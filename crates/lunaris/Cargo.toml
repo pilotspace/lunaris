@@ -1,0 +1,17 @@
+[package]
+name        = "lunaris"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[dependencies]
+lunaris-core              = { path = "../lunaris-core" }
+lunaris-storage-moon      = { path = "../lunaris-storage-moon" }
+lunaris-storage-postgres  = { path = "../lunaris-storage-postgres" }
+async-trait    = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+url            = { workspace = true }

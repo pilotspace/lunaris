@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/lunaris-core",
+  "crates/lunaris-storage-moon",
+  "crates/lunaris-storage-postgres",
+  "crates/lunaris",
+  "crates/lunaris-conformance",
+  "xtask",
+]
+
+[workspace.package]
+edition      = "2024"
+rust-version = "1.94"
+license      = "Apache-2.0"
+authors      = ["Lunaris Authors"]
+repository   = "https://github.com/lunaris-dev/lunaris"
+publish      = false
+
+[workspace.dependencies]
+# async runtime
+tokio          = { version = "1", features = ["full"] }
+async-trait    = "0.1"
+futures        = "0.3"
+bytes          = "1"
+# error / result
+thiserror      = "2"
+anyhow         = "1"
+# serde
+serde          = { version = "1", features = ["derive"] }
+serde_json     = "1"
+# time / id
+chrono         = { version = "0.4", features = ["serde"] }
+ulid           = { version = "1", features = ["serde"] }
+# observability
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# concurrency
+parking_lot    = "0.12"
+# storage backends (used by Plan 03 / 04 — declared here so versions stay aligned)
+redis          = { version = "0.32", features = ["aio", "tokio-comp", "connection-manager"] }
+sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
+url            = "2"
+# test only
+rand           = "0.9"
+proptest       = "1"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto       = "thin"
+debug     = 1

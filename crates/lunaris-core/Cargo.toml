@@ -1,0 +1,25 @@
+[package]
+name        = "lunaris-core"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[dependencies]
+async-trait    = { workspace = true }
+bytes          = { workspace = true }
+thiserror      = { workspace = true }
+anyhow         = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+chrono         = { workspace = true }
+ulid           = { workspace = true }
+parking_lot    = { workspace = true }
+tokio          = { workspace = true }
+futures        = { workspace = true }
+
+[dev-dependencies]
+rand           = { workspace = true }
+proptest       = { workspace = true }
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

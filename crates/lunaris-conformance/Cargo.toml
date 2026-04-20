@@ -1,0 +1,13 @@
+[package]
+name        = "lunaris-conformance"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[dependencies]
+lunaris        = { path = "../lunaris" }
+lunaris-core   = { path = "../lunaris-core" }
+async-trait    = { workspace = true }
+tokio          = { workspace = true }
