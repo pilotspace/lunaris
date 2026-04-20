@@ -25,7 +25,7 @@
 //! may multiplex by workspace); Plan 03 records it but does not act on it.
 
 use lunaris_core::error::StorageError;
-use moon_client::{MoonClient as TypedClient, MoonError};
+use moon::{MoonClient as TypedClient, MoonError};
 
 /// Default Moon RESP port (matches Moon's `bin/moond` default).
 pub const DEFAULT_MOON_PORT: u16 = 6390;

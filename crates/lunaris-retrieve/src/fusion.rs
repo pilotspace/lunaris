@@ -1,0 +1,177 @@
+//! RRF routing — Moon-native vs client-side fusion dispatch.
+//!
+//! Phase 1.5 STORE-09 added `RrfFusion::Moon { k, weights }` +
+//! `StorageCapabilities::native_rrf` so a Moon backend can fuse vector + BM25
+//! in **one** server round trip via `client.text().hybrid_search()`.
+//! Plan 02-02's `fuse_rrf` consumes that capability:
+//!
+//! 1. [`inspect_branches`] walks the upstream operator tree to detect when
+//!    both branches are exactly `Vector` + `Keyword(BM25)` on the SAME index.
+//! 2. At call time, `fuse_rrf` checks `storage.capabilities().native_rrf` —
+//!    when both conditions hold, dispatch to [`fuse_via_moon_native`] which
+//!    calls into `MoonStorage::client().typed().text().hybrid_search()`.
+//! 3. Otherwise the operator falls back to the client-side RRF in `fuse.rs`.
+//!
+//! ## Tree introspection mechanism
+//!
+//! The `Retriever` trait carries an `as_any() -> &dyn Any` method that every
+//! concrete operator overrides with `fn as_any(&self) -> &dyn Any { self }`.
+//! `inspect_branches` uses standard `Any::downcast_ref` to walk the tree —
+//! no unsafe casts, no transmutes. Operators that don't override the
+//! default impl downcast to `None`, which transparently routes the
+//! dispatcher to the client-side fallback.
+//!
+//! ## Storage backend introspection
+//!
+//! Same pattern: [`AsStorageAny`] is a blanket-impl trait that lets us
+//! recover `&dyn Any` from `&dyn StoragePort` without polluting the locked
+//! Phase 1 trait. `fuse_via_moon_native` uses it to confirm the backend is
+//! `MoonStorage` before invoking the Moon-native call.
+
+use lunaris_core::LunarisError;
+use lunaris_core::storage::keyword::min_max_normalize;
+
+use crate::operators::QueryContext;
+use crate::operators::Retriever;
+use crate::operators::combinators::AndRetriever;
+use crate::operators::keyword::Keyword;
+use crate::operators::vector::Vector;
+use crate::types::{RawHit, SourceOp};
+
+/// Tag describing what shape the fused branches take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FusedKind {
+    /// Both branches are `Vector(index)` + `Keyword(index)` with the same index.
+    VectorKeywordSameIndex,
+    /// Anything else; will fall back to client-side fusion regardless of
+    /// `native_rrf`.
+    Other,
+}
+
+/// Hint extracted at `fuse_rrf` build time. Carries the index name so the
+/// Moon-native dispatch knows which Moon FT index to query.
+#[derive(Clone, Debug)]
+pub struct FusedBranchHint {
+    pub kind: FusedKind,
+    pub index: String,
+    pub k: usize,
+}
+
+/// Inspect the upstream operator tree. Returns `Some(hint)` when the tree is
+/// the canonical "Vector + Keyword(BM25) on same index" shape that the
+/// Moon-native path supports; `Some(Other)` when the tree IS an `And` but
+/// the branches don't match the Moon-native pattern (still composable);
+/// `None` when the inner is not an `And` at all (e.g., `fuse_rrf(Vector)` —
+/// degenerate but still allowed for the client-side fold).
+pub fn inspect_branches(inner: &dyn Retriever) -> Option<FusedBranchHint> {
+    let and = inner.as_any().downcast_ref::<AndRetriever>()?;
+    let left_v = and.left.as_any().downcast_ref::<Vector>();
+    let right_k = and.right.as_any().downcast_ref::<Keyword>();
+    match (left_v, right_k) {
+        (Some(v), Some(k)) if v.index == k.index => Some(FusedBranchHint {
+            kind: FusedKind::VectorKeywordSameIndex,
+            index: v.index.clone(),
+            k: v.k.max(k.k),
+        }),
+        (Some(v), Some(k)) => Some(FusedBranchHint {
+            kind: FusedKind::Other,
+            index: v.index.clone(),
+            k: v.k.max(k.k),
+        }),
+        _ => Some(FusedBranchHint { kind: FusedKind::Other, index: String::new(), k: 0 }),
+    }
+}
+
+/// Run the Moon-native hybrid search path.
+///
+/// Calls `MoonStorage::client().typed().text().hybrid_search(index, q_text,
+/// q_vec, "vec", k, [bm25_w, vec_w])` — one round trip. Returns hits tagged
+/// `SourceOp::Fused` with min-max normalized scores.
+///
+/// Reads the concrete `Arc<MoonStorage>` from `ctx.moon_storage`. The
+/// caller (`FuseRrfRetriever::retrieve`) gates this with both
+/// `capabilities().native_rrf == true` AND `ctx.moon_storage.is_some()`;
+/// when either is false, dispatch falls back to client-side RRF.
+pub async fn fuse_via_moon_native(
+    ctx: &QueryContext,
+    hint: &FusedBranchHint,
+    k: usize,
+) -> Result<Vec<RawHit>, LunarisError> {
+    let moon = ctx.moon_storage.as_ref().ok_or_else(|| {
+        LunarisError::Storage(lunaris_core::StorageError::Backend(
+            "fuse_via_moon_native called without ctx.moon_storage; check builder wiring"
+                .to_string(),
+        ))
+    })?;
+
+    // Embed the query (cached in the OnceCell — same mechanism as Vector).
+    let q_emb = ctx.embed_once().await?;
+
+    let typed = moon.client().typed();
+    let mut text = typed.text();
+    // Default balanced weights [bm25, vec] = [0.5, 0.5]. The plan and
+    // RrfFusion::Moon docs both name this constant.
+    let weights: [f64; 2] = [0.5_f64, 0.5_f64];
+    // Use the Moon-native call. The fourth positional is the vec field name —
+    // for Lunaris the convention is `"vec"` (matches the Phase 1 ingest path
+    // metadata key).
+    let hits: Vec<moon::TextSearchHit> = text
+        .hybrid_search(&hint.index, &ctx.query.text, &q_emb, "vec", k, weights)
+        .await
+        .map_err(|e| {
+            LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
+                "moon hybrid_search: {e}"
+            )))
+        })?;
+
+    // Min-max normalize the returned scores so the fused RawHits stay in [0,1].
+    let raw_scores: Vec<f32> = hits.iter().map(|h| h.score as f32).collect();
+    let normalized = min_max_normalize(&raw_scores);
+
+    Ok(hits
+        .into_iter()
+        .zip(normalized)
+        .map(|(h, score)| {
+            let id = h.key.into_bytes();
+            let metadata = h
+                .fields
+                .get("__metadata")
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .unwrap_or(serde_json::Value::Null);
+            RawHit { id, score, rerank_applied: false, metadata, source_op: SourceOp::Fused }
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::operators::combinators::AndRetriever;
+
+    #[test]
+    fn inspect_recognizes_vector_plus_keyword_same_index() {
+        let v = Vector::new("chunks", 30);
+        let k = Keyword::bm25("chunks", 30);
+        let and = AndRetriever::new(Box::new(v), Box::new(k));
+        let hint = inspect_branches(&and).expect("must detect");
+        assert_eq!(hint.kind, FusedKind::VectorKeywordSameIndex);
+        assert_eq!(hint.index, "chunks");
+    }
+
+    #[test]
+    fn inspect_recognizes_different_index_as_other() {
+        let v = Vector::new("chunks", 30);
+        let k = Keyword::bm25("entities", 30);
+        let and = AndRetriever::new(Box::new(v), Box::new(k));
+        let hint = inspect_branches(&and).expect("AND visible");
+        assert_eq!(hint.kind, FusedKind::Other);
+    }
+
+    #[test]
+    fn inspect_returns_none_for_non_and() {
+        let v = Vector::new("chunks", 30);
+        // Not wrapped in AND — just a bare vector. inspect_branches must return None.
+        let hint = inspect_branches(&v);
+        assert!(hint.is_none());
+    }
+}

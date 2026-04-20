@@ -24,11 +24,12 @@ thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
 # Phase 1.5 retrofit (STORE-09): direct `redis = { workspace = true }` was replaced
-# with the typed `moon-client` SDK. moon-client v0.1.x ships `redis 1.x` transitively
-# with the right features. We additionally pin `redis = "1.1"` directly so the single
-# documented HSCAN escape hatch in `kv.rs` (the only raw `redis::cmd` site permitted
-# by Phase 1.5 constraints) can name the `redis::cmd` / `redis::Value` types it needs.
-moon-client    = { workspace = true }
+# with the typed `moon` SDK (formerly `moon-client`; renamed upstream). moon v0.1.x
+# ships `redis 1.x` transitively with the right features. We additionally pin
+# `redis = "1.1"` directly so the single documented HSCAN escape hatch in `kv.rs`
+# (the only raw `redis::cmd` site permitted by Phase 1.5 constraints) can name the
+# `redis::cmd` / `redis::Value` types it needs.
+moon           = { workspace = true }
 redis          = "1.1"
 parking_lot    = { workspace = true }
 url            = { workspace = true }

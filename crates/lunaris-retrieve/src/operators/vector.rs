@@ -1,0 +1,100 @@
+//! `Vector::new(index, k)` — embed query, run `StoragePort::vector_search`.
+//!
+//! Per the [`super::QueryContext`] convention, this operator calls
+//! [`super::QueryContext::embed_once`] which is cached per call so chained
+//! `.and(Vector::new(..), other)` operators don't re-embed the query.
+
+use std::any::Any;
+
+use async_trait::async_trait;
+use lunaris_core::LunarisError;
+
+use super::{QueryContext, Retriever, clamp_k};
+use crate::types::{RawHit, SourceOp};
+
+/// Vector retrieval operator.
+///
+/// Construction is fluent — you wire it up at `recall()`-build time, the
+/// network call only happens at `.execute()` time.
+#[derive(Clone, Debug)]
+pub struct Vector {
+    pub index: String,
+    pub k: usize,
+}
+
+impl Vector {
+    /// Build a new `Vector` operator targeting the given backend index
+    /// (e.g., `"chunks"`) with `k` candidates.
+    ///
+    /// `k` is clamped to [`super::MAX_K`] (T-02-02-03 DoS mitigation).
+    pub fn new(index: impl Into<String>, k: usize) -> Self {
+        Self { index: index.into(), k: clamp_k(k) }
+    }
+
+    /// Convenience: wrap into the standard combinator builder. Implemented in
+    /// `combinators` to avoid trait-method orphan rules with the generic
+    /// `.and / .or / .then`.
+    pub fn and<R: Retriever + 'static>(self, other: R) -> super::combinators::AndRetriever {
+        super::combinators::AndRetriever::new(Box::new(self), Box::new(other))
+    }
+    pub fn or<R: Retriever + 'static>(self, other: R) -> super::combinators::OrRetriever {
+        super::combinators::OrRetriever::new(Box::new(self), Box::new(other))
+    }
+    pub fn then<R: Retriever + 'static>(self, other: R) -> super::combinators::ThenRetriever {
+        super::combinators::ThenRetriever::new(Box::new(self), Box::new(other))
+    }
+    /// Cap the final result set after the operator tree resolves.
+    pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
+        super::modifiers::TopRetriever::new(Box::new(self), n)
+    }
+}
+
+#[async_trait]
+impl Retriever for Vector {
+    async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
+        let q_emb = ctx.embed_once().await?;
+        let hits = ctx
+            .storage
+            .vector_search(
+                &self.index,
+                &q_emb,
+                self.k,
+                ctx.query.filter.as_ref(),
+                ctx.query.as_of,
+                false,
+            )
+            .await?;
+        Ok(hits
+            .into_iter()
+            .map(|h| RawHit {
+                id: h.id,
+                score: h.score,
+                rerank_applied: h.rerank_applied,
+                metadata: h.metadata,
+                source_op: SourceOp::Vector,
+            })
+            .collect())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn k_is_clamped() {
+        let v = Vector::new("chunks", 1_000_000);
+        assert_eq!(v.k, super::super::MAX_K);
+    }
+
+    #[test]
+    fn vector_new_records_index() {
+        let v = Vector::new("chunks", 30);
+        assert_eq!(v.index, "chunks");
+        assert_eq!(v.k, 30);
+    }
+}

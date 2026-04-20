@@ -8,6 +8,7 @@ members = [
   "crates/lunaris-conformance",
   "crates/lunaris-embed",
   "crates/lunaris-ingest",
+  "crates/lunaris-retrieve",
   "xtask",
 ]
 
@@ -41,10 +42,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot    = "0.12"
 # storage backends (used by Plan 03 / 04 — declared here so versions stay aligned)
 redis          = { version = "0.32", features = ["aio", "tokio-comp", "connection-manager"] }
-# moon-client v0.1.0 — typed Rust SDK for Moon (path dep — user owns the Moon repo).
+# moon — typed Rust SDK for Moon (path dep — user owns the Moon repo).
 # Brings `redis 1.1` transitively via its own [dependencies] block. Phase 1.5 retrofit
 # (STORE-09) replaces `lunaris-storage-moon`'s direct `redis 0.32` dep with this.
-moon-client    = { path = "../moon/sdk/rust" }
+# Upstream rename: this crate was previously published as `moon-client`; renamed to
+# `moondb` in moon repo. Lunaris keeps the local alias `moon` so internal use sites
+# keep their stable `use moon::` form (one place to update if Moon renames again).
+moon           = { path = "../moon/sdk/rust", package = "moondb" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
@@ -55,6 +59,9 @@ candle-transformers = "0.10"
 tokenizers     = { version = "0.22", default-features = false, features = ["onig"] }
 dirs           = "6"
 reqwest        = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# Phase 2 retrieve hot path (RETRIEVE-01..13) — tower service composition + cached
+# query embedding via async OnceCell
+tower          = { version = "0.5", features = ["util", "limit", "timeout", "retry"] }
 # test only
 rand           = "0.9"
 proptest       = "1"

@@ -1,0 +1,41 @@
+# lunaris-retrieve — Phase 2 retrieval DSL (RETRIEVE-01,02,04,05,07,09,10,13).
+#
+# Composable operators (Vector + Keyword(BM25)) + combinators (.and / .or / .then) +
+# fuse_rrf + modifiers (top / filter / as_of) + hit hydration + query planner stub.
+# The outermost surface is `tower::Service<Query, Response = Vec<Hit>>` so the
+# whole retriever drops into `ServiceBuilder::new().rate_limit(..).timeout(..)`.
+
+[package]
+name        = "lunaris-retrieve"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[dependencies]
+lunaris-core         = { path = "../lunaris-core" }
+# Phase 1.5 fuse_rrf Moon-native dispatch needs the typed `MoonStorage` handle +
+# the moon SDK's TextSearchHit type for the hybrid_search return shape. Direct
+# deps so the rustdoc links resolve and the type names stay in scope without
+# requiring `pub use` re-exports from lunaris-storage-moon.
+lunaris-storage-moon = { path = "../lunaris-storage-moon" }
+moon                 = { workspace = true }
+async-trait          = { workspace = true }
+bytes                = { workspace = true }
+futures              = { workspace = true }
+serde                = { workspace = true }
+serde_json           = { workspace = true }
+thiserror            = { workspace = true }
+tokio                = { workspace = true, features = ["sync", "macros"] }
+tower                = { workspace = true }
+tracing              = { workspace = true }
+ulid                 = { workspace = true }
+
+[dev-dependencies]
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
+parking_lot          = { workspace = true }
+async-trait          = { workspace = true }
+
+[features]
+default = []

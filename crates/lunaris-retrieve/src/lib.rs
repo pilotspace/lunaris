@@ -1,0 +1,57 @@
+//! lunaris-retrieve — the v0 retrieval DSL.
+//!
+//! Per blueprint §8 the retrieval pipeline must "feel like Keras, not like a
+//! query language" — declarative, composable, `tower::Service`-shaped at the
+//! edge so middleware (rate-limit, retry, timeout, tracing) drops in for free.
+//!
+//! ## Quick example
+//!
+//! ```ignore
+//! use lunaris_retrieve::{Vector, Keyword, Query, RetrievalBuilder};
+//!
+//! // The DSL composes (no .await needed at construction):
+//! let plan = Vector::new("chunks", 30)
+//!     .and(Keyword::bm25("chunks", 30))
+//!     .fuse_rrf(60)
+//!     .top(5);
+//! ```
+//!
+//! The `Lunaris::recall()` umbrella API constructs a [`RetrievalBuilder`]
+//! seeded with the handle's storage / embedder / keyword / clock and
+//! a default root of `Vector::new("chunks", 30)`. Callers swap the root
+//! via [`RetrievalBuilder::with_root`].
+//!
+//! ## Module layout
+//!
+//! - [`types`] — `Query`, `Hit`, `RawHit`, `SourceOp`, `Plan`
+//! - [`operators`] — `Retriever` trait + `QueryContext` + the operator structs
+//! - [`hydrate`] — batched chunk-text + source hydration
+//! - [`planner`] — `plan_query` heuristic stub (RETRIEVE-13)
+//! - [`service`] — `RetrievalService` impl of `tower::Service<Query>`
+//! - [`builder`] — `RetrievalBuilder` (terminal `.execute()` wires the tree
+//!   to the `QueryContext` and runs hydrate)
+//! - [`fusion`] — Moon-native vs client-side RRF dispatch (consumes the
+//!   Phase 1.5 `RrfFusion` enum + `StorageCapabilities::native_rrf`)
+
+#![deny(rust_2018_idioms, unreachable_pub)]
+#![forbid(unsafe_code)]
+
+pub mod builder;
+pub mod fusion;
+pub mod hydrate;
+pub mod operators;
+pub mod planner;
+pub mod service;
+pub mod types;
+
+pub use builder::RetrievalBuilder;
+pub use hydrate::hydrate;
+pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever};
+pub use operators::fuse::FuseRrfRetriever;
+pub use operators::keyword::Keyword;
+pub use operators::modifiers::{TopRetriever, filter_str};
+pub use operators::vector::Vector;
+pub use operators::{QueryContext, Retriever};
+pub use planner::{Plan, plan_query};
+pub use service::RetrievalService;
+pub use types::{Hit, Query, RawHit, SourceOp};

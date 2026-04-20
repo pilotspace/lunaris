@@ -67,7 +67,7 @@ pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn,
     Ok(Lsn { wall_ms: now_ms, counter: 0 })
 }
 
-async fn run_ops(typed: &mut moon_client::MoonClient, ops: &[WriteOp]) -> Result<(), StorageError> {
+async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), StorageError> {
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
