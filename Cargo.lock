@@ -1690,6 +1690,7 @@ dependencies = [
  "bytes",
  "futures",
  "lunaris-core",
+ "lunaris-rerank",
  "lunaris-storage-moon",
  "moondb",
  "parking_lot",

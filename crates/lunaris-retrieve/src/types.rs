@@ -32,11 +32,24 @@ pub struct RawHit {
     pub id: Vec<u8>,
     /// Score from the producing operator. Vector: cosine similarity.
     /// Keyword: min-max normalized BM25. Fused: sum of `1 / (k + rank_i)`
-    /// across branches.
+    /// across branches. Reranked: cross-encoder logit (replaces upstream
+    /// score, see [`SourceOp::Reranked`]).
     pub score: f32,
-    /// Whether a backend-native cross-encoder reranker has been applied.
-    /// Plan 02-03 sets this `true` when the `rerank` operator runs.
+    /// Whether a cross-encoder reranker has been applied to this hit.
+    /// Plan 02-03's `rerank` operator sets this to the value of
+    /// `Reranker::applies()` after the rerank pass — `true` when the real
+    /// `BgeRerankerV2M3` ran, `false` when the `NoopReranker` passthrough
+    /// fallback ran (degraded model-missing path per RETRIEVE-06).
     pub rerank_applied: bool,
+    /// Set `true` by Plan 02-03's `degraded_fallback` operator when this
+    /// hit came from the fallback (secondary) retriever after the primary
+    /// errored. Default `false` — every upstream operator (Vector, Keyword,
+    /// fuse_rrf, combinators, rerank) leaves it false; only the
+    /// `degraded_fallback` operator flips it on the fallback path. Hydration
+    /// copies this onto [`Hit::degraded`] so callers can tell whether the
+    /// result came from the primary backend or the fallback.
+    #[serde(default)]
+    pub degraded: bool,
     /// Free-form metadata from the producing operator. Vector reads it from
     /// the backend's `__metadata` / payload column. Keyword reads it from
     /// the backend's payload column.
@@ -67,7 +80,9 @@ pub struct Hit {
     pub valid_from: Hlc,
     pub valid_to: Option<Hlc>,
     /// `true` when a `degraded_fallback` operator (Plan 02-03) flipped to a
-    /// fallback retriever for this branch. Always `false` in v0.
+    /// fallback retriever for this branch. Plumbed through hydration from
+    /// [`RawHit::degraded`]. Callers can render "stale result" UI off this
+    /// flag.
     pub degraded: bool,
     pub rerank_applied: bool,
     pub source_op: SourceOp,

@@ -1,9 +1,11 @@
 //! Retriever trait + per-call query context shared across the operator tree.
 
 pub mod combinators;
+pub mod degraded;
 pub mod fuse;
 pub mod keyword;
 pub mod modifiers;
+pub mod rerank;
 pub mod vector;
 
 use std::any::Any;

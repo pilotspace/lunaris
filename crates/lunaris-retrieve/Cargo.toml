@@ -20,6 +20,11 @@ lunaris-core         = { path = "../lunaris-core" }
 # deps so the rustdoc links resolve and the type names stay in scope without
 # requiring `pub use` re-exports from lunaris-storage-moon.
 lunaris-storage-moon = { path = "../lunaris-storage-moon" }
+# Plan 02-03: Reranker trait + RerankCandidate live in lunaris-rerank. We pull
+# it in with default-features=false so the retrieve crate doesn't transitively
+# pull the full candle stack — only the umbrella `lunaris` crate forwards the
+# `candle` feature when callers want the real BgeRerankerV2M3.
+lunaris-rerank       = { path = "../lunaris-rerank", default-features = false }
 moon                 = { workspace = true }
 async-trait          = { workspace = true }
 bytes                = { workspace = true }

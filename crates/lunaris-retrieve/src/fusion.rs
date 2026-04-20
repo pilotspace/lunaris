@@ -138,7 +138,14 @@ pub async fn fuse_via_moon_native(
                 .get("__metadata")
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                 .unwrap_or(serde_json::Value::Null);
-            RawHit { id, score, rerank_applied: false, metadata, source_op: SourceOp::Fused }
+            RawHit {
+                id,
+                score,
+                rerank_applied: false,
+                degraded: false,
+                metadata,
+                source_op: SourceOp::Fused,
+            }
         })
         .collect())
 }

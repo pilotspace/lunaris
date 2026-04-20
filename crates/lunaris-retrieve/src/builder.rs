@@ -117,6 +117,24 @@ impl RetrievalBuilder {
         Self { root: Box::new(new_root), ..self }
     }
 
+    /// Plan 02-03: Wrap the current root with a [`crate::RerankRetriever`].
+    /// The cross-encoder reorders the top-30 (default) candidates and tags
+    /// every hit with `rerank_applied = reranker.applies()` so callers can
+    /// see whether the real model fired (vs the noop fallback).
+    pub fn rerank(self, reranker: Arc<dyn lunaris_rerank::Reranker>) -> Self {
+        let new_root = crate::operators::rerank::RerankRetriever::new(self.root, reranker);
+        Self { root: Box::new(new_root), ..self }
+    }
+
+    /// Plan 02-03: Wrap the current root with a [`crate::DegradedFallbackRetriever`].
+    /// On any error from the current (primary) root, the operator switches
+    /// to `fallback` and tags returned hits with `degraded: true`.
+    pub fn degraded_fallback<R: Retriever + 'static>(self, fallback: R) -> Self {
+        let new_root =
+            crate::operators::degraded::DegradedFallbackRetriever::new(self.root, Box::new(fallback));
+        Self { root: Box::new(new_root), ..self }
+    }
+
     /// Run the tree and hydrate. Terminal — consumes the builder.
     pub async fn execute(self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
         // Builder-level filter / as_of override the per-query fields IFF the

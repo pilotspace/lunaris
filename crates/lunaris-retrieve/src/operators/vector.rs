@@ -47,6 +47,23 @@ impl Vector {
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
         super::modifiers::TopRetriever::new(Box::new(self), n)
     }
+
+    /// Wrap with a cross-encoder rerank pass (Plan 02-03).
+    pub fn rerank(
+        self,
+        reranker: std::sync::Arc<dyn lunaris_rerank::Reranker>,
+    ) -> super::rerank::RerankRetriever {
+        super::rerank::RerankRetriever::new(Box::new(self), reranker)
+    }
+
+    /// Wrap with a fallback retriever — if THIS vector path errors, switch to
+    /// `fallback` and tag returned hits with `degraded: true` (Plan 02-03).
+    pub fn degraded_fallback<R: Retriever + 'static>(
+        self,
+        fallback: R,
+    ) -> super::degraded::DegradedFallbackRetriever {
+        super::degraded::DegradedFallbackRetriever::new(Box::new(self), Box::new(fallback))
+    }
 }
 
 #[async_trait]
@@ -70,6 +87,7 @@ impl Retriever for Vector {
                 id: h.id,
                 score: h.score,
                 rerank_applied: h.rerank_applied,
+                degraded: false,
                 metadata: h.metadata,
                 source_op: SourceOp::Vector,
             })

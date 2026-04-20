@@ -51,6 +51,25 @@ impl FuseRrfRetriever {
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
         super::modifiers::TopRetriever::new(Box::new(self), n)
     }
+
+    /// Wrap this fused retriever with a [`super::rerank::RerankRetriever`].
+    /// Lets the canonical blueprint §8 example compose:
+    /// `Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).rerank(reranker).top(5)`.
+    pub fn rerank(
+        self,
+        reranker: std::sync::Arc<dyn lunaris_rerank::Reranker>,
+    ) -> super::rerank::RerankRetriever {
+        super::rerank::RerankRetriever::new(Box::new(self), reranker)
+    }
+
+    /// Wrap with a fallback retriever — if THIS fused path errors, switch to
+    /// `fallback` and tag returned hits with `degraded: true`.
+    pub fn degraded_fallback<R: Retriever + 'static>(
+        self,
+        fallback: R,
+    ) -> super::degraded::DegradedFallbackRetriever {
+        super::degraded::DegradedFallbackRetriever::new(Box::new(self), Box::new(fallback))
+    }
 }
 
 #[async_trait]
@@ -128,6 +147,7 @@ pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
                 id: id.clone(),
                 score,
                 rerank_applied: false,
+                degraded: false,
                 metadata: serde_json::Value::Null,
                 source_op: SourceOp::Fused,
             });
@@ -135,6 +155,7 @@ pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
                 id,
                 score,
                 rerank_applied: s.rerank_applied,
+                degraded: s.degraded,
                 metadata: s.metadata,
                 source_op: SourceOp::Fused,
             }
@@ -155,6 +176,7 @@ mod tests {
             id: id.to_vec(),
             score,
             rerank_applied: false,
+            degraded: false,
             metadata: json!({}),
             source_op: src,
         }

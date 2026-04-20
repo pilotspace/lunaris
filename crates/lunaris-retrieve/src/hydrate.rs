@@ -103,11 +103,57 @@ pub async fn hydrate(
             heading_path: chunk.heading_path,
             valid_from: chunk.bt.valid.0,
             valid_to: chunk.bt.valid.1,
-            degraded: false,
+            // Plan 02-03: degraded + rerank_applied flow through hydration so
+            // callers can tell whether the hit came from a degraded_fallback
+            // path (`degraded == true`) and whether the rerank pass actually
+            // ran (`rerank_applied == true` only when a non-NoopReranker fired).
+            degraded: raw.degraded,
             rerank_applied: raw.rerank_applied,
             source_op: raw.source_op,
         })
         .collect())
+}
+
+/// Partial hydration — fetch ONLY chunk text for the given raw hits, returning
+/// a `HashMap<id_bytes -> chunk.text>`.
+///
+/// Used by Plan 02-03's `rerank` operator: the cross-encoder needs the chunk
+/// body to pair-encode `(query, doc.text)` for scoring, but doesn't need the
+/// parent Episode's `source` or any other Hit-level field. Skipping the
+/// episode lookup roundtrip is the v0 latency-budget guard so the rerank pass
+/// stays inside the blueprint §4.2 12 ms allocation.
+///
+/// Hits whose chunk row is missing at the snapshot are SKIPPED (no entry in
+/// the returned map). Callers fall back to `text = ""` for missing entries
+/// — the cross-encoder will produce a low score and the downstream `top(n)`
+/// truncates them out.
+pub async fn partial_hydrate_text(
+    storage: &dyn StoragePort,
+    hits: &[RawHit],
+    as_of: Option<Hlc>,
+) -> Result<HashMap<Vec<u8>, String>, LunarisError> {
+    let live_clock = HlcClock::new(0);
+    let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
+
+    let mut by_id: HashMap<Vec<u8>, String> = HashMap::with_capacity(hits.len());
+    for raw in hits {
+        let key = match chunk_lookup_key(&raw.id) {
+            Some(k) => k,
+            None => continue,
+        };
+        match storage.read_as_of(&key, snapshot).await? {
+            Some(row) => {
+                if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
+                    by_id.insert(raw.id.clone(), chunk.text);
+                }
+            }
+            None => {
+                // Chunk no longer exists at this snapshot — skip
+                continue;
+            }
+        }
+    }
+    Ok(by_id)
 }
 
 #[cfg(test)]
