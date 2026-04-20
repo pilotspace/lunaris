@@ -6,6 +6,7 @@ pub mod bitemporal;
 pub mod embedder;
 pub mod error;
 pub mod hlc;
+pub mod primitives;
 
 pub use bitemporal::BiTemporal;
 pub use embedder::{Embedder, StubEmbedder};
@@ -13,3 +14,4 @@ pub use error::{
     ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
 };
 pub use hlc::{Hlc, HlcClock};
+pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
