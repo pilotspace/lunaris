@@ -1,5 +1,8 @@
-# lunaris-ingest — Phase 2 ingest hot path (chunker + batched embed → atomic_write).
-# Real wiring lands in Plan 02-01 Task 2.
+# lunaris-ingest — markdown chunker + batched ingest pipeline (chunk → embed → atomic_write).
+# Closes INGEST-01..04 of the Phase 2 hot path.
+#
+#   cargo test -p lunaris-ingest                    # unit + integration tests
+#
 [package]
 name        = "lunaris-ingest"
 version     = "0.0.1"
@@ -9,4 +12,19 @@ license.workspace      = true
 authors.workspace      = true
 
 [dependencies]
-lunaris-core   = { path = "../lunaris-core" }
+lunaris-core         = { path = "../lunaris-core" }
+lunaris-storage-moon = { path = "../lunaris-storage-moon" }   # for keyspace helpers (re-exported)
+async-trait    = { workspace = true }
+bytes          = { workspace = true }
+pulldown-cmark = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+ulid           = { workspace = true }
+chrono         = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+parking_lot    = { workspace = true }
+futures        = { workspace = true }
