@@ -18,6 +18,11 @@ lunaris            = { path = "../lunaris" }
 lunaris-core       = { path = "../lunaris-core" }
 lunaris-storage-moon = { path = "../lunaris-storage-moon" }
 lunaris-ingest     = { path = "../lunaris-ingest" }
+# Plan 03-04 — bench needs the Extractor trait + EntityId for the graph-on
+# StubExtractor (D-03 isolates storage cost from real Gemma forward-pass).
+# default-features = false keeps the candle / ollama / cloud-api stack out of
+# the bench build (mirrors B-3 fix from Plan 03-02).
+lunaris-extract    = { path = "../lunaris-extract", default-features = false }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
 futures            = { workspace = true }

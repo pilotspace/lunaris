@@ -44,8 +44,9 @@ pub mod corpus;
 pub mod fixtures;
 
 pub use corpus::{
-    BenchCorpusError, CORPUS_BATCH_OPS, CORPUS_EMBEDDING_DIM, CorpusFingerprint,
-    DEFAULT_CORPUS_COUNT, DEFAULT_CORPUS_SEED, DEFAULT_QUERY_SEED, build_one_million_fact_corpus,
-    ensure_corpus_or_skip, fingerprint_path_for, hash_url, synthetic_query_set, tcp_reachable,
+    BenchCorpusError, CORPUS_BATCH_OPS, CORPUS_EMBEDDING_DIM, CorpusFingerprint, CorpusGenOpts,
+    DEFAULT_CORPUS_COUNT, DEFAULT_CORPUS_SEED, DEFAULT_QUERY_SEED, GraphDensity,
+    build_corpus_with_options, build_one_million_fact_corpus, ensure_corpus_or_skip,
+    fingerprint_path, fingerprint_path_for, hash_url, synthetic_query_set, tcp_reachable,
 };
 pub use fixtures::twelve_kb_markdown_fixture;

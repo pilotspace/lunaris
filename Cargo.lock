@@ -1846,6 +1846,7 @@ dependencies = [
  "hex",
  "lunaris",
  "lunaris-core",
+ "lunaris-extract",
  "lunaris-ingest",
  "lunaris-storage-moon",
  "parking_lot",

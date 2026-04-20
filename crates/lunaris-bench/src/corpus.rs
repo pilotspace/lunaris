@@ -52,6 +52,7 @@ use std::time::{Duration, Instant};
 
 use lunaris::Lunaris;
 use lunaris_core::{BiTemporal, Fact, HlcClock, LunarisError, StorageError, StoragePort, WriteOp};
+use lunaris_extract::EntityId;
 use lunaris_storage_moon::keyspace::fact_key;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -82,6 +83,69 @@ pub const CORPUS_BATCH_OPS: usize = 10_000;
 /// query produces vectors compatible with the corpus embeddings.
 pub const CORPUS_EMBEDDING_DIM: usize = 768;
 
+/// Predicate vocab for the synthetic graph-on relations (Plan 03-04).
+///
+/// Mirror of the relation predicates the real Gemma-3 4B extractor would emit
+/// — kept stable and small (5 entries) so a deterministic round-robin pairing
+/// produces the same edges across runs.
+const SYNTHETIC_GRAPH_PREDICATES: &[&str] =
+    &["mentions", "related_to", "depends_on", "succeeds", "co_occurs"];
+
+// ----- graph density (Plan 03-04 D-04 / I-3 / I-4) -----
+
+/// Per-Episode entity + relation density to seed when generating a graph-on
+/// corpus (Plan 03-04 D-04).
+///
+/// When `CorpusGenOpts.graph_density = Some(...)`, the bulk-write path emits
+/// `WriteOp::GraphNode` per entity + `WriteOp::GraphEdge` per relation
+/// alongside the per-chunk `KvPut` + `VectorUpsert`.
+///
+/// **Default density (D-04):** 10 entities/chunk × 3 relations/entity = 30
+/// relations/chunk — matches the typical 12 KB markdown extraction ratio so
+/// the graph-on bench measures realistic ingest fan-out cost rather than a
+/// 4-entity straw man (I-3 fix). Bench harnesses MUST use [`Default`] unless
+/// they have a specific reason to deviate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GraphDensity {
+    /// Number of [`WriteOp::GraphNode`] writes seeded per chunk.
+    pub entities_per_chunk: u32,
+    /// Number of [`WriteOp::GraphEdge`] writes seeded per entity (so total
+    /// edges per chunk = `entities_per_chunk * relations_per_entity`).
+    pub relations_per_entity: u32,
+}
+
+impl Default for GraphDensity {
+    fn default() -> Self {
+        Self { entities_per_chunk: 10, relations_per_entity: 3 }
+    }
+}
+
+/// Knobs the corpus generator accepts (Plan 03-04 additive extension).
+///
+/// `graph_density: None` (default) reproduces the Plan 02-04 no-graph corpus
+/// shape exactly — every existing recall-bench caller that takes positional
+/// `(count, seed)` is unchanged. `graph_density: Some(...)` enables the
+/// graph-on bulk-write path which emits additional `GraphNode` + `GraphEdge`
+/// `WriteOp`s alongside the per-chunk KvPut + VectorUpsert.
+///
+/// Determinism contract: same `(count, seed, graph_density)` triple → byte-
+/// identical corpus across runs / machines / OSes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CorpusGenOpts {
+    pub fact_count: u64,
+    pub seed: u64,
+    /// When `Some(_)`, switches to the graph-on bulk-write path (D-04).
+    /// When `None`, behaves identically to the Plan 02-04 no-graph corpus.
+    #[serde(default)]
+    pub graph_density: Option<GraphDensity>,
+}
+
+impl Default for CorpusGenOpts {
+    fn default() -> Self {
+        Self { fact_count: DEFAULT_CORPUS_COUNT, seed: DEFAULT_CORPUS_SEED, graph_density: None }
+    }
+}
+
 // ----- error -----
 
 #[derive(Debug, Error)]
@@ -104,6 +168,12 @@ pub enum BenchCorpusError {
 /// rebuild decision. The URL is stored as a 16-char hex SHA-256 prefix, NOT
 /// the raw URL — credentials in a `postgres://user:pass@host` URL never hit
 /// disk (T-02-04-01 mitigation).
+///
+/// **Plan 03-04 extension:** `graph_density` is `Some(_)` when this
+/// fingerprint records a graph-on corpus (T-03-04-04 mitigation — switching
+/// density yields a distinct fingerprint, forcing a rebuild). `None`
+/// preserves the Plan 02-04 no-graph fingerprint shape (default-deserialised
+/// for backward-compat with on-disk fingerprints written by Plan 02-04).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CorpusFingerprint {
     /// 16-char SHA-256 prefix of the backend URL (hex). See [`hash_url`].
@@ -117,6 +187,12 @@ pub struct CorpusFingerprint {
     pub completed: bool,
     /// Wall-clock duration of the successful build, in seconds.
     pub duration_secs: f64,
+    /// Plan 03-04: density that this corpus was built under. `None` means
+    /// "no-graph corpus" (Plan 02-04 default shape). `Some(_)` means
+    /// "graph-on corpus with this density" — switching density invalidates
+    /// the cache (T-03-04-04 mitigation).
+    #[serde(default)]
+    pub graph_density: Option<GraphDensity>,
 }
 
 // ----- url hash helpers -----
@@ -130,17 +206,40 @@ pub fn hash_url(url: &str) -> String {
     full[..16].to_string()
 }
 
-/// Canonical fingerprint file location for a given backend URL + count.
+/// Canonical fingerprint file location for a given backend URL + count
+/// (no-graph variant — Plan 02-04 shape, kept for compat).
 ///
 /// Reads `CARGO_TARGET_DIR` if set, else uses `target/` relative to the current
 /// working directory (which Cargo guarantees is the workspace root for `cargo
 /// bench` / `cargo test` invocations). The directory is created lazily by
 /// [`build_one_million_fact_corpus`] before the file is written.
 pub fn fingerprint_path_for(url: &str, count: u64) -> PathBuf {
+    fingerprint_path(url, count, None)
+}
+
+/// Plan 03-04 — density-aware fingerprint path.
+///
+/// When `graph_density` is `None` the path is identical to
+/// [`fingerprint_path_for`] (Plan 02-04 shape preserved verbatim). When
+/// `graph_density` is `Some(_)` the filename gains a `-graph-on` suffix so a
+/// no-graph corpus AND a graph-on corpus can coexist on disk for the same
+/// backend URL:
+///
+/// ```text
+/// target/lunaris-bench/corpus-1000000-<urlhash>.json             // no-graph
+/// target/lunaris-bench/corpus-1000000-<urlhash>-graph-on.json    // graph-on
+/// ```
+///
+/// The fingerprint JSON content also encodes the density (see
+/// [`CorpusFingerprint::graph_density`]) so a future cache invalidation when
+/// `entities_per_chunk` changes is automatic — distinct density → distinct
+/// fingerprint content → cache miss → rebuild (T-03-04-04 mitigation).
+pub fn fingerprint_path(url: &str, count: u64, graph_density: Option<GraphDensity>) -> PathBuf {
     let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
     let mut p = PathBuf::from(target);
     p.push("lunaris-bench");
-    p.push(format!("corpus-{}-{}.json", count, hash_url(url)));
+    let suffix = if graph_density.is_some() { "-graph-on" } else { "" };
+    p.push(format!("corpus-{}-{}{}.json", count, hash_url(url), suffix));
     p
 }
 
@@ -291,6 +390,44 @@ pub async fn build_one_million_fact_corpus(
     seed: u64,
     backend_url: &str,
 ) -> Result<(), BenchCorpusError> {
+    // Plan 03-04: thin compat wrapper — preserves the Plan 02-04 positional
+    // surface verbatim (no-graph corpus). Callers wanting the graph-on
+    // variant invoke [`build_corpus_with_options`] with
+    // `graph_density = Some(GraphDensity::default())`.
+    build_corpus_with_options(
+        handle,
+        CorpusGenOpts { fact_count: count, seed, graph_density: None },
+        backend_url,
+    )
+    .await
+}
+
+/// Plan 03-04 — Build a synthetic corpus on `handle`'s storage backend, with
+/// optional graph density.
+///
+/// Behaves identically to [`build_one_million_fact_corpus`] when
+/// `opts.graph_density.is_none()`. When `Some(density)`, ALSO emits per-chunk
+/// `WriteOp::GraphNode` (one per entity) + `WriteOp::GraphEdge` (one per
+/// relation) batches alongside the existing per-fact `KvPut` +
+/// `VectorUpsert`. Total ops per "synthetic chunk" = 2 (fact KvPut +
+/// VectorUpsert) + `entities_per_chunk` (GraphNode) +
+/// `entities_per_chunk * relations_per_entity` (GraphEdge).
+///
+/// The fingerprint cache discriminator uses the `-graph-on` filename suffix
+/// (T-03-04-04 mitigation) so a no-graph corpus and a graph-on corpus can
+/// coexist on disk for the same backend URL. Switching `entities_per_chunk`
+/// or `relations_per_entity` invalidates the cache (the fingerprint JSON
+/// includes the density) — distinct density → distinct fingerprint content
+/// → cache miss → rebuild.
+pub async fn build_corpus_with_options(
+    handle: &Lunaris,
+    opts: CorpusGenOpts,
+    backend_url: &str,
+) -> Result<(), BenchCorpusError> {
+    let count = opts.fact_count;
+    let seed = opts.seed;
+    let graph_density = opts.graph_density;
+
     if count == 0 || count > 100_000_000 {
         return Err(BenchCorpusError::Invalid(format!(
             "count must be in (0, 100_000_000]; got {count}"
@@ -298,21 +435,24 @@ pub async fn build_one_million_fact_corpus(
     }
 
     let url_hash = hash_url(backend_url);
-    let fp_path = fingerprint_path_for(backend_url, count);
+    let fp_path = fingerprint_path(backend_url, count, graph_density);
 
-    // Cache hit → skip rebuild. Validates count + seed + completed flag so a
-    // partial run from a previous interrupted invocation re-runs.
+    // Cache hit → skip rebuild. Validates count + seed + completed flag +
+    // graph_density so a partial run from a previous interrupted invocation
+    // OR a density change re-runs (T-03-04-04 mitigation).
     if let Ok(bytes) = std::fs::read(&fp_path)
         && let Ok(fp) = serde_json::from_slice::<CorpusFingerprint>(&bytes)
         && fp.completed
         && fp.fact_count == count
         && fp.seed == seed
         && fp.backend_url_hash == url_hash
+        && fp.graph_density == graph_density
     {
         tracing::info!(
             target: "lunaris-bench",
             count,
             seed,
+            graph_on = graph_density.is_some(),
             duration_secs = fp.duration_secs,
             "corpus fingerprint hit; skipping rebuild"
         );
@@ -320,7 +460,13 @@ pub async fn build_one_million_fact_corpus(
     }
 
     // Build from scratch.
-    tracing::info!(target: "lunaris-bench", count, seed, "building synthetic fact corpus");
+    tracing::info!(
+        target: "lunaris-bench",
+        count,
+        seed,
+        graph_on = graph_density.is_some(),
+        "building synthetic fact corpus"
+    );
     let started = Instant::now();
     let storage: Arc<dyn StoragePort> = handle.storage();
     let clock = handle.clock();
@@ -331,9 +477,22 @@ pub async fn build_one_million_fact_corpus(
     // identical first-fact ULIDs.
     let facts_per_batch = (CORPUS_BATCH_OPS / 2).max(1) as u64;
     let mut emitted: u64 = 0;
+    let mut chunk_idx: u64 = 0;
     while emitted < count {
         let batch_size = std::cmp::min(facts_per_batch, count - emitted);
-        let mut ops: Vec<WriteOp> = Vec::with_capacity((batch_size * 2) as usize);
+        // Capacity hint covers no-graph (2 ops/fact) AND graph-on (extra
+        // entities + relations per fact; we treat each fact as one
+        // "synthetic chunk" for density bookkeeping so the WriteOp count
+        // mirrors the per-chunk extraction shape from a real ingest).
+        let extra_per_fact = match graph_density {
+            None => 0u64,
+            Some(d) => {
+                let e = d.entities_per_chunk as u64;
+                e + e * d.relations_per_entity as u64
+            }
+        };
+        let cap = (batch_size * (2 + extra_per_fact)) as usize;
+        let mut ops: Vec<WriteOp> = Vec::with_capacity(cap);
         for _ in 0..batch_size {
             let fact = next_fact(&mut rng, &clock)?;
             let key = fact_key(fact.id);
@@ -349,6 +508,68 @@ pub async fn build_one_million_fact_corpus(
                     "subject": fact.subject.to_string(),
                 }),
             });
+            // Plan 03-04 graph-on extension — emit deterministic synthetic
+            // GraphNode + GraphEdge ops per "chunk" (per fact in this
+            // bench-only context). EntityIds derive from
+            // `(chunk_idx, entity_idx)` via blake3 (mirrors the Plan 03-01
+            // EntityId::from_name_and_type path) so the corpus is
+            // byte-identical across runs for the same seed.
+            if let Some(density) = graph_density {
+                let entities_per_chunk = density.entities_per_chunk as usize;
+                let relations_per_entity = density.relations_per_entity as usize;
+
+                // Pre-derive EntityIds so the relation pairing can index
+                // back into the same set without recomputing.
+                let entity_ids: Vec<EntityId> = (0..entities_per_chunk)
+                    .map(|entity_idx| {
+                        EntityId::from_name_and_type(
+                            &format!("synthetic-entity-{chunk_idx}-{entity_idx}"),
+                            "BenchEntity",
+                        )
+                    })
+                    .collect();
+
+                // GraphNode writes — props.id_hex matches Plan 03-02's
+                // Cypher MATCH (n {id_hex: sid}) per W-7.
+                for (entity_idx, eid) in entity_ids.iter().enumerate() {
+                    let id_hex = format!("{eid}");
+                    ops.push(WriteOp::GraphNode {
+                        graph: "lunaris_graph".to_string(),
+                        id: eid.0.to_vec(),
+                        label: "BenchEntity".to_string(),
+                        props: serde_json::json!({
+                            "id_hex": id_hex,
+                            "name": format!("entity-{chunk_idx}-{entity_idx}"),
+                            "type": "BenchEntity",
+                        }),
+                    });
+                }
+
+                // GraphEdge writes — round-robin pairing wraps around the
+                // entity list so every relation has both endpoints in the
+                // same chunk. Predicate cycles through the fixed vocab to
+                // keep the predicate distribution realistic.
+                if entities_per_chunk > 0 {
+                    for (subj_idx, subj_id) in entity_ids.iter().enumerate() {
+                        for r in 0..relations_per_entity {
+                            let obj_idx = (subj_idx + r + 1) % entities_per_chunk;
+                            let obj_id = &entity_ids[obj_idx];
+                            let predicate = SYNTHETIC_GRAPH_PREDICATES
+                                [(subj_idx + r) % SYNTHETIC_GRAPH_PREDICATES.len()];
+                            ops.push(WriteOp::GraphEdge {
+                                graph: "lunaris_graph".to_string(),
+                                src: subj_id.0.to_vec(),
+                                dst: obj_id.0.to_vec(),
+                                rel: predicate.to_string(),
+                                props: serde_json::json!({
+                                    "confidence": 0.9,
+                                }),
+                            });
+                        }
+                    }
+                }
+            }
+            chunk_idx += 1;
         }
         storage
             .atomic_write(&ops)
@@ -360,6 +581,7 @@ pub async fn build_one_million_fact_corpus(
                 target: "lunaris-bench",
                 emitted,
                 total = count,
+                graph_on = graph_density.is_some(),
                 "corpus build progress"
             );
         }
@@ -372,12 +594,14 @@ pub async fn build_one_million_fact_corpus(
         seed,
         completed: true,
         duration_secs: duration.as_secs_f64(),
+        graph_density,
     };
     write_fingerprint(&fp_path, &fp)?;
     tracing::info!(
         target: "lunaris-bench",
         count,
         seed,
+        graph_on = graph_density.is_some(),
         duration_secs = fp.duration_secs,
         "corpus build complete; fingerprint written"
     );
@@ -497,6 +721,136 @@ mod tests {
         assert!(s.contains("lunaris-bench"));
         assert!(s.contains("1000000"));
         assert!(s.contains(&hash_url("moon://localhost:6390")));
+    }
+
+    #[test]
+    fn graph_on_fingerprint_distinct_from_no_graph() {
+        // Plan 03-04: graph-on fingerprint MUST differ from no-graph
+        // fingerprint for the same (url, count) — otherwise switching density
+        // would silently re-use a no-graph corpus on disk (T-03-04-04).
+        let url = "moon://localhost:6390";
+        let no_graph = fingerprint_path(url, 100, None);
+        let graph_on = fingerprint_path(url, 100, Some(GraphDensity::default()));
+        assert_ne!(no_graph, graph_on, "graph-on fingerprint must differ from no-graph");
+        assert!(
+            graph_on.to_string_lossy().contains("graph-on"),
+            "graph-on fingerprint must contain '-graph-on' suffix: {}",
+            graph_on.display()
+        );
+        // Sanity: no-graph fingerprint MUST NOT contain the graph-on suffix.
+        assert!(
+            !no_graph.to_string_lossy().contains("graph-on"),
+            "no-graph fingerprint must NOT contain '-graph-on' suffix: {}",
+            no_graph.display()
+        );
+    }
+
+    #[test]
+    fn graph_density_default_matches_d04_specification() {
+        // D-04 + I-3 + I-4: default density is 10 entities/chunk × 3 relations/entity
+        // = 30 relations/chunk. Anything else means the bench measures a straw man.
+        let d = GraphDensity::default();
+        assert_eq!(d.entities_per_chunk, 10, "D-04 entities/chunk");
+        assert_eq!(d.relations_per_entity, 3, "D-04 relations/entity");
+        // I-4 typo guard: the math must come out to 30 relations/chunk
+        // (NOT 30 relations/entity).
+        let relations_per_chunk = d.entities_per_chunk * d.relations_per_entity;
+        assert_eq!(relations_per_chunk, 30, "10 entities × 3 rel/entity = 30 rel/chunk");
+    }
+
+    #[test]
+    fn corpus_gen_opts_default_is_no_graph() {
+        // Backward-compat invariant: callers who construct
+        // `CorpusGenOpts::default()` get a no-graph corpus shape (Plan 02-04
+        // behavior) — only callers who explicitly set
+        // `graph_density = Some(_)` opt into the graph-on path.
+        let o = CorpusGenOpts::default();
+        assert_eq!(o.fact_count, DEFAULT_CORPUS_COUNT);
+        assert_eq!(o.seed, DEFAULT_CORPUS_SEED);
+        assert_eq!(o.graph_density, None);
+    }
+
+    #[test]
+    fn fingerprint_serde_roundtrip_with_graph_density() {
+        let fp = CorpusFingerprint {
+            backend_url_hash: "abcdef0123456789".to_string(),
+            fact_count: 100,
+            seed: 7,
+            completed: true,
+            duration_secs: 1.23,
+            graph_density: Some(GraphDensity::default()),
+        };
+        let json = serde_json::to_string(&fp).unwrap();
+        let parsed: CorpusFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(fp, parsed);
+
+        // Backward-compat: a Plan 02-04 fingerprint JSON without the
+        // graph_density field MUST deserialize cleanly (default = None).
+        let legacy = r#"{
+            "backend_url_hash": "abcdef0123456789",
+            "fact_count": 100,
+            "seed": 7,
+            "completed": true,
+            "duration_secs": 1.23
+        }"#;
+        let parsed_legacy: CorpusFingerprint = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed_legacy.graph_density, None);
+    }
+
+    #[tokio::test]
+    async fn build_corpus_with_options_emits_graph_writeops_when_density_some() {
+        // Smoke: a tiny graph-on corpus (count=2, default density) MUST
+        // produce GraphNode + GraphEdge ops alongside KvPut + VectorUpsert,
+        // proving the new bulk-write branch is wired end-to-end.
+        let storage = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let storage_dyn: Arc<dyn StoragePort> = storage.clone();
+        let embedder: Arc<dyn lunaris_core::Embedder> =
+            Arc::new(StubEmbedder::new(CORPUS_EMBEDDING_DIM));
+        let handle = Lunaris::with_parts(storage_dyn, embedder, HlcClock::new(0));
+
+        // Use a temp target dir so the fingerprint file doesn't collide with
+        // other tests' state.
+        let tmp = std::env::temp_dir()
+            .join(format!("lunaris-bench-graph-on-smoke-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // Safety: setting/removing CARGO_TARGET_DIR for the duration of one
+        // test would race other parallel tests. Instead we point only the
+        // fingerprint path through a custom build by overriding the env in
+        // a sub-thread isn't reliable either. We accept that the
+        // fingerprint may land in `target/lunaris-bench/` here — the
+        // RecordingStorage assertions below don't depend on that.
+
+        let url = format!("moon://test-{}-graph-on:6390", std::process::id());
+        build_corpus_with_options(
+            &handle,
+            CorpusGenOpts { fact_count: 2, seed: 7, graph_density: Some(GraphDensity::default()) },
+            &url,
+        )
+        .await
+        .expect("build graph-on corpus");
+
+        // We expect (per fact): 1 KvPut + 1 VectorUpsert + 10 GraphNode + 30
+        // GraphEdge = 42 ops/fact. With count=2 → 84 ops total. Batched into
+        // a single atomic_write call (batch capacity easily holds 84 ops).
+        let mut kv = 0usize;
+        let mut vec_ = 0usize;
+        let mut nodes = 0usize;
+        let mut edges = 0usize;
+        for batch in storage.batches.lock().iter() {
+            for op in batch {
+                match op {
+                    WriteOp::KvPut { .. } => kv += 1,
+                    WriteOp::VectorUpsert { .. } => vec_ += 1,
+                    WriteOp::GraphNode { .. } => nodes += 1,
+                    WriteOp::GraphEdge { .. } => edges += 1,
+                    WriteOp::KvDelete { .. } => {}
+                }
+            }
+        }
+        assert_eq!(kv, 2, "expected 2 KvPut (one per fact)");
+        assert_eq!(vec_, 2, "expected 2 VectorUpsert (one per fact)");
+        assert_eq!(nodes, 20, "expected 20 GraphNode (10 entities × 2 chunks)");
+        assert_eq!(edges, 60, "expected 60 GraphEdge (10 entities × 3 rel/entity × 2 chunks)");
     }
 
     #[test]
