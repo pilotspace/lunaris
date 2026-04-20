@@ -652,6 +652,36 @@ fn write_fingerprint(path: &Path, fp: &CorpusFingerprint) -> Result<(), BenchCor
     Ok(())
 }
 
+/// Plan 04-03 — chaos corpus.
+///
+/// Smaller than the 1M-fact bench corpus (10K facts by default) so the SIGKILL
+/// window during `atomic_write` is observable within the property test's
+/// `[1 ms, atomic_write_p99]` delay domain (D-23 / D-25). Reuses
+/// [`build_corpus_with_options`] (no-graph variant — keeps the chaos signal
+/// focused on the KV+vector atomic_write path).
+///
+/// Determinism contract: same `(count, seed, backend_url)` triple → byte-
+/// identical corpus across runs (seeded `ChaCha20Rng` per
+/// [`build_corpus_with_options`]).
+///
+/// Returns the number of facts emitted on success — used by the chaos
+/// subprocess (`crates/lunaris-bench/src/bin/chaos.rs`) to log "wrote N
+/// primitives" for observability.
+pub async fn build_chaos_corpus(
+    handle: &Lunaris,
+    count: u64,
+    seed: u64,
+    backend_url: &str,
+) -> Result<u64, BenchCorpusError> {
+    build_corpus_with_options(
+        handle,
+        CorpusGenOpts { fact_count: count, seed, graph_density: None },
+        backend_url,
+    )
+    .await?;
+    Ok(count)
+}
+
 /// Wrap [`build_one_million_fact_corpus`] with a TCP-reachability pre-check.
 ///
 /// Returns:

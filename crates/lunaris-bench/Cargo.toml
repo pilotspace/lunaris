@@ -47,6 +47,10 @@ futures            = { workspace = true }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
 tokio              = { workspace = true, features = ["full", "test-util"] }
+# Plan 04-03 — proptest harness for the chaos / crash-recovery property test
+# (used downstream by `lunaris-conformance/tests/crash_recovery.rs` which depends
+# on `lunaris-bench`).
+proptest           = { workspace = true }
 
 [features]
 # Gate the live budget-assertion test behind a feature so the default
@@ -67,3 +71,11 @@ harness = false
 [[bench]]
 name = "atomic_write_hot_path"
 harness = false
+
+# Plan 04-03 — chaos subprocess for the crash-recovery property test (D-23).
+# Spawned via `std::process::Command` from
+# `crates/lunaris-conformance/tests/crash_recovery.rs`, then SIGKILL'd
+# mid-`atomic_write` to verify all-or-nothing semantics on Moon AND Postgres.
+[[bin]]
+name = "chaos"
+path = "src/bin/chaos.rs"
