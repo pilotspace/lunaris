@@ -46,6 +46,12 @@ pub enum ValidateError {
     Temporal,
     #[error("contradiction: {0}")]
     Contradiction(String),
+    /// B-3 fix (Plan 04-05): hard-delete in `Lunaris::forget(target.hard())`
+    /// requires a confirmation token from a prior `dry_run` +
+    /// `confirm_hard_forget` round-trip. Returned when caller invokes
+    /// `.hard()` without `.with_token(...)` (D-21 safety rail).
+    #[error("confirmation required: {0}")]
+    ConfirmationRequired(String),
 }
 
 #[derive(Debug, Error)]
