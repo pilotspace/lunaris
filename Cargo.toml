@@ -39,6 +39,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot    = "0.12"
 # storage backends (used by Plan 03 / 04 — declared here so versions stay aligned)
 redis          = { version = "0.32", features = ["aio", "tokio-comp", "connection-manager"] }
+# moon-client v0.1.0 — typed Rust SDK for Moon (path dep — user owns the Moon repo).
+# Brings `redis 1.1` transitively via its own [dependencies] block. Phase 1.5 retrofit
+# (STORE-09) replaces `lunaris-storage-moon`'s direct `redis 0.32` dep with this.
+moon-client    = { path = "../moon/sdk/rust" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
 url            = "2"
 # test only

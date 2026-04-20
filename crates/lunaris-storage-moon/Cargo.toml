@@ -23,7 +23,13 @@ serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
-redis          = { workspace = true }
+# Phase 1.5 retrofit (STORE-09): replace direct `redis = { workspace = true }` with the
+# typed `moon-client` SDK. `moon-client` brings `redis 1.1` transitively with the right
+# features. The single documented HSCAN escape hatch in `kv.rs` accesses the underlying
+# `redis::aio::MultiplexedConnection` via `MoonClient::inner_mut()` and uses the `redis`
+# crate types pulled in transitively.
+moon-client    = { workspace = true }
+redis          = "1.1"
 parking_lot    = { workspace = true }
 url            = { workspace = true }
 ulid           = { workspace = true }
