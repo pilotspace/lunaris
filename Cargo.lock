@@ -1819,6 +1819,7 @@ dependencies = [
  "futures",
  "lunaris-core",
  "lunaris-embed",
+ "lunaris-extract",
  "lunaris-ingest",
  "lunaris-rerank",
  "lunaris-retrieve",

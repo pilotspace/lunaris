@@ -11,13 +11,17 @@ lunaris-core              = { path = "../lunaris-core" }
 lunaris-storage-moon      = { path = "../lunaris-storage-moon" }
 lunaris-storage-postgres  = { path = "../lunaris-storage-postgres" }
 lunaris-embed             = { path = "../lunaris-embed", default-features = false }
+lunaris-extract           = { path = "../lunaris-extract", default-features = false }
 lunaris-ingest            = { path = "../lunaris-ingest" }
 lunaris-rerank            = { path = "../lunaris-rerank", default-features = false }
 lunaris-retrieve          = { path = "../lunaris-retrieve" }
 async-trait    = { workspace = true }
+parking_lot    = { workspace = true }
+serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
+ulid           = { workspace = true }
 url            = { workspace = true }
 
 [dev-dependencies]
@@ -31,13 +35,17 @@ ulid           = { workspace = true }
 
 [features]
 default = ["candle"]
-# Forwards the embedder + reranker backend choice to lunaris-embed +
-# lunaris-rerank. Default = candle (real EmbeddingGemma 768d for embed +
-# real bge-reranker-v2-m3 cross-encoder for rerank, both via candle 0.10).
-# `ollama` swaps the embedder to the HTTP backend per the Plan 02-01
+# Forwards the embedder + reranker + extractor backend choice to lunaris-embed +
+# lunaris-rerank + lunaris-extract. Default = candle (real EmbeddingGemma 768d
+# for embed + real bge-reranker-v2-m3 cross-encoder for rerank + real Gemma-3
+# 4B for extract, all via candle 0.10).
+# `ollama` swaps the embedder + extractor to HTTP backends per the Plan 02-01
 # latency-budget escape hatch.
-candle  = ["lunaris-embed/candle", "lunaris-rerank/candle"]
-ollama  = ["lunaris-embed/ollama"]
+# `cloud-api` (Plan 03-03) gates the lunaris-extract Anthropic / OpenAI / Gemini
+# provider-mux backend.
+candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle"]
+ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama"]
+cloud-api = ["lunaris-extract/cloud-api"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris
