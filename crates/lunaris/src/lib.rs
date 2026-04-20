@@ -14,7 +14,9 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod consolidator_pipeline;
+pub mod forget;
 pub mod graph_pipeline;
 pub mod handle;
 pub mod ingest;
@@ -22,9 +24,11 @@ pub mod open;
 pub mod recall;
 pub mod verify_pipeline;
 
+pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
 pub use consolidator_pipeline::{
     ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR, ConsolidatorPipelineHandle,
 };
+pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::Lunaris;
 pub use lunaris_core::*;

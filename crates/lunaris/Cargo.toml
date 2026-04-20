@@ -22,6 +22,7 @@ lunaris-verify            = { path = "../lunaris-verify", default-features = fal
 lunaris-consolidate       = { path = "../lunaris-consolidate", default-features = false }
 async-trait    = { workspace = true }
 parking_lot    = { workspace = true }
+serde          = { workspace = true }
 serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }

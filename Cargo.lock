@@ -1828,6 +1828,7 @@ dependencies = [
  "lunaris-storage-postgres",
  "lunaris-verify",
  "parking_lot",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
