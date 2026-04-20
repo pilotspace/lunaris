@@ -15,6 +15,11 @@ lunaris-extract           = { path = "../lunaris-extract", default-features = fa
 lunaris-ingest            = { path = "../lunaris-ingest" }
 lunaris-rerank            = { path = "../lunaris-rerank", default-features = false }
 lunaris-retrieve          = { path = "../lunaris-retrieve" }
+# Plan 04 — verifier + consolidator crates. default-features = false keeps the
+# candle / ollama / cloud-api stacks out of the umbrella build unless the
+# matching feature is forwarded (see [features] below — W-5 AUGMENT forwards).
+lunaris-verify            = { path = "../lunaris-verify", default-features = false }
+lunaris-consolidate       = { path = "../lunaris-consolidate", default-features = false }
 async-trait    = { workspace = true }
 parking_lot    = { workspace = true }
 serde_json     = { workspace = true }
@@ -43,9 +48,13 @@ default = ["candle"]
 # latency-budget escape hatch.
 # `cloud-api` (Plan 03-03) gates the lunaris-extract Anthropic / OpenAI / Gemini
 # provider-mux backend.
-candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle"]
-ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama"]
-cloud-api = ["lunaris-extract/cloud-api"]
+# W-5 — AUGMENT (never replace) prior feature forwards with lunaris-verify
+# forwards for Plan 04. lunaris-consolidate has no backend feature flags per
+# D-15 (no LLM backends; community summaries reuse Phase 3 Extractor), so it
+# contributes nothing to these forwards.
+candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle", "lunaris-verify/candle"]
+ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama", "lunaris-verify/ollama"]
+cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris

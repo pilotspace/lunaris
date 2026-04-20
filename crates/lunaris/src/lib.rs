@@ -14,16 +14,36 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+pub mod consolidator_pipeline;
 pub mod graph_pipeline;
 pub mod handle;
 pub mod ingest;
 pub mod open;
 pub mod recall;
+pub mod verify_pipeline;
 
+pub use consolidator_pipeline::{
+    ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR, ConsolidatorPipelineHandle,
+};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::Lunaris;
 pub use lunaris_core::*;
 pub use open::open;
+pub use verify_pipeline::{ENABLED_ENV_VAR as VERIFY_ENABLED_ENV_VAR, VerifierPipelineHandle};
+
+// Plan 04 — verifier + consolidator trait surface re-exports so callers
+// `use lunaris::{Verifier, Consolidator, NoopVerifier, NoopConsolidator}`
+// without reaching into the per-crate paths.
+pub use lunaris_consolidate::{Consolidator, NoopConsolidator};
+pub use lunaris_verify::{NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend, VerifyDecision};
+
+// Cfg-gated verifier backends — mirror the extract backends gating pattern.
+#[cfg(feature = "candle")]
+pub use lunaris_verify::{CandleGemma3_27B, CandleGemma3_27BOpts};
+#[cfg(feature = "cloud-api")]
+pub use lunaris_verify::{CloudApiVerifier, CloudApiVerifierOpts};
+#[cfg(feature = "ollama")]
+pub use lunaris_verify::{OllamaVerifier, OllamaVerifierOpts};
 
 // Phase 2 retrieve DSL re-exports — callers `use lunaris::{Vector, Keyword, ...}`
 // rather than reaching into `lunaris_retrieve::`.
