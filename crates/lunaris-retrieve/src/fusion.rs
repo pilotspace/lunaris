@@ -214,11 +214,7 @@ mod tests {
         let v = Vector::new("chunks", 30);
         let and = AndRetriever::new(Box::new(g), Box::new(v));
         let hint = inspect_branches(&and).expect("AND visible");
-        assert_eq!(
-            hint.kind,
-            FusedKind::Other,
-            "Graph branch must force client-side fusion path",
-        );
+        assert_eq!(hint.kind, FusedKind::Other, "Graph branch must force client-side fusion path",);
     }
 
     #[test]

@@ -49,7 +49,9 @@ pub use hydrate::{hydrate, partial_hydrate_text};
 pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever};
 pub use operators::degraded::{DegradedFallbackRetriever, degraded_fallback};
 pub use operators::fuse::FuseRrfRetriever;
-pub use operators::graph::{DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS};
+pub use operators::graph::{
+    DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS,
+};
 pub use operators::keyword::Keyword;
 pub use operators::modifiers::{TopRetriever, filter_str};
 pub use operators::rerank::{DEFAULT_RERANK_TOP_IN, RerankRetriever, rerank};

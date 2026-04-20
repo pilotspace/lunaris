@@ -4,7 +4,7 @@
 //! keyword, clock-substitute via stored Hlc) into a `tower::Service`-shaped
 //! retriever. Terminal `.execute(query)` runs the tree and hydrates.
 //!
-//! ## Pattern
+//! ## Pattern — Vector + Keyword (Phase 2)
 //!
 //! ```ignore
 //! let hits = lunaris.recall()
@@ -13,11 +13,41 @@
 //!     .execute(Query::text("brown fox"))
 //!     .await?;
 //! ```
+//!
+//! ## Pattern — Graph-anchored recall (Plan 03-02)
+//!
+//! The canonical blueprint §8 example composes a Vector branch with a
+//! Graph branch via the same `fuse_rrf` operator. The Graph branch takes
+//! pre-resolved [`crate::EntityId`]s (from the RETRIEVE-13 planner stub
+//! per D-13) and walks the graph for `hops` BFS steps:
+//!
+//! ```ignore
+//! let hits = lunaris.recall()
+//!     .with_root(
+//!         Vector::new("chunks", 30)
+//!             .and(Graph::anchored(query_entity_ids, 2))
+//!             .fuse_rrf(60)
+//!             .rerank(handle.reranker())
+//!             .top(5))
+//!     .execute(Query::text("brown fox"))
+//!     .await?;
+//! ```
+//!
+//! `Graph::anchored(_, hops)` clamps `hops` to `[1, MAX_GRAPH_HOPS=5]`
+//! (D-14 DoS defense). Empty `entity_ids` short-circuits to an empty
+//! result without touching storage. The Cypher template is portable across
+//! Moon GRAPH.QUERY and Postgres AGE per D-16; W-7 alignment uses
+//! `id_hex` as the match property.
 
 use std::sync::Arc;
 
 use lunaris_core::storage::types::Filter;
 use lunaris_core::{Embedder, Hlc, KeywordPort, LunarisError, StoragePort};
+
+// Plan 03-02: Re-export Graph constants alongside the builder so callers
+// constructing a `recall()` chain can reach the hop / k defaults via the
+// same `lunaris_retrieve::*` import surface.
+pub use crate::operators::graph::{DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, MAX_GRAPH_HOPS};
 
 use crate::hydrate::hydrate;
 use crate::operators::modifiers::FilterParseError;

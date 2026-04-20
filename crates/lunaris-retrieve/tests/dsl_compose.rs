@@ -44,6 +44,10 @@ struct RecordingStorage {
     chunks_by_key: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
     /// canned episode KV rows: key bytes -> serialized Episode JSON
     episodes_by_key: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Plan 03-02: canned GraphResult returned from the next graph_traverse call
+    canned_graph: Mutex<GraphResult>,
+    /// Plan 03-02: records every graph_traverse `(query, as_of)` for assertion
+    graph_calls: Mutex<Vec<(CypherQuery, Option<Hlc>)>>,
 }
 
 impl RecordingStorage {
@@ -81,10 +85,15 @@ impl StoragePort for RecordingStorage {
 
     async fn graph_traverse(
         &self,
-        _q: &CypherQuery,
-        _as_of: Option<Hlc>,
+        q: &CypherQuery,
+        as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
-        Err(StorageError::NotSupported("RecordingStorage::graph_traverse"))
+        // Plan 03-02: record the call shape (CypherQuery + as_of) for
+        // assertion in tests, then return the canned GraphResult. Default
+        // canned_graph is empty (GraphResult::default()) so existing tests
+        // that never call graph_traverse see no behavior change.
+        self.graph_calls.lock().push((q.clone(), as_of));
+        Ok(self.canned_graph.lock().clone())
     }
 
     async fn scan_range(
