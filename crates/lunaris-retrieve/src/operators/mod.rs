@@ -3,6 +3,7 @@
 pub mod combinators;
 pub mod degraded;
 pub mod fuse;
+pub mod graph;
 pub mod keyword;
 pub mod modifiers;
 pub mod rerank;

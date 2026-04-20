@@ -49,6 +49,7 @@ pub use hydrate::{hydrate, partial_hydrate_text};
 pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever};
 pub use operators::degraded::{DegradedFallbackRetriever, degraded_fallback};
 pub use operators::fuse::FuseRrfRetriever;
+pub use operators::graph::{DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS};
 pub use operators::keyword::Keyword;
 pub use operators::modifiers::{TopRetriever, filter_str};
 pub use operators::rerank::{DEFAULT_RERANK_TOP_IN, RerankRetriever, rerank};
@@ -62,3 +63,10 @@ pub use types::{Hit, Query, RawHit, SourceOp};
 // callers `use lunaris_retrieve::{Reranker, NoopReranker}` instead of
 // reaching into the lower crate.
 pub use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};
+
+// Plan 03-02: EntityId re-exported from lunaris-extract so callers `use
+// lunaris_retrieve::EntityId` to construct `Graph::anchored(entity_ids, hops)`
+// without reaching across to the extractor crate. EntityId is the only
+// extractor-side DTO needed by the retrieve surface — backends + Validator
+// stay behind their own re-exports in the umbrella `lunaris` crate.
+pub use lunaris_extract::EntityId;

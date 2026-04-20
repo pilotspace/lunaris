@@ -34,6 +34,7 @@ use lunaris_core::storage::keyword::min_max_normalize;
 use crate::operators::QueryContext;
 use crate::operators::Retriever;
 use crate::operators::combinators::AndRetriever;
+use crate::operators::graph::Graph;
 use crate::operators::keyword::Keyword;
 use crate::operators::vector::Vector;
 use crate::types::{RawHit, SourceOp};
@@ -63,8 +64,29 @@ pub struct FusedBranchHint {
 /// the branches don't match the Moon-native pattern (still composable);
 /// `None` when the inner is not an `And` at all (e.g., `fuse_rrf(Vector)` —
 /// degenerate but still allowed for the client-side fold).
+///
+/// ## Plan 03-02: Graph operator forces client-side fusion
+///
+/// When EITHER branch is a [`Graph`] operator, returns `FusedKind::Other`
+/// (not the Vector+Keyword native shape). The Moon-native
+/// `text().hybrid_search()` path only fuses Vector + BM25; a Graph branch
+/// must go through the client-side RRF fold so the Graph hits compose with
+/// vector hits via the per-`SourceOp` group-and-rank flow. This also means
+/// `Vector + Graph` (the canonical compose example from blueprint §8) NEVER
+/// hits the Moon-native short-circuit even when both branches are wired to a
+/// Moon backend with `native_rrf=true`.
 pub fn inspect_branches(inner: &dyn Retriever) -> Option<FusedBranchHint> {
     let and = inner.as_any().downcast_ref::<AndRetriever>()?;
+
+    // Plan 03-02 (D-15): Graph operator forces the client-side RRF path
+    // because Moon-native hybrid_search only supports Vector + BM25 fusion.
+    // Detect Graph in EITHER branch and short-circuit to FusedKind::Other.
+    let left_is_graph = and.left.as_any().downcast_ref::<Graph>().is_some();
+    let right_is_graph = and.right.as_any().downcast_ref::<Graph>().is_some();
+    if left_is_graph || right_is_graph {
+        return Some(FusedBranchHint { kind: FusedKind::Other, index: String::new(), k: 0 });
+    }
+
     let left_v = and.left.as_any().downcast_ref::<Vector>();
     let right_k = and.right.as_any().downcast_ref::<Keyword>();
     match (left_v, right_k) {
@@ -180,5 +202,38 @@ mod tests {
         // Not wrapped in AND — just a bare vector. inspect_branches must return None.
         let hint = inspect_branches(&v);
         assert!(hint.is_none());
+    }
+
+    #[test]
+    fn inspect_forces_other_when_left_branch_is_graph() {
+        // Plan 03-02 (D-15): Graph operator must force the client-side RRF
+        // path because Moon-native hybrid_search only supports Vector + BM25
+        // fusion. Vector + Graph MUST NOT be detected as
+        // VectorKeywordSameIndex (which would silently route to Moon-native).
+        let g = Graph::anchored(vec![], 2);
+        let v = Vector::new("chunks", 30);
+        let and = AndRetriever::new(Box::new(g), Box::new(v));
+        let hint = inspect_branches(&and).expect("AND visible");
+        assert_eq!(
+            hint.kind,
+            FusedKind::Other,
+            "Graph branch must force client-side fusion path",
+        );
+    }
+
+    #[test]
+    fn inspect_forces_other_when_right_branch_is_graph() {
+        // Symmetric to the left-branch case — caller order MUST NOT matter.
+        // The canonical compose example from blueprint §8 puts Vector first
+        // and Graph second: Vector::new(...).and(Graph::anchored(...)).
+        let v = Vector::new("chunks", 30);
+        let g = Graph::anchored(vec![], 2);
+        let and = AndRetriever::new(Box::new(v), Box::new(g));
+        let hint = inspect_branches(&and).expect("AND visible");
+        assert_eq!(
+            hint.kind,
+            FusedKind::Other,
+            "Graph branch must force client-side fusion path regardless of position",
+        );
     }
 }

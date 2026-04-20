@@ -12,16 +12,21 @@ use serde::{Deserialize, Serialize};
 /// What kind of operator produced a [`RawHit`]. RRF fusion groups raw hits by
 /// this tag so per-branch rankings stay isolated when computing `1 / (k + rank_i)`.
 ///
-/// Plan 02-03 will populate `Reranked` after a cross-encoder pass; v0 ships
-/// `Vector` / `Keyword` / `Fused`. The `Fused` variant marks a `RawHit` that
-/// has already been through a `fuse_rrf` operator (so `fuse_rrf` of a `fuse_rrf`
-/// re-fuses on the fused tag, treating it as a single branch).
+/// Plan 02-03 added `Reranked` (cross-encoder pass output). Plan 03-02 added
+/// `Graph` (anchored graph traversal output). The `Fused` variant marks a
+/// `RawHit` that has already been through a `fuse_rrf` operator (so `fuse_rrf`
+/// of a `fuse_rrf` re-fuses on the fused tag, treating it as a single branch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SourceOp {
     Vector,
     Keyword,
     Fused,
     Reranked,
+    /// Plan 03-02 (D-15): `Graph::anchored` operator output. RRF fusion groups
+    /// Graph hits as a separate branch from Vector/Keyword so reciprocal-rank
+    /// contributions stay isolated. Per-hit score = `1.0 / (1 + bfs_rank)` for
+    /// rank-stability across hops (rank 0 → 1.0, rank 1 → 0.5, …).
+    Graph,
 }
 
 /// One pre-hydration retrieval hit. Operators flow these around between
@@ -128,6 +133,19 @@ mod tests {
         s.insert(SourceOp::Vector);
         s.insert(SourceOp::Vector);
         s.insert(SourceOp::Keyword);
-        assert_eq!(s.len(), 2);
+        s.insert(SourceOp::Graph); // Plan 03-02 (D-15): Graph variant is its own bucket.
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn source_op_graph_is_distinct_from_other_variants() {
+        // Plan 03-02 (D-15): the Graph variant must group separately from
+        // Vector/Keyword/Fused/Reranked so RRF fusion can rank graph hits as
+        // their own branch instead of folding them in with vector/keyword
+        // results (which would skew the per-branch reciprocal-rank weights).
+        assert_ne!(SourceOp::Graph, SourceOp::Vector);
+        assert_ne!(SourceOp::Graph, SourceOp::Keyword);
+        assert_ne!(SourceOp::Graph, SourceOp::Fused);
+        assert_ne!(SourceOp::Graph, SourceOp::Reranked);
     }
 }
