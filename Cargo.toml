@@ -8,6 +8,7 @@ members = [
   "crates/lunaris-bench",
   "crates/lunaris-conformance",
   "crates/lunaris-embed",
+  "crates/lunaris-extract",
   "crates/lunaris-ingest",
   "crates/lunaris-rerank",
   "crates/lunaris-retrieve",
@@ -72,6 +73,9 @@ criterion      = { version = "0.8", features = ["html_reports", "async_tokio"] }
 rand_chacha    = "0.9"
 sha2           = "0.10"
 hex            = "0.4"
+# Phase 3 Plan 03-01 — content-hash EntityId derivation (D-06).
+# 16-byte truncation of blake3(canonical_name_normalized || "::" || entity_type).
+blake3         = "1"
 clap           = { version = "4", features = ["derive"] }
 
 [profile.dev]

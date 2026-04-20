@@ -1,0 +1,66 @@
+# lunaris-extract — Phase 3 graph-pipeline extractor (default-OFF per blueprint §5.2).
+#
+# Default backend: CandleGemma3_4B (Gemma-3 4B instruction-tuned, candle 0.10 typed
+# `gemma3::Model`). Alt backends: OllamaExtractor (HTTP /api/chat with `format`
+# JSON-schema field) + CloudApiExtractor (Anthropic / OpenAI / Gemini selectable
+# via LUNARIS_EXTRACT_PROVIDER env). All three implement the dyn-compatible
+# `Extractor` trait so the umbrella `Lunaris::with_extractor` swap stays
+# trait-object friendly.
+#
+# Build matrix:
+#   cargo check -p lunaris-extract                                            # candle (default)
+#   cargo check -p lunaris-extract --no-default-features                      # noop only
+#   cargo check -p lunaris-extract --no-default-features --features ollama
+#   cargo check -p lunaris-extract --no-default-features --features cloud-api
+#   cargo check -p lunaris-extract --no-default-features --features candle,ollama,cloud-api
+#   cargo test  -p lunaris-extract --features extractor-it                    # gated live-backend tests
+
+[package]
+name        = "lunaris-extract"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[features]
+default      = ["candle"]
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
+ollama       = ["dep:reqwest"]
+cloud-api    = ["dep:reqwest"]
+# Gates live-backend integration tests (real Gemma-3 4B model load + Ollama HTTP
+# + cloud-api keys). SKIPs cleanly without env vars (mirrors `embedder-it` from
+# lunaris-embed).
+extractor-it = []
+
+[dependencies]
+lunaris-core   = { path = "../lunaris-core" }
+async-trait    = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+tokio          = { workspace = true }
+# UNCONDITIONAL — DTOs serialize regardless of backend; EntityId hashes via blake3
+# on every backend (D-06).
+blake3         = { workspace = true }
+serde          = { workspace = true, features = ["derive"] }
+serde_json     = { workspace = true }
+hex            = { workspace = true }
+ulid           = { workspace = true }
+# candle stack — gated behind `candle` feature. Mirrors lunaris-embed +
+# lunaris-rerank exactly so the workspace-pinned 0.10 versions stay aligned.
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+dirs                = { workspace = true, optional = true }
+# parking_lot::Mutex wraps the candle Gemma3Model handle (forward(&mut self) needs
+# &mut). Lock is taken INSIDE spawn_blocking so the CLAUDE.md "never hold lock
+# across .await" rule is upheld trivially. Gated behind `candle` (only the candle
+# backend needs the model handle).
+parking_lot         = { workspace = true, optional = true }
+# http stack — shared by `ollama` and `cloud-api` features. serde + serde_json
+# stay UNCONDITIONAL above (they are required for the trait DTOs regardless).
+reqwest        = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

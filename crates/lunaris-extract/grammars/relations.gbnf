@@ -1,0 +1,41 @@
+# Lunaris relation-extraction grammar (D-04).
+#
+# Constrains a model's output to a JSON array of relation objects. Each object
+# has the shape:
+#   {
+#     "subject_name":    <string>,
+#     "subject_type":    <string>,
+#     "predicate":       <string>,
+#     "object_name":     <string>,
+#     "object_type":     <string>,
+#     "confidence":      <number in [0, 1]>,
+#     "valid_from_iso":  <string, RFC3339>,
+#     "valid_to_iso":    <string | null, RFC3339-or-null>
+#   }
+#
+# At parse time the (subject_name, subject_type) and (object_name, object_type)
+# pairs are mapped to EntityIds via D-06 hash:
+#   EntityId = blake3(canonical_name_normalized || "::" || entity_type)[..16]
+#
+# This is the post-hoc fallback path (D-05) when grammar-constrained sampling
+# is unavailable for a given backend. The Validator (validator.rs) flags
+# any relation whose mapped subject_id / object_id does not appear in the
+# accompanying entity batch as NeedsReviewReason::GbnfFailure.
+#
+# llama.cpp GBNF spec reference:
+#   https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md
+
+root           ::= "[" ws (relation ("," ws relation)*)? ws "]"
+relation       ::= "{" ws subject_name "," ws subject_type "," ws predicate "," ws object_name "," ws object_type "," ws confidence "," ws valid_from ("," ws valid_to)? ws "}"
+subject_name   ::= "\"subject_name\":" ws string
+subject_type   ::= "\"subject_type\":" ws string
+predicate      ::= "\"predicate\":" ws string
+object_name    ::= "\"object_name\":" ws string
+object_type    ::= "\"object_type\":" ws string
+confidence     ::= "\"confidence\":" ws number
+valid_from     ::= "\"valid_from_iso\":" ws string
+valid_to       ::= "\"valid_to_iso\":" ws (string | "null")
+string         ::= "\"" char* "\""
+char           ::= [^"\\] | "\\" .
+number         ::= [0-9]+ ("." [0-9]+)?
+ws             ::= [ \t\n\r]*

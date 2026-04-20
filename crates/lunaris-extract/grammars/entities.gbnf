@@ -1,0 +1,37 @@
+# Lunaris entity-extraction grammar (D-04).
+#
+# Constrains a model's output to a JSON array of entity objects. Each object
+# has the shape:
+#   {
+#     "name":            <string>,
+#     "entity_type":     <string>,
+#     "aliases":         [<string>, ...],
+#     "confidence":      <number in [0, 1]>,
+#     "valid_from_iso":  <string, RFC3339>,
+#     "valid_to_iso":    <string | null, RFC3339-or-null>
+#   }
+#
+# Backends translate this grammar at their boundary:
+#   - candle path: optional GBNF logits processor (D-04). If unavailable, post-hoc
+#     JSON parse against the same shape (D-05) — the validator routes mis-typed
+#     fields to NeedsReviewReason::GbnfFailure rather than dropping silently.
+#   - ollama path: served as JSON-schema via the /api/chat `format` field.
+#   - cloud-api path: served as provider-native structured output (Anthropic
+#     `tools`/`input_schema`, OpenAI `response_format`/`json_schema`, Gemini
+#     `responseSchema`).
+#
+# llama.cpp GBNF spec reference:
+#   https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md
+
+root        ::= "[" ws (entity ("," ws entity)*)? ws "]"
+entity      ::= "{" ws name "," ws etype "," ws aliases "," ws confidence "," ws valid_from ("," ws valid_to)? ws "}"
+name        ::= "\"name\":" ws string
+etype       ::= "\"entity_type\":" ws string
+aliases     ::= "\"aliases\":" ws "[" ws (string ("," ws string)*)? ws "]"
+confidence  ::= "\"confidence\":" ws number
+valid_from  ::= "\"valid_from_iso\":" ws string
+valid_to    ::= "\"valid_to_iso\":" ws (string | "null")
+string      ::= "\"" char* "\""
+char        ::= [^"\\] | "\\" .
+number      ::= [0-9]+ ("." [0-9]+)?
+ws          ::= [ \t\n\r]*
