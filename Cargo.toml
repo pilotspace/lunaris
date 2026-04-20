@@ -4,6 +4,7 @@ members = [
   "crates/lunaris-core",
   "crates/lunaris-storage-moon",
   "crates/lunaris-storage-postgres",
+  "crates/lunaris-verify",
   "crates/lunaris",
   "crates/lunaris-bench",
   "crates/lunaris-conformance",

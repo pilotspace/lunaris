@@ -2036,6 +2036,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-verify"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "bytes",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "chrono",
+ "dirs",
+ "futures",
+ "hex",
+ "lunaris-core",
+ "lunaris-extract",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
 name = "macro_rules_attribute"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

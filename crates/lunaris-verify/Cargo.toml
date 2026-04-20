@@ -1,0 +1,59 @@
+# lunaris-verify — Phase 4 slow-path arbitration verifier (default-OFF per blueprint §5.1).
+#
+# Default backend: NoopVerifier (D-02). Real backends:
+#   CandleGemma3_27B (Gemma-3 27B IT, candle 0.10 typed `gemma3::Model`)
+#   OllamaVerifier (HTTP /api/chat with `format` JSON-schema field)
+#   CloudApiVerifier (Anthropic / OpenAI / Gemini selectable via LUNARIS_VERIFY_PROVIDER)
+#
+# Build matrix:
+#   cargo check -p lunaris-verify --no-default-features                   # noop only (default for v0)
+#   cargo check -p lunaris-verify                                         # same as --no-default-features (D-02)
+#   cargo check -p lunaris-verify --features candle
+#   cargo check -p lunaris-verify --features ollama
+#   cargo check -p lunaris-verify --features cloud-api
+#   cargo test  -p lunaris-verify --features verifier-it                  # gated live-backend tests
+
+[package]
+name        = "lunaris-verify"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[features]
+default      = []
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
+ollama       = ["dep:reqwest"]
+cloud-api    = ["dep:reqwest"]
+# Gates live-backend integration tests (real Gemma-3 27B model load + Ollama HTTP
+# + cloud-api keys). SKIPs cleanly without env vars (mirrors `extractor-it`).
+verifier-it  = []
+
+[dependencies]
+lunaris-core    = { path = "../lunaris-core" }
+lunaris-extract = { path = "../lunaris-extract", default-features = false }   # NeedsReviewItem + DTOs reuse
+async-trait     = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+tokio           = { workspace = true }
+futures         = { workspace = true }
+bytes           = { workspace = true }
+blake3          = { workspace = true }
+serde           = { workspace = true, features = ["derive"] }
+serde_json      = { workspace = true }
+hex             = { workspace = true }
+ulid            = { workspace = true }
+chrono          = { workspace = true }   # W-4 fix: chrono::Utc::now().to_rfc3339() for ISO-8601 audit timestamps
+# candle stack — gated behind `candle` feature. Mirrors lunaris-extract layout.
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+dirs                = { workspace = true, optional = true }
+parking_lot         = { workspace = true, optional = true }
+# http stack — shared by `ollama` and `cloud-api` features.
+reqwest        = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
