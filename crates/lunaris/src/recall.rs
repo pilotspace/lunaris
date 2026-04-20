@@ -27,6 +27,23 @@ impl Lunaris {
     ///     .execute(Query::text("brown fox"))
     ///     .await?;
     /// ```
+    ///
+    /// Plan 03-03 graph-aware extension — once `handle.graph_pipeline().enable()`
+    /// is called and Episodes have been ingested with extracted Entities,
+    /// callers can compose `Graph::anchored` into the same DSL:
+    ///
+    /// ```ignore
+    /// use lunaris::{EntityId, Graph, Query, Vector};
+    /// let alice = EntityId::from_name_and_type("Alice", "Person");
+    /// let hits = lunaris.recall()
+    ///     .with_root(Vector::new("chunks", 30)
+    ///         .and(Graph::anchored(vec![alice], 2))
+    ///         .fuse_rrf(60)
+    ///         .rerank(lunaris.reranker())
+    ///         .top(5))
+    ///     .execute(Query::text("Tell me about Alice"))
+    ///     .await?;
+    /// ```
     pub fn recall(&self) -> RetrievalBuilder {
         let mut b = RetrievalBuilder::from_handle(self.storage(), self.keyword(), self.embedder());
         if let Some(moon) = self.moon_storage() {
