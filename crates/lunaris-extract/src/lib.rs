@@ -9,13 +9,13 @@
 //!   `VarBuilder::from_buffered_safetensors` loader (CLAUDE.md no-unsafe rule).
 //!   Per-batch timeout (~150 ms by default; D-02) falls back to per-chunk
 //!   extraction on timeout — mirrors `lunaris-ingest::pipeline::embed_with_fallback`.
-//! - [`OllamaExtractor`] (`feature = "ollama"`) — POSTs `/api/chat` with the
+//! - `OllamaExtractor` (`feature = "ollama"`) — POSTs `/api/chat` with the
 //!   GBNF grammar translated to a JSON schema in the `format` field.
-//! - [`CloudApiExtractor`] (`feature = "cloud-api"`) — provider-mux Anthropic /
+//! - `CloudApiExtractor` (`feature = "cloud-api"`) — provider-mux Anthropic /
 //!   OpenAI / Gemini selectable via `LUNARIS_EXTRACT_PROVIDER` env (D-01). Per
 //!   D-21: single retry on transient errors then emit a sentinel entity that
 //!   the [`validator::validate`] pass routes to
-//!   [`NeedsReviewReason::TransientAfterRetry`].
+//!   `NeedsReviewReason::TransientAfterRetry`.
 //!
 //! ## Default-OFF contract (blueprint §5.2 + D-11)
 //!
@@ -25,9 +25,11 @@
 //! spawned. The crate compiles + tests succeed without any Gemma weights
 //! present (the `missing_weights_returns_actionable_error` test is the
 //! load-bearing assertion). Cache miss returns the actionable error
-//! `gemma-3-4b-it weights missing at <path> — run `huggingface-cli download
-//! google/gemma-3-4b-it --local-dir <path>``; Plan 03-03 catches it and
-//! substitutes [`NoopExtractor`] with `tracing::warn!`.
+//! ```text
+//! gemma-3-4b-it weights missing at PATH — run `huggingface-cli download google/gemma-3-4b-it --local-dir PATH`
+//! ```
+//! Plan 03-03 catches it and substitutes [`NoopExtractor`] with
+//! `tracing::warn!`.
 //!
 //! ## EntityId derivation (D-06)
 //!
@@ -63,9 +65,9 @@
 //! - [`noop`] — [`NoopExtractor`] (always-empty extraction; default when
 //!   graph pipeline is OFF or weights missing)
 //! - [`candle_gemma3`] (gated `candle`) — [`CandleGemma3_4B`]
-//! - [`ollama`] (gated `ollama`) — [`OllamaExtractor`]
-//! - [`cloud_api`] (gated `cloud-api`) — [`CloudApiExtractor`]
-//! - [`validator`] — [`validator::validate`] + [`NeedsReviewReason`]
+//! - `ollama` (gated `ollama`) — `OllamaExtractor`
+//! - `cloud_api` (gated `cloud-api`) — `CloudApiExtractor`
+//! - [`validator`] — [`validator::validate`] + `NeedsReviewReason`
 
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
@@ -102,8 +104,8 @@ pub use validator::{
 /// Object-safe async extractor.
 ///
 /// Per blueprint §5.2 + D-01 the default implementation is [`CandleGemma3_4B`];
-/// alternative backends include [`OllamaExtractor`] (HTTP) and
-/// [`CloudApiExtractor`] (Anthropic / OpenAI / Gemini). All implementations
+/// alternative backends include `OllamaExtractor` (HTTP) and
+/// `CloudApiExtractor` (Anthropic / OpenAI / Gemini). All implementations
 /// MUST honour the per-batch timeout (D-02) by falling back to per-chunk
 /// extraction on timeout, and MUST emit either valid extractions or a sentinel
 /// recognized by [`validator::validate`] — never silently drop chunks.

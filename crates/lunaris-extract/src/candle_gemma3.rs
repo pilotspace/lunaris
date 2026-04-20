@@ -9,8 +9,8 @@
 //! timeout-then-per-chunk fallback (D-02) are wired up here. Per-chunk forward
 //! pass uses post-hoc JSON parse against the GBNF schema (D-05) when grammar-
 //! constrained sampling is unavailable in the candle binding (the candle 0.10
-//! `LogitsProcessor` does not yet expose stable GBNF support — see
-//! [`Self::extract_one`] for the fallback path).
+//! `LogitsProcessor` does not yet expose stable GBNF support — see the
+//! `extract_one` private fn for the fallback path).
 //!
 //! ## CLAUDE.md compliance
 //!
@@ -168,8 +168,9 @@ impl CandleGemma3_4B {
     /// Construct with full options.
     ///
     /// Returns the actionable cache-miss error
-    /// `gemma-3-4b-it weights missing at <path> — run `huggingface-cli
-    /// download google/gemma-3-4b-it --local-dir <path>``
+    /// ```text
+    /// gemma-3-4b-it weights missing at PATH — run `huggingface-cli download google/gemma-3-4b-it --local-dir PATH`
+    /// ```
     /// when `tokenizer.json`, `config.json`, or `model.safetensors` are
     /// missing — the umbrella `Lunaris::open(url)` (Plan 03-03) catches this
     /// and substitutes [`crate::NoopExtractor`] with `tracing::warn!`,
