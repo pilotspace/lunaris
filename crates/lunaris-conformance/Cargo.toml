@@ -11,3 +11,30 @@ lunaris        = { path = "../lunaris" }
 lunaris-core   = { path = "../lunaris-core" }
 async-trait    = { workspace = true }
 tokio          = { workspace = true }
+
+[dev-dependencies]
+# Plan 04-03 — chaos / crash-recovery property test (D-23 .. D-25).
+# `lunaris-bench` provides both the `chaos` binary (spawned via
+# `env!("CARGO_BIN_EXE_chaos")`) AND `build_chaos_corpus` (corpus helper).
+lunaris-bench  = { path = "../lunaris-bench" }
+proptest       = { workspace = true }
+futures        = { workspace = true }
+bytes          = { workspace = true }
+
+# Plan 04-03 — `nix` is gated to Unix targets so Windows builds skip the
+# crash_recovery test cleanly. CLAUDE.md `#![forbid(unsafe_code)]` is
+# satisfied because nix's `kill` is a safe wrapper around `kill(2)`'s
+# unsafe FFI (the test crate need not declare any `unsafe` blocks).
+[target.'cfg(unix)'.dev-dependencies]
+nix            = { workspace = true }
+
+[features]
+default = []
+# Plan 04-03 D-25 — gates the property-based crash-recovery loop behind a
+# feature so default `cargo test --workspace` skips it (50 iter × 2 backend
+# × ~1s/iter = ~100s — too slow for fast-feedback unit-test runs). CI's
+# integration-test job runs `cargo test -p lunaris-conformance --features
+# chaos-it --test crash_recovery`. Without backends (MOON_URL / PG_URL
+# unset) the proptest body short-circuits to Ok(()) per the Plan 02-04
+# two-tier skip discipline so the gated invocation still exits 0.
+chaos-it = []
