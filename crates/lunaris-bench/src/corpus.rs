@@ -51,9 +51,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lunaris::Lunaris;
-use lunaris_core::{
-    BiTemporal, Fact, HlcClock, LunarisError, StorageError, StoragePort, WriteOp,
-};
+use lunaris_core::{BiTemporal, Fact, HlcClock, LunarisError, StorageError, StoragePort, WriteOp};
 use lunaris_storage_moon::keyspace::fact_key;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -259,7 +257,9 @@ fn det_vec(s: &str, dim: usize) -> Vec<f32> {
     let mut state = h.finish().max(1);
     (0..dim)
         .map(|_| {
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
             v * 2.0 - 1.0
         })
@@ -350,9 +350,10 @@ pub async fn build_one_million_fact_corpus(
                 }),
             });
         }
-        storage.atomic_write(&ops).await.map_err(|e| {
-            BenchCorpusError::Backend(LunarisError::Storage(e))
-        })?;
+        storage
+            .atomic_write(&ops)
+            .await
+            .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
         emitted += batch_size;
         if emitted.is_multiple_of(100_000) || emitted == count {
             tracing::debug!(
@@ -401,7 +402,8 @@ fn next_fact(rng: &mut ChaCha20Rng, clock: &HlcClock) -> Result<Fact, BenchCorpu
     let predicate = PREDICATES[pred_idx];
     let sub_name_idx = (subject.0 as usize) % ENTITY_VOCAB_SIZE;
     let obj_name_idx = (object.0 as usize) % ENTITY_VOCAB_SIZE;
-    let fact_text = format!("{} {} {}", entity_name(sub_name_idx), predicate, entity_name(obj_name_idx));
+    let fact_text =
+        format!("{} {} {}", entity_name(sub_name_idx), predicate, entity_name(obj_name_idx));
     let embedding = det_vec(&fact_text, CORPUS_EMBEDDING_DIM);
     Ok(Fact {
         id,
@@ -443,9 +445,7 @@ pub async fn ensure_corpus_or_skip(
     label: &str,
 ) -> Result<bool, BenchCorpusError> {
     if !tcp_reachable(backend_url).await {
-        eprintln!(
-            "SKIP {label} corpus build: backend unreachable (1s TCP probe failed)"
-        );
+        eprintln!("SKIP {label} corpus build: backend unreachable (1s TCP probe failed)");
         return Ok(false);
     }
     build_one_million_fact_corpus(handle, count, seed, backend_url).await?;
@@ -545,8 +545,10 @@ mod tests {
     #[test]
     fn invalid_count_is_rejected() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let storage: Arc<dyn StoragePort> = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
-        let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(CORPUS_EMBEDDING_DIM));
+        let storage: Arc<dyn StoragePort> =
+            Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let embedder: Arc<dyn lunaris_core::Embedder> =
+            Arc::new(StubEmbedder::new(CORPUS_EMBEDDING_DIM));
         let handle = Lunaris::with_parts(storage, embedder, HlcClock::new(0));
 
         let err = rt.block_on(build_one_million_fact_corpus(&handle, 0, 0, "moon://x:1"));
@@ -572,7 +574,11 @@ mod tests {
         let ok = tcp_reachable("moon://localhost:1").await;
         assert!(!ok);
         // Should reject in well under 1s (the probe's timeout). RST is ~ms.
-        assert!(started.elapsed() < Duration::from_secs(2), "probe took too long: {:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "probe took too long: {:?}",
+            started.elapsed()
+        );
     }
 }
 
@@ -587,8 +593,7 @@ pub mod tests_recording {
     use bytes::Bytes;
     use futures::stream::BoxStream;
     use lunaris_core::{
-        CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageCapabilities,
-        VectorHit,
+        CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageCapabilities, VectorHit,
     };
     use parking_lot::Mutex;
 

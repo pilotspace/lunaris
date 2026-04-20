@@ -13,11 +13,11 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
+use lunaris_bench::corpus::tests_recording::RecordingStorage;
 use lunaris_bench::{
     CORPUS_EMBEDDING_DIM, CorpusFingerprint, build_one_million_fact_corpus, fingerprint_path_for,
     hash_url,
 };
-use lunaris_bench::corpus::tests_recording::RecordingStorage;
 use lunaris_core::{Embedder, HlcClock, StoragePort, StubEmbedder};
 
 const SMOKE_COUNT: u64 = 100;

@@ -68,7 +68,7 @@ tower          = { version = "0.5", features = ["util", "limit", "timeout", "ret
 rand           = "0.9"
 proptest       = "1"
 # Phase 2 Plan 02-04 — bench harness (Criterion + deterministic 1M-fact corpus)
-criterion      = { version = "0.8", features = ["html_reports"] }
+criterion      = { version = "0.8", features = ["html_reports", "async_tokio"] }
 rand_chacha    = "0.9"
 sha2           = "0.10"
 hex            = "0.4"
