@@ -22,7 +22,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
 use sqlx::Row;
 
-use crate::pool::{sqlx_err, PgClient};
+use crate::pool::{PgClient, sqlx_err};
 
 pub(crate) async fn publish(
     c: &PgClient,
@@ -70,8 +70,7 @@ pub(crate) async fn subscribe(
                     let msg_id: i64 = r.try_get("msg_id").unwrap_or(0);
                     let env: serde_json::Value =
                         r.try_get("message").unwrap_or(serde_json::Value::Null);
-                    let payload_b64 =
-                        env.get("payload_b64").and_then(|x| x.as_str()).unwrap_or("");
+                    let payload_b64 = env.get("payload_b64").and_then(|x| x.as_str()).unwrap_or("");
                     let payload = base64_decode(payload_b64);
                     let env_partition =
                         env.get("partition").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
@@ -100,8 +99,7 @@ pub(crate) async fn subscribe(
 // Tiny base64 helpers — avoid a crate dep just for the queue envelope.
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -157,14 +155,8 @@ mod tests {
 
     #[test]
     fn base64_roundtrip() {
-        let cases: &[&[u8]] = &[
-            b"",
-            b"A",
-            b"AB",
-            b"ABC",
-            b"hello, world",
-            b"\x00\xff\x10\x20\x30\x40",
-        ];
+        let cases: &[&[u8]] =
+            &[b"", b"A", b"AB", b"ABC", b"hello, world", b"\x00\xff\x10\x20\x30\x40"];
         for c in cases {
             let enc = base64_encode(c);
             let dec = base64_decode(&enc);

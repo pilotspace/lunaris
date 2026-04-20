@@ -31,8 +31,8 @@ use lunaris_core::storage::types::{Lsn, WriteOp};
 
 use sqlx::AssertSqlSafe;
 
-use crate::pool::{sqlx_err, PgClient};
-use crate::schema::{hlc_to_ts, BtRow};
+use crate::pool::{PgClient, sqlx_err};
+use crate::schema::{BtRow, hlc_to_ts};
 
 pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
     let mut tx = c.pool.begin().await.map_err(sqlx_err)?;

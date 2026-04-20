@@ -16,7 +16,7 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 use sqlx::{AssertSqlSafe, Row};
 
-use crate::pool::{sqlx_err, PgClient};
+use crate::pool::{PgClient, sqlx_err};
 
 pub(crate) async fn graph_traverse(
     c: &PgClient,
@@ -32,10 +32,7 @@ pub(crate) async fn graph_traverse(
         cypher = query.cypher,
     );
 
-    let rows = sqlx::query(AssertSqlSafe(sql))
-        .fetch_all(&c.pool)
-        .await
-        .map_err(sqlx_err)?;
+    let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(&c.pool).await.map_err(sqlx_err)?;
 
     let mut out_rows: Vec<Vec<serde_json::Value>> = Vec::new();
     for r in rows {

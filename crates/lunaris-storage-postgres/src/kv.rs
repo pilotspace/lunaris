@@ -20,7 +20,7 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::Row as LRow;
 use sqlx::Row as SqlxRow;
 
-use crate::pool::{sqlx_err, PgClient};
+use crate::pool::{PgClient, sqlx_err};
 use crate::schema::hlc_to_ts;
 
 pub(crate) async fn read_as_of(

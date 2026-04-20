@@ -23,7 +23,7 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{Filter, VectorHit};
 use sqlx::{AssertSqlSafe, Row};
 
-use crate::pool::{sqlx_err, PgClient};
+use crate::pool::{PgClient, sqlx_err};
 use crate::schema::hlc_to_ts;
 
 pub(crate) async fn vector_search(
@@ -74,11 +74,8 @@ pub(crate) async fn vector_search(
         where_clause = where_parts.join(" AND "),
     );
 
-    let rows = sqlx::query(AssertSqlSafe(sql))
-        .bind(qlit)
-        .fetch_all(&c.pool)
-        .await
-        .map_err(sqlx_err)?;
+    let rows =
+        sqlx::query(AssertSqlSafe(sql)).bind(qlit).fetch_all(&c.pool).await.map_err(sqlx_err)?;
 
     Ok(rows
         .into_iter()
