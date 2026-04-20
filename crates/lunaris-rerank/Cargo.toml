@@ -1,0 +1,43 @@
+# lunaris-rerank — v0 cross-encoder reranker for the recall hot path (RETRIEVE-06).
+#
+# Default backend: BgeRerankerV2M3 — bge-reranker-v2-m3 cross-encoder loaded via
+# candle 0.10 (CPU). Falls back to NoopReranker when the model weights are missing,
+# per the RETRIEVE-06 contract: the operator code path MUST be present even when
+# the model file is unavailable.
+#
+# Build matrix:
+#   cargo check -p lunaris-rerank                                      # candle (default)
+#   cargo check -p lunaris-rerank --no-default-features                # noop only
+#   cargo test  -p lunaris-rerank --features rerank-it                 # gated live-model tests
+
+[package]
+name        = "lunaris-rerank"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[features]
+default     = ["candle"]
+candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
+rerank-it   = []   # gates live-model integration tests (real bge-reranker-v2-m3 load)
+
+[dependencies]
+lunaris-core   = { path = "../lunaris-core" }
+async-trait    = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+tokio          = { workspace = true }
+# candle stack — gated behind `candle` feature. Mirrors the lunaris-embed shape
+# from Plan 02-01 so the version pins (0.10) stay aligned across the workspace.
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+dirs                = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

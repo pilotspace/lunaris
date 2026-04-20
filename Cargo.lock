@@ -1665,6 +1665,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-rerank"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "dirs",
+ "lunaris-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lunaris-retrieve"
 version = "0.0.1"
 dependencies = [

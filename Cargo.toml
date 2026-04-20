@@ -8,6 +8,7 @@ members = [
   "crates/lunaris-conformance",
   "crates/lunaris-embed",
   "crates/lunaris-ingest",
+  "crates/lunaris-rerank",
   "crates/lunaris-retrieve",
   "xtask",
 ]
