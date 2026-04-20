@@ -1,0 +1,48 @@
+# lunaris-consolidate — Phase 4 ACT-R consolidator (default-OFF per blueprint §5.1).
+#
+# Per D-15: the consolidator has NO LLM backends. Community summaries (CONSOL-04)
+# are produced by Phase 3's `Extractor` trait acting as a summarizer — wired by
+# Plan 04-04 at the umbrella handle layer, not here. This keeps the dep tree
+# minimal + the build fast.
+#
+# Build matrix:
+#   cargo check -p lunaris-consolidate --no-default-features      # NoopConsolidator-only; no candle / reqwest
+#   cargo check -p lunaris-consolidate                             # same as --no-default-features (default=[])
+#   cargo test  -p lunaris-consolidate --features consolidator-it # gated live-backend integration tests
+
+[package]
+name        = "lunaris-consolidate"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[features]
+default          = []
+# Gates live-backend integration tests (real Moon MQ + Postgres pgmq subscribe
+# against an end-to-end consolidation pass). SKIPs cleanly without env vars
+# (mirrors `extractor-it` + `verifier-it`).
+consolidator-it  = []
+
+[dependencies]
+lunaris-core     = { path = "../lunaris-core" }
+# EntityId reuse — consolidator's FactId / CommunityId derivation consumes
+# `lunaris_extract::EntityId` byte arrays. default-features=false keeps the
+# extractor's candle/ollama/cloud-api stack out of the consolidator build.
+lunaris-extract  = { path = "../lunaris-extract", default-features = false }
+async-trait      = { workspace = true }
+thiserror        = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true }
+futures          = { workspace = true }
+bytes            = { workspace = true }
+blake3           = { workspace = true }   # FactId / CommunityId derivation per D-13
+parking_lot      = { workspace = true }
+serde            = { workspace = true, features = ["derive"] }
+serde_json       = { workspace = true }
+hex              = { workspace = true }
+ulid             = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tokio            = { workspace = true, features = ["macros", "rt-multi-thread"] }

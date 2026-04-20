@@ -1873,6 +1873,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-consolidate"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "bytes",
+ "futures",
+ "hex",
+ "lunaris-core",
+ "lunaris-extract",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
 name = "lunaris-core"
 version = "0.0.1"
 dependencies = [

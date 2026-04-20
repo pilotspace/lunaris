@@ -8,6 +8,7 @@ members = [
   "crates/lunaris",
   "crates/lunaris-bench",
   "crates/lunaris-conformance",
+  "crates/lunaris-consolidate",
   "crates/lunaris-embed",
   "crates/lunaris-extract",
   "crates/lunaris-ingest",
