@@ -28,9 +28,12 @@
 use std::sync::Arc;
 
 use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
+use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
+
+use crate::graph_pipeline::GraphPipelineHandle;
 
 #[derive(Clone)]
 pub struct Lunaris {
@@ -47,6 +50,14 @@ pub struct Lunaris {
     /// is present; falls back to `NoopReranker` per RETRIEVE-06 contract when
     /// the cache is missing. Callers swap via `with_reranker(reranker)`.
     pub(crate) reranker: Arc<dyn Reranker>,
+    /// Plan 03-03: graph extraction pipeline toggle (D-10/D-11). Default OFF.
+    /// The `Extractor` itself lives INSIDE the handle's
+    /// `RwLock<Option<Arc<dyn Extractor>>>` — callers `swap` via
+    /// [`Self::with_extractor`] which delegates to
+    /// [`GraphPipelineHandle::set_extractor`]; toggle ON/OFF via
+    /// `handle.graph_pipeline().enable() / .disable()` (D-10 single-switch
+    /// surface, EXTRACT-06).
+    pub(crate) graph_pipeline: Arc<GraphPipelineHandle>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -57,6 +68,7 @@ impl std::fmt::Debug for Lunaris {
             .field("clock_node_id", &self.clock.node_id())
             .field("has_moon_native_path", &self.moon_storage.is_some())
             .field("reranker_applies", &self.reranker.applies())
+            .field("graph_pipeline_enabled", &self.graph_pipeline.is_enabled())
             .finish()
     }
 }
@@ -88,6 +100,14 @@ impl Lunaris {
         let embedder = default_embedder().await?;
         let clock = HlcClock::new(0);
         let reranker = default_reranker().await;
+        // Plan 03-03: Construct the graph pipeline handle. Initial state
+        // comes from `LUNARIS_GRAPH_ENABLED=1|0` env var (D-10); default OFF
+        // per blueprint §5.2. The default extractor is candle Gemma-3 4B (or
+        // NoopExtractor on cache miss — see `default_extractor`).
+        let extractor = default_extractor().await;
+        let initial_graph_state = GraphPipelineHandle::initial_state_from_env();
+        let graph_pipeline =
+            Arc::new(GraphPipelineHandle::new(initial_graph_state, extractor));
         match scheme {
             "moon" => {
                 let m = Arc::new(MoonStorage::connect(url).await?);
@@ -98,6 +118,7 @@ impl Lunaris {
                     clock,
                     moon_storage: Some(m),
                     reranker,
+                    graph_pipeline,
                 })
             }
             "postgres" | "postgresql" => {
@@ -109,6 +130,7 @@ impl Lunaris {
                     clock,
                     moon_storage: None,
                     reranker,
+                    graph_pipeline,
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -143,6 +165,14 @@ impl Lunaris {
             // tests) keep working without picking up the candle dep
             // transitively. Production callers swap via with_reranker.
             reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
+            // Plan 03-03: graph pipeline OFF by default with a NoopExtractor
+            // installed. Tests that exercise the graph-ON path call
+            // `handle.graph_pipeline().enable()` + `handle.with_extractor(...)`
+            // explicitly; default-OFF preserves the Phase 2 fast path.
+            graph_pipeline: Arc::new(GraphPipelineHandle::new(
+                false,
+                Arc::new(NoopExtractor) as Arc<dyn Extractor>,
+            )),
         }
     }
 
@@ -163,6 +193,11 @@ impl Lunaris {
             clock,
             moon_storage: None,
             reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
+            // Plan 03-03 — see `with_parts` for the rationale.
+            graph_pipeline: Arc::new(GraphPipelineHandle::new(
+                false,
+                Arc::new(NoopExtractor) as Arc<dyn Extractor>,
+            )),
         }
     }
 
@@ -181,6 +216,21 @@ impl Lunaris {
     /// budget busts on their hardware: `handle.with_reranker(Arc::new(NoopReranker))`.
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
         self.reranker = reranker;
+        self
+    }
+
+    /// Plan 03-03 escape hatch — replace the extractor on an existing handle.
+    /// Production callers wiring a [`lunaris_extract::CloudApiExtractor`] or a
+    /// custom [`lunaris_extract::Extractor`] impl use this; tests pass
+    /// `Arc::new(lunaris_extract::NoopExtractor)` for determinism.
+    ///
+    /// Note: the extractor lives inside the [`GraphPipelineHandle`]'s
+    /// `RwLock<Option<Arc<dyn Extractor>>>` — this method swaps it via
+    /// [`GraphPipelineHandle::set_extractor`], NOT by replacing the entire
+    /// `graph_pipeline` field. Toggle state and the state-change counter are
+    /// preserved across the swap (D-12 idempotent observability).
+    pub fn with_extractor(self, extractor: Arc<dyn Extractor>) -> Self {
+        self.graph_pipeline.set_extractor(extractor);
         self
     }
 
@@ -209,6 +259,29 @@ impl Lunaris {
     /// pass without re-declaring it.
     pub fn reranker(&self) -> Arc<dyn Reranker> {
         self.reranker.clone()
+    }
+
+    /// Plan 03-03 — borrow the [`GraphPipelineHandle`] for runtime toggle
+    /// control. EXTRACT-06 single-switch surface (D-10):
+    ///
+    /// - `handle.graph_pipeline().enable()` / `.disable()` — flip the
+    ///   pipeline ON / OFF (idempotent, observable per D-12).
+    /// - `handle.graph_pipeline().is_enabled()` — current state.
+    /// - `handle.graph_pipeline().force_reload().await` — reload the
+    ///   extractor from default cache (e.g., after `huggingface-cli` finished
+    ///   downloading weights).
+    pub fn graph_pipeline(&self) -> Arc<GraphPipelineHandle> {
+        self.graph_pipeline.clone()
+    }
+
+    /// Plan 03-03 — snapshot the currently-installed [`Extractor`] `Arc`.
+    /// Useful for the canonical compose example in tests + bench harnesses.
+    /// Returns `None` only when the [`GraphPipelineHandle`] has no extractor
+    /// installed (rare — only via explicit `set_extractor` with a None which
+    /// is not exposed in the public surface; the public surface always
+    /// installs at least [`NoopExtractor`]).
+    pub fn extractor(&self) -> Option<Arc<dyn Extractor>> {
+        self.graph_pipeline.snapshot_extractor()
     }
 }
 
@@ -288,4 +361,39 @@ async fn default_reranker() -> Arc<dyn Reranker> {
 #[cfg(not(feature = "candle"))]
 async fn default_reranker() -> Arc<dyn Reranker> {
     Arc::new(NoopReranker) as Arc<dyn Reranker>
+}
+
+/// Plan 03-03: Construct the default extractor for [`Lunaris::open`].
+///
+/// Tries to load [`lunaris_extract::CandleGemma3_4B`] from the default cache.
+/// On cache miss (the common case on dev boxes without ~3 GiB of Gemma-3 4B
+/// weights pre-downloaded) emits a `tracing::warn!` describing what's missing
+/// AND substitutes [`NoopExtractor`] per the D-11 dead-code-when-OFF
+/// contract — even when the feature is enabled, a missing cache produces a
+/// working binary that has the trait wired but never calls a real model.
+/// Mirrors the [`default_reranker`] BgeRerankerV2M3 pattern from Plan 02-03.
+///
+/// Callers wire their own extractor via [`Lunaris::with_extractor`] or
+/// `handle.graph_pipeline().set_extractor(extractor)` for late binding.
+#[cfg(feature = "candle")]
+async fn default_extractor() -> Arc<dyn Extractor> {
+    match lunaris_extract::CandleGemma3_4B::new(Default::default()).await {
+        Ok(e) => Arc::new(e) as Arc<dyn Extractor>,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "gemma-3-4b-it unavailable; using NoopExtractor (graph extraction disabled at runtime — install weights via `huggingface-cli download google/gemma-3-4b-it --local-dir ~/.cache/lunaris/models/gemma-3-4b-it`)"
+            );
+            Arc::new(NoopExtractor) as Arc<dyn Extractor>
+        }
+    }
+}
+
+/// Without `candle` there's no real extractor to fall back FROM. Production
+/// callers wanting graph extraction either enable the `candle` feature or
+/// pass a custom [`Extractor`] impl (e.g., [`lunaris_extract::OllamaExtractor`]
+/// under the `ollama` feature) via [`Lunaris::with_extractor`].
+#[cfg(not(feature = "candle"))]
+async fn default_extractor() -> Arc<dyn Extractor> {
+    Arc::new(NoopExtractor) as Arc<dyn Extractor>
 }
