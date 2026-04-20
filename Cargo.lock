@@ -1584,12 +1584,15 @@ dependencies = [
  "lunaris-core",
  "lunaris-embed",
  "lunaris-ingest",
+ "lunaris-retrieve",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",
  "parking_lot",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ulid",
  "url",
 ]
 

@@ -12,6 +12,7 @@ lunaris-storage-moon      = { path = "../lunaris-storage-moon" }
 lunaris-storage-postgres  = { path = "../lunaris-storage-postgres" }
 lunaris-embed             = { path = "../lunaris-embed", default-features = false }
 lunaris-ingest            = { path = "../lunaris-ingest" }
+lunaris-retrieve          = { path = "../lunaris-retrieve" }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
@@ -24,6 +25,8 @@ async-trait    = { workspace = true }
 bytes          = { workspace = true }
 futures        = { workspace = true }
 parking_lot    = { workspace = true }
+serde_json     = { workspace = true }
+ulid           = { workspace = true }
 
 [features]
 default = ["candle"]

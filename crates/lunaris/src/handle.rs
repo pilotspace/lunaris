@@ -27,13 +27,20 @@
 
 use std::sync::Arc;
 
-use lunaris_core::{Embedder, HlcClock, LunarisError, StoragePort};
+use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
+use lunaris_storage_moon::MoonStorage;
+use lunaris_storage_postgres::PostgresStorage;
 
 #[derive(Clone)]
 pub struct Lunaris {
     pub(crate) storage: Arc<dyn StoragePort>,
+    pub(crate) keyword: Arc<dyn KeywordPort>,
     pub(crate) embedder: Arc<dyn Embedder>,
     pub(crate) clock: Arc<HlcClock>,
+    /// Concrete `MoonStorage` Arc when the handle was opened against a `moon://` URL.
+    /// Plan 02-02's `fuse_rrf` Moon-native dispatch reads this to opt into the
+    /// one-round-trip `text().hybrid_search()` path. None for Postgres / custom backends.
+    pub(crate) moon_storage: Option<Arc<MoonStorage>>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -42,6 +49,7 @@ impl std::fmt::Debug for Lunaris {
             .field("backend_capabilities", &self.storage.capabilities())
             .field("embedder_dim", &self.embedder.dim())
             .field("clock_node_id", &self.clock.node_id())
+            .field("has_moon_native_path", &self.moon_storage.is_some())
             .finish()
     }
 }
@@ -50,8 +58,13 @@ impl Lunaris {
     /// Production constructor. Opens a storage backend by URL and constructs
     /// the default embedder.
     ///
-    /// - `moon://...` → [`lunaris_storage_moon::MoonStorage`] backend
-    /// - `postgres://...` → [`lunaris_storage_postgres::PostgresStorage`] backend
+    /// - `moon://...` → [`lunaris_storage_moon::MoonStorage`] backend.
+    ///   Plan 02-02 wires the typed `Arc<MoonStorage>` alongside the dyn
+    ///   trait Arcs so `recall().fuse_rrf()` can take the Moon-native one-
+    ///   round-trip path.
+    /// - `postgres://...` → [`lunaris_storage_postgres::PostgresStorage`] backend.
+    ///   `moon_storage` field stays `None`; `recall().fuse_rrf()` falls back
+    ///   to client-side reciprocal rank fusion.
     /// - default embedder under `candle` feature: `lunaris_embed::CandleEmbeddingGemma`
     ///   with default cache path `~/.cache/lunaris/models/embedding-gemma-300m/`.
     ///   When the cache is missing the constructor surfaces the actionable
@@ -64,24 +77,72 @@ impl Lunaris {
     ///   in this configuration MUST use [`Self::with_parts`] with their own
     ///   embedder.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
-        let storage = crate::open::open(url).await?;
+        let scheme = url.split("://").next().unwrap_or("");
         let embedder = default_embedder().await?;
         let clock = HlcClock::new(0);
-        Ok(Self { storage, embedder, clock })
+        match scheme {
+            "moon" => {
+                let m = Arc::new(MoonStorage::connect(url).await?);
+                Ok(Self {
+                    storage: m.clone() as Arc<dyn StoragePort>,
+                    keyword: m.clone() as Arc<dyn KeywordPort>,
+                    embedder,
+                    clock,
+                    moon_storage: Some(m),
+                })
+            }
+            "postgres" | "postgresql" => {
+                let p = Arc::new(PostgresStorage::connect(url).await?);
+                Ok(Self {
+                    storage: p.clone() as Arc<dyn StoragePort>,
+                    keyword: p as Arc<dyn KeywordPort>,
+                    embedder,
+                    clock,
+                    moon_storage: None,
+                })
+            }
+            other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
+                other.to_string(),
+            ))),
+        }
     }
 
-    /// Test / latency-budget-swap escape hatch. Wires a custom storage handle,
-    /// embedder, and clock — bypasses [`Self::open`]'s default constructors.
-    /// Marked `#[doc(hidden)]` because production callers should use [`Self::open`]
-    /// instead, but kept on the public API so the smoke test + Phase 2 latency
-    /// swap have a stable seam.
+    /// Legacy test / latency-budget-swap escape hatch. Wires a custom
+    /// storage handle, embedder, and clock — bypasses [`Self::open`]'s
+    /// default constructors. The keyword Arc is taken from the same
+    /// `storage` Arc by attempting an Arc-to-trait downcast — when the
+    /// caller's storage type also impls `KeywordPort`, this works
+    /// transparently. Otherwise the keyword path returns
+    /// `StorageError::NotSupported` at call time.
+    ///
+    /// Production callers should use [`Self::open`] OR
+    /// [`Self::with_parts_keyword`] with explicit `keyword` Arc.
     #[doc(hidden)]
     pub fn with_parts(
         storage: Arc<dyn StoragePort>,
         embedder: Arc<dyn Embedder>,
         clock: Arc<HlcClock>,
     ) -> Self {
-        Self { storage, embedder, clock }
+        Self {
+            storage,
+            keyword: Arc::new(NoKeywordSupport) as Arc<dyn KeywordPort>,
+            embedder,
+            clock,
+            moon_storage: None,
+        }
+    }
+
+    /// Test seam used by Plan 02-02 Task 3's `recall_smoke` — wire a
+    /// `KeywordPort` Arc explicitly. Production callers go through
+    /// [`Self::open`] which constructs both Arcs from the URL.
+    #[doc(hidden)]
+    pub fn with_parts_keyword(
+        storage: Arc<dyn StoragePort>,
+        keyword: Arc<dyn KeywordPort>,
+        embedder: Arc<dyn Embedder>,
+        clock: Arc<HlcClock>,
+    ) -> Self {
+        Self { storage, keyword, embedder, clock, moon_storage: None }
     }
 
     /// Public escape hatch — replace the embedder on an existing handle.
@@ -95,11 +156,44 @@ impl Lunaris {
     pub fn storage(&self) -> Arc<dyn StoragePort> {
         self.storage.clone()
     }
+    pub fn keyword(&self) -> Arc<dyn KeywordPort> {
+        self.keyword.clone()
+    }
     pub fn embedder(&self) -> Arc<dyn Embedder> {
         self.embedder.clone()
     }
     pub fn clock(&self) -> Arc<HlcClock> {
         self.clock.clone()
+    }
+    /// Borrow the typed `Arc<MoonStorage>` when the handle was opened against
+    /// a Moon backend; `None` otherwise. Plan 02-02's `recall()` plumbs this
+    /// into the `RetrievalBuilder` so `fuse_rrf` can opt into Moon-native
+    /// hybrid search.
+    pub fn moon_storage(&self) -> Option<Arc<MoonStorage>> {
+        self.moon_storage.clone()
+    }
+}
+
+/// Sentinel `KeywordPort` impl returned by [`Lunaris::with_parts`] when the
+/// caller did NOT supply a real keyword backend. Calling `keyword_search`
+/// returns `StorageError::NotSupported` so callers see a clear failure
+/// rather than a silent empty result.
+#[derive(Debug, Clone, Copy)]
+struct NoKeywordSupport;
+
+#[async_trait::async_trait]
+impl KeywordPort for NoKeywordSupport {
+    async fn keyword_search(
+        &self,
+        _index: &str,
+        _query: &str,
+        _k: usize,
+        _filter: Option<&lunaris_core::Filter>,
+        _as_of: Option<lunaris_core::Hlc>,
+    ) -> Result<Vec<lunaris_core::KeywordHit>, lunaris_core::StorageError> {
+        Err(lunaris_core::StorageError::NotSupported(
+            "Lunaris::with_parts was called without a KeywordPort — use with_parts_keyword or open(url)",
+        ))
     }
 }
 

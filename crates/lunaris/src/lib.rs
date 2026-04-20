@@ -17,10 +17,18 @@
 pub mod handle;
 pub mod ingest;
 pub mod open;
+pub mod recall;
 
 pub use handle::Lunaris;
 pub use lunaris_core::*;
 pub use open::open;
+
+// Phase 2 retrieve DSL re-exports — callers `use lunaris::{Vector, Keyword, ...}`
+// rather than reaching into `lunaris_retrieve::`.
+pub use lunaris_retrieve::{
+    Hit, Keyword, Plan, Query, RawHit, RetrievalBuilder, RetrievalService, SourceOp, Vector,
+    filter_str, plan_query,
+};
 
 // Re-export backend concrete types for callers who want to construct directly
 // (bypassing URL routing — needed by the conformance harness in Phase 5).
