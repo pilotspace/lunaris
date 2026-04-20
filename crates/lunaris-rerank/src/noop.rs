@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 
-use crate::{Reranker, RerankCandidate};
+use crate::{RerankCandidate, Reranker};
 
 /// NO-OP reranker. Used as the default fallback when [`crate::BgeRerankerV2M3`]
 /// weights are missing. Production code wires this via

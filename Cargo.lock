@@ -1584,6 +1584,7 @@ dependencies = [
  "lunaris-core",
  "lunaris-embed",
  "lunaris-ingest",
+ "lunaris-rerank",
  "lunaris-retrieve",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",

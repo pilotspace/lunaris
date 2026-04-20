@@ -26,9 +26,18 @@ pub use open::open;
 // Phase 2 retrieve DSL re-exports — callers `use lunaris::{Vector, Keyword, ...}`
 // rather than reaching into `lunaris_retrieve::`.
 pub use lunaris_retrieve::{
-    Hit, Keyword, Plan, Query, RawHit, RetrievalBuilder, RetrievalService, SourceOp, Vector,
-    filter_str, plan_query,
+    DegradedFallbackRetriever, Hit, Keyword, Plan, Query, RawHit, RerankRetriever,
+    RetrievalBuilder, RetrievalService, SourceOp, Vector, degraded_fallback, filter_str,
+    plan_query, rerank,
 };
+
+// Plan 02-03: Reranker trait + helpers re-exported from lunaris-rerank so
+// callers `use lunaris::{Reranker, NoopReranker}`. `BgeRerankerV2M3` is gated
+// behind the `candle` feature so a `cargo check --no-default-features` build
+// doesn't pull the candle stack.
+#[cfg(feature = "candle")]
+pub use lunaris_rerank::{BgeRerankerV2M3, BgeRerankerV2M3Opts};
+pub use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};
 
 // Re-export backend concrete types for callers who want to construct directly
 // (bypassing URL routing — needed by the conformance harness in Phase 5).

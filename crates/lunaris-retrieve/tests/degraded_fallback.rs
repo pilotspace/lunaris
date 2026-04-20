@@ -24,7 +24,7 @@ use lunaris_core::{
     StoragePort, StubEmbedder,
 };
 use lunaris_retrieve::{
-    DegradedFallbackRetriever, QueryContext, Query, RawHit, RetrievalBuilder, Retriever, SourceOp,
+    DegradedFallbackRetriever, Query, QueryContext, RawHit, RetrievalBuilder, Retriever, SourceOp,
     Vector,
 };
 use parking_lot::Mutex;
@@ -283,9 +283,7 @@ async fn end_to_end_with_recording_storage() {
     let (storage, keyword, embedder) = build_ctx(rec.clone());
 
     // Build the canonical RETRIEVE-08 example: primary on chunks, fallback on entities.
-    let root = Vector::new("chunks", 10)
-        .degraded_fallback(Vector::new("entities", 10))
-        .top(5);
+    let root = Vector::new("chunks", 10).degraded_fallback(Vector::new("entities", 10)).top(5);
     let builder = RetrievalBuilder::new(storage, keyword, embedder).with_root(root);
 
     let hits = builder.execute(Query::text("query")).await.unwrap();

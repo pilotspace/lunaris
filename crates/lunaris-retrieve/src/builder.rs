@@ -130,8 +130,10 @@ impl RetrievalBuilder {
     /// On any error from the current (primary) root, the operator switches
     /// to `fallback` and tags returned hits with `degraded: true`.
     pub fn degraded_fallback<R: Retriever + 'static>(self, fallback: R) -> Self {
-        let new_root =
-            crate::operators::degraded::DegradedFallbackRetriever::new(self.root, Box::new(fallback));
+        let new_root = crate::operators::degraded::DegradedFallbackRetriever::new(
+            self.root,
+            Box::new(fallback),
+        );
         Self { root: Box::new(new_root), ..self }
     }
 

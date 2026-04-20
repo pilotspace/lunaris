@@ -12,12 +12,7 @@ use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};
 use serde_json::json;
 
 fn cand(id: &[u8], text: &str, score: f32) -> RerankCandidate {
-    RerankCandidate {
-        id: id.to_vec(),
-        text: text.to_string(),
-        score,
-        metadata: json!({}),
-    }
+    RerankCandidate { id: id.to_vec(), text: text.to_string(), score, metadata: json!({}) }
 }
 
 #[cfg(feature = "candle")]

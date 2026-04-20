@@ -56,6 +56,16 @@ impl DegradedFallbackRetriever {
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
         super::modifiers::TopRetriever::new(Box::new(self), n)
     }
+
+    /// Wrap with a cross-encoder rerank pass (Plan 02-03). Lets callers chain
+    /// `degraded_fallback(...).rerank(reranker).top(n)` when they want the
+    /// rerank to apply REGARDLESS of which branch (primary vs fallback) ran.
+    pub fn rerank(
+        self,
+        reranker: std::sync::Arc<dyn lunaris_rerank::Reranker>,
+    ) -> super::rerank::RerankRetriever {
+        super::rerank::RerankRetriever::new(Box::new(self), reranker)
+    }
 }
 
 /// Builder-friendly factory: `degraded_fallback(primary, fallback)`.

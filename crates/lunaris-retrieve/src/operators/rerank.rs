@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use lunaris_core::{LunarisError, RetrieveError};
-use lunaris_rerank::{Reranker, RerankCandidate};
+use lunaris_rerank::{RerankCandidate, Reranker};
 
 use super::{QueryContext, Retriever};
 use crate::hydrate::partial_hydrate_text;
@@ -78,6 +78,15 @@ impl RerankRetriever {
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
         super::modifiers::TopRetriever::new(Box::new(self), n)
     }
+
+    /// Wrap with a fallback retriever — if THIS rerank path errors, switch to
+    /// `fallback` and tag returned hits with `degraded: true` (Plan 02-03).
+    pub fn degraded_fallback<R: Retriever + 'static>(
+        self,
+        fallback: R,
+    ) -> super::degraded::DegradedFallbackRetriever {
+        super::degraded::DegradedFallbackRetriever::new(Box::new(self), Box::new(fallback))
+    }
 }
 
 /// Builder-friendly factory: `rerank(upstream, reranker)`. Mirrors the
@@ -105,8 +114,7 @@ impl Retriever for RerankRetriever {
 
         // 3. Partial-hydrate text for each surviving id (chunk-only, no Episode
         //    lookup — text is all the cross-encoder needs).
-        let texts =
-            partial_hydrate_text(ctx.storage.as_ref(), &raw, ctx.query.as_of).await?;
+        let texts = partial_hydrate_text(ctx.storage.as_ref(), &raw, ctx.query.as_of).await?;
 
         // 4. Build candidate list. Hits without a hydrated text get an empty
         //    string — the cross-encoder will produce a low score and the

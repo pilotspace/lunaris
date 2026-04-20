@@ -25,7 +25,7 @@
 //!
 //! - [`types`] — `Query`, `Hit`, `RawHit`, `SourceOp`, `Plan`
 //! - [`operators`] — `Retriever` trait + `QueryContext` + the operator structs
-//! - [`hydrate`] — batched chunk-text + source hydration
+//! - [`hydrate()`] — batched chunk-text + source hydration
 //! - [`planner`] — `plan_query` heuristic stub (RETRIEVE-13)
 //! - [`service`] — `RetrievalService` impl of `tower::Service<Query>`
 //! - [`builder`] — `RetrievalBuilder` (terminal `.execute()` wires the tree

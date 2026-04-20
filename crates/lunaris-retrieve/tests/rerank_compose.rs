@@ -30,7 +30,7 @@ use lunaris_core::{
     StoragePort, StubEmbedder,
 };
 use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};
-use lunaris_retrieve::{QueryContext, Query, RawHit, Retriever, SourceOp, Vector};
+use lunaris_retrieve::{Query, QueryContext, RawHit, Retriever, SourceOp, Vector};
 use parking_lot::Mutex;
 use serde_json::json;
 
@@ -318,8 +318,7 @@ async fn rerank_partial_hydrates_text() {
 
     let received = recorder.received.lock().clone();
     assert_eq!(received.len(), 2);
-    let by_id: HashMap<Vec<u8>, String> =
-        received.into_iter().map(|c| (c.id, c.text)).collect();
+    let by_id: HashMap<Vec<u8>, String> = received.into_iter().map(|c| (c.id, c.text)).collect();
     assert_eq!(by_id.get(&id_x).unwrap(), "the quick brown fox");
     assert_eq!(by_id.get(&id_y).unwrap(), "jumps over the lazy dog");
 }

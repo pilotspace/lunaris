@@ -45,7 +45,7 @@ use candle_transformers::models::xlm_roberta::{Config, XLMRobertaForSequenceClas
 use lunaris_core::{LunarisError, StorageError};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy};
 
-use crate::{Reranker, RerankCandidate};
+use crate::{RerankCandidate, Reranker};
 
 /// Maximum input tokens per pair-encoding (bge-reranker-v2-m3 context window).
 /// Inputs longer than this are truncated to match the model's positional limits.
@@ -275,23 +275,20 @@ impl Reranker for BgeRerankerV2M3 {
 
             let input_ids = Tensor::from_vec(all_ids, (batch_size, max_seq), &inner.device)
                 .map_err(forward_err)?;
-            let attention_mask =
-                Tensor::from_vec(all_mask, (batch_size, max_seq), &inner.device)
-                    .map_err(forward_err)?;
-            let token_type_ids =
-                Tensor::from_vec(all_types, (batch_size, max_seq), &inner.device)
-                    .map_err(forward_err)?;
+            let attention_mask = Tensor::from_vec(all_mask, (batch_size, max_seq), &inner.device)
+                .map_err(forward_err)?;
+            let token_type_ids = Tensor::from_vec(all_types, (batch_size, max_seq), &inner.device)
+                .map_err(forward_err)?;
 
             // Forward → logits shape [batch, 1] (num_labels=1 for bge-reranker-v2-m3).
-            let logits =
-                inner.model.forward(&input_ids, &attention_mask, &token_type_ids).map_err(forward_err)?;
+            let logits = inner
+                .model
+                .forward(&input_ids, &attention_mask, &token_type_ids)
+                .map_err(forward_err)?;
 
             // Squeeze to [batch] then collect to a Vec<f32> for downstream sort.
-            let scores: Vec<f32> = logits
-                .squeeze(1)
-                .map_err(forward_err)?
-                .to_vec1::<f32>()
-                .map_err(forward_err)?;
+            let scores: Vec<f32> =
+                logits.squeeze(1).map_err(forward_err)?.to_vec1::<f32>().map_err(forward_err)?;
 
             // Pair scores with docs, sort desc by score, return.
             let mut scored: Vec<(f32, RerankCandidate)> = scores

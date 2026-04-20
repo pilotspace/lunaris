@@ -28,6 +28,7 @@
 use std::sync::Arc;
 
 use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
+use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
 
@@ -41,6 +42,11 @@ pub struct Lunaris {
     /// Plan 02-02's `fuse_rrf` Moon-native dispatch reads this to opt into the
     /// one-round-trip `text().hybrid_search()` path. None for Postgres / custom backends.
     pub(crate) moon_storage: Option<Arc<MoonStorage>>,
+    /// Plan 02-03: cross-encoder reranker for the recall hot path.
+    /// Defaults to `BgeRerankerV2M3` when `~/.cache/lunaris/models/bge-reranker-v2-m3/`
+    /// is present; falls back to `NoopReranker` per RETRIEVE-06 contract when
+    /// the cache is missing. Callers swap via `with_reranker(reranker)`.
+    pub(crate) reranker: Arc<dyn Reranker>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -50,6 +56,7 @@ impl std::fmt::Debug for Lunaris {
             .field("embedder_dim", &self.embedder.dim())
             .field("clock_node_id", &self.clock.node_id())
             .field("has_moon_native_path", &self.moon_storage.is_some())
+            .field("reranker_applies", &self.reranker.applies())
             .finish()
     }
 }
@@ -80,6 +87,7 @@ impl Lunaris {
         let scheme = url.split("://").next().unwrap_or("");
         let embedder = default_embedder().await?;
         let clock = HlcClock::new(0);
+        let reranker = default_reranker().await;
         match scheme {
             "moon" => {
                 let m = Arc::new(MoonStorage::connect(url).await?);
@@ -89,6 +97,7 @@ impl Lunaris {
                     embedder,
                     clock,
                     moon_storage: Some(m),
+                    reranker,
                 })
             }
             "postgres" | "postgresql" => {
@@ -99,6 +108,7 @@ impl Lunaris {
                     embedder,
                     clock,
                     moon_storage: None,
+                    reranker,
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -129,6 +139,10 @@ impl Lunaris {
             embedder,
             clock,
             moon_storage: None,
+            // Default to NoopReranker so existing callers (Plan 02-01 smoke
+            // tests) keep working without picking up the candle dep
+            // transitively. Production callers swap via with_reranker.
+            reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
         }
     }
 
@@ -142,13 +156,31 @@ impl Lunaris {
         embedder: Arc<dyn Embedder>,
         clock: Arc<HlcClock>,
     ) -> Self {
-        Self { storage, keyword, embedder, clock, moon_storage: None }
+        Self {
+            storage,
+            keyword,
+            embedder,
+            clock,
+            moon_storage: None,
+            reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
+        }
     }
 
     /// Public escape hatch — replace the embedder on an existing handle.
     /// Used by the Plan 02-01 latency-budget swap (candle → Ollama).
     pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
         self.embedder = embedder;
+        self
+    }
+
+    /// Plan 02-03 escape hatch — replace the reranker on an existing handle.
+    /// Tests pass `Arc::new(NoopReranker)` for determinism; production callers
+    /// can wire a custom cross-encoder (e.g., a remote rerank service) without
+    /// touching the rest of the construction path. Per RETRIEVE-06 this is
+    /// also how callers turn the rerank pass off entirely if the per-batch
+    /// budget busts on their hardware: `handle.with_reranker(Arc::new(NoopReranker))`.
+    pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
+        self.reranker = reranker;
         self
     }
 
@@ -171,6 +203,12 @@ impl Lunaris {
     /// hybrid search.
     pub fn moon_storage(&self) -> Option<Arc<MoonStorage>> {
         self.moon_storage.clone()
+    }
+    /// Borrow the configured reranker. Lets callers chain
+    /// `handle.recall().rerank(handle.reranker())` when they want the rerank
+    /// pass without re-declaring it.
+    pub fn reranker(&self) -> Arc<dyn Reranker> {
+        self.reranker.clone()
     }
 }
 
@@ -218,4 +256,36 @@ async fn default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     Err(LunarisError::Storage(lunaris_core::StorageError::NotSupported(
         "no default embedder compiled in — enable feature `candle` or `ollama`, or pass a custom embedder via Lunaris::with_parts",
     )))
+}
+
+/// Plan 02-03: Construct the default reranker for [`Lunaris::open`].
+///
+/// Tries to load `BgeRerankerV2M3` from the default cache. On cache miss
+/// (the common case on dev boxes without 1.1 GB of weights pre-downloaded)
+/// emits a `tracing::warn!` describing what's missing and substitutes
+/// [`NoopReranker`] per the RETRIEVE-06 contract — recall still runs
+/// end-to-end, just without the 12 ms cross-encoder relevance boost.
+///
+/// Callers wire their own reranker via `Lunaris::with_reranker(reranker)`.
+#[cfg(feature = "candle")]
+async fn default_reranker() -> Arc<dyn Reranker> {
+    match lunaris_rerank::BgeRerankerV2M3::try_new_from_default_cache().await {
+        Ok(r) => Arc::new(r) as Arc<dyn Reranker>,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "bge-reranker-v2-m3 unavailable; using NoopReranker (recall budget skips the rerank pass per RETRIEVE-06 contract — install weights via `python -m huggingface_hub download BAAI/bge-reranker-v2-m3 --local-dir ~/.cache/lunaris/models/bge-reranker-v2-m3`)"
+            );
+            Arc::new(NoopReranker) as Arc<dyn Reranker>
+        }
+    }
+}
+
+/// Without the `candle` feature there's no real reranker to fall back FROM,
+/// so the default is unconditionally [`NoopReranker`]. Production callers that
+/// want a real rerank pass enable the `candle` feature OR pass a custom
+/// `Reranker` impl via [`Lunaris::with_reranker`].
+#[cfg(not(feature = "candle"))]
+async fn default_reranker() -> Arc<dyn Reranker> {
+    Arc::new(NoopReranker) as Arc<dyn Reranker>
 }
