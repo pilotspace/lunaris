@@ -1,27 +1,29 @@
-//! Plan 04-01 D-04..D-07: in-process tokio worker that consumes
-//! `__lunaris_verify__` and applies arbitration decisions through
-//! `StoragePort::atomic_write` with the MVCC supersede contract (D-11).
+//! Plan 04-01 D-04..D-07 + Plan 04-04 Task 4 (B-2): in-process tokio worker
+//! that consumes `__lunaris_verify__` and applies arbitration decisions
+//! through `StoragePort::atomic_write` with the MVCC supersede contract
+//! (D-11).
 //!
 //! ## Lifecycle
 //!
 //! ```ignore
 //! let shutdown = Arc::new(tokio::sync::Notify::new());
-//! let handle = run_verify_worker(storage, verifier, shutdown.clone()).await?;
+//! let clock = lunaris_core::HlcClock::new(0);
+//! let handle = run_verify_worker(storage, verifier, shutdown.clone(), clock).await?;
 //! shutdown.notify_one();
 //! handle.await.ok();
 //! ```
 //!
-//! ## v0 supersede stub (B-2 forward reference)
+//! ## B-2 fix — real MVCC primitive-row supersede (Plan 04-04 Task 4)
 //!
-//! `apply_supersede` here writes synthetic keys
-//! `verify-arbitration:winner:<ulid>` / `verify-arbitration:loser:<ulid>`
-//! through ONE `atomic_write` call. Plan 04-04 Task 4 REPLACES this body with
-//! the real primitive-row supersede: load the actual primitive `Row<Bytes>`
-//! via `read_as_of`, stamp the loser's `bt.sys.1 = Some(now)` via
-//! `BiTemporal::invalidate_sys`, write a new winner row at the canonical key
-//! — all in ONE `atomic_write` call. The v0 stub preserves both the
-//! single-call invariant and the audit-emit shape; Plan 04-04 Task 4 swaps
-//! the key derivation + payload shape only.
+//! `apply_supersede` loads the actual primitive `Row<Bytes>` for both winner
+//! and loser via `read_as_of`, stamps the loser's `bt.sys.1 = Some(now)` via
+//! `BiTemporal::invalidate_sys` AND **JSON-patches the mutated bt back into
+//! the payload bytes** before emitting the `WriteOp::KvPut`. This mirrors
+//! Plan 04-05 `forget.rs::build_soft_delete_op` because `WriteOp::KvPut`
+//! carries no separate `bt` field — the Moon HSET layer and Postgres row
+//! storage both derive the persisted bt from the serialized payload, so a
+//! typed-local mutation that doesn't ride inside the payload bytes is
+//! discarded. ONE `atomic_write` per decision (D-11).
 //!
 //! ## Shutdown + drain (D-07)
 //!
@@ -36,7 +38,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::stream::{BoxStream, StreamExt};
 use lunaris_core::QueueMsg;
-use lunaris_core::{LunarisError, StorageError, StoragePort, WriteOp};
+use lunaris_core::{BiTemporal, HlcClock, LunarisError, StorageError, StoragePort, WriteOp};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -87,6 +89,7 @@ pub async fn run_verify_worker(
     storage: Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
     shutdown: Arc<Notify>,
+    clock: Arc<HlcClock>,
 ) -> Result<JoinHandle<()>, LunarisError> {
     let stream = storage
         .subscribe(VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)
@@ -114,7 +117,7 @@ pub async fn run_verify_worker(
                         drain_ms,
                         "verify_worker_shutdown_requested; entering drain"
                     );
-                    drain_loop(&mut stream, &storage, verifier.clone(), drain_ms).await;
+                    drain_loop(&mut stream, &storage, verifier.clone(), &clock, drain_ms).await;
                     break;
                 }
                 maybe_msg = stream.next() => {
@@ -124,7 +127,7 @@ pub async fn run_verify_worker(
                             break;
                         }
                         Some(Ok(msg)) => {
-                            process_one(&storage, verifier.clone(), msg.payload).await;
+                            process_one(&storage, verifier.clone(), &clock, msg.payload).await;
                         }
                         Some(Err(e)) => {
                             tracing::warn!(err = %e, "verify_worker_stream_error; continuing");
@@ -150,13 +153,14 @@ async fn drain_loop(
     stream: &mut BoxStream<'static, Result<QueueMsg, StorageError>>,
     storage: &Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
+    clock: &Arc<HlcClock>,
     drain_ms: u64,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(drain_ms);
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, stream.next()).await {
             Ok(Some(Ok(msg))) => {
-                process_one(storage, verifier.clone(), msg.payload).await;
+                process_one(storage, verifier.clone(), clock, msg.payload).await;
             }
             Ok(Some(Err(e))) => {
                 tracing::warn!(err = %e, "verify_worker_drain_stream_error");
@@ -170,6 +174,7 @@ async fn drain_loop(
 async fn process_one(
     storage: &Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
+    clock: &Arc<HlcClock>,
     payload: Bytes,
 ) {
     // NoopVerifier short-circuit — applies()==false means never call verify
@@ -185,6 +190,12 @@ async fn process_one(
             return;
         }
     };
+
+    // Plan 04-04 Task 4 (B-2): keep the envelope's `kind` for the
+    // canonical-key derivation in apply_supersede. We move the body fields
+    // out of the envelope into the typed NeedsReviewItem next, so we
+    // capture `kind` first.
+    let envelope_kind = envelope.kind.clone();
 
     let item = match envelope.into_needs_review() {
         Ok(i) => i,
@@ -218,7 +229,7 @@ async fn process_one(
         return;
     }
 
-    if let Err(e) = apply_supersede(storage, &result).await {
+    if let Err(e) = apply_supersede(storage, &result, clock, &envelope_kind).await {
         tracing::warn!(err = %e, "verify_worker_atomic_write_failed; broker will redeliver");
         return;
     }
@@ -233,62 +244,181 @@ async fn process_one(
 
 /// D-11 MVCC supersede invariant: ONE atomic_write call.
 ///
-/// **v0 STUB (B-2 forward reference):** writes synthetic
-/// `verify-arbitration:winner:<ulid>` / `verify-arbitration:loser:<ulid>`
-/// keys. Plan 04-04 Task 4 REPLACES this body with the real primitive-row
-/// supersede:
+/// ## Plan 04-04 Task 4 (B-2 + B-2-RESIDUAL) — real primitive-row supersede
 ///
-///   1. Extract primitive_kind + primitive_id from the original envelope.
-///   2. Compute the canonical key (e.g., `episode:<ulid>`, `fact:<ulid>` —
-///      match `lunaris/src/ingest.rs` episode_key/chunk_key/etc.).
-///   3. `storage.read_as_of(key, now)` to load the current `Row<Bytes>`.
-///   4. Build a `WriteOp` pair stamping the loser's `bt.sys.1 = Some(now)`
-///      via `BiTemporal::invalidate_sys` and the winner's `bt.sys.0 = now`
-///      while preserving the original payload bytes.
-///   5. ONE `storage.atomic_write(&[loser_op, winner_op])`.
+/// 1. Derive the canonical key from `envelope_kind` + winner/loser ulid:
+///    `entity:<ulid>` / `relation:<ulid>` / `fact:<ulid>` (matching
+///    `lunaris/src/ingest.rs` key prefixes).
+/// 2. `storage.read_as_of(key, now)` for both winner + loser rows.
+/// 3. Mutate the loser's `BiTemporal::sys.1 = Some(now)` via
+///    `invalidate_sys` AND **JSON-patch the mutated bt back into the
+///    payload bytes** before emitting `WriteOp::KvPut`. This mirrors Plan
+///    04-05 `forget.rs::build_soft_delete_op`.
+/// 4. Mutate the winner's `BiTemporal { valid: (now, None), sys: (now,
+///    None) }` and JSON-patch the same way.
+/// 5. ONE storage.atomic_write call with the [loser_op, winner_op] slice.
 ///
-/// The v0 stub here is correct enough to demonstrate the single-call
-/// invariant + the audit-emit shape; the real key derivation lands in
-/// Plan 04-04 Task 4.
+/// **Why the JSON-patch pattern is mandatory (B-2-RESIDUAL):**
+/// `WriteOp::KvPut` is `{ key: Vec<u8>, value: Vec<u8> }` — it has NO `bt`
+/// field. The Moon HSET layer (`crates/lunaris-storage-moon/src/kv.rs`) and
+/// Postgres row storage both derive the persisted bt from the serialized
+/// payload, so a typed-local mutation that doesn't ride inside the payload
+/// bytes is discarded. Task 4 mirrors the JSON-patch pattern proven in
+/// Plan 04-05 forget.rs.
 async fn apply_supersede(
     storage: &Arc<dyn StoragePort>,
     decision: &VerifyDecision,
+    clock: &Arc<HlcClock>,
+    envelope_kind: &str,
 ) -> Result<(), LunarisError> {
-    let winner = decision.winner_id.expect("checked applies() earlier");
-    let loser = decision.loser_id.expect("checked applies() earlier");
+    let winner_id = decision.winner_id.expect("checked applies() earlier");
+    let loser_id = decision.loser_id.expect("checked applies() earlier");
 
-    let winner_key = format!("verify-arbitration:winner:{winner}").into_bytes();
-    let loser_key = format!("verify-arbitration:loser:{loser}").into_bytes();
+    // 1. Derive canonical keys from envelope_kind + ulids. Match the key
+    //    prefixes used by `crates/lunaris/src/ingest.rs` (episode_key,
+    //    chunk_key, fact_key, etc.). Unknown kinds error out so the worker
+    //    drops the message rather than writing the wrong row
+    //    (T-04-04-09 mitigation).
+    let key_prefix = match envelope_kind {
+        "entity" => "entity",
+        "relation" => "relation",
+        "fact" => "fact",
+        other => {
+            return Err(LunarisError::Storage(StorageError::Backend(format!(
+                "unknown envelope kind: {other}"
+            ))));
+        }
+    };
+    let winner_key = format!("{key_prefix}:{winner_id}").into_bytes();
+    let loser_key = format!("{key_prefix}:{loser_id}").into_bytes();
 
-    let winner_payload = serde_json::json!({
-        "verifier_decision": "winner",
-        "ulid": winner.to_string(),
-        "reason": decision.reason.clone(),
-        "decided_at_iso": decision.decided_at_iso.clone(),
-    });
-    let loser_payload = serde_json::json!({
-        "verifier_decision": "loser_superseded",
-        "ulid": loser.to_string(),
-        "superseded_by": winner.to_string(),
-        "decided_at_iso": decision.decided_at_iso.clone(),
-    });
+    // 2. Stamp `now` via HlcClock::tick (the Hlc type itself has no
+    //    `now()` constructor — Hlc::ZERO is the only const, and HlcClock
+    //    is the source of monotonic timestamps).
+    let now = clock.tick();
 
-    let ops = vec![
-        WriteOp::KvPut {
-            key: winner_key,
-            value: serde_json::to_vec(&winner_payload).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!("winner serialize: {e}")))
-            })?,
-        },
-        WriteOp::KvPut {
-            key: loser_key,
-            value: serde_json::to_vec(&loser_payload).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!("loser serialize: {e}")))
-            })?,
-        },
-    ];
+    // 3. Load existing rows.
+    let winner_existing = storage
+        .read_as_of(&winner_key, now)
+        .await
+        .map_err(LunarisError::Storage)?;
+    let loser_existing = storage
+        .read_as_of(&loser_key, now)
+        .await
+        .map_err(LunarisError::Storage)?;
 
-    storage.atomic_write(&ops).await.map(|_lsn| ()).map_err(LunarisError::Storage)
+    // 4. LOSER WriteOp — invalidate_sys + JSON-patch payload["bt"].
+    let loser_op = match loser_existing {
+        Some(row) => {
+            let mut loser_bt = row.bt;
+            loser_bt.invalidate_sys(now);
+
+            let mut payload: serde_json::Value =
+                serde_json::from_slice(&row.value).map_err(|e| {
+                    LunarisError::Storage(StorageError::Backend(format!(
+                        "loser payload parse: {e}"
+                    )))
+                })?;
+
+            payload["bt"] = serde_json::to_value(&loser_bt).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "loser bt serialize: {e}"
+                )))
+            })?;
+
+            let loser_bytes = serde_json::to_vec(&payload).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "loser payload serialize: {e}"
+                )))
+            })?;
+
+            WriteOp::KvPut { key: loser_key.clone(), value: loser_bytes }
+        }
+        None => {
+            // No prior loser row — emit a tombstone-shaped payload carrying
+            // a bt with sys=(now, Some(now)) so the row is immediately
+            // invalidated even though it has no history. JSON-patch shape
+            // mirrors the live-row path so the mock + real backends parse
+            // it identically.
+            let synthetic_bt = BiTemporal {
+                valid: (now, None),
+                sys: (now, Some(now)),
+            };
+            let payload = serde_json::json!({
+                "verifier_decision": "loser_superseded_no_prior_row",
+                "ulid": loser_id.to_string(),
+                "superseded_by": winner_id.to_string(),
+                "decided_at_iso": decision.decided_at_iso,
+                "bt": synthetic_bt,
+            });
+            let bytes = serde_json::to_vec(&payload).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "loser synthetic serialize: {e}"
+                )))
+            })?;
+            WriteOp::KvPut { key: loser_key.clone(), value: bytes }
+        }
+    };
+
+    // 5. WINNER WriteOp — stamp bt.sys.0 = now, clear bt.sys.1, reset
+    //    bt.valid.0 = now (v0 simplification — if the verifier produces
+    //    revised valid bounds in a future VerifyEnvelope extension, plumb
+    //    them through here instead of resetting). JSON-patch the same way.
+    let winner_op = match winner_existing {
+        Some(row) => {
+            let mut winner_bt = row.bt;
+            winner_bt.sys = (now, None);
+            winner_bt.valid = (now, None);
+
+            let mut payload: serde_json::Value =
+                serde_json::from_slice(&row.value).map_err(|e| {
+                    LunarisError::Storage(StorageError::Backend(format!(
+                        "winner payload parse: {e}"
+                    )))
+                })?;
+
+            payload["bt"] = serde_json::to_value(&winner_bt).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "winner bt serialize: {e}"
+                )))
+            })?;
+
+            let winner_bytes = serde_json::to_vec(&payload).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "winner payload serialize: {e}"
+                )))
+            })?;
+
+            WriteOp::KvPut { key: winner_key.clone(), value: winner_bytes }
+        }
+        None => {
+            // No prior winner row yet — synthesize one carrying the
+            // verifier decision body PLUS a fresh bt. JSON-patch shape
+            // matches the live-row path.
+            let fresh_bt = BiTemporal { valid: (now, None), sys: (now, None) };
+            let payload = serde_json::json!({
+                "verifier_decision": "winner",
+                "ulid": winner_id.to_string(),
+                "reason": decision.reason,
+                "decided_at_iso": decision.decided_at_iso,
+                "bt": fresh_bt,
+            });
+            let bytes = serde_json::to_vec(&payload).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "winner synthetic serialize: {e}"
+                )))
+            })?;
+            WriteOp::KvPut { key: winner_key.clone(), value: bytes }
+        }
+    };
+
+    // 6. ONE atomic_write per decision (D-11 invariant).
+    //    Exactly TWO ops in this call: [loser_op, winner_op].
+    storage
+        .atomic_write(&[loser_op, winner_op])
+        .await
+        .map(|_lsn| ())
+        .map_err(LunarisError::Storage)
 }
 
 /// Publish one `AuditEvent::VerifierArbitration` to `__lunaris_audit__`

@@ -150,10 +150,13 @@ impl Lunaris {
                 let m = Arc::new(MoonStorage::connect(url).await?);
                 let storage_arc: Arc<dyn StoragePort> = m.clone();
                 // B-10: bind the StoragePort Arc to BOTH pipelines AFTER
-                // we've constructed it. If env var initial-state was ON,
-                // also kick the worker via spawn_worker_if_idle so callers
-                // don't have to call enable() a second time post-bind.
+                // we've constructed it. Also bind the HlcClock so the
+                // Plan 04-04 Task 4 apply_supersede has a tick source. If
+                // env var initial-state was ON, also kick the worker via
+                // spawn_worker_if_idle so callers don't have to call
+                // enable() a second time post-bind.
                 verify_pipeline.bind_storage(storage_arc.clone());
+                verify_pipeline.bind_clock(clock.clone());
                 consolidator_pipeline.bind_storage(storage_arc.clone());
                 if initial_verify_state {
                     verify_pipeline.spawn_worker_if_idle();
@@ -177,6 +180,7 @@ impl Lunaris {
                 let p = Arc::new(PostgresStorage::connect(url).await?);
                 let storage_arc: Arc<dyn StoragePort> = p.clone();
                 verify_pipeline.bind_storage(storage_arc.clone());
+                verify_pipeline.bind_clock(clock.clone());
                 consolidator_pipeline.bind_storage(storage_arc.clone());
                 if initial_verify_state {
                     verify_pipeline.spawn_worker_if_idle();
@@ -230,8 +234,10 @@ impl Lunaris {
             Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
         ));
         // B-10: bind storage to BOTH pipelines (2 of the 4 total bind_storage
-        // call sites in handle.rs).
+        // call sites in handle.rs). Also bind the HlcClock to verify_pipeline
+        // so the Plan 04-04 Task 4 apply_supersede has a tick source.
         verify_pipeline.bind_storage(storage.clone());
+        verify_pipeline.bind_clock(clock.clone());
         consolidator_pipeline.bind_storage(storage.clone());
         Self {
             storage,
@@ -277,8 +283,10 @@ impl Lunaris {
             Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
         ));
         // B-10: bind storage to BOTH pipelines (the OTHER 2 of the 4 total
-        // bind_storage call sites in handle.rs).
+        // bind_storage call sites in handle.rs). Also bind the HlcClock to
+        // verify_pipeline.
         verify_pipeline.bind_storage(storage.clone());
+        verify_pipeline.bind_clock(clock.clone());
         consolidator_pipeline.bind_storage(storage.clone());
         Self {
             storage,

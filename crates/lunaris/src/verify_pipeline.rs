@@ -36,6 +36,7 @@
 
 use std::sync::Arc;
 
+use lunaris_core::HlcClock;
 use lunaris_verify::{NoopVerifier, Verifier};
 use parking_lot::{Mutex, RwLock};
 
@@ -71,6 +72,10 @@ pub struct VerifierPipelineHandle {
     /// Storage handle the worker subscribes through. Late-bound by
     /// [`crate::Lunaris::open`] via [`Self::bind_storage`].
     storage: RwLock<Option<Arc<dyn lunaris_core::StoragePort>>>,
+    /// Plan 04-04 Task 4 (B-2): HlcClock for the worker's apply_supersede
+    /// to call `clock.tick()` when stamping winner/loser bt. Late-bound by
+    /// [`crate::Lunaris::open`] via [`Self::bind_clock`] alongside storage.
+    clock: RwLock<Option<Arc<HlcClock>>>,
 }
 
 impl VerifierPipelineHandle {
@@ -87,6 +92,7 @@ impl VerifierPipelineHandle {
             shutdown: Arc::new(tokio::sync::Notify::new()),
             worker_handle: Mutex::new(None),
             storage: RwLock::new(None),
+            clock: RwLock::new(None),
         }
     }
 
@@ -117,6 +123,15 @@ impl VerifierPipelineHandle {
         *self.storage.write() = Some(storage);
     }
 
+    /// Plan 04-04 Task 4 (B-2): late-bind the HlcClock the worker uses
+    /// for `apply_supersede`'s `clock.tick()` call. The handle is
+    /// constructed BEFORE the umbrella `Lunaris::open` knows the clock
+    /// (the clock is created in the same construction sequence), so we
+    /// bind it after construction the same way as `bind_storage`.
+    pub fn bind_clock(&self, clock: Arc<HlcClock>) {
+        *self.clock.write() = Some(clock);
+    }
+
     /// Spawn the worker if one isn't already running AND storage is bound.
     /// Otherwise logs a warning + no-ops. Called by [`Self::enable`] on a
     /// real state transition.
@@ -136,12 +151,17 @@ impl VerifierPipelineHandle {
                 return;
             }
         };
+        // Plan 04-04 Task 4 (B-2): clock is required by run_verify_worker
+        // for apply_supersede's tick(). If unbound (test seam that didn't
+        // call bind_clock), construct a fresh node-0 HlcClock so the worker
+        // still spawns + the ON-OFF observability shape holds.
+        let clock = self.clock.read().clone().unwrap_or_else(|| HlcClock::new(0));
         let verifier = self
             .snapshot_verifier()
             .unwrap_or_else(|| Arc::new(NoopVerifier) as Arc<dyn Verifier>);
         let shutdown = self.shutdown.clone();
         let handle = tokio::spawn(async move {
-            match lunaris_verify::run_verify_worker(storage, verifier, shutdown).await {
+            match lunaris_verify::run_verify_worker(storage, verifier, shutdown, clock).await {
                 Ok(jh) => {
                     // The inner tokio::spawn's JoinHandle drives the event
                     // loop; await it so our outer handle.await signals
@@ -237,6 +257,7 @@ impl std::fmt::Debug for VerifierPipelineHandle {
             .field("enabled", &*self.enabled.read())
             .field("has_verifier", &self.verifier.read().is_some())
             .field("has_storage", &self.storage.read().is_some())
+            .field("has_clock", &self.clock.read().is_some())
             .field("has_worker", &self.worker_handle.lock().is_some())
             .field("state_change_count", &self.state_change_count())
             .finish()
