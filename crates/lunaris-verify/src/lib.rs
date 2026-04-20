@@ -105,6 +105,127 @@ pub trait Verifier: Send + Sync + 'static {
     }
 }
 
+/// Shared arbitration prompt used by the candle + ollama + cloud-api
+/// backends. v0 is intentionally minimal — a prompt-engineering iteration
+/// pass is a v1 concern (CONSOL-V1-01 / VERIFY-V1-01).
+///
+/// The model is expected to emit a JSON object of shape
+/// `{"winner_id": "<ulid>", "loser_id": "<ulid>", "reason": "..."}`. Any
+/// other shape (including missing fields) is treated as a "deferred"
+/// decision — the worker then skips the MVCC supersede for that item.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub(crate) fn arbitration_prompt(item: &NeedsReviewItem) -> String {
+    let kind = match item {
+        NeedsReviewItem::Entity { .. } => "entity",
+        NeedsReviewItem::Relation { .. } => "relation",
+        NeedsReviewItem::Fact { .. } => "fact",
+    };
+    let reason = match item {
+        NeedsReviewItem::Entity { reason, .. } => format!("{reason}"),
+        NeedsReviewItem::Relation { reason, .. } => format!("{reason}"),
+        NeedsReviewItem::Fact { reason, .. } => format!("{reason}"),
+    };
+    let item_json = match item {
+        NeedsReviewItem::Entity { raw, .. } => {
+            serde_json::to_string(raw).unwrap_or_else(|_| "{}".into())
+        }
+        NeedsReviewItem::Relation { raw, .. } => {
+            serde_json::to_string(raw).unwrap_or_else(|_| "{}".into())
+        }
+        NeedsReviewItem::Fact { raw, .. } => {
+            serde_json::to_string(raw).unwrap_or_else(|_| "{}".into())
+        }
+    };
+    format!(
+        "You are arbitrating a contradicting or invalid {kind} primitive in an agent memory store.\n\
+         Reason flagged: {reason}\n\
+         Item JSON: {item_json}\n\n\
+         Reply with a JSON object naming the winning and losing primitive ulids, e.g.\n\
+         {{\"winner_id\":\"01HX...\",\"loser_id\":\"01HY...\",\"reason\":\"<short explanation>\"}}\n\
+         If you cannot decide, reply with an empty JSON object {{}}."
+    )
+}
+
+/// Best-effort JSON parse of the model's decoded output — shared by the
+/// candle, ollama, and cloud-api backends. Tolerant of leading + trailing
+/// junk; extracts the first `{` ... matching `}` substring. On any failure
+/// (no JSON, bad shape, missing/invalid ulid), returns
+/// [`VerifyDecision::deferred()`] so the worker treats it as abstain.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub(crate) fn parse_decision_json(decoded: &str, backend: VerifierBackend) -> VerifyDecision {
+    let Some(start) = decoded.find('{') else {
+        return VerifyDecision::deferred();
+    };
+    let bytes = decoded.as_bytes();
+    let mut depth = 0_i32;
+    let mut end_excl = start;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end_excl = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if end_excl == start {
+        return VerifyDecision::deferred();
+    }
+    let slice = &decoded[start..end_excl];
+    match serde_json::from_str::<DecisionJson>(slice) {
+        Ok(parsed) => parsed.into_decision(backend),
+        Err(e) => {
+            tracing::warn!(err = %e, "verifier decision post-hoc parse failed; emitting deferred");
+            VerifyDecision::deferred()
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct DecisionJson {
+    winner_id: Option<String>,
+    loser_id: Option<String>,
+    reason: Option<String>,
+}
+
+#[allow(dead_code)]
+impl DecisionJson {
+    fn into_decision(self, backend: VerifierBackend) -> VerifyDecision {
+        let (Some(winner), Some(loser)) = (
+            self.winner_id.as_deref().and_then(|s| ulid::Ulid::from_string(s).ok()),
+            self.loser_id.as_deref().and_then(|s| ulid::Ulid::from_string(s).ok()),
+        ) else {
+            return VerifyDecision::deferred();
+        };
+        VerifyDecision::arbitrate(
+            winner,
+            loser,
+            self.reason.unwrap_or_else(|| "no reason provided".to_string()),
+            backend,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
