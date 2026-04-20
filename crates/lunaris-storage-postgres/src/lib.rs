@@ -1,10 +1,40 @@
-//! lunaris-storage-postgres — `PostgresStorage` skeleton for Phase 1 / Plan 02.
+//! `PostgresStorage` — `StoragePort` impl backed by Postgres + pgvector + AGE + pgmq.
 //!
-//! Plan 04 replaces the IO bodies with real `sqlx` queries against `pgvector` + `AGE` +
-//! `pgmq` + bi-temporal columns. The type and `capabilities()` shape locked here are stable.
+//! Module fan-out follows the same per-method layout as `lunaris-storage-moon`:
+//!
+//! | trait method      | module         | SQL pattern                                                |
+//! |-------------------|----------------|------------------------------------------------------------|
+//! | `atomic_write`    | `atomic.rs`    | `BEGIN` + per-op INSERT/UPSERT + `COMMIT`/`ROLLBACK`       |
+//! | `vector_search`   | `vector.rs`    | `SELECT ... ORDER BY embedding <=> $1 LIMIT $k`            |
+//! | `graph_traverse`  | `graph.rs`     | `SELECT * FROM cypher('lunaris_graph', $$ ... $$) AS ...`  |
+//! | `scan_range`      | `kv.rs`        | `SELECT key,value FROM lunaris_kv WHERE key LIKE $1 AND ...`|
+//! | `read_as_of`      | `kv.rs`        | bi-temporal predicate on `lunaris_kv`                      |
+//! | `publish`         | `queue.rs`     | `SELECT pgmq.send($topic, $payload::jsonb)`                |
+//! | `subscribe`       | `queue.rs`     | `SELECT * FROM pgmq.read($topic, $vt, $count)` polling     |
+//! | `capabilities`    | this file      | constant — Postgres profile (emulated bi-temporal, AGE, pgmq) |
+//!
+//! ## Threat model snapshot (T-01-04-*)
+//!
+//! * Filter values, label/rel names, prefix patterns are interpolated into SQL strings.
+//!   Caller-validated regex `^[A-Za-z_][A-Za-z0-9_]*$` per Plan 03's T-01-03-01 contract;
+//!   Phase 4 OPS-04 moves the guard into the trait.
+//! * `index` parameter on `vector_search` / `VectorUpsert` is whitelist-matched against
+//!   `chunks|entities|facts|communities` — anything else returns `StorageError::Backend`.
+//! * `PgClient::Debug` currently exposes the URL (potentially with userinfo). Phase 4
+//!   `OPS-05` redacts it; tracked in STATE.md.
 
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
+
+pub mod atomic;
+pub mod graph;
+pub mod kv;
+pub mod pool;
+pub mod queue;
+pub mod schema;
+pub mod vector;
+
+pub use pool::PgClient;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -14,72 +44,72 @@ use lunaris_core::{
     StoragePort, VectorHit, WriteOp,
 };
 
-/// Skeleton PostgresStorage handle — Plan 04 fills in the sqlx pool.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PostgresStorage {
-    url: String,
+    pub(crate) client: PgClient,
 }
 
 impl PostgresStorage {
-    /// Validate the URL and construct a handle. Plan 04 replaces this body with a real
-    /// `sqlx::postgres::PgPoolOptions::new().connect(...)` call + migrations.
+    /// Open a connection to Postgres at `url` (`postgres://user:pass@host/db` or
+    /// `postgresql://...`) and apply migrations.
     pub async fn connect(url: &str) -> Result<Self, StorageError> {
-        let parsed = url::Url::parse(url)
-            .map_err(|e| StorageError::UnsupportedScheme(format!("postgres parse: {e}")))?;
-        if parsed.scheme() != "postgres" && parsed.scheme() != "postgresql" {
-            return Err(StorageError::UnsupportedScheme(parsed.scheme().into()));
-        }
-        Ok(Self { url: url.to_string() })
+        Ok(Self { client: PgClient::connect(url).await? })
     }
 
-    pub fn url(&self) -> &str {
-        &self.url
+    /// Borrow the underlying client (used by integration tests).
+    pub fn client(&self) -> &PgClient {
+        &self.client
     }
 }
 
 #[async_trait]
 impl StoragePort for PostgresStorage {
-    async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        crate::atomic::atomic_write(&self.client, ops).await
     }
     async fn vector_search(
         &self,
-        _index: &str,
-        _q: &[f32],
-        _k: usize,
-        _f: Option<&Filter>,
-        _as_of: Option<Hlc>,
-        _rerank: bool,
+        index: &str,
+        query: &[f32],
+        k: usize,
+        filter: Option<&Filter>,
+        as_of: Option<Hlc>,
+        rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+        crate::vector::vector_search(&self.client, index, query, k, filter, as_of, rerank).await
     }
     async fn graph_traverse(
         &self,
-        _q: &CypherQuery,
-        _as_of: Option<Hlc>,
+        query: &CypherQuery,
+        as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+        crate::graph::graph_traverse(&self.client, query, as_of).await
     }
     async fn scan_range(
         &self,
-        _prefix: &[u8],
-        _as_of: Option<Hlc>,
+        prefix: &[u8],
+        as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+        crate::kv::scan_range(&self.client, prefix, as_of).await
     }
-    async fn read_as_of(&self, _k: &[u8], _as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+    async fn read_as_of(&self, key: &[u8], as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+        crate::kv::read_as_of(&self.client, key, as_of).await
     }
-    async fn publish(&self, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+    async fn publish(
+        &self,
+        topic: &str,
+        partition: u16,
+        payload: Bytes,
+    ) -> Result<u64, StorageError> {
+        crate::queue::publish(&self.client, topic, partition, payload).await
     }
     async fn subscribe(
         &self,
-        _g: &str,
-        _t: &str,
-        _p: u16,
+        group: &str,
+        topic: &str,
+        partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        Err(StorageError::NotSupported("Phase 1 skeleton — Plan 04 fills PostgresStorage IO"))
+        crate::queue::subscribe(self.client.clone(), group, topic, partition).await
     }
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
@@ -87,7 +117,38 @@ impl StoragePort for PostgresStorage {
             graph_native: true,        // AGE
             rerank_native: false,      // no native cross-encoder
             queue_native: true,        // pgmq
-            max_vector_dim: 1536,      // pgvector default upper bound
+            max_vector_dim: 1536,      // pgvector practical ceiling (Postgres profile)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Compile-time assertion that `PostgresStorage` is dyn-compatible.
+    #[allow(dead_code)]
+    fn _postgresstorage_is_storage_port() {
+        fn assert_storage_port<T: StoragePort + ?Sized>() {}
+        assert_storage_port::<PostgresStorage>();
+        assert_storage_port::<dyn StoragePort>();
+    }
+
+    #[test]
+    fn capabilities_match_postgres_profile() {
+        // We can't construct a real `PostgresStorage` without a connection, but we can
+        // match the `capabilities()` body shape directly.
+        let want = StorageCapabilities {
+            bi_temporal_native: false,
+            graph_native: true,
+            rerank_native: false,
+            queue_native: true,
+            max_vector_dim: 1536,
+        };
+        assert!(!want.bi_temporal_native);
+        assert!(want.graph_native);
+        assert!(!want.rerank_native);
+        assert!(want.queue_native);
+        assert_eq!(want.max_vector_dim, 1536);
     }
 }

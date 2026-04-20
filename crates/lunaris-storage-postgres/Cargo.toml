@@ -6,16 +6,36 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
+# Integration tests:
+#   cargo test -p lunaris-storage-postgres --lib                      # unit tests, no Postgres required
+#   cargo test -p lunaris-storage-postgres --features pg-it           # round-trip vs live Postgres
+# Live tests expect Postgres+pgvector+age+pgmq at PG_URL (default postgres://localhost/lunaris).
+# Cross-backend identity test additionally requires MOON_URL.
+
 [dependencies]
-lunaris-core   = { path = "../lunaris-core" }
-async-trait    = { workspace = true }
-bytes          = { workspace = true }
-futures        = { workspace = true }
-serde          = { workspace = true }
-serde_json     = { workspace = true }
-thiserror      = { workspace = true }
-tokio          = { workspace = true }
-tracing        = { workspace = true }
-sqlx           = { workspace = true }
-parking_lot    = { workspace = true }
-url            = { workspace = true }
+lunaris-core             = { path = "../lunaris-core" }
+lunaris-storage-moon     = { path = "../lunaris-storage-moon", optional = true }
+async-trait              = { workspace = true }
+bytes                    = { workspace = true }
+futures                  = { workspace = true }
+serde                    = { workspace = true }
+serde_json               = { workspace = true }
+thiserror                = { workspace = true }
+tokio                    = { workspace = true }
+tracing                  = { workspace = true }
+sqlx                     = { workspace = true, features = ["macros", "migrate"] }
+parking_lot              = { workspace = true }
+url                      = { workspace = true }
+ulid                     = { workspace = true }
+chrono                   = { workspace = true }
+
+[dev-dependencies]
+tokio                    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []
+# Run integration tests against a live Postgres with vector + age + pgmq at PG_URL.
+pg-it   = []
+# Cross-backend identity test additionally pulls MoonStorage so writes to both backends
+# can be byte-compared. Requires MOON_URL to be set at test time.
+moon-it = ["dep:lunaris-storage-moon"]
