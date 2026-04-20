@@ -142,6 +142,21 @@ const ROWS: &[Row] = &[
         p50_budget_ms: 3.0,
         p99_budget_ms: 12.0,
     },
+    // Plan 03-04 — INGEST-06 graph-on row (blueprint §4.1: 300 ms p50 / 570 ms p99).
+    // Per Plan 02-04 decision (table-mirror): explicit duplication with
+    // tests/budget_assertions.rs::BUDGET_TABLE rather than a shared
+    // submodule (table is small + change-rare; extracting forces xtask to
+    // take a path dep on lunaris-bench).
+    //
+    // Schema-W-6: ONE row per (group, bench); renderer (read_per_backend)
+    // fans across moon + postgres internally — do NOT add a separate
+    // Postgres row here.
+    Row {
+        group: "ingest_hot_path",
+        bench: "ingest_12kb_md_graph_on",
+        p50_budget_ms: 300.0,
+        p99_budget_ms: 570.0,
+    },
 ];
 
 #[derive(Debug, Default, Clone)]

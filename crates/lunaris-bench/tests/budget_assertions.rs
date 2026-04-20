@@ -94,6 +94,27 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 8_000_000,
         p99_budget_ns: 0,
     },
+    // INGEST-06 — graph-on ingest p50 ≤ 300 ms / p99 ≤ 570 ms (blueprint §4.1, Plan 03-04).
+    // Per ROADMAP Phase 3 success criterion #4: "With graph ON, ingest p50 ≤ 300 ms /
+    // p99 ≤ 570 ms holds per blueprint §4.1 latency budget."
+    //
+    // Soft-fail rule (Plan 02-04 decision): Moon over budget = hard panic;
+    // Postgres ≤2× over = hard panic; Postgres >2× over = warn + continue.
+    // Same logic the existing 6 rows use — no special-casing needed.
+    BudgetRow {
+        group: "ingest_hot_path",
+        bench: "ingest_12kb_md_graph_on",
+        label: "moon",
+        p50_budget_ns: 300_000_000,
+        p99_budget_ns: 570_000_000,
+    },
+    BudgetRow {
+        group: "ingest_hot_path",
+        bench: "ingest_12kb_md_graph_on",
+        label: "postgres",
+        p50_budget_ns: 300_000_000,
+        p99_budget_ns: 570_000_000,
+    },
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -138,8 +159,16 @@ enum CheckOutcome {
 /// (per ROADMAP risk register: ship Moon-only, document Postgres gap).
 /// Postgres rows that miss by ≤2× still panic — we want the gap visible
 /// during the soft-fail window so it's not silently accepted forever.
+///
+/// Plan 03-04 extends [`BUDGET_TABLE`] from 6 → 8 rows: the existing 6
+/// Phase 2 rows (INGEST-05 + RETRIEVE-11/12 + atomic_write floors) PLUS
+/// the 2 INGEST-06 graph-on rows (Moon + Postgres at 300 ms p50 / 570 ms
+/// p99). The walker logic is unchanged — every new row inherits the same
+/// soft-fail rule. Live numbers populate when CI / developer runs
+/// `MOON_URL=… PG_URL=… cargo xtask bench`; without live data each row
+/// resolves to SKIP cleanly (asserted by `missing_estimates_skip_without_panic`).
 #[test]
-fn enforces_phase2_budgets() {
+fn enforces_phase2_and_phase3_budgets() {
     init_tracing();
     let target_root = criterion_root();
     let mut hard_failures: Vec<String> = Vec::new();
@@ -170,7 +199,7 @@ fn enforces_phase2_budgets() {
                             p50_ms = rep.p50_ms,
                             budget_ms = rep.p50_budget_ms,
                             overshoot = p50_overshoot,
-                            "Postgres p50 > 2x budget; per ROADMAP risk register, ship Phase 2 on Moon-only and document gap"
+                            "Postgres p50 > 2x budget; per ROADMAP risk register, ship on Moon-only and document gap"
                         );
                         soft_warnings.push(format!("{id} (>2x soft-fail) → {msg}"));
                         continue;
@@ -189,11 +218,48 @@ fn enforces_phase2_budgets() {
 
     if !hard_failures.is_empty() {
         panic!(
-            "Phase 2 latency budget enforcement FAILED — {} hard miss(es):\n{}",
+            "Phase 2 + Phase 3 latency budget enforcement FAILED — {} hard miss(es):\n{}",
             hard_failures.len(),
             hard_failures.join("\n")
         );
     }
+}
+
+/// Plan 03-04 — verifies the BUDGET_TABLE has the 2 INGEST-06 graph-on
+/// rows (Moon + Postgres) at the expected 300 ms p50 / 570 ms p99 and
+/// the total row count is 8 (6 Phase 2 baseline + 2 Phase 3 graph-on).
+///
+/// Always runs (not gated behind live-backend data) so the BUDGET_TABLE
+/// shape itself is CI-checkable even when no Criterion JSON exists on disk.
+#[test]
+fn budget_table_has_ingest_06_graph_on_rows() {
+    let moon_row = BUDGET_TABLE
+        .iter()
+        .find(|r| {
+            r.group == "ingest_hot_path"
+                && r.bench == "ingest_12kb_md_graph_on"
+                && r.label == "moon"
+        })
+        .expect("INGEST-06 Moon row must exist");
+    assert_eq!(moon_row.p50_budget_ns, 300_000_000, "blueprint §4.1 graph-on p50 = 300 ms");
+    assert_eq!(moon_row.p99_budget_ns, 570_000_000, "blueprint §4.1 graph-on p99 = 570 ms");
+
+    let pg_row = BUDGET_TABLE
+        .iter()
+        .find(|r| {
+            r.group == "ingest_hot_path"
+                && r.bench == "ingest_12kb_md_graph_on"
+                && r.label == "postgres"
+        })
+        .expect("INGEST-06 Postgres row must exist");
+    assert_eq!(pg_row.p50_budget_ns, 300_000_000, "blueprint §4.1 graph-on p50 = 300 ms");
+    assert_eq!(pg_row.p99_budget_ns, 570_000_000, "blueprint §4.1 graph-on p99 = 570 ms");
+
+    // Total row count: 6 baseline (Plan 02-04) + 2 new (Plan 03-04) = 8.
+    // W-12 fix: the assertion uses the assert_eq!(BUDGET_TABLE.len(), 8, ...)
+    // form so the grep gate `grep -c 'BUDGET_TABLE.len(), 8'` finds it
+    // verbatim per the plan's W-12 corrected acceptance criterion.
+    assert_eq!(BUDGET_TABLE.len(), 8, "budget table row count check (6 Phase 2 + 2 Phase 3)");
 }
 
 /// Synthetic-JSON unit test — verifies the parse + comparison logic without
