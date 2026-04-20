@@ -1,0 +1,4 @@
+[submodule ".planning"]
+	path = .planning
+	url = git@github.com:pilotspace/lunaris-docs.git
+	branch = main

@@ -1,0 +1,72 @@
+# --- Rust ---
+target/
+**/*.rs.bk
+Cargo.lock.bak
+*.pdb
+
+# --- Python (PyO3 builds, evals, harnesses) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+htmlcov/
+.coverage
+*.egg-info/
+build/
+dist/
+wheels/
+
+# --- Node / TypeScript (NAPI bindings) ---
+node_modules/
+.pnp
+.pnp.js
+*.tsbuildinfo
+.next/
+.turbo/
+.npm/
+.yarn/
+dist-ts/
+*.node
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Tooling caches ---
+.serena/
+.ruff_cache/
+.cargo/
+.rustup/
+
+# --- Local env / secrets ---
+.env
+.env.local
+.env.*.local
+secrets/
+credentials.json
+
+# --- Eval artefacts (large corpora, downloaded models) ---
+evals/data/
+evals/results/
+models/
+*.gguf
+*.safetensors
+*.onnx
+
+# --- Local Postgres / Moon dev state ---
+pgdata/
+moon-data/
+*.wal
+*.snapshot
+tmp/
