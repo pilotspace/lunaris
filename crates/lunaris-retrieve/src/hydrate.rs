@@ -42,10 +42,15 @@ fn episode_lookup_key(id: Ulid) -> Vec<u8> {
 ///
 /// Looks up each chunk and its parent episode (batched per unique episode_id).
 /// Hits whose chunk row is missing are skipped (since-deleted chunks).
+///
+/// `initial_degraded` (Plan 04-04 B-9) is OR-ed into every produced
+/// `Hit::degraded` so callers using `Lunaris::recall_with_degraded_check`
+/// see the verifier-queue-lag flag on every hit.
 pub async fn hydrate(
     storage: &dyn StoragePort,
     hits: Vec<RawHit>,
     as_of: Option<Hlc>,
+    initial_degraded: bool,
 ) -> Result<Vec<Hit>, LunarisError> {
     // The fallback "live" timestamp when as_of is None.
     let live_clock = HlcClock::new(0);
@@ -107,7 +112,11 @@ pub async fn hydrate(
             // callers can tell whether the hit came from a degraded_fallback
             // path (`degraded == true`) and whether the rerank pass actually
             // ran (`rerank_applied == true` only when a non-NoopReranker fired).
-            degraded: raw.degraded,
+            //
+            // Plan 04-04 B-9: OR `initial_degraded` so hits also surface the
+            // verifier-queue-lag backpressure flag from
+            // `Lunaris::recall_with_degraded_check`.
+            degraded: raw.degraded || initial_degraded,
             rerank_applied: raw.rerank_applied,
             source_op: raw.source_op,
         })

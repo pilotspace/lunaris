@@ -78,7 +78,10 @@ impl Service<Query> for RetrievalService {
         Box::pin(async move {
             let ctx = QueryContext::new(q, embedder, storage.clone(), keyword);
             let raw = root.retrieve(&ctx).await?;
-            hydrate(storage.as_ref(), raw, as_of).await
+            // Plan 04-04 B-9: RetrievalService callers don't have a verifier
+            // queue-depth check (only `Lunaris::recall_with_degraded_check`
+            // does), so initial_degraded is unconditionally false here.
+            hydrate(storage.as_ref(), raw, as_of, false).await
         })
     }
 }

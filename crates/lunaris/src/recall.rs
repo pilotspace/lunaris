@@ -3,10 +3,32 @@
 //! Returns a [`RetrievalBuilder`] seeded with this handle's storage,
 //! keyword, embedder, and (when present) the typed `Arc<MoonStorage>`
 //! that lets `fuse_rrf` take the Moon-native one-round-trip path.
+//!
+//! ## Plan 04-04 B-8 — sync `recall()` is unchanged
+//!
+//! `recall()` stays synchronous so all prior callers (Phase 2 tests,
+//! `recall_smoke.rs`, `graph_pipeline_smoke.rs`) keep compiling without
+//! modification. The new async [`Lunaris::recall_with_degraded_check`] is
+//! the variant that reads the verifier-queue depth and seeds the builder
+//! with `initial_degraded` (VERIFY-05 + VERIFY-06).
 
+use lunaris_core::LunarisError;
 use lunaris_retrieve::RetrievalBuilder;
 
 use crate::handle::Lunaris;
+
+/// Env knob for the verifier-queue-lag warning threshold (D-12). Recall
+/// returns `degraded=true` when `queue_depth > threshold` at recall start.
+const ENV_VERIFY_WARN_THRESHOLD: &str = "LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD";
+
+/// Default verifier-queue warning threshold. Tuned conservatively for v0 — a
+/// production deployment with a real backlog of 1000+ unverified items
+/// should already be visible to ops and the recall API consumer.
+const DEFAULT_VERIFY_WARN_THRESHOLD: u64 = 1000;
+
+/// Verify queue topic — must match
+/// [`lunaris_verify::worker::VERIFY_TOPIC`] verbatim.
+const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
 impl Lunaris {
     /// Build a [`RetrievalBuilder`] bound to this handle's storage, keyword,
@@ -50,5 +72,50 @@ impl Lunaris {
             b = b.with_moon_storage(moon);
         }
         b
+    }
+
+    /// Plan 04-04 B-8 fix: NEW async variant that reads the verifier queue
+    /// depth ONCE per call and seeds the resulting [`RetrievalBuilder`] with
+    /// `with_initial_degraded(true)` when the depth crosses
+    /// [`LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD`] (default 1000).
+    ///
+    /// The existing sync [`Self::recall`] is unchanged — this is purely an
+    /// additive method so prior callers (Phase 2 tests, recall_smoke.rs,
+    /// graph_pipeline_smoke.rs) keep compiling without modification.
+    ///
+    /// Closes **VERIFY-05** (queue lag observability) + **VERIFY-06**
+    /// (backpressure surfaces in recall responses as `Hit::degraded`).
+    ///
+    /// When the underlying [`lunaris_core::StoragePort::queue_depth`] returns
+    /// `Err(StorageError::NotSupported(_))` (older backends without the
+    /// additive method implemented), the call falls through with
+    /// `initial_degraded=false` rather than failing the recall — the queue
+    /// introspection is best-effort observability, not a hard correctness
+    /// requirement.
+    pub async fn recall_with_degraded_check(&self) -> Result<RetrievalBuilder, LunarisError> {
+        let threshold = std::env::var(ENV_VERIFY_WARN_THRESHOLD)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_VERIFY_WARN_THRESHOLD);
+
+        let degraded_signal = match self.storage.queue_depth(VERIFY_TOPIC, 0).await {
+            Ok(depth) => {
+                tracing::debug!(verify_queue_depth = depth, threshold, "recall_queue_depth_check");
+                depth > threshold
+            }
+            Err(e) => {
+                // Backend doesn't implement queue_depth (or transient
+                // failure). Don't fail the recall — fall through with
+                // degraded=false so the recall still serves results.
+                tracing::debug!(err = %e, "recall_queue_depth_unavailable; degraded=false");
+                false
+            }
+        };
+
+        let mut b = self.recall();
+        if degraded_signal {
+            b = b.with_initial_degraded(true);
+        }
+        Ok(b)
     }
 }

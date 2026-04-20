@@ -42,6 +42,11 @@ const GRAPH_NAME: &str = "lunaris_graph";
 /// Verify-queue topic the Phase 4 Verifier worker subscribes to (D-19 hook).
 /// Phase 3 emits; Phase 4 consumes.
 const VERIFY_QUEUE_TOPIC: &str = "__lunaris_verify__";
+/// Plan 04-04 D-16 — consolidate-queue topic. Every successful Lunaris::ingest
+/// publishes one `__lunaris_consolidate__` event after the atomic_write
+/// commits. Fire-and-forget; ingest still returns `Ok(Lsn)` on publish failure.
+/// Closes CONSOL-05 (subscribe + publish wiring on the consolidator topic).
+const CONSOLIDATE_QUEUE_TOPIC: &str = "__lunaris_consolidate__";
 /// Vector index name for chunks (mirrors lunaris_ingest::pipeline).
 const CHUNK_VECTOR_INDEX: &str = "chunks";
 /// Default chunker target tokens (mirrors lunaris_ingest::pipeline).
@@ -61,27 +66,78 @@ impl Lunaris {
     /// `snapshot_extractor()` Arc is also captured ONCE in the graph-ON
     /// branch before any await.
     pub async fn ingest(&self, episode: Episode) -> Result<Lsn, LunarisError> {
-        if !self.graph_pipeline.is_enabled() {
+        // Plan 04-04 D-16: capture the episode_id BEFORE the move so we can
+        // include it in the consolidate-queue envelope after the
+        // atomic_write commits. The ingest functions consume `episode` so
+        // we lift the id here.
+        let episode_id = episode.id;
+        let lsn = if !self.graph_pipeline.is_enabled() {
             // Graph OFF — Phase 2 fast path, verbatim. INGEST-04 single
             // atomic_write call lives inside `lunaris_ingest::ingest_episode`.
-            return lunaris_ingest::ingest_episode(
+            lunaris_ingest::ingest_episode(
                 self.storage.as_ref(),
                 self.embedder.as_ref(),
                 &self.clock,
                 episode,
             )
-            .await;
+            .await?
+        } else {
+            // Graph ON — extended fan-out. INGEST-04 single atomic_write call
+            // lives in `ingest_episode_graph_on` below.
+            ingest_episode_graph_on(
+                self.storage.as_ref(),
+                self.embedder.as_ref(),
+                &self.graph_pipeline,
+                &self.clock,
+                episode,
+            )
+            .await?
+        };
+
+        // Plan 04-04 D-16: publish ONE __lunaris_consolidate__ event after
+        // every successful atomic_write (both branches). Fire-and-forget —
+        // a publish failure logs + continues; the ingest already committed
+        // and returns Ok(Lsn). Closes CONSOL-05.
+        publish_consolidate_event(self.storage.as_ref(), episode_id, lsn).await;
+
+        Ok(lsn)
+    }
+}
+
+/// Plan 04-04 D-16: publish one `__lunaris_consolidate__` envelope after
+/// every successful Lunaris::ingest. The consolidator worker (Plan 04-02
+/// `run_consolidate_worker`) debounces these per-episode_id (60 s default)
+/// then flushes them through `Consolidator::consolidate`.
+///
+/// Envelope shape MUST match
+/// [`lunaris_consolidate::types::ConsolidateEvent`] verbatim — the worker
+/// deserializes via `serde_json::from_slice::<ConsolidateEvent>(&payload)`.
+async fn publish_consolidate_event(
+    storage: &dyn StoragePort,
+    episode_id: Ulid,
+    lsn: Lsn,
+) {
+    let envelope = json!({
+        "kind": "ingest_committed",
+        "episode_id": episode_id.to_string(),
+        "lsn_wall_ms": lsn.wall_ms,
+        "lsn_counter": lsn.counter,
+    });
+    let payload = match serde_json::to_vec(&envelope) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                err = %e,
+                "consolidate serialize failed; skipping consolidate-queue publish"
+            );
+            return;
         }
-        // Graph ON — extended fan-out. INGEST-04 single atomic_write call
-        // lives in `ingest_episode_graph_on` below.
-        ingest_episode_graph_on(
-            self.storage.as_ref(),
-            self.embedder.as_ref(),
-            &self.graph_pipeline,
-            &self.clock,
-            episode,
-        )
-        .await
+    };
+    if let Err(e) = storage.publish(CONSOLIDATE_QUEUE_TOPIC, 0, payload.into()).await {
+        tracing::warn!(
+            err = %e,
+            "consolidate-queue publish failed; ingest still succeeded"
+        );
     }
 }
 

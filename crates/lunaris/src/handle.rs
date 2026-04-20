@@ -27,13 +27,17 @@
 
 use std::sync::Arc;
 
+use lunaris_consolidate::{Consolidator, NoopConsolidator};
 use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
+use lunaris_verify::{NoopVerifier, Verifier};
 
+use crate::consolidator_pipeline::ConsolidatorPipelineHandle;
 use crate::graph_pipeline::GraphPipelineHandle;
+use crate::verify_pipeline::VerifierPipelineHandle;
 
 #[derive(Clone)]
 pub struct Lunaris {
@@ -58,6 +62,18 @@ pub struct Lunaris {
     /// `handle.graph_pipeline().enable() / .disable()` (D-10 single-switch
     /// surface, EXTRACT-06).
     pub(crate) graph_pipeline: Arc<GraphPipelineHandle>,
+    /// Plan 04-04: slow-path Verifier worker toggle (D-08, default OFF per
+    /// blueprint §5.1). Owns the `Arc<dyn Verifier>`, the late-bound
+    /// `Arc<dyn StoragePort>`, the worker JoinHandle, and the shutdown
+    /// `tokio::sync::Notify`. Toggle ON/OFF via
+    /// `handle.verify_pipeline().enable() / .disable()` (D-08 single-switch
+    /// surface, VERIFY-01..06).
+    pub(crate) verify_pipeline: Arc<VerifierPipelineHandle>,
+    /// Plan 04-04: ACT-R Consolidator worker toggle (D-08, default OFF per
+    /// blueprint §5.1). Same shape as `verify_pipeline`. Toggle ON/OFF via
+    /// `handle.consolidator_pipeline().enable() / .disable()` (D-08
+    /// single-switch surface, CONSOL-01..05).
+    pub(crate) consolidator_pipeline: Arc<ConsolidatorPipelineHandle>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -69,6 +85,11 @@ impl std::fmt::Debug for Lunaris {
             .field("has_moon_native_path", &self.moon_storage.is_some())
             .field("reranker_applies", &self.reranker.applies())
             .field("graph_pipeline_enabled", &self.graph_pipeline.is_enabled())
+            .field("verify_pipeline_enabled", &self.verify_pipeline.is_enabled())
+            .field(
+                "consolidator_pipeline_enabled",
+                &self.consolidator_pipeline.is_enabled(),
+            )
             .finish()
     }
 }
@@ -107,29 +128,72 @@ impl Lunaris {
         let extractor = default_extractor().await;
         let initial_graph_state = GraphPipelineHandle::initial_state_from_env();
         let graph_pipeline = Arc::new(GraphPipelineHandle::new(initial_graph_state, extractor));
+        // Plan 04-04: Construct the verifier + consolidator pipeline handles.
+        // Initial state from `LUNARIS_VERIFY_ENABLED` / `LUNARIS_CONSOLIDATE_ENABLED`
+        // env vars (D-08); default OFF per blueprint §5.1. Default backends
+        // are NoopVerifier / NoopConsolidator — production callers wire real
+        // backends via `with_verifier` / `with_consolidator`.
+        let verifier = default_verifier().await;
+        let consolidator = default_consolidator();
+        let initial_verify_state = VerifierPipelineHandle::initial_state_from_env();
+        let initial_consolidate_state = ConsolidatorPipelineHandle::initial_state_from_env();
+        let verify_pipeline = Arc::new(VerifierPipelineHandle::new(
+            initial_verify_state,
+            verifier,
+        ));
+        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
+            initial_consolidate_state,
+            consolidator,
+        ));
         match scheme {
             "moon" => {
                 let m = Arc::new(MoonStorage::connect(url).await?);
+                let storage_arc: Arc<dyn StoragePort> = m.clone();
+                // B-10: bind the StoragePort Arc to BOTH pipelines AFTER
+                // we've constructed it. If env var initial-state was ON,
+                // also kick the worker via spawn_worker_if_idle so callers
+                // don't have to call enable() a second time post-bind.
+                verify_pipeline.bind_storage(storage_arc.clone());
+                consolidator_pipeline.bind_storage(storage_arc.clone());
+                if initial_verify_state {
+                    verify_pipeline.spawn_worker_if_idle();
+                }
+                if initial_consolidate_state {
+                    consolidator_pipeline.spawn_worker_if_idle();
+                }
                 Ok(Self {
-                    storage: m.clone() as Arc<dyn StoragePort>,
+                    storage: storage_arc,
                     keyword: m.clone() as Arc<dyn KeywordPort>,
                     embedder,
                     clock,
                     moon_storage: Some(m),
                     reranker,
                     graph_pipeline,
+                    verify_pipeline,
+                    consolidator_pipeline,
                 })
             }
             "postgres" | "postgresql" => {
                 let p = Arc::new(PostgresStorage::connect(url).await?);
+                let storage_arc: Arc<dyn StoragePort> = p.clone();
+                verify_pipeline.bind_storage(storage_arc.clone());
+                consolidator_pipeline.bind_storage(storage_arc.clone());
+                if initial_verify_state {
+                    verify_pipeline.spawn_worker_if_idle();
+                }
+                if initial_consolidate_state {
+                    consolidator_pipeline.spawn_worker_if_idle();
+                }
                 Ok(Self {
-                    storage: p.clone() as Arc<dyn StoragePort>,
+                    storage: storage_arc,
                     keyword: p as Arc<dyn KeywordPort>,
                     embedder,
                     clock,
                     moon_storage: None,
                     reranker,
                     graph_pipeline,
+                    verify_pipeline,
+                    consolidator_pipeline,
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -154,6 +218,21 @@ impl Lunaris {
         embedder: Arc<dyn Embedder>,
         clock: Arc<HlcClock>,
     ) -> Self {
+        // Plan 04-04 B-10: construct the verify + consolidator pipelines
+        // BEFORE the Self struct so we can call bind_storage on each handle
+        // with the storage Arc.
+        let verify_pipeline = Arc::new(VerifierPipelineHandle::new(
+            false,
+            Arc::new(NoopVerifier) as Arc<dyn Verifier>,
+        ));
+        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
+            false,
+            Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
+        ));
+        // B-10: bind storage to BOTH pipelines (2 of the 4 total bind_storage
+        // call sites in handle.rs).
+        verify_pipeline.bind_storage(storage.clone());
+        consolidator_pipeline.bind_storage(storage.clone());
         Self {
             storage,
             keyword: Arc::new(NoKeywordSupport) as Arc<dyn KeywordPort>,
@@ -172,6 +251,8 @@ impl Lunaris {
                 false,
                 Arc::new(NoopExtractor) as Arc<dyn Extractor>,
             )),
+            verify_pipeline,
+            consolidator_pipeline,
         }
     }
 
@@ -185,6 +266,20 @@ impl Lunaris {
         embedder: Arc<dyn Embedder>,
         clock: Arc<HlcClock>,
     ) -> Self {
+        // Plan 04-04 B-10: same shape as with_parts — construct the pipeline
+        // handles BEFORE the Self struct, then bind_storage on both.
+        let verify_pipeline = Arc::new(VerifierPipelineHandle::new(
+            false,
+            Arc::new(NoopVerifier) as Arc<dyn Verifier>,
+        ));
+        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
+            false,
+            Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
+        ));
+        // B-10: bind storage to BOTH pipelines (the OTHER 2 of the 4 total
+        // bind_storage call sites in handle.rs).
+        verify_pipeline.bind_storage(storage.clone());
+        consolidator_pipeline.bind_storage(storage.clone());
         Self {
             storage,
             keyword,
@@ -197,6 +292,8 @@ impl Lunaris {
                 false,
                 Arc::new(NoopExtractor) as Arc<dyn Extractor>,
             )),
+            verify_pipeline,
+            consolidator_pipeline,
         }
     }
 
@@ -231,6 +328,32 @@ impl Lunaris {
     /// preserved across the swap (D-12 idempotent observability).
     pub fn with_extractor(self, extractor: Arc<dyn Extractor>) -> Self {
         self.graph_pipeline.set_extractor(extractor);
+        self
+    }
+
+    /// Plan 04-04 escape hatch — replace the verifier on an existing handle.
+    /// Production callers wiring `CandleGemma3_27B` (cfg-gated `candle`) /
+    /// `OllamaVerifier` / `CloudApiVerifier` use this; tests pass
+    /// `Arc::new(NoopVerifier)` for determinism.
+    ///
+    /// The verifier lives inside the [`VerifierPipelineHandle`]'s
+    /// `RwLock<Option<Arc<dyn Verifier>>>` — this method swaps it via
+    /// [`VerifierPipelineHandle::set_verifier`], NOT by replacing the entire
+    /// `verify_pipeline` field. Toggle state and the state-change counter are
+    /// preserved across the swap (D-12 idempotent observability).
+    pub fn with_verifier(self, verifier: Arc<dyn Verifier>) -> Self {
+        self.verify_pipeline.set_verifier(verifier);
+        self
+    }
+
+    /// Plan 04-04 escape hatch — replace the consolidator on an existing handle.
+    /// Production callers install a real ACT-R consolidator via this; tests pass
+    /// `Arc::new(NoopConsolidator)` for determinism.
+    ///
+    /// Same swap semantics as [`Self::with_verifier`] — toggle + counter
+    /// preserved.
+    pub fn with_consolidator(self, consolidator: Arc<dyn Consolidator>) -> Self {
+        self.consolidator_pipeline.set_consolidator(consolidator);
         self
     }
 
@@ -282,6 +405,35 @@ impl Lunaris {
     /// installs at least [`NoopExtractor`]).
     pub fn extractor(&self) -> Option<Arc<dyn Extractor>> {
         self.graph_pipeline.snapshot_extractor()
+    }
+
+    /// Plan 04-04 — borrow the [`VerifierPipelineHandle`] for runtime toggle
+    /// control. D-08 single-switch surface:
+    ///
+    /// - `handle.verify_pipeline().enable()` / `.disable()` — flip the
+    ///   pipeline ON / OFF (idempotent, observable per D-12). Spawns / signals
+    ///   shutdown on the in-process tokio worker.
+    /// - `handle.verify_pipeline().is_enabled()` — current state.
+    /// - `handle.verify_pipeline().join_worker().await` — await full worker
+    ///   exit after a `disable()`.
+    pub fn verify_pipeline(&self) -> Arc<VerifierPipelineHandle> {
+        self.verify_pipeline.clone()
+    }
+
+    /// Plan 04-04 — borrow the [`ConsolidatorPipelineHandle`] for runtime
+    /// toggle control. Same surface shape as [`Self::verify_pipeline`].
+    pub fn consolidator_pipeline(&self) -> Arc<ConsolidatorPipelineHandle> {
+        self.consolidator_pipeline.clone()
+    }
+
+    /// Plan 04-04 — snapshot the currently-installed [`Verifier`] `Arc`.
+    pub fn verifier(&self) -> Option<Arc<dyn Verifier>> {
+        self.verify_pipeline.snapshot_verifier()
+    }
+
+    /// Plan 04-04 — snapshot the currently-installed [`Consolidator`] `Arc`.
+    pub fn consolidator(&self) -> Option<Arc<dyn Consolidator>> {
+        self.consolidator_pipeline.snapshot_consolidator()
     }
 }
 
@@ -396,4 +548,48 @@ async fn default_extractor() -> Arc<dyn Extractor> {
 #[cfg(not(feature = "candle"))]
 async fn default_extractor() -> Arc<dyn Extractor> {
     Arc::new(NoopExtractor) as Arc<dyn Extractor>
+}
+
+/// Plan 04-04: Construct the default verifier for [`Lunaris::open`].
+///
+/// Tries to load [`lunaris_verify::CandleGemma3_27B`] from the default cache.
+/// On cache miss (the common case on dev boxes without ~14 GiB of Gemma-3 27B
+/// weights pre-downloaded) emits a `tracing::warn!` and substitutes
+/// [`NoopVerifier`] per the D-02 default-OFF contract.
+///
+/// Mirrors the [`default_extractor`] CandleGemma3_4B pattern — even when the
+/// `candle` feature is enabled, a missing cache produces a working binary
+/// that has the trait wired but never calls a real model.
+///
+/// Callers wire their own verifier via [`Lunaris::with_verifier`].
+#[cfg(feature = "candle")]
+async fn default_verifier() -> Arc<dyn Verifier> {
+    match lunaris_verify::CandleGemma3_27B::new(Default::default()).await {
+        Ok(v) => Arc::new(v) as Arc<dyn Verifier>,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "gemma-3-27b-it unavailable; using NoopVerifier (verifier worker disabled at runtime — install weights via `huggingface-cli download google/gemma-3-27b-it --local-dir ~/.cache/lunaris/models/gemma-3-27b-it`)"
+            );
+            Arc::new(NoopVerifier) as Arc<dyn Verifier>
+        }
+    }
+}
+
+/// Without `candle` there's no real verifier to fall back FROM. Production
+/// callers wanting verifier work either enable the `candle` feature or pass
+/// a custom [`Verifier`] impl via [`Lunaris::with_verifier`].
+#[cfg(not(feature = "candle"))]
+async fn default_verifier() -> Arc<dyn Verifier> {
+    Arc::new(NoopVerifier) as Arc<dyn Verifier>
+}
+
+/// Plan 04-04: Construct the default consolidator for [`Lunaris::open`].
+///
+/// Per D-15 + lunaris-consolidate's no-LLM-backends posture, the v0 default
+/// is unconditionally [`NoopConsolidator`]. Real ACT-R consolidation is
+/// deferred to v1 (CONSOL-V1-01) — production callers wire it explicitly via
+/// [`Lunaris::with_consolidator`] when they're ready to flip the pipeline ON.
+fn default_consolidator() -> Arc<dyn Consolidator> {
+    Arc::new(NoopConsolidator) as Arc<dyn Consolidator>
 }

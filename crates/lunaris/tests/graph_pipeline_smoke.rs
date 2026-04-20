@@ -99,12 +99,27 @@ impl RecordingStorageWithKeyword {
         self.writeop_counts.lock().clone()
     }
 
+    #[allow(dead_code)]
     fn published_count(&self) -> usize {
         self.published_messages.lock().len()
     }
 
     fn published_topics(&self) -> Vec<String> {
         self.published_messages.lock().iter().map(|(t, _, _)| t.clone()).collect()
+    }
+
+    /// Plan 04-04 D-16 — Lunaris::ingest now ALSO publishes one
+    /// `__lunaris_consolidate__` event per call. The graph_pipeline_smoke
+    /// tests pre-date that change; this helper lets each test count ONLY
+    /// the verify-queue topic publishes (which is what the D-19 hook
+    /// assertions actually care about). The consolidate-queue publishes
+    /// are exercised by Plan 04-04's consolidator_pipeline_smoke tests.
+    fn published_verify_count(&self) -> usize {
+        self.published_messages
+            .lock()
+            .iter()
+            .filter(|(t, _, _)| t == "__lunaris_verify__")
+            .count()
     }
 
     fn set_canned_graph(&self, gr: GraphResult) {
@@ -387,7 +402,11 @@ async fn graph_off_default_uses_phase2_fast_path() {
     let counts = rec.writeop_counts();
     assert_eq!(counts.graph_node, 0, "graph OFF MUST emit zero GraphNode WriteOps");
     assert_eq!(counts.graph_edge, 0, "graph OFF MUST emit zero GraphEdge WriteOps");
-    assert_eq!(rec.published_count(), 0, "graph OFF MUST publish zero verify-queue messages");
+    assert_eq!(
+        rec.published_verify_count(),
+        0,
+        "graph OFF MUST publish zero __lunaris_verify__ messages (consolidate-queue publish from Plan 04-04 D-16 fires on EVERY ingest and is NOT counted here)"
+    );
 }
 
 #[tokio::test]
@@ -484,15 +503,22 @@ async fn validator_needs_review_publishes_verify_message() {
 
     // ... but the verify-queue publish DID fire.
     assert!(
-        rec.published_count() >= 1,
-        "expected at least 1 verify-queue publish for the demoted entity; got {}",
-        rec.published_count()
+        rec.published_verify_count() >= 1,
+        "expected at least 1 __lunaris_verify__ publish for the demoted entity; got {}",
+        rec.published_verify_count()
     );
-    let topics = rec.published_topics();
+    // Plan 04-04 D-16: every ingest now ALSO publishes one
+    // __lunaris_consolidate__ event. Filter the topic list to the verify
+    // topic before asserting "all on the verify queue".
+    let verify_topics: Vec<String> = rec
+        .published_topics()
+        .into_iter()
+        .filter(|t| t == "__lunaris_verify__")
+        .collect();
     assert!(
-        topics.iter().all(|t| t == "__lunaris_verify__"),
-        "all NeedsReview publishes MUST target __lunaris_verify__; got {:?}",
-        topics
+        verify_topics.iter().all(|t| t == "__lunaris_verify__"),
+        "all filtered verify-topic publishes target __lunaris_verify__; got {:?}",
+        verify_topics
     );
 }
 
@@ -517,9 +543,9 @@ async fn noop_extractor_with_graph_on_emits_no_graph_writeops() {
     assert_eq!(counts.graph_node, 0);
     assert_eq!(counts.graph_edge, 0);
     assert_eq!(
-        rec.published_count(),
+        rec.published_verify_count(),
         0,
-        "NoopExtractor produces empty extraction → no NeedsReview to publish"
+        "NoopExtractor produces empty extraction → no NeedsReview to publish on the verify queue (the consolidate-queue publish from Plan 04-04 D-16 fires unconditionally and is NOT counted here)"
     );
     // INGEST-04 still holds — single atomic_write call even on the noop path.
     assert_eq!(rec.batch_count(), 1);

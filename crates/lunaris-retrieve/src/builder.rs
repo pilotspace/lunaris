@@ -64,6 +64,10 @@ pub struct RetrievalBuilder {
     pub(crate) moon_storage: Option<Arc<lunaris_storage_moon::MoonStorage>>,
     pub(crate) base_filter: Option<Filter>,
     pub(crate) base_as_of: Option<Hlc>,
+    /// Plan 04-04 B-9 fix: when `true`, hydration ORs this into every
+    /// `Hit::degraded`. Set by `Lunaris::recall_with_degraded_check` when the
+    /// verifier queue depth crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD`.
+    pub(crate) initial_degraded: bool,
 }
 
 impl RetrievalBuilder {
@@ -81,6 +85,7 @@ impl RetrievalBuilder {
             moon_storage: None,
             base_filter: None,
             base_as_of: None,
+            initial_degraded: false,
         }
     }
 
@@ -139,6 +144,17 @@ impl RetrievalBuilder {
         self
     }
 
+    /// Plan 04-04 B-9 fix: caller-set degraded flag plumbed through hydration.
+    /// `Lunaris::recall_with_degraded_check` sets this when the verifier
+    /// queue depth crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` so every
+    /// returned `Hit::degraded` is `true` (VERIFY-06 backpressure surface).
+    ///
+    /// Returns `self` so callers can chain into the rest of the builder.
+    pub fn with_initial_degraded(mut self, deg: bool) -> Self {
+        self.initial_degraded = deg;
+        self
+    }
+
     /// Wrap an upstream operator with `top(n)` at builder time. This is a
     /// convenience over `.with_root(prev_root.top(n))` — you can also call
     /// `.top(n)` directly on the operator before passing to `with_root`.
@@ -180,6 +196,9 @@ impl RetrievalBuilder {
             query.as_of = self.base_as_of;
         }
         let as_of = query.as_of;
+        // Plan 04-04 B-9: snapshot the initial_degraded flag BEFORE moving
+        // the rest of the builder into the QueryContext / hydrate calls.
+        let initial_degraded = self.initial_degraded;
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
@@ -191,6 +210,6 @@ impl RetrievalBuilder {
             None => QueryContext::new(query, self.embedder, self.storage.clone(), self.keyword),
         };
         let raw = self.root.retrieve(&ctx).await?;
-        hydrate(self.storage.as_ref(), raw, as_of).await
+        hydrate(self.storage.as_ref(), raw, as_of, initial_degraded).await
     }
 }
