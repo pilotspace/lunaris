@@ -41,9 +41,7 @@ pub(crate) async fn read_as_of(
     let bt_bytes: Option<Vec<u8>> = conn.hget(key, "bt").await.map_err(redis_err)?;
 
     // Always release the snapshot, even if the reads errored.
-    let _ = redis::cmd("TEMPORAL.INVALIDATE")
-        .query_async::<redis::Value>(&mut conn)
-        .await;
+    let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
 
     match value {
         None => Ok(None),
@@ -117,9 +115,7 @@ pub(crate) async fn scan_range<'a>(
     }
 
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE")
-            .query_async::<redis::Value>(&mut conn)
-            .await;
+        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
     }
 
     Ok(stream::iter(all_pairs).boxed())

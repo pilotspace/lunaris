@@ -108,9 +108,7 @@ pub(crate) async fn subscribe(
                 }
                 Ok(other) => {
                     return Some((
-                        Err(StorageError::Backend(format!(
-                            "MQ.POP unexpected reply: {other:?}"
-                        ))),
+                        Err(StorageError::Backend(format!("MQ.POP unexpected reply: {other:?}"))),
                         s,
                     ));
                 }
@@ -131,13 +129,7 @@ mod tests {
     #[allow(dead_code)]
     fn _subscribe_returns_static_send_stream() {
         fn assert_send_static<T: Send + 'static + ?Sized>() {}
-        type BS = Pin<
-            Box<
-                dyn Stream<Item = Result<QueueMsg, StorageError>>
-                    + Send
-                    + 'static,
-            >,
-        >;
+        type BS = Pin<Box<dyn Stream<Item = Result<QueueMsg, StorageError>> + Send + 'static>>;
         assert_send_static::<BS>();
     }
 }

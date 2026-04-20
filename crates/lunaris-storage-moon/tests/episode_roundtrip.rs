@@ -47,33 +47,20 @@ async fn episode_atomic_write_then_read_back() {
         .atomic_write(&[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
         .await
         .expect("atomic_write commit");
-    assert!(
-        lsn.wall_ms > 0 || lsn.counter > 0,
-        "Lsn must be non-zero, got {lsn:?}",
-    );
+    assert!(lsn.wall_ms > 0 || lsn.counter > 0, "Lsn must be non-zero, got {lsn:?}",);
 
     // Read via read_as_of(now()) — must return exactly the bytes we wrote.
     let now = clock.tick();
-    let row = s
-        .read_as_of(&key, now)
-        .await
-        .expect("read_as_of ok")
-        .expect("episode exists");
+    let row = s.read_as_of(&key, now).await.expect("read_as_of ok").expect("episode exists");
     assert_eq!(row.key, key, "key roundtrip");
-    assert_eq!(
-        row.value,
-        Bytes::from(value),
-        "value roundtrip — bytes must be identical"
-    );
+    assert_eq!(row.value, Bytes::from(value), "value roundtrip — bytes must be identical");
 }
 
 /// Capabilities are independent of any live Moon state — but if we connect we should
 /// always see the Moon native-everything profile.
 #[tokio::test]
 async fn capabilities_reports_moon_native_profile() {
-    let s = MoonStorage::connect(&moon_url())
-        .await
-        .expect("connect to Moon");
+    let s = MoonStorage::connect(&moon_url()).await.expect("connect to Moon");
     let cap = s.capabilities();
     assert!(cap.bi_temporal_native);
     assert!(cap.graph_native);

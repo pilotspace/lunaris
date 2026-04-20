@@ -67,30 +67,12 @@ mod tests {
     fn keyspace_format_is_stable() {
         // 26-char crockford-base32 ULID; pick a deterministic one.
         let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
-        assert_eq!(
-            episode_key(id),
-            b"lunaris:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            chunk_key(id),
-            b"lunaris:chunk:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            entity_key(id),
-            b"lunaris:entity:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            relation_key(id),
-            b"lunaris:relation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            fact_key(id),
-            b"lunaris:fact:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            community_key(id),
-            b"lunaris:community:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
+        assert_eq!(episode_key(id), b"lunaris:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(chunk_key(id), b"lunaris:chunk:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(entity_key(id), b"lunaris:entity:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(relation_key(id), b"lunaris:relation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(fact_key(id), b"lunaris:fact:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(community_key(id), b"lunaris:community:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
     }
 
     #[test]

@@ -15,3 +15,11 @@ thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
 url            = { workspace = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []
+# Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
+moon-it = ["lunaris-storage-moon/moon-it"]

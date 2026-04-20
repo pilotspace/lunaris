@@ -48,9 +48,7 @@ pub(crate) async fn graph_traverse(
     let result: Result<redis::Value, _> = cmd.query_async(&mut conn).await;
 
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE")
-            .query_async::<redis::Value>(&mut conn)
-            .await;
+        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
     }
 
     parse_graph_reply(result.map_err(redis_err)?)
@@ -60,9 +58,7 @@ fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {
     let arr = match v {
         redis::Value::Array(a) => a,
         other => {
-            return Err(StorageError::Backend(format!(
-                "GRAPH.QUERY unexpected reply: {other:?}"
-            )));
+            return Err(StorageError::Backend(format!("GRAPH.QUERY unexpected reply: {other:?}")));
         }
     };
     if arr.len() < 2 {

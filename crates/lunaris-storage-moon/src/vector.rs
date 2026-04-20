@@ -68,9 +68,7 @@ pub(crate) async fn vector_search(
 
     // Always release the snapshot if we pinned one (even on FT.SEARCH error).
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE")
-            .query_async::<redis::Value>(&mut conn)
-            .await;
+        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
     }
 
     let reply = search_result.map_err(redis_err)?;
@@ -91,20 +89,12 @@ fn filter_to_moon(f: &Filter) -> String {
     match f {
         Filter::Eq { field, value } => format!("@{field}:{}", json_to_moon(value)),
         Filter::StartsWith { field, prefix } => format!("@{field}:{prefix}*"),
-        Filter::And(xs) => format!(
-            "({})",
-            xs.iter()
-                .map(filter_to_moon)
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        Filter::Or(xs) => format!(
-            "({})",
-            xs.iter()
-                .map(filter_to_moon)
-                .collect::<Vec<_>>()
-                .join(" | ")
-        ),
+        Filter::And(xs) => {
+            format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" "))
+        }
+        Filter::Or(xs) => {
+            format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" | "))
+        }
     }
 }
 
@@ -122,9 +112,7 @@ fn parse_ft_search(v: redis::Value, rerank: bool) -> Result<Vec<VectorHit>, Stor
     let arr = match v {
         redis::Value::Array(a) => a,
         other => {
-            return Err(StorageError::Backend(format!(
-                "FT.SEARCH unexpected reply: {other:?}"
-            )));
+            return Err(StorageError::Backend(format!("FT.SEARCH unexpected reply: {other:?}")));
         }
     };
     let mut hits = Vec::new();
@@ -160,12 +148,7 @@ fn parse_ft_search(v: redis::Value, rerank: bool) -> Result<Vec<VectorHit>, Stor
                 }
             }
         }
-        hits.push(VectorHit {
-            id: id_bytes,
-            score,
-            rerank_applied: rerank,
-            metadata,
-        });
+        hits.push(VectorHit { id: id_bytes, score, rerank_applied: rerank, metadata });
     }
     Ok(hits)
 }
@@ -184,10 +167,7 @@ mod tests {
 
     #[test]
     fn filter_starts_with_renders() {
-        let f = Filter::StartsWith {
-            field: "source".into(),
-            prefix: "helios:fs/".into(),
-        };
+        let f = Filter::StartsWith { field: "source".into(), prefix: "helios:fs/".into() };
         assert_eq!(filter_to_moon(&f), "@source:helios:fs/*");
     }
 

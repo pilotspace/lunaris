@@ -33,34 +33,23 @@ use redis::aio::ConnectionManager;
 
 use crate::client::{MoonClient, redis_err};
 
-pub(crate) async fn atomic_write(
-    c: &MoonClient,
-    ops: &[WriteOp],
-) -> Result<Lsn, StorageError> {
+pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
     let mut conn = c.conn();
 
     // 1) TXN.BEGIN — opens a Moon transaction on this connection.
-    redis::cmd("TXN.BEGIN")
-        .query_async::<String>(&mut conn)
-        .await
-        .map_err(redis_err)?;
+    redis::cmd("TXN.BEGIN").query_async::<String>(&mut conn).await.map_err(redis_err)?;
 
     // 2) Per-op fan-out. On any per-op error, ABORT and bubble the original error.
     if let Err(e) = run_ops(&mut conn, ops).await {
         // Best-effort abort; ignore its error (the transaction's already broken).
-        let _ = redis::cmd("TXN.ABORT")
-            .query_async::<String>(&mut conn)
-            .await;
+        let _ = redis::cmd("TXN.ABORT").query_async::<String>(&mut conn).await;
         return Err(e);
     }
 
     // 3) TXN.COMMIT — Moon may return either a packed u64 LSN (wall_ms<<32 | counter)
     //    or a simple "OK"; accept both. When "OK", fall back to a wall-clock LSN so
     //    callers always see a non-zero, monotonically-derivable Lsn.
-    match redis::cmd("TXN.COMMIT")
-        .query_async::<redis::Value>(&mut conn)
-        .await
-    {
+    match redis::cmd("TXN.COMMIT").query_async::<redis::Value>(&mut conn).await {
         Ok(redis::Value::Int(n)) => {
             let n = n as u64;
             Ok(Lsn { wall_ms: n >> 32, counter: (n & 0xFFFF_FFFF) as u32 })
@@ -82,19 +71,15 @@ async fn run_ops(conn: &mut ConnectionManager, ops: &[WriteOp]) -> Result<(), St
         match op {
             WriteOp::KvPut { key, value } => {
                 // Single-field hash so HGET <key> v is the canonical read in `read_as_of`.
-                let _: () = conn
-                    .hset(key.as_slice(), "v", value.as_slice())
-                    .await
-                    .map_err(redis_err)?;
+                let _: () =
+                    conn.hset(key.as_slice(), "v", value.as_slice()).await.map_err(redis_err)?;
             }
             WriteOp::KvDelete { key } => {
                 let _: () = conn.del(key.as_slice()).await.map_err(redis_err)?;
             }
             WriteOp::VectorUpsert { index, id, embedding, metadata } => {
                 if embedding.is_empty() {
-                    return Err(StorageError::Backend(
-                        "vector embedding is empty".into(),
-                    ));
+                    return Err(StorageError::Backend("vector embedding is empty".into()));
                 }
                 // Encode embedding as little-endian f32 bytes per Moon FT convention.
                 let mut buf = Vec::with_capacity(embedding.len() * 4);
@@ -115,11 +100,8 @@ async fn run_ops(conn: &mut ConnectionManager, ops: &[WriteOp]) -> Result<(), St
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
                 let props_json = serde_json::to_string(props)?;
                 let cypher = format!("MERGE (n:{label} {{id: $id}}) SET n += $props");
-                let params = format!(
-                    r#"{{"id":"{}","props":{}}}"#,
-                    String::from_utf8_lossy(id),
-                    props_json
-                );
+                let params =
+                    format!(r#"{{"id":"{}","props":{}}}"#, String::from_utf8_lossy(id), props_json);
                 redis::cmd("GRAPH.QUERY")
                     .arg(graph.as_str())
                     .arg(cypher)

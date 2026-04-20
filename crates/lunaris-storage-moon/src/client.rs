@@ -70,10 +70,7 @@ impl MoonClient {
             .ok_or_else(|| StorageError::Backend("moon URL missing host".into()))?
             .to_string();
         let port = parsed.port().unwrap_or(DEFAULT_MOON_PORT);
-        let workspace = parsed
-            .query_pairs()
-            .find(|(k, _)| k == "ws")
-            .map(|(_, v)| v.into_owned());
+        let workspace = parsed.query_pairs().find(|(k, _)| k == "ws").map(|(_, v)| v.into_owned());
 
         // Moon speaks RESP2/RESP3 over the Redis protocol. We dial via the `redis` crate.
         let redis_url = format!("redis://{host}:{port}");

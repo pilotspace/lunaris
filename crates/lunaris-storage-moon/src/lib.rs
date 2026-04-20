@@ -98,11 +98,7 @@ impl StoragePort for MoonStorage {
         crate::kv::scan_range(&self.client, prefix, as_of).await
     }
 
-    async fn read_as_of(
-        &self,
-        key: &[u8],
-        as_of: Hlc,
-    ) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(&self, key: &[u8], as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
         crate::kv::read_as_of(&self.client, key, as_of).await
     }
 
