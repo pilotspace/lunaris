@@ -5,6 +5,7 @@ members = [
   "crates/lunaris-storage-moon",
   "crates/lunaris-storage-postgres",
   "crates/lunaris",
+  "crates/lunaris-bench",
   "crates/lunaris-conformance",
   "crates/lunaris-embed",
   "crates/lunaris-ingest",
@@ -66,6 +67,12 @@ tower          = { version = "0.5", features = ["util", "limit", "timeout", "ret
 # test only
 rand           = "0.9"
 proptest       = "1"
+# Phase 2 Plan 02-04 — bench harness (Criterion + deterministic 1M-fact corpus)
+criterion      = { version = "0.8", features = ["html_reports"] }
+rand_chacha    = "0.9"
+sha2           = "0.10"
+hex            = "0.4"
+clap           = { version = "4", features = ["derive"] }
 
 [profile.dev]
 opt-level = 0

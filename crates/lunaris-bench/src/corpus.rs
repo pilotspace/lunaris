@@ -1,0 +1,693 @@
+//! Deterministic 1M-fact synthetic corpus generator + on-disk fingerprint cache.
+//!
+//! ## Why not seed via `Lunaris::ingest`?
+//!
+//! Naive sequential `ingest(Episode)` of 1M Episodes at the budgeted ~50 ms p50
+//! would burn ~14 hours per bench run. Per the plan's `<critical_constraints>`
+//! we bypass the public ingest API and emit `WriteOp::KvPut` + `WriteOp::VectorUpsert`
+//! batches directly via `StoragePort::atomic_write` in chunks of 10 000 ops. Each
+//! atomic_write is bounded by the backend's batch limit (Moon TXN.COMMIT, Postgres
+//! single COMMIT) so a power loss mid-build leaves a partially-written corpus +
+//! NO fingerprint file — the next run rebuilds from scratch (T-02-04-02 mitigation).
+//!
+//! ## Determinism contract
+//!
+//! - Vocab + predicate set are static constants below (10 K entity names,
+//!   32 predicates).
+//! - Per-fact bytes (id ULID, subject/object indices, predicate, embedding) all
+//!   derive from a `rand_chacha::ChaCha20Rng` seeded by the caller. Same seed +
+//!   same `count` → byte-identical corpus across runs / machines.
+//! - Embeddings use a `det_vec(text, dim)` helper that mirrors
+//!   `lunaris_core::embedder::StubEmbedder`'s LCG-via-DefaultHasher algorithm
+//!   so a `StubEmbedder`-driven recall query produces identical vectors to the
+//!   stored fact embeddings (lets the bench measure the storage hot path
+//!   independent of the real EmbeddingGemma cost).
+//!
+//! ## Fingerprint cache
+//!
+//! After a successful build, the generator writes a small JSON fingerprint to
+//! `<target>/lunaris-bench/corpus-1M-<urlhash>.json`:
+//!
+//! ```json
+//! { "backend_url_hash": "abcdef1234567890", "fact_count": 1000000, "seed": 42, "completed": true, "duration_secs": 423.7 }
+//! ```
+//!
+//! On the next bench invocation, the generator hashes the URL, reads the
+//! fingerprint, and returns `Ok(())` immediately if `completed && fact_count
+//! && seed` all match. There is no schema migration handling — bumping the
+//! corpus shape requires deleting the fingerprint file (which is what we want).
+//!
+//! ## Threat model snapshot
+//!
+//! - **T-02-04-01** (info disclosure via URL in logs): the URL itself is hashed
+//!   to 16 hex chars before any disk write or log line — credentials in a
+//!   `postgres://user:pass@host` URL never reach `target/`.
+//! - **T-02-04-02** (corrupt fingerprint after interrupt): `completed: true`
+//!   is only written AFTER the final batch lands. Interrupted runs leave no
+//!   fingerprint → next run rebuilds.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use lunaris::Lunaris;
+use lunaris_core::{
+    BiTemporal, Fact, HlcClock, LunarisError, StorageError, StoragePort, WriteOp,
+};
+use lunaris_storage_moon::keyspace::fact_key;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use ulid::Ulid;
+
+// ----- public constants -----
+
+/// Default fact count for the recall bench corpus. Plan 02-04 spec.
+pub const DEFAULT_CORPUS_COUNT: u64 = 1_000_000;
+
+/// Default RNG seed for the corpus generator.
+pub const DEFAULT_CORPUS_SEED: u64 = 42;
+
+/// Default RNG seed for the synthetic query set. Distinct from the corpus seed
+/// so query bytes don't accidentally match a fact's `fact_text` verbatim
+/// (which would let the bench cheat with an exact-match short-circuit).
+pub const DEFAULT_QUERY_SEED: u64 = 99;
+
+/// Number of WriteOps per `atomic_write` batch during corpus build. Each fact
+/// produces 2 WriteOps (KvPut + VectorUpsert) so this is ~5000 facts/batch.
+pub const CORPUS_BATCH_OPS: usize = 10_000;
+
+/// Embedding dimensionality — matches Moon profile (`max_vector_dim = 768`)
+/// AND `lunaris_core::StubEmbedder::new(768)` so a `StubEmbedder`-driven recall
+/// query produces vectors compatible with the corpus embeddings.
+pub const CORPUS_EMBEDDING_DIM: usize = 768;
+
+// ----- error -----
+
+#[derive(Debug, Error)]
+pub enum BenchCorpusError {
+    #[error("backend error: {0}")]
+    Backend(#[from] LunarisError),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serde error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("invalid corpus parameters: {0}")]
+    Invalid(String),
+}
+
+// ----- fingerprint -----
+
+/// On-disk record proving a successful corpus build.
+///
+/// Written ONLY after the final atomic_write batch lands. Re-reads gate the
+/// rebuild decision. The URL is stored as a 16-char hex SHA-256 prefix, NOT
+/// the raw URL — credentials in a `postgres://user:pass@host` URL never hit
+/// disk (T-02-04-01 mitigation).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CorpusFingerprint {
+    /// 16-char SHA-256 prefix of the backend URL (hex). See [`hash_url`].
+    pub backend_url_hash: String,
+    /// Number of facts the generator was asked to emit.
+    pub fact_count: u64,
+    /// Seed the RNG was initialised with.
+    pub seed: u64,
+    /// `true` only after the final batch landed successfully. A `false` here
+    /// (or absent file) tells the next run to rebuild.
+    pub completed: bool,
+    /// Wall-clock duration of the successful build, in seconds.
+    pub duration_secs: f64,
+}
+
+// ----- url hash helpers -----
+
+/// Hash a backend URL to a 16-char hex SHA-256 prefix. Stable across runs +
+/// machines + OSes. Used to derive the fingerprint file path AND to stamp
+/// the fingerprint without leaking credentials.
+pub fn hash_url(url: &str) -> String {
+    let digest = Sha256::digest(url.as_bytes());
+    let full = hex::encode(digest);
+    full[..16].to_string()
+}
+
+/// Canonical fingerprint file location for a given backend URL + count.
+///
+/// Reads `CARGO_TARGET_DIR` if set, else uses `target/` relative to the current
+/// working directory (which Cargo guarantees is the workspace root for `cargo
+/// bench` / `cargo test` invocations). The directory is created lazily by
+/// [`build_one_million_fact_corpus`] before the file is written.
+pub fn fingerprint_path_for(url: &str, count: u64) -> PathBuf {
+    let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
+    let mut p = PathBuf::from(target);
+    p.push("lunaris-bench");
+    p.push(format!("corpus-{}-{}.json", count, hash_url(url)));
+    p
+}
+
+// ----- TCP reachability probe -----
+
+/// Returns `true` if a 1-second TCP connect to the URL's `host:port` succeeds.
+///
+/// Used by [`ensure_corpus_or_skip`] AND by every Criterion bench to decide
+/// whether to skip the live-backend bench group when the substrate is
+/// unreachable. URL parsing is intentionally permissive: `moon://host:port`,
+/// `postgres://user:pass@host:port/db`, and bare `host:port` all work.
+///
+/// Returns `false` on any parse error, DNS failure, or TCP timeout — never
+/// panics, so callers can use it as a binary skip signal.
+pub async fn tcp_reachable(url: &str) -> bool {
+    let host_port = match parse_host_port(url) {
+        Some(hp) => hp,
+        None => return false,
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect(&host_port))
+            .await,
+        Ok(Ok(_))
+    )
+}
+
+/// Extract `host:port` from a URL or bare authority. Returns `None` on parse
+/// failure or missing port. We accept the absence of a default-port fallback
+/// because skipping a bench is safer than connecting to the wrong port.
+fn parse_host_port(url: &str) -> Option<String> {
+    // Try a real URL parse first — handles `moon://host:port`,
+    // `postgres://user:pass@host:port/db`, etc. Only succeeds when BOTH host
+    // and port are present (some URL grammars accept a missing port and
+    // we'd rather skip than guess).
+    if let Ok(parsed) = ::url::Url::parse(url)
+        && let (Some(host), Some(port)) = (parsed.host_str(), parsed.port())
+    {
+        return Some(format!("{host}:{port}"));
+    }
+    // Fall back to bare `host:port` (no scheme). Accepts exactly one `:` so
+    // `host:port:extra` doesn't get silently truncated.
+    let parts: Vec<&str> = url.split(':').collect();
+    if parts.len() == 2
+        && !parts[0].is_empty()
+        && !parts[1].is_empty()
+        && parts[1].chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(url.to_string());
+    }
+    None
+}
+
+// ----- vocab + predicates (static, deterministic) -----
+
+const PREDICATES: &[&str] = &[
+    "worked_at",
+    "lives_in",
+    "knows",
+    "owns",
+    "founded",
+    "manages",
+    "wrote",
+    "translated",
+    "designed",
+    "built",
+    "discovered",
+    "invented",
+    "led",
+    "joined",
+    "left",
+    "married",
+    "studied",
+    "taught",
+    "advised",
+    "mentored",
+    "competed_with",
+    "collaborated_with",
+    "hired",
+    "fired",
+    "promoted",
+    "edited",
+    "directed",
+    "produced",
+    "starred_in",
+    "composed",
+    "sang",
+    "performed",
+];
+
+const ENTITY_VOCAB_SIZE: usize = 10_000;
+
+/// Generate a deterministic 10 000-entry entity-name vocabulary.
+///
+/// We don't ship 10 K English-word fixtures (would bloat the binary). Instead
+/// we synthesize names of the shape `"Subject0001"` … `"Subject9999"`. The
+/// names are stable across runs because the index space is `[0, 10 000)`.
+fn entity_name(idx: usize) -> String {
+    format!("Subject{idx:04}")
+}
+
+// ----- deterministic embedding helper -----
+
+/// Mirror of `lunaris_core::embedder::StubEmbedder::embed_batch` per-string
+/// algorithm. Reproduced here so the corpus generator does NOT take a dep on
+/// the StubEmbedder (which would force `lunaris-core::test-util` into the
+/// production dep tree). The two impls MUST stay in sync — there's a unit
+/// test below that hashes the output of both for a known input.
+fn det_vec(s: &str, dim: usize) -> Vec<f32> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    let mut state = h.finish().max(1);
+    (0..dim)
+        .map(|_| {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
+            v * 2.0 - 1.0
+        })
+        .collect()
+}
+
+// ----- corpus build -----
+
+/// Build a `count`-fact synthetic corpus on `handle`'s storage backend.
+///
+/// Skips immediately (returns `Ok(())`) if a matching fingerprint file is
+/// found at [`fingerprint_path_for`]. Otherwise generates `count` facts with
+/// `seed` and bulk-writes via `handle.storage().atomic_write` in batches of
+/// [`CORPUS_BATCH_OPS`] / 2 facts.
+///
+/// ## Errors
+///
+/// - [`BenchCorpusError::Invalid`] — `count == 0` OR `count > 100_000_000`
+///   (a soft DoS guard so a malformed bench arg can't OOM the dev box).
+/// - [`BenchCorpusError::Backend`] — the backend rejected an `atomic_write`.
+///   The fingerprint file is NOT written; the next run rebuilds.
+/// - [`BenchCorpusError::Io`] / [`BenchCorpusError::Serde`] — fingerprint
+///   directory or file IO failure. The corpus IS in storage but the cache
+///   miss means subsequent runs re-write the same bytes (wasteful but
+///   correct).
+pub async fn build_one_million_fact_corpus(
+    handle: &Lunaris,
+    count: u64,
+    seed: u64,
+    backend_url: &str,
+) -> Result<(), BenchCorpusError> {
+    if count == 0 || count > 100_000_000 {
+        return Err(BenchCorpusError::Invalid(format!(
+            "count must be in (0, 100_000_000]; got {count}"
+        )));
+    }
+
+    let url_hash = hash_url(backend_url);
+    let fp_path = fingerprint_path_for(backend_url, count);
+
+    // Cache hit → skip rebuild. Validates count + seed + completed flag so a
+    // partial run from a previous interrupted invocation re-runs.
+    if let Ok(bytes) = std::fs::read(&fp_path)
+        && let Ok(fp) = serde_json::from_slice::<CorpusFingerprint>(&bytes)
+        && fp.completed
+        && fp.fact_count == count
+        && fp.seed == seed
+        && fp.backend_url_hash == url_hash
+    {
+        tracing::info!(
+            target: "lunaris-bench",
+            count,
+            seed,
+            duration_secs = fp.duration_secs,
+            "corpus fingerprint hit; skipping rebuild"
+        );
+        return Ok(());
+    }
+
+    // Build from scratch.
+    tracing::info!(target: "lunaris-bench", count, seed, "building synthetic fact corpus");
+    let started = Instant::now();
+    let storage: Arc<dyn StoragePort> = handle.storage();
+    let clock = handle.clock();
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+
+    // Per-fact ULIDs are derived from RNG bytes so they're deterministic for
+    // a given seed. Tests below verify two builds with the same seed produce
+    // identical first-fact ULIDs.
+    let facts_per_batch = (CORPUS_BATCH_OPS / 2).max(1) as u64;
+    let mut emitted: u64 = 0;
+    while emitted < count {
+        let batch_size = std::cmp::min(facts_per_batch, count - emitted);
+        let mut ops: Vec<WriteOp> = Vec::with_capacity((batch_size * 2) as usize);
+        for _ in 0..batch_size {
+            let fact = next_fact(&mut rng, &clock)?;
+            let key = fact_key(fact.id);
+            let value = serde_json::to_vec(&fact)?;
+            let embedding = fact.embedding.clone().unwrap_or_default();
+            ops.push(WriteOp::KvPut { key, value });
+            ops.push(WriteOp::VectorUpsert {
+                index: "facts".to_string(),
+                id: fact.id.to_bytes().to_vec(),
+                embedding,
+                metadata: serde_json::json!({
+                    "predicate": fact.predicate,
+                    "subject": fact.subject.to_string(),
+                }),
+            });
+        }
+        storage.atomic_write(&ops).await.map_err(|e| {
+            BenchCorpusError::Backend(LunarisError::Storage(e))
+        })?;
+        emitted += batch_size;
+        if emitted.is_multiple_of(100_000) || emitted == count {
+            tracing::debug!(
+                target: "lunaris-bench",
+                emitted,
+                total = count,
+                "corpus build progress"
+            );
+        }
+    }
+
+    let duration = started.elapsed();
+    let fp = CorpusFingerprint {
+        backend_url_hash: url_hash,
+        fact_count: count,
+        seed,
+        completed: true,
+        duration_secs: duration.as_secs_f64(),
+    };
+    write_fingerprint(&fp_path, &fp)?;
+    tracing::info!(
+        target: "lunaris-bench",
+        count,
+        seed,
+        duration_secs = fp.duration_secs,
+        "corpus build complete; fingerprint written"
+    );
+    Ok(())
+}
+
+/// Generate one synthetic [`Fact`] from the RNG. Pure — no IO.
+fn next_fact(rng: &mut ChaCha20Rng, clock: &HlcClock) -> Result<Fact, BenchCorpusError> {
+    // ULID from 16 random bytes — this matches `Ulid::from_bytes`.
+    let mut bytes = [0u8; 16];
+    rng.fill(&mut bytes);
+    let id = Ulid::from_bytes(bytes);
+
+    let mut sub_bytes = [0u8; 16];
+    rng.fill(&mut sub_bytes);
+    let mut obj_bytes = [0u8; 16];
+    rng.fill(&mut obj_bytes);
+    let subject = Ulid::from_bytes(sub_bytes);
+    let object = Ulid::from_bytes(obj_bytes);
+
+    let pred_idx = rng.random_range(0..PREDICATES.len());
+    let predicate = PREDICATES[pred_idx];
+    let sub_name_idx = (subject.0 as usize) % ENTITY_VOCAB_SIZE;
+    let obj_name_idx = (object.0 as usize) % ENTITY_VOCAB_SIZE;
+    let fact_text = format!("{} {} {}", entity_name(sub_name_idx), predicate, entity_name(obj_name_idx));
+    let embedding = det_vec(&fact_text, CORPUS_EMBEDDING_DIM);
+    Ok(Fact {
+        id,
+        subject,
+        predicate: predicate.to_string(),
+        object,
+        fact_text,
+        embedding: Some(embedding),
+        bt: BiTemporal::now(clock),
+        confidence: 0.95,
+        provenance: Vec::new(),
+        activation: 0.5,
+    })
+}
+
+fn write_fingerprint(path: &Path, fp: &CorpusFingerprint) -> Result<(), BenchCorpusError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let bytes = serde_json::to_vec_pretty(fp)?;
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
+/// Wrap [`build_one_million_fact_corpus`] with a TCP-reachability pre-check.
+///
+/// Returns:
+/// - `Ok(true)` — backend reachable AND corpus built (or cache-hit).
+/// - `Ok(false)` — backend unreachable; corpus NOT built. Caller treats as
+///   "skip the bench group". A short `eprintln!("SKIP …")` line is emitted
+///   for the bench output so an operator running `cargo bench` sees why.
+/// - `Err(_)` — backend reachable BUT the build itself failed. Caller
+///   surfaces (corpus genuinely broken).
+pub async fn ensure_corpus_or_skip(
+    handle: &Lunaris,
+    count: u64,
+    seed: u64,
+    backend_url: &str,
+    label: &str,
+) -> Result<bool, BenchCorpusError> {
+    if !tcp_reachable(backend_url).await {
+        eprintln!(
+            "SKIP {label} corpus build: backend unreachable (1s TCP probe failed)"
+        );
+        return Ok(false);
+    }
+    build_one_million_fact_corpus(handle, count, seed, backend_url).await?;
+    Ok(true)
+}
+
+// ----- synthetic query set -----
+
+/// Generate `count` deterministic query strings drawn from the same vocab as
+/// the corpus fact_text, so each query has hits in the corpus.
+///
+/// Each query is the predicate of a randomly-chosen fact-shape (`"<entity>
+/// <predicate>"`) — short enough that the keyword path matches via BM25 AND
+/// the vector path matches via embedding similarity (the entity name is in
+/// both the corpus fact_text and the query). Distinct from the corpus seed
+/// so query bytes don't match a fact_text verbatim.
+pub fn synthetic_query_set(seed: u64, count: usize) -> Vec<String> {
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entity_idx = rng.random_range(0..ENTITY_VOCAB_SIZE);
+        let pred_idx = rng.random_range(0..PREDICATES.len());
+        out.push(format!("{} {}", entity_name(entity_idx), PREDICATES[pred_idx]));
+    }
+    out
+}
+
+// ----- tests -----
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lunaris_core::{Embedder as _, StubEmbedder};
+
+    #[test]
+    fn url_hash_is_stable_and_truncated_to_16() {
+        let h = hash_url("moon://localhost:6390");
+        assert_eq!(h.len(), 16);
+        // Re-hashing the same URL gives the same prefix.
+        assert_eq!(h, hash_url("moon://localhost:6390"));
+        // Different URL → different hash (with overwhelming probability).
+        assert_ne!(h, hash_url("postgres://lunaris@localhost/lunaris"));
+    }
+
+    #[test]
+    fn fingerprint_path_includes_count_and_hash() {
+        let p = fingerprint_path_for("moon://localhost:6390", 1_000_000);
+        let s = p.to_string_lossy();
+        assert!(s.contains("lunaris-bench"));
+        assert!(s.contains("1000000"));
+        assert!(s.contains(&hash_url("moon://localhost:6390")));
+    }
+
+    #[test]
+    fn synthetic_query_set_is_deterministic() {
+        let a = synthetic_query_set(99, 16);
+        let b = synthetic_query_set(99, 16);
+        assert_eq!(a, b, "same seed must produce same query set");
+        let c = synthetic_query_set(100, 16);
+        assert_ne!(a, c, "different seed must produce different query set");
+        assert_eq!(a.len(), 16);
+        // Each query is "<EntityName> <predicate>" — at least 6 + 1 + 4 chars.
+        for q in &a {
+            assert!(q.len() >= 11, "query too short: {q:?}");
+            assert!(q.starts_with("Subject"));
+        }
+    }
+
+    #[test]
+    fn det_vec_matches_stub_embedder_per_string() {
+        // The stored fact embedding (det_vec) MUST match what
+        // StubEmbedder::embed_batch returns for the same input — this is the
+        // determinism contract that lets the bench measure the storage hot
+        // path independent of the real EmbeddingGemma cost.
+        let stub = StubEmbedder::new(CORPUS_EMBEDDING_DIM);
+        let fut = stub.embed_batch(&["hello world"]);
+        let got = futures::executor::block_on(fut).expect("stub embed");
+        let want = det_vec("hello world", CORPUS_EMBEDDING_DIM);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], want, "det_vec must mirror StubEmbedder per-string output");
+    }
+
+    #[test]
+    fn next_fact_is_deterministic_for_same_seed() {
+        let clock = HlcClock::new(0);
+        let mut a = ChaCha20Rng::seed_from_u64(7);
+        let mut b = ChaCha20Rng::seed_from_u64(7);
+        let fa = next_fact(&mut a, &clock).unwrap();
+        let fb = next_fact(&mut b, &clock).unwrap();
+        assert_eq!(fa.id.to_bytes(), fb.id.to_bytes());
+        assert_eq!(fa.subject.to_bytes(), fb.subject.to_bytes());
+        assert_eq!(fa.predicate, fb.predicate);
+        assert_eq!(fa.fact_text, fb.fact_text);
+        assert_eq!(fa.embedding, fb.embedding);
+    }
+
+    #[test]
+    fn invalid_count_is_rejected() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let storage: Arc<dyn StoragePort> = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(CORPUS_EMBEDDING_DIM));
+        let handle = Lunaris::with_parts(storage, embedder, HlcClock::new(0));
+
+        let err = rt.block_on(build_one_million_fact_corpus(&handle, 0, 0, "moon://x:1"));
+        assert!(matches!(err, Err(BenchCorpusError::Invalid(_))));
+    }
+
+    #[test]
+    fn parse_host_port_handles_url_and_bare_authority() {
+        assert_eq!(parse_host_port("moon://localhost:6390").as_deref(), Some("localhost:6390"));
+        assert_eq!(
+            parse_host_port("postgres://lunaris:lunaris@localhost:5432/lunaris").as_deref(),
+            Some("localhost:5432")
+        );
+        assert_eq!(parse_host_port("localhost:6390").as_deref(), Some("localhost:6390"));
+        assert_eq!(parse_host_port("not a url").as_deref(), None);
+        assert_eq!(parse_host_port("moon://localhost").as_deref(), None, "missing port → None");
+    }
+
+    #[tokio::test]
+    async fn tcp_unreachable_returns_false_quickly() {
+        // Port 1 on localhost is reserved + nobody listens — TCP RST is fast.
+        let started = Instant::now();
+        let ok = tcp_reachable("moon://localhost:1").await;
+        assert!(!ok);
+        // Should reject in well under 1s (the probe's timeout). RST is ~ms.
+        assert!(started.elapsed() < Duration::from_secs(2), "probe took too long: {:?}", started.elapsed());
+    }
+}
+
+// ----- shared in-test storage (re-used by the corpus_smoke integration test) -----
+//
+// Exposed via `pub(crate)` so the corpus_smoke test can inject the same shape
+// without duplicating the impl. NOT part of the public API.
+#[doc(hidden)]
+pub mod tests_recording {
+    use super::*;
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use futures::stream::BoxStream;
+    use lunaris_core::{
+        CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageCapabilities,
+        VectorHit,
+    };
+    use parking_lot::Mutex;
+
+    /// Records every `atomic_write` batch in memory + tallies KvPut /
+    /// VectorUpsert ops for assertions. All non-write methods return
+    /// `NotSupported` — this is a write-only recorder, sufficient for the
+    /// Plan 02-04 corpus smoke test.
+    #[derive(Default)]
+    pub struct RecordingStorage {
+        pub batches: Mutex<Vec<Vec<WriteOp>>>,
+    }
+
+    impl RecordingStorage {
+        pub fn batch_count(&self) -> usize {
+            self.batches.lock().len()
+        }
+        pub fn total_ops(&self) -> usize {
+            self.batches.lock().iter().map(|b: &Vec<WriteOp>| b.len()).sum()
+        }
+        pub fn op_kind_counts(&self) -> (usize, usize) {
+            // (kv_puts, vector_upserts)
+            let mut kv = 0;
+            let mut vec_ = 0;
+            for batch in self.batches.lock().iter() {
+                for op in batch {
+                    match op {
+                        WriteOp::KvPut { .. } => kv += 1,
+                        WriteOp::VectorUpsert { .. } => vec_ += 1,
+                        _ => {}
+                    }
+                }
+            }
+            (kv, vec_)
+        }
+    }
+
+    #[async_trait]
+    impl StoragePort for RecordingStorage {
+        async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+            self.batches.lock().push(ops.to_vec());
+            Ok(Lsn { wall_ms: 1, counter: self.batches.lock().len() as u32 })
+        }
+        async fn vector_search(
+            &self,
+            _index: &str,
+            _query: &[f32],
+            _k: usize,
+            _filter: Option<&Filter>,
+            _as_of: Option<Hlc>,
+            _rerank: bool,
+        ) -> Result<Vec<VectorHit>, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::vector_search"))
+        }
+        async fn graph_traverse(
+            &self,
+            _query: &CypherQuery,
+            _as_of: Option<Hlc>,
+        ) -> Result<GraphResult, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::graph_traverse"))
+        }
+        async fn scan_range(
+            &self,
+            _prefix: &[u8],
+            _as_of: Option<Hlc>,
+        ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::scan_range"))
+        }
+        async fn read_as_of(
+            &self,
+            _key: &[u8],
+            _as_of: Hlc,
+        ) -> Result<Option<Row<Bytes>>, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::read_as_of"))
+        }
+        async fn publish(
+            &self,
+            _topic: &str,
+            _partition: u16,
+            _payload: Bytes,
+        ) -> Result<u64, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::publish"))
+        }
+        async fn subscribe(
+            &self,
+            _group: &str,
+            _topic: &str,
+            _partition: u16,
+        ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+            Err(StorageError::NotSupported("RecordingStorage::subscribe"))
+        }
+        fn capabilities(&self) -> StorageCapabilities {
+            StorageCapabilities {
+                bi_temporal_native: false,
+                graph_native: false,
+                rerank_native: false,
+                queue_native: false,
+                max_vector_dim: CORPUS_EMBEDDING_DIM as u32,
+                native_rrf: false,
+            }
+        }
+    }
+}

@@ -1,0 +1,64 @@
+[package]
+name        = "lunaris-bench"
+version     = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+publish     = false
+
+# Plan 02-04 — Phase 2 latency budget enforcement.
+# Bench-only crate: NO production code lives here. The library surface
+# (`corpus.rs`, `fixtures.rs`) exists so the Criterion benches in `benches/`
+# AND the budget-assertion test in `tests/` can share the deterministic
+# 1M-fact corpus generator and the 12 KB markdown fixture.
+
+[dependencies]
+lunaris            = { path = "../lunaris" }
+lunaris-core       = { path = "../lunaris-core" }
+lunaris-storage-moon = { path = "../lunaris-storage-moon" }
+lunaris-ingest     = { path = "../lunaris-ingest" }
+async-trait        = { workspace = true }
+bytes              = { workspace = true }
+futures            = { workspace = true }
+parking_lot        = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+ulid               = { workspace = true }
+chrono             = { workspace = true }
+rand               = { workspace = true }
+rand_chacha        = { workspace = true }
+sha2               = { workspace = true }
+hex                = { workspace = true }
+tokio              = { workspace = true }
+tracing            = { workspace = true }
+thiserror          = { workspace = true }
+url                = { workspace = true }
+
+[dev-dependencies]
+criterion          = { workspace = true }
+parking_lot        = { workspace = true }
+futures            = { workspace = true }
+async-trait        = { workspace = true }
+bytes              = { workspace = true }
+tokio              = { workspace = true, features = ["full", "test-util"] }
+
+[features]
+# Gate the live budget-assertion test behind a feature so the default
+# `cargo test --workspace` skips it (it has no value without Criterion
+# data on disk). CI runs `cargo test -p lunaris-bench --features budget-it`
+# AFTER `cargo bench` populates `target/criterion/`.
+default = []
+budget-it = []
+
+[[bench]]
+name = "ingest_hot_path"
+harness = false
+
+[[bench]]
+name = "recall_hot_path"
+harness = false
+
+[[bench]]
+name = "atomic_write_hot_path"
+harness = false
