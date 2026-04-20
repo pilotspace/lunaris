@@ -1,4 +1,4 @@
-//! lunaris-core — shared types, clock, errors, and embedder trait.
+//! lunaris-core — shared types, clock, errors, embedder trait, and storage abstraction.
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
@@ -7,6 +7,7 @@ pub mod embedder;
 pub mod error;
 pub mod hlc;
 pub mod primitives;
+pub mod storage;
 
 pub use bitemporal::BiTemporal;
 pub use embedder::{Embedder, StubEmbedder};
@@ -15,3 +16,7 @@ pub use error::{
 };
 pub use hlc::{Hlc, HlcClock};
 pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
+pub use storage::{
+    CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, StorageCapabilities, StoragePort,
+    VectorHit, WriteOp,
+};
