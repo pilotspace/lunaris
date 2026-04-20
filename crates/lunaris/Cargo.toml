@@ -10,6 +10,8 @@ authors.workspace      = true
 lunaris-core              = { path = "../lunaris-core" }
 lunaris-storage-moon      = { path = "../lunaris-storage-moon" }
 lunaris-storage-postgres  = { path = "../lunaris-storage-postgres" }
+lunaris-embed             = { path = "../lunaris-embed", default-features = false }
+lunaris-ingest            = { path = "../lunaris-ingest" }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
@@ -18,9 +20,18 @@ url            = { workspace = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+async-trait    = { workspace = true }
+bytes          = { workspace = true }
+futures        = { workspace = true }
+parking_lot    = { workspace = true }
 
 [features]
-default = []
+default = ["candle"]
+# Forwards the embedder backend choice to lunaris-embed. Default = candle
+# (real EmbeddingGemma 768d via candle 0.10). `ollama` swaps to the HTTP
+# backend per the Plan 02-01 latency-budget escape hatch.
+candle  = ["lunaris-embed/candle"]
+ollama  = ["lunaris-embed/ollama"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris

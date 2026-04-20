@@ -90,9 +90,10 @@ impl Embedder for OllamaEmbedder {
         let url = format!("{}/api/embed", self.endpoint.trim_end_matches('/'));
         let body = EmbedRequest { model: &self.model, input: inputs.to_vec() };
 
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("ollama: {e}")))
-        })?;
+        let resp =
+            self.client.post(&url).json(&body).send().await.map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!("ollama: {e}")))
+            })?;
         if !resp.status().is_success() {
             return Err(LunarisError::Storage(StorageError::Backend(format!(
                 "ollama: HTTP {}",

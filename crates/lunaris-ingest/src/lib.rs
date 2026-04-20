@@ -22,6 +22,4 @@ pub use pipeline::{INGEST_EMBED_BATCH_SIZE, ingest_episode};
 // directly on a backend crate (Phase 1 convention — Moon's keyspace.rs is the
 // canonical key format; Postgres `lunaris_kv` uses the same byte prefix
 // convention).
-pub use lunaris_storage_moon::keyspace::{
-    chunk_key, chunk_prefix, episode_key, episode_prefix,
-};
+pub use lunaris_storage_moon::keyspace::{chunk_key, chunk_prefix, episode_key, episode_prefix};

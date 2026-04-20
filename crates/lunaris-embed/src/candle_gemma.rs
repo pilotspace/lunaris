@@ -72,7 +72,8 @@ pub struct CandleEmbeddingGemmaOpts {
 impl Default for CandleEmbeddingGemmaOpts {
     fn default() -> Self {
         let cache_root = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-        let default_model_path = cache_root.join("lunaris").join("models").join("embedding-gemma-300m");
+        let default_model_path =
+            cache_root.join("lunaris").join("models").join("embedding-gemma-300m");
         Self { model_path: Some(default_model_path), device: Device::Cpu }
     }
 }
@@ -161,8 +162,8 @@ impl CandleEmbeddingGemma {
                     safetensors_path.display()
                 )))
             })?;
-            let vb = VarBuilder::from_buffered_safetensors(bytes, DType::F32, &device)
-                .map_err(|e| {
+            let vb =
+                VarBuilder::from_buffered_safetensors(bytes, DType::F32, &device).map_err(|e| {
                     LunarisError::Storage(StorageError::Backend(format!(
                         "embedding-gemma weights: {e}"
                     )))
@@ -170,11 +171,8 @@ impl CandleEmbeddingGemma {
 
             // The token embedding matrix lives at `model.embed_tokens.weight`
             // in HuggingFace's gemma3 safetensors layout. Shape: [vocab_size, hidden_size].
-            let embed_weight = vb
-                .pp("model")
-                .pp("embed_tokens")
-                .get_unchecked("weight")
-                .map_err(|e| {
+            let embed_weight =
+                vb.pp("model").pp("embed_tokens").get_unchecked("weight").map_err(|e| {
                     LunarisError::Storage(StorageError::Backend(format!(
                         "embedding-gemma weights: model.embed_tokens.weight not found ({e})"
                     )))
@@ -197,9 +195,7 @@ impl CandleEmbeddingGemma {
             Ok(CandleInner { tokenizer, embed_weight, device, hidden_size })
         })
         .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("candle join: {e}")))
-        })??;
+        .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("candle join: {e}"))))??;
 
         Ok(Self { inner: Arc::new(load) })
     }
@@ -241,9 +237,12 @@ impl Embedder for CandleEmbeddingGemma {
                 }
 
                 // index_select: [vocab, hidden] @ [seq] → [seq, hidden]
-                let id_tensor =
-                    Tensor::from_vec(ids, (encoding.get_ids().len().min(EMBEDDING_GEMMA_MAX_TOKENS),), &inner.device)
-                        .map_err(candle_err)?;
+                let id_tensor = Tensor::from_vec(
+                    ids,
+                    (encoding.get_ids().len().min(EMBEDDING_GEMMA_MAX_TOKENS),),
+                    &inner.device,
+                )
+                .map_err(candle_err)?;
                 let token_embeds =
                     inner.embed_weight.index_select(&id_tensor, 0).map_err(candle_err)?;
 
@@ -265,9 +264,7 @@ impl Embedder for CandleEmbeddingGemma {
             Ok(out)
         })
         .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("candle join: {e}")))
-        })?
+        .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("candle join: {e}"))))?
     }
 }
 

@@ -70,7 +70,9 @@ fn embedder_is_dyn_compat() {
 #[tokio::test]
 async fn candle_gemma_embeds_real_batch() {
     let Some(path) = std::env::var("LUNARIS_EMBED_GEMMA_PATH").ok() else {
-        eprintln!("SKIP candle_gemma_embeds_real_batch — set LUNARIS_EMBED_GEMMA_PATH to a directory containing tokenizer.json + model.safetensors");
+        eprintln!(
+            "SKIP candle_gemma_embeds_real_batch — set LUNARIS_EMBED_GEMMA_PATH to a directory containing tokenizer.json + model.safetensors"
+        );
         return;
     };
     let embedder = CandleEmbeddingGemma::new(CandleEmbeddingGemmaOpts {
@@ -86,10 +88,7 @@ async fn candle_gemma_embeds_real_batch() {
     for (i, row) in out.iter().enumerate() {
         assert_eq!(row.len(), 768, "row {i} must be 768-d");
         let l2 = row.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-        assert!(
-            (0.99..=1.01).contains(&l2),
-            "row {i} L2 = {l2} not in [0.99, 1.01]"
-        );
+        assert!((0.99..=1.01).contains(&l2), "row {i} L2 = {l2} not in [0.99, 1.01]");
     }
 }
 

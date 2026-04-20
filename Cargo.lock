@@ -1579,9 +1579,14 @@ name = "lunaris"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "bytes",
+ "futures",
  "lunaris-core",
+ "lunaris-embed",
+ "lunaris-ingest",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",
+ "parking_lot",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

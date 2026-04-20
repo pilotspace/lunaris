@@ -19,9 +19,7 @@ fn chunks_a_simple_doc() {
         "first chunk should be inside the first H1"
     );
     // At least one chunk should record the nested H1 -> H2 lineage.
-    let nested = chunks
-        .iter()
-        .any(|c| c.heading_path == vec!["A".to_string(), "B".to_string()]);
+    let nested = chunks.iter().any(|c| c.heading_path == vec!["A".to_string(), "B".to_string()]);
     assert!(
         nested,
         "expected at least one chunk under the H1 -> H2 lineage; got: {:#?}",
@@ -61,10 +59,7 @@ fn overlap_tail_is_carried() {
     // target=10 overlap=3 — the chunker should emit at least 2 chunks for a doc
     // long enough; the second chunk's text should start with the last 3 words
     // of the first chunk's text.
-    let body: String = (0..40)
-        .map(|i| format!("word{i}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let body: String = (0..40).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
     let chunks = chunk_markdown(&body, 10, 3);
     assert!(chunks.len() >= 2, "expected at least 2 chunks, got {}", chunks.len());
     let first_overlap = &chunks[0].overlap_tail;
@@ -93,18 +88,11 @@ fn token_estimate_matches_heuristic() {
 fn chunks_preserve_ordering_in_complex_doc() {
     let chunks: Vec<ChunkDraft> = chunk_markdown(TWELVE_KB_FIXTURE, 500, 100);
     // Find the indices of two known heading_path chains and assert ordering.
-    let storage_idx = chunks.iter().position(|c| {
-        c.heading_path
-            .iter()
-            .any(|h| h.contains("Storage Contracts"))
-    });
-    let recall_idx = chunks
-        .iter()
-        .position(|c| c.heading_path.iter().any(|h| h.contains("Recall Hot Path")));
+    let storage_idx =
+        chunks.iter().position(|c| c.heading_path.iter().any(|h| h.contains("Storage Contracts")));
+    let recall_idx =
+        chunks.iter().position(|c| c.heading_path.iter().any(|h| h.contains("Recall Hot Path")));
     if let (Some(s), Some(r)) = (storage_idx, recall_idx) {
-        assert!(
-            s < r,
-            "Storage Contracts section should chunk before Recall Hot Path"
-        );
+        assert!(s < r, "Storage Contracts section should chunk before Recall Hot Path");
     }
 }

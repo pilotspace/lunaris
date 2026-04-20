@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Embedder, Episode, Filter, GraphResult, Hlc, HlcClock, LunarisError, Lsn,
+    CypherQuery, Embedder, Episode, Filter, GraphResult, Hlc, HlcClock, Lsn, LunarisError,
     QueueMsg, Row, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit,
     WriteOp,
 };
@@ -124,11 +124,7 @@ struct FlakyEmbedder {
 
 impl FlakyEmbedder {
     fn new(dim: usize) -> Self {
-        Self {
-            inner: StubEmbedder::new(dim),
-            multi_input_call_seen: Mutex::new(false),
-            dim,
-        }
+        Self { inner: StubEmbedder::new(dim), multi_input_call_seen: Mutex::new(false), dim }
     }
 }
 
@@ -194,9 +190,9 @@ async fn episode_and_chunks_appear_in_single_batch() {
     let batch = storage.first_batch();
     let n_episode_kvput = batch
         .iter()
-        .filter(|op| {
-            matches!(op, WriteOp::KvPut { key, .. } if key.starts_with(b"lunaris:episode:"))
-        })
+        .filter(
+            |op| matches!(op, WriteOp::KvPut { key, .. } if key.starts_with(b"lunaris:episode:")),
+        )
         .count();
     let n_chunk_kvput = batch
         .iter()
@@ -240,10 +236,7 @@ async fn embed_fallback_on_batch_error() {
     // Even with a flaky embedder, the pipeline still issues exactly ONE atomic_write.
     assert_eq!(storage.batch_count(), 1, "INGEST-04 holds even under embedder fallback");
     let batch = storage.first_batch();
-    let n_vec_upsert = batch
-        .iter()
-        .filter(|op| matches!(op, WriteOp::VectorUpsert { .. }))
-        .count();
+    let n_vec_upsert = batch.iter().filter(|op| matches!(op, WriteOp::VectorUpsert { .. })).count();
     assert!(n_vec_upsert >= 1, "fallback path should still produce embeddings");
     for op in &batch {
         if let WriteOp::VectorUpsert { embedding, .. } = op {

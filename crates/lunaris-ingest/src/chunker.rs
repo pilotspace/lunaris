@@ -58,14 +58,8 @@ impl ChunkDraft {
     /// Convert to a Phase 1 [`Chunk`]. The caller controls the `episode_id`;
     /// `clock` issues the `BiTemporal::now` stamp.
     pub fn into_chunk(self, episode_id: Ulid, clock: &HlcClock) -> Chunk {
-        let mut c = Chunk::new(
-            episode_id,
-            self.text,
-            self.tokens,
-            self.offset,
-            self.heading_path,
-            clock,
-        );
+        let mut c =
+            Chunk::new(episode_id, self.text, self.tokens, self.offset, self.heading_path, clock);
         c.overlap_tail = self.overlap_tail;
         c
     }
