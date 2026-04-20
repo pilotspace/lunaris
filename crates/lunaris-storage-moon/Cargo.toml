@@ -1,3 +1,10 @@
+# lunaris-storage-moon — `MoonStorage` impl backed by Moon (Redis-compatible RESP).
+#
+# Integration tests:
+#   cargo test -p lunaris-storage-moon --lib                   # unit tests, no Moon required
+#   cargo test -p lunaris-storage-moon --features moon-it      # round-trip vs live Moon
+# Live tests expect Moon at MOON_URL (default moon://localhost:6390).
+
 [package]
 name        = "lunaris-storage-moon"
 version     = "0.0.1"
@@ -19,3 +26,12 @@ tracing        = { workspace = true }
 redis          = { workspace = true }
 parking_lot    = { workspace = true }
 url            = { workspace = true }
+ulid           = { workspace = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default      = []
+# Enable to run the integration tests against a live Moon instance at moon://localhost:6390
+moon-it      = []
