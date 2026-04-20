@@ -182,11 +182,7 @@ async fn ingest_episode_graph_on(
             LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
         })?;
         ops.push(WriteOp::KvPut { key: chunk_key(chunk.id), value: chunk_value });
-        let embedding = chunk
-            .embedding
-            .as_ref()
-            .expect("embedding assigned in step 2")
-            .clone();
+        let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 2").clone();
         ops.push(WriteOp::VectorUpsert {
             index: CHUNK_VECTOR_INDEX.into(),
             id: chunk.id.to_bytes().to_vec(),

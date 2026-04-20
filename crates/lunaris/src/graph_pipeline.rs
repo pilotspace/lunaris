@@ -2,9 +2,10 @@
 //!
 //! Per blueprint §5.2 + ROADMAP Phase 3 success criterion #5, the graph
 //! pipeline is OFF by default. With it OFF, [`crate::Lunaris::ingest`] stays
-//! in the Phase 2 fast path; with it ON, ingest extracts entities + relations
-//! + facts and fans them into the SAME [`lunaris_core::StoragePort::atomic_write`]
-//! call as the Episode + Chunks (D-18 single-transaction contract).
+//! in the Phase 2 fast path; with it ON, ingest extracts entities, relations,
+//! and facts then fans them into the SAME
+//! [`lunaris_core::StoragePort::atomic_write`] call as the Episode and Chunks
+//! (D-18 single-transaction contract).
 //!
 //! ## Surfaces (D-10 — three equivalent ways to drive the same internal `RwLock<bool>`)
 //!
@@ -172,8 +173,8 @@ impl GraphPipelineHandle {
     }
 
     /// Replace the extractor on this handle. Test seam + production hook for
-    /// custom backends (e.g., a tenant-specific [`lunaris_extract::CloudApiExtractor`]
-    /// under `cloud-api` feature) that callers want to install AFTER
+    /// custom backends (e.g., a tenant-specific `CloudApiExtractor` under the
+    /// `cloud-api` feature) that callers want to install AFTER
     /// [`crate::Lunaris::open`].
     ///
     /// The toggle state is preserved — only the extractor `Arc` is swapped.

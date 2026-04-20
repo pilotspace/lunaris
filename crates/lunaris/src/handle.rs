@@ -106,8 +106,7 @@ impl Lunaris {
         // NoopExtractor on cache miss — see `default_extractor`).
         let extractor = default_extractor().await;
         let initial_graph_state = GraphPipelineHandle::initial_state_from_env();
-        let graph_pipeline =
-            Arc::new(GraphPipelineHandle::new(initial_graph_state, extractor));
+        let graph_pipeline = Arc::new(GraphPipelineHandle::new(initial_graph_state, extractor));
         match scheme {
             "moon" => {
                 let m = Arc::new(MoonStorage::connect(url).await?);
@@ -220,9 +219,10 @@ impl Lunaris {
     }
 
     /// Plan 03-03 escape hatch — replace the extractor on an existing handle.
-    /// Production callers wiring a [`lunaris_extract::CloudApiExtractor`] or a
-    /// custom [`lunaris_extract::Extractor`] impl use this; tests pass
-    /// `Arc::new(lunaris_extract::NoopExtractor)` for determinism.
+    /// Production callers wiring a `CloudApiExtractor` (cfg-gated behind the
+    /// `cloud-api` feature) or a custom [`lunaris_extract::Extractor`] impl
+    /// use this; tests pass `Arc::new(lunaris_extract::NoopExtractor)` for
+    /// determinism.
     ///
     /// Note: the extractor lives inside the [`GraphPipelineHandle`]'s
     /// `RwLock<Option<Arc<dyn Extractor>>>` — this method swaps it via

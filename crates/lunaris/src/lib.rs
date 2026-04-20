@@ -61,10 +61,10 @@ pub use lunaris_extract::{
 // the candle stack nor the http stack.
 #[cfg(feature = "candle")]
 pub use lunaris_extract::{CandleGemma3_4B, CandleGemma3_4BOpts};
-#[cfg(feature = "ollama")]
-pub use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 #[cfg(feature = "cloud-api")]
 pub use lunaris_extract::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
+#[cfg(feature = "ollama")]
+pub use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 
 // Re-export backend concrete types for callers who want to construct directly
 // (bypassing URL routing — needed by the conformance harness in Phase 5).
