@@ -8,10 +8,12 @@
 //!      failure (network drops, timeouts) per-row instead of silently truncating.
 
 pub mod capabilities;
+pub mod keyword;
 pub mod port;
 pub mod types;
 
 pub use capabilities::StorageCapabilities;
+pub use keyword::{KeywordHit, KeywordPort, min_max_normalize};
 pub use port::StoragePort;
 pub use types::{
     CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, RrfFusion, VectorHit, WriteOp,

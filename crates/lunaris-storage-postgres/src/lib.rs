@@ -28,6 +28,7 @@
 
 pub mod atomic;
 pub mod graph;
+pub mod keyword;
 pub mod kv;
 pub mod pool;
 pub mod queue;
@@ -40,8 +41,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageCapabilities, StorageError,
-    StoragePort, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row,
+    StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,20 @@ impl StoragePort for PostgresStorage {
             max_vector_dim: 1536,      // pgvector practical ceiling (Postgres profile)
             native_rrf: false,         // Postgres uses client-side RRF (Phase 1.5 STORE-09)
         }
+    }
+}
+
+#[async_trait]
+impl KeywordPort for PostgresStorage {
+    async fn keyword_search(
+        &self,
+        index: &str,
+        query: &str,
+        k: usize,
+        filter: Option<&Filter>,
+        as_of: Option<Hlc>,
+    ) -> Result<Vec<KeywordHit>, StorageError> {
+        crate::keyword::keyword_search(&self.client, index, query, k, filter, as_of).await
     }
 }
 

@@ -32,6 +32,7 @@ pub mod atomic;
 pub mod client;
 pub mod graph;
 pub mod keyspace;
+pub mod keyword;
 pub mod kv;
 pub mod queue;
 pub mod vector;
@@ -42,8 +43,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageCapabilities, StorageError,
-    StoragePort, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row,
+    StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 
 /// `StoragePort` backed by a single Moon RESP connection manager.
@@ -133,6 +134,20 @@ impl StoragePort for MoonStorage {
             // into `RrfFusion::Moon` when this is true (Phase 1.5 STORE-09).
             native_rrf: true,
         }
+    }
+}
+
+#[async_trait]
+impl KeywordPort for MoonStorage {
+    async fn keyword_search(
+        &self,
+        index: &str,
+        query: &str,
+        k: usize,
+        filter: Option<&Filter>,
+        as_of: Option<Hlc>,
+    ) -> Result<Vec<KeywordHit>, StorageError> {
+        crate::keyword::keyword_search(&self.client, index, query, k, filter, as_of).await
     }
 }
 
