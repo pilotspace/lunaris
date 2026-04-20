@@ -68,7 +68,9 @@ impl HlcClock {
         Hlc { wall_ms: issued.wall_ms, counter: issued.counter, node_id: self.node_id }
     }
 
-    pub fn node_id(&self) -> u16 { self.node_id }
+    pub fn node_id(&self) -> u16 {
+        self.node_id
+    }
 }
 
 #[inline]

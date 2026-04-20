@@ -27,8 +27,7 @@ fn torture_4_threads_1m_ticks_no_inversions() {
             local
         }));
     }
-    let mut all: Vec<(u128, Hlc)> =
-        handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+    let mut all: Vec<(u128, Hlc)> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
     // Sort by Hlc total order
     all.sort_by_key(|(_, t)| *t);
     let n = all.len();

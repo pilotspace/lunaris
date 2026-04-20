@@ -44,9 +44,7 @@ fn det_vec(s: &str, dim: usize) -> Vec<f32> {
     let mut state = h.finish().max(1);
     (0..dim)
         .map(|_| {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
             v * 2.0 - 1.0
         })
