@@ -112,6 +112,15 @@ impl StoragePort for PostgresStorage {
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
         crate::queue::subscribe(self.client.clone(), group, topic, partition).await
     }
+    /// Plan 04 D-12 + B-11 — see [`crate::queue::queue_length`] for the
+    /// pgmq.queue_length($1) primary path + SqlState 42883 fallback.
+    async fn queue_depth(
+        &self,
+        topic: &str,
+        partition: u16,
+    ) -> Result<u64, StorageError> {
+        crate::queue::queue_length(&self.client, topic, partition).await
+    }
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             bi_temporal_native: false, // emulated via valid_from/valid_to/sys_from/sys_to columns

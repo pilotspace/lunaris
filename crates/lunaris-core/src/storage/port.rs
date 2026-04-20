@@ -90,6 +90,30 @@ pub trait StoragePort: Send + Sync + 'static {
         partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError>;
 
+    /// Plan 04 D-12 — queue introspection. Returns the number of pending
+    /// (un-ACKed) messages on `(topic, partition)`.
+    ///
+    /// **Additive trait method**: backends may opt in by overriding the
+    /// default; the default returns `Err(StorageError::NotSupported(...))` so
+    /// every existing impl keeps compiling without modification. The Moon
+    /// backend implements this via raw `redis::cmd("MQ.LENGTH")` (Path 2 from
+    /// the D-12 B-NOTE — moon-client v0.1.x lacks a typed wrapper); the
+    /// Postgres backend implements it via `pgmq.queue_length($1)` with a
+    /// SqlState 42883 fallback for older pgmq installs (B-11).
+    ///
+    /// Plan 04-04 `Lunaris::recall_with_degraded_check` reads this once per
+    /// recall to set `Hit::degraded = true` when the verifier queue depth
+    /// crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` (VERIFY-05 + VERIFY-06).
+    async fn queue_depth(
+        &self,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported(
+            "queue_depth not implemented for this StoragePort backend",
+        ))
+    }
+
     /// Report capabilities so higher layers (retrievers, recipes, the conformance
     /// suite) can make degradation decisions per blueprint §6.
     fn capabilities(&self) -> StorageCapabilities;

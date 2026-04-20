@@ -20,9 +20,104 @@ use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
-use sqlx::Row;
+use sqlx::{AssertSqlSafe, Row};
 
 use crate::pool::{PgClient, sqlx_err};
+
+/// Plan 04 D-12 + B-11: pgmq queue length.
+///
+/// Tries `pgmq.queue_length($1)` SQL function first. On SqlState `42883`
+/// (`undefined_function` — pgmq.queue_length(text) absent on older pgmq
+/// installs) falls back to a direct `count(*)` against the per-topic
+/// `pgmq.q_<topic>` table.
+///
+/// The fallback path interpolates the topic name into the SQL string. To
+/// defend against SQL injection (T-04-04-01), the topic name MUST pass
+/// [`validate_topic`] BEFORE any `format!()` call. The validator matches
+/// `^[A-Za-z_][A-Za-z0-9_]*$` — the standard Postgres safe-identifier
+/// shape (mirror of Plan 03's atomic.rs T-01-03-01 contract).
+pub(crate) async fn queue_length(
+    c: &PgClient,
+    topic: &str,
+    _partition: u16,
+) -> Result<u64, StorageError> {
+    // B-11 fix: validate topic name BEFORE any SQL interpolation. The
+    // pgmq.queue_length($1) parameterised path doesn't strictly need this,
+    // but the fallback `format!("... q_{safe_topic} ...")` does, and
+    // running the validator unconditionally keeps the threat model trivially
+    // auditable (the validator is the gate; the bind param is defense in
+    // depth).
+    let safe_topic = validate_topic(topic)?;
+
+    // Path A: try pgmq.queue_length($1) SQL function.
+    let try_fn = sqlx::query("SELECT pgmq.queue_length($1) AS depth")
+        .bind(safe_topic)
+        .fetch_one(&c.pool)
+        .await;
+
+    match try_fn {
+        Ok(row) => {
+            let n: i64 = row.try_get("depth").map_err(|e| {
+                StorageError::Backend(format!("queue_length depth col: {e}"))
+            })?;
+            Ok(n.max(0) as u64)
+        }
+        // B-11 fix: match SqlState code `42883` (undefined_function), NOT
+        // brittle string-contains. The pgmq.queue_length() helper is missing
+        // on older pgmq installs; fall back to count(*) on the q_<name> table.
+        Err(sqlx::Error::Database(db_err))
+            if db_err.code().as_deref() == Some("42883") =>
+        {
+            tracing::debug!(
+                "pgmq.queue_length(text) absent (SqlState 42883); falling back to direct count"
+            );
+            // Safe interpolation: safe_topic already passed validate_topic.
+            // Workspace convention (atomic.rs / vector.rs / graph.rs) wraps
+            // every dynamically-built SQL string with `AssertSqlSafe(...)` —
+            // sqlx 0.9.0-alpha.1's `query()` requires `SqlSafeStr`, and the
+            // wrapper is the explicit "this string passed our validator"
+            // marker. The validator is the actual gate; this wrapper is the
+            // workspace-convention seal that the audit reader greps for.
+            let sql = format!("SELECT count(*) AS depth FROM pgmq.q_{safe_topic}");
+            let row = sqlx::query(AssertSqlSafe(sql))
+                .fetch_one(&c.pool)
+                .await
+                .map_err(sqlx_err)?;
+            let n: i64 = row.try_get("depth").map_err(|e| {
+                StorageError::Backend(format!("queue_length count col: {e}"))
+            })?;
+            Ok(n.max(0) as u64)
+        }
+        Err(e) => Err(sqlx_err(e)),
+    }
+}
+
+/// B-11 fix: validate topic name against the Postgres safe-identifier
+/// regex `^[A-Za-z_][A-Za-z0-9_]*$`. Hand-rolled (no `regex` crate dep) —
+/// the character set is small enough that a single-pass byte loop is both
+/// faster than compiling a regex and avoids pulling a new workspace dep.
+///
+/// Mirror of the validation contract documented in
+/// `lunaris-storage-postgres/src/lib.rs` line 19 ("Caller-validated regex
+/// `^[A-Za-z_][A-Za-z0-9_]*$` per Plan 03's T-01-03-01 contract").
+fn validate_topic(topic: &str) -> Result<&str, StorageError> {
+    let bytes = topic.as_bytes();
+    if bytes.is_empty() {
+        return Err(StorageError::Backend(format!("invalid pgmq topic: {topic}")));
+    }
+    // First byte: must be ASCII alpha or underscore.
+    let first = bytes[0];
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return Err(StorageError::Backend(format!("invalid pgmq topic: {topic}")));
+    }
+    // Subsequent bytes: ASCII alphanumeric or underscore.
+    for &b in &bytes[1..] {
+        if !(b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(StorageError::Backend(format!("invalid pgmq topic: {topic}")));
+        }
+    }
+    Ok(topic)
+}
 
 pub(crate) async fn publish(
     c: &PgClient,
@@ -168,5 +263,51 @@ mod tests {
     fn base64_empty_is_empty_string() {
         assert_eq!(base64_encode(&[]), "");
         assert_eq!(base64_decode(""), Vec::<u8>::new());
+    }
+}
+
+#[cfg(test)]
+mod queue_length_tests {
+    //! B-11 unit tests — validate the topic-name regex BEFORE any SQL hits
+    //! Postgres. These run on every `cargo test --workspace --lib` (no
+    //! pg-it gate) because they exercise the pure validator only.
+
+    use super::*;
+
+    #[test]
+    fn valid_table_names_accepted() {
+        assert!(validate_topic("__lunaris_verify__").is_ok());
+        assert!(validate_topic("__lunaris_consolidate__").is_ok());
+        assert!(validate_topic("__lunaris_audit__").is_ok());
+        assert!(validate_topic("topic1").is_ok());
+        assert!(validate_topic("_topic").is_ok());
+        assert!(validate_topic("Topic_With_Mixed_Case").is_ok());
+        assert!(validate_topic("a").is_ok());
+        assert!(validate_topic("_").is_ok());
+    }
+
+    #[test]
+    fn injection_attempts_rejected() {
+        assert!(validate_topic("").is_err(), "empty must reject");
+        assert!(validate_topic("1invalid").is_err(), "leading digit must reject");
+        assert!(validate_topic("helios:fs/").is_err(), "colon + slash must reject");
+        assert!(validate_topic("foo' OR '1").is_err(), "single-quote injection must reject");
+        assert!(
+            validate_topic("foo\"; DROP TABLE x; --").is_err(),
+            "double-quote + statement injection must reject"
+        );
+        assert!(validate_topic("foo bar").is_err(), "space must reject");
+        assert!(validate_topic("foo-bar").is_err(), "hyphen must reject");
+        assert!(validate_topic("foo.bar").is_err(), "dot must reject");
+        // Unicode + non-ASCII must reject (regex is ASCII-only).
+        assert!(validate_topic("föo").is_err(), "non-ASCII must reject");
+    }
+
+    /// Regression guard: the validator MUST reject empty input even though
+    /// `bytes.is_empty()` early returns — keep the explicit assertion so a
+    /// future refactor can't silently allow it through.
+    #[test]
+    fn empty_topic_rejected() {
+        assert!(validate_topic("").is_err());
     }
 }

@@ -25,7 +25,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
 
-use crate::client::{MoonClient, moon_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 
 pub(crate) async fn publish(
     c: &MoonClient,
@@ -35,6 +35,35 @@ pub(crate) async fn publish(
 ) -> Result<u64, StorageError> {
     let typed = c.typed();
     typed.mq().push_partitioned(topic, partition, payload.as_ref()).await.map_err(moon_err)
+}
+
+/// Plan 04 D-12 — pending (un-ACKed) message count for `(topic, partition)`.
+///
+/// ## Path 2 (raw `redis::cmd("MQ.LENGTH")`)
+///
+/// moon-client v0.1.x does not yet expose a typed `MqClient::length`
+/// helper, so we use the SAME raw `redis::cmd` escape hatch documented in
+/// `kv.rs::scan_range` (which uses HSCAN for the same reason). When
+/// moon-client adds a typed wrapper, swap this for the typed call. This is
+/// the SECOND raw RESP cmd invocation in `lunaris-storage-moon/src/` and is
+/// covered by the same Phase 1.5 retrofit (STORE-09) constraint comment.
+///
+/// Returns 0 when MQ.LENGTH replies a negative number (defensive cast — a
+/// well-behaved Moon server returns a non-negative i64 here).
+pub(crate) async fn queue_length(
+    c: &MoonClient,
+    topic: &str,
+    partition: u16,
+) -> Result<u64, StorageError> {
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    let n: i64 = redis::cmd("MQ.LENGTH")
+        .arg(topic)
+        .arg(partition)
+        .query_async(raw_conn)
+        .await
+        .map_err(redis_err)?;
+    Ok(n.max(0) as u64)
 }
 
 /// Internal state threaded through the unfold stream.

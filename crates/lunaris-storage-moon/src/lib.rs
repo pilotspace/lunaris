@@ -121,6 +121,16 @@ impl StoragePort for MoonStorage {
         crate::queue::subscribe(self.client.clone(), group, topic, partition).await
     }
 
+    /// Plan 04 D-12 — see [`crate::queue::queue_length`] for the raw
+    /// `MQ.LENGTH` escape hatch rationale.
+    async fn queue_depth(
+        &self,
+        topic: &str,
+        partition: u16,
+    ) -> Result<u64, StorageError> {
+        crate::queue::queue_length(&self.client, topic, partition).await
+    }
+
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             bi_temporal_native: true,
