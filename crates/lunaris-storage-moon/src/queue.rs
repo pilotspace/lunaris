@@ -65,8 +65,10 @@ pub(crate) async fn subscribe(
     let stream = stream::unfold(state, |mut s| async move {
         loop {
             let typed = s.client.typed();
-            let pop =
-                typed.mq().pop_partitioned(s.group.as_str(), s.topic.as_str(), s.partition, 250).await;
+            let pop = typed
+                .mq()
+                .pop_partitioned(s.group.as_str(), s.topic.as_str(), s.partition, 250)
+                .await;
             match pop {
                 Err(e) => {
                     // Surface the error to the consumer; keep the stream alive so

@@ -67,18 +67,13 @@ pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn,
     Ok(Lsn { wall_ms: now_ms, counter: 0 })
 }
 
-async fn run_ops(
-    typed: &mut moon_client::MoonClient,
-    ops: &[WriteOp],
-) -> Result<(), StorageError> {
+async fn run_ops(typed: &mut moon_client::MoonClient, ops: &[WriteOp]) -> Result<(), StorageError> {
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
                 // Single-field hash so HGET <key> v is the canonical read in `read_as_of`.
-                let _: i64 = typed
-                    .hset(key.as_slice(), "v", value.as_slice())
-                    .await
-                    .map_err(moon_err)?;
+                let _: i64 =
+                    typed.hset(key.as_slice(), "v", value.as_slice()).await.map_err(moon_err)?;
             }
             WriteOp::KvDelete { key } => {
                 let _: i64 = typed.del(key.as_slice()).await.map_err(moon_err)?;
@@ -103,11 +98,8 @@ async fn run_ops(
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
                 let props_json = serde_json::to_string(props)?;
                 let cypher = format!("MERGE (n:{label} {{id: $id}}) SET n += $props");
-                let params = format!(
-                    r#"{{"id":"{}","props":{}}}"#,
-                    String::from_utf8_lossy(id),
-                    props_json
-                );
+                let params =
+                    format!(r#"{{"id":"{}","props":{}}}"#, String::from_utf8_lossy(id), props_json);
                 let _: redis::Value = typed
                     .graph()
                     .query_with_params(graph.as_str(), &cypher, &params)

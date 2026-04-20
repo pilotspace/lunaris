@@ -42,7 +42,8 @@ pub(crate) async fn read_as_of(
     // moon-client's `hget` returns `Result<Option<RV>>`; when the field is absent we
     // get `Ok(None)` and translate to `None` here.
     let value: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "v").await.map_err(moon_err)?;
-    let bt_bytes: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "bt").await.map_err(moon_err)?;
+    let bt_bytes: Option<Vec<u8>> =
+        typed.hget::<_, _, Vec<u8>>(key, "bt").await.map_err(moon_err)?;
 
     // Always release the snapshot, even if the reads errored.
     let _ = typed.temporal().release_snapshot().await;

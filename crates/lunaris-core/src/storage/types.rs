@@ -136,3 +136,99 @@ pub struct QueueMsg {
     pub offset: u64,
     pub payload: Bytes,
 }
+
+// ----- RrfFusion -----
+
+/// RRF (Reciprocal Rank Fusion) mode for the retrieval DSL.
+///
+/// Phase 2's `fuse_rrf` operator chooses between client-side fusion and
+/// Moon-native `text().hybrid_search()` based on this hint and the backend's
+/// [`StorageCapabilities::native_rrf`](super::capabilities::StorageCapabilities)
+/// flag. Phase 1.5 (STORE-09) ships the type + the capability bit; Phase 2
+/// wires the operator that consumes them.
+///
+/// # Example
+///
+/// ```
+/// use lunaris_core::RrfFusion;
+///
+/// // Always available; works on any StoragePort backend (incl. Postgres).
+/// let client_side = RrfFusion::Client { k: 60 };
+///
+/// // Only valid when capabilities().native_rrf == true (Moon backend) AND
+/// // both branches are Vector + Keyword(BM25) on the same Moon index.
+/// let moon_native = RrfFusion::Moon { k: 60, weights: [0.5, 0.5] };
+/// match moon_native {
+///     RrfFusion::Moon { k, weights } => {
+///         assert_eq!(k, 60);
+///         assert_eq!(weights, [0.5, 0.5]);
+///     }
+///     _ => unreachable!(),
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RrfFusion {
+    /// Client-side fusion: collect both branches' results, apply `1 / (k + rank)`
+    /// per branch, sum scores. Works on any [`StoragePort`](super::port::StoragePort)
+    /// backend regardless of `capabilities().native_rrf`.
+    Client { k: usize },
+    /// Moon-native fusion: invoke
+    /// `FT.SEARCH ... HYBRID VECTOR ... SPARSE ... FUSION RRF WEIGHTS <bm25_w> <vec_w>`
+    /// in a single round trip via `client.text().hybrid_search()`. Only valid when
+    /// `capabilities().native_rrf == true` AND both branches are `Vector` and
+    /// `Keyword(BM25)` operators on the same Moon index. Phase 2's `fuse_rrf`
+    /// query planner picks this variant for Moon backends; falls back to
+    /// `Client` on non-native backends (e.g., Postgres).
+    Moon {
+        /// RRF constant in the `1 / (k + rank)` formula. Conventional value: 60.
+        k: usize,
+        /// Branch weights `[bm25_weight, vector_weight]`. Both must be non-negative
+        /// and finite (moon-client's `text().hybrid_search` rejects negative or
+        /// `NaN`/`Inf` weights). Conventional balanced value: `[0.5, 0.5]`.
+        weights: [f64; 2],
+    },
+}
+
+#[cfg(test)]
+mod rrf_fusion_tests {
+    use super::*;
+
+    #[test]
+    fn rrf_fusion_moon_constructible() {
+        let m = RrfFusion::Moon { k: 60, weights: [0.5, 0.5] };
+        match m {
+            RrfFusion::Moon { k, weights } => {
+                assert_eq!(k, 60);
+                assert_eq!(weights, [0.5, 0.5]);
+            }
+            _ => panic!("expected Moon variant"),
+        }
+    }
+
+    #[test]
+    fn rrf_fusion_client_constructible() {
+        let c = RrfFusion::Client { k: 60 };
+        match c {
+            RrfFusion::Client { k } => assert_eq!(k, 60),
+            _ => panic!("expected Client variant"),
+        }
+    }
+
+    #[test]
+    fn rrf_fusion_moon_and_client_are_distinct() {
+        // Equal `k` must NOT make Client and Moon compare equal — the planner
+        // distinguishes the two variants by shape, not by k alone.
+        let c = RrfFusion::Client { k: 60 };
+        let m = RrfFusion::Moon { k: 60, weights: [0.5, 0.5] };
+        assert_ne!(c, m);
+    }
+
+    #[test]
+    fn rrf_fusion_is_copy_clone_debug() {
+        // The trait bounds are part of the public contract — Phase 2's planner
+        // copies the enum out of a `&Operator` reference frequently and prints
+        // it in tracing spans.
+        fn assert_traits<T: Copy + Clone + std::fmt::Debug + PartialEq>() {}
+        assert_traits::<RrfFusion>();
+    }
+}

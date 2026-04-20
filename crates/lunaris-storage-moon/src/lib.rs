@@ -165,6 +165,9 @@ mod tests {
         assert!(want.rerank_native);
         assert!(want.queue_native);
         assert_eq!(want.max_vector_dim, 768);
-        assert!(want.native_rrf, "Moon backend supports text().hybrid_search RRF (Phase 1.5 STORE-09)");
+        assert!(
+            want.native_rrf,
+            "Moon backend supports text().hybrid_search RRF (Phase 1.5 STORE-09)"
+        );
     }
 }

@@ -17,6 +17,6 @@ pub use error::{
 pub use hlc::{Hlc, HlcClock};
 pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
 pub use storage::{
-    CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, StorageCapabilities, StoragePort,
-    VectorHit, WriteOp,
+    CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, RrfFusion, StorageCapabilities,
+    StoragePort, VectorHit, WriteOp,
 };

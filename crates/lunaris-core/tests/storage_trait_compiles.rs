@@ -61,6 +61,7 @@ impl StoragePort for StubStorage {
             rerank_native: false,
             queue_native: true,
             max_vector_dim: 768,
+            native_rrf: false,
         }
     }
 }

@@ -13,4 +13,6 @@ pub mod types;
 
 pub use capabilities::StorageCapabilities;
 pub use port::StoragePort;
-pub use types::{CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, VectorHit, WriteOp};
+pub use types::{
+    CypherQuery, Filter, GraphResult, Key, Lsn, QueueMsg, Row, RrfFusion, VectorHit, WriteOp,
+};
