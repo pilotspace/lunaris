@@ -1,19 +1,56 @@
 //! Plan 04-02 D-04..D-07 + D-16..D-17: in-process tokio worker that consumes
 //! `__lunaris_consolidate__`, debounces events, and runs activation passes.
 //!
-//! B-7 forward-compat stub: Task 1 commits this file with the public
-//! [`run_consolidate_worker`] signature + versioned constants so `cargo check
-//! -p lunaris-consolidate` passes after Task 1 alone. Task 3 replaces the
-//! body with the real subscribe loop + debounce buffer + per-promotion /
-//! per-archive audit emit (B-1 — D-22 verbatim).
+//! ## B-1 audit emit (D-22 verbatim)
+//!
+//! On every flush, the worker iterates `report.promotions` + `report.archives`
+//! and publishes ONE audit message per event. Audit envelope shape matches
+//! Plan 04-05 audit.rs `AuditEvent` enum verbatim:
+//!
+//! - `{"kind": "ConsolidatorPromotion", "episode_id", "fact_id", "activation_score"}`
+//! - `{"kind": "ConsolidatorArchive",   "fact_id", "final_activation", "moved_to"}`
+//!
+//! There is NO rolled-up `ConsolidatorReport` audit envelope — Plan 04-05's
+//! `AuditEvent` enum has no such variant. The worker NEVER coalesces multiple
+//! promotions or archives into a single audit message.
+//!
+//! ## W-6 events-by-value spawn boundary
+//!
+//! `flush()` clones the events vec into the `tokio::spawn` closure by VALUE
+//! (`let evts = events.clone(); ... async move { c.consolidate(s, &evts).await }`)
+//! so no borrow crosses the spawn boundary. This avoids the lifetime
+//! impedance from `Arc<dyn StoragePort>` + `Arc<dyn Consolidator>` borrows.
+//!
+//! ## Lifecycle
+//!
+//! ```ignore
+//! let shutdown = Arc::new(tokio::sync::Notify::new());
+//! let handle = run_consolidate_worker(storage, consolidator, shutdown.clone()).await?;
+//! shutdown.notify_one();
+//! handle.await.ok();
+//! ```
+//!
+//! ## Debounce (D-17)
+//!
+//! Multiple `ConsolidateEvent`s for the same `episode_id` within
+//! `LUNARIS_CONSOLIDATE_DEBOUNCE_MS` (default 60 000 ms) coalesce into ONE
+//! activation-scoring pass. The buffer is a `HashMap<Ulid, Vec<ConsolidateEvent>>`
+//! flushed on `tokio::time::sleep_until(deadline)` ticks or on `shutdown`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use lunaris_core::{LunarisError, StoragePort};
+use bytes::Bytes;
+use futures::stream::{BoxStream, StreamExt};
+use lunaris_core::{LunarisError, QueueMsg, StorageError, StoragePort};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
+use ulid::Ulid;
 
 use crate::Consolidator;
+use crate::types::{ArchiveEvent, ConsolidateEvent, ConsolidationReport, PromotionEvent};
 
 /// Consumer group name (D-06). Versioned so a v1 message-schema bump can use
 /// a fresh consumer group without colliding with running v0 workers.
@@ -22,20 +59,399 @@ pub const CONSOLIDATE_CONSUMER_GROUP: &str = "lunaris-consolidate-v0";
 /// Consolidate queue topic.
 pub const CONSOLIDATE_TOPIC: &str = "__lunaris_consolidate__";
 
-/// Spawn the in-process consolidator worker (Task 3 body).
+/// Audit topic (D-22). Plan 04-05 adds the typed `AuditEvent` enum that pins
+/// the payload shape; this plan writes the enum variants inline as JSON
+/// envelopes that match `ConsolidatorPromotion` + `ConsolidatorArchive`.
+const AUDIT_TOPIC: &str = "__lunaris_audit__";
+
+/// Debounce window default (D-17).
+const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
+
+/// Env override for [`DEFAULT_DEBOUNCE_MS`].
+const ENV_DEBOUNCE_MS: &str = "LUNARIS_CONSOLIDATE_DEBOUNCE_MS";
+
+/// Drain grace-period default (D-07 — mirrors verifier worker contract).
+const DEFAULT_DRAIN_MS: u64 = 5000;
+
+/// Env override for [`DEFAULT_DRAIN_MS`].
+const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
+
+/// Spawn the in-process consolidator worker. Returns the `JoinHandle` so the
+/// caller (Plan 04-04 `ConsolidatorPipelineHandle::enable()`) can `.await`
+/// it during graceful shutdown.
 ///
-/// Task 3 wires the subscribe loop, debounce buffer (D-17
-/// `LUNARIS_CONSOLIDATE_DEBOUNCE_MS`, default 60 s), `tokio::sync::Notify`
-/// shutdown, and per-event audit emit (B-1 — one
-/// `AuditEvent::ConsolidatorPromotion` per promotion + one
-/// `AuditEvent::ConsolidatorArchive` per archive). Preserves the
-/// single-`atomic_write` invariant at the caller layer — v0 body does not
-/// itself issue atomic_write since the NoopConsolidator short-circuit is the
-/// default path.
+/// The worker subscribes to `(lunaris-consolidate-v0,
+/// __lunaris_consolidate__, 0)`. Events are debounced into an
+/// `episode_id`-keyed buffer; the buffer is flushed every
+/// `LUNARIS_CONSOLIDATE_DEBOUNCE_MS` ticks (default 60 s) OR on
+/// `shutdown.notify_one()`. Each flush calls `consolidator.consolidate(...)`
+/// inside `tokio::spawn` so a panic in the backend never takes down the
+/// worker. Per-promotion + per-archive audit messages are emitted to
+/// `__lunaris_audit__` after each successful pass (B-1).
 pub async fn run_consolidate_worker(
-    _storage: Arc<dyn StoragePort>,
-    _consolidator: Arc<dyn Consolidator>,
-    _shutdown: Arc<Notify>,
+    storage: Arc<dyn StoragePort>,
+    consolidator: Arc<dyn Consolidator>,
+    shutdown: Arc<Notify>,
 ) -> Result<JoinHandle<()>, LunarisError> {
-    unimplemented!("Task 3 replaces this stub with the subscribe loop + debounce buffer + per-event audit emit (B-1)")
+    let stream = storage
+        .subscribe(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .await
+        .map_err(LunarisError::Storage)?;
+
+    let debounce_ms = std::env::var(ENV_DEBOUNCE_MS)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DEBOUNCE_MS);
+    let drain_ms = std::env::var(ENV_DRAIN_MS)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_DRAIN_MS);
+
+    let handle = tokio::spawn(async move {
+        tracing::info!(
+            consumer_group = CONSOLIDATE_CONSUMER_GROUP,
+            topic = CONSOLIDATE_TOPIC,
+            debounce_ms,
+            drain_ms,
+            "consolidate_worker_started"
+        );
+
+        let mut stream = stream;
+        let mut buffer: HashMap<Ulid, Vec<ConsolidateEvent>> = HashMap::new();
+        let mut next_flush = Instant::now() + Duration::from_millis(debounce_ms);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = shutdown.notified() => {
+                    tracing::info!(
+                        drain_ms,
+                        buffered_episodes = buffer.len(),
+                        "consolidate_worker_shutdown_requested; flushing buffer + draining"
+                    );
+                    flush(&storage, consolidator.clone(), &mut buffer).await;
+                    drain_loop(&mut stream, drain_ms).await;
+                    break;
+                }
+                maybe_msg = stream.next() => {
+                    match maybe_msg {
+                        None => {
+                            tracing::info!("consolidate_worker_stream_closed; flushing + exiting");
+                            flush(&storage, consolidator.clone(), &mut buffer).await;
+                            break;
+                        }
+                        Some(Ok(msg)) => {
+                            ingest_into_buffer(&mut buffer, msg.payload);
+                        }
+                        Some(Err(e)) => {
+                            tracing::warn!(err = %e, "consolidate_worker_stream_error; continuing");
+                            // Backoff so a flapping broker can't tight-loop the CPU
+                            // (T-04-02-02 DoS mitigation).
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep_until(next_flush) => {
+                    flush(&storage, consolidator.clone(), &mut buffer).await;
+                    next_flush = Instant::now() + Duration::from_millis(debounce_ms);
+                }
+            }
+        }
+
+        tracing::info!("consolidate_worker_exited");
+    });
+
+    Ok(handle)
+}
+
+/// Drain in-flight messages up to `drain_ms`. Each `stream.next()` call is
+/// wrapped in `timeout_at(deadline, ...)` so a stuck broker can't block
+/// shutdown past the deadline. We do NOT process the drained messages — the
+/// debounce buffer was already flushed by the caller, and the broker will
+/// redeliver any unACKed messages on the next worker boot.
+async fn drain_loop(
+    stream: &mut BoxStream<'static, Result<QueueMsg, StorageError>>,
+    drain_ms: u64,
+) {
+    let deadline = Instant::now() + Duration::from_millis(drain_ms);
+    while Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, stream.next()).await {
+            Ok(Some(Ok(_))) => continue,
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
+        }
+    }
+}
+
+/// Deserialize one queue payload into a [`ConsolidateEvent`] and append it
+/// to the `episode_id`-keyed debounce buffer. Malformed payloads are logged
+/// + dropped (T-04-02-01 tampering mitigation).
+fn ingest_into_buffer(
+    buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
+    payload: Bytes,
+) {
+    match serde_json::from_slice::<ConsolidateEvent>(&payload) {
+        Ok(ev) => {
+            buffer.entry(ev.episode_id).or_default().push(ev);
+        }
+        Err(e) => {
+            tracing::warn!(err = %e, "consolidate_worker_payload_deserialize_failed; dropping");
+        }
+    }
+}
+
+/// Flush the debounce buffer through `consolidator.consolidate(...)` and
+/// publish per-event audit records. Empty buffer → no-op.
+///
+/// W-6 fix: the events vec is cloned into the `tokio::spawn` closure BY
+/// VALUE so no borrow crosses the spawn boundary —
+/// `let evts = events.clone(); ... async move { c.consolidate(s, &evts).await }`.
+async fn flush(
+    storage: &Arc<dyn StoragePort>,
+    consolidator: Arc<dyn Consolidator>,
+    buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
+) {
+    if buffer.is_empty() {
+        return;
+    }
+
+    // NoopConsolidator short-circuit — applies()==false means iterate the
+    // buffer but never call consolidate (saves the spawn + the clone).
+    if !consolidator.applies() {
+        tracing::debug!(
+            buffered_episodes = buffer.len(),
+            "consolidate_worker_noop_flush; clearing buffer"
+        );
+        buffer.clear();
+        return;
+    }
+
+    let events: Vec<ConsolidateEvent> =
+        buffer.values().flat_map(|v| v.iter().cloned()).collect();
+    buffer.clear();
+
+    // W-6 fix: clone everything into the spawn closure by value. No borrow
+    // crosses the spawn boundary.
+    let evts = events.clone();
+    let c = consolidator.clone();
+    let s = storage.clone();
+    let report = match tokio::spawn(async move { c.consolidate(s, &evts).await }).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
+            return;
+        }
+        Err(join_err) => {
+            tracing::error!(err = %join_err, "consolidate_worker_panicked; loop continues");
+            return;
+        }
+    };
+
+    publish_per_event_audits(storage, &report).await;
+}
+
+/// B-1 fix: emit ONE audit message per promotion + ONE per archive
+/// (D-22 verbatim — matches Plan 04-05 audit.rs `AuditEvent::ConsolidatorPromotion`
+/// and `AuditEvent::ConsolidatorArchive` variants exactly).
+///
+/// `report.communities_rebuilt` is logged via `tracing::info!` only — there
+/// is no `AuditEvent::ConsolidatorRebuild` variant in v0 (deferred per the
+/// plan's threat model + D-22 audit shape).
+async fn publish_per_event_audits(
+    storage: &Arc<dyn StoragePort>,
+    report: &ConsolidationReport,
+) {
+    for p in &report.promotions {
+        publish_one_audit(storage, &promotion_envelope(p)).await;
+    }
+    for a in &report.archives {
+        publish_one_audit(storage, &archive_envelope(a)).await;
+    }
+    if report.communities_rebuilt > 0 {
+        tracing::info!(
+            communities_rebuilt = report.communities_rebuilt,
+            "consolidate_worker_communities_rebuilt"
+        );
+    }
+}
+
+/// Build the per-promotion audit envelope. Matches Plan 04-05
+/// `AuditEvent::ConsolidatorPromotion { episode_id, fact_id, activation_score }`
+/// verbatim.
+fn promotion_envelope(p: &PromotionEvent) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "ConsolidatorPromotion",
+        "episode_id": p.episode_id.to_string(),
+        "fact_id": p.fact_id.to_string(),
+        "activation_score": p.activation_score,
+    })
+}
+
+/// Build the per-archive audit envelope. Matches Plan 04-05
+/// `AuditEvent::ConsolidatorArchive { fact_id, final_activation, moved_to }`
+/// verbatim.
+fn archive_envelope(a: &ArchiveEvent) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "ConsolidatorArchive",
+        "fact_id": a.fact_id.to_string(),
+        "final_activation": a.final_activation,
+        "moved_to": a.moved_to,
+    })
+}
+
+/// Fire-and-forget audit publish. Match the verifier worker pattern verbatim
+/// — never propagate publish errors (an audit-publish hiccup must not roll
+/// back the just-committed consolidation pass).
+async fn publish_one_audit(
+    storage: &Arc<dyn StoragePort>,
+    envelope: &serde_json::Value,
+) {
+    let payload = match serde_json::to_vec(envelope) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(err = %e, "consolidate_audit_serialize_failed; skipping");
+            return;
+        }
+    };
+    if let Err(e) = storage.publish(AUDIT_TOPIC, 0, payload.into()).await {
+        tracing::warn!(err = %e, "consolidate_audit_publish_failed; report committed but audit lost");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NoopConsolidator;
+    use crate::types::{ConsolidateEvent, FactId};
+    use lunaris_extract::EntityId;
+
+    #[test]
+    fn consumer_group_and_topic_are_versioned() {
+        assert_eq!(CONSOLIDATE_CONSUMER_GROUP, "lunaris-consolidate-v0");
+        assert_eq!(CONSOLIDATE_TOPIC, "__lunaris_consolidate__");
+    }
+
+    #[test]
+    fn debounce_default_is_60_seconds() {
+        assert_eq!(DEFAULT_DEBOUNCE_MS, 60_000);
+        assert_eq!(ENV_DEBOUNCE_MS, "LUNARIS_CONSOLIDATE_DEBOUNCE_MS");
+    }
+
+    #[test]
+    fn drain_ms_default_matches_verifier_worker() {
+        assert_eq!(DEFAULT_DRAIN_MS, 5000);
+        assert_eq!(ENV_DRAIN_MS, "LUNARIS_WORKER_DRAIN_MS");
+    }
+
+    #[test]
+    fn audit_topic_matches_d22_contract() {
+        assert_eq!(AUDIT_TOPIC, "__lunaris_audit__");
+    }
+
+    #[test]
+    fn ingest_into_buffer_groups_by_episode_id() {
+        let mut buf: HashMap<Ulid, Vec<ConsolidateEvent>> = HashMap::new();
+        let ep = Ulid::new();
+        let payload1 = serde_json::to_vec(&ConsolidateEvent {
+            kind: "ingest_committed".into(),
+            episode_id: ep,
+            lsn_wall_ms: 1,
+            lsn_counter: 1,
+        })
+        .unwrap();
+        let payload2 = serde_json::to_vec(&ConsolidateEvent {
+            kind: "ingest_committed".into(),
+            episode_id: ep,
+            lsn_wall_ms: 2,
+            lsn_counter: 2,
+        })
+        .unwrap();
+        let payload_other = serde_json::to_vec(&ConsolidateEvent {
+            kind: "ingest_committed".into(),
+            episode_id: Ulid::new(),
+            lsn_wall_ms: 3,
+            lsn_counter: 3,
+        })
+        .unwrap();
+        ingest_into_buffer(&mut buf, payload1.into());
+        ingest_into_buffer(&mut buf, payload2.into());
+        ingest_into_buffer(&mut buf, payload_other.into());
+        assert_eq!(buf.len(), 2, "two distinct episode_ids");
+        assert_eq!(buf.get(&ep).map(|v| v.len()), Some(2), "two events for the same episode coalesce");
+    }
+
+    #[test]
+    fn ingest_into_buffer_handles_malformed_payload() {
+        let mut buf: HashMap<Ulid, Vec<ConsolidateEvent>> = HashMap::new();
+        ingest_into_buffer(&mut buf, Bytes::from(&b"not json"[..]));
+        assert!(buf.is_empty(), "malformed payload must NOT panic + must NOT enter buffer");
+    }
+
+    #[test]
+    fn worker_signature_accepts_dyn_consolidator() {
+        fn _check(_c: Arc<dyn Consolidator>) {}
+        _check(Arc::new(NoopConsolidator));
+    }
+
+    /// B-1: promotion envelope `kind` tag matches D-22 / Plan 04-05 audit.rs
+    /// verbatim. Plan 04-05 reads `env.get("kind") == "ConsolidatorPromotion"`
+    /// then deserializes `episode_id` + `fact_id` + `activation_score` 1:1.
+    #[test]
+    fn promotion_envelope_kind_is_consolidator_promotion() {
+        let p = PromotionEvent {
+            episode_id: Ulid::new(),
+            fact_id: FactId::from_triple(EntityId([1; 16]), "knows", EntityId([2; 16])),
+            activation_score: 1.5,
+        };
+        let env = promotion_envelope(&p);
+        assert_eq!(
+            env.get("kind").and_then(|v| v.as_str()),
+            Some("ConsolidatorPromotion")
+        );
+        assert!(env.get("episode_id").is_some());
+        assert!(env.get("fact_id").is_some());
+        assert_eq!(
+            env.get("activation_score").and_then(|v| v.as_f64()),
+            Some(1.5)
+        );
+    }
+
+    /// B-1: archive envelope `kind` tag matches D-22 verbatim.
+    #[test]
+    fn archive_envelope_kind_is_consolidator_archive() {
+        let a = ArchiveEvent {
+            fact_id: FactId::from_triple(EntityId([1; 16]), "knows", EntityId([2; 16])),
+            final_activation: -0.7,
+            moved_to: "cold_storage".to_string(),
+        };
+        let env = archive_envelope(&a);
+        assert_eq!(
+            env.get("kind").and_then(|v| v.as_str()),
+            Some("ConsolidatorArchive")
+        );
+        assert!(env.get("fact_id").is_some());
+        assert_eq!(env.get("final_activation").and_then(|v| v.as_f64()), Some(-0.7));
+        assert_eq!(env.get("moved_to").and_then(|v| v.as_str()), Some("cold_storage"));
+    }
+
+    /// B-1 regression guard: report shape carries per-event vectors, NOT
+    /// rolled-up counts. The worker iterates these vectors to emit one audit
+    /// message per event.
+    #[test]
+    fn report_carries_per_event_vectors_not_rolled_up_counts() {
+        let r = ConsolidationReport {
+            promotions: vec![PromotionEvent {
+                episode_id: Ulid::new(),
+                fact_id: FactId::from_triple(EntityId([1; 16]), "p", EntityId([2; 16])),
+                activation_score: 2.0,
+            }],
+            archives: vec![ArchiveEvent {
+                fact_id: FactId::from_triple(EntityId([3; 16]), "p", EntityId([4; 16])),
+                final_activation: -1.0,
+                moved_to: "cold".into(),
+            }],
+            communities_rebuilt: 0,
+        };
+        assert_eq!(r.promotions.len(), 1);
+        assert_eq!(r.archives.len(), 1);
+    }
 }
