@@ -1,0 +1,12 @@
+# lunaris-ingest — Phase 2 ingest hot path (chunker + batched embed → atomic_write).
+# Real wiring lands in Plan 02-01 Task 2.
+[package]
+name        = "lunaris-ingest"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[dependencies]
+lunaris-core   = { path = "../lunaris-core" }

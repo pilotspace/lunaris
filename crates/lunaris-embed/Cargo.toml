@@ -1,0 +1,44 @@
+# lunaris-embed — real Embedder impls for Phase 2 hot path.
+#
+# Default backend: CandleEmbeddingGemma (768d, EmbeddingGemma 300M token-embedding
+# mean-pool + L2-normalize). Alt backend: OllamaEmbedder (POSTs to /api/embed).
+# Phase 1's StubEmbedder remains in lunaris-core for tests.
+#
+# Build matrix:
+#   cargo check -p lunaris-embed                                      # candle (default)
+#   cargo check -p lunaris-embed --no-default-features --features ollama
+#   cargo test  -p lunaris-embed --features embedder-it               # gated live-backend tests
+
+[package]
+name        = "lunaris-embed"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+[features]
+default     = ["candle"]
+candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
+ollama      = ["dep:reqwest", "dep:serde", "dep:serde_json"]
+embedder-it = []   # gates live-backend integration tests (real model load + Ollama HTTP)
+
+[dependencies]
+lunaris-core   = { path = "../lunaris-core" }
+async-trait    = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+tokio          = { workspace = true }
+# candle stack — gated behind `candle` feature
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+dirs                = { workspace = true, optional = true }
+# ollama stack — gated behind `ollama` feature
+reqwest        = { workspace = true, optional = true }
+serde          = { workspace = true, optional = true }
+serde_json     = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

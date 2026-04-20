@@ -6,6 +6,8 @@ members = [
   "crates/lunaris-storage-postgres",
   "crates/lunaris",
   "crates/lunaris-conformance",
+  "crates/lunaris-embed",
+  "crates/lunaris-ingest",
   "xtask",
 ]
 
@@ -45,6 +47,14 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 moon-client    = { path = "../moon/sdk/rust" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
 url            = "2"
+# Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
+pulldown-cmark = { version = "0.13", default-features = false }
+candle-core    = "0.10"
+candle-nn      = "0.10"
+candle-transformers = "0.10"
+tokenizers     = { version = "0.22", default-features = false, features = ["onig"] }
+dirs           = "6"
+reqwest        = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # test only
 rand           = "0.9"
 proptest       = "1"
