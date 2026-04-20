@@ -1,13 +1,20 @@
-//! `read_as_of` — `TEMPORAL.SNAPSHOT_AT` then `HGET <key> v` + `HGET <key> bt`.
-//! `scan_range` — `SCAN ... MATCH <prefix>*` then `HGET <key> v` per matched key.
+//! `read_as_of` — `client.temporal().snapshot_at_packed(...)` then typed
+//! `client.hget(<key>, "v")` + `client.hget(<key>, "bt")`.
+//! `scan_range` — documented HSCAN escape hatch (the only raw RESP `cmd` site
+//! allowed in `lunaris-storage-moon/src/`) then typed `client.hget(<key>, "v")`
+//! per match.
+//!
+//! Phase 1.5 retrofit (STORE-09): all RESP commands here go through the typed
+//! `moon-client` SDK except for the single documented HSCAN call below.
 //!
 //! ## Why HGET on field `v` (and `bt`)
 //!
-//! `atomic_write::KvPut` stores values via `HSET <key> v <value>`. `read_as_of` reads
-//! the same field. The `bt` field is optional — when present it's a serde-encoded
-//! `BiTemporal` (the writer must HSET it explicitly; the trait's `KvPut` variant only
-//! carries `key + value`, so callers who care about bi-temporal stamping use a
-//! `Row<Bytes>`-shaped payload as the value).
+//! `atomic_write::KvPut` stores values via `HSET <key> v <value>` (typed call:
+//! `MoonClient::hset(key, "v", value)`). `read_as_of` reads the same field. The `bt`
+//! field is optional — when present it's a serde-encoded `BiTemporal` (the writer
+//! must HSET it explicitly; the trait's `KvPut` variant only carries `key + value`,
+//! so callers who care about bi-temporal stamping use a `Row<Bytes>`-shaped payload
+//! as the value).
 //!
 //! For `read_as_of` Phase 1 returns a default `BiTemporal` when the `bt` field is
 //! absent — Phase 2's higher-level write path will always populate it.
@@ -18,9 +25,8 @@ use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::Row;
-use redis::AsyncCommands;
 
-use crate::client::{MoonClient, redis_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 use crate::vector::pack_hlc;
 
 pub(crate) async fn read_as_of(
@@ -28,20 +34,18 @@ pub(crate) async fn read_as_of(
     key: &[u8],
     as_of: Hlc,
 ) -> Result<Option<Row<Bytes>>, StorageError> {
-    let mut conn = c.conn();
+    let mut typed = c.typed();
 
     let pinned = pack_hlc(as_of);
-    redis::cmd("TEMPORAL.SNAPSHOT_AT")
-        .arg(pinned.to_string())
-        .query_async::<redis::Value>(&mut conn)
-        .await
-        .map_err(redis_err)?;
+    typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
 
-    let value: Option<Vec<u8>> = conn.hget(key, "v").await.map_err(redis_err)?;
-    let bt_bytes: Option<Vec<u8>> = conn.hget(key, "bt").await.map_err(redis_err)?;
+    // moon-client's `hget` returns `Result<Option<RV>>`; when the field is absent we
+    // get `Ok(None)` and translate to `None` here.
+    let value: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "v").await.map_err(moon_err)?;
+    let bt_bytes: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "bt").await.map_err(moon_err)?;
 
     // Always release the snapshot, even if the reads errored.
-    let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
+    let _ = typed.temporal().release_snapshot().await;
 
     match value {
         None => Ok(None),
@@ -66,15 +70,11 @@ pub(crate) async fn scan_range<'a>(
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-    let mut conn = c.conn();
+    let mut typed = c.typed();
 
     if let Some(t) = as_of {
         let pinned = pack_hlc(t);
-        redis::cmd("TEMPORAL.SNAPSHOT_AT")
-            .arg(pinned.to_string())
-            .query_async::<redis::Value>(&mut conn)
-            .await
-            .map_err(redis_err)?;
+        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
     }
 
     // Build `<prefix>*` MATCH pattern. We construct it from raw bytes since prefixes are
@@ -85,6 +85,19 @@ pub(crate) async fn scan_range<'a>(
         p.push(b'*');
         String::from_utf8_lossy(&p).into_owned()
     };
+
+    // ESCAPE HATCH: moon-client v0.1.0 does not expose a typed HSCAN wrapper, only
+    // generic SCAN. Lunaris uses HSET-based KV (single-field hash with `v`/`bt`),
+    // so we need HSCAN here. When moon-client adds a typed `client.scan_match(...)`
+    // hash variant (or a higher-level `scan_hashes(prefix)` helper), swap this for
+    // it. This is the ONLY raw RESP cmd invocation permitted in
+    // `lunaris-storage-moon/src/` per Phase 1.5 retrofit constraints (STORE-09).
+    //
+    // We reach the underlying `redis::aio::MultiplexedConnection` via
+    // `MoonClient::inner_mut()` (a public escape hatch in moon-client v0.1.0) on a
+    // local clone so the parent connection remains free for typed calls.
+    let mut raw_inner = typed.clone();
+    let raw_conn = raw_inner.inner_mut();
 
     // Iterate SCAN cursor; for each key, HGET its `v` field. Phase 1 buffers the full
     // result into a Vec then returns a stream — Phase 2 replaces this with a true
@@ -98,14 +111,14 @@ pub(crate) async fn scan_range<'a>(
             .arg(pattern.as_str())
             .arg("COUNT")
             .arg(1000)
-            .query_async(&mut conn)
+            .query_async(raw_conn)
             .await
             .map_err(redis_err)?;
         for k in batch {
-            match conn.hget::<_, _, Option<Vec<u8>>>(k.as_slice(), "v").await {
+            match typed.hget::<_, _, Vec<u8>>(k.as_slice(), "v").await {
                 Ok(Some(v)) => all_pairs.push(Ok((Bytes::from(k), Bytes::from(v)))),
                 Ok(None) => {} // key matched but had no `v` field — skip silently
-                Err(e) => all_pairs.push(Err(redis_err(e))),
+                Err(e) => all_pairs.push(Err(moon_err(e))),
             }
         }
         if next == 0 {
@@ -115,7 +128,7 @@ pub(crate) async fn scan_range<'a>(
     }
 
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
+        let _ = typed.temporal().release_snapshot().await;
     }
 
     Ok(stream::iter(all_pairs).boxed())

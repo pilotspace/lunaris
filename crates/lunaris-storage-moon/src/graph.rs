@@ -1,4 +1,10 @@
-//! `graph_traverse` — `GRAPH.QUERY` pass-through with optional `TEMPORAL.SNAPSHOT_AT`.
+//! `graph_traverse` — typed `client.graph().query_with_params(...)` (or `query_raw`)
+//! wrapped with `client.temporal().snapshot_at_packed(...)` for AS_OF queries.
+//!
+//! Phase 1.5 retrofit (STORE-09): all RESP commands here go through the typed
+//! `moon-client` SDK. The Lunaris-shaped GRAPH.QUERY wire format with `--params <json>`
+//! is exposed by `GraphClient::query_with_params` upstream so we keep our own
+//! bi-temporal-aware parser in this module.
 //!
 //! Moon's `GRAPH.QUERY <graph> "<cypher>"` reply layout (per Moon RESP docs):
 //!
@@ -21,7 +27,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 
-use crate::client::{MoonClient, redis_err};
+use crate::client::{MoonClient, moon_err};
 use crate::vector::pack_hlc;
 
 pub(crate) async fn graph_traverse(
@@ -29,29 +35,28 @@ pub(crate) async fn graph_traverse(
     query: &CypherQuery,
     as_of: Option<Hlc>,
 ) -> Result<GraphResult, StorageError> {
-    let mut conn = c.conn();
+    let typed = c.typed();
 
     if let Some(t) = as_of {
         let pinned = pack_hlc(t);
-        redis::cmd("TEMPORAL.SNAPSHOT_AT")
-            .arg(pinned.to_string())
-            .query_async::<redis::Value>(&mut conn)
-            .await
-            .map_err(redis_err)?;
+        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
     }
 
-    let mut cmd = redis::cmd("GRAPH.QUERY");
-    cmd.arg(query.graph.as_str()).arg(query.cypher.as_str());
-    if !query.params.is_empty() {
-        cmd.arg("--params").arg(serde_json::to_string(&query.params)?);
-    }
-    let result: Result<redis::Value, _> = cmd.query_async(&mut conn).await;
+    let result = if !query.params.is_empty() {
+        let params_json = serde_json::to_string(&query.params)?;
+        typed
+            .graph()
+            .query_with_params(query.graph.as_str(), query.cypher.as_str(), &params_json)
+            .await
+    } else {
+        typed.graph().query_raw(query.graph.as_str(), query.cypher.as_str()).await
+    };
 
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
+        let _ = typed.temporal().release_snapshot().await;
     }
 
-    parse_graph_reply(result.map_err(redis_err)?)
+    parse_graph_reply(result.map_err(moon_err)?)
 }
 
 fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {

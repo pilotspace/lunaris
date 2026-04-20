@@ -1,13 +1,20 @@
-//! `vector_search` — `FT.SEARCH` with optional `TEMPORAL.SNAPSHOT_AT` for AS_OF queries.
+//! `vector_search` — typed `client.vector().search_raw(...)` wrapped with
+//! `client.temporal().snapshot_at_packed(packed_hlc)` for AS_OF queries.
+//!
+//! Phase 1.5 retrofit (STORE-09): all RESP commands here are dispatched through the
+//! typed `moon-client` SDK. The Lunaris-shaped FT.SEARCH wire format (custom filter
+//! expression + raw query bytes + RERANK flag) is exposed by `VectorClient::search_raw`
+//! upstream so we keep both Lunaris's filter algebra AND the bi-temporal `__score` /
+//! `__metadata` parser in this module.
 //!
 //! ## AS_OF semantics
 //!
-//! When `as_of = Some(t)`, we issue `TEMPORAL.SNAPSHOT_AT <packed-hlc>` on the same
-//! connection BEFORE `FT.SEARCH` so the search reads the snapshot. After the search we
-//! `TEMPORAL.INVALIDATE` to release the snapshot back to live mode. The
-//! `ConnectionManager` may multiplex this connection across other tasks, so failure to
-//! release would pin a stale view for them — `INVALIDATE` always runs after the search,
-//! even on FT.SEARCH errors (best effort).
+//! When `as_of = Some(t)`, we issue `client.temporal().snapshot_at_packed(packed_hlc)`
+//! on the same connection BEFORE `FT.SEARCH` so the search reads the snapshot. After
+//! the search we call `client.temporal().release_snapshot()` to release the pin back
+//! to live mode. The `MultiplexedConnection` may multiplex this connection across
+//! other tasks, so failure to release would pin a stale view for them — `release` runs
+//! after the search even on FT.SEARCH errors (best effort).
 //!
 //! ## Filter algebra
 //!
@@ -20,7 +27,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{Filter, VectorHit};
 
-use crate::client::{MoonClient, redis_err};
+use crate::client::{MoonClient, moon_err};
 
 pub(crate) async fn vector_search(
     c: &MoonClient,
@@ -31,16 +38,12 @@ pub(crate) async fn vector_search(
     as_of: Option<Hlc>,
     rerank: bool,
 ) -> Result<Vec<VectorHit>, StorageError> {
-    let mut conn = c.conn();
+    let typed = c.typed();
 
     // Pin the connection to a snapshot if AS_OF was requested.
     if let Some(t) = as_of {
         let pinned = pack_hlc(t);
-        redis::cmd("TEMPORAL.SNAPSHOT_AT")
-            .arg(pinned.to_string())
-            .query_async::<redis::Value>(&mut conn)
-            .await
-            .map_err(redis_err)?;
+        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
     }
 
     // Encode query embedding as little-endian f32 bytes per Moon FT convention.
@@ -50,28 +53,15 @@ pub(crate) async fn vector_search(
     }
 
     let filter_expr = filter.map(filter_to_moon).unwrap_or_else(|| "*".to_string());
-    let rerank_arg = if rerank { "RERANK" } else { "NORERANK" };
 
-    let search_result: Result<redis::Value, _> = redis::cmd("FT.SEARCH")
-        .arg(index)
-        .arg(filter_expr)
-        .arg("PARAMS")
-        .arg(2)
-        .arg("query")
-        .arg(&qbytes)
-        .arg(rerank_arg)
-        .arg("LIMIT")
-        .arg(0)
-        .arg(k)
-        .query_async(&mut conn)
-        .await;
+    let search_result = typed.vector().search_raw(index, &filter_expr, &qbytes, k, rerank).await;
 
     // Always release the snapshot if we pinned one (even on FT.SEARCH error).
     if as_of.is_some() {
-        let _ = redis::cmd("TEMPORAL.INVALIDATE").query_async::<redis::Value>(&mut conn).await;
+        let _ = typed.temporal().release_snapshot().await;
     }
 
-    let reply = search_result.map_err(redis_err)?;
+    let reply = search_result.map_err(moon_err)?;
     parse_ft_search(reply, rerank)
 }
 

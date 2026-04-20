@@ -128,6 +128,10 @@ impl StoragePort for MoonStorage {
             queue_native: true,
             // Moon profile uses 768d (matches EmbeddingGemma); Postgres uses 1536d.
             max_vector_dim: 768,
+            // Moon's `text().hybrid_search()` runs `FT.SEARCH HYBRID VECTOR ... SPARSE
+            // ... FUSION RRF` natively in one round trip — Phase 2's `fuse_rrf` opts
+            // into `RrfFusion::Moon` when this is true (Phase 1.5 STORE-09).
+            native_rrf: true,
         }
     }
 }
@@ -154,11 +158,13 @@ mod tests {
             rerank_native: true,
             queue_native: true,
             max_vector_dim: 768,
+            native_rrf: true,
         };
         assert!(want.bi_temporal_native);
         assert!(want.graph_native);
         assert!(want.rerank_native);
         assert!(want.queue_native);
         assert_eq!(want.max_vector_dim, 768);
+        assert!(want.native_rrf, "Moon backend supports text().hybrid_search RRF (Phase 1.5 STORE-09)");
     }
 }

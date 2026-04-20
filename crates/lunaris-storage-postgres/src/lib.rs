@@ -118,6 +118,7 @@ impl StoragePort for PostgresStorage {
             rerank_native: false,      // no native cross-encoder
             queue_native: true,        // pgmq
             max_vector_dim: 1536,      // pgvector practical ceiling (Postgres profile)
+            native_rrf: false,         // Postgres uses client-side RRF (Phase 1.5 STORE-09)
         }
     }
 }
@@ -144,11 +145,13 @@ mod tests {
             rerank_native: false,
             queue_native: true,
             max_vector_dim: 1536,
+            native_rrf: false,
         };
         assert!(!want.bi_temporal_native);
         assert!(want.graph_native);
         assert!(!want.rerank_native);
         assert!(want.queue_native);
         assert_eq!(want.max_vector_dim, 1536);
+        assert!(!want.native_rrf, "Postgres backend uses client-side RRF (Phase 1.5 STORE-09)");
     }
 }

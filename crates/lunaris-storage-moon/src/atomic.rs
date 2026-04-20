@@ -1,14 +1,25 @@
 //! `atomic_write` — `TXN.BEGIN` + per-op fan-out + `TXN.COMMIT` (or `TXN.ABORT` on error).
 //!
+//! Phase 1.5 retrofit (STORE-09): all per-op commands are now dispatched through the
+//! typed `moon-client` SDK (`txn_begin / txn_commit / txn_abort`, `set / del`,
+//! `vector().upsert`, `graph().query_with_params`).
+//!
 //! Each `WriteOp` translates to one Moon command:
 //!
-//! | variant            | command(s)                                    |
-//! |--------------------|-----------------------------------------------|
-//! | `KvPut`            | `HSET <key> v <value>` (single-field hash)    |
-//! | `KvDelete`         | `DEL <key>`                                   |
-//! | `VectorUpsert`     | `FT.UPSERT <index> <id> <le-f32-bytes> <metadata-json>` |
-//! | `GraphNode`        | `GRAPH.QUERY <graph> "MERGE (n:{label} {id: $id}) SET n += $props"` |
-//! | `GraphEdge`        | `GRAPH.QUERY <graph> "MATCH (a {id:$src}),(b {id:$dst}) MERGE (a)-[r:{rel}]->(b) SET r += $props"` |
+//! | variant            | typed call                                                |
+//! |--------------------|-----------------------------------------------------------|
+//! | `KvPut`            | `client.hset(key, "v", value)` (single-field hash to keep `read_as_of`'s `HGET v` shape) |
+//! | `KvDelete`         | `client.del(key)`                                         |
+//! | `VectorUpsert`     | `client.vector().upsert(index, id, le-f32-bytes, meta-json)` |
+//! | `GraphNode`        | `client.graph().query_with_params(graph, "MERGE (n:{label} {id:$id}) SET n += $props", params_json)` |
+//! | `GraphEdge`        | `client.graph().query_with_params(graph, "MATCH (a {id:$src}),(b {id:$dst}) MERGE (a)-[r:{rel}]->(b) SET r += $props", params_json)` |
+//!
+//! ## Storage-shape note: SET vs HSET
+//!
+//! Plan 1's hand-rolled impl stored KV entries via `HSET <key> v <value>` so it could
+//! piggy-back the bi-temporal `bt` field on the same hash. Phase 1.5 keeps the same
+//! single-hash convention via the typed `MoonClient::hset` calls because `read_as_of`
+//! depends on the `HGET <key> v` / `HGET <key> bt` shape — see `kv.rs` rustdoc.
 //!
 //! ## Threat note (T-01-03-01) — Cypher injection
 //!
@@ -22,60 +33,55 @@
 //! ## Atomicity model
 //!
 //! `TXN.BEGIN` is single-connection scoped; we run all per-op commands on the same
-//! `ConnectionManager` instance to ensure Moon associates them with the same transaction
-//! handle. Any per-op error short-circuits to `TXN.ABORT` then surfaces the original
-//! error.
+//! cloned `moon-client::MoonClient` handle (which holds a single
+//! `redis::aio::MultiplexedConnection` instance) to ensure Moon associates them with
+//! the same transaction handle. Any per-op error short-circuits to `TXN.ABORT` then
+//! surfaces the original error.
 
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::{Lsn, WriteOp};
-use redis::AsyncCommands;
-use redis::aio::ConnectionManager;
 
-use crate::client::{MoonClient, redis_err};
+use crate::client::{MoonClient, moon_err};
 
 pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-    let mut conn = c.conn();
+    let mut typed = c.typed();
 
     // 1) TXN.BEGIN — opens a Moon transaction on this connection.
-    redis::cmd("TXN.BEGIN").query_async::<String>(&mut conn).await.map_err(redis_err)?;
+    typed.txn_begin().await.map_err(moon_err)?;
 
     // 2) Per-op fan-out. On any per-op error, ABORT and bubble the original error.
-    if let Err(e) = run_ops(&mut conn, ops).await {
+    if let Err(e) = run_ops(&mut typed, ops).await {
         // Best-effort abort; ignore its error (the transaction's already broken).
-        let _ = redis::cmd("TXN.ABORT").query_async::<String>(&mut conn).await;
+        let _ = typed.txn_abort().await;
         return Err(e);
     }
 
-    // 3) TXN.COMMIT — Moon may return either a packed u64 LSN (wall_ms<<32 | counter)
-    //    or a simple "OK"; accept both. When "OK", fall back to a wall-clock LSN so
-    //    callers always see a non-zero, monotonically-derivable Lsn.
-    match redis::cmd("TXN.COMMIT").query_async::<redis::Value>(&mut conn).await {
-        Ok(redis::Value::Int(n)) => {
-            let n = n as u64;
-            Ok(Lsn { wall_ms: n >> 32, counter: (n & 0xFFFF_FFFF) as u32 })
-        }
-        Ok(_) => {
-            // "OK" / SimpleString / BulkString — fall back to client wall clock.
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            Ok(Lsn { wall_ms: now_ms, counter: 0 })
-        }
-        Err(e) => Err(redis_err(e)),
-    }
+    // 3) TXN.COMMIT — Moon's typed `txn_commit()` returns `()` after server ack. We
+    //    don't get a packed-LSN back through the typed API; fall back to a wall-clock
+    //    LSN so callers always see a non-zero, monotonically-derivable Lsn.
+    typed.txn_commit().await.map_err(moon_err)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    Ok(Lsn { wall_ms: now_ms, counter: 0 })
 }
 
-async fn run_ops(conn: &mut ConnectionManager, ops: &[WriteOp]) -> Result<(), StorageError> {
+async fn run_ops(
+    typed: &mut moon_client::MoonClient,
+    ops: &[WriteOp],
+) -> Result<(), StorageError> {
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
                 // Single-field hash so HGET <key> v is the canonical read in `read_as_of`.
-                let _: () =
-                    conn.hset(key.as_slice(), "v", value.as_slice()).await.map_err(redis_err)?;
+                let _: i64 = typed
+                    .hset(key.as_slice(), "v", value.as_slice())
+                    .await
+                    .map_err(moon_err)?;
             }
             WriteOp::KvDelete { key } => {
-                let _: () = conn.del(key.as_slice()).await.map_err(redis_err)?;
+                let _: i64 = typed.del(key.as_slice()).await.map_err(moon_err)?;
             }
             WriteOp::VectorUpsert { index, id, embedding, metadata } => {
                 if embedding.is_empty() {
@@ -87,29 +93,26 @@ async fn run_ops(conn: &mut ConnectionManager, ops: &[WriteOp]) -> Result<(), St
                     buf.extend_from_slice(&f.to_le_bytes());
                 }
                 let meta_json = serde_json::to_string(metadata)?;
-                redis::cmd("FT.UPSERT")
-                    .arg(index.as_str())
-                    .arg(id.as_slice())
-                    .arg(&buf)
-                    .arg(meta_json)
-                    .query_async::<redis::Value>(conn)
+                typed
+                    .vector()
+                    .upsert(index.as_str(), id.as_slice(), &buf, &meta_json)
                     .await
-                    .map_err(redis_err)?;
+                    .map_err(moon_err)?;
             }
             WriteOp::GraphNode { graph, id, label, props } => {
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
                 let props_json = serde_json::to_string(props)?;
                 let cypher = format!("MERGE (n:{label} {{id: $id}}) SET n += $props");
-                let params =
-                    format!(r#"{{"id":"{}","props":{}}}"#, String::from_utf8_lossy(id), props_json);
-                redis::cmd("GRAPH.QUERY")
-                    .arg(graph.as_str())
-                    .arg(cypher)
-                    .arg("--params")
-                    .arg(params)
-                    .query_async::<redis::Value>(conn)
+                let params = format!(
+                    r#"{{"id":"{}","props":{}}}"#,
+                    String::from_utf8_lossy(id),
+                    props_json
+                );
+                let _: redis::Value = typed
+                    .graph()
+                    .query_with_params(graph.as_str(), &cypher, &params)
                     .await
-                    .map_err(redis_err)?;
+                    .map_err(moon_err)?;
             }
             WriteOp::GraphEdge { graph, src, dst, rel, props } => {
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
@@ -123,14 +126,11 @@ async fn run_ops(conn: &mut ConnectionManager, ops: &[WriteOp]) -> Result<(), St
                     String::from_utf8_lossy(dst),
                     props_json
                 );
-                redis::cmd("GRAPH.QUERY")
-                    .arg(graph.as_str())
-                    .arg(cypher)
-                    .arg("--params")
-                    .arg(params)
-                    .query_async::<redis::Value>(conn)
+                let _: redis::Value = typed
+                    .graph()
+                    .query_with_params(graph.as_str(), &cypher, &params)
                     .await
-                    .map_err(redis_err)?;
+                    .map_err(moon_err)?;
             }
         }
     }

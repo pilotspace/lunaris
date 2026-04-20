@@ -1,11 +1,17 @@
-//! `publish` (`MQ.PUSH`) and `subscribe` (`MQ.POP` polling stream).
+//! `publish` (`client.mq().push_partitioned(...)`) and `subscribe`
+//! (`client.mq().pop_partitioned(...)` polling stream).
+//!
+//! Phase 1.5 retrofit (STORE-09): typed `moon-client::MqClient` calls replace the
+//! previous hand-rolled raw RESP `MQ.PUSH` / `MQ.POP` invocations. Lunaris's
+//! partitioned `(topic, partition)` queue model is now exposed as typed
+//! `push_partitioned` / `pop_partitioned` helpers in moon-client upstream.
 //!
 //! ## subscribe shape
 //!
 //! Returns a `BoxStream<'static, Result<QueueMsg, StorageError>>`. Each tick blocks on
-//! `MQ.POP <group> <topic> <partition> COUNT 1 BLOCK 250` (250 ms long-poll). On Nil
-//! reply (poll window expired with no message) the stream sleeps 50 ms and continues
-//! polling — this is silently filtered out (no Nil yields). On reply with a message,
+//! `client.mq().pop_partitioned(group, topic, partition, 250)` (250 ms long-poll). On
+//! `Value::Nil` reply (poll window expired with no message) the stream sleeps 50 ms and
+//! continues polling — silently filtered out (no Nil yields). On reply with a message,
 //! yields `Ok(QueueMsg)`. On RESP error, yields `Err(StorageError::Backend(_))` and
 //! continues — callers may decide whether to drop the stream.
 //!
@@ -19,7 +25,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
 
-use crate::client::{MoonClient, redis_err};
+use crate::client::{MoonClient, moon_err};
 
 pub(crate) async fn publish(
     c: &MoonClient,
@@ -27,15 +33,8 @@ pub(crate) async fn publish(
     partition: u16,
     payload: Bytes,
 ) -> Result<u64, StorageError> {
-    let mut conn = c.conn();
-    let offset: u64 = redis::cmd("MQ.PUSH")
-        .arg(topic)
-        .arg(partition)
-        .arg(payload.as_ref())
-        .query_async(&mut conn)
-        .await
-        .map_err(redis_err)?;
-    Ok(offset)
+    let typed = c.typed();
+    typed.mq().push_partitioned(topic, partition, payload.as_ref()).await.map_err(moon_err)
 }
 
 /// Internal state threaded through the unfold stream.
@@ -65,22 +64,14 @@ pub(crate) async fn subscribe(
     // recurse so the consumer never sees an empty / phantom message.
     let stream = stream::unfold(state, |mut s| async move {
         loop {
-            let mut conn = s.client.conn();
-            let pop: Result<redis::Value, _> = redis::cmd("MQ.POP")
-                .arg(s.group.as_str())
-                .arg(s.topic.as_str())
-                .arg(s.partition)
-                .arg("COUNT")
-                .arg(1)
-                .arg("BLOCK")
-                .arg(250)
-                .query_async(&mut conn)
-                .await;
+            let typed = s.client.typed();
+            let pop =
+                typed.mq().pop_partitioned(s.group.as_str(), s.topic.as_str(), s.partition, 250).await;
             match pop {
                 Err(e) => {
                     // Surface the error to the consumer; keep the stream alive so
                     // transient broker glitches don't drop the subscription.
-                    return Some((Err(redis_err(e)), s));
+                    return Some((Err(moon_err(e)), s));
                 }
                 Ok(redis::Value::Nil) => {
                     // No message in this poll window. 50ms backoff then continue.
