@@ -1,0 +1,45 @@
+[package]
+name        = "lunaris-server"
+version     = "0.0.1"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+publish     = false
+
+# Plan 05-01 — MemoryProtocol HTTP+SSE server (PROTO-01..05 + DEPLOY-01/02/04 per CONTEXT.md D-01..D-09).
+# Boots a `Lunaris::open(url)` handle and exposes the four MemoryProtocol verbs at
+# /v1/{ingest,recall,forget,snapshot/:lsn} + /healthz. Plan 05-05 will add /metrics.
+
+[dependencies]
+lunaris             = { path = "../lunaris" }
+lunaris-core        = { path = "../lunaris-core" }
+lunaris-retrieve    = { path = "../lunaris-retrieve" }
+axum                = { workspace = true }
+tower               = { workspace = true }
+tower-http          = { workspace = true }
+tower-governor      = { workspace = true }
+governor            = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+clap                = { workspace = true, features = ["derive", "env"] }
+tokio               = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+is-terminal         = { workspace = true }
+ulid                = { workspace = true }
+url                 = { workspace = true }
+chrono              = { workspace = true }
+async-trait         = { workspace = true }
+futures             = { workspace = true }
+bytes               = { workspace = true }
+parking_lot         = { workspace = true }
+thiserror           = { workspace = true }
+anyhow              = { workspace = true }
+
+[dev-dependencies]
+tokio              = { workspace = true, features = ["full", "test-util", "macros"] }
+
+[[bin]]
+name = "lunaris-server"
+path = "src/main.rs"

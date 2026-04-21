@@ -14,6 +14,7 @@ members = [
   "crates/lunaris-ingest",
   "crates/lunaris-rerank",
   "crates/lunaris-retrieve",
+  "crates/lunaris-server",
   "xtask",
 ]
 
@@ -85,6 +86,18 @@ clap           = { version = "4", features = ["derive"] }
 # `#![forbid(unsafe_code)]` is satisfied because `nix` wraps the unsafe FFI
 # internally and exposes a safe Rust API to callers.
 nix            = { version = "0.29", default-features = false, features = ["signal"] }
+# Phase 5 Plan 05-01 — MemoryProtocol HTTP+SSE server stack (PROTO-01..05 + DEPLOY-01/02/04).
+# CLAUDE.md "Latest libraries policy" — pin to latest stable per CONTEXT.md D-02 / D-08 / D-09.
+# Note: tower_governor crate uses underscore in name (the workspace alias `tower-governor` here
+# is the *user-facing* dep name; the actual published crate is `tower_governor 0.8`).
+axum               = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "macros", "tokio", "tracing"] }
+tower-http         = { version = "0.6", features = ["cors", "trace"] }
+tower-governor     = { package = "tower_governor", version = "0.8", default-features = false, features = ["axum"] }
+# governor 0.10 — pulled transitively by tower_governor; exposed as a workspace
+# dep so lunaris-server can name `governor::middleware::NoOpMiddleware` /
+# `governor::clock::QuantaInstant` in the GovernorLayer return type signature.
+governor           = "0.10"
+is-terminal        = "0.4"
 
 [profile.dev]
 opt-level = 0
