@@ -48,77 +48,105 @@ use crate::middleware::auth::{RequiredScope, auth_middleware};
 ///   rate limit (PROTO-05 + D-07 + D-08).
 /// - `/healthz` open (no auth).
 /// - Outer CORS layer per D-09.
+///
+/// ## Layer order
+///
+/// axum's `.layer(X)` adds X to the OUTSIDE of the existing stack — so the
+/// LAST `.layer(...)` call runs FIRST on the request path. We need:
+///
+///   request → CORS → rate-limit → enrich(scope) → auth → handler
+///
+/// To get `enrich → auth` ordering on the request, we wire BOTH as a single
+/// per-route closure that calls them in the correct sequence — `route_layer`
+/// vs `.layer` ordering quirks aren't ergonomic for two-step composition. The
+/// outer `.layer` wires the rate-limit layer (which is outside the per-route
+/// auth check, so an un-authenticated request still gets rate-limited at the
+/// IP-aware fallback path inside the governor key extractor).
 pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
     let tokens = load_tokens(&cfg.tokens_file).unwrap_or_default();
     let state = AppState::new(lunaris, tokens);
 
-    // Per-route scope enrichers — attach `RequiredScope` to the request
-    // extensions so `auth_middleware` rejects tokens lacking the scope. The
-    // closures live behind `from_fn` to keep the route declaration readable.
-    async fn enrich_ingest(
-        mut req: axum::extract::Request,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        req.extensions_mut().insert(RequiredScope("ingest"));
-        next.run(req).await
-    }
-    async fn enrich_recall(
-        mut req: axum::extract::Request,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        req.extensions_mut().insert(RequiredScope("recall"));
-        next.run(req).await
-    }
-    async fn enrich_forget(
-        mut req: axum::extract::Request,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        req.extensions_mut().insert(RequiredScope("forget"));
-        next.run(req).await
-    }
-    async fn enrich_snapshot(
-        mut req: axum::extract::Request,
-        next: axum::middleware::Next,
-    ) -> axum::response::Response {
-        req.extensions_mut().insert(RequiredScope("recall"));
-        next.run(req).await
-    }
+    // Per-route stacking. `route_layer` calls add to the OUTSIDE of the
+    // existing per-route stack — so the LAST `.route_layer` invocation runs
+    // FIRST on the request. Order we want on each authenticated route:
+    //
+    //   request → scoped_auth (auth + scope check) → rate_limit (per-tenant)
+    //           → handler
+    //
+    // We therefore add rate_limit FIRST (closer to the handler) and
+    // scoped_auth SECOND (outer, runs first on request). This guarantees the
+    // governor's `TenantKey::extract` always sees `AuthClaims` in the
+    // extensions populated by `auth_middleware`.
+    let rate_limit = middleware::rate_limit::governor_layer(cfg.rate_per_second, cfg.rate_burst);
 
     let v1 = Router::new()
         .route(
             "/ingest",
             post(routes::ingest::ingest_handler)
-                .route_layer(axum::middleware::from_fn(enrich_ingest)),
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("ingest"),
+                )),
         )
         .route(
             "/recall",
             post(routes::recall::recall_handler)
-                .route_layer(axum::middleware::from_fn(enrich_recall)),
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
         )
         .route(
             "/forget",
             post(routes::forget::forget_handler)
-                .route_layer(axum::middleware::from_fn(enrich_forget)),
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("forget"),
+                )),
         )
         .route(
             "/snapshot/{lsn}",
             get(routes::snapshot::snapshot_handler)
-                .route_layer(axum::middleware::from_fn(enrich_snapshot)),
-        )
-        .layer(middleware::rate_limit::governor_layer(
-            cfg.rate_per_second,
-            cfg.rate_burst,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
+        );
 
     Router::new()
         .nest("/v1", v1)
         .route("/healthz", get(routes::healthz::healthz_handler))
         .layer(middleware::cors::cors_layer(&cfg.cors_origins))
         .with_state(state)
+}
+
+/// Build a per-route auth closure that injects `RequiredScope(scope)` into the
+/// request extensions BEFORE delegating to `auth_middleware`. This guarantees
+/// the scope check fires on every authenticated request (the alternative —
+/// composing two `from_fn` middleware in the right order — is brittle because
+/// `route_layer` ordering wraps innermost-first, which conflicts with the
+/// "enrich → auth → handler" semantics we want).
+fn scoped_auth(
+    scope: &'static str,
+) -> impl Clone
++ Send
++ Sync
++ 'static
++ Fn(
+    axum::extract::State<AppState>,
+    axum::extract::Request,
+    axum::middleware::Next,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = axum::response::Response> + Send + 'static>,
+> {
+    move |state, mut req, next| {
+        req.extensions_mut().insert(RequiredScope(scope));
+        Box::pin(auth_middleware(state, req, next))
+    }
 }
 
 /// Load the bearer-token map from disk (D-07 tokens-file shape).
