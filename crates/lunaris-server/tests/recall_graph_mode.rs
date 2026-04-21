@@ -1,0 +1,661 @@
+//! Plan 07-01 — RED integration tests for `POST /v1/recall` `mode=graph`
+//! composition.
+//!
+//! Closes v0.1.0-MILESTONE-AUDIT.md gap:
+//! `gaps.integration[lunaris-server::routes::recall → lunaris-retrieve::Graph::anchored]`
+//! + `gaps.flows["HTTP recall mode=graph end-to-end"]`.
+//!
+//! Fixture shape is copied verbatim from `server_smoke.rs::RecordingStorageWithKeyword`
+//! with three additions:
+//! - `canned_graph: Mutex<GraphResult>` — what `graph_traverse` returns.
+//! - `graph_calls: Mutex<Vec<(CypherQuery, Option<Hlc>)>>` — records every
+//!   traverse call so tests can prove `Graph::anchored` was composed.
+//! - `vector_hits: Mutex<Vec<VectorHit>>` — canned `vector_search` return so
+//!   Test 3 (degraded fallback) can observe non-empty hits flow through the
+//!   semantic fallback path.
+//!
+//! Tests:
+//! 1. `mode_graph_composes_graph_operator_when_gate_passes` (RED primary)
+//! 2. `mode_graph_preserves_501_gate_when_runtime_off_and_graph_native_false`
+//! 3. `mode_graph_falls_back_to_semantic_with_degraded_when_no_entities`
+//! 4. `mode_semantic_unchanged_by_handler_diff` (regression guard)
+//! 5. `mode_graph_parity_across_moon_and_postgres` (`#[ignore]` — live
+//!    dual-backend UAT per ROADMAP Phase 7 SC #3b; mirrors Plan 05-04
+//!    `helios_scratchpad_smoke.rs` pattern).
+
+#![forbid(unsafe_code)]
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode};
+use bytes::Bytes;
+use futures::stream::{self, BoxStream};
+use lunaris::Lunaris;
+use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
+use lunaris_core::storage::types::{
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
+};
+use lunaris_core::{
+    BiTemporal, Embedder, Hlc, HlcClock, StorageCapabilities, StorageError, StoragePort,
+    StubEmbedder,
+};
+use lunaris_retrieve::EntityId;
+use parking_lot::Mutex;
+use tower::ServiceExt;
+
+// ---------------------------------------------------------------------------
+// Fixture — RecordingStorageWithKeyword (extended from server_smoke.rs with
+// graph_native toggle + canned GraphResult + graph_calls recorder + canned
+// vector_hits so Test 3 can observe semantic fallback).
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct RecordingStorageWithKeyword {
+    rows: Mutex<HashMap<Vec<u8>, (Vec<u8>, BiTemporal)>>,
+    batches: Mutex<Vec<Vec<WriteOp>>>,
+    published_messages: Mutex<Vec<(String, u16, Bytes)>>,
+    /// Plan 07-01 additions — graph-mode composition assertions.
+    canned_graph: Mutex<GraphResult>,
+    graph_calls: Mutex<Vec<(CypherQuery, Option<Hlc>)>>,
+    vector_hits: Mutex<Vec<VectorHit>>,
+    /// Toggle for `capabilities().graph_native` — default `true` so Tests 1/3/4
+    /// pass the 501 gate. Test 2 flips to `false` via `with_graph_native(false)`.
+    graph_native: Mutex<bool>,
+}
+
+impl RecordingStorageWithKeyword {
+    fn new() -> Self {
+        let s = Self::default();
+        *s.graph_native.lock() = true;
+        s
+    }
+
+    fn with_graph_native(self, b: bool) -> Self {
+        *self.graph_native.lock() = b;
+        self
+    }
+
+    fn with_canned_graph(self, g: GraphResult) -> Self {
+        *self.canned_graph.lock() = g;
+        self
+    }
+
+    fn with_vector_hits(self, hits: Vec<VectorHit>) -> Self {
+        *self.vector_hits.lock() = hits;
+        self
+    }
+
+    /// Seed a chunk row keyed by `lunaris:chunk:<id_hex>` so hydrate succeeds
+    /// for the Test 3 fallback path. Value is a minimal chunk payload that
+    /// `hydrate()` can parse — matches what Plan 02-01 writes.
+    fn seed_chunk_row(&self, id: &[u8]) {
+        // Hydrate reads `lunaris:chunk:<hex>` for each hit id; the value must
+        // be deserialisable as the chunk row produced by ingest. Since the
+        // test fixture does not model the full hydrate parser, we instead
+        // insert empty KV and rely on hydrate's missing-row drop path being
+        // lenient — BUT Test 3 asserts `response hits non-empty`, so we need
+        // actual rows. Mirror the shape `build_test_lunaris` above produces:
+        // insert a minimal JSON stub.
+        let payload = serde_json::json!({
+            "text": "stub chunk text",
+            "episode_id": ulid::Ulid::new().to_string(),
+            "heading_path": [],
+            "bt": {
+                "valid": [{"wall_ms": 1, "counter": 0, "node_id": 0}, null],
+                "sys":   [{"wall_ms": 1, "counter": 0, "node_id": 0}, null],
+            },
+        });
+        // Inline hex encoder — avoid pulling `hex` into lunaris-server deps
+        // (scope allowlist: Cargo.toml edits forbidden by 07-01 guardrail).
+        let mut hex_buf = String::with_capacity(id.len() * 2);
+        for b in id {
+            hex_buf.push_str(&format!("{:02x}", b));
+        }
+        let key = {
+            let mut k = b"lunaris:chunk:".to_vec();
+            k.extend_from_slice(hex_buf.as_bytes());
+            k
+        };
+        let bt = BiTemporal {
+            valid: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
+            sys: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
+        };
+        self.rows
+            .lock()
+            .insert(key, (serde_json::to_vec(&payload).unwrap(), bt));
+    }
+}
+
+#[async_trait]
+impl StoragePort for RecordingStorageWithKeyword {
+    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        for op in ops {
+            match op {
+                WriteOp::KvPut { key, value } => {
+                    let prior_bt =
+                        self.rows.lock().get(key).map(|(_, bt)| *bt).unwrap_or(BiTemporal {
+                            valid: (Hlc::ZERO, None),
+                            sys: (Hlc::ZERO, None),
+                        });
+                    self.rows.lock().insert(key.clone(), (value.clone(), prior_bt));
+                }
+                WriteOp::KvDelete { key } => {
+                    self.rows.lock().remove(key);
+                }
+                _ => {}
+            }
+        }
+        self.batches.lock().push(ops.to_vec());
+        Ok(Lsn { wall_ms: 1, counter: 1 })
+    }
+
+    async fn vector_search(
+        &self,
+        _index: &str,
+        _query: &[f32],
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+        _rerank: bool,
+    ) -> Result<Vec<VectorHit>, StorageError> {
+        Ok(self.vector_hits.lock().clone())
+    }
+
+    async fn graph_traverse(
+        &self,
+        query: &CypherQuery,
+        as_of: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
+        // Record the call shape + return the canned GraphResult — this is the
+        // primary evidence surface asserted by Test 1.
+        self.graph_calls.lock().push((query.clone(), as_of));
+        Ok(self.canned_graph.lock().clone())
+    }
+
+    async fn scan_range(
+        &self,
+        prefix: &[u8],
+        _as_of: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+        let snapshot = self.rows.lock().clone();
+        let pairs: Vec<Result<(Bytes, Bytes), StorageError>> = snapshot
+            .into_iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(k, (v, _bt))| Ok((Bytes::from(k), Bytes::from(v))))
+            .collect();
+        Ok(Box::pin(stream::iter(pairs)))
+    }
+
+    async fn read_as_of(
+        &self,
+        key: &[u8],
+        _as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
+        let rows = self.rows.lock();
+        Ok(rows.get(key).map(|(v, bt)| Row {
+            key: key.to_vec(),
+            value: Bytes::from(v.clone()),
+            bt: *bt,
+        }))
+    }
+
+    async fn publish(
+        &self,
+        topic: &str,
+        partition: u16,
+        payload: Bytes,
+    ) -> Result<u64, StorageError> {
+        self.published_messages.lock().push((topic.to_string(), partition, payload));
+        Ok(self.published_messages.lock().len() as u64)
+    }
+
+    async fn subscribe(
+        &self,
+        _group: &str,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+        Ok(Box::pin(stream::empty()))
+    }
+
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            bi_temporal_native: true,
+            graph_native: *self.graph_native.lock(),
+            rerank_native: false,
+            queue_native: true,
+            max_vector_dim: 768,
+            native_rrf: false,
+        }
+    }
+}
+
+#[async_trait]
+impl KeywordPort for RecordingStorageWithKeyword {
+    async fn keyword_search(
+        &self,
+        _index: &str,
+        _query: &str,
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+    ) -> Result<Vec<KeywordHit>, StorageError> {
+        Ok(Vec::new())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — mirror server_smoke.rs shape; parameterised on storage Arc so each
+// test can inject its pre-configured fixture variant.
+// ---------------------------------------------------------------------------
+
+fn build_test_lunaris_from_storage(storage: Arc<RecordingStorageWithKeyword>) -> Arc<Lunaris> {
+    let storage_dyn: Arc<dyn StoragePort> = storage.clone();
+    let keyword_dyn: Arc<dyn KeywordPort> = storage;
+    Arc::new(Lunaris::with_parts_keyword(
+        storage_dyn,
+        keyword_dyn,
+        Arc::new(StubEmbedder::new(768)) as Arc<dyn Embedder>,
+        HlcClock::new(0),
+    ))
+}
+
+fn write_test_tokens_file() -> std::path::PathBuf {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!(
+        "lunaris-server-graph-mode-tokens-{}.json",
+        ulid::Ulid::new()
+    ));
+    let body = serde_json::json!({
+        "tok-all": { "tenant": "t-1", "scopes": ["ingest", "recall", "forget"] },
+    });
+    std::fs::write(&path, body.to_string()).expect("write tokens file");
+    path
+}
+
+fn build_test_app_with(lunaris: Arc<Lunaris>) -> axum::Router {
+    let cfg = lunaris_server::Config {
+        bind: "127.0.0.1:0".to_string(),
+        storage: "test://stub".to_string(),
+        tokens_file: write_test_tokens_file(),
+        rate_per_second: 1000,
+        rate_burst: 1000,
+        cors_origins: "*".to_string(),
+        shutdown_grace_secs: 30,
+        metrics_disabled: false,
+    };
+    lunaris_server::build(cfg, lunaris)
+}
+
+/// Build a GraphResult with N `(id, name, type)` rows for testing. Matches the
+/// canned_graph_with helper at `crates/lunaris-retrieve/tests/graph_anchored.rs:186-200`
+/// verbatim.
+fn canned_graph_with(rows: Vec<(EntityId, &str, &str)>) -> GraphResult {
+    GraphResult {
+        headers: vec!["id".into(), "name".into(), "type".into()],
+        rows: rows
+            .into_iter()
+            .map(|(id, name, typ)| {
+                vec![
+                    serde_json::Value::String(format!("{}", id)),
+                    serde_json::Value::String(name.into()),
+                    serde_json::Value::String(typ.into()),
+                ]
+            })
+            .collect(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn mode_graph_composes_graph_operator_when_gate_passes() {
+    // Arrange: graph_native=true + canned GraphResult with one row.
+    let bob_id = EntityId::from_name_and_type("Bob", "Person");
+    let storage = Arc::new(
+        RecordingStorageWithKeyword::new()
+            .with_graph_native(true)
+            .with_canned_graph(canned_graph_with(vec![(bob_id, "Bob", "Person")])),
+    );
+    let lunaris = build_test_lunaris_from_storage(storage.clone());
+    let app = build_test_app_with(lunaris);
+
+    // Act: POST {"query":"what did Alice do at Acme","k":5,"mode":"graph"}.
+    // "Alice" and "Acme" are capitalized non-first tokens → extract_query_entities
+    // returns two EntityIds → Graph::anchored gets a non-empty Vec →
+    // storage.graph_traverse MUST fire.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/recall")
+        .header("authorization", "Bearer tok-all")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"query":"what did Alice do at Acme","k":5,"mode":"graph"}"#,
+        ))
+        .expect("req");
+
+    let resp = app.oneshot(req).await.expect("oneshot");
+
+    // Assert 1a: HTTP 200 OK (NOT 501 — gate passed because graph_native=true).
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "gate should pass when graph_native=true",
+    );
+
+    // Assert 1b: storage.graph_traverse was called exactly once — PRIMARY
+    // proof that Graph::anchored was composed into the retrieval root.
+    let calls = storage.graph_calls.lock();
+    assert_eq!(
+        calls.len(),
+        1,
+        "graph_traverse MUST be called exactly once — proves Graph::anchored was composed into root",
+    );
+
+    // Assert 1c: cypher body contains id_hex (W-7 alignment) and [*1..2]
+    // (DEFAULT_GRAPH_HOPS=2 per graph.rs:54).
+    let cypher = &calls[0].0.cypher;
+    assert!(
+        cypher.contains("id_hex"),
+        "W-7 alignment: cypher must use id_hex property: {cypher}",
+    );
+    assert!(
+        cypher.contains("[*1..2]"),
+        "DEFAULT_GRAPH_HOPS=2 must be spliced as [*1..2]: {cypher}",
+    );
+
+    // Assert 1d: response body parses as a JSON array (Vec<Hit> shape preserved).
+    drop(calls); // release the lock before consuming the response body
+    let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert!(
+        v.is_array(),
+        "default Accept should yield JSON array (Vec<Hit>)",
+    );
+}
+
+#[tokio::test]
+async fn mode_graph_preserves_501_gate_when_runtime_off_and_graph_native_false() {
+    // Arrange: graph_native=false + graph_pipeline NOT enabled → gate fails.
+    let storage = Arc::new(RecordingStorageWithKeyword::new().with_graph_native(false));
+    let lunaris = build_test_lunaris_from_storage(storage.clone());
+    let app = build_test_app_with(lunaris);
+
+    // Act.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/recall")
+        .header("authorization", "Bearer tok-all")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"query":"what did Alice do","mode":"graph"}"#))
+        .expect("req");
+
+    let resp = app.oneshot(req).await.expect("oneshot");
+
+    // Assert 2a: HTTP 501 Not Implemented (existing gate preserved — no regression).
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_IMPLEMENTED,
+        "existing 501 gate must be preserved when runtime off + graph_native=false",
+    );
+
+    // Assert 2b: graph_traverse was NOT called (handler short-circuited).
+    assert_eq!(
+        storage.graph_calls.lock().len(),
+        0,
+        "handler MUST short-circuit before composing Graph when gate fails",
+    );
+
+    // Assert 2c: response body.error == "graph_mode_unavailable".
+    let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(
+        v["error"], "graph_mode_unavailable",
+        "501 payload must preserve the graph_mode_unavailable tag verbatim",
+    );
+}
+
+#[tokio::test]
+async fn mode_graph_falls_back_to_semantic_with_degraded_when_no_entities() {
+    // Arrange: graph_native=true + canned vector hits so hydrate yields
+    // non-empty Hit list. Query has NO capitalized non-first tokens →
+    // extract_query_entities returns empty → Graph::anchored empty fast-path
+    // → zero graph_traverse calls AND handler falls back to semantic recall
+    // marking every returned Hit with degraded=true.
+    let v_id_a = vec![1u8; 16];
+    let v_id_b = vec![2u8; 16];
+    let storage = Arc::new(
+        RecordingStorageWithKeyword::new()
+            .with_graph_native(true)
+            .with_canned_graph(canned_graph_with(vec![]))
+            .with_vector_hits(vec![
+                VectorHit {
+                    id: v_id_a.clone(),
+                    score: 0.9,
+                    rerank_applied: false,
+                    metadata: serde_json::json!({}),
+                },
+                VectorHit {
+                    id: v_id_b.clone(),
+                    score: 0.7,
+                    rerank_applied: false,
+                    metadata: serde_json::json!({}),
+                },
+            ]),
+    );
+    // Seed chunk rows keyed by lunaris:chunk:<hex> so hydrate returns
+    // non-empty hits. Hydrate parses the payload + fills Hit fields; we
+    // intentionally keep the payload stub minimal — hydrate drops on parse
+    // failure but the test assertion only needs SOME hits to flow through.
+    storage.seed_chunk_row(&v_id_a);
+    storage.seed_chunk_row(&v_id_b);
+
+    let lunaris = build_test_lunaris_from_storage(storage.clone());
+    let app = build_test_app_with(lunaris);
+
+    // Act.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/recall")
+        .header("authorization", "Bearer tok-all")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"query":"show me everything lowercase","mode":"graph"}"#,
+        ))
+        .expect("req");
+
+    let resp = app.oneshot(req).await.expect("oneshot");
+
+    // Assert 3a: HTTP 200 OK (semantic fallback succeeded).
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Assert 3b: graph_traverse NOT called (empty EntityId list → graph.rs
+    // line 204 fast-path OR handler skipped Graph::anchored composition
+    // entirely in the no-entities branch).
+    assert_eq!(
+        storage.graph_calls.lock().len(),
+        0,
+        "empty entities must NOT trigger graph_traverse",
+    );
+
+    // Assert 3c + 3d: response hits non-empty AND every hit carries
+    // degraded=true.
+    let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    let hits = v.as_array().expect("hits array");
+    assert!(
+        !hits.is_empty(),
+        "semantic fallback must yield at least one hit (fixture seeds 2 chunks): {v}",
+    );
+    for h in hits {
+        assert_eq!(
+            h["degraded"], true,
+            "every hit from graph-mode-with-empty-entities fallback MUST carry degraded=true: {h}",
+        );
+    }
+}
+
+#[tokio::test]
+async fn mode_semantic_unchanged_by_handler_diff() {
+    // Regression guard — mode=semantic (default) path MUST NOT touch
+    // graph_traverse. This catches accidental wiring where the Graph branch
+    // somehow composes into every mode.
+    let storage = Arc::new(RecordingStorageWithKeyword::new().with_graph_native(true));
+    let lunaris = build_test_lunaris_from_storage(storage.clone());
+    let app = build_test_app_with(lunaris);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/recall")
+        .header("authorization", "Bearer tok-all")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"query":"what did Alice do at Acme","mode":"semantic"}"#,
+        ))
+        .expect("req");
+
+    let resp = app.oneshot(req).await.expect("oneshot");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        storage.graph_calls.lock().len(),
+        0,
+        "semantic mode MUST NOT touch graph_traverse — even with capitalized tokens in query",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Live dual-backend UAT — `#[ignore]`-gated per ROADMAP Phase 7 SC #3b.
+// Mirrors the pattern from Plan 05-04's `helios_scratchpad_smoke.rs` — skips
+// cleanly when MOON_URL / PG_URL env vars unset; runs end-to-end against live
+// Moon + Postgres backends when both are set. Listed in 05-HUMAN-UAT.md as a
+// deferred-measurement gate.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn mode_graph_parity_across_moon_and_postgres() {
+    // UAT-class — operator-driven. Skip unless BOTH env vars present.
+    let moon_url = match std::env::var("MOON_URL") {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!(
+                "SKIP mode_graph_parity_across_moon_and_postgres: MOON_URL env var not set",
+            );
+            return;
+        }
+    };
+    let pg_url = match std::env::var("PG_URL") {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!(
+                "SKIP mode_graph_parity_across_moon_and_postgres: PG_URL env var not set",
+            );
+            return;
+        }
+    };
+
+    // Boot both backends; reject gracefully if either Lunaris::open fails
+    // (same two-tier probe discipline as Plan 04-03).
+    let moon = match Lunaris::open(&moon_url).await {
+        Ok(l) => Arc::new(l),
+        Err(e) => {
+            eprintln!(
+                "SKIP mode_graph_parity_across_moon_and_postgres: Lunaris::open(MOON_URL={moon_url}) failed: {e}",
+            );
+            return;
+        }
+    };
+    let pg = match Lunaris::open(&pg_url).await {
+        Ok(l) => Arc::new(l),
+        Err(e) => {
+            eprintln!(
+                "SKIP mode_graph_parity_across_moon_and_postgres: Lunaris::open(PG_URL={pg_url}) failed: {e}",
+            );
+            return;
+        }
+    };
+
+    // Enable graph pipeline on both so the ingest fan-out actually writes
+    // graph nodes + edges.
+    moon.graph_pipeline().enable();
+    pg.graph_pipeline().enable();
+
+    // Build the HTTP app against each handle.
+    let moon_app = build_test_app_with(moon.clone());
+    let pg_app = build_test_app_with(pg.clone());
+
+    // Issue identical mode=graph recall requests against both backends and
+    // diff the response hit-id sets. Per capabilities() parity rules
+    // (Plan 05-02 STORE-07), both backends MUST return equivalent hit sets
+    // when fed the same ingest corpus.
+    let body = r#"{"query":"what did Alice do at Acme","k":5,"mode":"graph"}"#;
+
+    let moon_resp = moon_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/recall")
+                .header("authorization", "Bearer tok-all")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .expect("req"),
+        )
+        .await
+        .expect("moon oneshot");
+    let pg_resp = pg_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/recall")
+                .header("authorization", "Bearer tok-all")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .expect("req"),
+        )
+        .await
+        .expect("pg oneshot");
+
+    assert_eq!(moon_resp.status(), StatusCode::OK);
+    assert_eq!(pg_resp.status(), StatusCode::OK);
+
+    let moon_bytes = to_bytes(moon_resp.into_body(), 1_048_576).await.expect("moon body");
+    let pg_bytes = to_bytes(pg_resp.into_body(), 1_048_576).await.expect("pg body");
+    let moon_v: serde_json::Value = serde_json::from_slice(&moon_bytes).expect("moon json");
+    let pg_v: serde_json::Value = serde_json::from_slice(&pg_bytes).expect("pg json");
+
+    // Parity check: both backends must return non-empty hit sets and the
+    // returned ids overlap (strict set-equality is too brittle when the
+    // corpora aren't byte-identical; this asserts the graph branch fired on
+    // both + produced overlapping results).
+    let moon_ids: Vec<serde_json::Value> = moon_v
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|h| h["id"].clone())
+        .collect();
+    let pg_ids: Vec<serde_json::Value> = pg_v
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|h| h["id"].clone())
+        .collect();
+    assert!(
+        !moon_ids.is_empty(),
+        "Moon response must yield at least one hit: {moon_v}",
+    );
+    assert!(
+        !pg_ids.is_empty(),
+        "Postgres response must yield at least one hit: {pg_v}",
+    );
+    // Intersection non-empty — parity contract per capabilities() rules.
+    let overlap = moon_ids.iter().filter(|id| pg_ids.contains(id)).count();
+    assert!(
+        overlap > 0,
+        "Moon and Postgres hit-id sets must overlap for mode=graph parity: moon={moon_ids:?} pg={pg_ids:?}",
+    );
+}
