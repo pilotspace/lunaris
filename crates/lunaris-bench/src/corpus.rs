@@ -706,6 +706,126 @@ pub async fn ensure_corpus_or_skip(
     Ok(true)
 }
 
+// ----- markdown document corpus (Plan 05-04 HELIOS-02 / EVAL-06) -----
+
+/// Plan 05-04 HELIOS-02 / EVAL-06 — bulk-write `count` synthetic ~12 KB
+/// markdown documents directly to `storage`.
+///
+/// Same deterministic ChaCha20-seeded generator family as
+/// [`build_chaos_corpus`] + [`build_one_million_fact_corpus`], but emits one
+/// [`Episode`] per document with a markdown body shaped like the
+/// `lunaris-ingest` `twelve_kb_markdown_fixture` (heading + paragraphs
+/// targeting ~12 KB).
+///
+/// Bypasses [`Lunaris::ingest`] for the same reason
+/// [`build_one_million_fact_corpus`] does — sequential ingest of 50K episodes
+/// at the budgeted ~50 ms p50 would burn ~40 minutes per smoke run, whereas
+/// the bulk-write path lands the corpus in single-digit minutes (or seconds
+/// when the count is small + the backend is fast). Each `atomic_write` batches
+/// 64 episodes (~12 KB / episode → ~768 KB / batch — well under both Moon
+/// `TXN.COMMIT` and Postgres single-COMMIT limits).
+///
+/// ## Determinism contract
+///
+/// Same `(count, seed)` tuple → byte-identical corpus across runs / machines /
+/// OSes. The per-document body is deterministic via `ChaCha20Rng::seed_from_u64(seed)`.
+///
+/// ## Source convention
+///
+/// Synthetic episodes use `source = "bench:md-doc/<idx>"` so they don't collide
+/// with `helios:fs/...` Helios-namespaced data when both run on the same backend.
+///
+/// ## Errors
+///
+/// - [`BenchCorpusError::Invalid`] — `count == 0`.
+/// - [`BenchCorpusError::Backend`] — the backend rejected an `atomic_write`.
+///
+/// Returns the number of episodes written on success.
+pub async fn build_md_doc_corpus(
+    storage: &dyn StoragePort,
+    count: u64,
+    seed: u64,
+) -> Result<u64, BenchCorpusError> {
+    if count == 0 {
+        return Err(BenchCorpusError::Invalid(format!(
+            "count must be > 0; got {count}"
+        )));
+    }
+
+    /// Per-batch episode count. 64 × ~12 KB ≈ 768 KB per atomic_write —
+    /// fits comfortably within both Moon TXN.COMMIT and Postgres single-COMMIT
+    /// throughput envelopes (analog of [`CORPUS_BATCH_OPS`] but expressed in
+    /// episodes-per-batch rather than ops-per-batch since each markdown doc
+    /// emits exactly one KvPut).
+    const BATCH: u64 = 64;
+
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let mut written: u64 = 0;
+    let mut batch_ops: Vec<WriteOp> = Vec::with_capacity(BATCH as usize);
+
+    for idx in 0..count {
+        let episode = synth_md_episode(idx, &mut rng);
+        // Storage key mirrors lunaris_ingest::episode_key shape verbatim:
+        // `episode:` ASCII prefix + the episode id's 16 bytes. Deferring to a
+        // local format!() rather than pulling lunaris-ingest as a dep here —
+        // this crate already carries enough deps and the prefix is stable.
+        let mut key = Vec::with_capacity(8 + 16);
+        key.extend_from_slice(b"episode:");
+        key.extend_from_slice(&episode.id.to_bytes());
+        let value = serde_json::to_vec(&episode).map_err(BenchCorpusError::Serde)?;
+        batch_ops.push(WriteOp::KvPut { key, value });
+
+        if batch_ops.len() as u64 >= BATCH {
+            storage
+                .atomic_write(&batch_ops)
+                .await
+                .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
+            written += batch_ops.len() as u64;
+            batch_ops.clear();
+        }
+    }
+    if !batch_ops.is_empty() {
+        storage
+            .atomic_write(&batch_ops)
+            .await
+            .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
+        written += batch_ops.len() as u64;
+    }
+    Ok(written)
+}
+
+/// Produce one synthetic ~12 KB markdown [`Episode`]. Pure — no IO. RNG is
+/// passed by mut ref so the caller controls determinism (same seed → byte-
+/// identical corpus).
+fn synth_md_episode(idx: u64, rng: &mut ChaCha20Rng) -> lunaris_core::Episode {
+    let mut body = String::with_capacity(12_500);
+    body.push_str(&format!("# Document {idx}\n\n"));
+    let paragraphs = 8usize + (rng.random::<u8>() as usize % 4);
+    for p in 0..paragraphs {
+        body.push_str(&format!("## Section {p}\n\n"));
+        let sentences = 6usize + (rng.random::<u8>() as usize % 5);
+        for _ in 0..sentences {
+            body.push_str(
+                "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod \
+                 tempor incididunt ut labore et dolore magna aliqua. ",
+            );
+        }
+        body.push_str("\n\n");
+    }
+    let mut id_bytes = [0u8; 16];
+    rng.fill(&mut id_bytes);
+    lunaris_core::Episode {
+        id: Ulid::from_bytes(id_bytes),
+        source: format!("bench:md-doc/{idx}"),
+        content: body,
+        t_ref: None,
+        // Server stamps bt at ingest; bench bulk-write path uses Hlc::ZERO so
+        // payload bytes are deterministic (see Plan 02-04 corpus convention).
+        bt: BiTemporal::at(lunaris_core::Hlc::ZERO, lunaris_core::Hlc::ZERO),
+        metadata: serde_json::Map::new(),
+    }
+}
+
 // ----- synthetic query set -----
 
 /// Generate `count` deterministic query strings drawn from the same vocab as
@@ -963,6 +1083,68 @@ mod tests {
             "probe took too long: {:?}",
             started.elapsed()
         );
+    }
+
+    // ----- Plan 05-04 build_md_doc_corpus tests -----
+
+    #[tokio::test]
+    async fn build_md_doc_corpus_emits_one_kvput_per_doc() {
+        // 10 docs → all fit in the first batch (BATCH=64). Expect exactly
+        // one atomic_write batch with 10 KvPut ops.
+        let storage = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let storage_dyn: &dyn StoragePort = storage.as_ref();
+        let written = build_md_doc_corpus(storage_dyn, 10, 0xDEAD_BEEF)
+            .await
+            .expect("build small md corpus");
+        assert_eq!(written, 10, "build_md_doc_corpus reports written count");
+        assert_eq!(storage.batch_count(), 1, "10 docs ≤ BATCH=64 → one atomic_write");
+        let (kv, vec_) = storage.op_kind_counts();
+        assert_eq!(kv, 10, "exactly 10 KvPut ops (one per doc)");
+        assert_eq!(vec_, 0, "no VectorUpsert ops — markdown corpus is KV-only");
+    }
+
+    #[tokio::test]
+    async fn build_md_doc_corpus_batches_at_64_docs() {
+        // 130 docs → 64 + 64 + 2 = three atomic_write batches.
+        let storage = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let storage_dyn: &dyn StoragePort = storage.as_ref();
+        let written = build_md_doc_corpus(storage_dyn, 130, 7).await.expect("build");
+        assert_eq!(written, 130);
+        assert_eq!(storage.batch_count(), 3, "130 docs / 64 per batch = 3 batches");
+        let (kv, _) = storage.op_kind_counts();
+        assert_eq!(kv, 130, "130 KvPut ops total");
+    }
+
+    #[tokio::test]
+    async fn build_md_doc_corpus_is_deterministic_for_same_seed() {
+        // Same seed → byte-identical KvPut payloads. We compare the first
+        // batch's KvPut value bytes across two runs.
+        let s1 = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let s2 = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        build_md_doc_corpus(s1.as_ref() as &dyn StoragePort, 4, 42).await.unwrap();
+        build_md_doc_corpus(s2.as_ref() as &dyn StoragePort, 4, 42).await.unwrap();
+        let b1 = s1.batches.lock().clone();
+        let b2 = s2.batches.lock().clone();
+        assert_eq!(b1.len(), 1);
+        assert_eq!(b2.len(), 1);
+        // Compare the serialized payloads pairwise — same seed must produce
+        // byte-identical Episode bodies (the determinism contract).
+        for (op1, op2) in b1[0].iter().zip(b2[0].iter()) {
+            match (op1, op2) {
+                (
+                    WriteOp::KvPut { value: v1, .. },
+                    WriteOp::KvPut { value: v2, .. },
+                ) => assert_eq!(v1, v2, "same seed → byte-identical KvPut payloads"),
+                _ => panic!("expected KvPut ops"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn build_md_doc_corpus_rejects_zero_count() {
+        let storage = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let result = build_md_doc_corpus(storage.as_ref() as &dyn StoragePort, 0, 1).await;
+        assert!(matches!(result, Err(BenchCorpusError::Invalid(_))));
     }
 }
 
