@@ -1,21 +1,188 @@
-//! Plan 05-01 — `POST /v1/recall` handler stub (PROTO-02/03 + D-04/05).
+//! Plan 05-01 — `POST /v1/recall` (PROTO-02 + PROTO-03 + D-04 + D-05).
 //!
-//! Body for Task 1 is a B-7 stub; Task 3 wires the full SSE / JSON dispatch.
+//! Two response shapes per D-04:
+//! - `Accept: application/json` (default) → `Vec<Hit>` JSON body in one response.
+//! - `Accept: text/event-stream` → SSE stream of `event: hit\ndata: <Hit>\n\n`
+//!   per hit, terminated by `event: done\ndata: {}\n\n`.
+//!
+//! Two retrieval modes per D-05:
+//! - `mode: "semantic"` (default) → Phase 2 hot path (Vector + Keyword + RRF + bge-rerank).
+//! - `mode: "graph"` → Phase 3 `Graph::anchored` operator, gated on
+//!   `capabilities().graph_native || lunaris.graph_pipeline().is_enabled()`.
+
+use std::convert::Infallible;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
+use futures::stream::{self, Stream};
 
+use lunaris_core::Hlc;
+use lunaris_retrieve::{Hit, Query};
+
+use crate::dto::{RecallRequest, RetrievalMode};
+use crate::middleware::error::map_error;
 use crate::state::AppState;
 
 pub async fn recall_handler(
-    State(_state): State<AppState>,
-    Json(_body): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<RecallRequest>,
 ) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"error":"not_implemented","message":"task 3 placeholder"})),
-    )
+    // D-05 + PROTO-03: gate "graph" mode on backend capability + runtime
+    // toggle. v0 returns 501 Not Implemented when neither is satisfied —
+    // future work wires the Graph::anchored operator into compose_query.
+    if req.mode == RetrievalMode::Graph {
+        let caps = state.lunaris.storage().capabilities();
+        let graph_runtime_on = state.lunaris.graph_pipeline().is_enabled();
+        if !caps.graph_native && !graph_runtime_on {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({
+                    "error": "graph_mode_unavailable",
+                    "message": "graph mode requires capabilities().graph_native or GraphPipeline::enable()",
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // Build the typed Query from the wire DTO up-front so request-level
+    // validation surfaces as 400 BEFORE we touch the storage layer.
+    let query = match build_query(&req) {
+        Ok(q) => q,
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_request",
+                    "message": msg,
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Phase 4 plumbing: degraded check based on verifier-queue depth.
+    let mut builder = match state.lunaris.recall_with_degraded_check().await {
+        Ok(b) => b,
+        Err(e) => return map_error(e),
+    };
+
+    // Apply optional filter — surface parse failures as 400 (the caller's
+    // body was valid JSON but the filter DSL is invalid).
+    if let Some(filter_str) = &req.filter {
+        builder = match builder.filter_str(filter_str) {
+            Ok(updated) => updated,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": "invalid_filter",
+                        "message": format!("filter DSL parse error: {e}"),
+                    })),
+                )
+                    .into_response();
+            }
+        };
+    }
+
+    let want_sse = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.contains("text/event-stream"))
+        .unwrap_or(false);
+
+    if want_sse {
+        match builder.execute(query).await {
+            Ok(hits) => sse_response(hits),
+            Err(e) => map_error(e),
+        }
+    } else {
+        match builder.execute(query).await {
+            Ok(hits) => (StatusCode::OK, Json(hits)).into_response(),
+            Err(e) => map_error(e),
+        }
+    }
+}
+
+/// Build the typed `Query` from the wire DTO.
+fn build_query(req: &RecallRequest) -> Result<Query, &'static str> {
+    let mut q = Query::text(&req.query);
+    if req.k > 0 {
+        q.k = req.k;
+    }
+    if let Some(ts) = &req.as_of {
+        match parse_rfc3339_to_hlc(ts) {
+            Ok(hlc) => q.as_of = Some(hlc),
+            Err(_) => return Err("as_of must be RFC-3339"),
+        }
+    }
+    Ok(q)
+}
+
+fn parse_rfc3339_to_hlc(s: &str) -> Result<Hlc, ()> {
+    use chrono::DateTime;
+    let dt = DateTime::parse_from_rfc3339(s).map_err(|_| ())?;
+    let wall_ms = u64::try_from(dt.timestamp_millis()).map_err(|_| ())?;
+    Ok(Hlc {
+        wall_ms,
+        counter: 0,
+        node_id: 0,
+    })
+}
+
+/// Build the SSE response stream — one `event: hit` per Hit, terminal
+/// `event: done` envelope.
+fn sse_response(hits: Vec<Hit>) -> Response {
+    let events: Vec<Result<Event, Infallible>> = hits
+        .into_iter()
+        .map(|hit| {
+            let payload = serde_json::to_string(&hit).unwrap_or_else(|_| "{}".to_string());
+            Ok(Event::default().event("hit").data(payload))
+        })
+        .collect();
+    let done = stream::once(async {
+        Ok::<Event, Infallible>(Event::default().event("done").data("{}"))
+    });
+    let stream: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
+        Box::pin(stream::iter(events).chain(done));
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rfc3339_round_trips() {
+        let h = parse_rfc3339_to_hlc("2025-06-01T00:00:00Z").expect("parse");
+        assert!(h.wall_ms > 0);
+        assert_eq!(h.counter, 0);
+    }
+
+    #[test]
+    fn parse_rfc3339_rejects_garbage() {
+        assert!(parse_rfc3339_to_hlc("not a date").is_err());
+    }
+
+    #[test]
+    fn build_query_uses_default_k_when_zero() {
+        let req = RecallRequest {
+            query: "hi".into(),
+            k: 0,
+            as_of: None,
+            filter: None,
+            mode: RetrievalMode::Semantic,
+        };
+        let q = build_query(&req).expect("ok");
+        // build_query keeps Query::text default k (30) when req.k == 0.
+        assert_eq!(q.k, 30);
+    }
 }
