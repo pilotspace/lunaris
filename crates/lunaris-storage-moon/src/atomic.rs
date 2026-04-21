@@ -2,7 +2,7 @@
 //!
 //! Phase 1.5 retrofit (STORE-09): all per-op commands are now dispatched through the
 //! typed `moon-client` SDK (`txn_begin / txn_commit / txn_abort`, `set / del`,
-//! `vector().upsert`, `graph().query_with_params`).
+//! `hset_multiple`, `graph().query_raw`).
 //!
 //! Each `WriteOp` translates to one Moon command:
 //!
@@ -10,9 +10,9 @@
 //! |--------------------|-----------------------------------------------------------|
 //! | `KvPut`            | `client.hset(key, "v", value)` (single-field hash to keep `read_as_of`'s `HGET v` shape) |
 //! | `KvDelete`         | `client.del(key)`                                         |
-//! | `VectorUpsert`     | `client.vector().upsert(index, id, le-f32-bytes, meta-json)` |
-//! | `GraphNode`        | `client.graph().query_with_params(graph, "MERGE (n:{label} {id:$id}) SET n += $props", params_json)` |
-//! | `GraphEdge`        | `client.graph().query_with_params(graph, "MATCH (a {id:$src}),(b {id:$dst}) MERGE (a)-[r:{rel}]->(b) SET r += $props", params_json)` |
+//! | `VectorUpsert`     | `client.hset_multiple("<index>:<id_hex>", [("vec", blob), ("meta", json)])` |
+//! | `GraphNode`        | `client.graph().query_raw(graph, "MERGE (n:{label} {id:'...'}) SET n.k = v, ... RETURN n")` |
+//! | `GraphEdge`        | `client.graph().query_raw(graph, "MATCH (a {id:'..'}),(b {id:'..}) MERGE (a)-[r:{rel}]->(b) SET r.k = v, ... RETURN r")` |
 //!
 //! ## Storage-shape note: SET vs HSET
 //!
@@ -37,6 +37,17 @@
 //! `redis::aio::MultiplexedConnection` instance) to ensure Moon associates them with
 //! the same transaction handle. Any per-op error short-circuits to `TXN.ABORT` then
 //! surfaces the original error.
+//!
+//! ## Multi-shard limitation (Fix 3, 2026-04-21)
+//!
+//! Moon's `TXN` does NOT support cross-shard writes (`TXN does not support
+//! cross-shard writes -- use hash tags {tag} to co-locate keys`). Lunaris
+//! WriteOps currently use raw key/index names without `{}` hash tags so any
+//! atomic_write spanning more than one shard fails. Workaround for live
+//! measurement: run Moon with `--shards 1` (single-shard mode). Real fix
+//! requires WriteOp routing keys + `{<tag>}:` key prefixing so all ops in
+//! one transaction land on the same shard. Tracked as future work; not a
+//! blocker for v0.1.0-alpha measurement on a single-node Moon dev box.
 
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::{Lsn, WriteOp};
@@ -88,43 +99,145 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                     buf.extend_from_slice(&f.to_le_bytes());
                 }
                 let meta_json = serde_json::to_string(metadata)?;
+                // Gap 9 fix (2026-04-21): mirror the Postgres tsvector convention
+                // (`crates/lunaris-storage-postgres/migrations/20260421_000004_tsvector_bm25.sql`)
+                // so Moon BM25 / HYBRID FT.SEARCH have a real text payload to
+                // score against. Without this, the FT index sees only `vec`
+                // and FT.SEARCH returns "no such index" / "unknown index".
+                let content = extract_content_for_index(index, metadata);
+                // Moon's vector model: write to `<index_prefix>:<id>` via HSET; the
+                // FT index created by MoonClient::ensure_indexes auto-picks the row up
+                // (per `moon/docs/vector-search-guide.md`). Phase 1.5 used the SDK
+                // helper `vector().upsert(...)` which emits a phantom `FT.UPSERT`
+                // (Moon server only exposes FT.{CREATE,SEARCH,AGGREGATE,...}, not
+                // FT.UPSERT). Live-measurement gap fix 2026-04-21.
+                let id_hex = hex::encode(id);
+                let key = format!("{index}:{id_hex}");
+                let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(3);
+                fields.push(("vec", buf.as_slice()));
+                fields.push(("meta", meta_json.as_bytes()));
+                if let Some(c) = content.as_ref() {
+                    fields.push(("content", c.as_bytes()));
+                }
                 typed
-                    .vector()
-                    .upsert(index.as_str(), id.as_slice(), &buf, &meta_json)
+                    .hset_multiple(key.as_bytes(), &fields)
                     .await
                     .map_err(moon_err)?;
             }
             WriteOp::GraphNode { graph, id, label, props } => {
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
-                let props_json = serde_json::to_string(props)?;
-                let cypher = format!("MERGE (n:{label} {{id: $id}}) SET n += $props");
-                let params =
-                    format!(r#"{{"id":"{}","props":{}}}"#, String::from_utf8_lossy(id), props_json);
+                // Moon Cypher only supports `SET n.prop = expr` (no map-merge `+=`).
+                // Moon's GRAPH.QUERY handler also ignores `--params` (always empty
+                // HashMap internally), so we inline all values as literals.
+                // Hex-encode the raw id bytes — EntityId is [u8;16] hash,
+                // lossy UTF-8 produces Cypher-unsafe characters.
+                let id_hex = hex::encode(id);
+                let set_clause = build_set_clause("n", props);
+                let cypher = if set_clause.is_empty() {
+                    format!("MERGE (n:{label} {{id: '{id_hex}'}}) RETURN n")
+                } else {
+                    format!("MERGE (n:{label} {{id: '{id_hex}'}}) {set_clause} RETURN n")
+                };
                 let _: redis::Value = typed
                     .graph()
-                    .query_with_params(graph.as_str(), &cypher, &params)
+                    .query_raw(graph.as_str(), &cypher)
                     .await
                     .map_err(moon_err)?;
             }
             WriteOp::GraphEdge { graph, src, dst, rel, props } => {
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
-                let props_json = serde_json::to_string(props)?;
-                let cypher = format!(
-                    "MATCH (a {{id:$src}}),(b {{id:$dst}}) MERGE (a)-[r:{rel}]->(b) SET r += $props",
-                );
-                let params = format!(
-                    r#"{{"src":"{}","dst":"{}","props":{}}}"#,
-                    String::from_utf8_lossy(src),
-                    String::from_utf8_lossy(dst),
-                    props_json
-                );
+                // Same constraints as GraphNode: inline literals, no params, no `+=`.
+                let src_hex = hex::encode(src);
+                let dst_hex = hex::encode(dst);
+                let set_clause = build_set_clause("r", props);
+                let cypher = if set_clause.is_empty() {
+                    format!(
+                        "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) RETURN r"
+                    )
+                } else {
+                    format!(
+                        "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
+                    )
+                };
                 let _: redis::Value = typed
                     .graph()
-                    .query_with_params(graph.as_str(), &cypher, &params)
+                    .query_raw(graph.as_str(), &cypher)
                     .await
                     .map_err(moon_err)?;
             }
         }
     }
     Ok(())
+}
+
+/// Per-index BM25/HYBRID text payload extractor — mirrors the Postgres
+/// tsvector source convention (see
+/// `crates/lunaris-storage-postgres/migrations/20260421_000004_tsvector_bm25.sql`).
+///
+/// | index       | source field(s)                                          |
+/// |-------------|----------------------------------------------------------|
+/// | chunks      | metadata["text"]                                         |
+/// | entities    | metadata["name"] + " " + metadata["entity_type"]         |
+/// | facts       | metadata["fact_text"]                                    |
+/// | communities | metadata["summary"]                                      |
+///
+/// Returns `None` when the source field(s) are missing or empty so callers
+/// can skip the HSET write rather than store an empty `content` field that
+/// would just inflate row size for nothing.
+fn extract_content_for_index(index: &str, metadata: &serde_json::Value) -> Option<String> {
+    fn s<'a>(v: &'a serde_json::Value, k: &str) -> Option<&'a str> {
+        v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    }
+    let combined = match index {
+        "chunks" => s(metadata, "text").map(str::to_owned),
+        "entities" => match (s(metadata, "name"), s(metadata, "entity_type")) {
+            (Some(n), Some(t)) => Some(format!("{n} {t}")),
+            (Some(n), None) => Some(n.to_owned()),
+            (None, Some(t)) => Some(t.to_owned()),
+            (None, None) => None,
+        },
+        "facts" => s(metadata, "fact_text").map(str::to_owned),
+        "communities" => s(metadata, "summary").map(str::to_owned),
+        _ => None,
+    };
+    combined.filter(|s| !s.is_empty())
+}
+
+/// Build a Cypher `SET var.k1 = lit1, var.k2 = lit2, ...` clause from a JSON object.
+///
+/// Moon's Cypher parser only supports `SET var.prop = expr` (no map-merge `+=` or
+/// `SET var = {...}`). Each JSON value is converted to its Cypher literal:
+/// - strings → `'escaped'`
+/// - numbers → numeric literal
+/// - booleans → `true`/`false`
+/// - null/arrays/objects → serialized as a quoted JSON string (best-effort)
+///
+/// Returns empty string when `props` is null, not an object, or has no keys.
+fn build_set_clause(var: &str, props: &serde_json::Value) -> String {
+    let obj = match props.as_object() {
+        Some(o) if !o.is_empty() => o,
+        _ => return String::new(),
+    };
+    let mut parts: Vec<String> = Vec::with_capacity(obj.len());
+    for (k, v) in obj {
+        let lit = json_to_cypher_literal(v);
+        parts.push(format!("{var}.{k} = {lit}"));
+    }
+    format!("SET {}", parts.join(", "))
+}
+
+fn json_to_cypher_literal(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => {
+            let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{escaped}'")
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => {
+            let s = other.to_string().replace('\\', "\\\\").replace('\'', "\\'");
+            format!("'{s}'")
+        }
+    }
 }

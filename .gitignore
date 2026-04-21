@@ -71,3 +71,14 @@ moon-data/
 *.wal
 *.snapshot
 tmp/
+# Moon writes these into its --dir cwd; if a bench is run with `--dir .`
+# accidentally they end up in the repo root. Always-ignore so they don't
+# get staged or committed.
+appendonlydir/
+shard-*/
+replication.state
+*.aof
+*.rdb
+
+# --- Live measurement scratch reports ---
+LIVE-MEASUREMENT-REPORT.md

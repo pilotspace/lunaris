@@ -53,6 +53,7 @@ use crate::hydrate::hydrate;
 use crate::operators::modifiers::FilterParseError;
 use crate::operators::vector::Vector;
 use crate::operators::{QueryContext, Retriever};
+use crate::types::RawHit;
 use crate::types::{Hit, Query};
 
 /// Builder returned by `Lunaris::recall()`.
@@ -211,5 +212,41 @@ impl RetrievalBuilder {
         };
         let raw = self.root.retrieve(&ctx).await?;
         hydrate(self.storage.as_ref(), raw, as_of, initial_degraded).await
+    }
+
+    /// Run the tree and return the unhydrated [`RawHit`]s. Terminal —
+    /// consumes the builder.
+    ///
+    /// `execute()` runs the operator tree AND `hydrate()`, which looks up
+    /// each result's `id` as a `lunaris:chunk:<ulid>` row and silently
+    /// drops anything that doesn't decode (since-deleted chunks, OR — the
+    /// motivating case — recall over a non-chunk index like `facts` /
+    /// `entities` / `communities` whose ids are NOT chunk ULIDs). Bench
+    /// harnesses that just want to measure search-path latency and don't
+    /// need full chunk text/episode metadata can call this method to
+    /// bypass the cull. Production callers should keep using `execute()`
+    /// so the contract "hits always have chunk text" holds.
+    ///
+    /// Gap 9 follow-up 2026-04-21 — added so `recall_hot_path` can run
+    /// against the bench-seeded `facts` corpus without `hydrate` filtering
+    /// every hit out.
+    pub async fn execute_raw(self, mut query: Query) -> Result<Vec<RawHit>, LunarisError> {
+        if query.filter.is_none() {
+            query.filter = self.base_filter.clone();
+        }
+        if query.as_of.is_none() {
+            query.as_of = self.base_as_of;
+        }
+        let ctx = match self.moon_storage.clone() {
+            Some(moon) => QueryContext::with_moon(
+                query,
+                self.embedder,
+                self.storage.clone(),
+                self.keyword,
+                moon,
+            ),
+            None => QueryContext::new(query, self.embedder, self.storage.clone(), self.keyword),
+        };
+        self.root.retrieve(&ctx).await
     }
 }

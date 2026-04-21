@@ -193,7 +193,29 @@ pub struct CorpusFingerprint {
     /// the cache (T-03-04-04 mitigation).
     #[serde(default)]
     pub graph_density: Option<GraphDensity>,
+    /// Row-shape schema version. Bumped whenever the WriteOp metadata
+    /// emitted per fact / chunk / entity changes shape (e.g. Gap 9 fix
+    /// 2026-04-21 added `fact_text` to facts metadata). Old fingerprints
+    /// deserialise to `0` via `#[serde(default)]`, so a version bump
+    /// invalidates the cache automatically without operator intervention.
+    /// See [`CURRENT_CORPUS_SCHEMA_VERSION`].
+    #[serde(default)]
+    pub schema_version: u32,
 }
+
+/// Current row-shape version emitted by [`build_corpus_with_options`]. Bump
+/// alongside any metadata-shape change so existing fingerprints invalidate.
+///
+/// History:
+/// - `0` — pre-Gap-9 (facts metadata = `{predicate, subject}` only)
+/// - `1` — Gap 9 fix 2026-04-21: facts metadata adds `fact_text`. **First
+///   try emitted `format!("{} {}", subject_ulid, predicate)` — recall probe
+///   returned 0 hits because `synthetic_query_set` draws from the
+///   `entity_name(idx)` vocab and ULIDs never matched.**
+/// - `2` — Gap 9 follow-up 2026-04-21: facts metadata `fact_text` now uses
+///   `fact.fact_text` (the `entity_name(sub) predicate entity_name(obj)`
+///   string built by `next_fact`) so BM25 / HYBRID hits land.
+pub const CURRENT_CORPUS_SCHEMA_VERSION: u32 = 2;
 
 // ----- url hash helpers -----
 
@@ -447,6 +469,7 @@ pub async fn build_corpus_with_options(
         && fp.seed == seed
         && fp.backend_url_hash == url_hash
         && fp.graph_density == graph_density
+        && fp.schema_version == CURRENT_CORPUS_SCHEMA_VERSION
     {
         tracing::info!(
             target: "lunaris-bench",
@@ -503,9 +526,24 @@ pub async fn build_corpus_with_options(
                 index: "facts".to_string(),
                 id: fact.id.to_bytes().to_vec(),
                 embedding,
+                // Gap 9 fix (2026-04-21): include `fact_text` (mirrors the
+                // production `lunaris/src/ingest.rs::ingest` shape and the
+                // Postgres tsvector source `payload->>'fact_text'`) so the
+                // bench corpus is searchable by both backends' BM25/HYBRID
+                // path. Without this the recall_q probe returns 0 hits and
+                // SKIPs the bench.
+                //
+                // The text MUST be `fact.fact_text` (the
+                // `entity_name(sub) predicate entity_name(obj)` form built
+                // by `next_fact`), NOT a freshly-rebuilt `subject predicate`
+                // string. `synthetic_query_set` draws from the same
+                // `entity_name(idx)` vocab — using the wrong fact text
+                // emits ULIDs that no query can match (Gap 9 follow-up
+                // recall regression caught 2026-04-21).
                 metadata: serde_json::json!({
                     "predicate": fact.predicate,
                     "subject": fact.subject.to_string(),
+                    "fact_text": fact.fact_text.clone(),
                 }),
             });
             // Plan 03-04 graph-on extension — emit deterministic synthetic
@@ -595,6 +633,7 @@ pub async fn build_corpus_with_options(
         completed: true,
         duration_secs: duration.as_secs_f64(),
         graph_density,
+        schema_version: CURRENT_CORPUS_SCHEMA_VERSION,
     };
     write_fingerprint(&fp_path, &fp)?;
     tracing::info!(
@@ -929,13 +968,18 @@ mod tests {
             completed: true,
             duration_secs: 1.23,
             graph_density: Some(GraphDensity::default()),
+            schema_version: CURRENT_CORPUS_SCHEMA_VERSION,
         };
         let json = serde_json::to_string(&fp).unwrap();
         let parsed: CorpusFingerprint = serde_json::from_str(&json).unwrap();
         assert_eq!(fp, parsed);
 
         // Backward-compat: a Plan 02-04 fingerprint JSON without the
-        // graph_density field MUST deserialize cleanly (default = None).
+        // graph_density / schema_version fields MUST deserialize cleanly
+        // (defaults: graph_density = None, schema_version = 0). The cache
+        // hit guard then rejects v0 fingerprints because they don't match
+        // CURRENT_CORPUS_SCHEMA_VERSION = 1, forcing a rebuild on the new
+        // metadata shape (Gap 9 fix 2026-04-21).
         let legacy = r#"{
             "backend_url_hash": "abcdef0123456789",
             "fact_count": 100,
@@ -945,6 +989,11 @@ mod tests {
         }"#;
         let parsed_legacy: CorpusFingerprint = serde_json::from_str(legacy).unwrap();
         assert_eq!(parsed_legacy.graph_density, None);
+        assert_eq!(parsed_legacy.schema_version, 0);
+        assert_ne!(
+            parsed_legacy.schema_version, CURRENT_CORPUS_SCHEMA_VERSION,
+            "legacy fingerprint must invalidate so Gap 9's row-shape change forces a rebuild"
+        );
     }
 
     #[tokio::test]

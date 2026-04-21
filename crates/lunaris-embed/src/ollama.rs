@@ -18,7 +18,7 @@ use lunaris_core::{Embedder, LunarisError, StorageError};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
-const DEFAULT_MODEL: &str = "embeddinggemma";
+const DEFAULT_MODEL: &str = "embeddinggemma:300m";
 const DEFAULT_DIM: usize = 768;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 

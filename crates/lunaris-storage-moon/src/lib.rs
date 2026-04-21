@@ -133,15 +133,34 @@ impl StoragePort for MoonStorage {
 
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
-            bi_temporal_native: true,
+            // Moon supports AS_OF for FT.SEARCH (vector + keyword) and VALID_AT
+            // for GRAPH.QUERY, but plain HGET does NOT accept temporal clauses.
+            // Per moon/docs/guides/temporal.mdx: "Bi-temporal fields are
+            // currently limited to graph entities (nodes/edges). KV temporal
+            // versioning uses a sparse index" (the sparse index is for
+            // transactional MVCC isolation, NOT for AS_OF reads). Lunaris's
+            // KV `read_as_of` therefore returns current state on Moon —
+            // historical KV reads need a Lunaris-layer versioned-key encoding
+            // (Gap 8 — tracked for follow-up phase). Reporting `false` here
+            // makes downstream consumers route bi-temporal reads to Postgres
+            // (which has native bi-temporal columns) per the dual-backend
+            // contract. Live-measurement gap fix 2026-04-21.
+            bi_temporal_native: false,
             graph_native: true,
             rerank_native: true,
             queue_native: true,
             // Moon profile uses 768d (matches EmbeddingGemma); Postgres uses 1536d.
             max_vector_dim: 768,
-            // Moon's `text().hybrid_search()` runs `FT.SEARCH HYBRID VECTOR ... SPARSE
-            // ... FUSION RRF` natively in one round trip — Phase 2's `fuse_rrf` opts
-            // into `RrfFusion::Moon` when this is true (Phase 1.5 STORE-09).
+            // Gap 9 closure (2026-04-21): `ensure_indexes` now declares
+            // `SchemaField::Text("content")` on chunks/entities/facts/communities
+            // and `WriteOp::VectorUpsert` writes the `content` field via
+            // `extract_content_for_index` (mirrors the Postgres
+            // `payload->>'text'/'fact_text'/...` tsvector convention). Moon's
+            // SDK `hybrid_search` (3-weight + sparse_field) therefore resolves
+            // `@content` and `fuse_rrf` opts into `RrfFusion::Moon` for one
+            // round-trip server-side fusion. If the schema regresses (e.g. an
+            // older Moon binary that ignores extra_schema), set this back to
+            // `false` to force the always-correct local fusion path.
             native_rrf: true,
         }
     }
@@ -178,21 +197,24 @@ mod tests {
         // We can't construct a real `MoonStorage` without a connection, but we can match
         // the `capabilities()` body shape directly.
         let want = StorageCapabilities {
-            bi_temporal_native: true,
+            bi_temporal_native: false,
             graph_native: true,
             rerank_native: true,
             queue_native: true,
             max_vector_dim: 768,
             native_rrf: true,
         };
-        assert!(want.bi_temporal_native);
+        assert!(
+            !want.bi_temporal_native,
+            "Moon does not natively support KV bi-temporal reads (HGET ignores AS_OF); only FT.SEARCH AS_OF + GRAPH.QUERY VALID_AT are temporal — Gap 8 fix 2026-04-21"
+        );
         assert!(want.graph_native);
         assert!(want.rerank_native);
         assert!(want.queue_native);
         assert_eq!(want.max_vector_dim, 768);
         assert!(
             want.native_rrf,
-            "Moon backend supports text().hybrid_search RRF (Phase 1.5 STORE-09)"
+            "Moon HYBRID FT.SEARCH now resolves @content via the SchemaField::Text added by ensure_indexes; fuse_rrf opts into RrfFusion::Moon — Gap 9 closure 2026-04-21"
         );
     }
 }

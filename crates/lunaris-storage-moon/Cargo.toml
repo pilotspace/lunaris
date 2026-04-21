@@ -34,6 +34,9 @@ redis          = "1.1"
 parking_lot    = { workspace = true }
 url            = { workspace = true }
 ulid           = { workspace = true }
+# hex encoding for `<index>:<id_hex>` Moon hash keys per Fix 1b
+# (avoids non-UTF8 bytes in Redis key names).
+hex            = { workspace = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

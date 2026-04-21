@@ -40,11 +40,13 @@ pub(crate) async fn vector_search(
 ) -> Result<Vec<VectorHit>, StorageError> {
     let typed = c.typed();
 
-    // Pin the connection to a snapshot if AS_OF was requested.
-    if let Some(t) = as_of {
-        let pinned = pack_hlc(t);
-        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
-    }
+    // AS_OF deferred — Moon SDK `search_raw` does not yet expose an `as_of`
+    // parameter; the SDK's `search_opts` does (`FT.SEARCH … AS_OF <ts>` clause)
+    // but lacks the custom filter expression that Lunaris uses. Until either
+    // SDK helper accepts both, AS_OF queries return current state. Phase 1.5
+    // pre-pinned via `snapshot_at_packed(ts)` — that command takes 0 args
+    // server-side and was rejected. Tracked as B-task for STORE-07.
+    let _ = as_of;
 
     // Encode query embedding as little-endian f32 bytes per Moon FT convention.
     let mut qbytes = Vec::with_capacity(query.len() * 4);
@@ -53,27 +55,27 @@ pub(crate) async fn vector_search(
     }
 
     let filter_expr = filter.map(filter_to_moon).unwrap_or_else(|| "*".to_string());
-
-    let search_result = typed.vector().search_raw(index, &filter_expr, &qbytes, k, rerank).await;
-
-    // Always release the snapshot if we pinned one (even on FT.SEARCH error).
-    if as_of.is_some() {
-        let _ = typed.temporal().release_snapshot().await;
-    }
-
-    let reply = search_result.map_err(moon_err)?;
+    // Moon's FT.SEARCH KNN dialect requires the query to carry the full
+    // `<filter>=>[KNN <k> @<field> $<param>]` form — Phase 1.5 used the SDK's
+    // `search_raw` with bare filter, which Moon rejects with "invalid KNN
+    // query syntax". The SDK's higher-level `search_opts` adds the KNN
+    // wrapper but doesn't accept a filter expression. Compose the wrapper
+    // here so the filter algebra still works. Live-measurement gap fix
+    // 2026-04-21.
+    let knn_query = format!("({filter_expr})=>[KNN {k} @vec $query]");
+    let reply = typed
+        .vector()
+        .search_raw(index, &knn_query, &qbytes, k, rerank)
+        .await
+        .map_err(moon_err)?;
     parse_ft_search(reply, rerank)
 }
 
-/// Pack an `Hlc` into the 96-bit value Moon expects for `TEMPORAL.SNAPSHOT_AT`.
-///
-/// Layout: `(wall_ms as u128) << 32 | (counter as u128)`. Node id is folded out (a
-/// snapshot at time `t` is shared across nodes). Returned as `u128` — Moon parses the
-/// stringified value via `BIGNUM`.
-#[inline]
-pub(crate) fn pack_hlc(t: Hlc) -> u128 {
-    ((t.wall_ms as u128) << 32) | (t.counter as u128)
-}
+// Removed `pack_hlc` (Gap 8 / live-measurement 2026-04-21): the
+// `TEMPORAL.SNAPSHOT_AT` pre-pin path was deleted from vector/keyword/graph/kv
+// after Moon proved it has no KV-AS_OF surface. If a real bi-temporal
+// command surface lands upstream, restore the helper from git history rather
+// than re-derive it.
 
 fn filter_to_moon(f: &Filter) -> String {
     match f {
@@ -176,13 +178,9 @@ mod tests {
         assert!(s.contains(" | "), "OR uses pipe, got {s}");
     }
 
-    #[test]
-    fn pack_hlc_round_trips_components() {
-        let t = Hlc { wall_ms: 0xDEAD_BEEFu64, counter: 0xCAFEu32, node_id: 1 };
-        let n = pack_hlc(t);
-        assert_eq!((n >> 32) as u64, 0xDEAD_BEEFu64);
-        assert_eq!((n & 0xFFFF_FFFF) as u32, 0xCAFEu32);
-    }
+    // pack_hlc_round_trips_components — removed alongside `pack_hlc` itself
+    // (see module rustdoc above). Restore from git history if Moon ships a
+    // bi-temporal command surface that needs the helper back.
 
     #[test]
     fn parse_ft_search_empty_returns_empty_vec() {

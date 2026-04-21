@@ -2318,6 +2318,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "hex",
  "lunaris-core",
  "moondb",
  "parking_lot",

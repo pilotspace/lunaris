@@ -92,10 +92,16 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
             index: CHUNK_VECTOR_INDEX.to_string(),
             id: chunk.id.to_bytes().to_vec(),
             embedding,
+            // Gap 9 fix (2026-04-21): include `text` so both Postgres BM25
+            // (`payload->>'text'` per migration 20260421_000004) AND Moon
+            // BM25/HYBRID (per `extract_content_for_index`) can score the
+            // chunk's content. Without this both backends silently miss
+            // chunk recall.
             metadata: json!({
                 "episode_id": chunk.episode_id.to_string(),
                 "heading_path": chunk.heading_path,
                 "offset": chunk.offset,
+                "text": chunk.text,
             }),
         });
     }

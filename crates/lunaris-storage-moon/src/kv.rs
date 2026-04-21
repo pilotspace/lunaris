@@ -27,26 +27,25 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::Row;
 
 use crate::client::{MoonClient, moon_err, redis_err};
-use crate::vector::pack_hlc;
 
 pub(crate) async fn read_as_of(
     c: &MoonClient,
     key: &[u8],
-    as_of: Hlc,
+    _as_of: Hlc,
 ) -> Result<Option<Row<Bytes>>, StorageError> {
     let mut typed = c.typed();
 
-    let pinned = pack_hlc(as_of);
-    typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
-
-    // moon-client's `hget` returns `Result<Option<RV>>`; when the field is absent we
-    // get `Ok(None)` and translate to `None` here.
+    // Moon KV (HSET-based) does not yet expose an AS_OF read clause —
+    // `TEMPORAL.SNAPSHOT_AT` is a 0-arg snapshot recorder, not a per-query
+    // pin. Phase 1.5 used the SDK's `snapshot_at_packed(ts)` which sends
+    // `TEMPORAL.SNAPSHOT_AT <ts>` and is rejected by the server. Until
+    // Moon ships native HGET AS_OF, return current state (effectively
+    // `as_of == latest`). Bench + ingest hot path never query historical
+    // KV, so this is sufficient for live measurement. Tracked as B-task
+    // for AS_OF parity (STORE-07).
     let value: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "v").await.map_err(moon_err)?;
     let bt_bytes: Option<Vec<u8>> =
         typed.hget::<_, _, Vec<u8>>(key, "bt").await.map_err(moon_err)?;
-
-    // Always release the snapshot, even if the reads errored.
-    let _ = typed.temporal().release_snapshot().await;
 
     match value {
         None => Ok(None),
@@ -73,10 +72,8 @@ pub(crate) async fn scan_range<'a>(
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
     let mut typed = c.typed();
 
-    if let Some(t) = as_of {
-        let pinned = pack_hlc(t);
-        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
-    }
+    // AS_OF deferred per `read_as_of` rationale above — return current state.
+    let _ = as_of;
 
     // Build `<prefix>*` MATCH pattern. We construct it from raw bytes since prefixes are
     // expected to be ASCII (`lunaris:<primitive>:<ulid>`); fall back to lossy UTF-8 only
@@ -128,10 +125,6 @@ pub(crate) async fn scan_range<'a>(
         cursor = next;
     }
 
-    if as_of.is_some() {
-        let _ = typed.temporal().release_snapshot().await;
-    }
-
     Ok(stream::iter(all_pairs).boxed())
 }
 
@@ -148,11 +141,8 @@ mod tests {
         assert_eq!(bt.sys.0.counter, bt2.sys.0.counter);
     }
 
-    #[test]
-    fn pack_hlc_used_by_kv_matches_vector_module() {
-        // Cross-module sanity: kv uses the same packing as vector.
-        let t = Hlc { wall_ms: 100, counter: 5, node_id: 0 };
-        let n = pack_hlc(t);
-        assert_eq!(n, (100u128 << 32) | 5u128);
-    }
+    // pack_hlc_used_by_kv_matches_vector_module — removed alongside the
+    // `pack_hlc` helper itself (Gap 8 / live-measurement 2026-04-21). Restore
+    // from git history if Moon ships a real KV-AS_OF / TEMPORAL.HGET surface
+    // that needs the packing back.
 }

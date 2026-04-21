@@ -14,7 +14,7 @@ publish     = false
 # 1M-fact corpus generator and the 12 KB markdown fixture.
 
 [dependencies]
-lunaris            = { path = "../lunaris" }
+lunaris            = { path = "../lunaris", default-features = false, features = ["ollama"] }
 lunaris-core       = { path = "../lunaris-core" }
 lunaris-storage-moon = { path = "../lunaris-storage-moon" }
 lunaris-ingest     = { path = "../lunaris-ingest" }

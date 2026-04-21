@@ -85,14 +85,80 @@ impl MoonClient {
 
         // Moon speaks RESP2/RESP3 over the Redis protocol. We dial via the typed
         // moon-client SDK which internally opens a `redis::aio::MultiplexedConnection`.
+        // Use a 5-minute response timeout to handle bulk-write bench workloads
+        // (corpus seeding of 50K-1M HSET ops can exceed the default ~60s timeout).
         let redis_url = format!("redis://{host}:{port}");
-        let inner = TypedClient::connect(redis_url.as_str()).await.map_err(moon_err)?;
-        Ok(Self { host, port, workspace, inner })
+        let timeout = std::time::Duration::from_secs(300);
+        let inner = TypedClient::connect_with_timeout(redis_url.as_str(), timeout)
+            .await
+            .map_err(moon_err)?;
+        let me = Self { host, port, workspace, inner };
+        me.ensure_indexes().await?;
+        Ok(me)
     }
 
     /// Cheap clone of the underlying typed client. Use one clone per concurrent task.
     pub fn typed(&self) -> TypedClient {
         self.inner.clone()
+    }
+
+    /// Idempotently create the FT indexes Lunaris uses (`chunks`, `entities`,
+    /// `facts`, `communities`). Each index declares the dense `vec` field
+    /// (HNSW Cosine, 768d) AND a TEXT `content` field so BM25 / HYBRID
+    /// `FT.SEARCH` can score against the per-row text payload populated by
+    /// `WriteOp::VectorUpsert` (Gap 9 fix 2026-04-21 —
+    /// `extract_content_for_index` mirrors the Postgres tsvector convention).
+    ///
+    /// Per Moon's vector model (`docs/vector-search-guide.md`), HSET writes to keys
+    /// matching `<prefix>` are auto-indexed by FT.SEARCH. Without this call, every
+    /// HSET would land in a hash that no FT index covers — recall returns empty.
+    /// Duplicate-create errors (`Index already exists`) are swallowed so reopening
+    /// an existing Moon instance is a no-op.
+    ///
+    /// NOTE: Moon's `FT.CREATE` is fully idempotent — once an index exists with
+    /// a stale schema (e.g. vector-only from before this commit), `create_index`
+    /// returns "already exists" and DOES NOT update the schema. After upgrading
+    /// past Gap 9, operators must `FT.DROPINDEX <name>` once before the new
+    /// schema takes effect.
+    async fn ensure_indexes(&self) -> Result<(), StorageError> {
+        use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
+        const DIM: usize = 768;
+        for (name, prefix) in
+            &[("chunks", "chunks:"), ("entities", "entities:"), ("facts", "facts:"), ("communities", "communities:")]
+        {
+            let opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
+                .prefix(*prefix)
+                .field_name("vec")
+                .add_field(SchemaField::Text("content".to_string()));
+            let typed = self.inner.clone();
+            match typed.vector().create_index(name, opts).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("Index already exists") || msg.contains("already exists") {
+                        continue;
+                    }
+                    return Err(moon_err(e));
+                }
+            }
+        }
+        // Pre-create the well-known graph Lunaris's graph-on ingest writes
+        // into (`crates/lunaris/src/ingest.rs::GRAPH_NAME = "lunaris_graph"`).
+        // Moon does not auto-create graphs on first GRAPH.QUERY — `ERR graph
+        // not found` would otherwise surface on first GraphNode/GraphEdge
+        // write. `GRAPH.CREATE` is idempotent on Moon (returns OK either way),
+        // so we don't filter the error.
+        let typed = self.inner.clone();
+        match typed.graph().create("lunaris_graph").await {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                if !(msg.contains("already exists") || msg.contains("Graph already exists")) {
+                    return Err(moon_err(e));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

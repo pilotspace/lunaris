@@ -28,7 +28,6 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 
 use crate::client::{MoonClient, moon_err};
-use crate::vector::pack_hlc;
 
 pub(crate) async fn graph_traverse(
     c: &MoonClient,
@@ -37,10 +36,13 @@ pub(crate) async fn graph_traverse(
 ) -> Result<GraphResult, StorageError> {
     let typed = c.typed();
 
-    if let Some(t) = as_of {
-        let pinned = pack_hlc(t);
-        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
-    }
+    // AS_OF deferred — Moon's `GRAPH.QUERY ... VALID_AT <ts>` clause is
+    // documented but the SDK's `query_with_params` / `query_raw` do not
+    // accept it as a parameter. Phase 1.5's `snapshot_at_packed(ts)`
+    // pre-pin sent invalid args server-side. Until the SDK exposes a
+    // VALID_AT helper (or we cmd-build inline), VALID_AT queries return
+    // current state. Tracked as B-task for STORE-07.
+    let _ = as_of;
 
     let result = if !query.params.is_empty() {
         let params_json = serde_json::to_string(&query.params)?;
@@ -51,10 +53,6 @@ pub(crate) async fn graph_traverse(
     } else {
         typed.graph().query_raw(query.graph.as_str(), query.cypher.as_str()).await
     };
-
-    if as_of.is_some() {
-        let _ = typed.temporal().release_snapshot().await;
-    }
 
     parse_graph_reply(result.map_err(moon_err)?)
 }

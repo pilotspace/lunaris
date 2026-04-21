@@ -131,14 +131,17 @@ pub async fn fuse_via_moon_native(
 
     let typed = moon.client().typed();
     let mut text = typed.text();
-    // Default balanced weights [bm25, vec] = [0.5, 0.5]. The plan and
-    // RrfFusion::Moon docs both name this constant.
-    let weights: [f64; 2] = [0.5_f64, 0.5_f64];
-    // Use the Moon-native call. The fourth positional is the vec field name —
-    // for Lunaris the convention is `"vec"` (matches the Phase 1 ingest path
-    // metadata key).
+    // Default balanced weights [bm25, dense, sparse] = [0.5, 0.5, 0.0].
+    // Sparse weight is 0 because Lunaris does not populate a sparse field —
+    // and to keep Moon happy we pass `sparse_field: None` so the SDK omits
+    // the SPARSE clause entirely (Moon would otherwise reject with
+    // "sparse field not defined in index" because `content` is a TEXT field,
+    // not SPARSE). Two-way fusion (BM25 + dense) is the documented
+    // Moon-server fallback when the SPARSE clause is absent — see
+    // `moon/src/command/vector_search/hybrid.rs::HybridQuery::sparse: Option`.
+    let weights: [f64; 3] = [0.5_f64, 0.5_f64, 0.0_f64];
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&hint.index, &ctx.query.text, &q_emb, "vec", k, weights)
+        .hybrid_search(&hint.index, &ctx.query.text, &q_emb, "vec", None, k, weights)
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(

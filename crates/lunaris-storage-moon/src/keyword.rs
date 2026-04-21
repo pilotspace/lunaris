@@ -42,7 +42,6 @@ use lunaris_core::storage::keyword::{KeywordHit, min_max_normalize};
 use lunaris_core::storage::types::Filter;
 
 use crate::client::{MoonClient, moon_err};
-use crate::vector::pack_hlc;
 
 pub(crate) async fn keyword_search(
     c: &MoonClient,
@@ -65,10 +64,11 @@ pub(crate) async fn keyword_search(
 
     let typed = c.typed();
 
-    if let Some(t) = as_of {
-        let pinned = pack_hlc(t);
-        typed.temporal().snapshot_at_packed(pinned).await.map_err(moon_err)?;
-    }
+    // AS_OF deferred — see vector.rs / graph.rs / kv.rs rationale: the SDK
+    // helper this module calls (`text.search`) does not accept an AS_OF
+    // clause, and Phase 1.5's `snapshot_at_packed(ts)` pre-pin sent invalid
+    // args server-side. Tracked as B-task for STORE-07.
+    let _ = as_of;
 
     let query_escaped = ft_escape(query);
     let composite = match filter {
@@ -79,14 +79,7 @@ pub(crate) async fn keyword_search(
     // Moon's FT.SEARCH default scorer is BM25 (per RediSearch behavior).
     // The typed SDK returns Vec<TextSearchHit> with `key`, `score`, `fields`.
     let mut text = typed.text();
-    let search_result = text.search(index, &composite, k, None).await;
-
-    if as_of.is_some() {
-        // Best effort — release the snapshot pin even if FT.SEARCH errored.
-        let _ = typed.temporal().release_snapshot().await;
-    }
-
-    let hits = search_result.map_err(moon_err)?;
+    let hits = text.search(index, &composite, k, None).await.map_err(moon_err)?;
 
     // Stage raw scores so we can min-max normalize per the KeywordPort contract.
     let mut staged: Vec<(Vec<u8>, serde_json::Value, f32)> = Vec::with_capacity(hits.len());

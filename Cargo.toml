@@ -79,7 +79,7 @@ hex            = "0.4"
 # Phase 3 Plan 03-01 — content-hash EntityId derivation (D-06).
 # 16-byte truncation of blake3(canonical_name_normalized || "::" || entity_type).
 blake3         = "1"
-clap           = { version = "4", features = ["derive"] }
+clap           = { version = "4", features = ["derive", "env"] }
 # Phase 4 Plan 04-03 — safe wrapper around POSIX `kill(2)` for the SIGKILL chaos
 # test (D-23). `default-features = false` + `features = ["signal"]` keeps the dep
 # surface to just the signal API (no aio/process/etc). CLAUDE.md
