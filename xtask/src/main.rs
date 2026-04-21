@@ -48,6 +48,22 @@ enum Cmd {
         #[arg(long, default_value = "ingest_hot_path,recall_hot_path,atomic_write_hot_path")]
         groups: String,
     },
+    /// Plan 05-06 — run the full eval gauntlet locally via `cargo run
+    /// --release --bin lunaris-evals -- all --output <PATH>`. Writes a JSON
+    /// manifest with one EvalRow per harness/metric per CONTEXT.md D-20.
+    Eval {
+        /// Output JSON manifest path (default `eval-results.json` at workspace root).
+        #[arg(long, default_value = "eval-results.json")]
+        output: PathBuf,
+    },
+    /// Plan 05-02 / 05-03 — run the conformance suite against a backend.
+    /// Wraps `cargo test -p lunaris-conformance --test run_storage_<backend>`
+    /// (and the protocol suite when the chosen backend is `protocol`).
+    Conformance {
+        /// Backend to certify: `moon` | `postgres`.
+        #[arg(long, value_parser = ["moon", "postgres"])]
+        backend: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -58,6 +74,8 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some(Cmd::Bench { skip_bench, groups }) => cmd_bench(skip_bench, &groups),
+        Some(Cmd::Eval { output }) => cmd_eval_gauntlet(&output),
+        Some(Cmd::Conformance { backend }) => cmd_conformance(&backend),
     }
 }
 
@@ -72,7 +90,66 @@ fn print_help() {
     println!("                       Set MOON_URL / PG_URL to enable each backend; benches");
     println!("                       skip gracefully when env vars are unset.");
     println!("  bench --skip-bench   Re-print the delta table from existing Criterion data.");
+    println!("  eval                 Run the Plan 05-06 eval gauntlet locally; writes");
+    println!("                       eval-results.json (--output overrides path).");
+    println!("                       Set MOON_URL / PG_URL / LUNARIS_EVAL_CACHE_DIR /");
+    println!("                       LUNARIS_EXTRACT_GEMMA_PATH to populate the relevant");
+    println!("                       harnesses (else they SKIP cleanly).");
+    println!("  conformance --backend moon|postgres");
+    println!("                       Run the lunaris-conformance suite against a backend.");
     println!("  help                 Print this help.");
+}
+
+// ----- eval subcommand (Plan 05-06) -----
+//
+// Wraps `cargo run --release --bin lunaris-evals -- all --output <PATH>`.
+// The `eval` subcommand name refers to the Plan 05-06 EVAL-* gauntlet
+// (LongMemEval, LoCoMo, ER-F1, memory, e2e, perf-delta) — NOT to dynamic
+// code evaluation. Renamed the dispatch fn `cmd_eval_gauntlet` to make the
+// distinction unambiguous for code reviewers + static analyzers.
+
+fn cmd_eval_gauntlet(output: &Path) -> Result<()> {
+    println!("xtask eval — invoking lunaris-evals all --output {}", output.display());
+    let status = Command::new("cargo")
+        .args(["run", "--release", "--bin", "lunaris-evals", "--", "all", "--output"])
+        .arg(output)
+        .status()
+        .with_context(|| "invoke cargo run --bin lunaris-evals")?;
+    if !status.success() {
+        anyhow::bail!(
+            "lunaris-evals exited with status {:?} — see {} for FAIL rows",
+            status.code(),
+            output.display()
+        );
+    }
+    println!("xtask eval — eval gauntlet exited 0; manifest at {}", output.display());
+    Ok(())
+}
+
+// ----- conformance subcommand (Plan 05-02 / 05-03) -----
+
+fn cmd_conformance(backend: &str) -> Result<()> {
+    let test_name = format!("run_storage_{backend}");
+    println!("xtask conformance — invoking cargo test -p lunaris-conformance --test {test_name}");
+    let status = Command::new("cargo")
+        .args([
+            "test",
+            "-p",
+            "lunaris-conformance",
+            "--test",
+            &test_name,
+            "--",
+            "--nocapture",
+        ])
+        .status()
+        .with_context(|| format!("invoke cargo test conformance backend={backend}"))?;
+    if !status.success() {
+        anyhow::bail!(
+            "lunaris-conformance test {test_name} exited with status {:?}",
+            status.code()
+        );
+    }
+    Ok(())
 }
 
 // ----- bench subcommand -----
