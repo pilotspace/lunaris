@@ -88,37 +88,33 @@ impl RecordingStorageWithKeyword {
         self
     }
 
-    /// Seed a chunk row keyed by `lunaris:chunk:<id_hex>` so hydrate succeeds
-    /// for the Test 3 fallback path. Value is a minimal chunk payload that
-    /// `hydrate()` can parse — matches what Plan 02-01 writes.
+    /// Seed a chunk row keyed by `lunaris:chunk:<ulid>` (the format
+    /// `lunaris_retrieve::hydrate::chunk_lookup_key` constructs) so the
+    /// hydrate pass yields a non-empty Hit list for the Test 3 fallback
+    /// assertion. The value is a minimal serialisable `Chunk` — hydrate
+    /// drops on parse failure so the shape must match
+    /// `lunaris_core::primitives::Chunk` exactly.
+    ///
+    /// `id` MUST be 16 bytes (ULID bytes). Anything else will fail to
+    /// decode in `chunk_lookup_key` and the hit will be silently dropped.
     fn seed_chunk_row(&self, id: &[u8]) {
-        // Hydrate reads `lunaris:chunk:<hex>` for each hit id; the value must
-        // be deserialisable as the chunk row produced by ingest. Since the
-        // test fixture does not model the full hydrate parser, we instead
-        // insert empty KV and rely on hydrate's missing-row drop path being
-        // lenient — BUT Test 3 asserts `response hits non-empty`, so we need
-        // actual rows. Mirror the shape `build_test_lunaris` above produces:
-        // insert a minimal JSON stub.
+        assert_eq!(id.len(), 16, "id must be 16 ULID bytes");
+        let ulid = ulid::Ulid::from_bytes(id.try_into().expect("16 bytes"));
+        let episode_id = ulid::Ulid::new();
         let payload = serde_json::json!({
+            "id": ulid.to_string(),
+            "episode_id": episode_id.to_string(),
             "text": "stub chunk text",
-            "episode_id": ulid::Ulid::new().to_string(),
+            "tokens": 3,
+            "offset": 0,
             "heading_path": [],
+            "overlap_tail": "",
             "bt": {
                 "valid": [{"wall_ms": 1, "counter": 0, "node_id": 0}, null],
                 "sys":   [{"wall_ms": 1, "counter": 0, "node_id": 0}, null],
             },
         });
-        // Inline hex encoder — avoid pulling `hex` into lunaris-server deps
-        // (scope allowlist: Cargo.toml edits forbidden by 07-01 guardrail).
-        let mut hex_buf = String::with_capacity(id.len() * 2);
-        for b in id {
-            hex_buf.push_str(&format!("{:02x}", b));
-        }
-        let key = {
-            let mut k = b"lunaris:chunk:".to_vec();
-            k.extend_from_slice(hex_buf.as_bytes());
-            k
-        };
+        let key = format!("lunaris:chunk:{ulid}").into_bytes();
         let bt = BiTemporal {
             valid: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
             sys: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
