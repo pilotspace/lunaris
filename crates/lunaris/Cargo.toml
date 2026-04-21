@@ -40,6 +40,11 @@ futures        = { workspace = true }
 parking_lot    = { workspace = true }
 serde_json     = { workspace = true }
 ulid           = { workspace = true }
+# Plan 05-04 Task 3 — HeliosScratchpad dual-backend smoke test reuses
+# build_md_doc_corpus + the deterministic ChaCha20 generator from lunaris-bench.
+# anyhow gives the smoke test the Result<()> shape that the live runners use.
+lunaris-bench  = { path = "../lunaris-bench" }
+anyhow         = { workspace = true }
 
 [features]
 default = ["candle"]
