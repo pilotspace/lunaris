@@ -1979,6 +1979,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "is-terminal",
  "lunaris-bench",
  "lunaris-consolidate",
  "lunaris-core",
@@ -1996,6 +1997,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "ulid",
  "url",
 ]

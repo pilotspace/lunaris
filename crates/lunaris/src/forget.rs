@@ -31,6 +31,10 @@ use lunaris_core::{
     BiTemporal, Hlc, HlcClock, LunarisError, StorageError, StoragePort, ValidateError,
 };
 use serde::{Deserialize, Serialize};
+// Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
+// `lunaris.forget` info_span so per-call `correlation_id` field-recording
+// + downstream child-span propagation works (CONTEXT.md D-24).
+use tracing::Instrument;
 use ulid::Ulid;
 
 use crate::audit::{AuditEvent, publish_audit_event};
@@ -205,70 +209,92 @@ impl Lunaris {
     ) -> Result<ForgetReceipt, LunarisError> {
         let request = request.into();
 
-        // B-3: hard delete must carry a confirmation token. Returns the typed
-        // ValidateError::ConfirmationRequired variant added in Task 0.
-        if request.options.hard && request.options.confirmation_token.is_none() {
-            return Err(LunarisError::Validate(ValidateError::ConfirmationRequired(
-                "hard-delete requires confirmation token from prior dry_run".into(),
-            )));
-        }
+        // Plan 05-05 OPS-05 — `lunaris.forget` root span (CONTEXT.md D-24).
+        // `correlation_id` reserved as `tracing::field::Empty` for HTTP-layer
+        // propagation. `target` carries only the variant tag (`id` / `scope`
+        // / `before`) — the actual ulid / scope spec is NOT logged
+        // (T-05-05-04 accept disposition; richer redaction lands in v2
+        // OPS-V2-01).
+        let target_kind = match &request.target {
+            ForgetTarget::Id(_) => "id",
+            ForgetTarget::Scope(_) => "scope",
+            ForgetTarget::Before(_) => "before",
+        };
+        let span = tracing::info_span!(
+            "lunaris.forget",
+            correlation_id = tracing::field::Empty,
+            target = %target_kind,
+            hard = %request.options.hard,
+            dry_run = %request.options.dry_run,
+        );
+        async move {
+            // B-3: hard delete must carry a confirmation token. Returns the typed
+            // ValidateError::ConfirmationRequired variant added in Task 0.
+            if request.options.hard && request.options.confirmation_token.is_none() {
+                return Err(LunarisError::Validate(ValidateError::ConfirmationRequired(
+                    "hard-delete requires confirmation token from prior dry_run".into(),
+                )));
+            }
 
-        // B-4: scan_matches takes &HlcClock so it can call clock.tick() to
-        // stamp the as_of for the OPS-01 single-target read_as_of path.
-        let matches =
-            scan_matches(self.storage.as_ref(), &request.target, self.clock.as_ref()).await?;
+            // B-4: scan_matches takes &HlcClock so it can call clock.tick() to
+            // stamp the as_of for the OPS-01 single-target read_as_of path.
+            let matches =
+                scan_matches(self.storage.as_ref(), &request.target, self.clock.as_ref()).await?;
 
-        if request.options.dry_run {
-            // Dry-run: no atomic_write. Receipt carries preview=true.
+            if request.options.dry_run {
+                // Dry-run: no atomic_write. Receipt carries preview=true.
+                let receipt = ForgetReceipt {
+                    target: request.target.clone(),
+                    indices_affected: classify_indices(&request.target),
+                    rows_written: 0,
+                    rows_deleted: 0,
+                    audit_lsn: Lsn { wall_ms: 0, counter: 0 },
+                    preview: true,
+                };
+                let audit_offset =
+                    publish_audit_event(&self.storage, AuditEvent::Forget(receipt.clone())).await;
+                return Ok(ForgetReceipt {
+                    audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
+                    ..receipt
+                });
+            }
+
+            // Build the WriteOp set: hard → KvDelete; soft → KvPut with MVCC
+            // sys_to-stamped payload (B-4 + B-5).
+            let ops: Vec<WriteOp> = if request.options.hard {
+                matches.iter().map(|m| WriteOp::KvDelete { key: m.key.clone() }).collect()
+            } else {
+                matches
+                    .iter()
+                    .map(|m| build_soft_delete_op(m, self.clock.as_ref()))
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+
+            // D-19 single-call invariant: at most ONE atomic_write per forget
+            // call. Skip when there are zero matches (publishing an empty op
+            // batch would be a no-op anyway and some backends reject it).
+            if !ops.is_empty() {
+                let _lsn =
+                    self.storage.atomic_write(&ops).await.map_err(LunarisError::Storage)?;
+            }
+
             let receipt = ForgetReceipt {
                 target: request.target.clone(),
                 indices_affected: classify_indices(&request.target),
-                rows_written: 0,
-                rows_deleted: 0,
+                rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
+                rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
-                preview: true,
+                preview: false,
             };
             let audit_offset =
                 publish_audit_event(&self.storage, AuditEvent::Forget(receipt.clone())).await;
-            return Ok(ForgetReceipt {
+            Ok(ForgetReceipt {
                 audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
                 ..receipt
-            });
+            })
         }
-
-        // Build the WriteOp set: hard → KvDelete; soft → KvPut with MVCC
-        // sys_to-stamped payload (B-4 + B-5).
-        let ops: Vec<WriteOp> = if request.options.hard {
-            matches.iter().map(|m| WriteOp::KvDelete { key: m.key.clone() }).collect()
-        } else {
-            matches
-                .iter()
-                .map(|m| build_soft_delete_op(m, self.clock.as_ref()))
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        // D-19 single-call invariant: at most ONE atomic_write per forget
-        // call. Skip when there are zero matches (publishing an empty op
-        // batch would be a no-op anyway and some backends reject it).
-        if !ops.is_empty() {
-            let _lsn =
-                self.storage.atomic_write(&ops).await.map_err(LunarisError::Storage)?;
-        }
-
-        let receipt = ForgetReceipt {
-            target: request.target.clone(),
-            indices_affected: classify_indices(&request.target),
-            rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
-            rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
-            audit_lsn: Lsn { wall_ms: 0, counter: 0 },
-            preview: false,
-        };
-        let audit_offset =
-            publish_audit_event(&self.storage, AuditEvent::Forget(receipt.clone())).await;
-        Ok(ForgetReceipt {
-            audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
-            ..receipt
-        })
+        .instrument(span)
+        .await
     }
 
     /// Two-step hard-delete safety rail per D-21. Caller MUST first run

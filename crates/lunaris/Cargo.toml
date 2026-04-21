@@ -29,6 +29,14 @@ serde_json     = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
+# Plan 05-05 OPS-08 — JSON-vs-pretty subscriber selector + EnvFilter init in
+# `lunaris::logging::init()`. Public helper exported at the umbrella so embedded
+# callers (and lunaris-server::main) can opt in with one call.
+tracing-subscriber = { workspace = true }
+# Plan 05-05 OPS-08 — TTY detection for production-vs-dev log mode selection
+# (CONTEXT.md D-26: `!stdout().is_terminal()` is one of the two production
+# triggers).
+is-terminal    = { workspace = true }
 ulid           = { workspace = true }
 url            = { workspace = true }
 

@@ -25,6 +25,10 @@ use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate
 // publicly re-exported at the lunaris_ingest:: top level.
 use lunaris_ingest::{ChunkDraft, chunk_key, chunk_markdown, episode_key};
 use serde_json::json;
+// Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
+// `lunaris.ingest` info_span so per-call `correlation_id` field-recording
+// + downstream child-span propagation works (CONTEXT.md D-24).
+use tracing::Instrument;
 use ulid::Ulid;
 
 use crate::graph_pipeline::GraphPipelineHandle;
@@ -71,36 +75,55 @@ impl Lunaris {
         // atomic_write commits. The ingest functions consume `episode` so
         // we lift the id here.
         let episode_id = episode.id;
-        let lsn = if !self.graph_pipeline.is_enabled() {
-            // Graph OFF — Phase 2 fast path, verbatim. INGEST-04 single
-            // atomic_write call lives inside `lunaris_ingest::ingest_episode`.
-            lunaris_ingest::ingest_episode(
-                self.storage.as_ref(),
-                self.embedder.as_ref(),
-                &self.clock,
-                episode,
-            )
-            .await?
-        } else {
-            // Graph ON — extended fan-out. INGEST-04 single atomic_write call
-            // lives in `ingest_episode_graph_on` below.
-            ingest_episode_graph_on(
-                self.storage.as_ref(),
-                self.embedder.as_ref(),
-                &self.graph_pipeline,
-                &self.clock,
-                episode,
-            )
-            .await?
-        };
 
-        // Plan 04-04 D-16: publish ONE __lunaris_consolidate__ event after
-        // every successful atomic_write (both branches). Fire-and-forget —
-        // a publish failure logs + continues; the ingest already committed
-        // and returns Ok(Lsn). Closes CONSOL-05.
-        publish_consolidate_event(self.storage.as_ref(), episode_id, lsn).await;
+        // Plan 05-05 OPS-05 — `lunaris.ingest` root span (CONTEXT.md D-24).
+        // `correlation_id` is reserved as `tracing::field::Empty` so the
+        // HTTP middleware (Plan 05-05 Task 3 `lunaris-server::middleware::tracing`)
+        // can `Span::current().record("correlation_id", ...)` upstream of this
+        // call site, OR an embedded caller can record it directly. Field
+        // convention per CONTEXT.md `<specifics>` block: episode_id +
+        // graph_enabled keep the span body greppable in JSON output without
+        // leaking episode content (T-05-05-03 mitigation).
+        let span = tracing::info_span!(
+            "lunaris.ingest",
+            correlation_id = tracing::field::Empty,
+            episode_id = %episode_id,
+            graph_enabled = self.graph_pipeline.is_enabled(),
+        );
+        async move {
+            let lsn = if !self.graph_pipeline.is_enabled() {
+                // Graph OFF — Phase 2 fast path, verbatim. INGEST-04 single
+                // atomic_write call lives inside `lunaris_ingest::ingest_episode`.
+                lunaris_ingest::ingest_episode(
+                    self.storage.as_ref(),
+                    self.embedder.as_ref(),
+                    &self.clock,
+                    episode,
+                )
+                .await?
+            } else {
+                // Graph ON — extended fan-out. INGEST-04 single atomic_write call
+                // lives in `ingest_episode_graph_on` below.
+                ingest_episode_graph_on(
+                    self.storage.as_ref(),
+                    self.embedder.as_ref(),
+                    &self.graph_pipeline,
+                    &self.clock,
+                    episode,
+                )
+                .await?
+            };
 
-        Ok(lsn)
+            // Plan 04-04 D-16: publish ONE __lunaris_consolidate__ event after
+            // every successful atomic_write (both branches). Fire-and-forget —
+            // a publish failure logs + continues; the ingest already committed
+            // and returns Ok(Lsn). Closes CONSOL-05.
+            publish_consolidate_event(self.storage.as_ref(), episode_id, lsn).await;
+
+            Ok(lsn)
+        }
+        .instrument(span)
+        .await
     }
 }
 
@@ -196,6 +219,14 @@ async fn ingest_episode_graph_on(
     // Step 4: Extract on each chunk (NoopExtractor short-circuit per
     // T-03-03-05 — applies()==false → empty ValidatedExtraction; no
     // GraphNode/Edge writes possible).
+    //
+    // Plan 05-05 OPS-05 — `lunaris.extract` is a CHILD span of `lunaris.ingest`
+    // (CONTEXT.md D-24). The B-NOTE under PATTERNS.md Plan 05-05 says
+    // lunaris-extract has no `recall/run` entry to wrap directly; the span
+    // wraps the Extractor call site here in `ingest_episode_graph_on`. Since
+    // we're already inside the `lunaris.ingest` async block via the parent
+    // `instrument(span)`, this nested info_span automatically attaches as a
+    // child via tracing-subscriber's span-list emission.
     let validated: ValidatedExtraction = if extractor.applies() {
         let chunk_inputs: Vec<ChunkInput> = chunks
             .iter()
@@ -205,7 +236,16 @@ async fn ingest_episode_graph_on(
                 heading_path: c.heading_path.clone(),
             })
             .collect();
-        let raw = extractor.extract(episode.id, &chunk_inputs).await?;
+        let extract_span = tracing::info_span!(
+            "lunaris.extract",
+            correlation_id = tracing::field::Empty,
+            episode_id = %episode.id,
+            chunk_count = chunk_inputs.len(),
+        );
+        let raw = extractor
+            .extract(episode.id, &chunk_inputs)
+            .instrument(extract_span)
+            .await?;
         validate(raw)
     } else {
         // NoopExtractor — produces empty raw batch; validator returns empty.

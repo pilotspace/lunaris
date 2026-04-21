@@ -14,6 +14,10 @@
 
 use lunaris_core::LunarisError;
 use lunaris_retrieve::RetrievalBuilder;
+// Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
+// `lunaris.recall` info_span so per-call `correlation_id` field-recording
+// + downstream child-span propagation works (CONTEXT.md D-24).
+use tracing::Instrument;
 
 use crate::handle::Lunaris;
 
@@ -93,29 +97,44 @@ impl Lunaris {
     /// introspection is best-effort observability, not a hard correctness
     /// requirement.
     pub async fn recall_with_degraded_check(&self) -> Result<RetrievalBuilder, LunarisError> {
-        let threshold = std::env::var(ENV_VERIFY_WARN_THRESHOLD)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_VERIFY_WARN_THRESHOLD);
+        // Plan 05-05 OPS-05 — `lunaris.recall` root span (CONTEXT.md D-24).
+        // `correlation_id` is reserved as `tracing::field::Empty` so the
+        // HTTP middleware (Plan 05-05 Task 3 `lunaris-server::middleware::tracing`)
+        // can `Span::current().record("correlation_id", ...)` upstream of this
+        // call site. The pre-existing `tracing::debug!(verify_queue_depth = ...)`
+        // event below becomes a child event of this span automatically.
+        let span = tracing::info_span!("lunaris.recall", correlation_id = tracing::field::Empty);
+        async move {
+            let threshold = std::env::var(ENV_VERIFY_WARN_THRESHOLD)
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_VERIFY_WARN_THRESHOLD);
 
-        let degraded_signal = match self.storage.queue_depth(VERIFY_TOPIC, 0).await {
-            Ok(depth) => {
-                tracing::debug!(verify_queue_depth = depth, threshold, "recall_queue_depth_check");
-                depth > threshold
-            }
-            Err(e) => {
-                // Backend doesn't implement queue_depth (or transient
-                // failure). Don't fail the recall — fall through with
-                // degraded=false so the recall still serves results.
-                tracing::debug!(err = %e, "recall_queue_depth_unavailable; degraded=false");
-                false
-            }
-        };
+            let degraded_signal = match self.storage.queue_depth(VERIFY_TOPIC, 0).await {
+                Ok(depth) => {
+                    tracing::debug!(
+                        verify_queue_depth = depth,
+                        threshold,
+                        "recall_queue_depth_check"
+                    );
+                    depth > threshold
+                }
+                Err(e) => {
+                    // Backend doesn't implement queue_depth (or transient
+                    // failure). Don't fail the recall — fall through with
+                    // degraded=false so the recall still serves results.
+                    tracing::debug!(err = %e, "recall_queue_depth_unavailable; degraded=false");
+                    false
+                }
+            };
 
-        let mut b = self.recall();
-        if degraded_signal {
-            b = b.with_initial_degraded(true);
+            let mut b = self.recall();
+            if degraded_signal {
+                b = b.with_initial_degraded(true);
+            }
+            Ok(b)
         }
-        Ok(b)
+        .instrument(span)
+        .await
     }
 }

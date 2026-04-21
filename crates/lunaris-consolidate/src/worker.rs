@@ -47,6 +47,9 @@ use lunaris_core::{LunarisError, QueueMsg, StorageError, StoragePort};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+// Plan 05-05 OPS-05 — `Instrument::instrument` wraps each per-flush body in
+// the `lunaris.consolidator_pipeline.process_message` info_span (CONTEXT.md D-24).
+use tracing::Instrument;
 use ulid::Ulid;
 
 use crate::Consolidator;
@@ -214,39 +217,57 @@ async fn flush(
         return;
     }
 
-    // NoopConsolidator short-circuit — applies()==false means iterate the
-    // buffer but never call consolidate (saves the spawn + the clone).
-    if !consolidator.applies() {
-        tracing::debug!(
-            buffered_episodes = buffer.len(),
-            "consolidate_worker_noop_flush; clearing buffer"
-        );
+    // Plan 05-05 OPS-05 — `lunaris.consolidator_pipeline.process_message`
+    // per-flush span (CONTEXT.md D-24). The "message" here is the debounced
+    // batch of consolidate events keyed by episode_id; one span per flush
+    // captures the whole pass (ACT-R scoring + audit emit). `correlation_id`
+    // reserved as `tracing::field::Empty` for upstream propagation when the
+    // ingest path that emitted the events is in-process.
+    let buffered_episodes = buffer.len();
+    let total_events: usize = buffer.values().map(|v| v.len()).sum();
+    let span = tracing::info_span!(
+        "lunaris.consolidator_pipeline.process_message",
+        correlation_id = tracing::field::Empty,
+        buffered_episodes,
+        total_events,
+    );
+    async move {
+        // NoopConsolidator short-circuit — applies()==false means iterate the
+        // buffer but never call consolidate (saves the spawn + the clone).
+        if !consolidator.applies() {
+            tracing::debug!(
+                buffered_episodes,
+                "consolidate_worker_noop_flush; clearing buffer"
+            );
+            buffer.clear();
+            return;
+        }
+
+        let events: Vec<ConsolidateEvent> =
+            buffer.values().flat_map(|v| v.iter().cloned()).collect();
         buffer.clear();
-        return;
+
+        // W-6 fix: clone everything into the spawn closure by value. No borrow
+        // crosses the spawn boundary.
+        let evts = events.clone();
+        let c = consolidator.clone();
+        let s = storage.clone();
+        let report = match tokio::spawn(async move { c.consolidate(s, &evts).await }).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
+                return;
+            }
+            Err(join_err) => {
+                tracing::error!(err = %join_err, "consolidate_worker_panicked; loop continues");
+                return;
+            }
+        };
+
+        publish_per_event_audits(storage, &report).await;
     }
-
-    let events: Vec<ConsolidateEvent> =
-        buffer.values().flat_map(|v| v.iter().cloned()).collect();
-    buffer.clear();
-
-    // W-6 fix: clone everything into the spawn closure by value. No borrow
-    // crosses the spawn boundary.
-    let evts = events.clone();
-    let c = consolidator.clone();
-    let s = storage.clone();
-    let report = match tokio::spawn(async move { c.consolidate(s, &evts).await }).await {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
-            return;
-        }
-        Err(join_err) => {
-            tracing::error!(err = %join_err, "consolidate_worker_panicked; loop continues");
-            return;
-        }
-    };
-
-    publish_per_event_audits(storage, &report).await;
+    .instrument(span)
+    .await
 }
 
 /// B-1 fix: emit ONE audit message per promotion + ONE per archive

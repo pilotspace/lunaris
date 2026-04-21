@@ -42,6 +42,9 @@ use lunaris_core::{BiTemporal, HlcClock, LunarisError, StorageError, StoragePort
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+// Plan 05-05 OPS-05 — `Instrument::instrument` wraps each per-message body
+// in the `lunaris.verify_pipeline.process_message` info_span (CONTEXT.md D-24).
+use tracing::Instrument;
 
 use crate::Verifier;
 use crate::types::VerifyDecision;
@@ -177,69 +180,85 @@ async fn process_one(
     clock: &Arc<HlcClock>,
     payload: Bytes,
 ) {
-    // NoopVerifier short-circuit — applies()==false means never call verify
-    // (T-04-01-07 mitigation: no panic path through a noop backend).
-    if !verifier.applies() {
-        return;
+    // Plan 05-05 OPS-05 — `lunaris.verify_pipeline.process_message` per-message
+    // span (CONTEXT.md D-24). `correlation_id` reserved as
+    // `tracing::field::Empty`; populated upstream by whatever Lunaris boundary
+    // emitted the verify-queue envelope (T-05-05-01: span field shape; the
+    // ingest path that emitted the message has its own `lunaris.ingest` parent
+    // span, but cross-process queue messages don't auto-propagate without an
+    // OpenTelemetry W3C trace-context header — that's a v1 enhancement).
+    let span = tracing::info_span!(
+        "lunaris.verify_pipeline.process_message",
+        correlation_id = tracing::field::Empty,
+        payload_bytes = payload.len(),
+    );
+    async move {
+        // NoopVerifier short-circuit — applies()==false means never call verify
+        // (T-04-01-07 mitigation: no panic path through a noop backend).
+        if !verifier.applies() {
+            return;
+        }
+
+        let envelope: VerifyEnvelope = match serde_json::from_slice(&payload) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(err = %e, "verify_worker_payload_deserialize_failed; dropping");
+                return;
+            }
+        };
+
+        // Plan 04-04 Task 4 (B-2): keep the envelope's `kind` for the
+        // canonical-key derivation in apply_supersede. We move the body fields
+        // out of the envelope into the typed NeedsReviewItem next, so we
+        // capture `kind` first.
+        let envelope_kind = envelope.kind.clone();
+
+        let item = match envelope.into_needs_review() {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!(err = %e, "verify_worker_envelope_to_item_failed; dropping");
+                return;
+            }
+        };
+
+        // Inner spawn — a panic inside verifier.verify() bubbles up to the join
+        // handle which we observe as Err(JoinError); the outer loop continues
+        // (T-04-01-07 verifier-panic-does-not-kill-worker).
+        let result = match tokio::spawn({
+            let v = verifier.clone();
+            async move { v.verify(item).await }
+        })
+        .await
+        {
+            Ok(Ok(d)) => d,
+            Ok(Err(e)) => {
+                tracing::warn!(err = %e, "verify_worker_verifier_returned_error; nack");
+                return;
+            }
+            Err(join_err) => {
+                tracing::error!(err = %join_err, "verify_worker_verifier_panicked; loop continues");
+                return;
+            }
+        };
+
+        if !result.applies() {
+            return;
+        }
+
+        if let Err(e) = apply_supersede(storage, &result, clock, &envelope_kind).await {
+            tracing::warn!(err = %e, "verify_worker_atomic_write_failed; broker will redeliver");
+            return;
+        }
+
+        if let Err(e) = publish_arbitration_audit(storage, &result).await {
+            tracing::warn!(
+                err = %e,
+                "verify_worker_audit_publish_failed; decision committed but audit lost"
+            );
+        }
     }
-
-    let envelope: VerifyEnvelope = match serde_json::from_slice(&payload) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(err = %e, "verify_worker_payload_deserialize_failed; dropping");
-            return;
-        }
-    };
-
-    // Plan 04-04 Task 4 (B-2): keep the envelope's `kind` for the
-    // canonical-key derivation in apply_supersede. We move the body fields
-    // out of the envelope into the typed NeedsReviewItem next, so we
-    // capture `kind` first.
-    let envelope_kind = envelope.kind.clone();
-
-    let item = match envelope.into_needs_review() {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::warn!(err = %e, "verify_worker_envelope_to_item_failed; dropping");
-            return;
-        }
-    };
-
-    // Inner spawn — a panic inside verifier.verify() bubbles up to the join
-    // handle which we observe as Err(JoinError); the outer loop continues
-    // (T-04-01-07 verifier-panic-does-not-kill-worker).
-    let result = match tokio::spawn({
-        let v = verifier.clone();
-        async move { v.verify(item).await }
-    })
+    .instrument(span)
     .await
-    {
-        Ok(Ok(d)) => d,
-        Ok(Err(e)) => {
-            tracing::warn!(err = %e, "verify_worker_verifier_returned_error; nack");
-            return;
-        }
-        Err(join_err) => {
-            tracing::error!(err = %join_err, "verify_worker_verifier_panicked; loop continues");
-            return;
-        }
-    };
-
-    if !result.applies() {
-        return;
-    }
-
-    if let Err(e) = apply_supersede(storage, &result, clock, &envelope_kind).await {
-        tracing::warn!(err = %e, "verify_worker_atomic_write_failed; broker will redeliver");
-        return;
-    }
-
-    if let Err(e) = publish_arbitration_audit(storage, &result).await {
-        tracing::warn!(
-            err = %e,
-            "verify_worker_audit_publish_failed; decision committed but audit lost"
-        );
-    }
 }
 
 /// D-11 MVCC supersede invariant: ONE atomic_write call.

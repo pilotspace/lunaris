@@ -20,6 +20,12 @@ pub mod forget;
 pub mod graph_pipeline;
 pub mod handle;
 pub mod ingest;
+// Plan 05-05 OPS-08 — `lunaris::logging::init()` JSON-vs-pretty subscriber
+// selector helper. Production triggers per CONTEXT.md D-26: `LUNARIS_ENV=production`
+// OR `!std::io::stdout().is_terminal()`. Re-exported as `init_logging` below
+// so embedded callers can `use lunaris::init_logging;` without reaching into
+// the module path.
+pub mod logging;
 pub mod open;
 pub mod recall;
 pub mod recipes;
@@ -32,6 +38,11 @@ pub use consolidator_pipeline::{
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::Lunaris;
+// Plan 05-05 OPS-08 — re-export `lunaris::logging::init` as
+// `lunaris::init_logging` for the canonical embedded-caller use site
+// `lunaris::init_logging();`. The `lunaris-server` binary calls
+// `lunaris::logging::init()` via the full path; both are equivalent.
+pub use logging::init as init_logging;
 pub use lunaris_core::*;
 pub use open::open;
 // Plan 05-04 — opinionated v0 recipes (helios-rfc §5.3 surface). v0 ships only
