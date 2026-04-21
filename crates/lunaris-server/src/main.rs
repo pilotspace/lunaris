@@ -22,16 +22,12 @@ use lunaris_server::{Config, Shutdown};
 async fn main() -> ExitCode {
     let cfg = Config::parse();
 
-    // Plan 05-05 Task 3 will REPLACE this call site with `lunaris::logging::init()`
-    // (the JSON / pretty selector helper). Until then, a minimal env-filter
-    // init keeps tracing output usable.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .try_init()
-        .ok();
+    // Plan 05-05 Task 3 — REPLACES the Plan 05-01 minimal subscriber init with
+    // `lunaris::logging::init()` (the OPS-08 JSON-vs-pretty selector helper
+    // per CONTEXT.md D-26). JSON when `LUNARIS_ENV=production` OR
+    // `!std::io::stdout().is_terminal()`; pretty otherwise. Idempotent via
+    // try_init().ok() so test code with its own subscriber doesn't panic.
+    lunaris::logging::init();
 
     let lunaris = match lunaris::Lunaris::open(&cfg.storage).await {
         Ok(l) => Arc::new(l),

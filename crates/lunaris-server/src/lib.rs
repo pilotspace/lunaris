@@ -92,11 +92,30 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
     // extensions populated by `auth_middleware`.
     let rate_limit = middleware::rate_limit::governor_layer(cfg.rate_per_second, cfg.rate_burst);
 
+    // Plan 05-05 OPS-05 — per-route stacking now includes the tracing
+    // middleware that wraps the request in `lunaris.server.handle_request`
+    // info_span. Stacking order on the request path:
+    //
+    //   request → scoped_auth → tracing → rate_limit → handler
+    //
+    // Why: `tracing_middleware` reads `AuthClaims.tenant` from request
+    // extensions for the `tenant` span field, so it MUST run AFTER
+    // `auth_middleware`. `route_layer` adds OUTER on each subsequent call,
+    // so we add rate_limit first (innermost), then tracing, then
+    // scoped_auth (outermost = runs first on request). This guarantees:
+    //   1. scoped_auth populates AuthClaims before tracing reads it.
+    //   2. tracing's `lunaris.server.handle_request` span wraps the
+    //      downstream `lunaris.{ingest,recall,forget}` spans as a parent.
+    //   3. rate_limit's TenantKey extractor still sees AuthClaims (auth
+    //      ran first).
     let v1 = Router::new()
         .route(
             "/ingest",
             post(routes::ingest::ingest_handler)
                 .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(
+                    middleware::tracing::tracing_middleware,
+                ))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("ingest"),
@@ -106,6 +125,9 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/recall",
             post(routes::recall::recall_handler)
                 .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(
+                    middleware::tracing::tracing_middleware,
+                ))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("recall"),
@@ -115,6 +137,9 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/forget",
             post(routes::forget::forget_handler)
                 .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(
+                    middleware::tracing::tracing_middleware,
+                ))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("forget"),
@@ -124,6 +149,9 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/snapshot/{lsn}",
             get(routes::snapshot::snapshot_handler)
                 .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(
+                    middleware::tracing::tracing_middleware,
+                ))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("recall"),

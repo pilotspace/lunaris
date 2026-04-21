@@ -15,7 +15,7 @@
 use std::convert::Infallible;
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -23,11 +23,18 @@ use futures::StreamExt;
 
 use lunaris_core::Hlc;
 
+use crate::middleware::auth::AuthClaims;
 use crate::middleware::error::map_error;
 use crate::state::AppState;
 
+/// Plan 05-05 W-11 fix — handler signature carries `Extension<AuthClaims>` so
+/// every verb route in the workspace uses the same pattern. The snapshot verb
+/// does NOT yet carry a dedicated Prometheus metric (the per-snapshot QPS is
+/// not in the D-25 catalogue); the `tenant` Auth claim is reserved for a
+/// future SNAP-* metric without a signature break.
 pub async fn snapshot_handler(
     State(state): State<AppState>,
+    Extension(_claims): Extension<AuthClaims>,
     Path(lsn_str): Path<String>,
 ) -> Response {
     let hlc = match parse_hlc(&lsn_str) {

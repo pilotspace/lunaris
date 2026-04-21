@@ -14,7 +14,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -25,14 +25,31 @@ use lunaris_core::Hlc;
 use lunaris_retrieve::{Hit, Query};
 
 use crate::dto::{RecallRequest, RetrievalMode};
+use crate::metrics::metrics;
+use crate::middleware::auth::AuthClaims;
 use crate::middleware::error::map_error;
 use crate::state::AppState;
 
 pub async fn recall_handler(
     State(state): State<AppState>,
+    Extension(claims): Extension<AuthClaims>,
     headers: HeaderMap,
     Json(req): Json<RecallRequest>,
 ) -> Response {
+    let tenant = claims.tenant.as_str();
+    let mode_label = match req.mode {
+        RetrievalMode::Semantic => "semantic",
+        RetrievalMode::Graph => "graph",
+    };
+
+    // Plan 05-05 OPS-06 — duration timer started up-front so even early-exit
+    // paths (graph-mode unavailable, invalid filter) contribute to the
+    // histogram observation when the metric increments below.
+    let timer = metrics()
+        .recall_duration
+        .with_label_values(&[tenant, mode_label])
+        .start_timer();
+
     // D-05 + PROTO-03: gate "graph" mode on backend capability + runtime
     // toggle. v0 returns 501 Not Implemented when neither is satisfied —
     // future work wires the Graph::anchored operator into compose_query.
@@ -40,6 +57,11 @@ pub async fn recall_handler(
         let caps = state.lunaris.storage().capabilities();
         let graph_runtime_on = state.lunaris.graph_pipeline().is_enabled();
         if !caps.graph_native && !graph_runtime_on {
+            timer.observe_duration();
+            metrics()
+                .recall_total
+                .with_label_values(&[tenant, mode_label, "error"])
+                .inc();
             return (
                 StatusCode::NOT_IMPLEMENTED,
                 Json(serde_json::json!({
@@ -56,6 +78,11 @@ pub async fn recall_handler(
     let query = match build_query(&req) {
         Ok(q) => q,
         Err(msg) => {
+            timer.observe_duration();
+            metrics()
+                .recall_total
+                .with_label_values(&[tenant, mode_label, "error"])
+                .inc();
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -70,7 +97,14 @@ pub async fn recall_handler(
     // Phase 4 plumbing: degraded check based on verifier-queue depth.
     let mut builder = match state.lunaris.recall_with_degraded_check().await {
         Ok(b) => b,
-        Err(e) => return map_error(e),
+        Err(e) => {
+            timer.observe_duration();
+            metrics()
+                .recall_total
+                .with_label_values(&[tenant, mode_label, "error"])
+                .inc();
+            return map_error(e);
+        }
     };
 
     // Apply optional filter — surface parse failures as 400 (the caller's
@@ -79,6 +113,11 @@ pub async fn recall_handler(
         builder = match builder.filter_str(filter_str) {
             Ok(updated) => updated,
             Err(e) => {
+                timer.observe_duration();
+                metrics()
+                    .recall_total
+                    .with_label_values(&[tenant, mode_label, "error"])
+                    .inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -97,13 +136,21 @@ pub async fn recall_handler(
         .map(|s| s.contains("text/event-stream"))
         .unwrap_or(false);
 
+    let result = builder.execute(query).await;
+    timer.observe_duration();
+    let status = if result.is_ok() { "ok" } else { "error" };
+    metrics()
+        .recall_total
+        .with_label_values(&[tenant, mode_label, status])
+        .inc();
+
     if want_sse {
-        match builder.execute(query).await {
+        match result {
             Ok(hits) => sse_response(hits),
             Err(e) => map_error(e),
         }
     } else {
-        match builder.execute(query).await {
+        match result {
             Ok(hits) => (StatusCode::OK, Json(hits)).into_response(),
             Err(e) => map_error(e),
         }

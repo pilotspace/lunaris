@@ -234,7 +234,29 @@ No auth, no rate-limit. Probe surface for load balancers + the conformance subpr
 
 ### GET /metrics
 
-Prometheus text-format exposition. See [OPS-06 Plan 05-05](../../.planning/phases/05-surface-validation/05-05-PLAN.md) for the metric catalogue. Not in scope of this v0 spec; Plan 05-05 lands the surface.
+Prometheus text-format exposition. **No auth required** — Prometheus scrapers reach this without a Bearer token. Operators MUST front this endpoint with network-level ACL or reverse-proxy auth in production (T-05-05-05; standard Prometheus convention).
+
+Returns `404 Not Found` when `lunaris-server --metrics-disabled` is set at startup (operator opt-out for embedded deployments that scrape via a sidecar).
+
+**Metrics catalogue** (Plan 05-05 OPS-06; CONTEXT.md D-25 verbatim):
+
+| Name                                | Type      | Labels                              | Notes                                                                          |
+|-------------------------------------|-----------|-------------------------------------|--------------------------------------------------------------------------------|
+| `lunaris_ingest_total`              | counter   | `tenant`, `status`                  | One increment per `POST /v1/ingest`; `status` ∈ {`ok`, `error`}.               |
+| `lunaris_ingest_duration_seconds`   | histogram | `tenant`                            | Wall-clock from request entry to response sent (includes business logic).      |
+| `lunaris_recall_total`              | counter   | `tenant`, `mode`, `status`          | `mode` ∈ {`semantic`, `graph`}; `status` ∈ {`ok`, `error`}.                    |
+| `lunaris_recall_duration_seconds`   | histogram | `tenant`, `mode`                    | Wall-clock; same shape as ingest_duration.                                     |
+| `lunaris_forget_total`              | counter   | `tenant`, `target_kind`, `hard`     | `target_kind` ∈ {`id`, `scope`, `before`}; `hard` ∈ {`true`, `false`}.         |
+| `lunaris_verify_queue_depth`        | gauge     | `topic`                             | Polled every 10 s from `StoragePort::queue_depth("__lunaris_verify__", 0)`.    |
+| `lunaris_consolidator_queue_depth`  | gauge     | `topic`                             | Polled every 10 s from `StoragePort::queue_depth("__lunaris_consolidate__", 0)`. |
+| `lunaris_error_total`               | counter   | `kind`                              | `LunarisError` variant tag; cardinality cap ≤ 10. Incremented inside `map_error`. |
+| `lunaris_eval_score`                | gauge     | `harness`                           | Populated by `lunaris-evals` (Plan 05-06); harness ∈ {`longmemeval`, `locomo`, `er-f1`, …}. |
+
+**Cardinality bounds** (T-05-05-02 mitigation):
+- `tenant` set membership = `--tokens-file` JSON map size (operator-controlled).
+- All other labels are bounded by the constants above; the total time series count grows linearly with tenant count, NOT with traffic volume.
+
+**Content-Type:** `text/plain; version=0.0.4; charset=utf-8` (the `prometheus::TextEncoder::format_type()` value). Body parses via any standard Prometheus scraper or `prometheus-client` library.
 
 ## Error taxonomy
 

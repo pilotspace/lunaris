@@ -19,21 +19,37 @@
 //! the Rust API).
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use lunaris::ForgetReceipt;
+use lunaris::{ForgetReceipt, ForgetTarget};
 
 use crate::dto::ForgetRequestDto;
+use crate::metrics::metrics;
+use crate::middleware::auth::AuthClaims;
 use crate::middleware::error::map_error;
 use crate::state::AppState;
 
 pub async fn forget_handler(
     State(state): State<AppState>,
+    Extension(claims): Extension<AuthClaims>,
     Json(req): Json<ForgetRequestDto>,
 ) -> Response {
     let target = req.target.clone();
+    let tenant = claims.tenant.as_str();
+
+    // Plan 05-05 OPS-06 — `target_kind` + `hard` labels per CONTEXT.md D-25.
+    // Cardinality: target_kind ∈ {id, scope, before} (3 values); hard ∈
+    // {true, false} (2 values). Combined per-tenant cardinality bounded by
+    // tokens-file size × 6.
+    let target_kind = match &target {
+        ForgetTarget::Id(_) => "id",
+        ForgetTarget::Scope(_) => "scope",
+        ForgetTarget::Before(_) => "before",
+    };
+    let hard_label = if req.hard { "true" } else { "false" };
+
     let mut request = lunaris::forget::ForgetRequest::from(target);
 
     if req.dry_run {
@@ -50,6 +66,10 @@ pub async fn forget_handler(
         let receipt_json = match req.confirmation_token.as_deref() {
             Some(t) if !t.is_empty() => t.to_string(),
             _ => {
+                metrics()
+                    .forget_total
+                    .with_label_values(&[tenant, target_kind, hard_label])
+                    .inc();
                 return map_error(lunaris_core::LunarisError::Validate(
                     lunaris_core::ValidateError::ConfirmationRequired(
                         "hard-delete requires confirmation_token (serialized prior ForgetReceipt JSON)".to_string(),
@@ -60,6 +80,10 @@ pub async fn forget_handler(
         let prior_receipt: ForgetReceipt = match serde_json::from_str(&receipt_json) {
             Ok(r) => r,
             Err(e) => {
+                metrics()
+                    .forget_total
+                    .with_label_values(&[tenant, target_kind, hard_label])
+                    .inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -72,12 +96,27 @@ pub async fn forget_handler(
         };
         let token = match state.lunaris.confirm_hard_forget(prior_receipt).await {
             Ok(t) => t,
-            Err(e) => return map_error(e),
+            Err(e) => {
+                metrics()
+                    .forget_total
+                    .with_label_values(&[tenant, target_kind, hard_label])
+                    .inc();
+                return map_error(e);
+            }
         };
         request.options.confirmation_token = Some(token);
     }
 
-    match state.lunaris.forget(request).await {
+    let result = state.lunaris.forget(request).await;
+
+    // Always increment forget_total — both success + error contribute to the
+    // counter. error_total increment lives inside map_error (W-11 fix).
+    metrics()
+        .forget_total
+        .with_label_values(&[tenant, target_kind, hard_label])
+        .inc();
+
+    match result {
         Ok(receipt) => (StatusCode::OK, Json(receipt)).into_response(),
         Err(e) => map_error(e),
     }

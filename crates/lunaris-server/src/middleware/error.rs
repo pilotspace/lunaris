@@ -9,10 +9,23 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use lunaris_core::{LunarisError, StorageError, ValidateError};
 
+use crate::metrics::{error_kind, metrics};
+
 /// Map every `LunarisError` variant to the appropriate HTTP status + JSON
 /// envelope. Auth/rate-limit middleware emits 401/403/429 BEFORE this map runs,
 /// so this only covers business-logic errors.
+///
+/// Plan 05-05 OPS-06 (W-11 fix) — increments `lunaris_error_total{kind=...}`
+/// counter HERE rather than at every verb-handler call site. Centralizes the
+/// error-counting policy + ensures any future `map_error` caller automatically
+/// participates in the metric. `error_kind` (from `crate::metrics`) maps the
+/// LunarisError variant to a bounded label string per CONTEXT.md D-25
+/// cardinality cap.
 pub fn map_error(err: LunarisError) -> Response {
+    metrics()
+        .error_total
+        .with_label_values(&[error_kind(&err)])
+        .inc();
     let (status, code, message) = match &err {
         LunarisError::Validate(ValidateError::ConfirmationRequired(_)) => (
             StatusCode::PRECONDITION_REQUIRED,
