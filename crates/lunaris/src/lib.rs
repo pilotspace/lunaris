@@ -22,6 +22,7 @@ pub mod handle;
 pub mod ingest;
 pub mod open;
 pub mod recall;
+pub mod recipes;
 pub mod verify_pipeline;
 
 pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
@@ -33,6 +34,10 @@ pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipeline
 pub use handle::Lunaris;
 pub use lunaris_core::*;
 pub use open::open;
+// Plan 05-04 — opinionated v0 recipes (helios-rfc §5.3 surface). v0 ships only
+// HeliosScratchpad + its borrowed AsOfScratchpad time-travel view; the other
+// 9 recipes (RECIPE-V1-01..11) ship in v1.
+pub use recipes::{AsOfScratchpad, HeliosScratchpad};
 pub use verify_pipeline::{ENABLED_ENV_VAR as VERIFY_ENABLED_ENV_VAR, VerifierPipelineHandle};
 
 // Plan 04 — verifier + consolidator trait surface re-exports so callers

@@ -21,6 +21,7 @@ lunaris-retrieve          = { path = "../lunaris-retrieve" }
 lunaris-verify            = { path = "../lunaris-verify", default-features = false }
 lunaris-consolidate       = { path = "../lunaris-consolidate", default-features = false }
 async-trait    = { workspace = true }
+bytes          = { workspace = true }
 futures        = { workspace = true }
 parking_lot    = { workspace = true }
 serde          = { workspace = true }
