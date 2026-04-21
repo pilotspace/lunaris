@@ -1,0 +1,704 @@
+# Lunaris User Guide
+
+Status: alpha (tracks `lunaris = "0.0.1"`). Complements `docs/protocol/memoryprotocol-0.1.md` (HTTP wire spec). If a claim here disagrees with the Rust source, the source wins — every symbol below has a `path:line` cross-reference.
+
+## What is Lunaris?
+
+Lunaris is a Rust-first agent memory engine. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval DSL that fuses vector search, BM25 keyword lookup, and graph traversal, with a cross-encoder rerank pass on top.
+
+Two backends ship Day-0: **Moon** (Redis-compatible with `FT.*` native vector + BM25 + RRF) and **Postgres** (via `pgvector` + `AGE` + `pgmq`). Everything you call on `Lunaris` works identically against either — the URL scheme decides.
+
+### Mental model
+
+```
+          Episode
+             |
+             v
+      +-------------+        (optional)         +----------------+
+      |   ingest    | -- graph pipeline ON --> |  extract       |
+      |  (chunk,    |                          |  entities +    |
+      |   embed,    |                          |  relations +   |
+      |   atomic    |                          |  facts         |
+      |   write)    | <---- validator --------+----------------+
+      +------+------+
+             |                                            ^
+             v                                            |
+      +-------------+                             +--------------+
+      |   storage   | <-- MVCC supersede -------> | forget       |
+      | (KV/Vector/ |       (soft/hard)           | (GDPR/audit) |
+      |   Graph/    |                             +--------------+
+      |   Queue)    |
+      +------+------+
+             |
+   recall    v        rerank
+   builder -+-> [vector] ----\                       queue
+            +-> [bm25 ]  ---- fuse_rrf --> rerank --> Hit[]
+            +-> [graph] ----/                          |
+                                                       v
+                                               +-------+-------+
+                                               | __lunaris_    |
+                                               |  verify__     |  <-- verifier worker (default OFF)
+                                               | __lunaris_    |
+                                               |  consolidate__|  <-- consolidator worker (default OFF)
+                                               | __lunaris_    |
+                                               |  audit__      |  <-- audit sink
+                                               +---------------+
+```
+
+`ingest` and `forget` each commit in a **single** `StoragePort::atomic_write` call. `recall` is a read-only DSL that composes retrievers into a plan, executes once, and returns `Vec<Hit>`.
+
+---
+
+## 1. Install & open a handle
+
+### Problem
+
+You have a Rust program and want to talk to Lunaris.
+
+### When to use it
+
+Every program begins here. You pick between the raw storage port (`lunaris::open`) and the high-level handle (`lunaris::Lunaris::open`). Use the handle unless you are writing a conformance test that needs to sidestep the ingest/recall pipelines.
+
+### Code
+
+`Cargo.toml`:
+
+```toml
+[dependencies]
+lunaris = "0.0.1"
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Features (see `crates/lunaris/Cargo.toml:57-77`):
+
+- `candle` (default) — real EmbeddingGemma 300M embedder, bge-reranker-v2-m3 cross-encoder, Gemma-3 4B extractor, Gemma-3 27B verifier. All load from `~/.cache/lunaris/models/`.
+- `ollama` — HTTP-backed embedder + extractor + verifier pointing at `http://localhost:11434`.
+- `cloud-api` — Anthropic / OpenAI / Gemini backends for the extractor + verifier.
+- `moon-it`, `pg-it` — gate live-backend integration tests.
+
+```rust
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> Result<(), lunaris::LunarisError> {
+    // High-level handle — this is what application code uses.
+    let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
+    println!("{lunaris:?}");
+    Ok(())
+}
+```
+
+If all you need is the raw `Arc<dyn StoragePort>` (Plan 5 conformance harness, low-level tests):
+
+```rust
+let storage = lunaris::open("postgres://lunaris:lunaris@localhost/lunaris").await?;
+// storage is Arc<dyn StoragePort>. No ingest/recall surface; you drive atomic_write, read_as_of, etc.
+```
+
+URL schemes are matched at `crates/lunaris/src/open.rs:20-30` and `crates/lunaris/src/handle.rs:148-206`. Only `moon://`, `postgres://`, and `postgresql://` are accepted; anything else returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))`.
+
+### Gotchas
+
+- **Weights cache**: the default embedder is `CandleEmbeddingGemma` loaded from `~/.cache/lunaris/models/embedding-gemma-300m/` (`crates/lunaris/src/handle.rs:108-112`). Missing weights surface as `"embedding-gemma weights missing at PATH — run huggingface-cli ..."`. Either pre-download (see section 10) or swap to a different embedder with `with_embedder(...)` before first use.
+- **Feature combinations**: building with neither `candle` nor `ollama` makes `Lunaris::open` return `StorageError::NotSupported` from `default_embedder` (`crates/lunaris/src/handle.rs:487-492`). In that configuration you must construct via `Lunaris::with_parts(...)`.
+- **Typos in the URL**: `mon://...` or `redis://...` yield `UnsupportedScheme`, not a connection error. Double-check the scheme when the error mentions a string you did not type.
+
+---
+
+## 2. Ingest your first episode
+
+### Problem
+
+You want data in the store, durably, with one transaction per call.
+
+### When to use it
+
+Every write begins with `Lunaris::ingest`. One call = one `atomic_write` on the backend, whether the graph pipeline is ON or OFF. The INGEST-04 single-call invariant is enforced inside `crates/lunaris/src/ingest.rs:72-127`.
+
+### Code
+
+The shape below paraphrases the canonical smoke test at `crates/lunaris/tests/ingest_smoke.rs:91-108`. In production you would use a real storage + embedder; here we use `StubEmbedder` so the test needs no model weights.
+
+```rust
+use std::sync::Arc;
+
+use lunaris::{Lunaris, Episode, HlcClock, StoragePort, Embedder};
+use lunaris_core::StubEmbedder;
+
+#[tokio::main]
+async fn main() -> Result<(), lunaris::LunarisError> {
+    // Production form — pulls the real storage + candle embedder from the URL:
+    //   let lunaris = Lunaris::open("moon://localhost:6379").await?;
+    //
+    // Test form — matches tests/ingest_smoke.rs:91-108. Replace `my_storage()`
+    // with any Arc<dyn StoragePort> (an in-memory recording fixture in tests,
+    // or MoonStorage::connect / PostgresStorage::connect directly in benches).
+    let storage: Arc<dyn StoragePort> = Arc::new(my_storage());
+    let clock = HlcClock::new(0);
+    let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
+    let lunaris = Lunaris::with_parts(storage, embedder, clock.clone());
+
+    // Episode::new fills id = Ulid::new(), bt = BiTemporal::now(clock),
+    // metadata = {} — see crates/lunaris-core/src/primitives.rs:27.
+    let ep = Episode::new(
+        "notes.md",
+        "# Notes\nThe quick brown fox jumps over the lazy dog.",
+        &lunaris.clock(),
+    );
+
+    let lsn = lunaris.ingest(ep).await?;
+    println!("committed at lsn={lsn:?}");
+    Ok(())
+}
+```
+
+### Gotchas
+
+- **One `atomic_write` per call, period.** `ingest` does not commit per chunk; it builds the full `Vec<WriteOp>` (episode KV + per-chunk KV + per-chunk vector upsert, plus graph/fact rows if the graph pipeline is ON) and hands it to the backend in a single call. See `crates/lunaris/src/ingest.rs:188-377`.
+- **The returned `Lsn` is a replay cursor, not a primary key.** It tells you where the snapshot endpoint (`GET /v1/snapshot/{lsn}`) can resume. Callers dedupe on `Episode::id`, not on `Lsn`.
+- **Ingest publishes to `__lunaris_consolidate__` after commit** (`crates/lunaris/src/ingest.rs:49-53` + `121`). Publish failure is logged but does not fail the ingest — the data is already durable. If the graph pipeline is ON, every `NeedsReview` item also publishes to `__lunaris_verify__` (`crates/lunaris/src/ingest.rs:48`, `443-457`).
+
+---
+
+## 3. Recall: the DSL in four steps
+
+### Problem
+
+You want hits back without writing your own retriever.
+
+### When to use it
+
+Every read beyond a single-key fetch. The DSL composes four operators — `Vector`, `Keyword`, `Graph`, and fusion/rerank/modifier wrappers — and executes the plan in one pass. The canonical shape lives at `crates/lunaris/src/recall.rs:46-72`; the canonical test is `crates/lunaris/tests/recall_smoke.rs:200-217`.
+
+### Code
+
+#### Step 1 — pure vector
+
+```rust
+use lunaris::{Query, Vector};
+
+let hits = lunaris
+    .recall()
+    .with_root(Vector::new("chunks", 30).top(5))
+    .execute(Query::text("brown fox"))
+    .await?;
+```
+
+`Vector::new("chunks", 30)` asks the backend for the top 30 chunks by vector similarity; `.top(5)` caps the final result. The `chunks` index is one of four whitelisted names (`chunks | entities | facts | communities`).
+
+#### Step 2 — add BM25
+
+```rust
+use lunaris::{Keyword, Query, Vector};
+
+let hits = lunaris
+    .recall()
+    .with_root(
+        Vector::new("chunks", 30)
+            .and(Keyword::bm25("chunks", 30))
+            .top(5),
+    )
+    .execute(Query::text("brown fox"))
+    .await?;
+```
+
+`Keyword::bm25("chunks", 30)` is defined at `crates/lunaris-retrieve/src/operators/keyword.rs:25`. `.and(...)` is the combinator from `combinators.rs:36` — both retrievers run and their results flow into the next operator.
+
+#### Step 3 — fuse with reciprocal rank
+
+```rust
+let hits = lunaris
+    .recall()
+    .with_root(
+        Vector::new("chunks", 30)
+            .and(Keyword::bm25("chunks", 30))
+            .fuse_rrf(60)
+            .top(5),
+    )
+    .execute(Query::text("brown fox"))
+    .await?;
+```
+
+When the handle was opened against a Moon URL, `fuse_rrf` detects the (Vector + Keyword(BM25)) shape on the same index and dispatches to Moon's native `text().hybrid_search` — **one** round trip instead of two (`crates/lunaris-retrieve/src/operators/fuse.rs`, governed by the capability hinted at `crates/lunaris-core/src/storage.rs` via `StorageCapabilities::native_rrf`). Postgres falls back to client-side RRF in the same operator. Same API either way.
+
+#### Step 4 — rerank
+
+```rust
+let hits = lunaris
+    .recall()
+    .with_root(
+        Vector::new("chunks", 30)
+            .and(Keyword::bm25("chunks", 30))
+            .fuse_rrf(60)
+            .top(30),
+    )
+    .rerank(lunaris.reranker())
+    .top(5)
+    .execute(Query::text("brown fox"))
+    .await?;
+```
+
+`RetrievalBuilder::rerank` and `::top` are both builder-level (`crates/lunaris-retrieve/src/builder.rs:162-171`). The reranker is cross-encoder bge-reranker-v2-m3 by default; when weights are missing, `Lunaris::open` installs `NoopReranker` and `handle.reranker()` still returns a working `Arc<dyn Reranker>` that passes scores through unchanged (`crates/lunaris/src/handle.rs:494-515`).
+
+### Gotchas
+
+- **`filter_str` returns a `Result`.** Parse errors come back as `FilterParseError` — unwrap with `?` in your application code; never `.unwrap()` on user input. See `crates/lunaris-retrieve/src/builder.rs:136`.
+- **Empty hits are usually a filter problem.** The v0 string-DSL only parses `field LIKE 'prefix%'` predicates (`crates/lunaris-retrieve/src/operators/modifiers.rs:80`). If you over-constrain, drop the filter and re-run.
+- **`RetrievalBuilder` is sync; `execute` is the only `.await`.** Side-effectful wiring (setting `with_root`, attaching filters, enabling degraded mode) happens before any async work, which keeps the builder `Send` without future-boxing.
+
+---
+
+## 4. Graph-aware recall
+
+### Problem
+
+You want to follow relations out from a known entity ("everything we know about Alice that also matches this query").
+
+### When to use it
+
+After the graph pipeline is enabled and you've ingested Episodes — chunks extracted entities + relations, which landed as `GraphNode` + `GraphEdge` rows. Now `Graph::anchored(entity_ids, hops)` traverses the same index.
+
+### Code
+
+```rust
+use lunaris::{EntityId, Graph, Keyword, Query, Vector};
+
+// Flip the pipeline ON. Default is OFF (blueprint §5.2).
+// Env alternative: LUNARIS_GRAPH_ENABLED=1 (handle reads this at open time).
+lunaris.graph_pipeline().enable();
+
+// Ingest episodes here so the extractor writes GraphNodes + GraphEdges.
+// (See Section 2 — same ingest call; the branch lights up automatically.)
+
+// The anchor: a content-hash EntityId derived deterministically from
+// name + type (crates/lunaris-extract/src/types.rs:29).
+let alice = EntityId::from_name_and_type("Alice", "Person");
+
+let hits = lunaris
+    .recall()
+    .with_root(
+        Vector::new("chunks", 30)
+            .and(Graph::anchored(vec![alice], 2))
+            .fuse_rrf(60)
+            .top(30),
+    )
+    .rerank(lunaris.reranker())
+    .top(5)
+    .execute(Query::text("Tell me about Alice"))
+    .await?;
+```
+
+This mirrors the canonical compose example in the `recall()` doc comment (`crates/lunaris/src/recall.rs:62-72`).
+
+### Gotchas
+
+- **Graph is default OFF.** Blueprint §5.2 + `crates/lunaris/src/handle.rs:124-130`. Toggling at runtime via `handle.graph_pipeline().enable()` is idempotent; `LUNARIS_GRAPH_ENABLED=1` seeds the initial state at open time.
+- **Hops are capped.** `DEFAULT_GRAPH_HOPS = 2`, `MAX_GRAPH_HOPS = 5` at `crates/lunaris-retrieve/src/operators/graph.rs:54-59`. Asking for more gets clamped.
+- **The extractor is required for graph ingest.** Default is candle Gemma-3 4B; on cache miss (no 3 GiB of weights on disk) the handle substitutes `NoopExtractor` and emits a `tracing::warn!` (`crates/lunaris/src/handle.rs:538-559`). In that state `graph_pipeline().enable()` is a no-op — you will get zero `GraphNode`s written. Fix with `handle.with_extractor(Arc::new(OllamaExtractor::new(...)?))` or by pre-downloading the weights.
+- **Graph traversal uses `Vector::and(Graph::anchored(...))`.** When a `Graph` branch is present, `fuse_rrf` always uses client-side fusion (`crates/lunaris-retrieve/src/fusion.rs`) — the Moon-native one-trip path only fires for Vector+Keyword(BM25) on the same index.
+
+---
+
+## 5. Forget
+
+### Problem
+
+Surgical deletes: GDPR right-to-be-forgotten, retention windows, session cleanup.
+
+### When to use it
+
+Whenever a primitive must stop being visible to future queries. Three variants; all go through one `Lunaris::forget` entry point (`crates/lunaris/src/forget.rs:206-298`). Every successful call emits one `__lunaris_audit__` event (OPS-04; `crates/lunaris/src/forget.rs:289-294`).
+
+### Code
+
+```rust
+use lunaris::{ForgetTarget, ScopeSpec};
+
+// Soft delete — MVCC: stamps bt.sys_to, prior reads via as_of still work.
+let scope = ForgetTarget::Scope(ScopeSpec::BySource(
+    "helios:fs/session-42/".into(),
+));
+let receipt = lunaris.forget(scope.clone()).await?;
+assert!(!receipt.preview);
+assert!(receipt.rows_written > 0);
+
+// Dry-run preview — no atomic_write; receipt shape is identical but preview=true.
+let preview = lunaris.forget(scope.clone().dry_run()).await?;
+assert!(preview.preview);
+
+// Hard delete — irreversible KvDelete fan-out, requires a ForgetConfirmation
+// token minted from a prior dry_run receipt (D-21 two-step safety rail).
+let token = lunaris.confirm_hard_forget(preview).await?;
+let hard_receipt = lunaris
+    .forget(scope.hard().with_token(token))
+    .await?;
+assert!(!hard_receipt.preview);
+assert_eq!(hard_receipt.rows_written, 0);       // hard delete writes zero MVCC rows
+assert!(hard_receipt.rows_deleted >= 1);        // one KvDelete per match
+```
+
+The three target shapes live at `crates/lunaris/src/forget.rs:49-71`:
+
+```rust
+pub enum ForgetTarget {
+    Id(Ulid),                  // OPS-01 — single-primitive purge
+    Scope(ScopeSpec),          // OPS-02 — prefix / metadata / episode-id predicate
+    Before(Hlc),               // OPS-03 — AS_OF cutoff
+}
+
+pub enum ScopeSpec {
+    BySource(String),          // prefix match on episode.source
+    ByMetadata(String, String),// exact match on metadata[key]
+    ByEpisode(Ulid),           // exact match on episode.id
+}
+```
+
+### Gotchas
+
+- **Hard delete without a token errors out.** You get `Err(LunarisError::Validate(ValidateError::ConfirmationRequired(_)))` — not a panic (`crates/lunaris/src/forget.rs:232-237`). `confirm_hard_forget` only accepts a `preview: true` receipt; replaying a non-preview receipt surfaces the same error (`crates/lunaris/src/forget.rs:307-317`).
+- **One `atomic_write` per call, zero for dry-run** (`crates/lunaris/src/forget.rs:273-280`). The audit publish lands even on dry-run so ops has a complete trail of what almost happened.
+- **Soft delete writes MVCC `sys_to` inside the payload bytes.** Backends derive persisted bitemporal from the payload, so a typed-only mutation is silently lost. `build_soft_delete_op` patches both the in-memory `BiTemporal` and the JSON payload (`crates/lunaris/src/forget.rs:468-502`) — this is the same cross-plan contract Plan 04-04's `apply_supersede` uses.
+
+---
+
+## 6. Background workers
+
+### Problem
+
+Slow-path quality checks (verifier) and memory consolidation (ACT-R) without blocking ingest or recall.
+
+### When to use it
+
+When your deployment has latency budget to spare AND you want provenance/quality signals landing in the audit stream. v0 ships both workers default-OFF (blueprint §5.1); v1 flips them on in production once queue-lag SLOs hold.
+
+### Code
+
+```rust
+// Verifier — consumes __lunaris_verify__ messages emitted by the graph-ON
+// ingest path and publishes VerifyDecision outcomes.
+lunaris.verify_pipeline().enable();
+
+// Consolidator — consumes __lunaris_consolidate__ (one message per ingest
+// commit) and runs ACT-R activation updates / promotion / archival.
+lunaris.consolidator_pipeline().enable();
+
+// Degraded-recall check — reads the verifier queue depth once per call and
+// sets Hit::degraded=true on every hit when depth > threshold.
+let hits = lunaris
+    .recall_with_degraded_check()
+    .await?
+    .with_root(lunaris::Vector::new("chunks", 30).top(5))
+    .execute(lunaris::Query::text("status of x"))
+    .await?;
+for h in &hits {
+    if h.degraded {
+        tracing::warn!("verifier backlog — results may be stale");
+    }
+}
+```
+
+Env seeds the initial state at open time:
+
+- `LUNARIS_GRAPH_ENABLED=1|0` — toggle the graph pipeline (`crates/lunaris/src/graph_pipeline.rs`).
+- `LUNARIS_VERIFY_ENABLED=1|0` — toggle the verifier worker (`crates/lunaris/src/verify_pipeline.rs`).
+- `LUNARIS_CONSOLIDATE_ENABLED=1|0` — toggle the consolidator worker (`crates/lunaris/src/consolidator_pipeline.rs`).
+- `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD=<u64>` — depth beyond which `recall_with_degraded_check` flags results. Default 1000 (`crates/lunaris/src/recall.rs:26-31`).
+
+### Gotchas
+
+- **Both workers default OFF.** Calling `.enable()` with no backend installed just runs the shipped `NoopVerifier` / `NoopConsolidator` — no crashes, but also no useful output. Wire a real backend (`handle.with_verifier(...)` / `handle.with_consolidator(...)`) before enabling if you want work done.
+- **`recall_with_degraded_check` is best-effort.** If the backend's `queue_depth` returns `NotSupported`, recall falls through with `degraded=false` and logs at debug (`crates/lunaris/src/recall.rs:122-128`). Recall still returns hits.
+- **Queue topics are hard-coded constants** — see `crates/lunaris/src/ingest.rs:48-53`. If you build your own worker off these topics, watch for consumer-group versioning: the shipped workers use `lunaris-verify-v0` / `lunaris-consolidate-v0` groups so a future message-schema bump can land on a fresh group.
+
+---
+
+## 7. HTTP
+
+### Problem
+
+You drive Lunaris from a non-Rust runtime (Python, TypeScript, Go, curl).
+
+### When to use it
+
+Helios will call it from Rust via the crate directly, but everyone else goes through `lunaris-server`. The wire protocol is MemoryProtocol v0.1 — see [`docs/protocol/memoryprotocol-0.1.md`](protocol/memoryprotocol-0.1.md) for the full JSON schemas, SSE contract, error taxonomy, and conformance gate. This section shows you how to run the server and hit each route with `curl`.
+
+### Start the server
+
+```bash
+# One-time: create a bearer-token map. Every /v1/* request needs this.
+cat > /tmp/lunaris-tokens.json <<'EOF'
+{
+  "dev-token-xxx": { "tenant": "dev", "scopes": ["ingest", "recall", "forget"] }
+}
+EOF
+
+cargo run -p lunaris-server -- \
+  --storage moon://localhost:6379 \
+  --bind 0.0.0.0:8080 \
+  --tokens-file /tmp/lunaris-tokens.json
+```
+
+Flags live in `crates/lunaris-server/src/config.rs:10-`; key knobs:
+
+| Flag | Env | Default |
+|------|-----|---------|
+| `--bind` | `LUNARIS_BIND` | `0.0.0.0:8080` |
+| `--storage` | `LUNARIS_STORAGE` | required |
+| `--tokens-file` | `LUNARIS_TOKENS_FILE` | required |
+| `--rate-per-second` | `LUNARIS_RATE_PER_SECOND` | `60` |
+| `--shutdown-grace-secs` | — | see `--help` |
+
+### Hit the routes
+
+Every `/v1/*` call needs `Authorization: Bearer <token>` (`docs/protocol/memoryprotocol-0.1.md` §Authentication). `/healthz` and `/metrics` are unauthenticated probe surfaces.
+
+```bash
+# Health probe (no auth).
+curl -s http://localhost:8080/healthz
+
+# Ingest — scope "ingest".
+curl -sX POST http://localhost:8080/v1/ingest \
+  -H "Authorization: Bearer dev-token-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "source":  "notes.md",
+        "content": "# Notes\nThe quick brown fox jumps over the lazy dog."
+      }'
+# -> { "lsn": { "wall_ms": ..., "counter": 0 }, "queue_lag_warn": false }
+
+# Recall (JSON) — scope "recall".
+curl -sX POST http://localhost:8080/v1/recall \
+  -H "Authorization: Bearer dev-token-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{ "query": "brown fox", "k": 5, "mode": "semantic" }'
+
+# Recall (SSE stream) — set Accept: text/event-stream.
+curl -sN -X POST http://localhost:8080/v1/recall \
+  -H "Authorization: Bearer dev-token-xxx" \
+  -H "Accept: text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{ "query": "brown fox", "k": 5 }'
+
+# Forget (soft) — scope "forget".
+curl -sX POST http://localhost:8080/v1/forget \
+  -H "Authorization: Bearer dev-token-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "target": { "Scope": { "BySource": "helios:fs/session-42/" } }
+      }'
+
+# Snapshot replay — scope "recall". NDJSON body, one WriteOp per line.
+curl -s "http://localhost:8080/v1/snapshot/1713789012345.0" \
+  -H "Authorization: Bearer dev-token-xxx"
+
+# Metrics (Prometheus text — no auth).
+curl -s http://localhost:8080/metrics
+```
+
+Route list is at `crates/lunaris-server/src/lib.rs:111-170`; request/response DTOs live at `crates/lunaris-server/src/dto.rs`.
+
+### Gotchas
+
+- **The plan's shorthand "`POST /ingest`" is wrong** — the real routes are under `/v1/` with `Authorization: Bearer` required. Anything that contradicts `docs/protocol/memoryprotocol-0.1.md` is a spec bug; raise it there.
+- **Hard delete is two requests.** First `POST /v1/forget` with `dry_run: true`, read the `audit_lsn` out of the receipt, then repeat with `hard: true` and `confirmation_token: "<wall_ms>.<counter>"` formed from the prior audit LSN. See the protocol doc §Forget.
+- **Logs default to pretty text on a TTY, JSON when `LUNARIS_ENV=production` or stdout is not a TTY** — `crates/lunaris/src/logging.rs:46` + CONTEXT.md D-26. Pipe through `jq` in production.
+- **SIGTERM drains cleanly.** `--shutdown-grace-secs` controls how long the server waits for in-flight requests. The server exits non-zero on `Lunaris::open` failure with an actionable error on stderr (`crates/lunaris-server/src/main.rs:32-38`).
+- **Per-tenant rate limit** (`60 rps / 120 burst` by default) bites before the handler runs — exceeding returns `429` with `Retry-After` (`docs/protocol/memoryprotocol-0.1.md` §Rate limiting).
+
+---
+
+## 8. Component swaps
+
+### Problem
+
+Tests need determinism; benches need specific backends; production wants to swap implementations without rebuilding the handle graph.
+
+### When to use it
+
+Every one of the five swap builders returns `Self`, so they chain. Apply before enabling the corresponding pipeline — otherwise the old component keeps running until the next `.enable()` cycle.
+
+### Code
+
+```rust
+use std::sync::Arc;
+
+use lunaris::{NoopConsolidator, NoopExtractor, NoopReranker, NoopVerifier};
+
+let lunaris = lunaris::Lunaris::open("moon://localhost:6379")
+    .await?
+    // Swap embedder — e.g., candle → Ollama when the per-batch budget busts.
+    // (handle.rs:18-20 explains the motivating latency case.)
+    .with_embedder(Arc::new(lunaris_embed::OllamaEmbedder::new(Default::default())?))
+    // Swap reranker — pin NoopReranker in tests for determinism.
+    .with_reranker(Arc::new(NoopReranker))
+    // Swap extractor — NoopExtractor when graph is off and you don't want the
+    // model download (handle.rs:337-340).
+    .with_extractor(Arc::new(NoopExtractor))
+    // Wire real slow-path backends before flipping .enable() on the pipeline.
+    .with_verifier(Arc::new(NoopVerifier))
+    .with_consolidator(Arc::new(NoopConsolidator));
+```
+
+The escape hatch constructor bypasses URL routing entirely. `tests/ingest_smoke.rs:96` uses it to wire an in-memory storage + `StubEmbedder`:
+
+```rust
+use lunaris_core::StubEmbedder;
+
+let storage: Arc<dyn StoragePort> = Arc::new(my_recording_storage());
+let embedder: Arc<dyn Embedder>  = Arc::new(StubEmbedder::new(768));
+let clock                          = HlcClock::new(0);
+let handle                         = Lunaris::with_parts(storage, embedder, clock);
+```
+
+If your storage also implements `KeywordPort`, use `Lunaris::with_parts_keyword` instead so recall's BM25 path stays alive (`crates/lunaris/src/handle.rs:269`).
+
+### Gotchas
+
+- **Swaps return `Self`.** Builder style — chain them, or rebind `let lunaris = lunaris.with_extractor(...)`.
+- **Apply before enabling.** `.enable()` captures a snapshot of the current component (`crates/lunaris/src/graph_pipeline.rs`, `verify_pipeline.rs`, `consolidator_pipeline.rs`). A swap afterwards propagates via `set_extractor` / `set_verifier` / `set_consolidator` and is preserved across toggle flips.
+- **`with_parts` wires a `NoopReranker` by default.** Production callers that go through `Lunaris::open` get the real bge-reranker-v2-m3 when weights are present (`crates/lunaris/src/handle.rs:503-515`). Tests and benches that construct via `with_parts` must opt into rerank themselves.
+
+---
+
+## 9. Recipes
+
+### Problem
+
+You want an opinionated shortcut when you don't want to hand-compose the DSL.
+
+### When to use it
+
+You're a Helios tool writer and you want filesystem-like semantics on top of Lunaris. In v0, the only recipe is `HeliosScratchpad` plus its borrowed `AsOfScratchpad` time-travel view (helios-rfc §5.3). The other nine recipes (ChatAgentMemory, DocumentKnowledgeBase, CustomerSupportHistory, ResearchPaperCorpus, CodeRepoMemory, MeetingNotesMemory, SlackArchive, EmailThreading, TimelineReconstruction) ship in v1.
+
+### Code
+
+```rust
+use std::sync::Arc;
+
+use lunaris::{HeliosScratchpad, Hlc};
+
+let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
+let pad     = HeliosScratchpad::new(lunaris.clone(), "session-42");
+
+// write(path, content) — maps to ingest with source = "helios:fs/session-42/<path>".
+pad.write("README.md", "# Hello\nWorld").await?;
+
+// read(path) — hybrid recall over the session prefix, concatenates chunks.
+let body = pad.read("README.md").await?;   // Option<String>
+
+// edit — plain write of the new content. Prior version's bt.sys[1] is stamped
+// by the existing MVCC supersede path; no new mutation code in the recipe
+// (helios_scratchpad.rs:122-133).
+pad.edit("README.md", /* old */ "", "# Hello\nUpdated").await?;
+
+// grep(pattern, k) — hybrid recall, k hits.
+let hits = pad.grep("hello", 5).await?;
+
+// ls(prefix) — walk episode: keys, filter by session prefix, return tails.
+let files = pad.ls(Some("docs/")).await?;
+
+// forget() — Plan 04-05 BySource prefix-match soft delete.
+let receipt = pad.forget().await?;
+
+// as_of(ts) — borrowed time-travel view; re-runs read at the pinned HLC.
+let ts = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
+let old_body = pad.as_of(ts).read("README.md").await?;
+```
+
+The public surface is intentionally tiny — eight methods on `HeliosScratchpad` + one on `AsOfScratchpad`. A unit test at `crates/lunaris/src/recipes/helios_scratchpad.rs:290-303` holds the line at 9 total `pub fn`s.
+
+### Gotchas
+
+- **Recipes bake in defaults.** `grep` always uses the hybrid + rerank stack; `read` always uses the chunk-concatenation reconstruction; neither accepts a custom filter or reranker choice. Reach for `lunaris.recall()` directly if you need the flexibility.
+- **`edit` doesn't inspect `_old`.** It is accepted for helios-rfc parity but unused — the underlying `ingest` does a full write, and MVCC retention means the old chunk versions stay visible via `.as_of(ts).read(path)` (`crates/lunaris/src/recipes/helios_scratchpad.rs:122-133`).
+- **`ls` is a prefix walk**, not a directory listing. It scans `episode:`-prefixed keys, parses each payload as an `Episode` JSON, and filters on `source`. That is O(all-episodes) — fine for session-scoped pads, not fine for an arbitrary tenant-wide index.
+
+---
+
+## 10. Troubleshooting
+
+### `embedding-gemma weights missing at PATH — run huggingface-cli ...`
+
+Download the weights, or swap the embedder:
+
+```bash
+python -m huggingface_hub download google/embeddinggemma-300m \
+  --local-dir ~/.cache/lunaris/models/embedding-gemma-300m
+```
+
+Or:
+
+```rust
+let lunaris = lunaris::Lunaris::open(url).await?
+    .with_embedder(Arc::new(lunaris_embed::OllamaEmbedder::new(Default::default())?));
+```
+
+### `bge-reranker-v2-m3 unavailable; using NoopReranker`
+
+Same pattern — pre-download to `~/.cache/lunaris/models/bge-reranker-v2-m3/` (command in the `tracing::warn!` body at `crates/lunaris/src/handle.rs:510`) or call `handle.with_reranker(...)` with a custom impl. The log is informational; recall keeps working without the 12 ms cross-encoder pass.
+
+### `LunarisError::Storage(StorageError::UnsupportedScheme("..."))`
+
+Your URL scheme isn't `moon`, `postgres`, or `postgresql` (`crates/lunaris/src/open.rs:20-30`). Check for typos (`redis://`, `mon://`). Lunaris does not auto-detect — it matches on the scheme string.
+
+### Empty recall results
+
+The most common cause is an over-tight `filter_str`. Drop the filter:
+
+```rust
+let hits = lunaris.recall()
+    .with_root(Vector::new("chunks", 30).top(5))
+    // .filter_str("source LIKE 'helios:fs/wrong/%'").unwrap()  // remove this
+    .execute(Query::text("..."))
+    .await?;
+```
+
+The second-most-common cause is asking for an index that wasn't written — the chunker fills `chunks`, the extractor fills `entities` and `facts`, nothing fills `communities` until the consolidator's Leiden run lands (v1).
+
+### Every hit has `degraded=true`
+
+Verifier queue is backed up beyond `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` (default 1000). Check:
+
+```bash
+curl -s http://localhost:8080/metrics | grep verify_queue_depth
+tracing::debug!(verify_queue_depth = ...)   # set RUST_LOG=debug
+```
+
+Remediation is a capacity call — either scale the verifier backend, raise the threshold, or disable the verifier pipeline until the backlog clears.
+
+### `cannot find type Vector / Graph / Keyword in scope`
+
+You're reaching into the inner crate path. Use the umbrella re-exports:
+
+```rust
+use lunaris::{EntityId, Graph, Keyword, NoopExtractor, Query, Vector};
+```
+
+Every symbol the guide names is re-exported at the `lunaris::` top level from `crates/lunaris/src/lib.rs:34-107`.
+
+### `hard-delete requires confirmation token from prior dry_run`
+
+You called `.hard()` without attaching a `ForgetConfirmation`. Two-step flow:
+
+```rust
+let preview = lunaris.forget(target.clone().dry_run()).await?;
+let token   = lunaris.confirm_hard_forget(preview).await?;
+let _       = lunaris.forget(target.hard().with_token(token)).await?;
+```
+
+### I want a test without downloading any model
+
+`Lunaris::with_parts(storage, Arc::new(StubEmbedder::new(768)), clock)` — this is how `crates/lunaris/tests/ingest_smoke.rs:91-108` runs. `StubEmbedder` emits deterministic 768-dim vectors with no forward pass. For keyword-aware tests, use `with_parts_keyword` and supply a `RecordingStorageWithKeyword`-style fixture (`crates/lunaris/tests/recall_smoke.rs:180-217`).
+
+---
+
+## Next steps
+
+- **Wire protocol & conformance:** [`docs/protocol/memoryprotocol-0.1.md`](protocol/memoryprotocol-0.1.md) is the source of truth for HTTP JSON shapes, the SSE contract, the error taxonomy, and how to certify a third-party server.
+- **Runnable examples:** the shortest path to a working `.rs` file is the integration tests at `crates/lunaris/tests/`:
+  - `ingest_smoke.rs` — the `with_parts` + `StubEmbedder` ingest pattern (Section 2 anchor).
+  - `recall_smoke.rs` — the BM25 + vector recall pattern (Section 3 anchor).
+  - `graph_pipeline_smoke.rs` — the `LUNARIS_GRAPH_ENABLED` round-trip (Section 4 anchor).
+  - `helios_scratchpad_smoke.rs` — dual-backend recipe smoke test (Section 9 anchor).
+- **Operational envelope:** `.planning/architect/blueprint.md` for the full latency/throughput targets; `docs/protocol/conformance.md` for the cross-backend conformance contract.
+- **Benchmarks:** `cargo xtask bench` drives the Plan 02-04 + 03-04 budget harness. Live numbers land per the 03-HUMAN-UAT and 05-HUMAN-UAT runbooks in `.planning/phases/`.
