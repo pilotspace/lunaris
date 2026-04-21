@@ -28,7 +28,10 @@ rand                     = { workspace = true }
 rand_chacha              = { workspace = true }
 chrono                   = { workspace = true }
 url                      = { workspace = true }                       # Plan 05-03 prep
-reqwest                  = { workspace = true }                       # Plan 05-03 prep
+# Plan 05-03 — protocol suite needs `stream` for `Response::bytes_stream()` (SSE
+# walker on POST /v1/recall). The workspace `reqwest` dep declares only [json,
+# rustls]; we additively turn on `stream` here without touching siblings.
+reqwest                  = { workspace = true, features = ["stream"] }
 
 [dev-dependencies]
 # Plan 04-03 — chaos / crash-recovery property test (D-23 .. D-25).
