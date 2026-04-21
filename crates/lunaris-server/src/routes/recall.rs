@@ -22,7 +22,7 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 
 use lunaris_core::Hlc;
-use lunaris_retrieve::{Hit, Query};
+use lunaris_retrieve::{DEFAULT_GRAPH_HOPS, EntityId, Graph, Hit, Query, Vector};
 
 use crate::dto::{RecallRequest, RetrievalMode};
 use crate::metrics::metrics;
@@ -130,6 +130,23 @@ pub async fn recall_handler(
         };
     }
 
+    // Plan 07-01 — compose Graph::anchored into the root when mode=graph and
+    // the 501 gate passed. Empty-entity fallback marks each hit degraded=true
+    // per ROADMAP Phase 7 SC #2.
+    let mut fallback_degraded = false;
+    if req.mode == RetrievalMode::Graph {
+        let entities = extract_query_entities(&req.query);
+        if entities.is_empty() {
+            fallback_degraded = true;
+        } else {
+            builder = builder.with_root(
+                Vector::new("chunks", 30)
+                    .and(Graph::anchored(entities, DEFAULT_GRAPH_HOPS))
+                    .fuse_rrf(60),
+            );
+        }
+    }
+
     let want_sse = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
@@ -144,6 +161,16 @@ pub async fn recall_handler(
         .with_label_values(&[tenant, mode_label, status])
         .inc();
 
+    // Plan 07-01 — mark each hit degraded=true when graph-mode fell back.
+    let result = result.map(|mut hits| {
+        if fallback_degraded {
+            for h in hits.iter_mut() {
+                h.degraded = true;
+            }
+        }
+        hits
+    });
+
     if want_sse {
         match result {
             Ok(hits) => sse_response(hits),
@@ -155,6 +182,38 @@ pub async fn recall_handler(
             Err(e) => map_error(e),
         }
     }
+}
+
+/// v0 entity extraction for HTTP mode=graph — mirrors
+/// `lunaris_retrieve::planner::has_entity_like_capitalized_token` inline
+/// (Phase 7 risk register: no new extractor, no new query-planner strategy).
+/// Walks whitespace tokens; every capitalized non-first token mints an
+/// `EntityId::from_name_and_type(token, "")`. Empty `entity_type` reflects
+/// the v0 "no type-tagging at HTTP" constraint — the caller surfaces the
+/// empty-hit case via `degraded=true`.
+fn extract_query_entities(text: &str) -> Vec<EntityId> {
+    text.split_whitespace()
+        .enumerate()
+        .filter_map(|(i, tok)| {
+            if i == 0 {
+                return None;
+            }
+            // Strip leading non-alphanumeric (matches planner.rs token logic).
+            let start = tok.find(|c: char| c.is_ascii_alphanumeric())?;
+            let clean = &tok[start..];
+            let first = clean.chars().next()?;
+            if first.is_ascii_uppercase() {
+                // Strip trailing punctuation for cleaner names.
+                let end = clean
+                    .rfind(|c: char| c.is_ascii_alphanumeric())
+                    .map(|idx| idx + 1)
+                    .unwrap_or(clean.len());
+                Some(EntityId::from_name_and_type(&clean[..end], ""))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Build the typed `Query` from the wire DTO.
@@ -231,5 +290,30 @@ mod tests {
         let q = build_query(&req).expect("ok");
         // build_query keeps Query::text default k (30) when req.k == 0.
         assert_eq!(q.k, 30);
+    }
+
+    // ---- Plan 07-01 extract_query_entities unit tests ---------------------
+
+    #[test]
+    fn extract_query_entities_matches_rust_sdk_shape() {
+        // "what did Alice do at Acme last April?" → Alice + Acme + April.
+        let ents = extract_query_entities("what did Alice do at Acme last April?");
+        assert_eq!(ents.len(), 3, "Alice + Acme + April");
+        let alice = EntityId::from_name_and_type("Alice", "");
+        assert!(
+            ents.contains(&alice),
+            "expected Alice EntityId in {ents:?}",
+        );
+    }
+
+    #[test]
+    fn extract_query_entities_empty_on_lowercase_query() {
+        assert!(extract_query_entities("show me everything lowercase").is_empty());
+    }
+
+    #[test]
+    fn extract_query_entities_skips_sentence_initial_capitalization() {
+        // "What" is sentence-initial — NOT an entity (matches planner.rs behavior).
+        assert!(extract_query_entities("What is going on").is_empty());
     }
 }
