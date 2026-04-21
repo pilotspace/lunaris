@@ -2031,15 +2031,26 @@ dependencies = [
 name = "lunaris-conformance"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "lunaris",
  "lunaris-bench",
  "lunaris-core",
+ "lunaris-storage-moon",
+ "lunaris-storage-postgres",
  "nix",
  "proptest",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
+ "ulid",
+ "url",
 ]
 
 [[package]]

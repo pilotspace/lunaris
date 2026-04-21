@@ -7,10 +7,28 @@ license.workspace      = true
 authors.workspace      = true
 
 [dependencies]
-lunaris        = { path = "../lunaris" }
-lunaris-core   = { path = "../lunaris-core" }
-async-trait    = { workspace = true }
-tokio          = { workspace = true }
+# Plan 05-02 — extends [dependencies] with the two backend constructors so the
+# storage suite can directly instantiate `MoonStorage` / `PostgresStorage` from
+# the thin entry tests, and adds reqwest + url for the Plan 05-03 protocol
+# suite (the `protocol::*` module body lands in Plan 05-03; the dep is wired
+# here so `cargo build -p lunaris-conformance` does not break between plans).
+lunaris                  = { path = "../lunaris" }
+lunaris-core             = { path = "../lunaris-core" }
+lunaris-storage-moon     = { path = "../lunaris-storage-moon" }       # Plan 05-02
+lunaris-storage-postgres = { path = "../lunaris-storage-postgres" }   # Plan 05-02
+async-trait              = { workspace = true }
+tokio                    = { workspace = true }
+futures                  = { workspace = true }                       # Plan 05-02 — scan_range stream walker
+bytes                    = { workspace = true }
+serde                    = { workspace = true }
+serde_json               = { workspace = true }
+anyhow                   = { workspace = true }                       # Plan 05-02 — Result<()> shape for runners
+ulid                     = { workspace = true }
+rand                     = { workspace = true }
+rand_chacha              = { workspace = true }
+chrono                   = { workspace = true }
+url                      = { workspace = true }                       # Plan 05-03 prep
+reqwest                  = { workspace = true }                       # Plan 05-03 prep
 
 [dev-dependencies]
 # Plan 04-03 — chaos / crash-recovery property test (D-23 .. D-25).
@@ -18,8 +36,6 @@ tokio          = { workspace = true }
 # `env!("CARGO_BIN_EXE_chaos")`) AND `build_chaos_corpus` (corpus helper).
 lunaris-bench  = { path = "../lunaris-bench" }
 proptest       = { workspace = true }
-futures        = { workspace = true }
-bytes          = { workspace = true }
 
 # Plan 04-03 — `nix` is gated to Unix targets so Windows builds skip the
 # crash_recovery test cleanly. CLAUDE.md `#![forbid(unsafe_code)]` is
