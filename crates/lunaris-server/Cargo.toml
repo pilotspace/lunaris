@@ -20,6 +20,9 @@ tower               = { workspace = true }
 tower-http          = { workspace = true }
 tower-governor      = { workspace = true }
 governor            = { workspace = true }
+# Plan 05-05 OPS-06 — Prometheus text-format exporter for GET /metrics
+# (CONTEXT.md D-25; 9-metric catalogue lives in src/metrics.rs).
+prometheus          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 clap                = { workspace = true, features = ["derive", "env"] }

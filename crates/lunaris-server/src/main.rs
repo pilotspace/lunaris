@@ -65,6 +65,16 @@ async fn main() -> ExitCode {
         drain.trigger();
     });
 
+    // Plan 05-05 OPS-06 — spawn the 10s queue-depth poller AFTER the lunaris
+    // handle is constructed but BEFORE axum::serve. The poller listens on the
+    // SAME `Shutdown::notify()` Arc so SIGTERM cleanly drains it alongside
+    // in-flight HTTP requests. The JoinHandle is dropped (the runtime collects
+    // the task on shutdown notify).
+    let _poller = lunaris_server::queue_depth_poller::spawn_queue_depth_poller(
+        lunaris.storage(),
+        shutdown.notify(),
+    );
+
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown.wait().await;

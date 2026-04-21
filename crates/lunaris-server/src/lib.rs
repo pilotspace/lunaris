@@ -25,7 +25,11 @@
 
 pub mod config;
 pub mod dto;
+// Plan 05-05 OPS-06 — Prometheus metrics registry + GET /metrics text-format
+// handler + 10s queue-depth poller (background tokio task).
+pub mod metrics;
 pub mod middleware;
+pub mod queue_depth_poller;
 pub mod routes;
 pub mod shutdown;
 pub mod state;
@@ -65,6 +69,15 @@ use crate::middleware::auth::{RequiredScope, auth_middleware};
 pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
     let tokens = load_tokens(&cfg.tokens_file).unwrap_or_default();
     let state = AppState::new(lunaris, tokens);
+
+    // Plan 05-05 OPS-06 — propagate the `--metrics-disabled` flag into the
+    // runtime-flags toggle so `routes::metrics::metrics_handler` returns 404
+    // when the flag is set. Three-surface toggle convention (PATTERNS.md
+    // Shared Pattern 4) — operators may also flip this at runtime later via
+    // a future `/admin/flags` control endpoint without restart.
+    if cfg.metrics_disabled {
+        *state.runtime_flags.metrics_disabled.write() = true;
+    }
 
     // Per-route stacking. `route_layer` calls add to the OUTSIDE of the
     // existing per-route stack — so the LAST `.route_layer` invocation runs
@@ -120,6 +133,12 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
     Router::new()
         .nest("/v1", v1)
         .route("/healthz", get(routes::healthz::healthz_handler))
+        // Plan 05-05 OPS-06 — `/metrics` mounted at root (NOT under `/v1`)
+        // so Prometheus scrapers reach it without Bearer-auth tokens.
+        // CONTEXT.md D-25 + threat-model T-05-05-05 (operators MUST front
+        // with network ACL or reverse-proxy auth in production — documented
+        // in spec markdown, see Plan 05-05 Task 3).
+        .route("/metrics", get(routes::metrics::metrics_handler))
         .layer(middleware::cors::cors_layer(&cfg.cors_origins))
         .with_state(state)
 }
