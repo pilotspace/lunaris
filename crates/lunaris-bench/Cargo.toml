@@ -39,6 +39,23 @@ tokio              = { workspace = true }
 tracing            = { workspace = true }
 thiserror          = { workspace = true }
 url                = { workspace = true }
+# Plan 05-06 — eval gauntlet binary (lunaris-evals) + harness suite.
+# anyhow / clap power the binary; hf-hub / dirs power the dataset download +
+# cache-directory resolution for LongMemEval / LoCoMo / WNUT-2017 harnesses.
+anyhow             = { workspace = true }
+clap               = { workspace = true }
+hf-hub             = { workspace = true }
+dirs               = { workspace = true }
+# Plan 05-06 EVAL-04 memory harness (RSS sampling) needs a tracing-subscriber
+# init in the binary entry per chaos.rs convention; reuses the existing
+# tracing dep already in [dependencies] above.
+tracing-subscriber = { workspace = true }
+
+# Plan 05-06 EVAL-04 Linux RSS sampling via procfs. cfg-gated per-OS so the
+# Windows + macOS targets don't pull procfs (which only compiles on Linux).
+# macOS uses `ps -o rss= -p <pid>` shell-out (no extra dep) per B-6 fix.
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs             = { workspace = true }
 
 [dev-dependencies]
 criterion          = { workspace = true }
@@ -79,3 +96,11 @@ harness = false
 [[bin]]
 name = "chaos"
 path = "src/bin/chaos.rs"
+
+# Plan 05-06 EVAL-01..09 — single-binary eval gauntlet entry point. clap-driven
+# subcommands (longmemeval | locomo | er-f1 | memory | e2e | perf-delta | all);
+# emits eval-results.json + a markdown summary; CI greps for "status":"FAIL"
+# to fail merge per CONTEXT.md D-22.
+[[bin]]
+name = "lunaris-evals"
+path = "src/bin/evals.rs"

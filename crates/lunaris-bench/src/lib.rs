@@ -41,6 +41,7 @@
 #![forbid(unsafe_code)]
 
 pub mod corpus;
+pub mod eval;
 pub mod fixtures;
 
 pub use corpus::{

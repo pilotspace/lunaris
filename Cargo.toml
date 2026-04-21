@@ -103,6 +103,20 @@ is-terminal        = "0.4"
 # "Latest libraries policy"; default-features=false drops the procfs/protobuf
 # Linux-only collectors we don't need (we only emit our own 9 metrics).
 prometheus         = { version = "0.14", default-features = false }
+# Phase 5 Plan 05-06 EVAL-01/02 — HuggingFace Hub dataset download + caching for
+# LongMemEval (xiaowu0162/long-mem-eval), LoCoMo (snap-research/locomo10), and
+# WNUT-2017 (tner/wnut2017). Cache directory is caller-controlled via
+# `ApiBuilder::with_cache_dir(PathBuf)` per CLAUDE.md `#![forbid(unsafe_code)]`
+# mandate (the prior `unsafe { std::env::set_var("HF_HOME", ...) }` plan-body
+# pattern was rejected by B-4 fix — `with_cache_dir` is the safe-Rust path).
+hf-hub             = { version = "0.4", default-features = false, features = ["tokio", "rustls-tls"] }
+# Phase 5 Plan 05-06 EVAL-04 — Linux RSS sampling via /proc/self/status. macOS
+# uses `ps -o rss= -p <pid>` shell-out (no extra dep — std::process::Command);
+# Windows path returns None and the harness emits status:SKIPPED. mach2 is NOT
+# in workspace deps because CLAUDE.md `#![forbid(unsafe_code)]` would require
+# an unsafe wrapper crate (Plan 04-03 set the precedent: nix wraps unsafe;
+# mach2 has no equivalent safe wrapper as of 0.4).
+procfs             = { version = "0.18", default-features = false }
 
 [profile.dev]
 opt-level = 0
