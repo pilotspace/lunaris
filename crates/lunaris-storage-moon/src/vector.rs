@@ -87,6 +87,16 @@ fn filter_to_moon(f: &Filter) -> String {
         Filter::Or(xs) => {
             format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" | "))
         }
+        Filter::ValidTimeRange { after, before } => {
+            // RediSearch numeric range on `@valid_time`. Inline string render —
+            // no hlc_to_moon_score helper exists (verified 2026-04-22). None
+            // maps to -inf / +inf sentinels. The Moon FT schema on the `chunks`
+            // index declares `valid_time` NUMERIC (Plan 09.1-02 Task 2 landed
+            // SchemaField::Numeric("valid_time") in ensure_indexes).
+            let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
+            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
+            format!("@valid_time:[{lo} {hi}]")
+        }
     }
 }
 
@@ -181,6 +191,40 @@ mod tests {
     // pack_hlc_round_trips_components — removed alongside `pack_hlc` itself
     // (see module rustdoc above). Restore from git history if Moon ships a
     // bi-temporal command surface that needs the helper back.
+
+    // Plan 09.1-02 Task 3 — ValidTimeRange rendering tests.
+    #[test]
+    fn filter_to_moon_valid_time_range_both_bounds() {
+        let f = Filter::ValidTimeRange {
+            after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
+            before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
+        };
+        assert_eq!(filter_to_moon(&f), "@valid_time:[100 200]");
+    }
+
+    #[test]
+    fn filter_to_moon_valid_time_range_only_after() {
+        let f = Filter::ValidTimeRange {
+            after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
+            before: None,
+        };
+        assert_eq!(filter_to_moon(&f), "@valid_time:[100 +inf]");
+    }
+
+    #[test]
+    fn filter_to_moon_valid_time_range_only_before() {
+        let f = Filter::ValidTimeRange {
+            after: None,
+            before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
+        };
+        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf 200]");
+    }
+
+    #[test]
+    fn filter_to_moon_valid_time_range_both_none() {
+        let f = Filter::ValidTimeRange { after: None, before: None };
+        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf +inf]");
+    }
 
     #[test]
     fn parse_ft_search_empty_returns_empty_vec() {
