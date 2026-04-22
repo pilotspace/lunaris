@@ -2,6 +2,7 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod bitemporal;
 pub mod embedder;
 pub mod error;

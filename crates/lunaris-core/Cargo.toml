@@ -18,6 +18,7 @@ ulid           = { workspace = true }
 parking_lot    = { workspace = true }
 tokio          = { workspace = true }
 futures        = { workspace = true }
+tracing        = { workspace = true }
 
 [dev-dependencies]
 rand           = { workspace = true }

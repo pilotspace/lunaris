@@ -1,0 +1,23 @@
+{
+  "kind": "ConsolidatorArchive",
+  "fact_id": [
+    123,
+    216,
+    144,
+    97,
+    1,
+    113,
+    244,
+    67,
+    1,
+    53,
+    96,
+    68,
+    42,
+    244,
+    151,
+    0
+  ],
+  "final_activation": -0.7,
+  "moved_to": "cold_storage"
+}

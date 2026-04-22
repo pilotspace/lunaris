@@ -1,0 +1,19 @@
+{
+  "kind": "Forget",
+  "target": {
+    "Scope": {
+      "BySource": "helios:fs/session-42/"
+    }
+  },
+  "indices_affected": [
+    "Kv",
+    "Vector"
+  ],
+  "rows_written": 5,
+  "rows_deleted": 0,
+  "audit_lsn": {
+    "wall_ms": 1713000000000,
+    "counter": 7
+  },
+  "preview": false
+}

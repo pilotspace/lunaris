@@ -258,7 +258,9 @@ impl Lunaris {
                     preview: true,
                 };
                 let audit_offset =
-                    publish_audit_event(&self.storage, AuditEvent::Forget(receipt.clone())).await;
+                    publish_audit_event(&self.storage, AuditEvent::Forget((&receipt).into()))
+                        .await
+                        .unwrap_or(0);
                 return Ok(ForgetReceipt {
                     audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
                     ..receipt
@@ -293,7 +295,9 @@ impl Lunaris {
                 preview: false,
             };
             let audit_offset =
-                publish_audit_event(&self.storage, AuditEvent::Forget(receipt.clone())).await;
+                publish_audit_event(&self.storage, AuditEvent::Forget((&receipt).into()))
+                    .await
+                    .unwrap_or(0);
             Ok(ForgetReceipt {
                 audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
                 ..receipt

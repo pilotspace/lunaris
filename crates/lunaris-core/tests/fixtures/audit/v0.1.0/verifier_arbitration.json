@@ -1,0 +1,8 @@
+{
+  "kind": "VerifierArbitration",
+  "winner_id": "01HKAPABCDEFGHIJKLMNOPQRST",
+  "loser_id": "01HKAPABCDEFGHIJKLMNOPQRTV",
+  "reason": "winner has higher confidence",
+  "backend": "CloudAnthropic",
+  "decided_at_iso": "2026-04-20T15:00:00.000Z"
+}

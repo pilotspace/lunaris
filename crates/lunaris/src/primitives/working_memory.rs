@@ -166,7 +166,7 @@ impl WorkingMemory {
         for promo in &report.promotions {
             let event = AuditEvent::ConsolidatorPromotion {
                 episode_id: promo.episode_id,
-                fact_id: promo.fact_id,
+                fact_id: crate::audit::FactIdData(promo.fact_id.0),
                 activation_score: promo.activation_score,
             };
             let _ = publish_audit_event(&storage, event).await;
