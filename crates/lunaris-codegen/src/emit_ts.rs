@@ -66,33 +66,41 @@ pub fn emit_ts(ir: &SurfaceIR) -> TsOutput {
     dts.push('\n');
 
     for module in &ir.modules {
+        let crate_path = module.rust_crate_path.as_deref().unwrap_or("::lunaris");
         for ty in &module.types {
-            emit_ts_type_rust(&mut rust, ty);
+            emit_ts_type_rust(&mut rust, ty, crate_path);
             emit_ts_type_dts(&mut dts, ty);
         }
     }
     TsOutput { rust_glue: rust, dts }
 }
 
-fn emit_ts_type_rust(out: &mut String, ty: &IrType) {
+fn emit_ts_type_rust(out: &mut String, ty: &IrType, crate_path: &str) {
     if let Some(doc) = &ty.doc {
         writeln!(out, "/// {doc}").unwrap();
     }
     writeln!(
         out,
-        "#[napi]\npub struct {name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<::lunaris::{name}>,\n}}",
-        name = ty.name
+        "#[napi]\npub struct {name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<{crate_path}::{name}>,\n}}",
+        name = ty.name,
+        crate_path = crate_path
     )
     .unwrap();
     out.push('\n');
     writeln!(out, "#[napi]\nimpl {name} {{", name = ty.name).unwrap();
     for m in &ty.methods {
-        emit_ts_method_rust(out, &ty.name, m, ty.kind.clone());
+        emit_ts_method_rust(out, &ty.name, m, ty.kind.clone(), crate_path);
     }
     writeln!(out, "}}\n").unwrap();
 }
 
-fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind) {
+fn emit_ts_method_rust(
+    out: &mut String,
+    type_name: &str,
+    m: &IrMethod,
+    _kind: IrKind,
+    crate_path: &str,
+) {
     if let Some(doc) = &m.doc {
         writeln!(out, "    /// {doc}").unwrap();
     }
@@ -119,7 +127,8 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
             let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
-                "        let inner = ::lunaris::{type_name}::{name}({call_args}).await.map_err(napi_err)?;",
+                "        let inner = {crate_path}::{type_name}::{name}({call_args}).await.map_err(napi_err)?;",
+                crate_path = crate_path,
                 type_name = type_name,
                 name = m.name
             )
@@ -209,7 +218,8 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
             let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
-                "        let inner = ::lunaris::{type_name}::{name}({call_args});",
+                "        let inner = {crate_path}::{type_name}::{name}({call_args});",
+                crate_path = crate_path,
                 type_name = type_name,
                 name = m.name
             )
@@ -263,6 +273,41 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
             }
             writeln!(out, "    }}").unwrap();
         }
+        // Plan 11-02a D6(b) — owned-self builder with `clone_self = true`
+        // hint. Clone the inner `Arc<Inner>` via `as_ref().clone()`,
+        // consume through the Rust builder, re-wrap. Mirror of the
+        // emit_py.rs clone-and-rewrap arm.
+        (IrAsync::No, IrReceiver::Owned) if m.clone_self => {
+            let target_ty = ts_owned_self_target_ty(type_name, &m.returns.ty);
+            writeln!(out, "    #[napi]").unwrap();
+            writeln!(
+                out,
+                "    pub fn {name}(&self{params}) -> napi::Result<{target_ty}> {{",
+                name = m.name,
+                params = format_params_rust(&m.params, /* with_self */ true),
+                target_ty = target_ty
+            )
+            .unwrap();
+            let owned_names = emit_ts_owned_bindings(out, &m.params);
+            let call_args = ts_call_args_from_owned(&m.params, &owned_names);
+            writeln!(
+                out,
+                "        let out = self.inner.as_ref().clone().{name}({call_args});",
+                name = m.name,
+                call_args = call_args
+            )
+            .unwrap();
+            if m.returns.fallible {
+                writeln!(out, "        let out = out.map_err(napi_err)?;").unwrap();
+            }
+            writeln!(
+                out,
+                "        Ok({target_ty} {{ inner: Arc::new(out) }})",
+                target_ty = target_ty
+            )
+            .unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
         (IrAsync::No, IrReceiver::Owned) => {
             writeln!(out, "    #[napi]").unwrap();
             writeln!(
@@ -282,6 +327,48 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 .unwrap();
             writeln!(out, "        Err(napi::Error::from_reason(\"Plan 08-03 wires the body\"))")
                 .unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
+        // Plan 11-02a — async owned-self + clone_self. napi-rs 3.x handles
+        // `async fn` natively; we clone the inner Arc, await the owned
+        // builder method, re-wrap.
+        (IrAsync::Yes, IrReceiver::Owned) if m.clone_self => {
+            let target_ty = ts_owned_self_target_ty(type_name, &m.returns.ty);
+            writeln!(out, "    #[napi]").unwrap();
+            writeln!(
+                out,
+                "    pub async fn {name}(&self{params}) -> napi::Result<{target_ty}> {{",
+                name = m.name,
+                params = format_params_rust(&m.params, /* with_self */ true),
+                target_ty = target_ty
+            )
+            .unwrap();
+            writeln!(out, "        let cloned = self.inner.as_ref().clone();").unwrap();
+            let owned_names = emit_ts_owned_bindings(out, &m.params);
+            let call_args = ts_call_args_from_owned(&m.params, &owned_names);
+            if m.returns.fallible {
+                writeln!(
+                    out,
+                    "        let out = cloned.{name}({call_args}).await.map_err(napi_err)?;",
+                    name = m.name,
+                    call_args = call_args
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        let out = cloned.{name}({call_args}).await;",
+                    name = m.name,
+                    call_args = call_args
+                )
+                .unwrap();
+            }
+            writeln!(
+                out,
+                "        Ok({target_ty} {{ inner: Arc::new(out) }})",
+                target_ty = target_ty
+            )
+            .unwrap();
             writeln!(out, "    }}").unwrap();
         }
         _ => {
@@ -624,5 +711,16 @@ fn ts_return_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Handle { name } => name.clone(),
         IrTyRef::Option { inner } => format!("{} | null", ts_return_ty_dts(inner)),
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_return_ty_dts(inner)),
+    }
+}
+
+/// Plan 11-02a D6(b) — mirror of emit_py.rs::owned_self_target_ty. TS
+/// doesn't prefix wrapper classes with `Py` — the napi-rs struct name
+/// equals the TS class name equals the source Rust struct name.
+fn ts_owned_self_target_ty(type_name: &str, ret_ty: &IrTyRef) -> String {
+    match ret_ty {
+        IrTyRef::RefSelf => type_name.to_string(),
+        IrTyRef::Named { name } => name.clone(),
+        _ => type_name.to_string(),
     }
 }

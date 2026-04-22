@@ -44,6 +44,25 @@ const GENERATED_HEADER: &str = "\
 // this snapshot.
 ";
 
+/// Plan 11-02a D1(c) — legacy-mode detector. Returns `true` iff the IR is
+/// the revision-1 single-`lunaris`-module shape with no per-module
+/// `rust_crate_path` override. In that case the emitter produces the
+/// byte-identical `register_generated` fn the committed snapshot pins;
+/// otherwise the emitter switches to one `register_generated_{sanitized}`
+/// fn per module (consumed by Plan 11-02b's host `lib.rs` rewiring).
+fn is_legacy_single_module(ir: &SurfaceIR) -> bool {
+    ir.modules.len() == 1
+        && ir.modules[0].name == "lunaris"
+        && ir.modules[0].rust_crate_path.is_none()
+}
+
+/// Sanitise a dotted module name into an identifier fragment — replaces
+/// `.` with `_` so `lunaris_recipes.conversational` becomes
+/// `lunaris_recipes_conversational`.
+fn sanitize_module_name(name: &str) -> String {
+    name.replace('.', "_")
+}
+
 /// Emit PyO3 wrapper code for the given [`SurfaceIR`].
 pub fn emit_py(ir: &SurfaceIR) -> String {
     let mut out = String::new();
@@ -53,54 +72,86 @@ pub fn emit_py(ir: &SurfaceIR) -> String {
     out.push_str("use pyo3::types::PyModule;\n");
     out.push_str("use std::sync::Arc;\n\n");
 
+    let legacy = is_legacy_single_module(ir);
     for module in &ir.modules {
+        let crate_path = module.rust_crate_path.as_deref().unwrap_or("::lunaris");
         for ty in &module.types {
-            emit_py_type(&mut out, ty);
+            emit_py_type(&mut out, ty, crate_path);
         }
-        // Plan 08-02 Rule 1 deviation: emit `pub fn register_generated` instead
-        // of a `#[pymodule] fn {module}` so the host crate's `src/lib.rs` can
-        // `include!("generated.rs")` without colliding on the `PyInit_lunaris`
-        // C-exported symbol. The host crate owns the canonical `#[pymodule]`
-        // and calls `register_generated(py, m)?` from its body. `module.name`
-        // is preserved in the doc comment for traceability.
-        writeln!(
-            out,
-            "/// Registers every generated `#[pyclass]` on the host crate's `#[pymodule] fn {}`.",
-            module.name
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {{"
-        )
-        .unwrap();
-        for ty in &module.types {
-            writeln!(out, "    m.add_class::<Py{}>()?;", ty.name).unwrap();
+        if legacy {
+            // Plan 08-02 Rule 1 deviation: emit `pub fn register_generated` instead
+            // of a `#[pymodule] fn {module}` so the host crate's `src/lib.rs` can
+            // `include!("generated.rs")` without colliding on the `PyInit_lunaris`
+            // C-exported symbol. The host crate owns the canonical `#[pymodule]`
+            // and calls `register_generated(py, m)?` from its body. `module.name`
+            // is preserved in the doc comment for traceability.
+            writeln!(
+                out,
+                "/// Registers every generated `#[pyclass]` on the host crate's `#[pymodule] fn {}`.",
+                module.name
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {{"
+            )
+            .unwrap();
+            for ty in &module.types {
+                writeln!(out, "    m.add_class::<Py{}>()?;", ty.name).unwrap();
+            }
+            writeln!(out, "    Ok(())\n}}").unwrap();
+        } else {
+            // Plan 11-02a D1(c) — per-module `register_generated_{suffix}`
+            // scheme. Host `lib.rs` (Plan 11-02b) wires each fn against a
+            // `PyModule::new_bound(py, "{module}")` submodule. Multiple
+            // modules land side-by-side in this same generated file.
+            let suffix = sanitize_module_name(&module.name);
+            writeln!(
+                out,
+                "/// Registers every generated `#[pyclass]` for module `{}`.",
+                module.name
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "pub(crate) fn register_generated_{suffix}(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {{"
+            )
+            .unwrap();
+            for ty in &module.types {
+                writeln!(out, "    m.add_class::<Py{}>()?;", ty.name).unwrap();
+            }
+            writeln!(out, "    Ok(())\n}}").unwrap();
         }
-        writeln!(out, "    Ok(())\n}}").unwrap();
     }
     out
 }
 
-fn emit_py_type(out: &mut String, ty: &IrType) {
+fn emit_py_type(out: &mut String, ty: &IrType, crate_path: &str) {
     if let Some(doc) = &ty.doc {
         writeln!(out, "/// {doc}").unwrap();
     }
     writeln!(
         out,
-        "#[pyclass(name = \"{name}\", unsendable)]\npub struct Py{name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<::lunaris::{name}>,\n}}",
-        name = ty.name
+        "#[pyclass(name = \"{name}\", unsendable)]\npub struct Py{name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<{crate_path}::{name}>,\n}}",
+        name = ty.name,
+        crate_path = crate_path
     )
     .unwrap();
     out.push('\n');
     writeln!(out, "#[pymethods]\nimpl Py{name} {{", name = ty.name).unwrap();
     for m in &ty.methods {
-        emit_py_method(out, &ty.name, m, ty.kind.clone());
+        emit_py_method(out, &ty.name, m, ty.kind.clone(), crate_path);
     }
     writeln!(out, "}}\n").unwrap();
 }
 
-fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind) {
+fn emit_py_method(
+    out: &mut String,
+    type_name: &str,
+    m: &IrMethod,
+    _kind: IrKind,
+    crate_path: &str,
+) {
     if let Some(doc) = &m.doc {
         writeln!(out, "    /// {doc}").unwrap();
     }
@@ -119,7 +170,8 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 .unwrap();
             writeln!(
                 out,
-                "            let inner = ::lunaris::{type_name}::{name}({call_args}).await.map_err(py_err)?;",
+                "            let inner = {crate_path}::{type_name}::{name}({call_args}).await.map_err(py_err)?;",
+                crate_path = crate_path,
                 type_name = type_name,
                 name = m.name,
                 call_args = format_call_args(&m.params)
@@ -164,6 +216,19 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                             "        let {owned_name}: {ty} = pythonize::depythonize(&{param})?;",
                             owned_name = owned_name,
                             ty = rust_owned_ty(&p.ty),
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    // Plan 11-02a D3(a) — Handle: clone `.inner` from the
+                    // wrapper class reference; no pythonize round-trip.
+                    IrTyRef::Handle { name: handle_name } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::std::sync::Arc<::lunaris::{handle_name}> = {param}.inner.clone();",
+                            owned_name = owned_name,
+                            handle_name = handle_name,
                             param = p.name
                         )
                         .unwrap();
@@ -234,6 +299,18 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                         .unwrap();
                         owned_names.push(owned_name);
                     }
+                    // Plan 11-02a D3(a) — Handle: clone `.inner` (Arc).
+                    IrTyRef::Handle { name: handle_name } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::std::sync::Arc<::lunaris::{handle_name}> = {param}.inner.clone();",
+                            owned_name = owned_name,
+                            handle_name = handle_name,
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
                     _ => owned_names.push(p.name.clone()),
                 }
             }
@@ -249,7 +326,8 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 .join(", ");
             writeln!(
                 out,
-                "        let inner = ::lunaris::{type_name}::{name}({call_args});",
+                "        let inner = {crate_path}::{type_name}::{name}({call_args});",
+                crate_path = crate_path,
                 type_name = type_name,
                 name = m.name
             )
@@ -311,6 +389,54 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
         // FFI boundary surfaces a proper `NotImplementedError` (a normal
         // `Exception` subclass), matching the shape of the TS emitter's
         // `Err(napi::Error::from_reason(...))` path.
+        // Plan 11-02a D6(b) — owned-self builder with `clone_self = true`
+        // hint. Replaces the legacy `PyNotImplementedError` stub with a
+        // clone-and-rewrap body: clone the inner `Arc<Inner>`, consume it
+        // through the Rust builder method, re-wrap into the target wrapper
+        // class. `&self` receiver (not `PyRefMut`) because we never
+        // actually consume `self` at the PyO3 layer — the `Arc` clone is
+        // cheap.
+        (IrAsync::No, IrReceiver::Owned) if m.clone_self => {
+            let target_ty = owned_self_target_ty(type_name, &m.returns.ty);
+            writeln!(
+                out,
+                "    fn {name}(&self{params}) -> PyResult<{target_ty}> {{",
+                name = m.name,
+                params = format_params(&m.params, /* leading_comma */ true),
+                target_ty = target_ty
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        let out = self.inner.as_ref().clone().{name}({call_args});",
+                name = m.name,
+                call_args = format_call_args(&m.params)
+            )
+            .unwrap();
+            if m.returns.fallible {
+                writeln!(out, "        let out = out.map_err(py_err)?;").unwrap();
+            }
+            writeln!(
+                out,
+                "        Ok({target_ty} {{ inner: Arc::new(out) }})",
+                target_ty = target_ty
+            )
+            .unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
+        // Sync `self`-consuming builder method (RetrievalBuilder chain)
+        // WITHOUT the `clone_self` hint — legacy stub preserved so the
+        // committed Plan 08-01 snapshot stays byte-identical.
+        //
+        // WR-01 fix (Phase 8 code review): return a typed
+        // `PyNotImplementedError` instead of `unimplemented!(...)`.
+        // `unimplemented!` panics — and PyO3 converts Rust panics into
+        // `PanicException`, a `BaseException` subclass that Python's
+        // `except RuntimeError:` / `except LunarisError:` cannot catch.
+        // By returning `Err(PyNotImplementedError::new_err(...))` the
+        // FFI boundary surfaces a proper `NotImplementedError` (a normal
+        // `Exception` subclass), matching the shape of the TS emitter's
+        // `Err(napi::Error::from_reason(...))` path.
         (IrAsync::No, IrReceiver::Owned) => {
             writeln!(
                 out,
@@ -337,8 +463,107 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
             .unwrap();
             writeln!(out, "    }}").unwrap();
         }
-        // Unhandled shapes (MutSelf / async Owned) — defensive stub. The v0.1.1
-        // 15-item surface does not exercise either.
+        // Plan 11-02a — async owned-self with `clone_self = true`. Used by
+        // DocumentKnowledgeBase::search et al. when the Rust signature is
+        // `async fn search(self, query: &str) -> Result<Vec<Hit>>`. Clone
+        // the inner Arc BEFORE the async move (PyO3 GIL invariant:
+        // future_into_py owns every `.await`), then call & wrap. Non-clone
+        // async-owned falls through to the `_ =>` stub below.
+        (IrAsync::Yes, IrReceiver::Owned) if m.clone_self => {
+            let target_ty = owned_self_target_ty(type_name, &m.returns.ty);
+            writeln!(
+                out,
+                "    fn {name}<'py>(&self, py: Python<'py>{params}) -> PyResult<Bound<'py, PyAny>> {{",
+                name = m.name,
+                params = format_params(&m.params, /* leading_comma */ true)
+            )
+            .unwrap();
+            writeln!(out, "        let cloned = self.inner.as_ref().clone();").unwrap();
+            // Pre-depythonize params for Send-safety (same rationale as
+            // the async ref_self arm).
+            let mut owned_names: Vec<String> = Vec::with_capacity(m.params.len());
+            for p in &m.params {
+                let owned_name = format!("{}_owned", p.name);
+                match &p.ty {
+                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param})?;",
+                            owned_name = owned_name,
+                            ty = rust_owned_ty(&p.ty),
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    IrTyRef::Handle { name: handle_name } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::std::sync::Arc<::lunaris::{handle_name}> = {param}.inner.clone();",
+                            owned_name = owned_name,
+                            handle_name = handle_name,
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    _ => owned_names.push(p.name.clone()),
+                }
+            }
+            writeln!(out, "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{")
+                .unwrap();
+            let call_args = m
+                .params
+                .iter()
+                .zip(owned_names.iter())
+                .map(|(p, owned)| match &p.ty {
+                    IrTyRef::Str => format!("&{}", owned),
+                    _ => owned.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if m.returns.fallible {
+                writeln!(
+                    out,
+                    "            let out = cloned.{name}({call_args}).await.map_err(py_err)?;",
+                    name = m.name
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "            let out = cloned.{name}({call_args}).await;",
+                    name = m.name
+                )
+                .unwrap();
+            }
+            // Return-shape — async-owned + clone_self + RefSelf/Named
+            // produces a wrapper-class construction; other shapes fall
+            // back to pythonize (matches the async-ref_self pattern).
+            match &m.returns.ty {
+                IrTyRef::RefSelf | IrTyRef::Named { .. } => {
+                    writeln!(
+                        out,
+                        "            Ok({target_ty} {{ inner: Arc::new(out) }})",
+                        target_ty = target_ty
+                    )
+                    .unwrap();
+                }
+                _ => {
+                    writeln!(
+                        out,
+                        "            {ret}",
+                        ret = py_return_expr(&m.returns.ty)
+                    )
+                    .unwrap();
+                }
+            }
+            writeln!(out, "        }})").unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
+        // Unhandled shapes (MutSelf / async Owned without clone_self) —
+        // defensive stub. The v0.1.1 15-item surface does not exercise
+        // either.
         _ => {
             writeln!(
                 out,
@@ -349,6 +574,21 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
         }
     }
     out.push('\n');
+}
+
+/// Plan 11-02a D6(b) — resolve the target wrapper class name for a
+/// clone-and-rewrap owned-self body.
+/// - `IrTyRef::RefSelf` — chainable builder returns its own `Py{Self}`.
+/// - `IrTyRef::Named { name }` — returns `Py{name}` (e.g.
+///   `.channel() -> SlackArchiveQuery` lands as `PySlackArchiveQuery`).
+/// - Anything else — fall back to `Py{type_name}` (safe default; legacy
+///   wrappers only ever exercise RefSelf).
+fn owned_self_target_ty(type_name: &str, ret_ty: &IrTyRef) -> String {
+    match ret_ty {
+        IrTyRef::RefSelf => format!("Py{type_name}"),
+        IrTyRef::Named { name } => format!("Py{name}"),
+        _ => format!("Py{type_name}"),
+    }
 }
 
 fn format_params(params: &[IrParam], leading_comma: bool) -> String {

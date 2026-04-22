@@ -14,6 +14,23 @@
 //! for the real `crates/lunaris-{py,ts}/src/generated.rs` files; that
 //! additive change will adjust [`codegen_managed_paths`] without touching
 //! the conformance-exclusion contract.
+//!
+//! # Plan 11-02a D1(c) — per-module `register_generated_{suffix}` scheme
+//!
+//! Multi-module surfaces (Plan 11-02b's
+//! `[[module]] name = "lunaris_recipes.conversational"` etc.) collapse
+//! into the SAME snapshot files — one `generated_py.rs` / `generated_ts.rs`
+//! / `generated_ts.d.ts`. Each IR module produces a side-by-side
+//! `register_generated_{sanitized}` fn in the Py file. The parity-walker
+//! stays at exactly 3 managed paths — no per-module file split. Host
+//! crates (`lunaris-py`, `lunaris-ts`) wire each fn against its own
+//! `PyModule::new_bound(py, "{module}")` / napi-rs submodule; that is
+//! Plan 11-02b's concern.
+//!
+//! For the current revision-1 single-`lunaris`-module TOML, the emitter
+//! stays in legacy mode (one `register_generated` fn, no suffix) so the
+//! committed Plan 08-01 snapshot is byte-identical. Adding a second
+//! `[[module]]` flips the emitter into per-module mode.
 
 use std::path::{Path, PathBuf};
 
