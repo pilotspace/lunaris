@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "module": [
+    {
+      "name": "lunaris",
+      "type": [
+        {
+          "name": "Lunaris",
+          "kind": "opaque",
+          "source_file": "crates/lunaris/src/handle.rs",
+          "doc": "High-level memory-engine handle. Opens a storage backend by URL and drives ingest, recall, forget, and snapshot.",
+          "methods": [
+            {
+              "name": "open",
+              "is_async": "yes",
+              "receiver": "none",
+              "params": [
+                {
+                  "name": "url",
+                  "ty": {
+                    "kind": "str"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": true
+              },
+              "doc": "Production constructor. Routes `url` through the scheme dispatcher to pick a StoragePort backend."
+            },
+            {
+              "name": "ingest",
+              "is_async": "yes",
+              "receiver": "ref_self",
+              "params": [
+                {
+                  "name": "episode",
+                  "ty": {
+                    "kind": "json"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "named",
+                  "name": "Lsn"
+                },
+                "fallible": true
+              },
+              "doc": "Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON)."
+            },
+            {
+              "name": "recall",
+              "is_async": "no",
+              "receiver": "ref_self",
+              "params": [],
+              "returns": {
+                "ty": {
+                  "kind": "named",
+                  "name": "RetrievalBuilder"
+                },
+                "fallible": false
+              },
+              "doc": "Build a RetrievalBuilder bound to this handle's storage / keyword / embedder / clock."
+            },
+            {
+              "name": "forget",
+              "is_async": "yes",
+              "receiver": "ref_self",
+              "params": [
+                {
+                  "name": "req",
+                  "ty": {
+                    "kind": "json"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "named",
+                  "name": "ForgetReceipt"
+                },
+                "fallible": true
+              },
+              "doc": "Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token."
+            },
+            {
+              "name": "snapshot",
+              "is_async": "yes",
+              "receiver": "ref_self",
+              "params": [],
+              "returns": {
+                "ty": {
+                  "kind": "named",
+                  "name": "Lsn"
+                },
+                "fallible": true
+              },
+              "doc": "Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[])."
+            }
+          ]
+        },
+        {
+          "name": "Vector",
+          "kind": "builder",
+          "source_file": "crates/lunaris-retrieve/src/operators/vector.rs",
+          "doc": "Vector-search DSL operator; root-level constructor for kNN retrieval.",
+          "methods": [
+            {
+              "name": "new",
+              "is_async": "no",
+              "receiver": "none",
+              "params": [
+                {
+                  "name": "index",
+                  "ty": {
+                    "kind": "str"
+                  }
+                },
+                {
+                  "name": "k",
+                  "ty": {
+                    "kind": "usize"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Construct a Vector retriever over `index` with top-k fan-out."
+            }
+          ]
+        },
+        {
+          "name": "Keyword",
+          "kind": "builder",
+          "source_file": "crates/lunaris-retrieve/src/operators/keyword.rs",
+          "doc": "Keyword / BM25 DSL operator; root-level constructor for lexical retrieval.",
+          "methods": [
+            {
+              "name": "bm25",
+              "is_async": "no",
+              "receiver": "none",
+              "params": [
+                {
+                  "name": "index",
+                  "ty": {
+                    "kind": "str"
+                  }
+                },
+                {
+                  "name": "k",
+                  "ty": {
+                    "kind": "usize"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Construct a BM25 keyword retriever over `index` with top-k fan-out."
+            }
+          ]
+        },
+        {
+          "name": "Graph",
+          "kind": "builder",
+          "source_file": "crates/lunaris-retrieve/src/operators/graph.rs",
+          "doc": "Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops.",
+          "methods": [
+            {
+              "name": "anchored",
+              "is_async": "no",
+              "receiver": "none",
+              "params": [
+                {
+                  "name": "entity_ids",
+                  "ty": {
+                    "kind": "vec",
+                    "inner": {
+                      "kind": "named",
+                      "name": "EntityId"
+                    }
+                  }
+                },
+                {
+                  "name": "hops",
+                  "ty": {
+                    "kind": "usize"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph."
+            }
+          ]
+        },
+        {
+          "name": "RetrievalBuilder",
+          "kind": "builder",
+          "source_file": "crates/lunaris-retrieve/src/builder.rs",
+          "doc": "Chainable retrieval plan builder. Terminal .execute() runs the plan through the hydrate stage.",
+          "methods": [
+            {
+              "name": "and",
+              "is_async": "no",
+              "receiver": "owned",
+              "params": [
+                {
+                  "name": "other",
+                  "ty": {
+                    "kind": "named",
+                    "name": "RetrievalBuilder"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Compose `other` in parallel with the current plan; unions the result set."
+            },
+            {
+              "name": "fuse_rrf",
+              "is_async": "no",
+              "receiver": "owned",
+              "params": [
+                {
+                  "name": "k",
+                  "ty": {
+                    "kind": "usize"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Fuse two parallel branches via reciprocal-rank fusion (client-side or Moon-native depending on capabilities)."
+            },
+            {
+              "name": "top",
+              "is_async": "no",
+              "receiver": "owned",
+              "params": [
+                {
+                  "name": "n",
+                  "ty": {
+                    "kind": "usize"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Keep only the top `n` hits after fusion."
+            },
+            {
+              "name": "filter",
+              "is_async": "no",
+              "receiver": "owned",
+              "params": [
+                {
+                  "name": "pred",
+                  "ty": {
+                    "kind": "str"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": true
+              },
+              "doc": "Attach a filter predicate (parsed via filter_str) to the query; fails on a malformed predicate string."
+            },
+            {
+              "name": "as_of",
+              "is_async": "no",
+              "receiver": "owned",
+              "params": [
+                {
+                  "name": "hlc",
+                  "ty": {
+                    "kind": "named",
+                    "name": "Hlc"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "ref_self"
+                },
+                "fallible": false
+              },
+              "doc": "Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read)."
+            }
+          ]
+        },
+        {
+          "name": "GraphPipelineHandle",
+          "kind": "opaque",
+          "source_file": "crates/lunaris/src/graph_pipeline.rs",
+          "doc": "Runtime toggle for the graph-extraction pipeline (default OFF per blueprint §5.2). The toggle method is the canonical single-item entry in the binding surface.",
+          "methods": [
+            {
+              "name": "toggle",
+              "is_async": "no",
+              "receiver": "ref_self",
+              "params": [
+                {
+                  "name": "on",
+                  "ty": {
+                    "kind": "bool"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "unit"
+                },
+                "fallible": false
+              },
+              "doc": "Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12)."
+            }
+          ]
+        },
+        {
+          "name": "ConsolidatorPipelineHandle",
+          "kind": "opaque",
+          "source_file": "crates/lunaris/src/consolidator_pipeline.rs",
+          "doc": "Runtime toggle for the ACT-R consolidator worker (default OFF per blueprint §5.1). Mirrors GraphPipelineHandle's single-item toggle surface.",
+          "methods": [
+            {
+              "name": "toggle",
+              "is_async": "no",
+              "receiver": "ref_self",
+              "params": [
+                {
+                  "name": "on",
+                  "ty": {
+                    "kind": "bool"
+                  }
+                }
+              ],
+              "returns": {
+                "ty": {
+                  "kind": "unit"
+                },
+                "fallible": false
+              },
+              "doc": "Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12)."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -49,6 +49,7 @@ Thumbs.db
 .ruff_cache/
 .cargo/
 .rustup/
+.claude/
 
 # --- Local env / secrets ---
 .env

@@ -8,6 +8,10 @@ members = [
   "crates/lunaris",
   "crates/lunaris-bench",
   "crates/lunaris-conformance",
+  # Plan 08-01: lunaris-codegen sits next to lunaris-conformance per the plan's
+  # explicit workspace-grouping rule — both are metadata/plumbing crates; placing
+  # them adjacent (rather than alphabetising) keeps the mental model coherent.
+  "crates/lunaris-codegen",
   "crates/lunaris-consolidate",
   "crates/lunaris-embed",
   "crates/lunaris-extract",
@@ -117,6 +121,19 @@ hf-hub             = { version = "0.4", default-features = false, features = ["t
 # an unsafe wrapper crate (Plan 04-03 set the precedent: nix wraps unsafe;
 # mach2 has no equivalent safe wrapper as of 0.4).
 procfs             = { version = "0.18", default-features = false }
+# Phase 8 Plan 08-01 — lunaris-codegen single-source surface pipeline.
+# `syn` parses the optional annotated-Rust surface (kept for future extraction
+# modes); `toml` parses the primary `annotations/surface.toml` declarative file;
+# `prettyplease` pretty-prints emitter-side Rust token streams; `similar`
+# renders unified diffs for `--check` drift output; `insta` drives the
+# snapshot-based tests in `tests/emitter_shape.rs`.
+syn            = { version = "2", features = ["full", "extra-traits", "visit"] }
+quote          = "1"
+proc-macro2    = "1"
+prettyplease   = "0.2"
+toml           = "0.8"
+insta          = { version = "1", features = ["json"] }
+similar        = "2"
 
 [profile.dev]
 opt-level = 0
