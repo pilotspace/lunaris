@@ -283,3 +283,60 @@ fn check_budget_postgres_over_2x_soft_fails_only() {
     // 250ms vs 100ms budget = 2.5× → > 2× → eprintln + continue. NO panic.
     check_budget("PG_URL", "ingest_p50", 250.0, 100.0);
 }
+
+// ---------------------------------------------------------------------------
+// Plan 12-01 Task 2 — v2 delegation cross-crate surface guard + live round-trip
+// ---------------------------------------------------------------------------
+
+/// Cross-crate cross-check for the HELIOS-01 ≤ 50-LOC public-surface contract.
+///
+/// Mirrors the in-lib `helios_scratchpad_public_surface_under_50_loc` sentinel
+/// but counts from OUTSIDE the `lunaris` crate, via `include_str!` on the
+/// source file. If the lib-side sentinel ever drifts, this default-mode test
+/// catches it in the integration-test lane where downstream Helios actually
+/// consumes the type.
+#[test]
+fn helios_scratchpad_v2_surface_matches_v1_exactly() {
+    let src = include_str!("../src/recipes/helios_scratchpad.rs");
+    let production = src.split("#[cfg(test)]").next().unwrap_or(src);
+    let pub_fns = production.matches("    pub fn ").count()
+        + production.matches("    pub async fn ").count();
+    assert_eq!(
+        pub_fns, 9,
+        "HELIOS-01 cross-crate sentinel: expected exactly 9 public methods \
+         (8 on HeliosScratchpad + AsOfScratchpad::read); got {pub_fns}. \
+         Any drift here vs the in-lib sentinel is a contract violation."
+    );
+}
+
+/// Plan 12-01 Task 2 — delegation round-trip. Proves the `Value::String`
+/// wrap (on `HeliosScratchpad::write`) and unwrap (on `HeliosScratchpad::read`)
+/// paths route through `WorkingMemory` cleanly on both backends.
+///
+/// `#[ignore]`-gated behind `MOON_URL` / `PG_URL` TCP probes in the same way
+/// as the 10K-turn chat test above — default `cargo test` skips this.
+#[tokio::test]
+#[ignore = "requires MOON_URL or PG_URL env vars"]
+async fn helios_scratchpad_v2_delegation_round_trip() -> anyhow::Result<()> {
+    for url_env in ["MOON_URL", "PG_URL"] {
+        let Some(url) = probe_backend(url_env) else {
+            continue;
+        };
+        eprintln!("\n=== v2 delegation round-trip: {url_env} ({url}) ===");
+        let lunaris = Arc::new(Lunaris::open(&url).await?);
+        let session_id = format!("smoke-v2-rt-{}", ulid::Ulid::new());
+        let pad = HeliosScratchpad::new(lunaris.clone(), &session_id);
+
+        pad.write("note.md", "hello v2").await?;
+        let round_trip = pad.read("note.md").await?;
+        assert_eq!(
+            round_trip.as_deref(),
+            Some("hello v2"),
+            "{url_env}: v2 write→read round-trip lost or reshaped the payload"
+        );
+
+        // Per-tenant cleanup — same pattern as helios_chat_10k_turns_dual_backend.
+        let _ = pad.forget().await?;
+    }
+    Ok(())
+}
