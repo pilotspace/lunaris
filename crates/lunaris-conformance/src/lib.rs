@@ -25,5 +25,16 @@ pub mod fixtures;
 pub mod protocol;
 pub mod storage;
 
+// Plan 08-04 (revision iteration 2) — per-driver backend parity module.
+// Gated behind the `bindings-it` feature so default `cargo test --workspace`
+// does not compile the parity-test surface. Consumers:
+//   - `tests/run_bindings_backend_parity.rs` — Rust-driver integration test.
+//   - `crates/lunaris-py/tests/test_backend_parity.py` — Python-driver test.
+//   - `crates/lunaris-ts/__test__/backend_parity.spec.mts` — TS-driver test.
+// All three compare their own rows against the committed golden reference
+// at `fixtures/golden/bindings_fixture.json` — NOT against each other.
+#[cfg(feature = "bindings-it")]
+pub mod bindings;
+
 pub use protocol::run_full_protocol_suite;
 pub use storage::run_full_storage_suite;

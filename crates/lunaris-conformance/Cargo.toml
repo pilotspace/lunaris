@@ -57,3 +57,13 @@ default = []
 # unset) the proptest body short-circuits to Ok(()) per the Plan 02-04
 # two-tier skip discipline so the gated invocation still exits 0.
 chaos-it = []
+# Plan 08-04 (revision iteration 2) — per-driver backend parity.
+# Gates the `bindings/` module (golden-reference loader + NormalizedRows
+# + assert_structural_eq + run_rust_driver_backend_parity) behind a feature
+# so default `cargo test --workspace` does not pull in the per-driver parity
+# test. Does NOT chain `lunaris/bindings-it` or `lunaris-embed/mock-embedder`
+# — the golden reference compares structural shape, not byte-identical
+# embeddings, so no determinism seam is required. The `base64` dep is NOT
+# needed for revision 2 (no byte-exact assertion) so we intentionally omit
+# `dep:base64` here.
+bindings-it = []
