@@ -1,10 +1,14 @@
-//! Phase 9 Plan 09-05 PRIM-05 — TemporalQuery Moon + Postgres parity test.
+//! Phase 9 Plan 09-05 PRIM-05 + Phase 9.1 Plan 09.1-03 PRIM-03 — TemporalQuery
+//! Moon + Postgres parity test.
 //!
-//! AS_OF-only parity coverage per the 2026-04-22 scope-reduction split. The
-//! `.before` / `.after` / `.between` operators record into `TemporalBounds`
-//! but do NOT flow to the backend in Phase 9 (see Plan 09-04 revision note
-//! plus the module-level rustdoc on the TemporalQuery source file); their
-//! backend wiring plus parity coverage moves to Phase 9.1 Plan 09.1-03.
+//! Phase 9 landed AS_OF-only parity coverage under the 2026-04-22
+//! scope-reduction split. Phase 9.1 Plan 09.1-02 wired
+//! `Filter::ValidTimeRange` end-to-end on Moon (`@valid_time:[lo hi]` over a
+//! `SchemaField::Numeric("valid_time")` chunks index) + Postgres
+//! (`valid_from >= 'rfc' AND valid_from < 'rfc'`), and Plan 09.1-03 (this
+//! file, current wave) extends the parity harness to assert Moon == Postgres
+//! hit-set parity on `.before / .after / .between` on BOTH `Messages` +
+//! `Documents` source markers.
 //!
 //! Feature-gated behind `moon-it` + `pg-it`. Default `cargo test -p lunaris-recipes`
 //! executes 0 parity tests. With features + env vars + reachable TCP the
@@ -15,15 +19,33 @@
 //! are skipped — "latest" queries are the MessageStream parity test's
 //! concern, not TemporalQuery's point-in-time surface.
 //!
-//! ## Semantic caveat (Phase 9 structural scope)
+//! After the AS_OF loop, three additional range-axis cases run once each
+//! (Messages + Documents markers) against a fixed timestamp split drawn
+//! from the FixtureCorpus episode range (wall_ms 1_000_000..=1_009_000):
+//! `.before(1_005_000)`, `.after(1_002_000)`, `.between(1_002_000,
+//! 1_007_000)`. Divergences append into the same `Vec<String>` and surface
+//! at `anyhow::bail!` end-of-test.
+//!
+//! ## Regression guard (presence, replacing the Phase 9 absence guard)
+//!
+//! Plan 09-05 established an absence guard on `.before(/.after(/.between(`
+//! in this file (the operators accumulated into `TemporalBounds` but did
+//! not reach the backend). Plan 09.1-02 landed the backend wiring, so the
+//! absence guard is INVERTED to a presence guard enforced at CI grep-time:
+//! each of `.before(`, `.after(`, `.between(` MUST appear at least once
+//! here.
+//!
+//! ## Semantic caveat (Phase 9 structural scope, still applicable)
 //!
 //! `FixtureCorpus::ingest_into` writes raw `WriteOp::KvPut` per episode into
 //! the episode-KV key space. It does NOT populate the `"chunks"` Vector /
 //! Keyword index that `TemporalQuery::execute` fuses over via
-//! `RetrievalBuilder::recall().as_of(ts).execute(...)`. On a dev machine
-//! with live backends the parity run observes `0 == 0` hit-count parity —
-//! a trivial-but-valid pass. Structural PRIM-05 is satisfied; semantic
-//! deepening lands in Phase 9.1 Plan 09.1-03 or a later v0.1.2 task.
+//! `RetrievalBuilder::recall()...execute(...)`. On a dev machine with live
+//! backends the parity run observes `0 == 0` hit-count parity on both the
+//! AS_OF loop and the new `.before/.after/.between` cases — a trivial-but
+//! -valid pass that still asserts Moon and Postgres agree byte-for-byte on
+//! the empty-result shape. Deeper semantic parity via `Lunaris::ingest` in
+//! the fixture seed is deferred to v0.1.2 per 09.1-CONTEXT.md line 22.
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
@@ -82,14 +104,14 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
 #[cfg(all(feature = "moon-it", feature = "pg-it"))]
 #[tokio::test]
 async fn temporal_query_moon_postgres_parity() -> anyhow::Result<()> {
-    // Phase 9 scope: .as_of parity ONLY. The .before / .after / .between
-    // operators accumulate into TemporalBounds (see Plan 09-04) but do
-    // not reach the backend in Phase 9 — Phase 9.1 Plan 09.1-02 adds
-    // Filter::ValidTimeRange and Phase 9.1 Plan 09.1-03 extends this
-    // harness. DO NOT add .before / .after / .between assertions here;
-    // they would pass vacuously and lock in a ghost-method test.
+    // Phase 9 scope landed .as_of parity. Phase 9.1 Plan 09.1-02 wired
+    // Filter::ValidTimeRange on Moon + Postgres; Plan 09.1-03 (this wave)
+    // extends this harness with .before / .after / .between parity on
+    // BOTH Messages + Documents markers — every bound flows live through
+    // RetrievalBuilder::execute against real indexed fields.
     use lunaris::Lunaris;
     use lunaris_conformance::fixtures::FixtureCorpus;
+    use lunaris_core::hlc::Hlc;
     use lunaris_recipes::{Documents, Messages, TemporalQuery};
 
     let moon_url = match probe_backend("MOON_URL", std::env::var("MOON_URL").ok()) {
@@ -168,9 +190,161 @@ async fn temporal_query_moon_postgres_parity() -> anyhow::Result<()> {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Phase 9.1 Plan 09.1-03 — .before / .after / .between range parity.
+    //
+    // FixtureCorpus episodes span wall_ms 1_000_000..=1_009_000 (see
+    // lunaris-conformance::fixtures::build_ten_episodes). The range-axis
+    // probe uses a fixed query string ("alpha") drawn from query_set;
+    // splits partition the corpus cleanly. Both backends go through
+    // Filter::ValidTimeRange (Plan 09.1-02) — Moon emits
+    // `@valid_time:[lo hi]` against the chunks FT numeric field; Postgres
+    // emits `valid_from >= 'rfc' AND valid_from < 'rfc'`.
+    // -----------------------------------------------------------------
+    let probe_query = "alpha";
+    let before_ts = Hlc { wall_ms: 1_005_000, counter: 0, node_id: 0 };
+    let after_ts = Hlc { wall_ms: 1_002_000, counter: 0, node_id: 0 };
+    let between_lo = Hlc { wall_ms: 1_002_000, counter: 0, node_id: 0 };
+    let between_hi = Hlc { wall_ms: 1_007_000, counter: 0, node_id: 0 };
+
+    // --- .before(ts) parity — Messages + Documents ---
+    {
+        let moon_msg = TemporalQuery::<Messages>::new(moon.clone())
+            .before(before_ts)
+            .execute(probe_query)
+            .await?;
+        let pg_msg = TemporalQuery::<Messages>::new(postgres.clone())
+            .before(before_ts)
+            .execute(probe_query)
+            .await?;
+        if moon_msg.len() != pg_msg.len() {
+            divergences.push(format!(
+                "messages .before({before_ts:?}) hit_count moon={} postgres={}",
+                moon_msg.len(),
+                pg_msg.len()
+            ));
+        } else {
+            for (i, (m, p)) in moon_msg.iter().zip(pg_msg.iter()).enumerate() {
+                if m.id != p.id {
+                    divergences.push(format!(
+                        "messages .before({before_ts:?}) position {i}: id moon={:?} postgres={:?}",
+                        m.id, p.id
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let moon_doc = TemporalQuery::<Documents>::new(moon.clone())
+            .before(before_ts)
+            .execute(probe_query)
+            .await?;
+        let pg_doc = TemporalQuery::<Documents>::new(postgres.clone())
+            .before(before_ts)
+            .execute(probe_query)
+            .await?;
+        if moon_doc.len() != pg_doc.len() {
+            divergences.push(format!(
+                "documents .before({before_ts:?}) hit_count moon={} postgres={}",
+                moon_doc.len(),
+                pg_doc.len()
+            ));
+        }
+    }
+
+    // --- .after(ts) parity — Messages + Documents ---
+    {
+        let moon_msg = TemporalQuery::<Messages>::new(moon.clone())
+            .after(after_ts)
+            .execute(probe_query)
+            .await?;
+        let pg_msg = TemporalQuery::<Messages>::new(postgres.clone())
+            .after(after_ts)
+            .execute(probe_query)
+            .await?;
+        if moon_msg.len() != pg_msg.len() {
+            divergences.push(format!(
+                "messages .after({after_ts:?}) hit_count moon={} postgres={}",
+                moon_msg.len(),
+                pg_msg.len()
+            ));
+        } else {
+            for (i, (m, p)) in moon_msg.iter().zip(pg_msg.iter()).enumerate() {
+                if m.id != p.id {
+                    divergences.push(format!(
+                        "messages .after({after_ts:?}) position {i}: id moon={:?} postgres={:?}",
+                        m.id, p.id
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let moon_doc = TemporalQuery::<Documents>::new(moon.clone())
+            .after(after_ts)
+            .execute(probe_query)
+            .await?;
+        let pg_doc = TemporalQuery::<Documents>::new(postgres.clone())
+            .after(after_ts)
+            .execute(probe_query)
+            .await?;
+        if moon_doc.len() != pg_doc.len() {
+            divergences.push(format!(
+                "documents .after({after_ts:?}) hit_count moon={} postgres={}",
+                moon_doc.len(),
+                pg_doc.len()
+            ));
+        }
+    }
+
+    // --- .between(a, b) parity — Messages + Documents ---
+    {
+        let moon_msg = TemporalQuery::<Messages>::new(moon.clone())
+            .between(between_lo, between_hi)
+            .execute(probe_query)
+            .await?;
+        let pg_msg = TemporalQuery::<Messages>::new(postgres.clone())
+            .between(between_lo, between_hi)
+            .execute(probe_query)
+            .await?;
+        if moon_msg.len() != pg_msg.len() {
+            divergences.push(format!(
+                "messages .between({between_lo:?}, {between_hi:?}) hit_count moon={} postgres={}",
+                moon_msg.len(),
+                pg_msg.len()
+            ));
+        } else {
+            for (i, (m, p)) in moon_msg.iter().zip(pg_msg.iter()).enumerate() {
+                if m.id != p.id {
+                    divergences.push(format!(
+                        "messages .between({between_lo:?}, {between_hi:?}) position {i}: id moon={:?} postgres={:?}",
+                        m.id, p.id
+                    ));
+                    break;
+                }
+            }
+        }
+
+        let moon_doc = TemporalQuery::<Documents>::new(moon.clone())
+            .between(between_lo, between_hi)
+            .execute(probe_query)
+            .await?;
+        let pg_doc = TemporalQuery::<Documents>::new(postgres.clone())
+            .between(between_lo, between_hi)
+            .execute(probe_query)
+            .await?;
+        if moon_doc.len() != pg_doc.len() {
+            divergences.push(format!(
+                "documents .between({between_lo:?}, {between_hi:?}) hit_count moon={} postgres={}",
+                moon_doc.len(),
+                pg_doc.len()
+            ));
+        }
+    }
+
     if !divergences.is_empty() {
         anyhow::bail!(
-            "PRIM-05 TemporalQuery parity violations ({} divergences): {:#?}",
+            "PRIM-03/PRIM-05 TemporalQuery parity violations ({} divergences): {:#?}",
             divergences.len(),
             divergences
         );
