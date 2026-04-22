@@ -1,0 +1,152 @@
+[
+  {
+    "id": "2653189cd8207c59",
+    "valid_time_rfc3339": "2025-01-01T00:00:00Z",
+    "text": "event on 2025-01-01: deterministic fixture payload #0"
+  },
+  {
+    "id": "75593d29ca23e2e9",
+    "valid_time_rfc3339": "2025-01-02T00:00:00Z",
+    "text": "event on 2025-01-02: deterministic fixture payload #1"
+  },
+  {
+    "id": "defa8ed051eb4f2b",
+    "valid_time_rfc3339": "2025-01-03T00:00:00Z",
+    "text": "event on 2025-01-03: deterministic fixture payload #2"
+  },
+  {
+    "id": "cf14e689b69265be",
+    "valid_time_rfc3339": "2025-01-04T00:00:00Z",
+    "text": "event on 2025-01-04: deterministic fixture payload #3"
+  },
+  {
+    "id": "3462e5d2a9692f7b",
+    "valid_time_rfc3339": "2025-01-05T00:00:00Z",
+    "text": "event on 2025-01-05: deterministic fixture payload #4"
+  },
+  {
+    "id": "415e0ef62411f2cd",
+    "valid_time_rfc3339": "2025-01-06T00:00:00Z",
+    "text": "event on 2025-01-06: deterministic fixture payload #5"
+  },
+  {
+    "id": "5cad782f8ffb38d2",
+    "valid_time_rfc3339": "2025-01-07T00:00:00Z",
+    "text": "event on 2025-01-07: deterministic fixture payload #6"
+  },
+  {
+    "id": "c111c8d63bafe247",
+    "valid_time_rfc3339": "2025-01-08T00:00:00Z",
+    "text": "event on 2025-01-08: deterministic fixture payload #7"
+  },
+  {
+    "id": "8a8008df8939d428",
+    "valid_time_rfc3339": "2025-01-09T00:00:00Z",
+    "text": "event on 2025-01-09: deterministic fixture payload #8"
+  },
+  {
+    "id": "8f8ddde5670f0e6f",
+    "valid_time_rfc3339": "2025-01-10T00:00:00Z",
+    "text": "event on 2025-01-10: deterministic fixture payload #9"
+  },
+  {
+    "id": "10fd49891883ad04",
+    "valid_time_rfc3339": "2025-01-11T00:00:00Z",
+    "text": "event on 2025-01-11: deterministic fixture payload #10"
+  },
+  {
+    "id": "84da6aef0807d023",
+    "valid_time_rfc3339": "2025-01-12T00:00:00Z",
+    "text": "event on 2025-01-12: deterministic fixture payload #11"
+  },
+  {
+    "id": "455477dc853e2749",
+    "valid_time_rfc3339": "2025-01-13T00:00:00Z",
+    "text": "event on 2025-01-13: deterministic fixture payload #12"
+  },
+  {
+    "id": "a7543b4ec304d7e8",
+    "valid_time_rfc3339": "2025-01-14T00:00:00Z",
+    "text": "event on 2025-01-14: deterministic fixture payload #13"
+  },
+  {
+    "id": "afba85ad5a5c84b5",
+    "valid_time_rfc3339": "2025-01-15T00:00:00Z",
+    "text": "event on 2025-01-15: deterministic fixture payload #14"
+  },
+  {
+    "id": "d8296d564eaaffd1",
+    "valid_time_rfc3339": "2025-01-16T00:00:00Z",
+    "text": "event on 2025-01-16: deterministic fixture payload #15"
+  },
+  {
+    "id": "7192a019bd513968",
+    "valid_time_rfc3339": "2025-01-17T00:00:00Z",
+    "text": "event on 2025-01-17: deterministic fixture payload #16"
+  },
+  {
+    "id": "84c6560a7a4569dd",
+    "valid_time_rfc3339": "2025-01-18T00:00:00Z",
+    "text": "event on 2025-01-18: deterministic fixture payload #17"
+  },
+  {
+    "id": "c1369f07406c4650",
+    "valid_time_rfc3339": "2025-01-19T00:00:00Z",
+    "text": "event on 2025-01-19: deterministic fixture payload #18"
+  },
+  {
+    "id": "e5bd12dfb675bb98",
+    "valid_time_rfc3339": "2025-01-20T00:00:00Z",
+    "text": "event on 2025-01-20: deterministic fixture payload #19"
+  },
+  {
+    "id": "e18f868759687610",
+    "valid_time_rfc3339": "2025-01-21T00:00:00Z",
+    "text": "event on 2025-01-21: deterministic fixture payload #20"
+  },
+  {
+    "id": "9f5ad1a74009a950",
+    "valid_time_rfc3339": "2025-01-22T00:00:00Z",
+    "text": "event on 2025-01-22: deterministic fixture payload #21"
+  },
+  {
+    "id": "b7199d11dcd4482e",
+    "valid_time_rfc3339": "2025-01-23T00:00:00Z",
+    "text": "event on 2025-01-23: deterministic fixture payload #22"
+  },
+  {
+    "id": "a1ff5a275fc21208",
+    "valid_time_rfc3339": "2025-01-24T00:00:00Z",
+    "text": "event on 2025-01-24: deterministic fixture payload #23"
+  },
+  {
+    "id": "ece15942d3eb5aae",
+    "valid_time_rfc3339": "2025-01-25T00:00:00Z",
+    "text": "event on 2025-01-25: deterministic fixture payload #24"
+  },
+  {
+    "id": "340eff3d69ee9b6c",
+    "valid_time_rfc3339": "2025-01-26T00:00:00Z",
+    "text": "event on 2025-01-26: deterministic fixture payload #25"
+  },
+  {
+    "id": "a3ce37fb7f0444dd",
+    "valid_time_rfc3339": "2025-01-27T00:00:00Z",
+    "text": "event on 2025-01-27: deterministic fixture payload #26"
+  },
+  {
+    "id": "1cb838ff6e13daca",
+    "valid_time_rfc3339": "2025-01-28T00:00:00Z",
+    "text": "event on 2025-01-28: deterministic fixture payload #27"
+  },
+  {
+    "id": "40e4be621f9322c6",
+    "valid_time_rfc3339": "2025-01-29T00:00:00Z",
+    "text": "event on 2025-01-29: deterministic fixture payload #28"
+  },
+  {
+    "id": "120da8333e325072",
+    "valid_time_rfc3339": "2025-01-30T00:00:00Z",
+    "text": "event on 2025-01-30: deterministic fixture payload #29"
+  }
+]

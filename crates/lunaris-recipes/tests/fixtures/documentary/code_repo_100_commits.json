@@ -1,0 +1,502 @@
+[
+  {
+    "sha": "2e1275a84e75367742f25f664794cf2280f8b6ee",
+    "committer_date_rfc3339": "2025-01-01T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 1 }"
+  },
+  {
+    "sha": "93737acdb524059056353478cc89829954e95286",
+    "committer_date_rfc3339": "2025-01-02T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 2 }"
+  },
+  {
+    "sha": "5fe1399a46c0d48ef949048766fa928f9aa20f88",
+    "committer_date_rfc3339": "2025-01-03T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 3 }"
+  },
+  {
+    "sha": "2ff5f680e266d24c91075c251178942e3041414b",
+    "committer_date_rfc3339": "2025-01-04T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 4 }"
+  },
+  {
+    "sha": "8c0c178668ec342f62b66d53f8ba3baaedde3e7c",
+    "committer_date_rfc3339": "2025-01-05T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 5 }"
+  },
+  {
+    "sha": "d779cdbfbc7c5b3e97ed0be79191ecb71b01aeb9",
+    "committer_date_rfc3339": "2025-01-06T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 6 }"
+  },
+  {
+    "sha": "10ed7d01699db06087bbd64a269f8b3ddfcb470b",
+    "committer_date_rfc3339": "2025-01-07T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 7 }"
+  },
+  {
+    "sha": "ab0407a975b4911d720c5a15544500dc3e10d2dd",
+    "committer_date_rfc3339": "2025-01-08T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 8 }"
+  },
+  {
+    "sha": "2aeeea1b8c3f6be334879a560fa51cd46e417579",
+    "committer_date_rfc3339": "2025-01-09T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 9 }"
+  },
+  {
+    "sha": "a328ff367557e11604c16fb37c453099e118bb50",
+    "committer_date_rfc3339": "2025-01-10T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 10 }"
+  },
+  {
+    "sha": "226a9ccb593c0f69126cdaaa22b4b23aaddc7406",
+    "committer_date_rfc3339": "2025-01-11T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 11 }"
+  },
+  {
+    "sha": "5826f1c72fd85006f897cef64857d8b423ce0167",
+    "committer_date_rfc3339": "2025-01-12T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 12 }"
+  },
+  {
+    "sha": "10955b898e9d1ad2a42f1a3ad492045bc3ce3fcb",
+    "committer_date_rfc3339": "2025-01-13T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 13 }"
+  },
+  {
+    "sha": "d1dbaf388679821ff1d53cd5b56035e4ae6705c3",
+    "committer_date_rfc3339": "2025-01-14T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 14 }"
+  },
+  {
+    "sha": "228651767d22bb27c7062b6bf2eea34c0fecceec",
+    "committer_date_rfc3339": "2025-01-15T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 15 }"
+  },
+  {
+    "sha": "04c8d3078c48273fad317b776c8cb3ee036c3418",
+    "committer_date_rfc3339": "2025-01-16T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 16 }"
+  },
+  {
+    "sha": "52beabb0cb75d41dc182370b5263fa09e5b6d5eb",
+    "committer_date_rfc3339": "2025-01-17T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 17 }"
+  },
+  {
+    "sha": "05871f806576f2fc72c7a059704aeb8250e08079",
+    "committer_date_rfc3339": "2025-01-18T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 18 }"
+  },
+  {
+    "sha": "2780a1a0a11ed395a7d1400735b1d1a61736b76a",
+    "committer_date_rfc3339": "2025-01-19T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 19 }"
+  },
+  {
+    "sha": "489066ac49279b859ba37f24c0ef46d576cd711d",
+    "committer_date_rfc3339": "2025-01-20T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 20 }"
+  },
+  {
+    "sha": "4234c2b458e76153708654432f4f76ea48e59e0b",
+    "committer_date_rfc3339": "2025-01-21T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 21 }"
+  },
+  {
+    "sha": "c2ac14c325ce1755b87cae4d8efb9d47944e1259",
+    "committer_date_rfc3339": "2025-01-22T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 22 }"
+  },
+  {
+    "sha": "7ab7d6e3e0b7f2dcaf546e68fc64e857f1fd1b5a",
+    "committer_date_rfc3339": "2025-01-23T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 23 }"
+  },
+  {
+    "sha": "22cfae541fb64a42d33ec22ef570bef0166d62d6",
+    "committer_date_rfc3339": "2025-01-24T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 24 }"
+  },
+  {
+    "sha": "c91fbd7978e927498961b695b913211d98acce6a",
+    "committer_date_rfc3339": "2025-01-25T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 25 }"
+  },
+  {
+    "sha": "fe6547b03f3ab3ca81d3b19d703e398f1bb51c75",
+    "committer_date_rfc3339": "2025-01-26T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 26 }"
+  },
+  {
+    "sha": "cbb84e3b2956857a74342a7d64f5ce7f24ef02f4",
+    "committer_date_rfc3339": "2025-01-27T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 27 }"
+  },
+  {
+    "sha": "353e50a93c901fbbaf35846891a9c31b420adbd8",
+    "committer_date_rfc3339": "2025-01-28T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 28 }"
+  },
+  {
+    "sha": "682f4d418831002fa6003a575507f9a0d30fd0e5",
+    "committer_date_rfc3339": "2025-01-29T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 29 }"
+  },
+  {
+    "sha": "0cd873b2c847884d16827db4c3801f0acc3b9075",
+    "committer_date_rfc3339": "2025-01-30T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 30 }"
+  },
+  {
+    "sha": "5c0a3c2dc72efbb079815aa16cd715691cf14c52",
+    "committer_date_rfc3339": "2025-01-31T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 31 }"
+  },
+  {
+    "sha": "3a30a1aabdc630f4874cedc6043e3a8788670eec",
+    "committer_date_rfc3339": "2025-02-01T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 32 }"
+  },
+  {
+    "sha": "d3aef70304300ca48bc41e77ad7e80d685de05ea",
+    "committer_date_rfc3339": "2025-02-02T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 33 }"
+  },
+  {
+    "sha": "29db9fd929eb97dcbbdfa7e1ba5e1b96b2494c2d",
+    "committer_date_rfc3339": "2025-02-03T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 34 }"
+  },
+  {
+    "sha": "08a55fbffaaebb05608d242eef16eeb0e5b23246",
+    "committer_date_rfc3339": "2025-02-04T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 35 }"
+  },
+  {
+    "sha": "8f3e5d45749619ec0942f1d4ab567861cfd0432d",
+    "committer_date_rfc3339": "2025-02-05T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 36 }"
+  },
+  {
+    "sha": "bbf55ed528ee97362ae92b1f654403bdaa64de92",
+    "committer_date_rfc3339": "2025-02-06T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 37 }"
+  },
+  {
+    "sha": "192333bd67cf594fc5741750a68468ec1b744477",
+    "committer_date_rfc3339": "2025-02-07T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 38 }"
+  },
+  {
+    "sha": "18c856ced26b3ceec5a4b2898f97d0f98a971739",
+    "committer_date_rfc3339": "2025-02-08T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 39 }"
+  },
+  {
+    "sha": "505476680f2900083ad871b4d1bb65980bd574bb",
+    "committer_date_rfc3339": "2025-02-09T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 40 }"
+  },
+  {
+    "sha": "99738b7ce9fe00ea827b8707ce36c9509453674c",
+    "committer_date_rfc3339": "2025-02-10T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 41 }"
+  },
+  {
+    "sha": "de0a4c28f5f4065528738023e8e556dbb1fdade5",
+    "committer_date_rfc3339": "2025-02-11T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 42 }"
+  },
+  {
+    "sha": "8beb1ff3fede40eb1915493e3e8942e8b97fafca",
+    "committer_date_rfc3339": "2025-02-12T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 43 }"
+  },
+  {
+    "sha": "3e2b23611e4ba928b092c350227c23cc6e80ed0f",
+    "committer_date_rfc3339": "2025-02-13T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 44 }"
+  },
+  {
+    "sha": "075e866f30ec2b924086106dac8a09d9bc42113c",
+    "committer_date_rfc3339": "2025-02-14T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 45 }"
+  },
+  {
+    "sha": "ac2d1ad9498811390e31360714bece834b2dfbe4",
+    "committer_date_rfc3339": "2025-02-15T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 46 }"
+  },
+  {
+    "sha": "e127d672fdc0e8d74653972277f70048006bdd50",
+    "committer_date_rfc3339": "2025-02-16T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 47 }"
+  },
+  {
+    "sha": "ddffd6276560d0de948231ad008e670c5b7aaf40",
+    "committer_date_rfc3339": "2025-02-17T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 48 }"
+  },
+  {
+    "sha": "e0c58263e172fef31eebf3121407deadc5f1b452",
+    "committer_date_rfc3339": "2025-02-18T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 49 }"
+  },
+  {
+    "sha": "886ebc781e83bed065e97a7b86037f28a1bf4f3b",
+    "committer_date_rfc3339": "2025-02-19T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 50 }"
+  },
+  {
+    "sha": "f1f6846a20d57fc6491bbb341aa490855e149f54",
+    "committer_date_rfc3339": "2025-02-20T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 51 }"
+  },
+  {
+    "sha": "056c23bae009330703d891b3fc88ad7b65486afb",
+    "committer_date_rfc3339": "2025-02-21T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 52 }"
+  },
+  {
+    "sha": "293f6d6f672344d3564c7c293e2c8a43b36246e4",
+    "committer_date_rfc3339": "2025-02-22T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 53 }"
+  },
+  {
+    "sha": "3c8ca6d77d3c27644b0217749677da153984c062",
+    "committer_date_rfc3339": "2025-02-23T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 54 }"
+  },
+  {
+    "sha": "8598f9fd9696c7a6a6c601d620774743cdec91d4",
+    "committer_date_rfc3339": "2025-02-24T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 55 }"
+  },
+  {
+    "sha": "04808b74ddf46fedb3e4f9ad89f89f3ce3ed5577",
+    "committer_date_rfc3339": "2025-02-25T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 56 }"
+  },
+  {
+    "sha": "156c5ad7cc15acb4f211f9e42d9947646af426bc",
+    "committer_date_rfc3339": "2025-02-26T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 57 }"
+  },
+  {
+    "sha": "055fcb46c0df3c3552eabf1841a1d2246e19eb47",
+    "committer_date_rfc3339": "2025-02-27T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 58 }"
+  },
+  {
+    "sha": "dfc355ceb5472ff013671389cdbbe9f3ab699905",
+    "committer_date_rfc3339": "2025-02-28T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 59 }"
+  },
+  {
+    "sha": "8fab6854d201496f79b49de5898d9024b3deeb0d",
+    "committer_date_rfc3339": "2025-03-01T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 60 }"
+  },
+  {
+    "sha": "0e4ac56cb74582bf46714f5cf3e39c65a5fb300b",
+    "committer_date_rfc3339": "2025-03-02T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 61 }"
+  },
+  {
+    "sha": "aa439a2ab4626e6cd4b4701831298ecf6cac1705",
+    "committer_date_rfc3339": "2025-03-03T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 62 }"
+  },
+  {
+    "sha": "83a3bdb4d1ac32943dc79b6047a31430e84b911f",
+    "committer_date_rfc3339": "2025-03-04T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 63 }"
+  },
+  {
+    "sha": "da97e581fd1c4f25f575b2394cdee7bb7612f524",
+    "committer_date_rfc3339": "2025-03-05T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 64 }"
+  },
+  {
+    "sha": "dccb46436b4d8db104f9025caa8e910fd6cf8317",
+    "committer_date_rfc3339": "2025-03-06T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 65 }"
+  },
+  {
+    "sha": "aae13aa5921a9c9d63818cb3fe0d44427023a3e6",
+    "committer_date_rfc3339": "2025-03-07T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 66 }"
+  },
+  {
+    "sha": "d0ad73638ad6f564f3077bedeaaa8d42953cab02",
+    "committer_date_rfc3339": "2025-03-08T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 67 }"
+  },
+  {
+    "sha": "2bd298a8538092d677c09faf5bea7d5df0105ed0",
+    "committer_date_rfc3339": "2025-03-09T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 68 }"
+  },
+  {
+    "sha": "aa01b2c873883c0d6ffb5aed212a390434b3aca9",
+    "committer_date_rfc3339": "2025-03-10T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 69 }"
+  },
+  {
+    "sha": "7f15ce7174e8fe67da696ead4d2f49cebbeb4cdc",
+    "committer_date_rfc3339": "2025-03-11T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 70 }"
+  },
+  {
+    "sha": "ee203efb33efd852ef2a3e7fc5bd37d44f6daa43",
+    "committer_date_rfc3339": "2025-03-12T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 71 }"
+  },
+  {
+    "sha": "d9b7d60da10aaa95f08c7be652e9bf8e364f4db0",
+    "committer_date_rfc3339": "2025-03-13T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 72 }"
+  },
+  {
+    "sha": "a24cfc6a624bba10a6226d026a51bf70a8edbe9c",
+    "committer_date_rfc3339": "2025-03-14T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 73 }"
+  },
+  {
+    "sha": "bd9b39c6805e1047aa8ee84dbf3f8b9b48bf2bf1",
+    "committer_date_rfc3339": "2025-03-15T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 74 }"
+  },
+  {
+    "sha": "d8a82406868567f9c34ca2441970582693f0aa8a",
+    "committer_date_rfc3339": "2025-03-16T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 75 }"
+  },
+  {
+    "sha": "b3b5673dc304267d74b1ebb78b24a734955efd90",
+    "committer_date_rfc3339": "2025-03-17T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 76 }"
+  },
+  {
+    "sha": "fe159a533f9b020a9fab9c494029fff73e322710",
+    "committer_date_rfc3339": "2025-03-18T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 77 }"
+  },
+  {
+    "sha": "de2fb8dfd1c4a323e66590281ebe3098fe2bc900",
+    "committer_date_rfc3339": "2025-03-19T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 78 }"
+  },
+  {
+    "sha": "a24bb44322508c2c61508604dfae36242a070b58",
+    "committer_date_rfc3339": "2025-03-20T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 79 }"
+  },
+  {
+    "sha": "b127783e8b6b929d86e5731551d72a815dbc6ff1",
+    "committer_date_rfc3339": "2025-03-21T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 80 }"
+  },
+  {
+    "sha": "86780451b9f02cb32459f8e85543a63e51dd1d68",
+    "committer_date_rfc3339": "2025-03-22T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 81 }"
+  },
+  {
+    "sha": "61d6998e612a6c4c77ce86ac2ddd892781dcc421",
+    "committer_date_rfc3339": "2025-03-23T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 82 }"
+  },
+  {
+    "sha": "8d91e154aeedf7a21536dc2d6d46abf66f0e12bb",
+    "committer_date_rfc3339": "2025-03-24T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 83 }"
+  },
+  {
+    "sha": "522703365df578e7bb474fed10f10b48b584f499",
+    "committer_date_rfc3339": "2025-03-25T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 84 }"
+  },
+  {
+    "sha": "8a552227a1769aaac102528e6ac72ce086b9ee6d",
+    "committer_date_rfc3339": "2025-03-26T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 85 }"
+  },
+  {
+    "sha": "f6047e642bf5fa84861f7620bbdd955dbd22d813",
+    "committer_date_rfc3339": "2025-03-27T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 86 }"
+  },
+  {
+    "sha": "d758b1fed2fa8bbecc94363856c12672a184cee7",
+    "committer_date_rfc3339": "2025-03-28T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 87 }"
+  },
+  {
+    "sha": "48e282ed6dfcf066c947097db701ec5481a9a602",
+    "committer_date_rfc3339": "2025-03-29T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 88 }"
+  },
+  {
+    "sha": "3f38274c729b04754123e34db173b6ca182a2e49",
+    "committer_date_rfc3339": "2025-03-30T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 89 }"
+  },
+  {
+    "sha": "7fa9897e02fe064005809c631323cf35e59a9dc7",
+    "committer_date_rfc3339": "2025-03-31T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 90 }"
+  },
+  {
+    "sha": "4d5c9568c2c8570a60fde85bfe5b94d1d11e26ae",
+    "committer_date_rfc3339": "2025-04-01T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 91 }"
+  },
+  {
+    "sha": "dbae1fa24dcb7b59f614b6a110e1ec431e097b1f",
+    "committer_date_rfc3339": "2025-04-02T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 92 }"
+  },
+  {
+    "sha": "5c05c85dd9fe953f7b08149e05f816c17043a6d6",
+    "committer_date_rfc3339": "2025-04-03T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 93 }"
+  },
+  {
+    "sha": "7486e8bcf6150a02d2c5beb917549fe341937329",
+    "committer_date_rfc3339": "2025-04-04T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 94 }"
+  },
+  {
+    "sha": "0b62623c8a59010192aa8c61b3692fcb30c2f400",
+    "committer_date_rfc3339": "2025-04-05T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 95 }"
+  },
+  {
+    "sha": "da38ad0d4a1e5de2b3d35ea87b0ad95188971bec",
+    "committer_date_rfc3339": "2025-04-06T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 96 }"
+  },
+  {
+    "sha": "4949cfcf15c899c07162d9ccac76b7302aaad497",
+    "committer_date_rfc3339": "2025-04-07T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 97 }"
+  },
+  {
+    "sha": "efd00267d769a971ee2123c2c3e35a1fb4c67228",
+    "committer_date_rfc3339": "2025-04-08T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 98 }"
+  },
+  {
+    "sha": "e120885839127b4e8000ddf33c405c6779eaf4f0",
+    "committer_date_rfc3339": "2025-04-09T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 99 }"
+  },
+  {
+    "sha": "d954c6fbff9f05d511bc4e44b968f7e0cb2c4fd8",
+    "committer_date_rfc3339": "2025-04-10T12:00:00Z",
+    "function_body_chunk": "fn target() -> u64 { 100 }"
+  }
+]
