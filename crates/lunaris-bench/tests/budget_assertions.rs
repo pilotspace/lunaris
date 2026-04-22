@@ -1,4 +1,9 @@
 //! Plan 02-04 Task 3 — Phase 2 latency budget enforcement.
+//! Plan 03-04 — extended with 2 INGEST-06 graph-on rows.
+//! Plan 12-03 — extended with 2 HELIOS-05 `helios_smoke::helios_p50` rows
+//! (p50 ≤ 20 ms tool-call overhead on Moon + Postgres; p99 budget intentionally
+//! untightened per CONTEXT.md D-09). Total rows = 10 (6 Phase 2 + 2 Phase 3
+//! + 2 Phase 12).
 //!
 //! Reads Criterion's `target/criterion/<group>/<bench>_<label>/new/{estimates,sample}.json`
 //! and asserts the measured p50 + p99 satisfy the blueprint §4.1 / §4.2 budget
@@ -115,6 +120,28 @@ const BUDGET_TABLE: &[BudgetRow] = &[
         p50_budget_ns: 300_000_000,
         p99_budget_ns: 570_000_000,
     },
+    // HELIOS-05 (Plan 12-03, CONTEXT.md D-07/D-09) — p50 ≤ 20 ms tool-call
+    // overhead on Moon for the HeliosScratchpad v2 surface (Read:Write:Edit:Grep
+    // mix per helios-rfc §5.3). `p99_budget_ns = 0` per D-09: p99 stays on the
+    // v0.1.0 ≤ 60 ms Postgres budget and is NOT tightened by Phase 12.
+    BudgetRow {
+        group: "helios_smoke",
+        bench: "helios_p50",
+        label: "moon",
+        p50_budget_ns: 20_000_000,
+        p99_budget_ns: 0,
+    },
+    // HELIOS-05 — p50 ≤ 20 ms tool-call overhead on Postgres. Same soft-fail
+    // rule already encoded below for Postgres rows applies (>2× budget →
+    // tracing::warn + continue; ≤2× → hard fail so the gap stays visible
+    // during the soft-fail window).
+    BudgetRow {
+        group: "helios_smoke",
+        bench: "helios_p50",
+        label: "postgres",
+        p50_budget_ns: 20_000_000,
+        p99_budget_ns: 0,
+    },
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -160,13 +187,15 @@ enum CheckOutcome {
 /// Postgres rows that miss by ≤2× still panic — we want the gap visible
 /// during the soft-fail window so it's not silently accepted forever.
 ///
-/// Plan 03-04 extends [`BUDGET_TABLE`] from 6 → 8 rows: the existing 6
-/// Phase 2 rows (INGEST-05 + RETRIEVE-11/12 + atomic_write floors) PLUS
-/// the 2 INGEST-06 graph-on rows (Moon + Postgres at 300 ms p50 / 570 ms
-/// p99). The walker logic is unchanged — every new row inherits the same
-/// soft-fail rule. Live numbers populate when CI / developer runs
-/// `MOON_URL=… PG_URL=… cargo xtask bench`; without live data each row
-/// resolves to SKIP cleanly (asserted by `missing_estimates_skip_without_panic`).
+/// Plan 03-04 extended [`BUDGET_TABLE`] from 6 → 8 rows (2 INGEST-06 graph-on).
+/// Plan 12-03 extends 8 → 10 rows: adds the 2 HELIOS-05 `helios_smoke::helios_p50`
+/// entries (Moon + Postgres at 20 ms p50; p99 untightened per CONTEXT.md D-09).
+/// The walker logic is unchanged — every new row inherits the same soft-fail
+/// rule (Postgres >2× budget → `tracing::warn!` + continue; Moon over budget →
+/// always hard-fail). Live numbers populate when CI / developer runs
+/// `MOON_URL=… PG_URL=… cargo bench -p lunaris-bench`; without live data each
+/// row resolves to SKIP cleanly (asserted by
+/// `missing_estimates_skip_without_panic`).
 #[test]
 fn enforces_phase2_and_phase3_budgets() {
     init_tracing();
@@ -218,7 +247,7 @@ fn enforces_phase2_and_phase3_budgets() {
 
     if !hard_failures.is_empty() {
         panic!(
-            "Phase 2 + Phase 3 latency budget enforcement FAILED — {} hard miss(es):\n{}",
+            "Phase 2 + Phase 3 + Phase 12 latency budget enforcement FAILED — {} hard miss(es):\n{}",
             hard_failures.len(),
             hard_failures.join("\n")
         );
@@ -255,11 +284,52 @@ fn budget_table_has_ingest_06_graph_on_rows() {
     assert_eq!(pg_row.p50_budget_ns, 300_000_000, "blueprint §4.1 graph-on p50 = 300 ms");
     assert_eq!(pg_row.p99_budget_ns, 570_000_000, "blueprint §4.1 graph-on p99 = 570 ms");
 
-    // Total row count: 6 baseline (Plan 02-04) + 2 new (Plan 03-04) = 8.
-    // W-12 fix: the assertion uses the assert_eq!(BUDGET_TABLE.len(), 8, ...)
-    // form so the grep gate `grep -c 'BUDGET_TABLE.len(), 8'` finds it
-    // verbatim per the plan's W-12 corrected acceptance criterion.
-    assert_eq!(BUDGET_TABLE.len(), 8, "budget table row count check (6 Phase 2 + 2 Phase 3)");
+    // Total row count: 6 baseline (Plan 02-04) + 2 graph-on (Plan 03-04) +
+    // 2 HELIOS-05 (Plan 12-03) = 10. The assertion stays in the
+    // `assert_eq!(BUDGET_TABLE.len(), 10, ...)` form so the plan's grep
+    // gate `grep -c 'BUDGET_TABLE.len(), 10'` finds it verbatim.
+    assert_eq!(
+        BUDGET_TABLE.len(),
+        10,
+        "budget table row count check (6 Phase 2 + 2 Phase 3 + 2 Phase 12)"
+    );
+}
+
+/// Plan 12-03 HELIOS-05 — asserts the BUDGET_TABLE contains the two
+/// `helios_smoke::helios_p50` rows (Moon + Postgres) at exactly the 20 ms p50
+/// budget CONTEXT.md D-07 specifies, with `p99_budget_ns == 0` per D-09
+/// (p99 intentionally untightened).
+///
+/// Always runs — this check does NOT depend on a live Criterion sample on
+/// disk, so CI catches a row-shape drift even when no backends are
+/// reachable.
+#[test]
+fn verifies_helios_budget_row_present() {
+    let moon_row = BUDGET_TABLE
+        .iter()
+        .find(|r| r.group == "helios_smoke" && r.bench == "helios_p50" && r.label == "moon")
+        .expect("HELIOS-05 Moon row must exist");
+    assert_eq!(
+        moon_row.p50_budget_ns, 20_000_000,
+        "HELIOS-05 / CONTEXT.md D-07: Moon p50 budget = 20 ms"
+    );
+    assert_eq!(
+        moon_row.p99_budget_ns, 0,
+        "HELIOS-05 / CONTEXT.md D-09: Moon p99 intentionally untightened"
+    );
+
+    let pg_row = BUDGET_TABLE
+        .iter()
+        .find(|r| r.group == "helios_smoke" && r.bench == "helios_p50" && r.label == "postgres")
+        .expect("HELIOS-05 Postgres row must exist");
+    assert_eq!(
+        pg_row.p50_budget_ns, 20_000_000,
+        "HELIOS-05 / CONTEXT.md D-07: Postgres p50 budget = 20 ms"
+    );
+    assert_eq!(
+        pg_row.p99_budget_ns, 0,
+        "HELIOS-05 / CONTEXT.md D-09: Postgres p99 intentionally untightened"
+    );
 }
 
 /// Synthetic-JSON unit test — verifies the parse + comparison logic without
