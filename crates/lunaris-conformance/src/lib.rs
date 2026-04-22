@@ -25,6 +25,11 @@ pub mod fixtures;
 pub mod protocol;
 pub mod storage;
 
+// Phase 12 Plan 12-04 — chaos / fsck helpers shared with the Helios
+// SIGKILL test. Always-on (no feature gate) so downstream integration
+// tests in `crates/lunaris` can import without chaining `chaos-it`.
+pub mod chaos_helpers;
+
 // Plan 08-04 (revision iteration 2) — per-driver backend parity module.
 // Gated behind the `bindings-it` feature so default `cargo test --workspace`
 // does not compile the parity-test surface. Consumers:

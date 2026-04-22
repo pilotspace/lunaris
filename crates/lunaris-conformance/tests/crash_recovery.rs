@@ -431,3 +431,27 @@ fn chaos_it_feature_disabled_placeholder() {
          enable with `cargo test -p lunaris-conformance --features chaos-it --test crash_recovery`"
     );
 }
+
+// Phase 12 Plan 12-04 Task 1 — smoke test for the new helios interrupt
+// profile. Lives in this test file per the plan's Done criteria (so the
+// HELIOS-06 interrupt profile is co-located with the Phase-4 crash_recovery
+// harness it forward-references). Pure-logic test — runs in every default
+// `cargo test --workspace` pass.
+#[test]
+fn helios_interrupt_profile_smoke() {
+    use lunaris_conformance::chaos_helpers::{helios_interrupt_profile, InterruptSite};
+    let profile = helios_interrupt_profile();
+    assert_eq!(profile.name, "helios");
+    assert!(
+        profile
+            .sites
+            .contains(&InterruptSite::MidHeliosScratchpadWrite),
+        "profile MUST include MidHeliosScratchpadWrite (Phase 12 D-10)"
+    );
+    assert!(
+        profile
+            .sites
+            .contains(&InterruptSite::MidConsolidatorPromotion),
+        "profile MUST include MidConsolidatorPromotion (Phase 12 D-11 Consolidator-mid-promotion race)"
+    );
+}
