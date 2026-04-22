@@ -1,0 +1,4 @@
+# Plan 08-04 5x5 multi-platform prebuild matrix lands artefacts here.
+# Plan 08-03 only builds for the host triple — keep the folder present so
+# the `files` entry in package.json exists, but ignore any local binaries.
+*.node

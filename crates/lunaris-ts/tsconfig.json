@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "isolatedModules": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node"],
+    "outDir": "./dist",
+    "rootDir": "."
+  },
+  "include": ["index.mts", "index.d.ts", "__test__/**/*"],
+  "exclude": ["dist", "node_modules", "target", "npm"]
+}

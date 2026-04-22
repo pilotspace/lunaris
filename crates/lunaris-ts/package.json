@@ -1,0 +1,62 @@
+{
+  "name": "lunaris",
+  "version": "0.1.1",
+  "description": "Lunaris — agent memory engine (TypeScript bindings, napi-rs 3.x).",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "module": "index.mjs",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.js"
+    }
+  },
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Lunaris Authors"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lunaris-dev/lunaris"
+  },
+  "keywords": [
+    "memory",
+    "agent",
+    "bi-temporal",
+    "retrieval",
+    "mvcc",
+    "napi-rs"
+  ],
+  "engines": {
+    "node": ">= 20"
+  },
+  "napi": {
+    "binaryName": "lunaris",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "vitest run --config vitest.config.mts",
+    "test:watch": "vitest --config vitest.config.mts"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.6.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

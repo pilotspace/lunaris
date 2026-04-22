@@ -1,0 +1,6 @@
+# Plan 08-03 — build artefacts not checked in.
+*.node
+node_modules/
+dist/
+target/
+.vitest-cache/

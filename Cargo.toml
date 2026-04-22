@@ -16,6 +16,10 @@ members = [
   # lunaris (the umbrella it wraps) rather than alphabetised; mirrors the
   # grouping rule used for lunaris-codegen next to lunaris-conformance.
   "crates/lunaris-py",
+  # Phase 8 Plan 08-03: lunaris-ts is the napi-rs 3.x TypeScript host crate —
+  # placed next to lunaris-py (both are binding crates for the same Rust
+  # umbrella) per the grouping-by-concern rule (NOT alphabetical).
+  "crates/lunaris-ts",
   "crates/lunaris-consolidate",
   "crates/lunaris-embed",
   "crates/lunaris-extract",
@@ -151,6 +155,20 @@ similar        = "2"
 pyo3                = { version = "0.26", features = ["extension-module", "abi3-py311"] }
 pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
 pythonize           = "0.26"
+# Phase 8 Plan 08-03 — napi-rs 3.x TypeScript bindings (lunaris-ts crate).
+# NAPI-8 feature pin is the ROADMAP Phase 8 risk-register stable ABI guard:
+# Node 20 LTS exposes NAPI v8 — pinning here ensures the `.node` binary
+# doesn't drift against a newer symbol set on a Node minor-update.
+# `tokio_rt` hooks up napi-rs's async runtime adapter to our shared tokio
+# worker so `#[napi] pub async fn` lowers into a `Promise<T>` whose work
+# actually runs on the same executor the Rust umbrella crate uses; `async`
+# toggles the attribute-level async support in napi-derive; `serde-json`
+# enables the `serde_json::Value <-> JsValue` bridges that the codegen
+# emitter (Plan 08-01) already leans on for Episode / ForgetRequest / Hit;
+# `error_anyhow` lets us map `anyhow::Error` straight into a napi::Error.
+napi                = { version = "3", default-features = false, features = ["napi8", "tokio_rt", "async", "serde-json", "error_anyhow"] }
+napi-derive         = "3"
+napi-build          = "2"
 
 [profile.dev]
 opt-level = 0
