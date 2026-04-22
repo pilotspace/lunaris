@@ -32,5 +32,5 @@ mod working_memory;
 
 pub use document_corpus::DocumentCorpus;
 pub use message_stream::MessageStream;
-pub use temporal_query::{SupportsAsOf, TemporalQuery};
+pub use temporal_query::{Documents, Facts, Messages, SupportsAsOf, SupportsBetween, TemporalQuery};
 pub use working_memory::WorkingMemory;
