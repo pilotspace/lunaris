@@ -160,16 +160,52 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
         // Plan 08-03 Rule 1 fix: the Graph::anchored path takes
         // `Vec<EntityId>` — same convert-before-call shape as the async
         // ref_self branch. `Str` / `Usize` / `Bool` pass through.
+        //
+        // WR-02 fix (Phase 8 code review): if ANY param requires serde
+        // deserialization (`Vec<T>` / `Named<T>` / `Option<T>` / `Json`),
+        // the factory MUST return `napi::Result<Self>` and route serde
+        // errors through `.map_err(napi_err)?`. Previously the
+        // infallible path called `.unwrap_or_else(|e| panic!(...))`
+        // which surfaces as a Rust panic crossing the FFI boundary —
+        // napi-rs 3.x installs a panic hook that converts this to a JS
+        // `Error` but the behaviour is runtime-dependent and the
+        // emitted message is less structured than the typed
+        // `napi::Result<T>` path. Using `emit_ts_owned_bindings` (the
+        // fallible variant) collapses the two paths.
         (IrAsync::No, IrReceiver::None) => {
+            let any_fallible = m.params.iter().any(|p| {
+                matches!(
+                    &p.ty,
+                    IrTyRef::Vec { .. }
+                        | IrTyRef::Named { .. }
+                        | IrTyRef::Option { .. }
+                        | IrTyRef::Json
+                )
+            });
+            let ret_ty = if any_fallible { "napi::Result<Self>" } else { "Self" };
+            let ok_wrap = if any_fallible {
+                "Ok(Self { inner: Arc::new(inner) })"
+            } else {
+                "Self { inner: Arc::new(inner) }"
+            };
             writeln!(out, "    #[napi(factory)]").unwrap();
             writeln!(
                 out,
-                "    pub fn {name}({params}) -> Self {{",
+                "    pub fn {name}({params}) -> {ret_ty} {{",
                 name = m.name,
-                params = format_params_rust(&m.params, /* with_self */ false)
+                params = format_params_rust(&m.params, /* with_self */ false),
+                ret_ty = ret_ty,
             )
             .unwrap();
-            let owned_names = emit_ts_owned_bindings_infallible(out, &m.params);
+            // Use the fallible bindings emitter when any param can
+            // serde-fail; otherwise the infallible primitive-only path
+            // (Vector::new, Keyword::bm25) is still structurally
+            // equivalent.
+            let owned_names = if any_fallible {
+                emit_ts_owned_bindings(out, &m.params)
+            } else {
+                emit_ts_owned_bindings_infallible(out, &m.params)
+            };
             let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
@@ -178,7 +214,7 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 name = m.name
             )
             .unwrap();
-            writeln!(out, "        Self {{ inner: Arc::new(inner) }}").unwrap();
+            writeln!(out, "        {ok_wrap}", ok_wrap = ok_wrap).unwrap();
             writeln!(out, "    }}").unwrap();
         }
         // Sync `&self` method (Lunaris::recall, pipeline-handle toggles).

@@ -104,10 +104,10 @@ pub struct Graph {
 impl Graph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[napi(factory)]
-    pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> Self {
-        let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).unwrap_or_else(|e| panic!("entity_ids: {e}"));
+    pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self> {
+        let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).map_err(napi_err)?;
         let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops as usize);
-        Self { inner: Arc::new(inner) }
+        Ok(Self { inner: Arc::new(inner) })
     }
 
 }
