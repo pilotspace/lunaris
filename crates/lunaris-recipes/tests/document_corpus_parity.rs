@@ -26,6 +26,12 @@
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
+// Imports + `probe_backend` fn are only used behind the `moon-it` + `pg-it`
+// feature gate; suppress the clippy dead-code warnings on the default build.
+#![cfg_attr(
+    not(all(feature = "moon-it", feature = "pg-it")),
+    allow(unused_imports, dead_code)
+)]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;

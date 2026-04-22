@@ -82,11 +82,28 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use lunaris::Lunaris;
+use futures::StreamExt;
+use lunaris::{AuditEvent, Lunaris, publish_audit_event};
+use lunaris_consolidate::{
+    CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, ConsolidateEvent, ConsolidationReport,
+};
 use lunaris_core::storage::types::{Filter, Lsn};
-use lunaris_core::{Episode, LunarisError};
+use lunaris_core::{Episode, LunarisError, StoragePort};
 use lunaris_retrieve::{Keyword, Query, Vector};
+
+/// Phase 9.1 Plan 01 Task 3 — maximum events drained per
+/// [`WorkingMemory::consolidate`] call. Bounds T-09-1-01-04 DoS surface:
+/// heavy callers should invoke repeatedly rather than raising the cap.
+const DRAIN_CAP: usize = 1024;
+
+/// Phase 9.1 Plan 01 Task 3 — per-pull timeout on the drain stream. The
+/// drain exits on the first timeout, stream end, or error; combined with
+/// [`DRAIN_CAP`] this guarantees the drain terminates within
+/// `DRAIN_CAP × PULL_TIMEOUT_MS` ms (worst case ≈ 51 s when the broker
+/// keeps delivering events at exactly the timeout boundary).
+const PULL_TIMEOUT_MS: u64 = 50;
 
 /// Default `top_k` the `read` / `grep` recall paths use. Chosen to match
 /// Plan 09-01 MessageStream's `DEFAULT_TOP_K` + HeliosScratchpad's `READ_TOP`
@@ -217,6 +234,65 @@ impl WorkingMemory {
         Ok(out)
     }
 
+    /// Phase 9.1 Plan 01 Task 3 — run one consolidation pass scoped to
+    /// `self.scope_prefix`.
+    ///
+    /// Steps:
+    ///
+    /// 1. Drain recent [`ConsolidateEvent`]s from `__lunaris_consolidate__`
+    ///    using a bounded one-shot [`StoragePort::subscribe`] + 50 ms
+    ///    per-pull timeout (cap 1024 events; T-09-1-01-04 DoS mitigation).
+    /// 2. Delegate to the currently-installed
+    ///    [`lunaris_consolidate::Consolidator::consolidate_scoped`] with
+    ///    `Some(&self.scope_prefix)` so non-scope events are filtered.
+    /// 3. Publish [`AuditEvent::ConsolidatorPromotion`] once per returned
+    ///    [`lunaris_consolidate::PromotionEvent`] on `__lunaris_audit__`
+    ///    so downstream audit consumers see every promotion.
+    ///
+    /// If no consolidator is installed (the pipeline's default
+    /// [`lunaris::NoopConsolidator`] slot), returns an empty report after
+    /// the drain. Phase 12 HELIOS-04 consumes this hook at
+    /// `scope_prefix = "helios:fs/"`.
+    pub async fn consolidate(&self) -> Result<ConsolidationReport, LunarisError> {
+        // (a) Resolve the storage handle once — reused by drain + audit publish.
+        let storage: Arc<dyn StoragePort> = self.lunaris.storage();
+
+        // (b) Drain recent ConsolidateEvents from the queue (bounded).
+        let events = drain_consolidate_events(&storage).await?;
+
+        // (c) Route through consolidate_scoped with this scope's prefix.
+        //     The pipeline's snapshot always returns Some(_) — Plan 04-04
+        //     installs NoopConsolidator by default and set_consolidator
+        //     swap never nulls the slot. Defensive `None` arm returns an
+        //     empty report so this path fails-closed.
+        let pipeline = self.lunaris.consolidator_pipeline();
+        let consolidator = match pipeline.snapshot_consolidator() {
+            Some(c) => c,
+            None => {
+                return Ok(ConsolidationReport::default());
+            }
+        };
+
+        let report = consolidator
+            .consolidate_scoped(storage.clone(), &events, Some(&self.scope_prefix))
+            .await?;
+
+        // (d) Publish one AuditEvent::ConsolidatorPromotion per promotion.
+        //     Fire-and-forget — audit failures never roll back the
+        //     already-returned consolidation decisions (blueprint §11
+        //     best-effort audit; mirrors lunaris::audit::publish_audit_event).
+        for promo in &report.promotions {
+            let event = AuditEvent::ConsolidatorPromotion {
+                episode_id: promo.episode_id,
+                fact_id: promo.fact_id,
+                activation_score: promo.activation_score,
+            };
+            let _ = publish_audit_event(&storage, event).await;
+        }
+
+        Ok(report)
+    }
+
     /// Internal — build the scoped key `{scope_prefix}{k}`. Not public so
     /// the LOC-guard cap stays tight; reused by `write` / `read` / `grep`
     /// and (in Phase 9.1) by the promotion hook when it filters pending
@@ -226,6 +302,46 @@ impl WorkingMemory {
     fn scope_key(&self, k: &str) -> String {
         format!("{}{}", self.scope_prefix, k)
     }
+}
+
+/// Phase 9.1 Plan 01 Task 3 — drain up to [`DRAIN_CAP`] recent
+/// [`ConsolidateEvent`]s from [`CONSOLIDATE_TOPIC`].
+///
+/// One-shot bounded pull: subscribes to
+/// `(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, partition=0)` — the
+/// SAME `(group, topic, partition)` triple the consolidator worker uses
+/// (`crates/lunaris-consolidate/src/worker.rs:99-102`). Each
+/// `stream.next()` is wrapped in a 50 ms timeout; the loop exits on the
+/// first timeout, stream end, error, or when the event cap is hit.
+/// Malformed payloads are dropped silently (matches the worker's
+/// `ingest_into_buffer` tampering-mitigation policy, T-04-02-01).
+///
+/// Free-standing helper so the `WorkingMemory::consolidate` body stays
+/// compact and the LOC-guard on the public surface is unaffected.
+async fn drain_consolidate_events(
+    storage: &Arc<dyn StoragePort>,
+) -> Result<Vec<ConsolidateEvent>, LunarisError> {
+    let pull_timeout = Duration::from_millis(PULL_TIMEOUT_MS);
+
+    let mut stream = storage
+        .subscribe(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .await
+        .map_err(LunarisError::Storage)?;
+
+    let mut events = Vec::with_capacity(64);
+    while events.len() < DRAIN_CAP {
+        match tokio::time::timeout(pull_timeout, stream.next()).await {
+            Ok(Some(Ok(msg))) => {
+                if let Ok(ev) = serde_json::from_slice::<ConsolidateEvent>(&msg.payload) {
+                    events.push(ev);
+                }
+                // Malformed payload → drop silently, continue draining.
+            }
+            // Stream end, per-msg error, OR timeout → stop draining.
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
+        }
+    }
+    Ok(events)
 }
 
 #[cfg(test)]

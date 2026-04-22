@@ -41,6 +41,10 @@ serde       = { workspace = true }
 serde_json  = { workspace = true }
 parking_lot = { workspace = true }
 ulid        = { workspace = true }
+# Phase 9.1 Plan 01 Task 3 — StreamExt::next for WorkingMemory::consolidate's
+# bounded drain of __lunaris_consolidate__. No new transitive deps (already
+# available via lunaris-consolidate + lunaris-core).
+futures     = { workspace = true }
 
 [dev-dependencies]
 anyhow              = { workspace = true }

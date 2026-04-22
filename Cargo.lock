@@ -2368,10 +2368,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
+ "futures",
  "lunaris",
  "lunaris-conformance",
  "lunaris-consolidate",
  "lunaris-core",
+ "lunaris-extract",
  "lunaris-retrieve",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",
