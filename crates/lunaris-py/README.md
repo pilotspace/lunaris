@@ -16,6 +16,8 @@ maturin develop --release
 
 A PyPI wheel will ship with the v0.1.1 release via the Plan 08-04 multi-platform prebuild matrix.
 
+For the full user-facing install + quickstart guide covering both Python and TypeScript, see [`docs/bindings.md`](../../docs/bindings.md).
+
 ## Requirements
 
 - Python **3.11+** (abi3 stable ABI — one wheel covers 3.11, 3.12, 3.13)

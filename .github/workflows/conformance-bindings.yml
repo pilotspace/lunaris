@@ -1,0 +1,176 @@
+name: conformance-bindings
+
+# Plan 08-04 - per-driver backend parity gate.
+#
+# Builds both bindings WITH the `bindings-it` feature, then runs THREE
+# independent per-driver backend-parity tests (Rust / Python / TypeScript)
+# against memory-equivalent + Postgres + Moon backends. Each driver
+# asserts its own rows against the committed golden reference at
+# `crates/lunaris-conformance/fixtures/golden/bindings_fixture.json`.
+#
+# No cross-language byte-identity assertion anywhere - revision
+# iteration 2 scope-reset explicitly dropped that. The "AND" in ROADMAP
+# success criterion #4 joins BACKENDS (Moon == Postgres) within a SINGLE
+# driver run, not LANGUAGES.
+#
+# Backend matrix:
+# - postgres: service container; both LUNARIS_MOON_URL + LUNARIS_POSTGRES_URL
+#   point at Postgres to exercise the pg code path on both slots.
+# - moon: gated behind `secrets.MOON_IMAGE`; when the secret is unset the
+#   row is a no-op pass (neutral skip).
+#
+# All `run:` steps use static strings / literal paths / CI-controlled
+# matrix values. No untrusted user input flows into any command.
+#
+# Triggers: push to main + PR touching bindings / codegen / conformance.
+
+on:
+  pull_request:
+    paths:
+      - "crates/lunaris-py/**"
+      - "crates/lunaris-ts/**"
+      - "crates/lunaris-codegen/**"
+      - "crates/lunaris-conformance/**"
+      - "crates/lunaris/**"
+      - "crates/lunaris-core/**"
+      - ".github/workflows/conformance-bindings.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-py/**"
+      - "crates/lunaris-ts/**"
+      - "crates/lunaris-codegen/**"
+      - "crates/lunaris-conformance/**"
+      - "crates/lunaris/**"
+      - "crates/lunaris-core/**"
+      - ".github/workflows/conformance-bindings.yml"
+  workflow_dispatch:
+
+jobs:
+  per-driver-parity:
+    name: per-driver parity (${{ matrix.backend }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [postgres, moon]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: lunaris
+          POSTGRES_DB: lunaris
+          POSTGRES_USER: postgres
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      - name: Install maturin + pytest
+        run: pip install maturin pytest pytest-asyncio python-ulid
+      - name: Build + install lunaris-py WITH bindings-it
+        run: maturin develop --release --features bindings-it
+        working-directory: crates/lunaris-py
+      - name: npm install + napi build lunaris-ts WITH bindings-it
+        run: |
+          npm ci --no-audit --no-fund
+          npx napi build --platform --release --features bindings-it
+        working-directory: crates/lunaris-ts
+      - name: Resolve backend URLs
+        id: backend
+        env:
+          BACKEND: ${{ matrix.backend }}
+          MOON_IMAGE: ${{ secrets.MOON_IMAGE }}
+        run: |
+          set -euo pipefail
+          case "$BACKEND" in
+            postgres)
+              echo "moon_url=postgres://postgres:lunaris@localhost:5432/lunaris" >> "$GITHUB_OUTPUT"
+              echo "pg_url=postgres://postgres:lunaris@localhost:5432/lunaris" >> "$GITHUB_OUTPUT"
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              ;;
+            moon)
+              if [ -z "${MOON_IMAGE:-}" ]; then
+                echo "Moon image secret not configured - skipping moon matrix row (neutral)"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "moon_url=moon://localhost:6379" >> "$GITHUB_OUTPUT"
+                echo "pg_url=postgres://postgres:lunaris@localhost:5432/lunaris" >> "$GITHUB_OUTPUT"
+                echo "skip=false" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+          esac
+      - name: Rust - per-driver backend parity
+        if: steps.backend.outputs.skip != 'true'
+        env:
+          LUNARIS_MOON_URL: ${{ steps.backend.outputs.moon_url }}
+          LUNARIS_POSTGRES_URL: ${{ steps.backend.outputs.pg_url }}
+        run: |
+          cargo test -p lunaris-conformance --features bindings-it \
+            --test run_bindings_backend_parity -- --nocapture
+      - name: Python - per-driver backend parity
+        if: steps.backend.outputs.skip != 'true'
+        env:
+          LUNARIS_MOON_URL: ${{ steps.backend.outputs.moon_url }}
+          LUNARIS_POSTGRES_URL: ${{ steps.backend.outputs.pg_url }}
+        run: |
+          pytest crates/lunaris-py/tests/test_backend_parity.py -v
+      - name: TypeScript - per-driver backend parity
+        if: steps.backend.outputs.skip != 'true'
+        env:
+          LUNARIS_MOON_URL: ${{ steps.backend.outputs.moon_url }}
+          LUNARIS_POSTGRES_URL: ${{ steps.backend.outputs.pg_url }}
+        run: |
+          npx vitest run --config vitest.config.mts __test__/backend_parity.spec.mts
+        working-directory: crates/lunaris-ts
+
+  # Memory-equivalent smoke row: runs the three drivers with env vars UNSET.
+  # The Rust test + Python test + TS test all skip gracefully in that mode
+  # so this row acts as a "feature-build compiles cleanly on stock ubuntu"
+  # guard rather than a parity-against-live-backend check.
+  memory-smoke:
+    name: feature-build smoke (memory / no backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test bindings-it feature
+        run: cargo test -p lunaris-conformance --features bindings-it --all-targets
+      - name: Install maturin + pytest
+        run: pip install maturin pytest pytest-asyncio python-ulid
+      - name: Build lunaris-py WITH bindings-it
+        run: maturin develop --release --features bindings-it
+        working-directory: crates/lunaris-py
+      - name: Python parity test (skip path)
+        run: pytest crates/lunaris-py/tests/test_backend_parity.py -v
+      - name: npm install + napi build lunaris-ts WITH bindings-it
+        run: |
+          npm ci --no-audit --no-fund
+          npx napi build --platform --release --features bindings-it
+        working-directory: crates/lunaris-ts
+      - name: TypeScript parity test (skip path)
+        run: npx vitest run --config vitest.config.mts __test__/backend_parity.spec.mts
+        working-directory: crates/lunaris-ts

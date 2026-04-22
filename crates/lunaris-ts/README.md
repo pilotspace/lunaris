@@ -15,6 +15,8 @@ npm test                # run vitest suite
 
 A published npm package will ship with the v0.1.1 release via the Plan 08-04 multi-platform prebuild matrix.
 
+For the full user-facing install + quickstart guide covering both TypeScript and Python, see [`docs/bindings.md`](../../docs/bindings.md).
+
 ## Requirements
 
 - Node **20+** (NAPI ABI v8 pin — `abi_pin.spec.mts` asserts `process.versions.napi >= 8` at test startup).

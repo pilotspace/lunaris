@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
@@ -151,16 +151,9 @@ pub async fn collect_normalized_chunk_rows(
 /// structural invariant drifts. The error message always includes
 /// BOTH the observed and the expected values so operators can
 /// diagnose without re-running.
-pub fn assert_structural_eq(
-    rows: &NormalizedRows,
-    golden: &GoldenReference,
-) -> anyhow::Result<()> {
+pub fn assert_structural_eq(rows: &NormalizedRows, golden: &GoldenReference) -> anyhow::Result<()> {
     if rows.keys_prefix != golden.keys_prefix {
-        bail!(
-            "prefix drift: got {:?} want {:?}",
-            rows.keys_prefix,
-            golden.keys_prefix
-        );
+        bail!("prefix drift: got {:?} want {:?}", rows.keys_prefix, golden.keys_prefix);
     }
     if rows.distinct_episode_ids != golden.episode_count {
         bail!(

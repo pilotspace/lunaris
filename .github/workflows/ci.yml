@@ -16,6 +16,21 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
       - run: cargo doc --workspace --no-deps
+      # Plan 08-04 - confirm both binding crates type-check under DEFAULT
+      # features on every PR. Production wheels / .node binaries are
+      # built with default features only (no `bindings-it`); this step
+      # catches regressions where the default build breaks because a
+      # fix only landed for the feature-gated path.
+      #
+      # Uses `cargo check` (not `cargo build --release`) because PyO3's
+      # `extension-module` feature produces a cdylib that requires
+      # maturin's Python symbol resolution to link; raw `cargo build`
+      # hits "symbol(s) not found for architecture arm64" at the linker
+      # step on non-Linux runners. `cargo check` skips linking and still
+      # catches compilation regressions. The multi-platform matrix is
+      # owned by `python-prebuild.yml` + `ts-prebuild.yml` which invoke
+      # `maturin build` + `napi build` correctly.
+      - run: cargo check -p lunaris-py -p lunaris-ts --all-targets
 
   # Phase 8 Plan 08-01 (BIND-GEN-02) — parity-check job.
   # Fails the PR when the committed binding snapshots drift from the

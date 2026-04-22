@@ -1,0 +1,126 @@
+name: python-prebuild
+
+# Plan 08-04 — BIND-PY-05 multi-platform wheel matrix.
+#
+# Builds Python wheels for all 5 target triples via PyO3/maturin-action.
+# `abi3-py311` means ONE wheel per triple covers Python 3.11 / 3.12 / 3.13,
+# so the matrix dimension is just platform (not platform x Python-version).
+#
+# Triggers:
+# - `pull_request` touching `crates/lunaris-py/**` or `crates/lunaris-codegen/**`
+#   so every change that could affect the Python wheel is CI-validated on all
+#   five platforms.
+# - `push` to `main` when the same paths change - keeps main green.
+# - `workflow_dispatch` for preview builds.
+# - `push` with a `v*` tag - promotes wheels to GitHub Release assets.
+#
+# `fail-fast: false` - per ROADMAP Phase 8 risk-register row 2, a failing
+# arch demotes to "source install supported" in release notes rather than
+# blocking the milestone. All matrix rows produce independent artefacts.
+#
+# Production wheels are built with DEFAULT features only - no `bindings-it`.
+# The conformance-bindings workflow owns the feature-gated build.
+#
+# All `run:` steps use static strings / literal paths / CI-controlled matrix
+# values only. No untrusted user input (issue title / PR body / commit
+# message) flows into any command. See github.blog/security/
+# vulnerability-research/how-to-catch-github-actions-workflow-injections
+# -before-attackers-do/.
+
+on:
+  pull_request:
+    paths:
+      - "crates/lunaris-py/**"
+      - "crates/lunaris-codegen/**"
+      - ".github/workflows/python-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-py/**"
+      - "crates/lunaris-codegen/**"
+      - ".github/workflows/python-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # required for softprops/action-gh-release on tag push
+
+jobs:
+  build-wheels:
+    name: wheel ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "manylinux_2_28"
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: "manylinux_2_28"
+          - os: macos-13
+            target: x86_64-apple-darwin
+            manylinux: "off"
+          - os: macos-14 # Apple Silicon runners
+            target: aarch64-apple-darwin
+            manylinux: "off"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Per-target cache key so cross-compilation runs don't poison the
+          # native cache.
+          key: ${{ matrix.target }}
+      - name: Build wheel via maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >-
+            --release
+            --out dist
+            --target ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          working-directory: crates/lunaris-py
+      - name: Upload wheel artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunaris-py-wheel-${{ matrix.target }}
+          path: crates/lunaris-py/dist/*.whl
+          # ROADMAP Phase 8 risk register row 2 - 30-day retention so any
+          # fallback / re-release decisions have the exact artefact
+          # available for download.
+          retention-days: 30
+
+  release:
+    name: publish wheels to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-wheels
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all wheel artefacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lunaris-py-wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Attach wheels to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          # Allow partial uploads per risk-register row 2 - a missing arch
+          # row should not block the release; release notes document
+          # "source install supported" for any demoted target.
+          fail_on_unmatched_files: false

@@ -1,0 +1,114 @@
+name: ts-prebuild
+
+# Plan 08-04 - BIND-TS-05 multi-platform napi-rs binary matrix.
+#
+# Builds `.node` binaries for all 5 target triples via @napi-rs/cli 3.x.
+# napi-rs 3.x supports cross-compilation for aarch64 Linux / Windows ARM
+# via the `--cross-compile` flag where applicable; all matrix rows use
+# native runners where available to maximise reliability.
+#
+# Triggers mirror python-prebuild.yml:
+# - `pull_request` touching lunaris-ts or lunaris-codegen
+# - `push` to main on the same paths
+# - `workflow_dispatch` for preview builds
+# - `push` with `v*` tag - uploads prebuilt binaries to GitHub Release
+#
+# `fail-fast: false` per ROADMAP Phase 8 risk-register row 2 - failing
+# arch demotes to "source install supported" rather than blocking.
+#
+# Production `.node` binaries built with DEFAULT features only - no
+# `bindings-it`. The conformance-bindings workflow owns the feature-gated
+# build.
+#
+# All `run:` steps use static strings / literal paths / CI-controlled
+# matrix values only. No untrusted user input flows into any command.
+
+on:
+  pull_request:
+    paths:
+      - "crates/lunaris-ts/**"
+      - "crates/lunaris-codegen/**"
+      - ".github/workflows/ts-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-ts/**"
+      - "crates/lunaris-codegen/**"
+      - ".github/workflows/ts-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # required for softprops/action-gh-release on tag push
+
+jobs:
+  build-napi:
+    name: napi ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+        working-directory: crates/lunaris-ts
+      - name: Install cross-compilation toolchain (aarch64 Linux)
+        if: matrix.cross == true && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build .node via napi
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+        working-directory: crates/lunaris-ts
+      - name: Upload .node artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunaris-ts-node-${{ matrix.target }}
+          path: crates/lunaris-ts/*.node
+          retention-days: 30
+
+  release:
+    name: publish .node binaries to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-napi
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all .node artefacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lunaris-ts-node-*
+          path: node-artefacts
+          merge-multiple: true
+      - name: Attach .node binaries to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: node-artefacts/*.node
+          # Partial uploads allowed per risk-register row 2.
+          fail_on_unmatched_files: false

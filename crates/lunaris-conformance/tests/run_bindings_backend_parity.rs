@@ -47,20 +47,11 @@ async fn rust_driver_backend_parity() -> anyhow::Result<()> {
     //   3. host_port.to_socket_addrs() resolves (W-3 — handles
     //      `localhost:N` form, not just literal IPs).
     //   4. 1-second TCP connect probe succeeds.
-    let moon = probe_backend(
-        "LUNARIS_MOON_URL",
-        std::env::var("LUNARIS_MOON_URL").ok(),
-    );
-    let pg = probe_backend(
-        "LUNARIS_POSTGRES_URL",
-        std::env::var("LUNARIS_POSTGRES_URL").ok(),
-    );
+    let moon = probe_backend("LUNARIS_MOON_URL", std::env::var("LUNARIS_MOON_URL").ok());
+    let pg = probe_backend("LUNARIS_POSTGRES_URL", std::env::var("LUNARIS_POSTGRES_URL").ok());
 
-    lunaris_conformance::bindings::run_rust_driver_backend_parity(
-        moon.as_deref(),
-        pg.as_deref(),
-    )
-    .await
+    lunaris_conformance::bindings::run_rust_driver_backend_parity(moon.as_deref(), pg.as_deref())
+        .await
 }
 
 /// Verbatim mirror of `run_storage_moon.rs::probe_backend` lines
@@ -76,11 +67,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("run_bindings_backend_parity: SKIP {name} (unknown URL scheme)");
         return None;
