@@ -116,20 +116,29 @@ impl MoonClient {
     /// an existing Moon instance is a no-op.
     ///
     /// NOTE: Moon's `FT.CREATE` is fully idempotent — once an index exists with
-    /// a stale schema (e.g. vector-only from before this commit), `create_index`
+    /// a stale schema (e.g. vector-only from before Gap 9, or missing the
+    /// `valid_time` NUMERIC field from before Phase 9.1 Plan 02), `create_index`
     /// returns "already exists" and DOES NOT update the schema. After upgrading
-    /// past Gap 9, operators must `FT.DROPINDEX <name>` once before the new
-    /// schema takes effect.
+    /// past Phase 9.1, operators must `FT.DROPINDEX chunks` once before the new
+    /// schema takes effect (Moon will recreate on next `ensure_indexes` call).
     async fn ensure_indexes(&self) -> Result<(), StorageError> {
         use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
         const DIM: usize = 768;
         for (name, prefix) in
             &[("chunks", "chunks:"), ("entities", "entities:"), ("facts", "facts:"), ("communities", "communities:")]
         {
-            let opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
+            let mut opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
                 .prefix(*prefix)
                 .field_name("vec")
                 .add_field(SchemaField::Text("content".to_string()));
+            // Plan 09.1-02 Task 2 — chunks gets an additional NUMERIC field on
+            // `valid_time` so `Filter::ValidTimeRange` renders as
+            // `@valid_time:[lo hi]` against a real indexed field. Other indices
+            // (entities / facts / communities) do NOT participate in the
+            // TemporalQuery axis and stay unchanged.
+            if *name == "chunks" {
+                opts = opts.add_field(SchemaField::Numeric("valid_time".to_string()));
+            }
             let typed = self.inner.clone();
             match typed.vector().create_index(name, opts).await {
                 Ok(_) => {}
