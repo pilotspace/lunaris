@@ -29,6 +29,11 @@ pub mod logging;
 pub mod open;
 pub mod recall;
 pub mod recipes;
+// Plan 08-00 — `Lunaris::snapshot()` monotonic LSN marker. Pre-req for Plan
+// 08-01 codegen so the `snapshot` surface entry has a real inherent method
+// to bind from PyO3 + napi-rs. The module only contains an `impl Lunaris`
+// block + `#[cfg(test)] mod tests`, so no extra `pub use` is required.
+pub mod snapshot;
 pub mod verify_pipeline;
 
 pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
