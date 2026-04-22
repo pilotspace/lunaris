@@ -201,8 +201,8 @@ impl PyConsolidatorPipelineHandle {
 
 }
 
-#[pymodule]
-fn lunaris(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Registers every generated `#[pyclass]` on the host crate's `#[pymodule] fn lunaris`.
+pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLunaris>()?;
     m.add_class::<PyVector>()?;
     m.add_class::<PyKeyword>()?;

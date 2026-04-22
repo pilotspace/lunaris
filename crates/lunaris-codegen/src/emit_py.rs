@@ -57,12 +57,21 @@ pub fn emit_py(ir: &SurfaceIR) -> String {
         for ty in &module.types {
             emit_py_type(&mut out, ty);
         }
-        // Canonical `#[pymodule]` registration at the tail — callers load
-        // this via `pyo3::append_to_inittab!` from lunaris-py's crate root.
+        // Plan 08-02 Rule 1 deviation: emit `pub fn register_generated` instead
+        // of a `#[pymodule] fn {module}` so the host crate's `src/lib.rs` can
+        // `include!("generated.rs")` without colliding on the `PyInit_lunaris`
+        // C-exported symbol. The host crate owns the canonical `#[pymodule]`
+        // and calls `register_generated(py, m)?` from its body. `module.name`
+        // is preserved in the doc comment for traceability.
         writeln!(
             out,
-            "#[pymodule]\nfn {}(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {{",
+            "/// Registers every generated `#[pyclass]` on the host crate's `#[pymodule] fn {}`.",
             module.name
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {{"
         )
         .unwrap();
         for ty in &module.types {
