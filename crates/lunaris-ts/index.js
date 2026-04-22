@@ -576,12 +576,24 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.ChatAgentMemory = nativeBinding.ChatAgentMemory
+module.exports.CodeRepoMemory = nativeBinding.CodeRepoMemory
 module.exports.ConsolidatorPipelineHandle = nativeBinding.ConsolidatorPipelineHandle
+module.exports.CustomerSupportHistory = nativeBinding.CustomerSupportHistory
+module.exports.DocumentKnowledgeBase = nativeBinding.DocumentKnowledgeBase
+module.exports.EmailThreading = nativeBinding.EmailThreading
 module.exports.Graph = nativeBinding.Graph
 module.exports.GraphPipelineHandle = nativeBinding.GraphPipelineHandle
 module.exports.Keyword = nativeBinding.Keyword
 module.exports.Lunaris = nativeBinding.Lunaris
+module.exports.MeetingNotesMemory = nativeBinding.MeetingNotesMemory
+module.exports.MeetingNotesQuery = nativeBinding.MeetingNotesQuery
+module.exports.MultiTurnConversation = nativeBinding.MultiTurnConversation
+module.exports.ResearchPaperCorpus = nativeBinding.ResearchPaperCorpus
 module.exports.RetrievalBuilder = nativeBinding.RetrievalBuilder
+module.exports.SlackArchive = nativeBinding.SlackArchive
+module.exports.SlackArchiveQuery = nativeBinding.SlackArchiveQuery
+module.exports.TimelineReconstruction = nativeBinding.TimelineReconstruction
 module.exports.Vector = nativeBinding.Vector
 module.exports.consolidatorPipelineDisable = nativeBinding.consolidatorPipelineDisable
 module.exports.consolidatorPipelineEnable = nativeBinding.consolidatorPipelineEnable

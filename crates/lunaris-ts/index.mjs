@@ -42,6 +42,26 @@ export const fromEnvValue = native.fromEnvValue;
 export const fromConfig = native.fromConfig;
 export const __version__ = "0.1.1";
 
+// Plan 10-03 + 11-03 — expose the Phase 10 conversational + Phase 11
+// documentary recipe wrappers flat at the crate root. napi-rs 3.x's
+// proc-macro registry surfaces every `#[napi]` class as a top-level
+// identifier in the compiled `.node` (see 11-02b Known Limitations —
+// `import { X } from 'lunaris/conversational'` is NOT supported);
+// these explicit re-exports give ESM callers the same crate-root flat
+// imports the auto-generated CJS `index.js` emits for Phase 8 types.
+export const ChatAgentMemory = native.ChatAgentMemory;
+export const MultiTurnConversation = native.MultiTurnConversation;
+export const SlackArchive = native.SlackArchive;
+export const SlackArchiveQuery = native.SlackArchiveQuery;
+export const EmailThreading = native.EmailThreading;
+export const MeetingNotesMemory = native.MeetingNotesMemory;
+export const MeetingNotesQuery = native.MeetingNotesQuery;
+export const DocumentKnowledgeBase = native.DocumentKnowledgeBase;
+export const ResearchPaperCorpus = native.ResearchPaperCorpus;
+export const CodeRepoMemory = native.CodeRepoMemory;
+export const TimelineReconstruction = native.TimelineReconstruction;
+export const CustomerSupportHistory = native.CustomerSupportHistory;
+
 /** napi-rs maps `Error(GenericFailure)` to a plain JS `Error` with
  * `"CODE: message"` format. `LunarisError` is an alias on the plain
  * `Error` constructor so `instanceof Error` and `err instanceof LunarisError`
