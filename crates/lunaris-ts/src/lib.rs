@@ -95,4 +95,46 @@ mod generated;
 pub use generated::{
     ConsolidatorPipelineHandle, Graph, GraphPipelineHandle, Keyword, Lunaris,
     RetrievalBuilder, Vector,
+    // Plan 11-02b — Phase 10 conversational wrappers + 2 opaque side-types.
+    ChatAgentMemory, EmailThreading, MeetingNotesMemory, MeetingNotesQuery,
+    MultiTurnConversation, SlackArchive, SlackArchiveQuery,
+    // Plan 11-02b — Phase 11 documentary wrappers.
+    CodeRepoMemory, CustomerSupportHistory, DocumentKnowledgeBase,
+    ResearchPaperCorpus, TimelineReconstruction,
 };
+
+/// Plan 11-02b — conversational namespace. Pure Rust re-exports so TS
+/// callers can `import { ChatAgentMemory } from 'lunaris'` at the crate
+/// root (the existing flat export pattern) or consume them under a
+/// `.conversational` namespace via Phase 8's napi-rs 3.x pattern.
+///
+/// **TS namespace fallback (planner refinement 4 / 11-02-CHECKPOINT.md
+/// D1 pre-auth):** napi-rs 3.x's proc-macro-driven class registry does
+/// not automatically route nested `pub mod` blocks into JS-side submodule
+/// paths — the `.node` binary exports every `#[napi]` class as a
+/// top-level identifier and the build-step `index.js` wraps them flat.
+/// That means `import { ChatAgentMemory } from 'lunaris'` works today;
+/// `import { ChatAgentMemory } from 'lunaris/conversational'` requires a
+/// separate `@napi-rs/cli` packaging step that is NOT in scope for
+/// 11-02b. SC #1 "wrappers are visible in TS" closes either way.
+///
+/// The `pub mod` re-export below preserves Rust-side documentation
+/// discoverability (`cargo doc` renders `lunaris_ts::conversational::*`)
+/// and leaves the door open for a future packaging change to light up
+/// the subpath import without churning Rust code.
+pub mod conversational {
+    pub use super::generated::{
+        ChatAgentMemory, EmailThreading, MeetingNotesMemory, MeetingNotesQuery,
+        MultiTurnConversation, SlackArchive, SlackArchiveQuery,
+    };
+}
+
+/// Plan 11-02b — documentary namespace. Same conventions as
+/// [`conversational`]; see the module-level doc there for the TS
+/// subpath-import caveat.
+pub mod documentary {
+    pub use super::generated::{
+        CodeRepoMemory, CustomerSupportHistory, DocumentKnowledgeBase,
+        ResearchPaperCorpus, TimelineReconstruction,
+    };
+}

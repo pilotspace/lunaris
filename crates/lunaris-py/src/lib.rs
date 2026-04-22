@@ -68,17 +68,48 @@ pub(crate) use errors::{LunarisError, py_err};
 pub(crate) use generated::{
     PyConsolidatorPipelineHandle, PyGraph, PyGraphPipelineHandle, PyKeyword, PyLunaris,
     PyRetrievalBuilder, PyVector,
+    // Plan 11-02b — Phase 10 conversational wrappers + 2 opaque side-types.
+    PyChatAgentMemory, PyEmailThreading, PyMeetingNotesMemory, PyMeetingNotesQuery,
+    PyMultiTurnConversation, PySlackArchive, PySlackArchiveQuery,
+    // Plan 11-02b — Phase 11 documentary wrappers.
+    PyCodeRepoMemory, PyCustomerSupportHistory, PyDocumentKnowledgeBase,
+    PyResearchPaperCorpus, PyTimelineReconstruction,
 };
 
 /// Top-level `#[pymodule]` entry point — emitted by the cdylib as
 /// `PyInit_lunaris`. The `[lib] name = "lunaris"` in `Cargo.toml` plus
 /// `module-name = "lunaris.lunaris"` in `pyproject.toml` routes `import lunaris`
 /// in Python to THIS function.
+///
+/// ## Plan 11-02b submodule routing
+///
+/// Phase 10 + 11 recipe wrappers expose as `lunaris.conversational.*` and
+/// `lunaris.documentary.*`. The per-module `register_generated_{sanitised}`
+/// fns emitted by Plan 11-02a's `is_legacy_single_module == false` branch
+/// wire each module's classes against its own `PyModule::new_bound`
+/// submodule. The root `lunaris` namespace continues to carry the Phase 8
+/// `Lunaris` / `Vector` / `Keyword` / `Graph` / `RetrievalBuilder` /
+/// `GraphPipelineHandle` / `ConsolidatorPipelineHandle` classes so
+/// existing callers are unchanged.
 #[pymodule]
 fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Codegen-managed classes (PyLunaris / PyVector / PyKeyword / PyGraph /
-    // PyRetrievalBuilder / PyGraphPipelineHandle / PyConsolidatorPipelineHandle).
-    generated::register_generated(py, m)?;
+    // Root-module codegen classes — Phase 8 surface
+    // (PyLunaris / PyVector / PyKeyword / PyGraph / PyRetrievalBuilder /
+    // PyGraphPipelineHandle / PyConsolidatorPipelineHandle). Plan 11-02a
+    // renamed the single `register_generated` fn into per-module
+    // `register_generated_{sanitised}` fns the moment a second `[[module]]`
+    // block landed in `surface.toml`.
+    generated::register_generated_lunaris(py, m)?;
+
+    // Plan 11-02b — conversational submodule (Phase 10 wrappers).
+    let conversational = PyModule::new(py, "conversational")?;
+    generated::register_generated_lunaris_recipes_conversational(py, &conversational)?;
+    m.add_submodule(&conversational)?;
+
+    // Plan 11-02b — documentary submodule (Phase 11 wrappers).
+    let documentary = PyModule::new(py, "documentary")?;
+    generated::register_generated_lunaris_recipes_documentary(py, &documentary)?;
+    m.add_submodule(&documentary)?;
 
     // Hand-written ergonomics that don't fit the codegen's single-shape
     // emitter (e.g. `open` free function, `from_env` / `from_config` toggle
