@@ -46,6 +46,7 @@ async-trait    = { workspace = true }
 bytes          = { workspace = true }
 futures        = { workspace = true }
 parking_lot    = { workspace = true }
+serde          = { workspace = true }
 serde_json     = { workspace = true }
 ulid           = { workspace = true }
 # Plan 05-04 Task 3 — HeliosScratchpad dual-backend smoke test reuses
@@ -53,6 +54,16 @@ ulid           = { workspace = true }
 # anyhow gives the smoke test the Result<()> shape that the live runners use.
 lunaris-bench  = { path = "../lunaris-bench" }
 anyhow         = { workspace = true }
+# Plan 12-04 HELIOS-06 — SIGKILL chaos test over the Helios tool flow.
+# Consumes the chaos_helpers surface (fsck probe + InterruptSite taxonomy).
+lunaris-conformance = { path = "../lunaris-conformance" }
+# rand drives the deterministic per-iter (kill_site, kill_offset_ns) sampler.
+rand           = { workspace = true }
+
+# Plan 12-04 — `nix` (Unix SIGKILL delivery) gated to Unix targets so non-Unix
+# builds skip the chaos test cleanly.
+[target.'cfg(unix)'.dev-dependencies]
+nix            = { workspace = true }
 
 [features]
 default = ["candle"]
