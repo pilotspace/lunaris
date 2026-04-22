@@ -27,6 +27,12 @@ pub mod ingest;
 // the module path.
 pub mod logging;
 pub mod open;
+// Phase 12 Option-A relocation: `WorkingMemory` moved here from
+// `lunaris-recipes` so `HeliosScratchpad` (also in this crate) can compose
+// over it without a dependency cycle. `lunaris-recipes` re-exports the type
+// so Phase 9/10/11 callers using `lunaris_recipes::WorkingMemory` compile
+// unchanged. Phase 13 proper primitives-crate extraction subsumes this.
+pub mod primitives;
 pub mod recall;
 pub mod recipes;
 // Plan 08-00 — `Lunaris::snapshot()` monotonic LSN marker. Pre-req for Plan
@@ -43,6 +49,10 @@ pub use consolidator_pipeline::{
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::Lunaris;
+// Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`
+// re-exports this path so the established `lunaris_recipes::WorkingMemory`
+// import stays stable.
+pub use primitives::WorkingMemory;
 // Plan 05-05 OPS-08 — re-export `lunaris::logging::init` as
 // `lunaris::init_logging` for the canonical embedded-caller use site
 // `lunaris::init_logging();`. The `lunaris-server` binary calls

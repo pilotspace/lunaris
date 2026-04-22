@@ -28,7 +28,6 @@
 mod document_corpus;
 mod message_stream;
 mod temporal_query;
-mod working_memory;
 
 pub mod conversational;
 pub mod documentary;
@@ -36,4 +35,9 @@ pub mod documentary;
 pub use document_corpus::DocumentCorpus;
 pub use message_stream::MessageStream;
 pub use temporal_query::{Documents, Facts, Messages, SupportsAsOf, SupportsBetween, TemporalQuery};
-pub use working_memory::WorkingMemory;
+// Phase 12 Option-A relocation — `WorkingMemory` now lives in
+// `lunaris::primitives::working_memory` so `HeliosScratchpad` (in the
+// `lunaris` crate) can compose over it without a dep cycle. Re-exported
+// here so `use lunaris_recipes::WorkingMemory;` keeps compiling for every
+// Phase 9/10/11 caller.
+pub use lunaris::WorkingMemory;
