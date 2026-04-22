@@ -62,6 +62,73 @@ jobs:
             exit 1
           fi
 
+      # Plan 13-03 RELEASE-04 — version parity gate. Asserts the Rust
+      # umbrella crate (crates/lunaris/Cargo.toml), the Python host
+      # (crates/lunaris-py/pyproject.toml [project].version), and the
+      # TypeScript host (crates/lunaris-ts/package.json .version) all
+      # agree. Blocks Info #5 drift (mismatched SDK versions confusing
+      # `pip install lunaris==X` vs `npm install lunaris@X` users).
+      #
+      # Rust source-of-truth: crates/lunaris/Cargo.toml. This repo has
+      # no [workspace.package].version field — per-crate versions are
+      # canonical. See Plan 13-03 SUMMARY "Deviations" for the full
+      # rationale. The umbrella crate is what both host crates wrap,
+      # so it is the correct comparison point.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: version_parity_rust_python_typescript
+        run: |
+          set -e
+          rust_ver=$(grep '^version' crates/lunaris/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          py_ver=$(grep '^version = ' crates/lunaris-py/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          ts_ver=$(jq -r '.version' crates/lunaris-ts/package.json)
+          echo "Rust (crates/lunaris): $rust_ver"
+          echo "Python (pyproject):    $py_ver"
+          echo "TypeScript (package):  $ts_ver"
+          if [[ "$rust_ver" != "$py_ver" || "$py_ver" != "$ts_ver" ]]; then
+            echo "::error::version parity broken across Rust / Python / TypeScript SDKs (RELEASE-04)"
+            exit 1
+          fi
+
+  # Plan 13-03 RELEASE-05 — submodule tag parity gate.
+  # Runs ONLY on tagged pushes (`refs/tags/v*`). Asserts the tag exists on
+  # BOTH the parent-repo origin AND the .planning submodule's origin. Blocks
+  # the orphaned-submodule-pointer failure mode (Phase 13 risk register row #5,
+  # CONTEXT.md D9): operator tags parent but forgets to push the .planning
+  # tag, leaving external consumers with a reference they cannot clone.
+  #
+  # Security note: `GITHUB_REF_NAME` is provided by the workflow runtime and
+  # is the tag ref the push targets. It is safe to interpolate into the shell
+  # via env (not via string-template injection). No user-controlled PR body
+  # / commit message flows in.
+  #
+  # Submodule checkout: the default actions/checkout@v4 does NOT init
+  # submodules. The submodule tag check needs .planning/ to be a valid git
+  # working tree; `submodules: true` pulls it in at the pinned pointer.
+  submodule-tag-parity:
+    name: submodule-tag-parity (RELEASE-05)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Assert tag exists on parent AND .planning remotes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          echo "Checking tag $TAG exists on parent AND .planning submodule remotes"
+          if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG"; then
+            echo "::error::$TAG not found on parent-repo origin (RELEASE-05)"
+            exit 1
+          fi
+          if ! git -C .planning ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG"; then
+            echo "::error::$TAG not found on .planning submodule origin (RELEASE-05) — operator forgot git -C .planning push origin $TAG"
+            exit 1
+          fi
+          echo "OK: $TAG present on both remotes"
+
   # Phase 8 Plan 08-01 (BIND-GEN-02) — parity-check job.
   # Fails the PR when the committed binding snapshots drift from the
   # regenerated output. The walker is implemented in

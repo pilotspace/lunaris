@@ -1,0 +1,67 @@
+# Lunaris v0.1.1 Release Notes
+
+**Released:** <YYYY-MM-DD, populated by operator>
+**Milestone audit:** [milestones/v0.1.1-MILESTONE-AUDIT.md](./v0.1.1-MILESTONE-AUDIT.md)
+**EVAL-05 evidence:** [milestones/v0.1.1-EVAL-05-RESULTS.json](./v0.1.1-EVAL-05-RESULTS.json)
+**Previous release:** v0.1.0 Alpha (2026-04-21)
+
+## Highlights
+
+<!-- Operator: populate from v0.1.1-MILESTONE-AUDIT.md "What shipped" section. Bullet format. -->
+
+- **Recipes pivot (blueprint §7 refinement):** 4 composable primitives
+  (MessageStream, DocumentCorpus, TemporalQuery, WorkingMemory) +
+  10 thin vertical wrappers across Rust, Python, and TypeScript.
+- **SDK bindings:** `pip install lunaris` and `npm install lunaris` — prebuilt
+  wheels + native binaries across 5 platforms each, single-source codegen,
+  CI parity gate prevents surface drift.
+- **Helios production hardening:** HeliosScratchpad v2 over WorkingMemory;
+  Consolidator-ON scoped to `helios:fs/%`; p50 tool-call latency ≤ 20 ms on
+  both Moon and Postgres; SIGKILL chaos 50×2 zero orphans.
+- **AuditEvent canonicalized:** enum lives in `lunaris-core::audit`; typed
+  `publish_audit_event` helper; CI grep gate prevents inline envelope
+  reintroduction.
+
+## EVAL-05 live gate (Helios chat 10K-turn E2E)
+
+<!-- Operator: pull these values from v0.1.1-EVAL-05-RESULTS.json via jq. -->
+
+- Moon recall p50: `<jq -r .moon.recall_p50_ms v0.1.1-EVAL-05-RESULTS.json>` ms (budget 25 ms)
+- Postgres recall p50: `<jq -r .postgres.recall_p50_ms v0.1.1-EVAL-05-RESULTS.json>` ms (budget 60 ms)
+- Moon promotion rate: `<jq -r .moon.promotion_rate v0.1.1-EVAL-05-RESULTS.json>`
+- Postgres promotion rate: `<jq -r .postgres.promotion_rate v0.1.1-EVAL-05-RESULTS.json>`
+- Trace seed: `3204447181` (shared with Plan 12-03 helios_p50)
+- Trace length: `10000` turns
+
+## Upgrade notes
+
+<!-- Breaking changes, deprecations. -->
+
+- `AuditEvent` re-exported from `lunaris-core::audit`; callers importing from
+  `lunaris::audit` continue to work unchanged (Plan 13-01 preserved the
+  public surface via a shim module).
+- Downstream consumers parsing `__lunaris_audit__` envelopes: the byte-level
+  JSON shape is unchanged for all 4 variants (Forget, VerifierArbitration,
+  ConsolidatorPromotion, ConsolidatorArchive). Fixture-diff tests in
+  `crates/lunaris-core/tests/audit_event_fixture_parity.rs` lock the v0.1.0
+  wire format.
+
+## Known limitations
+
+- The other 15 HUMAN-UAT items from the v0.1.0 backlog remain deferred —
+  see `milestones/v0.1.1-REQUIREMENTS.md` Out of Scope.
+- Managed cloud (`api.lunaris.dev`) and system-wide Verifier / Consolidator
+  ON remain v0.2 scope.
+
+## Checksums
+
+<!-- Operator: append sha256 fingerprints of published wheels + .tgz after
+     PyPI / npm publish. Emit via:
+       shasum -a 256 dist/*.whl
+       shasum -a 256 crates/lunaris-ts/lunaris-*.tgz
+-->
+
+---
+*Template committed in Plan 13-03 Task 2 (RELEASE-05). Populated by
+`/gsd-complete-milestone` + operator per
+`.planning/phases/13-auditevent-refactor-eval-05-release-gate/13-03-HUMAN-UAT.md` §6.*
