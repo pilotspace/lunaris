@@ -1,15 +1,13 @@
 //! [`NoopConsolidator`] — passthrough that satisfies the trait without
 //! performing any consolidation work.
 //!
-//! Used as the default when:
-//!
-//! - The consolidator pipeline is OFF (Plan 04-04; default per blueprint §5.1
-//!   + D-02), in which case the worker is never spawned and `consolidate` is
-//!   never called.
-//! - The caller hasn't explicitly installed a real consolidator via
-//!   `with_consolidator` — v0 ships no default ACT-R consolidator on the
-//!   umbrella handle (`default_consolidator` in Plan 04-04 returns
-//!   `Arc::new(NoopConsolidator)` unconditionally).
+//! Used as the default when the consolidator pipeline is OFF (Plan 04-04;
+//! default per blueprint §5.1 + D-02) — the worker is never spawned and
+//! `consolidate` is never called. Also used when the caller has not
+//! explicitly installed a real consolidator via `with_consolidator`; v0
+//! ships no default ACT-R consolidator on the umbrella handle
+//! (`default_consolidator` in Plan 04-04 returns `Arc::new(NoopConsolidator)`
+//! unconditionally).
 //!
 //! `applies()` returns `false` so the worker loop (Plan 04-02 Task 3) can
 //! short-circuit before iterating the debounce buffer — saves a clone +

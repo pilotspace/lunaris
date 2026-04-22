@@ -18,10 +18,10 @@
 //!
 //! 1. Initialize each node in its own community (singleton labels).
 //! 2. Repeat up to `max_iters`:
-//!    a. Visit nodes in fixed order (by `EntityId.0` byte order — deterministic).
-//!    b. For each node, set its label to the most-frequent label among
-//!       its neighbors (ties broken by smallest `EntityId.0`).
-//!    c. If no node changed labels this iteration, stop.
+//!    - Visit nodes in fixed order (by `EntityId.0` byte order — deterministic).
+//!    - For each node, set its label to the most-frequent label among
+//!      its neighbors (ties broken by smallest `EntityId.0`).
+//!    - If no node changed labels this iteration, stop.
 //! 3. Materialize the final labels as `CommunityId::from_members(sorted_set)`
 //!    so the output `CommunityId` is content-hashed by member set.
 //!
@@ -96,7 +96,7 @@ pub fn leiden_pass(graph: &GraphSnapshot, max_iters: usize) -> CommunityAssignme
     }
 
     // Deterministic node ordering: dedup + sort by EntityId byte order.
-    let mut nodes: Vec<EntityId> = graph.nodes.iter().copied().collect();
+    let mut nodes: Vec<EntityId> = graph.nodes.to_vec();
     nodes.sort_by_key(|e| e.0);
     nodes.dedup();
 

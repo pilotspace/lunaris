@@ -236,15 +236,16 @@ pub struct ConsolidateEvent {
     pub lsn_counter: u64,
     /// Phase 9.1 Plan 01 (PRIM-04 full wiring) — Episode `source` captured at
     /// publish-time by `crates/lunaris/src/ingest.rs::publish_consolidate_event`.
-    /// Consumed by `Consolidator::consolidate_scoped` (default method on the
-    /// trait) to filter a batch by `event.source.starts_with(prefix)` before
-    /// delegating to `consolidate`.
+    /// Consumed by [`crate::Consolidator::consolidate_scoped`] (default method
+    /// on the trait) to filter a batch by `event.source.starts_with(prefix)`
+    /// before delegating to [`crate::Consolidator::consolidate`].
     ///
-    /// NOTE — this field intentionally lacks `#[serde(default)]` in the RED
-    /// step of Plan 09.1-01 Task 1 so legacy payloads produce a runtime
-    /// deserialization error. The GREEN step adds `#[serde(default)]` so
-    /// in-flight queue payloads from before this field existed deserialize
-    /// as `source: ""`.
+    /// `#[serde(default)]` is MANDATORY so in-flight `__lunaris_consolidate__`
+    /// queue payloads from before this field existed deserialize as
+    /// `source: ""`. Under any non-empty scope prefix an empty `source`
+    /// fails the `starts_with` check and the event is dropped — the default
+    /// `consolidate_scoped` impl fails closed by design (T-09-1-01-02).
+    #[serde(default)]
     pub source: String,
 }
 
