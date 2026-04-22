@@ -123,6 +123,34 @@ fn filter_to_sql(f: &Filter, payload_col: &str) -> String {
             let parts: Vec<String> = xs.iter().map(|x| filter_to_sql(x, payload_col)).collect();
             format!("({})", parts.join(" OR "))
         }
+        Filter::ValidTimeRange { after, before } => {
+            // Bi-temporal valid_time range. Uses the chunks table's
+            // valid_from column (exists since Phase 4 schema; confirmed
+            // 2026-04-22). Format timestamps via the existing hlc_to_ts
+            // helper at crates/lunaris-storage-postgres/src/schema.rs
+            // so rendering stays in lock-step with the as_of snapshot path
+            // (which uses the same helper above at the `as_of` render).
+            //
+            // Both-None degrades to TRUE — a predicate no-op that composes
+            // cleanly under AND with other filters.
+            //
+            // SQL injection note (T-09-1-02-05): hlc_to_ts(..).to_rfc3339()
+            // emits a fixed grammar (digits / `-` / `T` / `:` / `.` / `Z`
+            // / `+`) — structurally cannot carry a single-quote, semicolon,
+            // or backslash. No injection surface.
+            let mut parts = Vec::new();
+            if let Some(a) = after {
+                parts.push(format!("valid_from >= '{}'", hlc_to_ts(*a).to_rfc3339()));
+            }
+            if let Some(b) = before {
+                parts.push(format!("valid_from < '{}'", hlc_to_ts(*b).to_rfc3339()));
+            }
+            if parts.is_empty() {
+                "TRUE".to_string()
+            } else {
+                format!("({})", parts.join(" AND "))
+            }
+        }
     }
 }
 
@@ -172,5 +200,44 @@ mod tests {
         let sql = filter_to_sql(&f, "payload");
         assert!(sql.starts_with("(payload->>'kind' = 'note' AND ("));
         assert!(sql.contains("payload->>'tag' = 'a' OR payload->>'tag' = 'b'"));
+    }
+
+    // Plan 09.1-02 Task 4 — ValidTimeRange rendering tests.
+    #[test]
+    fn filter_to_sql_valid_time_range_both_bounds() {
+        let a = Hlc { wall_ms: 100, counter: 0, node_id: 0 };
+        let b = Hlc { wall_ms: 200, counter: 0, node_id: 0 };
+        let f = Filter::ValidTimeRange { after: Some(a), before: Some(b) };
+        let sql = filter_to_sql(&f, "payload");
+        let expected = format!(
+            "(valid_from >= '{}' AND valid_from < '{}')",
+            hlc_to_ts(a).to_rfc3339(),
+            hlc_to_ts(b).to_rfc3339()
+        );
+        assert_eq!(sql, expected);
+    }
+
+    #[test]
+    fn filter_to_sql_valid_time_range_only_after() {
+        let a = Hlc { wall_ms: 100, counter: 0, node_id: 0 };
+        let f = Filter::ValidTimeRange { after: Some(a), before: None };
+        let sql = filter_to_sql(&f, "payload");
+        let expected = format!("(valid_from >= '{}')", hlc_to_ts(a).to_rfc3339());
+        assert_eq!(sql, expected);
+    }
+
+    #[test]
+    fn filter_to_sql_valid_time_range_only_before() {
+        let b = Hlc { wall_ms: 200, counter: 0, node_id: 0 };
+        let f = Filter::ValidTimeRange { after: None, before: Some(b) };
+        let sql = filter_to_sql(&f, "payload");
+        let expected = format!("(valid_from < '{}')", hlc_to_ts(b).to_rfc3339());
+        assert_eq!(sql, expected);
+    }
+
+    #[test]
+    fn filter_to_sql_valid_time_range_both_none() {
+        let f = Filter::ValidTimeRange { after: None, before: None };
+        assert_eq!(filter_to_sql(&f, "payload"), "TRUE".to_string());
     }
 }
