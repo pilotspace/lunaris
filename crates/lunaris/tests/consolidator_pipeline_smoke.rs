@@ -289,6 +289,33 @@ async fn consolidate_enable_then_ingest_publishes_event() {
     assert!(envelope.get("lsn_counter").is_some(), "envelope carries lsn_counter");
 }
 
+/// Phase 9.1 Plan 01 Task 2 RED — publish_consolidate_event MUST populate
+/// the envelope's `source` field from the ingested Episode.source at
+/// publish-time. Without this, Consolidator::consolidate_scoped's filter
+/// (`event.source.starts_with(prefix)`) has no data to match on and every
+/// scoped WorkingMemory::consolidate pass (Plan 09.1-01 Task 3) silently
+/// drops every event.
+#[tokio::test]
+async fn ingest_publishes_consolidate_envelope_with_episode_source() {
+    let (handle, rec, clock) = build_handle();
+    let ep = Episode::new(
+        "test:wm/note-0",
+        "# Notes\nScope-aware consolidate payload.",
+        &clock,
+    );
+    handle.ingest(ep).await.expect("ingest must succeed");
+
+    let envelope = rec
+        .first_consolidate_envelope()
+        .expect("consolidate envelope must be valid JSON");
+    assert_eq!(
+        envelope.get("source").and_then(|v| v.as_str()),
+        Some("test:wm/note-0"),
+        "publish_consolidate_event MUST copy Episode.source into the envelope \
+         (Phase 9.1 Plan 01 Task 2; consolidate_scoped filters on this field)"
+    );
+}
+
 #[tokio::test]
 async fn ingest_publishes_one_consolidate_event_per_call() {
     // D-16 strictness — N ingests produce exactly N consolidate publishes.
