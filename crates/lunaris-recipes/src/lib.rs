@@ -30,6 +30,9 @@ mod message_stream;
 mod temporal_query;
 mod working_memory;
 
+pub mod conversational;
+pub mod documentary;
+
 pub use document_corpus::DocumentCorpus;
 pub use message_stream::MessageStream;
 pub use temporal_query::{Documents, Facts, Messages, SupportsAsOf, SupportsBetween, TemporalQuery};
