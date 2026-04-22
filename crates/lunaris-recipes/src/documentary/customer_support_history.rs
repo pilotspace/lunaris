@@ -86,10 +86,15 @@ impl CustomerSupportHistory {
 
     /// Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the
     /// MessageStream thread_id so chats cluster per ticket. (1 primitive call.)
+    // Plan 11-02b Rule 1 widen: `turn_idx` accepts `usize` so the codegen
+    // `kind = "usize"` annotation flows cleanly across the FFI boundary
+    // without a `U32` allow-list entry in the emitter. usize is strictly
+    // wider than u32 on every platform Lunaris supports; production
+    // semantics unchanged (turn indices never overflow 2^32).
     pub async fn ingest_chat(
         &self,
         ticket_id: impl Into<String>,
-        turn_idx: u32,
+        turn_idx: usize,
         participant: impl Into<String>,
         msg: impl Into<String>,
     ) -> Result<Lsn, LunarisError> {

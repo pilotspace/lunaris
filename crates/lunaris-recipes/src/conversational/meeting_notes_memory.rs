@@ -72,10 +72,15 @@ impl MeetingNotesMemory {
     /// per-attendee `Filter::Eq { field: "participant_id", .. }` — D-06:
     /// NO new filter DSL, NO new `Filter` variants. 0 primitive calls
     /// (deferred).
-    pub fn attendees(&self, attendees: &[&str]) -> MeetingNotesQuery {
+    // Plan 11-02b Rule 1 widen: accept `Vec<String>` instead of `&[&str]`
+    // so the codegen `StrList` (Vec<String>) allow-list entry can flow
+    // cleanly. ≤3 LOC signature change; no new filter DSL; production
+    // semantics unchanged. All existing call sites pass owned `Vec<String>`
+    // or `vec!["x".into(), ...]` literals which transparently coerce.
+    pub fn attendees(&self, attendees: Vec<String>) -> MeetingNotesQuery {
         MeetingNotesQuery {
             lunaris: self.lunaris.clone(),
-            participants: attendees.iter().map(|s| s.to_string()).collect(),
+            participants: attendees,
         }
     }
 

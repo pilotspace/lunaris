@@ -262,11 +262,18 @@ fn emit_ts_method_rust(
                 .unwrap();
                 writeln!(out, "        Ok(())").unwrap();
             } else {
+                // Plan 11-02b Rule 1 extension — pre-serde Named / Json /
+                // Vec / Option / Handle params with EXPLICIT owned-type
+                // annotations so the call site sees the concrete Rust type
+                // (mirror of emit_py.rs sync-ref_self Rule 1 extension).
+                // Load-bearing for MeetingNotesMemory::attendees(Vec<String>).
+                let owned_names = emit_ts_owned_bindings(out, &m.params);
+                let call_args = ts_call_args_from_owned(&m.params, &owned_names);
                 writeln!(
                     out,
                     "        let out = self.inner.{name}({call_args});",
                     name = m.name,
-                    call_args = format_call_args(&m.params)
+                    call_args = call_args
                 )
                 .unwrap();
                 writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty)).unwrap();
@@ -333,14 +340,28 @@ fn emit_ts_method_rust(
         // `async fn` natively; we clone the inner Arc, await the owned
         // builder method, re-wrap.
         (IrAsync::Yes, IrReceiver::Owned) if m.clone_self => {
+            // Plan 11-02b Rule 1 — async-owned + clone_self branches on the
+            // return type: `RefSelf` / `Named` land a wrapper-class Arc;
+            // other shapes (Vec<Hit>, etc.) pass through JSON via
+            // ts_async_return_ty_rust + ts_return_expr_rust (same path the
+            // async-ref_self arm uses).
+            let wraps_into_class = matches!(
+                m.returns.ty,
+                IrTyRef::RefSelf | IrTyRef::Named { .. }
+            );
             let target_ty = ts_owned_self_target_ty(type_name, &m.returns.ty);
+            let sig_ret = if wraps_into_class {
+                target_ty.clone()
+            } else {
+                ts_async_return_ty_rust(&m.returns.ty)
+            };
             writeln!(out, "    #[napi]").unwrap();
             writeln!(
                 out,
-                "    pub async fn {name}(&self{params}) -> napi::Result<{target_ty}> {{",
+                "    pub async fn {name}(&self{params}) -> napi::Result<{sig_ret}> {{",
                 name = m.name,
                 params = format_params_rust(&m.params, /* with_self */ true),
-                target_ty = target_ty
+                sig_ret = sig_ret
             )
             .unwrap();
             writeln!(out, "        let cloned = self.inner.as_ref().clone();").unwrap();
@@ -363,12 +384,17 @@ fn emit_ts_method_rust(
                 )
                 .unwrap();
             }
-            writeln!(
-                out,
-                "        Ok({target_ty} {{ inner: Arc::new(out) }})",
-                target_ty = target_ty
-            )
-            .unwrap();
+            if wraps_into_class {
+                writeln!(
+                    out,
+                    "        Ok({target_ty} {{ inner: Arc::new(out) }})",
+                    target_ty = target_ty
+                )
+                .unwrap();
+            } else {
+                writeln!(out, "        {ret}", ret = ts_return_expr_rust(&m.returns.ty))
+                    .unwrap();
+            }
             writeln!(out, "    }}").unwrap();
         }
         _ => {
@@ -689,6 +715,14 @@ fn ts_return_expr_rust(ty: &IrTyRef) -> String {
         // serialise to JSON. The napi-rs side accepts serde_json::Value but the
         // .d.ts sees the TS class name — mirror of emit_py.rs behaviour.
         IrTyRef::Named { .. } => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
+        // Plan 11-02b Rule 1 — `Vec<T>` async returns. The signature spells
+        // `Vec<serde_json::Value>` (see ts_async_return_ty_rust fallback), so
+        // each element must be serialised individually instead of wrapping
+        // the whole Vec in a single `serde_json::to_value`.
+        IrTyRef::Vec { .. } => {
+            "Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)"
+                .into()
+        }
         _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
     }
 }
@@ -704,6 +738,11 @@ fn ts_sync_return_expr_rust(ty: &IrTyRef) -> String {
         IrTyRef::Named { name } => {
             format!("Ok({name} {{ inner: Arc::new(out) }})")
         }
+        // Plan 11-02b Rule 1 — sync `&self -> Self` (e.g.
+        // `EmailThreading::thread(&self, root_id) -> Self`) wraps the
+        // owned return into the host class. `Self` is the current impl's
+        // class name, not a serialisable value.
+        IrTyRef::RefSelf => "Ok(Self { inner: Arc::new(out) })".into(),
         _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
     }
 }

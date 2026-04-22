@@ -367,11 +367,57 @@ fn emit_py_method(
                 .unwrap();
                 writeln!(out, "        Ok(())").unwrap();
             } else {
+                // Plan 11-02b Rule 1 extension — pre-depythonize Named /
+                // Json / Vec / Option / Handle params with an EXPLICIT
+                // owned-type annotation so the call site sees the concrete
+                // Rust type (mirrors the async-ref_self and sync-owned
+                // clone_self arms). Load-bearing for
+                // `MeetingNotesMemory::attendees(Vec<String>)` whose
+                // emitted param is `&Bound<'_, PyAny>` at the FFI layer.
+                let mut owned_names: Vec<String> = Vec::with_capacity(m.params.len());
+                for p in &m.params {
+                    let owned_name = format!("{}_owned", p.name);
+                    match &p.ty {
+                        IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                            writeln!(
+                                out,
+                                "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                                owned_name = owned_name,
+                                ty = rust_owned_ty(&p.ty),
+                                param = p.name
+                            )
+                            .unwrap();
+                            owned_names.push(owned_name);
+                        }
+                        IrTyRef::Handle { name: handle_name } => {
+                            writeln!(
+                                out,
+                                "        let {owned_name}: ::std::sync::Arc<::lunaris::{handle_name}> = {param}.inner.clone();",
+                                owned_name = owned_name,
+                                handle_name = handle_name,
+                                param = p.name
+                            )
+                            .unwrap();
+                            owned_names.push(owned_name);
+                        }
+                        _ => owned_names.push(p.name.clone()),
+                    }
+                }
+                let call_args = m
+                    .params
+                    .iter()
+                    .zip(owned_names.iter())
+                    .map(|(p, owned)| match &p.ty {
+                        IrTyRef::Str => format!("&{}", owned),
+                        _ => owned.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 writeln!(
                     out,
                     "        let out = self.inner.{name}({call_args});",
                     name = m.name,
-                    call_args = format_call_args(&m.params)
+                    call_args = call_args
                 )
                 .unwrap();
                 writeln!(out, "        {ret}", ret = py_sync_return_expr(&m.returns)).unwrap();

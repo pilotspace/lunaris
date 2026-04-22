@@ -427,9 +427,14 @@ fn ts_async_owned_clone_self() {
     let ir = multi_module_ir();
     let out = emit_ts(&ir);
     let rust = out.rust_glue;
+    // Plan 11-02b — async-owned clone_self branches on return type: when
+    // the return is Vec<Named> (not RefSelf/Named), the sig is
+    // `napi::Result<Vec<serde_json::Value>>` (JSON pass-through, same as
+    // the async-ref_self arm). Wrapping Vec<Hit> into `Type2` would be a
+    // bug (Type2 is the source type, not a Vec container).
     assert!(
-        rust.contains("pub async fn search(&self, query: String) -> napi::Result<Type2>"),
-        "async-owned clone_self signature wrong — got:\n{rust}"
+        rust.contains("pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>>"),
+        "async-owned clone_self signature wrong (expected Vec<Value>) — got:\n{rust}"
     );
     assert!(
         rust.contains("let cloned = self.inner.as_ref().clone();"),

@@ -132,7 +132,9 @@ struct TicketFixture {
 #[derive(serde::Deserialize)]
 struct ChatFixture {
     ticket_id: String,
-    turn_idx: u32,
+    // Plan 11-02b widen: match CustomerSupportHistory::ingest_chat's
+    // usize param.
+    turn_idx: usize,
     participant: String,
     msg: String,
 }
