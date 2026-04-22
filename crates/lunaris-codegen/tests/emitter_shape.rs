@@ -187,6 +187,60 @@ fn codegen_managed_paths_enumerates_exactly_three() {
     );
 }
 
+/// WR-01 lock (Phase 8 code review):
+/// The PyO3 emitter MUST NOT produce `unimplemented!(...)` in the
+/// owned-self builder branch. Rust panics cross the FFI boundary as
+/// `PanicException` (a `BaseException` subclass) which Python
+/// `except RuntimeError:` / `except LunarisError:` cannot catch.
+/// Builder stubs must return `Err(PyNotImplementedError::new_err(...))`
+/// so callers see a normal `NotImplementedError` they can handle.
+#[test]
+fn emit_py_unimplemented_returns_py_err() {
+    let ir = extract_surface(&workspace_root()).expect("extract_surface");
+    let py = emit_py(&ir);
+    assert!(
+        !py.contains("unimplemented!(\"Plan 08-02 wires the body\")"),
+        "emit_py still emits `unimplemented!(...)` in an owned-self builder branch — must return `Err(PyNotImplementedError::new_err(...))` (WR-01)"
+    );
+    assert!(
+        py.contains("pyo3::exceptions::PyNotImplementedError::new_err("),
+        "emit_py does not emit a `PyNotImplementedError::new_err(...)` anywhere — WR-01 fix missing"
+    );
+    // Defence-in-depth: no Rust `panic!(...)` escapes should be emitted
+    // by the PyO3 emitter either.
+    assert!(
+        !py.contains("panic!("),
+        "emit_py emits a `panic!(...)` — FFI-facing panics must be lifted into PyErr returns (WR-01)"
+    );
+}
+
+/// WR-02 lock (Phase 8 code review):
+/// The TS emitter's sync-factory path MUST NOT `.unwrap_or_else(|e| panic!(...))`
+/// on serde failure. When any param is `Vec<T>` / `Named<T>` / `Option<T>` /
+/// `Json`, the factory must return `napi::Result<Self>` and route the
+/// serde error through `.map_err(napi_err)?` — mirror of the async
+/// branch. `Graph::anchored` is the load-bearing caller (takes
+/// `Vec<EntityId>`).
+#[test]
+fn emit_ts_graph_anchored_fallible() {
+    let ir = extract_surface(&workspace_root()).expect("extract_surface");
+    let out = emit_ts(&ir);
+    let rust = out.rust_glue;
+    assert!(
+        !rust.contains(".unwrap_or_else(|e| panic!"),
+        "emit_ts still emits `.unwrap_or_else(|e| panic!(...))` — sync factories with serde-failing params must return `napi::Result<Self>` (WR-02)"
+    );
+    assert!(
+        !rust.contains("panic!("),
+        "emit_ts emits `panic!(...)` — FFI-facing panics must be lifted into napi::Result returns (WR-02)"
+    );
+    // Specifically require `Graph::anchored` to be fallible.
+    assert!(
+        rust.contains("pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self>"),
+        "emit_ts did not produce a fallible `Graph::anchored` factory — expected `-> napi::Result<Self>` (WR-02)"
+    );
+}
+
 #[test]
 fn emit_is_deterministic() {
     let ir = extract_surface(&workspace_root()).expect("extract_surface");

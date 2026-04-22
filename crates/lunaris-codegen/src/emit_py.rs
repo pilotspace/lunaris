@@ -301,6 +301,16 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
             writeln!(out, "    }}").unwrap();
         }
         // Sync `self`-consuming builder method (RetrievalBuilder chain).
+        //
+        // WR-01 fix (Phase 8 code review): return a typed
+        // `PyNotImplementedError` instead of `unimplemented!(...)`.
+        // `unimplemented!` panics — and PyO3 converts Rust panics into
+        // `PanicException`, a `BaseException` subclass that Python's
+        // `except RuntimeError:` / `except LunarisError:` cannot catch.
+        // By returning `Err(PyNotImplementedError::new_err(...))` the
+        // FFI boundary surfaces a proper `NotImplementedError` (a normal
+        // `Exception` subclass), matching the shape of the TS emitter's
+        // `Err(napi::Error::from_reason(...))` path.
         (IrAsync::No, IrReceiver::Owned) => {
             writeln!(
                 out,
@@ -320,7 +330,11 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 unused = format_call_args(&m.params)
             )
             .unwrap();
-            writeln!(out, "        unimplemented!(\"Plan 08-02 wires the body\")").unwrap();
+            writeln!(
+                out,
+                "        Err(pyo3::exceptions::PyNotImplementedError::new_err(\"Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired.\"))"
+            )
+            .unwrap();
             writeln!(out, "    }}").unwrap();
         }
         // Unhandled shapes (MutSelf / async Owned) — defensive stub. The v0.1.1

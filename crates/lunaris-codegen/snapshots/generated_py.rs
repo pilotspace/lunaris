@@ -137,35 +137,35 @@ impl PyRetrievalBuilder {
     fn and(slf: PyRefMut<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
         let _ = slf; let _ = (other); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
-        unimplemented!("Plan 08-02 wires the body")
+        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Fuse two parallel branches via reciprocal-rank fusion (client-side or Moon-native depending on capabilities).
     fn fuse_rrf(slf: PyRefMut<'_, Self>, k: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
         let _ = slf; let _ = (k); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
-        unimplemented!("Plan 08-02 wires the body")
+        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Keep only the top `n` hits after fusion.
     fn top(slf: PyRefMut<'_, Self>, n: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
         let _ = slf; let _ = (n); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
-        unimplemented!("Plan 08-02 wires the body")
+        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Attach a filter predicate (parsed via filter_str) to the query; fails on a malformed predicate string.
     fn filter(slf: PyRefMut<'_, Self>, pred: String) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
         let _ = slf; let _ = (&pred); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
-        unimplemented!("Plan 08-02 wires the body")
+        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read).
     fn as_of(slf: PyRefMut<'_, Self>, hlc: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
         let _ = slf; let _ = (hlc); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
-        unimplemented!("Plan 08-02 wires the body")
+        Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
 }
