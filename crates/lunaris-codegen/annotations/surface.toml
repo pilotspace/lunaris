@@ -23,6 +23,7 @@ schema_version = 1
 
 [[module]]
 name = "lunaris"
+rust_crate_path = "::lunaris"
 
   [[module.type]]
   name = "Lunaris"
@@ -208,3 +209,540 @@ name = "lunaris"
     params = [{ name = "on", ty = { kind = "bool" } }]
     returns = { ty = { kind = "unit" }, fallible = false }
     doc = "Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12)."
+
+# ============================================================================
+# Plan 11-02b — lunaris_recipes.conversational module (RCPCONV-01..05).
+#
+# 5 wrapper types + 2 opaque side-types (SlackArchiveQuery, MeetingNotesQuery).
+# Grep-verified against crates/lunaris-recipes/src/conversational/*.rs on
+# 2026-04-22. Every `new(Arc<Lunaris>, …)` first param uses
+# `kind = "handle", name = "Lunaris"` (D3(a)); owned-self builder methods
+# (`with_graph_pipeline`, `SlackArchiveQuery::with_user`) carry
+# `clone_self = true` (D6(b)); ingest `Vec<(String, Map)>` params use the
+# Plan 11-02b Rule 1 `kind = "named", name = "DocumentChunks"` allow-list
+# entry (D4(b) revised — see emit_py.rs commentary).
+# ============================================================================
+
+[[module]]
+name = "lunaris_recipes.conversational"
+rust_crate_path = "::lunaris_recipes::conversational"
+
+  [[module.type]]
+  name = "ChatAgentMemory"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/chat_agent_memory.rs"
+  doc = "Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "user_id", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct a ChatAgentMemory bound to `user_id`."
+
+    [[module.type.methods]]
+    name = "remember"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "turn", ty = { kind = "str" } }]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Record a single conversational turn."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall turns matching `query`."
+
+  [[module.type]]
+  name = "MultiTurnConversation"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/multi_turn_conversation.rs"
+  doc = "Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "user_id", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct bound to `user_id`."
+
+    [[module.type.methods]]
+    name = "remember"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "turn", ty = { kind = "str" } },
+      { name = "thread_id", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Record a turn for `thread_id` (session id)."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall turns matching `query` across all sessions."
+
+    [[module.type.methods]]
+    name = "consolidate"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = []
+    returns = { ty = { kind = "named", name = "ConsolidationReport" }, fallible = true }
+    doc = "Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation)."
+
+  [[module.type]]
+  name = "SlackArchive"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/slack_archive.rs"
+  doc = "Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct a root archive handle."
+
+    [[module.type.methods]]
+    name = "ingest_channel"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "channel", ty = { kind = "str" } },
+      { name = "participant_id", ty = { kind = "str" } },
+      { name = "message", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Ingest one message into `channel` authored by `participant_id`."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall across the whole archive."
+
+    [[module.type.methods]]
+    name = "channel"
+    is_async = "no"
+    receiver = "ref_self"
+    params = [{ name = "id", ty = { kind = "str" } }]
+    returns = { ty = { kind = "named", name = "SlackArchiveQuery" }, fallible = false }
+    doc = "Narrow to one channel. Returns a SlackArchiveQuery."
+
+    [[module.type.methods]]
+    name = "user"
+    is_async = "no"
+    receiver = "ref_self"
+    params = [{ name = "id", ty = { kind = "str" } }]
+    returns = { ty = { kind = "named", name = "SlackArchiveQuery" }, fallible = false }
+    doc = "Narrow to one user. Returns a SlackArchiveQuery."
+
+  [[module.type]]
+  name = "SlackArchiveQuery"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/slack_archive.rs"
+  doc = "Narrowed query builder returned by SlackArchive::channel / SlackArchive::user."
+
+    [[module.type.methods]]
+    name = "with_user"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "id", ty = { kind = "str" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Add a `user` narrow on top of a `.channel(...)` narrow."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Execute the narrowed recall."
+
+  [[module.type]]
+  name = "EmailThreading"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/email_threading.rs"
+  doc = "Thread-scoped email wrapper with an opt-in graph-pipeline builder."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct a new email-archive handle rooted at `email:thread/`."
+
+    [[module.type.methods]]
+    name = "ingest"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "root_id", ty = { kind = "str" } },
+      { name = "from", ty = { kind = "str" } },
+      { name = "body", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Ingest one email into `root_id`'s thread, authored by `from`."
+
+    [[module.type.methods]]
+    name = "thread"
+    is_async = "no"
+    receiver = "ref_self"
+    params = [{ name = "root_id", ty = { kind = "str" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Narrow to one thread `root_id`. Returns a new EmailThreading."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall across the current scope."
+
+    [[module.type.methods]]
+    name = "with_graph_pipeline"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "enable", ty = { kind = "bool" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false)."
+
+  [[module.type]]
+  name = "MeetingNotesMemory"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/meeting_notes_memory.rs"
+  doc = "Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct bound to `meeting:notes/`."
+
+    [[module.type.methods]]
+    name = "note"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "heading", ty = { kind = "str" } },
+      { name = "body", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Record one note under `heading` (thread_id) with `body` content."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall across the meeting corpus."
+
+    [[module.type.methods]]
+    name = "attendees"
+    is_async = "no"
+    receiver = "ref_self"
+    params = [{ name = "attendees", ty = { kind = "named", name = "StrList" } }]
+    returns = { ty = { kind = "named", name = "MeetingNotesQuery" }, fallible = false }
+    doc = "Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery."
+
+    [[module.type.methods]]
+    name = "with_graph_pipeline"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "enable", ty = { kind = "bool" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Opt-in the v0.1.0 graph pipeline (blueprint §5.2)."
+
+  [[module.type]]
+  name = "MeetingNotesQuery"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/conversational/meeting_notes_memory.rs"
+  doc = "Narrowed query builder returned by MeetingNotesMemory::attendees."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Execute the narrowed recall (per-attendee Filter::Eq And)."
+
+# ============================================================================
+# Plan 11-02b — lunaris_recipes.documentary module (RCPDOC-01..05).
+#
+# 5 wrapper types. `DocumentKnowledgeBase` exercises the full suite of
+# emitter arms added by 11-02a: sync-owned + clone_self (filter/top), and
+# async-owned + clone_self (search). `CodeRepoMemory::ingest_commit` rides
+# the new `UnixMs` allow-list entry. All ingest methods use
+# `DocumentChunks` (Vec of (String, Map)).
+# ============================================================================
+
+[[module]]
+name = "lunaris_recipes.documentary"
+rust_crate_path = "::lunaris_recipes::documentary"
+
+  [[module.type]]
+  name = "DocumentKnowledgeBase"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/documentary/document_knowledge_base.rs"
+  doc = "Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "source_prefix", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct a knowledge base bound to `source_prefix`."
+
+    [[module.type.methods]]
+    name = "ingest"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "chunks", ty = { kind = "named", name = "DocumentChunks" } }]
+    returns = { ty = { kind = "unit" }, fallible = true }
+    doc = "Ingest chunked `(content, metadata)` pairs."
+
+    [[module.type.methods]]
+    name = "filter"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [
+      { name = "field", ty = { kind = "str" } },
+      { name = "value", ty = { kind = "named", name = "JsonValue" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Add an equality filter on a metadata field."
+
+    [[module.type.methods]]
+    name = "top"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "k", ty = { kind = "usize" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Cap output at `k` hits."
+
+    [[module.type.methods]]
+    name = "search"
+    is_async = "yes"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Execute the fused Vector + Keyword RRF recall."
+
+  [[module.type]]
+  name = "ResearchPaperCorpus"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/documentary/research_paper_corpus.rs"
+  doc = "Research-paper corpus wrapper with opt-in citation graph."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "source_prefix", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct bound to `source_prefix`."
+
+    [[module.type.methods]]
+    name = "with_graph_pipeline"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "on", ty = { kind = "bool" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Opt-in the citation graph (blueprint §5.2 graph-default-off)."
+
+    [[module.type.methods]]
+    name = "ingest"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "chunks", ty = { kind = "named", name = "DocumentChunks" } }]
+    returns = { ty = { kind = "unit" }, fallible = true }
+    doc = "Ingest chunked `(content, metadata)` pairs."
+
+    [[module.type.methods]]
+    name = "search"
+    is_async = "yes"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Execute the RRF-fused recall."
+
+  [[module.type]]
+  name = "CodeRepoMemory"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/documentary/code_repo_memory.rs"
+  doc = "Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "repo_prefix", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct bound to `repo_prefix`."
+
+    [[module.type.methods]]
+    name = "ingest_commit"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "commit_sha", ty = { kind = "str" } },
+      { name = "committer_date_unix_ms", ty = { kind = "named", name = "UnixMs" } },
+      { name = "chunks", ty = { kind = "named", name = "DocumentChunks" } },
+    ]
+    returns = { ty = { kind = "unit" }, fallible = true }
+    doc = "Ingest one commit as a batch of `(function_body, metadata)` chunks."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "query", ty = { kind = "str" } },
+      { name = "as_of", ty = { kind = "named", name = "Hlc" } },
+    ]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall at point-in-time `as_of`."
+
+  [[module.type]]
+  name = "TimelineReconstruction"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/documentary/timeline_reconstruction.rs"
+  doc = "Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "source_prefix", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct bound to `source_prefix`."
+
+    [[module.type.methods]]
+    name = "ingest"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "events", ty = { kind = "named", name = "DocumentChunks" } }]
+    returns = { ty = { kind = "unit" }, fallible = true }
+    doc = "Ingest timeline events as chunked `(content, metadata)` pairs."
+
+    [[module.type.methods]]
+    name = "between"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "query", ty = { kind = "str" } },
+      { name = "lo", ty = { kind = "named", name = "Hlc" } },
+      { name = "hi", ty = { kind = "named", name = "Hlc" } },
+    ]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics)."
+
+    [[module.type.methods]]
+    name = "as_of"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "query", ty = { kind = "str" } },
+      { name = "ts", ty = { kind = "named", name = "Hlc" } },
+    ]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall the snapshot at `ts`."
+
+  [[module.type]]
+  name = "CustomerSupportHistory"
+  kind = "opaque"
+  source_file = "crates/lunaris-recipes/src/documentary/customer_support_history.rs"
+  doc = "Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream."
+
+    [[module.type.methods]]
+    name = "new"
+    is_async = "no"
+    receiver = "none"
+    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Construct with hard-coded source prefixes `ticket:` and `chat:`."
+
+    [[module.type.methods]]
+    name = "with_graph_pipeline"
+    is_async = "no"
+    receiver = "owned"
+    clone_self = true
+    params = [{ name = "on", ty = { kind = "bool" } }]
+    returns = { ty = { kind = "ref_self" }, fallible = false }
+    doc = "Opt-in the product/customer relationship graph (blueprint §5.2)."
+
+    [[module.type.methods]]
+    name = "ingest_ticket"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "ticket_id", ty = { kind = "str" } },
+      { name = "body", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "unit" }, fallible = true }
+    doc = "Ingest one ticket body. `ticket_id` is stamped into metadata."
+
+    [[module.type.methods]]
+    name = "ingest_chat"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [
+      { name = "ticket_id", ty = { kind = "str" } },
+      { name = "turn_idx", ty = { kind = "usize" } },
+      { name = "participant", ty = { kind = "str" } },
+      { name = "msg", ty = { kind = "str" } },
+    ]
+    returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
+    doc = "Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id."
+
+    [[module.type.methods]]
+    name = "recall"
+    is_async = "yes"
+    receiver = "ref_self"
+    params = [{ name = "query", ty = { kind = "str" } }]
+    returns = { ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }, fallible = true }
+    doc = "Recall from both buckets; RRF fusion happens within each primitive's own bucket."

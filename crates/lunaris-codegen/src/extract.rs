@@ -53,11 +53,9 @@ mod tests {
     }
 
     #[test]
-    fn fifteen_surface_methods_present() {
+    fn sixty_one_surface_methods_present() {
         let ir = load_committed_ir();
-        // Plan 08-01 Rule 1 deviation: the plan text calls this a "14-item"
-        // surface but the explicit enumeration in the plan `<interfaces>`
-        // block sums to 15:
+        // Plan 08-01 surface enumeration (15 methods):
         //
         //   Lunaris: open, ingest, recall, forget, snapshot        (5)
         //   Vector::new                                             (1)
@@ -67,18 +65,48 @@ mod tests {
         //   GraphPipelineHandle (single toggle)                    (1)
         //   ConsolidatorPipelineHandle (single toggle)             (1)
         //                                                         ----
-        //                                                          15
+        //   Phase 8 subtotal:                                       15
         //
-        // Every method here corresponds to a real Rust method on the v0.1.0
-        // surface + Plan 08-00's `snapshot` — we emit all 15 rather than
-        // silently dropping one. Summary documents this as a Rule 1 fix.
+        // Plan 11-02b — conversational (25 methods):
+        //
+        //   ChatAgentMemory: new, remember, recall                 (3)
+        //   MultiTurnConversation: new, remember, recall, consolidate (4)
+        //   SlackArchive: new, ingest_channel, recall, channel, user (5)
+        //   SlackArchiveQuery: with_user, recall                   (2)
+        //   EmailThreading: new, ingest, thread, recall,
+        //                   with_graph_pipeline                    (5)
+        //   MeetingNotesMemory: new, note, recall, attendees,
+        //                       with_graph_pipeline                (5)
+        //   MeetingNotesQuery: recall                              (1)
+        //                                                         ----
+        //   conversational subtotal:                                25
+        //
+        // Plan 11-02b — documentary (21 methods):
+        //
+        //   DocumentKnowledgeBase: new, ingest, filter, top, search (5)
+        //   ResearchPaperCorpus: new, with_graph_pipeline, ingest,
+        //                        search                            (4)
+        //   CodeRepoMemory: new, ingest_commit, recall             (3)
+        //   TimelineReconstruction: new, ingest, between, as_of    (4)
+        //   CustomerSupportHistory: new, with_graph_pipeline,
+        //                           ingest_ticket, ingest_chat,
+        //                           recall                         (5)
+        //                                                         ----
+        //   documentary subtotal:                                   21
+        //                                                         ----
+        //   Grand total:                                            61
         let total_methods: usize =
             ir.modules.iter().flat_map(|m| &m.types).map(|t| t.methods.len()).sum();
         assert_eq!(
-            total_methods, 15,
-            "expected 15 surface methods per plan enumeration, got {total_methods}: {:#?}",
+            total_methods, 61,
+            "expected 61 surface methods (15 phase 8 + 25 conversational + 21 documentary), got {total_methods}: {:#?}",
             ir.modules
         );
+        // Module count sanity: 3 modules (lunaris + conversational + documentary).
+        assert_eq!(ir.modules.len(), 3, "expected 3 modules");
+        // Type count sanity: 19 types (7 + 7 + 5).
+        let total_types: usize = ir.modules.iter().map(|m| m.types.len()).sum();
+        assert_eq!(total_types, 19, "expected 19 types (7 lunaris + 7 conversational + 5 documentary)");
     }
 
     #[test]

@@ -23,6 +23,7 @@ crate-type = ["cdylib", "rlib"]
 # enable the feature at `napi build` time.
 lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
 lunaris-core        = { path = "../lunaris-core" }
+lunaris-recipes     = { path = "../lunaris-recipes" }
 lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
 lunaris-conformance = { path = "../lunaris-conformance", optional = true }

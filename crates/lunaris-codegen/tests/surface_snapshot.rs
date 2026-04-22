@@ -13,13 +13,13 @@ fn workspace_root() -> std::path::PathBuf {
 }
 
 #[test]
-fn fifteen_items_present() {
+fn sixty_one_items_present() {
     let ir = extract_surface(&workspace_root()).expect("extract_surface");
     let total: usize = ir.modules.iter().flat_map(|m| &m.types).map(|t| t.methods.len()).sum();
-    // See extract.rs `fifteen_surface_methods_present` for the
-    // plan-vs-reality arithmetic. The enumeration in the plan sums to 15;
-    // we emit all 15 since each maps to a real Rust method.
-    assert_eq!(total, 15, "expected 15 surface methods, got {total}");
+    // See extract.rs `sixty_one_surface_methods_present` for the full
+    // per-module breakdown. Plan 8 surface (15) + Plan 11-02b
+    // conversational (25) + Plan 11-02b documentary (21) = 61.
+    assert_eq!(total, 61, "expected 61 surface methods, got {total}");
 }
 
 #[test]

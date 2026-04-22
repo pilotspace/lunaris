@@ -62,3 +62,143 @@ export class ConsolidatorPipelineHandle {
   toggle(on: boolean): void;
 }
 
+/** Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair. */
+export class ChatAgentMemory {
+  /** Construct a ChatAgentMemory bound to `user_id`. */
+  static new(lunaris: Lunaris, user_id: string): this;
+  /** Record a single conversational turn. */
+  remember(turn: string): Promise<string>;
+  /** Recall turns matching `query`. */
+  recall(query: string): Promise<Array<Hit>>;
+}
+
+/** Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass. */
+export class MultiTurnConversation {
+  /** Construct bound to `user_id`. */
+  static new(lunaris: Lunaris, user_id: string): this;
+  /** Record a turn for `thread_id` (session id). */
+  remember(turn: string, thread_id: string): Promise<string>;
+  /** Recall turns matching `query` across all sessions. */
+  recall(query: string): Promise<Array<Hit>>;
+  /** Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation). */
+  consolidate(): Promise<ConsolidationReport>;
+}
+
+/** Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`. */
+export class SlackArchive {
+  /** Construct a root archive handle. */
+  static new(lunaris: Lunaris): this;
+  /** Ingest one message into `channel` authored by `participant_id`. */
+  ingest_channel(channel: string, participant_id: string, message: string): Promise<string>;
+  /** Recall across the whole archive. */
+  recall(query: string): Promise<Array<Hit>>;
+  /** Narrow to one channel. Returns a SlackArchiveQuery. */
+  channel(id: string): SlackArchiveQuery;
+  /** Narrow to one user. Returns a SlackArchiveQuery. */
+  user(id: string): SlackArchiveQuery;
+}
+
+/** Narrowed query builder returned by SlackArchive::channel / SlackArchive::user. */
+export class SlackArchiveQuery {
+  /** Add a `user` narrow on top of a `.channel(...)` narrow. */
+  with_user(id: string): this;
+  /** Execute the narrowed recall. */
+  recall(query: string): Promise<Array<Hit>>;
+}
+
+/** Thread-scoped email wrapper with an opt-in graph-pipeline builder. */
+export class EmailThreading {
+  /** Construct a new email-archive handle rooted at `email:thread/`. */
+  static new(lunaris: Lunaris): this;
+  /** Ingest one email into `root_id`'s thread, authored by `from`. */
+  ingest(root_id: string, from: string, body: string): Promise<string>;
+  /** Narrow to one thread `root_id`. Returns a new EmailThreading. */
+  thread(root_id: string): this;
+  /** Recall across the current scope. */
+  recall(query: string): Promise<Array<Hit>>;
+  /** Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false). */
+  with_graph_pipeline(enable: boolean): this;
+}
+
+/** Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder. */
+export class MeetingNotesMemory {
+  /** Construct bound to `meeting:notes/`. */
+  static new(lunaris: Lunaris): this;
+  /** Record one note under `heading` (thread_id) with `body` content. */
+  note(heading: string, body: string): Promise<string>;
+  /** Recall across the meeting corpus. */
+  recall(query: string): Promise<Array<Hit>>;
+  /** Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery. */
+  attendees(attendees: StrList): MeetingNotesQuery;
+  /** Opt-in the v0.1.0 graph pipeline (blueprint §5.2). */
+  with_graph_pipeline(enable: boolean): this;
+}
+
+/** Narrowed query builder returned by MeetingNotesMemory::attendees. */
+export class MeetingNotesQuery {
+  /** Execute the narrowed recall (per-attendee Filter::Eq And). */
+  recall(query: string): Promise<Array<Hit>>;
+}
+
+/** Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`. */
+export class DocumentKnowledgeBase {
+  /** Construct a knowledge base bound to `source_prefix`. */
+  static new(lunaris: Lunaris, source_prefix: string): this;
+  /** Ingest chunked `(content, metadata)` pairs. */
+  ingest(chunks: DocumentChunks): Promise<void>;
+  /** Add an equality filter on a metadata field. */
+  filter(field: string, value: JsonValue): this;
+  /** Cap output at `k` hits. */
+  top(k: number): this;
+  /** Execute the fused Vector + Keyword RRF recall. */
+  search(query: string): Promise<Array<Hit>>;
+}
+
+/** Research-paper corpus wrapper with opt-in citation graph. */
+export class ResearchPaperCorpus {
+  /** Construct bound to `source_prefix`. */
+  static new(lunaris: Lunaris, source_prefix: string): this;
+  /** Opt-in the citation graph (blueprint §5.2 graph-default-off). */
+  with_graph_pipeline(on: boolean): this;
+  /** Ingest chunked `(content, metadata)` pairs. */
+  ingest(chunks: DocumentChunks): Promise<void>;
+  /** Execute the RRF-fused recall. */
+  search(query: string): Promise<Array<Hit>>;
+}
+
+/** Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies. */
+export class CodeRepoMemory {
+  /** Construct bound to `repo_prefix`. */
+  static new(lunaris: Lunaris, repo_prefix: string): this;
+  /** Ingest one commit as a batch of `(function_body, metadata)` chunks. */
+  ingest_commit(commit_sha: string, committer_date_unix_ms: UnixMs, chunks: DocumentChunks): Promise<void>;
+  /** Recall at point-in-time `as_of`. */
+  recall(query: string, as_of: Hlc): Promise<Array<Hit>>;
+}
+
+/** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>. */
+export class TimelineReconstruction {
+  /** Construct bound to `source_prefix`. */
+  static new(lunaris: Lunaris, source_prefix: string): this;
+  /** Ingest timeline events as chunked `(content, metadata)` pairs. */
+  ingest(events: DocumentChunks): Promise<void>;
+  /** Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics). */
+  between(query: string, lo: Hlc, hi: Hlc): Promise<Array<Hit>>;
+  /** Recall the snapshot at `ts`. */
+  as_of(query: string, ts: Hlc): Promise<Array<Hit>>;
+}
+
+/** Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream. */
+export class CustomerSupportHistory {
+  /** Construct with hard-coded source prefixes `ticket:` and `chat:`. */
+  static new(lunaris: Lunaris): this;
+  /** Opt-in the product/customer relationship graph (blueprint §5.2). */
+  with_graph_pipeline(on: boolean): this;
+  /** Ingest one ticket body. `ticket_id` is stamped into metadata. */
+  ingest_ticket(ticket_id: string, body: string): Promise<void>;
+  /** Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id. */
+  ingest_chat(ticket_id: string, turn_idx: number, participant: string, msg: string): Promise<string>;
+  /** Recall from both buckets; RRF fusion happens within each primitive's own bucket. */
+  recall(query: string): Promise<Array<Hit>>;
+}
+

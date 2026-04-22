@@ -204,8 +204,8 @@ impl PyConsolidatorPipelineHandle {
 
 }
 
-/// Registers every generated `#[pyclass]` on the host crate's `#[pymodule] fn lunaris`.
-pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Registers every generated `#[pyclass]` for module `lunaris`.
+pub(crate) fn register_generated_lunaris(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLunaris>()?;
     m.add_class::<PyVector>()?;
     m.add_class::<PyKeyword>()?;
@@ -213,5 +213,539 @@ pub(crate) fn register_generated(_py: Python<'_>, m: &Bound<'_, PyModule>) -> Py
     m.add_class::<PyRetrievalBuilder>()?;
     m.add_class::<PyGraphPipelineHandle>()?;
     m.add_class::<PyConsolidatorPipelineHandle>()?;
+    Ok(())
+}
+/// Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair.
+#[pyclass(name = "ChatAgentMemory", unsendable)]
+pub struct PyChatAgentMemory {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::ChatAgentMemory>,
+}
+
+#[pymethods]
+impl PyChatAgentMemory {
+    /// Construct a ChatAgentMemory bound to `user_id`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, &user_id);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Record a single conversational turn.
+    fn remember<'py>(&self, py: Python<'py>, turn: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.remember(&turn).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Recall turns matching `query`.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass.
+#[pyclass(name = "MultiTurnConversation", unsendable)]
+pub struct PyMultiTurnConversation {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::MultiTurnConversation>,
+}
+
+#[pymethods]
+impl PyMultiTurnConversation {
+    /// Construct bound to `user_id`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, &user_id);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Record a turn for `thread_id` (session id).
+    fn remember<'py>(&self, py: Python<'py>, turn: String, thread_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.remember(&turn, &thread_id).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Recall turns matching `query` across all sessions.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+    /// Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation).
+    fn consolidate<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.consolidate().await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`.
+#[pyclass(name = "SlackArchive", unsendable)]
+pub struct PySlackArchive {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::SlackArchive>,
+}
+
+#[pymethods]
+impl PySlackArchive {
+    /// Construct a root archive handle.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Ingest one message into `channel` authored by `participant_id`.
+    fn ingest_channel<'py>(&self, py: Python<'py>, channel: String, participant_id: String, message: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest_channel(&channel, &participant_id, &message).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Recall across the whole archive.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+    /// Narrow to one channel. Returns a SlackArchiveQuery.
+    fn channel(&self, id: String) -> PyResult<PySlackArchiveQuery> {
+        let out = self.inner.channel(&id);
+        Ok(PySlackArchiveQuery { inner: Arc::new(out) })
+    }
+
+    /// Narrow to one user. Returns a SlackArchiveQuery.
+    fn user(&self, id: String) -> PyResult<PySlackArchiveQuery> {
+        let out = self.inner.user(&id);
+        Ok(PySlackArchiveQuery { inner: Arc::new(out) })
+    }
+
+}
+
+/// Narrowed query builder returned by SlackArchive::channel / SlackArchive::user.
+#[pyclass(name = "SlackArchiveQuery", unsendable)]
+pub struct PySlackArchiveQuery {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::SlackArchiveQuery>,
+}
+
+#[pymethods]
+impl PySlackArchiveQuery {
+    /// Add a `user` narrow on top of a `.channel(...)` narrow.
+    fn with_user(&self, id: String) -> PyResult<PySlackArchiveQuery> {
+        let out = self.inner.as_ref().clone().with_user(&id);
+        Ok(PySlackArchiveQuery { inner: Arc::new(out) })
+    }
+
+    /// Execute the narrowed recall.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Thread-scoped email wrapper with an opt-in graph-pipeline builder.
+#[pyclass(name = "EmailThreading", unsendable)]
+pub struct PyEmailThreading {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::EmailThreading>,
+}
+
+#[pymethods]
+impl PyEmailThreading {
+    /// Construct a new email-archive handle rooted at `email:thread/`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Ingest one email into `root_id`'s thread, authored by `from`.
+    fn ingest<'py>(&self, py: Python<'py>, root_id: String, from: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest(&root_id, &from, &body).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Narrow to one thread `root_id`. Returns a new EmailThreading.
+    fn thread(&self, root_id: String) -> PyResult<Self> {
+        let out = self.inner.thread(&root_id);
+        Ok(Self { inner: Arc::new(out) })
+    }
+
+    /// Recall across the current scope.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+    /// Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false).
+    fn with_graph_pipeline(&self, enable: bool) -> PyResult<PyEmailThreading> {
+        let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
+        Ok(PyEmailThreading { inner: Arc::new(out) })
+    }
+
+}
+
+/// Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder.
+#[pyclass(name = "MeetingNotesMemory", unsendable)]
+pub struct PyMeetingNotesMemory {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::MeetingNotesMemory>,
+}
+
+#[pymethods]
+impl PyMeetingNotesMemory {
+    /// Construct bound to `meeting:notes/`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Record one note under `heading` (thread_id) with `body` content.
+    fn note<'py>(&self, py: Python<'py>, heading: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.note(&heading, &body).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Recall across the meeting corpus.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+    /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
+    fn attendees(&self, attendees: &Bound<'_, PyAny>) -> PyResult<PyMeetingNotesQuery> {
+        let attendees_owned: Vec<String> = pythonize::depythonize(&attendees).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("attendees: {e}")))?;
+        let out = self.inner.attendees(attendees_owned);
+        Ok(PyMeetingNotesQuery { inner: Arc::new(out) })
+    }
+
+    /// Opt-in the v0.1.0 graph pipeline (blueprint §5.2).
+    fn with_graph_pipeline(&self, enable: bool) -> PyResult<PyMeetingNotesMemory> {
+        let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
+        Ok(PyMeetingNotesMemory { inner: Arc::new(out) })
+    }
+
+}
+
+/// Narrowed query builder returned by MeetingNotesMemory::attendees.
+#[pyclass(name = "MeetingNotesQuery", unsendable)]
+pub struct PyMeetingNotesQuery {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::conversational::MeetingNotesQuery>,
+}
+
+#[pymethods]
+impl PyMeetingNotesQuery {
+    /// Execute the narrowed recall (per-attendee Filter::Eq And).
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Registers every generated `#[pyclass]` for module `lunaris_recipes.conversational`.
+pub(crate) fn register_generated_lunaris_recipes_conversational(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyChatAgentMemory>()?;
+    m.add_class::<PyMultiTurnConversation>()?;
+    m.add_class::<PySlackArchive>()?;
+    m.add_class::<PySlackArchiveQuery>()?;
+    m.add_class::<PyEmailThreading>()?;
+    m.add_class::<PyMeetingNotesMemory>()?;
+    m.add_class::<PyMeetingNotesQuery>()?;
+    Ok(())
+}
+/// Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`.
+#[pyclass(name = "DocumentKnowledgeBase", unsendable)]
+pub struct PyDocumentKnowledgeBase {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::documentary::DocumentKnowledgeBase>,
+}
+
+#[pymethods]
+impl PyDocumentKnowledgeBase {
+    /// Construct a knowledge base bound to `source_prefix`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, &source_prefix);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Ingest chunked `(content, metadata)` pairs.
+    fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest(chunks_owned).await.map_err(py_err)?;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    /// Add an equality filter on a metadata field.
+    fn filter(&self, field: String, value: &Bound<'_, PyAny>) -> PyResult<PyDocumentKnowledgeBase> {
+        let value_owned: serde_json::Value = pythonize::depythonize(&value).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("value: {e}")))?;
+        let out = self.inner.as_ref().clone().filter(&field, value_owned);
+        Ok(PyDocumentKnowledgeBase { inner: Arc::new(out) })
+    }
+
+    /// Cap output at `k` hits.
+    fn top(&self, k: usize) -> PyResult<PyDocumentKnowledgeBase> {
+        let out = self.inner.as_ref().clone().top(k);
+        Ok(PyDocumentKnowledgeBase { inner: Arc::new(out) })
+    }
+
+    /// Execute the fused Vector + Keyword RRF recall.
+    fn search<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let cloned = self.inner.as_ref().clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = cloned.search(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Research-paper corpus wrapper with opt-in citation graph.
+#[pyclass(name = "ResearchPaperCorpus", unsendable)]
+pub struct PyResearchPaperCorpus {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::documentary::ResearchPaperCorpus>,
+}
+
+#[pymethods]
+impl PyResearchPaperCorpus {
+    /// Construct bound to `source_prefix`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, &source_prefix);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Opt-in the citation graph (blueprint §5.2 graph-default-off).
+    fn with_graph_pipeline(&self, on: bool) -> PyResult<PyResearchPaperCorpus> {
+        let out = self.inner.as_ref().clone().with_graph_pipeline(on);
+        Ok(PyResearchPaperCorpus { inner: Arc::new(out) })
+    }
+
+    /// Ingest chunked `(content, metadata)` pairs.
+    fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest(chunks_owned).await.map_err(py_err)?;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    /// Execute the RRF-fused recall.
+    fn search<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let cloned = self.inner.as_ref().clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = cloned.search(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies.
+#[pyclass(name = "CodeRepoMemory", unsendable)]
+pub struct PyCodeRepoMemory {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::documentary::CodeRepoMemory>,
+}
+
+#[pymethods]
+impl PyCodeRepoMemory {
+    /// Construct bound to `repo_prefix`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, repo_prefix: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, &repo_prefix);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
+    fn ingest_commit<'py>(&self, py: Python<'py>, commit_sha: String, committer_date_unix_ms: &Bound<'_, PyAny>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let committer_date_unix_ms_owned: i64 = pythonize::depythonize(&committer_date_unix_ms)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(py_err)?;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    /// Recall at point-in-time `as_of`.
+    fn recall<'py>(&self, py: Python<'py>, query: String, as_of: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let as_of_owned: ::lunaris::Hlc = pythonize::depythonize(&as_of)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query, as_of_owned).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>.
+#[pyclass(name = "TimelineReconstruction", unsendable)]
+pub struct PyTimelineReconstruction {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::documentary::TimelineReconstruction>,
+}
+
+#[pymethods]
+impl PyTimelineReconstruction {
+    /// Construct bound to `source_prefix`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, &source_prefix);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Ingest timeline events as chunked `(content, metadata)` pairs.
+    fn ingest<'py>(&self, py: Python<'py>, events: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&events)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest(events_owned).await.map_err(py_err)?;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
+    fn between<'py>(&self, py: Python<'py>, query: String, lo: &Bound<'_, PyAny>, hi: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let lo_owned: ::lunaris::Hlc = pythonize::depythonize(&lo)?;
+        let hi_owned: ::lunaris::Hlc = pythonize::depythonize(&hi)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.between(&query, lo_owned, hi_owned).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+    /// Recall the snapshot at `ts`.
+    fn as_of<'py>(&self, py: Python<'py>, query: String, ts: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let ts_owned: ::lunaris::Hlc = pythonize::depythonize(&ts)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.as_of(&query, ts_owned).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream.
+#[pyclass(name = "CustomerSupportHistory", unsendable)]
+pub struct PyCustomerSupportHistory {
+    #[allow(dead_code)]
+    pub(crate) inner: Arc<::lunaris_recipes::documentary::CustomerSupportHistory>,
+}
+
+#[pymethods]
+impl PyCustomerSupportHistory {
+    /// Construct with hard-coded source prefixes `ticket:` and `chat:`.
+    #[staticmethod]
+    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+        let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
+        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned);
+        Ok(Self { inner: Arc::new(inner) })
+    }
+
+    /// Opt-in the product/customer relationship graph (blueprint §5.2).
+    fn with_graph_pipeline(&self, on: bool) -> PyResult<PyCustomerSupportHistory> {
+        let out = self.inner.as_ref().clone().with_graph_pipeline(on);
+        Ok(PyCustomerSupportHistory { inner: Arc::new(out) })
+    }
+
+    /// Ingest one ticket body. `ticket_id` is stamped into metadata.
+    fn ingest_ticket<'py>(&self, py: Python<'py>, ticket_id: String, body: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest_ticket(&ticket_id, &body).await.map_err(py_err)?;
+            Ok(Python::with_gil(|py| py.None()))
+        })
+    }
+
+    /// Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id.
+    fn ingest_chat<'py>(&self, py: Python<'py>, ticket_id: String, turn_idx: usize, participant: String, msg: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.ingest_chat(&ticket_id, turn_idx, &participant, &msg).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+        })
+    }
+
+    /// Recall from both buckets; RRF fusion happens within each primitive's own bucket.
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let out = inner.recall(&query).await.map_err(py_err)?;
+            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+        })
+    }
+
+}
+
+/// Registers every generated `#[pyclass]` for module `lunaris_recipes.documentary`.
+pub(crate) fn register_generated_lunaris_recipes_documentary(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyDocumentKnowledgeBase>()?;
+    m.add_class::<PyResearchPaperCorpus>()?;
+    m.add_class::<PyCodeRepoMemory>()?;
+    m.add_class::<PyTimelineReconstruction>()?;
+    m.add_class::<PyCustomerSupportHistory>()?;
     Ok(())
 }
