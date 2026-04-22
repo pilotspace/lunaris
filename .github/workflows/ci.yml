@@ -16,3 +16,44 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
       - run: cargo doc --workspace --no-deps
+
+  # Phase 8 Plan 08-01 (BIND-GEN-02) — parity-check job.
+  # Fails the PR when the committed binding snapshots drift from the
+  # regenerated output. The walker is implemented in
+  # `crates/lunaris-codegen/src/check.rs` and deliberately enumerates ONLY
+  # the three codegen-managed snapshot paths under
+  # `crates/lunaris-codegen/snapshots/` — handwritten `conformance.rs`
+  # modules owned by Plans 08-02 / 08-03 / 08-04 are invisible to this
+  # check by construction (BLOCKER 3+4 / T-08-01-05 carveout).
+  #
+  # All `run:` steps use static strings / literal paths only. No untrusted
+  # user input (issue title / PR body / commit message / etc.) flows into
+  # any command. See github.blog/security/vulnerability-research/
+  # how-to-catch-github-actions-workflow-injections-before-attackers-do/.
+  parity-check:
+    name: parity-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      - name: Regenerate bindings into snapshots/
+        run: cargo run -p lunaris-codegen -- --emit py --emit ts
+      - name: Verify no drift (codegen-managed paths only)
+        run: cargo run -p lunaris-codegen -- --check
+      - name: Verify --dump-ir matches committed golden snapshot
+        run: |
+          cargo run -p lunaris-codegen -- --dump-ir > /tmp/lunaris-ir.json
+          diff -u crates/lunaris-codegen/snapshots/rust_surface.json /tmp/lunaris-ir.json
+      - name: Fail on uncommitted changes to codegen outputs
+        run: |
+          set -e
+          if ! git diff --quiet \
+              crates/lunaris-codegen/snapshots/generated_py.rs \
+              crates/lunaris-codegen/snapshots/generated_ts.rs \
+              crates/lunaris-codegen/snapshots/generated_ts.d.ts \
+              crates/lunaris-codegen/snapshots/rust_surface.json; then
+            echo "::error::Generated bindings drift from Rust surface — run 'cargo run -p lunaris-codegen -- --emit py --emit ts' locally and commit."
+            git diff -- crates/lunaris-codegen/snapshots/
+            exit 1
+          fi

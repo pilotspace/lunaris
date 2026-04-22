@@ -106,11 +106,8 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 params = format_params(&m.params, /* leading_comma */ true)
             )
             .unwrap();
-            writeln!(
-                out,
-                "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{"
-            )
-            .unwrap();
+            writeln!(out, "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{")
+                .unwrap();
             writeln!(
                 out,
                 "            let inner = ::lunaris::{type_name}::{name}({call_args}).await.map_err(py_err)?;",
@@ -119,11 +116,7 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 call_args = format_call_args(&m.params)
             )
             .unwrap();
-            writeln!(
-                out,
-                "            Ok(Py{type_name} {{ inner: Arc::new(inner) }})"
-            )
-            .unwrap();
+            writeln!(out, "            Ok(Py{type_name} {{ inner: Arc::new(inner) }})").unwrap();
             writeln!(out, "        }})").unwrap();
             writeln!(out, "    }}").unwrap();
         }
@@ -138,11 +131,8 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
             )
             .unwrap();
             writeln!(out, "        let inner = self.inner.clone();").unwrap();
-            writeln!(
-                out,
-                "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{"
-            )
-            .unwrap();
+            writeln!(out, "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{")
+                .unwrap();
             writeln!(
                 out,
                 "            let out = inner.{name}({call_args}).await.map_err(py_err)?;",
@@ -172,11 +162,7 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 call_args = format_call_args(&m.params)
             )
             .unwrap();
-            writeln!(
-                out,
-                "        Ok(Self {{ inner: Arc::new(inner) }})"
-            )
-            .unwrap();
+            writeln!(out, "        Ok(Self {{ inner: Arc::new(inner) }})").unwrap();
             writeln!(out, "    }}").unwrap();
         }
         // Sync `&self` method (Lunaris::recall, pipeline-handle toggles).
@@ -278,21 +264,27 @@ fn py_param_ty(ty: &IrTyRef) -> &'static str {
 fn py_return_expr(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Named { name } if name == "Lsn" => {
-            "Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))".into()
+            "Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))"
+                .into()
         }
         IrTyRef::Unit => "Ok(Python::with_gil(|py| py.None()))".into(),
         _ => "Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))".into(),
     }
 }
 
-fn py_sync_return_ty(ty: &IrTyRef, fallible: bool) -> String {
-    let base = match ty {
+fn py_sync_return_ty(ty: &IrTyRef, _fallible: bool) -> String {
+    // Both fallible and infallible sync methods wrap in `PyResult<T>` at the
+    // outer signature layer; the caller formats the `PyResult<...>` around
+    // this return so here we only produce the inner type name. The
+    // `_fallible` argument is preserved in the signature for future
+    // differentiation (e.g. if we want to drop the `PyResult` wrapper on
+    // trivially infallible toggles) without churning every caller.
+    match ty {
         IrTyRef::Unit => "()".into(),
         IrTyRef::RefSelf => "Self".into(),
         IrTyRef::Named { name } => format!("Py{name}"),
         other => format!("<{other:?}>"),
-    };
-    if fallible { base } else { base }
+    }
 }
 
 fn py_sync_return_expr(r: &crate::ir::IrReturn) -> String {

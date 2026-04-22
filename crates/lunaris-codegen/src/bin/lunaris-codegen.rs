@@ -52,10 +52,7 @@ enum EmitTarget {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let root = args
-        .workspace_root
-        .clone()
-        .unwrap_or_else(default_workspace_root);
+    let root = args.workspace_root.clone().unwrap_or_else(default_workspace_root);
     let ir = extract_surface(&root)
         .with_context(|| format!("lunaris-codegen: extract_surface({})", root.display()))?;
 
@@ -67,7 +64,10 @@ fn main() -> Result<()> {
     if args.check {
         let outcome = check_surface(&root, &ir)?;
         if outcome.is_clean() {
-            println!("lunaris-codegen: --check clean ({} paths matched)", lunaris_codegen::codegen_managed_paths(&ir).len());
+            println!(
+                "lunaris-codegen: --check clean ({} paths matched)",
+                lunaris_codegen::codegen_managed_paths(&ir).len()
+            );
             return Ok(());
         }
         for drift in &outcome.drift {

@@ -178,13 +178,10 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 "        // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body."
             )
             .unwrap();
-            writeln!(
-                out,
-                "        let _ = ({unused});",
-                unused = format_call_args(&m.params)
-            )
-            .unwrap();
-            writeln!(out, "        Err(napi::Error::from_reason(\"Plan 08-03 wires the body\"))").unwrap();
+            writeln!(out, "        let _ = ({unused});", unused = format_call_args(&m.params))
+                .unwrap();
+            writeln!(out, "        Err(napi::Error::from_reason(\"Plan 08-03 wires the body\"))")
+                .unwrap();
             writeln!(out, "    }}").unwrap();
         }
         _ => {
@@ -224,7 +221,7 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
         .join(", ");
     let ret = match (&m.is_async, &m.returns.ty) {
         (IrAsync::Yes, _) => format!("Promise<{}>", ts_return_ty_dts(&m.returns.ty)),
-        (IrAsync::No, ty) => ts_return_ty_dts(ty).into(),
+        (IrAsync::No, ty) => ts_return_ty_dts(ty),
     };
     writeln!(out, "{prefix}{name}({params}): {ret};", name = m.name).unwrap();
 }
@@ -250,7 +247,9 @@ fn format_call_args(params: &[IrParam]) -> String {
         .iter()
         .map(|p| match &p.ty {
             IrTyRef::Str => format!("&{}", p.name),
-            IrTyRef::Json => format!("serde_json::from_value({}.clone()).map_err(napi_err)?", p.name),
+            IrTyRef::Json => {
+                format!("serde_json::from_value({}.clone()).map_err(napi_err)?", p.name)
+            }
             _ => p.name.clone(),
         })
         .collect::<Vec<_>>()

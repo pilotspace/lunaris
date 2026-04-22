@@ -90,10 +90,7 @@ pub fn check_surface(workspace_root: &Path, ir: &SurfaceIR) -> Result<CheckOutco
                     &format!("regenerated {}", managed.relative.display()),
                 )
                 .to_string();
-            outcome.drift.push(DriftEntry {
-                path: managed.relative.clone(),
-                diff,
-            });
+            outcome.drift.push(DriftEntry { path: managed.relative.clone(), diff });
         }
     }
     // Sanity: the walker enumerated exactly three codegen-managed paths,
@@ -111,9 +108,8 @@ pub fn write_snapshots(workspace_root: &Path, ir: &SurfaceIR) -> Result<()> {
     for managed in codegen_managed_paths(ir) {
         let abs = workspace_root.join(&managed.relative);
         if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("lunaris-codegen: create_dir_all {}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("lunaris-codegen: create_dir_all {}", parent.display()))?;
         }
         std::fs::write(&abs, &managed.expected)
             .with_context(|| format!("lunaris-codegen: write {}", abs.display()))?;

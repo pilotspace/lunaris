@@ -25,18 +25,12 @@ fn every_ir_ty_ref_variant_round_trips() {
         IrTyRef::Json,
         IrTyRef::RefSelf,
         IrTyRef::Named { name: "Lsn".into() },
-        IrTyRef::Option {
-            inner: Box::new(IrTyRef::Str),
-        },
-        IrTyRef::Vec {
-            inner: Box::new(IrTyRef::Named { name: "Hit".into() }),
-        },
+        IrTyRef::Option { inner: Box::new(IrTyRef::Str) },
+        IrTyRef::Vec { inner: Box::new(IrTyRef::Named { name: "Hit".into() }) },
         // Nested: Option<Vec<Named>>
         IrTyRef::Option {
             inner: Box::new(IrTyRef::Vec {
-                inner: Box::new(IrTyRef::Named {
-                    name: "EntityId".into(),
-                }),
+                inner: Box::new(IrTyRef::Named { name: "EntityId".into() }),
             }),
         },
     ];
@@ -44,29 +38,18 @@ fn every_ir_ty_ref_variant_round_trips() {
         let wrapper = TyRefHolder { ty: original.clone() };
         let t = toml::to_string(&wrapper).expect("toml serialise");
         let parsed: TyRefHolder = toml::from_str(&t).expect("toml deserialise");
-        assert_eq!(
-            parsed.ty, original,
-            "TOML round-trip failed for {original:?} → {t}"
-        );
+        assert_eq!(parsed.ty, original, "TOML round-trip failed for {original:?} → {t}");
     }
 }
 
 #[test]
 fn ir_return_round_trips_with_fallible_flag() {
     let cases = vec![
-        IrReturn {
-            ty: IrTyRef::Named { name: "Lsn".into() },
-            fallible: true,
-        },
-        IrReturn {
-            ty: IrTyRef::Unit,
-            fallible: false,
-        },
+        IrReturn { ty: IrTyRef::Named { name: "Lsn".into() }, fallible: true },
+        IrReturn { ty: IrTyRef::Unit, fallible: false },
     ];
     for original in cases {
-        let wrapper = ReturnHolder {
-            returns: original.clone(),
-        };
+        let wrapper = ReturnHolder { returns: original.clone() };
         let t = toml::to_string(&wrapper).expect("toml serialise");
         let parsed: ReturnHolder = toml::from_str(&t).expect("toml deserialise");
         assert_eq!(parsed.returns, original);

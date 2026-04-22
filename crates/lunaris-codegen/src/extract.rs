@@ -23,28 +23,20 @@ pub const SURFACE_TOML_PATH: &str = "annotations/surface.toml";
 /// Extract the IR from the committed annotation file, given the workspace
 /// root (typically `env!("CARGO_MANIFEST_DIR")/../..`).
 pub fn extract_surface(workspace_root: &Path) -> Result<SurfaceIR> {
-    let toml_path = workspace_root
-        .join("crates/lunaris-codegen")
-        .join(SURFACE_TOML_PATH);
+    let toml_path = workspace_root.join("crates/lunaris-codegen").join(SURFACE_TOML_PATH);
     let raw = std::fs::read_to_string(&toml_path).with_context(|| {
-        format!(
-            "lunaris-codegen: failed to read annotation file at {}",
-            toml_path.display()
-        )
+        format!("lunaris-codegen: failed to read annotation file at {}", toml_path.display())
     })?;
     extract_surface_from_str(&raw).with_context(|| {
-        format!(
-            "lunaris-codegen: failed to parse annotation file at {}",
-            toml_path.display()
-        )
+        format!("lunaris-codegen: failed to parse annotation file at {}", toml_path.display())
     })
 }
 
 /// Parse a TOML string directly. Exposed for unit tests that want to round
 /// trip literal TOML without touching the filesystem.
 pub fn extract_surface_from_str(raw: &str) -> Result<SurfaceIR> {
-    let ir: SurfaceIR = toml::from_str(raw)
-        .context("lunaris-codegen: TOML deserialisation of SurfaceIR failed")?;
+    let ir: SurfaceIR =
+        toml::from_str(raw).context("lunaris-codegen: TOML deserialisation of SurfaceIR failed")?;
     Ok(ir)
 }
 
@@ -80,12 +72,8 @@ mod tests {
         // Every method here corresponds to a real Rust method on the v0.1.0
         // surface + Plan 08-00's `snapshot` — we emit all 15 rather than
         // silently dropping one. Summary documents this as a Rule 1 fix.
-        let total_methods: usize = ir
-            .modules
-            .iter()
-            .flat_map(|m| &m.types)
-            .map(|t| t.methods.len())
-            .sum();
+        let total_methods: usize =
+            ir.modules.iter().flat_map(|m| &m.types).map(|t| t.methods.len()).sum();
         assert_eq!(
             total_methods, 15,
             "expected 15 surface methods per plan enumeration, got {total_methods}: {:#?}",
@@ -108,17 +96,10 @@ mod tests {
                 .iter()
                 .find(|m| m.name == async_name)
                 .unwrap_or_else(|| panic!("Lunaris::{async_name} present"));
-            assert_eq!(
-                m.is_async,
-                IrAsync::Yes,
-                "Lunaris::{async_name} must be async in the IR"
-            );
+            assert_eq!(m.is_async, IrAsync::Yes, "Lunaris::{async_name} must be async in the IR");
         }
-        let recall = lunaris
-            .methods
-            .iter()
-            .find(|m| m.name == "recall")
-            .expect("Lunaris::recall present");
+        let recall =
+            lunaris.methods.iter().find(|m| m.name == "recall").expect("Lunaris::recall present");
         assert_eq!(
             recall.is_async,
             IrAsync::No,
