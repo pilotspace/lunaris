@@ -109,6 +109,18 @@ pub enum Filter {
     And(Vec<Filter>),
     /// Logical OR of sub-filters.
     Or(Vec<Filter>),
+    /// Constrain hits to items whose `valid_time` falls within the
+    /// half-open range `[after, before)`. Either bound may be `None`:
+    /// - `after = None`  → open-ended left bound (matches `-inf`).
+    /// - `before = None` → open-ended right bound (matches `+inf`).
+    /// - both `None`     → predicate no-op (degrades to `TRUE` on SQL,
+    ///   `@valid_time:[-inf +inf]` on Moon).
+    ///
+    /// This filter lives on a different axis from `as_of` — `as_of` pins
+    /// the MVCC snapshot timestamp, whereas `ValidTimeRange` constrains
+    /// which items are candidates at all. Mirrors `TemporalQuery.before /
+    /// .after / .between` per Phase 9.1 Plan 02 (PRIM-03 full wiring).
+    ValidTimeRange { after: Option<Hlc>, before: Option<Hlc> },
 }
 
 // ----- CypherQuery / GraphResult -----
@@ -210,8 +222,8 @@ mod filter_valid_time_range_tests {
     #[test]
     fn filter_valid_time_range_roundtrip() {
         let f = Filter::ValidTimeRange {
-            after: Some(Hlc { wall_ms: 100, counter: 0 }),
-            before: Some(Hlc { wall_ms: 200, counter: 5 }),
+            after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
+            before: Some(Hlc { wall_ms: 200, counter: 5, node_id: 0 }),
         };
         let s = serde_json::to_string(&f).expect("serialize ValidTimeRange");
         let parsed: Filter = serde_json::from_str(&s).expect("deserialize ValidTimeRange");
