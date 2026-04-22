@@ -1,0 +1,22 @@
+[
+  {"id": "paper-0001", "title": "Graphiti bi-temporal memory", "abstract": "Graphiti proposes an Episode, Entity, EntityEdge bi-temporal memory model for agent harnesses with provable temporal queries."},
+  {"id": "paper-0002", "title": "Cognee DataPoint tree", "abstract": "Cognee introduces the DataPoint tree with Pydantic schemas and dependency injection for structured memory pipelines."},
+  {"id": "paper-0003", "title": "Mem0 fact centric memory", "abstract": "Mem0 argues for a fact-centric memory API with simple put, get, and search operations."},
+  {"id": "paper-0004", "title": "GraphRAG community summarization", "abstract": "GraphRAG leverages community detection on extracted knowledge graphs to power long-context summarization."},
+  {"id": "paper-0005", "title": "ACT-R base level learning", "abstract": "Anderson 1996 ACT-R base-level learning describes memory activation as a function of recency and frequency."},
+  {"id": "paper-0006", "title": "Petrov ACT-R approximation", "abstract": "Petrov 2006 proposes an O(1) incremental approximation for ACT-R base-level activation computation."},
+  {"id": "paper-0007", "title": "SQL 2011 PERIOD", "abstract": "SQL 2011 PERIOD specification formalizes bi-temporal valid-time and system-time columns in relational databases."},
+  {"id": "paper-0008", "title": "HNSW graph index", "abstract": "Hierarchical Navigable Small World graphs provide a state of the art approximate nearest neighbor index for high-dimensional vectors."},
+  {"id": "paper-0009", "title": "BM25 ranking function", "abstract": "BM25 is the canonical probabilistic ranking function for keyword-based information retrieval over inverted indices."},
+  {"id": "paper-0010", "title": "Reciprocal rank fusion", "abstract": "Reciprocal rank fusion combines multiple ranked lists with a simple k-plus-rank reciprocal weighting scheme."},
+  {"id": "paper-0011", "title": "pgvector extension", "abstract": "pgvector brings vector similarity search to Postgres with HNSW and IVFFlat index types."},
+  {"id": "paper-0012", "title": "Apache AGE graph", "abstract": "Apache AGE adds a property graph and Cypher query dialect to Postgres."},
+  {"id": "paper-0013", "title": "pgmq durable queue", "abstract": "pgmq provides a durable at-least-once message queue on top of Postgres with per-queue visibility timeouts."},
+  {"id": "paper-0014", "title": "Turbo quantization", "abstract": "Turbo quantization compresses float32 vectors to 4 or 8 bits while preserving recall quality for HNSW."},
+  {"id": "paper-0015", "title": "EmbeddingGemma 768", "abstract": "EmbeddingGemma 768 is a 768-dimensional sentence encoder tuned for retrieval augmented generation."},
+  {"id": "paper-0016", "title": "BGE reranker v2 m3", "abstract": "BGE reranker v2 m3 is a cross-encoder that reorders top-k retrieval candidates for downstream generation."},
+  {"id": "paper-0017", "title": "Label propagation Leiden", "abstract": "Label propagation Leiden is a fast community detection algorithm suitable for incremental graph updates."},
+  {"id": "paper-0018", "title": "Helios Rust agent harness", "abstract": "Helios is a Claude-Code-class Rust agent harness with Read, Write, Edit, Grep tools over a bi-temporal scratchpad."},
+  {"id": "paper-0019", "title": "Moon Redis substrate", "abstract": "Moon is a Redis-compatible substrate exposing FT.CREATE, GRAPH.QUERY, TEMPORAL.SNAPSHOT_AT, and MQ.PUSH in one process."},
+  {"id": "paper-0020", "title": "Lunaris memory engine", "abstract": "Lunaris is a production-grade agent memory engine with sub-25 millisecond recall over millions of bi-temporal facts."}
+]

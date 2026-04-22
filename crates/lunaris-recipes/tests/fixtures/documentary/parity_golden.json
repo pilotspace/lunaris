@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "seed": "lunaris-doc-parity-v1",
+  "notes": "Committed Rust-reference golden for Phase 11 Plan 11-03 cross-language + dual-backend parity. Each of the 5 documentary wrappers contributes one canonical scenario. Assertions are top-k SET equality (per D-13 — tie-bucket ordering accepted as known-flakiness); Py + TS drivers diff against the same expected_source_set values. Boundary convention for .between: lower-inclusive, upper-exclusive (Phase 9.1 Postgres renderer `valid_from >= lo AND valid_from < hi`).",
+  "scenarios": {
+    "document_knowledge_base_basic_rag": {
+      "fixture": "document_knowledge_base_docs.json",
+      "source_prefix": "kb:docs/",
+      "query": "quickstart",
+      "top_k": 5,
+      "expected_source_prefix": "kb:docs/",
+      "expected_hit_body_contains_any": [
+        "Lunaris quickstart",
+        "Quickstart for Python",
+        "Quickstart for TypeScript",
+        "Quickstart for Rust",
+        "Quickstart cheatsheet"
+      ],
+      "expected_min_hits": 1
+    },
+    "research_paper_corpus_graph_off": {
+      "fixture": "research_paper_corpus_papers.json",
+      "source_prefix": "papers:",
+      "graph_on": false,
+      "query": "reciprocal rank fusion",
+      "top_k": 5,
+      "expected_source_prefix": "papers:",
+      "expected_hit_body_contains_any": [
+        "Reciprocal rank fusion"
+      ],
+      "expected_min_hits": 1
+    },
+    "code_repo_memory_as_of_commit_50": {
+      "fixture": "code_repo_100_commits.json",
+      "source_prefix_template": "repo:doc-11-03/{backend_label}/",
+      "query": "target",
+      "commit_index_0based": 49,
+      "as_of_rfc3339": "2025-02-19T12:00:00Z",
+      "as_of_unix_ms": 1739966400000,
+      "top_k": 5,
+      "expected_first_body_contains": "fn target() -> u64 { 50 }",
+      "expected_min_hits": 1
+    },
+    "timeline_reconstruction_between_10_and_15": {
+      "fixture": "timeline_30_days.json",
+      "source_prefix_template": "timeline:doc-11-03/{backend_label}/",
+      "query": "event",
+      "between_lo_rfc3339": "2025-01-10T00:00:00Z",
+      "between_hi_rfc3339": "2025-01-16T00:00:00Z",
+      "between_lo_unix_ms": 1736467200000,
+      "between_hi_unix_ms": 1736985600000,
+      "boundary": "lower-inclusive, upper-exclusive",
+      "expected_count": 6,
+      "expected_event_ids_slice": [
+        "event on 2025-01-10",
+        "event on 2025-01-11",
+        "event on 2025-01-12",
+        "event on 2025-01-13",
+        "event on 2025-01-14",
+        "event on 2025-01-15"
+      ]
+    },
+    "customer_support_refund_recall": {
+      "fixture": "customer_support_50_tickets.json",
+      "query": "refund",
+      "top_k": 10,
+      "expected_source_prefixes": ["ticket:", "chat:"],
+      "expected_unique_source_ids": true,
+      "expected_min_ticket_hits": 1,
+      "expected_min_chat_hits": 1
+    }
+  }
+}
