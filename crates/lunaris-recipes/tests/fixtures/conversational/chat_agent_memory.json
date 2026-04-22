@@ -1,0 +1,17 @@
+{
+  "scenario": "chat_agent_memory",
+  "user_id": "user-42",
+  "turns": [
+    { "t": "2026-04-22T10:00:00Z", "role": "user", "text": "I'm planning a trip to Tokyo in May." },
+    { "t": "2026-04-22T10:00:30Z", "role": "assistant", "text": "Exciting! Are you going for work or leisure?" },
+    { "t": "2026-04-22T10:01:00Z", "role": "user", "text": "Mostly leisure. I love ramen." },
+    { "t": "2026-04-22T10:01:30Z", "role": "assistant", "text": "Tokyo has amazing ramen — try Ichiran and Ippudo." },
+    { "t": "2026-04-22T10:02:00Z", "role": "user", "text": "Any tips on getting around?" },
+    { "t": "2026-04-22T10:02:30Z", "role": "assistant", "text": "Get a Suica card at the airport for trains." },
+    { "t": "2026-04-22T10:03:00Z", "role": "user", "text": "How much Japanese do I need to know?" },
+    { "t": "2026-04-22T10:03:30Z", "role": "assistant", "text": "Basic phrases help; most signs have English." },
+    { "t": "2026-04-22T10:04:00Z", "role": "user", "text": "Best neighborhood to stay in?" },
+    { "t": "2026-04-22T10:04:30Z", "role": "assistant", "text": "Shinjuku or Shibuya for first-timers." }
+  ],
+  "query": "ramen recommendations"
+}

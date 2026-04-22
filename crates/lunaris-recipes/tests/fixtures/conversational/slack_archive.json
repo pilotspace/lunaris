@@ -1,0 +1,38 @@
+{
+  "scenario": "slack_archive",
+  "channels": [
+    {
+      "id": "general",
+      "messages": [
+        { "user": "U1", "text": "Morning everyone!" },
+        { "user": "U2", "text": "Standup in 10." },
+        { "user": "U1", "text": "Coffee machine is broken." },
+        { "user": "U3", "text": "I'll file a ticket." },
+        { "user": "U2", "text": "Thanks!" }
+      ]
+    },
+    {
+      "id": "engineering",
+      "messages": [
+        { "user": "U4", "text": "PR #42 is ready for review." },
+        { "user": "U5", "text": "Taking a look now." },
+        { "user": "U4", "text": "Thanks, low urgency." },
+        { "user": "U5", "text": "LGTM with small nits." },
+        { "user": "U4", "text": "Addressed — merging." }
+      ]
+    },
+    {
+      "id": "random",
+      "messages": [
+        { "user": "U1", "text": "Good lunch spot near office?" },
+        { "user": "U6", "text": "The ramen place on 5th is great." },
+        { "user": "U1", "text": "Perfect, thanks!" },
+        { "user": "U7", "text": "I go there every week." },
+        { "user": "U1", "text": "Sold." }
+      ]
+    }
+  ],
+  "query": "ticket coffee",
+  "channel_filter": "general",
+  "user_filter": "U1"
+}

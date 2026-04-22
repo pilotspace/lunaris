@@ -1,0 +1,42 @@
+{
+  "scenario": "multi_turn_conversation",
+  "user_id": "user-77",
+  "other_user_id": "user-other",
+  "sessions": [
+    {
+      "thread_id": "session-1",
+      "turns": [
+        { "t": "2026-04-20T09:00:00Z", "role": "user", "text": "Remind me to review the Q2 roadmap." },
+        { "t": "2026-04-20T09:00:30Z", "role": "assistant", "text": "Got it — noted for Q2 roadmap review." },
+        { "t": "2026-04-20T09:01:00Z", "role": "user", "text": "Also, I want to hire two engineers." },
+        { "t": "2026-04-20T09:01:30Z", "role": "assistant", "text": "Noted — two engineering hires." },
+        { "t": "2026-04-20T09:02:00Z", "role": "user", "text": "Cap ex should stay under 500k." },
+        { "t": "2026-04-20T09:02:30Z", "role": "assistant", "text": "Budget ceiling at 500k captured." },
+        { "t": "2026-04-20T09:03:00Z", "role": "user", "text": "Let's revisit this tomorrow." },
+        { "t": "2026-04-20T09:03:30Z", "role": "assistant", "text": "Saved for tomorrow's review." },
+        { "t": "2026-04-20T09:04:00Z", "role": "user", "text": "Thanks — one more thing." },
+        { "t": "2026-04-20T09:04:30Z", "role": "assistant", "text": "Go ahead." }
+      ]
+    },
+    {
+      "thread_id": "session-2",
+      "turns": [
+        { "t": "2026-04-21T10:00:00Z", "role": "user", "text": "Did we capture the hiring plan?" },
+        { "t": "2026-04-21T10:00:30Z", "role": "assistant", "text": "Yes — two engineers, budget 500k." },
+        { "t": "2026-04-21T10:01:00Z", "role": "user", "text": "Let's push the roadmap review to Friday." },
+        { "t": "2026-04-21T10:01:30Z", "role": "assistant", "text": "Rescheduled to Friday." },
+        { "t": "2026-04-21T10:02:00Z", "role": "user", "text": "Add a design review sync too." },
+        { "t": "2026-04-21T10:02:30Z", "role": "assistant", "text": "Design review sync added." },
+        { "t": "2026-04-21T10:03:00Z", "role": "user", "text": "Weekly is fine." },
+        { "t": "2026-04-21T10:03:30Z", "role": "assistant", "text": "Weekly cadence confirmed." },
+        { "t": "2026-04-21T10:04:00Z", "role": "user", "text": "Perfect." },
+        { "t": "2026-04-21T10:04:30Z", "role": "assistant", "text": "Anything else?" }
+      ]
+    }
+  ],
+  "other_turns": [
+    { "t": "2026-04-20T09:00:00Z", "text": "Unrelated other-user content A." },
+    { "t": "2026-04-20T09:00:30Z", "text": "Unrelated other-user content B." }
+  ],
+  "query": "hiring plan"
+}

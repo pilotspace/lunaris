@@ -1,0 +1,18 @@
+{
+  "scenario": "meeting_notes_memory",
+  "meeting_id": "board-2026-04-22",
+  "notes": [
+    { "heading": "opening", "body": "Chairperson called the meeting to order at 10:00." },
+    { "heading": "agenda", "body": "Review Q1 metrics, approve Q2 budget, discuss hiring." },
+    { "heading": "q1-metrics", "body": "Revenue +18% YoY; churn down 3pts." },
+    { "heading": "q1-metrics", "body": "Customer satisfaction score: 74 (up from 68)." },
+    { "heading": "q2-budget", "body": "Proposed budget: $2.3M across engineering + GTM." },
+    { "heading": "q2-budget", "body": "Action item: CFO to publish detailed split by Friday." },
+    { "heading": "hiring", "body": "Two senior engineers, one designer." },
+    { "heading": "hiring", "body": "Action item: HR to open reqs next week." },
+    { "heading": "risks", "body": "Supply-chain delay on hardware vendor." },
+    { "heading": "risks", "body": "Mitigation: dual-sourcing plan by end of May." }
+  ],
+  "attendees": ["alice", "bob"],
+  "query": "action items"
+}

@@ -1,0 +1,17 @@
+{
+  "scenario": "email_threading",
+  "root_id": "thread-root-001",
+  "messages": [
+    { "from": "alice@example.com", "body": "Kicking off the Q3 planning discussion." },
+    { "from": "bob@example.com", "body": "Thanks Alice — here's last quarter's retrospective." },
+    { "from": "carol@example.com", "body": "I'd like to propose a new onboarding initiative." },
+    { "from": "alice@example.com", "body": "Great — let's allocate a small budget." },
+    { "from": "dan@example.com", "body": "I can lead the initiative." },
+    { "from": "bob@example.com", "body": "Scope it to engineering for Q3." },
+    { "from": "carol@example.com", "body": "Agreed — target two hires by end of Q3." },
+    { "from": "alice@example.com", "body": "Let's finalize the plan by Friday." },
+    { "from": "dan@example.com", "body": "On it — doc draft tomorrow." },
+    { "from": "eve@example.com", "body": "Happy to review the draft." }
+  ],
+  "query": "onboarding initiative Q3"
+}
