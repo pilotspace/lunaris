@@ -41,6 +41,21 @@ from .toggles import (
     attach_pipeline_properties,
 )
 
+# Plan 10-03 — expose the Phase 10 conversational + Phase 11 documentary
+# recipe wrappers as top-level submodules of the `lunaris` package so callers
+# can write `from lunaris.conversational import ChatAgentMemory` (matches the
+# TS crate-root flat import surface and the blueprint §7 recipe-call shape).
+# Without this re-export the only working path is
+# `from lunaris.lunaris import conversational` — the doubled-`lunaris` comes
+# from the compiled cdylib's `#[pymodule] fn lunaris` living inside the
+# `lunaris` Python package, which is a binding-surface artefact users
+# shouldn't have to know about.
+from .lunaris import conversational, documentary  # type: ignore[attr-defined]
+import sys as _sys
+_sys.modules[__name__ + ".conversational"] = conversational
+_sys.modules[__name__ + ".documentary"] = documentary
+del _sys
+
 # Patch the Rust-side `Lunaris` class with Python-side property accessors so
 # callers can write `handle.graph_pipeline.enable()` instead of reaching for
 # the raw free-function form.
