@@ -406,11 +406,57 @@ fn emit_py_method(
                 target_ty = target_ty
             )
             .unwrap();
+            // Plan 11-02b Rule 1 extension — pre-depythonize every
+            // Named / Json / Vec / Option / Handle param with an EXPLICIT
+            // owned-type annotation so the clone-and-rewrap call site sees
+            // the concrete Rust type. Mirrors the async-ref_self arm's
+            // Send-safety pattern (even though this is a sync body, the
+            // explicit annotation is load-bearing for `impl Into<T>` Rust
+            // wrapper params like DocumentKnowledgeBase::filter).
+            let mut owned_names: Vec<String> = Vec::with_capacity(m.params.len());
+            for p in &m.params {
+                let owned_name = format!("{}_owned", p.name);
+                match &p.ty {
+                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                            owned_name = owned_name,
+                            ty = rust_owned_ty(&p.ty),
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    IrTyRef::Handle { name: handle_name } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::std::sync::Arc<::lunaris::{handle_name}> = {param}.inner.clone();",
+                            owned_name = owned_name,
+                            handle_name = handle_name,
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    _ => owned_names.push(p.name.clone()),
+                }
+            }
+            let call_args = m
+                .params
+                .iter()
+                .zip(owned_names.iter())
+                .map(|(p, owned)| match &p.ty {
+                    IrTyRef::Str => format!("&{}", owned),
+                    _ => owned.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             writeln!(
                 out,
                 "        let out = self.inner.as_ref().clone().{name}({call_args});",
                 name = m.name,
-                call_args = format_call_args(&m.params)
+                call_args = call_args
             )
             .unwrap();
             if m.returns.fallible {
@@ -655,6 +701,30 @@ fn rust_owned_ty(ty: &IrTyRef) -> String {
             "ConsolidationReport" => "::lunaris::ConsolidationReport".to_string(),
             "SlackArchiveQuery" => "::lunaris::SlackArchiveQuery".to_string(),
             "MeetingNotesQuery" => "::lunaris::MeetingNotesQuery".to_string(),
+            // Plan 11-02b Rule 1 extension — concrete-spelling allow-list
+            // entries for Phase 10/11 wrapper param shapes that have no
+            // clean `IrTyRef` grammar today. Annotated in surface.toml as
+            // `ty = { kind = "named", name = "<TagName>" }`; the emitter
+            // lowers through pythonize / serde_json::from_value exactly
+            // like `Episode` / `ForgetRequest`. No IR grammar change.
+            //
+            // - `DocumentChunks` — `Vec<(String, serde_json::Map<...>)>` used
+            //   by every documentary ingest method (D4(b) — planner said
+            //   `kind = "json"` but that lands `serde_json::Value` which
+            //   doesn't coerce to the tuple-of-map shape).
+            // - `UnixMs` — plain `i64` for `CodeRepoMemory::ingest_commit`'s
+            //   committer_date_unix_ms param.
+            // - `StrList` — `Vec<String>` for `MeetingNotesMemory::attendees`
+            //   after the pre-authorised ≤3-LOC Rust widen from `&[&str]`.
+            // - `JsonValue` — `serde_json::Value` for
+            //   `DocumentKnowledgeBase::filter(value: impl Into<Value>)` —
+            //   the `impl Into<Value>` blanket accepts a typed Value.
+            "DocumentChunks" => {
+                "Vec<(String, serde_json::Map<String, serde_json::Value>)>".to_string()
+            }
+            "UnixMs" => "i64".to_string(),
+            "StrList" => "Vec<String>".to_string(),
+            "JsonValue" => "serde_json::Value".to_string(),
             _ => format!("::lunaris::{name}"),
         },
         IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty(inner)),

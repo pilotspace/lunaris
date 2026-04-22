@@ -538,6 +538,17 @@ fn rust_owned_ty_ts(ty: &IrTyRef) -> String {
             "ConsolidationReport" => "::lunaris::ConsolidationReport".to_string(),
             "SlackArchiveQuery" => "::lunaris::SlackArchiveQuery".to_string(),
             "MeetingNotesQuery" => "::lunaris::MeetingNotesQuery".to_string(),
+            // Plan 11-02b Rule 1 extension — concrete-spelling allow-list
+            // entries mirroring emit_py.rs. See emit_py.rs::rust_owned_ty
+            // for the full rationale (D4(b) could not be solved with
+            // `kind = "json"` as the plan claimed; these named allow-list
+            // entries are the narrow in-scope fix).
+            "DocumentChunks" => {
+                "Vec<(String, serde_json::Map<String, serde_json::Value>)>".to_string()
+            }
+            "UnixMs" => "i64".to_string(),
+            "StrList" => "Vec<String>".to_string(),
+            "JsonValue" => "serde_json::Value".to_string(),
             _ => format!("::lunaris::{name}"),
         },
         IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty_ts(inner)),

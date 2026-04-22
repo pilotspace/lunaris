@@ -309,6 +309,119 @@ fn ts_clone_self_owned_sync_body() {
     );
 }
 
+/// Plan 11-02b Rule 1 extension — `rust_owned_ty` / `rust_owned_ty_ts`
+/// allow-list carries concrete Rust spellings for Phase 10/11 wrapper
+/// param shapes that can't be expressed as-is through `kind = "json"`
+/// (the planner's D4(b) claim was empirically wrong — see emit_py.rs
+/// commentary). These new names — `DocumentChunks`, `UnixMs`, `StrList`,
+/// `JsonValue` — ride through the existing `Named` variant with no IR
+/// grammar change.
+#[test]
+fn py_and_ts_new_allow_list_entries_lower_to_concrete_rust_spellings() {
+    use lunaris_codegen::{
+        IrAsync, IrKind, IrMethod, IrModule, IrParam, IrReceiver, IrReturn, IrTyRef, IrType,
+        SCHEMA_VERSION, SurfaceIR, emit_py, emit_ts,
+    };
+
+    let fixture = IrModule {
+        name: "fixture.allow_list".into(),
+        rust_crate_path: Some("::fixture::allow_list".into()),
+        types: vec![IrType {
+            name: "Probe".into(),
+            kind: IrKind::Opaque,
+            source_file: None,
+            doc: None,
+            methods: vec![
+                IrMethod {
+                    name: "ingest".into(),
+                    is_async: IrAsync::Yes,
+                    receiver: IrReceiver::RefSelf,
+                    params: vec![IrParam {
+                        name: "chunks".into(),
+                        ty: IrTyRef::Named { name: "DocumentChunks".into() },
+                    }],
+                    returns: IrReturn { ty: IrTyRef::Unit, fallible: true },
+                    clone_self: false,
+                    doc: None,
+                },
+                IrMethod {
+                    name: "ingest_commit".into(),
+                    is_async: IrAsync::Yes,
+                    receiver: IrReceiver::RefSelf,
+                    params: vec![IrParam {
+                        name: "committer_date_unix_ms".into(),
+                        ty: IrTyRef::Named { name: "UnixMs".into() },
+                    }],
+                    returns: IrReturn { ty: IrTyRef::Unit, fallible: true },
+                    clone_self: false,
+                    doc: None,
+                },
+                IrMethod {
+                    name: "attendees".into(),
+                    is_async: IrAsync::Yes,
+                    receiver: IrReceiver::RefSelf,
+                    params: vec![IrParam {
+                        name: "ids".into(),
+                        ty: IrTyRef::Named { name: "StrList".into() },
+                    }],
+                    returns: IrReturn { ty: IrTyRef::Unit, fallible: true },
+                    clone_self: false,
+                    doc: None,
+                },
+                IrMethod {
+                    name: "filter".into(),
+                    is_async: IrAsync::No,
+                    receiver: IrReceiver::Owned,
+                    params: vec![IrParam {
+                        name: "value".into(),
+                        ty: IrTyRef::Named { name: "JsonValue".into() },
+                    }],
+                    returns: IrReturn { ty: IrTyRef::RefSelf, fallible: false },
+                    clone_self: true,
+                    doc: None,
+                },
+            ],
+        }],
+    };
+    let ir = SurfaceIR { schema_version: SCHEMA_VERSION, modules: vec![fixture] };
+
+    let py = emit_py(&ir);
+    assert!(
+        py.contains("let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="),
+        "DocumentChunks did not lower to concrete tuple-of-map spelling in Py — got:\n{py}"
+    );
+    assert!(
+        py.contains("let committer_date_unix_ms_owned: i64 ="),
+        "UnixMs did not lower to i64 in Py — got:\n{py}"
+    );
+    assert!(
+        py.contains("let ids_owned: Vec<String> ="),
+        "StrList did not lower to Vec<String> in Py — got:\n{py}"
+    );
+    assert!(
+        py.contains("let value_owned: serde_json::Value ="),
+        "JsonValue did not lower to serde_json::Value in Py — got:\n{py}"
+    );
+
+    let ts = emit_ts(&ir).rust_glue;
+    assert!(
+        ts.contains("let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="),
+        "DocumentChunks did not lower to concrete spelling in TS — got:\n{ts}"
+    );
+    assert!(
+        ts.contains("let committer_date_unix_ms_owned: i64 ="),
+        "UnixMs did not lower to i64 in TS — got:\n{ts}"
+    );
+    assert!(
+        ts.contains("let ids_owned: Vec<String> ="),
+        "StrList did not lower to Vec<String> in TS — got:\n{ts}"
+    );
+    assert!(
+        ts.contains("let value_owned: serde_json::Value ="),
+        "JsonValue did not lower to serde_json::Value in TS — got:\n{ts}"
+    );
+}
+
 #[test]
 fn ts_async_owned_clone_self() {
     let ir = multi_module_ir();
