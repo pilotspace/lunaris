@@ -112,3 +112,12 @@ path = "src/bin/chaos.rs"
 [[bin]]
 name = "lunaris-evals"
 path = "src/bin/evals.rs"
+
+# Plan 13-02 RELEASE-03 — Helios chat 10K-turn E2E harness. HUMAN-UAT-gated:
+# the executor ships the binary; the operator runs it on a dev box with live
+# Moon + Postgres, producing milestones/v0.1.1-EVAL-05-RESULTS.json. SLO gate
+# is enforced IN the binary (hard-fail on recall p50 > 25 ms Moon / > 60 ms
+# Postgres / promotion_rate < 0.05).
+[[bin]]
+name = "eval_05_helios_10k"
+path = "src/bin/eval_05_helios_10k.rs"

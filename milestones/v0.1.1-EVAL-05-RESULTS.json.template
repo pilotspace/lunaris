@@ -1,0 +1,33 @@
+{
+  "_comment": "Plan 13-02 RELEASE-03 template — shape reference only. Populated by the live run via `cargo run --release -p lunaris-bench --bin eval_05_helios_10k`. Do NOT hand-edit the PASS/FAIL status or metric fields — commit the binary-emitted JSON verbatim.",
+  "status": "<operator-populated: PASS | FAIL | SKIP>",
+  "workspace_sha": "<operator-populated: 40-char hex from git rev-parse HEAD>",
+  "moon_version": "<operator-populated or 'unknown'>",
+  "postgres_version": "<operator-populated or 'unknown'>",
+  "run_timestamp_iso": "<operator-populated: RFC3339>",
+  "trace_seed": 3204447181,
+  "trace_len": 10000,
+  "promotion_drain_secs": 90,
+  "moon": {
+    "backend": "moon",
+    "recall_p50_ms": null,
+    "recall_samples": null,
+    "promotion_rate": null,
+    "promotions_observed": null,
+    "budget_p50_ms": 25.0,
+    "slo_passed": null,
+    "slo_reasons": []
+  },
+  "postgres": {
+    "backend": "postgres",
+    "recall_p50_ms": null,
+    "recall_samples": null,
+    "promotion_rate": null,
+    "promotions_observed": null,
+    "budget_p50_ms": 60.0,
+    "slo_passed": null,
+    "slo_reasons": []
+  },
+  "moon_skip_reason": null,
+  "postgres_skip_reason": null
+}
