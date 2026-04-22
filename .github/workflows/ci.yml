@@ -32,6 +32,36 @@ jobs:
       # `maturin build` + `napi build` correctly.
       - run: cargo check -p lunaris-py -p lunaris-ts --all-targets
 
+      # Plan 13-01 RELEASE-02 — audit envelope grep gate. Blocks
+      # reintroduction of inline `serde_json::json!({"kind":"..."})`
+      # envelopes in either worker crate. The canonical shape lives in
+      # lunaris_core::audit::AuditEvent; all publishers must route through
+      # lunaris_core::audit::publish_audit_event.
+      #
+      # Security: the `run:` block below uses static literal strings only.
+      # No github.event.* or other untrusted input flows into the command.
+      - name: audit_inline_envelope_grep_gate
+        run: |
+          set -e
+          if grep -rnE 'serde_json::json!\s*\(\s*\{\s*"kind":\s*"(Forget|VerifierArbitration|ConsolidatorPromotion|ConsolidatorArchive)"' crates/lunaris-verify/src crates/lunaris-consolidate/src; then
+            echo "::error::inline __lunaris_audit__ envelope detected — use lunaris_core::audit::publish_audit_event(AuditEvent::...)"
+            exit 1
+          fi
+
+      # Plan 13-01 RELEASE-01 — lunaris-core leaf-purity gate. Fails the
+      # build if any worker crate sneaks into lunaris-core's transitive
+      # dependency graph. Keeps the AuditEvent types at the bottom of the
+      # dep tree where every publisher can reach them.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: lunaris_core_leaf_purity
+        run: |
+          set -e
+          if cargo tree -p lunaris-core --prefix none | grep -E 'lunaris-verify|lunaris-consolidate|^lunaris '; then
+            echo "::error::lunaris-core must remain leaf-pure (no worker-crate or handle-crate deps)"
+            exit 1
+          fi
+
   # Phase 8 Plan 08-01 (BIND-GEN-02) — parity-check job.
   # Fails the PR when the committed binding snapshots drift from the
   # regenerated output. The walker is implemented in
