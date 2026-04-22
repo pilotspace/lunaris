@@ -18,6 +18,7 @@
 //! ty = { kind = "named", name = "Lsn" }
 //! ty = { kind = "option", inner = { kind = "str" } }
 //! ty = { kind = "vec", inner = { kind = "named", name = "Hit" } }
+//! ty = { kind = "handle", name = "Lunaris" }
 //! ```
 //!
 //! Serde round-trips the shape directly — `#[serde(tag = "kind",
@@ -26,6 +27,28 @@
 //! [`tests::every_ir_ty_ref_variant_round_trips`] test (in
 //! `tests/surface_toml_roundtrip.rs`) locks the contract: every variant must
 //! survive a `toml::to_string` → `toml::from_str` round trip unchanged.
+//!
+//! # Plan 11-02a additions (D1..D6)
+//!
+//! Three axes were added to carry the Phase 10/11 wrapper surface shapes
+//! without forcing a snapshot regeneration in this plan:
+//!
+//! - [`IrModule::rust_crate_path`] (D2(a)) — optional per-module Rust path
+//!   prefix. `None` means "use the default `::lunaris::` spelling" (existing
+//!   behaviour); `Some("::lunaris_recipes::conversational")` etc. drives the
+//!   emitter's method-call spelling. Annotated with `#[serde(default,
+//!   skip_serializing_if = "Option::is_none")]` so the committed
+//!   `rust_surface.json` snapshot stays byte-identical until a real module
+//!   sets the field.
+//! - [`IrTyRef::Handle`] (D3(a)) — new variant naming an opaque runtime
+//!   handle (e.g. `Arc<Lunaris>`). The emitters treat it specially: no
+//!   `pythonize::depythonize` / `serde_json::from_value` round-trip, just a
+//!   cheap `Arc` clone lifted from the wrapper's `.inner`.
+//! - [`IrMethod::clone_self`] (D6(b)) — `bool` default `false`. When `true`
+//!   on a `receiver = "owned"` method the emitter replaces the stub body
+//!   with `let out = self.inner.as_ref().clone().{name}(…); Ok({Target} {
+//!   inner: Arc::new(out) })`. Annotated with `skip_serializing_if =
+//!   "is_false"` so round-revision-1 surface.toml stays identical on disk.
 
 use serde::{Deserialize, Serialize};
 
@@ -49,10 +72,22 @@ pub struct SurfaceIR {
     pub modules: Vec<IrModule>,
 }
 
-/// One logical module — there is exactly one (`lunaris`) in v0.1.1.
+/// One logical module — there is exactly one (`lunaris`) in v0.1.1; Plan
+/// 11-02b adds `lunaris_recipes.conversational` and
+/// `lunaris_recipes.documentary`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IrModule {
     pub name: String,
+    /// Plan 11-02a D2(a): optional Rust crate-path prefix used by the
+    /// emitters when spelling method-call sites. `None` is the legacy
+    /// default → emitters fall back to `::lunaris::`. `Some(p)` → emitters
+    /// spell calls as `{p}::{type_name}::{method}(…)`.
+    ///
+    /// `skip_serializing_if = "Option::is_none"` is load-bearing for
+    /// `rust_surface.json` bit-stability: revision-1 `surface.toml` omits
+    /// the field, so the serialised snapshot must omit it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_crate_path: Option<String>,
     /// Same TOML-vs-JSON duality as `SurfaceIR::modules` — `[[module.type]]`
     /// in TOML, `types` in JSON.
     #[serde(rename = "type", default)]
@@ -104,6 +139,14 @@ pub struct IrMethod {
     #[serde(default)]
     pub params: Vec<IrParam>,
     pub returns: IrReturn,
+    /// Plan 11-02a D6(b): when `true` AND `receiver = "owned"`, the
+    /// emitters replace the legacy `PyNotImplementedError::new_err(...)` /
+    /// `napi::Error::from_reason(...)` stub with a clone-and-rewrap body
+    /// (`let out = self.inner.as_ref().clone().{name}(…); Ok({Target} {
+    /// inner: Arc::new(out) })`). Default `false` + `skip_serializing_if`
+    /// keeps revision-1 `surface.toml` + `rust_surface.json` byte-stable.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clone_self: bool,
     pub doc: Option<String>,
 }
 
@@ -185,4 +228,19 @@ pub enum IrTyRef {
     Option { inner: Box<IrTyRef> },
     /// `Vec<T>` — emitted as `list[T]` in Python, `Array<T>` in TS.
     Vec { inner: Box<IrTyRef> },
+    /// Plan 11-02a D3(a) — runtime handle passed as an opaque wrapper
+    /// reference (e.g. `&PyLunaris` / `&Lunaris`). The emitter lowers this
+    /// to a cheap `Arc` clone (`{name}.inner.clone()`) — NO
+    /// `pythonize::depythonize` / `serde_json::from_value` round-trip.
+    /// Used by every Phase 10/11 wrapper constructor that takes
+    /// `Arc<Lunaris>` as its first argument.
+    Handle { name: String },
+}
+
+/// `#[serde(skip_serializing_if = "is_false")]` helper. Keeps
+/// `clone_self = false` from serialising into the `rust_surface.json`
+/// snapshot → revision-1 IR dump stays byte-identical through Plan 11-02a.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
 }

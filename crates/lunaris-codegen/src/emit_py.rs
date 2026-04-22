@@ -359,7 +359,7 @@ fn format_params(params: &[IrParam], leading_comma: bool) -> String {
         }
         s.push_str(&p.name);
         s.push_str(": ");
-        s.push_str(py_param_ty(&p.ty));
+        s.push_str(&py_param_ty(&p.ty));
     }
     s
 }
@@ -376,17 +376,21 @@ fn format_call_args(params: &[IrParam]) -> String {
         .join(", ")
 }
 
-fn py_param_ty(ty: &IrTyRef) -> &'static str {
+fn py_param_ty(ty: &IrTyRef) -> String {
     match ty {
-        IrTyRef::Unit => "()",
-        IrTyRef::Str => "String",
-        IrTyRef::Usize => "usize",
-        IrTyRef::Bool => "bool",
-        IrTyRef::Json => "&Bound<'_, PyAny>",
-        IrTyRef::RefSelf => "&Self",
-        IrTyRef::Named { .. } => "&Bound<'_, PyAny>",
-        IrTyRef::Option { .. } => "Option<&Bound<'_, PyAny>>",
-        IrTyRef::Vec { .. } => "&Bound<'_, PyAny>",
+        IrTyRef::Unit => "()".to_string(),
+        IrTyRef::Str => "String".to_string(),
+        IrTyRef::Usize => "usize".to_string(),
+        IrTyRef::Bool => "bool".to_string(),
+        IrTyRef::Json => "&Bound<'_, PyAny>".to_string(),
+        IrTyRef::RefSelf => "&Self".to_string(),
+        IrTyRef::Named { .. } => "&Bound<'_, PyAny>".to_string(),
+        IrTyRef::Option { .. } => "Option<&Bound<'_, PyAny>>".to_string(),
+        IrTyRef::Vec { .. } => "&Bound<'_, PyAny>".to_string(),
+        // Plan 11-02a D3(a) — Handle wrappers pass the PyO3 class reference
+        // (`&PyLunaris`) directly; the emitter then clones `.inner` (an
+        // `Arc`) at the call site. No pythonize round-trip.
+        IrTyRef::Handle { name } => format!("&Py{name}"),
     }
 }
 
@@ -403,10 +407,21 @@ fn rust_owned_ty(ty: &IrTyRef) -> String {
             "Hlc" => "::lunaris::Hlc".to_string(),
             "EntityId" => "::lunaris::EntityId".to_string(),
             "RetrievalBuilder" => "::lunaris::RetrievalBuilder".to_string(),
+            // Plan 11-02a D5 — explicit allow-list entries for the Phase
+            // 10/11 wrapper surface. Each maps to `::lunaris::{name}`
+            // (same as the fallback) — umbrella re-exports carry them.
+            // Listed explicitly for grep-ability; bit-stable vs. fallback.
+            "Hit" => "::lunaris::Hit".to_string(),
+            "ConsolidationReport" => "::lunaris::ConsolidationReport".to_string(),
+            "SlackArchiveQuery" => "::lunaris::SlackArchiveQuery".to_string(),
+            "MeetingNotesQuery" => "::lunaris::MeetingNotesQuery".to_string(),
             _ => format!("::lunaris::{name}"),
         },
         IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty(inner)),
         IrTyRef::Vec { inner } => format!("Vec<{}>", rust_owned_ty(inner)),
+        // Plan 11-02a D3(a) — Handle lowers to `Arc<::lunaris::{name}>` on
+        // the owned-binding side.
+        IrTyRef::Handle { name } => format!("::std::sync::Arc<::lunaris::{name}>"),
         _ => "serde_json::Value".to_string(),
     }
 }

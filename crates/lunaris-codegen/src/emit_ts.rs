@@ -335,6 +335,20 @@ fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
             }
+            // Plan 11-02a D3(a) — Handle wrapper: clone `.inner` directly,
+            // no serde round-trip.
+            IrTyRef::Handle { name } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: ::std::sync::Arc<::lunaris::{name}> = {param}.inner.clone();",
+                    owned_name = owned_name,
+                    name = name,
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
         }
     }
     names
@@ -379,6 +393,20 @@ fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Ve
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
             }
+            // Plan 11-02a D3(a) — Handle wrapper: clone `.inner` directly,
+            // no serde round-trip (mirror of the fallible branch).
+            IrTyRef::Handle { name } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: ::std::sync::Arc<::lunaris::{name}> = {param}.inner.clone();",
+                    owned_name = owned_name,
+                    name = name,
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
         }
     }
     names
@@ -416,10 +444,19 @@ fn rust_owned_ty_ts(ty: &IrTyRef) -> String {
             "Hlc" => "::lunaris::Hlc".to_string(),
             "EntityId" => "::lunaris::EntityId".to_string(),
             "RetrievalBuilder" => "::lunaris::RetrievalBuilder".to_string(),
+            // Plan 11-02a D5 — explicit allow-list; same spelling as the
+            // fallback (umbrella re-exports). Listed for grep-ability;
+            // bit-stable vs. fallback arm.
+            "Hit" => "::lunaris::Hit".to_string(),
+            "ConsolidationReport" => "::lunaris::ConsolidationReport".to_string(),
+            "SlackArchiveQuery" => "::lunaris::SlackArchiveQuery".to_string(),
+            "MeetingNotesQuery" => "::lunaris::MeetingNotesQuery".to_string(),
             _ => format!("::lunaris::{name}"),
         },
         IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty_ts(inner)),
         IrTyRef::Vec { inner } => format!("Vec<{}>", rust_owned_ty_ts(inner)),
+        // Plan 11-02a D3(a) — Handle lowers to `Arc<::lunaris::{name}>`.
+        IrTyRef::Handle { name } => format!("::std::sync::Arc<::lunaris::{name}>"),
         _ => "serde_json::Value".to_string(),
     }
 }
@@ -460,7 +497,7 @@ fn format_params_rust(params: &[IrParam], _with_self: bool) -> String {
         s.push_str(", ");
         s.push_str(&p.name);
         s.push_str(": ");
-        s.push_str(ts_param_ty_rust(&p.ty));
+        s.push_str(&ts_param_ty_rust(&p.ty));
     }
     // If `_with_self` is false (static), trim the leading ", " — napi-rs
     // factory functions don't take `&self` but do take leading parameters.
@@ -484,17 +521,20 @@ fn format_call_args(params: &[IrParam]) -> String {
         .join(", ")
 }
 
-fn ts_param_ty_rust(ty: &IrTyRef) -> &'static str {
+fn ts_param_ty_rust(ty: &IrTyRef) -> String {
     match ty {
-        IrTyRef::Unit => "()",
-        IrTyRef::Str => "String",
-        IrTyRef::Usize => "u32",
-        IrTyRef::Bool => "bool",
-        IrTyRef::Json => "serde_json::Value",
-        IrTyRef::RefSelf => "&Self",
-        IrTyRef::Named { .. } => "serde_json::Value",
-        IrTyRef::Option { .. } => "Option<serde_json::Value>",
-        IrTyRef::Vec { .. } => "Vec<serde_json::Value>",
+        IrTyRef::Unit => "()".to_string(),
+        IrTyRef::Str => "String".to_string(),
+        IrTyRef::Usize => "u32".to_string(),
+        IrTyRef::Bool => "bool".to_string(),
+        IrTyRef::Json => "serde_json::Value".to_string(),
+        IrTyRef::RefSelf => "&Self".to_string(),
+        IrTyRef::Named { .. } => "serde_json::Value".to_string(),
+        IrTyRef::Option { .. } => "Option<serde_json::Value>".to_string(),
+        IrTyRef::Vec { .. } => "Vec<serde_json::Value>".to_string(),
+        // Plan 11-02a D3(a) — Handle: napi-rs class reference (by Rust
+        // struct name, which equals the TS class name for napi exports).
+        IrTyRef::Handle { name } => format!("&{name}"),
     }
 }
 
@@ -509,6 +549,8 @@ fn ts_param_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Named { name } => name.clone(),
         IrTyRef::Option { inner } => format!("{} | null", ts_param_ty_dts(inner)),
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_param_ty_dts(inner)),
+        // Plan 11-02a D3(a) — Handle: TS class name (same as Rust struct).
+        IrTyRef::Handle { name } => name.clone(),
     }
 }
 
@@ -578,6 +620,8 @@ fn ts_return_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Usize => "number".into(),
         IrTyRef::Bool => "boolean".into(),
         IrTyRef::Json => "object".into(),
+        // Plan 11-02a D3(a) — Handle: TS class name.
+        IrTyRef::Handle { name } => name.clone(),
         IrTyRef::Option { inner } => format!("{} | null", ts_return_ty_dts(inner)),
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_return_ty_dts(inner)),
     }
