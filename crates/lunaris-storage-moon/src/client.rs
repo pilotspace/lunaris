@@ -213,4 +213,18 @@ mod tests {
         let r = MoonClient::connect("not a url").await;
         assert!(matches!(r, Err(StorageError::UnsupportedScheme(_))));
     }
+
+    /// Plan 09.1-02 Task 2 — structural guard on `ensure_indexes`.
+    /// The `chunks` FT index MUST declare `valid_time` as `SchemaField::Numeric`
+    /// so `@valid_time:[lo hi]` range queries hit a real indexed field. Without
+    /// the declaration the translator arm in vector.rs / keyword.rs renders
+    /// valid grammar that matches 0 rows — a silent footgun.
+    #[test]
+    fn chunks_index_declares_valid_time_numeric() {
+        let source = include_str!("client.rs");
+        assert!(
+            source.contains("SchemaField::Numeric(\"valid_time\""),
+            "ensure_indexes must declare valid_time NUMERIC on the chunks FT index"
+        );
+    }
 }
