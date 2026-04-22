@@ -3,8 +3,8 @@
 //! AS_OF-only parity coverage per the 2026-04-22 scope-reduction split. The
 //! `.before` / `.after` / `.between` operators record into `TemporalBounds`
 //! but do NOT flow to the backend in Phase 9 (see Plan 09-04 revision note
-//! + module-level rustdoc on `crates/lunaris-recipes/src/temporal_query.rs`);
-//! their backend wiring + parity coverage moves to Phase 9.1 Plan 09.1-03.
+//! plus the module-level rustdoc on the TemporalQuery source file); their
+//! backend wiring plus parity coverage moves to Phase 9.1 Plan 09.1-03.
 //!
 //! Feature-gated behind `moon-it` + `pg-it`. Default `cargo test -p lunaris-recipes`
 //! executes 0 parity tests. With features + env vars + reachable TCP the

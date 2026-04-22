@@ -217,15 +217,16 @@ mod tests {
         // Using `Arc::new_uninit` would be unsafe; instead we build the
         // filter vec directly matching the shape `.filter()` produces, then
         // assert the produced `Filter::And` branch shape inside `search`.
-        let mut filters: Vec<Filter> = Vec::new();
-        filters.push(Filter::Eq {
-            field: "lang".into(),
-            value: serde_json::json!("en"),
-        });
-        filters.push(Filter::Eq {
-            field: "type".into(),
-            value: serde_json::json!("md"),
-        });
+        let filters: Vec<Filter> = vec![
+            Filter::Eq {
+                field: "lang".into(),
+                value: serde_json::json!("en"),
+            },
+            Filter::Eq {
+                field: "type".into(),
+                value: serde_json::json!("md"),
+            },
+        ];
         assert_eq!(filters.len(), 2);
         match &filters[0] {
             Filter::Eq { field, value } => {

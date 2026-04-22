@@ -235,9 +235,11 @@ mod tests {
 
     #[test]
     fn temporal_query_bounds_accumulate() {
-        let mut b = TemporalBounds::default();
-        b.as_of = Some(Hlc::from_parts(1_000, 0, 0));
-        b.before = Some(Hlc::from_parts(2_000, 0, 0));
+        let b = TemporalBounds {
+            as_of: Some(Hlc::from_parts(1_000, 0, 0)),
+            before: Some(Hlc::from_parts(2_000, 0, 0)),
+            after: None,
+        };
         assert!(b.as_of.is_some());
         assert!(b.before.is_some());
         assert!(b.after.is_none());
