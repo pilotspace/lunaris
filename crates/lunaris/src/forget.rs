@@ -123,7 +123,13 @@ pub struct ForgetOptions {
 /// callers can pass a bare `ForgetTarget` to `Lunaris::forget(...)` for the
 /// soft-delete default case AND chain `.hard()` / `.dry_run()` on the target
 /// to get a full request.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Plan 08-02 Rule 3 additive: `Serialize + Deserialize` added so the codegen
+/// PyO3 wrapper for `Lunaris::forget` can accept a Python dict via
+/// `pythonize::depythonize`. Both inner fields (`ForgetTarget`, `ForgetOptions`)
+/// already derived these traits, so the change is mechanical with no
+/// semantic surface shift.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForgetRequest {
     pub target: ForgetTarget,
     pub options: ForgetOptions,

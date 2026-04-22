@@ -35,8 +35,9 @@ impl PyLunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     fn ingest<'py>(&self, py: Python<'py>, episode: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
+        let episode_owned: ::lunaris::Episode = pythonize::depythonize(&episode)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest(pythonize::depythonize(&episode)?).await.map_err(py_err)?;
+            let out = inner.ingest(episode_owned).await.map_err(py_err)?;
             Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
@@ -44,14 +45,15 @@ impl PyLunaris {
     /// Build a RetrievalBuilder bound to this handle's storage / keyword / embedder / clock.
     fn recall(&self) -> PyResult<PyRetrievalBuilder> {
         let out = self.inner.recall();
-        Ok(Self { inner: Arc::new(out) })
+        Ok(PyRetrievalBuilder { inner: Arc::new(out) })
     }
 
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     fn forget<'py>(&self, py: Python<'py>, req: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
+        let req_owned: ::lunaris::forget::ForgetRequest = pythonize::depythonize(&req)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.forget(pythonize::depythonize(&req)?).await.map_err(py_err)?;
+            let out = inner.forget(req_owned).await.map_err(py_err)?;
             Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
@@ -115,7 +117,8 @@ impl PyGraph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[staticmethod]
     fn anchored(entity_ids: &Bound<'_, PyAny>, hops: usize) -> PyResult<Self> {
-        let inner = ::lunaris::Graph::anchored(entity_ids, hops);
+        let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(&entity_ids).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
+        let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -178,8 +181,8 @@ pub struct PyGraphPipelineHandle {
 impl PyGraphPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     fn toggle(&self, on: bool) -> PyResult<()> {
-        let out = self.inner.toggle(on);
-        let _ = out; Ok(())
+        if on { self.inner.enable(); } else { self.inner.disable(); }
+        Ok(())
     }
 
 }
@@ -195,8 +198,8 @@ pub struct PyConsolidatorPipelineHandle {
 impl PyConsolidatorPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     fn toggle(&self, on: bool) -> PyResult<()> {
-        let out = self.inner.toggle(on);
-        let _ = out; Ok(())
+        if on { self.inner.enable(); } else { self.inner.disable(); }
+        Ok(())
     }
 
 }

@@ -26,7 +26,7 @@ impl Lunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     #[napi]
     pub async fn ingest(&self, episode: serde_json::Value) -> napi::Result<String> {
-        let out = self.inner.ingest(serde_json::from_value(episode.clone()).map_err(napi_err)?).await.map_err(napi_err)?;
+        let out = self.inner.ingest(episode).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
 
@@ -40,7 +40,7 @@ impl Lunaris {
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     #[napi]
     pub async fn forget(&self, req: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let out = self.inner.forget(serde_json::from_value(req.clone()).map_err(napi_err)?).await.map_err(napi_err)?;
+        let out = self.inner.forget(req).await.map_err(napi_err)?;
         Ok(serde_json::to_value(&out).map_err(napi_err)?)
     }
 

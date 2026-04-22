@@ -27,6 +27,20 @@ impl Lsn {
     }
 }
 
+/// Plan 08-02 additive: `Display` lets the PyO3 / napi-rs bindings emit
+/// `Lsn::to_string()` as the FFI-crossing shape for `ingest() -> Lsn` and
+/// `snapshot() -> Lsn`. The format is `"{wall_ms}:{counter}"` — stable,
+/// total-order-preserving under lexicographic compare IFF wall_ms/counter
+/// are zero-padded to fixed widths; we deliberately do NOT zero-pad because
+/// callers that need ordering compare the numeric fields directly (Lsn
+/// derives `PartialOrd + Ord`). The string form is intended for opaque
+/// display / serialisation only.
+impl std::fmt::Display for Lsn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.wall_ms, self.counter)
+    }
+}
+
 // ----- Key trait -----
 
 /// User-defined typed key. Implementors define how to serialize the key to bytes

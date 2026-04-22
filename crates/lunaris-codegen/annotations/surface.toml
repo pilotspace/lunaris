@@ -42,7 +42,13 @@ name = "lunaris"
     name = "ingest"
     is_async = "yes"
     receiver = "ref_self"
-    params = [{ name = "episode", ty = { kind = "json" } }]
+    # Plan 08-02 Rule 1 refinement: `episode` is a typed Episode struct on
+    # the Rust side (crates/lunaris-core/src/primitives.rs:16) — the codegen
+    # must `depythonize::<Episode>` to match `Lunaris::ingest(Episode)`.
+    # `kind = "named", name = "Episode"` tells `rust_owned_ty` to spell
+    # `::lunaris::Episode` at the call site; `kind = "json"` would land
+    # `serde_json::Value` and fail the arg-type check.
+    params = [{ name = "episode", ty = { kind = "named", name = "Episode" } }]
     returns = { ty = { kind = "named", name = "Lsn" }, fallible = true }
     doc = "Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON)."
 
@@ -58,7 +64,13 @@ name = "lunaris"
     name = "forget"
     is_async = "yes"
     receiver = "ref_self"
-    params = [{ name = "req", ty = { kind = "json" } }]
+    # Plan 08-02 Rule 1 refinement: `req` is the typed ForgetRequest
+    # (crates/lunaris/src/forget.rs:127). `ForgetRequest` now derives
+    # Serialize + Deserialize (Plan 08-02 additive) so depythonize flows
+    # through cleanly. `kind = "named", name = "ForgetRequest"` routes
+    # `rust_owned_ty` to the correct `::lunaris::forget::ForgetRequest`
+    # spelling used by the emitter call site.
+    params = [{ name = "req", ty = { kind = "named", name = "ForgetRequest" } }]
     returns = { ty = { kind = "named", name = "ForgetReceipt" }, fallible = true }
     doc = "Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token."
 

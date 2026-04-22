@@ -9,11 +9,11 @@ export class Lunaris {
   /** Production constructor. Routes `url` through the scheme dispatcher to pick a StoragePort backend. */
   static open(url: string): Promise<this>;
   /** Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON). */
-  ingest(episode: object): Promise<string>;
+  ingest(episode: Episode): Promise<string>;
   /** Build a RetrievalBuilder bound to this handle's storage / keyword / embedder / clock. */
   recall(): RetrievalBuilder;
   /** Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token. */
-  forget(req: object): Promise<ForgetReceipt>;
+  forget(req: ForgetRequest): Promise<ForgetReceipt>;
   /** Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]). */
   snapshot(): Promise<string>;
 }

@@ -38,7 +38,8 @@
                 {
                   "name": "episode",
                   "ty": {
-                    "kind": "json"
+                    "kind": "named",
+                    "name": "Episode"
                   }
                 }
               ],
@@ -73,7 +74,8 @@
                 {
                   "name": "req",
                   "ty": {
-                    "kind": "json"
+                    "kind": "named",
+                    "name": "ForgetRequest"
                   }
                 }
               ],

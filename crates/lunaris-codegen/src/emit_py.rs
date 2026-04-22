@@ -131,6 +131,13 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
         }
         // Async instance method (e.g. `Lunaris::ingest`, `Lunaris::snapshot`,
         // `Lunaris::forget`).
+        //
+        // Plan 08-02 Rule 1 fix — Send-safety: `pythonize::depythonize(&py_any)`
+        // borrows a `&Bound<'_, PyAny>` which is `!Send`. Capturing such a
+        // borrow inside the `async move { ... .await ... }` block sent to the
+        // tokio runtime makes the future non-Send and fails to compile. Fix
+        // is to eagerly run `depythonize` (with GIL still held, BEFORE the
+        // async block) and move the owned typed value into the closure.
         (IrAsync::Yes, IrReceiver::RefSelf) => {
             writeln!(
                 out,
@@ -140,13 +147,55 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
             )
             .unwrap();
             writeln!(out, "        let inner = self.inner.clone();").unwrap();
+            // Eager pythonize::depythonize for every Json / Named / Vec /
+            // Option param so the future body can move the owned value.
+            let mut owned_names: Vec<String> = Vec::with_capacity(m.params.len());
+            for p in &m.params {
+                let owned_name = format!("{}_owned", p.name);
+                match &p.ty {
+                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                        // Plan 08-02 Rule 1: explicit type annotation so
+                        // `depythonize` returns the correct owned type —
+                        // generic Rust APIs like `forget(impl Into<ForgetRequest>)`
+                        // won't infer a concrete type from the plain
+                        // `let x = pythonize::depythonize(...)?;` shape.
+                        writeln!(
+                            out,
+                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param})?;",
+                            owned_name = owned_name,
+                            ty = rust_owned_ty(&p.ty),
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    IrTyRef::Str => {
+                        // String is already owned (Python string → Rust
+                        // String via PyO3's param conversion) so no
+                        // depythonize step is needed.
+                        owned_names.push(p.name.clone());
+                    }
+                    _ => owned_names.push(p.name.clone()),
+                }
+            }
             writeln!(out, "        pyo3_async_runtimes::tokio::future_into_py(py, async move {{")
                 .unwrap();
+            // Call-args: `&str` args still need a leading `&` at the call
+            // site; owned typed values are passed by value.
+            let call_args = m
+                .params
+                .iter()
+                .zip(owned_names.iter())
+                .map(|(p, owned)| match &p.ty {
+                    IrTyRef::Str => format!("&{}", owned),
+                    _ => owned.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             writeln!(
                 out,
                 "            let out = inner.{name}({call_args}).await.map_err(py_err)?;",
-                name = m.name,
-                call_args = format_call_args(&m.params)
+                name = m.name
             )
             .unwrap();
             writeln!(out, "            {ret}", ret = py_return_expr(&m.returns.ty)).unwrap();
@@ -154,6 +203,11 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
             writeln!(out, "    }}").unwrap();
         }
         // Sync static constructor (Vector::new, Keyword::bm25, Graph::anchored).
+        //
+        // Plan 08-02 Rule 1 fix: `Vec<T>` / `Named<T>` / `Option<T>` params
+        // are depythonized before the call site so the Rust-side inherent
+        // method signature sees the real owned typed value (e.g. Graph::anchored
+        // takes `Vec<EntityId>`, not `&Bound<'_, PyAny>`).
         (IrAsync::No, IrReceiver::None) => {
             writeln!(out, "    #[staticmethod]").unwrap();
             writeln!(
@@ -163,18 +217,56 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 params = format_params(&m.params, /* leading_comma */ false)
             )
             .unwrap();
+            // Pre-depythonize every non-primitive param, mirroring the
+            // async ref_self branch.
+            let mut owned_names: Vec<String> = Vec::with_capacity(m.params.len());
+            for p in &m.params {
+                let owned_name = format!("{}_owned", p.name);
+                match &p.ty {
+                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                            owned_name = owned_name,
+                            ty = rust_owned_ty(&p.ty),
+                            param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    _ => owned_names.push(p.name.clone()),
+                }
+            }
+            let call_args = m
+                .params
+                .iter()
+                .zip(owned_names.iter())
+                .map(|(p, owned)| match &p.ty {
+                    IrTyRef::Str => format!("&{}", owned),
+                    _ => owned.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             writeln!(
                 out,
                 "        let inner = ::lunaris::{type_name}::{name}({call_args});",
                 type_name = type_name,
-                name = m.name,
-                call_args = format_call_args(&m.params)
+                name = m.name
             )
             .unwrap();
             writeln!(out, "        Ok(Self {{ inner: Arc::new(inner) }})").unwrap();
             writeln!(out, "    }}").unwrap();
         }
         // Sync `&self` method (Lunaris::recall, pipeline-handle toggles).
+        //
+        // Plan 08-02 Rule 1 fix: the pipeline-toggle method is declared as
+        // `toggle(on: bool)` in the codegen surface, but the Rust-side
+        // GraphPipelineHandle / ConsolidatorPipelineHandle expose
+        // `enable()` / `disable()` rather than a unified `toggle(on)`. We
+        // special-case the method name here so emitted code dispatches to
+        // the real Rust API. Calling `toggle` on any other type keeps the
+        // straight pass-through (future toggle callers would add a method
+        // with that literal name).
         (IrAsync::No, IrReceiver::RefSelf) => {
             writeln!(
                 out,
@@ -184,14 +276,28 @@ fn emit_py_method(out: &mut String, type_name: &str, m: &IrMethod, _kind: IrKind
                 ret = py_sync_return_ty(&m.returns.ty, m.returns.fallible)
             )
             .unwrap();
-            writeln!(
-                out,
-                "        let out = self.inner.{name}({call_args});",
-                name = m.name,
-                call_args = format_call_args(&m.params)
-            )
-            .unwrap();
-            writeln!(out, "        {ret}", ret = py_sync_return_expr(&m.returns)).unwrap();
+            if m.name == "toggle"
+                && (type_name == "GraphPipelineHandle"
+                    || type_name == "ConsolidatorPipelineHandle")
+            {
+                // Rust surface is enable()/disable(); dispatch on the single
+                // `on` bool arg.
+                writeln!(
+                    out,
+                    "        if on {{ self.inner.enable(); }} else {{ self.inner.disable(); }}"
+                )
+                .unwrap();
+                writeln!(out, "        Ok(())").unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        let out = self.inner.{name}({call_args});",
+                    name = m.name,
+                    call_args = format_call_args(&m.params)
+                )
+                .unwrap();
+                writeln!(out, "        {ret}", ret = py_sync_return_expr(&m.returns)).unwrap();
+            }
             writeln!(out, "    }}").unwrap();
         }
         // Sync `self`-consuming builder method (RetrievalBuilder chain).
@@ -270,6 +376,27 @@ fn py_param_ty(ty: &IrTyRef) -> &'static str {
     }
 }
 
+/// Plan 08-02 Rule 1 addition — Rust owned-type spelling used as the
+/// explicit type annotation on `let {name}_owned: {ty} = pythonize::depythonize(...)`
+/// so type inference works at the call site regardless of how the Rust
+/// method was declared.
+fn rust_owned_ty(ty: &IrTyRef) -> String {
+    match ty {
+        IrTyRef::Json => "serde_json::Value".to_string(),
+        IrTyRef::Named { name } => match name.as_str() {
+            "Episode" => "::lunaris::Episode".to_string(),
+            "ForgetRequest" => "::lunaris::forget::ForgetRequest".to_string(),
+            "Hlc" => "::lunaris::Hlc".to_string(),
+            "EntityId" => "::lunaris::EntityId".to_string(),
+            "RetrievalBuilder" => "::lunaris::RetrievalBuilder".to_string(),
+            _ => format!("::lunaris::{name}"),
+        },
+        IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty(inner)),
+        IrTyRef::Vec { inner } => format!("Vec<{}>", rust_owned_ty(inner)),
+        _ => "serde_json::Value".to_string(),
+    }
+}
+
 fn py_return_expr(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Named { name } if name == "Lsn" => {
@@ -299,8 +426,15 @@ fn py_sync_return_ty(ty: &IrTyRef, _fallible: bool) -> String {
 fn py_sync_return_expr(r: &crate::ir::IrReturn) -> String {
     match (&r.ty, r.fallible) {
         (IrTyRef::Unit, _) => "let _ = out; Ok(())".into(),
-        (IrTyRef::RefSelf, _) | (IrTyRef::Named { .. }, false) => {
-            "Ok(Self { inner: Arc::new(out) })".into()
+        (IrTyRef::RefSelf, _) => "Ok(Self { inner: Arc::new(out) })".into(),
+        // Plan 08-02 Rule 1 fix: for a sync `&self` method returning a
+        // named-type (e.g. `Lunaris::recall() -> RetrievalBuilder`), the
+        // wrapper must construct the TARGET PyFoo, not `Self` — `Self`
+        // would resolve to the current `impl Py{source}` block and produce
+        // `Py{source} { inner: Arc::new(<RetrievalBuilder>) }`, which fails
+        // to typecheck.
+        (IrTyRef::Named { name }, false) => {
+            format!("Ok(Py{name} {{ inner: Arc::new(out) }})")
         }
         _ => "Ok(out)".into(),
     }
