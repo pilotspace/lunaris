@@ -89,6 +89,14 @@ harness = false
 name = "atomic_write_hot_path"
 harness = false
 
+# Plan 12-03 HELIOS-05 — p50 ≤ 20 ms tool-call overhead bench for the
+# HeliosScratchpad v2 surface (Read:Write:Edit:Grep mix per helios-rfc §5.3).
+# Measures on Moon + Postgres; emits evidence envelope alongside Criterion
+# samples under target/criterion/helios_smoke/helios_p50_<label>/.
+[[bench]]
+name = "helios_p50"
+harness = false
+
 # Plan 04-03 — chaos subprocess for the crash-recovery property test (D-23).
 # Spawned via `std::process::Command` from
 # `crates/lunaris-conformance/tests/crash_recovery.rs`, then SIGKILL'd
