@@ -204,6 +204,42 @@ pub enum RrfFusion {
 }
 
 #[cfg(test)]
+mod filter_valid_time_range_tests {
+    use super::*;
+
+    #[test]
+    fn filter_valid_time_range_roundtrip() {
+        let f = Filter::ValidTimeRange {
+            after: Some(Hlc { wall_ms: 100, counter: 0 }),
+            before: Some(Hlc { wall_ms: 200, counter: 5 }),
+        };
+        let s = serde_json::to_string(&f).expect("serialize ValidTimeRange");
+        let parsed: Filter = serde_json::from_str(&s).expect("deserialize ValidTimeRange");
+        assert!(matches!(parsed, Filter::ValidTimeRange { after: Some(_), before: Some(_) }));
+    }
+
+    #[test]
+    fn filter_valid_time_range_both_none() {
+        let f = Filter::ValidTimeRange { after: None, before: None };
+        let s = serde_json::to_string(&f).expect("serialize both-None");
+        let parsed: Filter = serde_json::from_str(&s).expect("deserialize both-None");
+        assert!(matches!(parsed, Filter::ValidTimeRange { after: None, before: None }));
+    }
+
+    #[test]
+    fn filter_existing_variants_unchanged() {
+        let eq = Filter::Eq { field: "source".into(), value: serde_json::json!("helios:fs/") };
+        let sw = Filter::StartsWith { field: "source".into(), prefix: "helios:fs/".into() };
+        let and_f = Filter::And(vec![eq.clone(), sw.clone()]);
+        let or_f = Filter::Or(vec![eq.clone(), sw.clone()]);
+        for f in [eq, sw, and_f, or_f] {
+            let s = serde_json::to_string(&f).expect("serialize existing variant");
+            let _: Filter = serde_json::from_str(&s).expect("deserialize existing variant");
+        }
+    }
+}
+
+#[cfg(test)]
 mod rrf_fusion_tests {
     use super::*;
 
