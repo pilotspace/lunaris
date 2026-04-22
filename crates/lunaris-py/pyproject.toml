@@ -1,0 +1,51 @@
+[build-system]
+requires      = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name            = "lunaris"
+version         = "0.1.1"
+description     = "Lunaris — agent memory engine (Python bindings, PyO3 0.26)."
+requires-python = ">=3.11"
+readme          = "README.md"
+license         = { text = "Apache-2.0" }
+authors         = [{ name = "Lunaris Authors" }]
+keywords        = ["memory", "agent", "bi-temporal", "retrieval", "mvcc"]
+classifiers = [
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Topic :: Database",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Repository = "https://github.com/lunaris-dev/lunaris"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+]
+
+[tool.maturin]
+# Python-source layout: `python/lunaris/` is the pure-Python sidecar that
+# wraps the compiled cdylib. The cdylib lands inside that package as
+# `lunaris.lunaris` because `module-name = "lunaris.lunaris"` and `[lib]
+# name = "lunaris"` in Cargo.toml.
+python-source = "python"
+module-name   = "lunaris.lunaris"
+features      = ["pyo3/extension-module"]
+bindings      = "pyo3"
+# abi3-py311 stable ABI — one wheel works for 3.11 / 3.12 / 3.13.
+# This is already declared in Cargo.toml's pyo3 features.
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+# Be strict about warnings originating from our code so PyO3 0.26 deprecation
+# surprises surface early; upstream deprecations are narrowed by ignore lists.
+filterwarnings = ["error::DeprecationWarning:lunaris"]

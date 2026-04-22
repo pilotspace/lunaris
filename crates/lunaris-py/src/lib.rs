@@ -1,0 +1,95 @@
+//! `lunaris-py` — PyO3 0.26 Python bindings for the Lunaris memory engine.
+//!
+//! Phase 8 Plan 08-02. This crate is the Python-side host of the 15-item
+//! binding surface emitted by `lunaris-codegen` (Plan 08-01). The module is
+//! split across:
+//!
+//! - [`generated`] — codegen-managed file; DO NOT EDIT. Regenerate via
+//!   `cargo run -p lunaris-codegen -- --emit py` and re-copy to
+//!   `crates/lunaris-py/src/generated.rs`.
+//! - [`errors`] — `LunarisError` Python exception + `py_err` translator used
+//!   by every generated `.map_err(py_err)` call site.
+//! - [`types`] — thin helpers for Episode / ForgetRequest / Hit
+//!   serialisation; used by the generated wrappers via the unqualified
+//!   `pythonize::depythonize` path already emitted by Plan 08-01.
+//! - [`dsl`] — Python-facing ergonomics for [`lunaris_retrieve::RetrievalBuilder`]
+//!   that don't fit the code-generated surface shape (owned-self consumes).
+//! - [`toggles`] — three-surface (code + env + config) wrappers for
+//!   [`lunaris::GraphPipelineHandle`] and
+//!   [`lunaris::ConsolidatorPipelineHandle`].
+//! - [`conformance`] — feature-gated (`bindings-it`) handwritten helpers
+//!   consumed by Plan 08-04. NOT codegen-managed.
+//!
+//! ## `#[pymodule]` ownership
+//!
+//! The host crate (THIS file) owns the canonical `#[pymodule] fn lunaris(...)`
+//! — Plan 08-02's Rule 1 deviation on Plan 08-01 changed the emitter to
+//! produce a `register_generated(py, m)` helper rather than a conflicting
+//! `#[pymodule]` block, so there is exactly one `PyInit_lunaris` symbol in
+//! the final cdylib.
+//!
+//! ## GIL discipline
+//!
+//! Every `.await` in [`generated`] sits inside a
+//! `pyo3_async_runtimes::tokio::future_into_py` closure (CLAUDE.md mandate;
+//! brace-balanced scan test in `lunaris-codegen/tests/emitter_shape.rs`).
+//! The handwritten `dsl.rs`, `toggles.rs`, and `conformance.rs` follow the
+//! same rule — `tests/test_gil_discipline.py` is the end-to-end proof.
+
+#![deny(rust_2018_idioms, unreachable_pub)]
+#![forbid(unsafe_code)]
+#![allow(clippy::too_many_arguments)]
+
+use pyo3::prelude::*;
+
+mod errors;
+mod types;
+mod dsl;
+mod toggles;
+
+// Handwritten conformance-only helpers — feature-gated so production wheels
+// never ship them. NOT codegen-managed; excluded from the Plan 08-01
+// parity-check walker by explicit path enumeration.
+#[cfg(feature = "bindings-it")]
+mod conformance;
+
+// @generated include — Plan 08-01 emits wrapper structs + a
+// `pub(crate) fn register_generated` helper. Plan 08-02's host `#[pymodule]`
+// below calls that helper.
+mod generated {
+    // The generated file uses `py_err` as an unqualified identifier; bring
+    // it into the nested module's namespace so the generated `.map_err(py_err)`
+    // sites resolve.
+    use super::errors::py_err;
+    include!("generated.rs");
+}
+
+pub(crate) use errors::{LunarisError, py_err};
+pub(crate) use generated::{
+    PyConsolidatorPipelineHandle, PyGraph, PyGraphPipelineHandle, PyKeyword, PyLunaris,
+    PyRetrievalBuilder, PyVector,
+};
+
+/// Top-level `#[pymodule]` entry point — emitted by the cdylib as
+/// `PyInit_lunaris`. The `[lib] name = "lunaris"` in `Cargo.toml` plus
+/// `module-name = "lunaris.lunaris"` in `pyproject.toml` routes `import lunaris`
+/// in Python to THIS function.
+#[pymodule]
+fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Codegen-managed classes (PyLunaris / PyVector / PyKeyword / PyGraph /
+    // PyRetrievalBuilder / PyGraphPipelineHandle / PyConsolidatorPipelineHandle).
+    generated::register_generated(py, m)?;
+
+    // Hand-written ergonomics that don't fit the codegen's single-shape
+    // emitter (e.g. `open` free function, `from_env` / `from_config` toggle
+    // helpers, `LunarisError` exception class).
+    m.add("LunarisError", py.get_type::<LunarisError>())?;
+    dsl::register(py, m)?;
+    toggles::register(py, m)?;
+
+    #[cfg(feature = "bindings-it")]
+    conformance::register(py, m)?;
+
+    m.setattr("__version__", env!("CARGO_PKG_VERSION"))?;
+    Ok(())
+}

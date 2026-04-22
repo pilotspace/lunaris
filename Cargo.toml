@@ -12,6 +12,10 @@ members = [
   # explicit workspace-grouping rule — both are metadata/plumbing crates; placing
   # them adjacent (rather than alphabetising) keeps the mental model coherent.
   "crates/lunaris-codegen",
+  # Phase 8 Plan 08-02: lunaris-py is the PyO3 0.26 host crate — placed next to
+  # lunaris (the umbrella it wraps) rather than alphabetised; mirrors the
+  # grouping rule used for lunaris-codegen next to lunaris-conformance.
+  "crates/lunaris-py",
   "crates/lunaris-consolidate",
   "crates/lunaris-embed",
   "crates/lunaris-extract",
@@ -134,6 +138,19 @@ prettyplease   = "0.2"
 toml           = "0.8"
 insta          = { version = "1", features = ["json"] }
 similar        = "2"
+# Phase 8 Plan 08-02 — PyO3 0.26 Python bindings (lunaris-py crate).
+# `extension-module` suppresses libpython linkage on Linux/macOS so the cdylib
+# is loadable from any Python 3.11+ interpreter; `abi3-py311` emits stable-ABI
+# symbols so a single wheel works across Python 3.11 / 3.12 / 3.13 per
+# PEP 384. `pyo3-async-runtimes` hosts the tokio integration —
+# `future_into_py` is the CLAUDE.md-mandated GIL-release surface for every
+# async method wrapper emitted by Plan 08-01 codegen. `pythonize` converts
+# between `serde`-capable Rust types and Python dicts/lists so Episode +
+# ForgetTarget + Hit cross the FFI boundary as native Python objects without
+# a hand-rolled per-field dispatcher.
+pyo3                = { version = "0.26", features = ["extension-module", "abi3-py311"] }
+pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
+pythonize           = "0.26"
 
 [profile.dev]
 opt-level = 0

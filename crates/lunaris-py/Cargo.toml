@@ -1,0 +1,62 @@
+[package]
+name    = "lunaris-py"
+version = "0.1.1"                       # aligned with workspace v0.1.1 target
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+publish.workspace      = true
+
+[lib]
+# Python imports by module name "lunaris" (see pyproject.toml module-name =
+# "lunaris.lunaris" — the inner ".lunaris" is THIS cdylib). `rlib` is kept so
+# `cargo test --lib` still compiles against the Rust test harness.
+name       = "lunaris"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Rust surface being bound. `default-features = false` opts out of the
+# `candle` default on the umbrella crate so the Python cdylib does NOT
+# pull the 500 MB candle+tokenizers dep tree or require embedding-gemma
+# weights to be present at runtime. Production deploys that need a real
+# embedder pass one through `Lunaris::with_parts` after construction or
+# enable the `candle` feature explicitly at wheel-build time.
+lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
+lunaris-core        = { path = "../lunaris-core" }
+lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
+# Conformance fixtures — only pulled in under the `bindings-it` feature.
+lunaris-conformance = { path = "../lunaris-conformance", optional = true }
+# PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
+pyo3                = { workspace = true }
+pyo3-async-runtimes = { workspace = true }
+pythonize           = { workspace = true }
+# Upstream Rust deps reused via workspace.
+tokio               = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+futures             = { workspace = true }
+bytes               = { workspace = true }
+tracing             = { workspace = true }
+thiserror           = { workspace = true }
+
+[features]
+default = []
+# Plan 08-02 BLOCKER 3+4 resolution — conformance helpers
+# (`conformance_fixture_episodes`, `scan_kv_prefix`) compile only under this
+# feature. Production PyPI wheels do NOT enable it. The Plan 08-01 parity-check
+# walker excludes `crates/lunaris-py/src/conformance.rs` by construction so
+# handwritten helpers never trigger codegen drift.
+#
+# Revision iteration 2 (locked in 08-CONTEXT.md): per-driver backend parity
+# does not require deterministic clocks or a zero-embedder. The earlier
+# `lunaris/bindings-it` + `lunaris-embed/mock-embedder` feature chain is
+# dropped; the only capability the conformance helpers need is access to the
+# canonical `lunaris_conformance::fixtures::{SEED, EPISODE_COUNT, FixtureCorpus}`
+# constants.
+bindings-it = ["dep:lunaris-conformance"]
+
+[package.metadata.docs.rs]
+# lunaris-py is a cdylib — docs.rs doesn't build Python extension modules,
+# but `cargo doc --no-deps` on the `rlib` side still works.
+all-features = false
+no-default-features = true
