@@ -234,6 +234,18 @@ pub struct ConsolidateEvent {
     pub episode_id: Ulid,
     pub lsn_wall_ms: u64,
     pub lsn_counter: u64,
+    /// Phase 9.1 Plan 01 (PRIM-04 full wiring) — Episode `source` captured at
+    /// publish-time by `crates/lunaris/src/ingest.rs::publish_consolidate_event`.
+    /// Consumed by `Consolidator::consolidate_scoped` (default method on the
+    /// trait) to filter a batch by `event.source.starts_with(prefix)` before
+    /// delegating to `consolidate`.
+    ///
+    /// NOTE — this field intentionally lacks `#[serde(default)]` in the RED
+    /// step of Plan 09.1-01 Task 1 so legacy payloads produce a runtime
+    /// deserialization error. The GREEN step adds `#[serde(default)]` so
+    /// in-flight queue payloads from before this field existed deserialize
+    /// as `source: ""`.
+    pub source: String,
 }
 
 // ------------------------------- IndexKind -----------------------------------
@@ -329,6 +341,7 @@ mod tests {
             episode_id: Ulid::new(),
             lsn_wall_ms: 12_345,
             lsn_counter: 7,
+            source: String::new(),
         };
         let bytes = serde_json::to_vec(&e).unwrap();
         let back: ConsolidateEvent = serde_json::from_slice(&bytes).unwrap();
@@ -336,6 +349,40 @@ mod tests {
         assert_eq!(e.lsn_wall_ms, back.lsn_wall_ms);
         assert_eq!(e.lsn_counter, back.lsn_counter);
         assert_eq!(e.kind, back.kind);
+        assert_eq!(e.source, back.source);
+    }
+
+    /// Phase 9.1 Plan 01 Task 1 RED — legacy `ConsolidateEvent` JSON payloads
+    /// (from before the `source` field existed) MUST still deserialize,
+    /// defaulting `source` to `""`. Without `#[serde(default)]` this test
+    /// fails with a "missing field `source`" serde error; with
+    /// `#[serde(default)]` the default `String` (empty) fills in and the test
+    /// passes. Locks the backward-compat contract on the
+    /// `__lunaris_consolidate__` queue wire shape.
+    #[test]
+    fn consolidate_event_legacy_payload_without_source_deserializes() {
+        let legacy_json = format!(
+            r#"{{"kind":"ingest_committed","episode_id":"{}","lsn_wall_ms":1,"lsn_counter":2}}"#,
+            Ulid::new()
+        );
+        let back: ConsolidateEvent = serde_json::from_str(&legacy_json)
+            .expect("legacy payload without source field MUST deserialize");
+        assert_eq!(back.kind, "ingest_committed");
+        assert_eq!(back.lsn_wall_ms, 1);
+        assert_eq!(back.lsn_counter, 2);
+        assert_eq!(back.source, "", "missing source field defaults to empty string");
+    }
+
+    /// Phase 9.1 Plan 01 Task 1 — full payload with `source` field round-trips
+    /// verbatim.
+    #[test]
+    fn consolidate_event_full_payload_with_source_round_trips() {
+        let ep = Ulid::new();
+        let full_json = format!(
+            r#"{{"kind":"ingest_committed","episode_id":"{ep}","lsn_wall_ms":10,"lsn_counter":20,"source":"helios:fs/foo"}}"#,
+        );
+        let back: ConsolidateEvent = serde_json::from_str(&full_json).unwrap();
+        assert_eq!(back.source, "helios:fs/foo");
     }
 
     /// B-1: `PromotionEvent` matches D-22 verbatim — the worker serializes

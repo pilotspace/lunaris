@@ -377,6 +377,7 @@ mod tests {
             episode_id: ep,
             lsn_wall_ms: 1,
             lsn_counter: 1,
+            source: String::new(),
         })
         .unwrap();
         let payload2 = serde_json::to_vec(&ConsolidateEvent {
@@ -384,6 +385,7 @@ mod tests {
             episode_id: ep,
             lsn_wall_ms: 2,
             lsn_counter: 2,
+            source: String::new(),
         })
         .unwrap();
         let payload_other = serde_json::to_vec(&ConsolidateEvent {
@@ -391,6 +393,7 @@ mod tests {
             episode_id: Ulid::new(),
             lsn_wall_ms: 3,
             lsn_counter: 3,
+            source: String::new(),
         })
         .unwrap();
         ingest_into_buffer(&mut buf, payload1.into());
