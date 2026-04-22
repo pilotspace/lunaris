@@ -40,13 +40,27 @@ pub struct TsOutput {
 }
 
 /// Emit napi-rs glue + matching `.d.ts` for the given [`SurfaceIR`].
+///
+/// The emitted Rust file is designed to be consumed as a proper module
+/// (`mod generated;`) by the host crate (Plan 08-03 `crates/lunaris-ts`),
+/// NOT via `include!` — napi-rs 3.x's `#[napi]` proc-macro maintains
+/// global struct-registration state that `include!` disrupts, surfacing
+/// as "Did not find struct `X` parsed before expand #[napi] for impl"
+/// on factory methods. Using a real module keeps proc-macro expansion
+/// order stable.
+///
+/// The emitted file references `super::errors::napi_err` so the host
+/// crate wires error mapping by placing an `errors.rs` with a
+/// `pub(crate) fn napi_err(err) -> napi::Error` sibling.
 pub fn emit_ts(ir: &SurfaceIR) -> TsOutput {
     let mut rust = String::new();
     let mut dts = String::new();
     rust.push_str(RUST_HEADER);
     rust.push('\n');
     rust.push_str("use napi_derive::napi;\n");
-    rust.push_str("use std::sync::Arc;\n\n");
+    rust.push_str("use std::sync::Arc;\n");
+    rust.push_str("\n");
+    rust.push_str("use super::errors::napi_err;\n\n");
 
     dts.push_str(DTS_HEADER);
     dts.push('\n');
@@ -83,6 +97,15 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
         writeln!(out, "    /// {doc}").unwrap();
     }
     match (m.is_async, m.receiver) {
+        // Static async constructor (e.g. `Lunaris::open`).
+        //
+        // Plan 08-03 Rule 1 fix (mirror of Plan 08-02's emit_py.rs fix):
+        // pre-convert every `Named` / `Vec` / `Option` / `Json` param via
+        // `serde_json::from_value::<T>` BEFORE the `Lunaris::open` call so
+        // the Rust-side inherent method sees owned typed values rather
+        // than a raw `serde_json::Value`. napi-rs 3.x has no GIL analog,
+        // but the same pre-conversion pattern keeps the emitted code
+        // typecheck-clean against the v0.1.0 Rust surface.
         (IrAsync::Yes, IrReceiver::None) => {
             writeln!(out, "    #[napi(factory)]").unwrap();
             writeln!(
@@ -92,17 +115,25 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 params = format_params_rust(&m.params, /* with_self */ false)
             )
             .unwrap();
+            let owned_names = emit_ts_owned_bindings(out, &m.params);
+            let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
                 "        let inner = ::lunaris::{type_name}::{name}({call_args}).await.map_err(napi_err)?;",
                 type_name = type_name,
-                name = m.name,
-                call_args = format_call_args(&m.params)
+                name = m.name
             )
             .unwrap();
             writeln!(out, "        Ok(Self {{ inner: Arc::new(inner) }})").unwrap();
             writeln!(out, "    }}").unwrap();
         }
+        // Async instance method (e.g. `Lunaris::ingest`, `Lunaris::forget`,
+        // `Lunaris::snapshot`).
+        //
+        // Plan 08-03 Rule 1 fix: eager `serde_json::from_value` for every
+        // non-primitive param so `inner.ingest(Episode)` / `inner.forget(ForgetRequest)`
+        // call sites see the concrete Rust owned type. `String` / `bool` /
+        // `u32` pass through as-is.
         (IrAsync::Yes, IrReceiver::RefSelf) => {
             writeln!(out, "    #[napi]").unwrap();
             writeln!(
@@ -110,19 +141,25 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 "    pub async fn {name}(&self{params}) -> napi::Result<{ret}> {{",
                 name = m.name,
                 params = format_params_rust(&m.params, /* with_self */ true),
-                ret = ts_return_ty_rust(&m.returns.ty)
+                ret = ts_async_return_ty_rust(&m.returns.ty)
             )
             .unwrap();
+            let owned_names = emit_ts_owned_bindings(out, &m.params);
+            let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
                 "        let out = self.inner.{name}({call_args}).await.map_err(napi_err)?;",
-                name = m.name,
-                call_args = format_call_args(&m.params)
+                name = m.name
             )
             .unwrap();
             writeln!(out, "        {ret}", ret = ts_return_expr_rust(&m.returns.ty)).unwrap();
             writeln!(out, "    }}").unwrap();
         }
+        // Sync static constructor (Vector::new, Keyword::bm25, Graph::anchored).
+        //
+        // Plan 08-03 Rule 1 fix: the Graph::anchored path takes
+        // `Vec<EntityId>` — same convert-before-call shape as the async
+        // ref_self branch. `Str` / `Usize` / `Bool` pass through.
         (IrAsync::No, IrReceiver::None) => {
             writeln!(out, "    #[napi(factory)]").unwrap();
             writeln!(
@@ -132,17 +169,30 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 params = format_params_rust(&m.params, /* with_self */ false)
             )
             .unwrap();
+            let owned_names = emit_ts_owned_bindings_infallible(out, &m.params);
+            let call_args = ts_call_args_from_owned(&m.params, &owned_names);
             writeln!(
                 out,
                 "        let inner = ::lunaris::{type_name}::{name}({call_args});",
                 type_name = type_name,
-                name = m.name,
-                call_args = format_call_args(&m.params)
+                name = m.name
             )
             .unwrap();
             writeln!(out, "        Self {{ inner: Arc::new(inner) }}").unwrap();
             writeln!(out, "    }}").unwrap();
         }
+        // Sync `&self` method (Lunaris::recall, pipeline-handle toggles).
+        //
+        // Plan 08-03 Rule 1 fix: the pipeline-toggle method is declared as
+        // `toggle(on: bool)` in the codegen surface, but the Rust-side
+        // GraphPipelineHandle / ConsolidatorPipelineHandle expose
+        // `enable()` / `disable()` rather than a unified `toggle(on)`. We
+        // special-case the method name here so emitted code dispatches to
+        // the real Rust API — mirror of the emit_py.rs fix.
+        //
+        // For `Lunaris::recall() -> RetrievalBuilder` the wrapper must
+        // construct the TARGET napi class (`RetrievalBuilder { inner: Arc::new(out) }`),
+        // not serialise a non-serde-derivable builder to JSON.
         (IrAsync::No, IrReceiver::RefSelf) => {
             writeln!(out, "    #[napi]").unwrap();
             writeln!(
@@ -150,17 +200,31 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
                 "    pub fn {name}(&self{params}) -> napi::Result<{ret}> {{",
                 name = m.name,
                 params = format_params_rust(&m.params, /* with_self */ true),
-                ret = ts_return_ty_rust(&m.returns.ty)
+                ret = ts_sync_return_ty_rust(&m.returns.ty)
             )
             .unwrap();
-            writeln!(
-                out,
-                "        let out = self.inner.{name}({call_args});",
-                name = m.name,
-                call_args = format_call_args(&m.params)
-            )
-            .unwrap();
-            writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty)).unwrap();
+            if m.name == "toggle"
+                && (type_name == "GraphPipelineHandle"
+                    || type_name == "ConsolidatorPipelineHandle")
+            {
+                // Rust surface is enable()/disable(); dispatch on the single
+                // `on` bool arg.
+                writeln!(
+                    out,
+                    "        if on {{ self.inner.enable(); }} else {{ self.inner.disable(); }}"
+                )
+                .unwrap();
+                writeln!(out, "        Ok(())").unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        let out = self.inner.{name}({call_args});",
+                    name = m.name,
+                    call_args = format_call_args(&m.params)
+                )
+                .unwrap();
+                writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty)).unwrap();
+            }
             writeln!(out, "    }}").unwrap();
         }
         (IrAsync::No, IrReceiver::Owned) => {
@@ -194,6 +258,134 @@ fn emit_ts_method_rust(out: &mut String, type_name: &str, m: &IrMethod, _kind: I
         }
     }
     out.push('\n');
+}
+
+/// Plan 08-03 Rule 1 — emit `let {name}_owned: {ty} = serde_json::from_value(...)` lines
+/// for every non-primitive param. Returns the per-param bound name (either
+/// the original `p.name` for primitives or `"{p.name}_owned"` for typed
+/// Named / Vec / Option / Json). Used by async methods that must `?` the
+/// error back up through the napi::Result return.
+fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(params.len());
+    for p in params {
+        match &p.ty {
+            // `Vec<serde_json::Value>` needs to be wrapped in
+            // `serde_json::Value::Array(...)` before `serde_json::from_value`
+            // can coerce it into a typed `Vec<T>`.
+            IrTyRef::Vec { .. } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: {ty} = serde_json::from_value(serde_json::Value::Array({param}.clone())).map_err(napi_err)?;",
+                    owned_name = owned_name,
+                    ty = rust_owned_ty_ts(&p.ty),
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
+            IrTyRef::Named { .. } | IrTyRef::Json | IrTyRef::Option { .. } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: {ty} = serde_json::from_value({param}.clone()).map_err(napi_err)?;",
+                    owned_name = owned_name,
+                    ty = rust_owned_ty_ts(&p.ty),
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
+            IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
+                names.push(p.name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// Same as [`emit_ts_owned_bindings`] but used for sync infallible contexts
+/// (e.g. `Vector::new`) where the caller signature doesn't return
+/// `napi::Result<T>`. napi-rs 3.x allows any param that accepts JSON values
+/// (like `Vec<serde_json::Value>` for `Graph::anchored`) to fail
+/// deserialization — in the sync case we surface the failure as a `panic!`
+/// with the serde error so it bubbles up as a JS `Error` with a readable
+/// reason instead of silent coercion. Only `Graph::anchored` currently
+/// exercises this path.
+fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::with_capacity(params.len());
+    for p in params {
+        match &p.ty {
+            IrTyRef::Vec { .. } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: {ty} = serde_json::from_value(serde_json::Value::Array({param}.clone())).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
+                    owned_name = owned_name,
+                    ty = rust_owned_ty_ts(&p.ty),
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
+            IrTyRef::Named { .. } | IrTyRef::Json | IrTyRef::Option { .. } => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: {ty} = serde_json::from_value({param}.clone()).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
+                    owned_name = owned_name,
+                    ty = rust_owned_ty_ts(&p.ty),
+                    param = p.name
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
+            IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
+                names.push(p.name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// Per-param call-site expression. Mirrors emit_py.rs:
+/// - `&str` params → `&{name}` (leading `&` for Rust borrow)
+/// - `Usize` params stay as `u32` at the napi boundary; we cast to `usize`
+///   at the call site because `Vector::new` et al. take `usize`.
+/// - Everything else uses the pre-depythonized owned value (or the raw name
+///   for primitives).
+fn ts_call_args_from_owned(params: &[IrParam], owned: &[String]) -> String {
+    params
+        .iter()
+        .zip(owned.iter())
+        .map(|(p, owned)| match &p.ty {
+            IrTyRef::Str => format!("&{}", owned),
+            IrTyRef::Usize => format!("{} as usize", owned),
+            _ => owned.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Plan 08-03 — Rust owned-type spelling used as the explicit type
+/// annotation on `let {name}_owned: {ty} = serde_json::from_value(...)`.
+/// Mirrors `emit_py.rs::rust_owned_ty` so the two emitters stay in lockstep
+/// on which Rust spelling each surface.toml `kind = "named"` maps to.
+fn rust_owned_ty_ts(ty: &IrTyRef) -> String {
+    match ty {
+        IrTyRef::Json => "serde_json::Value".to_string(),
+        IrTyRef::Named { name } => match name.as_str() {
+            "Episode" => "::lunaris::Episode".to_string(),
+            "ForgetRequest" => "::lunaris::forget::ForgetRequest".to_string(),
+            "Hlc" => "::lunaris::Hlc".to_string(),
+            "EntityId" => "::lunaris::EntityId".to_string(),
+            "RetrievalBuilder" => "::lunaris::RetrievalBuilder".to_string(),
+            _ => format!("::lunaris::{name}"),
+        },
+        IrTyRef::Option { inner } => format!("Option<{}>", rust_owned_ty_ts(inner)),
+        IrTyRef::Vec { inner } => format!("Vec<{}>", rust_owned_ty_ts(inner)),
+        _ => "serde_json::Value".to_string(),
+    }
 }
 
 fn emit_ts_type_dts(out: &mut String, ty: &IrType) {
@@ -284,7 +476,11 @@ fn ts_param_ty_dts(ty: &IrTyRef) -> String {
     }
 }
 
-fn ts_return_ty_rust(ty: &IrTyRef) -> String {
+/// Async-context return-type spelling. Named returns serialise to
+/// `serde_json::Value` (napi-rs 3.x maps that straight to `any` at the TS
+/// layer; the matching .d.ts line carries the concrete type name from
+/// `ts_return_ty_dts`). Lsn is the one special case — we `to_string()` it.
+fn ts_async_return_ty_rust(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Unit => "()".into(),
         IrTyRef::Named { name } if name == "Lsn" => "String".into(),
@@ -294,10 +490,29 @@ fn ts_return_ty_rust(ty: &IrTyRef) -> String {
     }
 }
 
+/// Sync-context return-type spelling. Named returns use the TARGET napi
+/// wrapper class (e.g. `Lunaris::recall() -> RetrievalBuilder` constructs
+/// the TS-side `RetrievalBuilder { inner: Arc::new(...) }`). Serialising a
+/// non-serde-derivable `lunaris::RetrievalBuilder` via `to_value` would
+/// fail to compile — Plan 08-03 Rule 1 fix.
+fn ts_sync_return_ty_rust(ty: &IrTyRef) -> String {
+    match ty {
+        IrTyRef::Unit => "()".into(),
+        IrTyRef::Named { name } if name == "Lsn" => "String".into(),
+        IrTyRef::Named { name } => name.clone(),
+        IrTyRef::RefSelf => "Self".into(),
+        _ => ts_param_ty_rust(ty).to_string(),
+    }
+}
+
 fn ts_return_expr_rust(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Unit => "let _ = out; Ok(())".into(),
         IrTyRef::Named { name } if name == "Lsn" => "Ok(out.to_string())".into(),
+        // Async methods returning a Named serde-derivable value (ForgetReceipt)
+        // serialise to JSON. The napi-rs side accepts serde_json::Value but the
+        // .d.ts sees the TS class name — mirror of emit_py.rs behaviour.
+        IrTyRef::Named { .. } => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
         _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
     }
 }
@@ -305,6 +520,14 @@ fn ts_return_expr_rust(ty: &IrTyRef) -> String {
 fn ts_sync_return_expr_rust(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Unit => "let _ = out; Ok(())".into(),
+        // Plan 08-03 Rule 1 fix: sync `&self -> Named` returns wrap the
+        // inner Rust value in the matching napi class rather than serialising
+        // it. `Lunaris::recall() -> RetrievalBuilder` is the load-bearing
+        // caller — `RetrievalBuilder` doesn't derive Serialize on the Rust
+        // side, so serde_json::to_value would fail to compile.
+        IrTyRef::Named { name } => {
+            format!("Ok({name} {{ inner: Arc::new(out) }})")
+        }
         _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
     }
 }

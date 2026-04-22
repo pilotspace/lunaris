@@ -7,6 +7,8 @@
 use napi_derive::napi;
 use std::sync::Arc;
 
+use super::errors::napi_err;
+
 /// High-level memory-engine handle. Opens a storage backend by URL and drives ingest, recall, forget, and snapshot.
 #[napi]
 pub struct Lunaris {
@@ -26,21 +28,23 @@ impl Lunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     #[napi]
     pub async fn ingest(&self, episode: serde_json::Value) -> napi::Result<String> {
-        let out = self.inner.ingest(episode).await.map_err(napi_err)?;
+        let episode_owned: ::lunaris::Episode = serde_json::from_value(episode.clone()).map_err(napi_err)?;
+        let out = self.inner.ingest(episode_owned).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
 
     /// Build a RetrievalBuilder bound to this handle's storage / keyword / embedder / clock.
     #[napi]
-    pub fn recall(&self) -> napi::Result<serde_json::Value> {
+    pub fn recall(&self) -> napi::Result<RetrievalBuilder> {
         let out = self.inner.recall();
-        Ok(serde_json::to_value(&out).map_err(napi_err)?)
+        Ok(RetrievalBuilder { inner: Arc::new(out) })
     }
 
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     #[napi]
     pub async fn forget(&self, req: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let out = self.inner.forget(req).await.map_err(napi_err)?;
+        let req_owned: ::lunaris::forget::ForgetRequest = serde_json::from_value(req.clone()).map_err(napi_err)?;
+        let out = self.inner.forget(req_owned).await.map_err(napi_err)?;
         Ok(serde_json::to_value(&out).map_err(napi_err)?)
     }
 
@@ -65,7 +69,7 @@ impl Vector {
     /// Construct a Vector retriever over `index` with top-k fan-out.
     #[napi(factory)]
     pub fn new(index: String, k: u32) -> Self {
-        let inner = ::lunaris::Vector::new(&index, k);
+        let inner = ::lunaris::Vector::new(&index, k as usize);
         Self { inner: Arc::new(inner) }
     }
 
@@ -83,7 +87,7 @@ impl Keyword {
     /// Construct a BM25 keyword retriever over `index` with top-k fan-out.
     #[napi(factory)]
     pub fn bm25(index: String, k: u32) -> Self {
-        let inner = ::lunaris::Keyword::bm25(&index, k);
+        let inner = ::lunaris::Keyword::bm25(&index, k as usize);
         Self { inner: Arc::new(inner) }
     }
 
@@ -101,7 +105,8 @@ impl Graph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[napi(factory)]
     pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> Self {
-        let inner = ::lunaris::Graph::anchored(entity_ids, hops);
+        let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).unwrap_or_else(|e| panic!("entity_ids: {e}"));
+        let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops as usize);
         Self { inner: Arc::new(inner) }
     }
 
@@ -170,8 +175,8 @@ impl GraphPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     #[napi]
     pub fn toggle(&self, on: bool) -> napi::Result<()> {
-        let out = self.inner.toggle(on);
-        let _ = out; Ok(())
+        if on { self.inner.enable(); } else { self.inner.disable(); }
+        Ok(())
     }
 
 }
@@ -188,8 +193,8 @@ impl ConsolidatorPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     #[napi]
     pub fn toggle(&self, on: bool) -> napi::Result<()> {
-        let out = self.inner.toggle(on);
-        let _ = out; Ok(())
+        if on { self.inner.enable(); } else { self.inner.disable(); }
+        Ok(())
     }
 
 }
