@@ -113,11 +113,32 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 // FT.UPSERT). Live-measurement gap fix 2026-04-21.
                 let id_hex = hex::encode(id);
                 let key = format!("{index}:{id_hex}");
-                let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(3);
+                // Plan 09.1-02 Task 2b — valid_time numeric field on chunks only.
+                // The `chunks` FT index declares `valid_time` as
+                // `SchemaField::Numeric` (Task 2 / `ensure_indexes`). Moon's
+                // RediSearch NUMERIC parser accepts ASCII-decimal bytes. Other
+                // indices (entities / facts / communities) do NOT declare this
+                // field — HSETting it there would be wasted work (FT ignores
+                // undeclared fields), so we gate on `index == "chunks"`. The
+                // decimal string is allocated BEFORE the hset_multiple borrow
+                // so the `&[u8]` slice outlives the call (mirrors meta_json
+                // materialisation above).
+                let valid_time_buf: Option<String> = if index == "chunks" {
+                    metadata
+                        .get("valid_time_ms")
+                        .and_then(|v| v.as_u64())
+                        .map(|ms| ms.to_string())
+                } else {
+                    None
+                };
+                let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(4);
                 fields.push(("vec", buf.as_slice()));
                 fields.push(("meta", meta_json.as_bytes()));
                 if let Some(c) = content.as_ref() {
                     fields.push(("content", c.as_bytes()));
+                }
+                if let Some(ref vt) = valid_time_buf {
+                    fields.push(("valid_time", vt.as_bytes()));
                 }
                 typed
                     .hset_multiple(key.as_bytes(), &fields)

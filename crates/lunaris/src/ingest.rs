@@ -320,6 +320,14 @@ async fn ingest_episode_graph_on(
                 "heading_path": chunk.heading_path,
                 "offset": chunk.offset,
                 "text": chunk.text,
+                // Plan 09.1-02 Task 2b — Moon chunks FT index declares
+                // `valid_time` NUMERIC via SchemaField::Numeric; the
+                // atomic_write fan-out HSETs this field when present in
+                // metadata. Postgres writes already carry `valid_from` via
+                // the chunks table schema — this field closes the Moon side
+                // of the parity contract so Filter::ValidTimeRange queries
+                // match newly-ingested chunks.
+                "valid_time_ms": chunk.bt.valid.0.wall_ms,
             }),
         });
     }
