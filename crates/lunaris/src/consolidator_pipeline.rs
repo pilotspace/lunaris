@@ -147,10 +147,10 @@ impl ConsolidatorPipelineHandle {
     /// Await the spawned worker task to full exit.
     pub async fn join_worker(&self) {
         let handle = self.worker_handle.lock().take();
-        if let Some(h) = handle {
-            if let Err(e) = h.await {
-                tracing::warn!(err = %e, "consolidator_pipeline_worker_join_failed");
-            }
+        if let Some(h) = handle
+            && let Err(e) = h.await
+        {
+            tracing::warn!(err = %e, "consolidator_pipeline_worker_join_failed");
         }
     }
 

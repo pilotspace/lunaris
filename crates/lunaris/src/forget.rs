@@ -490,16 +490,14 @@ fn build_soft_delete_op(m: &ForgetMatch, clock: &HlcClock) -> Result<WriteOp, Lu
     let mut json: serde_json::Value = serde_json::from_slice(&m.payload).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("forget payload parse: {e}")))
     })?;
-    if let Some(bt_obj) = json.get_mut("bt") {
-        if let Some(sys_arr) = bt_obj.get_mut("sys") {
-            if let Some(arr) = sys_arr.as_array_mut() {
-                if arr.len() == 2 {
-                    // Set the SECOND element (index 1 = sys_to) to the new
-                    // `now`. The first element (index 0 = sys_from) stays.
-                    arr[1] = serde_json::to_value(now).unwrap_or(serde_json::Value::Null);
-                }
-            }
-        }
+    if let Some(bt_obj) = json.get_mut("bt")
+        && let Some(sys_arr) = bt_obj.get_mut("sys")
+        && let Some(arr) = sys_arr.as_array_mut()
+        && arr.len() == 2
+    {
+        // Set the SECOND element (index 1 = sys_to) to the new
+        // `now`. The first element (index 0 = sys_from) stays.
+        arr[1] = serde_json::to_value(now).unwrap_or(serde_json::Value::Null);
     }
     let value = serde_json::to_vec(&json).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("forget payload serialize: {e}")))

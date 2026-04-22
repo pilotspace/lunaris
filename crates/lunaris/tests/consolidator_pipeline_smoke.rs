@@ -322,7 +322,7 @@ async fn ingest_publishes_one_consolidate_event_per_call() {
     let (handle, rec, clock) = build_handle();
     for i in 0..3 {
         let ep =
-            Episode::new(&format!("ep{i}.md"), &format!("# E{i}\nAlice and Bob."), &clock);
+            Episode::new(format!("ep{i}.md"), format!("# E{i}\nAlice and Bob."), &clock);
         handle.ingest(ep).await.expect("ingest must succeed");
     }
     assert_eq!(

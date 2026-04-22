@@ -214,10 +214,10 @@ impl VerifierPipelineHandle {
     /// then `.join_worker().await`.
     pub async fn join_worker(&self) {
         let handle = self.worker_handle.lock().take();
-        if let Some(h) = handle {
-            if let Err(e) = h.await {
-                tracing::warn!(err = %e, "verify_pipeline_worker_join_failed");
-            }
+        if let Some(h) = handle
+            && let Err(e) = h.await
+        {
+            tracing::warn!(err = %e, "verify_pipeline_worker_join_failed");
         }
     }
 

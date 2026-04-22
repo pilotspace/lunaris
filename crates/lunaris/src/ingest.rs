@@ -74,7 +74,15 @@ impl Lunaris {
         // include it in the consolidate-queue envelope after the
         // atomic_write commits. The ingest functions consume `episode` so
         // we lift the id here.
+        //
+        // Plan 09.1-01 Task 2 (PRIM-04 full wiring): ALSO lift
+        // `episode.source` before the move so the consolidate envelope can
+        // carry it verbatim. Downstream `Consolidator::consolidate_scoped`
+        // filters on `event.source.starts_with(prefix)`; without this the
+        // scope filter degenerates to "match-none" for every non-empty
+        // prefix (T-09-1-01-02 fail-closed posture).
         let episode_id = episode.id;
+        let episode_source = episode.source.clone();
 
         // Plan 05-05 OPS-05 — `lunaris.ingest` root span (CONTEXT.md D-24).
         // `correlation_id` is reserved as `tracing::field::Empty` so the
@@ -118,7 +126,17 @@ impl Lunaris {
             // every successful atomic_write (both branches). Fire-and-forget —
             // a publish failure logs + continues; the ingest already committed
             // and returns Ok(Lsn). Closes CONSOL-05.
-            publish_consolidate_event(self.storage.as_ref(), episode_id, lsn).await;
+            //
+            // Plan 09.1-01 Task 2 — `&episode_source` carries Episode.source
+            // into the envelope so Consolidator::consolidate_scoped can
+            // filter by `event.source.starts_with(prefix)` downstream.
+            publish_consolidate_event(
+                self.storage.as_ref(),
+                episode_id,
+                lsn,
+                &episode_source,
+            )
+            .await;
 
             Ok(lsn)
         }
@@ -139,12 +157,21 @@ async fn publish_consolidate_event(
     storage: &dyn StoragePort,
     episode_id: Ulid,
     lsn: Lsn,
+    source: &str,
 ) {
     let envelope = json!({
         "kind": "ingest_committed",
         "episode_id": episode_id.to_string(),
         "lsn_wall_ms": lsn.wall_ms,
         "lsn_counter": lsn.counter,
+        // Phase 9.1 Plan 01 Task 2 (PRIM-04 full wiring): Episode.source
+        // flows into the envelope so Consolidator::consolidate_scoped's
+        // default impl can filter batches by
+        // `event.source.starts_with(scope_prefix)`. Paired with the
+        // additive #[serde(default)] source: String field on
+        // ConsolidateEvent so legacy payloads without this key still
+        // deserialize as source: "".
+        "source": source,
     });
     let payload = match serde_json::to_vec(&envelope) {
         Ok(b) => b,

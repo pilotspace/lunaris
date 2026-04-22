@@ -58,6 +58,7 @@ struct RecordingStorageWithKeyword {
     /// Per-key (payload, bt) tuple. `bt` is stored separately so `read_as_of`
     /// can return the typed `Row { key, value, bt }` without re-deriving
     /// from the payload bytes.
+    #[allow(clippy::type_complexity)]
     rows: Mutex<HashMap<Vec<u8>, (Vec<u8>, BiTemporal)>>,
     /// Full atomic_write history — `len()` == number of atomic_write calls
     /// (D-19 single-call invariant test target).
