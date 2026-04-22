@@ -57,10 +57,11 @@ pub const VERIFY_CONSUMER_GROUP: &str = "lunaris-verify-v0";
 /// Verify queue topic (matches Plan 03-03 `ingest.rs::VERIFY_QUEUE_TOPIC`).
 pub const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
-/// Audit topic (D-22). Plan 04-05 adds the `AuditEvent` enum that pins the
-/// payload shape; this plan writes the enum variant inline as a JSON blob
-/// that matches the `VerifierArbitration` variant's fields.
-const AUDIT_TOPIC: &str = "__lunaris_audit__";
+/// Audit topic re-exported from the canonical `lunaris-core::audit` module
+/// (Plan 13-01 RELEASE-01). The inline `const AUDIT_TOPIC` that previously
+/// lived here has been removed; the local alias below preserves the old
+/// `AUDIT_TOPIC` identifier for the test module without re-declaring it.
+use lunaris_core::audit::AUDIT_TOPIC;
 
 /// Default drain grace period (D-07).
 const DEFAULT_DRAIN_MS: u64 = 5000;
@@ -441,27 +442,30 @@ async fn apply_supersede(
 }
 
 /// Publish one `AuditEvent::VerifierArbitration` to `__lunaris_audit__`
-/// fire-and-forget (D-22). Plan 04-05 adds the typed enum; this plan
-/// writes the JSON shape inline so the contract doesn't wait on that plan.
+/// fire-and-forget (D-22). Plan 13-01 RELEASE-02: the inline
+/// `serde_json::json!({ "kind": ... })` envelope construction was removed in
+/// favor of the typed helper `lunaris_core::audit::publish_audit_event`.
+/// The `backend` string is produced via serde so it stays byte-identical to
+/// the v0.1.0 wire shape even if a future `#[serde(rename=...)]` is added to
+/// `VerifierBackend`.
 async fn publish_arbitration_audit(
     storage: &Arc<dyn StoragePort>,
     decision: &VerifyDecision,
 ) -> Result<u64, LunarisError> {
-    let envelope = serde_json::json!({
-        "kind": "VerifierArbitration",
-        "winner_id": decision.winner_id.map(|u| u.to_string()),
-        "loser_id": decision.loser_id.map(|u| u.to_string()),
-        "reason": decision.reason,
-        "backend": decision.backend,
-        "decided_at_iso": decision.decided_at_iso,
-    });
-    let payload = serde_json::to_vec(&envelope).map_err(|e| {
-        LunarisError::Storage(StorageError::Backend(format!("audit serialize: {e}")))
-    })?;
-    storage
-        .publish(AUDIT_TOPIC, 0, payload.into())
+    let backend = serde_json::to_value(&decision.backend)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let event = lunaris_core::audit::AuditEvent::VerifierArbitration {
+        winner_id: decision.winner_id.map(|u| u.to_string()),
+        loser_id: decision.loser_id.map(|u| u.to_string()),
+        reason: decision.reason.clone(),
+        backend,
+        decided_at_iso: decision.decided_at_iso.clone(),
+    };
+    lunaris_core::audit::publish_audit_event(storage, event)
         .await
-        .map_err(LunarisError::Storage)
+        .map_err(|e| LunarisError::Storage(StorageError::Backend(e.to_string())))
 }
 
 // ------------------------------- Envelope ----------------------------------
@@ -547,21 +551,30 @@ mod tests {
 
     #[test]
     fn audit_envelope_shape_is_versioned_kind() {
+        // Plan 13-01 RELEASE-02: this test now constructs the typed
+        // `AuditEvent::VerifierArbitration` from `lunaris-core::audit`
+        // instead of an inline `serde_json::json!` envelope (which the CI
+        // grep gate blocks). Kept for regression coverage of the worker's
+        // "kind tag" contract.
         let d = VerifyDecision::arbitrate(
             ulid::Ulid::new(),
             ulid::Ulid::new(),
             "winner higher confidence",
             VerifierBackend::CloudAnthropic,
         );
-        let envelope = serde_json::json!({
-            "kind": "VerifierArbitration",
-            "winner_id": d.winner_id.map(|u| u.to_string()),
-            "loser_id": d.loser_id.map(|u| u.to_string()),
-            "reason": d.reason,
-            "backend": d.backend,
-            "decided_at_iso": d.decided_at_iso,
-        });
-        assert_eq!(envelope.get("kind").and_then(|v| v.as_str()), Some("VerifierArbitration"));
+        let backend = serde_json::to_value(&d.backend)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let event = lunaris_core::audit::AuditEvent::VerifierArbitration {
+            winner_id: d.winner_id.map(|u| u.to_string()),
+            loser_id: d.loser_id.map(|u| u.to_string()),
+            reason: d.reason.clone(),
+            backend,
+            decided_at_iso: d.decided_at_iso.clone(),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value.get("kind").and_then(|v| v.as_str()), Some("VerifierArbitration"));
     }
 
     #[test]

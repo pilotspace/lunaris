@@ -62,10 +62,11 @@ pub const CONSOLIDATE_CONSUMER_GROUP: &str = "lunaris-consolidate-v0";
 /// Consolidate queue topic.
 pub const CONSOLIDATE_TOPIC: &str = "__lunaris_consolidate__";
 
-/// Audit topic (D-22). Plan 04-05 adds the typed `AuditEvent` enum that pins
-/// the payload shape; this plan writes the enum variants inline as JSON
-/// envelopes that match `ConsolidatorPromotion` + `ConsolidatorArchive`.
-const AUDIT_TOPIC: &str = "__lunaris_audit__";
+/// Audit topic re-exported from the canonical `lunaris-core::audit` module
+/// (Plan 13-01 RELEASE-01). Inline `const AUDIT_TOPIC` was removed; the local
+/// re-export preserves the old `AUDIT_TOPIC` identifier for the test module
+/// without re-declaring it.
+use lunaris_core::audit::AUDIT_TOPIC;
 
 /// Debounce window default (D-17).
 const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
@@ -297,10 +298,10 @@ async fn publish_per_event_audits(
     report: &ConsolidationReport,
 ) {
     for p in &report.promotions {
-        publish_one_audit(storage, &promotion_envelope(p)).await;
+        let _ = lunaris_core::audit::publish_audit_event(storage, promotion_event(p)).await;
     }
     for a in &report.archives {
-        publish_one_audit(storage, &archive_envelope(a)).await;
+        let _ = lunaris_core::audit::publish_audit_event(storage, archive_event(a)).await;
     }
     if report.communities_rebuilt > 0 {
         tracing::info!(
@@ -310,46 +311,26 @@ async fn publish_per_event_audits(
     }
 }
 
-/// Build the per-promotion audit envelope. Matches Plan 04-05
-/// `AuditEvent::ConsolidatorPromotion { episode_id, fact_id, activation_score }`
-/// verbatim.
-fn promotion_envelope(p: &PromotionEvent) -> serde_json::Value {
-    serde_json::json!({
-        "kind": "ConsolidatorPromotion",
-        "episode_id": p.episode_id.to_string(),
-        "fact_id": p.fact_id.to_string(),
-        "activation_score": p.activation_score,
-    })
+/// Build the per-promotion typed audit event. Plan 13-01 RELEASE-02: the
+/// previous inline JSON envelope was replaced by the typed
+/// `AuditEvent::ConsolidatorPromotion` variant from `lunaris-core::audit`.
+/// The v0.1.0 wire shape is preserved (see
+/// `crates/lunaris-core/tests/fixtures/audit/v0.1.0/consolidator_promotion.json`).
+fn promotion_event(p: &PromotionEvent) -> lunaris_core::audit::AuditEvent {
+    lunaris_core::audit::AuditEvent::ConsolidatorPromotion {
+        episode_id: p.episode_id,
+        fact_id: lunaris_core::audit::FactIdData(p.fact_id.0),
+        activation_score: p.activation_score,
+    }
 }
 
-/// Build the per-archive audit envelope. Matches Plan 04-05
-/// `AuditEvent::ConsolidatorArchive { fact_id, final_activation, moved_to }`
-/// verbatim.
-fn archive_envelope(a: &ArchiveEvent) -> serde_json::Value {
-    serde_json::json!({
-        "kind": "ConsolidatorArchive",
-        "fact_id": a.fact_id.to_string(),
-        "final_activation": a.final_activation,
-        "moved_to": a.moved_to,
-    })
-}
-
-/// Fire-and-forget audit publish. Match the verifier worker pattern verbatim
-/// — never propagate publish errors (an audit-publish hiccup must not roll
-/// back the just-committed consolidation pass).
-async fn publish_one_audit(
-    storage: &Arc<dyn StoragePort>,
-    envelope: &serde_json::Value,
-) {
-    let payload = match serde_json::to_vec(envelope) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(err = %e, "consolidate_audit_serialize_failed; skipping");
-            return;
-        }
-    };
-    if let Err(e) = storage.publish(AUDIT_TOPIC, 0, payload.into()).await {
-        tracing::warn!(err = %e, "consolidate_audit_publish_failed; report committed but audit lost");
+/// Build the per-archive typed audit event. See `promotion_event` for the
+/// refactor context.
+fn archive_event(a: &ArchiveEvent) -> lunaris_core::audit::AuditEvent {
+    lunaris_core::audit::AuditEvent::ConsolidatorArchive {
+        fact_id: lunaris_core::audit::FactIdData(a.fact_id.0),
+        final_activation: a.final_activation,
+        moved_to: a.moved_to.clone(),
     }
 }
 
@@ -432,8 +413,8 @@ mod tests {
     }
 
     /// B-1: promotion envelope `kind` tag matches D-22 / Plan 04-05 audit.rs
-    /// verbatim. Plan 04-05 reads `env.get("kind") == "ConsolidatorPromotion"`
-    /// then deserializes `episode_id` + `fact_id` + `activation_score` 1:1.
+    /// verbatim. Plan 13-01 RELEASE-02: now asserts through the typed
+    /// `AuditEvent::ConsolidatorPromotion` by round-tripping through serde.
     #[test]
     fn promotion_envelope_kind_is_consolidator_promotion() {
         let p = PromotionEvent {
@@ -441,20 +422,22 @@ mod tests {
             fact_id: FactId::from_triple(EntityId([1; 16]), "knows", EntityId([2; 16])),
             activation_score: 1.5,
         };
-        let env = promotion_envelope(&p);
+        let env = serde_json::to_value(&promotion_event(&p)).unwrap();
         assert_eq!(
-            env.get("kind").and_then(|v| v.as_str()),
+            env.get("kind").and_then(|v: &serde_json::Value| v.as_str()),
             Some("ConsolidatorPromotion")
         );
         assert!(env.get("episode_id").is_some());
         assert!(env.get("fact_id").is_some());
         assert_eq!(
-            env.get("activation_score").and_then(|v| v.as_f64()),
+            env.get("activation_score")
+                .and_then(|v: &serde_json::Value| v.as_f64()),
             Some(1.5)
         );
     }
 
-    /// B-1: archive envelope `kind` tag matches D-22 verbatim.
+    /// B-1: archive envelope `kind` tag matches D-22 verbatim (Plan 13-01
+    /// typed variant).
     #[test]
     fn archive_envelope_kind_is_consolidator_archive() {
         let a = ArchiveEvent {
@@ -462,14 +445,21 @@ mod tests {
             final_activation: -0.7,
             moved_to: "cold_storage".to_string(),
         };
-        let env = archive_envelope(&a);
+        let env = serde_json::to_value(&archive_event(&a)).unwrap();
         assert_eq!(
-            env.get("kind").and_then(|v| v.as_str()),
+            env.get("kind").and_then(|v: &serde_json::Value| v.as_str()),
             Some("ConsolidatorArchive")
         );
         assert!(env.get("fact_id").is_some());
-        assert_eq!(env.get("final_activation").and_then(|v| v.as_f64()), Some(-0.7));
-        assert_eq!(env.get("moved_to").and_then(|v| v.as_str()), Some("cold_storage"));
+        assert_eq!(
+            env.get("final_activation")
+                .and_then(|v: &serde_json::Value| v.as_f64()),
+            Some(-0.7)
+        );
+        assert_eq!(
+            env.get("moved_to").and_then(|v: &serde_json::Value| v.as_str()),
+            Some("cold_storage")
+        );
     }
 
     /// Phase 12 HELIOS-04 — proves `flush()` forwards the `source_prefix`
