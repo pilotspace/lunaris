@@ -152,29 +152,32 @@ def _backends_or_skip() -> tuple[str, str]:
 
 
 def _lunaris_module():
-    """Import the compiled lunaris PyO3 cdylib + `documentary` submodule.
+    """Import the `documentary` submodule exposed by `lunaris` package.
 
-    The wrapper classes live in `lunaris.lunaris.documentary` per Plan
-    11-02b (`lunaris-py/src/lib.rs` wires a per-module `PyModule` under
-    the crate-root module; `module-name = "lunaris.lunaris"` in
-    pyproject.toml means the compiled cdylib itself is
-    `lunaris.lunaris`). If the bindings were built without the wrappers
-    (stale wheel / dev build pre-11-02b), skip — there is nothing to
-    parity-test.
+    Per Plan 10-03 commit `4747946`, `lunaris/python/__init__.py`
+    promotes the cdylib submodule into the package namespace so
+    `from lunaris.documentary import X` works (matches Plan 11-03
+    must_haves §1). Fall back to the raw cdylib path
+    `lunaris.lunaris.documentary` for wheels built from pre-10-03
+    checkouts.
     """
     try:
         import lunaris  # noqa: F401
     except ImportError as e:
         pytest.skip(f"lunaris Python bindings not installed: {e}")
 
+    doc_mod = None
     try:
-        from lunaris.lunaris import documentary as doc_mod  # type: ignore[attr-defined]
-    except (ImportError, AttributeError) as e:
-        pytest.skip(
-            f"lunaris.lunaris.documentary submodule not present "
-            f"(rebuild with `maturin develop --release` against Plan "
-            f"11-02b): {e}"
-        )
+        from lunaris import documentary as doc_mod  # type: ignore[attr-defined]
+    except (ImportError, AttributeError):
+        try:
+            from lunaris.lunaris import documentary as doc_mod  # type: ignore[attr-defined]
+        except (ImportError, AttributeError) as e:
+            pytest.skip(
+                f"lunaris.documentary / lunaris.lunaris.documentary "
+                f"submodule not present (rebuild with `maturin develop "
+                f"--release` against Plan 11-02b + 10-03): {e}"
+            )
     required = (
         "DocumentKnowledgeBase",
         "ResearchPaperCorpus",
