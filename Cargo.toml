@@ -20,6 +20,11 @@ members = [
   # placed next to lunaris-py (both are binding crates for the same Rust
   # umbrella) per the grouping-by-concern rule (NOT alphabetical).
   "crates/lunaris-ts",
+  # Phase 9 Plan 09-01: lunaris-recipes hosts the 4 composable primitives
+  # (MessageStream / DocumentCorpus / TemporalQuery / WorkingMemory) +
+  # Moon + Postgres parity harness. Placed after lunaris-ts per the
+  # grouping-by-concern rule (all downstream-consumer crates clustered).
+  "crates/lunaris-recipes",
   "crates/lunaris-consolidate",
   "crates/lunaris-embed",
   "crates/lunaris-extract",

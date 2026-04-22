@@ -1,0 +1,55 @@
+# lunaris-recipes — Phase 9 Plan 09-01 composable primitives crate.
+#
+# Hosts the 4 first-class Lunaris primitives that every vertical wrapper in
+# Phases 10 + 11 composes on top of:
+#   - MessageStream    (ACT-R recency-weighted message recall)
+#   - DocumentCorpus   (RRF-fused Vector + Keyword RAG)    [Wave 2 Plan 09-02]
+#   - TemporalQuery    (typestate time-travel combinator)  [Wave 2 Plan 09-04]
+#   - WorkingMemory    (scope-prefixed scratchpad + Consolidator promotion)
+#                                                          [Wave 2 Plan 09-03]
+#
+# Dep shape mirrors `crates/lunaris-consolidate/Cargo.toml` (path = "..") for
+# internal crates — the workspace root `[workspace.dependencies]` block holds
+# only EXTERNAL crates (tokio, serde, thiserror, …), so internal deps MUST use
+# explicit path entries, not `{ workspace = true }`.
+#
+# Feature gates `moon-it` + `pg-it` mirror Phase 4 Plan 04-03 + Phase 5 Plan
+# 05-02 `probe_backend` discipline: parity tests under `tests/` SKIP cleanly
+# when env URL is unset, so `cargo test -p lunaris-recipes` stays zero-config.
+
+[package]
+name        = "lunaris-recipes"
+version     = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish              = false
+
+[dependencies]
+lunaris                  = { path = "../lunaris", default-features = false }
+lunaris-core             = { path = "../lunaris-core" }
+lunaris-retrieve         = { path = "../lunaris-retrieve" }
+lunaris-consolidate      = { path = "../lunaris-consolidate" }
+lunaris-storage-moon     = { path = "../lunaris-storage-moon", optional = true }
+lunaris-storage-postgres = { path = "../lunaris-storage-postgres", optional = true }
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+thiserror   = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+parking_lot = { workspace = true }
+ulid        = { workspace = true }
+
+[dev-dependencies]
+anyhow              = { workspace = true }
+tokio               = { workspace = true, features = ["macros", "rt-multi-thread"] }
+lunaris-conformance = { path = "../lunaris-conformance" }
+
+[features]
+default = []
+# Integration-test flags — parity tests SKIP cleanly when env URL is unset
+# (mirrors Phase 4 Plan 04-03 + Plan 05-02 probe_backend discipline).
+moon-it = ["dep:lunaris-storage-moon"]
+pg-it   = ["dep:lunaris-storage-postgres"]
