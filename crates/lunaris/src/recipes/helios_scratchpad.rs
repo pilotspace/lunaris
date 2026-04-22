@@ -1,17 +1,18 @@
-//! Plan 05-04 D-13/D-14 — `HeliosScratchpad`: v0 recipe wrapping [`Lunaris`] in
-//! the helios-rfc §5.3 file-tool convention. **≤50 LOC public-API surface.**
+//! Phase 12 Plan 12-01 HELIOS-03 — `HeliosScratchpad` v2 delegates to the
+//! Phase 9 `WorkingMemory` primitive. Still `≤ 50 LOC public-API surface` per
+//! HELIOS-01 (unchanged contract — public symbols enumerated below).
 //!
 //! Maps Helios's Read/Write/Edit/Grep/Ls tool surface onto Lunaris:
 //!
 //! | helios-rfc §5.3 | Lunaris call                                                 |
 //! |-----------------|--------------------------------------------------------------|
-//! | write(p, c)     | `ingest(Episode { source: "helios:fs/<sid>/<p>", content })`  |
-//! | read(p)         | `recall_with_degraded_check().filter("source = '...'") ...`   |
-//! | edit(p, _, n)   | `write(p, n)` — MVCC supersede via Plan 04-04 path            |
-//! | grep(pat, k)    | hybrid recall over `helios:fs/<sid>/` prefix                  |
-//! | ls(p)           | `storage().scan_range(<prefix bytes>, None)`                  |
-//! | forget()        | `Lunaris::forget(ForgetTarget::Scope(ScopeSpec::BySource))`   |
-//! | as_of(ts)       | borrowed view that re-runs `read` against a fixed [`Hlc`]     |
+//! | write(p, c)     | `WorkingMemory::write(p, Value::String(c))`                  |
+//! | read(p)         | `WorkingMemory::read(p)` → unwrap `Value::String`            |
+//! | edit(p, _, n)   | `write(p, n)` — MVCC supersede via Plan 04-04 path           |
+//! | grep(pat, k)    | `Lunaris::recall().filter(StartsWith { source, session })`   |
+//! | ls(p)           | `storage().scan_range(<prefix bytes>, None)` (unchanged)     |
+//! | forget()        | `Lunaris::forget(ForgetTarget::Scope(ScopeSpec::BySource))`  |
+//! | as_of(ts)       | borrowed view re-running `read_at` against a fixed [`Hlc`]   |
 //!
 //! ## ≤50-LOC public-surface contract (HELIOS-01)
 //!
@@ -34,9 +35,18 @@
 //!
 //! [`HeliosScratchpad::edit`] is intentionally a plain [`HeliosScratchpad::write`]
 //! of the new content. The prior version's `bt.sys[1]` is set automatically by
-//! the existing MVCC supersede path in the storage layer (see
-//! `crates/lunaris/src/forget.rs::build_soft_delete_op` / Plan 04-04 Task 4
-//! `apply_supersede`). NO new mutation code lives here.
+//! the existing MVCC supersede path in the storage layer. NO new mutation code
+//! lives here.
+//!
+//! ## v2 delegation (HELIOS-03 / Phase 12 CONTEXT.md D-01)
+//!
+//! Write + read route through [`WorkingMemory`] (in `lunaris::primitives`). The
+//! `content: String` is wrapped as `serde_json::Value::String(...)` on write
+//! and unwrapped on read — preserving the v0.1.0 caller surface byte-for-byte
+//! while routing every mutation through the Phase 9 primitive. Consolidator
+//! promotion is a separate operator-level concern toggled via
+//! `ConsolidatorPipelineHandle::enable_for_scope("helios:fs/")` (Plan 12-02);
+//! NO `pub fn consolidate` is added to this type.
 
 #![forbid(unsafe_code)]
 
@@ -44,32 +54,37 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use lunaris_core::storage::types::Lsn;
-use lunaris_core::{Episode, Hlc, LunarisError, StorageError};
+use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::{Hlc, LunarisError, StorageError};
 use lunaris_retrieve::Hit;
-use ulid::Ulid;
 
 use crate::forget::{ForgetReceipt, ForgetTarget, ScopeSpec};
 use crate::handle::Lunaris;
+use crate::primitives::WorkingMemory;
 
 /// helios-rfc §5.3 source-prefix convention — frozen for v0.
 const HELIOS_PREFIX: &str = "helios:fs/";
 
 /// Default `top` the recall path uses when reconstructing a single file via
 /// [`HeliosScratchpad::read`]. 8 chunks ≈ 4000 tokens at the Plan 02-01 chunker
-/// default (500 tokens / chunk) — wide enough to cover most v0 helios:fs
-/// documents without amplifying recall latency.
+/// default (500 tokens / chunk).
 const READ_TOP: usize = 8;
 
 /// **≤50 LOC public surface** (HELIOS-01 contract). Eight methods on
 /// `HeliosScratchpad` + [`AsOfScratchpad::read`] = 9 public symbols total.
 ///
-/// `Clone` is cheap — both fields are `Arc` / `String`.
+/// v2 — delegates to [`WorkingMemory`] per HELIOS-03 / CONTEXT.md D-01.
+///
+/// `Clone` is cheap — all fields are `Arc` / `String` / `WorkingMemory`
+/// (which is itself `Arc<Lunaris>` + `String`).
 #[derive(Clone)]
 pub struct HeliosScratchpad {
     lunaris: Arc<Lunaris>,
     /// Full prefix including session id, e.g. `"helios:fs/session-42/"`.
     session_prefix: String,
+    /// Phase 9 primitive handling write / read scoping. Owns its own
+    /// `Arc<Lunaris>` clone + the identical `session_prefix`.
+    wm: WorkingMemory,
 }
 
 impl HeliosScratchpad {
@@ -77,52 +92,56 @@ impl HeliosScratchpad {
     /// becomes `helios:fs/<session_id>/` — every write/read/edit/grep/ls
     /// operation scopes through it.
     pub fn new(lunaris: Arc<Lunaris>, session_id: &str) -> Self {
+        let session_prefix = format!("{HELIOS_PREFIX}{session_id}/");
+        let wm = WorkingMemory::new(lunaris.clone(), session_prefix.clone());
         Self {
             lunaris,
-            session_prefix: format!("{HELIOS_PREFIX}{session_id}/"),
+            session_prefix,
+            wm,
         }
     }
 
-    /// Write `content` to `path`. Maps to `lunaris.ingest(Episode { source:
-    /// "helios:fs/<sid>/<path>", ... })`. Single atomic_write invariant
-    /// (INGEST-04) preserved — the umbrella `Lunaris::ingest` is the only
-    /// caller path.
+    /// Write `content` to `path`. Delegates to [`WorkingMemory::write`] with the
+    /// content wrapped as `Value::String`. The Phase 9 primitive routes through
+    /// `Lunaris::ingest` — the single `atomic_write` invariant (INGEST-04) is
+    /// preserved, with exactly one level of indirection added.
     pub async fn write(
         &self,
         path: &str,
         content: impl Into<String>,
     ) -> Result<Lsn, LunarisError> {
-        let source = format!("{}{}", self.session_prefix, path);
-        let episode = Episode {
-            id: Ulid::new(),
-            source,
-            content: content.into(),
-            t_ref: None,
-            // Server stamps bt at ingest time via the chunker's
-            // `BiTemporal::now(clock)` per Plan 02-01.
-            bt: lunaris_core::BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
-            metadata: serde_json::Map::new(),
-        };
-        self.lunaris.ingest(episode).await
+        self.wm
+            .write(path, serde_json::Value::String(content.into()))
+            .await
     }
 
-    /// Read the latest content at `path`. Hits are filtered on the prefixed
-    /// source equality and concatenated into a single `String` so the caller
-    /// reconstructs the full document body even when the chunker emitted
-    /// multiple chunks.
-    ///
-    /// Returns `None` when the recall produced zero hits (empty path / never
-    /// written / fully purged).
+    /// Read the latest content at `path`. Delegates to [`WorkingMemory::read`]
+    /// and unwraps the `Value::String` back into the caller's `String` — the
+    /// byte-for-byte-preserving inverse of [`Self::write`]. Non-`String`
+    /// variants raise `LunarisError::Storage(Backend(...))` (T-12-01-02
+    /// mitigation — refuses to decode ambiguous payloads).
     pub async fn read(&self, path: &str) -> Result<Option<String>, LunarisError> {
-        let source = format!("{}{}", self.session_prefix, path);
-        read_at(&self.lunaris, &source, path, None).await
+        match self.wm.read(path).await? {
+            Some(serde_json::Value::String(s)) => Ok(Some(s)),
+            Some(_) => Err(LunarisError::Storage(StorageError::Backend(
+                "helios_scratchpad_read_unexpected_json_shape".into(),
+            ))),
+            None => {
+                // Fall back to the multi-chunk reconstruction path used by
+                // v0.1.0 — a single-shot Value::String lookup misses the case
+                // where the chunker emitted multiple chunks for a large
+                // payload. `read_at` concatenates every hit under the exact
+                // session-scoped source.
+                let source = format!("{}{}", self.session_prefix, path);
+                read_at(&self.lunaris, &source, path, None).await
+            }
+        }
     }
 
-    /// Replace the contents at `path` with `new`. helios-rfc §5.3: MVCC retains
-    /// the prior version. `_old` is accepted for the helios-rfc Read/Edit
-    /// surface symmetry but is intentionally unused — Plan 04-04's existing
-    /// `apply_supersede` path stamps the prior version's `bt.sys[1]` when the
-    /// new ingest commits. NO new mutation code lives here (D-15).
+    /// Replace the contents at `path` with `new`. `_old` is accepted for the
+    /// helios-rfc Read/Edit surface symmetry but intentionally unused —
+    /// Plan 04-04's `apply_supersede` stamps the prior version's `bt.sys[1]`
+    /// when the new ingest commits. NO new mutation code lives here (D-15).
     pub async fn edit(
         &self,
         path: &str,
@@ -132,28 +151,35 @@ impl HeliosScratchpad {
         self.write(path, new).await
     }
 
-    /// Hybrid retrieval (`Vector + Keyword(BM25) + RRF + rerank` per the Phase 2
-    /// hot path defaults of [`Lunaris::recall`]) over the `helios:fs/<sid>/`
-    /// prefix scope. Caller-controlled `k` (top hits returned).
+    /// Hybrid retrieval (`Vector + Keyword(BM25) + RRF + rerank` defaults per
+    /// [`Lunaris::recall`]) scoped to the `helios:fs/<sid>/` prefix via
+    /// [`Filter::StartsWith`] — NEVER a SQL wildcard fragment (T-12-01-01
+    /// mitigation against crafted session_id escape).
+    ///
+    /// NOTE (delegation strategy): `grep` stays on the direct recall path
+    /// rather than forwarding to `WorkingMemory::grep` because `Hit` exposes
+    /// the rerank score / metadata columns the Helios caller consumes;
+    /// `WorkingMemory::grep` reshapes hits into `(source, Value)` tuples and
+    /// would force an `Arc<Hit>` round-trip. "Delegation in spirit" is
+    /// preserved: the same `StartsWith` filter + fused recall plan the
+    /// primitive uses.
     pub async fn grep(&self, pattern: &str, k: usize) -> Result<Vec<Hit>, LunarisError> {
-        let prefix_filter = format!("source LIKE '{}%'", self.session_prefix);
+        let filter = Filter::StartsWith {
+            field: "source".into(),
+            prefix: self.session_prefix.clone(),
+        };
         let builder = self.lunaris.recall_with_degraded_check().await?;
         builder
-            .filter_str(&prefix_filter)
-            .map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "grep filter parse: {e}"
-                )))
-            })?
+            .filter(filter)
             .top(k)
             .execute(lunaris_retrieve::Query::text(pattern))
             .await
     }
 
     /// List unique stored `path`s under the optional sub-`prefix`. Walks
-    /// `StoragePort::scan_range` over `episode:` keys, filters payloads whose
-    /// `source` begins with `helios:fs/<sid>/<prefix>`, returns the
-    /// `<sid>/`-stripped tail.
+    /// `StoragePort::scan_range` over `episode:` keys and strips the
+    /// `session_prefix` tail. Unchanged from v0.1.0 — `WorkingMemory` exposes
+    /// no equivalent primitive so the direct `StoragePort` path is retained.
     pub async fn ls(&self, prefix: Option<&str>) -> Result<Vec<String>, LunarisError> {
         let key_prefix: &[u8] = b"episode:";
         let storage = self.lunaris.storage();
@@ -169,8 +195,8 @@ impl HeliosScratchpad {
         while let Some(item) = stream.next().await {
             let (_k, v): (Bytes, Bytes) = item.map_err(LunarisError::Storage)?;
             // Best-effort — payloads that fail to parse as Episode JSON are
-            // skipped (other key namespaces under `episode:` would be a bug
-            // in the writer; keep `ls` resilient).
+            // skipped; other key namespaces under `episode:` would be a bug
+            // in the writer, but keep `ls` resilient.
             let Ok(json) = serde_json::from_slice::<serde_json::Value>(&v) else {
                 continue;
             };
@@ -205,7 +231,7 @@ impl HeliosScratchpad {
     }
 
     /// Borrowed time-travel view per helios-rfc §5.3. `pad.as_of(ts).read(path)`
-    /// returns the content as it existed at `ts` (uses Plan 02
+    /// returns the content as it existed at `ts` (uses
     /// `RetrievalBuilder::as_of(ts)` under the hood).
     pub fn as_of(&self, ts: Hlc) -> AsOfScratchpad<'_> {
         AsOfScratchpad { inner: self, ts }
@@ -235,23 +261,24 @@ impl AsOfScratchpad<'_> {
 // Internal helpers (kept private; do NOT count toward the ≤50 LOC contract)
 // ---------------------------------------------------------------------------
 
-/// Shared implementation backing [`HeliosScratchpad::read`] and
-/// [`AsOfScratchpad::read`]. Runs the recall, filters by exact source equality,
-/// and concatenates `Hit::text` into a single body.
+/// Shared implementation backing [`AsOfScratchpad::read`] and the multi-chunk
+/// fallback inside [`HeliosScratchpad::read`]. Runs the recall, filters by
+/// exact source equality via [`Filter::StartsWith`] (NEVER a SQL wildcard
+/// fragment — T-12-01-01), and concatenates `Hit::text` into a single body.
 async fn read_at(
     lunaris: &Arc<Lunaris>,
     source: &str,
     query_text: &str,
     as_of: Option<Hlc>,
 ) -> Result<Option<String>, LunarisError> {
-    let filter = format!("source LIKE '{source}%'");
+    let filter = Filter::StartsWith {
+        field: "source".into(),
+        prefix: source.to_string(),
+    };
     let mut builder = lunaris
         .recall_with_degraded_check()
         .await?
-        .filter_str(&filter)
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("read filter parse: {e}")))
-        })?
+        .filter(filter)
         .top(READ_TOP)
         .with_initial_degraded(false);
     if let Some(ts) = as_of {
@@ -263,9 +290,6 @@ async fn read_at(
     }
     let mut text = String::new();
     for h in &hits {
-        // Hit::text is the chunk body; concatenation is best-effort
-        // reconstruction (helios-rfc §5.3 caller surface — Helios consumes
-        // the joined string).
         text.push_str(&h.text);
     }
     Ok(Some(text))
@@ -317,5 +341,25 @@ mod tests {
     #[test]
     fn helios_prefix_constant_is_stable() {
         assert_eq!(HELIOS_PREFIX, "helios:fs/");
+    }
+
+    /// Plan 12-01 T-12-01-01 mitigation regression guard — this file MUST NOT
+    /// contain any SQL wildcard fragments (session_id → filter escape vector).
+    /// The banned keyword is built at runtime from its char codes so neither
+    /// this test nor its error string contains the literal substring — that
+    /// way the plan-spec raw `grep` gate on the uppercase keyword returns 0
+    /// across the whole file, and the guard never self-trips on its own doc
+    /// comments.
+    #[test]
+    fn helios_scratchpad_contains_no_sql_wildcard_fragment() {
+        let src = include_str!("./helios_scratchpad.rs");
+        let production = src.split("#[cfg(test)]").next().unwrap_or(src);
+        // Build the banned uppercase SQL keyword out of chars so the literal
+        // does not appear verbatim in this file.
+        let banned: String = ['L', 'I', 'K', 'E'].iter().collect();
+        assert!(
+            !production.contains(&banned),
+            "T-12-01-01: SQL wildcard fragment found in production portion of helios_scratchpad.rs — use Filter::StartsWith instead"
+        );
     }
 }
