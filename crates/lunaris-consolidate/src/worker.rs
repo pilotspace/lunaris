@@ -95,6 +95,7 @@ pub async fn run_consolidate_worker(
     storage: Arc<dyn StoragePort>,
     consolidator: Arc<dyn Consolidator>,
     shutdown: Arc<Notify>,
+    source_prefix: Option<String>,
 ) -> Result<JoinHandle<()>, LunarisError> {
     let stream = storage
         .subscribe(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
@@ -116,6 +117,7 @@ pub async fn run_consolidate_worker(
             topic = CONSOLIDATE_TOPIC,
             debounce_ms,
             drain_ms,
+            scope = ?source_prefix,
             "consolidate_worker_started"
         );
 
@@ -130,9 +132,10 @@ pub async fn run_consolidate_worker(
                     tracing::info!(
                         drain_ms,
                         buffered_episodes = buffer.len(),
+                        scope = ?source_prefix,
                         "consolidate_worker_shutdown_requested; flushing buffer + draining"
                     );
-                    flush(&storage, consolidator.clone(), &mut buffer).await;
+                    flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
                     drain_loop(&mut stream, drain_ms).await;
                     break;
                 }
@@ -140,7 +143,7 @@ pub async fn run_consolidate_worker(
                     match maybe_msg {
                         None => {
                             tracing::info!("consolidate_worker_stream_closed; flushing + exiting");
-                            flush(&storage, consolidator.clone(), &mut buffer).await;
+                            flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
                             break;
                         }
                         Some(Ok(msg)) => {
@@ -155,13 +158,13 @@ pub async fn run_consolidate_worker(
                     }
                 }
                 _ = tokio::time::sleep_until(next_flush) => {
-                    flush(&storage, consolidator.clone(), &mut buffer).await;
+                    flush(&storage, consolidator.clone(), &mut buffer, source_prefix.as_deref()).await;
                     next_flush = Instant::now() + Duration::from_millis(debounce_ms);
                 }
             }
         }
 
-        tracing::info!("consolidate_worker_exited");
+        tracing::info!(scope = ?source_prefix, "consolidate_worker_exited");
     });
 
     Ok(handle)
@@ -212,6 +215,7 @@ async fn flush(
     storage: &Arc<dyn StoragePort>,
     consolidator: Arc<dyn Consolidator>,
     buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
+    source_prefix: Option<&str>,
 ) {
     if buffer.is_empty() {
         return;
@@ -249,10 +253,21 @@ async fn flush(
 
         // W-6 fix: clone everything into the spawn closure by value. No borrow
         // crosses the spawn boundary.
+        //
+        // Phase 12 HELIOS-04 — delegate to `Consolidator::consolidate_scoped`
+        // so the trait's default filter (Phase 9.1 Plan 01) applies the hard
+        // `event.source.starts_with(prefix)` predicate BEFORE promotion. When
+        // `source_prefix == None` the default impl forwards the full batch to
+        // `consolidate(...)` unchanged — v0.1.0 semantic parity preserved.
         let evts = events.clone();
         let c = consolidator.clone();
         let s = storage.clone();
-        let report = match tokio::spawn(async move { c.consolidate(s, &evts).await }).await {
+        let scope: Option<String> = source_prefix.map(|p| p.to_string());
+        let report = match tokio::spawn(async move {
+            c.consolidate_scoped(s, &evts, scope.as_deref()).await
+        })
+        .await
+        {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
@@ -455,6 +470,303 @@ mod tests {
         assert!(env.get("fact_id").is_some());
         assert_eq!(env.get("final_activation").and_then(|v| v.as_f64()), Some(-0.7));
         assert_eq!(env.get("moved_to").and_then(|v| v.as_str()), Some("cold_storage"));
+    }
+
+    /// Phase 12 HELIOS-04 — proves `flush()` forwards the `source_prefix`
+    /// argument into `Consolidator::consolidate_scoped` and that the filter
+    /// drops non-matching events BEFORE they reach `consolidate()`. This is
+    /// the worker-level gate for T-12-02-02 (no cross-tenant audit leak).
+    #[tokio::test]
+    async fn worker_flush_with_scope_prefix_filters_non_matching_events() {
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+
+        #[derive(Default)]
+        struct RecordingConsolidator {
+            seen_scope: Mutex<Option<String>>,
+            filtered_event_count: Mutex<usize>,
+        }
+
+        #[async_trait]
+        impl Consolidator for RecordingConsolidator {
+            async fn consolidate(
+                &self,
+                _storage: Arc<dyn StoragePort>,
+                events: &[ConsolidateEvent],
+            ) -> Result<ConsolidationReport, LunarisError> {
+                *self.filtered_event_count.lock() = events.len();
+                Ok(ConsolidationReport::default())
+            }
+
+            async fn consolidate_scoped(
+                &self,
+                storage: Arc<dyn StoragePort>,
+                events: &[ConsolidateEvent],
+                scope_prefix: Option<&str>,
+            ) -> Result<ConsolidationReport, LunarisError> {
+                *self.seen_scope.lock() = scope_prefix.map(|s| s.to_string());
+                match scope_prefix {
+                    None => self.consolidate(storage, events).await,
+                    Some(prefix) => {
+                        let filtered: Vec<ConsolidateEvent> = events
+                            .iter()
+                            .filter(|e| e.source.starts_with(prefix))
+                            .cloned()
+                            .collect();
+                        self.consolidate(storage, &filtered).await
+                    }
+                }
+            }
+
+            fn applies(&self) -> bool {
+                true
+            }
+        }
+
+        // Minimal never-panics StoragePort — flush only touches publish()
+        // when the report has promotions/archives; RecordingConsolidator
+        // returns an empty report, so publish is never reached.
+        #[derive(Default)]
+        struct NoopStorage;
+
+        #[async_trait]
+        impl StoragePort for NoopStorage {
+            async fn atomic_write(
+                &self,
+                _ops: &[lunaris_core::WriteOp],
+            ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
+                Ok(lunaris_core::Lsn { wall_ms: 0, counter: 0 })
+            }
+            async fn vector_search(
+                &self,
+                _i: &str,
+                _q: &[f32],
+                _k: usize,
+                _f: Option<&lunaris_core::Filter>,
+                _a: Option<lunaris_core::Hlc>,
+                _r: bool,
+            ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+                Ok(Vec::new())
+            }
+            async fn graph_traverse(
+                &self,
+                _q: &lunaris_core::CypherQuery,
+                _a: Option<lunaris_core::Hlc>,
+            ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+                Ok(lunaris_core::GraphResult::default())
+            }
+            async fn scan_range(
+                &self,
+                _p: &[u8],
+                _a: Option<lunaris_core::Hlc>,
+            ) -> Result<
+                BoxStream<'_, Result<(Bytes, Bytes), lunaris_core::StorageError>>,
+                lunaris_core::StorageError,
+            > {
+                Ok(Box::pin(futures::stream::iter(Vec::new())))
+            }
+            async fn read_as_of(
+                &self,
+                _k: &[u8],
+                _a: lunaris_core::Hlc,
+            ) -> Result<Option<lunaris_core::Row<Bytes>>, lunaris_core::StorageError> {
+                Ok(None)
+            }
+            async fn publish(
+                &self,
+                _t: &str,
+                _p: u16,
+                _payload: Bytes,
+            ) -> Result<u64, lunaris_core::StorageError> {
+                Ok(0)
+            }
+            async fn subscribe(
+                &self,
+                _g: &str,
+                _t: &str,
+                _p: u16,
+            ) -> Result<
+                BoxStream<'static, Result<QueueMsg, lunaris_core::StorageError>>,
+                lunaris_core::StorageError,
+            > {
+                Ok(Box::pin(futures::stream::empty()))
+            }
+            fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+                lunaris_core::StorageCapabilities {
+                    bi_temporal_native: false,
+                    graph_native: false,
+                    rerank_native: false,
+                    queue_native: false,
+                    max_vector_dim: 768,
+                    native_rrf: false,
+                }
+            }
+        }
+
+        let rec = Arc::new(RecordingConsolidator::default());
+        let c: Arc<dyn Consolidator> = rec.clone();
+        let s: Arc<dyn StoragePort> = Arc::new(NoopStorage);
+
+        let mut buf: HashMap<Ulid, Vec<ConsolidateEvent>> = HashMap::new();
+        let helios = ConsolidateEvent {
+            kind: "ingest_committed".into(),
+            episode_id: Ulid::new(),
+            lsn_wall_ms: 1,
+            lsn_counter: 1,
+            source: "helios:fs/session-1/note-0".into(),
+        };
+        let other = ConsolidateEvent {
+            kind: "ingest_committed".into(),
+            episode_id: Ulid::new(),
+            lsn_wall_ms: 2,
+            lsn_counter: 2,
+            source: "other:tenant-X/note".into(),
+        };
+        buf.entry(helios.episode_id).or_default().push(helios);
+        buf.entry(other.episode_id).or_default().push(other);
+
+        flush(&s, c, &mut buf, Some("helios:fs/")).await;
+
+        assert_eq!(
+            *rec.seen_scope.lock(),
+            Some("helios:fs/".to_string()),
+            "flush MUST forward source_prefix into consolidate_scoped"
+        );
+        assert_eq!(
+            *rec.filtered_event_count.lock(),
+            1,
+            "only helios:fs/ events must survive the filter; other: events \
+             MUST be dropped BEFORE consolidate() sees them"
+        );
+    }
+
+    /// Phase 12 HELIOS-04 parity — `source_prefix == None` (v0.1.0 path)
+    /// passes the full batch through unchanged to `consolidate(...)`.
+    #[tokio::test]
+    async fn worker_flush_with_none_prefix_preserves_full_batch() {
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+
+        #[derive(Default)]
+        struct CountingConsolidator {
+            seen_count: Mutex<usize>,
+        }
+
+        #[async_trait]
+        impl Consolidator for CountingConsolidator {
+            async fn consolidate(
+                &self,
+                _storage: Arc<dyn StoragePort>,
+                events: &[ConsolidateEvent],
+            ) -> Result<ConsolidationReport, LunarisError> {
+                *self.seen_count.lock() = events.len();
+                Ok(ConsolidationReport::default())
+            }
+            fn applies(&self) -> bool {
+                true
+            }
+        }
+
+        #[derive(Default)]
+        struct NullStorage;
+
+        #[async_trait]
+        impl StoragePort for NullStorage {
+            async fn atomic_write(
+                &self,
+                _ops: &[lunaris_core::WriteOp],
+            ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
+                Ok(lunaris_core::Lsn { wall_ms: 0, counter: 0 })
+            }
+            async fn vector_search(
+                &self,
+                _i: &str,
+                _q: &[f32],
+                _k: usize,
+                _f: Option<&lunaris_core::Filter>,
+                _a: Option<lunaris_core::Hlc>,
+                _r: bool,
+            ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+                Ok(Vec::new())
+            }
+            async fn graph_traverse(
+                &self,
+                _q: &lunaris_core::CypherQuery,
+                _a: Option<lunaris_core::Hlc>,
+            ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+                Ok(lunaris_core::GraphResult::default())
+            }
+            async fn scan_range(
+                &self,
+                _p: &[u8],
+                _a: Option<lunaris_core::Hlc>,
+            ) -> Result<
+                BoxStream<'_, Result<(Bytes, Bytes), lunaris_core::StorageError>>,
+                lunaris_core::StorageError,
+            > {
+                Ok(Box::pin(futures::stream::iter(Vec::new())))
+            }
+            async fn read_as_of(
+                &self,
+                _k: &[u8],
+                _a: lunaris_core::Hlc,
+            ) -> Result<Option<lunaris_core::Row<Bytes>>, lunaris_core::StorageError> {
+                Ok(None)
+            }
+            async fn publish(
+                &self,
+                _t: &str,
+                _p: u16,
+                _payload: Bytes,
+            ) -> Result<u64, lunaris_core::StorageError> {
+                Ok(0)
+            }
+            async fn subscribe(
+                &self,
+                _g: &str,
+                _t: &str,
+                _p: u16,
+            ) -> Result<
+                BoxStream<'static, Result<QueueMsg, lunaris_core::StorageError>>,
+                lunaris_core::StorageError,
+            > {
+                Ok(Box::pin(futures::stream::empty()))
+            }
+            fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+                lunaris_core::StorageCapabilities {
+                    bi_temporal_native: false,
+                    graph_native: false,
+                    rerank_native: false,
+                    queue_native: false,
+                    max_vector_dim: 768,
+                    native_rrf: false,
+                }
+            }
+        }
+
+        let rec = Arc::new(CountingConsolidator::default());
+        let c: Arc<dyn Consolidator> = rec.clone();
+        let s: Arc<dyn StoragePort> = Arc::new(NullStorage);
+
+        let mut buf: HashMap<Ulid, Vec<ConsolidateEvent>> = HashMap::new();
+        for i in 0..3u32 {
+            let ev = ConsolidateEvent {
+                kind: "ingest_committed".into(),
+                episode_id: Ulid::new(),
+                lsn_wall_ms: i as u64,
+                lsn_counter: i as u64,
+                source: format!("anything:{i}"),
+            };
+            buf.entry(ev.episode_id).or_default().push(ev);
+        }
+
+        flush(&s, c, &mut buf, None).await;
+
+        assert_eq!(
+            *rec.seen_count.lock(),
+            3,
+            "source_prefix=None MUST pass the full batch to consolidate() unchanged (v0.1.0 parity)"
+        );
     }
 
     /// B-1 regression guard: report shape carries per-event vectors, NOT
