@@ -241,3 +241,52 @@ fn json_to_cypher_literal(v: &serde_json::Value) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod valid_time_tests {
+    //! Plan 09.1-02 Task 2b structural guards on `atomic_write`.
+    //!
+    //! The `chunks` FT index declares `valid_time` NUMERIC (Task 2). Without
+    //! the write-side populating a `valid_time` hash field on every chunk row,
+    //! `@valid_time:[lo hi]` queries match 0 rows — a silent footgun. These
+    //! source-grep tests pin the behaviour without requiring a live Moon.
+
+    #[test]
+    fn vector_upsert_writes_valid_time_field_for_chunks() {
+        let src = include_str!("atomic.rs");
+        assert!(
+            src.contains("valid_time_ms"),
+            "VectorUpsert must read valid_time_ms from metadata"
+        );
+        assert!(
+            src.contains("\"valid_time\""),
+            "HSET field name must be valid_time to match FT schema"
+        );
+    }
+
+    #[test]
+    fn vector_upsert_skips_valid_time_for_non_chunks_indices() {
+        let src = include_str!("atomic.rs");
+        // The fan-out MUST gate on `index == "chunks"` — entities / facts /
+        // communities indices do NOT declare valid_time in ensure_indexes.
+        assert!(
+            src.contains("index == \"chunks\""),
+            "valid_time HSET must be gated on index == \"chunks\""
+        );
+    }
+
+    #[test]
+    fn vector_upsert_no_valid_time_when_absent_from_metadata() {
+        let src = include_str!("atomic.rs");
+        // The fan-out MUST read metadata["valid_time_ms"] via .get(..).and_then(.as_u64())
+        // so missing / non-u64 values fall through to None (no HSET), not panic.
+        assert!(
+            src.contains("get(\"valid_time_ms\")"),
+            "valid_time population must probe metadata via .get(\"valid_time_ms\")"
+        );
+        assert!(
+            src.contains(".and_then(|v| v.as_u64())"),
+            "valid_time population must require u64 (missing / non-u64 => None)"
+        );
+    }
+}
