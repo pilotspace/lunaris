@@ -59,6 +59,7 @@ use std::sync::Arc;
 use lunaris::Lunaris;
 use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::storage::types::Filter;
 use lunaris_retrieve::{Hit, Query};
 
 /// Sealed-trait module. External crates cannot impl `SupportsAsOf` or
@@ -183,13 +184,18 @@ where
         if let Some(ts) = self.bounds.as_of {
             builder = builder.as_of(ts);
         }
-        // Phase 9.1 Plan 09.1-02 extends this block:
-        //   if self.bounds.before.is_some() || self.bounds.after.is_some() {
-        //       builder = builder.filter(Filter::ValidTimeRange {
-        //           after: self.bounds.after,
-        //           before: self.bounds.before,
-        //       });
-        //   }
+        // Phase 9.1 Plan 09.1-02 — emit Filter::ValidTimeRange when either
+        // bound is set. The if-guard keeps the filter out of the path for
+        // pure `.as_of` queries (zero regression on Phase 9 PRIM-03
+        // structural behaviour). Renderers: Moon `@valid_time:[lo hi]`
+        // (vector.rs / keyword.rs) + Postgres `valid_from >= 'rfc' AND
+        // valid_from < 'rfc'` (vector.rs / keyword.rs).
+        if self.bounds.before.is_some() || self.bounds.after.is_some() {
+            builder = builder.filter(Filter::ValidTimeRange {
+                after: self.bounds.after,
+                before: self.bounds.before,
+            });
+        }
         builder.execute(Query::text(query)).await
     }
 }
