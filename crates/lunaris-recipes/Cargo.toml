@@ -44,8 +44,16 @@ ulid        = { workspace = true }
 
 [dev-dependencies]
 anyhow              = { workspace = true }
-tokio               = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio               = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 lunaris-conformance = { path = "../lunaris-conformance" }
+# Phase 9.1 Plan 01 Task 3 — `tests/working_memory_consolidate.rs` builds
+# a `TestConsolidator` fixture that constructs `FactId::from_triple` args
+# using `lunaris_extract::EntityId`. Test-only; no production surface impact.
+lunaris-extract     = { path = "../lunaris-extract", default-features = false }
+async-trait         = { workspace = true }
+bytes               = { workspace = true }
+futures             = { workspace = true }
+parking_lot         = { workspace = true }
 
 [features]
 default = []
