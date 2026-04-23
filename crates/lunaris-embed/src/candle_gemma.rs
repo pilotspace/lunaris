@@ -169,12 +169,20 @@ impl CandleEmbeddingGemma {
                     )))
                 })?;
 
-            // The token embedding matrix lives at `model.embed_tokens.weight`
-            // in HuggingFace's gemma3 safetensors layout. Shape: [vocab_size, hidden_size].
-            let embed_weight =
-                vb.pp("model").pp("embed_tokens").get_unchecked("weight").map_err(|e| {
+            // The token embedding matrix lives at `model.embed_tokens.weight` in
+            // HuggingFace's raw gemma3 safetensors layout, but at flat
+            // `embed_tokens.weight` in the SentenceTransformer-wrapped
+            // `google/embeddinggemma-300m` checkpoint Google publishes. Accept
+            // both. Shape: [vocab_size, hidden_size].
+            let embed_weight = vb
+                .pp("model")
+                .pp("embed_tokens")
+                .get_unchecked("weight")
+                .or_else(|_| vb.pp("embed_tokens").get_unchecked("weight"))
+                .map_err(|e| {
                     LunarisError::Storage(StorageError::Backend(format!(
-                        "embedding-gemma weights: model.embed_tokens.weight not found ({e})"
+                        "embedding-gemma weights: embed_tokens.weight not found \
+                         (tried model.embed_tokens.weight and embed_tokens.weight): {e}"
                     )))
                 })?;
 
