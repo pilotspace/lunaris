@@ -1,0 +1,181 @@
+# Phase 14-01 (CI-01) — Integration workflow: live pg-lunaris service.
+#
+# Provisions a live Postgres service container built in-workflow from
+# `scripts/pg-lunaris/Dockerfile` (pgvector + Apache AGE + pgmq) via
+# `docker/build-push-action@v5` with GHA layer cache, then runs
+# `cargo test -p lunaris-conformance --features pg-it` against it on
+# every PR and push to main.
+#
+# ## Phase-14 ownership map (DO NOT fold into eval-gauntlet.yml)
+#
+# This file is strictly owned by Phase 14:
+#   - 14-01 (this plan): pg-lunaris service, pg-it default-on,
+#     timing-summary step. REQ CI-01.
+#   - 14-02 (next wave): adds a Moon service (build-from-source primary,
+#     pinned release artifact fallback) and an integration-moon job
+#     sibling; flips moon-it default-on; wires AS_OF parity gate.
+#     REQ CI-02. Injection anchor: # <14-02-anchor>.
+#   - 14-03 (wave 3): adds a vanilla-pg-negative-matrix job leg that
+#     runs the 4 EVAL-05 regression tests against postgres:16 and
+#     asserts specific expected-error substrings. REQ CI-03.
+#     Injection anchor: # <14-03-anchor>.
+#   - 14-04 (wave 4): documents + tunes for the 8-min p50 budget.
+#     Uses the timing.json artifact emitted below. REQ CI-04 + CI-05.
+#
+# ## Security posture (mirrors eval-gauntlet.yml)
+#
+# - No `run:` step interpolates untrusted `github.event.*` payloads.
+#   All ${{ ... }} expansions are limited to runner-provided,
+#   GitHub-controlled values (github.run_id) and are only used in
+#   artifact names, not shell strings.
+# - Service boots in a local docker daemon on the runner — no egress
+#   to a managed cluster.
+# - actions/checkout@v4 with submodules: recursive pulls the .planning
+#   submodule required by fixture paths.
+#
+# ## CI-01 acceptance hooks
+#
+# - docker/build-push-action@v5 with cache-from/cache-to type=gha
+#   keyed on scope=pg-lunaris (CI-01 "cached via docker/build-push-action
+#   GHA cache").
+# - The pg-lunaris image is built once per PR run, loaded to the local
+#   daemon via load: true, and started manually with docker run -d
+#   (GHA services: blocks can't consume a build: step cleanly —
+#   see Plan 14-01 D-02 in the plan body).
+# - timing-summary step records wall-clock seconds to the job summary
+#   AND uploads a timing.json artifact so Plan 14-04 can harvest p50
+#   across 5 consecutive main-branch runs without a custom action.
+
+name: Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  integration-pg:
+    name: integration-pg (pg-lunaris + pg-it)
+    runs-on: ubuntu-latest
+    # CI-04 target p50 is 8 min; 20 min is the safety margin for first-run
+    # cache-miss (AGE + pgmq source compile ~90s on cold Docker layer cache).
+    timeout-minutes: 20
+
+    env:
+      # Two-tier skip discipline: when PG_URL is set, conformance tests
+      # attempt the live connection; absent, they short-circuit to Ok(()).
+      # In this workflow the service is always up by the time cargo test
+      # runs (wait-for-port gate below), so PG_URL is always present.
+      PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
+
+    steps:
+      - name: Checkout (with submodules for .planning)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build pg-lunaris image (GHA layer cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: scripts/pg-lunaris
+          tags: pg-lunaris:ci
+          load: true
+          # type=gha scoped on the Dockerfile directory — cache invalidates
+          # automatically when Dockerfile or init-extensions.sql changes
+          # (both live under scripts/pg-lunaris and feed the build context).
+          cache-from: type=gha,scope=pg-lunaris
+          cache-to: type=gha,mode=max,scope=pg-lunaris
+
+      - name: Start pg-lunaris container
+        # Manual docker run (not services:) per Plan 14-01 D-02 — GHA
+        # services: blocks cannot consume a local build-push-action
+        # output cleanly. Manual run gives full control over env/ports
+        # and lets the wait-for-port gate be job-local.
+        run: |
+          docker run -d --name pg-lunaris \
+            -p 5432:5432 \
+            -e POSTGRES_PASSWORD=lunaris \
+            -e POSTGRES_DB=lunaris \
+            -e POSTGRES_USER=lunaris \
+            pg-lunaris:ci
+
+      - name: Wait for Postgres (60s max)
+        # Same pattern as eval-gauntlet.yml — TCP probe with 30 attempts
+        # at 2s intervals. Bash /dev/tcp is sufficient; no netcat dep.
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; then
+              echo "pg-lunaris reachable after $i attempts"
+              exit 0
+            fi
+            echo "waiting for pg-lunaris (5432) ($i/30)..."
+            sleep 2
+          done
+          echo "ERROR: pg-lunaris not reachable after 60s"
+          docker logs pg-lunaris || true
+          exit 1
+
+      - name: Install Rust 1.94 toolchain
+        # Matches workspace rust-toolchain.toml + CLAUDE.md MSRV pin.
+        uses: dtolnay/rust-toolchain@1.94
+
+      - name: Cache cargo registry + target dir
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run conformance tests with pg-it feature
+        # CI-02 language verbatim: "pg-it ... enabled by default on PR runs".
+        # Scope is strictly -p lunaris-conformance (NOT --workspace) per
+        # Plan 14-01 Action block — keep the 8-min budget tight.
+        run: |
+          cargo test -p lunaris-conformance --features pg-it --no-fail-fast
+
+      - name: Timing summary (CI-04 evidence)
+        # Runs unconditionally so budget data is captured even on test
+        # failure. SECONDS is the bash shell-init wall-clock counter;
+        # per-step SECONDS resets on each new shell, so this captures
+        # step-wall-clock. Plan 14-04 will aggregate across runs via
+        # the uploaded artifact and (separately) the GHA API job-level
+        # wall-clock for the authoritative p50.
+        if: always()
+        env:
+          RUN_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          WALL_CLOCK="${SECONDS}"
+          {
+            echo "## integration-pg timing"
+            echo ""
+            echo "- wall_clock_seconds: ${WALL_CLOCK}"
+            echo "- sha: ${RUN_SHA}"
+            echo "- run_id: ${RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '{"job":"integration-pg","wall_clock_seconds":%d,"sha":"%s","run_id":"%s"}\n' \
+            "${WALL_CLOCK}" "${RUN_SHA}" "${RUN_ID}" > timing.json
+          cat timing.json
+
+      - name: Upload timing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-pg-timing-${{ github.run_id }}
+          path: timing.json
+
+      - name: Dump pg-lunaris logs on failure
+        if: failure()
+        run: docker logs pg-lunaris || true
+
+      - name: Tear down pg-lunaris
+        if: always()
+        run: docker rm -f pg-lunaris || true
+
+# <14-02-anchor>
+# Plan 14-02 injects `integration-moon` job here (Moon build-from-source
+# service + moon-it default-on + AS_OF parity gate).
+
+# <14-03-anchor>
+# Plan 14-03 injects `vanilla-pg-negative-matrix` job here (runs the 4
+# EVAL-05 regression tests against `postgres:16` and asserts specific
+# expected-error substrings).
