@@ -2,3 +2,6 @@
 	path = .planning
 	url = git@github.com:pilotspace/lunaris-docs.git
 	branch = main
+[submodule "vendor/moon"]
+	path = vendor/moon
+	url = git@github.com:pilotspace/moon.git
