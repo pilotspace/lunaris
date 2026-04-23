@@ -1,6 +1,6 @@
 [package]
 name    = "lunaris-codegen"
-version = "0.1.0"
+version = "0.1.1"
 description = "Single-source codegen pipeline for PyO3 + napi-rs Lunaris bindings (Phase 8 Plan 08-01 / BIND-GEN-01..03)."
 edition.workspace      = true
 rust-version.workspace = true
