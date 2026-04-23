@@ -299,6 +299,46 @@ jobs:
           name: integration-timing-${{ github.run_id }}
           path: timing.json
 
+      - name: Budget gate (soft-fail)
+        # Plan 14-04 Task 2 (CI-04). Reads wall_clock_seconds from the
+        # timing.json the previous step wrote and classifies against the
+        # 480s (8-min) target per ROADMAP Phase 14 success criterion 3.
+        # SOFT-FAIL per R14-03 mitigation: blown budget triggers the
+        # docs/ci/postgres-integration.md §4 runbook, not a red PR.
+        # The step always exits 0 — classification lives in the job
+        # summary + a single structured JSON line on stdout for future
+        # log aggregation.
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ ! -f timing.json ]; then
+            echo '{"budget_gate":"UNKNOWN","wall_clock_seconds":0,"target_seconds":480,"reason":"timing.json missing"}'
+            echo "## Budget gate: UNKNOWN (timing.json missing)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          WALL=$(jq -r '.wall_clock_seconds // 0' timing.json)
+          if [ "$WALL" -le 480 ]; then
+            STATUS="PASS"
+          elif [ "$WALL" -le 600 ]; then
+            STATUS="WARN"
+          else
+            STATUS="BREACH"
+          fi
+          printf '{"budget_gate":"%s","wall_clock_seconds":%s,"target_seconds":480}\n' "$STATUS" "$WALL"
+          {
+            echo "## Budget gate: ${STATUS}"
+            echo ""
+            echo "- wall_clock_seconds: ${WALL}"
+            echo "- target_seconds: 480 (8 min, CI-04)"
+            echo "- classification: PASS ≤ 480, WARN 481–600, BREACH > 600"
+            echo "- soft-fail: this gate never blocks the PR (R14-03)"
+            if [ "$STATUS" != "PASS" ]; then
+              echo ""
+              echo "See docs/ci/postgres-integration.md §4 for the breach runbook."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
       - name: Dump pg-lunaris logs on failure
         if: failure()
         run: docker logs pg-lunaris || true
