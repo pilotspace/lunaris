@@ -39,6 +39,12 @@ reqwest                  = { workspace = true, features = ["stream"] }
 # `env!("CARGO_BIN_EXE_chaos")`) AND `build_chaos_corpus` (corpus helper).
 lunaris-bench  = { path = "../lunaris-bench" }
 proptest       = { workspace = true }
+# Plan 14-03 — the 4 EVAL-05 regression tests (`tests/regression/*.rs`) issue
+# raw sqlx queries against the pg-lunaris pool (EXPLAIN shape, migration table
+# row count, session-leak probe). sqlx is a transitive dep via
+# `lunaris-storage-postgres`; re-declaring it as a dev-dep lets the test files
+# `use sqlx;` directly without a re-export shim.
+sqlx           = { workspace = true }
 
 # Plan 04-03 — `nix` is gated to Unix targets so Windows builds skip the
 # crash_recovery test cleanly. CLAUDE.md `#![forbid(unsafe_code)]` is
