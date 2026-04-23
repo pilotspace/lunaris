@@ -153,26 +153,44 @@ pub async fn fuse_via_moon_native(
     let raw_scores: Vec<f32> = hits.iter().map(|h| h.score as f32).collect();
     let normalized = min_max_normalize(&raw_scores);
 
+    // Moon returns `<index>:<hex32>` keys per atomic.rs::VectorUpsert. Strip
+    // the prefix and hex-decode to 16-byte ULID so `hydrate::chunk_lookup_key`
+    // can recover the canonical `lunaris:chunk:<ulid>` lookup key. Same fix
+    // as the vector/keyword paths in `lunaris-storage-moon` — hybrid was the
+    // third silent-dropper (live-measurement gap, 2026-04-23).
     Ok(hits
         .into_iter()
         .zip(normalized)
-        .map(|(h, score)| {
-            let id = h.key.into_bytes();
+        .filter_map(|(h, score)| {
+            let raw_key = h.key.into_bytes();
+            let id = decode_moon_vector_key(&raw_key, &hint.index)?;
             let metadata = h
                 .fields
                 .get("__metadata")
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
                 .unwrap_or(serde_json::Value::Null);
-            RawHit {
+            Some(RawHit {
                 id,
                 score,
                 rerank_applied: false,
                 degraded: false,
                 metadata,
                 source_op: SourceOp::Fused,
-            }
+            })
         })
         .collect())
+}
+
+/// Strip `<index>:` prefix and hex-decode the rest to 16-byte ULID. Mirrors
+/// `lunaris_storage_moon::vector::decode_key` — duplicated here because that
+/// symbol is `pub(crate)` and this crate can't depend on lunaris-storage-moon
+/// (would invert the dependency graph).
+fn decode_moon_vector_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
+    let prefix_len = index.len() + 1;
+    if key.len() < prefix_len || !key.starts_with(index.as_bytes()) || key[index.len()] != b':' {
+        return None;
+    }
+    hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
 }
 
 #[cfg(test)]

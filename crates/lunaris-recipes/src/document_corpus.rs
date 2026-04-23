@@ -64,6 +64,12 @@ const DEFAULT_TOP_K: usize = 10;
 /// branch before RRF fusion so ties break naturally at fuse time.
 const FANOUT: usize = 3;
 
+/// Extra over-fetch multiplier for post-hydrate source-prefix filtering.
+/// The source filter no longer pushes down into the storage layer (Moon
+/// schema gap, 2026-04-23 live-measurement fix), so we fetch a wider
+/// candidate set before pruning to the corpus's scope.
+const POST_FILTER_OVERFETCH: usize = 4;
+
 /// Hybrid-RAG primitive. Wraps [`Arc<Lunaris>`] + a source prefix and
 /// exposes a fluent builder that terminates in [`search`](Self::search).
 ///
@@ -146,28 +152,37 @@ impl DocumentCorpus {
     /// branch lives inside `RetrievalBuilder::execute`; this primitive is
     /// pure plan composition.
     pub async fn search(self, query: &str) -> Result<Vec<Hit>, LunarisError> {
-        let scope = Filter::StartsWith {
-            field: "source".into(),
-            prefix: self.source_prefix.clone(),
-        };
+        // Source-prefix scoping runs post-hydrate (not via StoragePort filter)
+        // because `source` is not a field on the Moon `chunks` FT schema and
+        // Moon's TAG index is exact-match only (verified 2026-04-23 against
+        // `moon/src/text/store.rs::search_tag`). `Hit.source` is populated by
+        // `lunaris_retrieve::hydrate`, so post-filter gives us identical
+        // correctness on both Moon and Postgres with a modest over-fetch.
+        let over_fetch = self.top_k * FANOUT * POST_FILTER_OVERFETCH;
         let combined = if self.filters.is_empty() {
-            scope
+            None
         } else {
-            let mut all = Vec::with_capacity(self.filters.len() + 1);
-            all.push(scope);
-            all.extend(self.filters.iter().cloned());
-            Filter::And(all)
+            Some(if self.filters.len() == 1 {
+                self.filters[0].clone()
+            } else {
+                Filter::And(self.filters.clone())
+            })
         };
-        let plan = Vector::new("chunks", self.top_k * FANOUT)
-            .and(Keyword::bm25("chunks", self.top_k * FANOUT))
+        let plan = Vector::new("chunks", over_fetch)
+            .and(Keyword::bm25("chunks", over_fetch))
             .fuse_rrf(DEFAULT_RRF_K)
-            .top(self.top_k);
-        self.lunaris
-            .recall()
-            .with_root(plan)
-            .filter(combined)
-            .execute(Query::text(query))
-            .await
+            .top(over_fetch);
+        let mut builder = self.lunaris.recall().with_root(plan);
+        if let Some(f) = combined {
+            builder = builder.filter(f);
+        }
+        let hits = builder.execute(Query::text(query)).await?;
+        let prefix = self.source_prefix;
+        Ok(hits
+            .into_iter()
+            .filter(|h| h.source.starts_with(&prefix))
+            .take(self.top_k)
+            .collect())
     }
 }
 

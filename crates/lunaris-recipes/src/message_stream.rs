@@ -39,7 +39,7 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::storage::types::Lsn;
 use lunaris_core::{BiTemporal, Episode, Hlc, LunarisError};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
@@ -134,21 +134,26 @@ impl MessageStream {
     /// blends the ACT-R base-level activation score (Anderson 1996,
     /// `d = 0.5`) with the fused RRF score to rerank hits by age.
     pub async fn recall(&self, query: &str) -> Result<Vec<Hit>, LunarisError> {
-        let filter = Filter::StartsWith {
-            field: "source".into(),
-            prefix: self.thread_prefix.clone(),
-        };
-        let plan = Vector::new("chunks", self.top_k * 3)
-            .and(Keyword::bm25("chunks", self.top_k * 3))
+        // Source-prefix scoping runs post-hydrate (not via StoragePort filter).
+        // The Moon `chunks` FT schema does not carry `source`, and Moon's TAG
+        // index is exact-match only (store.rs::search_tag, verified
+        // 2026-04-23) so a prefix push-down is infeasible on that backend.
+        // `Hit.source` is populated by `lunaris_retrieve::hydrate` — we
+        // over-fetch and prune here for parity with Postgres.
+        let over_fetch = self.top_k * 12;
+        let plan = Vector::new("chunks", over_fetch)
+            .and(Keyword::bm25("chunks", over_fetch))
             .fuse_rrf(60)
-            .top(self.top_k);
+            .top(over_fetch);
         let hits: Vec<Hit> = self
             .lunaris
             .recall()
             .with_root(plan)
-            .filter(filter)
             .execute(Query::text(query))
             .await?;
+        let prefix = self.thread_prefix.clone();
+        let hits: Vec<Hit> =
+            hits.into_iter().filter(|h| h.source.starts_with(&prefix)).collect();
         let now = self.lunaris.clock().tick();
         let mut rescored: Vec<(f32, Hit)> = hits
             .into_iter()
@@ -162,7 +167,7 @@ impl MessageStream {
             })
             .collect();
         rescored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(rescored.into_iter().map(|(_, h)| h).collect())
+        Ok(rescored.into_iter().take(self.top_k).map(|(_, h)| h).collect())
     }
 }
 
