@@ -67,3 +67,14 @@ chaos-it = []
 # needed for revision 2 (no byte-exact assertion) so we intentionally omit
 # `dep:base64` here.
 bindings-it = []
+# Plan 14-01 (CI-01): substrate-hardening gate. Empty features (no deps
+# chained) — semantic markers for "this test needs a live Moon / PG".
+# The actual connection is via env vars (`MOON_URL`, `PG_URL`) per the
+# existing two-tier skip discipline (Plan 02-04). Declared here in 14-01
+# so Plan 14-03's regression tests can cfg-gate cleanly and so
+# `--features pg-it` / `--features moon-it` on the cargo test invocation
+# is semantically meaningful. Matches REQUIREMENTS.md CI-02 language:
+# "moon-it and pg-it integration features ... are enabled by default
+# on PR runs".
+moon-it = []
+pg-it = []
