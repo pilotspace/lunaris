@@ -1,5 +1,5 @@
 //! `read_as_of` — bi-temporal predicate on `lunaris_kv`.
-//! `scan_range`  — prefix `LIKE` on `lunaris_kv.key` + bi-temporal predicate.
+//! `scan_range`  — byte-range prefix scan on `lunaris_kv.key` + bi-temporal predicate.
 //!
 //! The bi-temporal predicate emulates Moon's `TEMPORAL.SNAPSHOT_AT` purely in SQL:
 //!
@@ -55,38 +55,79 @@ pub(crate) async fn read_as_of(
     }))
 }
 
+/// Exclusive upper bound for a byte-wise prefix scan.
+///
+/// Returns `Some(successor)` where `successor` is the smallest byte string
+/// strictly greater than every string starting with `prefix`. Returns `None`
+/// if `prefix` is empty or consists entirely of `0xFF` bytes — in that case
+/// the scan is open-ended above and the caller should omit the upper bound.
+fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut out = prefix.to_vec();
+    for i in (0..out.len()).rev() {
+        if out[i] < 0xFF {
+            out[i] += 1;
+            out.truncate(i + 1);
+            return Some(out);
+        }
+    }
+    None
+}
+
 pub(crate) async fn scan_range<'a>(
     c: &'a PgClient,
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-    // Escape LIKE-significant wildcards in the user-supplied prefix.
-    let prefix_pat = {
-        let lossy = String::from_utf8_lossy(prefix);
-        let escaped = lossy.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-        format!("{escaped}%")
-    };
+    // `key` is BYTEA — `LIKE` is undefined on bytea (`bytea ~~ text` has no
+    // operator). Use a byte-wise range scan on the primary-key B-tree
+    // instead: `key >= prefix AND key < successor(prefix)`.
+    let lower = prefix.to_vec();
+    let upper = prefix_upper_bound(prefix);
 
-    let rows = match as_of {
-        Some(t) => {
+    let rows = match (as_of, upper) {
+        (Some(t), Some(u)) => {
             let ts = hlc_to_ts(t);
             sqlx::query(
                 "SELECT key, value FROM lunaris_kv \
-                 WHERE key LIKE $1 \
-                   AND valid_from <= $2 AND (valid_to IS NULL OR $2 < valid_to) \
-                   AND sys_from   <= $2 AND (sys_to   IS NULL OR $2 < sys_to)",
+                 WHERE key >= $1 AND key < $2 \
+                   AND valid_from <= $3 AND (valid_to IS NULL OR $3 < valid_to) \
+                   AND sys_from   <= $3 AND (sys_to   IS NULL OR $3 < sys_to)",
             )
-            .bind(prefix_pat)
+            .bind(lower)
+            .bind(u)
             .bind(ts)
             .fetch_all(&c.pool)
             .await
             .map_err(sqlx_err)?
         }
-        None => sqlx::query(
+        (Some(t), None) => {
+            let ts = hlc_to_ts(t);
+            sqlx::query(
+                "SELECT key, value FROM lunaris_kv \
+                 WHERE key >= $1 \
+                   AND valid_from <= $2 AND (valid_to IS NULL OR $2 < valid_to) \
+                   AND sys_from   <= $2 AND (sys_to   IS NULL OR $2 < sys_to)",
+            )
+            .bind(lower)
+            .bind(ts)
+            .fetch_all(&c.pool)
+            .await
+            .map_err(sqlx_err)?
+        }
+        (None, Some(u)) => sqlx::query(
             "SELECT key, value FROM lunaris_kv \
-                 WHERE key LIKE $1 AND valid_to IS NULL",
+             WHERE key >= $1 AND key < $2 AND valid_to IS NULL",
         )
-        .bind(prefix_pat)
+        .bind(lower)
+        .bind(u)
+        .fetch_all(&c.pool)
+        .await
+        .map_err(sqlx_err)?,
+        (None, None) => sqlx::query(
+            "SELECT key, value FROM lunaris_kv \
+             WHERE key >= $1 AND valid_to IS NULL",
+        )
+        .bind(lower)
         .fetch_all(&c.pool)
         .await
         .map_err(sqlx_err)?,
