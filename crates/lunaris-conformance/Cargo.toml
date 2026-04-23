@@ -45,6 +45,14 @@ proptest       = { workspace = true }
 # `lunaris-storage-postgres`; re-declaring it as a dev-dep lets the test files
 # `use sqlx;` directly without a re-export shim.
 sqlx           = { workspace = true }
+# Plan 14-03 — regression test #3 (candle `embed_tokens` tensor-path fallback
+# for SentenceTransformer layout) drives `CandleEmbeddingGemma::new` directly
+# against the cached EmbeddingGemma 300M weights. Dev-only dep; feature-gated
+# to candle so the `ollama`-only build matrix does not force a candle compile.
+lunaris-embed  = { path = "../lunaris-embed", default-features = false, features = ["candle"] }
+# Plan 14-03 — `dirs::cache_dir()` resolves the default EmbeddingGemma weights
+# path the same way `CandleEmbeddingGemmaOpts::default` does. Dev-only.
+dirs           = { workspace = true }
 
 # Plan 04-03 — `nix` is gated to Unix targets so Windows builds skip the
 # crash_recovery test cleanly. CLAUDE.md `#![forbid(unsafe_code)]` is
