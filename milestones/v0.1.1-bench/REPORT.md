@@ -100,7 +100,49 @@ Evidence: [`squad-10kx1k.log`](./squad-10kx1k.log)
 | Recall | recall@1 / @3 / @5 / @10 | **75% / 90% / 90% / 90%** |
 | Recall | latency p50 / p95 | 74 / 83 ms |
 
-A full 10 k × 1 k chat run is in progress; the results file lives at [`chat-10kx1k.log`](./chat-10kx1k.log). Update this section once it completes.
+### 2.4 `bench-dialog-chat.py` — 10,000 turns × 1,000 queries
+
+| phase | metric | value |
+|---|---|---:|
+| Ingest | throughput | **15.68 turns/s** |
+| Ingest | total wall | 637.8 s |
+| Ingest | p50 / p95 / p99 / max | 63 / 69 / 79 / 217 ms |
+| Recall | total wall | 96.1 s (10.4 q/s) |
+| Recall | recall@1 / @3 / @5 / @10 | **73.4% / 83.0% / 85.2% / 86.3%** |
+| Recall | MRR | **0.785** |
+| Recall | p50 / p95 / p99 | 89 / 94 / 98 ms |
+| Recall | max | 7535 ms (single tail — same pattern as the doc bench) |
+| Moon   | dbsize / chunks_num_docs | 30 000 / 21 438 |
+
+Note the `chunks_num_docs` is ~2× the turn count — the chunker splits some multi-clause turns into several chunks even when the input is short, because the Phase 2 chunker uses a fixed sentence/window policy rather than a per-input length check. This inflates the HNSW but has no effect on recall semantics.
+
+Evidence: [`chat-10kx1k.log`](./chat-10kx1k.log)
+
+#### Resource usage during the chat 10k × 1k run (731 samples at 1 Hz)
+
+| process | CPU mean | CPU p95 | CPU max | RSS mean | RSS peak |
+|---|---:|---:|---:|---:|---:|
+| **ollama** | **91.8 %** | 98.6 % | 100.3 % | 232 MB | 254 MB |
+| **moon** | 4.0 % | 13.3 % | 100.0 % | 152 MB | 337 MB |
+| bench python | 2.3 % | 8.4 % | 9.1 % | 82 MB | 180 MB |
+| system (all cores) | 27.7 % | 39.2 % | 50.8 % | 82.6 % mem | 84.5 % peak |
+
+### 2.5 Doc vs. Chat side-by-side (both 10 k × 1 k, same hardware)
+
+| metric | docs (SQuAD ctx) | chat (SQuAD questions as turns) |
+|---|---:|---:|
+| ingest throughput | 14.96 docs/s | **15.68 turns/s** |
+| ingest p50 | 66 ms | 63 ms |
+| recall latency p50 | 86 ms | 89 ms |
+| recall latency p95 | 93 ms | 94 ms |
+| recall@1 | **75.3 %** | 73.4 % |
+| recall@3 | **86.0 %** | 83.0 % |
+| recall@10 | **91.1 %** | 86.3 % |
+| MRR | **0.812** | 0.785 |
+| moon chunks_num_docs | 11 278 | 21 438 |
+| ollama cpu mean | 88 % | 92 % |
+
+Chat quality trails the doc bench by ~3 points recall@1 and ~5 points recall@10 — expected for shorter input strings (less embedding signal per item) combined with a 2× larger chunk population from the chunker split.
 
 ---
 

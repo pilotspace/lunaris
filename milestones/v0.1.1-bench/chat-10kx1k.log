@@ -1,0 +1,158 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+# Backend      : moon://127.0.0.1:6380
+# Embedder     : Ollama embeddinggemma:300m (768d Google EmbeddingGemma)
+# Corpus       : daily_dialog train (conversational turns)
+# Plan         : ingest 10000 turns, 1000 recall queries (first 80 chars of random turns), top-10
+# Loaded       : 10000 turns
+  [ingest 500/10000] elapsed 31.4s rate 15.9/s recent-p50 62ms
+  [ingest 1000/10000] elapsed 63.2s rate 15.8/s recent-p50 63ms
+  [ingest 1500/10000] elapsed 95.0s rate 15.8/s recent-p50 63ms
+  [ingest 2000/10000] elapsed 126.7s rate 15.8/s recent-p50 63ms
+  [ingest 2500/10000] elapsed 158.0s rate 15.8/s recent-p50 63ms
+  [ingest 3000/10000] elapsed 189.5s rate 15.8/s recent-p50 63ms
+  [ingest 3500/10000] elapsed 221.0s rate 15.8/s recent-p50 63ms
+  [ingest 4000/10000] elapsed 252.7s rate 15.8/s recent-p50 63ms
+  [ingest 4500/10000] elapsed 284.5s rate 15.8/s recent-p50 63ms
+  [ingest 5000/10000] elapsed 317.1s rate 15.8/s recent-p50 64ms
+  [ingest 5500/10000] elapsed 349.7s rate 15.7/s recent-p50 64ms
+  [ingest 6000/10000] elapsed 381.8s rate 15.7/s recent-p50 63ms
+  [ingest 6500/10000] elapsed 413.5s rate 15.7/s recent-p50 63ms
+  [ingest 7000/10000] elapsed 445.3s rate 15.7/s recent-p50 63ms
+  [ingest 7500/10000] elapsed 477.1s rate 15.7/s recent-p50 63ms
+  [ingest 8000/10000] elapsed 509.0s rate 15.7/s recent-p50 63ms
+  [ingest 8500/10000] elapsed 540.9s rate 15.7/s recent-p50 63ms
+  [ingest 9000/10000] elapsed 573.5s rate 15.7/s recent-p50 64ms
+  [ingest 9500/10000] elapsed 605.9s rate 15.7/s recent-p50 63ms
+  [ingest 10000/10000] elapsed 637.8s rate 15.7/s recent-p50 63ms
+  [recall 500/1000] elapsed 52.2s rate 9.6/s
+  [recall 1000/1000] elapsed 96.1s rate 10.4/s
+
+════════════ MOON FOOTPRINT ════════════
+  dbsize                : 30000
+  chunks_num_docs       : 21438
+  entities_num_docs     : 0
+  facts_num_docs        : 0
+  communities_num_docs  : 0
+
+════════════ INGEST ════════════
+  turns             : 10000
+  total wall        : 637.85 s
+  throughput        : 15.7 turns/s
+  per-turn p50      : 63.0 ms
+  per-turn p95      : 69.4 ms
+  per-turn p99      : 79.4 ms
+  per-turn max      : 217.4 ms
+
+════════════ RECALL ════════════
+  queries           : 1000
+  total wall        : 96.12 s
+  recall@1          : 73.4%
+  recall@3          : 83.0%
+  recall@5          : 85.2%
+  recall@10         : 86.3%
+  MRR               : 0.785
+  latency p50       : 88.6 ms
+  latency p95       : 94.3 ms
+  latency p99       : 97.8 ms
+  latency max       : 7535.0 ms
+  latency mean      : 96.1 ms
+
+════════════ RESOURCE USAGE ════════════
+{
+  "samples": 731,
+  "moon": {
+    "cpu_pct_mean": 4.0,
+    "cpu_pct_p95": 13.3,
+    "cpu_pct_max": 100.0,
+    "rss_mb_mean": 152.4,
+    "rss_mb_peak": 337.3
+  },
+  "ollama": {
+    "cpu_pct_mean": 91.8,
+    "cpu_pct_p95": 98.6,
+    "cpu_pct_max": 100.3,
+    "rss_mb_mean": 231.7,
+    "rss_mb_peak": 254.0
+  },
+  "bench-dialog-chat": {
+    "cpu_pct_mean": 2.3,
+    "cpu_pct_p95": 8.4,
+    "cpu_pct_max": 9.1,
+    "rss_mb_mean": 82.5,
+    "rss_mb_peak": 180.5
+  },
+  "system": {
+    "cpu_pct_mean": 27.7,
+    "cpu_pct_p95": 39.2,
+    "cpu_pct_max": 50.8,
+    "mem_pct_mean": 82.6,
+    "mem_pct_peak": 84.5
+  }
+}
+
+════════════ JSON ════════════
+{
+  "backend": "moon://127.0.0.1:6380",
+  "corpus": "daily_dialog train",
+  "turns": 10000,
+  "queries": 1000,
+  "ingest": {
+    "total_s": 637.847,
+    "turns_per_s": 15.68,
+    "p50_ms": 63.03,
+    "p95_ms": 69.37,
+    "p99_ms": 79.44,
+    "max_ms": 217.36
+  },
+  "recall": {
+    "total_s": 96.125,
+    "recall_at_1": 0.734,
+    "recall_at_3": 0.83,
+    "recall_at_5": 0.852,
+    "recall_at_10": 0.863,
+    "mrr": 0.7847,
+    "p50_ms": 88.62,
+    "p95_ms": 94.34,
+    "p99_ms": 97.8,
+    "max_ms": 7534.99,
+    "mean_ms": 96.11
+  },
+  "moon": {
+    "dbsize": 30000,
+    "chunks_num_docs": 21438,
+    "entities_num_docs": 0,
+    "facts_num_docs": 0,
+    "communities_num_docs": 0
+  },
+  "resources": {
+    "samples": 731,
+    "moon": {
+      "cpu_pct_mean": 4.0,
+      "cpu_pct_p95": 13.3,
+      "cpu_pct_max": 100.0,
+      "rss_mb_mean": 152.4,
+      "rss_mb_peak": 337.3
+    },
+    "ollama": {
+      "cpu_pct_mean": 91.8,
+      "cpu_pct_p95": 98.6,
+      "cpu_pct_max": 100.3,
+      "rss_mb_mean": 231.7,
+      "rss_mb_peak": 254.0
+    },
+    "bench-dialog-chat": {
+      "cpu_pct_mean": 2.3,
+      "cpu_pct_p95": 8.4,
+      "cpu_pct_max": 9.1,
+      "rss_mb_mean": 82.5,
+      "rss_mb_peak": 180.5
+    },
+    "system": {
+      "cpu_pct_mean": 27.7,
+      "cpu_pct_p95": 39.2,
+      "cpu_pct_max": 50.8,
+      "mem_pct_mean": 82.6,
+      "mem_pct_peak": 84.5
+    }
+  }
+}
