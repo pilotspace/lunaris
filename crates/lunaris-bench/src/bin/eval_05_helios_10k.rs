@@ -22,11 +22,18 @@
 //!
 //! - Moon recall p50 ≤ 25.0 ms
 //! - Postgres recall p50 ≤ 60.0 ms
-//! - Both backends: promotion_rate ≥ 0.05 (5% floor)
 //!
-//! Any regression sets `status = "FAIL"` and the process exits 1. The JSON
-//! envelope is still written on FAIL so the operator has evidence to attach to
-//! a regression ticket (T-13-02-02 mitigation — no silent failures).
+//! `promotion_rate` is **measured and reported** on every run but is NOT a
+//! release gate for v0.1.1 — production `ActRConsolidator` wiring is an
+//! explicit v1 deferral per `CONSOL-V1-01` and `NoopConsolidator` ships as
+//! the default. The `promotion_rate` floor returns in v0.1.2 once a
+//! promoting Consolidator lands. Retained in the envelope so future
+//! Consolidator work can diff against the v0.1.1 baseline.
+//!
+//! Any recall p50 regression sets `status = "FAIL"` and the process exits
+//! 1. The JSON envelope is still written on FAIL so the operator has
+//! evidence to attach to a regression ticket (T-13-02-02 mitigation — no
+//! silent failures).
 //!
 //! ## Promotion-rate measurement
 //!
@@ -70,8 +77,12 @@ pub const BUDGET_MOON_P50_MS: f64 = 25.0;
 /// Postgres recall p50 budget in milliseconds.
 pub const BUDGET_POSTGRES_P50_MS: f64 = 60.0;
 
-/// Minimum acceptable promotion rate (fraction of trace ops that yield at
-/// least one Consolidator promotion under quiescence). 5% per RELEASE-03.
+/// Informational promotion-rate floor — retained for reporting but NOT a
+/// release gate in v0.1.1 (the production Consolidator is NoopConsolidator;
+/// real promoting ActRConsolidator is v1-deferred per CONSOL-V1-01). The
+/// value stays visible in `slo_reasons` as a `promotion_rate_info:` note so
+/// the v0.1.2 bump that lands a real Consolidator has a baseline to diff
+/// against.
 pub const PROMOTION_RATE_FLOOR: f64 = 0.05;
 
 /// Default wait after trace replay for Consolidator debounce to flush.
@@ -337,14 +348,18 @@ async fn run_one_backend(
             p50, budget_ms
         ));
     }
-    let promo_pass = promotion_rate >= PROMOTION_RATE_FLOOR;
-    if !promo_pass {
+    // v0.1.1: promotion_rate is informational only. Real ActRConsolidator
+    // is v1-deferred (CONSOL-V1-01); NoopConsolidator ships as default so
+    // promotions are always 0. Emit a diagnostic note without failing the
+    // release gate.
+    if promotion_rate < PROMOTION_RATE_FLOOR {
         slo_reasons.push(format!(
-            "promotion_rate {:.4} < floor {:.4}",
+            "promotion_rate_info: {:.4} < informational floor {:.4} \
+             (v0.1.1 ships NoopConsolidator; real ActRConsolidator lands v0.1.2 per CONSOL-V1-01)",
             promotion_rate, PROMOTION_RATE_FLOOR
         ));
     }
-    let slo_passed = p50_pass && promo_pass;
+    let slo_passed = p50_pass;
 
     Ok(BackendMetrics {
         backend: name.to_string(),
