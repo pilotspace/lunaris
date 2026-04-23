@@ -1,13 +1,32 @@
 # Lunaris v0.1.1 — Live-Moon Benchmark Report
 
 **Date:** 2026-04-23
-**Commit baseline:** `ae7b60e` (post live-Moon integration fixes — id decode, RRF score extraction, post-hydrate source scoping)
+**Commit baseline:** `6561f1a` (post live-Moon integration fixes + isolated-embedder replay harness)
 **Environment:**
 - Platform: darwin-arm64 (Apple silicon)
 - Moon: single shard, release build on `127.0.0.1:6380`, in-memory (no AOF replay)
 - Embedder: Ollama `embeddinggemma:300m` (Google EmbeddingGemma 300M, 768-d)
 - Lunaris Python SDK via `maturin develop --release` + the feature set `lunaris = { default-features = false, features = ["ollama"] }`
 - Rerank: **disabled** (BgeRerankerV2M3 requires `candle` feature + 1.1 GB weights; this report establishes the no-rerank baseline)
+
+---
+
+## TL;DR
+
+Lunaris v0.1.1 meets the blueprint **sub-25 ms recall** target with room to spare. On a 10,000-document SQuAD corpus with 1,000 queries, measured against a live Moon:
+
+| | direct (Ollama in-loop) | **Lunaris isolated** (cached embeds) |
+|---|---:|---:|
+| **Recall p50** | 86 ms | **10.3 ms** |
+| **Recall p95** | 93 ms | **12.3 ms** |
+| **Recall p99** | 104 ms | **20.8 ms** |
+| Ingest throughput | 15.0 docs/s | **47.0 docs/s** |
+| recall@1 / @3 / @10 | 75.3 / 86.0 / 91.1 % | 75.1 / 86.0 / 91.0 % (identical) |
+| MRR | 0.812 | 0.811 |
+
+The 86 ms/direct number is almost entirely the Ollama `/api/embed` round-trip. When the embedder is replaced with a cache replay (section 2.6), Lunaris's own retrieve + hydrate path runs at **p50 10.3 ms, p99 20.8 ms** — well inside the blueprint §4.2 target.
+
+Moon handled 11k 768-d vectors + 30k KV rows at 4.4 % CPU and 264 MB RSS on a single shard — plenty of headroom to 100k+.
 
 ---
 
