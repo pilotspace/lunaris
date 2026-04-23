@@ -149,8 +149,23 @@ pub async fn fuse_via_moon_native(
             )))
         })?;
 
-    // Min-max normalize the returned scores so the fused RawHits stay in [0,1].
-    let raw_scores: Vec<f32> = hits.iter().map(|h| h.score as f32).collect();
+    // Moon's HYBRID reply carries the fused score under `__rrf_score` in the
+    // fields map — NOT in the SDK's typed `score` field. The Moon SDK parser
+    // (`moon/sdk/rust/src/util.rs::parse_search_results`) only recognises
+    // `__vec_score` / `vec_score`, so `h.score` is always 0.0 on the hybrid
+    // path. Without this fallback, `min_max_normalize([0, 0, 0])` collapses
+    // to `vec![1.0; n]` and every hit reports score=1.0 (live-measurement
+    // gap, 2026-04-23). Prefer `__rrf_score` when present, fall back to the
+    // typed `score` for non-hybrid code paths.
+    let raw_scores: Vec<f32> = hits
+        .iter()
+        .map(|h| {
+            h.fields
+                .get("__rrf_score")
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(h.score as f32)
+        })
+        .collect();
     let normalized = min_max_normalize(&raw_scores);
 
     // Moon returns `<index>:<hex32>` keys per atomic.rs::VectorUpsert. Strip
