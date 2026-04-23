@@ -1,10 +1,10 @@
 # Lunaris User Guide
 
-Status: alpha (tracks `lunaris = "0.0.1"`). Complements `docs/protocol/memoryprotocol-0.1.md` (HTTP wire spec). If a claim here disagrees with the Rust source, the source wins — every symbol below has a `path:line` cross-reference.
+Status: alpha tracking v0.1.1 (Rust crate `lunaris`, `pip install lunaris`, `npm i lunaris`). Complements `docs/protocol/memoryprotocol-0.1.md` (HTTP wire spec). If a claim here disagrees with the Rust source, the source wins — every symbol below has a `path:line` cross-reference.
 
 ## What is Lunaris?
 
-Lunaris is a Rust-first agent memory engine. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval DSL that fuses vector search, BM25 keyword lookup, and graph traversal, with a cross-encoder rerank pass on top.
+Lunaris is a multi-language agent memory engine — Rust-first, with PyO3 + napi-rs bindings generated from the same source of truth. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval DSL that fuses vector search, BM25 keyword lookup, and graph traversal, with a cross-encoder rerank pass on top.
 
 Two backends ship Day-0: **Moon** (Redis-compatible with `FT.*` native vector + BM25 + RRF) and **Postgres** (via `pgvector` + `AGE` + `pgmq`). Everything you call on `Lunaris` works identically against either — the URL scheme decides.
 
@@ -564,13 +564,34 @@ If your storage also implements `KeywordPort`, use `Lunaris::with_parts_keyword`
 
 ### Problem
 
-You want an opinionated shortcut when you don't want to hand-compose the DSL.
+You want opinionated shortcuts when you don't want to hand-compose the DSL, or you need a stable named surface across Rust + Python + TypeScript.
 
-### When to use it
+### When to use them
 
-You're a Helios tool writer and you want filesystem-like semantics on top of Lunaris. In v0, the only recipe is `HeliosScratchpad` plus its borrowed `AsOfScratchpad` time-travel view (helios-rfc §5.3). The other nine recipes (ChatAgentMemory, DocumentKnowledgeBase, CustomerSupportHistory, ResearchPaperCorpus, CodeRepoMemory, MeetingNotesMemory, SlackArchive, EmailThreading, TimelineReconstruction) ship in v1.
+v0.1.1 ships three layers. Pick the lowest one that meets your need — thinner = more flexible; named = more discoverable and better documented in Py/TS.
 
-### Code
+1. **`lunaris.recall()` / `lunaris.ingest()`** (Sections 2–4) — the DSL. Full flexibility.
+2. **Primitives** in `lunaris_recipes::{MessageStream, DocumentCorpus, TemporalQuery, WorkingMemory}` — composable building blocks. ≤ 30 LOC public surface each.
+3. **Named recipes** — 10 thin vertical wrappers (5 conversational + 5 documentary) each ≤ 30 LOC, each forwarding to at most 2 primitive calls. Plus `HeliosScratchpad` — the v0 Helios-harness tool-surface recipe, now a delegate over `WorkingMemory`.
+
+All three layers sit on the same `StoragePort`; Moon + Postgres work identically at every layer. The public recipe surface is codegen'd to PyO3 + napi-rs from a single annotated-Rust source (`lunaris-codegen` — see Section 1), so every Rust method below has a byte-stable `snake_case` Python counterpart and `camelCase` TypeScript counterpart.
+
+```
+                    Lunaris::recall / ingest / forget
+                                  ▲
+           ┌──────────────────────┼──────────────────────┐
+           │                      │                      │
+   MessageStream            DocumentCorpus        TemporalQuery<S>      WorkingMemory
+   (recency-weighted        (RRF-fused RAG)       (typestate time-      (scratchpad +
+    messages)                                      travel DSL)           consolidate)
+           ▲                      ▲                      ▲                      ▲
+  conversational/*         documentary/*          documentary/*         recipes::HeliosScratchpad
+  (5 wrappers)             (5 wrappers)           (2 of them)
+```
+
+### 9.1 `HeliosScratchpad` — the Helios tool-surface recipe
+
+The v0 Helios harness consumes Lunaris through this one recipe. In v0.1.1 the file was rewritten to hold a `WorkingMemory` internally and delegate every method — the public API is byte-stable versus v0.1.0 (the `helios_scratchpad_public_surface_under_50_loc` test gates every commit).
 
 ```rust
 use std::sync::Arc;
@@ -580,15 +601,14 @@ use lunaris::{HeliosScratchpad, Hlc};
 let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
 let pad     = HeliosScratchpad::new(lunaris.clone(), "session-42");
 
-// write(path, content) — maps to ingest with source = "helios:fs/session-42/<path>".
+// write(path, content) — ingest with source = "helios:fs/session-42/<path>".
 pad.write("README.md", "# Hello\nWorld").await?;
 
 // read(path) — hybrid recall over the session prefix, concatenates chunks.
-let body = pad.read("README.md").await?;   // Option<String>
+let body: Option<String> = pad.read("README.md").await?;
 
 // edit — plain write of the new content. Prior version's bt.sys[1] is stamped
-// by the existing MVCC supersede path; no new mutation code in the recipe
-// (helios_scratchpad.rs:122-133).
+// by the existing MVCC supersede path; old chunks stay visible via as_of.
 pad.edit("README.md", /* old */ "", "# Hello\nUpdated").await?;
 
 // grep(pattern, k) — hybrid recall, k hits.
@@ -597,7 +617,7 @@ let hits = pad.grep("hello", 5).await?;
 // ls(prefix) — walk episode: keys, filter by session prefix, return tails.
 let files = pad.ls(Some("docs/")).await?;
 
-// forget() — Plan 04-05 BySource prefix-match soft delete.
+// forget() — BySource prefix-match soft delete.
 let receipt = pad.forget().await?;
 
 // as_of(ts) — borrowed time-travel view; re-runs read at the pinned HLC.
@@ -605,13 +625,278 @@ let ts = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
 let old_body = pad.as_of(ts).read("README.md").await?;
 ```
 
-The public surface is intentionally tiny — eight methods on `HeliosScratchpad` + one on `AsOfScratchpad`. A unit test at `crates/lunaris/src/recipes/helios_scratchpad.rs:290-303` holds the line at 9 total `pub fn`s.
+Eight methods on `HeliosScratchpad` + one on `AsOfScratchpad`. Source: `crates/lunaris/src/recipes/helios_scratchpad.rs` (≤ 50 LOC cap enforced by test).
+
+**v0.1.1 addition — scoped consolidation.** In v0.1.1 the Consolidator pipeline can be turned on for the `"helios:fs/"` scope alone via `lunaris.consolidator_pipeline().enable_for_scope("helios:fs/")`. "Important notes" in the scratchpad get ACT-R-promoted to `Fact` primitives (helios-rfc §5.3) without enabling Consolidator across all tenants. Prefix match is exact — no regex, no glob. The 50/50 isolation test (`helios:fs/…` vs `other:…`) asserts zero `ConsolidatorPromotion` `AuditEvent`s for non-matching sources.
+
+### 9.2 Primitives
+
+All four live in `lunaris-recipes` (re-exports `WorkingMemory` from `lunaris::primitives::working_memory` to avoid a dep cycle with `HeliosScratchpad`).
+
+#### `MessageStream` — recency-weighted message recall
+
+Recency-weighted message recall with ACT-R base-level activation (Anderson 1996, `d = 0.5`). Source: `crates/lunaris-recipes/src/message_stream.rs`.
+
+```rust
+use lunaris_recipes::MessageStream;
+
+let chat = MessageStream::new(lunaris.clone(), "chat:user_42/").with_top_k(10);
+chat.ingest("hello world", "thread-1", "user_42").await?;
+let hits = chat.recall("hello").await?;
+```
+
+Public surface: `new`, `with_top_k`, `ingest(body, thread_id, participant_id)`, `recall(query)`. Scope prefix filters via `Filter::StartsWith` on `source`.
+
+#### `DocumentCorpus` — RRF-fused Vector + Keyword RAG
+
+RRF-fused Vector + Keyword RAG over a `source_prefix`-scoped document set. Source: `crates/lunaris-recipes/src/document_corpus.rs`.
+
+```rust
+use lunaris_recipes::DocumentCorpus;
+
+let kb = DocumentCorpus::new(lunaris.clone(), "kb:docs/");
+kb.ingest(vec![
+    ("# Spec\nthe quick brown fox".into(), serde_json::Map::new()),
+]).await?;
+
+// Builder pattern — filter + top cap chain, then search.
+let hits = kb
+    .filter("section", serde_json::Value::String("intro".into()))
+    .top(5)
+    .search("brown fox")
+    .await?;
+```
+
+Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `search(query)`. RRF-fuses Vector + Keyword on the `chunks` index; takes the Moon-native one-trip path when the handle is opened against `moon://…`.
+
+#### `TemporalQuery<S>` — typestate time-travel combinator
+
+Typestate-parameterised time-travel combinator. `S` is `Messages | Documents | Facts` — different type states unlock different methods. Source: `crates/lunaris-recipes/src/temporal_query.rs`.
+
+```rust
+use lunaris_core::hlc::Hlc;
+use lunaris_recipes::{Documents, TemporalQuery};
+
+// as_of — point-in-time recall.
+let t0 = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
+let hits = TemporalQuery::<Documents>::new(lunaris.clone())
+    .as_of(t0)
+    .execute("schema v1")
+    .await?;
+
+// between(lo, hi) — closed-open range recall. hi is EXCLUSIVE.
+let lo = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
+let hi = Hlc { wall_ms: 1_700_086_400_000, counter: 0, node_id: 0 };
+let events = TemporalQuery::<Documents>::new(lunaris.clone())
+    .between(lo, hi)
+    .execute("what happened")
+    .await?;
+
+// before / after — open-ended ranges via Filter::ValidTimeRange { after, before }.
+let old = TemporalQuery::<Documents>::new(lunaris.clone())
+    .before(t0)
+    .execute("legacy config")
+    .await?;
+```
+
+Public surface: `new`, `as_of(ts)`, `before(ts)`, `after(ts)`, `between(lo, hi)`, `execute(query)`. `between` is lower-bound inclusive, upper-bound EXCLUSIVE — for "days X..=Y inclusive" pass `hi = Y + 1_day`.
+
+#### `WorkingMemory` — scope-prefixed scratchpad + consolidate hook
+
+Scope-prefixed scratchpad with an explicit promotion hook. Source: `crates/lunaris/src/primitives/working_memory.rs`.
+
+```rust
+use lunaris::WorkingMemory;  // re-exported from lunaris-recipes too
+
+let wm = WorkingMemory::new(lunaris.clone(), "chat:user_42/");
+wm.write("last_topic", serde_json::json!({"t": "memory"})).await?;
+let v = wm.read("last_topic").await?;
+let matches = wm.grep("memory").await?;
+
+// Promote scratchpad events to Facts for THIS scope only.
+// The Consolidator's default `consolidate_scoped` filters ConsolidateEvents
+// whose source does not start with "chat:user_42/".
+let report = wm.consolidate().await?;
+```
+
+Public surface: `new`, `write(k, v)`, `read(k)`, `grep(pattern)`, `consolidate()`. The five-method cap is asserted at compile time.
+
+### 9.3 Conversational wrappers (5)
+
+All under `lunaris_recipes::conversational`. Each is a thin composition — ≤ 30 LOC, ≤ 2 primitive calls per public method.
+
+#### `ChatAgentMemory` — per-user chat history
+
+```rust
+use lunaris_recipes::conversational::ChatAgentMemory;
+
+let chat = ChatAgentMemory::new(lunaris.clone(), "user_42");  // scope "chat:user_42/"
+chat.remember("what's my name?").await?;
+let hits = chat.recall("my name").await?;
+```
+
+Public surface: `new(lunaris, user_id)`, `remember(turn)`, `recall(query)`. Holds both a `MessageStream` and a `WorkingMemory` scoped at `"chat:<user_id>/"` (the same prefix so `MultiTurnConversation` can consolidate without cross-user leaks).
+
+#### `MultiTurnConversation` — `ChatAgentMemory` + consolidation
+
+```rust
+use lunaris_recipes::conversational::MultiTurnConversation;
+
+let convo = MultiTurnConversation::new(lunaris.clone(), "user_42");
+convo.remember("user", "hi").await?;    // (participant, body)
+convo.remember("bot", "hello").await?;
+let hits = convo.recall("greeting").await?;
+let report = convo.consolidate().await?;  // promote notes → Facts for this user only
+```
+
+Public surface: `new`, `remember(participant, body)`, `recall(query)`, `consolidate()`. Scope isolation enforced at BOTH the write path (`MessageStream::ingest`) and the promotion filter (`WorkingMemory::consolidate`).
+
+#### `SlackArchive` — channel + user-filtered archive
+
+```rust
+use lunaris_recipes::conversational::SlackArchive;
+
+let slack = SlackArchive::new(lunaris.clone());
+slack.ingest_channel("C-general", "alice", "shipping today").await?;
+
+// Narrow to a channel → returns a fresh SlackArchive bound at "slack:archive/channel=C-general/".
+let hits = slack.channel("C-general").recall("shipping").await?;
+
+// Or use the query builder for combined filters.
+let hits = slack.channel("C-general").user("alice").recall("shipping").await?;
+```
+
+Public surface: `new`, `ingest_channel(channel, user, body)`, `recall(query)`, `channel(id)`, `user(id)`. `.channel(id)` returns a narrowed `SlackArchive` (scope `"slack:archive/channel=<id>/"`); `.user(id)` returns a `SlackArchiveQuery` helper with `.with_user(id)` + `.recall(query)`.
+
+> **Parity caveat.** The current `chunks` payload shape doesn't carry `channel` / `participant_id` as top-level fields, so backend `Filter::Eq` on those fields is structurally correct but returns empty sets until the payload schema is extended. Use `.channel(id)` for reliable narrowing today — it encodes the channel into the `source` prefix, which IS fully wired end-to-end. See the module rustdoc for the full deviation note.
+
+#### `EmailThreading` — thread-scoped email archive
+
+```rust
+use lunaris_recipes::conversational::EmailThreading;
+
+let mail = EmailThreading::new(lunaris.clone()).with_graph_pipeline(true);
+mail.ingest("thread-1", "alice@x", "subject body").await?;
+let hits = mail.thread("thread-1").recall("subject").await?;
+```
+
+Public surface: `new`, `ingest(root_id, from, body)`, `thread(root_id)`, `recall(query)`, `with_graph_pipeline(bool)`. `.thread(root_id)` returns a fresh `EmailThreading` at scope `"email:thread/<root_id>/"`. `.with_graph_pipeline(true)` calls `lunaris.graph_pipeline().enable()` (idempotent) so Entities/Relations extracted from email bodies light up graph traversal.
+
+#### `MeetingNotesMemory` — heading-scoped notes + attendees filter
+
+```rust
+use lunaris_recipes::conversational::MeetingNotesMemory;
+
+let mtg = MeetingNotesMemory::new(lunaris.clone()).with_graph_pipeline(true);
+mtg.note("Q2 planning", "discussed roadmap and staffing").await?;
+let hits = mtg.recall("staffing").await?;
+
+// AND-filtered recall — every attendee must be present.
+let hits = mtg
+    .attendees(vec!["alice".into(), "bob".into()])
+    .recall("staffing")
+    .await?;
+```
+
+Public surface: `new`, `note(heading, body)`, `recall(query)`, `attendees(list)`, `with_graph_pipeline(bool)`. `.attendees(list)` returns a `MeetingNotesQuery` that ANDs per-attendee `Filter::Eq` on `participant_id`. Default participant is `"scribe"` — for per-attendee authorship use `MessageStream::ingest` directly.
+
+### 9.4 Documentary wrappers (5)
+
+All under `lunaris_recipes::documentary`. Each composes `DocumentCorpus` and/or `TemporalQuery` and/or `MessageStream`.
+
+#### `DocumentKnowledgeBase` — filtered RAG over a source prefix
+
+```rust
+use lunaris_recipes::documentary::DocumentKnowledgeBase;
+
+let kb = DocumentKnowledgeBase::new(lunaris.clone(), "kb:docs/");
+kb.ingest(vec![
+    ("# Onboarding\nStart here.".into(), serde_json::Map::new()),
+]).await?;
+let hits = kb
+    .filter("section", serde_json::Value::String("intro".into()))
+    .top(5)
+    .search("onboarding")
+    .await?;
+```
+
+Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `search(query)`. One-to-one passthrough of `DocumentCorpus`; no business logic.
+
+#### `ResearchPaperCorpus` — `DocumentCorpus` + opt-in citation graph
+
+```rust
+use lunaris_recipes::documentary::ResearchPaperCorpus;
+
+let papers = ResearchPaperCorpus::new(lunaris.clone(), "papers:")
+    .with_graph_pipeline(true);        // opt-in citation graph
+papers.ingest(chunks).await?;
+let hits = papers.search("attention is all you need").await?;
+```
+
+Public surface: `new`, `with_graph_pipeline(bool)`, `ingest(chunks)`, `search(query)`. Graph opt-in is per-handle and idempotent; default OFF per blueprint §5.2.
+
+#### `CodeRepoMemory` — function body "as-of commit N"
+
+```rust
+use lunaris_core::hlc::Hlc;
+use lunaris_recipes::documentary::CodeRepoMemory;
+
+let repo = CodeRepoMemory::new(lunaris.clone(), "repo:lunaris/");
+// Ingest one commit; wrapper stamps commit_sha + committer_date_unix_ms.
+repo.ingest_commit(
+    "ae7b60e",
+    1_713_700_000_000,
+    vec![("fn recall() { ... }".into(), serde_json::Map::new())],
+).await?;
+
+// Time-travel to a specific commit — Hlc carried directly for counter/node_id control.
+let ts = Hlc { wall_ms: 1_713_700_000_000, counter: 0, node_id: 0 };
+let hits = repo.recall("recall", ts).await?;
+```
+
+Public surface: `new`, `ingest_commit(commit_sha, committer_date_unix_ms, chunks)`, `recall(query, as_of)`. `committer_date_unix_ms` is `i64`; precision below nanos has nowhere to live on `Hlc`. Isolation across repos is the caller's responsibility — `TemporalQuery` recalls across all Documents, so use a unique `repo_prefix` per repo.
+
+#### `TimelineReconstruction` — "what happened on day X"
+
+```rust
+use lunaris_core::hlc::Hlc;
+use lunaris_recipes::documentary::TimelineReconstruction;
+
+let timeline = TimelineReconstruction::new(lunaris.clone(), "timeline:events/");
+timeline.ingest(chunks).await?;
+
+let start = Hlc { wall_ms: day_0_ms, counter: 0, node_id: 0 };
+let end   = Hlc { wall_ms: day_0_ms + 86_400_000, counter: 0, node_id: 0 };
+// between(lo, hi) — EXCLUSIVE upper bound: pass hi = last_day + 1_day for inclusive.
+let day_hits = timeline.between("incident", start, end).await?;
+let at_hits  = timeline.as_of("incident", start).await?;
+```
+
+Public surface: `new`, `ingest(chunks)`, `between(query, lo, hi)`, `as_of(query, ts)`. Deliberately thin (< 10 LOC acceptable) — value is named discoverability.
+
+#### `CustomerSupportHistory` — tickets + chats, RRF within each
+
+```rust
+use lunaris_recipes::documentary::CustomerSupportHistory;
+
+let hist = CustomerSupportHistory::new(lunaris.clone())
+    .with_graph_pipeline(true);       // opt-in product-customer relations
+hist.ingest_ticket("T-101", chunks).await?;
+hist.ingest_chat("T-101", "customer", "app crashes on start").await?;
+let hits = hist.recall("crash").await?;     // concat: tickets first, chats second
+```
+
+Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, chunks)`, `ingest_chat(ticket_id, from, body)`, `recall(query)`. Critical contract: RRF fuses **within** each primitive's bucket, not across types. The wrapper asserts the two source prefixes are distinct (`ticket:` vs `chat:`) so double-indexed records can't collapse duplicates.
 
 ### Gotchas
 
-- **Recipes bake in defaults.** `grep` always uses the hybrid + rerank stack; `read` always uses the chunk-concatenation reconstruction; neither accepts a custom filter or reranker choice. Reach for `lunaris.recall()` directly if you need the flexibility.
-- **`edit` doesn't inspect `_old`.** It is accepted for helios-rfc parity but unused — the underlying `ingest` does a full write, and MVCC retention means the old chunk versions stay visible via `.as_of(ts).read(path)` (`crates/lunaris/src/recipes/helios_scratchpad.rs:122-133`).
-- **`ls` is a prefix walk**, not a directory listing. It scans `episode:`-prefixed keys, parses each payload as an `Episode` JSON, and filters on `source`. That is O(all-episodes) — fine for session-scoped pads, not fine for an arbitrary tenant-wide index.
+- **One wrapper ≠ one primitive call.** Each wrapper method forwards to at most 2 primitive calls. Anything more is business logic that belongs in application code, not in the wrapper (D-04 / RCPDOC-05 contract).
+- **Scope prefixes are load-bearing.** `ChatAgentMemory` + `MultiTurnConversation` share `"chat:<user_id>/"` across `MessageStream` AND `WorkingMemory` precisely so `consolidate()` can filter on source prefix and reject cross-user events. Never re-scope one of the two primitives without the other.
+- **Graph-on is still default-off.** Every `.with_graph_pipeline(true)` call hits the same `GraphPipelineHandle` — you're toggling the handle, not the wrapper. Calling it on one wrapper flips graph on for every ingest in the process. Idempotent; matches blueprint §5.2.
+- **`between` is lower-inclusive, upper-EXCLUSIVE.** Applies to `TemporalQuery::between` and `TimelineReconstruction::between` both. For "days X..=Y inclusive" pass `hi = Y + 1_day`.
+- **HeliosScratchpad is still filesystem-shaped.** `grep` always uses hybrid + rerank; `read` always concatenates chunks; `edit` ignores its `_old` argument (MVCC retention keeps prior versions visible via `as_of`); `ls` is an O(all-episodes) prefix walk over `episode:` keys — fine session-scoped, not fine tenant-wide.
+- **`CustomerSupportHistory.recall` returns a concatenation, not a fused list.** Tickets first, chats second. Tie-bucket ordering across Moon vs Postgres is accepted as known-flakiness (top-k set equality is the gate, per D-13).
+- **Cross-language API is codegen'd.** Do not hand-write `lunaris-py` or `lunaris-ts` wrapper classes. Edit Rust, run `cargo run -p lunaris-codegen -- --dump-ir`, commit the IR snapshot — CI fails the PR when Rust/Py/TS drift. The Python surface is `snake_case`; the TypeScript surface is `camelCase`; both are stable versus the Rust surface at every wrapper method name and argument order.
 
 ---
 
