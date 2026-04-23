@@ -15,7 +15,7 @@ use pyo3::types::PyModule;
 use std::sync::Arc;
 
 /// High-level memory-engine handle. Opens a storage backend by URL and drives ingest, recall, forget, and snapshot.
-#[pyclass(name = "Lunaris", unsendable)]
+#[pyclass(name = "Lunaris", dict)]
 pub struct PyLunaris {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::Lunaris>,
@@ -70,7 +70,7 @@ impl PyLunaris {
 }
 
 /// Vector-search DSL operator; root-level constructor for kNN retrieval.
-#[pyclass(name = "Vector", unsendable)]
+#[pyclass(name = "Vector", dict)]
 pub struct PyVector {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::Vector>,
@@ -88,7 +88,7 @@ impl PyVector {
 }
 
 /// Keyword / BM25 DSL operator; root-level constructor for lexical retrieval.
-#[pyclass(name = "Keyword", unsendable)]
+#[pyclass(name = "Keyword", dict)]
 pub struct PyKeyword {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::Keyword>,
@@ -106,7 +106,7 @@ impl PyKeyword {
 }
 
 /// Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops.
-#[pyclass(name = "Graph", unsendable)]
+#[pyclass(name = "Graph", dict)]
 pub struct PyGraph {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::Graph>,
@@ -125,7 +125,7 @@ impl PyGraph {
 }
 
 /// Chainable retrieval plan builder. Terminal .execute() runs the plan through the hydrate stage.
-#[pyclass(name = "RetrievalBuilder", unsendable)]
+#[pyclass(name = "RetrievalBuilder", dict)]
 pub struct PyRetrievalBuilder {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::RetrievalBuilder>,
@@ -171,7 +171,7 @@ impl PyRetrievalBuilder {
 }
 
 /// Runtime toggle for the graph-extraction pipeline (default OFF per blueprint §5.2). The toggle method is the canonical single-item entry in the binding surface.
-#[pyclass(name = "GraphPipelineHandle", unsendable)]
+#[pyclass(name = "GraphPipelineHandle", dict)]
 pub struct PyGraphPipelineHandle {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::GraphPipelineHandle>,
@@ -188,7 +188,7 @@ impl PyGraphPipelineHandle {
 }
 
 /// Runtime toggle for the ACT-R consolidator worker (default OFF per blueprint §5.1). Mirrors GraphPipelineHandle's single-item toggle surface.
-#[pyclass(name = "ConsolidatorPipelineHandle", unsendable)]
+#[pyclass(name = "ConsolidatorPipelineHandle", dict)]
 pub struct PyConsolidatorPipelineHandle {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris::ConsolidatorPipelineHandle>,
@@ -216,7 +216,7 @@ pub(crate) fn register_generated_lunaris(_py: Python<'_>, m: &Bound<'_, PyModule
     Ok(())
 }
 /// Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair.
-#[pyclass(name = "ChatAgentMemory", unsendable)]
+#[pyclass(name = "ChatAgentMemory", dict)]
 pub struct PyChatAgentMemory {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::ChatAgentMemory>,
@@ -253,7 +253,7 @@ impl PyChatAgentMemory {
 }
 
 /// Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass.
-#[pyclass(name = "MultiTurnConversation", unsendable)]
+#[pyclass(name = "MultiTurnConversation", dict)]
 pub struct PyMultiTurnConversation {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::MultiTurnConversation>,
@@ -299,7 +299,7 @@ impl PyMultiTurnConversation {
 }
 
 /// Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`.
-#[pyclass(name = "SlackArchive", unsendable)]
+#[pyclass(name = "SlackArchive", dict)]
 pub struct PySlackArchive {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::SlackArchive>,
@@ -348,7 +348,7 @@ impl PySlackArchive {
 }
 
 /// Narrowed query builder returned by SlackArchive::channel / SlackArchive::user.
-#[pyclass(name = "SlackArchiveQuery", unsendable)]
+#[pyclass(name = "SlackArchiveQuery", dict)]
 pub struct PySlackArchiveQuery {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::SlackArchiveQuery>,
@@ -374,7 +374,7 @@ impl PySlackArchiveQuery {
 }
 
 /// Thread-scoped email wrapper with an opt-in graph-pipeline builder.
-#[pyclass(name = "EmailThreading", unsendable)]
+#[pyclass(name = "EmailThreading", dict)]
 pub struct PyEmailThreading {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::EmailThreading>,
@@ -423,7 +423,7 @@ impl PyEmailThreading {
 }
 
 /// Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder.
-#[pyclass(name = "MeetingNotesMemory", unsendable)]
+#[pyclass(name = "MeetingNotesMemory", dict)]
 pub struct PyMeetingNotesMemory {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::MeetingNotesMemory>,
@@ -473,7 +473,7 @@ impl PyMeetingNotesMemory {
 }
 
 /// Narrowed query builder returned by MeetingNotesMemory::attendees.
-#[pyclass(name = "MeetingNotesQuery", unsendable)]
+#[pyclass(name = "MeetingNotesQuery", dict)]
 pub struct PyMeetingNotesQuery {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::conversational::MeetingNotesQuery>,
@@ -504,7 +504,7 @@ pub(crate) fn register_generated_lunaris_recipes_conversational(_py: Python<'_>,
     Ok(())
 }
 /// Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`.
-#[pyclass(name = "DocumentKnowledgeBase", unsendable)]
+#[pyclass(name = "DocumentKnowledgeBase", dict)]
 pub struct PyDocumentKnowledgeBase {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::documentary::DocumentKnowledgeBase>,
@@ -555,7 +555,7 @@ impl PyDocumentKnowledgeBase {
 }
 
 /// Research-paper corpus wrapper with opt-in citation graph.
-#[pyclass(name = "ResearchPaperCorpus", unsendable)]
+#[pyclass(name = "ResearchPaperCorpus", dict)]
 pub struct PyResearchPaperCorpus {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::documentary::ResearchPaperCorpus>,
@@ -599,7 +599,7 @@ impl PyResearchPaperCorpus {
 }
 
 /// Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies.
-#[pyclass(name = "CodeRepoMemory", unsendable)]
+#[pyclass(name = "CodeRepoMemory", dict)]
 pub struct PyCodeRepoMemory {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::documentary::CodeRepoMemory>,
@@ -639,7 +639,7 @@ impl PyCodeRepoMemory {
 }
 
 /// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>.
-#[pyclass(name = "TimelineReconstruction", unsendable)]
+#[pyclass(name = "TimelineReconstruction", dict)]
 pub struct PyTimelineReconstruction {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::documentary::TimelineReconstruction>,
@@ -689,7 +689,7 @@ impl PyTimelineReconstruction {
 }
 
 /// Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream.
-#[pyclass(name = "CustomerSupportHistory", unsendable)]
+#[pyclass(name = "CustomerSupportHistory", dict)]
 pub struct PyCustomerSupportHistory {
     #[allow(dead_code)]
     pub(crate) inner: Arc<::lunaris_recipes::documentary::CustomerSupportHistory>,

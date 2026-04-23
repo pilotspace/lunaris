@@ -70,15 +70,32 @@ fn get_consolidator_pipeline(
     Ok(PyConsolidatorPipelineHandle { inner })
 }
 
+// Pipeline `enable()` internally calls `tokio::spawn(...)` (see
+// `crates/lunaris/src/consolidator_pipeline.rs:121` + `graph_pipeline.rs`
+// counterpart), which panics with "no reactor running" when invoked from
+// the Python main thread without an active tokio runtime. Entering the
+// pyo3-async-runtimes shared runtime handle for the duration of the call
+// satisfies `Handle::current()` so `tokio::spawn` works.
+//
+// `is_enabled()` is a pure atomic-load — safe to call without the guard.
+fn with_tokio<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let rt = pyo3_async_runtimes::tokio::get_runtime();
+    let _g = rt.handle().enter();
+    f()
+}
+
 #[pyfunction]
 fn graph_pipeline_enable(handle: PyRef<'_, PyGraphPipelineHandle>) -> PyResult<()> {
-    handle.inner.enable();
+    with_tokio(|| handle.inner.enable());
     Ok(())
 }
 
 #[pyfunction]
 fn graph_pipeline_disable(handle: PyRef<'_, PyGraphPipelineHandle>) -> PyResult<()> {
-    handle.inner.disable();
+    with_tokio(|| handle.inner.disable());
     Ok(())
 }
 
@@ -91,7 +108,7 @@ fn graph_pipeline_is_enabled(handle: PyRef<'_, PyGraphPipelineHandle>) -> PyResu
 fn consolidator_pipeline_enable(
     handle: PyRef<'_, PyConsolidatorPipelineHandle>,
 ) -> PyResult<()> {
-    handle.inner.enable();
+    with_tokio(|| handle.inner.enable());
     Ok(())
 }
 
@@ -99,7 +116,7 @@ fn consolidator_pipeline_enable(
 fn consolidator_pipeline_disable(
     handle: PyRef<'_, PyConsolidatorPipelineHandle>,
 ) -> PyResult<()> {
-    handle.inner.disable();
+    with_tokio(|| handle.inner.disable());
     Ok(())
 }
 

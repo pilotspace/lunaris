@@ -14,8 +14,19 @@
 //!
 //! ## Emission shape per type kind
 //!
-//! - `Opaque` → `#[pyclass(name = "...", unsendable)]` struct with
+//! - `Opaque` → `#[pyclass(name = "...", dict)]` struct with
 //!   `std::sync::Arc<::lunaris::Inner>`, `#[pymethods]` impl block.
+//!   `unsendable` is NOT emitted because every wrapped inner type is
+//!   `Arc<T> where T: Send + Sync` — marking as unsendable was an over-
+//!   cautious default that broke `pyo3_async_runtimes::tokio::future_into_py`
+//!   constructors: the PyClass instance was pinned to a tokio worker thread
+//!   during `open()` and subsequent method calls from the Python main
+//!   thread tripped pyo3's thread-validation assertion (pyclass.rs:1081).
+//!   `dict` IS emitted so that Python-side ergonomic shims in `dsl.py` (e.g.
+//!   `_attach_recall_shim` monkey-patching `handle.recall`) can setattr at
+//!   runtime; without it PyO3 rejects setattr with `AttributeError: ...
+//!   is read-only` and the shim silently no-ops, leaving callers on the
+//!   unwired Rust-frozen `PyRetrievalBuilder` stubs.
 //! - `Builder` → same shape, but builder-mutator methods are emitted as
 //!   `#[pymethods]` that return `PyResult<Self>` (owned-self consuming).
 //! - `Value` → pass-through JSON helper (not exercised in v0.1.1).
@@ -132,7 +143,7 @@ fn emit_py_type(out: &mut String, ty: &IrType, crate_path: &str) {
     }
     writeln!(
         out,
-        "#[pyclass(name = \"{name}\", unsendable)]\npub struct Py{name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<{crate_path}::{name}>,\n}}",
+        "#[pyclass(name = \"{name}\", dict)]\npub struct Py{name} {{\n    #[allow(dead_code)]\n    pub(crate) inner: Arc<{crate_path}::{name}>,\n}}",
         name = ty.name,
         crate_path = crate_path
     )

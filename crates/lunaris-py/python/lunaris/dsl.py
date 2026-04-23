@@ -58,23 +58,29 @@ class _Composable:
     # `and` is a Python reserved keyword; we expose `.and_` as the canonical
     # Python spelling and also alias as `.and_op` for anyone who prefers
     # that form. Test 1 in test_dsl_parity.py uses `.and_` per PEP 8.
+    #
+    # Handle propagation: when `self` is already a bound `RetrievalBuilder`
+    # (i.e. has `_handle` set) the chained result must inherit that handle
+    # so `handle.recall().top(3).execute()` doesn't lose its storage
+    # binding mid-chain. `_inherit_handle(self)` reads an optional
+    # `_handle` attribute (Vector / Keyword / Graph don't define one).
     def and_(self, other: "_Composable") -> "RetrievalBuilder":
         node = _OpNode("and", (), (self._node, other._node))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     and_op = and_
 
     def fuse_rrf(self, k: int) -> "RetrievalBuilder":
         node = _OpNode("fuse_rrf", (int(k),), (self._node,))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     def top(self, n: int) -> "RetrievalBuilder":
         node = _OpNode("top", (int(n),), (self._node,))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     def as_of(self, wall_ms: int) -> "RetrievalBuilder":
         node = _OpNode("as_of", (int(wall_ms),), (self._node,))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     def filter(self, pred: Optional[str] = None, **kwargs: Any) -> "RetrievalBuilder":
         """Either positional `filter("source = 'x'")` OR keyword
@@ -89,11 +95,18 @@ class _Composable:
             pieces.append(f"{key} = '{val}'")
         combined = " AND ".join(pieces)
         node = _OpNode("filter", (combined,), (self._node,))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     def filter_str(self, s: str) -> "RetrievalBuilder":
         node = _OpNode("filter", (str(s),), (self._node,))
-        return RetrievalBuilder._from_node(node)
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+
+
+def _inherit_handle(src: "_Composable") -> Optional[Any]:
+    """Return `src._handle` if present (RetrievalBuilder instances), else
+    None. Lets chained ops on a bound RetrievalBuilder propagate the
+    handle so `handle.recall().top(3).execute()` keeps its binding."""
+    return getattr(src, "_handle", None)
 
 
 class Vector(_Composable):
@@ -131,10 +144,10 @@ class RetrievalBuilder(_Composable):
         self._handle = handle
 
     @classmethod
-    def _from_node(cls, node: _OpNode) -> "RetrievalBuilder":
+    def _from_node(cls, node: _OpNode, handle: Optional[Any] = None) -> "RetrievalBuilder":
         rb = cls.__new__(cls)
         rb._node = node
-        rb._handle = None
+        rb._handle = handle
         return rb
 
     def bind(self, handle: Any) -> "RetrievalBuilder":
