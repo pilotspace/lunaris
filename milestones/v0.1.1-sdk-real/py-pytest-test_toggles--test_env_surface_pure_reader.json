@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_toggles::test_env_surface_pure_reader",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 0.0,
+  "details": {
+    "note": "pytest assertion chain passed"
+  }
+}

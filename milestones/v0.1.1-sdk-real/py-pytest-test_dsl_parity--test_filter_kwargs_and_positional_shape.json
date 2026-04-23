@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_dsl_parity::test_filter_kwargs_and_positional_shape",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 0.0,
+  "details": {
+    "note": "pytest assertion chain passed"
+  }
+}

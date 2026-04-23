@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_documentary_parity::test_research_paper_corpus_parity_graph_off_recall",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "SKIP",
+  "duration_ms": 0.0,
+  "details": {
+    "reason": "documentary_parity needs BOTH LUNARIS_MOON_URL and LUNARIS_POSTGRES_URL reachable \u2014 per-driver backend parity requires two live backends"
+  }
+}

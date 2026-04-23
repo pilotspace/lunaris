@@ -1,0 +1,8 @@
+TypeScript runner - MOON_URL=moon://127.0.0.1:6380
+  ✓ ts:offline-dsl-surface              PASS      0.0ms  -> ts-offline-dsl-surface.json
+  ✓ ts:core-roundtrip                   PASS    108.0ms  -> ts-core-roundtrip.json
+  ✓ ts:chat-agent-memory                PASS    259.5ms  -> ts-chat-agent-memory.json
+  ✓ ts:document-knowledge-base          PASS    198.5ms  -> ts-document-knowledge-base.json
+  ✓ ts:pipeline-toggles                 PASS      0.2ms  -> ts-pipeline-toggles.json
+
+typescript-summary: 5/5 OK rc=0

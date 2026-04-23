@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_backend_parity::test_python_driver_backend_parity",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "SKIP",
+  "duration_ms": 0.0,
+  "details": {
+    "reason": "lunaris-py built without `bindings-it` feature \u2014 run `maturin develop --release --features bindings-it` to build the conformance helpers"
+  }
+}

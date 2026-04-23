@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_toggles::test_code_surface_enables_graph_pipeline",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 1.0,
+  "details": {
+    "note": "pytest assertion chain passed"
+  }
+}

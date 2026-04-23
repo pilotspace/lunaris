@@ -1,0 +1,13 @@
+{
+  "runner": "typescript",
+  "scenario": "document-knowledge-base",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 198.53,
+  "node_version": "v25.8.1",
+  "details": {
+    "ingested": 2,
+    "search_hit_count": 0,
+    "search_sample": []
+  }
+}

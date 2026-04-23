@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_gil_discipline::test_concurrent_backend_calls_dont_block",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 96.0,
+  "details": {
+    "note": "pytest assertion chain passed"
+  }
+}

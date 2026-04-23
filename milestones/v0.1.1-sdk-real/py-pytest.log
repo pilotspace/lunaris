@@ -1,0 +1,37 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-py/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-py
+configfile: pyproject.toml
+plugins: asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items
+
+tests/test_backend_parity.py::test_python_driver_backend_parity SKIPPED  [  4%]
+tests/test_backend_parity.py::test_golden_reference_loads PASSED         [  8%]
+tests/test_documentary_parity.py::test_document_knowledge_base_parity_quickstart_rag SKIPPED [ 12%]
+tests/test_documentary_parity.py::test_research_paper_corpus_parity_graph_off_recall SKIPPED [ 16%]
+tests/test_documentary_parity.py::test_code_repo_memory_parity_as_of_commit_50 SKIPPED [ 20%]
+tests/test_documentary_parity.py::test_timeline_reconstruction_parity_between_10_and_15 SKIPPED [ 24%]
+tests/test_documentary_parity.py::test_customer_support_history_parity_refund_recall SKIPPED [ 28%]
+tests/test_documentary_parity.py::test_parity_golden_json_loads_with_expected_scenarios PASSED [ 32%]
+tests/test_dsl_parity.py::test_vector_and_keyword_fuse_top_shape PASSED  [ 36%]
+tests/test_dsl_parity.py::test_graph_anchored_and_as_of_shape PASSED     [ 40%]
+tests/test_dsl_parity.py::test_filter_kwargs_and_positional_shape PASSED [ 44%]
+tests/test_dsl_parity.py::test_method_names_match_rust_surface PASSED    [ 48%]
+tests/test_dsl_parity.py::test_execute_returns_list PASSED               [ 52%]
+tests/test_dsl_parity.py::test_filter_str_runs PASSED                    [ 56%]
+tests/test_gil_discipline.py::test_concurrent_awaits_dont_serialize PASSED [ 60%]
+tests/test_gil_discipline.py::test_concurrent_backend_calls_dont_block PASSED [ 64%]
+tests/test_open_ingest_recall.py::test_errors_map_to_lunaris_error PASSED [ 68%]
+tests/test_open_ingest_recall.py::test_open_roundtrip PASSED             [ 72%]
+tests/test_open_ingest_recall.py::test_ingest_recall_roundtrip PASSED    [ 76%]
+tests/test_open_ingest_recall.py::test_snapshot_roundtrip PASSED         [ 80%]
+tests/test_open_ingest_recall.py::test_forget_dry_run_roundtrip PASSED   [ 84%]
+tests/test_toggles.py::test_code_surface_enables_graph_pipeline PASSED   [ 88%]
+tests/test_toggles.py::test_env_surface_pure_reader PASSED               [ 92%]
+tests/test_toggles.py::test_config_surface_pure_reader PASSED            [ 96%]
+tests/test_toggles.py::test_config_surface_enables_via_open PASSED       [100%]
+
+- generated xml file: /Users/tindang/workspaces/tind-repo/lunaris/milestones/v0.1.1-sdk-real/py-pytest-junit.xml -
+======================== 19 passed, 6 skipped in 0.56s =========================

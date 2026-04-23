@@ -1,0 +1,20 @@
+{
+  "runner": "typescript",
+  "scenario": "pipeline-toggles",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 0.206,
+  "node_version": "v25.8.1",
+  "details": {
+    "graph_ext_class": true,
+    "graph_enable_fn": true,
+    "graph_disable_fn": true,
+    "graph_is_enabled_fn": true,
+    "graph_toggle_fn": true,
+    "cons_ext_class": true,
+    "cons_enable_fn": true,
+    "cons_disable_fn": true,
+    "cons_is_enabled_fn": true,
+    "cons_toggle_fn": true
+  }
+}

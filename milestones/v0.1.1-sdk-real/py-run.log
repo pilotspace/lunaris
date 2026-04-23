@@ -1,0 +1,6 @@
+Uninstalled 1 package in 0.54ms
+Installed 1 package in 2ms
+Python runner — MOON_URL=moon://127.0.0.1:6380  (offline surface only; live cases via pytest)
+  ✓ py:offline-dsl-surface              PASS    599.9ms  → py-offline-dsl-surface.json
+
+python-offline-summary: 1/1 OK rc=0

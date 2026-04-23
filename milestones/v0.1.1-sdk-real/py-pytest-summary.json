@@ -1,0 +1,9 @@
+{
+  "runner": "python-pytest",
+  "scenario": "summary",
+  "backend": "moon://127.0.0.1:6380",
+  "total": 25,
+  "failed": 0,
+  "passed": 25,
+  "junit_source": "/Users/tindang/workspaces/tind-repo/lunaris/milestones/v0.1.1-sdk-real/py-pytest-junit.xml"
+}

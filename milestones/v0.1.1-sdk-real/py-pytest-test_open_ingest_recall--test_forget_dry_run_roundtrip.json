@@ -1,0 +1,10 @@
+{
+  "runner": "python-pytest",
+  "scenario": "tests.test_open_ingest_recall::test_forget_dry_run_roundtrip",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 2.0,
+  "details": {
+    "note": "pytest assertion chain passed"
+  }
+}

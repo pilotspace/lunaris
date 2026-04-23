@@ -1,0 +1,18 @@
+{
+  "runner": "typescript",
+  "scenario": "chat-agent-memory",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 259.479,
+  "node_version": "v25.8.1",
+  "details": {
+    "recorded_ids": [
+      "1776920691649:0",
+      "1776920691710:0",
+      "1776920691777:0"
+    ],
+    "turn_count": 3,
+    "recall_hit_count": 0,
+    "recall_sample": []
+  }
+}

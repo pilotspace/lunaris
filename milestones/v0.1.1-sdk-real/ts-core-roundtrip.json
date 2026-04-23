@@ -1,0 +1,15 @@
+{
+  "runner": "typescript",
+  "scenario": "core-roundtrip",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 108.018,
+  "node_version": "v25.8.1",
+  "details": {
+    "snapshot_before": "1776920691484:0",
+    "snapshot_after_ingest": "1776920691583:0",
+    "snapshot_monotonic": true,
+    "forget_dry_run_preview": true,
+    "forget_rows_written": 0
+  }
+}

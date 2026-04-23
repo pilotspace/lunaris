@@ -1,0 +1,19 @@
+{
+  "runner": "python",
+  "scenario": "offline-dsl-surface",
+  "backend": "moon://127.0.0.1:6380",
+  "status": "PASS",
+  "duration_ms": 599.855,
+  "py_version": "3.11.15",
+  "details": {
+    "version": "0.1.1",
+    "dsl_classes": [
+      "Vector",
+      "Keyword",
+      "Graph",
+      "RetrievalBuilder"
+    ],
+    "conversational_wrappers": 5,
+    "documentary_wrappers": 5
+  }
+}
