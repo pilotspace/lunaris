@@ -249,6 +249,23 @@ jobs:
             sleep 3
           done
 
+      - name: "Run EVAL-05 regression tests (positive path: pg-lunaris)"
+        # Plan 14-03 Task 6 (CI-03 positive half). Distinct named step so
+        # the 4 EVAL-05 regression tests appear as their own line in the
+        # Actions UI — mirrors the AS_OF-parity pattern above. These tests
+        # ALSO run as part of the main `cargo test -p lunaris-conformance
+        # --features moon-it,pg-it` step (they live under
+        # `tests/regression/`), so this is an explicit rerun for signal
+        # locality, not the only invocation. Same `if: success() ||
+        # failure()` guard so CI surfaces the regression state even when
+        # an unrelated earlier step failed.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-conformance \
+            --features pg-it \
+            --test regression \
+            --no-fail-fast
+
       - name: Timing summary (CI-04 evidence)
         # Runs unconditionally so budget data is captured even on test
         # failure. SECONDS is the bash shell-init wall-clock counter;
