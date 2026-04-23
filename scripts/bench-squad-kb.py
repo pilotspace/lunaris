@@ -1,6 +1,6 @@
 """Larger live-Moon benchmark over SQuAD paragraphs with embeddinggemma:300m.
 
-Loads N unique contexts from rajpurkar/squad validation, ingests them through
+Loads N unique contexts from rajpurkar/squad, ingests them through
 DocumentKnowledgeBase, then issues M queries whose gold paragraph is known,
 measuring:
 
@@ -12,10 +12,18 @@ measuring:
     recall@1 / @3 / @5 / @10
     MRR (mean reciprocal rank of the gold doc)
 
+  Moon footprint
+    dbsize, per-index num_docs, used_memory
+
+  Resource usage (when psutil is available)
+    per-process CPU% / RSS peak + mean for moon, ollama, and this bench
+    system CPU%, used memory, load average — sampled once per second
+
 Usage:
   LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
-    uv run --with datasets --with python-ulid \
-      python scripts/bench-squad-kb.py [--docs 300] [--queries 100]
+    uv run --with datasets --with python-ulid --with redis --with psutil \
+      python scripts/bench-squad-kb.py \
+        [--docs 300] [--queries 100] [--top-k 10] [--split validation|train]
 """
 from __future__ import annotations
 
@@ -24,6 +32,7 @@ import asyncio
 import json
 import os
 import statistics
+import threading
 import time
 from collections import OrderedDict
 
@@ -42,19 +51,150 @@ def pct(xs: list[float], p: float) -> float:
     return xs[k]
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Resource sampler — optional (no-op when psutil isn't installed)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class ResourceSampler:
+    """Sample CPU% + RSS for named processes + the overall system once/sec."""
+
+    def __init__(self, targets: list[str], interval_s: float = 1.0) -> None:
+        self.targets = targets  # process name substrings to track
+        self.interval_s = interval_s
+        self.samples: dict[str, list[tuple[float, float]]] = {
+            t: [] for t in targets
+        }
+        self.system_cpu: list[float] = []
+        self.system_mem_pct: list[float] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._psutil = None
+        try:
+            import psutil  # type: ignore[import-not-found]
+
+            self._psutil = psutil
+            # Prime cpu_percent so the next call returns a real delta.
+            psutil.cpu_percent(interval=None)
+        except ImportError:
+            pass
+
+    def start(self) -> None:
+        if self._psutil is None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _find_procs(self) -> dict[str, list]:
+        assert self._psutil is not None
+        procs: dict[str, list] = {t: [] for t in self.targets}
+        for p in self._psutil.process_iter(attrs=["pid", "name", "cmdline"]):
+            try:
+                name = (p.info.get("name") or "").lower()
+                cmd = " ".join(p.info.get("cmdline") or []).lower()
+                for t in self.targets:
+                    needle = t.lower()
+                    if needle in name or needle in cmd:
+                        procs[t].append(p)
+                        # Prime per-proc cpu_percent for the next call.
+                        try:
+                            p.cpu_percent(interval=None)
+                        except Exception:
+                            pass
+            except Exception:
+                continue
+        return procs
+
+    def _run(self) -> None:
+        assert self._psutil is not None
+        procs = self._find_procs()
+        # Give cpu_percent one interval to warm up.
+        time.sleep(self.interval_s)
+        while not self._stop.is_set():
+            try:
+                self.system_cpu.append(self._psutil.cpu_percent(interval=None))
+                self.system_mem_pct.append(self._psutil.virtual_memory().percent)
+                for t, plist in procs.items():
+                    cpu_sum = 0.0
+                    rss_sum = 0.0
+                    alive = []
+                    for p in plist:
+                        try:
+                            cpu_sum += p.cpu_percent(interval=None)
+                            rss_sum += p.memory_info().rss / (1024 * 1024)
+                            alive.append(p)
+                        except Exception:
+                            continue
+                    procs[t] = alive
+                    if alive:
+                        self.samples[t].append((cpu_sum, rss_sum))
+                    # Refresh process list periodically so newly-spawned
+                    # ollama children get picked up.
+                    if len(self.system_cpu) % 10 == 0:
+                        for new_p in self._psutil.process_iter(attrs=["name", "cmdline"]):
+                            try:
+                                name = (new_p.info.get("name") or "").lower()
+                                cmd = " ".join(new_p.info.get("cmdline") or []).lower()
+                                needle = t.lower()
+                                if (
+                                    (needle in name or needle in cmd)
+                                    and new_p not in plist
+                                ):
+                                    plist.append(new_p)
+                                    try:
+                                        new_p.cpu_percent(interval=None)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                continue
+            except Exception:
+                pass
+            self._stop.wait(self.interval_s)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def report(self) -> dict[str, object]:
+        if self._psutil is None:
+            return {"note": "psutil not installed — resource monitoring skipped"}
+        out: dict[str, object] = {"samples": len(self.system_cpu)}
+        for t, pts in self.samples.items():
+            if not pts:
+                out[t] = {"note": "no process matched"}
+                continue
+            cpus = [x[0] for x in pts]
+            rss = [x[1] for x in pts]
+            out[t] = {
+                "cpu_pct_mean": round(statistics.mean(cpus), 1),
+                "cpu_pct_p95": round(pct(cpus, 95), 1),
+                "cpu_pct_max": round(max(cpus), 1),
+                "rss_mb_mean": round(statistics.mean(rss), 1),
+                "rss_mb_peak": round(max(rss), 1),
+            }
+        if self.system_cpu:
+            out["system"] = {
+                "cpu_pct_mean": round(statistics.mean(self.system_cpu), 1),
+                "cpu_pct_p95": round(pct(self.system_cpu, 95), 1),
+                "cpu_pct_max": round(max(self.system_cpu), 1),
+                "mem_pct_mean": round(statistics.mean(self.system_mem_pct), 1),
+                "mem_pct_peak": round(max(self.system_mem_pct), 1),
+            }
+        return out
+
+
 def load_squad(
-    n_docs: int, n_queries: int
+    split: str, n_docs: int, n_queries: int
 ) -> tuple[list[tuple[str, str]], list[tuple[str, list[str], str]]]:
     """Return (docs, queries).
 
     docs    = [(ctx_id, context_text)]
-    queries = [(ctx_id, answer_spans, question_text)] — answer_spans are the
-              SQuAD gold answer strings; a top-k hit "counts" when any span
-              is a substring of the hit's chunk text.
+    queries = [(ctx_id, answer_spans, question_text)]
     """
     from datasets import load_dataset
 
-    ds = load_dataset("rajpurkar/squad", split="validation")
+    ds = load_dataset("rajpurkar/squad", split=split)
     by_ctx: OrderedDict[str, list[tuple[str, list[str]]]] = OrderedDict()
     ctx_ids: dict[str, str] = {}
     for row in ds:
@@ -65,12 +205,14 @@ def load_squad(
         answers = [a for a in (row["answers"].get("text") or []) if a]
         if answers:
             by_ctx[ctx].append((row["question"], answers))
-        if len(by_ctx) >= n_docs:
+        if len(by_ctx) >= n_docs and all(
+            len(by_ctx[k]) >= 1 for k in list(by_ctx)[:n_docs]
+        ):
             break
-    docs = [(ctx_ids[c], c) for c in by_ctx]
+    docs = [(ctx_ids[c], c) for c in list(by_ctx.keys())[:n_docs]]
     queries: list[tuple[str, list[str], str]] = []
-    cursor = [list(qs) for qs in by_ctx.values()]
-    ctx_list = list(by_ctx.keys())
+    ctx_list = list(by_ctx.keys())[:n_docs]
+    cursor = [list(by_ctx[c]) for c in ctx_list]
     i = 0
     while len(queries) < n_queries and any(cursor):
         idx = i % len(cursor)
@@ -87,42 +229,58 @@ async def main() -> None:
     ap.add_argument("--docs", type=int, default=300)
     ap.add_argument("--queries", type=int, default=100)
     ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--split", default="validation", choices=["validation", "train"])
+    ap.add_argument(
+        "--progress-every",
+        type=int,
+        default=0,
+        help="Print ingest progress every N docs (0 = off)",
+    )
     args = ap.parse_args()
 
     print(f"# Backend      : {MOON_URL}")
-    print(f"# Embedder     : Ollama embeddinggemma:300m (768d)")
-    print(f"# Corpus       : rajpurkar/squad validation")
-    print(f"# Plan         : ingest {args.docs} paragraphs, query {args.queries} times, top-{args.top_k}")
+    print(f"# Embedder     : Ollama embeddinggemma:300m (768d Google EmbeddingGemma)")
+    print(f"# Corpus       : rajpurkar/squad {args.split}")
+    print(
+        f"# Plan         : ingest {args.docs} paragraphs, query {args.queries} times, "
+        f"top-{args.top_k}"
+    )
 
-    docs, queries = load_squad(args.docs, args.queries)
+    docs, queries = load_squad(args.split, args.docs, args.queries)
     print(f"# Loaded       : {len(docs)} unique contexts, {len(queries)} queries")
+
+    sampler = ResourceSampler(targets=["moon", "ollama", "bench-squad-kb"])
+    sampler.start()
 
     handle = await lunaris.open(MOON_URL)
     kb = DocumentKnowledgeBase.new(handle, SOURCE_PREFIX)
 
     # ── Ingest ────────────────────────────────────────────────────────────
     ingest_latencies: list[float] = []
-    t0 = time.perf_counter()
-    # DocumentKnowledgeBase.ingest takes a batch; time per call then divide
-    # by batch-size so per-doc latency is honest. We use batches of 1 so
-    # the latency distribution isn't hidden by batching.
-    for ctx_id, context in docs:
+    ingest_start = time.perf_counter()
+    for i, (ctx_id, context) in enumerate(docs, start=1):
         meta = {"doc_id": ctx_id, "title": ctx_id}
         t = time.perf_counter()
         await kb.ingest([(context, meta)])
         ingest_latencies.append((time.perf_counter() - t) * 1000.0)
-    ingest_total_s = time.perf_counter() - t0
+        if args.progress_every and i % args.progress_every == 0:
+            elapsed = time.perf_counter() - ingest_start
+            print(
+                f"  [ingest {i}/{len(docs)}] elapsed {elapsed:.1f}s "
+                f"rate {i / elapsed:.1f}/s "
+                f"recent-p50 {pct(ingest_latencies[-args.progress_every:], 50):.0f}ms",
+                flush=True,
+            )
+    ingest_total_s = time.perf_counter() - ingest_start
 
     # ── Recall ────────────────────────────────────────────────────────────
-    # Ground truth: a hit "counts" when any of the SQuAD answer spans for the
-    # question appears as a substring of the hit chunk text (case-insensitive,
-    # whitespace-normalized so chunker tokenization differences don't matter).
     def norm(s: str) -> str:
         return " ".join(s.lower().split())
 
     recall_latencies: list[float] = []
     ranks: list[int | None] = []
-    for _gold_ctx_id, answers, q in queries:
+    recall_start = time.perf_counter()
+    for q_idx, (_gold_ctx_id, answers, q) in enumerate(queries, start=1):
         norm_answers = [norm(a) for a in answers if a.strip()]
         t = time.perf_counter()
         hits = await kb.top(args.top_k).search(q)
@@ -134,6 +292,16 @@ async def main() -> None:
                 rank = i
                 break
         ranks.append(rank)
+        if args.progress_every and q_idx % args.progress_every == 0:
+            elapsed = time.perf_counter() - recall_start
+            print(
+                f"  [recall {q_idx}/{len(queries)}] elapsed {elapsed:.1f}s "
+                f"rate {q_idx / elapsed:.1f}/s",
+                flush=True,
+            )
+    recall_total_s = time.perf_counter() - recall_start
+
+    sampler.stop()
 
     # ── Report ────────────────────────────────────────────────────────────
     def recall_at(k: int) -> float:
@@ -144,8 +312,7 @@ async def main() -> None:
         sum(1.0 / r for r in ranks if r is not None) / len(ranks) if ranks else 0.0
     )
 
-    # ── Moon footprint ─────────────────────────────────────────────────────
-    # Query Moon directly for index + memory stats (redis protocol, read-only).
+    # Moon footprint
     moon_stats: dict[str, object] = {}
     try:
         import redis as _redis  # type: ignore[import-not-found]
@@ -188,6 +355,7 @@ async def main() -> None:
 
     print("\n════════════ RECALL ════════════")
     print(f"  queries           : {len(queries)}")
+    print(f"  total wall        : {recall_total_s:.2f} s")
     print(f"  recall@1          : {recall_at(1):.1%}")
     print(f"  recall@3          : {recall_at(3):.1%}")
     print(f"  recall@5          : {recall_at(5):.1%}")
@@ -199,9 +367,13 @@ async def main() -> None:
     print(f"  latency max       : {max(recall_latencies):.1f} ms")
     print(f"  latency mean      : {statistics.mean(recall_latencies):.1f} ms")
 
-    # Structured summary for automation.
+    res = sampler.report()
+    print("\n════════════ RESOURCE USAGE ════════════")
+    print(json.dumps(res, indent=2))
+
     summary = {
         "backend": MOON_URL,
+        "split": args.split,
         "corpus_size": len(docs),
         "queries": len(queries),
         "ingest": {
@@ -213,6 +385,7 @@ async def main() -> None:
             "max_ms": round(max(ingest_latencies), 2),
         },
         "recall": {
+            "total_s": round(recall_total_s, 3),
             "recall_at_1": round(recall_at(1), 4),
             "recall_at_3": round(recall_at(3), 4),
             "recall_at_5": round(recall_at(5), 4),
@@ -222,10 +395,13 @@ async def main() -> None:
             "p95_ms": round(pct(recall_latencies, 95), 2),
             "p99_ms": round(pct(recall_latencies, 99), 2),
             "max_ms": round(max(recall_latencies), 2),
+            "mean_ms": round(statistics.mean(recall_latencies), 2),
         },
+        "moon": moon_stats,
+        "resources": res,
     }
     print("\n════════════ JSON ════════════")
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2, default=str))
 
 
 asyncio.run(main())
