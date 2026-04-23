@@ -68,7 +68,21 @@ pub(crate) async fn vector_search(
         .search_raw(index, &knn_query, &qbytes, k, rerank)
         .await
         .map_err(moon_err)?;
-    parse_ft_search(reply, rerank)
+    parse_ft_search(reply, rerank, index)
+}
+
+/// Moon returns FT.SEARCH keys as `<index>:<hex32>` (see
+/// `atomic.rs::VectorUpsert` — `format!("{index}:{}", hex::encode(id))`). The
+/// `StoragePort` contract (and Postgres's symmetric impl) expects
+/// `VectorHit.id` to be the raw 16-byte ULID so `hydrate::chunk_lookup_key`
+/// can reconstruct `lunaris:chunk:<ulid>`. Strip the prefix + hex-decode; any
+/// key that doesn't match the shape is dropped (live-measurement gap fix).
+fn decode_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
+    let prefix_len = index.len() + 1;
+    if key.len() < prefix_len || !key.starts_with(index.as_bytes()) || key[index.len()] != b':' {
+        return None;
+    }
+    hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
 }
 
 // Removed `pack_hlc` (Gap 8 / live-measurement 2026-04-21): the
@@ -109,7 +123,7 @@ fn json_to_moon(v: &serde_json::Value) -> String {
     }
 }
 
-fn parse_ft_search(v: redis::Value, rerank: bool) -> Result<Vec<VectorHit>, StorageError> {
+fn parse_ft_search(v: redis::Value, rerank: bool, index: &str) -> Result<Vec<VectorHit>, StorageError> {
     // FT.SEARCH reply: [count, id1, [k1,v1,...], id2, [k1,v1,...], ...]
     let arr = match v {
         redis::Value::Array(a) => a,
@@ -121,10 +135,14 @@ fn parse_ft_search(v: redis::Value, rerank: bool) -> Result<Vec<VectorHit>, Stor
     let mut iter = arr.into_iter();
     let _count = iter.next();
     while let (Some(id), Some(fields)) = (iter.next(), iter.next()) {
-        let id_bytes = match id {
+        let raw_key = match id {
             redis::Value::BulkString(b) => b,
             redis::Value::SimpleString(s) => s.into_bytes(),
             _ => continue,
+        };
+        let id_bytes = match decode_key(&raw_key, index) {
+            Some(b) => b,
+            None => continue,
         };
         let mut score = 0.0f32;
         let mut metadata = serde_json::Value::Null;
@@ -229,30 +247,50 @@ mod tests {
     #[test]
     fn parse_ft_search_empty_returns_empty_vec() {
         let reply = redis::Value::Array(vec![redis::Value::Int(0)]);
-        let hits = parse_ft_search(reply, false).unwrap();
+        let hits = parse_ft_search(reply, false, "chunks").unwrap();
         assert!(hits.is_empty());
     }
 
     #[test]
-    fn parse_ft_search_two_hits_with_score() {
+    fn parse_ft_search_decodes_index_prefixed_hex_keys() {
+        // Moon wire shape: `<index>:<hex32>` per atomic.rs::VectorUpsert.
+        let ulid_bytes: [u8; 16] = [
+            1, 157, 184, 227, 97, 47, 203, 75, 14, 1, 202, 211, 92, 115, 47, 72,
+        ];
+        let hex = hex::encode(ulid_bytes);
+        let key = format!("chunks:{hex}");
         let reply = redis::Value::Array(vec![
-            redis::Value::Int(2),
-            redis::Value::BulkString(b"doc1".to_vec()),
+            redis::Value::Int(1),
+            redis::Value::BulkString(key.into_bytes()),
             redis::Value::Array(vec![
                 redis::Value::BulkString(b"__score".to_vec()),
                 redis::Value::BulkString(b"0.91".to_vec()),
             ]),
-            redis::Value::BulkString(b"doc2".to_vec()),
-            redis::Value::Array(vec![
-                redis::Value::BulkString(b"__score".to_vec()),
-                redis::Value::BulkString(b"0.55".to_vec()),
-            ]),
         ]);
-        let hits = parse_ft_search(reply, true).unwrap();
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].id, b"doc1".to_vec());
+        let hits = parse_ft_search(reply, true, "chunks").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, ulid_bytes.to_vec());
         assert!((hits[0].score - 0.91).abs() < 1e-4);
         assert!(hits[0].rerank_applied);
-        assert_eq!(hits[1].id, b"doc2".to_vec());
+    }
+
+    #[test]
+    fn parse_ft_search_drops_malformed_keys() {
+        let reply = redis::Value::Array(vec![
+            redis::Value::Int(1),
+            redis::Value::BulkString(b"wrongprefix:abc".to_vec()),
+            redis::Value::Array(vec![]),
+        ]);
+        let hits = parse_ft_search(reply, false, "chunks").unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn decode_key_round_trip() {
+        let ulid: [u8; 16] = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let key = format!("chunks:{}", hex::encode(ulid));
+        assert_eq!(decode_key(key.as_bytes(), "chunks"), Some(ulid.to_vec()));
+        assert_eq!(decode_key(b"facts:00", "chunks"), None);
+        assert_eq!(decode_key(b"chunks:notHex!", "chunks"), None);
     }
 }

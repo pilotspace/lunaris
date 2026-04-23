@@ -84,7 +84,13 @@ pub(crate) async fn keyword_search(
     // Stage raw scores so we can min-max normalize per the KeywordPort contract.
     let mut staged: Vec<(Vec<u8>, serde_json::Value, f32)> = Vec::with_capacity(hits.len());
     for h in hits {
-        let id_bytes = h.key.into_bytes();
+        // Moon returns keys as `<index>:<hex32>` (per atomic.rs::VectorUpsert).
+        // Symmetric with vector::decode_key — hydrate expects 16-byte ULID.
+        let raw_key = h.key.into_bytes();
+        let id_bytes = match decode_moon_key(&raw_key, index) {
+            Some(b) => b,
+            None => continue,
+        };
         // Recover __metadata if Moon stored it as a field; otherwise keep null.
         let metadata = h
             .fields
@@ -131,6 +137,16 @@ fn filter_to_moon(f: &Filter) -> String {
             format!("@valid_time:[{lo} {hi}]")
         }
     }
+}
+
+/// Strip `<index>:` prefix and hex-decode the rest to 16-byte ULID, mirroring
+/// `vector::decode_key`. See that fn's doc for rationale.
+fn decode_moon_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
+    let prefix_len = index.len() + 1;
+    if key.len() < prefix_len || !key.starts_with(index.as_bytes()) || key[index.len()] != b':' {
+        return None;
+    }
+    hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
 }
 
 fn json_to_moon(v: &serde_json::Value) -> String {
