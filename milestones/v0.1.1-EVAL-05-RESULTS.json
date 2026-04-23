@@ -1,0 +1,36 @@
+{
+  "status": "PASS",
+  "workspace_sha": "0b6a30f318950f88143903ca8c83e0e0f3e4c8e0",
+  "moon_version": "unknown",
+  "postgres_version": "psql (PostgreSQL) 18.3 (Homebrew)",
+  "run_timestamp_iso": "2026-04-23T12:31:43.417852+00:00",
+  "trace_seed": 3203391149,
+  "trace_len": 10000,
+  "promotion_drain_secs": 90,
+  "moon": {
+    "backend": "moon",
+    "recall_p50_ms": 2.720708,
+    "recall_samples": 5571,
+    "promotion_rate": 0.0,
+    "promotions_observed": 0,
+    "budget_p50_ms": 25.0,
+    "slo_passed": true,
+    "slo_reasons": [
+      "promotion_rate_info: 0.0000 < informational floor 0.0500 (v0.1.1 ships NoopConsolidator; real ActRConsolidator lands v0.1.2 per CONSOL-V1-01)"
+    ]
+  },
+  "postgres": {
+    "backend": "postgres",
+    "recall_p50_ms": 2.045792,
+    "recall_samples": 5571,
+    "promotion_rate": 0.0,
+    "promotions_observed": 0,
+    "budget_p50_ms": 60.0,
+    "slo_passed": true,
+    "slo_reasons": [
+      "promotion_rate_info: 0.0000 < informational floor 0.0500 (v0.1.1 ships NoopConsolidator; real ActRConsolidator lands v0.1.2 per CONSOL-V1-01)"
+    ]
+  },
+  "moon_skip_reason": null,
+  "postgres_skip_reason": null
+}
