@@ -144,13 +144,59 @@ Evidence: [`chat-10kx1k.log`](./chat-10kx1k.log)
 
 Chat quality trails the doc bench by ~3 points recall@1 and ~5 points recall@10 — expected for shorter input strings (less embedding signal per item) combined with a 2× larger chunk population from the chunker split.
 
+### 2.6 Isolated Lunaris — strict replay (embedder cost removed)
+
+To measure Lunaris's own latency without the ~60 ms Ollama `/api/embed` round-trip on every call, we captured every embed text Lunaris emits during a 10 k × 1 k doc run, stored them in `milestones/v0.1.1-bench/cache/squad-10k.npz` (11 012 float32 × 768-d vectors, 32.9 MB), and reran the same bench against the `scripts/ollama-replay-server.py` strict replay server (cache hit = ~0.1 ms JSON round-trip, miss = 404).
+
+The mechanism:
+
+1. Added `LUNARIS_OLLAMA_URL` env override to `OllamaEmbedder::Default` so benchmarks can swap the embedder endpoint without rebuilding.
+2. Ran one **record pass** (`--upstream http://127.0.0.1:11434`) to build the cache — identical wire behaviour to direct Ollama, just adds ~20 ms proxy overhead.
+3. Ran the **strict replay pass** with the populated cache, zero upstream — every embed served from the `.npz` at microsecond scale.
+
+Quality matched direct (recall@1 75.1 % vs 75.3 %, MRR 0.811 vs 0.812) — the cache round-trips the exact same vectors, so ranking is byte-identical within float rounding.
+
+| phase | metric | direct Ollama | **strict replay** | speedup |
+|---|---|---:|---:|---:|
+| Ingest | throughput | 14.96 docs/s | **47.0 docs/s** | **3.14×** |
+| Ingest | total wall | 668.6 s | **212.9 s** | **3.14×** |
+| Ingest | per-doc p50 | 66 ms | **19.0 ms** | 3.5× |
+| Ingest | per-doc p95 | 77 ms | **40.9 ms** | 1.9× |
+| Ingest | per-doc p99 | 90 ms | **65.7 ms** | — |
+| Recall | total wall | 94.0 s | **18.1 s** | **5.2×** |
+| Recall | throughput | 10.6 q/s | **55.3 q/s** | **5.2×** |
+| Recall | latency p50 | 86 ms | **10.3 ms** | **8.3×** |
+| Recall | latency p95 | 93 ms | **12.3 ms** | 7.6× |
+| Recall | latency p99 | 104 ms | **20.8 ms** | 5.0× |
+| Recall | latency mean | 94 ms | 18.1 ms | 5.2× |
+| Recall | max | 8005 ms | 7337 ms | — (tail outlier persists — not an Ollama artefact) |
+| Quality | recall@1 / @3 / @10 | 75.3 / 86.0 / 91.1 % | 75.1 / 86.0 / 91.0 % | ≡ |
+| Quality | MRR | 0.812 | 0.811 | ≡ |
+
+**Recall p50 = 10.3 ms** — this is Lunaris's pure retrieve+hydrate cost (Moon HYBRID FT.SEARCH + `__rrf_score` parse + post-hydrate source filter + ACT-R rescore path). **Well inside the blueprint §4.2 sub-25 ms target.**
+
+**Ingest p50 = 19 ms** — chunker + atomic_write fan-out (1 KvPut for episode + 1 KvPut + 1 VectorUpsert per chunk, plus the HTTP round-trip to the replay server).
+
+Resource footprint while Lunaris wasn't embedder-blocked:
+| process | CPU mean | CPU p95 | RSS peak |
+|---|---:|---:|---:|
+| **moon** | **13.7 %** | 63.9 % | 365 MB |
+| replay server | 8.7 % | 14.1 % | 226 MB |
+| bench python | 5.7 % | 8.1 % | 186 MB |
+
+Moon's CPU roughly 3× the direct-Ollama run (4.4% → 13.7%) because it is no longer idle-waiting for the embedder — it is processing the real Lunaris workload continuously.
+
+Evidence: [`squad-10kx1k-record.log`](./squad-10kx1k-record.log), [`squad-10kx1k-strict.log`](./squad-10kx1k-strict.log), cache at `cache/squad-10k.npz`.
+
+> **Caveat on `chunks_num_docs = 20 048`:** Moon's FT.* index state did not reset across the `FLUSHALL` between the two runs, so the strict-pass `num_docs` counter is inflated by the record-pass entries. This does **not** affect recall correctness — the 10 k stale vectors have no corresponding `lunaris:chunk:<ulid>` row after FLUSHALL, so `hydrate` silently drops them and the 75 % recall@1 is computed only over live data. Worth tracking upstream (Moon) as a separate B-task.
+
 ---
 
 ## 3. Headline findings
 
 1. **Recall@3 = 86 % on 10 k docs, no rerank, off-the-shelf embedder.** For open-domain SQuAD, this is a strong baseline — adding the cross-encoder rerank (Phase 02-03 RETRIEVE-06) is expected to lift recall@1 by 8–15 pts based on published BGE numbers.
 
-2. **Sub-25 ms recall target is achievable once query embeds are cached.** Of the 86 ms median recall latency, ~60 ms is the Ollama `/api/embed` round-trip. The Moon retrieve+hydrate path is 15–25 ms — inside the blueprint §4.2 budget. Production deploys should batch query embeds or set `OLLAMA_NUM_PARALLEL > 1`.
+2. **Sub-25 ms recall target is achieved by Lunaris itself — proven.** Section 2.6 isolates the embedder: recall p50 drops from 86 ms → **10.3 ms** and p99 from 104 ms → **20.8 ms** when the Ollama round-trip is replaced by a local cache lookup. Ingest throughput jumps from 15 → 47 docs/s (3.1× faster). Production deploys should cache or batch query embeds, or set `OLLAMA_NUM_PARALLEL > 1`.
 
 3. **Moon scales well on a single shard.** 11 k vectors + 30 k KV rows, 264 MB RSS, 4 % CPU mean. Plenty of headroom for 100 k+ documents before sharding is needed.
 
@@ -225,6 +271,50 @@ python ../../scripts/bench-squad-kb.py --docs 300 --queries 100 --top-k 10
 python ../../scripts/bench-dialog-chat.py --turns 80 --queries 20 --top-k 10
 ```
 
+### Isolated Lunaris (embedder cost removed)
+
+```bash
+# 1. Start replay server in RECORD mode on an alternate port (Ollama stays on 11434).
+cd /Users/tindang/workspaces/tind-repo/lunaris
+uv run --with numpy python scripts/ollama-replay-server.py \
+  --cache milestones/v0.1.1-bench/cache/squad-10k.npz \
+  --port 11435 \
+  --upstream http://127.0.0.1:11434 &
+
+# 2. Run the regular bench with the embedder redirected to the replay server —
+#    populates the npz as a side effect. Quality is identical; latency is
+#    ~20% worse than direct because of the extra proxy hop.
+redis-cli -p 6380 FLUSHALL
+cd crates/lunaris-py
+LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+LUNARIS_OLLAMA_URL="http://127.0.0.1:11435" \
+  uv run --with datasets --with python-ulid --with redis --with psutil \
+    python ../../scripts/bench-squad-kb.py \
+      --docs 10000 --queries 1000 --top-k 10 --split train --progress-every 500 \
+      > ../../milestones/v0.1.1-bench/squad-10kx1k-record.log 2>&1
+
+# 3. SIGTERM the replay server — it saves the npz on shutdown.
+kill <replay_pid>
+
+# 4. Restart replay in STRICT mode (no upstream) and rerun the bench — now
+#    every embed is a cache lookup. Quality is byte-identical; latency drops
+#    3–8×.
+cd ..
+uv run --with numpy python scripts/ollama-replay-server.py \
+  --cache milestones/v0.1.1-bench/cache/squad-10k.npz --port 11435 &
+
+redis-cli -p 6380 FLUSHALL
+cd crates/lunaris-py
+LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+LUNARIS_OLLAMA_URL="http://127.0.0.1:11435" \
+  uv run --with datasets --with python-ulid --with redis --with psutil \
+    python ../../scripts/bench-squad-kb.py \
+      --docs 10000 --queries 1000 --top-k 10 --split train --progress-every 1000 \
+      > ../../milestones/v0.1.1-bench/squad-10kx1k-strict.log 2>&1
+```
+
+Requires the `LUNARIS_OLLAMA_URL` env override — added to `lunaris-embed::OllamaEmbedderOpts::Default` in the commit that landed this report.
+
 ---
 
 ## 6. Open follow-ups
@@ -232,7 +322,8 @@ python ../../scripts/bench-dialog-chat.py --turns 80 --queries 20 --top-k 10
 | id | item | priority |
 |---|---|---|
 | BENCH-01 | Rebuild with `--features candle` + BgeRerankerV2M3 weights, rerun 10 k × 1 k, report recall delta | high |
-| BENCH-02 | Add `OLLAMA_NUM_PARALLEL=8` + concurrent ingest/recall to measure the non-serial ceiling | medium |
+| BENCH-02 | Add `OLLAMA_NUM_PARALLEL=8` + concurrent ingest/recall to measure the non-serial ceiling | medium (partially addressed — section 2.6 isolates Lunaris via the `ollama-replay-server.py` cache) |
+| BENCH-07 | Report upstream Moon issue: FT.* index state survives `FLUSHALL` (see section 2.6 caveat) | medium |
 | BENCH-03 | Investigate the 8 s tail outlier — correlate with Ollama slowlog / Moon profiling | medium |
 | BENCH-04 | Postgres backend parity benchmark (same harness, `postgres://…` URL) | medium |
 | BENCH-05 | Cross-user scoping correctness test (N users × M turns each, assert zero cross-user leakage at top-k) | high |

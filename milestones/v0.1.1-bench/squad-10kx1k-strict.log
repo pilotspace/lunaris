@@ -1,0 +1,151 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+# Backend      : moon://127.0.0.1:6380
+# Embedder     : Ollama embeddinggemma:300m (768d Google EmbeddingGemma)
+# Corpus       : rajpurkar/squad train
+# Plan         : ingest 10000 paragraphs, query 1000 times, top-10
+# Loaded       : 10000 unique contexts, 1000 queries
+  [ingest 1000/10000] elapsed 20.0s rate 50.0/s recent-p50 18ms
+  [ingest 2000/10000] elapsed 41.4s rate 48.3/s recent-p50 19ms
+  [ingest 3000/10000] elapsed 63.0s rate 47.6/s recent-p50 19ms
+  [ingest 4000/10000] elapsed 83.9s rate 47.7/s recent-p50 19ms
+  [ingest 5000/10000] elapsed 105.6s rate 47.4/s recent-p50 19ms
+  [ingest 6000/10000] elapsed 126.9s rate 47.3/s recent-p50 19ms
+  [ingest 7000/10000] elapsed 148.7s rate 47.1/s recent-p50 19ms
+  [ingest 8000/10000] elapsed 166.9s rate 47.9/s recent-p50 18ms
+  [ingest 9000/10000] elapsed 186.0s rate 48.4/s recent-p50 18ms
+  [ingest 10000/10000] elapsed 212.9s rate 47.0/s recent-p50 22ms
+  [recall 1000/1000] elapsed 18.1s rate 55.3/s
+
+════════════ MOON FOOTPRINT ════════════
+  dbsize                : 30022
+  chunks_num_docs       : 20048
+  entities_num_docs     : 0
+  facts_num_docs        : 0
+  communities_num_docs  : 0
+  used_memory_human     : 0B
+  used_memory_bytes     : 0
+
+════════════ INGEST ════════════
+  docs              : 10000
+  total wall        : 212.89 s
+  throughput        : 47.0 docs/s
+  per-doc p50       : 19.0 ms
+  per-doc p95       : 40.9 ms
+  per-doc p99       : 65.7 ms
+  per-doc max       : 451.2 ms
+
+════════════ RECALL ════════════
+  queries           : 1000
+  total wall        : 18.07 s
+  recall@1          : 75.1%
+  recall@3          : 86.0%
+  recall@5          : 88.7%
+  recall@10         : 91.0%
+  MRR               : 0.811
+  latency p50       : 10.3 ms
+  latency p95       : 12.3 ms
+  latency p99       : 20.8 ms
+  latency max       : 7336.5 ms
+  latency mean      : 18.1 ms
+
+════════════ RESOURCE USAGE ════════════
+{
+  "samples": 228,
+  "moon": {
+    "cpu_pct_mean": 13.7,
+    "cpu_pct_p95": 63.9,
+    "cpu_pct_max": 100.5,
+    "rss_mb_mean": 195.7,
+    "rss_mb_peak": 364.8
+  },
+  "ollama": {
+    "cpu_pct_mean": 5.7,
+    "cpu_pct_p95": 8.1,
+    "cpu_pct_max": 9.9,
+    "rss_mb_mean": 144.0,
+    "rss_mb_peak": 186.5
+  },
+  "bench-squad-kb": {
+    "cpu_pct_mean": 8.7,
+    "cpu_pct_p95": 14.1,
+    "cpu_pct_max": 35.7,
+    "rss_mb_mean": 114.6,
+    "rss_mb_peak": 226.3
+  },
+  "system": {
+    "cpu_pct_mean": 23.5,
+    "cpu_pct_p95": 33.4,
+    "cpu_pct_max": 55.5,
+    "mem_pct_mean": 81.5,
+    "mem_pct_peak": 84.0
+  }
+}
+
+════════════ JSON ════════════
+{
+  "backend": "moon://127.0.0.1:6380",
+  "split": "train",
+  "corpus_size": 10000,
+  "queries": 1000,
+  "ingest": {
+    "total_s": 212.894,
+    "docs_per_s": 46.97,
+    "p50_ms": 19.0,
+    "p95_ms": 40.92,
+    "p99_ms": 65.66,
+    "max_ms": 451.2
+  },
+  "recall": {
+    "total_s": 18.072,
+    "recall_at_1": 0.751,
+    "recall_at_3": 0.86,
+    "recall_at_5": 0.887,
+    "recall_at_10": 0.91,
+    "mrr": 0.8111,
+    "p50_ms": 10.27,
+    "p95_ms": 12.29,
+    "p99_ms": 20.84,
+    "max_ms": 7336.54,
+    "mean_ms": 18.05
+  },
+  "moon": {
+    "dbsize": 30022,
+    "chunks_num_docs": 20048,
+    "entities_num_docs": 0,
+    "facts_num_docs": 0,
+    "communities_num_docs": 0,
+    "used_memory_human": "0B",
+    "used_memory_bytes": 0
+  },
+  "resources": {
+    "samples": 228,
+    "moon": {
+      "cpu_pct_mean": 13.7,
+      "cpu_pct_p95": 63.9,
+      "cpu_pct_max": 100.5,
+      "rss_mb_mean": 195.7,
+      "rss_mb_peak": 364.8
+    },
+    "ollama": {
+      "cpu_pct_mean": 5.7,
+      "cpu_pct_p95": 8.1,
+      "cpu_pct_max": 9.9,
+      "rss_mb_mean": 144.0,
+      "rss_mb_peak": 186.5
+    },
+    "bench-squad-kb": {
+      "cpu_pct_mean": 8.7,
+      "cpu_pct_p95": 14.1,
+      "cpu_pct_max": 35.7,
+      "rss_mb_mean": 114.6,
+      "rss_mb_peak": 226.3
+    },
+    "system": {
+      "cpu_pct_mean": 23.5,
+      "cpu_pct_p95": 33.4,
+      "cpu_pct_max": 55.5,
+      "mem_pct_mean": 81.5,
+      "mem_pct_peak": 84.0
+    }
+  }
+}

@@ -37,9 +37,18 @@ pub struct OllamaEmbedderOpts {
 
 impl Default for OllamaEmbedderOpts {
     fn default() -> Self {
+        // Allow tests and benchmarks to redirect the embedder (see
+        // `scripts/ollama-replay-server.py`) without rebuilding. Model
+        // name is overridable for the same reason — pulling a different
+        // variant via `OLLAMA_MODEL` lets ablation runs compare embedders
+        // without touching Cargo.toml.
         Self {
-            endpoint: DEFAULT_ENDPOINT.to_string(),
-            model: DEFAULT_MODEL.to_string(),
+            endpoint: std::env::var("LUNARIS_OLLAMA_URL")
+                .ok()
+                .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string()),
+            model: std::env::var("LUNARIS_OLLAMA_MODEL")
+                .ok()
+                .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
             dim: DEFAULT_DIM,
         }
     }

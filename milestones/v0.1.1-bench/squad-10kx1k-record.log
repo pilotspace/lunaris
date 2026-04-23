@@ -1,0 +1,164 @@
+Uninstalled 1 package in 0.59ms
+Installed 1 package in 13ms
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+# Backend      : moon://127.0.0.1:6380
+# Embedder     : Ollama embeddinggemma:300m (768d Google EmbeddingGemma)
+# Corpus       : rajpurkar/squad train
+# Plan         : ingest 10000 paragraphs, query 1000 times, top-10
+# Loaded       : 10000 unique contexts, 1000 queries
+  [ingest 500/10000] elapsed 46.3s rate 10.8/s recent-p50 86ms
+  [ingest 1000/10000] elapsed 88.3s rate 11.3/s recent-p50 83ms
+  [ingest 1500/10000] elapsed 129.9s rate 11.5/s recent-p50 82ms
+  [ingest 2000/10000] elapsed 171.2s rate 11.7/s recent-p50 82ms
+  [ingest 2500/10000] elapsed 212.9s rate 11.7/s recent-p50 82ms
+  [ingest 3000/10000] elapsed 255.6s rate 11.7/s recent-p50 83ms
+  [ingest 3500/10000] elapsed 300.4s rate 11.7/s recent-p50 84ms
+  [ingest 4000/10000] elapsed 348.3s rate 11.5/s recent-p50 84ms
+  [ingest 4500/10000] elapsed 394.4s rate 11.4/s recent-p50 87ms
+  [ingest 5000/10000] elapsed 439.8s rate 11.4/s recent-p50 84ms
+  [ingest 5500/10000] elapsed 483.3s rate 11.4/s recent-p50 83ms
+  [ingest 6000/10000] elapsed 529.5s rate 11.3/s recent-p50 88ms
+  [ingest 6500/10000] elapsed 574.1s rate 11.3/s recent-p50 88ms
+  [ingest 7000/10000] elapsed 620.0s rate 11.3/s recent-p50 87ms
+  [ingest 7500/10000] elapsed 670.2s rate 11.2/s recent-p50 90ms
+  [ingest 8000/10000] elapsed 718.1s rate 11.1/s recent-p50 90ms
+  [ingest 8500/10000] elapsed 763.4s rate 11.1/s recent-p50 90ms
+  [ingest 9000/10000] elapsed 817.8s rate 11.0/s recent-p50 91ms
+  [ingest 9500/10000] elapsed 865.2s rate 11.0/s recent-p50 91ms
+  [ingest 10000/10000] elapsed 911.8s rate 11.0/s recent-p50 92ms
+  [recall 500/1000] elapsed 54.9s rate 9.1/s
+  [recall 1000/1000] elapsed 100.7s rate 9.9/s
+
+════════════ MOON FOOTPRINT ════════════
+  dbsize                : 30022
+  chunks_num_docs       : 10037
+  entities_num_docs     : 0
+  facts_num_docs        : 0
+  communities_num_docs  : 0
+  used_memory_human     : 0B
+  used_memory_bytes     : 0
+
+════════════ INGEST ════════════
+  docs              : 10000
+  total wall        : 911.84 s
+  throughput        : 11.0 docs/s
+  per-doc p50       : 86.4 ms
+  per-doc p95       : 110.3 ms
+  per-doc p99       : 213.3 ms
+  per-doc max       : 4765.9 ms
+
+════════════ RECALL ════════════
+  queries           : 1000
+  total wall        : 100.69 s
+  recall@1          : 75.0%
+  recall@3          : 86.0%
+  recall@5          : 88.8%
+  recall@10         : 91.1%
+  MRR               : 0.810
+  latency p50       : 91.3 ms
+  latency p95       : 103.3 ms
+  latency p99       : 128.0 ms
+  latency max       : 7492.6 ms
+  latency mean      : 100.7 ms
+
+════════════ RESOURCE USAGE ════════════
+{
+  "samples": 1002,
+  "moon": {
+    "cpu_pct_mean": 4.7,
+    "cpu_pct_p95": 9.8,
+    "cpu_pct_max": 100.2,
+    "rss_mb_mean": 111.0,
+    "rss_mb_peak": 338.3
+  },
+  "ollama": {
+    "cpu_pct_mean": 70.1,
+    "cpu_pct_p95": 79.8,
+    "cpu_pct_max": 91.9,
+    "rss_mb_mean": 361.6,
+    "rss_mb_peak": 477.2
+  },
+  "bench-squad-kb": {
+    "cpu_pct_mean": 3.3,
+    "cpu_pct_p95": 9.5,
+    "cpu_pct_max": 13.5,
+    "rss_mb_mean": 103.5,
+    "rss_mb_peak": 195.4
+  },
+  "system": {
+    "cpu_pct_mean": 22.4,
+    "cpu_pct_p95": 36.2,
+    "cpu_pct_max": 74.5,
+    "mem_pct_mean": 80.4,
+    "mem_pct_peak": 85.0
+  }
+}
+
+════════════ JSON ════════════
+{
+  "backend": "moon://127.0.0.1:6380",
+  "split": "train",
+  "corpus_size": 10000,
+  "queries": 1000,
+  "ingest": {
+    "total_s": 911.837,
+    "docs_per_s": 10.97,
+    "p50_ms": 86.42,
+    "p95_ms": 110.26,
+    "p99_ms": 213.34,
+    "max_ms": 4765.85
+  },
+  "recall": {
+    "total_s": 100.692,
+    "recall_at_1": 0.75,
+    "recall_at_3": 0.86,
+    "recall_at_5": 0.888,
+    "recall_at_10": 0.911,
+    "mrr": 0.8105,
+    "p50_ms": 91.32,
+    "p95_ms": 103.28,
+    "p99_ms": 128.01,
+    "max_ms": 7492.65,
+    "mean_ms": 100.66
+  },
+  "moon": {
+    "dbsize": 30022,
+    "chunks_num_docs": 10037,
+    "entities_num_docs": 0,
+    "facts_num_docs": 0,
+    "communities_num_docs": 0,
+    "used_memory_human": "0B",
+    "used_memory_bytes": 0
+  },
+  "resources": {
+    "samples": 1002,
+    "moon": {
+      "cpu_pct_mean": 4.7,
+      "cpu_pct_p95": 9.8,
+      "cpu_pct_max": 100.2,
+      "rss_mb_mean": 111.0,
+      "rss_mb_peak": 338.3
+    },
+    "ollama": {
+      "cpu_pct_mean": 70.1,
+      "cpu_pct_p95": 79.8,
+      "cpu_pct_max": 91.9,
+      "rss_mb_mean": 361.6,
+      "rss_mb_peak": 477.2
+    },
+    "bench-squad-kb": {
+      "cpu_pct_mean": 3.3,
+      "cpu_pct_p95": 9.5,
+      "cpu_pct_max": 13.5,
+      "rss_mb_mean": 103.5,
+      "rss_mb_peak": 195.4
+    },
+    "system": {
+      "cpu_pct_mean": 22.4,
+      "cpu_pct_p95": 36.2,
+      "cpu_pct_max": 74.5,
+      "mem_pct_mean": 80.4,
+      "mem_pct_peak": 85.0
+    }
+  }
+}
