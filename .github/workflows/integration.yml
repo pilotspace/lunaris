@@ -1,20 +1,24 @@
-# Phase 14-01 (CI-01) — Integration workflow: live pg-lunaris service.
+# Phase 14 — Integration workflow: live pg-lunaris + live Moon services.
 #
-# Provisions a live Postgres service container built in-workflow from
-# `scripts/pg-lunaris/Dockerfile` (pgvector + Apache AGE + pgmq) via
-# `docker/build-push-action@v5` with GHA layer cache, then runs
-# `cargo test -p lunaris-conformance --features pg-it` against it on
-# every PR and push to main.
+# Two waves combined into a single `integration` job because
+# `lunaris-conformance`'s AS_OF parity test compares Moon vs Postgres
+# field-by-field in-process — splitting into two jobs would require
+# cross-job state handoff for the parity assertion.
+#
+# - 14-01 (CI-01): pg-lunaris service (pgvector + AGE + pgmq) built
+#   in-workflow via `docker/build-push-action@v5` + pg-it default-on
+#   + timing.json evidence artifact.
+# - 14-02 (CI-02, this commit): Moon service built from source at the
+#   SHA pinned by the `vendor/moon` git submodule, `moon-it` default-on,
+#   explicit AS_OF parity step on every PR.
 #
 # ## Phase-14 ownership map (DO NOT fold into eval-gauntlet.yml)
 #
 # This file is strictly owned by Phase 14:
-#   - 14-01 (this plan): pg-lunaris service, pg-it default-on,
-#     timing-summary step. REQ CI-01.
-#   - 14-02 (next wave): adds a Moon service (build-from-source primary,
-#     pinned release artifact fallback) and an integration-moon job
-#     sibling; flips moon-it default-on; wires AS_OF parity gate.
-#     REQ CI-02. Injection anchor: # <14-02-anchor>.
+#   - 14-01: pg-lunaris service, pg-it default-on, timing-summary step.
+#     REQ CI-01.
+#   - 14-02 (this wave): Moon service + moon-it default-on + AS_OF parity
+#     gate on every PR. REQ CI-02. Injection anchor preserved below.
 #   - 14-03 (wave 3): adds a vanilla-pg-negative-matrix job leg that
 #     runs the 4 EVAL-05 regression tests against postgres:16 and
 #     asserts specific expected-error substrings. REQ CI-03.
@@ -26,14 +30,16 @@
 #
 # - No `run:` step interpolates untrusted `github.event.*` payloads.
 #   All ${{ ... }} expansions are limited to runner-provided,
-#   GitHub-controlled values (github.run_id) and are only used in
-#   artifact names, not shell strings.
-# - Service boots in a local docker daemon on the runner — no egress
-#   to a managed cluster.
-# - actions/checkout@v4 with submodules: recursive pulls the .planning
-#   submodule required by fixture paths.
+#   GitHub-controlled values (github.run_id, github.sha) and are passed
+#   via `env:` (RUN_ID / RUN_SHA) into the shell — never inlined into
+#   run: strings. security_reminder_hook-compliant.
+# - Services boot in a local docker daemon + a background process on
+#   the runner — no egress to a managed cluster.
+# - actions/checkout@v4 with submodules: recursive pulls both the
+#   .planning submodule (fixture paths) and the vendor/moon submodule
+#   (Moon source pinned for build-from-source per Plan 14-02 Option B).
 #
-# ## CI-01 acceptance hooks
+# ## CI-01 + CI-02 acceptance hooks
 #
 # - docker/build-push-action@v5 with cache-from/cache-to type=gha
 #   keyed on scope=pg-lunaris (CI-01 "cached via docker/build-push-action
@@ -42,6 +48,14 @@
 #   daemon via load: true, and started manually with docker run -d
 #   (GHA services: blocks can't consume a build: step cleanly —
 #   see Plan 14-01 D-02 in the plan body).
+# - Moon is built from `vendor/moon` submodule (14-02 Option B) with
+#   `Swatinem/rust-cache@v2` keyed on the pinned Moon SHA so cache
+#   hits stay < 3 min on warm runs (14-02 must-haves).
+# - cargo test -p lunaris-conformance --features moon-it,pg-it runs on
+#   every PR with both backends live (14-02 Task 3 behavior).
+# - AS_OF parity is invoked as a distinct named step with
+#   `if: success() || failure()` so the parity state is visible even
+#   on other failures (14-02 success criterion).
 # - timing-summary step records wall-clock seconds to the job summary
 #   AND uploads a timing.json artifact so Plan 14-04 can harvest p50
 #   across 5 consecutive main-branch runs without a custom action.
@@ -54,22 +68,26 @@ on:
   pull_request:
 
 jobs:
-  integration-pg:
-    name: integration-pg (pg-lunaris + pg-it)
+  integration:
+    name: integration (pg-lunaris + Moon + pg-it + moon-it)
     runs-on: ubuntu-latest
-    # CI-04 target p50 is 8 min; 20 min is the safety margin for first-run
-    # cache-miss (AGE + pgmq source compile ~90s on cold Docker layer cache).
-    timeout-minutes: 20
+    # CI-04 target p50 is 8 min; 25 min is the safety margin for first-run
+    # cache-miss (AGE + pgmq source compile ~90s on cold Docker layer cache
+    # PLUS Moon release build ~6 min on cold Swatinem/rust-cache).
+    timeout-minutes: 25
 
     env:
-      # Two-tier skip discipline: when PG_URL is set, conformance tests
-      # attempt the live connection; absent, they short-circuit to Ok(()).
-      # In this workflow the service is always up by the time cargo test
-      # runs (wait-for-port gate below), so PG_URL is always present.
+      # Two-tier skip discipline: when MOON_URL / PG_URL are set, conformance
+      # tests attempt the live connection; absent, they short-circuit to
+      # Ok(()). In this workflow both services are always up by the time
+      # cargo test runs (wait-for-port gates below), so both URLs are always
+      # present. MOON_URL uses the `moon://` scheme (not `redis://`) per
+      # the W-8 contract — Lunaris::open dispatches on URL scheme.
+      MOON_URL: moon://localhost:6390
       PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
 
     steps:
-      - name: Checkout (with submodules for .planning)
+      - name: Checkout (with submodules for .planning + vendor/moon)
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -120,17 +138,116 @@ jobs:
 
       - name: Install Rust 1.94 toolchain
         # Matches workspace rust-toolchain.toml + CLAUDE.md MSRV pin.
+        # Shared by the Moon build step AND the cargo test step.
         uses: dtolnay/rust-toolchain@1.94
 
-      - name: Cache cargo registry + target dir
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run conformance tests with pg-it feature
-        # CI-02 language verbatim: "pg-it ... enabled by default on PR runs".
-        # Scope is strictly -p lunaris-conformance (NOT --workspace) per
-        # Plan 14-01 Action block — keep the 8-min budget tight.
+      - name: Capture pinned Moon SHA (for cache key)
+        # Read the submodule's HEAD SHA into an env var so the rust-cache
+        # shared-key below is deterministic on the pinned Moon commit.
+        # The submodule pointer is the single source of truth for the
+        # Moon CI pin (see scripts/moon-ci/README.md) — .gitmodules only
+        # holds URL/branch config, not the SHA.
+        id: moon-sha
         run: |
-          cargo test -p lunaris-conformance --features pg-it --no-fail-fast
+          SHA=$(git -C vendor/moon rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Pinned Moon SHA: $SHA"
+
+      - name: Cache cargo registry + target dirs (lunaris + vendor/moon)
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cache BOTH the root lunaris workspace target/ AND the
+          # vendor/moon target/ (Moon build lands there via --manifest-path).
+          # Multiline `workspaces:` syntax is the rust-cache-idiomatic form.
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
+          # Keyed on the pinned Moon SHA so the cache invalidates on SHA
+          # bump only (not on every unrelated lunaris change). 14-02
+          # must-haves: warm Moon builds stay < 3 min.
+          shared-key: moon-ci-${{ steps.moon-sha.outputs.sha }}
+
+      - name: Build Moon (release, from vendor/moon submodule)
+        # Plan 14-02 Task 3 step 7. `cargo build --release --manifest-path
+        # vendor/moon/Cargo.toml --bin moon` produces
+        # vendor/moon/target/release/moon. The submodule pointer determines
+        # the source SHA — no secret / no token needed (Option B).
+        run: |
+          cargo build --release \
+            --manifest-path vendor/moon/Cargo.toml \
+            --bin moon
+
+      - name: Launch Moon service (port 6390)
+        # Launch in background with stdout+stderr redirected to a log file
+        # so the on-failure dump has something to show. Port 6390 matches
+        # eval-gauntlet.yml's URL contract (local-dev uses 6380; CI uses
+        # 6390) per reference_moon_local_run.md in the operator memory.
+        run: |
+          mkdir -p "$RUNNER_TEMP"
+          ./vendor/moon/target/release/moon --port 6390 \
+            > "$RUNNER_TEMP/moon.log" 2>&1 &
+          MOON_PID=$!
+          echo "MOON_PID=$MOON_PID" >> "$GITHUB_ENV"
+          echo "Moon launched with PID $MOON_PID, logging to $RUNNER_TEMP/moon.log"
+
+      - name: Wait for Moon (60s max, two retries tolerated)
+        # Mirror the pg-5432 loop. Two retries absorb the first-second-of-boot
+        # loopback flake 14-02 Task 3 Action block calls out.
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/6390) >/dev/null 2>&1; then
+              echo "moon reachable after $i attempts"
+              exit 0
+            fi
+            echo "waiting for moon (6390) ($i/30)..."
+            sleep 2
+          done
+          echo "ERROR: moon not reachable after 60s"
+          cat "$RUNNER_TEMP/moon.log" || true
+          exit 1
+
+      - name: Run conformance tests with moon-it + pg-it features
+        # CI-02 language verbatim: "moon-it and pg-it integration features
+        # ... are enabled by default on PR runs". Scope is strictly
+        # -p lunaris-conformance (NOT --workspace) per Plan 14-01 Action
+        # block — keep the 8-min budget tight. AS_OF parity test is also
+        # selected here (as part of the full suite); the following named
+        # step re-runs it in isolation so its result is visible in the
+        # Actions UI even if other tests fail.
+        run: |
+          cargo test -p lunaris-conformance \
+            --features moon-it,pg-it \
+            --no-fail-fast
+
+      - name: AS_OF parity gate (moon-it + pg-it, one retry on flake)
+        # Plan 14-02 Task 3 step 10 — distinct named step with
+        # `if: success() || failure()` so the parity state is visible in
+        # the Actions UI even when the main feature-test step fails
+        # (CI-02 "lunaris-conformance AS_OF parity runs on every PR").
+        #
+        # Single retry absorbs HLC timing flakes per R14-06. The retry is
+        # implemented as a shell `for` loop because `cargo test` has no
+        # native --retries flag (that is cargo-nextest syntax). We do NOT
+        # retry the main feature-test step above because that would mask
+        # real regressions.
+        if: success() || failure()
+        run: |
+          for attempt in 1 2; do
+            echo "AS_OF parity attempt $attempt/2"
+            if cargo test -p lunaris-conformance \
+                --features moon-it,pg-it \
+                --test run_as_of_parity \
+                --no-fail-fast; then
+              echo "AS_OF parity PASSED on attempt $attempt"
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              echo "AS_OF parity FAILED after 2 attempts"
+              exit 1
+            fi
+            echo "AS_OF parity flaked on attempt $attempt, retrying..."
+            sleep 3
+          done
 
       - name: Timing summary (CI-04 evidence)
         # Runs unconditionally so budget data is captured even on test
@@ -143,37 +260,59 @@ jobs:
         env:
           RUN_SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
+          MOON_SHA: ${{ steps.moon-sha.outputs.sha }}
         run: |
           WALL_CLOCK="${SECONDS}"
           {
-            echo "## integration-pg timing"
+            echo "## integration timing"
             echo ""
             echo "- wall_clock_seconds: ${WALL_CLOCK}"
             echo "- sha: ${RUN_SHA}"
             echo "- run_id: ${RUN_ID}"
+            echo "- moon_sha: ${MOON_SHA}"
           } >> "$GITHUB_STEP_SUMMARY"
-          printf '{"job":"integration-pg","wall_clock_seconds":%d,"sha":"%s","run_id":"%s"}\n' \
-            "${WALL_CLOCK}" "${RUN_SHA}" "${RUN_ID}" > timing.json
+          printf '{"job":"integration","wall_clock_seconds":%d,"sha":"%s","run_id":"%s","moon_sha":"%s"}\n' \
+            "${WALL_CLOCK}" "${RUN_SHA}" "${RUN_ID}" "${MOON_SHA}" > timing.json
           cat timing.json
 
       - name: Upload timing artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-pg-timing-${{ github.run_id }}
+          name: integration-timing-${{ github.run_id }}
           path: timing.json
 
       - name: Dump pg-lunaris logs on failure
         if: failure()
         run: docker logs pg-lunaris || true
 
+      - name: Dump Moon logs on failure
+        if: failure()
+        run: |
+          if [ -f "$RUNNER_TEMP/moon.log" ]; then
+            echo "--- moon.log ---"
+            cat "$RUNNER_TEMP/moon.log"
+          else
+            echo "moon logs unavailable (no $RUNNER_TEMP/moon.log)"
+          fi
+
+      - name: Tear down Moon process
+        if: always()
+        run: |
+          if [ -n "${MOON_PID:-}" ]; then
+            kill "$MOON_PID" 2>/dev/null || true
+            echo "Killed Moon PID $MOON_PID"
+          fi
+
       - name: Tear down pg-lunaris
         if: always()
         run: docker rm -f pg-lunaris || true
 
 # <14-02-anchor>
-# Plan 14-02 injects `integration-moon` job here (Moon build-from-source
-# service + moon-it default-on + AS_OF parity gate).
+# Plan 14-02 extended the single `integration` job above with Moon
+# build-from-source (vendor/moon submodule) + moon-it default-on + AS_OF
+# parity step. Anchor preserved for historical traceability; further
+# Moon-side extensions land inside the `integration` job's `steps:` list.
 
 # <14-03-anchor>
 # Plan 14-03 injects `vanilla-pg-negative-matrix` job here (runs the 4
