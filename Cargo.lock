@@ -2178,6 +2178,7 @@ dependencies = [
  "hex",
  "hf-hub",
  "lunaris",
+ "lunaris-consolidate",
  "lunaris-core",
  "lunaris-extract",
  "lunaris-ingest",
