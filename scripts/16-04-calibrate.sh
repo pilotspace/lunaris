@@ -191,11 +191,22 @@ if [[ -z "$MOON_VERSION" ]]; then
     | head -n1)
 fi
 MOON_VERSION="${MOON_VERSION:-unknown}"
+# Collapse any embedded CR / newline / surrounding whitespace — fingerprint
+# must be a single-line token to round-trip cleanly through env vars + JSON.
+MOON_VERSION=$(printf '%s' "$MOON_VERSION" | tr -d '\r\n' | awk '{$1=$1; print}')
+MOON_VERSION="${MOON_VERSION:-unknown}"
 
-# Postgres image digest from docker
+# Postgres image digest from docker. Not every container exposes
+# `.RepoDigests` (e.g., locally-built or locally-tagged images), so fall
+# back to `.Image` sha and finally to the literal "unknown".
 PG_IMAGE_DIGEST=$(docker inspect \
-  --format='{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Image}}{{end}}' \
-  "$PG_CONTAINER_RESOLVED" 2>/dev/null || echo "unknown")
+  --format='{{if .RepoDigests}}{{if gt (len .RepoDigests) 0}}{{index .RepoDigests 0}}{{end}}{{end}}' \
+  "$PG_CONTAINER_RESOLVED" 2>/dev/null || true)
+if [[ -z "$PG_IMAGE_DIGEST" ]]; then
+  PG_IMAGE_DIGEST=$(docker inspect --format='{{.Image}}' "$PG_CONTAINER_RESOLVED" 2>/dev/null || true)
+fi
+PG_IMAGE_DIGEST=$(printf '%s' "$PG_IMAGE_DIGEST" | tr -d '\r\n' | awk '{$1=$1; print}')
+PG_IMAGE_DIGEST="${PG_IMAGE_DIGEST:-unknown}"
 
 # Candle / HF model cache hash — tolerate missing cache (dev box with no models yet).
 CANDLE_CACHE_HASH=""
@@ -301,29 +312,47 @@ run_once() {
   local captured_at
   captured_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  # Use python3 (stdlib) to re-shape the bench JSON into the canonical run schema.
-  # The bench writes a ResultsEnvelope: { status, moon: Option<BackendMetrics>,
-  # postgres: Option<BackendMetrics>, ... }. For this run, exactly one of
-  # `moon` / `postgres` is populated — we extract promotion_rate + recall_p50_ms
-  # from that branch.
-  python3 - "$bench_out" "$final_out" <<PY_END
-import json, sys
-src, dst = sys.argv[1], sys.argv[2]
+  # Use python3 (stdlib) to re-shape the bench JSON into the canonical run
+  # schema. The bench writes a ResultsEnvelope: { status, moon:
+  # Option<BackendMetrics>, postgres: Option<BackendMetrics>, ... }. For this
+  # run, exactly one of `moon` / `postgres` is populated — we extract
+  # promotion_rate + recall_p50_ms from that branch.
+  #
+  # All fingerprint values are passed via environment (RUN_BACKEND, RUN_ID,
+  # RUN_GIT_SHA, ...) so the python stdin can be a plain quoted heredoc with
+  # NO shell parameter expansion. This avoids bash 3.2 incompatibilities
+  # (macOS default ships 3.2; `${VAR@Q}` requires 4.4+) and makes fingerprint
+  # values with shell metacharacters safe to pass.
+  RUN_BACKEND="$backend" \
+  RUN_ID="$run_id" \
+  RUN_GIT_SHA="$GIT_SHA" \
+  RUN_MOON_VERSION="$MOON_VERSION" \
+  RUN_PG_IMAGE_DIGEST="$PG_IMAGE_DIGEST" \
+  RUN_CANDLE_CACHE_HASH="$CANDLE_CACHE_HASH" \
+  RUN_TRACE_HASH="$TRACE_HASH" \
+  RUN_CAPTURED_AT="$captured_at" \
+  RUN_SRC="$bench_out" \
+  RUN_DST="$final_out" \
+  python3 - <<'PY_END'
+import json, os
+
+src = os.environ["RUN_SRC"]
+dst = os.environ["RUN_DST"]
 with open(src) as f:
     raw = json.load(f)
 
-backend = "${backend}"
+backend = os.environ["RUN_BACKEND"]
 be_block = raw.get(backend) or {}
 
 envelope = {
     "schema_version": "1.0",
-    "run_id": "${run_id}",
+    "run_id": os.environ["RUN_ID"],
     "backend": backend,
-    "git_sha": "${GIT_SHA}",
-    "moon_version": ${MOON_VERSION@Q},
-    "pg_lunaris_image_digest": ${PG_IMAGE_DIGEST@Q},
-    "candle_cache_hash": "${CANDLE_CACHE_HASH}",
-    "trace_hash": "${TRACE_HASH}",
+    "git_sha": os.environ["RUN_GIT_SHA"],
+    "moon_version": os.environ["RUN_MOON_VERSION"],
+    "pg_lunaris_image_digest": os.environ["RUN_PG_IMAGE_DIGEST"],
+    "candle_cache_hash": os.environ["RUN_CANDLE_CACHE_HASH"],
+    "trace_hash": os.environ["RUN_TRACE_HASH"],
     "promotion_rate": be_block.get("promotion_rate"),
     "eval_05_p50_ms": be_block.get("recall_p50_ms"),
     # queue_depth_peak is not emitted by the env-only shim (eval_05_helios_10k
@@ -332,14 +361,13 @@ envelope = {
     # regress the V1 gate surface. Documented in SUMMARY.md.
     "queue_depth_peak": None,
     "slo_reasons": be_block.get("slo_reasons") or [],
-    "captured_at": "${captured_at}",
+    "captured_at": os.environ["RUN_CAPTURED_AT"],
     "raw_bench_path": src,
     "envelope_status": raw.get("status"),
 }
 with open(dst, "w") as f:
     json.dump(envelope, f, indent=2, sort_keys=True)
     f.write("\n")
-print(f"  wrote {dst}", file=sys.stderr)
 PY_END
 
   echo "==> [run ${run_id}] done — $final_out"
