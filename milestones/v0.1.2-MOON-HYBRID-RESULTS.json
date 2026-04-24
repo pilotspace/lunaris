@@ -87,6 +87,13 @@
       "recommendation": "Phase 15 migration (source TAG + Filter::Eq push-down) achieves all targets under clean system conditions. Moon p50 and p99 both pass. The Postgres p50 regression from 2.05 ms (v0.1.1) is system-load-dependent, not schema-dependent, and remains within the 60 ms SLO."
     }
   },
+  "gap_closure": {
+    "run_5_added": true,
+    "verdict_corrected": true,
+    "plan": "15-06",
+    "verification_updated": "15-07",
+    "date": "2026-04-24"
+  },
   "supplementary_python_bench": {
     "note": "bench-dialog-chat.py 10K turns / 1K queries via ChatAgentMemory with Ollama replay server. Includes embedding overhead (~40ms per query). Not directly comparable to EVAL-05 StubEmbedder numbers.",
     "moon": {
