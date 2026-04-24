@@ -328,6 +328,10 @@ async fn ingest_episode_graph_on(
                 // of the parity contract so Filter::ValidTimeRange queries
                 // match newly-ingested chunks.
                 "valid_time_ms": chunk.bt.valid.0.wall_ms,
+                // Plan 15-01 Task 2 — episode.source flows into chunk
+                // metadata so atomic.rs can HSET it as a TAG field for
+                // server-side `@source:{value}` FT.SEARCH (PERF-MOON-01).
+                "source": &episode.source,
             }),
         });
     }
