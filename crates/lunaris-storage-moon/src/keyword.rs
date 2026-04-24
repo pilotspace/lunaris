@@ -118,7 +118,16 @@ pub(crate) async fn keyword_search(
 /// shape it composes.
 fn filter_to_moon(f: &Filter) -> String {
     match f {
-        Filter::Eq { field, value } => format!("@{field}:{}", json_to_moon(value)),
+        Filter::Eq { field, value } => {
+            if field == "source" {
+                // source is a TAG field on the chunks FT index (PERF-MOON-01).
+                // TAG syntax uses `{value}` braces. Special characters inside
+                // the value must be backslash-escaped per RediSearch TAG rules.
+                format!("@{field}:{{{}}}", ft_tag_escape(&json_to_moon_bare(value)))
+            } else {
+                format!("@{field}:{}", json_to_moon(value))
+            }
+        }
         Filter::StartsWith { field, prefix } => format!("@{field}:{prefix}*"),
         Filter::And(xs) => {
             format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" "))
@@ -147,6 +156,29 @@ fn decode_moon_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
         return None;
     }
     hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
+}
+
+/// Return the bare string value WITHOUT quotes — TAG values must not be quoted.
+fn json_to_moon_bare(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => format!("{v}"),
+    }
+}
+
+/// Escape RediSearch TAG special characters with backslash.
+/// Per RediSearch TAG rules: `,`, `.`, `{`, `}`, `\`, `:` must be escaped.
+fn ft_tag_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        if matches!(ch, ',' | '.' | '{' | '}' | '\\' | ':') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn json_to_moon(v: &serde_json::Value) -> String {
@@ -207,10 +239,25 @@ mod tests {
         assert_eq!(ft_escape(""), "");
     }
 
+    /// Plan 15-01 Task 3 — source is a TAG field; TAG syntax uses `{value}`
+    /// braces. Dots inside the value must be backslash-escaped per RediSearch
+    /// TAG rules.
     #[test]
-    fn filter_eq_renders_for_keyword() {
+    fn filter_eq_renders_source_as_tag_keyword() {
         let f = Filter::Eq { field: "source".into(), value: json!("notes.md") };
-        assert_eq!(filter_to_moon(&f), "@source:\"notes.md\"");
+        assert_eq!(filter_to_moon(&f), "@source:{notes\\.md}");
+    }
+
+    #[test]
+    fn filter_eq_renders_source_with_colon_as_tag_keyword() {
+        let f = Filter::Eq { field: "source".into(), value: json!("helios:fs/test") };
+        assert_eq!(filter_to_moon(&f), "@source:{helios\\:fs/test}");
+    }
+
+    #[test]
+    fn filter_eq_renders_non_source_as_text_keyword() {
+        let f = Filter::Eq { field: "kind".into(), value: json!("episode") };
+        assert_eq!(filter_to_moon(&f), "@kind:\"episode\"");
     }
 
     #[test]
