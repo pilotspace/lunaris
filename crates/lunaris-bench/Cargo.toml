@@ -23,6 +23,11 @@ lunaris-ingest     = { path = "../lunaris-ingest" }
 # default-features = false keeps the candle / ollama / cloud-api stack out of
 # the bench build (mirrors B-3 fix from Plan 03-02).
 lunaris-extract    = { path = "../lunaris-extract", default-features = false }
+# Plan 16-03 — consolidator_tick bench exercises `ActRConsolidator::default()`
+# directly (independent of the `Lunaris` handle's internal consolidator pipeline
+# wiring in 16-01) so we depend on `lunaris-consolidate` explicitly. No extra
+# features — the default build is NoopConsolidator + ActRConsolidator types.
+lunaris-consolidate = { path = "../lunaris-consolidate" }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
 futures            = { workspace = true }
@@ -95,6 +100,15 @@ harness = false
 # samples under target/criterion/helios_smoke/helios_p50_<label>/.
 [[bench]]
 name = "helios_p50"
+harness = false
+
+# Plan 16-03 CONSOL-V1-03 — Criterion bench for one full `ActRConsolidator`
+# worker-tick (score → classify → promote/archive emission). Baseline saved at
+# `--save-baseline v0.1.2` feeds the committed summary at
+# `milestones/v0.1.2-CONSOL-BENCH.json`. Exercises Moon + Postgres via
+# `MOON_URL` / `PG_URL` env vars (same skip discipline as `helios_p50.rs`).
+[[bench]]
+name = "consolidator_tick"
 harness = false
 
 # Plan 04-03 — chaos subprocess for the crash-recovery property test (D-23).
