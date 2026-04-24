@@ -54,7 +54,7 @@ pub mod noop;
 pub mod types;
 pub mod worker;
 
-pub use act_r::ActRScorer;
+pub use act_r::{ActRConsolidator, ActRScorer};
 pub use leiden::{CommunityAssignment, GraphSnapshot, leiden_pass};
 pub use noop::NoopConsolidator;
 pub use types::{
