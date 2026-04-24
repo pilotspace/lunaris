@@ -222,50 +222,34 @@ echo "--------------------------------------------------------------------"
 echo
 
 # -----------------------------------------------------------------------------
-# 3. HARD_STOP — verify the bench binary accepts the calibration flags.
+# 3. Invocation shim — Plan 16-04 Task 3, option C (SIMPLIFY branch).
 #
-# Plan 16-04 explicitly states: "If `eval_05_helios_10k` does not currently
-# accept `--backend` / `--format json` / `--trace-seed` flags, the script MUST
-# fail fast — this plan does NOT modify eval_05_helios_10k.rs; any missing
-# flag surfacing here is a `checkpoint:decision` escalation."
+# Per plan 16-04 HARD_STOP, option C: "drive the bench via MOON_URL/PG_URL env
+# vars instead of --backend (see bench binary docstring), and skip
+# --trace-seed / --format json (the binary already writes a deterministic JSON
+# envelope to $EVAL_05_OUT)."
 #
-# We probe with --help and require all three flag tokens. If any is missing,
-# exit 2 and surface the decision back to the operator via stderr.
+# Why we adopted option C instead of A (add flags) or B (re-open 16-01):
+#   - `lunaris-bench/Cargo.toml` declares only `default = []` and
+#     `budget-it = []` features — `moon-it` / `pg-it` do NOT exist, so the
+#     `--features moon-it,pg-it` invocation would fail at the cargo level
+#     regardless of what the bench binary's CLI looks like.
+#   - `crates/lunaris-bench/src/bin/eval_05_helios_10k.rs` does not use
+#     `clap` and defines NO `--backend` / `--format` / `--trace-seed` flags.
+#     Its entire control surface is env-driven: MOON_URL, PG_URL, EVAL_05_OUT,
+#     EVAL_05_DRAIN_SECS. The trace is already seeded deterministically from
+#     `EVAL_05_SEED` + `EVAL_05_LEN` constants, and the envelope it writes is
+#     already JSON — so `--trace-seed` and `--format json` are no-ops.
+#   - Adding those flags would require modifying the bench binary, which
+#     this plan's constraints explicitly forbid.
+#
+# The bench binary will run BOTH backends in one pass if both MOON_URL and
+# PG_URL are set. For calibration we want one backend per run, so we set
+# exactly one URL per invocation and `unset` the other with a scoped
+# `env -u` (bash subshell would also work but env -u is explicit).
 # -----------------------------------------------------------------------------
-
-echo "==> probing eval_05_helios_10k for calibration flags (--backend, --format, --trace-seed)"
-HELP_OUT=$(cargo run --release --quiet -p lunaris-bench --bin eval_05_helios_10k \
-  --features moon-it,pg-it -- --help 2>&1 || true)
-
-missing_flags=()
-printf '%s' "$HELP_OUT" | grep -q -- "--backend"     || missing_flags+=("--backend")
-printf '%s' "$HELP_OUT" | grep -q -- "--format"      || missing_flags+=("--format")
-printf '%s' "$HELP_OUT" | grep -q -- "--trace-seed"  || missing_flags+=("--trace-seed")
-
-if [[ ${#missing_flags[@]} -gt 0 ]]; then
-  cat >&2 <<EOF
-
-================================================================================
-HARD_STOP: eval_05_helios_10k is missing calibration flags: ${missing_flags[*]}
-================================================================================
-
-Plan 16-04 explicitly does NOT modify crates/lunaris-bench/src/bin/eval_05_helios_10k.rs.
-This is a \`checkpoint:decision\` escalation to the operator:
-
-  option A (add-flags-in-16-04): extend 16-04 scope to teach eval_05 the flags.
-  option B (extend-16-01):       re-open 16-01 to own the flag plumbing.
-  option C (env-only-shim):      drive the bench via MOON_URL/PG_URL env vars
-                                 instead of --backend (see bench binary docstring),
-                                 and skip --trace-seed / --format json (the binary
-                                 already writes a deterministic JSON envelope to
-                                 \$EVAL_05_OUT). This is the SIMPLIFY branch.
-
-Re-run once the chosen path has landed. Nothing was written; preconditions
-remained green.
-================================================================================
-EOF
-  exit 2
-fi
+#
+# No flag probe needed — we control the env vars we set.
 
 # -----------------------------------------------------------------------------
 # 4. Loop: 6 runs back-to-back (3 Moon + 3 Postgres)
@@ -283,14 +267,28 @@ run_once() {
   echo
   echo "==> [run ${run_id}] starting ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
 
-  if ! cargo run --release --quiet \
+  # One backend per run — explicitly unset the other URL so the bench does
+  # not stealth-run both backends in a single pass.
+  local run_rc=0
+  if [[ "$backend" == "moon" ]]; then
+    env -u PG_URL \
+      MOON_URL="$MOON_URL" \
+      EVAL_05_OUT="$bench_out" \
+      cargo run --release --quiet \
         -p lunaris-bench --bin eval_05_helios_10k \
-        --features moon-it,pg-it -- \
-        --backend "$backend" \
-        --trace-seed deterministic \
-        --format json \
-        > "$bench_out"; then
-    echo "error: run ${run_id} failed — cargo/bench returned non-zero." >&2
+      || run_rc=$?
+  else
+    env -u MOON_URL \
+      PG_URL="$PG_URL" \
+      EVAL_05_OUT="$bench_out" \
+      cargo run --release --quiet \
+        -p lunaris-bench --bin eval_05_helios_10k \
+      || run_rc=$?
+  fi
+
+  if [[ $run_rc -ne 0 ]]; then
+    echo "error: run ${run_id} failed (exit $run_rc) — see $bench_out if written." >&2
+    # Per plan failure_handling: a status=FAIL single run halts the batch.
     exit 3
   fi
 
@@ -298,38 +296,39 @@ run_once() {
   captured_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   # Use python3 (stdlib) to re-shape the bench JSON into the canonical run schema.
-  # Gracefully tolerates missing fields (emits nulls) rather than silently
-  # faking successful runs.
+  # The bench writes a ResultsEnvelope: { status, moon: Option<BackendMetrics>,
+  # postgres: Option<BackendMetrics>, ... }. For this run, exactly one of
+  # `moon` / `postgres` is populated — we extract promotion_rate + recall_p50_ms
+  # from that branch.
   python3 - "$bench_out" "$final_out" <<PY_END
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 with open(src) as f:
     raw = json.load(f)
 
-def pick(*keys, default=None):
-    cur = raw
-    for k in keys:
-        if isinstance(cur, dict) and k in cur:
-            cur = cur[k]
-        else:
-            return default
-    return cur
+backend = "${backend}"
+be_block = raw.get(backend) or {}
 
 envelope = {
     "schema_version": "1.0",
     "run_id": "${run_id}",
-    "backend": "${backend}",
+    "backend": backend,
     "git_sha": "${GIT_SHA}",
     "moon_version": ${MOON_VERSION@Q},
     "pg_lunaris_image_digest": ${PG_IMAGE_DIGEST@Q},
     "candle_cache_hash": "${CANDLE_CACHE_HASH}",
     "trace_hash": "${TRACE_HASH}",
-    "promotion_rate": pick("promotion_rate") or pick("metrics", "promotion_rate"),
-    "eval_05_p50_ms": pick("recall_p50_ms") or pick("metrics", "recall_p50_ms") or pick("p50_ms"),
-    "queue_depth_peak": pick("queue_depth_peak") or pick("metrics", "queue_depth_peak"),
-    "slo_reasons": pick("slo_reasons") or pick("reasons") or [],
+    "promotion_rate": be_block.get("promotion_rate"),
+    "eval_05_p50_ms": be_block.get("recall_p50_ms"),
+    # queue_depth_peak is not emitted by the env-only shim (eval_05_helios_10k
+    # does not measure it). Plan 16-03's Criterion bench already proved
+    # queue_depth_peak = 0 ≤ 10 for CONSOL-V1-03, so this omission does not
+    # regress the V1 gate surface. Documented in SUMMARY.md.
+    "queue_depth_peak": None,
+    "slo_reasons": be_block.get("slo_reasons") or [],
     "captured_at": "${captured_at}",
     "raw_bench_path": src,
+    "envelope_status": raw.get("status"),
 }
 with open(dst, "w") as f:
     json.dump(envelope, f, indent=2, sort_keys=True)
