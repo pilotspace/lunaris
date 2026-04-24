@@ -66,11 +66,16 @@ OUT_DIR="milestones/v0.1.2-CONSOL-CALIBRATION"
 TMP_DIR="tmp"
 mkdir -p "$OUT_DIR" "$TMP_DIR"
 
-# Idempotency guard — refuse to overwrite without --force
+# Idempotency guard — refuse to overwrite without --force.
+# Use shopt nullglob so an unmatched literal glob expands to an empty array
+# rather than staying as the literal string (which would trip `set -e` via
+# `ls` exit 2 on a non-existent path under pipefail).
 if [[ $FORCE -eq 0 ]]; then
-  existing=$(ls "$OUT_DIR"/run-*.json 2>/dev/null | wc -l | tr -d ' ')
-  if [[ "$existing" != "0" ]]; then
-    echo "error: $OUT_DIR already contains $existing run-*.json file(s)." >&2
+  shopt -s nullglob
+  existing_runs=("$OUT_DIR"/run-*.json)
+  shopt -u nullglob
+  if [[ ${#existing_runs[@]} -gt 0 ]]; then
+    echo "error: $OUT_DIR already contains ${#existing_runs[@]} run-*.json file(s)." >&2
     echo "       pass --force to overwrite, or clear the directory first." >&2
     exit 1
   fi
