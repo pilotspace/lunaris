@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "bench": "consolidator_tick",
+  "baseline": "v0.1.2",
+  "git_sha": "0206397",
+  "moon_version": "moon@b24b4d0 (RESP redis_version=0.1.0)",
+  "pg_lunaris_image_digest": "sha256:67b40fab19417f3777ac1047f0dae077e27e2032f3756b71b5121e6aebb14999",
+  "pg_version": "16.13",
+  "candle_cache_hash": "n/a (StubEmbedder 768-dim; no HF weights loaded by this bench)",
+  "cpu_model": "Apple M4 Pro",
+  "run_timestamp_iso": "2026-04-24T03:22:43Z",
+  "backends": {
+    "moon": {
+      "p50_ms": 0.0715,
+      "p95_ms": 0.0726,
+      "p99_ms": 0.073,
+      "sample_count": 50,
+      "queue_depth_peak": 0
+    },
+    "postgres": {
+      "p50_ms": 0.0722,
+      "p95_ms": 0.0735,
+      "p99_ms": 0.0739,
+      "sample_count": 50,
+      "queue_depth_peak": 0
+    }
+  },
+  "slo": {
+    "p50_ms_budget": 50,
+    "queue_depth_max": "R16-03 hard cap = 10 (2\u00d7 noop baseline of ~0)"
+  },
+  "workload": {
+    "batch_size": 1000,
+    "episode_fanout": 100,
+    "description": "Deterministic 1K ConsolidateEvent batch spanning 100 episodes; all activations land in neutral band so report emission = 0 per tick (queue_depth_peak=0).",
+    "storage_usage": "ActRConsolidator::consolidate takes Arc<dyn StoragePort> but does not dereference it (Leiden spreading-activation deferred per act_r.rs 'Known gap'). Moon vs Postgres lanes are fingerprint labels on a pure-CPU scoring pass; future storage-touching regressions will be measurable against this reference."
+  },
+  "verdict": "PASS",
+  "notes": [
+    "Plan 16-03 prescribed `--features moon-it,pg-it`; repo convention is MOON_URL/PG_URL env vars. Followed repo convention (Rule 3 deviation documented in SUMMARY).",
+    "PG container name is `lunaris-pg` (per prompt live_infra_state), not `pg-lunaris` referenced in the plan body. Used the actual running container.",
+    "Measurements are in \u00b5s-range (~72\u00b5s) because storage is not touched; budget (50ms) is trivially met. Numbers establish the pre-Leiden-wiring baseline \u2014 a regression when storage-touching spreading-activation lands will be immediately visible against this reference."
+  ]
+}
