@@ -96,6 +96,10 @@ const DEFAULT_DRAIN_SECS: u64 = 90;
 pub struct BackendMetrics {
     pub backend: String,
     pub recall_p50_ms: f64,
+    #[serde(default)]
+    pub recall_p95_ms: f64,
+    #[serde(default)]
+    pub recall_p99_ms: f64,
     pub recall_samples: u64,
     pub promotion_rate: f64,
     pub promotions_observed: u64,
@@ -338,6 +342,8 @@ async fn run_one_backend(
     eprintln!("[{name}] post-drain fact count = {facts_after} (Δ = {promotions})");
 
     let p50 = percentile(&mut recalls_ms, 50.0);
+    let p95 = percentile(&mut recalls_ms, 95.0);
+    let p99 = percentile(&mut recalls_ms, 99.0);
     let promotion_rate = promotions as f64 / trace.ops.len() as f64;
 
     let mut slo_reasons = Vec::new();
@@ -363,6 +369,8 @@ async fn run_one_backend(
     Ok(BackendMetrics {
         backend: name.to_string(),
         recall_p50_ms: p50,
+        recall_p95_ms: p95,
+        recall_p99_ms: p99,
         recall_samples: recalls_ms.len() as u64,
         promotion_rate,
         promotions_observed: promotions,
@@ -495,6 +503,8 @@ mod tests {
             moon: Some(BackendMetrics {
                 backend: "moon".into(),
                 recall_p50_ms: 12.5,
+                recall_p95_ms: 20.0,
+                recall_p99_ms: 24.0,
                 recall_samples: 5500,
                 promotion_rate: 0.07,
                 promotions_observed: 700,
@@ -505,6 +515,8 @@ mod tests {
             postgres: Some(BackendMetrics {
                 backend: "postgres".into(),
                 recall_p50_ms: 45.1,
+                recall_p95_ms: 55.0,
+                recall_p99_ms: 58.0,
                 recall_samples: 5500,
                 promotion_rate: 0.06,
                 promotions_observed: 600,
@@ -527,6 +539,8 @@ mod tests {
         env.ingest_moon(BackendMetrics {
             backend: "moon".into(),
             recall_p50_ms: 30.0, // > 25 ms budget
+            recall_p95_ms: 40.0,
+            recall_p99_ms: 50.0,
             recall_samples: 100,
             promotion_rate: 0.1,
             promotions_observed: 1,
@@ -545,6 +559,8 @@ mod tests {
         env.ingest_moon(BackendMetrics {
             backend: "moon".into(),
             recall_p50_ms: 10.0,
+            recall_p95_ms: 15.0,
+            recall_p99_ms: 18.0,
             recall_samples: 100,
             promotion_rate: 0.1,
             promotions_observed: 1,
