@@ -85,10 +85,16 @@ MOON_URL="${MOON_URL:-redis://127.0.0.1:6380}"
 PG_URL="${PG_URL:-postgres://postgres:postgres@127.0.0.1:5432/lunaris}"
 PG_CONTAINER_NAME="${PG_CONTAINER_NAME:-lunaris-pg}"
 
-# Parse host+port out of MOON_URL for redis-cli (redis://HOST:PORT)
-MOON_HOST_PORT=$(printf '%s\n' "$MOON_URL" | sed -E 's#^redis://##; s#/.*$##')
+# Parse host+port out of MOON_URL (accept redis:// or moon:// as input).
+MOON_HOST_PORT=$(printf '%s\n' "$MOON_URL" | sed -E 's#^(redis|moon)://##; s#/.*$##')
 MOON_HOST=$(printf '%s\n' "$MOON_HOST_PORT" | cut -d: -f1)
 MOON_PORT=$(printf '%s\n' "$MOON_HOST_PORT" | cut -d: -f2)
+
+# `lunaris::open` (crates/lunaris/src/open.rs) dispatches on URL scheme: it
+# requires `moon://` for MoonStorage. `redis-cli` and the PING precondition
+# need `redis://` (or just host:port). Normalize so each tool sees the
+# scheme it expects.
+MOON_URL_LUNARIS="moon://${MOON_HOST}:${MOON_PORT}"
 
 # -----------------------------------------------------------------------------
 # 1. Preconditions
@@ -272,7 +278,7 @@ run_once() {
   local run_rc=0
   if [[ "$backend" == "moon" ]]; then
     env -u PG_URL \
-      MOON_URL="$MOON_URL" \
+      MOON_URL="$MOON_URL_LUNARIS" \
       EVAL_05_OUT="$bench_out" \
       cargo run --release --quiet \
         -p lunaris-bench --bin eval_05_helios_10k \
