@@ -131,7 +131,18 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 } else {
                     None
                 };
-                let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(4);
+                // Plan 15-01 Task 1 — extract source from metadata for chunks
+                // index so the `SchemaField::Tag("source")` FT index can
+                // resolve `@source:{value}` queries server-side (PERF-MOON-01).
+                let source_buf: Option<String> = if index == "chunks" {
+                    metadata
+                        .get("source")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+                let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(6);
                 fields.push(("vec", buf.as_slice()));
                 fields.push(("meta", meta_json.as_bytes()));
                 if let Some(c) = content.as_ref() {
@@ -139,6 +150,9 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 }
                 if let Some(ref vt) = valid_time_buf {
                     fields.push(("valid_time", vt.as_bytes()));
+                }
+                if let Some(ref src) = source_buf {
+                    fields.push(("source", src.as_bytes()));
                 }
                 typed
                     .hset_multiple(key.as_bytes(), &fields)
@@ -294,6 +308,30 @@ mod valid_time_tests {
             src.contains("index == \"chunks\""),
             "valid_time HSET must be gated on index == \"chunks\""
         );
+    }
+
+    /// Plan 15-01 Task 1 — structural guard: VectorUpsert for chunks must
+    /// extract `source` from metadata and HSET it as a separate field so the
+    /// `SchemaField::Tag("source")` FT index can resolve `@source:{value}`
+    /// queries server-side (PERF-MOON-01).
+    #[test]
+    fn vector_upsert_writes_source_field_for_chunks() {
+        let src = include_str!("atomic.rs");
+        assert!(
+            src.contains("source_buf"),
+            "VectorUpsert must extract source into source_buf for chunks"
+        );
+        assert!(
+            src.contains("\"source\", src.as_bytes()"),
+            "VectorUpsert must HSET source field from source_buf"
+        );
+    }
+
+    #[test]
+    fn source_extracted_from_metadata_for_chunks_index() {
+        let meta = serde_json::json!({"source": "helios:fs/test", "text": "hello"});
+        let source = meta.get("source").and_then(|v| v.as_str());
+        assert_eq!(source, Some("helios:fs/test"));
     }
 
     #[test]

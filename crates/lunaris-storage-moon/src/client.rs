@@ -138,6 +138,9 @@ impl MoonClient {
             // TemporalQuery axis and stay unchanged.
             if *name == "chunks" {
                 opts = opts.add_field(SchemaField::Numeric("valid_time".to_string()));
+                // Plan 15-01 Task 1 — source TAG field so `@source:{value}`
+                // FT.SEARCH queries resolve server-side (PERF-MOON-01).
+                opts = opts.add_field(SchemaField::Tag("source".to_string()));
             }
             let typed = self.inner.clone();
             match typed.vector().create_index(name, opts).await {
@@ -234,6 +237,18 @@ mod tests {
         assert!(
             source.contains("SchemaField::Numeric(\"valid_time\""),
             "ensure_indexes must declare valid_time NUMERIC on the chunks FT index"
+        );
+    }
+
+    /// Plan 15-01 Task 1 — structural guard: chunks FT index MUST declare
+    /// `source` as `SchemaField::Tag` so `@source:{value}` TAG queries
+    /// resolve server-side (PERF-MOON-01).
+    #[test]
+    fn ensure_indexes_declares_source_tag_on_chunks() {
+        let source = include_str!("client.rs");
+        assert!(
+            source.contains("SchemaField::Tag(\"source\""),
+            "ensure_indexes must declare source TAG on the chunks FT index"
         );
     }
 }
