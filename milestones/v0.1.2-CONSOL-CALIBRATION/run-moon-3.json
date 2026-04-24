@@ -1,0 +1,19 @@
+{
+  "backend": "moon",
+  "candle_cache_hash": "none",
+  "captured_at": "2026-04-24T04:14:55Z",
+  "envelope_status": "PASS",
+  "eval_05_p50_ms": 4.7155000000000005,
+  "git_sha": "8a5db5d7c979504402c4c235c9fe3013022c8faf",
+  "moon_version": "redis-compat:0.1.0",
+  "pg_lunaris_image_digest": "sha256:67b40fab19417f3777ac1047f0dae077e27e2032f3756b71b5121e6aebb14999",
+  "promotion_rate": 0.0,
+  "queue_depth_peak": null,
+  "raw_bench_path": "tmp/eval-05-moon-3.json",
+  "run_id": "moon-3",
+  "schema_version": "1.0",
+  "slo_reasons": [
+    "promotion_rate_info: 0.0000 < informational floor 0.0500 (v0.1.1 ships NoopConsolidator; real ActRConsolidator lands v0.1.2 per CONSOL-V1-01)"
+  ],
+  "trace_hash": "a4b024082b67cb26c98af53587b62d9e64ee8304bc97dab746f6342249f24cd2"
+}
