@@ -212,6 +212,53 @@ fn decode_moon_vector_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::operators::combinators::AndRetriever;
+    use lunaris_core::storage::types::Filter;
+
+    // ── filter_to_moon_tag tests (Plan 15-02) ──
+
+    #[test]
+    fn filter_to_moon_tag_source_renders_tag_syntax() {
+        let f = Filter::Eq { field: "source".into(), value: serde_json::json!("notes.md") };
+        assert_eq!(filter_to_moon_tag(&f), "@source:{notes\\.md}");
+    }
+
+    #[test]
+    fn filter_to_moon_tag_source_escapes_colon() {
+        let f = Filter::Eq { field: "source".into(), value: serde_json::json!("helios:fs/test") };
+        assert_eq!(filter_to_moon_tag(&f), "@source:{helios\\:fs/test}");
+    }
+
+    #[test]
+    fn filter_to_moon_tag_non_source_renders_text_syntax() {
+        let f = Filter::Eq { field: "kind".into(), value: serde_json::json!("episode") };
+        assert_eq!(filter_to_moon_tag(&f), "@kind:\"episode\"");
+    }
+
+    #[test]
+    fn filter_to_moon_tag_and_combo() {
+        let f = Filter::And(vec![
+            Filter::Eq { field: "source".into(), value: serde_json::json!("x") },
+            Filter::Eq { field: "kind".into(), value: serde_json::json!("y") },
+        ]);
+        assert_eq!(filter_to_moon_tag(&f), "(@source:{x} @kind:\"y\")");
+    }
+
+    #[test]
+    fn compose_query_with_filter_prepends_filter() {
+        let result = compose_query_with_filter("hello", &Some(Filter::Eq {
+            field: "source".into(),
+            value: serde_json::json!("x"),
+        }));
+        assert_eq!(result, "(@source:{x}) hello");
+    }
+
+    #[test]
+    fn compose_query_with_filter_none_returns_text() {
+        let result = compose_query_with_filter("hello", &None);
+        assert_eq!(result, "hello");
+    }
+
+    // ── inspect_branches tests ──
 
     #[test]
     fn inspect_recognizes_vector_plus_keyword_same_index() {
