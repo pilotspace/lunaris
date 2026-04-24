@@ -130,6 +130,20 @@ pub trait Consolidator: Send + Sync + 'static {
     fn applies(&self) -> bool {
         true
     }
+
+    /// Short, static name of the concrete backend — used by
+    /// `ConsolidatorPipelineHandle::backend_from_env` for its one-shot
+    /// `tracing::info!(consolidator_backend = ...)` log on first resolution,
+    /// and by the `default_flip` regression test to assert which backend is
+    /// wired without `std::any` downcasts. Phase 16-01 (CONSOL-V1-01).
+    ///
+    /// Default returns `"Unknown"`; each concrete `impl Consolidator` should
+    /// override with a stable short name (e.g. `"NoopConsolidator"`,
+    /// `"ActRConsolidator"`). `dyn`-compat is preserved — the method takes
+    /// `&self`, returns a `'static` string, no generics.
+    fn debug_name(&self) -> &'static str {
+        "Unknown"
+    }
 }
 
 #[cfg(test)]

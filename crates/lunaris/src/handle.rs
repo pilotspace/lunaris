@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use lunaris_consolidate::{Consolidator, NoopConsolidator};
+use lunaris_consolidate::Consolidator;
 use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
@@ -134,7 +134,9 @@ impl Lunaris {
         // are NoopVerifier / NoopConsolidator — production callers wire real
         // backends via `with_verifier` / `with_consolidator`.
         let verifier = default_verifier().await;
-        let consolidator = default_consolidator();
+        // Phase 16-01 (CONSOL-V1-01): resolve backend from LUNARIS_CONSOLIDATOR_BACKEND;
+        // fail-fast on unknown env values (no silent fallback).
+        let consolidator = default_consolidator()?;
         let initial_verify_state = VerifierPipelineHandle::initial_state_from_env();
         let initial_consolidate_state = ConsolidatorPipelineHandle::initial_state_from_env();
         let verify_pipeline = Arc::new(VerifierPipelineHandle::new(
@@ -229,9 +231,15 @@ impl Lunaris {
             false,
             Arc::new(NoopVerifier) as Arc<dyn Verifier>,
         ));
+        // Phase 16-01 (CONSOL-V1-01): resolve backend from env. Test seam is
+        // infallible — `expect` surfaces env misconfiguration loudly rather
+        // than silently falling back (matches fail-fast contract of the
+        // `Lunaris::open` path).
+        let consolidator = ConsolidatorPipelineHandle::backend_from_env()
+            .expect("LUNARIS_CONSOLIDATOR_BACKEND resolution failed in with_parts test seam");
         let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
             false,
-            Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
+            consolidator,
         ));
         // B-10: bind storage to BOTH pipelines (2 of the 4 total bind_storage
         // call sites in handle.rs). Also bind the HlcClock to verify_pipeline
@@ -278,9 +286,14 @@ impl Lunaris {
             false,
             Arc::new(NoopVerifier) as Arc<dyn Verifier>,
         ));
+        // Phase 16-01 (CONSOL-V1-01): resolve backend from env (same fail-fast
+        // contract as `with_parts`).
+        let consolidator = ConsolidatorPipelineHandle::backend_from_env().expect(
+            "LUNARIS_CONSOLIDATOR_BACKEND resolution failed in with_parts_keyword test seam",
+        );
         let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
             false,
-            Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
+            consolidator,
         ));
         // B-10: bind storage to BOTH pipelines (the OTHER 2 of the 4 total
         // bind_storage call sites in handle.rs). Also bind the HlcClock to
@@ -592,12 +605,17 @@ async fn default_verifier() -> Arc<dyn Verifier> {
     Arc::new(NoopVerifier) as Arc<dyn Verifier>
 }
 
-/// Plan 04-04: Construct the default consolidator for [`Lunaris::open`].
+/// Plan 04-04 + Phase 16-01 (CONSOL-V1-01): Construct the default consolidator
+/// for [`Lunaris::open`], resolving from
+/// [`ConsolidatorPipelineHandle::BACKEND_ENV_VAR`] (`LUNARIS_CONSOLIDATOR_BACKEND`).
 ///
-/// Per D-15 + lunaris-consolidate's no-LLM-backends posture, the v0 default
-/// is unconditionally [`NoopConsolidator`]. Real ACT-R consolidation is
-/// deferred to v1 (CONSOL-V1-01) — production callers wire it explicitly via
-/// [`Lunaris::with_consolidator`] when they're ready to flip the pipeline ON.
-fn default_consolidator() -> Arc<dyn Consolidator> {
-    Arc::new(NoopConsolidator) as Arc<dyn Consolidator>
+/// Default (env unset) → [`lunaris_consolidate::ActRConsolidator`] (production
+/// default per CONSOL-V1-01). Operators opt out to [`NoopConsolidator`] by
+/// setting `LUNARIS_CONSOLIDATOR_BACKEND=noop` (preserved third toggle surface:
+/// code override via [`Lunaris::with_consolidator`] also still works).
+///
+/// Unknown env values fail-fast via [`LunarisError::Storage`]
+/// (`StorageError::Backend`) — NO silent fallback.
+fn default_consolidator() -> Result<Arc<dyn Consolidator>, LunarisError> {
+    ConsolidatorPipelineHandle::backend_from_env()
 }

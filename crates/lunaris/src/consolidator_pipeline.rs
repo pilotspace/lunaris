@@ -31,12 +31,32 @@
 
 use std::sync::Arc;
 
-use lunaris_consolidate::{Consolidator, NoopConsolidator};
+use lunaris_consolidate::{ActRConsolidator, Consolidator, NoopConsolidator};
+use lunaris_core::{LunarisError, StorageError};
 use parking_lot::{Mutex, RwLock};
 
 /// Process-env knob (D-08/D-10) — `LUNARIS_CONSOLIDATE_ENABLED=1|true|on`
 /// flips the initial state at [`crate::Lunaris::open`] time.
 pub const ENABLED_ENV_VAR: &str = "LUNARIS_CONSOLIDATE_ENABLED";
+
+/// Phase 16-01 (CONSOL-V1-01) — backend-selection env var.
+///
+/// Resolved values:
+/// - unset or `"actr"` (case-insensitive, trimmed) → [`ActRConsolidator`]
+///   (production default per CONSOL-V1-01 D-01).
+/// - `"noop"` (case-insensitive, trimmed) → [`NoopConsolidator`]
+///   (operator opt-out preserved per D-02 three-surface toggle).
+/// - anything else → fail-fast with [`LunarisError::Config`] (NO silent
+///   fallback — unknown values are a configuration error, not a hint).
+///
+/// The corresponding resolver is [`ConsolidatorPipelineHandle::backend_from_env`].
+pub const BACKEND_ENV_VAR: &str = "LUNARIS_CONSOLIDATOR_BACKEND";
+
+/// One-shot guard so the `consolidator_backend_resolved` info log fires exactly
+/// once per process (avoids log-spam when `with_parts`/`with_parts_keyword`
+/// test seams resolve the backend for every constructed Lunaris handle).
+/// R16-05 mitigation — Helios observability needs exactly one line.
+static BACKEND_LOG_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 /// The single switch (D-08). Default state is OFF unless
 /// `LUNARIS_CONSOLIDATE_ENABLED=1` is set in env at construction time.
@@ -292,6 +312,68 @@ impl ConsolidatorPipelineHandle {
     /// Convenience installer used by test seams.
     pub fn with_noop() -> Self {
         Self::new(false, Arc::new(NoopConsolidator) as Arc<dyn Consolidator>)
+    }
+
+    /// Phase 16-01 (CONSOL-V1-01) — convenience installer wiring the real
+    /// [`ActRConsolidator`] with [`ActRConsolidator::default`] parameters
+    /// (Anderson 1996: `d=0.5`, archive `-0.5`, promote `+1.0`, noise `0.0`).
+    /// Mirrors [`Self::with_noop`]; used by [`Self::backend_from_env`].
+    pub fn with_actr() -> Self {
+        Self::new(
+            false,
+            Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
+        )
+    }
+
+    /// Phase 16-01 (CONSOL-V1-01) — resolve the default backend from the
+    /// [`BACKEND_ENV_VAR`] env var. See the `BACKEND_ENV_VAR` doc for the
+    /// resolution table. Fails fast on unknown values (per 16-01 instruction:
+    /// silent fallback would violate the three-surface toggle's trust
+    /// contract — operators MUST know their env typo was rejected).
+    ///
+    /// Emits exactly one `tracing::info!(consolidator_backend = ...)` per
+    /// process (R16-05 mitigation — Helios operators see the flip in logs).
+    ///
+    /// Returns an `Arc<dyn Consolidator>` ready to hand to [`Self::new`] (or
+    /// to `set_consolidator` on an already-constructed handle).
+    pub fn backend_from_env() -> Result<Arc<dyn Consolidator>, LunarisError> {
+        let raw = std::env::var(BACKEND_ENV_VAR).ok();
+        let trimmed = raw.as_deref().map(|v| v.trim());
+        let (backend, name): (Arc<dyn Consolidator>, &'static str) = match trimmed {
+            None | Some("") => (
+                Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
+                "ActRConsolidator",
+            ),
+            Some(v) if v.eq_ignore_ascii_case("actr") => (
+                Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
+                "ActRConsolidator",
+            ),
+            Some(v) if v.eq_ignore_ascii_case("noop") => (
+                Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
+                "NoopConsolidator",
+            ),
+            Some(other) => {
+                // No `LunarisError::Config` variant exists; route through
+                // `StorageError::Backend` (matches the crate's existing
+                // string-carrying misconfig path) so the full error still
+                // carries our env-var context and [`CONSOL-V1-01`] tag.
+                return Err(LunarisError::Storage(StorageError::Backend(format!(
+                    "{BACKEND_ENV_VAR}={other:?} is not one of [actr, noop]; \
+                     unset for the ActR default, or set to \"noop\" to pin the \
+                     no-op backend. CONSOL-V1-01."
+                ))));
+            }
+        };
+        // R16-05 — one-shot info log so the flip is visible to downstream
+        // Helios observability without spamming per-handle construction.
+        BACKEND_LOG_ONCE.get_or_init(|| {
+            tracing::info!(
+                target: "lunaris::consolidator",
+                consolidator_backend = name,
+                "consolidator_backend_resolved"
+            );
+        });
+        Ok(backend)
     }
 }
 

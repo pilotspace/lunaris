@@ -46,6 +46,10 @@ impl Consolidator for NoopConsolidator {
     fn applies(&self) -> bool {
         false
     }
+
+    fn debug_name(&self) -> &'static str {
+        "NoopConsolidator"
+    }
 }
 
 #[cfg(test)]

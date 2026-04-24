@@ -19,7 +19,11 @@
 //! `lunaris-consolidate` cannot reverse-depend on `lunaris`. Moved here as a
 //! Rule 3 (blocking-issue) scope correction.
 
-#![forbid(unsafe_code)]
+// `std::env::{set_var,remove_var}` are `unsafe` in Rust 2024 edition; the
+// module-local `ENV_GUARD` serializes access within this test binary, and
+// each guard drops before any `.await`. We therefore permit `unsafe` at the
+// test-binary level ONLY — the production crate retains `#![forbid(unsafe_code)]`.
+#![allow(unsafe_code)]
 
 use std::sync::Arc;
 
@@ -117,8 +121,11 @@ fn set_consolidator_code_override_still_works() {
 fn env_unknown_value_fails_fast() {
     with_clean_env(|| {
         unsafe { std::env::set_var("LUNARIS_CONSOLIDATOR_BACKEND", "ollama") };
-        let err = ConsolidatorPipelineHandle::backend_from_env()
-            .expect_err("unknown backend values MUST NOT silently fall back");
+        let result = ConsolidatorPipelineHandle::backend_from_env();
+        let err = match result {
+            Ok(_) => panic!("unknown backend values MUST NOT silently fall back"),
+            Err(e) => e,
+        };
         let msg = format!("{err}");
         assert!(
             msg.contains("LUNARIS_CONSOLIDATOR_BACKEND"),

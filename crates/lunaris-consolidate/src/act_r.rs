@@ -240,6 +240,10 @@ enum EpisodeDecision {
 
 #[async_trait]
 impl Consolidator for ActRConsolidator {
+    fn debug_name(&self) -> &'static str {
+        "ActRConsolidator"
+    }
+
     async fn consolidate(
         &self,
         _storage: Arc<dyn StoragePort>,
