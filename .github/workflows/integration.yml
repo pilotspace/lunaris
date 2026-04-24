@@ -219,6 +219,18 @@ jobs:
             --features moon-it,pg-it \
             --no-fail-fast
 
+      - name: Run lunaris-recipes tests with moon-it + pg-it features
+        # Phase 18 SC5 — extend CI coverage to lunaris-recipes integration
+        # tests. The crate declares moon-it/pg-it features (Cargo.toml L16-18)
+        # and tests use probe_backend skip discipline (SKIP when env URL unset).
+        # Both MOON_URL and PG_URL are set in the job env, so all parity tests
+        # will run against live backends. Separate step from lunaris-conformance
+        # so failures are independently visible in the Actions UI.
+        run: |
+          cargo test -p lunaris-recipes \
+            --features moon-it,pg-it \
+            --no-fail-fast
+
       - name: AS_OF parity gate (moon-it + pg-it, one retry on flake)
         # Plan 14-02 Task 3 step 10 — distinct named step with
         # `if: success() || failure()` so the parity state is visible in
