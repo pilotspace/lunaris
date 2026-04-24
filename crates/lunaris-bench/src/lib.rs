@@ -42,6 +42,7 @@
 
 pub mod corpus;
 pub mod eval;
+pub mod eval_05_slo;
 pub mod eval_05_trace;
 pub mod fixtures;
 

@@ -77,13 +77,13 @@ pub const BUDGET_MOON_P50_MS: f64 = 25.0;
 /// Postgres recall p50 budget in milliseconds.
 pub const BUDGET_POSTGRES_P50_MS: f64 = 60.0;
 
-/// Informational promotion-rate floor — retained for reporting but NOT a
-/// release gate in v0.1.1 (the production Consolidator is NoopConsolidator;
-/// real promoting ActRConsolidator is v1-deferred per CONSOL-V1-01). The
-/// value stays visible in `slo_reasons` as a `promotion_rate_info:` note so
-/// the v0.1.2 bump that lands a real Consolidator has a baseline to diff
-/// against.
-pub const PROMOTION_RATE_FLOOR: f64 = 0.05;
+// v0.1.2: promotion_rate is now ENFORCED against the empirical band from
+// Plan 16-04 calibration (6 runs: 3 x Moon + 3 x Postgres). The enforcement
+// function and band constants live in `lunaris_bench::eval_05_slo` so
+// integration tests can exercise them independently.
+//
+// Band: [0.0, 0.01] — observed_median 0.0 +/- max(2*MAD, 0.01).
+// See `milestones/v0.1.2-CONSOL-CALIBRATION/SUMMARY.md` for lineage.
 
 /// Default wait after trace replay for Consolidator debounce to flush.
 const DEFAULT_DRAIN_SECS: u64 = 90;
@@ -348,18 +348,17 @@ async fn run_one_backend(
             p50, budget_ms
         ));
     }
-    // v0.1.1: promotion_rate is informational only. Real ActRConsolidator
-    // is v1-deferred (CONSOL-V1-01); NoopConsolidator ships as default so
-    // promotions are always 0. Emit a diagnostic note without failing the
-    // release gate.
-    if promotion_rate < PROMOTION_RATE_FLOOR {
-        slo_reasons.push(format!(
-            "promotion_rate_info: {:.4} < informational floor {:.4} \
-             (v0.1.1 ships NoopConsolidator; real ActRConsolidator lands v0.1.2 per CONSOL-V1-01)",
-            promotion_rate, PROMOTION_RATE_FLOOR
-        ));
-    }
-    let slo_passed = p50_pass;
+    // v0.1.2: promotion_rate is ENFORCED against the empirical band from
+    // Plan 16-04 calibration. ActRConsolidator is now the production default
+    // (Plan 16-01). The band captures the observed zero-promotion baseline.
+    let promotion_pass = match lunaris_bench::eval_05_slo::enforce_promotion_rate_slo(promotion_rate) {
+        Ok(()) => true,
+        Err(msg) => {
+            slo_reasons.push(msg);
+            false
+        }
+    };
+    let slo_passed = p50_pass && promotion_pass;
 
     Ok(BackendMetrics {
         backend: name.to_string(),
