@@ -1,0 +1,67 @@
+# AS_OF Parity Test Execution Evidence
+# Date: 2026-04-24T07:51:56Z
+# MOON_URL: moon://127.0.0.1:6380
+# PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
+# Phase: 15 gap closure (Plan 15-06)
+# Purpose: Close VERIFICATION.md gap -- AS_OF parity checkpoint was auto-approved without execution evidence
+# FT Migration: 0001-chunks-add-source-tag applied immediately before test run
+#
+# RESULT: FAILED -- vector dimension mismatch (conformance test uses 16d stub vectors,
+#   MoonStorage ensure_indexes creates 768d FT chunks index). This is a pre-existing
+#   conformance harness bug: the AS_OF parity test's stub_embed() generates 16d vectors
+#   but MoonStorage::connect always creates the chunks FT index at 768d. The test was
+#   previously auto-approved without execution, so this bug was never surfaced.
+#
+# ROOT CAUSE: crates/lunaris-conformance/src/storage/as_of_parity.rs line 160 produces
+#   16d vectors via stub_embed(). crates/lunaris-storage-moon/src/client.rs line 126
+#   declares const DIM: usize = 768 in ensure_indexes(). Moon's FT.SEARCH rejects the
+#   dimension mismatch at query time.
+#
+# IMPACT: The AS_OF parity test cannot pass against a live Moon backend without fixing
+#   the dimension mismatch. This confirms VERIFICATION.md's concern that the auto-approved
+#   checkpoint had no execution evidence -- the test has a latent bug that would have been
+#   caught if it had been run.
+#
+# DEFERRED FIX: Align stub_embed() dimension with MoonStorage DIM (768) or make DIM
+#   configurable. Out of scope for this gap-closure plan (documentation-only).
+
+   Compiling sysctl v0.6.0
+   Compiling tokenizers v0.22.2
+   Compiling hyper-util v0.1.20
+   Compiling tower-http v0.6.8
+   Compiling sqlx-postgres v0.9.0-alpha.1
+   Compiling lunaris-ingest v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-ingest)
+   Compiling rand_xorshift v0.4.0
+   Compiling proptest v1.11.0
+   Compiling gemm-common v0.19.0
+   Compiling gemm-f32 v0.19.0
+   Compiling gemm-f64 v0.19.0
+   Compiling gemm-c32 v0.19.0
+   Compiling gemm-c64 v0.19.0
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.2
+   Compiling reqwest v0.12.28
+   Compiling gemm-f16 v0.19.0
+   Compiling gemm v0.19.0
+   Compiling hf-hub v0.4.3
+   Compiling sqlx-macros-core v0.9.0-alpha.1
+   Compiling candle-core v0.10.2
+   Compiling sqlx-macros v0.9.0-alpha.1
+   Compiling sqlx v0.9.0-alpha.1
+   Compiling lunaris-storage-postgres v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-conformance)
+   Compiling candle-nn v0.10.2
+   Compiling candle-transformers v0.10.2
+   Compiling lunaris-extract v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-extract)
+   Compiling lunaris-rerank v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-rerank)
+   Compiling lunaris-embed v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-embed)
+   Compiling lunaris-consolidate v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-consolidate)
+   Compiling lunaris-verify v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-verify)
+   Compiling lunaris-retrieve v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-retrieve)
+   Compiling lunaris v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris)
+   Compiling lunaris-bench v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-bench)
+   Compiling lunaris-conformance v0.1.1 (/Users/tindang/workspaces/tind-repo/lunaris/crates/lunaris-conformance)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.31s
+     Running tests/run_as_of_parity.rs (target/debug/deps/run_as_of_parity-7dbb818f04d7b79b)
+Error: backend: moon: redis error: ResponseError: query vector dimension mismatch
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
