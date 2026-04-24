@@ -627,3 +627,257 @@ fn probe_backend_missing_env_returns_none() {
     // Use a deliberately-unset env var name so the probe returns None.
     assert!(probe_backend("LUNARIS_SCOPE_ISOLATION_UNSET_ENV_VAR").is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Plan 16-02 — CONSOL-V1-04 post-default-flip isolation gate.
+//
+// The block above gates the scope-filter with a backend-agnostic fixture
+// (`AlwaysPromoteConsolidator`). That is still the right contract for the
+// filter-layer regression: the filter lives in the `Consolidator::
+// consolidate_scoped` default impl and runs BEFORE any backend is invoked,
+// so it is provably backend-independent.
+//
+// What the v0.1.2 default flip (Plan 16-01) changes is the *production*
+// wire: `Lunaris::open` now resolves to `ActRConsolidator::default()`. The
+// blueprint contract for CONSOL-V1-04 is that the Helios 50/50 isolation
+// invariant MUST hold under the real backend too. This block adds that
+// proof, wired explicitly (not env-resolved) to `ActRConsolidator::default`.
+//
+// Sizing note — `ActRConsolidator::default()` promote threshold is `+1.0`
+// with `d=0.5`. A single-event episode has `activation = ln(1) = 0.0`
+// (elapsed floors to 1s), which lands in the neutral band → zero
+// promote/archive events. To non-vacuously exercise the real backend on
+// the Helios half we publish 16 `ConsolidateEvent`s with the SAME
+// `episode_id` and elapsed ≈ 1s each → `activation = ln(16) ≈ 2.77 > 1.0`
+// → promote. The `other:` half uses single-event episodes — the scope
+// filter drops them either way (zero-or-not-zero both falsify under a
+// broken filter because promote-count would leak with 16 refs too).
+// ---------------------------------------------------------------------------
+
+use lunaris_consolidate::{ActRConsolidator, CONSOLIDATE_TOPIC};
+
+/// Build a `Lunaris` with an explicit consolidator instance (not env-
+/// resolved, so test determinism doesn't depend on
+/// `LUNARIS_CONSOLIDATOR_BACKEND`). Mirrors `build_in_process_lunaris`
+/// but parameterised.
+fn build_in_process_lunaris_with(
+    consolidator: Arc<dyn Consolidator>,
+) -> (Lunaris, Arc<InProcessBroker>) {
+    let broker = InProcessBroker::new();
+    let storage: Arc<dyn StoragePort> = broker.clone();
+    let keyword: Arc<dyn KeywordPort> = broker.clone();
+    let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let handle = Lunaris::with_parts_keyword(storage, keyword, embedder, clock)
+        .with_reranker(Arc::new(NoopReranker) as Arc<dyn Reranker>)
+        .with_consolidator(consolidator);
+    (handle, broker)
+}
+
+/// Publish 16 `ConsolidateEvent`s with the SAME `episode_id` to the
+/// `__lunaris_consolidate__` queue so the worker's debounce buffer has
+/// enough references to lift the episode's activation above the ActR
+/// promote threshold. Mirrors the production worker's buffer shape.
+///
+/// `source` is copied into each envelope — `Consolidator::consolidate_scoped`
+/// reads it to decide whether to forward or drop the batch.
+async fn publish_n_refs_for(
+    broker: &Arc<InProcessBroker>,
+    episode_id: ulid::Ulid,
+    source: &str,
+    n: usize,
+    lsn_wall_ms: u64,
+) {
+    for counter in 0..n {
+        let envelope = serde_json::json!({
+            "kind": "ingest_committed",
+            "episode_id": episode_id.to_string(),
+            "lsn_wall_ms": lsn_wall_ms,
+            "lsn_counter": counter,
+            "source": source,
+        });
+        let payload = serde_json::to_vec(&envelope).expect("envelope serialize");
+        broker
+            .publish(CONSOLIDATE_TOPIC, 0, payload.into())
+            .await
+            .expect("publish consolidate event");
+    }
+}
+
+/// Run the 50/50 scope-isolation scenario end-to-end against whichever
+/// consolidator the caller wires. Returns `(helios_promotions,
+/// helios_archives, other_touched)` where `other_touched` counts any
+/// promote OR archive whose source starts with `other:` — the v0.1.1
+/// HARD gate. Sixteen refs per Helios episode; one ref per `other`
+/// episode.
+async fn run_scope_isolation_scenario(
+    consolidator: Arc<dyn Consolidator>,
+    per_side: usize,
+) -> (usize, usize, usize) {
+    unsafe {
+        std::env::set_var("LUNARIS_CONSOLIDATE_DEBOUNCE_MS", "50");
+    }
+
+    let (lunaris, broker) = build_in_process_lunaris_with(consolidator);
+    lunaris
+        .consolidator_pipeline()
+        .enable_for_scope("helios:fs/");
+
+    // now_ms minus 1 second so `ActRConsolidator::consolidate` sees
+    // elapsed ≈ 1s (floored at 1). Determinism: the scenario is not
+    // wall-clock-sensitive so long as the 1s offset holds — runs that
+    // sit on a debounce flush > 1s late still see elapsed ≤ small-
+    // constant, and `ln(16 × k^-0.5)` remains > 1.0 for k up to ~50.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let lsn_ms = now_ms.saturating_sub(1_000);
+
+    // Map every episode_id we'll publish back to its source so the
+    // assertion phase can partition the audit log.
+    let mut id_to_source: HashMap<ulid::Ulid, String> = HashMap::new();
+
+    for i in 0..per_side {
+        // Helios half — 16 refs per episode, activation ≈ ln(16) ≈ 2.77 > 1.0.
+        let src_helios = format!("helios:fs/session-isolation-actr/note-{i}");
+        let ep_helios = ulid::Ulid::new();
+        id_to_source.insert(ep_helios, src_helios.clone());
+        publish_n_refs_for(&broker, ep_helios, &src_helios, 16, lsn_ms).await;
+
+        // Other half — single ref per episode. Scope filter drops these
+        // before `consolidate` sees them; even if it didn't, one ref at
+        // elapsed=1s is activation=0 (neutral band, no emission).
+        let src_other = format!("other:tenant-{i}/note");
+        let ep_other = ulid::Ulid::new();
+        id_to_source.insert(ep_other, src_other.clone());
+        publish_n_refs_for(&broker, ep_other, &src_other, 1, lsn_ms).await;
+    }
+
+    // Worker debounce window + drain grace. 50 ms debounce + ~700 ms
+    // scheduling headroom matches the sibling test's timing envelope.
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    lunaris.consolidator_pipeline().disable();
+    lunaris.consolidator_pipeline().join_worker().await;
+
+    let mut helios_promotions = 0usize;
+    let mut helios_archives = 0usize;
+    let mut other_touched = 0usize;
+    for env in broker.audit_snapshot() {
+        let kind = env.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let is_promote = kind == "ConsolidatorPromotion";
+        let is_archive = kind == "ConsolidatorArchive";
+        if !(is_promote || is_archive) {
+            continue;
+        }
+        let Some(id_str) = env.get("episode_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(id) = id_str.parse::<ulid::Ulid>() else {
+            continue;
+        };
+        match id_to_source.get(&id) {
+            Some(src) if src.starts_with("helios:fs/") => {
+                if is_promote {
+                    helios_promotions += 1;
+                } else {
+                    helios_archives += 1;
+                }
+            }
+            Some(src) if src.starts_with("other:") => {
+                other_touched += 1;
+            }
+            _ => {}
+        }
+    }
+    eprintln!(
+        "scope_isolation_actr: helios_promotions={helios_promotions} \
+         helios_archives={helios_archives} other_touched={other_touched} \
+         per_side={per_side}"
+    );
+    (helios_promotions, helios_archives, other_touched)
+}
+
+/// Plan 16-02 HARD GATE — scope-isolation invariant holds under the
+/// production default backend (`ActRConsolidator::default()`, explicit —
+/// not env-resolved so the test does not depend on
+/// `LUNARIS_CONSOLIDATOR_BACKEND` state).
+///
+/// Assertions (all three must hold together):
+///
+/// 1. At least one `ConsolidatorPromotion` OR `ConsolidatorArchive`
+///    event is emitted for the `helios:fs/` half. This gates the real
+///    ACT-R scorer: under `NoopConsolidator` this assertion FAILS (Noop
+///    returns empty reports). Proves the test is backend-sensitive.
+/// 2. Zero `ConsolidatorPromotion` / `ConsolidatorArchive` events for
+///    any source NOT starting with `helios:fs/`. Preserves the v0.1.1
+///    HARD cross-tenant leak gate under the real backend.
+/// 3. The helios-half emission count is `≤ 16 × PER_SIDE` (one
+///    promote/archive per episode at most — sanity that the fixture
+///    didn't accidentally amplify).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn consolidator_scope_isolation_under_actr_default() {
+    const PER_SIDE: usize = 20;
+    let consolidator: Arc<dyn Consolidator> = Arc::new(ActRConsolidator::default());
+    let (helios_promotions, helios_archives, other_touched) =
+        run_scope_isolation_scenario(consolidator, PER_SIDE).await;
+
+    // Gate 2 (v0.1.1 invariant) — no cross-tenant leak under real backend.
+    assert_eq!(
+        other_touched, 0,
+        "CONSOL-V1-04: `other:` sources MUST receive zero ConsolidatorPromotion \
+         / ConsolidatorArchive events under ActRConsolidator. got={other_touched}"
+    );
+
+    // Gate 1 — real-backend non-vacuity. Fails under NoopConsolidator.
+    let helios_events = helios_promotions + helios_archives;
+    assert!(
+        helios_events > 0,
+        "CONSOL-V1-04: real ActR backend MUST emit ≥ 1 promote-or-archive \
+         event for the helios:fs/ half (the v0.1.1 test ran against \
+         AlwaysPromote; this gate proves ActR actually fires). \
+         helios_promotions={helios_promotions} helios_archives={helios_archives}"
+    );
+
+    // Gate 3 — sanity cap.
+    assert!(
+        helios_events <= PER_SIDE,
+        "one promote/archive per episode at most — got {helios_events} for \
+         {PER_SIDE} helios episodes (fixture amplification bug?)"
+    );
+}
+
+/// Plan 16-02 regression companion — the SAME scenario wired to
+/// `NoopConsolidator` MUST fail the non-vacuity gate (helios events == 0).
+/// This proves `consolidator_scope_isolation_under_actr_default`'s gate 1
+/// is genuinely backend-sensitive and not a tautology.
+///
+/// Expressed as a `#[should_panic]` inversion so the proof is part of the
+/// default test run — if the non-vacuity gate ever degrades into something
+/// Noop could satisfy (e.g. asserting `audit.len() >= 0`), this test will
+/// flip to passing-without-panic and CI flags the regression.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[should_panic(expected = "MUST emit ≥ 1 promote-or-archive")]
+async fn consolidator_scope_isolation_under_noop_fails_non_vacuity_gate() {
+    use lunaris_consolidate::NoopConsolidator;
+    const PER_SIDE: usize = 20;
+    let consolidator: Arc<dyn Consolidator> = Arc::new(NoopConsolidator);
+    let (helios_promotions, helios_archives, other_touched) =
+        run_scope_isolation_scenario(consolidator, PER_SIDE).await;
+
+    // v0.1.1 cross-tenant gate still holds trivially under Noop (nothing
+    // ever promoted, so nothing leaked). This assert must pass to reach
+    // the gate-1 failure below.
+    assert_eq!(other_touched, 0);
+
+    // This is the gate that SHOULD panic — Noop emits nothing. Mirror of
+    // the ActR test's message so #[should_panic(expected=...)] matches.
+    let helios_events = helios_promotions + helios_archives;
+    assert!(
+        helios_events > 0,
+        "CONSOL-V1-04: real ActR backend MUST emit ≥ 1 promote-or-archive \
+         event for the helios:fs/ half (the v0.1.1 test ran against \
+         AlwaysPromote; this gate proves ActR actually fires). \
+         helios_promotions={helios_promotions} helios_archives={helios_archives}"
+    );
+}
