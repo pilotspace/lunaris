@@ -30,6 +30,7 @@
 
 use lunaris_core::LunarisError;
 use lunaris_core::storage::keyword::min_max_normalize;
+use lunaris_core::storage::types::Filter;
 
 use crate::operators::QueryContext;
 use crate::operators::Retriever;
@@ -140,8 +141,9 @@ pub async fn fuse_via_moon_native(
     // Moon-server fallback when the SPARSE clause is absent — see
     // `moon/src/command/vector_search/hybrid.rs::HybridQuery::sparse: Option`.
     let weights: [f64; 3] = [0.5_f64, 0.5_f64, 0.0_f64];
+    let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&hint.index, &ctx.query.text, &q_emb, "vec", None, k, weights)
+        .hybrid_search(&hint.index, &composite_query, &q_emb, "vec", None, k, weights)
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
@@ -206,6 +208,82 @@ fn decode_moon_vector_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
         return None;
     }
     hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
+}
+
+/// Compose a text query with an optional filter for the Moon FT.SEARCH
+/// hybrid_search path. When a filter is present the output is
+/// `(<filter_expr>) <text>` so Moon applies the filter server-side before
+/// RRF scoring. When no filter is set, returns the text unchanged.
+fn compose_query_with_filter(text: &str, filter: &Option<Filter>) -> String {
+    match filter {
+        Some(f) => format!("({}) {}", filter_to_moon_tag(f), text),
+        None => text.to_string(),
+    }
+}
+
+/// Render a [`Filter`] tree as a Moon FT query expression for the hybrid
+/// search path. TAG-aware: `source` field renders as `@source:{value}`
+/// (TAG syntax per PERF-MOON-01), all other fields use TEXT syntax
+/// `@field:"value"`.
+///
+/// Mirrors `keyword::filter_to_moon` — duplicated locally per the
+/// codebase's established "extract when a third caller asks" convention
+/// (keyword.rs and vector.rs each have their own copy already).
+fn filter_to_moon_tag(f: &Filter) -> String {
+    match f {
+        Filter::Eq { field, value } => {
+            if field == "source" {
+                format!("@{field}:{{{}}}", ft_tag_escape(&json_bare(value)))
+            } else {
+                format!("@{field}:{}", json_quoted(value))
+            }
+        }
+        Filter::StartsWith { field, prefix } => format!("@{field}:{prefix}*"),
+        Filter::And(xs) => {
+            format!("({})", xs.iter().map(filter_to_moon_tag).collect::<Vec<_>>().join(" "))
+        }
+        Filter::Or(xs) => {
+            format!("({})", xs.iter().map(filter_to_moon_tag).collect::<Vec<_>>().join(" | "))
+        }
+        Filter::ValidTimeRange { after, before } => {
+            let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
+            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
+            format!("@valid_time:[{lo} {hi}]")
+        }
+    }
+}
+
+/// Return the bare string value WITHOUT quotes — TAG values must not be quoted.
+fn json_bare(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => format!("{v}"),
+    }
+}
+
+/// Return the value with quotes for TEXT field syntax.
+fn json_quoted(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => format!("\"{s}\""),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => format!("\"{v}\""),
+    }
+}
+
+/// Escape RediSearch TAG special characters with backslash.
+/// Per RediSearch TAG rules: `,`, `.`, `{`, `}`, `\`, `:` must be escaped.
+fn ft_tag_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        if matches!(ch, ',' | '.' | '{' | '}' | '\\' | ':') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 #[cfg(test)]
