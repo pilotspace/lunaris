@@ -15,6 +15,7 @@ All notable changes to Lunaris are documented here.
 - EVAL-05 `promotion_rate` SLO is now enforced (was informational in v0.1.1), with empirical
   band [0.00, 0.01] calibrated against the deterministic 10K-turn trace on Moon + Postgres
   (6 runs: 3 x Moon + 3 x Postgres; see `milestones/v0.1.2-CONSOL-CALIBRATION/SUMMARY.md`).
+- HELIOS-05 and HELIOS-06 SLOs lifted from deferred to validated in PROJECT.md (Phase 17).
 
 ### Added
 
@@ -22,6 +23,10 @@ All notable changes to Lunaris are documented here.
   `PROMOTION_RATE_LOW` / `PROMOTION_RATE_HIGH` constants for CI enforcement.
 - `docs/migration/v0.1.2.md` migration guide for downstream consumers.
 - `milestones/v0.1.2-CONSOL-CALIBRATION/` with 6-run calibration artifacts and band derivation.
+- Criterion `helios_p50` v0.1.2 baseline committed at `milestones/v0.1.2-HELIOS-05-BASELINE/`.
+  Moon p50 ≤ 20 ms (budget), Postgres p50 ≤ 25 ms (budget). HELIOS-05 validated.
+- SIGKILL chaos 200/200 runs (100 x Moon + 100 x Postgres) with `fsck_all` green on every iteration.
+  Evidence at `milestones/v0.1.2-HELIOS-06-RESULTS.json`. HELIOS-06 validated.
 
 ## v0.1.1
 
