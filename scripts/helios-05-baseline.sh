@@ -49,6 +49,20 @@ if [[ -z "${PG_URL:-}" ]]; then
     exit $EXIT_PREFLIGHT
 fi
 
+# Guard against NoopConsolidator — HELIOS-05 evidence requires the real
+# ActRConsolidator default (Phase 16). If the operator's environment has
+# LUNARIS_CONSOLIDATOR_BACKEND=noop, the bench would run without real
+# consolidation, silently invalidating the baseline.
+if [[ "${LUNARIS_CONSOLIDATOR_BACKEND:-}" == "noop" ]]; then
+    echo >&2 "FATAL: LUNARIS_CONSOLIDATOR_BACKEND=noop detected."
+    echo >&2 "  HELIOS-05 evidence requires the real ActRConsolidator backend."
+    echo >&2 "  Either unset the variable (default is actr) or set it explicitly:"
+    echo >&2 "    export LUNARIS_CONSOLIDATOR_BACKEND=actr"
+    exit $EXIT_PREFLIGHT
+fi
+# Force the default to actr for evidence integrity, even if unset.
+export LUNARIS_CONSOLIDATOR_BACKEND=actr
+
 # Redact credentials from URLs for logging (T-17-01-02 mitigation)
 redact_url() {
     local url="$1"

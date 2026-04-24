@@ -61,6 +61,20 @@ if [[ -z "${PG_URL:-}" ]]; then
     exit $EXIT_PREFLIGHT
 fi
 
+# Guard against NoopConsolidator — HELIOS-06 evidence requires the real
+# ActRConsolidator default (Phase 16). If the operator's environment has
+# LUNARIS_CONSOLIDATOR_BACKEND=noop, the chaos runs would use Noop instead
+# of ActR, silently weakening the HELIOS-06 evidence.
+if [[ "${LUNARIS_CONSOLIDATOR_BACKEND:-}" == "noop" ]]; then
+    echo >&2 "FATAL: LUNARIS_CONSOLIDATOR_BACKEND=noop detected."
+    echo >&2 "  HELIOS-06 evidence requires the real ActRConsolidator backend."
+    echo >&2 "  Either unset the variable (default is actr) or set it explicitly:"
+    echo >&2 "    export LUNARIS_CONSOLIDATOR_BACKEND=actr"
+    exit $EXIT_PREFLIGHT
+fi
+# Force the default to actr for evidence integrity, even if unset.
+export LUNARIS_CONSOLIDATOR_BACKEND=actr
+
 # TCP-probe Moon backend (1-second timeout)
 MOON_HOST_PORT="${MOON_URL#moon://}"
 MOON_HOST_PORT="${MOON_HOST_PORT%%/*}"
