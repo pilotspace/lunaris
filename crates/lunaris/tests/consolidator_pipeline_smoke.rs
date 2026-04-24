@@ -364,16 +364,24 @@ async fn noop_consolidator_with_pipeline_on_emits_no_audit() {
     // NoopConsolidator's applies()==false short-circuits before the audit
     // emit path can fire. With the pipeline ON and an empty subscribe
     // stream, the worker idles immediately and produces zero audit events.
+    //
+    // 16-01: explicitly pin noop because this test asserts zero promotion
+    // events and `applies()==false`. After the CONSOL-V1-01 default flip,
+    // `with_parts_keyword` wires `ActRConsolidator` by default (whose
+    // `applies()==true`), so the test MUST pin noop to keep exercising the
+    // short-circuit path it was designed for.
     let (handle, rec, _clock) = build_handle();
+    handle
+        .consolidator_pipeline()
+        .set_consolidator(Arc::new(NoopConsolidator) as Arc<dyn Consolidator>);
     handle.consolidator_pipeline().enable();
     assert!(handle.consolidator_pipeline().is_enabled());
 
-    // The default consolidator on with_parts_keyword is NoopConsolidator —
-    // verify the assumption.
+    // Verify the pinned NoopConsolidator is the wired backend.
     assert!(
         !handle
             .consolidator()
-            .expect("default Noop installed")
+            .expect("noop pinned via set_consolidator")
             .applies(),
         "NoopConsolidator.applies() MUST be false"
     );
