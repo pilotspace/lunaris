@@ -22,6 +22,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use lunaris_core::bitemporal::BiTemporal;
@@ -32,6 +33,13 @@ use lunaris_core::storage::StoragePort;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ulid::Ulid;
+
+/// Vector dimensionality used by fixture-seeded embeddings. Must match both
+/// `MoonClient::ensure_indexes` (`const DIM: usize = 768`) and the Postgres
+/// `chunks.embedding` column (`vector(768)`). Keeping the constant here
+/// (instead of hard-coding 768 at every call site) localises the update when
+/// the canonical dimension moves.
+pub const EMBED_DIM: usize = 768;
 
 /// Deterministic ChaCha20 seed for the conformance fixture corpus. Distinct
 /// from `crates/lunaris-bench/src/corpus.rs::DEFAULT_CORPUS_SEED` (`42`) so a
@@ -78,8 +86,11 @@ impl FixtureCorpus {
     /// the same `SEED`, so calling this on Moon and Postgres produces
     /// byte-identical primitive bytes.
     ///
-    /// Each episode lands as a SINGLE `atomic_write` of one
-    /// `WriteOp::KvPut` (INGEST-04 single-call invariant per Episode).
+    /// Each episode lands as a SINGLE `atomic_write` carrying BOTH the
+    /// `WriteOp::KvPut` raw episode payload AND a `WriteOp::VectorUpsert`
+    /// into the `chunks` index so the `vector_search` parity suite has
+    /// searchable rows on both backends (INGEST-04 single-call invariant
+    /// per Episode preserved — one `atomic_write` call per episode).
     pub async fn ingest_into(&self, storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
         for ep in &self.episodes {
             let ops = build_episode_ops(ep)?;
@@ -160,7 +171,57 @@ fn lorem_for(i: usize) -> String {
 fn build_episode_ops(ep: &Episode) -> anyhow::Result<Vec<WriteOp>> {
     let key = format!("episode:conformance:{}", ep.id).into_bytes();
     let value = serde_json::to_vec(ep)?;
-    Ok(vec![WriteOp::KvPut { key, value }])
+    // Seed the `chunks` FT / pgvector index so `vector_search("chunks", ...)`
+    // has rows on both backends. Embedding is derived from the episode
+    // content via the same `stub_embed` the parity query path uses, so query
+    // and stored vectors live in the same metric space.
+    //
+    // Metadata carries:
+    //   * `text`     — picked up by Moon's `extract_content_for_index` and
+    //                  Postgres's tsvector generator for BM25 payloads.
+    //   * `source`   — chunks FT index has a `SchemaField::Tag("source")`
+    //                  declared; keeps parity with production writes.
+    //   * `valid_time_ms` — chunks FT index has `SchemaField::Numeric("valid_time")`;
+    //                  populated from the episode's bitemporal valid stamp so
+    //                  `Filter::ValidTimeRange` queries can resolve.
+    let embedding = stub_embed(&ep.content);
+    let metadata = serde_json::json!({
+        "text": ep.content,
+        "source": ep.source,
+        "valid_time_ms": ep.bt.valid.0.wall_ms,
+    });
+    Ok(vec![
+        WriteOp::KvPut { key, value },
+        WriteOp::VectorUpsert {
+            index: "chunks".to_string(),
+            id: ep.id.to_bytes().to_vec(),
+            embedding,
+            metadata,
+        },
+    ])
+}
+
+/// Deterministic 768-d stub embedder. Mirrors the canonical
+/// `lunaris_core::embedder::StubEmbedder::det_vec` algorithm (seed hashed
+/// with `.max(1)`, LCG, output in `[-1, 1]`) so fixture-stored embeddings
+/// sit in the same metric space as production `StubEmbedder(768)` output.
+///
+/// Exposed at `pub(crate)` so both the fixture ingest path AND the parity
+/// query path in `storage::as_of_parity` compute matching vectors for the
+/// same input string.
+pub(crate) fn stub_embed(s: &str) -> Vec<f32> {
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    let mut state = h.finish().max(1);
+    (0..EMBED_DIM)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
+            v * 2.0 - 1.0
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +342,8 @@ mod tests {
         let c = FixtureCorpus::new();
         for ep in c.episodes() {
             let ops = build_episode_ops(ep).expect("episode ops build");
-            assert_eq!(ops.len(), 1);
+            // One KvPut (raw episode payload) + one VectorUpsert (chunks index seed).
+            assert_eq!(ops.len(), 2);
             match &ops[0] {
                 WriteOp::KvPut { key, value } => {
                     assert!(key.starts_with(b"episode:conformance:"));
@@ -289,8 +351,47 @@ mod tests {
                         serde_json::from_slice(value).expect("episode round trip");
                     assert_eq!(back.id, ep.id);
                 }
-                other => panic!("expected KvPut, got {other:?}"),
+                other => panic!("expected KvPut at [0], got {other:?}"),
+            }
+            match &ops[1] {
+                WriteOp::VectorUpsert { index, id, embedding, metadata } => {
+                    assert_eq!(index, "chunks");
+                    assert_eq!(id, &ep.id.to_bytes().to_vec());
+                    assert_eq!(embedding.len(), EMBED_DIM, "embedding must be 768d");
+                    assert_eq!(metadata.get("text").and_then(|v| v.as_str()), Some(ep.content.as_str()));
+                    assert_eq!(metadata.get("source").and_then(|v| v.as_str()), Some(ep.source.as_str()));
+                    assert_eq!(
+                        metadata.get("valid_time_ms").and_then(|v| v.as_u64()),
+                        Some(ep.bt.valid.0.wall_ms),
+                    );
+                }
+                other => panic!("expected VectorUpsert at [1], got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn stub_embed_is_deterministic_and_768d() {
+        let a = stub_embed("alpha");
+        let b = stub_embed("alpha");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), EMBED_DIM);
+    }
+
+    #[test]
+    fn stub_embed_distinguishes_inputs() {
+        let a = stub_embed("alpha");
+        let b = stub_embed("beta");
+        assert_ne!(a, b, "different inputs MUST produce different vectors");
+    }
+
+    #[test]
+    fn stub_embed_matches_canonical_det_vec_algorithm() {
+        use lunaris_core::embedder::{Embedder, StubEmbedder};
+        let canonical = StubEmbedder::new(EMBED_DIM);
+        let got = stub_embed("parity-check");
+        let expected = futures::executor::block_on(canonical.embed_batch(&["parity-check"]))
+            .expect("stub embedder never fails");
+        assert_eq!(got, expected[0], "fixture stub_embed must match canonical det_vec byte-for-byte");
     }
 }

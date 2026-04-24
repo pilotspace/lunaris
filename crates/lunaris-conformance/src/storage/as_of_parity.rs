@@ -23,7 +23,7 @@ use std::sync::Arc;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::StoragePort;
 
-use crate::fixtures::FixtureCorpus;
+use crate::fixtures::{stub_embed, FixtureCorpus};
 
 /// One observed divergence between the two backends for a given
 /// `(query, as_of)` tuple. Surfaced verbatim in the `anyhow::bail!`
@@ -148,41 +148,8 @@ pub async fn run(
     Ok(())
 }
 
-/// Deterministic 16-d stub embedder. Mirrors `StubEmbedder`'s
-/// LCG-via-DefaultHasher algorithm so any embedded text → vector pair
-/// stays stable across runs and machines.
-fn stub_embed(s: &str) -> Vec<f32> {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    let seed = h.finish();
-    let mut state = seed;
-    (0..16)
-        .map(|_| {
-            state = state
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            ((state >> 33) as f32) / (u32::MAX as f32)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stub_embed_is_deterministic() {
-        let a = stub_embed("alpha");
-        let b = stub_embed("alpha");
-        assert_eq!(a, b);
-        assert_eq!(a.len(), 16);
-    }
-
-    #[test]
-    fn stub_embed_distinguishes_inputs() {
-        let a = stub_embed("alpha");
-        let b = stub_embed("beta");
-        assert_ne!(a, b, "different inputs MUST produce different vectors");
-    }
-}
+// `stub_embed` moved to `crate::fixtures` so the ingest path and the query
+// path compute matching 768d vectors for the same input string. The former
+// 16d local copy caused a dimension-mismatch panic against Moon's 768d FT
+// index AND against Postgres's `vector(768)` column (debug session
+// `.planning/debug/conformance-dim-mismatch.md`, 2026-04-24).

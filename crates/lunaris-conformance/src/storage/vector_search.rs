@@ -13,17 +13,20 @@ use std::sync::Arc;
 
 use lunaris_core::storage::StoragePort;
 
-/// Vector dimensionality for the conformance fixture. 16 components is
-/// well below both backends' `max_vector_dim` (Moon=768, Postgres=1536)
-/// while still being expressive enough to exercise distance ordering.
-const FIXTURE_DIM: usize = 16;
+/// Vector dimensionality for the conformance fixture. Must match Moon's
+/// `ensure_indexes` (`DIM = 768`) AND Postgres's `chunks.embedding`
+/// declared as `vector(768)` — any other value triggers a backend-side
+/// dim-mismatch error (debug session `conformance-dim-mismatch.md`,
+/// 2026-04-24). Centralised in `fixtures::EMBED_DIM`.
+const FIXTURE_DIM: usize = crate::fixtures::EMBED_DIM;
 
 pub async fn recall(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    // Predictable target vector: monotonic ramp [0.0, 0.1, 0.2, ..., 1.5].
-    // The fixture helper seeds index-0 with this exact vector and indices
-    // 1+2 with perturbed copies, so a query for `target_vec` MUST rank
-    // the index-0 chunk first when the backend honours cosine distance.
-    let target_vec: Vec<f32> = (0..FIXTURE_DIM).map(|i| i as f32 * 0.1).collect();
+    // Predictable target vector: small deterministic ramp over the full
+    // 768d space (`i * 0.001` keeps values bounded). The fixture helper
+    // seeds index-0 with this exact vector and indices 1+2 with perturbed
+    // copies, so a query for `target_vec` MUST rank the index-0 chunk
+    // first when the backend honours cosine distance.
+    let target_vec: Vec<f32> = (0..FIXTURE_DIM).map(|i| (i as f32) * 0.001).collect();
 
     let written = crate::fixtures::seed_three_chunks(storage, &target_vec).await?;
     anyhow::ensure!(
