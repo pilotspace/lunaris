@@ -57,11 +57,6 @@ pub const VERIFY_CONSUMER_GROUP: &str = "lunaris-verify-v0";
 /// Verify queue topic (matches Plan 03-03 `ingest.rs::VERIFY_QUEUE_TOPIC`).
 pub const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
-/// Audit topic re-exported from the canonical `lunaris-core::audit` module
-/// (Plan 13-01 RELEASE-01). The inline `const AUDIT_TOPIC` that previously
-/// lived here has been removed; the local alias below preserves the old
-/// `AUDIT_TOPIC` identifier for the test module without re-declaring it.
-use lunaris_core::audit::AUDIT_TOPIC;
 
 /// Default drain grace period (D-07).
 const DEFAULT_DRAIN_MS: u64 = 5000;

@@ -85,6 +85,7 @@ jobs:
       # the W-8 contract — Lunaris::open dispatches on URL scheme.
       MOON_URL: moon://localhost:6390
       PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
+      LUNARIS_PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
 
     steps:
       - name: Checkout (with submodules for .planning + vendor/moon)

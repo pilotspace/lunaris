@@ -62,11 +62,6 @@ pub const CONSOLIDATE_CONSUMER_GROUP: &str = "lunaris-consolidate-v0";
 /// Consolidate queue topic.
 pub const CONSOLIDATE_TOPIC: &str = "__lunaris_consolidate__";
 
-/// Audit topic re-exported from the canonical `lunaris-core::audit` module
-/// (Plan 13-01 RELEASE-01). Inline `const AUDIT_TOPIC` was removed; the local
-/// re-export preserves the old `AUDIT_TOPIC` identifier for the test module
-/// without re-declaring it.
-use lunaris_core::audit::AUDIT_TOPIC;
 
 /// Debounce window default (D-17).
 const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
