@@ -121,12 +121,11 @@ impl StoragePort for RecordingStorageWithKeyword {
                     // payload's `bt.sys[1]` was patched by build_soft_delete_op
                     // the test inspects the PERSISTED payload bytes (B-5
                     // contract).
-                    let prior_bt = self
-                        .rows
-                        .lock()
-                        .get(key)
-                        .map(|(_, bt)| *bt)
-                        .unwrap_or(BiTemporal { valid: (Hlc::ZERO, None), sys: (Hlc::ZERO, None) });
+                    let prior_bt =
+                        self.rows.lock().get(key).map(|(_, bt)| *bt).unwrap_or(BiTemporal {
+                            valid: (Hlc::ZERO, None),
+                            sys: (Hlc::ZERO, None),
+                        });
                     self.rows.lock().insert(key.clone(), (value.clone(), prior_bt));
                 }
                 WriteOp::KvDelete { key } => {
@@ -260,10 +259,7 @@ async fn forget_id_writes_one_mvcc_row_and_publishes_audit() {
     rec.seed_episode(&format!("episode:{target_ulid}"), "test:source", Hlc::ZERO);
 
     let lunaris = build_lunaris(rec.clone());
-    let receipt = lunaris
-        .forget(ForgetTarget::Id(target_ulid))
-        .await
-        .expect("forget id");
+    let receipt = lunaris.forget(ForgetTarget::Id(target_ulid)).await.expect("forget id");
 
     assert_eq!(receipt.rows_written, 1, "one MVCC sys_to write per matched row");
     assert_eq!(receipt.rows_deleted, 0, "soft-delete writes ZERO hard deletes");
@@ -273,17 +269,10 @@ async fn forget_id_writes_one_mvcc_row_and_publishes_audit() {
         1,
         "D-19 single-call invariant: ONE atomic_write per forget call"
     );
-    assert!(
-        receipt.indices_affected.contains(&IndexKind::Kv),
-        "indices_affected reports KV"
-    );
+    assert!(receipt.indices_affected.contains(&IndexKind::Kv), "indices_affected reports KV");
 
     let audits = rec.published_audit_events();
-    assert_eq!(
-        audits.len(),
-        1,
-        "OPS-04: every forget call publishes ONE __lunaris_audit__ event"
-    );
+    assert_eq!(audits.len(), 1, "OPS-04: every forget call publishes ONE __lunaris_audit__ event");
     assert!(matches!(audits[0], AuditEvent::Forget(_)));
 }
 
@@ -291,11 +280,7 @@ async fn forget_id_writes_one_mvcc_row_and_publishes_audit() {
 async fn forget_scope_by_source_prefix_soft_deletes_all_matches() {
     let rec = Arc::new(RecordingStorageWithKeyword::new());
     for i in 0..3 {
-        rec.seed_episode(
-            &format!("episode:helios-{i}"),
-            "helios:fs/session-42/foo.md",
-            Hlc::ZERO,
-        );
+        rec.seed_episode(&format!("episode:helios-{i}"), "helios:fs/session-42/foo.md", Hlc::ZERO);
     }
     for i in 0..2 {
         rec.seed_episode(&format!("episode:other-{i}"), "other:source", Hlc::ZERO);
@@ -303,9 +288,7 @@ async fn forget_scope_by_source_prefix_soft_deletes_all_matches() {
 
     let lunaris = build_lunaris(rec.clone());
     let receipt = lunaris
-        .forget(ForgetTarget::Scope(ScopeSpec::BySource(
-            "helios:fs/session-42/".into(),
-        )))
+        .forget(ForgetTarget::Scope(ScopeSpec::BySource("helios:fs/session-42/".into())))
         .await
         .expect("forget scope");
 
@@ -342,10 +325,7 @@ async fn forget_before_temporal_purge() {
 
     let lunaris = build_lunaris(rec.clone());
     let cutoff = Hlc { wall_ms: 200, counter: 0, node_id: 0 };
-    let receipt = lunaris
-        .forget(ForgetTarget::Before(cutoff))
-        .await
-        .expect("forget before");
+    let receipt = lunaris.forget(ForgetTarget::Before(cutoff)).await.expect("forget before");
 
     // W-1 typed compare: only t1 < cutoff (100 < 200 → true; 300 < 200 → false).
     assert_eq!(
@@ -362,10 +342,8 @@ async fn forget_dry_run_writes_zero_rows_returns_preview() {
     rec.seed_episode(&format!("episode:{target_ulid}"), "test:source", Hlc::ZERO);
 
     let lunaris = build_lunaris(rec.clone());
-    let receipt = lunaris
-        .forget(ForgetTarget::Id(target_ulid).dry_run())
-        .await
-        .expect("dry_run forget");
+    let receipt =
+        lunaris.forget(ForgetTarget::Id(target_ulid).dry_run()).await.expect("dry_run forget");
 
     assert!(receipt.preview, "dry_run receipt MUST carry preview=true");
     assert_eq!(receipt.rows_written, 0);
@@ -398,11 +376,7 @@ async fn forget_hard_without_confirmation_token_fails() {
         }
         other => panic!("expected ValidateError::ConfirmationRequired; got {other:?}"),
     }
-    assert_eq!(
-        rec.batch_count(),
-        0,
-        "no atomic_write must fire on the failed validation path"
-    );
+    assert_eq!(rec.batch_count(), 0, "no atomic_write must fire on the failed validation path");
     assert_eq!(
         rec.published_audit_events().len(),
         0,
@@ -420,17 +394,12 @@ async fn forget_hard_with_confirmation_token_issues_irreversible_delete() {
     let lunaris = build_lunaris(rec.clone());
 
     // Step 1: dry_run to receive a preview receipt.
-    let dry_receipt = lunaris
-        .forget(ForgetTarget::Id(target_ulid).dry_run())
-        .await
-        .expect("dry_run");
+    let dry_receipt =
+        lunaris.forget(ForgetTarget::Id(target_ulid).dry_run()).await.expect("dry_run");
     assert!(dry_receipt.preview);
 
     // Step 2: confirm_hard_forget(receipt) → confirmation token.
-    let token = lunaris
-        .confirm_hard_forget(dry_receipt)
-        .await
-        .expect("confirm");
+    let token = lunaris.confirm_hard_forget(dry_receipt).await.expect("confirm");
 
     // Step 3: hard().with_token(token) → irreversible delete via KvDelete.
     let receipt = lunaris
@@ -452,9 +421,7 @@ async fn forget_publishes_audit_event_on_every_call() {
 
     let lunaris = build_lunaris(rec.clone());
     let _ = lunaris.forget(ForgetTarget::Id(Ulid::new())).await;
-    let _ = lunaris
-        .forget(ForgetTarget::Scope(ScopeSpec::BySource("test:".into())))
-        .await;
+    let _ = lunaris.forget(ForgetTarget::Scope(ScopeSpec::BySource("test:".into()))).await;
 
     assert_eq!(
         rec.published_audit_events().len(),

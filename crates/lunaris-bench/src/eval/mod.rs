@@ -61,10 +61,7 @@ impl EvalRow {
 
     /// Construct a FAIL row (status = "FAIL").
     pub fn fail(harness: &str, metric: &str, value: f64, threshold: f64, duration_ms: u64) -> Self {
-        Self {
-            status: "FAIL".into(),
-            ..Self::pass(harness, metric, value, threshold, duration_ms)
-        }
+        Self { status: "FAIL".into(), ..Self::pass(harness, metric, value, threshold, duration_ms) }
     }
 
     /// Construct a SKIPPED row (status = "SKIPPED"). Logs the skip reason to

@@ -120,10 +120,7 @@ async fn poll_topic<F: FnOnce(u64)>(
             let already = *warned.read();
             if !already {
                 *warned.write() = true;
-                tracing::warn!(
-                    topic,
-                    "queue_depth unsupported by backend; gauge stays at 0"
-                );
+                tracing::warn!(topic, "queue_depth unsupported by backend; gauge stays at 0");
             }
         }
         Err(e) => {

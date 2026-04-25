@@ -105,17 +105,13 @@ fn graph_pipeline_is_enabled(handle: PyRef<'_, PyGraphPipelineHandle>) -> PyResu
 }
 
 #[pyfunction]
-fn consolidator_pipeline_enable(
-    handle: PyRef<'_, PyConsolidatorPipelineHandle>,
-) -> PyResult<()> {
+fn consolidator_pipeline_enable(handle: PyRef<'_, PyConsolidatorPipelineHandle>) -> PyResult<()> {
     with_tokio(|| handle.inner.enable());
     Ok(())
 }
 
 #[pyfunction]
-fn consolidator_pipeline_disable(
-    handle: PyRef<'_, PyConsolidatorPipelineHandle>,
-) -> PyResult<()> {
+fn consolidator_pipeline_disable(handle: PyRef<'_, PyConsolidatorPipelineHandle>) -> PyResult<()> {
     with_tokio(|| handle.inner.disable());
     Ok(())
 }

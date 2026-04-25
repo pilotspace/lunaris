@@ -23,8 +23,8 @@ use lunaris_core::{LunarisError, StorageError};
 use serde::{Deserialize, Serialize};
 
 use crate::Verifier;
-use crate::types::{VerifierBackend, VerifyDecision};
 use crate::parse_decision_json;
+use crate::types::{VerifierBackend, VerifyDecision};
 use lunaris_extract::NeedsReviewItem;
 
 /// Per-call HTTP timeout (CLAUDE.md "design for failure"). Ollama is local-
@@ -55,8 +55,7 @@ impl Default for OllamaVerifierOpts {
     fn default() -> Self {
         Self {
             endpoint: std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string()),
-            model: std::env::var(ENV_MODEL_OVERRIDE)
-                .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
+            model: std::env::var(ENV_MODEL_OVERRIDE).unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
         }
     }
 }
@@ -98,10 +97,7 @@ impl OllamaVerifier {
 
 #[async_trait]
 impl Verifier for OllamaVerifier {
-    async fn verify(
-        &self,
-        item: NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
+    async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
         let url = format!("{}/api/chat", self.endpoint.trim_end_matches('/'));
         let prompt = crate::arbitration_prompt(&item);
         let body = ChatRequest {

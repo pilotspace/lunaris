@@ -48,10 +48,7 @@ pub async fn ingest_handler(
 
     // Plan 05-05 OPS-06 — start the duration timer. Histogram observes
     // wall-clock from request entry to response sent.
-    let timer = metrics()
-        .ingest_duration
-        .with_label_values(&[tenant])
-        .start_timer();
+    let timer = metrics().ingest_duration.with_label_values(&[tenant]).start_timer();
 
     // Single-atomic-write invariant preserved (INGEST-04). NO new atomic
     // boundary at the HTTP layer.
@@ -62,10 +59,7 @@ pub async fn ingest_handler(
     timer.observe_duration();
 
     let status = if result.is_ok() { "ok" } else { "error" };
-    metrics()
-        .ingest_total
-        .with_label_values(&[tenant, status])
-        .inc();
+    metrics().ingest_total.with_label_values(&[tenant, status]).inc();
 
     match result {
         Ok(lsn) => {
@@ -75,14 +69,7 @@ pub async fn ingest_handler(
                 Ok(d) => d > VERIFY_WARN_THRESHOLD,
                 Err(_) => false,
             };
-            (
-                StatusCode::OK,
-                Json(IngestResponse {
-                    lsn,
-                    queue_lag_warn: warn,
-                }),
-            )
-                .into_response()
+            (StatusCode::OK, Json(IngestResponse { lsn, queue_lag_warn: warn })).into_response()
         }
         Err(e) => map_error(e),
     }

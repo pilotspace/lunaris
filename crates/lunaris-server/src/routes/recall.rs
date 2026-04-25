@@ -45,10 +45,7 @@ pub async fn recall_handler(
     // Plan 05-05 OPS-06 — duration timer started up-front so even early-exit
     // paths (graph-mode unavailable, invalid filter) contribute to the
     // histogram observation when the metric increments below.
-    let timer = metrics()
-        .recall_duration
-        .with_label_values(&[tenant, mode_label])
-        .start_timer();
+    let timer = metrics().recall_duration.with_label_values(&[tenant, mode_label]).start_timer();
 
     // D-05 + PROTO-03: gate "graph" mode on backend capability + runtime
     // toggle. v0 returns 501 Not Implemented when neither is satisfied —
@@ -58,10 +55,7 @@ pub async fn recall_handler(
         let graph_runtime_on = state.lunaris.graph_pipeline().is_enabled();
         if !caps.graph_native && !graph_runtime_on {
             timer.observe_duration();
-            metrics()
-                .recall_total
-                .with_label_values(&[tenant, mode_label, "error"])
-                .inc();
+            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
             return (
                 StatusCode::NOT_IMPLEMENTED,
                 Json(serde_json::json!({
@@ -79,10 +73,7 @@ pub async fn recall_handler(
         Ok(q) => q,
         Err(msg) => {
             timer.observe_duration();
-            metrics()
-                .recall_total
-                .with_label_values(&[tenant, mode_label, "error"])
-                .inc();
+            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -99,10 +90,7 @@ pub async fn recall_handler(
         Ok(b) => b,
         Err(e) => {
             timer.observe_duration();
-            metrics()
-                .recall_total
-                .with_label_values(&[tenant, mode_label, "error"])
-                .inc();
+            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
             return map_error(e);
         }
     };
@@ -114,10 +102,7 @@ pub async fn recall_handler(
             Ok(updated) => updated,
             Err(e) => {
                 timer.observe_duration();
-                metrics()
-                    .recall_total
-                    .with_label_values(&[tenant, mode_label, "error"])
-                    .inc();
+                metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -156,10 +141,7 @@ pub async fn recall_handler(
     let result = builder.execute(query).await;
     timer.observe_duration();
     let status = if result.is_ok() { "ok" } else { "error" };
-    metrics()
-        .recall_total
-        .with_label_values(&[tenant, mode_label, status])
-        .inc();
+    metrics().recall_total.with_label_values(&[tenant, mode_label, status]).inc();
 
     // Plan 07-01 — mark each hit degraded=true when graph-mode fell back.
     let result = result.map(|mut hits| {
@@ -235,11 +217,7 @@ fn parse_rfc3339_to_hlc(s: &str) -> Result<Hlc, ()> {
     use chrono::DateTime;
     let dt = DateTime::parse_from_rfc3339(s).map_err(|_| ())?;
     let wall_ms = u64::try_from(dt.timestamp_millis()).map_err(|_| ())?;
-    Ok(Hlc {
-        wall_ms,
-        counter: 0,
-        node_id: 0,
-    })
+    Ok(Hlc { wall_ms, counter: 0, node_id: 0 })
 }
 
 /// Build the SSE response stream — one `event: hit` per Hit, terminal
@@ -252,14 +230,11 @@ fn sse_response(hits: Vec<Hit>) -> Response {
             Ok(Event::default().event("hit").data(payload))
         })
         .collect();
-    let done = stream::once(async {
-        Ok::<Event, Infallible>(Event::default().event("done").data("{}"))
-    });
+    let done =
+        stream::once(async { Ok::<Event, Infallible>(Event::default().event("done").data("{}")) });
     let stream: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
         Box::pin(stream::iter(events).chain(done));
-    Sse::new(stream)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
-        .into_response()
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response()
 }
 
 #[cfg(test)]
@@ -300,10 +275,7 @@ mod tests {
         let ents = extract_query_entities("what did Alice do at Acme last April?");
         assert_eq!(ents.len(), 3, "Alice + Acme + April");
         let alice = EntityId::from_name_and_type("Alice", "");
-        assert!(
-            ents.contains(&alice),
-            "expected Alice EntityId in {ents:?}",
-        );
+        assert!(ents.contains(&alice), "expected Alice EntityId in {ents:?}",);
     }
 
     #[test]

@@ -129,18 +129,10 @@ pub enum AuditEvent {
     },
 
     /// Per-promotion event (one per Episode→Fact promotion).
-    ConsolidatorPromotion {
-        episode_id: Ulid,
-        fact_id: FactIdData,
-        activation_score: f64,
-    },
+    ConsolidatorPromotion { episode_id: Ulid, fact_id: FactIdData, activation_score: f64 },
 
     /// Per-archive event (one per archived Fact).
-    ConsolidatorArchive {
-        fact_id: FactIdData,
-        final_activation: f64,
-        moved_to: String,
-    },
+    ConsolidatorArchive { fact_id: FactIdData, final_activation: f64, moved_to: String },
 }
 
 // ---------------------------------------------------------------------------

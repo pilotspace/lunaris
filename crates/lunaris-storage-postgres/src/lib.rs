@@ -114,11 +114,7 @@ impl StoragePort for PostgresStorage {
     }
     /// Plan 04 D-12 + B-11 — see [`crate::queue::queue_length`] for the
     /// pgmq.queue_length($1) primary path + SqlState 42883 fallback.
-    async fn queue_depth(
-        &self,
-        topic: &str,
-        partition: u16,
-    ) -> Result<u64, StorageError> {
+    async fn queue_depth(&self, topic: &str, partition: u16) -> Result<u64, StorageError> {
         crate::queue::queue_length(&self.client, topic, partition).await
     }
     fn capabilities(&self) -> StorageCapabilities {

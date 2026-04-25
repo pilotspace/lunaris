@@ -19,11 +19,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "lunaris-evals",
-    version,
-    about = "Lunaris eval gauntlet (EVAL-01..09)"
-)]
+#[command(name = "lunaris-evals", version, about = "Lunaris eval gauntlet (EVAL-01..09)")]
 struct Cli {
     #[command(subcommand)]
     cmd: EvalCmd,
@@ -32,12 +28,7 @@ struct Cli {
     /// root). Marked `global` so the flag works either before or after the
     /// subcommand: `lunaris-evals all --output X` AND
     /// `lunaris-evals --output X all` both parse identically.
-    #[arg(
-        long,
-        default_value = "eval-results.json",
-        env = "LUNARIS_EVAL_OUTPUT",
-        global = true
-    )]
+    #[arg(long, default_value = "eval-results.json", env = "LUNARIS_EVAL_OUTPUT", global = true)]
     output: std::path::PathBuf,
 }
 
@@ -97,10 +88,7 @@ async fn main() -> ExitCode {
 
     let any_fail = results.iter().any(|r| r.status == "FAIL");
     if any_fail {
-        eprintln!(
-            "eval-gauntlet: at least one harness FAILED — see {}",
-            cli.output.display()
-        );
+        eprintln!("eval-gauntlet: at least one harness FAILED — see {}", cli.output.display());
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS

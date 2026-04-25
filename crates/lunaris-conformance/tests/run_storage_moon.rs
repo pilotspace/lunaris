@@ -51,11 +51,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("run_storage_moon: SKIP {name} (unknown URL scheme)");
         return None;
@@ -68,9 +64,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
             // Intentionally do NOT log the full URL — postgres:// URLs
             // can carry credentials in the userinfo segment
             // (T-05-02-01 mitigation).
-            eprintln!(
-                "run_storage_moon: SKIP {name} (DNS resolution of {host_port} failed)"
-            );
+            eprintln!("run_storage_moon: SKIP {name} (DNS resolution of {host_port} failed)");
             return None;
         }
     };

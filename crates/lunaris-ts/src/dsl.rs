@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Plan 08-03 Task 2 — TS DSL camelCase parity module.
 //!
 //! The codegen-emitted `RetrievalBuilder` in `generated.rs` freezes the
@@ -48,25 +49,10 @@ pub async fn recall_simple_execute(
 
     // Extract plan fields with safe defaults so the TS-side builder can
     // forward a sparse object.
-    let query_text = plan
-        .get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let k = plan
-        .get("k")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(5);
-    let index = plan
-        .get("index")
-        .and_then(|v| v.as_str())
-        .unwrap_or("chunks")
-        .to_string();
-    let filter_str_opt = plan
-        .get("filter")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let query_text = plan.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let k = plan.get("k").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(5);
+    let index = plan.get("index").and_then(|v| v.as_str()).unwrap_or("chunks").to_string();
+    let filter_str_opt = plan.get("filter").and_then(|v| v.as_str()).map(|s| s.to_string());
     let as_of_ms = plan.get("as_of_ms").and_then(|v| v.as_u64());
 
     // Build the operator tree on the Rust side. The TS-side DSL builder
@@ -75,9 +61,9 @@ pub async fn recall_simple_execute(
     let root = Vector::new(&index, k);
     let mut builder = inner.recall().with_root(root);
     if let Some(s) = filter_str_opt {
-        builder = builder
-            .filter_str(&s)
-            .map_err(|e| crate::errors::napi_err_with_code("VALIDATE", format!("filter_str: {e}")))?;
+        builder = builder.filter_str(&s).map_err(|e| {
+            crate::errors::napi_err_with_code("VALIDATE", format!("filter_str: {e}"))
+        })?;
     }
     if let Some(ms) = as_of_ms {
         // `Hlc::from_parts(wall_ms, counter, node_id)` — the only public

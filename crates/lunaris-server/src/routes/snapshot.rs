@@ -110,11 +110,7 @@ fn parse_hlc(s: &str) -> Result<Hlc, &'static str> {
     let wall_ms: u64 = wall_str.parse().map_err(|_| "wall_ms not a u64")?;
     let counter: u32 = counter_str.parse().map_err(|_| "counter not a u32")?;
     let node_id: u16 = node_str.parse().map_err(|_| "node_id not a u16")?;
-    Ok(Hlc {
-        wall_ms,
-        counter,
-        node_id,
-    })
+    Ok(Hlc { wall_ms, counter, node_id })
 }
 
 #[cfg(test)]

@@ -124,9 +124,12 @@ impl MoonClient {
     async fn ensure_indexes(&self) -> Result<(), StorageError> {
         use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
         const DIM: usize = 768;
-        for (name, prefix) in
-            &[("chunks", "chunks:"), ("entities", "entities:"), ("facts", "facts:"), ("communities", "communities:")]
-        {
+        for (name, prefix) in &[
+            ("chunks", "chunks:"),
+            ("entities", "entities:"),
+            ("facts", "facts:"),
+            ("communities", "communities:"),
+        ] {
             let mut opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
                 .prefix(*prefix)
                 .field_name("vec")

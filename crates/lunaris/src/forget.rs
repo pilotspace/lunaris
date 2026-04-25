@@ -142,10 +142,7 @@ impl ForgetTarget {
     /// `LunarisError::Validate(ValidateError::ConfirmationRequired(_))` per
     /// the D-21 safety rail (B-3 typed variant).
     pub fn hard(self) -> ForgetRequest {
-        ForgetRequest {
-            target: self,
-            options: ForgetOptions { hard: true, ..Default::default() },
-        }
+        ForgetRequest { target: self, options: ForgetOptions { hard: true, ..Default::default() } }
     }
 
     /// Build a preview request that does NOT call `atomic_write`. Returns a
@@ -177,11 +174,7 @@ impl ForgetRequest {
     pub fn hard_confirmed(target: ForgetTarget, token: ForgetConfirmation) -> Self {
         ForgetRequest {
             target,
-            options: ForgetOptions {
-                hard: true,
-                dry_run: false,
-                confirmation_token: Some(token),
-            },
+            options: ForgetOptions { hard: true, dry_run: false, confirmation_token: Some(token) },
         }
     }
 }
@@ -282,8 +275,7 @@ impl Lunaris {
             // call. Skip when there are zero matches (publishing an empty op
             // batch would be a no-op anyway and some backends reject it).
             if !ops.is_empty() {
-                let _lsn =
-                    self.storage.atomic_write(&ops).await.map_err(LunarisError::Storage)?;
+                let _lsn = self.storage.atomic_write(&ops).await.map_err(LunarisError::Storage)?;
             }
 
             let receipt = ForgetReceipt {
@@ -298,10 +290,7 @@ impl Lunaris {
                 publish_audit_event(&self.storage, AuditEvent::Forget((&receipt).into()))
                     .await
                     .unwrap_or(0);
-            Ok(ForgetReceipt {
-                audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
-                ..receipt
-            })
+            Ok(ForgetReceipt { audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 }, ..receipt })
         }
         .instrument(span)
         .await
@@ -360,16 +349,12 @@ async fn scan_matches(
         let key_str = format!("episode:{ulid}");
         // B-4: clock.tick() — Hlc::now() doesn't exist in this codebase.
         let now = clock.tick();
-        let row = storage
-            .read_as_of(key_str.as_bytes(), now)
-            .await
-            .map_err(LunarisError::Storage)?;
+        let row =
+            storage.read_as_of(key_str.as_bytes(), now).await.map_err(LunarisError::Storage)?;
         return Ok(match row {
-            Some(r) => vec![ForgetMatch {
-                key: key_str.into_bytes(),
-                payload: r.value.to_vec(),
-                bt: r.bt,
-            }],
+            Some(r) => {
+                vec![ForgetMatch { key: key_str.into_bytes(), payload: r.value.to_vec(), bt: r.bt }]
+            }
             None => Vec::new(),
         });
     }
@@ -378,10 +363,7 @@ async fn scan_matches(
     // `episode:` prefix; richer scope languages (chunk:, fact:, ...) are v1.
     let prefix: &[u8] = b"episode:";
 
-    let mut stream = storage
-        .scan_range(prefix, None)
-        .await
-        .map_err(LunarisError::Storage)?;
+    let mut stream = storage.scan_range(prefix, None).await.map_err(LunarisError::Storage)?;
     let mut out = Vec::new();
     while let Some(item) = stream.next().await {
         let (k, v) = item.map_err(LunarisError::Storage)?;
@@ -390,14 +372,11 @@ async fn scan_matches(
             // can mutate the typed struct via `invalidate_sys`. now is bumped
             // per row to preserve HLC monotony.
             let now = clock.tick();
-            let row_opt = storage
-                .read_as_of(&k, now)
-                .await
-                .map_err(LunarisError::Storage)?;
-            let bt = row_opt.as_ref().map(|r| r.bt).unwrap_or_else(|| BiTemporal {
-                valid: (Hlc::ZERO, None),
-                sys: (Hlc::ZERO, None),
-            });
+            let row_opt = storage.read_as_of(&k, now).await.map_err(LunarisError::Storage)?;
+            let bt = row_opt
+                .as_ref()
+                .map(|r| r.bt)
+                .unwrap_or_else(|| BiTemporal { valid: (Hlc::ZERO, None), sys: (Hlc::ZERO, None) });
             out.push(ForgetMatch { key: k.to_vec(), payload: v.to_vec(), bt });
         }
     }
@@ -435,11 +414,9 @@ fn match_scope(value: &[u8], spec: &ScopeSpec) -> bool {
             .and_then(|v| v.as_str())
             .map(|v| v == expected)
             .unwrap_or(false),
-        ScopeSpec::ByEpisode(ulid) => json
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s == ulid.to_string())
-            .unwrap_or(false),
+        ScopeSpec::ByEpisode(ulid) => {
+            json.get("id").and_then(|v| v.as_str()).map(|s| s == ulid.to_string()).unwrap_or(false)
+        }
     }
 }
 

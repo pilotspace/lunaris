@@ -132,15 +132,7 @@ fn cmd_conformance(backend: &str) -> Result<()> {
     let test_name = format!("run_storage_{backend}");
     println!("xtask conformance — invoking cargo test -p lunaris-conformance --test {test_name}");
     let status = Command::new("cargo")
-        .args([
-            "test",
-            "-p",
-            "lunaris-conformance",
-            "--test",
-            &test_name,
-            "--",
-            "--nocapture",
-        ])
+        .args(["test", "-p", "lunaris-conformance", "--test", &test_name, "--", "--nocapture"])
         .status()
         .with_context(|| format!("invoke cargo test conformance backend={backend}"))?;
     if !status.success() {

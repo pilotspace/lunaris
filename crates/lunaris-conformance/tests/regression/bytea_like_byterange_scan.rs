@@ -67,25 +67,20 @@ async fn bytea_like_byterange_scan() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let storage = lunaris_storage_postgres::PostgresStorage::connect(&url)
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "PostgresStorage::connect failed: {e} — \
+    let storage = lunaris_storage_postgres::PostgresStorage::connect(&url).await.map_err(|e| {
+        anyhow::anyhow!(
+            "PostgresStorage::connect failed: {e} — \
                  (on vanilla postgres:16 this is the expected substrate-gap \
                  signal; regression-test EXPECTED_VANILLA_ERROR = {EXPECTED_VANILLA_ERROR:?})"
-            )
-        })?;
+        )
+    })?;
     let pool = &storage.client().pool;
 
     // Seed lunaris_kv with N keys sharing a distinctive prefix so a
     // Seq Scan vs Index Scan choice is planner-visible. The prefix
     // includes a run-unique suffix so concurrent test runs on the same
     // DB don't collide.
-    let prefix_stem = format!(
-        "regression-14-03-bytea-scan-{}/",
-        std::process::id()
-    );
+    let prefix_stem = format!("regression-14-03-bytea-scan-{}/", std::process::id());
     let prefix = prefix_stem.as_bytes();
     for i in 0..SEED_ROW_COUNT {
         let key = format!("{prefix_stem}{i:05}").into_bytes();
@@ -186,11 +181,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("regression::bytea_like_byterange_scan: SKIP {name} (unknown URL scheme)");
         return None;

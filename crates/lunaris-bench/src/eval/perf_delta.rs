@@ -57,19 +57,17 @@ const BENCHES: &[(&str, &str)] = &[
 ];
 
 pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
-    let target = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            // Fallback: walk from CARGO_MANIFEST_DIR (crates/lunaris-bench)
-            // up to workspace root, then join target/. Mirrors Plan 04-03
-            // chaos.rs binary-discovery walker shape.
-            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            manifest
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.join("target"))
-                .unwrap_or_else(|| PathBuf::from("target"))
-        });
+    let target = std::env::var("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|_| {
+        // Fallback: walk from CARGO_MANIFEST_DIR (crates/lunaris-bench)
+        // up to workspace root, then join target/. Mirrors Plan 04-03
+        // chaos.rs binary-discovery walker shape.
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("target"))
+            .unwrap_or_else(|| PathBuf::from("target"))
+    });
     let criterion_root = target.join("criterion");
 
     // Whole-directory absence → emit SKIPPED rows per (group, bench) so the
@@ -126,12 +124,7 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 /// verbatim — Criterion's `BenchmarkId::new(bench, label)` resolves to
 /// the on-disk dir `<group>/<bench>/<label>/`.
 fn read_p50(root: &std::path::Path, group: &str, bench: &str, label: &str) -> Option<f64> {
-    let path = root
-        .join(group)
-        .join(bench)
-        .join(label)
-        .join("new")
-        .join("estimates.json");
+    let path = root.join(group).join(bench).join(label).join("new").join("estimates.json");
     let bytes = std::fs::read(&path).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     // Criterion estimates.json shape: median.point_estimate is the p50 (in ns).
@@ -142,7 +135,13 @@ fn read_p50(root: &std::path::Path, group: &str, bench: &str, label: &str) -> Op
 mod tests {
     use super::*;
 
-    fn write_synth_estimates(root: &std::path::Path, group: &str, bench: &str, label: &str, ns: f64) {
+    fn write_synth_estimates(
+        root: &std::path::Path,
+        group: &str,
+        bench: &str,
+        label: &str,
+        ns: f64,
+    ) {
         let dir = root.join(group).join(bench).join(label).join("new");
         std::fs::create_dir_all(&dir).unwrap();
         let body = serde_json::json!({
@@ -153,7 +152,8 @@ mod tests {
 
     #[test]
     fn read_p50_returns_median_ns() {
-        let tmp = std::env::temp_dir().join(format!("lunaris-perf-delta-test-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("lunaris-perf-delta-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         write_synth_estimates(&tmp, "ingest_hot_path", "ingest_12kb_md", "moon", 30_000_000.0);
         let v = read_p50(&tmp, "ingest_hot_path", "ingest_12kb_md", "moon");
@@ -163,7 +163,8 @@ mod tests {
 
     #[test]
     fn read_p50_missing_file_returns_none() {
-        let tmp = std::env::temp_dir().join(format!("lunaris-perf-delta-missing-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("lunaris-perf-delta-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         assert!(read_p50(&tmp, "g", "b", "l").is_none());
@@ -177,10 +178,8 @@ mod tests {
         // that read CARGO_TARGET_DIR; we don't actually mutate the env
         // (which would require unsafe in Rust 2024). Instead we directly
         // exercise the inner loop by constructing the path manually.
-        let nonexistent = std::env::temp_dir().join(format!(
-            "lunaris-perf-delta-no-such-{}",
-            std::process::id()
-        ));
+        let nonexistent =
+            std::env::temp_dir().join(format!("lunaris-perf-delta-no-such-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&nonexistent);
         // Direct synthesis of the SKIPPED branch:
         let mut results: Vec<EvalRow> = Vec::new();
@@ -205,7 +204,11 @@ mod tests {
         // (either real ratios or SKIPPED).
         let initial = results.len();
         super::run(&mut results).await.unwrap();
-        assert!(results.len() >= initial + BENCHES.len(),
-            "run should append at least {} rows; got {}", BENCHES.len(), results.len() - initial);
+        assert!(
+            results.len() >= initial + BENCHES.len(),
+            "run should append at least {} rows; got {}",
+            BENCHES.len(),
+            results.len() - initial
+        );
     }
 }

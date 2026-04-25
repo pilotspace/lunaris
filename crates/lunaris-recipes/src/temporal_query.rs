@@ -140,11 +140,7 @@ where
     /// Construct a TemporalQuery over source `S`. Source is a phantom
     /// marker — no runtime value required.
     pub fn new(lunaris: Arc<Lunaris>) -> Self {
-        Self {
-            lunaris,
-            bounds: TemporalBounds::default(),
-            _source: PhantomData,
-        }
+        Self { lunaris, bounds: TemporalBounds::default(), _source: PhantomData }
     }
 
     /// Return the snapshot at `ts` for source `S`. Subsequent operators

@@ -67,7 +67,11 @@ impl CustomerSupportHistory {
     /// [`GraphPipelineHandle`]). Default OFF per blueprint §5.2.
     pub fn with_graph_pipeline(self, on: bool) -> Self {
         let handle = self.lunaris.graph_pipeline();
-        if on { handle.enable(); } else { handle.disable(); }
+        if on {
+            handle.enable();
+        } else {
+            handle.disable();
+        }
         self
     }
 

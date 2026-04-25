@@ -37,7 +37,7 @@ use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
 use lunaris_retrieve::Hit;
 
-use crate::{Documents, DocumentCorpus, TemporalQuery};
+use crate::{DocumentCorpus, Documents, TemporalQuery};
 
 /// Code-repository memory wrapper. Stores commit SHA in Episode metadata
 /// (`source` column) and recalls point-in-time function bodies via
@@ -86,10 +86,7 @@ impl CodeRepoMemory {
     /// See note: `TemporalQuery` recalls across ALL Documents; isolation is
     /// the caller's responsibility (fixture-isolated in tests).
     pub async fn recall(&self, query: &str, as_of: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone())
-            .as_of(as_of)
-            .execute(query)
-            .await
+        TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(as_of).execute(query).await
     }
 }
 

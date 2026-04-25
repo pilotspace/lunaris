@@ -16,11 +16,7 @@ pub fn cors_layer(spec: &str) -> CorsLayer {
         return CorsLayer::permissive();
     }
     let mut layer = CorsLayer::new().allow_methods(Any).allow_headers(Any);
-    for origin in spec
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    for origin in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         if let Ok(value) = origin.parse::<HeaderValue>() {
             layer = layer.allow_origin(value);
         }

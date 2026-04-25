@@ -27,7 +27,7 @@ use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
 use lunaris_retrieve::Hit;
 
-use crate::{Documents, DocumentCorpus, TemporalQuery};
+use crate::{DocumentCorpus, Documents, TemporalQuery};
 
 /// Timeline-reconstruction wrapper. Two-call composition of
 /// DocumentCorpus + TemporalQuery<Documents>.
@@ -56,19 +56,13 @@ impl TimelineReconstruction {
     /// Recall all events in `[lo, hi)` (lower inclusive, upper exclusive).
     /// 2 primitive calls: `TemporalQuery::<Documents>::new` + `.between().execute()`.
     pub async fn between(&self, query: &str, lo: Hlc, hi: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone())
-            .between(lo, hi)
-            .execute(query)
-            .await
+        TemporalQuery::<Documents>::new(self.lunaris.clone()).between(lo, hi).execute(query).await
     }
 
     /// Recall the snapshot at `ts`. 2 primitive calls:
     /// `TemporalQuery::<Documents>::new` + `.as_of(ts).execute()`.
     pub async fn as_of(&self, query: &str, ts: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone())
-            .as_of(ts)
-            .execute(query)
-            .await
+        TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(ts).execute(query).await
     }
 }
 

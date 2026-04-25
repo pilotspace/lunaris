@@ -33,6 +33,7 @@ use lunaris_core::{LunarisError, StorageError};
 use lunaris_extract::{CandleGemma3_4B, CandleGemma3_4BOpts};
 
 #[cfg(feature = "ollama")]
+#[allow(unused_imports)]
 use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 
 #[cfg(feature = "cloud-api")]

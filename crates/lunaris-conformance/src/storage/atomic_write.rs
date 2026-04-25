@@ -14,8 +14,8 @@
 use std::sync::Arc;
 
 use lunaris_core::hlc::Hlc;
-use lunaris_core::storage::types::{Lsn, WriteOp};
 use lunaris_core::storage::StoragePort;
+use lunaris_core::storage::types::{Lsn, WriteOp};
 
 /// Asserts that an atomic_write of N ops either commits ALL or NONE.
 ///
@@ -24,29 +24,18 @@ use lunaris_core::storage::StoragePort;
 /// future (so any backend's snapshot semantics include the just-committed
 /// row regardless of HLC clock skew).
 pub async fn all_or_nothing(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    let keys: [&[u8]; 3] = [
-        b"conformance:aw:k1",
-        b"conformance:aw:k2",
-        b"conformance:aw:k3",
-    ];
+    let keys: [&[u8]; 3] = [b"conformance:aw:k1", b"conformance:aw:k2", b"conformance:aw:k3"];
     let ops: Vec<WriteOp> = keys
         .iter()
         .enumerate()
-        .map(|(i, k)| WriteOp::KvPut {
-            key: k.to_vec(),
-            value: format!("v{i}").into_bytes(),
-        })
+        .map(|(i, k)| WriteOp::KvPut { key: k.to_vec(), value: format!("v{i}").into_bytes() })
         .collect();
 
     let lsn = storage.atomic_write(&ops).await?;
 
     // Read at a generous "now" — backends with snapshot pinning need
     // a timestamp that comfortably overlaps the commit's HLC.
-    let now = Hlc {
-        wall_ms: u64::MAX / 2,
-        counter: 0,
-        node_id: 0,
-    };
+    let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
     for k in keys.iter() {
         let row = storage.read_as_of(k, now).await?;
         anyhow::ensure!(
@@ -70,10 +59,7 @@ pub async fn lsn_monotonic(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()>
     let mut prev: Option<Lsn> = None;
     for i in 0..5u32 {
         let key = format!("conformance:lsn:{i:03}").into_bytes();
-        let ops = vec![WriteOp::KvPut {
-            key,
-            value: format!("v{i}").into_bytes(),
-        }];
+        let ops = vec![WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }];
         let lsn = storage.atomic_write(&ops).await?;
         if let Some(p) = prev {
             anyhow::ensure!(

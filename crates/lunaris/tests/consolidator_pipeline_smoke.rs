@@ -65,11 +65,7 @@ impl RecordingStorageWithKeyword {
     }
 
     fn published_audit_count(&self) -> usize {
-        self.published_messages
-            .lock()
-            .iter()
-            .filter(|(t, _, _)| t == "__lunaris_audit__")
-            .count()
+        self.published_messages.lock().iter().filter(|(t, _, _)| t == "__lunaris_audit__").count()
     }
 
     fn first_consolidate_envelope(&self) -> Option<serde_json::Value> {
@@ -276,9 +272,8 @@ async fn consolidate_enable_then_ingest_publishes_event() {
         "Lunaris::ingest MUST publish exactly one __lunaris_consolidate__ event per call (D-16)"
     );
 
-    let envelope = rec
-        .first_consolidate_envelope()
-        .expect("consolidate envelope must be valid JSON");
+    let envelope =
+        rec.first_consolidate_envelope().expect("consolidate envelope must be valid JSON");
     assert_eq!(
         envelope.get("kind").and_then(|v| v.as_str()),
         Some("ingest_committed"),
@@ -298,16 +293,11 @@ async fn consolidate_enable_then_ingest_publishes_event() {
 #[tokio::test]
 async fn ingest_publishes_consolidate_envelope_with_episode_source() {
     let (handle, rec, clock) = build_handle();
-    let ep = Episode::new(
-        "test:wm/note-0",
-        "# Notes\nScope-aware consolidate payload.",
-        &clock,
-    );
+    let ep = Episode::new("test:wm/note-0", "# Notes\nScope-aware consolidate payload.", &clock);
     handle.ingest(ep).await.expect("ingest must succeed");
 
-    let envelope = rec
-        .first_consolidate_envelope()
-        .expect("consolidate envelope must be valid JSON");
+    let envelope =
+        rec.first_consolidate_envelope().expect("consolidate envelope must be valid JSON");
     assert_eq!(
         envelope.get("source").and_then(|v| v.as_str()),
         Some("test:wm/note-0"),
@@ -321,8 +311,7 @@ async fn ingest_publishes_one_consolidate_event_per_call() {
     // D-16 strictness — N ingests produce exactly N consolidate publishes.
     let (handle, rec, clock) = build_handle();
     for i in 0..3 {
-        let ep =
-            Episode::new(format!("ep{i}.md"), format!("# E{i}\nAlice and Bob."), &clock);
+        let ep = Episode::new(format!("ep{i}.md"), format!("# E{i}\nAlice and Bob."), &clock);
         handle.ingest(ep).await.expect("ingest must succeed");
     }
     assert_eq!(
@@ -379,10 +368,7 @@ async fn noop_consolidator_with_pipeline_on_emits_no_audit() {
 
     // Verify the pinned NoopConsolidator is the wired backend.
     assert!(
-        !handle
-            .consolidator()
-            .expect("noop pinned via set_consolidator")
-            .applies(),
+        !handle.consolidator().expect("noop pinned via set_consolidator").applies(),
         "NoopConsolidator.applies() MUST be false"
     );
 
@@ -435,8 +421,7 @@ async fn empty_consolidation_report_default_is_constructible() {
     assert!(r.archives.is_empty());
     assert_eq!(r.communities_rebuilt, 0);
     // ConsolidatorPipelineHandle is reachable on the umbrella crate.
-    let _: Arc<ConsolidatorPipelineHandle> =
-        Arc::new(ConsolidatorPipelineHandle::with_noop());
+    let _: Arc<ConsolidatorPipelineHandle> = Arc::new(ConsolidatorPipelineHandle::with_noop());
     // NoopConsolidator is constructible from the umbrella crate.
     let _: Arc<dyn Consolidator> = Arc::new(NoopConsolidator);
     let _ = json!({}); // serde_json import touch

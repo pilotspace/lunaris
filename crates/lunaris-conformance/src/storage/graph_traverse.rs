@@ -14,14 +14,11 @@
 
 use std::sync::Arc;
 
-use lunaris_core::storage::types::CypherQuery;
 use lunaris_core::storage::StoragePort;
+use lunaris_core::storage::types::CypherQuery;
 
 pub async fn cypher_subset(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    debug_assert!(
-        storage.capabilities().graph_native,
-        "caller must gate on graph_native"
-    );
+    debug_assert!(storage.capabilities().graph_native, "caller must gate on graph_native");
 
     crate::fixtures::seed_one_edge(storage).await?;
 

@@ -29,10 +29,7 @@ pub struct NoopVerifier;
 
 #[async_trait]
 impl Verifier for NoopVerifier {
-    async fn verify(
-        &self,
-        _item: NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
+    async fn verify(&self, _item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
         Ok(VerifyDecision::deferred())
     }
 

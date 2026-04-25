@@ -42,10 +42,10 @@
 
 use pyo3::prelude::*;
 
-mod errors;
-mod types;
 mod dsl;
+mod errors;
 mod toggles;
+mod types;
 
 // Handwritten conformance-only helpers — feature-gated so production wheels
 // never ship them. NOT codegen-managed; excluded from the Plan 08-01
@@ -64,16 +64,31 @@ mod generated {
     include!("generated.rs");
 }
 
+#[allow(unused_imports)]
 pub(crate) use errors::{LunarisError, py_err};
+#[allow(unused_imports)]
 pub(crate) use generated::{
-    PyConsolidatorPipelineHandle, PyGraph, PyGraphPipelineHandle, PyKeyword, PyLunaris,
-    PyRetrievalBuilder, PyVector,
     // Plan 11-02b — Phase 10 conversational wrappers + 2 opaque side-types.
-    PyChatAgentMemory, PyEmailThreading, PyMeetingNotesMemory, PyMeetingNotesQuery,
-    PyMultiTurnConversation, PySlackArchive, PySlackArchiveQuery,
+    PyChatAgentMemory,
     // Plan 11-02b — Phase 11 documentary wrappers.
-    PyCodeRepoMemory, PyCustomerSupportHistory, PyDocumentKnowledgeBase,
-    PyResearchPaperCorpus, PyTimelineReconstruction,
+    PyCodeRepoMemory,
+    PyConsolidatorPipelineHandle,
+    PyCustomerSupportHistory,
+    PyDocumentKnowledgeBase,
+    PyEmailThreading,
+    PyGraph,
+    PyGraphPipelineHandle,
+    PyKeyword,
+    PyLunaris,
+    PyMeetingNotesMemory,
+    PyMeetingNotesQuery,
+    PyMultiTurnConversation,
+    PyResearchPaperCorpus,
+    PyRetrievalBuilder,
+    PySlackArchive,
+    PySlackArchiveQuery,
+    PyTimelineReconstruction,
+    PyVector,
 };
 
 /// Top-level `#[pymodule]` entry point — emitted by the cdylib as

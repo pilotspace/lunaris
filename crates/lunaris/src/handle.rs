@@ -86,10 +86,7 @@ impl std::fmt::Debug for Lunaris {
             .field("reranker_applies", &self.reranker.applies())
             .field("graph_pipeline_enabled", &self.graph_pipeline.is_enabled())
             .field("verify_pipeline_enabled", &self.verify_pipeline.is_enabled())
-            .field(
-                "consolidator_pipeline_enabled",
-                &self.consolidator_pipeline.is_enabled(),
-            )
+            .field("consolidator_pipeline_enabled", &self.consolidator_pipeline.is_enabled())
             .finish()
     }
 }
@@ -139,14 +136,9 @@ impl Lunaris {
         let consolidator = default_consolidator()?;
         let initial_verify_state = VerifierPipelineHandle::initial_state_from_env();
         let initial_consolidate_state = ConsolidatorPipelineHandle::initial_state_from_env();
-        let verify_pipeline = Arc::new(VerifierPipelineHandle::new(
-            initial_verify_state,
-            verifier,
-        ));
-        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
-            initial_consolidate_state,
-            consolidator,
-        ));
+        let verify_pipeline = Arc::new(VerifierPipelineHandle::new(initial_verify_state, verifier));
+        let consolidator_pipeline =
+            Arc::new(ConsolidatorPipelineHandle::new(initial_consolidate_state, consolidator));
         match scheme {
             "moon" => {
                 let m = Arc::new(MoonStorage::connect(url).await?);
@@ -237,10 +229,7 @@ impl Lunaris {
         // `Lunaris::open` path).
         let consolidator = ConsolidatorPipelineHandle::backend_from_env()
             .expect("LUNARIS_CONSOLIDATOR_BACKEND resolution failed in with_parts test seam");
-        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
-            false,
-            consolidator,
-        ));
+        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(false, consolidator));
         // B-10: bind storage to BOTH pipelines (2 of the 4 total bind_storage
         // call sites in handle.rs). Also bind the HlcClock to verify_pipeline
         // so the Plan 04-04 Task 4 apply_supersede has a tick source.
@@ -291,10 +280,7 @@ impl Lunaris {
         let consolidator = ConsolidatorPipelineHandle::backend_from_env().expect(
             "LUNARIS_CONSOLIDATOR_BACKEND resolution failed in with_parts_keyword test seam",
         );
-        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(
-            false,
-            consolidator,
-        ));
+        let consolidator_pipeline = Arc::new(ConsolidatorPipelineHandle::new(false, consolidator));
         // B-10: bind storage to BOTH pipelines (the OTHER 2 of the 4 total
         // bind_storage call sites in handle.rs). Also bind the HlcClock to
         // verify_pipeline.

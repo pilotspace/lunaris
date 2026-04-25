@@ -49,10 +49,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 // Helpers + imports only used under the `moon-it` + `pg-it` feature gate.
-#![cfg_attr(
-    not(all(feature = "moon-it", feature = "pg-it")),
-    allow(unused_imports, dead_code)
-)]
+#![cfg_attr(not(all(feature = "moon-it", feature = "pg-it")), allow(unused_imports, dead_code))]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -69,11 +66,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("{name}: SKIP (unknown URL scheme)");
         return None;
@@ -283,13 +276,16 @@ async fn document_knowledge_base_parity_quickstart_rag() -> anyhow::Result<()> {
     if moon_set != pg_set {
         anyhow::bail!(
             "DocumentKnowledgeBase 'quickstart' set divergence:\n  moon={:?}\n  pg={:?}",
-            moon_set, pg_set
+            moon_set,
+            pg_set
         );
     }
     assert!(
         moon_hits.len() >= min_hits,
         "expected ≥{} hits, got {} on moon: {:?}",
-        min_hits, moon_hits.len(), moon_hits
+        min_hits,
+        moon_hits.len(),
+        moon_hits
     );
     let has_body_match = moon_hits
         .iter()
@@ -364,13 +360,16 @@ async fn research_paper_corpus_parity_graph_off_recall() -> anyhow::Result<()> {
     if moon_set != pg_set {
         anyhow::bail!(
             "ResearchPaperCorpus '{query}' set divergence:\n  moon={:?}\n  pg={:?}",
-            moon_set, pg_set
+            moon_set,
+            pg_set
         );
     }
     assert!(
         moon_hits.len() >= min_hits,
         "expected ≥{} hits, got {}: {:?}",
-        min_hits, moon_hits.len(), moon_hits
+        min_hits,
+        moon_hits.len(),
+        moon_hits
     );
     let has_body_match = moon_hits
         .iter()
@@ -411,12 +410,8 @@ async fn run_code_repo_as_of(
     for c in &commits {
         let ms = rfc3339_to_unix_ms(&c.committer_date_rfc3339)?;
         let mut meta = serde_json::Map::new();
-        meta.insert(
-            "function_name".into(),
-            serde_json::Value::String("target".into()),
-        );
-        repo.ingest_commit(&c.sha, ms, vec![(c.function_body_chunk.clone(), meta)])
-            .await?;
+        meta.insert("function_name".into(), serde_json::Value::String("target".into()));
+        repo.ingest_commit(&c.sha, ms, vec![(c.function_body_chunk.clone(), meta)]).await?;
     }
 
     let hits = repo.recall(query, target_ts).await?;
@@ -450,23 +445,25 @@ async fn code_repo_memory_parity_as_of_commit_50() -> anyhow::Result<()> {
     if moon_set != pg_set {
         anyhow::bail!(
             "CodeRepoMemory .as_of(commit_{}) set divergence:\n  moon={:?}\n  pg={:?}",
-            commit_idx + 1, moon_set, pg_set
+            commit_idx + 1,
+            moon_set,
+            pg_set
         );
     }
-    assert!(
-        moon_texts.len() >= min_hits,
-        "expected ≥{} hits, got {}",
-        min_hits, moon_texts.len()
-    );
+    assert!(moon_texts.len() >= min_hits, "expected ≥{} hits, got {}", min_hits, moon_texts.len());
     assert!(
         moon_texts.iter().any(|t| t.contains(expected)),
         "moon: expected commit-{} body `{}` in hits, got: {:?}",
-        commit_idx + 1, expected, moon_texts
+        commit_idx + 1,
+        expected,
+        moon_texts
     );
     assert!(
         pg_texts.iter().any(|t| t.contains(expected)),
         "pg: expected commit-{} body `{}` in hits, got: {:?}",
-        commit_idx + 1, expected, pg_texts
+        commit_idx + 1,
+        expected,
+        pg_texts
     );
     Ok(())
 }
@@ -497,10 +494,7 @@ async fn run_timeline_between(
         let ms = rfc3339_to_unix_ms(&e.valid_time_rfc3339)?;
         let mut meta = serde_json::Map::new();
         meta.insert("event_id".into(), serde_json::Value::String(e.id.clone()));
-        meta.insert(
-            "event_valid_time_unix_ms".into(),
-            serde_json::Value::Number(ms.into()),
-        );
+        meta.insert("event_valid_time_unix_ms".into(), serde_json::Value::Number(ms.into()));
         timeline.ingest(vec![(e.text.clone(), meta)]).await?;
     }
     let lo_ms = rfc3339_to_unix_ms(lo_rfc3339)?;
@@ -544,19 +538,26 @@ async fn timeline_reconstruction_parity_between_10_and_15() -> anyhow::Result<()
     if moon_set != pg_set {
         anyhow::bail!(
             "TimelineReconstruction .between({lo}, {hi}) set divergence:\n  moon={:?}\n  pg={:?}",
-            moon_set, pg_set
+            moon_set,
+            pg_set
         );
     }
     assert_eq!(
-        moon_texts.len(), expected_count,
+        moon_texts.len(),
+        expected_count,
         "expected exactly {} events in [{}, {}) inclusive-of-lo/exclusive-of-hi; got {}: {:?}",
-        expected_count, lo, hi, moon_texts.len(), moon_texts
+        expected_count,
+        lo,
+        hi,
+        moon_texts.len(),
+        moon_texts
     );
     for needle in &expected_slice {
         assert!(
             moon_texts.iter().any(|t| t.contains(*needle)),
             "expected at least one hit matching `{}` in between-recall; got {:?}",
-            needle, moon_texts
+            needle,
+            moon_texts
         );
     }
     Ok(())
@@ -584,8 +585,7 @@ async fn run_customer_support_refund(
         hist.ingest_ticket(&t.id, &t.body).await?;
     }
     for c in &fixture.chats {
-        hist.ingest_chat(&c.ticket_id, c.turn_idx, &c.participant, &c.msg)
-            .await?;
+        hist.ingest_chat(&c.ticket_id, c.turn_idx, &c.participant, &c.msg).await?;
     }
     let hits = hist.recall(query).await?;
     Ok(hits.into_iter().map(|h| (h.source, h.id)).collect())
@@ -619,24 +619,22 @@ async fn customer_support_history_parity_refund_recall() -> anyhow::Result<()> {
     for (label, url) in [("moon", moon_url.as_str()), ("pg", pg_url.as_str())] {
         let hits = run_customer_support_refund(label, url, query).await?;
         // Each expected_source_prefix must appear at least min_{ticket,chat} times.
-        let ticket_count = hits
-            .iter()
-            .filter(|(s, _)| s.starts_with(expected_prefixes[0]))
-            .count();
-        let chat_count = hits
-            .iter()
-            .filter(|(s, _)| s.starts_with(expected_prefixes[1]))
-            .count();
+        let ticket_count = hits.iter().filter(|(s, _)| s.starts_with(expected_prefixes[0])).count();
+        let chat_count = hits.iter().filter(|(s, _)| s.starts_with(expected_prefixes[1])).count();
         assert!(
             ticket_count >= min_ticket,
             "{label}: expected ≥{} hit with `{}` prefix; got {} in {:?}",
-            min_ticket, expected_prefixes[0], ticket_count,
+            min_ticket,
+            expected_prefixes[0],
+            ticket_count,
             hits.iter().map(|(s, _)| s).collect::<Vec<_>>()
         );
         assert!(
             chat_count >= min_chat,
             "{label}: expected ≥{} hit with `{}` prefix; got {} in {:?}",
-            min_chat, expected_prefixes[1], chat_count,
+            min_chat,
+            expected_prefixes[1],
+            chat_count,
             hits.iter().map(|(s, _)| s).collect::<Vec<_>>()
         );
         if require_unique {

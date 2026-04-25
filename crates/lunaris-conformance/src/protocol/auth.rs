@@ -40,12 +40,7 @@ pub async fn missing_token_returns_401(client: &Client, base: &Url) -> anyhow::R
 pub async fn wrong_scope_returns_403(client: &Client, base: &Url) -> anyhow::Result<()> {
     let url = base.join("/v1/recall")?;
     let body = json!({"query": "wrong-scope-probe", "k": 1});
-    let resp = client
-        .post(url)
-        .bearer_auth("tok-ingest")
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(url).bearer_auth("tok-ingest").json(&body).send().await?;
     anyhow::ensure!(
         resp.status() == StatusCode::FORBIDDEN,
         "wrong-scope expected 403, got {}",

@@ -44,10 +44,7 @@ impl Lunaris {
     /// per the atomic_write monotonicity rule. Errors from the storage layer
     /// flow through the `#[from]`-derived `LunarisError::Storage` variant.
     pub async fn snapshot(&self) -> Result<Lsn, LunarisError> {
-        self.storage
-            .atomic_write(&[])
-            .await
-            .map_err(LunarisError::from)
+        self.storage.atomic_write(&[]).await.map_err(LunarisError::from)
     }
 }
 
@@ -151,9 +148,7 @@ mod tests {
     #[async_trait]
     impl StoragePort for FailingStorage {
         async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-            Err(StorageError::NotSupported(
-                "snapshot test: atomic_write disabled",
-            ))
+            Err(StorageError::NotSupported("snapshot test: atomic_write disabled"))
         }
         async fn vector_search(
             &self,

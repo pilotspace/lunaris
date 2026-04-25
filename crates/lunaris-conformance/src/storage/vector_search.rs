@@ -29,17 +29,12 @@ pub async fn recall(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     let target_vec: Vec<f32> = (0..FIXTURE_DIM).map(|i| (i as f32) * 0.001).collect();
 
     let written = crate::fixtures::seed_three_chunks(storage, &target_vec).await?;
-    anyhow::ensure!(
-        written == 3,
-        "vector_search::recall: expected 3 chunks seeded, got {written}",
-    );
+    anyhow::ensure!(written == 3, "vector_search::recall: expected 3 chunks seeded, got {written}",);
 
     // top-k = 1 — we only need the nearest neighbour to confirm the
     // index is searchable. Stronger ordering assertions live in
     // as_of_parity (cross-backend ordering equality is the harder gate).
-    let hits = storage
-        .vector_search("chunks", &target_vec, 1, None, None, false)
-        .await?;
+    let hits = storage.vector_search("chunks", &target_vec, 1, None, None, false).await?;
     anyhow::ensure!(
         !hits.is_empty(),
         "vector_search::recall: backend returned 0 hits for the seeded query",

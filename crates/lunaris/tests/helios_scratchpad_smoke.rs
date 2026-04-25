@@ -126,12 +126,9 @@ async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
             .unwrap_or(1_000);
 
         let bulk_started = Instant::now();
-        let written = lunaris_bench::build_md_doc_corpus(
-            lunaris.storage().as_ref(),
-            docs,
-            0xDEAD_BEEF,
-        )
-        .await?;
+        let written =
+            lunaris_bench::build_md_doc_corpus(lunaris.storage().as_ref(), docs, 0xDEAD_BEEF)
+                .await?;
         eprintln!(
             "{url_env} bulk-ingested {written} docs in {:.2}s",
             bulk_started.elapsed().as_secs_f64()
@@ -209,12 +206,18 @@ fn check_budget(env_name: &str, metric: &str, value: f64, budget: f64) {
     }
     let ratio = value / budget;
     if env_name == "MOON_URL" {
-        panic!("{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Moon hard-fail");
+        panic!(
+            "{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Moon hard-fail"
+        );
     }
     if ratio > 2.0 {
-        eprintln!("WARN {env_name} {metric}={value:.2}ms exceeds budget {budget}ms by >2x ({ratio:.2}x) — Postgres soft-fail per Plan 02-04 D-12");
+        eprintln!(
+            "WARN {env_name} {metric}={value:.2}ms exceeds budget {budget}ms by >2x ({ratio:.2}x) — Postgres soft-fail per Plan 02-04 D-12"
+        );
     } else {
-        panic!("{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Postgres ≤2x hard-fail per Plan 02-04 D-12");
+        panic!(
+            "{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Postgres ≤2x hard-fail per Plan 02-04 D-12"
+        );
     }
 }
 
@@ -299,8 +302,8 @@ fn check_budget_postgres_over_2x_soft_fails_only() {
 fn helios_scratchpad_v2_surface_matches_v1_exactly() {
     let src = include_str!("../src/recipes/helios_scratchpad.rs");
     let production = src.split("#[cfg(test)]").next().unwrap_or(src);
-    let pub_fns = production.matches("    pub fn ").count()
-        + production.matches("    pub async fn ").count();
+    let pub_fns =
+        production.matches("    pub fn ").count() + production.matches("    pub async fn ").count();
     assert_eq!(
         pub_fns, 9,
         "HELIOS-01 cross-crate sentinel: expected exactly 9 public methods \

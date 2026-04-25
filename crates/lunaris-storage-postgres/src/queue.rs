@@ -57,17 +57,15 @@ pub(crate) async fn queue_length(
 
     match try_fn {
         Ok(row) => {
-            let n: i64 = row.try_get("depth").map_err(|e| {
-                StorageError::Backend(format!("queue_length depth col: {e}"))
-            })?;
+            let n: i64 = row
+                .try_get("depth")
+                .map_err(|e| StorageError::Backend(format!("queue_length depth col: {e}")))?;
             Ok(n.max(0) as u64)
         }
         // B-11 fix: match SqlState code `42883` (undefined_function), NOT
         // brittle string-contains. The pgmq.queue_length() helper is missing
         // on older pgmq installs; fall back to count(*) on the q_<name> table.
-        Err(sqlx::Error::Database(db_err))
-            if db_err.code().as_deref() == Some("42883") =>
-        {
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42883") => {
             tracing::debug!(
                 "pgmq.queue_length(text) absent (SqlState 42883); falling back to direct count"
             );
@@ -79,13 +77,10 @@ pub(crate) async fn queue_length(
             // marker. The validator is the actual gate; this wrapper is the
             // workspace-convention seal that the audit reader greps for.
             let sql = format!("SELECT count(*) AS depth FROM pgmq.q_{safe_topic}");
-            let row = sqlx::query(AssertSqlSafe(sql))
-                .fetch_one(&c.pool)
-                .await
-                .map_err(sqlx_err)?;
-            let n: i64 = row.try_get("depth").map_err(|e| {
-                StorageError::Backend(format!("queue_length count col: {e}"))
-            })?;
+            let row = sqlx::query(AssertSqlSafe(sql)).fetch_one(&c.pool).await.map_err(sqlx_err)?;
+            let n: i64 = row
+                .try_get("depth")
+                .map_err(|e| StorageError::Backend(format!("queue_length count col: {e}")))?;
             Ok(n.max(0) as u64)
         }
         Err(e) => Err(sqlx_err(e)),

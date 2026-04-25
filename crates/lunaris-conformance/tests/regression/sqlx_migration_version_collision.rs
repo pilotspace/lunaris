@@ -74,19 +74,17 @@ async fn sqlx_migration_version_collision() -> anyhow::Result<()> {
     // migration set against an image that has pgvector + AGE + pgmq
     // already installed via `init-extensions.sql`. pgmq-owned tables
     // (`pgmq.*`) live in a separate schema, so there is no collision.
-    let storage = lunaris_storage_postgres::PostgresStorage::connect(&url)
-        .await
-        .map_err(|e| {
-            // When this fails on vanilla pg:16, the error message MUST
-            // contain EXPECTED_VANILLA_ERROR for the negative-matrix
-            // assertion to pass. We return the error as-is so the cargo
-            // test runner prints it to stderr verbatim.
-            anyhow::anyhow!(
-                "PostgresStorage::connect failed: {e} — \
+    let storage = lunaris_storage_postgres::PostgresStorage::connect(&url).await.map_err(|e| {
+        // When this fails on vanilla pg:16, the error message MUST
+        // contain EXPECTED_VANILLA_ERROR for the negative-matrix
+        // assertion to pass. We return the error as-is so the cargo
+        // test runner prints it to stderr verbatim.
+        anyhow::anyhow!(
+            "PostgresStorage::connect failed: {e} — \
                  (on vanilla postgres:16 this is the expected substrate-gap \
                  signal; regression-test EXPECTED_VANILLA_ERROR = {EXPECTED_VANILLA_ERROR:?})"
-            )
-        })?;
+        )
+    })?;
 
     // Invariant on pg-lunaris: the lunaris sqlx migration table exists and
     // holds exactly the 4 migrations shipped under
@@ -120,11 +118,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("regression::sqlx_migration_version_collision: SKIP {name} (unknown URL scheme)");
         return None;

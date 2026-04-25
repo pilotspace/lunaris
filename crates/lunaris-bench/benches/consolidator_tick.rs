@@ -60,9 +60,9 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use lunaris::Lunaris;
 use lunaris_bench::tcp_reachable;
+use lunaris_consolidate::Consolidator;
 use lunaris_consolidate::act_r::ActRConsolidator;
 use lunaris_consolidate::types::ConsolidateEvent;
-use lunaris_consolidate::Consolidator;
 use lunaris_core::StubEmbedder;
 use ulid::Ulid;
 
@@ -101,10 +101,8 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] = &[
-    Backend { label: "moon", env: "MOON_URL" },
-    Backend { label: "postgres", env: "PG_URL" },
-];
+const BACKENDS: &[Backend] =
+    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
 
 /// Build a deterministic 1K-event debounce batch spanning `EPISODE_FANOUT`
 /// distinct episodes. Seeded from a fixed ULID so the bench is reproducible
@@ -163,10 +161,7 @@ fn consolidator_tick_bench(c: &mut Criterion) {
 
     for backend in BACKENDS {
         let Ok(url) = std::env::var(backend.env) else {
-            eprintln!(
-                "SKIP consolidator_tick/{} bench: {} unset",
-                backend.label, backend.env
-            );
+            eprintln!("SKIP consolidator_tick/{} bench: {} unset", backend.label, backend.env);
             continue;
         };
         if !runtime.block_on(tcp_reachable(&url)) {
@@ -189,10 +184,7 @@ fn consolidator_tick_bench(c: &mut Criterion) {
         }) {
             Ok(h) => Arc::new(h),
             Err(e) => {
-                eprintln!(
-                    "SKIP consolidator_tick/{} bench: open failed: {}",
-                    backend.label, e
-                );
+                eprintln!("SKIP consolidator_tick/{} bench: open failed: {}", backend.label, e);
                 continue;
             }
         };
@@ -222,8 +214,7 @@ fn consolidator_tick_bench(c: &mut Criterion) {
                         .expect("consolidator_tick: consolidate returned Err");
 
                         // R16-03 proxy: track peak emission-vector length.
-                        let depth =
-                            (report.promotions.len() + report.archives.len()) as u64;
+                        let depth = (report.promotions.len() + report.archives.len()) as u64;
                         let prev = queue_depth_peak.load(Ordering::Relaxed);
                         if depth > prev {
                             queue_depth_peak.store(depth, Ordering::Relaxed);
@@ -310,18 +301,12 @@ fn read_criterion_estimates(path: &std::path::Path) -> std::io::Result<(f64, Opt
         .and_then(|m| m.get("point_estimate"))
         .and_then(|pe| pe.as_f64())
         .ok_or_else(|| std::io::Error::other("missing median.point_estimate"))?;
-    let mean_ns = v
-        .get("mean")
-        .and_then(|m| m.get("point_estimate"))
-        .and_then(|pe| pe.as_f64());
+    let mean_ns = v.get("mean").and_then(|m| m.get("point_estimate")).and_then(|pe| pe.as_f64());
     Ok((median_ns / 1_000_000.0, mean_ns.map(|n| n / 1_000_000.0)))
 }
 
 fn git_sha() -> Option<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()?;
+    let out = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
     }

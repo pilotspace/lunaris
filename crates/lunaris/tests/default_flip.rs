@@ -82,8 +82,8 @@ fn env_noop_opts_out() {
 #[test]
 fn scope_filter_intact_after_flip() {
     with_clean_env(|| {
-        let backend = ConsolidatorPipelineHandle::backend_from_env()
-            .expect("default backend resolves");
+        let backend =
+            ConsolidatorPipelineHandle::backend_from_env().expect("default backend resolves");
         let h = ConsolidatorPipelineHandle::new(false, backend);
         h.enable_for_scope("helios:fs/");
         assert_eq!(
@@ -99,8 +99,8 @@ fn scope_filter_intact_after_flip() {
 #[test]
 fn set_consolidator_code_override_still_works() {
     with_clean_env(|| {
-        let backend = ConsolidatorPipelineHandle::backend_from_env()
-            .expect("default backend resolves");
+        let backend =
+            ConsolidatorPipelineHandle::backend_from_env().expect("default backend resolves");
         let h = ConsolidatorPipelineHandle::new(false, backend);
         assert_eq!(
             h.snapshot_consolidator().unwrap().debug_name(),

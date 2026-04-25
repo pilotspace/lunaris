@@ -129,10 +129,7 @@ impl DocumentCorpus {
     /// canonical (v0.1.0 Plan 01 invariant; matches MessageStream + the
     /// HeliosScratchpad recipe verbatim).
     pub fn filter(mut self, field: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
-        self.filters.push(Filter::Eq {
-            field: field.into(),
-            value: value.into(),
-        });
+        self.filters.push(Filter::Eq { field: field.into(), value: value.into() });
         self
     }
 
@@ -178,11 +175,7 @@ impl DocumentCorpus {
         }
         let hits = builder.execute(Query::text(query)).await?;
         let prefix = self.source_prefix;
-        Ok(hits
-            .into_iter()
-            .filter(|h| h.source.starts_with(&prefix))
-            .take(self.top_k)
-            .collect())
+        Ok(hits.into_iter().filter(|h| h.source.starts_with(&prefix)).take(self.top_k).collect())
     }
 }
 
@@ -233,14 +226,8 @@ mod tests {
         // filter vec directly matching the shape `.filter()` produces, then
         // assert the produced `Filter::And` branch shape inside `search`.
         let filters: Vec<Filter> = vec![
-            Filter::Eq {
-                field: "lang".into(),
-                value: serde_json::json!("en"),
-            },
-            Filter::Eq {
-                field: "type".into(),
-                value: serde_json::json!("md"),
-            },
+            Filter::Eq { field: "lang".into(), value: serde_json::json!("en") },
+            Filter::Eq { field: "type".into(), value: serde_json::json!("md") },
         ];
         assert_eq!(filters.len(), 2);
         match &filters[0] {

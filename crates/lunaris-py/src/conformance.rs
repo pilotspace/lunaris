@@ -51,11 +51,7 @@ use crate::errors::py_err;
 /// with the canonical Rust value in the message so operators know which
 /// side of the FFI needs updating.
 #[pyfunction]
-fn conformance_fixture_episodes(
-    py: Python<'_>,
-    seed: u64,
-    count: usize,
-) -> PyResult<Py<PyList>> {
+fn conformance_fixture_episodes(py: Python<'_>, seed: u64, count: usize) -> PyResult<Py<PyList>> {
     assert_eq!(
         seed,
         ::lunaris_conformance::fixtures::SEED,
@@ -104,10 +100,8 @@ fn scan_kv_prefix<'py>(
             .scan_range(&prefix, None)
             .await
             .map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
-        let rows: Vec<(bytes::Bytes, bytes::Bytes)> = stream
-            .try_collect()
-            .await
-            .map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
+        let rows: Vec<(bytes::Bytes, bytes::Bytes)> =
+            stream.try_collect().await.map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
         Python::with_gil(|py| {
             let out = PyList::empty(py);
             for (k, v) in rows {
@@ -137,9 +131,6 @@ mod tests {
     #[test]
     fn test_conformance_helpers_exist() {
         let corpus = ::lunaris_conformance::fixtures::FixtureCorpus::new();
-        assert_eq!(
-            corpus.episodes().len(),
-            ::lunaris_conformance::fixtures::EPISODE_COUNT
-        );
+        assert_eq!(corpus.episodes().len(), ::lunaris_conformance::fixtures::EPISODE_COUNT);
     }
 }

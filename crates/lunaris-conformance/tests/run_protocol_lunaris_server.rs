@@ -60,10 +60,8 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
 
     // 3. Write a temp tokens-file with two test tokens. The runner cleans up
     //    via the Cleanup RAII guard regardless of test outcome.
-    let tokens_path = std::env::temp_dir().join(format!(
-        "lunaris-conformance-tokens-{}.json",
-        ulid::Ulid::new()
-    ));
+    let tokens_path =
+        std::env::temp_dir().join(format!("lunaris-conformance-tokens-{}.json", ulid::Ulid::new()));
     let tokens_body = serde_json::json!({
         "tok-test":   { "tenant": "test-tenant",   "scopes": ["ingest", "recall", "forget"] },
         "tok-ingest": { "tenant": "ingest-tenant", "scopes": ["ingest"] }
@@ -108,20 +106,11 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
     let _child_guard = ChildCleanup::new(child);
 
     let base_url = Url::parse(&format!("http://{bound_addr}"))?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
     // 6. Run the protocol suite.
-    let result = lunaris_conformance::run_full_protocol_suite(
-        client,
-        base_url,
-        "tok-test".to_string(),
-    )
-    .await;
-
     // Cleanup happens via Drop (ChildCleanup + TempPathCleanup).
-    result
+    lunaris_conformance::run_full_protocol_suite(client, base_url, "tok-test".to_string()).await
 }
 
 /// RAII guard that kills + reaps a child process on drop. Survives panics.
@@ -176,19 +165,12 @@ fn resolve_lunaris_server_bin() -> String {
         return p;
     }
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(&manifest);
+    let workspace = manifest.parent().and_then(|p| p.parent()).unwrap_or(&manifest);
     let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| workspace.join("target"));
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    target_dir
-        .join(profile)
-        .join("lunaris-server")
-        .to_string_lossy()
-        .into_owned()
+    target_dir.join(profile).join("lunaris-server").to_string_lossy().into_owned()
 }
 
 /// Read the child's stderr in a background thread until the
@@ -231,11 +213,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else if let Some(rest) = url.strip_prefix("redis://") {
         rest.split('/').next()?.to_string()
     } else {
@@ -243,11 +221,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     };
 
     let timeout = Duration::from_secs(1);
-    let addr = match host_port
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut it| it.next())
-    {
+    let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
         Some(a) => a,
         None => {
             eprintln!(

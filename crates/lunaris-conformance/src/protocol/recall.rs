@@ -28,12 +28,7 @@ pub async fn happy_path(client: &Client, base: &Url, token: &str) -> anyhow::Res
         "k": 5,
         "mode": "semantic",
     });
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(url).bearer_auth(token).json(&body).send().await?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await?;
     anyhow::ensure!(
@@ -76,12 +71,8 @@ pub async fn sse_streaming(client: &Client, base: &Url, token: &str) -> anyhow::
         "SSE recall expected 200, got {}",
         resp.status()
     );
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let ct =
+        resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     anyhow::ensure!(
         ct.contains("text/event-stream"),
         "SSE recall content-type expected text/event-stream, got {ct:?}"
@@ -151,12 +142,7 @@ pub async fn graph_mode_capability_gate(
         "k": 5,
         "mode": "graph",
     });
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(url).bearer_auth(token).json(&body).send().await?;
     let status = resp.status();
     anyhow::ensure!(
         status == StatusCode::OK || status == StatusCode::NOT_IMPLEMENTED,

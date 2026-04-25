@@ -106,7 +106,10 @@ mod tests {
         assert_eq!(ir.modules.len(), 3, "expected 3 modules");
         // Type count sanity: 19 types (7 + 7 + 5).
         let total_types: usize = ir.modules.iter().map(|m| m.types.len()).sum();
-        assert_eq!(total_types, 19, "expected 19 types (7 lunaris + 7 conversational + 5 documentary)");
+        assert_eq!(
+            total_types, 19,
+            "expected 19 types (7 lunaris + 7 conversational + 5 documentary)"
+        );
     }
 
     #[test]

@@ -28,10 +28,7 @@ use crate::state::AppState;
 
 pub async fn metrics_handler(State(state): State<AppState>) -> Response {
     if *state.runtime_flags.metrics_disabled.read() {
-        return (
-            StatusCode::NOT_FOUND,
-            "metrics disabled at startup via --metrics-disabled\n",
-        )
+        return (StatusCode::NOT_FOUND, "metrics disabled at startup via --metrics-disabled\n")
             .into_response();
     }
 
@@ -43,10 +40,7 @@ pub async fn metrics_handler(State(state): State<AppState>) -> Response {
     let mut buf = Vec::with_capacity(8192);
     let encoder = TextEncoder::new();
     if let Err(e) = encoder.encode(&prometheus::gather(), &mut buf) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("metrics encode failed: {e}"),
-        )
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("metrics encode failed: {e}"))
             .into_response();
     }
 
@@ -67,10 +61,7 @@ mod tests {
         // contract — protects against double-registration panics).
         let m1 = crate::metrics::metrics();
         let m2 = crate::metrics::metrics();
-        assert!(
-            std::ptr::eq(m1, m2),
-            "metrics() must return the same OnceLock singleton"
-        );
+        assert!(std::ptr::eq(m1, m2), "metrics() must return the same OnceLock singleton");
     }
 
     #[tokio::test]
@@ -79,9 +70,6 @@ mod tests {
         // here would mean Prometheus scrapers parse the body as opaque text.
         let encoder = TextEncoder::new();
         let ct = encoder.format_type();
-        assert!(
-            ct.contains("text/plain"),
-            "format_type must include text/plain; got `{ct}`"
-        );
+        assert!(ct.contains("text/plain"), "format_type must include text/plain; got `{ct}`");
     }
 }

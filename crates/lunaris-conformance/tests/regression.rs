@@ -47,7 +47,7 @@
 //! assertion logic is broken (R14-02 trip-wire).
 
 #![allow(dead_code)] // `EXPECTED_VANILLA_ERRORS` is read by humans + the
-                     // workflow post-step, not by the Rust code itself.
+// workflow post-step, not by the Rust code itself.
 
 // Each bug file lives in `tests/regression/<bug>.rs` — one file per the v0.1.1
 // release-blocking bug it encodes. Cargo's integration-test discovery only
@@ -76,20 +76,11 @@ mod sqlx_migration_version_collision;
 /// statement before any test-specific setup runs.
 #[cfg(feature = "pg-it")]
 pub const EXPECTED_VANILLA_ERRORS: &[(&str, Option<&str>)] = &[
-    (
-        "sqlx_migration_version_collision",
-        Some("extension \"vector\" is not available"),
-    ),
-    (
-        "search_path_session_leak",
-        Some("extension \"vector\" is not available"),
-    ),
+    ("sqlx_migration_version_collision", Some("extension \"vector\" is not available")),
+    ("search_path_session_leak", Some("extension \"vector\" is not available")),
     // PG-independent — candle embed_tokens fallback lives in lunaris-embed;
     // vanilla pg:16 passes this test unchanged. The negative-matrix post-step
     // asserts exit code 0 for this entry, not a stderr substring.
     ("candle_embed_tokens_fallback", None),
-    (
-        "bytea_like_byterange_scan",
-        Some("extension \"vector\" is not available"),
-    ),
+    ("bytea_like_byterange_scan", Some("extension \"vector\" is not available")),
 ];

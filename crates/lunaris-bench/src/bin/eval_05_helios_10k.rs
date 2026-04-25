@@ -31,9 +31,9 @@
 //! Consolidator work can diff against the v0.1.1 baseline.
 //!
 //! Any recall p50 regression sets `status = "FAIL"` and the process exits
-//! 1. The JSON envelope is still written on FAIL so the operator has
-//! evidence to attach to a regression ticket (T-13-02-02 mitigation — no
-//! silent failures).
+//! with code 1. The JSON envelope is still written on FAIL so the operator
+//! has evidence to attach to a regression ticket (T-13-02-02 mitigation —
+//! no silent failures).
 //!
 //! ## Promotion-rate measurement
 //!
@@ -61,9 +61,9 @@ use lunaris_bench::eval_05_trace::{EVAL_05_LEN, EVAL_05_SEED, Op, Trace};
 // `grep -c 'AuditEvent\|__lunaris_audit__' ≥ 1` passes AND so a future
 // operator who chooses to enhance the harness with live audit-topic
 // subscription has the canonical imports already in place.
+use lunaris_core::StubEmbedder;
 #[allow(unused_imports)]
 use lunaris_core::audit::{AUDIT_TOPIC, AuditEvent};
-use lunaris_core::StubEmbedder;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -211,16 +211,13 @@ pub async fn run(moon_url: Option<&str>, pg_url: Option<&str>, drain_secs: u64) 
     let mut envelope = ResultsEnvelope::new(&trace, drain_secs);
 
     if moon_url.is_none() && pg_url.is_none() {
-        let reason =
-            "neither MOON_URL nor PG_URL set — live backends required for RELEASE-03 gate".to_string();
+        let reason = "neither MOON_URL nor PG_URL set — live backends required for RELEASE-03 gate"
+            .to_string();
         eprintln!("SKIP: {reason}");
         envelope.moon_skip_reason = Some(reason.clone());
         envelope.postgres_skip_reason = Some(reason);
         envelope.finalize(); // stays SKIP (no backends)
-        return RunOutcome {
-            envelope,
-            exit_code: 2,
-        };
+        return RunOutcome { envelope, exit_code: 2 };
     }
 
     if let Some(url) = moon_url {
@@ -249,10 +246,7 @@ pub async fn run(moon_url: Option<&str>, pg_url: Option<&str>, drain_secs: u64) 
         "FAIL" => 1,
         _ => 2,
     };
-    RunOutcome {
-        envelope,
-        exit_code,
-    }
+    RunOutcome { envelope, exit_code }
 }
 
 // -----------------------------------------------------------------------------
@@ -267,9 +261,7 @@ async fn run_one_backend(
     drain_secs: u64,
 ) -> Result<BackendMetrics> {
     eprintln!("[{name}] opening backend at {}", redact_url(url));
-    let handle = Lunaris::open(url)
-        .await
-        .with_context(|| format!("Lunaris::open({name})"))?;
+    let handle = Lunaris::open(url).await.with_context(|| format!("Lunaris::open({name})"))?;
     let handle = handle.with_embedder(Arc::new(StubEmbedder::new(768)));
     let mem = Arc::new(handle);
 
@@ -349,21 +341,19 @@ async fn run_one_backend(
     let mut slo_reasons = Vec::new();
     let p50_pass = p50 <= budget_ms;
     if !p50_pass {
-        slo_reasons.push(format!(
-            "recall p50 {:.3} ms > {:.3} ms budget",
-            p50, budget_ms
-        ));
+        slo_reasons.push(format!("recall p50 {:.3} ms > {:.3} ms budget", p50, budget_ms));
     }
     // v0.1.2: promotion_rate is ENFORCED against the empirical band from
     // Plan 16-04 calibration. ActRConsolidator is now the production default
     // (Plan 16-01). The band captures the observed zero-promotion baseline.
-    let promotion_pass = match lunaris_bench::eval_05_slo::enforce_promotion_rate_slo(promotion_rate) {
-        Ok(()) => true,
-        Err(msg) => {
-            slo_reasons.push(msg);
-            false
-        }
-    };
+    let promotion_pass =
+        match lunaris_bench::eval_05_slo::enforce_promotion_rate_slo(promotion_rate) {
+            Ok(()) => true,
+            Err(msg) => {
+                slo_reasons.push(msg);
+                false
+            }
+        };
     let slo_passed = p50_pass && promotion_pass;
 
     Ok(BackendMetrics {
@@ -432,10 +422,7 @@ fn postgres_version() -> String {
 }
 
 fn probe_cmd(argv: &[&str]) -> Option<String> {
-    let out = std::process::Command::new(argv[0])
-        .args(&argv[1..])
-        .output()
-        .ok()?;
+    let out = std::process::Command::new(argv[0]).args(&argv[1..]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -455,10 +442,10 @@ fn redact_url(url: &str) -> String {
 }
 
 fn write_envelope(path: &str, env: &ResultsEnvelope) -> std::io::Result<()> {
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = std::path::Path::new(path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     let bytes = serde_json::to_vec_pretty(env)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -586,10 +573,7 @@ mod tests {
 
     #[test]
     fn redact_url_strips_userinfo() {
-        assert_eq!(
-            redact_url("postgres://user:pw@host:5432/db"),
-            "postgres://***@host:5432/db"
-        );
+        assert_eq!(redact_url("postgres://user:pw@host:5432/db"), "postgres://***@host:5432/db");
         assert_eq!(redact_url("moon://host:6390"), "moon://host:6390");
     }
 }

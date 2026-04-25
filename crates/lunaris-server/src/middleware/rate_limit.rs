@@ -26,10 +26,7 @@ pub struct TenantKey;
 impl KeyExtractor for TenantKey {
     type Key = String;
 
-    fn extract<T>(
-        &self,
-        req: &Request<T>,
-    ) -> Result<Self::Key, tower_governor::GovernorError> {
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, tower_governor::GovernorError> {
         req.extensions()
             .get::<AuthClaims>()
             .map(|c| c.tenant.clone())

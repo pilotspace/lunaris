@@ -113,11 +113,7 @@ mod chaos {
             let after_scheme = url.split("://").nth(1)?;
             let authority = after_scheme.split('/').next()?;
             let bare = authority.rsplit('@').next()?;
-            if bare.contains(':') {
-                bare.to_string()
-            } else {
-                format!("{bare}:5432")
-            }
+            if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
         } else {
             // Unknown scheme — skip rather than guess.
             return None;
@@ -135,9 +131,7 @@ mod chaos {
                 // Intentionally do NOT log the URL itself (it may carry
                 // credentials in postgres://user:pass@host form). Log only
                 // the host_port and the env var name.
-                eprintln!(
-                    "crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)"
-                );
+                eprintln!("crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)");
                 return None;
             }
         };
@@ -174,14 +168,8 @@ mod chaos {
             // currently emits only `fact:` rows + vector upserts (no
             // graph), so the dominant prefix is `fact:`. Scanning the
             // others future-proofs against the corpus expanding.
-            let prefixes: &[&[u8]] = &[
-                b"episode:",
-                b"chunk:",
-                b"entity:",
-                b"relation:",
-                b"fact:",
-                b"community:",
-            ];
+            let prefixes: &[&[u8]] =
+                &[b"episode:", b"chunk:", b"entity:", b"relation:", b"fact:", b"community:"];
 
             let mut total: u64 = 0;
             for prefix in prefixes {
@@ -295,9 +283,7 @@ mod chaos {
             }
             Err(e) => {
                 // try_wait itself errored — best-effort kill, then proceed.
-                eprintln!(
-                    "crash_recovery: try_wait error: {e}; attempting SIGKILL anyway"
-                );
+                eprintln!("crash_recovery: try_wait error: {e}; attempting SIGKILL anyway");
                 let _ = kill(pid, Signal::SIGKILL);
             }
         }
@@ -439,19 +425,15 @@ fn chaos_it_feature_disabled_placeholder() {
 // `cargo test --workspace` pass.
 #[test]
 fn helios_interrupt_profile_smoke() {
-    use lunaris_conformance::chaos_helpers::{helios_interrupt_profile, InterruptSite};
+    use lunaris_conformance::chaos_helpers::{InterruptSite, helios_interrupt_profile};
     let profile = helios_interrupt_profile();
     assert_eq!(profile.name, "helios");
     assert!(
-        profile
-            .sites
-            .contains(&InterruptSite::MidHeliosScratchpadWrite),
+        profile.sites.contains(&InterruptSite::MidHeliosScratchpadWrite),
         "profile MUST include MidHeliosScratchpadWrite (Phase 12 D-10)"
     );
     assert!(
-        profile
-            .sites
-            .contains(&InterruptSite::MidConsolidatorPromotion),
+        profile.sites.contains(&InterruptSite::MidConsolidatorPromotion),
         "profile MUST include MidConsolidatorPromotion (Phase 12 D-11 Consolidator-mid-promotion race)"
     );
 }

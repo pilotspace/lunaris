@@ -90,13 +90,7 @@ mod tests {
 
     #[test]
     fn retrieval_mode_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&RetrievalMode::Semantic).unwrap(),
-            "\"semantic\""
-        );
-        assert_eq!(
-            serde_json::to_string(&RetrievalMode::Graph).unwrap(),
-            "\"graph\""
-        );
+        assert_eq!(serde_json::to_string(&RetrievalMode::Semantic).unwrap(), "\"semantic\"");
+        assert_eq!(serde_json::to_string(&RetrievalMode::Graph).unwrap(), "\"graph\"");
     }
 }

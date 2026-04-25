@@ -178,9 +178,6 @@ mod tests {
         assert_eq!(results.len(), 1, "memory harness emits exactly one row");
         // Either SKIPPED (env unset / open failed) or PASS/FAIL (live run).
         // We don't pin the status; we just verify the harness didn't crash.
-        assert!(matches!(
-            results[0].status.as_str(),
-            "SKIPPED" | "PASS" | "FAIL"
-        ));
+        assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
     }
 }

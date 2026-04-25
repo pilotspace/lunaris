@@ -124,9 +124,7 @@ impl ConsolidatorPipelineHandle {
         let storage = match self.storage.read().clone() {
             Some(s) => s,
             None => {
-                tracing::warn!(
-                    "consolidator_pipeline_enable_without_storage; worker not spawned"
-                );
+                tracing::warn!("consolidator_pipeline_enable_without_storage; worker not spawned");
                 return;
             }
         };
@@ -319,10 +317,7 @@ impl ConsolidatorPipelineHandle {
     /// (Anderson 1996: `d=0.5`, archive `-0.5`, promote `+1.0`, noise `0.0`).
     /// Mirrors [`Self::with_noop`]; used by [`Self::backend_from_env`].
     pub fn with_actr() -> Self {
-        Self::new(
-            false,
-            Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
-        )
+        Self::new(false, Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>)
     }
 
     /// Phase 16-01 (CONSOL-V1-01) — resolve the default backend from the
@@ -340,18 +335,15 @@ impl ConsolidatorPipelineHandle {
         let raw = std::env::var(BACKEND_ENV_VAR).ok();
         let trimmed = raw.as_deref().map(|v| v.trim());
         let (backend, name): (Arc<dyn Consolidator>, &'static str) = match trimmed {
-            None | Some("") => (
-                Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
-                "ActRConsolidator",
-            ),
-            Some(v) if v.eq_ignore_ascii_case("actr") => (
-                Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>,
-                "ActRConsolidator",
-            ),
-            Some(v) if v.eq_ignore_ascii_case("noop") => (
-                Arc::new(NoopConsolidator) as Arc<dyn Consolidator>,
-                "NoopConsolidator",
-            ),
+            None | Some("") => {
+                (Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>, "ActRConsolidator")
+            }
+            Some(v) if v.eq_ignore_ascii_case("actr") => {
+                (Arc::new(ActRConsolidator::default()) as Arc<dyn Consolidator>, "ActRConsolidator")
+            }
+            Some(v) if v.eq_ignore_ascii_case("noop") => {
+                (Arc::new(NoopConsolidator) as Arc<dyn Consolidator>, "NoopConsolidator")
+            }
             Some(other) => {
                 // No `LunarisError::Config` variant exists; route through
                 // `StorageError::Backend` (matches the crate's existing
@@ -462,11 +454,7 @@ mod tests {
         h.set_consolidator(replacement);
 
         assert!(h.is_enabled(), "set_consolidator must not flip the toggle");
-        assert_eq!(
-            h.state_change_count(),
-            1,
-            "set_consolidator must not increment state changes"
-        );
+        assert_eq!(h.state_change_count(), 1, "set_consolidator must not increment state changes");
     }
 
     #[test]
@@ -485,10 +473,7 @@ mod tests {
         let h = ConsolidatorPipelineHandle::new(false, Arc::new(NoopConsolidator));
         h.enable();
         assert!(h.is_enabled());
-        assert!(
-            h.worker_handle.lock().is_none(),
-            "no storage bound → no worker spawned (B-10)"
-        );
+        assert!(h.worker_handle.lock().is_none(), "no storage bound → no worker spawned (B-10)");
     }
 
     /// B-10 explicit field init — all 6 fields visible through public accessors.
@@ -535,10 +520,7 @@ mod tests {
         // Toggle off then back on via system-wide enable.
         h.disable();
         h.enable();
-        assert!(
-            h.scope_prefix().is_none(),
-            "enable() (system-wide) clears any stale scope_prefix"
-        );
+        assert!(h.scope_prefix().is_none(), "enable() (system-wide) clears any stale scope_prefix");
     }
 
     /// Re-calling enable_for_scope with the SAME prefix on an already-scoped

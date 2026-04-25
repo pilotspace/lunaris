@@ -52,9 +52,8 @@ impl FactId {
         hasher.update(b"::");
         hasher.update(&object.0);
         let h = hasher.finalize();
-        let bytes: [u8; 16] = h.as_bytes()[..16]
-            .try_into()
-            .expect("blake3 output is 32 bytes; first 16 always fit");
+        let bytes: [u8; 16] =
+            h.as_bytes()[..16].try_into().expect("blake3 output is 32 bytes; first 16 always fit");
         FactId(bytes)
     }
 }
@@ -97,9 +96,8 @@ impl CommunityId {
             first = false;
         }
         let h = hasher.finalize();
-        let bytes: [u8; 16] = h.as_bytes()[..16]
-            .try_into()
-            .expect("blake3 output is 32 bytes; first 16 always fit");
+        let bytes: [u8; 16] =
+            h.as_bytes()[..16].try_into().expect("blake3 output is 32 bytes; first 16 always fit");
         CommunityId(bytes)
     }
 }
@@ -284,7 +282,10 @@ mod tests {
     fn fact_id_distinguishes_predicate_case() {
         let a = FactId::from_triple(entity_id(1), "knows", entity_id(2));
         let b = FactId::from_triple(entity_id(1), "KNOWS", entity_id(2));
-        assert_ne!(a, b, "predicate is case-sensitive (predicates are canonical lowercase by convention; this guards against accidental case drift)");
+        assert_ne!(
+            a, b,
+            "predicate is case-sensitive (predicates are canonical lowercase by convention; this guards against accidental case drift)"
+        );
     }
 
     #[test]

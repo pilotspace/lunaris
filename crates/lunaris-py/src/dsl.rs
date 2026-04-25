@@ -88,9 +88,9 @@ fn recall_simple_execute<'py>(
         let root = Vector::new(&index, k);
         let mut builder = inner.recall().with_root(root);
         if let Some(s) = filter_str_opt {
-            builder = builder.filter_str(&s).map_err(|e| {
-                crate::errors::py_err_str("VALIDATE", format!("filter_str: {e}"))
-            })?;
+            builder = builder
+                .filter_str(&s)
+                .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("filter_str: {e}")))?;
         }
         if let Some(ms) = as_of_ms {
             // `Hlc::from_parts(wall_ms, counter, node_id)` — the only public
@@ -101,7 +101,7 @@ fn recall_simple_execute<'py>(
         }
         let q = Query::text(&query_text);
         let hits = builder.execute(q).await.map_err(py_err)?;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let list = PyList::empty(py);
             for h in hits {
                 let d = pythonize::pythonize(py, &h).map_err(|e| {
@@ -120,7 +120,7 @@ fn recall_simple_execute<'py>(
 fn open_handle<'py>(py: Python<'py>, url: String) -> PyResult<Bound<'py, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let inner = ::lunaris::Lunaris::open(&url).await.map_err(py_err)?;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let handle = PyLunaris { inner: Arc::new(inner) };
             // Convert into a Python object owned by the caller.
             Ok(Py::new(py, handle)?.into_any())

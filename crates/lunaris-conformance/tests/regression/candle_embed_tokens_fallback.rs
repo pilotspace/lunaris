@@ -71,9 +71,7 @@ async fn candle_embed_tokens_fallback() -> anyhow::Result<()> {
     let cache_root = match dirs::cache_dir() {
         Some(p) => p,
         None => {
-            eprintln!(
-                "regression::candle_embed_tokens_fallback: SKIP (no user cache dir)"
-            );
+            eprintln!("regression::candle_embed_tokens_fallback: SKIP (no user cache dir)");
             return Ok(());
         }
     };

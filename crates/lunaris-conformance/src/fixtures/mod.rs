@@ -28,8 +28,8 @@ use std::sync::Arc;
 use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::primitives::Episode;
-use lunaris_core::storage::types::WriteOp;
 use lunaris_core::storage::StoragePort;
+use lunaris_core::storage::types::WriteOp;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ulid::Ulid;
@@ -105,20 +105,13 @@ fn build_ten_episodes(seed: u64) -> Vec<Episode> {
     (0..EPISODE_COUNT)
         .map(|i| {
             let id = ulid_from_rng(&mut rng);
-            let stamp = Hlc {
-                wall_ms: 1_000_000 + (i as u64) * 1_000,
-                counter: 0,
-                node_id: 0,
-            };
+            let stamp = Hlc { wall_ms: 1_000_000 + (i as u64) * 1_000, counter: 0, node_id: 0 };
             Episode {
                 id,
                 source: format!("conformance:fixture/{i}"),
                 content: lorem_for(i),
                 t_ref: None,
-                bt: BiTemporal {
-                    valid: (stamp, None),
-                    sys: (stamp, None),
-                },
+                bt: BiTemporal { valid: (stamp, None), sys: (stamp, None) },
                 metadata: serde_json::Map::new(),
             }
         })
@@ -130,25 +123,13 @@ fn build_query_set() -> Vec<(String, Option<Hlc>)> {
         // No as_of — read latest.
         ("alpha".to_string(), None),
         // Just after the second episode lands.
-        (
-            "beta".to_string(),
-            Some(Hlc { wall_ms: 1_002_000, counter: 0, node_id: 0 }),
-        ),
+        ("beta".to_string(), Some(Hlc { wall_ms: 1_002_000, counter: 0, node_id: 0 })),
         // Roughly mid-corpus.
-        (
-            "gamma".to_string(),
-            Some(Hlc { wall_ms: 1_005_000, counter: 0, node_id: 0 }),
-        ),
+        ("gamma".to_string(), Some(Hlc { wall_ms: 1_005_000, counter: 0, node_id: 0 })),
         // Past the last episode — semantically "latest".
-        (
-            "delta".to_string(),
-            Some(Hlc { wall_ms: 1_009_000, counter: 0, node_id: 0 }),
-        ),
+        ("delta".to_string(), Some(Hlc { wall_ms: 1_009_000, counter: 0, node_id: 0 })),
         // Before any episode — empty result expected.
-        (
-            "epsilon".to_string(),
-            Some(Hlc { wall_ms: 1, counter: 0, node_id: 0 }),
-        ),
+        ("epsilon".to_string(), Some(Hlc { wall_ms: 1, counter: 0, node_id: 0 })),
     ]
 }
 
@@ -347,8 +328,7 @@ mod tests {
             match &ops[0] {
                 WriteOp::KvPut { key, value } => {
                     assert!(key.starts_with(b"episode:conformance:"));
-                    let back: Episode =
-                        serde_json::from_slice(value).expect("episode round trip");
+                    let back: Episode = serde_json::from_slice(value).expect("episode round trip");
                     assert_eq!(back.id, ep.id);
                 }
                 other => panic!("expected KvPut at [0], got {other:?}"),
@@ -358,8 +338,14 @@ mod tests {
                     assert_eq!(index, "chunks");
                     assert_eq!(id, &ep.id.to_bytes().to_vec());
                     assert_eq!(embedding.len(), EMBED_DIM, "embedding must be 768d");
-                    assert_eq!(metadata.get("text").and_then(|v| v.as_str()), Some(ep.content.as_str()));
-                    assert_eq!(metadata.get("source").and_then(|v| v.as_str()), Some(ep.source.as_str()));
+                    assert_eq!(
+                        metadata.get("text").and_then(|v| v.as_str()),
+                        Some(ep.content.as_str())
+                    );
+                    assert_eq!(
+                        metadata.get("source").and_then(|v| v.as_str()),
+                        Some(ep.source.as_str())
+                    );
                     assert_eq!(
                         metadata.get("valid_time_ms").and_then(|v| v.as_u64()),
                         Some(ep.bt.valid.0.wall_ms),
@@ -392,6 +378,9 @@ mod tests {
         let got = stub_embed("parity-check");
         let expected = futures::executor::block_on(canonical.embed_batch(&["parity-check"]))
             .expect("stub embedder never fails");
-        assert_eq!(got, expected[0], "fixture stub_embed must match canonical det_vec byte-for-byte");
+        assert_eq!(
+            got, expected[0],
+            "fixture stub_embed must match canonical det_vec byte-for-byte"
+        );
     }
 }

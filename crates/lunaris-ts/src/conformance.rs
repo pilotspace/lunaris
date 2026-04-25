@@ -50,22 +50,13 @@ use crate::errors::napi_err;
 /// the API intentionally uses `BigInt` to future-proof against a larger
 /// seed.
 #[napi(js_name = "conformanceFixtureEpisodes")]
-pub fn conformance_fixture_episodes(
-    seed: BigInt,
-    count: u32,
-) -> napi::Result<serde_json::Value> {
+pub fn conformance_fixture_episodes(seed: BigInt, count: u32) -> napi::Result<serde_json::Value> {
     let (signed, seed_u64, lossless) = seed.get_u64();
     if signed {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            "seed must be non-negative".to_string(),
-        ));
+        return Err(napi::Error::new(Status::InvalidArg, "seed must be non-negative".to_string()));
     }
     if !lossless {
-        return Err(napi::Error::new(
-            Status::InvalidArg,
-            "seed exceeds u64 range".to_string(),
-        ));
+        return Err(napi::Error::new(Status::InvalidArg, "seed exceeds u64 range".to_string()));
     }
     if seed_u64 != ::lunaris_conformance::fixtures::SEED {
         return Err(napi::Error::new(
@@ -108,10 +99,7 @@ pub fn conformance_fixture_episodes(
 /// a second `#[napi] impl Lunaris` block would introduce duplicate-symbol
 /// risk with the generated `impl` in `generated.rs`.
 #[napi(js_name = "scanKvPrefix")]
-pub async fn scan_kv_prefix(
-    handle: &Lunaris,
-    prefix: Buffer,
-) -> napi::Result<Vec<Vec<Buffer>>> {
+pub async fn scan_kv_prefix(handle: &Lunaris, prefix: Buffer) -> napi::Result<Vec<Vec<Buffer>>> {
     use futures::TryStreamExt;
     let storage = handle.inner.storage();
     let prefix_vec: Vec<u8> = prefix.to_vec();
@@ -119,10 +107,8 @@ pub async fn scan_kv_prefix(
         .scan_range(&prefix_vec, None)
         .await
         .map_err(|e| napi_err(::lunaris::LunarisError::Storage(e)))?;
-    let rows: Vec<(bytes::Bytes, bytes::Bytes)> = stream
-        .try_collect()
-        .await
-        .map_err(|e| napi_err(::lunaris::LunarisError::Storage(e)))?;
+    let rows: Vec<(bytes::Bytes, bytes::Bytes)> =
+        stream.try_collect().await.map_err(|e| napi_err(::lunaris::LunarisError::Storage(e)))?;
     Ok(rows
         .into_iter()
         .map(|(k, v)| vec![Buffer::from(k.to_vec()), Buffer::from(v.to_vec())])
@@ -139,9 +125,6 @@ mod tests {
     #[test]
     fn test_conformance_helpers_exist() {
         let corpus = ::lunaris_conformance::fixtures::FixtureCorpus::new();
-        assert_eq!(
-            corpus.episodes().len(),
-            ::lunaris_conformance::fixtures::EPISODE_COUNT
-        );
+        assert_eq!(corpus.episodes().len(), ::lunaris_conformance::fixtures::EPISODE_COUNT);
     }
 }

@@ -19,8 +19,8 @@
 //! to the typed helper via `.into()`.
 
 pub use lunaris_core::audit::{
-    AuditEvent, FactIdData, ForgetReceiptData, ForgetTargetData, IndexKindData, PublishError,
-    Publisher, ScopeSpecData, AUDIT_TOPIC, publish_audit_event,
+    AUDIT_TOPIC, AuditEvent, FactIdData, ForgetReceiptData, ForgetTargetData, IndexKindData,
+    PublishError, Publisher, ScopeSpecData, publish_audit_event,
 };
 
 use crate::forget::{ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
@@ -101,7 +101,7 @@ mod tests {
         );
         assert_eq!(d1.rows_written, 3);
         assert_eq!(d1.rows_deleted, 4);
-        assert_eq!(d1.preview, true);
+        assert!(d1.preview);
 
         // Scope::BySource
         let r2 = ForgetReceipt {
@@ -109,10 +109,7 @@ mod tests {
             ..r1.clone()
         };
         let d2: ForgetReceiptData = (&r2).into();
-        assert_eq!(
-            d2.target,
-            ForgetTargetData::Scope(ScopeSpecData::BySource("src".into()))
-        );
+        assert_eq!(d2.target, ForgetTargetData::Scope(ScopeSpecData::BySource("src".into())));
 
         // Scope::ByMetadata
         let r3 = ForgetReceipt {
@@ -126,14 +123,9 @@ mod tests {
         );
 
         // Scope::ByEpisode
-        let r4 = ForgetReceipt {
-            target: ForgetTarget::Scope(ScopeSpec::ByEpisode(id)),
-            ..r1.clone()
-        };
+        let r4 =
+            ForgetReceipt { target: ForgetTarget::Scope(ScopeSpec::ByEpisode(id)), ..r1.clone() };
         let d4: ForgetReceiptData = (&r4).into();
-        assert_eq!(
-            d4.target,
-            ForgetTargetData::Scope(ScopeSpecData::ByEpisode(id))
-        );
+        assert_eq!(d4.target, ForgetTargetData::Scope(ScopeSpecData::ByEpisode(id)));
     }
 }

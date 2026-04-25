@@ -94,25 +94,15 @@ impl HeliosScratchpad {
     pub fn new(lunaris: Arc<Lunaris>, session_id: &str) -> Self {
         let session_prefix = format!("{HELIOS_PREFIX}{session_id}/");
         let wm = WorkingMemory::new(lunaris.clone(), session_prefix.clone());
-        Self {
-            lunaris,
-            session_prefix,
-            wm,
-        }
+        Self { lunaris, session_prefix, wm }
     }
 
     /// Write `content` to `path`. Delegates to [`WorkingMemory::write`] with the
     /// content wrapped as `Value::String`. The Phase 9 primitive routes through
     /// `Lunaris::ingest` — the single `atomic_write` invariant (INGEST-04) is
     /// preserved, with exactly one level of indirection added.
-    pub async fn write(
-        &self,
-        path: &str,
-        content: impl Into<String>,
-    ) -> Result<Lsn, LunarisError> {
-        self.wm
-            .write(path, serde_json::Value::String(content.into()))
-            .await
+    pub async fn write(&self, path: &str, content: impl Into<String>) -> Result<Lsn, LunarisError> {
+        self.wm.write(path, serde_json::Value::String(content.into())).await
     }
 
     /// Read the latest content at `path`. Delegates to [`WorkingMemory::read`]
@@ -142,12 +132,7 @@ impl HeliosScratchpad {
     /// helios-rfc Read/Edit surface symmetry but intentionally unused —
     /// Plan 04-04's `apply_supersede` stamps the prior version's `bt.sys[1]`
     /// when the new ingest commits. NO new mutation code lives here (D-15).
-    pub async fn edit(
-        &self,
-        path: &str,
-        _old: &str,
-        new: &str,
-    ) -> Result<Lsn, LunarisError> {
+    pub async fn edit(&self, path: &str, _old: &str, new: &str) -> Result<Lsn, LunarisError> {
         self.write(path, new).await
     }
 
@@ -164,16 +149,10 @@ impl HeliosScratchpad {
     /// preserved: the same `StartsWith` filter + fused recall plan the
     /// primitive uses.
     pub async fn grep(&self, pattern: &str, k: usize) -> Result<Vec<Hit>, LunarisError> {
-        let filter = Filter::StartsWith {
-            field: "source".into(),
-            prefix: self.session_prefix.clone(),
-        };
+        let filter =
+            Filter::StartsWith { field: "source".into(), prefix: self.session_prefix.clone() };
         let builder = self.lunaris.recall_with_degraded_check().await?;
-        builder
-            .filter(filter)
-            .top(k)
-            .execute(lunaris_retrieve::Query::text(pattern))
-            .await
+        builder.filter(filter).top(k).execute(lunaris_retrieve::Query::text(pattern)).await
     }
 
     /// List unique stored `path`s under the optional sub-`prefix`. Walks
@@ -183,10 +162,8 @@ impl HeliosScratchpad {
     pub async fn ls(&self, prefix: Option<&str>) -> Result<Vec<String>, LunarisError> {
         let key_prefix: &[u8] = b"episode:";
         let storage = self.lunaris.storage();
-        let mut stream = storage
-            .scan_range(key_prefix, None)
-            .await
-            .map_err(LunarisError::Storage)?;
+        let mut stream =
+            storage.scan_range(key_prefix, None).await.map_err(LunarisError::Storage)?;
         let target_prefix = match prefix {
             Some(p) => format!("{}{}", self.session_prefix, p),
             None => self.session_prefix.clone(),
@@ -224,9 +201,7 @@ impl HeliosScratchpad {
     /// [`Lunaris::confirm_hard_forget`] two-step rail (D-21).
     pub async fn forget(&self) -> Result<ForgetReceipt, LunarisError> {
         self.lunaris
-            .forget(ForgetTarget::Scope(ScopeSpec::BySource(
-                self.session_prefix.clone(),
-            )))
+            .forget(ForgetTarget::Scope(ScopeSpec::BySource(self.session_prefix.clone())))
             .await
     }
 
@@ -271,10 +246,7 @@ async fn read_at(
     query_text: &str,
     as_of: Option<Hlc>,
 ) -> Result<Option<String>, LunarisError> {
-    let filter = Filter::StartsWith {
-        field: "source".into(),
-        prefix: source.to_string(),
-    };
+    let filter = Filter::StartsWith { field: "source".into(), prefix: source.to_string() };
     let mut builder = lunaris
         .recall_with_degraded_check()
         .await?

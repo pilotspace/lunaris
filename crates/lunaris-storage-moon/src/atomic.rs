@@ -124,10 +124,7 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 // so the `&[u8]` slice outlives the call (mirrors meta_json
                 // materialisation above).
                 let valid_time_buf: Option<String> = if index == "chunks" {
-                    metadata
-                        .get("valid_time_ms")
-                        .and_then(|v| v.as_u64())
-                        .map(|ms| ms.to_string())
+                    metadata.get("valid_time_ms").and_then(|v| v.as_u64()).map(|ms| ms.to_string())
                 } else {
                     None
                 };
@@ -135,10 +132,7 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 // index so the `SchemaField::Tag("source")` FT index can
                 // resolve `@source:{value}` queries server-side (PERF-MOON-01).
                 let source_buf: Option<String> = if index == "chunks" {
-                    metadata
-                        .get("source")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
+                    metadata.get("source").and_then(|v| v.as_str()).map(|s| s.to_string())
                 } else {
                     None
                 };
@@ -154,10 +148,7 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 if let Some(ref src) = source_buf {
                     fields.push(("source", src.as_bytes()));
                 }
-                typed
-                    .hset_multiple(key.as_bytes(), &fields)
-                    .await
-                    .map_err(moon_err)?;
+                typed.hset_multiple(key.as_bytes(), &fields).await.map_err(moon_err)?;
             }
             WriteOp::GraphNode { graph, id, label, props } => {
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
@@ -173,11 +164,8 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 } else {
                     format!("MERGE (n:{label} {{id: '{id_hex}'}}) {set_clause} RETURN n")
                 };
-                let _: redis::Value = typed
-                    .graph()
-                    .query_raw(graph.as_str(), &cypher)
-                    .await
-                    .map_err(moon_err)?;
+                let _: redis::Value =
+                    typed.graph().query_raw(graph.as_str(), &cypher).await.map_err(moon_err)?;
             }
             WriteOp::GraphEdge { graph, src, dst, rel, props } => {
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
@@ -194,11 +182,8 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                         "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
                     )
                 };
-                let _: redis::Value = typed
-                    .graph()
-                    .query_raw(graph.as_str(), &cypher)
-                    .await
-                    .map_err(moon_err)?;
+                let _: redis::Value =
+                    typed.graph().query_raw(graph.as_str(), &cypher).await.map_err(moon_err)?;
             }
         }
     }

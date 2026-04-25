@@ -25,12 +25,7 @@ pub async fn burst_returns_429(client: &Client, base: &Url, token: &str) -> anyh
     // 30 requests gives ample headroom over the runner-configured burst=10
     // even if the per-second refill races with the loop.
     for _ in 0..30u32 {
-        let resp = client
-            .post(url.clone())
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .await?;
+        let resp = client.post(url.clone()).bearer_auth(token).json(&body).send().await?;
         if resp.status() == StatusCode::TOO_MANY_REQUESTS {
             saw_429 = true;
             if resp.headers().contains_key("retry-after") {
@@ -49,9 +44,6 @@ pub async fn burst_returns_429(client: &Client, base: &Url, token: &str) -> anyh
         saw_429,
         "rate_limit: 30 burst requests did not trigger 429 (rate-burst=10 expected)"
     );
-    anyhow::ensure!(
-        saw_retry_after,
-        "rate_limit: 429 response missing Retry-After header"
-    );
+    anyhow::ensure!(saw_retry_after, "rate_limit: 429 response missing Retry-After header");
     Ok(())
 }

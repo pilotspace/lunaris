@@ -91,16 +91,8 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] = &[
-    Backend {
-        label: "moon",
-        env: "MOON_URL",
-    },
-    Backend {
-        label: "postgres",
-        env: "PG_URL",
-    },
-];
+const BACKENDS: &[Backend] =
+    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
 
 /// Pre-generated note-paths the bench loop draws from. The warm-up seeds each
 /// path with a non-empty body so `read` + `edit` + `grep` all find content.
@@ -138,10 +130,7 @@ fn helios_p50_bench(c: &mut Criterion) {
     // Sanity: mix weights must sum to 1.0. Guards against silent drift if a
     // future edit renormalises only three of four constants.
     let sum = MIX_READ + MIX_WRITE + MIX_EDIT + MIX_GREP;
-    assert!(
-        (sum - 1.0).abs() < 1e-9,
-        "helios_p50 mix weights must sum to 1.0; got {sum}"
-    );
+    assert!((sum - 1.0).abs() < 1e-9, "helios_p50 mix weights must sum to 1.0; got {sum}");
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     let mut group = c.benchmark_group("helios_smoke");
@@ -151,10 +140,7 @@ fn helios_p50_bench(c: &mut Criterion) {
 
     for backend in BACKENDS {
         let Ok(url) = std::env::var(backend.env) else {
-            eprintln!(
-                "SKIP helios_smoke/{} bench: {} unset",
-                backend.label, backend.env
-            );
+            eprintln!("SKIP helios_smoke/{} bench: {} unset", backend.label, backend.env);
             continue;
         };
         if !runtime.block_on(tcp_reachable(&url)) {
@@ -173,10 +159,7 @@ fn helios_p50_bench(c: &mut Criterion) {
         }) {
             Ok(h) => Arc::new(h),
             Err(e) => {
-                eprintln!(
-                    "SKIP helios_smoke/{} bench: open failed: {}",
-                    backend.label, e
-                );
+                eprintln!("SKIP helios_smoke/{} bench: open failed: {}", backend.label, e);
                 continue;
             }
         };
@@ -190,10 +173,7 @@ fn helios_p50_bench(c: &mut Criterion) {
         let warmup = match runtime.block_on(seed_warmup(&pad)) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!(
-                    "SKIP helios_smoke/{} bench: warm-up failed: {}",
-                    backend.label, e
-                );
+                eprintln!("SKIP helios_smoke/{} bench: warm-up failed: {}", backend.label, e);
                 continue;
             }
         };
@@ -203,46 +183,39 @@ fn helios_p50_bench(c: &mut Criterion) {
         let paths = Arc::new(warmup.paths);
 
         let label = backend.label;
-        group.bench_with_input(
-            BenchmarkId::new("helios_p50", label),
-            &paths.len(),
-            |b, _len| {
-                b.to_async(&runtime).iter(|| {
-                    let pad = pad.clone();
-                    let paths = paths.clone();
-                    let idx = idx.clone();
-                    let op = {
-                        let mut g = rng_state.lock().expect("rng mutex");
-                        draw_op(&mut g)
-                    };
-                    async move {
-                        let i = idx.fetch_add(1, Ordering::Relaxed);
-                        let path = &paths[i % paths.len()];
-                        match op {
-                            Op::Read => {
-                                let _ = pad.read(path).await.expect("read");
-                            }
-                            Op::Write => {
-                                let new_path = format!("note-{}.md", Ulid::new());
-                                let _ = pad
-                                    .write(&new_path, "lorem ipsum helios bench payload")
-                                    .await
-                                    .expect("write");
-                            }
-                            Op::Edit => {
-                                let _ = pad
-                                    .edit(path, "lorem", "lorem-edited")
-                                    .await
-                                    .expect("edit");
-                            }
-                            Op::Grep => {
-                                let _ = pad.grep("lorem", GREP_TOP_K).await.expect("grep");
-                            }
+        group.bench_with_input(BenchmarkId::new("helios_p50", label), &paths.len(), |b, _len| {
+            b.to_async(&runtime).iter(|| {
+                let pad = pad.clone();
+                let paths = paths.clone();
+                let idx = idx.clone();
+                let op = {
+                    let mut g = rng_state.lock().expect("rng mutex");
+                    draw_op(&mut g)
+                };
+                async move {
+                    let i = idx.fetch_add(1, Ordering::Relaxed);
+                    let path = &paths[i % paths.len()];
+                    match op {
+                        Op::Read => {
+                            let _ = pad.read(path).await.expect("read");
+                        }
+                        Op::Write => {
+                            let new_path = format!("note-{}.md", Ulid::new());
+                            let _ = pad
+                                .write(&new_path, "lorem ipsum helios bench payload")
+                                .await
+                                .expect("write");
+                        }
+                        Op::Edit => {
+                            let _ = pad.edit(path, "lorem", "lorem-edited").await.expect("edit");
+                        }
+                        Op::Grep => {
+                            let _ = pad.grep("lorem", GREP_TOP_K).await.expect("grep");
                         }
                     }
-                });
-            },
-        );
+                }
+            });
+        });
 
         // Evidence envelope — best-effort, written after the group finishes.
         // We defer actual disk-write to after `group.finish()` (post-loop)
@@ -269,8 +242,7 @@ async fn seed_warmup(pad: &HeliosScratchpad) -> Result<WarmupSet, lunaris::Lunar
     let mut paths = Vec::with_capacity(WARMUP_NOTES);
     for i in 0..WARMUP_NOTES {
         let p = format!("warmup-{i:04}.md");
-        pad.write(&p, format!("lorem ipsum warmup body {i}"))
-            .await?;
+        pad.write(&p, format!("lorem ipsum warmup body {i}")).await?;
         paths.push(p);
     }
     Ok(WarmupSet { paths })
@@ -287,10 +259,7 @@ static ENVELOPE_PENDING: std::sync::Mutex<Vec<(String, String)>> =
     std::sync::Mutex::new(Vec::new());
 
 fn envelope_pending_push(label: &str, url: String) {
-    ENVELOPE_PENDING
-        .lock()
-        .expect("envelope pending mutex")
-        .push((label.to_string(), url));
+    ENVELOPE_PENDING.lock().expect("envelope pending mutex").push((label.to_string(), url));
 }
 
 fn drain_envelope_pending() -> Vec<(String, String)> {
@@ -353,18 +322,12 @@ fn read_criterion_estimates(path: &std::path::Path) -> std::io::Result<(f64, Opt
         .and_then(|m| m.get("point_estimate"))
         .and_then(|pe| pe.as_f64())
         .ok_or_else(|| std::io::Error::other("missing median.point_estimate"))?;
-    let mean_ns = v
-        .get("mean")
-        .and_then(|m| m.get("point_estimate"))
-        .and_then(|pe| pe.as_f64());
+    let mean_ns = v.get("mean").and_then(|m| m.get("point_estimate")).and_then(|pe| pe.as_f64());
     Ok((median_ns / 1_000_000.0, mean_ns.map(|n| n / 1_000_000.0)))
 }
 
 fn git_sha() -> Option<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()?;
+    let out = Command::new("git").args(["rev-parse", "--short", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
     }

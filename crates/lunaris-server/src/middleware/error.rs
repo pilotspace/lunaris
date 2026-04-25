@@ -22,53 +22,28 @@ use crate::metrics::{error_kind, metrics};
 /// LunarisError variant to a bounded label string per CONTEXT.md D-25
 /// cardinality cap.
 pub fn map_error(err: LunarisError) -> Response {
-    metrics()
-        .error_total
-        .with_label_values(&[error_kind(&err)])
-        .inc();
+    metrics().error_total.with_label_values(&[error_kind(&err)]).inc();
     let (status, code, message) = match &err {
-        LunarisError::Validate(ValidateError::ConfirmationRequired(_)) => (
-            StatusCode::PRECONDITION_REQUIRED,
-            "confirmation_required",
-            err.to_string(),
-        ),
+        LunarisError::Validate(ValidateError::ConfirmationRequired(_)) => {
+            (StatusCode::PRECONDITION_REQUIRED, "confirmation_required", err.to_string())
+        }
         LunarisError::Validate(_) => (StatusCode::BAD_REQUEST, "validate", err.to_string()),
-        LunarisError::Storage(StorageError::NotSupported(_)) => (
-            StatusCode::NOT_IMPLEMENTED,
-            "not_supported",
-            err.to_string(),
-        ),
-        LunarisError::Storage(StorageError::UnsupportedScheme(_)) => (
-            StatusCode::BAD_REQUEST,
-            "unsupported_scheme",
-            err.to_string(),
-        ),
-        LunarisError::Storage(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage",
-            err.to_string(),
-        ),
-        LunarisError::Extract(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "extract",
-            err.to_string(),
-        ),
-        LunarisError::Retrieve(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "retrieve",
-            err.to_string(),
-        ),
-        LunarisError::Consolidate(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "consolidate",
-            err.to_string(),
-        ),
+        LunarisError::Storage(StorageError::NotSupported(_)) => {
+            (StatusCode::NOT_IMPLEMENTED, "not_supported", err.to_string())
+        }
+        LunarisError::Storage(StorageError::UnsupportedScheme(_)) => {
+            (StatusCode::BAD_REQUEST, "unsupported_scheme", err.to_string())
+        }
+        LunarisError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage", err.to_string()),
+        LunarisError::Extract(_) => (StatusCode::INTERNAL_SERVER_ERROR, "extract", err.to_string()),
+        LunarisError::Retrieve(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "retrieve", err.to_string())
+        }
+        LunarisError::Consolidate(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "consolidate", err.to_string())
+        }
     };
-    (
-        status,
-        Json(serde_json::json!({ "error": code, "message": message })),
-    )
-        .into_response()
+    (status, Json(serde_json::json!({ "error": code, "message": message }))).into_response()
 }
 
 #[cfg(test)]

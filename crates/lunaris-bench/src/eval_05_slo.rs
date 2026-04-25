@@ -25,7 +25,7 @@ pub const PROMOTION_RATE_HIGH: f64 = 0.01;
 /// Wired into `eval_05_helios_10k` main so the binary exits non-zero when the
 /// gate fails (D-06: never ship a regressing tag).
 pub fn enforce_promotion_rate_slo(rate: f64) -> Result<(), String> {
-    if rate < PROMOTION_RATE_LOW || rate > PROMOTION_RATE_HIGH {
+    if !(PROMOTION_RATE_LOW..=PROMOTION_RATE_HIGH).contains(&rate) {
         Err(format!(
             "promotion_rate {rate:.6} outside enforced band \
              [{PROMOTION_RATE_LOW:.4}, {PROMOTION_RATE_HIGH:.4}] \

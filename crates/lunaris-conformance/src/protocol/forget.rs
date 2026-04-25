@@ -25,12 +25,7 @@ pub async fn id_target(client: &Client, base: &Url, token: &str) -> anyhow::Resu
         "target": { "Id": ulid::Ulid::new().to_string() },
         "dry_run": true,
     });
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(url).bearer_auth(token).json(&body).send().await?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await?;
     anyhow::ensure!(
@@ -57,11 +52,7 @@ pub async fn id_target(client: &Client, base: &Url, token: &str) -> anyhow::Resu
 /// JSON (per Plan 05-01 routes/forget.rs rustdoc — `ForgetConfirmation` has a
 /// `pub(crate)` inner field so external callers cannot mint the typed token
 /// directly; the server reconstructs it from the receipt round-trip).
-pub async fn two_step_hard_delete(
-    client: &Client,
-    base: &Url,
-    token: &str,
-) -> anyhow::Result<()> {
+pub async fn two_step_hard_delete(client: &Client, base: &Url, token: &str) -> anyhow::Result<()> {
     let url = base.join("/v1/forget")?;
     let target_id = ulid::Ulid::new().to_string();
 

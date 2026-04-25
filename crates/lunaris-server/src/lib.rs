@@ -113,9 +113,7 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/ingest",
             post(routes::ingest::ingest_handler)
                 .route_layer(rate_limit.clone())
-                .route_layer(axum::middleware::from_fn(
-                    middleware::tracing::tracing_middleware,
-                ))
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("ingest"),
@@ -125,9 +123,7 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/recall",
             post(routes::recall::recall_handler)
                 .route_layer(rate_limit.clone())
-                .route_layer(axum::middleware::from_fn(
-                    middleware::tracing::tracing_middleware,
-                ))
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("recall"),
@@ -137,9 +133,7 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/forget",
             post(routes::forget::forget_handler)
                 .route_layer(rate_limit.clone())
-                .route_layer(axum::middleware::from_fn(
-                    middleware::tracing::tracing_middleware,
-                ))
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("forget"),
@@ -149,9 +143,7 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
             "/snapshot/{lsn}",
             get(routes::snapshot::snapshot_handler)
                 .route_layer(rate_limit.clone())
-                .route_layer(axum::middleware::from_fn(
-                    middleware::tracing::tracing_middleware,
-                ))
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
                 .route_layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     scoped_auth("recall"),

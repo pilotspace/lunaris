@@ -45,6 +45,7 @@ use tower::ServiceExt;
 // signature from crates/lunaris-core/src/storage/port.rs (B-6 from Plan 04-05).
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 #[derive(Default)]
 struct RecordingStorageWithKeyword {
     rows: Mutex<HashMap<Vec<u8>, (Vec<u8>, BiTemporal)>>,
@@ -64,12 +65,8 @@ impl StoragePort for RecordingStorageWithKeyword {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
-                    let prior_bt = self
-                        .rows
-                        .lock()
-                        .get(key)
-                        .map(|(_, bt)| *bt)
-                        .unwrap_or(BiTemporal {
+                    let prior_bt =
+                        self.rows.lock().get(key).map(|(_, bt)| *bt).unwrap_or(BiTemporal {
                             valid: (Hlc::ZERO, None),
                             sys: (Hlc::ZERO, None),
                         });
@@ -202,10 +199,7 @@ fn build_test_lunaris() -> Arc<Lunaris> {
 
 fn write_test_tokens_file() -> std::path::PathBuf {
     let dir = std::env::temp_dir();
-    let path = dir.join(format!(
-        "lunaris-server-test-tokens-{}.json",
-        ulid::Ulid::new()
-    ));
+    let path = dir.join(format!("lunaris-server-test-tokens-{}.json", ulid::Ulid::new()));
     let body = serde_json::json!({
         "tok-ingest": { "tenant": "t-1", "scopes": ["ingest"] },
         "tok-all":    { "tenant": "t-2", "scopes": ["ingest", "recall", "forget"] },
@@ -245,10 +239,7 @@ async fn build_router_compiles() {
 #[tokio::test]
 async fn healthz_returns_200() {
     let app = build_test_app();
-    let req = Request::builder()
-        .uri("/healthz")
-        .body(Body::empty())
-        .expect("req");
+    let req = Request::builder().uri("/healthz").body(Body::empty()).expect("req");
     let resp = app.oneshot(req).await.expect("oneshot");
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = to_bytes(resp.into_body(), 1024).await.expect("body bytes");
@@ -321,11 +312,7 @@ async fn recall_sse_streams_when_event_stream_accept() {
         .expect("req");
     let resp = app.oneshot(req).await.expect("oneshot");
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
     assert!(
         ct.starts_with("text/event-stream"),
         "Accept: text/event-stream MUST yield SSE Content-Type, got {ct}"

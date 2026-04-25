@@ -67,9 +67,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use lunaris_conformance::chaos_helpers::{
-    helios_interrupt_profile, FsckReport, InterruptSite,
-};
+use lunaris_conformance::chaos_helpers::{FsckReport, InterruptSite, helios_interrupt_profile};
 
 // ---------------------------------------------------------------------------
 // Public types (serialized into the per-run JSON evidence)
@@ -186,10 +184,8 @@ mod live {
     use std::time::Duration;
 
     use lunaris::Lunaris;
-    use lunaris_conformance::chaos_helpers::{
-        fsck_all, helios_interrupt_profile, InterruptSite,
-    };
-    use nix::sys::signal::{kill, Signal};
+    use lunaris_conformance::chaos_helpers::{InterruptSite, fsck_all, helios_interrupt_profile};
+    use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -208,19 +204,12 @@ mod live {
             let after_scheme = raw.split("://").nth(1)?;
             let authority = after_scheme.split('/').next()?;
             let bare = authority.rsplit('@').next()?;
-            if bare.contains(':') {
-                bare.to_string()
-            } else {
-                format!("{bare}:5432")
-            }
+            if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
         } else {
             return None;
         };
         let timeout = Duration::from_secs(1);
-        let addr = host_port
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut it| it.next())?;
+        let addr = host_port.to_socket_addrs().ok().and_then(|mut it| it.next())?;
         match TcpStream::connect_timeout(&addr, timeout) {
             Ok(_) => Some(raw),
             Err(_) => None,
@@ -228,21 +217,16 @@ mod live {
     }
 
     fn chaos_bin_path() -> PathBuf {
-        std::env::var("CARGO_BIN_EXE_chaos")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                let workspace = manifest
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(&manifest)
-                    .to_path_buf();
-                let target_dir = std::env::var("CARGO_TARGET_DIR")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|_| workspace.join("target"));
-                let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-                target_dir.join(profile).join("chaos")
-            })
+        std::env::var("CARGO_BIN_EXE_chaos").map(PathBuf::from).unwrap_or_else(|_| {
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let workspace =
+                manifest.parent().and_then(|p| p.parent()).unwrap_or(&manifest).to_path_buf();
+            let target_dir = std::env::var("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| workspace.join("target"));
+            let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+            target_dir.join(profile).join("chaos")
+        })
     }
 
     /// Spawn the chaos helios subprocess, wait for "ready\n", sleep
@@ -325,8 +309,7 @@ mod live {
             let site = profile.sites[site_idx];
             // kill_offset_ns ∈ [1ms, 110ms] — same domain as the Phase 4
             // crash_recovery harness (ATOMIC_WRITE_P99_MS).
-            let kill_offset_ns: u64 =
-                rng.random_range(1_000_000u64..=110_000_000u64);
+            let kill_offset_ns: u64 = rng.random_range(1_000_000u64..=110_000_000u64);
 
             let session_id = format!("chaos-{backend_name}-{iter:03}-{}", ulid::Ulid::new());
 
@@ -392,10 +375,8 @@ mod live {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "50x2 SIGKILL live run; requires MOON_URL or PG_URL"]
 async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
-    let iters: u64 = std::env::var("LUNARIS_CHAOS_HELIOS_ITERS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50);
+    let iters: u64 =
+        std::env::var("LUNARIS_CHAOS_HELIOS_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
 
     let evidence_dir = default_evidence_dir();
     let _ = fs::create_dir_all(&evidence_dir);
@@ -404,8 +385,7 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
     let moon_result = match live::probe_backend("MOON_URL") {
         Some(url) => {
             eprintln!("chaos: running Moon branch at {}", redact_url(&url));
-            let (done, orphaned) =
-                live::per_backend_run("moon", &url, iters, &evidence_dir).await;
+            let (done, orphaned) = live::per_backend_run("moon", &url, iters, &evidence_dir).await;
             Some((done, orphaned))
         }
         None => {
@@ -428,9 +408,7 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
                 Err(e) => {
                     let disp = format!("{e}");
                     if is_pgmq_fallback_error(&disp) {
-                        eprintln!(
-                            "POSTGRES_FALLBACK pgmq_partition_packing_error: {disp}"
-                        );
+                        eprintln!("POSTGRES_FALLBACK pgmq_partition_packing_error: {disp}");
                         let marker = fallback_marker_path(&evidence_dir);
                         let payload = serde_json::json!({
                             "fallback": "pgmq_partition_packing_error",
@@ -459,22 +437,24 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
     if let Some((done, orphaned)) = moon_result {
         assert!(done > 0, "Moon probed but no iterations completed");
         assert_eq!(
-            orphaned, 0,
+            orphaned,
+            0,
             "Moon chaos: {orphaned}/{done} iterations showed orphans — \
              HELIOS-06 FAILED (evidence under {})",
             evidence_dir.display()
         );
     }
-    if let Some((done, orphaned, fallback)) = pg_result {
-        if !fallback {
-            assert!(done > 0, "Postgres probed but no iterations completed");
-            assert_eq!(
-                orphaned, 0,
-                "Postgres chaos: {orphaned}/{done} iterations showed orphans — \
+    if let Some((done, orphaned, fallback)) = pg_result
+        && !fallback
+    {
+        assert!(done > 0, "Postgres probed but no iterations completed");
+        assert_eq!(
+            orphaned,
+            0,
+            "Postgres chaos: {orphaned}/{done} iterations showed orphans — \
                  HELIOS-06 FAILED (evidence under {})",
-                evidence_dir.display()
-            );
-        }
+            evidence_dir.display()
+        );
     }
 
     Ok(())
@@ -493,18 +473,9 @@ fn evidence_path_uses_stable_naming() {
 
 #[test]
 fn redact_url_strips_postgres_userinfo() {
-    assert_eq!(
-        redact_url("postgres://user:password@host:5432/db"),
-        "postgres://host:5432/db"
-    );
-    assert_eq!(
-        redact_url("postgresql://user:password@host:5432/db"),
-        "postgresql://host:5432/db"
-    );
-    assert_eq!(
-        redact_url("moon://localhost:6390"),
-        "moon://localhost:6390"
-    );
+    assert_eq!(redact_url("postgres://user:password@host:5432/db"), "postgres://host:5432/db");
+    assert_eq!(redact_url("postgresql://user:password@host:5432/db"), "postgresql://host:5432/db");
+    assert_eq!(redact_url("moon://localhost:6390"), "moon://localhost:6390");
 }
 
 #[test]
@@ -532,11 +503,7 @@ fn fsck_class_counts_round_trip_from_report() {
     let mut r = FsckReport::default();
     // Synthesize 2 KV + 1 Index orphan.
     for key in ["episode:aa", "episode:bb"] {
-        r.rows.push(OrphanRow {
-            class: OrphanClass::Kv,
-            key: key.into(),
-            reason: "test".into(),
-        });
+        r.rows.push(OrphanRow { class: OrphanClass::Kv, key: key.into(), reason: "test".into() });
     }
     r.rows.push(OrphanRow {
         class: OrphanClass::Index,

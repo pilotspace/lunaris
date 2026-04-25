@@ -113,8 +113,7 @@ fn module_rust_crate_path_round_trips() {
 
     // None case: the `rust_crate_path` key MUST be absent from the
     // serialised TOML (`skip_serializing_if = "Option::is_none"`).
-    let m_none =
-        IrModule { name: "lunaris".into(), rust_crate_path: None, types: vec![] };
+    let m_none = IrModule { name: "lunaris".into(), rust_crate_path: None, types: vec![] };
     let t_none = toml::to_string(&m_none).expect("toml serialise");
     assert!(
         !t_none.contains("rust_crate_path"),

@@ -74,11 +74,8 @@ impl CommunityAssignment {
         let Some(label) = self.by_node.get(&node).copied() else {
             return Vec::new();
         };
-        let mut out: Vec<EntityId> = self
-            .by_node
-            .iter()
-            .filter_map(|(n, c)| (*c == label).then_some(*n))
-            .collect();
+        let mut out: Vec<EntityId> =
+            self.by_node.iter().filter_map(|(n, c)| (*c == label).then_some(*n)).collect();
         out.sort_by_key(|e| e.0);
         out
     }
@@ -146,10 +143,8 @@ pub fn leiden_pass(graph: &GraphSnapshot, max_iters: usize) -> CommunityAssignme
             // EntityId.0 representative-node carrying that label among the
             // neighbors. This is fully deterministic.
             let max_count = counts.values().copied().max().unwrap_or(0);
-            let candidates: Vec<u32> = counts
-                .iter()
-                .filter_map(|(l, c)| (*c == max_count).then_some(*l))
-                .collect();
+            let candidates: Vec<u32> =
+                counts.iter().filter_map(|(l, c)| (*c == max_count).then_some(*l)).collect();
             // For each candidate label, find the smallest-EntityId
             // representative AMONG NEIGHBORS carrying that label. Pick the
             // candidate whose representative is the absolute smallest.
@@ -244,11 +239,7 @@ mod tests {
     fn triangle_clique_collapses_to_one_community() {
         let g = GraphSnapshot {
             nodes: vec![entity(1), entity(2), entity(3)],
-            edges: vec![
-                (entity(1), entity(2)),
-                (entity(2), entity(3)),
-                (entity(1), entity(3)),
-            ],
+            edges: vec![(entity(1), entity(2)), (entity(2), entity(3)), (entity(1), entity(3))],
         };
         let a = leiden_pass(&g, 50);
         assert_eq!(a.community_count(), 1);
@@ -259,10 +250,7 @@ mod tests {
     /// Test 4: isolated nodes form singleton communities.
     #[test]
     fn isolated_nodes_form_singletons() {
-        let g = GraphSnapshot {
-            nodes: vec![entity(1), entity(2), entity(3)],
-            edges: vec![],
-        };
+        let g = GraphSnapshot { nodes: vec![entity(1), entity(2), entity(3)], edges: vec![] };
         let a = leiden_pass(&g, 50);
         assert_eq!(a.community_count(), 3);
         for n in [entity(1), entity(2), entity(3)] {
@@ -275,11 +263,7 @@ mod tests {
     fn label_propagation_is_deterministic() {
         let g = GraphSnapshot {
             nodes: vec![entity(1), entity(2), entity(3), entity(4), entity(5)],
-            edges: vec![
-                (entity(1), entity(2)),
-                (entity(2), entity(3)),
-                (entity(4), entity(5)),
-            ],
+            edges: vec![(entity(1), entity(2)), (entity(2), entity(3)), (entity(4), entity(5))],
         };
         let a = leiden_pass(&g, 50);
         let b = leiden_pass(&g, 50);

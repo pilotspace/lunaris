@@ -52,6 +52,7 @@ use tower::ServiceExt;
 // vector_hits so Test 3 can observe semantic fallback).
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 #[derive(Default)]
 struct RecordingStorageWithKeyword {
     rows: Mutex<HashMap<Vec<u8>, (Vec<u8>, BiTemporal)>>,
@@ -119,9 +120,7 @@ impl RecordingStorageWithKeyword {
             valid: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
             sys: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
         };
-        self.rows
-            .lock()
-            .insert(key, (serde_json::to_vec(&payload).unwrap(), bt));
+        self.rows.lock().insert(key, (serde_json::to_vec(&payload).unwrap(), bt));
     }
 }
 
@@ -261,10 +260,7 @@ fn build_test_lunaris_from_storage(storage: Arc<RecordingStorageWithKeyword>) ->
 
 fn write_test_tokens_file() -> std::path::PathBuf {
     let dir = std::env::temp_dir();
-    let path = dir.join(format!(
-        "lunaris-server-graph-mode-tokens-{}.json",
-        ulid::Ulid::new()
-    ));
+    let path = dir.join(format!("lunaris-server-graph-mode-tokens-{}.json", ulid::Ulid::new()));
     let body = serde_json::json!({
         "tok-all": { "tenant": "t-1", "scopes": ["ingest", "recall", "forget"] },
     });
@@ -330,23 +326,17 @@ async fn mode_graph_composes_graph_operator_when_gate_passes() {
         .uri("/v1/recall")
         .header("authorization", "Bearer tok-all")
         .header("content-type", "application/json")
-        .body(Body::from(
-            r#"{"query":"what did Alice do at Acme","k":5,"mode":"graph"}"#,
-        ))
+        .body(Body::from(r#"{"query":"what did Alice do at Acme","k":5,"mode":"graph"}"#))
         .expect("req");
 
     let resp = app.oneshot(req).await.expect("oneshot");
 
     // Assert 1a: HTTP 200 OK (NOT 501 — gate passed because graph_native=true).
-    assert_eq!(
-        resp.status(),
-        StatusCode::OK,
-        "gate should pass when graph_native=true",
-    );
+    assert_eq!(resp.status(), StatusCode::OK, "gate should pass when graph_native=true",);
 
     // Assert 1b: storage.graph_traverse was called exactly once — PRIMARY
     // proof that Graph::anchored was composed into the retrieval root.
-    let calls = storage.graph_calls.lock();
+    let calls = storage.graph_calls.lock().clone();
     assert_eq!(
         calls.len(),
         1,
@@ -356,10 +346,7 @@ async fn mode_graph_composes_graph_operator_when_gate_passes() {
     // Assert 1c: cypher body contains id_hex (W-7 alignment) and [*1..2]
     // (DEFAULT_GRAPH_HOPS=2 per graph.rs:54).
     let cypher = &calls[0].0.cypher;
-    assert!(
-        cypher.contains("id_hex"),
-        "W-7 alignment: cypher must use id_hex property: {cypher}",
-    );
+    assert!(cypher.contains("id_hex"), "W-7 alignment: cypher must use id_hex property: {cypher}",);
     assert!(
         cypher.contains("[*1..2]"),
         "DEFAULT_GRAPH_HOPS=2 must be spliced as [*1..2]: {cypher}",
@@ -369,10 +356,7 @@ async fn mode_graph_composes_graph_operator_when_gate_passes() {
     drop(calls); // release the lock before consuming the response body
     let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
     let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert!(
-        v.is_array(),
-        "default Accept should yield JSON array (Vec<Hit>)",
-    );
+    assert!(v.is_array(), "default Accept should yield JSON array (Vec<Hit>)",);
 }
 
 #[tokio::test]
@@ -460,9 +444,7 @@ async fn mode_graph_falls_back_to_semantic_with_degraded_when_no_entities() {
         .uri("/v1/recall")
         .header("authorization", "Bearer tok-all")
         .header("content-type", "application/json")
-        .body(Body::from(
-            r#"{"query":"show me everything lowercase","mode":"graph"}"#,
-        ))
+        .body(Body::from(r#"{"query":"show me everything lowercase","mode":"graph"}"#))
         .expect("req");
 
     let resp = app.oneshot(req).await.expect("oneshot");
@@ -510,9 +492,7 @@ async fn mode_semantic_unchanged_by_handler_diff() {
         .uri("/v1/recall")
         .header("authorization", "Bearer tok-all")
         .header("content-type", "application/json")
-        .body(Body::from(
-            r#"{"query":"what did Alice do at Acme","mode":"semantic"}"#,
-        ))
+        .body(Body::from(r#"{"query":"what did Alice do at Acme","mode":"semantic"}"#))
         .expect("req");
 
     let resp = app.oneshot(req).await.expect("oneshot");
@@ -539,18 +519,14 @@ async fn mode_graph_parity_across_moon_and_postgres() {
     let moon_url = match std::env::var("MOON_URL") {
         Ok(v) => v,
         Err(_) => {
-            eprintln!(
-                "SKIP mode_graph_parity_across_moon_and_postgres: MOON_URL env var not set",
-            );
+            eprintln!("SKIP mode_graph_parity_across_moon_and_postgres: MOON_URL env var not set",);
             return;
         }
     };
     let pg_url = match std::env::var("PG_URL") {
         Ok(v) => v,
         Err(_) => {
-            eprintln!(
-                "SKIP mode_graph_parity_across_moon_and_postgres: PG_URL env var not set",
-            );
+            eprintln!("SKIP mode_graph_parity_across_moon_and_postgres: PG_URL env var not set",);
             return;
         }
     };
@@ -628,26 +604,12 @@ async fn mode_graph_parity_across_moon_and_postgres() {
     // returned ids overlap (strict set-equality is too brittle when the
     // corpora aren't byte-identical; this asserts the graph branch fired on
     // both + produced overlapping results).
-    let moon_ids: Vec<serde_json::Value> = moon_v
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .map(|h| h["id"].clone())
-        .collect();
-    let pg_ids: Vec<serde_json::Value> = pg_v
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .map(|h| h["id"].clone())
-        .collect();
-    assert!(
-        !moon_ids.is_empty(),
-        "Moon response must yield at least one hit: {moon_v}",
-    );
-    assert!(
-        !pg_ids.is_empty(),
-        "Postgres response must yield at least one hit: {pg_v}",
-    );
+    let moon_ids: Vec<serde_json::Value> =
+        moon_v.as_array().unwrap_or(&vec![]).iter().map(|h| h["id"].clone()).collect();
+    let pg_ids: Vec<serde_json::Value> =
+        pg_v.as_array().unwrap_or(&vec![]).iter().map(|h| h["id"].clone()).collect();
+    assert!(!moon_ids.is_empty(), "Moon response must yield at least one hit: {moon_v}",);
+    assert!(!pg_ids.is_empty(), "Postgres response must yield at least one hit: {pg_v}",);
     // Intersection non-empty — parity contract per capabilities() rules.
     let overlap = moon_ids.iter().filter(|id| pg_ids.contains(id)).count();
     assert!(

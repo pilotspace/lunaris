@@ -55,7 +55,8 @@ mod tests {
 
     #[test]
     fn write_json_round_trips() {
-        let tmp = std::env::temp_dir().join(format!("lunaris-eval-test-{}.json", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("lunaris-eval-test-{}.json", std::process::id()));
         let rows = vec![
             EvalRow::pass("h", "m", 1.0, 2.0, 100),
             EvalRow::skipped("h2", "m2", 3.0, "no env"),

@@ -315,9 +315,7 @@ impl CandleGemma3_27B {
         drop(model_guard);
 
         let decoded = inner.tokenizer.decode(&emitted, true).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!(
-                "gemma-3-27b-it detokenize: {e}"
-            )))
+            LunarisError::Storage(StorageError::Backend(format!("gemma-3-27b-it detokenize: {e}")))
         })?;
 
         Ok(crate::parse_decision_json(&decoded, VerifierBackend::Candle))
@@ -326,10 +324,7 @@ impl CandleGemma3_27B {
 
 #[async_trait]
 impl Verifier for CandleGemma3_27B {
-    async fn verify(
-        &self,
-        item: NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
+    async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
         let inner = self.inner.clone();
 
         // Per-chunk (single-item) timeout. The 27B path is always one item

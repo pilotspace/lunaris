@@ -49,11 +49,7 @@ impl AppState {
     pub fn new(lunaris: Arc<Lunaris>, tokens: TokenMap) -> Self {
         let flags = RuntimeFlags::default();
         *flags.rate_limit_enabled.write() = true;
-        Self {
-            lunaris,
-            tokens: Arc::new(tokens),
-            runtime_flags: Arc::new(flags),
-        }
+        Self { lunaris, tokens: Arc::new(tokens), runtime_flags: Arc::new(flags) }
     }
 }
 

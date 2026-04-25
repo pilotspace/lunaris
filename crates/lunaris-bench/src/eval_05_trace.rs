@@ -49,21 +49,10 @@ pub const MIX_GREP: f64 = 0.15;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op")]
 pub enum Op {
-    Read {
-        path: String,
-    },
-    Write {
-        path: String,
-        content: String,
-    },
-    Edit {
-        path: String,
-        find: String,
-        replace: String,
-    },
-    Grep {
-        pattern: String,
-    },
+    Read { path: String },
+    Write { path: String, content: String },
+    Edit { path: String, find: String, replace: String },
+    Grep { pattern: String },
 }
 
 /// Deterministic 10K-turn Helios chat trace.
@@ -88,23 +77,14 @@ impl Trace {
             let op = if r < MIX_READ {
                 Op::Read { path }
             } else if r < MIX_READ + MIX_WRITE {
-                Op::Write {
-                    path,
-                    content: format!("turn {i} body lorem ipsum dolor sit amet"),
-                }
+                Op::Write { path, content: format!("turn {i} body lorem ipsum dolor sit amet") }
             } else if r < MIX_READ + MIX_WRITE + MIX_EDIT {
-                Op::Edit {
-                    path,
-                    find: "lorem".into(),
-                    replace: "LOREM".into(),
-                }
+                Op::Edit { path, find: "lorem".into(), replace: "LOREM".into() }
             } else {
                 // Grep patterns reference pool indices so the search space is
                 // bounded + deterministic.
                 let grep_idx = rng.random_range(0..pool.len());
-                Op::Grep {
-                    pattern: format!("turn {grep_idx}"),
-                }
+                Op::Grep { pattern: format!("turn {grep_idx}") }
             };
             ops.push(op);
         }
@@ -119,9 +99,7 @@ impl Trace {
 }
 
 fn path_pool() -> Vec<String> {
-    (0..EVAL_05_POOL_SIZE)
-        .map(|i| format!("helios:fs/chat-turn-{i:04}.md"))
-        .collect()
+    (0..EVAL_05_POOL_SIZE).map(|i| format!("helios:fs/chat-turn-{i:04}.md")).collect()
 }
 
 #[cfg(test)]
@@ -159,26 +137,14 @@ mod tests {
             let expected = weight * total;
             ((actual as f64) - expected).abs() <= tol
         };
-        assert!(
-            within(reads, MIX_READ),
-            "reads={reads} not within ±1% of {}",
-            MIX_READ * total
-        );
+        assert!(within(reads, MIX_READ), "reads={reads} not within ±1% of {}", MIX_READ * total);
         assert!(
             within(writes, MIX_WRITE),
             "writes={writes} not within ±1% of {}",
             MIX_WRITE * total
         );
-        assert!(
-            within(edits, MIX_EDIT),
-            "edits={edits} not within ±1% of {}",
-            MIX_EDIT * total
-        );
-        assert!(
-            within(greps, MIX_GREP),
-            "greps={greps} not within ±1% of {}",
-            MIX_GREP * total
-        );
+        assert!(within(edits, MIX_EDIT), "edits={edits} not within ±1% of {}", MIX_EDIT * total);
+        assert!(within(greps, MIX_GREP), "greps={greps} not within ±1% of {}", MIX_GREP * total);
     }
 
     #[test]
@@ -194,10 +160,7 @@ mod tests {
                 Op::Grep { .. } => None,
             };
             if let Some(p) = maybe_path {
-                assert!(
-                    pool.contains(p),
-                    "op path {p} not drawn from the canonical 500-path pool"
-                );
+                assert!(pool.contains(p), "op path {p} not drawn from the canonical 500-path pool");
             }
         }
     }

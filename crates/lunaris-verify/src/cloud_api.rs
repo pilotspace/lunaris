@@ -154,12 +154,7 @@ impl Default for CloudApiVerifierOpts {
         let api_key = std::env::var(ENV_API_KEY)
             .or_else(|_| std::env::var(provider.api_key_env()))
             .unwrap_or_default();
-        Self {
-            provider,
-            model,
-            api_key,
-            max_retries: DEFAULT_MAX_RETRIES,
-        }
+        Self { provider, model, api_key, max_retries: DEFAULT_MAX_RETRIES }
     }
 }
 
@@ -304,10 +299,7 @@ impl CloudApiVerifier {
 
 #[async_trait]
 impl Verifier for CloudApiVerifier {
-    async fn verify(
-        &self,
-        item: NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
+    async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
         let mut last_err: Option<LunarisError> = None;
         let attempts = self.max_retries.saturating_add(1) as usize;
         for attempt in 0..attempts {
@@ -365,10 +357,7 @@ struct DecisionWire {
 /// - Anthropic returns `{content: [{type: "tool_use", input: <json>}, ...]}`
 /// - OpenAI returns `{choices: [{message: {content: <stringified-json>}}]}`
 /// - Gemini returns `{candidates: [{content: {parts: [{text: <json>}]}}]}`
-fn extract_provider_text(
-    provider: CloudProvider,
-    body: &str,
-) -> Result<String, LunarisError> {
+fn extract_provider_text(provider: CloudProvider, body: &str) -> Result<String, LunarisError> {
     match provider {
         CloudProvider::Anthropic => {
             let v: serde_json::Value = serde_json::from_str(body).map_err(|e| {
@@ -506,9 +495,12 @@ mod tests {
 
     #[test]
     fn is_transient_classifies_429_and_5xx() {
-        let e_429 = LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 429".into()));
-        let e_503 = LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 503".into()));
-        let e_400 = LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 400".into()));
+        let e_429 =
+            LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 429".into()));
+        let e_503 =
+            LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 503".into()));
+        let e_400 =
+            LunarisError::Storage(StorageError::Backend("cloud-api-verify: HTTP 400".into()));
         let e_to = LunarisError::Storage(StorageError::Backend("cloud-api-verify: timeout".into()));
         assert!(is_transient(&e_429));
         assert!(is_transient(&e_503));

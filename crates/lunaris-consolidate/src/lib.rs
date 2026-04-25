@@ -114,11 +114,8 @@ pub trait Consolidator: Send + Sync + 'static {
         match scope_prefix {
             None => self.consolidate(storage, events).await,
             Some(prefix) => {
-                let filtered: Vec<ConsolidateEvent> = events
-                    .iter()
-                    .filter(|e| e.source.starts_with(prefix))
-                    .cloned()
-                    .collect();
+                let filtered: Vec<ConsolidateEvent> =
+                    events.iter().filter(|e| e.source.starts_with(prefix)).cloned().collect();
                 self.consolidate(storage, &filtered).await
             }
         }
@@ -295,14 +292,8 @@ mod tests {
         );
 
         // None path — full batch forwarded unchanged.
-        let report_unscoped = c
-            .consolidate_scoped(
-                storage,
-                &[ev_in_scope, ev_out_of_scope],
-                None,
-            )
-            .await
-            .unwrap();
+        let report_unscoped =
+            c.consolidate_scoped(storage, &[ev_in_scope, ev_out_of_scope], None).await.unwrap();
         assert_eq!(report_scoped, report_unscoped);
     }
 }

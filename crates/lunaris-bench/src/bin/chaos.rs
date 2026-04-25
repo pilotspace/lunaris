@@ -121,15 +121,14 @@ async fn run_phase4_legacy(args: &[String]) -> ExitCode {
 
     eprintln!("chaos: opened Lunaris handle to {url}; writing {count} primitives via atomic_write");
 
-    let written = match lunaris_bench::build_chaos_corpus(&lunaris, count, /*seed=*/ 0xC0FFEE, url)
-        .await
-    {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("build_chaos_corpus failed: {e:?}");
-            return ExitCode::from(1);
-        }
-    };
+    let written =
+        match lunaris_bench::build_chaos_corpus(&lunaris, count, /*seed=*/ 0xC0FFEE, url).await {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("build_chaos_corpus failed: {e:?}");
+                return ExitCode::from(1);
+            }
+        };
 
     eprintln!("chaos: wrote {written} primitives via atomic_write to {url}");
     ExitCode::SUCCESS
@@ -141,10 +140,7 @@ async fn run_phase4_legacy(args: &[String]) -> ExitCode {
 
 async fn run_profile_dispatch(args: &[String]) -> ExitCode {
     // Find the profile argument.
-    let profile = args
-        .iter()
-        .position(|a| a == "--profile")
-        .and_then(|i| args.get(i + 1).cloned());
+    let profile = args.iter().position(|a| a == "--profile").and_then(|i| args.get(i + 1).cloned());
 
     match profile.as_deref() {
         Some("helios") => run_helios_profile().await,
@@ -164,7 +160,9 @@ async fn run_helios_profile() -> ExitCode {
     let url = match std::env::var("LUNARIS_URL") {
         Ok(v) if !v.is_empty() => v,
         _ => {
-            eprintln!("chaos: --profile helios requires LUNARIS_URL env (moon://... | postgres://...)");
+            eprintln!(
+                "chaos: --profile helios requires LUNARIS_URL env (moon://... | postgres://...)"
+            );
             return ExitCode::from(2);
         }
     };
@@ -184,10 +182,8 @@ async fn run_helios_profile() -> ExitCode {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| format!("session-chaos-{}", ulid::Ulid::new()));
-    let kill_offset_ns: u64 = std::env::var("KILL_OFFSET_NS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let kill_offset_ns: u64 =
+        std::env::var("KILL_OFFSET_NS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
 
     eprintln!(
         "chaos: --profile helios url={url} session_id={session_id} \

@@ -39,8 +39,8 @@
 use std::sync::OnceLock;
 
 use prometheus::{
-    GaugeVec, HistogramVec, IntCounterVec, IntGaugeVec, register_gauge_vec,
-    register_histogram_vec, register_int_counter_vec, register_int_gauge_vec,
+    GaugeVec, HistogramVec, IntCounterVec, IntGaugeVec, register_gauge_vec, register_histogram_vec,
+    register_int_counter_vec, register_int_gauge_vec,
 };
 
 /// Container for the nine declared metrics. Lazily constructed via [`metrics`]
@@ -153,12 +153,8 @@ mod tests {
         m.recall_total.with_label_values(&["t", "semantic", "ok"]).inc();
         m.recall_duration.with_label_values(&["t", "semantic"]).observe(0.001);
         m.forget_total.with_label_values(&["t", "id", "false"]).inc();
-        m.verify_queue_depth
-            .with_label_values(&["__lunaris_verify__"])
-            .set(0);
-        m.consolidator_queue_depth
-            .with_label_values(&["__lunaris_consolidate__"])
-            .set(0);
+        m.verify_queue_depth.with_label_values(&["__lunaris_verify__"]).set(0);
+        m.consolidator_queue_depth.with_label_values(&["__lunaris_consolidate__"]).set(0);
         m.error_total.with_label_values(&["storage"]).inc();
         m.eval_score.with_label_values(&["longmemeval"]).set(0.0);
     }
@@ -177,19 +173,13 @@ mod tests {
         m.recall_total.with_label_values(&["t", "semantic", "ok"]).inc();
         m.recall_duration.with_label_values(&["t", "semantic"]).observe(0.001);
         m.forget_total.with_label_values(&["t", "id", "false"]).inc();
-        m.verify_queue_depth
-            .with_label_values(&["__lunaris_verify__"])
-            .set(0);
-        m.consolidator_queue_depth
-            .with_label_values(&["__lunaris_consolidate__"])
-            .set(0);
+        m.verify_queue_depth.with_label_values(&["__lunaris_verify__"]).set(0);
+        m.consolidator_queue_depth.with_label_values(&["__lunaris_consolidate__"]).set(0);
         m.error_total.with_label_values(&["storage"]).inc();
         m.eval_score.with_label_values(&["longmemeval"]).set(0.0);
 
         let mut buf = Vec::new();
-        TextEncoder::new()
-            .encode(&prometheus::gather(), &mut buf)
-            .expect("encode");
+        TextEncoder::new().encode(&prometheus::gather(), &mut buf).expect("encode");
         let out = String::from_utf8(buf).expect("utf8");
         for name in [
             "lunaris_ingest_total",
@@ -202,10 +192,7 @@ mod tests {
             "lunaris_error_total",
             "lunaris_eval_score",
         ] {
-            assert!(
-                out.contains(name),
-                "metrics text format must contain {name}; got:\n{out}"
-            );
+            assert!(out.contains(name), "metrics text format must contain {name}; got:\n{out}");
         }
     }
 
@@ -218,10 +205,7 @@ mod tests {
             error_kind(&LunarisError::Storage(StorageError::Backend("x".into()))),
             "storage"
         );
-        assert_eq!(
-            error_kind(&LunarisError::Validate(ValidateError::Temporal)),
-            "validate"
-        );
+        assert_eq!(error_kind(&LunarisError::Validate(ValidateError::Temporal)), "validate");
         assert_eq!(
             error_kind(&LunarisError::Extract(ExtractError::Backend("x".into()))),
             "extract"

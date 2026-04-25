@@ -130,13 +130,8 @@ impl Lunaris {
             // Plan 09.1-01 Task 2 — `&episode_source` carries Episode.source
             // into the envelope so Consolidator::consolidate_scoped can
             // filter by `event.source.starts_with(prefix)` downstream.
-            publish_consolidate_event(
-                self.storage.as_ref(),
-                episode_id,
-                lsn,
-                &episode_source,
-            )
-            .await;
+            publish_consolidate_event(self.storage.as_ref(), episode_id, lsn, &episode_source)
+                .await;
 
             Ok(lsn)
         }
@@ -269,10 +264,7 @@ async fn ingest_episode_graph_on(
             episode_id = %episode.id,
             chunk_count = chunk_inputs.len(),
         );
-        let raw = extractor
-            .extract(episode.id, &chunk_inputs)
-            .instrument(extract_span)
-            .await?;
+        let raw = extractor.extract(episode.id, &chunk_inputs).instrument(extract_span).await?;
         validate(raw)
     } else {
         // NoopExtractor — produces empty raw batch; validator returns empty.

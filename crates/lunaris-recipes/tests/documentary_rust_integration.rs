@@ -45,10 +45,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 // Imports + helpers only used behind the `moon-it` + `pg-it` feature gate.
-#![cfg_attr(
-    not(all(feature = "moon-it", feature = "pg-it")),
-    allow(unused_imports, dead_code)
-)]
+#![cfg_attr(not(all(feature = "moon-it", feature = "pg-it")), allow(unused_imports, dead_code))]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -65,11 +62,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("{name}: SKIP (unknown URL scheme)");
         return None;
@@ -203,8 +196,7 @@ async fn run_code_repo_as_of_commit_50(
     use lunaris_recipes::documentary::CodeRepoMemory;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let repo =
-        CodeRepoMemory::new(mem.clone(), format!("repo:doc-11-01/{backend_label}/"));
+    let repo = CodeRepoMemory::new(mem.clone(), format!("repo:doc-11-01/{backend_label}/"));
     let commits = load_commits()?;
     let commit_50 = &commits[49]; // 1-indexed → idx 49 is "commit 50"
     let commit_50_ms = rfc3339_to_unix_ms(&commit_50.committer_date_rfc3339)?;
@@ -213,12 +205,8 @@ async fn run_code_repo_as_of_commit_50(
     for c in &commits {
         let ms = rfc3339_to_unix_ms(&c.committer_date_rfc3339)?;
         let mut meta = serde_json::Map::new();
-        meta.insert(
-            "function_name".into(),
-            serde_json::Value::String("target".into()),
-        );
-        repo.ingest_commit(&c.sha, ms, vec![(c.function_body_chunk.clone(), meta)])
-            .await?;
+        meta.insert("function_name".into(), serde_json::Value::String("target".into()));
+        repo.ingest_commit(&c.sha, ms, vec![(c.function_body_chunk.clone(), meta)]).await?;
     }
 
     let hits = repo.recall("target", commit_50_ts).await?;
@@ -247,18 +235,23 @@ async fn code_repo_memory_as_of_commit_50_round_trip_moon_postgres() -> anyhow::
     if moon_set != pg_set {
         anyhow::bail!(
             "CodeRepoMemory as_of(commit_50) set divergence:\n  moon={:?}\n  pg={:?}",
-            moon_set, pg_set
+            moon_set,
+            pg_set
         );
     }
     // Primary SC: commit-50 body is the top hit (not commit-100).
     let expected = "fn target() -> u64 { 50 }".to_string();
     assert!(
         moon_texts.iter().any(|t| t.contains(&expected)),
-        "moon: expected commit-50 body `{}` in hits, got: {:?}", expected, moon_texts
+        "moon: expected commit-50 body `{}` in hits, got: {:?}",
+        expected,
+        moon_texts
     );
     assert!(
         pg_texts.iter().any(|t| t.contains(&expected)),
-        "pg: expected commit-50 body `{}` in hits, got: {:?}", expected, pg_texts
+        "pg: expected commit-50 body `{}` in hits, got: {:?}",
+        expected,
+        pg_texts
     );
     Ok(())
 }
@@ -268,10 +261,7 @@ async fn code_repo_memory_as_of_commit_50_round_trip_moon_postgres() -> anyhow::
 // ---------------------------------------------------------------------------
 
 #[cfg(all(feature = "moon-it", feature = "pg-it"))]
-async fn run_timeline_between_10_15(
-    backend_label: &str,
-    url: &str,
-) -> anyhow::Result<usize> {
+async fn run_timeline_between_10_15(backend_label: &str, url: &str) -> anyhow::Result<usize> {
     use std::sync::Arc;
 
     use lunaris::Lunaris;
@@ -279,20 +269,15 @@ async fn run_timeline_between_10_15(
     use lunaris_recipes::documentary::TimelineReconstruction;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let timeline = TimelineReconstruction::new(
-        mem.clone(),
-        format!("timeline:doc-11-01/{backend_label}/"),
-    );
+    let timeline =
+        TimelineReconstruction::new(mem.clone(), format!("timeline:doc-11-01/{backend_label}/"));
     let events = load_events()?;
 
     for e in &events {
         let ms = rfc3339_to_unix_ms(&e.valid_time_rfc3339)?;
         let mut meta = serde_json::Map::new();
         meta.insert("event_id".into(), serde_json::Value::String(e.id.clone()));
-        meta.insert(
-            "event_valid_time_unix_ms".into(),
-            serde_json::Value::Number(ms.into()),
-        );
+        meta.insert("event_valid_time_unix_ms".into(), serde_json::Value::Number(ms.into()));
         timeline.ingest(vec![(e.text.clone(), meta)]).await?;
     }
 
@@ -326,7 +311,8 @@ async fn timeline_reconstruction_between_returns_exactly_6_events() -> anyhow::R
     if moon_count != pg_count {
         anyhow::bail!(
             "TimelineReconstruction .between count divergence: moon={} pg={}",
-            moon_count, pg_count
+            moon_count,
+            pg_count
         );
     }
     assert_eq!(
@@ -359,8 +345,7 @@ async fn run_customer_support_refund(
         hist.ingest_ticket(&t.id, &t.body).await?;
     }
     for c in &fixture.chats {
-        hist.ingest_chat(&c.ticket_id, c.turn_idx, &c.participant, &c.msg)
-            .await?;
+        hist.ingest_chat(&c.ticket_id, c.turn_idx, &c.participant, &c.msg).await?;
     }
 
     let hits = hist.recall("refund").await?;
@@ -369,8 +354,7 @@ async fn run_customer_support_refund(
 
 #[cfg(all(feature = "moon-it", feature = "pg-it"))]
 #[tokio::test]
-async fn customer_support_history_refund_recall_preserves_source_prefixes() -> anyhow::Result<()>
-{
+async fn customer_support_history_refund_recall_preserves_source_prefixes() -> anyhow::Result<()> {
     let moon_url = match probe_backend("MOON_URL", std::env::var("MOON_URL").ok()) {
         Some(u) => u,
         None => return Ok(()),

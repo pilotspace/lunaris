@@ -123,11 +123,7 @@ impl StoragePort for MoonStorage {
 
     /// Plan 04 D-12 — see [`crate::queue::queue_length`] for the raw
     /// `MQ.LENGTH` escape hatch rationale.
-    async fn queue_depth(
-        &self,
-        topic: &str,
-        partition: u16,
-    ) -> Result<u64, StorageError> {
+    async fn queue_depth(&self, topic: &str, partition: u16) -> Result<u64, StorageError> {
         crate::queue::queue_length(&self.client, topic, partition).await
     }
 

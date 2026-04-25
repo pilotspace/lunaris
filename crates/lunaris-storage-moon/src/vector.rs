@@ -63,11 +63,8 @@ pub(crate) async fn vector_search(
     // here so the filter algebra still works. Live-measurement gap fix
     // 2026-04-21.
     let knn_query = format!("({filter_expr})=>[KNN {k} @vec $query]");
-    let reply = typed
-        .vector()
-        .search_raw(index, &knn_query, &qbytes, k, rerank)
-        .await
-        .map_err(moon_err)?;
+    let reply =
+        typed.vector().search_raw(index, &knn_query, &qbytes, k, rerank).await.map_err(moon_err)?;
     parse_ft_search(reply, rerank, index)
 }
 
@@ -155,7 +152,11 @@ fn json_to_moon(v: &serde_json::Value) -> String {
     }
 }
 
-fn parse_ft_search(v: redis::Value, rerank: bool, index: &str) -> Result<Vec<VectorHit>, StorageError> {
+fn parse_ft_search(
+    v: redis::Value,
+    rerank: bool,
+    index: &str,
+) -> Result<Vec<VectorHit>, StorageError> {
     // FT.SEARCH reply: [count, id1, [k1,v1,...], id2, [k1,v1,...], ...]
     let arr = match v {
         redis::Value::Array(a) => a,
@@ -301,9 +302,8 @@ mod tests {
     #[test]
     fn parse_ft_search_decodes_index_prefixed_hex_keys() {
         // Moon wire shape: `<index>:<hex32>` per atomic.rs::VectorUpsert.
-        let ulid_bytes: [u8; 16] = [
-            1, 157, 184, 227, 97, 47, 203, 75, 14, 1, 202, 211, 92, 115, 47, 72,
-        ];
+        let ulid_bytes: [u8; 16] =
+            [1, 157, 184, 227, 97, 47, 203, 75, 14, 1, 202, 211, 92, 115, 47, 72];
         let hex = hex::encode(ulid_bytes);
         let key = format!("chunks:{hex}");
         let reply = redis::Value::Array(vec![

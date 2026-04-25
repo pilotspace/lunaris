@@ -44,24 +44,19 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 
     // W-7 fix: reuse the same `pub(crate)` download_dataset helper from
     // longmemeval.rs — single source of truth for HF download semantics.
-    let dataset_path = match crate::eval::longmemeval::download_dataset(
-        HF_REPO,
-        DATASET_FILENAME,
-        &cache,
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            results.push(EvalRow::skipped(
-                HARNESS,
-                METRIC,
-                THRESHOLD,
-                &format!("dataset download failed: {e}"),
-            ));
-            return Ok(());
-        }
-    };
+    let dataset_path =
+        match crate::eval::longmemeval::download_dataset(HF_REPO, DATASET_FILENAME, &cache).await {
+            Ok(p) => p,
+            Err(e) => {
+                results.push(EvalRow::skipped(
+                    HARNESS,
+                    METRIC,
+                    THRESHOLD,
+                    &format!("dataset download failed: {e}"),
+                ));
+                return Ok(());
+            }
+        };
 
     let _lunaris = match lunaris::Lunaris::open(&url).await {
         Ok(l) => std::sync::Arc::new(l),
@@ -123,10 +118,7 @@ mod tests {
         let mut results: Vec<EvalRow> = Vec::new();
         super::run(&mut results).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(matches!(
-            results[0].status.as_str(),
-            "SKIPPED" | "PASS" | "FAIL"
-        ));
+        assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
         assert_eq!(results[0].harness, HARNESS);
         assert_eq!(results[0].metric, METRIC);
         assert_eq!(results[0].threshold, THRESHOLD);

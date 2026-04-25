@@ -66,8 +66,8 @@
 // napi-rs 3.x's `#[napi]` attribute is re-exported by `napi_derive`. Each
 // module that uses it has its own `use napi_derive::napi;` import.
 
-mod errors;
 mod dsl;
+mod errors;
 mod toggles;
 
 // Handwritten conformance-only helpers — feature-gated so production
@@ -93,14 +93,27 @@ mod conformance;
 mod generated;
 
 pub use generated::{
-    ConsolidatorPipelineHandle, Graph, GraphPipelineHandle, Keyword, Lunaris,
-    RetrievalBuilder, Vector,
     // Plan 11-02b — Phase 10 conversational wrappers + 2 opaque side-types.
-    ChatAgentMemory, EmailThreading, MeetingNotesMemory, MeetingNotesQuery,
-    MultiTurnConversation, SlackArchive, SlackArchiveQuery,
+    ChatAgentMemory,
     // Plan 11-02b — Phase 11 documentary wrappers.
-    CodeRepoMemory, CustomerSupportHistory, DocumentKnowledgeBase,
-    ResearchPaperCorpus, TimelineReconstruction,
+    CodeRepoMemory,
+    ConsolidatorPipelineHandle,
+    CustomerSupportHistory,
+    DocumentKnowledgeBase,
+    EmailThreading,
+    Graph,
+    GraphPipelineHandle,
+    Keyword,
+    Lunaris,
+    MeetingNotesMemory,
+    MeetingNotesQuery,
+    MultiTurnConversation,
+    ResearchPaperCorpus,
+    RetrievalBuilder,
+    SlackArchive,
+    SlackArchiveQuery,
+    TimelineReconstruction,
+    Vector,
 };
 
 /// Plan 11-02b — conversational namespace. Pure Rust re-exports so TS
@@ -134,7 +147,7 @@ pub mod conversational {
 /// subpath-import caveat.
 pub mod documentary {
     pub use super::generated::{
-        CodeRepoMemory, CustomerSupportHistory, DocumentKnowledgeBase,
-        ResearchPaperCorpus, TimelineReconstruction,
+        CodeRepoMemory, CustomerSupportHistory, DocumentKnowledgeBase, ResearchPaperCorpus,
+        TimelineReconstruction,
     };
 }

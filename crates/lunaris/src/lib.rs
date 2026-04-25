@@ -44,7 +44,7 @@ pub mod verify_pipeline;
 
 pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
 pub use consolidator_pipeline::{
-    ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR, ConsolidatorPipelineHandle,
+    ConsolidatorPipelineHandle, ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR,
 };
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
@@ -70,7 +70,10 @@ pub use verify_pipeline::{ENABLED_ENV_VAR as VERIFY_ENABLED_ENV_VAR, VerifierPip
 // `use lunaris::{Verifier, Consolidator, NoopVerifier, NoopConsolidator}`
 // without reaching into the per-crate paths.
 pub use lunaris_consolidate::{Consolidator, NoopConsolidator};
-pub use lunaris_verify::{NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend, VerifyDecision};
+pub use lunaris_verify::{
+    NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend,
+    VerifyDecision,
+};
 
 // Cfg-gated verifier backends — mirror the extract backends gating pattern.
 #[cfg(feature = "candle")]

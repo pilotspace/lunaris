@@ -27,25 +27,11 @@ fn method(
     returns: IrReturn,
     clone_self: bool,
 ) -> IrMethod {
-    IrMethod {
-        name: name.into(),
-        is_async,
-        receiver,
-        params,
-        returns,
-        clone_self,
-        doc: None,
-    }
+    IrMethod { name: name.into(), is_async, receiver, params, returns, clone_self, doc: None }
 }
 
 fn ty(name: &str, kind: IrKind, methods: Vec<IrMethod>) -> IrType {
-    IrType {
-        name: name.into(),
-        kind,
-        source_file: None,
-        doc: None,
-        methods,
-    }
+    IrType { name: name.into(), kind, source_file: None, doc: None, methods }
 }
 
 fn multi_module_ir() -> SurfaceIR {
@@ -111,9 +97,7 @@ fn multi_module_ir() -> SurfaceIR {
                     IrReceiver::Owned,
                     vec![IrParam { name: "query".into(), ty: IrTyRef::Str }],
                     IrReturn {
-                        ty: IrTyRef::Vec {
-                            inner: Box::new(IrTyRef::Named { name: "Hit".into() }),
-                        },
+                        ty: IrTyRef::Vec { inner: Box::new(IrTyRef::Named { name: "Hit".into() }) },
                         fallible: true,
                     },
                     /* clone_self */ true,
@@ -166,7 +150,9 @@ fn py_handle_variant_lowers_to_arc_clone() {
     // Type1::new takes a Handle { name = "Lunaris" } — emitted should bind
     // the owned Arc via `.inner.clone()`, not pythonize::depythonize.
     assert!(
-        py.contains("let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();"),
+        py.contains(
+            "let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();"
+        ),
         "Handle param did not lower to Arc::clone — got:\n{py}"
     );
     // Handle variant param type is `&PyLunaris`, not `&Bound<'_, PyAny>`.
@@ -279,7 +265,9 @@ fn ts_handle_variant_lowers_to_arc_clone() {
     let out = emit_ts(&ir);
     let rust = out.rust_glue;
     assert!(
-        rust.contains("let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();"),
+        rust.contains(
+            "let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();"
+        ),
         "TS Handle param did not lower to Arc::clone — got:\n{rust}"
     );
     assert!(
@@ -387,7 +375,9 @@ fn py_and_ts_new_allow_list_entries_lower_to_concrete_rust_spellings() {
 
     let py = emit_py(&ir);
     assert!(
-        py.contains("let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="),
+        py.contains(
+            "let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="
+        ),
         "DocumentChunks did not lower to concrete tuple-of-map spelling in Py — got:\n{py}"
     );
     assert!(
@@ -405,7 +395,9 @@ fn py_and_ts_new_allow_list_entries_lower_to_concrete_rust_spellings() {
 
     let ts = emit_ts(&ir).rust_glue;
     assert!(
-        ts.contains("let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="),
+        ts.contains(
+            "let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> ="
+        ),
         "DocumentChunks did not lower to concrete spelling in TS — got:\n{ts}"
     );
     assert!(
@@ -433,7 +425,9 @@ fn ts_async_owned_clone_self() {
     // the async-ref_self arm). Wrapping Vec<Hit> into `Type2` would be a
     // bug (Type2 is the source type, not a Vec container).
     assert!(
-        rust.contains("pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>>"),
+        rust.contains(
+            "pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>>"
+        ),
         "async-owned clone_self signature wrong (expected Vec<Value>) — got:\n{rust}"
     );
     assert!(

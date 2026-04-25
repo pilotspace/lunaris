@@ -66,10 +66,7 @@ pub async fn forget_handler(
         let receipt_json = match req.confirmation_token.as_deref() {
             Some(t) if !t.is_empty() => t.to_string(),
             _ => {
-                metrics()
-                    .forget_total
-                    .with_label_values(&[tenant, target_kind, hard_label])
-                    .inc();
+                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
                 return map_error(lunaris_core::LunarisError::Validate(
                     lunaris_core::ValidateError::ConfirmationRequired(
                         "hard-delete requires confirmation_token (serialized prior ForgetReceipt JSON)".to_string(),
@@ -80,10 +77,7 @@ pub async fn forget_handler(
         let prior_receipt: ForgetReceipt = match serde_json::from_str(&receipt_json) {
             Ok(r) => r,
             Err(e) => {
-                metrics()
-                    .forget_total
-                    .with_label_values(&[tenant, target_kind, hard_label])
-                    .inc();
+                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -97,10 +91,7 @@ pub async fn forget_handler(
         let token = match state.lunaris.confirm_hard_forget(prior_receipt).await {
             Ok(t) => t,
             Err(e) => {
-                metrics()
-                    .forget_total
-                    .with_label_values(&[tenant, target_kind, hard_label])
-                    .inc();
+                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
                 return map_error(e);
             }
         };
@@ -111,10 +102,7 @@ pub async fn forget_handler(
 
     // Always increment forget_total — both success + error contribute to the
     // counter. error_total increment lives inside map_error (W-11 fix).
-    metrics()
-        .forget_total
-        .with_label_values(&[tenant, target_kind, hard_label])
-        .inc();
+    metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
 
     match result {
         Ok(receipt) => (StatusCode::OK, Json(receipt)).into_response(),

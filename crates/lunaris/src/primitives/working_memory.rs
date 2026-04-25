@@ -74,18 +74,14 @@ pub struct WorkingMemory {
 impl WorkingMemory {
     /// Construct a new scratchpad bound to `scope_prefix`.
     pub fn new(lunaris: Arc<Lunaris>, scope_prefix: impl Into<String>) -> Self {
-        Self {
-            lunaris,
-            scope_prefix: scope_prefix.into(),
-        }
+        Self { lunaris, scope_prefix: scope_prefix.into() }
     }
 
     /// Write `(k, v)` under `{scope_prefix}{k}` as an [`Episode`].
     pub async fn write(&self, k: &str, v: serde_json::Value) -> Result<Lsn, LunarisError> {
         let source = self.scope_key(k);
-        let content = serde_json::to_string(&v).map_err(|e| LunarisError::from(
-            lunaris_core::StorageError::from(e),
-        ))?;
+        let content = serde_json::to_string(&v)
+            .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
         let episode = Episode::new(source, content, self.lunaris.clock().as_ref());
         self.lunaris.ingest(episode).await
     }
@@ -93,36 +89,30 @@ impl WorkingMemory {
     /// Read the value for `k` scoped under `scope_prefix`, if present.
     pub async fn read(&self, k: &str) -> Result<Option<serde_json::Value>, LunarisError> {
         let source = self.scope_key(k);
-        let filter = Filter::Eq {
-            field: "source".into(),
-            value: serde_json::Value::String(source),
-        };
+        let filter =
+            Filter::Eq { field: "source".into(), value: serde_json::Value::String(source) };
         let plan = Vector::new("chunks", DEFAULT_TOP_K * FANOUT)
             .and(Keyword::bm25("chunks", DEFAULT_TOP_K * FANOUT))
             .fuse_rrf(RRF_K)
             .top(DEFAULT_TOP_K);
-        let hits = self
-            .lunaris
-            .recall()
-            .with_root(plan)
-            .filter(filter)
-            .execute(Query::text(k))
-            .await?;
+        let hits =
+            self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(k)).await?;
         match hits.into_iter().next() {
-            Some(h) => Ok(Some(serde_json::from_str(&h.text).map_err(|e| {
-                LunarisError::from(lunaris_core::StorageError::from(e))
-            })?)),
+            Some(h) => Ok(Some(
+                serde_json::from_str(&h.text)
+                    .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?,
+            )),
             None => Ok(None),
         }
     }
 
     /// Return all `(source, value)` pairs whose `source` starts with
     /// `{scope_prefix}{pattern}`.
-    pub async fn grep(&self, pattern: &str) -> Result<Vec<(String, serde_json::Value)>, LunarisError> {
-        let filter = Filter::StartsWith {
-            field: "source".into(),
-            prefix: self.scope_key(pattern),
-        };
+    pub async fn grep(
+        &self,
+        pattern: &str,
+    ) -> Result<Vec<(String, serde_json::Value)>, LunarisError> {
+        let filter = Filter::StartsWith { field: "source".into(), prefix: self.scope_key(pattern) };
         let plan = Vector::new("chunks", DEFAULT_TOP_K * FANOUT)
             .and(Keyword::bm25("chunks", DEFAULT_TOP_K * FANOUT))
             .fuse_rrf(RRF_K)
@@ -136,9 +126,8 @@ impl WorkingMemory {
             .await?;
         let mut out = Vec::with_capacity(hits.len());
         for h in hits {
-            let v: serde_json::Value = serde_json::from_str(&h.text).map_err(|e| {
-                LunarisError::from(lunaris_core::StorageError::from(e))
-            })?;
+            let v: serde_json::Value = serde_json::from_str(&h.text)
+                .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
             out.push((h.source, v));
         }
         Ok(out)
@@ -240,10 +229,7 @@ mod tests {
     #[test]
     fn working_memory_grep_uses_starts_with_filter() {
         let prefix = "chat:user-42/draft-";
-        let filter = Filter::StartsWith {
-            field: "source".into(),
-            prefix: prefix.into(),
-        };
+        let filter = Filter::StartsWith { field: "source".into(), prefix: prefix.into() };
         match filter {
             Filter::StartsWith { field, prefix: p } => {
                 assert_eq!(field, "source");

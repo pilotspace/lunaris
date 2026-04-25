@@ -57,7 +57,6 @@ pub const VERIFY_CONSUMER_GROUP: &str = "lunaris-verify-v0";
 /// Verify queue topic (matches Plan 03-03 `ingest.rs::VERIFY_QUEUE_TOPIC`).
 pub const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
-
 /// Default drain grace period (D-07).
 const DEFAULT_DRAIN_MS: u64 = 5000;
 
@@ -313,14 +312,10 @@ async fn apply_supersede(
     let now = clock.tick();
 
     // 3. Load existing rows.
-    let winner_existing = storage
-        .read_as_of(&winner_key, now)
-        .await
-        .map_err(LunarisError::Storage)?;
-    let loser_existing = storage
-        .read_as_of(&loser_key, now)
-        .await
-        .map_err(LunarisError::Storage)?;
+    let winner_existing =
+        storage.read_as_of(&winner_key, now).await.map_err(LunarisError::Storage)?;
+    let loser_existing =
+        storage.read_as_of(&loser_key, now).await.map_err(LunarisError::Storage)?;
 
     // 4. LOSER WriteOp — invalidate_sys + JSON-patch payload["bt"].
     let loser_op = match loser_existing {
@@ -335,10 +330,8 @@ async fn apply_supersede(
                     )))
                 })?;
 
-            payload["bt"] = serde_json::to_value(&loser_bt).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "loser bt serialize: {e}"
-                )))
+            payload["bt"] = serde_json::to_value(loser_bt).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!("loser bt serialize: {e}")))
             })?;
 
             let loser_bytes = serde_json::to_vec(&payload).map_err(|e| {
@@ -355,10 +348,7 @@ async fn apply_supersede(
             // invalidated even though it has no history. JSON-patch shape
             // mirrors the live-row path so the mock + real backends parse
             // it identically.
-            let synthetic_bt = BiTemporal {
-                valid: (now, None),
-                sys: (now, Some(now)),
-            };
+            let synthetic_bt = BiTemporal { valid: (now, None), sys: (now, Some(now)) };
             let payload = serde_json::json!({
                 "verifier_decision": "loser_superseded_no_prior_row",
                 "ulid": loser_id.to_string(),
@@ -392,10 +382,8 @@ async fn apply_supersede(
                     )))
                 })?;
 
-            payload["bt"] = serde_json::to_value(&winner_bt).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "winner bt serialize: {e}"
-                )))
+            payload["bt"] = serde_json::to_value(winner_bt).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!("winner bt serialize: {e}")))
             })?;
 
             let winner_bytes = serde_json::to_vec(&payload).map_err(|e| {
@@ -429,11 +417,7 @@ async fn apply_supersede(
 
     // 6. ONE atomic_write per decision (D-11 invariant).
     //    Exactly TWO ops in this call: [loser_op, winner_op].
-    storage
-        .atomic_write(&[loser_op, winner_op])
-        .await
-        .map(|_lsn| ())
-        .map_err(LunarisError::Storage)
+    storage.atomic_write(&[loser_op, winner_op]).await.map(|_lsn| ()).map_err(LunarisError::Storage)
 }
 
 /// Publish one `AuditEvent::VerifierArbitration` to `__lunaris_audit__`
@@ -447,7 +431,7 @@ async fn publish_arbitration_audit(
     storage: &Arc<dyn StoragePort>,
     decision: &VerifyDecision,
 ) -> Result<u64, LunarisError> {
-    let backend = serde_json::to_value(&decision.backend)
+    let backend = serde_json::to_value(decision.backend)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default();
@@ -524,7 +508,7 @@ mod tests {
 
     #[test]
     fn audit_topic_matches_d22_contract() {
-        assert_eq!(AUDIT_TOPIC, "__lunaris_audit__");
+        assert_eq!(lunaris_core::audit::AUDIT_TOPIC, "__lunaris_audit__");
     }
 
     #[tokio::test]
@@ -557,7 +541,7 @@ mod tests {
             "winner higher confidence",
             VerifierBackend::CloudAnthropic,
         );
-        let backend = serde_json::to_value(&d.backend)
+        let backend = serde_json::to_value(d.backend)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();

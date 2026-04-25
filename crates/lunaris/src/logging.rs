@@ -46,8 +46,8 @@ const PRODUCTION: &str = "production";
 pub fn init() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let prod = std::env::var(LUNARIS_ENV).as_deref() == Ok(PRODUCTION)
-        || !std::io::stdout().is_terminal();
+    let prod =
+        std::env::var(LUNARIS_ENV).as_deref() == Ok(PRODUCTION) || !std::io::stdout().is_terminal();
 
     if prod {
         let _ = fmt()

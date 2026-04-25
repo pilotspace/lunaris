@@ -96,27 +96,20 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 
 /// Chat scenario — synthetic per-turn write/read loop matching the
 /// `helios_chat_10k_turns_dual_backend` smoke in Plan 05-04.
-async fn run_chat_scenario(
-    url: &str,
-    env: &str,
-    budget: Budgets,
-) -> anyhow::Result<EvalRow> {
+async fn run_chat_scenario(url: &str, env: &str, budget: Budgets) -> anyhow::Result<EvalRow> {
     let started = Instant::now();
     let lunaris = Arc::new(lunaris::Lunaris::open(url).await?);
     let session_id = format!("eval-chat-{}", ulid::Ulid::new());
     let pad = lunaris::HeliosScratchpad::new(lunaris.clone(), &session_id);
 
-    let turns: usize = std::env::var("LUNARIS_EVAL_E2E_TURNS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(200);
+    let turns: usize =
+        std::env::var("LUNARIS_EVAL_E2E_TURNS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
 
     let mut recall_samples_ms: Vec<f64> = Vec::with_capacity(turns);
     for i in 0..turns {
         let path = format!("turn-{i:06}.md");
-        let content = format!(
-            "Turn {i}: hello eval e2e. The quick brown fox jumps over the lazy dog."
-        );
+        let content =
+            format!("Turn {i}: hello eval e2e. The quick brown fox jumps over the lazy dog.");
         pad.write(&path, content).await?;
         let t = Instant::now();
         let _ = pad.read(&path).await?;
@@ -138,27 +131,17 @@ async fn run_chat_scenario(
 
 /// Doc scenario — bulk-ingest synthetic markdown via build_md_doc_corpus,
 /// then 100 grep samples. Mirrors `helios_doc_rag_50k_md_dual_backend`.
-async fn run_doc_scenario(
-    url: &str,
-    env: &str,
-    budget: Budgets,
-) -> anyhow::Result<EvalRow> {
+async fn run_doc_scenario(url: &str, env: &str, budget: Budgets) -> anyhow::Result<EvalRow> {
     let started = Instant::now();
     let lunaris = Arc::new(lunaris::Lunaris::open(url).await?);
     let session_id = format!("eval-doc-{}", ulid::Ulid::new());
     let pad = lunaris::HeliosScratchpad::new(lunaris.clone(), &session_id);
 
-    let docs: u64 = std::env::var("LUNARIS_EVAL_E2E_DOCS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1_000);
+    let docs: u64 =
+        std::env::var("LUNARIS_EVAL_E2E_DOCS").ok().and_then(|v| v.parse().ok()).unwrap_or(1_000);
 
-    let written = crate::corpus::build_md_doc_corpus(
-        lunaris.storage().as_ref(),
-        docs,
-        0xDEAD_BEEF,
-    )
-    .await?;
+    let written =
+        crate::corpus::build_md_doc_corpus(lunaris.storage().as_ref(), docs, 0xDEAD_BEEF).await?;
     eprintln!("e2e-doc {env}: bulk-ingested {written} docs");
 
     let mut grep_samples_ms: Vec<f64> = Vec::with_capacity(100);
@@ -225,8 +208,10 @@ mod tests {
         // verify cardinality.
         let mut results: Vec<EvalRow> = Vec::new();
         super::run(&mut results).await.unwrap();
-        assert!(results.len() >= 4,
+        assert!(
+            results.len() >= 4,
             "e2e should emit ≥4 rows (2 backends × 2 scenarios); got {}",
-            results.len());
+            results.len()
+        );
     }
 }

@@ -66,20 +66,17 @@ pub async fn auth_middleware(
     });
 
     // Scope check — `RequiredScope` was attached by the per-route layer.
-    if let Some(req_scope) = req.extensions().get::<RequiredScope>().cloned() {
-        if !claims.scopes.iter().any(|s| s == req_scope.0) {
-            return forbidden(req_scope.0);
-        }
+    if let Some(req_scope) = req.extensions().get::<RequiredScope>().cloned()
+        && !claims.scopes.iter().any(|s| s == req_scope.0)
+    {
+        return forbidden(req_scope.0);
     }
 
     next.run(req).await
 }
 
 fn unauth(msg: &str) -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": "unauthorized", "message": msg })),
-    )
+    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "unauthorized", "message": msg })))
         .into_response()
 }
 

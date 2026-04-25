@@ -95,6 +95,7 @@ impl InterruptSite {
 
     /// Parse the canonical string. Returns `None` for unknown variants so
     /// callers can distinguish "malformed env" from "recognized site".
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "MidHeliosScratchpadWrite" => Some(InterruptSite::MidHeliosScratchpadWrite),
@@ -321,10 +322,8 @@ async fn scan_session_episodes(
 ) -> Result<(HashSet<String>, BTreeMap<String, String>), lunaris_core::LunarisError> {
     let mut ids: HashSet<String> = HashSet::new();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();
-    let mut stream = storage
-        .scan_range(b"episode:", None)
-        .await
-        .map_err(lunaris_core::LunarisError::Storage)?;
+    let mut stream =
+        storage.scan_range(b"episode:", None).await.map_err(lunaris_core::LunarisError::Storage)?;
     while let Some(item) = stream.next().await {
         let (k, v) = item.map_err(lunaris_core::LunarisError::Storage)?;
         let key_str = match std::str::from_utf8(&k) {
@@ -374,10 +373,11 @@ async fn scan_chunk_episode_ids(
                 Err(_) => continue,
             };
             // chunk:<episode_id>:<seq>   OR   chunks:<episode_id>:<seq>
-            let rest = match key_str.strip_prefix("chunk:").or_else(|| key_str.strip_prefix("chunks:")) {
-                Some(r) => r,
-                None => continue,
-            };
+            let rest =
+                match key_str.strip_prefix("chunk:").or_else(|| key_str.strip_prefix("chunks:")) {
+                    Some(r) => r,
+                    None => continue,
+                };
             let ep_id = match rest.split(':').next() {
                 Some(s) => s.to_string(),
                 None => continue,
@@ -400,10 +400,8 @@ mod tests {
 
     #[test]
     fn interrupt_site_round_trip() {
-        for v in [
-            InterruptSite::MidHeliosScratchpadWrite,
-            InterruptSite::MidConsolidatorPromotion,
-        ] {
+        for v in [InterruptSite::MidHeliosScratchpadWrite, InterruptSite::MidConsolidatorPromotion]
+        {
             assert_eq!(InterruptSite::from_str(v.as_str()), Some(v));
         }
         assert_eq!(InterruptSite::from_str("garbage"), None);

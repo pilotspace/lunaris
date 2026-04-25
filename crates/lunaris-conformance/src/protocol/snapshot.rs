@@ -27,12 +27,8 @@ pub async fn ndjson_stream(client: &Client, base: &Url, token: &str) -> anyhow::
         "snapshot expected 200, got {}",
         resp.status()
     );
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let ct =
+        resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     anyhow::ensure!(
         ct.contains("ndjson") || ct.contains("application/json"),
         "snapshot content-type expected ndjson, got {ct:?}"

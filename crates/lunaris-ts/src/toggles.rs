@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Plan 08-03 BIND-TS-04 — three-surface pipeline toggles (code + env + config).
 //!
 //! The codegen-emitted [`crate::GraphPipelineHandle`] +
@@ -153,8 +154,5 @@ pub fn from_config(config: serde_json::Value) -> Vec<bool> {
 }
 
 fn read_nested_enabled(v: &serde_json::Value, key: &str) -> bool {
-    v.get(key)
-        .and_then(|nested| nested.get("enabled"))
-        .and_then(|b| b.as_bool())
-        .unwrap_or(false)
+    v.get(key).and_then(|nested| nested.get("enabled")).and_then(|b| b.as_bool()).unwrap_or(false)
 }

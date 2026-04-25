@@ -28,10 +28,7 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 // Imports + `probe_backend` fn are only used behind the `moon-it` + `pg-it`
 // feature gate; suppress the clippy dead-code warnings on the default build.
-#![cfg_attr(
-    not(all(feature = "moon-it", feature = "pg-it")),
-    allow(unused_imports, dead_code)
-)]
+#![cfg_attr(not(all(feature = "moon-it", feature = "pg-it")), allow(unused_imports, dead_code))]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -49,11 +46,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("{name}: SKIP (unknown URL scheme)");
         return None;
@@ -112,14 +105,8 @@ async fn document_corpus_moon_postgres_parity() -> anyhow::Result<()> {
         // `DocumentCorpus::search` consumes `self` — construct fresh builders
         // per query so the fluent `.top(5).search(query)` chain matches the
         // plan action block verbatim.
-        let moon_hits = DocumentCorpus::new(moon.clone(), "chunks:")
-            .top(5)
-            .search(query)
-            .await?;
-        let pg_hits = DocumentCorpus::new(postgres.clone(), "chunks:")
-            .top(5)
-            .search(query)
-            .await?;
+        let moon_hits = DocumentCorpus::new(moon.clone(), "chunks:").top(5).search(query).await?;
+        let pg_hits = DocumentCorpus::new(postgres.clone(), "chunks:").top(5).search(query).await?;
 
         if moon_hits.len() != pg_hits.len() {
             divergences.push(format!(

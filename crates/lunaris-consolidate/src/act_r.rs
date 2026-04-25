@@ -78,10 +78,8 @@ impl ActRScorer {
         if refs.is_empty() {
             return f64::NEG_INFINITY;
         }
-        let sum: f64 = refs
-            .iter()
-            .map(|r| (r.elapsed_seconds.max(1) as f64).powf(-self.config.decay))
-            .sum();
+        let sum: f64 =
+            refs.iter().map(|r| (r.elapsed_seconds.max(1) as f64).powf(-self.config.decay)).sum();
         sum.ln() + spreading + self.config.noise
     }
 
@@ -139,9 +137,8 @@ fn synthesize_fact_id_from_episode(episode_id: Ulid) -> FactId {
     hasher.update(b"lunaris-consolidate::episode-fact::");
     hasher.update(&episode_id.to_bytes());
     let h = hasher.finalize();
-    let bytes: [u8; 16] = h.as_bytes()[..16]
-        .try_into()
-        .expect("blake3 output is 32 bytes; first 16 always fit");
+    let bytes: [u8; 16] =
+        h.as_bytes()[..16].try_into().expect("blake3 output is 32 bytes; first 16 always fit");
     FactId(bytes)
 }
 
@@ -256,10 +253,8 @@ impl Consolidator for ActRConsolidator {
         // "now" in whole seconds since UNIX epoch; floor-safe when SystemTime
         // is pre-epoch (extremely unlikely, but don't panic on a misconfigured
         // clock).
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now_secs =
+            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
         // Group by episode_id so multiple debounced events for the same
         // episode coalesce into one scoring pass — matches the worker's
@@ -305,15 +300,9 @@ mod tests {
         let a = s.activation(&refs, 0.0);
         // 60^-0.5 ≈ 0.12910, 120^-0.5 ≈ 0.09129, sum ≈ 0.22039, ln ≈ -1.5125
         let expected = (60_f64.powf(-0.5) + 120_f64.powf(-0.5)).ln();
-        assert!(
-            (a - expected).abs() < 1e-9,
-            "activation = {a}, expected = {expected}"
-        );
+        assert!((a - expected).abs() < 1e-9, "activation = {a}, expected = {expected}");
         // Cross-check the approximate literal from the plan:
-        assert!(
-            (a - (-1.514)).abs() < 1e-2,
-            "activation ~= -1.514; got {a}"
-        );
+        assert!((a - (-1.514)).abs() < 1e-2, "activation ~= -1.514; got {a}");
     }
 
     /// Test 2: Empty refs → `-∞`. The scorer's archive predicate will then
@@ -504,9 +493,8 @@ mod tests {
         let ep = Ulid::from_bytes([1; 16]);
         let now_secs = 1_000_000u64;
         // All events at elapsed=1s (lsn_wall_ms = (now_secs - 1) * 1000).
-        let events: Vec<ConsolidateEvent> = (0..16)
-            .map(|i| event_for(ep, (now_secs - 1) * 1000, i))
-            .collect();
+        let events: Vec<ConsolidateEvent> =
+            (0..16).map(|i| event_for(ep, (now_secs - 1) * 1000, i)).collect();
         let d = c.classify_episode(now_secs, &events);
         match d {
             EpisodeDecision::Promote(p) => {
@@ -562,9 +550,8 @@ mod tests {
         let c = ActRConsolidator::default();
         let ep = Ulid::from_bytes([3; 16]);
         let now_secs = 1_000_000u64;
-        let events: Vec<ConsolidateEvent> = (0..3)
-            .map(|i| event_for(ep, (now_secs - 2) * 1000, i))
-            .collect();
+        let events: Vec<ConsolidateEvent> =
+            (0..3).map(|i| event_for(ep, (now_secs - 2) * 1000, i)).collect();
         let d = c.classify_episode(now_secs, &events);
         assert_eq!(d, EpisodeDecision::Noop, "mid-band activation must not emit");
     }
@@ -574,8 +561,7 @@ mod tests {
     #[tokio::test]
     async fn act_r_consolidator_empty_batch_returns_empty_report() {
         let c = ActRConsolidator::default();
-        let s: std::sync::Arc<dyn lunaris_core::StoragePort> =
-            std::sync::Arc::new(UnusedStorage);
+        let s: std::sync::Arc<dyn lunaris_core::StoragePort> = std::sync::Arc::new(UnusedStorage);
         let report = c.consolidate(s, &[]).await.unwrap();
         assert!(report.promotions.is_empty());
         assert!(report.archives.is_empty());
@@ -588,17 +574,13 @@ mod tests {
     #[tokio::test]
     async fn act_r_consolidator_groups_by_episode_id_deterministically() {
         let c = ActRConsolidator::default();
-        let s: std::sync::Arc<dyn lunaris_core::StoragePort> =
-            std::sync::Arc::new(UnusedStorage);
+        let s: std::sync::Arc<dyn lunaris_core::StoragePort> = std::sync::Arc::new(UnusedStorage);
         let ep_a = Ulid::from_bytes([0x0A; 16]);
         let ep_b = Ulid::from_bytes([0x0B; 16]);
         // 16 refs at elapsed=1s for each of ep_a and ep_b -> both promote.
         // Derive lsn_wall_ms from a recent "now" so elapsed ≈ 1s regardless of
         // wall clock drift during the test.
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
         let lsn_ms = now_ms.saturating_sub(1_000);
         let mut batch: Vec<ConsolidateEvent> = Vec::new();
         for ep in [ep_b, ep_a] {
@@ -609,10 +591,7 @@ mod tests {
         }
         let report = c.consolidate(s, &batch).await.unwrap();
         assert_eq!(report.promotions.len(), 2, "both episodes promote");
-        assert_eq!(
-            report.promotions[0].episode_id, ep_a,
-            "ep_a (0x0A) sorts before ep_b (0x0B)"
-        );
+        assert_eq!(report.promotions[0].episode_id, ep_a, "ep_a (0x0A) sorts before ep_b (0x0B)");
         assert_eq!(report.promotions[1].episode_id, ep_b);
         assert!(report.archives.is_empty());
     }

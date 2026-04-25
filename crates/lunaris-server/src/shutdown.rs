@@ -18,10 +18,7 @@ pub struct Shutdown {
 impl Shutdown {
     /// Construct a fresh shutdown handle with the given grace window.
     pub fn new(grace_secs: u64) -> Self {
-        Self {
-            notify: Arc::new(Notify::new()),
-            grace_secs,
-        }
+        Self { notify: Arc::new(Notify::new()), grace_secs }
     }
 
     /// Borrow the inner `Arc<Notify>` (e.g., for embedding in another future).

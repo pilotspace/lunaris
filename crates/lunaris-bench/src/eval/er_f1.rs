@@ -48,24 +48,19 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let _ = std::fs::create_dir_all(&cache);
 
     // W-7 fix: reuse shared download_dataset helper from longmemeval.rs.
-    let dataset_path = match crate::eval::longmemeval::download_dataset(
-        HF_REPO,
-        DATASET_FILENAME,
-        &cache,
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            results.push(EvalRow::skipped(
-                HARNESS,
-                METRIC,
-                THRESHOLD,
-                &format!("WNUT-2017 download failed: {e}"),
-            ));
-            return Ok(());
-        }
-    };
+    let dataset_path =
+        match crate::eval::longmemeval::download_dataset(HF_REPO, DATASET_FILENAME, &cache).await {
+            Ok(p) => p,
+            Err(e) => {
+                results.push(EvalRow::skipped(
+                    HARNESS,
+                    METRIC,
+                    THRESHOLD,
+                    &format!("WNUT-2017 download failed: {e}"),
+                ));
+                return Ok(());
+            }
+        };
 
     // Verify the dataset bytes are parseable (sanity gate).
     let bytes = match std::fs::read(&dataset_path) {
@@ -112,10 +107,7 @@ mod tests {
         let mut results: Vec<EvalRow> = Vec::new();
         super::run(&mut results).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(matches!(
-            results[0].status.as_str(),
-            "SKIPPED" | "PASS" | "FAIL"
-        ));
+        assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
         assert_eq!(results[0].harness, HARNESS);
         assert_eq!(results[0].metric, METRIC);
         assert_eq!(results[0].threshold, THRESHOLD);

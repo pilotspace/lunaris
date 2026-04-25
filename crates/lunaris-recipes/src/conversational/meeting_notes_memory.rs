@@ -18,8 +18,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::storage::types::{Filter, Lsn};
 use lunaris_core::LunarisError;
+use lunaris_core::storage::types::{Filter, Lsn};
 use lunaris_retrieve::Hit;
 
 use crate::{MessageStream, WorkingMemory};
@@ -78,10 +78,7 @@ impl MeetingNotesMemory {
     // semantics unchanged. All existing call sites pass owned `Vec<String>`
     // or `vec!["x".into(), ...]` literals which transparently coerce.
     pub fn attendees(&self, attendees: Vec<String>) -> MeetingNotesQuery {
-        MeetingNotesQuery {
-            lunaris: self.lunaris.clone(),
-            participants: attendees,
-        }
+        MeetingNotesQuery { lunaris: self.lunaris.clone(), participants: attendees }
     }
 
     /// Opt-in the v0.1.0 graph pipeline (D-07). Blueprint §5.2
@@ -114,16 +111,8 @@ impl MeetingNotesQuery {
     pub async fn recall(&self, query: &str) -> Result<Vec<Hit>, LunarisError> {
         use lunaris_retrieve::{Keyword, Query, Vector};
         let filter = build_attendees_filter(&self.participants);
-        let plan = Vector::new("chunks", 24)
-            .and(Keyword::bm25("chunks", 24))
-            .fuse_rrf(60)
-            .top(8);
-        self.lunaris
-            .recall()
-            .with_root(plan)
-            .filter(filter)
-            .execute(Query::text(query))
-            .await
+        let plan = Vector::new("chunks", 24).and(Keyword::bm25("chunks", 24)).fuse_rrf(60).top(8);
+        self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(query)).await
     }
 }
 
@@ -137,10 +126,7 @@ fn build_attendees_filter(participants: &[String]) -> Filter {
         })
         .collect();
     match parts.len() {
-        0 => Filter::StartsWith {
-            field: "source".into(),
-            prefix: MEETING_PREFIX.into(),
-        },
+        0 => Filter::StartsWith { field: "source".into(), prefix: MEETING_PREFIX.into() },
         1 => parts.into_iter().next().unwrap(),
         _ => Filter::And(parts),
     }
@@ -170,7 +156,7 @@ mod tests {
     /// name `participant_id` and the empty / single / multi shapes.
     #[test]
     fn meeting_notes_attendees_filter_shapes() {
-        use super::{build_attendees_filter, MEETING_PREFIX};
+        use super::{MEETING_PREFIX, build_attendees_filter};
         use lunaris_core::storage::types::Filter;
         match build_attendees_filter(&[]) {
             Filter::StartsWith { prefix, .. } => assert_eq!(prefix, MEETING_PREFIX),

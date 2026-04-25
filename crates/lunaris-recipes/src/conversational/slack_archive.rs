@@ -41,8 +41,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::storage::types::{Filter, Lsn};
 use lunaris_core::LunarisError;
+use lunaris_core::storage::types::{Filter, Lsn};
 use lunaris_retrieve::Hit;
 
 use crate::MessageStream;
@@ -66,10 +66,7 @@ impl SlackArchive {
     /// Construct a root archive handle. `MessageStream` is scoped at
     /// [`SLACK_ARCHIVE_PREFIX`].
     pub fn new(lunaris: Arc<Lunaris>) -> Self {
-        Self {
-            inner_ms: MessageStream::new(lunaris.clone(), SLACK_ARCHIVE_PREFIX),
-            lunaris,
-        }
+        Self { inner_ms: MessageStream::new(lunaris.clone(), SLACK_ARCHIVE_PREFIX), lunaris }
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.
@@ -145,16 +142,8 @@ impl SlackArchiveQuery {
     pub async fn recall(&self, query: &str) -> Result<Vec<Hit>, LunarisError> {
         use lunaris_retrieve::{Keyword, Query, Vector};
         let filter = build_filter(self);
-        let plan = Vector::new("chunks", 24)
-            .and(Keyword::bm25("chunks", 24))
-            .fuse_rrf(60)
-            .top(8);
-        self.lunaris
-            .recall()
-            .with_root(plan)
-            .filter(filter)
-            .execute(Query::text(query))
-            .await
+        let plan = Vector::new("chunks", 24).and(Keyword::bm25("chunks", 24)).fuse_rrf(60).top(8);
+        self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(query)).await
     }
 }
 
@@ -177,10 +166,7 @@ fn build_filter(q: &SlackArchiveQuery) -> Filter {
         });
     }
     match parts.len() {
-        0 => Filter::StartsWith {
-            field: "source".into(),
-            prefix: SLACK_ARCHIVE_PREFIX.into(),
-        },
+        0 => Filter::StartsWith { field: "source".into(), prefix: SLACK_ARCHIVE_PREFIX.into() },
         1 => parts.into_iter().next().unwrap(),
         _ => Filter::And(parts),
     }

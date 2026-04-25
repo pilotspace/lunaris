@@ -40,17 +40,14 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use lunaris::{Consolidator, Lunaris, NoopReranker, Reranker};
-use lunaris_consolidate::{
-    ConsolidateEvent, ConsolidationReport, PromotionEvent,
-    types::FactId,
-};
+use lunaris_consolidate::{ConsolidateEvent, ConsolidationReport, PromotionEvent, types::FactId};
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
 use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
 };
 use lunaris_core::{
-    BiTemporal, Embedder, Episode, Hlc, HlcClock, LunarisError, StorageCapabilities,
-    StorageError, StoragePort, StubEmbedder,
+    BiTemporal, Embedder, Episode, Hlc, HlcClock, LunarisError, StorageCapabilities, StorageError,
+    StoragePort, StubEmbedder,
 };
 use lunaris_extract::EntityId;
 use parking_lot::Mutex;
@@ -85,19 +82,11 @@ impl Consolidator for AlwaysPromoteConsolidator {
                 // Deterministic synthetic FactId — the scope-filter test
                 // doesn't inspect fact content, only the promotion's
                 // episode_id (to map back to source).
-                fact_id: FactId::from_triple(
-                    EntityId([1; 16]),
-                    "test",
-                    EntityId([2; 16]),
-                ),
+                fact_id: FactId::from_triple(EntityId([1; 16]), "test", EntityId([2; 16])),
                 activation_score: 1.0,
             });
         }
-        Ok(ConsolidationReport {
-            promotions,
-            archives: Vec::new(),
-            communities_rebuilt: 0,
-        })
+        Ok(ConsolidationReport { promotions, archives: Vec::new(), communities_rebuilt: 0 })
     }
 
     fn applies(&self) -> bool {
@@ -329,9 +318,7 @@ async fn consolidator_scope_isolation_zero_other_promotions() {
 
     // Enable scope-filter for Helios BEFORE seeding so the worker spawns
     // with the correct filter in place.
-    lunaris
-        .consolidator_pipeline()
-        .enable_for_scope("helios:fs/");
+    lunaris.consolidator_pipeline().enable_for_scope("helios:fs/");
     assert_eq!(
         lunaris.consolidator_pipeline().scope_prefix(),
         Some("helios:fs/".to_string()),
@@ -544,13 +531,10 @@ async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> 
             }
             Err(e) => return Err(e.into()),
         };
-        let lunaris = lunaris.with_consolidator(
-            Arc::new(AlwaysPromoteConsolidator) as Arc<dyn Consolidator>,
-        );
+        let lunaris =
+            lunaris.with_consolidator(Arc::new(AlwaysPromoteConsolidator) as Arc<dyn Consolidator>);
 
-        lunaris
-            .consolidator_pipeline()
-            .enable_for_scope("helios:fs/");
+        lunaris.consolidator_pipeline().enable_for_scope("helios:fs/");
 
         let session = format!("live-isolation-{}", ulid::Ulid::new());
         let mut id_to_source: HashMap<ulid::Ulid, String> = HashMap::new();
@@ -719,19 +703,16 @@ async fn run_scope_isolation_scenario(
     }
 
     let (lunaris, broker) = build_in_process_lunaris_with(consolidator);
-    lunaris
-        .consolidator_pipeline()
-        .enable_for_scope("helios:fs/");
+    lunaris.consolidator_pipeline().enable_for_scope("helios:fs/");
 
     // now_ms minus 1 second so `ActRConsolidator::consolidate` sees
     // elapsed ≈ 1s (floored at 1). Determinism: the scenario is not
     // wall-clock-sensitive so long as the 1s offset holds — runs that
     // sit on a debounce flush > 1s late still see elapsed ≤ small-
     // constant, and `ln(16 × k^-0.5)` remains > 1.0 for k up to ~50.
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+    let now_ms =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            as u64;
     let lsn_ms = now_ms.saturating_sub(1_000);
 
     // Map every episode_id we'll publish back to its source so the

@@ -62,7 +62,6 @@ pub const CONSOLIDATE_CONSUMER_GROUP: &str = "lunaris-consolidate-v0";
 /// Consolidate queue topic.
 pub const CONSOLIDATE_TOPIC: &str = "__lunaris_consolidate__";
 
-
 /// Debounce window default (D-17).
 const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
 
@@ -187,10 +186,7 @@ async fn drain_loop(
 /// Deserialize one queue payload into a [`ConsolidateEvent`] and append it
 /// to the `episode_id`-keyed debounce buffer. Malformed payloads are logged
 /// + dropped (T-04-02-01 tampering mitigation).
-fn ingest_into_buffer(
-    buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
-    payload: Bytes,
-) {
+fn ingest_into_buffer(buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>, payload: Bytes) {
     match serde_json::from_slice::<ConsolidateEvent>(&payload) {
         Ok(ev) => {
             buffer.entry(ev.episode_id).or_default().push(ev);
@@ -235,10 +231,7 @@ async fn flush(
         // NoopConsolidator short-circuit — applies()==false means iterate the
         // buffer but never call consolidate (saves the spawn + the clone).
         if !consolidator.applies() {
-            tracing::debug!(
-                buffered_episodes,
-                "consolidate_worker_noop_flush; clearing buffer"
-            );
+            tracing::debug!(buffered_episodes, "consolidate_worker_noop_flush; clearing buffer");
             buffer.clear();
             return;
         }
@@ -259,21 +252,22 @@ async fn flush(
         let c = consolidator.clone();
         let s = storage.clone();
         let scope: Option<String> = source_prefix.map(|p| p.to_string());
-        let report = match tokio::spawn(async move {
-            c.consolidate_scoped(s, &evts, scope.as_deref()).await
-        })
-        .await
-        {
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => {
-                tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
-                return;
-            }
-            Err(join_err) => {
-                tracing::error!(err = %join_err, "consolidate_worker_panicked; loop continues");
-                return;
-            }
-        };
+        let report =
+            match tokio::spawn(
+                async move { c.consolidate_scoped(s, &evts, scope.as_deref()).await },
+            )
+            .await
+            {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    tracing::warn!(err = %e, "consolidate_worker_returned_error; events dropped");
+                    return;
+                }
+                Err(join_err) => {
+                    tracing::error!(err = %join_err, "consolidate_worker_panicked; loop continues");
+                    return;
+                }
+            };
 
         publish_per_event_audits(storage, &report).await;
     }
@@ -288,10 +282,7 @@ async fn flush(
 /// `report.communities_rebuilt` is logged via `tracing::info!` only — there
 /// is no `AuditEvent::ConsolidatorRebuild` variant in v0 (deferred per the
 /// plan's threat model + D-22 audit shape).
-async fn publish_per_event_audits(
-    storage: &Arc<dyn StoragePort>,
-    report: &ConsolidationReport,
-) {
+async fn publish_per_event_audits(storage: &Arc<dyn StoragePort>, report: &ConsolidationReport) {
     for p in &report.promotions {
         let _ = lunaris_core::audit::publish_audit_event(storage, promotion_event(p)).await;
     }
@@ -356,7 +347,7 @@ mod tests {
 
     #[test]
     fn audit_topic_matches_d22_contract() {
-        assert_eq!(AUDIT_TOPIC, "__lunaris_audit__");
+        assert_eq!(lunaris_core::audit::AUDIT_TOPIC, "__lunaris_audit__");
     }
 
     #[test]
@@ -391,7 +382,11 @@ mod tests {
         ingest_into_buffer(&mut buf, payload2.into());
         ingest_into_buffer(&mut buf, payload_other.into());
         assert_eq!(buf.len(), 2, "two distinct episode_ids");
-        assert_eq!(buf.get(&ep).map(|v| v.len()), Some(2), "two events for the same episode coalesce");
+        assert_eq!(
+            buf.get(&ep).map(|v| v.len()),
+            Some(2),
+            "two events for the same episode coalesce"
+        );
     }
 
     #[test]
@@ -417,7 +412,7 @@ mod tests {
             fact_id: FactId::from_triple(EntityId([1; 16]), "knows", EntityId([2; 16])),
             activation_score: 1.5,
         };
-        let env = serde_json::to_value(&promotion_event(&p)).unwrap();
+        let env = serde_json::to_value(promotion_event(&p)).unwrap();
         assert_eq!(
             env.get("kind").and_then(|v: &serde_json::Value| v.as_str()),
             Some("ConsolidatorPromotion")
@@ -425,8 +420,7 @@ mod tests {
         assert!(env.get("episode_id").is_some());
         assert!(env.get("fact_id").is_some());
         assert_eq!(
-            env.get("activation_score")
-                .and_then(|v: &serde_json::Value| v.as_f64()),
+            env.get("activation_score").and_then(|v: &serde_json::Value| v.as_f64()),
             Some(1.5)
         );
     }
@@ -440,15 +434,14 @@ mod tests {
             final_activation: -0.7,
             moved_to: "cold_storage".to_string(),
         };
-        let env = serde_json::to_value(&archive_event(&a)).unwrap();
+        let env = serde_json::to_value(archive_event(&a)).unwrap();
         assert_eq!(
             env.get("kind").and_then(|v: &serde_json::Value| v.as_str()),
             Some("ConsolidatorArchive")
         );
         assert!(env.get("fact_id").is_some());
         assert_eq!(
-            env.get("final_activation")
-                .and_then(|v: &serde_json::Value| v.as_f64()),
+            env.get("final_activation").and_then(|v: &serde_json::Value| v.as_f64()),
             Some(-0.7)
         );
         assert_eq!(

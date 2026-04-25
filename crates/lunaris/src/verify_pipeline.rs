@@ -156,9 +156,8 @@ impl VerifierPipelineHandle {
         // call bind_clock), construct a fresh node-0 HlcClock so the worker
         // still spawns + the ON-OFF observability shape holds.
         let clock = self.clock.read().clone().unwrap_or_else(|| HlcClock::new(0));
-        let verifier = self
-            .snapshot_verifier()
-            .unwrap_or_else(|| Arc::new(NoopVerifier) as Arc<dyn Verifier>);
+        let verifier =
+            self.snapshot_verifier().unwrap_or_else(|| Arc::new(NoopVerifier) as Arc<dyn Verifier>);
         let shutdown = self.shutdown.clone();
         let handle = tokio::spawn(async move {
             match lunaris_verify::run_verify_worker(storage, verifier, shutdown, clock).await {
@@ -344,11 +343,7 @@ mod tests {
         h.set_verifier(replacement);
 
         assert!(h.is_enabled(), "set_verifier must not flip the toggle");
-        assert_eq!(
-            h.state_change_count(),
-            1,
-            "set_verifier must not increment state changes"
-        );
+        assert_eq!(h.state_change_count(), 1, "set_verifier must not increment state changes");
     }
 
     #[test]
@@ -369,10 +364,7 @@ mod tests {
         let h = VerifierPipelineHandle::new(false, Arc::new(NoopVerifier));
         h.enable();
         assert!(h.is_enabled());
-        assert!(
-            h.worker_handle.lock().is_none(),
-            "no storage bound → no worker spawned (B-10)"
-        );
+        assert!(h.worker_handle.lock().is_none(), "no storage bound → no worker spawned (B-10)");
     }
 
     /// B-10: the `new()` body initializes all 6 fields inline. The struct is

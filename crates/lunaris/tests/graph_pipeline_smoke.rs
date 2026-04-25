@@ -115,11 +115,7 @@ impl RecordingStorageWithKeyword {
     /// assertions actually care about). The consolidate-queue publishes
     /// are exercised by Plan 04-04's consolidator_pipeline_smoke tests.
     fn published_verify_count(&self) -> usize {
-        self.published_messages
-            .lock()
-            .iter()
-            .filter(|(t, _, _)| t == "__lunaris_verify__")
-            .count()
+        self.published_messages.lock().iter().filter(|(t, _, _)| t == "__lunaris_verify__").count()
     }
 
     fn set_canned_graph(&self, gr: GraphResult) {
@@ -510,11 +506,8 @@ async fn validator_needs_review_publishes_verify_message() {
     // Plan 04-04 D-16: every ingest now ALSO publishes one
     // __lunaris_consolidate__ event. Filter the topic list to the verify
     // topic before asserting "all on the verify queue".
-    let verify_topics: Vec<String> = rec
-        .published_topics()
-        .into_iter()
-        .filter(|t| t == "__lunaris_verify__")
-        .collect();
+    let verify_topics: Vec<String> =
+        rec.published_topics().into_iter().filter(|t| t == "__lunaris_verify__").collect();
     assert!(
         verify_topics.iter().all(|t| t == "__lunaris_verify__"),
         "all filtered verify-topic publishes target __lunaris_verify__; got {:?}",

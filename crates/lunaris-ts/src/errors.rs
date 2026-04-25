@@ -73,10 +73,7 @@ impl NapiErrLike for serde_json::Error {
 /// check in the handwritten DSL adapter. Callers supply the coarse
 /// subsystem code explicitly.
 #[allow(dead_code)]
-pub(crate) fn napi_err_with_code<D: std::fmt::Display>(
-    code: &'static str,
-    e: D,
-) -> NapiError {
+pub(crate) fn napi_err_with_code<D: std::fmt::Display>(code: &'static str, e: D) -> NapiError {
     NapiError::new(Status::GenericFailure, format!("{code}: {e}"))
 }
 

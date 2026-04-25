@@ -92,10 +92,7 @@ pub trait Verifier: Send + Sync + 'static {
     /// worker skips the atomic_write for deferred decisions. Returning
     /// `Err(...)` signals a hard failure; the worker logs + nacks the
     /// message so the broker can redeliver.
-    async fn verify(
-        &self,
-        item: NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError>;
+    async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError>;
 
     /// Returns `true` when this verifier produces real arbitrations; `false`
     /// for [`NoopVerifier`] so the worker can short-circuit before calling

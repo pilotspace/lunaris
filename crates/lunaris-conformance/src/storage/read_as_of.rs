@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use lunaris_core::hlc::Hlc;
-use lunaris_core::storage::types::WriteOp;
 use lunaris_core::storage::StoragePort;
+use lunaris_core::storage::types::WriteOp;
 
 pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     let key: Vec<u8> = b"conformance:read_as_of:k1".to_vec();
@@ -34,22 +34,12 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
         pre,
     );
 
-    storage
-        .atomic_write(&[WriteOp::KvPut {
-            key: key.clone(),
-            value: value.clone(),
-        }])
-        .await?;
+    storage.atomic_write(&[WriteOp::KvPut { key: key.clone(), value: value.clone() }]).await?;
 
-    let now = Hlc {
-        wall_ms: u64::MAX / 2,
-        counter: 0,
-        node_id: 0,
-    };
-    let post = storage
-        .read_as_of(&key, now)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None"))?;
+    let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
+    let post = storage.read_as_of(&key, now).await?.ok_or_else(|| {
+        anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None")
+    })?;
     anyhow::ensure!(
         post.value.as_ref() == value.as_slice(),
         "read_as_of::snapshot: payload mismatch — got {} bytes, want {}",

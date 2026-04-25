@@ -81,11 +81,7 @@ impl MessageStream {
     /// field. Conventional value: `"messages:"`; per-wrapper recipes
     /// specialise further (e.g. `"slack:archive/"`, `"email:"`).
     pub fn new(lunaris: Arc<Lunaris>, thread_prefix: impl Into<String>) -> Self {
-        Self {
-            lunaris,
-            thread_prefix: thread_prefix.into(),
-            top_k: DEFAULT_TOP_K,
-        }
+        Self { lunaris, thread_prefix: thread_prefix.into(), top_k: DEFAULT_TOP_K }
     }
 
     /// Override the default `top_k` for [`recall`](Self::recall). Returns
@@ -111,10 +107,7 @@ impl MessageStream {
         let participant_id = participant_id.into();
         let mut metadata = serde_json::Map::new();
         metadata.insert("thread_id".into(), serde_json::Value::String(thread_id.clone()));
-        metadata.insert(
-            "participant_id".into(),
-            serde_json::Value::String(participant_id),
-        );
+        metadata.insert("participant_id".into(), serde_json::Value::String(participant_id));
         let episode = Episode {
             id: Ulid::new(),
             source: format!("{}{}/", self.thread_prefix, thread_id),
@@ -145,15 +138,10 @@ impl MessageStream {
             .and(Keyword::bm25("chunks", over_fetch))
             .fuse_rrf(60)
             .top(over_fetch);
-        let hits: Vec<Hit> = self
-            .lunaris
-            .recall()
-            .with_root(plan)
-            .execute(Query::text(query))
-            .await?;
-        let prefix = self.thread_prefix.clone();
         let hits: Vec<Hit> =
-            hits.into_iter().filter(|h| h.source.starts_with(&prefix)).collect();
+            self.lunaris.recall().with_root(plan).execute(Query::text(query)).await?;
+        let prefix = self.thread_prefix.clone();
+        let hits: Vec<Hit> = hits.into_iter().filter(|h| h.source.starts_with(&prefix)).collect();
         let now = self.lunaris.clock().tick();
         let mut rescored: Vec<(f32, Hit)> = hits
             .into_iter()
@@ -226,8 +214,7 @@ mod tests {
     fn message_stream_recency_scorer_matches_act_r_formula() {
         let ages = [1.0_f32, 60.0, 3600.0];
         let got = act_r_base_level(&ages);
-        let expected =
-            (1.0_f32.powf(-0.5) + 60.0_f32.powf(-0.5) + 3600.0_f32.powf(-0.5)).ln();
+        let expected = (1.0_f32.powf(-0.5) + 60.0_f32.powf(-0.5) + 3600.0_f32.powf(-0.5)).ln();
         assert!(
             (got - expected).abs() < 1e-5,
             "ACT-R formula mismatch: got {got}, expected {expected}"

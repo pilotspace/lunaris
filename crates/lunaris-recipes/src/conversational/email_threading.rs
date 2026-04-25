@@ -20,8 +20,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::storage::types::Lsn;
 use lunaris_core::LunarisError;
+use lunaris_core::storage::types::Lsn;
 use lunaris_retrieve::Hit;
 
 use crate::{MessageStream, WorkingMemory};

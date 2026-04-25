@@ -24,12 +24,7 @@ pub async fn happy_path(client: &Client, base: &Url, token: &str) -> anyhow::Res
         "t_ref": chrono::Utc::now().to_rfc3339(),
         "metadata": {},
     });
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(url).bearer_auth(token).json(&body).send().await?;
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await?;
     anyhow::ensure!(

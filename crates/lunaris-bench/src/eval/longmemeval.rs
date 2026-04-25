@@ -133,13 +133,9 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 /// `~/.cache/lunaris/eval/` (`dirs::cache_dir()`); fall back to `./`. Pure
 /// function — no env mutation. CONTEXT.md D-21 verbatim.
 pub(crate) fn resolve_cache_dir() -> PathBuf {
-    std::env::var("LUNARIS_EVAL_CACHE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::cache_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("lunaris/eval")
-        })
+    std::env::var("LUNARIS_EVAL_CACHE_DIR").map(PathBuf::from).unwrap_or_else(|_| {
+        dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".")).join("lunaris/eval")
+    })
 }
 
 /// **B-4 + W-7 fix.** Download a single file from a HuggingFace dataset
@@ -254,16 +250,14 @@ mod tests {
         assert_eq!(results.len(), 1);
         // Either SKIPPED (env unset / download failed / open failed) or
         // PASS/FAIL (live run with full parser). We only assert cardinality.
-        assert!(matches!(
-            results[0].status.as_str(),
-            "SKIPPED" | "PASS" | "FAIL"
-        ));
+        assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
         assert_eq!(results[0].harness, HARNESS);
         assert_eq!(results[0].metric, METRIC);
         assert_eq!(results[0].threshold, THRESHOLD);
     }
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn download_dataset_signature_compiles() {
         // Type check: download_dataset must be reachable from sibling
         // modules. Just verify the function pointer compiles.
@@ -271,8 +265,8 @@ mod tests {
             &'static str,
             &'static str,
             &Path,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<PathBuf>> + Send>> =
-            |_, _, _| Box::pin(async move { Ok(PathBuf::new()) });
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<PathBuf>> + Send>,
+        > = |_, _, _| Box::pin(async move { Ok(PathBuf::new()) });
     }
 }

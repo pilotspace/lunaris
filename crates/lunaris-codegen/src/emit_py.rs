@@ -216,7 +216,10 @@ fn emit_py_method(
             for p in &m.params {
                 let owned_name = format!("{}_owned", p.name);
                 match &p.ty {
-                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                    IrTyRef::Json
+                    | IrTyRef::Named { .. }
+                    | IrTyRef::Option { .. }
+                    | IrTyRef::Vec { .. } => {
                         // Plan 08-02 Rule 1: explicit type annotation so
                         // `depythonize` returns the correct owned type —
                         // generic Rust APIs like `forget(impl Into<ForgetRequest>)`
@@ -224,7 +227,7 @@ fn emit_py_method(
                         // `let x = pythonize::depythonize(...)?;` shape.
                         writeln!(
                             out,
-                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param})?;",
+                            "        let {owned_name}: {ty} = pythonize::depythonize({param})?;",
                             owned_name = owned_name,
                             ty = rust_owned_ty(&p.ty),
                             param = p.name
@@ -268,12 +271,21 @@ fn emit_py_method(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            writeln!(
-                out,
-                "            let out = inner.{name}({call_args}).await.map_err(py_err)?;",
-                name = m.name
-            )
-            .unwrap();
+            if matches!(m.returns.ty, IrTyRef::Unit) {
+                writeln!(
+                    out,
+                    "            inner.{name}({call_args}).await.map_err(py_err)?;",
+                    name = m.name
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "            let out = inner.{name}({call_args}).await.map_err(py_err)?;",
+                    name = m.name
+                )
+                .unwrap();
+            }
             writeln!(out, "            {ret}", ret = py_return_expr(&m.returns.ty)).unwrap();
             writeln!(out, "        }})").unwrap();
             writeln!(out, "    }}").unwrap();
@@ -299,10 +311,13 @@ fn emit_py_method(
             for p in &m.params {
                 let owned_name = format!("{}_owned", p.name);
                 match &p.ty {
-                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                    IrTyRef::Json
+                    | IrTyRef::Named { .. }
+                    | IrTyRef::Option { .. }
+                    | IrTyRef::Vec { .. } => {
                         writeln!(
                             out,
-                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                            "        let {owned_name}: {ty} = pythonize::depythonize({param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
                             owned_name = owned_name,
                             ty = rust_owned_ty(&p.ty),
                             param = p.name
@@ -366,8 +381,7 @@ fn emit_py_method(
             )
             .unwrap();
             if m.name == "toggle"
-                && (type_name == "GraphPipelineHandle"
-                    || type_name == "ConsolidatorPipelineHandle")
+                && (type_name == "GraphPipelineHandle" || type_name == "ConsolidatorPipelineHandle")
             {
                 // Rust surface is enable()/disable(); dispatch on the single
                 // `on` bool arg.
@@ -389,10 +403,13 @@ fn emit_py_method(
                 for p in &m.params {
                     let owned_name = format!("{}_owned", p.name);
                     match &p.ty {
-                        IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                        IrTyRef::Json
+                        | IrTyRef::Named { .. }
+                        | IrTyRef::Option { .. }
+                        | IrTyRef::Vec { .. } => {
                             writeln!(
                                 out,
-                                "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                                "        let {owned_name}: {ty} = pythonize::depythonize({param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
                                 owned_name = owned_name,
                                 ty = rust_owned_ty(&p.ty),
                                 param = p.name
@@ -474,10 +491,13 @@ fn emit_py_method(
             for p in &m.params {
                 let owned_name = format!("{}_owned", p.name);
                 match &p.ty {
-                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                    IrTyRef::Json
+                    | IrTyRef::Named { .. }
+                    | IrTyRef::Option { .. }
+                    | IrTyRef::Vec { .. } => {
                         writeln!(
                             out,
-                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
+                            "        let {owned_name}: {ty} = pythonize::depythonize({param}).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!(\"{param}: {{e}}\")))?;",
                             owned_name = owned_name,
                             ty = rust_owned_ty(&p.ty),
                             param = p.name
@@ -555,7 +575,7 @@ fn emit_py_method(
             .unwrap();
             writeln!(
                 out,
-                "        let _ = slf; let _ = ({unused}); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.",
+                "        let _ = slf; let _ = {unused};",
                 unused = format_call_args(&m.params)
             )
             .unwrap();
@@ -588,10 +608,13 @@ fn emit_py_method(
             for p in &m.params {
                 let owned_name = format!("{}_owned", p.name);
                 match &p.ty {
-                    IrTyRef::Json | IrTyRef::Named { .. } | IrTyRef::Option { .. } | IrTyRef::Vec { .. } => {
+                    IrTyRef::Json
+                    | IrTyRef::Named { .. }
+                    | IrTyRef::Option { .. }
+                    | IrTyRef::Vec { .. } => {
                         writeln!(
                             out,
-                            "        let {owned_name}: {ty} = pythonize::depythonize(&{param})?;",
+                            "        let {owned_name}: {ty} = pythonize::depythonize({param})?;",
                             owned_name = owned_name,
                             ty = rust_owned_ty(&p.ty),
                             param = p.name
@@ -653,12 +676,8 @@ fn emit_py_method(
                     .unwrap();
                 }
                 _ => {
-                    writeln!(
-                        out,
-                        "            {ret}",
-                        ret = py_return_expr(&m.returns.ty)
-                    )
-                    .unwrap();
+                    writeln!(out, "            {ret}", ret = py_return_expr(&m.returns.ty))
+                        .unwrap();
                 }
             }
             writeln!(out, "        }})").unwrap();
@@ -796,11 +815,10 @@ fn rust_owned_ty(ty: &IrTyRef) -> String {
 fn py_return_expr(ty: &IrTyRef) -> String {
     match ty {
         IrTyRef::Named { name } if name == "Lsn" => {
-            "Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))"
-                .into()
+            "Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))".into()
         }
-        IrTyRef::Unit => "Ok(Python::with_gil(|py| py.None()))".into(),
-        _ => "Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))".into(),
+        IrTyRef::Unit => "Ok(Python::attach(|py| py.None()))".into(),
+        _ => "Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))".into(),
     }
 }
 

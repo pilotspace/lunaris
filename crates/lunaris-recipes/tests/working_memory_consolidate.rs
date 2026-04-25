@@ -136,9 +136,7 @@ impl StoragePort for BridgedStorage {
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        Ok(Box::pin(stream::iter(
-            Vec::<Result<(Bytes, Bytes), StorageError>>::new(),
-        )))
+        Ok(Box::pin(stream::iter(Vec::<Result<(Bytes, Bytes), StorageError>>::new())))
     }
 
     async fn read_as_of(
@@ -170,12 +168,7 @@ impl StoragePort for BridgedStorage {
         if topic == CONSOLIDATE_TOPIC
             && let Some(tx) = self.consolidate_tx.lock().as_ref()
         {
-            let _ = tx.send(QueueMsg {
-                topic: topic.to_string(),
-                partition,
-                offset,
-                payload,
-            });
+            let _ = tx.send(QueueMsg { topic: topic.to_string(), partition, offset, payload });
         }
         Ok(offset)
     }
@@ -269,11 +262,7 @@ impl Consolidator for TestConsolidator {
                 }
             })
             .collect();
-        Ok(ConsolidationReport {
-            promotions,
-            archives: vec![],
-            communities_rebuilt: 0,
-        })
+        Ok(ConsolidationReport { promotions, archives: vec![], communities_rebuilt: 0 })
     }
 
     fn applies(&self) -> bool {
@@ -313,10 +302,7 @@ async fn seed_events(
             source: format!("test:wm/note-{i}"),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage
-            .publish(CONSOLIDATE_TOPIC, 0, payload.into())
-            .await
-            .unwrap();
+        storage.publish(CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
     }
     for i in 0..other_count {
         let ep_id = Ulid::new();
@@ -328,10 +314,7 @@ async fn seed_events(
             source: format!("other:note-{i}"),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage
-            .publish(CONSOLIDATE_TOPIC, 0, payload.into())
-            .await
-            .unwrap();
+        storage.publish(CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
     }
     ids
 }
@@ -344,9 +327,7 @@ async fn seed_events(
 async fn wm_consolidate_scope_isolation() {
     let (handle, rec, _clock) = build_handle();
     let handle = Arc::new(handle);
-    handle
-        .consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator::default()));
+    handle.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator::default()));
 
     let storage: Arc<dyn StoragePort> = rec.clone();
     let scoped_ids = seed_events(&storage, 5, 5).await;
@@ -375,9 +356,7 @@ async fn wm_consolidate_scope_isolation() {
 async fn wm_consolidate_publishes_audit_event_per_promotion() {
     let (handle, rec, _clock) = build_handle();
     let handle = Arc::new(handle);
-    handle
-        .consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator::default()));
+    handle.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator::default()));
 
     let storage: Arc<dyn StoragePort> = rec.clone();
     let _scoped_ids = seed_events(&storage, 5, 5).await;
@@ -393,10 +372,8 @@ async fn wm_consolidate_publishes_audit_event_per_promotion() {
          AuditEvent::ConsolidatorPromotion on __lunaris_audit__"
     );
     let audits = rec.audit_events();
-    let promotion_events: Vec<_> = audits
-        .iter()
-        .filter(|e| matches!(e, AuditEvent::ConsolidatorPromotion { .. }))
-        .collect();
+    let promotion_events: Vec<_> =
+        audits.iter().filter(|e| matches!(e, AuditEvent::ConsolidatorPromotion { .. })).collect();
     assert_eq!(promotion_events.len(), 5);
 }
 
@@ -404,22 +381,13 @@ async fn wm_consolidate_publishes_audit_event_per_promotion() {
 async fn wm_consolidate_with_empty_queue_returns_empty_report() {
     let (handle, rec, _clock) = build_handle();
     let handle = Arc::new(handle);
-    handle
-        .consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator::default()));
+    handle.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator::default()));
 
     let wm = WorkingMemory::new(handle.clone(), "test:wm/");
-    let report = wm
-        .consolidate()
-        .await
-        .expect("consolidate on empty queue must succeed");
+    let report = wm.consolidate().await.expect("consolidate on empty queue must succeed");
     assert!(report.promotions.is_empty(), "empty queue → empty promotions");
     assert!(report.archives.is_empty(), "empty queue → empty archives");
-    assert_eq!(
-        rec.audit_promotion_count(),
-        0,
-        "no promotions → no audit events"
-    );
+    assert_eq!(rec.audit_promotion_count(), 0, "no promotions → no audit events");
 }
 
 #[tokio::test]
@@ -432,14 +400,8 @@ async fn wm_consolidate_noop_consolidator_returns_empty_report() {
     let _ = seed_events(&storage, 5, 5).await;
 
     let wm = WorkingMemory::new(handle.clone(), "test:wm/");
-    let report = wm
-        .consolidate()
-        .await
-        .expect("noop consolidate must succeed");
-    assert!(
-        report.promotions.is_empty(),
-        "NoopConsolidator returns empty report for any input"
-    );
+    let report = wm.consolidate().await.expect("noop consolidate must succeed");
+    assert!(report.promotions.is_empty(), "NoopConsolidator returns empty report for any input");
     assert_eq!(
         rec.audit_promotion_count(),
         0,

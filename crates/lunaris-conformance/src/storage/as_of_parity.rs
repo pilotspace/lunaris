@@ -23,7 +23,7 @@ use std::sync::Arc;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::StoragePort;
 
-use crate::fixtures::{stub_embed, FixtureCorpus};
+use crate::fixtures::{FixtureCorpus, stub_embed};
 
 /// One observed divergence between the two backends for a given
 /// `(query, as_of)` tuple. Surfaced verbatim in the `anyhow::bail!`
@@ -42,21 +42,12 @@ pub enum DivergenceKind {
     HitCount { moon: usize, postgres: usize },
     /// Backends agreed on hit count but disagreed on the id at this
     /// position (zero-indexed).
-    HitOrdering {
-        position: usize,
-        moon_id: Vec<u8>,
-        postgres_id: Vec<u8>,
-    },
+    HitOrdering { position: usize, moon_id: Vec<u8>, postgres_id: Vec<u8> },
     /// Backends agreed on id ordering but the score difference at this
     /// position exceeded `epsilon`. Only fired when both backends report
     /// the same `rerank_native` capability — when capabilities differ,
     /// score divergence is expected and gated out.
-    ScoreEpsilon {
-        position: usize,
-        moon_score: f32,
-        postgres_score: f32,
-        epsilon: f32,
-    },
+    ScoreEpsilon { position: usize, moon_score: f32, postgres_score: f32, epsilon: f32 },
 }
 
 /// Score-comparison tolerance when both backends advertise the same
@@ -88,21 +79,14 @@ pub async fn run(
     for (query, as_of) in fixtures.query_set() {
         let q_vec = stub_embed(query);
 
-        let hits_moon = moon
-            .vector_search("chunks", &q_vec, 5, None, *as_of, false)
-            .await?;
-        let hits_pg = postgres
-            .vector_search("chunks", &q_vec, 5, None, *as_of, false)
-            .await?;
+        let hits_moon = moon.vector_search("chunks", &q_vec, 5, None, *as_of, false).await?;
+        let hits_pg = postgres.vector_search("chunks", &q_vec, 5, None, *as_of, false).await?;
 
         if hits_moon.len() != hits_pg.len() {
             divergences.push(Divergence {
                 query: query.clone(),
                 as_of: *as_of,
-                kind: DivergenceKind::HitCount {
-                    moon: hits_moon.len(),
-                    postgres: hits_pg.len(),
-                },
+                kind: DivergenceKind::HitCount { moon: hits_moon.len(), postgres: hits_pg.len() },
             });
             // Ordering comparison is meaningless when counts differ;
             // skip to next query.

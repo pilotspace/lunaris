@@ -786,9 +786,7 @@ pub async fn build_md_doc_corpus(
     seed: u64,
 ) -> Result<u64, BenchCorpusError> {
     if count == 0 {
-        return Err(BenchCorpusError::Invalid(format!(
-            "count must be > 0; got {count}"
-        )));
+        return Err(BenchCorpusError::Invalid(format!("count must be > 0; got {count}")));
     }
 
     /// Per-batch episode count. 64 × ~12 KB ≈ 768 KB per atomic_write —
@@ -1142,9 +1140,8 @@ mod tests {
         // one atomic_write batch with 10 KvPut ops.
         let storage = Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
         let storage_dyn: &dyn StoragePort = storage.as_ref();
-        let written = build_md_doc_corpus(storage_dyn, 10, 0xDEAD_BEEF)
-            .await
-            .expect("build small md corpus");
+        let written =
+            build_md_doc_corpus(storage_dyn, 10, 0xDEAD_BEEF).await.expect("build small md corpus");
         assert_eq!(written, 10, "build_md_doc_corpus reports written count");
         assert_eq!(storage.batch_count(), 1, "10 docs ≤ BATCH=64 → one atomic_write");
         let (kv, vec_) = storage.op_kind_counts();
@@ -1180,10 +1177,9 @@ mod tests {
         // byte-identical Episode bodies (the determinism contract).
         for (op1, op2) in b1[0].iter().zip(b2[0].iter()) {
             match (op1, op2) {
-                (
-                    WriteOp::KvPut { value: v1, .. },
-                    WriteOp::KvPut { value: v2, .. },
-                ) => assert_eq!(v1, v2, "same seed → byte-identical KvPut payloads"),
+                (WriteOp::KvPut { value: v1, .. }, WriteOp::KvPut { value: v2, .. }) => {
+                    assert_eq!(v1, v2, "same seed → byte-identical KvPut payloads")
+                }
                 _ => panic!("expected KvPut ops"),
             }
         }

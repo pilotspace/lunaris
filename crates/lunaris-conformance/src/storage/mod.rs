@@ -50,9 +50,7 @@ pub async fn run_full_storage_suite(storage: Arc<dyn StoragePort>) -> anyhow::Re
     if storage.capabilities().queue_native {
         queue::publish_subscribe_round_trip(&storage).await?;
     } else {
-        eprintln!(
-            "conformance: SKIP queue::publish_subscribe_round_trip (queue_native=false)"
-        );
+        eprintln!("conformance: SKIP queue::publish_subscribe_round_trip (queue_native=false)");
     }
     // as_of_parity is dual-backend; not part of the per-backend run — see
     // crates/lunaris-conformance/tests/run_as_of_parity.rs.

@@ -104,14 +104,8 @@ pub trait StoragePort: Send + Sync + 'static {
     /// Plan 04-04 `Lunaris::recall_with_degraded_check` reads this once per
     /// recall to set `Hit::degraded = true` when the verifier queue depth
     /// crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` (VERIFY-05 + VERIFY-06).
-    async fn queue_depth(
-        &self,
-        _topic: &str,
-        _partition: u16,
-    ) -> Result<u64, StorageError> {
-        Err(StorageError::NotSupported(
-            "queue_depth not implemented for this StoragePort backend",
-        ))
+    async fn queue_depth(&self, _topic: &str, _partition: u16) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported("queue_depth not implemented for this StoragePort backend"))
     }
 
     /// Report capabilities so higher layers (retrievers, recipes, the conformance

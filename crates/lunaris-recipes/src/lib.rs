@@ -34,7 +34,9 @@ pub mod documentary;
 
 pub use document_corpus::DocumentCorpus;
 pub use message_stream::MessageStream;
-pub use temporal_query::{Documents, Facts, Messages, SupportsAsOf, SupportsBetween, TemporalQuery};
+pub use temporal_query::{
+    Documents, Facts, Messages, SupportsAsOf, SupportsBetween, TemporalQuery,
+};
 // Phase 12 Option-A relocation — `WorkingMemory` now lives in
 // `lunaris::primitives::working_memory` so `HeliosScratchpad` (in the
 // `lunaris` crate) can compose over it without a dep cycle. Re-exported

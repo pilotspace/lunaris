@@ -109,29 +109,16 @@ impl RecordingStorageWithKeyword {
     async fn push_subscribe_envelope(&self, topic: &str, partition: u16, payload: Bytes) {
         let tx_guard = self.subscribe_tx.lock().await;
         if let Some(tx) = tx_guard.as_ref() {
-            let _ = tx.send(QueueMsg {
-                topic: topic.to_string(),
-                partition,
-                offset: 0,
-                payload,
-            });
+            let _ = tx.send(QueueMsg { topic: topic.to_string(), partition, offset: 0, payload });
         }
     }
 
     fn published_verify_count(&self) -> usize {
-        self.published_messages
-            .lock()
-            .iter()
-            .filter(|(t, _, _)| t == "__lunaris_verify__")
-            .count()
+        self.published_messages.lock().iter().filter(|(t, _, _)| t == "__lunaris_verify__").count()
     }
 
     fn published_audit_count(&self) -> usize {
-        self.published_messages
-            .lock()
-            .iter()
-            .filter(|(t, _, _)| t == "__lunaris_audit__")
-            .count()
+        self.published_messages.lock().iter().filter(|(t, _, _)| t == "__lunaris_audit__").count()
     }
 
     fn batch_count(&self) -> usize {
@@ -251,9 +238,11 @@ impl StoragePort for RecordingStorageWithKeyword {
         let mut rx_guard = self.subscribe_rx.lock().await;
         match rx_guard.take() {
             Some(rx) => {
-                let stream = stream::unfold(rx, |mut rx| async move {
-                    rx.recv().await.map(|msg| (Ok(msg), rx))
-                });
+                let stream =
+                    stream::unfold(
+                        rx,
+                        |mut rx| async move { rx.recv().await.map(|msg| (Ok(msg), rx)) },
+                    );
                 Ok(Box::pin(stream))
             }
             None => Ok(Box::pin(stream::empty())),
@@ -305,10 +294,7 @@ impl MockVerifier {
 
 #[async_trait]
 impl Verifier for MockVerifier {
-    async fn verify(
-        &self,
-        _item: VerifyNeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
+    async fn verify(&self, _item: VerifyNeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
         *self.call_count.lock() += 1;
         Ok(self.decision.clone())
     }
@@ -424,10 +410,7 @@ async fn noop_verifier_with_pipeline_on_emits_no_writes() {
     handle.verify_pipeline().enable();
 
     assert!(
-        !handle
-            .verifier()
-            .expect("default Noop installed")
-            .applies(),
+        !handle.verifier().expect("default Noop installed").applies(),
         "NoopVerifier.applies() MUST be false"
     );
 
@@ -454,10 +437,7 @@ async fn with_verifier_swaps_handle_verifier() {
     let mock_a: Arc<dyn Verifier> = Arc::new(MockVerifier::arbitrate(VerifyDecision::deferred()));
     let handle = handle.with_verifier(mock_a.clone());
     let installed = handle.verifier().expect("snapshot installed");
-    assert!(
-        Arc::ptr_eq(&installed, &mock_a),
-        "snapshot MUST return the just-installed verifier"
-    );
+    assert!(Arc::ptr_eq(&installed, &mock_a), "snapshot MUST return the just-installed verifier");
 
     let mock_b: Arc<dyn Verifier> = Arc::new(MockVerifier::arbitrate(VerifyDecision::arbitrate(
         ulid::Ulid::new(),
@@ -637,8 +617,8 @@ async fn verify_apply_supersede_writes_real_mvcc_rows() {
     //    mutation rides inside the WriteOp::KvPut value bytes.
     let rows = rec.rows.lock();
     let loser_row = rows.get(&loser_key).expect("loser row still present");
-    let loser_payload: serde_json::Value = serde_json::from_slice(&loser_row.value)
-        .expect("loser payload is valid JSON");
+    let loser_payload: serde_json::Value =
+        serde_json::from_slice(&loser_row.value).expect("loser payload is valid JSON");
     let loser_sys_1 = &loser_payload["bt"]["sys"][1];
     assert!(
         !loser_sys_1.is_null(),
@@ -650,8 +630,8 @@ async fn verify_apply_supersede_writes_real_mvcc_rows() {
     // 4. WINNER assertion: bt.sys[0] is the fresh `now` (non-zero) AND
     //    bt.sys[1] is null (open validity).
     let winner_row = rows.get(&winner_key).expect("winner row still present");
-    let winner_payload: serde_json::Value = serde_json::from_slice(&winner_row.value)
-        .expect("winner payload is valid JSON");
+    let winner_payload: serde_json::Value =
+        serde_json::from_slice(&winner_row.value).expect("winner payload is valid JSON");
     let winner_sys_0 = &winner_payload["bt"]["sys"][0];
     let winner_sys_1 = &winner_payload["bt"]["sys"][1];
     let t0_value = serde_json::to_value(t0).unwrap();

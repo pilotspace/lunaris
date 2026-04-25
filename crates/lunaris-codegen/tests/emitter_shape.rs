@@ -236,7 +236,9 @@ fn emit_ts_graph_anchored_fallible() {
     );
     // Specifically require `Graph::anchored` to be fallible.
     assert!(
-        rust.contains("pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self>"),
+        rust.contains(
+            "pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self>"
+        ),
         "emit_ts did not produce a fallible `Graph::anchored` factory — expected `-> napi::Result<Self>` (WR-02)"
     );
 }

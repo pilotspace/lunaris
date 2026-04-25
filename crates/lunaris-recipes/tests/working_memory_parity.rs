@@ -54,10 +54,7 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 // Imports + `probe_backend` fn are only used behind the `moon-it` + `pg-it`
 // feature gate; suppress the clippy dead-code warnings on the default build.
-#![cfg_attr(
-    not(all(feature = "moon-it", feature = "pg-it")),
-    allow(unused_imports, dead_code)
-)]
+#![cfg_attr(not(all(feature = "moon-it", feature = "pg-it")), allow(unused_imports, dead_code))]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -75,11 +72,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("{name}: SKIP (unknown URL scheme)");
         return None;
@@ -225,9 +218,8 @@ async fn working_memory_moon_postgres_parity() -> anyhow::Result<()> {
                 divergences.push(format!("grep position {i} key: moon={mk} postgres={pk}"));
             }
             if mv != pv {
-                divergences.push(format!(
-                    "grep position {i} value for {mk}: moon={mv:?} postgres={pv:?}"
-                ));
+                divergences
+                    .push(format!("grep position {i} value for {mk}: moon={mv:?} postgres={pv:?}"));
             }
         }
     }
@@ -243,11 +235,8 @@ async fn working_memory_moon_postgres_parity() -> anyhow::Result<()> {
     // the 5 "other:" notes here inverts the scope-reduction Phase 9
     // rustdoc caveat (the method didn't exist then).
     // -----------------------------------------------------------------
-    moon.consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator));
-    postgres
-        .consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator));
+    moon.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
+    postgres.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
 
     let wm_moon_other = WorkingMemory::new(moon.clone(), "other:");
     let wm_pg_other = WorkingMemory::new(postgres.clone(), "other:");

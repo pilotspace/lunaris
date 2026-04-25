@@ -59,7 +59,7 @@ pub fn emit_ts(ir: &SurfaceIR) -> TsOutput {
     rust.push('\n');
     rust.push_str("use napi_derive::napi;\n");
     rust.push_str("use std::sync::Arc;\n");
-    rust.push_str("\n");
+    rust.push('\n');
     rust.push_str("use super::errors::napi_err;\n\n");
 
     dts.push_str(DTS_HEADER);
@@ -250,8 +250,7 @@ fn emit_ts_method_rust(
             )
             .unwrap();
             if m.name == "toggle"
-                && (type_name == "GraphPipelineHandle"
-                    || type_name == "ConsolidatorPipelineHandle")
+                && (type_name == "GraphPipelineHandle" || type_name == "ConsolidatorPipelineHandle")
             {
                 // Rust surface is enable()/disable(); dispatch on the single
                 // `on` bool arg.
@@ -276,7 +275,8 @@ fn emit_ts_method_rust(
                     call_args = call_args
                 )
                 .unwrap();
-                writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty)).unwrap();
+                writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty))
+                    .unwrap();
             }
             writeln!(out, "    }}").unwrap();
         }
@@ -330,7 +330,7 @@ fn emit_ts_method_rust(
                 "        // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body."
             )
             .unwrap();
-            writeln!(out, "        let _ = ({unused});", unused = format_call_args(&m.params))
+            writeln!(out, "        let _ = {unused};", unused = format_call_args(&m.params))
                 .unwrap();
             writeln!(out, "        Err(napi::Error::from_reason(\"Plan 08-03 wires the body\"))")
                 .unwrap();
@@ -345,10 +345,7 @@ fn emit_ts_method_rust(
             // other shapes (Vec<Hit>, etc.) pass through JSON via
             // ts_async_return_ty_rust + ts_return_expr_rust (same path the
             // async-ref_self arm uses).
-            let wraps_into_class = matches!(
-                m.returns.ty,
-                IrTyRef::RefSelf | IrTyRef::Named { .. }
-            );
+            let wraps_into_class = matches!(m.returns.ty, IrTyRef::RefSelf | IrTyRef::Named { .. });
             let target_ty = ts_owned_self_target_ty(type_name, &m.returns.ty);
             let sig_ret = if wraps_into_class {
                 target_ty.clone()
@@ -392,8 +389,7 @@ fn emit_ts_method_rust(
                 )
                 .unwrap();
             } else {
-                writeln!(out, "        {ret}", ret = ts_return_expr_rust(&m.returns.ty))
-                    .unwrap();
+                writeln!(out, "        {ret}", ret = ts_return_expr_rust(&m.returns.ty)).unwrap();
             }
             writeln!(out, "    }}").unwrap();
         }

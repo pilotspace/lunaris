@@ -46,10 +46,7 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 // Imports + `probe_backend` fn are only used behind the `moon-it` + `pg-it`
 // feature gate; suppress the clippy dead-code warnings on the default build.
-#![cfg_attr(
-    not(all(feature = "moon-it", feature = "pg-it")),
-    allow(unused_imports, dead_code)
-)]
+#![cfg_attr(not(all(feature = "moon-it", feature = "pg-it")), allow(unused_imports, dead_code))]
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -68,11 +65,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let after_scheme = url.split("://").nth(1)?;
         let authority = after_scheme.split('/').next()?;
         let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') {
-            bare.to_string()
-        } else {
-            format!("{bare}:5432")
-        }
+        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("{name}: SKIP (unknown URL scheme)");
         return None;
@@ -149,20 +142,17 @@ impl lunaris::Consolidator for TestConsolidator {
 /// parity. Ordering is preserved (ranking IS the point for recall —
 /// do NOT sort before compare).
 #[cfg(all(feature = "moon-it", feature = "pg-it"))]
-fn compare_hits(label: &str, moon: &[lunaris_retrieve::Hit], pg: &[lunaris_retrieve::Hit]) -> Option<String> {
+fn compare_hits(
+    label: &str,
+    moon: &[lunaris_retrieve::Hit],
+    pg: &[lunaris_retrieve::Hit],
+) -> Option<String> {
     if moon.len() != pg.len() {
-        return Some(format!(
-            "{label}: hit_count moon={} postgres={}",
-            moon.len(),
-            pg.len()
-        ));
+        return Some(format!("{label}: hit_count moon={} postgres={}", moon.len(), pg.len()));
     }
     for (i, (m, p)) in moon.iter().zip(pg.iter()).enumerate() {
         if m.id != p.id {
-            return Some(format!(
-                "{label} position {i}: id moon={:?} postgres={:?}",
-                m.id, p.id
-            ));
+            return Some(format!("{label} position {i}: id moon={:?} postgres={:?}", m.id, p.id));
         }
     }
     None
@@ -186,9 +176,8 @@ async fn chat_agent_memory_moon_postgres_parity() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/conversational/chat_agent_memory.json"
-    ))?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/conversational/chat_agent_memory.json"))?;
     let user_id = fixture["user_id"].as_str().unwrap();
     let turns = fixture["turns"].as_array().unwrap();
     let query = fixture["query"].as_str().unwrap();
@@ -231,9 +220,8 @@ async fn multi_turn_conversation_cross_session_consolidation_parity() -> anyhow:
         None => return Ok(()),
     };
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/conversational/multi_turn_conversation.json"
-    ))?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/conversational/multi_turn_conversation.json"))?;
     let user_id = fixture["user_id"].as_str().unwrap();
     let other_user_id = fixture["other_user_id"].as_str().unwrap();
     let sessions = fixture["sessions"].as_array().unwrap();
@@ -246,11 +234,8 @@ async fn multi_turn_conversation_cross_session_consolidation_parity() -> anyhow:
     // Install deterministic TestConsolidator on both handles (otherwise
     // default Noop returns empty reports on both sides and the scope-
     // isolation assertion passes trivially at 0/0 — proves nothing).
-    moon.consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator));
-    postgres
-        .consolidator_pipeline()
-        .set_consolidator(Arc::new(TestConsolidator));
+    moon.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
+    postgres.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
 
     let conv_moon = MultiTurnConversation::new(moon.clone(), user_id);
     let conv_pg = MultiTurnConversation::new(postgres.clone(), user_id);
@@ -327,9 +312,8 @@ async fn slack_archive_channel_filter_parity() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/conversational/slack_archive.json"
-    ))?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/conversational/slack_archive.json"))?;
     let channels = fixture["channels"].as_array().unwrap();
     let query = fixture["query"].as_str().unwrap();
     let channel_filter = fixture["channel_filter"].as_str().unwrap();
@@ -344,9 +328,7 @@ async fn slack_archive_channel_filter_parity() -> anyhow::Result<()> {
         for msg in channel["messages"].as_array().unwrap() {
             let user = msg["user"].as_str().unwrap().to_string();
             let text = msg["text"].as_str().unwrap().to_string();
-            sl_moon
-                .ingest_channel(ch_id.clone(), user.clone(), text.clone())
-                .await?;
+            sl_moon.ingest_channel(ch_id.clone(), user.clone(), text.clone()).await?;
             sl_pg.ingest_channel(ch_id.clone(), user, text).await?;
         }
     }
@@ -396,9 +378,8 @@ async fn email_threading_graph_off_parity() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/conversational/email_threading.json"
-    ))?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/conversational/email_threading.json"))?;
     let root_id = fixture["root_id"].as_str().unwrap();
     let messages = fixture["messages"].as_array().unwrap();
     let query = fixture["query"].as_str().unwrap();
@@ -423,9 +404,7 @@ async fn email_threading_graph_off_parity() -> anyhow::Result<()> {
     for msg in messages {
         let from = msg["from"].as_str().unwrap().to_string();
         let body = msg["body"].as_str().unwrap().to_string();
-        em_moon
-            .ingest(root_id, from.clone(), body.clone())
-            .await?;
+        em_moon.ingest(root_id, from.clone(), body.clone()).await?;
         em_pg.ingest(root_id, from, body).await?;
     }
 
@@ -463,9 +442,7 @@ async fn email_threading_graph_on_opt_in() -> anyhow::Result<()> {
     // Phase 10 risk row #2: gate the Gemma-3 4B-loading path behind an
     // explicit env opt-in. CI default stays green.
     if std::env::var("LUNARIS_EXTRACT_GEMMA_PATH").is_err() {
-        eprintln!(
-            "email_threading_graph_on_opt_in: SKIP (LUNARIS_EXTRACT_GEMMA_PATH unset)"
-        );
+        eprintln!("email_threading_graph_on_opt_in: SKIP (LUNARIS_EXTRACT_GEMMA_PATH unset)");
         return Ok(());
     }
 
@@ -515,9 +492,8 @@ async fn meeting_notes_memory_transcript_parity() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let fixture: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/conversational/meeting_notes_memory.json"
-    ))?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/conversational/meeting_notes_memory.json"))?;
     let notes = fixture["notes"].as_array().unwrap();
     let query = fixture["query"].as_str().unwrap();
 

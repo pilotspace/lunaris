@@ -5,7 +5,9 @@
 //! Postgres). Band = [0.0, 0.01] (observed_median 0.0 +/- max(2*MAD, 0.01)).
 //! See `milestones/v0.1.2-CONSOL-CALIBRATION/SUMMARY.md` for lineage.
 
-use lunaris_bench::eval_05_slo::{enforce_promotion_rate_slo, PROMOTION_RATE_HIGH, PROMOTION_RATE_LOW};
+use lunaris_bench::eval_05_slo::{
+    PROMOTION_RATE_HIGH, PROMOTION_RATE_LOW, enforce_promotion_rate_slo,
+};
 
 #[test]
 fn below_band_returns_err() {

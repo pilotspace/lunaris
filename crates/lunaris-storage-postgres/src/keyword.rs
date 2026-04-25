@@ -180,11 +180,7 @@ fn filter_to_sql(f: &Filter, payload_col: &str) -> String {
             if let Some(b) = before {
                 parts.push(format!("valid_from < '{}'", hlc_to_ts(*b).to_rfc3339()));
             }
-            if parts.is_empty() {
-                "TRUE".to_string()
-            } else {
-                format!("({})", parts.join(" AND "))
-            }
+            if parts.is_empty() { "TRUE".to_string() } else { format!("({})", parts.join(" AND ")) }
         }
     }
 }

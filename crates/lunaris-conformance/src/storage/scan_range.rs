@@ -14,8 +14,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use lunaris_core::error::StorageError;
-use lunaris_core::storage::types::WriteOp;
 use lunaris_core::storage::StoragePort;
+use lunaris_core::storage::types::WriteOp;
 
 /// Number of seeded rows under the `scan_range` prefix. 7 is small
 /// enough to stay deterministic AND large enough to catch off-by-one
@@ -31,10 +31,7 @@ pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     for i in 0..SEEDED_ROWS {
         let key = format!("conformance:scan_range:{i:03}").into_bytes();
         storage
-            .atomic_write(&[WriteOp::KvPut {
-                key,
-                value: format!("v{i}").into_bytes(),
-            }])
+            .atomic_write(&[WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }])
             .await?;
     }
 
@@ -53,10 +50,7 @@ pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
 /// Mirrors `crash_recovery.rs:202-217` shape verbatim — the only delta is
 /// returning a `Result` instead of `panic!()` so the failure surfaces
 /// through `anyhow` rather than a runtime panic.
-async fn count_under_prefix(
-    storage: &Arc<dyn StoragePort>,
-    prefix: &[u8],
-) -> anyhow::Result<u64> {
+async fn count_under_prefix(storage: &Arc<dyn StoragePort>, prefix: &[u8]) -> anyhow::Result<u64> {
     let mut stream = storage.scan_range(prefix, None).await?;
     let mut total = 0u64;
     while let Some(item) = stream.next().await {

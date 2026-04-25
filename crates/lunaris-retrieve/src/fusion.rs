@@ -323,10 +323,10 @@ mod tests {
 
     #[test]
     fn compose_query_with_filter_prepends_filter() {
-        let result = compose_query_with_filter("hello", &Some(Filter::Eq {
-            field: "source".into(),
-            value: serde_json::json!("x"),
-        }));
+        let result = compose_query_with_filter(
+            "hello",
+            &Some(Filter::Eq { field: "source".into(), value: serde_json::json!("x") }),
+        );
         assert_eq!(result, "(@source:{x}) hello");
     }
 

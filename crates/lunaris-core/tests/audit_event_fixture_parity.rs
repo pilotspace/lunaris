@@ -10,8 +10,8 @@
 //! documented in `.planning/phases/13-auditevent-refactor-eval-05-release-gate/13-CONTEXT.md` D3.
 
 use lunaris_core::audit::{
-    AuditEvent, FactIdData, ForgetReceiptData, ForgetTargetData, IndexKindData, Publisher,
-    PublishError, ScopeSpecData, publish_audit_event,
+    AuditEvent, FactIdData, ForgetReceiptData, ForgetTargetData, IndexKindData, PublishError,
+    Publisher, ScopeSpecData, publish_audit_event,
 };
 use lunaris_core::storage::types::Lsn;
 use parking_lot::Mutex;
@@ -32,7 +32,8 @@ fn assert_serializes_to(event: &AuditEvent, fixture_raw: &str) {
     let produced = serde_json::to_value(event).expect("event serializes");
     let fixture = fixture_value(fixture_raw);
     assert_eq!(
-        produced, fixture,
+        produced,
+        fixture,
         "AuditEvent serialization drifted from v0.1.0 baseline.\n\
          produced = {}\nexpected = {}",
         serde_json::to_string_pretty(&produced).unwrap(),
@@ -72,9 +73,7 @@ fn fixture_parity_verifier_arbitration() {
 #[test]
 fn fixture_parity_consolidator_promotion() {
     let episode_id: Ulid = "01HKAP00000000000000000000".parse().unwrap();
-    let fact_bytes: [u8; 16] = [
-        123, 216, 144, 97, 1, 113, 244, 67, 1, 53, 96, 68, 42, 244, 151, 0,
-    ];
+    let fact_bytes: [u8; 16] = [123, 216, 144, 97, 1, 113, 244, 67, 1, 53, 96, 68, 42, 244, 151, 0];
     let event = AuditEvent::ConsolidatorPromotion {
         episode_id,
         fact_id: FactIdData(fact_bytes),
@@ -85,9 +84,7 @@ fn fixture_parity_consolidator_promotion() {
 
 #[test]
 fn fixture_parity_consolidator_archive() {
-    let fact_bytes: [u8; 16] = [
-        123, 216, 144, 97, 1, 113, 244, 67, 1, 53, 96, 68, 42, 244, 151, 0,
-    ];
+    let fact_bytes: [u8; 16] = [123, 216, 144, 97, 1, 113, 244, 67, 1, 53, 96, 68, 42, 244, 151, 0];
     let event = AuditEvent::ConsolidatorArchive {
         fact_id: FactIdData(fact_bytes),
         final_activation: -0.7,
