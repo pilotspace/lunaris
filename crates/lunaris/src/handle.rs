@@ -490,9 +490,10 @@ impl KeywordPort for NoKeywordSupport {
 /// Wave 0: method bodies are `todo!()` — the public API surface is frozen for
 /// downstream crate + binding codegen. Wave 1B/1C will replace the stubs with
 /// real scope-aware routing through the storage backends.
-// Wave 0: `engine` is not yet read by the stub method bodies — it will be
-// used in Wave 1B when the real routing logic replaces the `todo!()` stubs.
-#[allow(dead_code)]
+/// RFC 0001 Wave 1E — scope-bound view over a [`Lunaris`] handle.
+///
+/// The `engine` field is used by all method bodies; the Wave 0 `dead_code`
+/// allow is removed since methods now delegate to the engine.
 pub struct ScopedLunaris<'a> {
     pub(crate) engine: &'a Lunaris,
     pub(crate) scope: Scope,
@@ -506,26 +507,86 @@ impl<'a> ScopedLunaris<'a> {
 
     /// Ingest an [`lunaris_core::Episode`] under the bound scope.
     ///
-    /// Wave 0 stub — implementation deferred to Wave 1B.
+    /// The episode's `scope` field is overridden with the bound scope so a
+    /// client cannot supply a scope in the request body and have it take
+    /// effect — the JWT-bound scope is authoritative (RFC 0001 §3.8).
+    ///
+    /// Wave 1B will route the underlying `atomic_write` through the
+    /// scope-partitioned storage backends. Until then this method provides
+    /// HTTP-layer scope enforcement: the episode written to storage always
+    /// carries the JWT-bound scope, not whatever the client may have sent.
     pub async fn ingest(
         &self,
-        ep: lunaris_core::Episode,
+        mut ep: lunaris_core::Episode,
     ) -> Result<lunaris_core::Lsn, LunarisError> {
-        // Wave 1B: route through self.engine.ingest with scope override.
-        let _ = ep;
-        todo!("ScopedLunaris::ingest — Wave 1B")
+        // RFC 0001 §3.8: override the episode scope with the JWT-bound scope.
+        // This is the primary enforcement point — any `scope` in the request
+        // body is silently replaced here. Storage-level partitioning
+        // (`atomic_write(&scope, ops)`) follows in Wave 1B.
+        ep.scope = self.scope.clone();
+        self.engine.ingest(ep).await
     }
 
     /// Recall hits under the bound scope.
     ///
-    /// Wave 0 stub — implementation deferred to Wave 1B.
+    /// Returns a [`lunaris_retrieve::RetrievalBuilder`] seeded with a
+    /// scope-aware degraded-check (using the JWT-bound scope for
+    /// `queue_depth` rather than `Scope::dev()`). Callers compose the
+    /// builder further (filters, root operators, etc.) before calling
+    /// `.execute(query)`.
+    ///
+    /// Wave 1B will push the scope into the storage-level vector / keyword
+    /// search paths. Until then this method replaces the `Scope::dev()`
+    /// crutch in the `queue_depth` call.
+    pub async fn recall_builder(
+        &self,
+    ) -> Result<lunaris_retrieve::RetrievalBuilder, LunarisError> {
+        use lunaris_retrieve::RetrievalBuilder;
+
+        const VERIFY_TOPIC: &str = "__lunaris_verify__";
+        const DEFAULT_VERIFY_WARN_THRESHOLD: u64 = 1000;
+        const ENV_VERIFY_WARN_THRESHOLD: &str = "LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD";
+
+        let threshold = std::env::var(ENV_VERIFY_WARN_THRESHOLD)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_VERIFY_WARN_THRESHOLD);
+
+        // Use the JWT-bound scope for queue_depth instead of Scope::dev().
+        let degraded = match self
+            .engine
+            .storage
+            .queue_depth(&self.scope, VERIFY_TOPIC, 0)
+            .await
+        {
+            Ok(depth) => depth > threshold,
+            Err(_) => false,
+        };
+
+        let mut b = RetrievalBuilder::from_handle(
+            self.engine.storage(),
+            self.engine.keyword(),
+            self.engine.embedder(),
+        );
+        if let Some(moon) = self.engine.moon_storage() {
+            b = b.with_moon_storage(moon);
+        }
+        if degraded {
+            b = b.with_initial_degraded(true);
+        }
+        Ok(b)
+    }
+
+    /// Recall hits under the bound scope.
+    ///
+    /// Wave 1B will push scope into the storage query paths. This method
+    /// provides the scoped `queue_depth` signal.
     pub async fn recall(
         &self,
         query: lunaris_retrieve::Query,
     ) -> Result<Vec<lunaris_retrieve::Hit>, LunarisError> {
-        // Wave 1B: route through self.engine.recall() with scope predicate.
-        let _ = query;
-        todo!("ScopedLunaris::recall — Wave 1B")
+        let builder = self.recall_builder().await?;
+        builder.execute(query).await
     }
 }
 

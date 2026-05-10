@@ -7,7 +7,8 @@
 use std::any::Any;
 
 use async_trait::async_trait;
-use lunaris_core::LunarisError;
+// RFC 0001 Wave 0 placeholder: Scope::dev() until Wave 1B wires real scopes.
+use lunaris_core::{LunarisError, Scope};
 
 use super::{QueryContext, Retriever, clamp_k};
 use crate::types::{RawHit, SourceOp};
@@ -73,6 +74,8 @@ impl Retriever for Vector {
         let hits = ctx
             .storage
             .vector_search(
+                // RFC 0001 Wave 0 placeholder: real scope wired in Wave 1B.
+                &Scope::dev(),
                 &self.index,
                 &q_emb,
                 self.k,

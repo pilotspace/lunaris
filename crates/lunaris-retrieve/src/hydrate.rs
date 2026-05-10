@@ -18,7 +18,8 @@
 
 use std::collections::HashMap;
 
-use lunaris_core::{Chunk, Episode, Hlc, HlcClock, LunarisError, StoragePort};
+// RFC 0001 Wave 0 placeholder: Scope::dev() used until Wave 1B wires real scopes.
+use lunaris_core::{Chunk, Episode, Hlc, HlcClock, LunarisError, Scope, StoragePort};
 use ulid::Ulid;
 
 use crate::types::{Hit, RawHit};
@@ -63,7 +64,7 @@ pub async fn hydrate(
             Some(k) => k,
             None => continue, // bytes don't decode to a ulid — skip
         };
-        match storage.read_as_of(&key, snapshot).await? {
+        match storage.read_as_of(&Scope::dev(), &key, snapshot).await? {
             Some(row) => {
                 let chunk: Chunk = match serde_json::from_slice(&row.value) {
                     Ok(c) => c,
@@ -90,7 +91,7 @@ pub async fn hydrate(
     let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
     for ep_id in unique_ep {
         let key = episode_lookup_key(ep_id);
-        if let Some(row) = storage.read_as_of(&key, snapshot).await?
+        if let Some(row) = storage.read_as_of(&Scope::dev(), &key, snapshot).await?
             && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
         {
             episode_sources.insert(ep_id, ep.source);
@@ -150,7 +151,7 @@ pub async fn partial_hydrate_text(
             Some(k) => k,
             None => continue,
         };
-        match storage.read_as_of(&key, snapshot).await? {
+        match storage.read_as_of(&Scope::dev(), &key, snapshot).await? {
             Some(row) => {
                 if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
                     by_id.insert(raw.id.clone(), chunk.text);

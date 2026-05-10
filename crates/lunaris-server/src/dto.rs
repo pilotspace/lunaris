@@ -3,10 +3,51 @@
 //! Every DTO is plain serde + `serde(rename_all = "lowercase")` where the wire
 //! contract requires it. Internal types (`ForgetTarget`, `Lsn`) are
 //! re-exported as-is so the JSON shape mirrors the Rust shape.
+//!
+//! ## RFC 0001 Wave 1E — `IngestBody` replaces bare `Episode` on the wire
+//!
+//! The `POST /v1/ingest` endpoint previously accepted a raw `Episode` (which
+//! carries `pub scope: Scope`) — this let a client set an arbitrary scope and
+//! override the JWT-bound scope. `IngestBody` removes the `scope` field from
+//! the wire entirely; the handler stamps the JWT-bound scope onto the episode
+//! before persisting. Unknown fields are rejected (`deny_unknown_fields`) to
+//! prevent clients from passing `scope` through a different key.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ulid::Ulid;
 
 use lunaris_core::storage::types::Lsn;
+
+/// `POST /v1/ingest` request body — RFC 0001 Wave 1E shape.
+///
+/// The `scope` field is intentionally absent: the JWT-bound scope (from
+/// `AuthClaims.scope`) is the authoritative partition key. Clients MUST NOT
+/// supply `scope` — the field is stripped at the HTTP boundary. Unknown fields
+/// are rejected entirely (`deny_unknown_fields`) so `"scope"` passed by a
+/// client is an immediate 422 Unprocessable Entity, not a silent override.
+///
+/// The `id` field is optional: when absent, the handler generates a fresh
+/// `Ulid`. When present, callers may supply a deterministic id for idempotent
+/// ingest (e.g., replay / migration tooling).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IngestBody {
+    /// Optional client-supplied id. When absent a fresh ULID is generated.
+    pub id: Option<Ulid>,
+    /// Observation source (agent id, tool name, document path, …).
+    pub source: String,
+    /// Free-form text content of the observation.
+    pub content: String,
+    /// Optional valid-time anchor (RFC-3339). When absent, wall-clock now.
+    pub t_ref: Option<DateTime<Utc>>,
+    /// Additional metadata key-value pairs. MUST NOT contain a `"tenant"`
+    /// or `"scope"` key — those are rejected at deserialization time because
+    /// `deny_unknown_fields` applies to the top-level struct. Nested metadata
+    /// values are passed through as-is.
+    #[serde(default)]
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
 
 /// `POST /v1/recall` request body. Two retrieval modes per D-05 + PROTO-03.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +113,61 @@ pub struct ForgetRequestDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- IngestBody RFC 0001 Wave 1E tests --------------------------------
+
+    #[test]
+    fn ingest_body_rejects_scope_field() {
+        // A client that includes "scope" in the JSON body MUST get a
+        // deserialization error — the field is not part of the wire contract.
+        let body = serde_json::json!({
+            "source": "agent-42",
+            "content": "hello",
+            "scope": "evil"          // NOT allowed — deny_unknown_fields
+        });
+        let result: Result<IngestBody, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "scope field must be rejected by deny_unknown_fields");
+    }
+
+    #[test]
+    fn ingest_body_rejects_tenant_field() {
+        // Legacy v0.1 clients may send metadata.tenant at the top level
+        // (or as a plain "tenant" key). Both must be rejected.
+        let body = serde_json::json!({
+            "source": "agent-42",
+            "content": "hello",
+            "tenant": "evil"         // NOT allowed — deny_unknown_fields
+        });
+        let result: Result<IngestBody, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "tenant field must be rejected by deny_unknown_fields");
+    }
+
+    #[test]
+    fn ingest_body_accepts_valid_fields() {
+        let body = serde_json::json!({
+            "source": "agent-42",
+            "content": "hello world",
+            "metadata": { "key": "value" }
+        });
+        let parsed: IngestBody = serde_json::from_value(body).expect("valid IngestBody");
+        assert_eq!(parsed.source, "agent-42");
+        assert_eq!(parsed.content, "hello world");
+        assert_eq!(parsed.metadata.get("key").unwrap(), "value");
+        assert!(parsed.id.is_none());
+    }
+
+    #[test]
+    fn ingest_body_metadata_may_contain_custom_keys() {
+        // Arbitrary metadata keys (not "scope" / "tenant") are allowed.
+        let body = serde_json::json!({
+            "source": "s",
+            "content": "c",
+            "metadata": { "custom_key": "custom_val", "nested": { "x": 1 } }
+        });
+        let parsed: IngestBody = serde_json::from_value(body).expect("valid IngestBody");
+        assert!(parsed.metadata.contains_key("custom_key"));
+        assert!(parsed.metadata.contains_key("nested"));
+    }
 
     #[test]
     fn recall_request_default_mode_is_semantic() {

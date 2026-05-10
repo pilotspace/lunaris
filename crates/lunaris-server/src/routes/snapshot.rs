@@ -34,7 +34,7 @@ use crate::state::AppState;
 /// future SNAP-* metric without a signature break.
 pub async fn snapshot_handler(
     State(state): State<AppState>,
-    Extension(_claims): Extension<AuthClaims>,
+    Extension(claims): Extension<AuthClaims>,
     Path(lsn_str): Path<String>,
 ) -> Response {
     let hlc = match parse_hlc(&lsn_str) {
@@ -60,8 +60,10 @@ pub async fn snapshot_handler(
     // we materialize the snapshot fully (single-tenant; bounded by storage
     // size) — Plan 05-05 may add `?limit=N` for streaming-bounded responses.
     let pairs: Vec<Result<(Bytes, Bytes), lunaris_core::StorageError>> =
-        // RFC 0001 Wave 0: Scope::dev() until per-scope routing (Wave 1E).
-        match storage.scan_range(&lunaris_core::Scope::dev(), b"", Some(hlc)).await {
+        // RFC 0001 Wave 1E: use the JWT-bound scope so callers only see their
+        // own partition's data. Wave 1B/1C will enforce this at the storage
+        // level; at the HTTP layer the scope is already authoritative.
+        match storage.scan_range(&claims.scope, b"", Some(hlc)).await {
             Ok(mut s) => {
                 let mut acc = Vec::new();
                 while let Some(item) = s.next().await {

@@ -36,7 +36,9 @@ pub async fn recall_handler(
     headers: HeaderMap,
     Json(req): Json<RecallRequest>,
 ) -> Response {
-    let tenant = claims.scope.as_str();
+    // RFC 0001 Wave 1E: use the JWT-bound scope for metrics labels and for
+    // the scoped degraded-check instead of `Scope::dev()`.
+    let scope_str = claims.scope.as_str();
     let mode_label = match req.mode {
         RetrievalMode::Semantic => "semantic",
         RetrievalMode::Graph => "graph",
@@ -45,7 +47,7 @@ pub async fn recall_handler(
     // Plan 05-05 OPS-06 — duration timer started up-front so even early-exit
     // paths (graph-mode unavailable, invalid filter) contribute to the
     // histogram observation when the metric increments below.
-    let timer = metrics().recall_duration.with_label_values(&[tenant, mode_label]).start_timer();
+    let timer = metrics().recall_duration.with_label_values(&[scope_str, mode_label]).start_timer();
 
     // D-05 + PROTO-03: gate "graph" mode on backend capability + runtime
     // toggle. v0 returns 501 Not Implemented when neither is satisfied —
@@ -55,7 +57,7 @@ pub async fn recall_handler(
         let graph_runtime_on = state.lunaris.graph_pipeline().is_enabled();
         if !caps.graph_native && !graph_runtime_on {
             timer.observe_duration();
-            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
+            metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
             return (
                 StatusCode::NOT_IMPLEMENTED,
                 Json(serde_json::json!({
@@ -73,7 +75,7 @@ pub async fn recall_handler(
         Ok(q) => q,
         Err(msg) => {
             timer.observe_duration();
-            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
+            metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -85,12 +87,16 @@ pub async fn recall_handler(
         }
     };
 
-    // Phase 4 plumbing: degraded check based on verifier-queue depth.
-    let mut builder = match state.lunaris.recall_with_degraded_check().await {
+    // RFC 0001 Wave 1E: use engine.scoped(claims.scope) to get the
+    // scope-aware RetrievalBuilder. This replaces recall_with_degraded_check()
+    // which used Scope::dev() for the queue_depth call. The scoped wrapper
+    // uses the JWT-bound scope for queue_depth, closing the Scope::dev() crutch.
+    let scoped = state.lunaris.scoped(claims.scope.clone());
+    let mut builder = match scoped.recall_builder().await {
         Ok(b) => b,
         Err(e) => {
             timer.observe_duration();
-            metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
+            metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
             return map_error(e);
         }
     };
@@ -102,7 +108,7 @@ pub async fn recall_handler(
             Ok(updated) => updated,
             Err(e) => {
                 timer.observe_duration();
-                metrics().recall_total.with_label_values(&[tenant, mode_label, "error"]).inc();
+                metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -141,7 +147,7 @@ pub async fn recall_handler(
     let result = builder.execute(query).await;
     timer.observe_duration();
     let status = if result.is_ok() { "ok" } else { "error" };
-    metrics().recall_total.with_label_values(&[tenant, mode_label, status]).inc();
+    metrics().recall_total.with_label_values(&[scope_str, mode_label, status]).inc();
 
     // Plan 07-01 — mark each hit degraded=true when graph-mode fell back.
     let result = result.map(|mut hits| {

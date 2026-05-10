@@ -37,11 +37,12 @@ pub async fn forget_handler(
     Json(req): Json<ForgetRequestDto>,
 ) -> Response {
     let target = req.target.clone();
-    let tenant = claims.scope.as_str();
+    // RFC 0001 Wave 1E: use claims.scope for metrics labels.
+    let scope_str = claims.scope.as_str();
 
     // Plan 05-05 OPS-06 — `target_kind` + `hard` labels per CONTEXT.md D-25.
     // Cardinality: target_kind ∈ {id, scope, before} (3 values); hard ∈
-    // {true, false} (2 values). Combined per-tenant cardinality bounded by
+    // {true, false} (2 values). Combined per-scope_str cardinality bounded by
     // tokens-file size × 6.
     let target_kind = match &target {
         ForgetTarget::Id(_) => "id",
@@ -66,7 +67,10 @@ pub async fn forget_handler(
         let receipt_json = match req.confirmation_token.as_deref() {
             Some(t) if !t.is_empty() => t.to_string(),
             _ => {
-                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
+                metrics()
+                    .forget_total
+                    .with_label_values(&[scope_str, target_kind, hard_label])
+                    .inc();
                 return map_error(lunaris_core::LunarisError::Validate(
                     lunaris_core::ValidateError::ConfirmationRequired(
                         "hard-delete requires confirmation_token (serialized prior ForgetReceipt JSON)".to_string(),
@@ -77,7 +81,10 @@ pub async fn forget_handler(
         let prior_receipt: ForgetReceipt = match serde_json::from_str(&receipt_json) {
             Ok(r) => r,
             Err(e) => {
-                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
+                metrics()
+                    .forget_total
+                    .with_label_values(&[scope_str, target_kind, hard_label])
+                    .inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -91,7 +98,10 @@ pub async fn forget_handler(
         let token = match state.lunaris.confirm_hard_forget(prior_receipt).await {
             Ok(t) => t,
             Err(e) => {
-                metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
+                metrics()
+                    .forget_total
+                    .with_label_values(&[scope_str, target_kind, hard_label])
+                    .inc();
                 return map_error(e);
             }
         };
@@ -102,7 +112,7 @@ pub async fn forget_handler(
 
     // Always increment forget_total — both success + error contribute to the
     // counter. error_total increment lives inside map_error (W-11 fix).
-    metrics().forget_total.with_label_values(&[tenant, target_kind, hard_label]).inc();
+    metrics().forget_total.with_label_values(&[scope_str, target_kind, hard_label]).inc();
 
     match result {
         Ok(receipt) => (StatusCode::OK, Json(receipt)).into_response(),
