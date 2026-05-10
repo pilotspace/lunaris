@@ -7,7 +7,7 @@
 use std::any::Any;
 
 use async_trait::async_trait;
-use lunaris_core::LunarisError;
+use lunaris_core::{LunarisError, Scope};
 
 use super::{QueryContext, Retriever, clamp_k};
 use crate::types::{RawHit, SourceOp};
@@ -70,9 +70,13 @@ impl Vector {
 impl Retriever for Vector {
     async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
         let q_emb = ctx.embed_once().await?;
+        // RFC 0001 Wave 1D: vector_search uses Scope::dev() until the
+        // QueryContext carries per-scope routing (Wave 1C backend plumbing).
+        let dev_scope = Scope::dev();
         let hits = ctx
             .storage
             .vector_search(
+                &dev_scope,
                 &self.index,
                 &q_emb,
                 self.k,

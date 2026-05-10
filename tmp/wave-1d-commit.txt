@@ -1,0 +1,28 @@
+feat(lunaris): Wave 1D — ScopedLunaris<'a> bodies + EpisodeBuilder (RFC 0001)
+
+Fills the Wave 0 ScopedLunaris<'a> stub with real method bodies and
+introduces EpisodeBuilder so callers cannot construct an Episode with an
+arbitrary scope — the wrapper writes the bound scope onto the episode
+before handing it to the engine. Replaces remaining Scope::dev() crutch
+across lunaris/, lunaris-ingest/, lunaris-retrieve/, lunaris-recipes/.
+
+- EpisodeBuilder: scope-less Episode payload in lunaris-core::primitives;
+  into_episode is pub and accepts scope only from ScopedLunaris::ingest
+- ScopedLunaris::ingest / recall / dsl / scope() filled from todo!()
+- INGEST-04 preserved: single atomic_write call at pipeline.rs:116
+  threading episode.scope via &episode.scope
+- lunaris/src/ingest.rs: publish_consolidate_event + publish_needs_review
+  now accept and use the episode's real scope instead of Scope::dev()
+- lunaris-retrieve: hydrate.rs, vector.rs, graph.rs fixed with Scope::dev()
+  Wave 1D placeholders (Wave 1C will wire per-scope storage routing)
+- lunaris-verify/worker.rs: subscribe, read_as_of, atomic_write fixed
+- lunaris-recipes: message_stream + document_corpus Episode construction
+  updated to include scope field (Scope::dev() until Wave 3 SDK layer)
+- All retrieve + recipes test fixtures updated with &Scope first arg on
+  StoragePort impl methods
+- New integration test asserts cross-scope episode isolation at the
+  builder/wrapper boundary (3 tests in tests/scoped_lunaris.rs)
+
+Closes Wave 1D subtask of v0.2 multi-agent rollout.
+
+author: Tin Dang

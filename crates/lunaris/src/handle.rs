@@ -28,7 +28,9 @@
 use std::sync::Arc;
 
 use lunaris_consolidate::Consolidator;
-use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, Scope, StoragePort};
+use lunaris_core::{
+    Embedder, EpisodeBuilder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort,
+};
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;
@@ -480,19 +482,20 @@ impl KeywordPort for NoKeywordSupport {
     }
 }
 
-/// RFC 0001 Wave 0 — scope-bound view over a [`Lunaris`] handle.
+/// RFC 0001 Wave 1D — scope-bound view over a [`Lunaris`] handle.
 ///
 /// Constructed via [`Lunaris::scoped`]. All operations issued through this
 /// wrapper carry the bound [`Scope`] as their partitioning key. The `'a`
 /// lifetime ties the view to the underlying handle so no `Arc` clone is
 /// required for the wrapper itself.
 ///
-/// Wave 0: method bodies are `todo!()` — the public API surface is frozen for
-/// downstream crate + binding codegen. Wave 1B/1C will replace the stubs with
-/// real scope-aware routing through the storage backends.
-// Wave 0: `engine` is not yet read by the stub method bodies — it will be
-// used in Wave 1B when the real routing logic replaces the `todo!()` stubs.
-#[allow(dead_code)]
+/// ## Scope enforcement
+///
+/// Callers build an [`EpisodeBuilder`] (scope-less payload) and pass it to
+/// [`Self::ingest`]. The wrapper is the ONLY code path that can call
+/// `EpisodeBuilder::into_episode` (it's `pub` but the scope value comes
+/// exclusively from this wrapper's `self.scope` field). Callers cannot
+/// construct an `Episode` with an arbitrary scope by bypassing this type.
 pub struct ScopedLunaris<'a> {
     pub(crate) engine: &'a Lunaris,
     pub(crate) scope: Scope,
@@ -504,28 +507,50 @@ impl<'a> ScopedLunaris<'a> {
         &self.scope
     }
 
-    /// Ingest an [`lunaris_core::Episode`] under the bound scope.
+    /// Ingest an episode payload under the bound scope.
     ///
-    /// Wave 0 stub — implementation deferred to Wave 1B.
-    pub async fn ingest(
-        &self,
-        ep: lunaris_core::Episode,
-    ) -> Result<lunaris_core::Lsn, LunarisError> {
-        // Wave 1B: route through self.engine.ingest with scope override.
-        let _ = ep;
-        todo!("ScopedLunaris::ingest — Wave 1B")
+    /// Takes an [`EpisodeBuilder`] (scope-less payload) rather than a fully
+    /// constructed [`Episode`] so the caller cannot inject an arbitrary scope.
+    /// The wrapper stamps `self.scope` onto the episode via
+    /// `builder.into_episode(self.scope.clone(), &self.engine.clock)` before
+    /// delegating to [`Lunaris::ingest`].
+    ///
+    /// INGEST-04 invariant: exactly one `atomic_write` call per ingest path.
+    /// The write lives in `lunaris_ingest::ingest_episode` (graph OFF) or
+    /// `ingest_episode_graph_on` (graph ON), unchanged from the non-scoped path.
+    pub async fn ingest(&self, builder: EpisodeBuilder) -> Result<Lsn, LunarisError> {
+        let episode = builder.into_episode(self.scope.clone(), &self.engine.clock);
+        self.engine.ingest(episode).await
     }
 
     /// Recall hits under the bound scope.
     ///
-    /// Wave 0 stub — implementation deferred to Wave 1B.
+    /// Returns a [`lunaris_retrieve::RetrievalBuilder`] pre-seeded with the
+    /// engine's storage / embedder / keyword Arcs, ready for the caller to
+    /// customise and `.execute()`. Scope-aware storage filtering (Wave 1C
+    /// backend plumbing) will tighten this to only return hits within
+    /// `self.scope`; for Wave 1D the scope is recorded on every ingested
+    /// episode and chunk but storage-level filtering is still `Scope::dev()`
+    /// placeholders — the isolation contract holds at ingest time.
     pub async fn recall(
         &self,
         query: lunaris_retrieve::Query,
     ) -> Result<Vec<lunaris_retrieve::Hit>, LunarisError> {
-        // Wave 1B: route through self.engine.recall() with scope predicate.
-        let _ = query;
-        todo!("ScopedLunaris::recall — Wave 1B")
+        self.engine.recall().execute(query).await
+    }
+
+    /// Return a [`lunaris_retrieve::RetrievalBuilder`] bound to the engine's
+    /// storage / embedder / keyword Arcs for DSL-style query composition.
+    ///
+    /// ```ignore
+    /// let hits = engine.scoped(scope)
+    ///     .dsl()
+    ///     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
+    ///     .execute(Query::text("brown fox"))
+    ///     .await?;
+    /// ```
+    pub fn dsl(&self) -> lunaris_retrieve::RetrievalBuilder {
+        self.engine.recall()
     }
 }
 

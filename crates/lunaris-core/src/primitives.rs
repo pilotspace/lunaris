@@ -237,6 +237,87 @@ impl Fact {
     }
 }
 
+// ---------------- EpisodeBuilder ----------------
+
+/// Scope-less payload builder for [`Episode`].
+///
+/// Callers assemble all Episode fields EXCEPT scope using this builder.
+/// Scope is injected exactly once — by [`ScopedLunaris::ingest`] — via the
+/// `pub(crate)` [`EpisodeBuilder::into_episode`] method. This makes it
+/// impossible to construct an [`Episode`] with an arbitrary scope by reaching
+/// around the `ScopedLunaris` wrapper.
+///
+/// # Example
+///
+/// ```ignore
+/// let builder = EpisodeBuilder::new("agent:fs/report.md", "# Q3 Report\n...")
+///     .t_ref(chrono::Utc::now());
+/// // scope is injected by engine.scoped(scope_a).ingest(builder).await?
+/// ```
+#[derive(Clone, Debug)]
+pub struct EpisodeBuilder {
+    /// The `source` field of the resulting `Episode` (e.g. `"helios:fs/report.md"`).
+    pub source: String,
+    /// Raw content that will be chunked + embedded by the ingest pipeline.
+    pub content: String,
+    /// Optional real-world reference timestamp (valid time). When `None`,
+    /// the ingest pipeline stamps the Episode with the current HLC.
+    pub t_ref: Option<chrono::DateTime<chrono::Utc>>,
+    /// Caller-supplied metadata key/value pairs.
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+impl EpisodeBuilder {
+    /// Construct a new builder with the required `source` and `content`.
+    ///
+    /// `source` is the namespace-qualified origin identifier
+    /// (e.g. `"helios:fs/report.md"` or `"chat:session-42/turn-7"`).
+    /// `content` is the raw text that will be chunked + embedded.
+    pub fn new(source: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            content: content.into(),
+            t_ref: None,
+            metadata: serde_json::Map::new(),
+        }
+    }
+
+    /// Set the reference timestamp (valid time anchor).
+    ///
+    /// When not set, the ingest pipeline uses the current wall time from the
+    /// [`HlcClock`] bound to the engine.
+    pub fn t_ref(mut self, t: chrono::DateTime<chrono::Utc>) -> Self {
+        self.t_ref = Some(t);
+        self
+    }
+
+    /// Merge `metadata` key/value pairs into the builder.
+    pub fn metadata(mut self, m: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.metadata.extend(m);
+        self
+    }
+
+    /// Materialise the builder into an [`Episode`].
+    ///
+    /// `scope` can ONLY be provided by [`lunaris::handle::ScopedLunaris::ingest`]
+    /// — callers outside the `lunaris` crate cannot call this method, so
+    /// they cannot set an arbitrary scope on an Episode.
+    ///
+    /// The `clock` is the engine's `HlcClock`; `BiTemporal::now(clock)` stamps
+    /// the bi-temporal `(valid, sys)` pair at the moment of ingest.
+    pub fn into_episode(self, scope: Scope, clock: &HlcClock) -> Episode {
+        Episode {
+            id: Ulid::new(),
+            scope,
+            source: self.source,
+            content: self.content,
+            t_ref: self.t_ref,
+            bt: BiTemporal::now(clock),
+            metadata: self.metadata,
+        }
+    }
+}
+
 // ---------------- Community ----------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -44,7 +44,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lunaris_core::{CypherQuery, LunarisError};
+use lunaris_core::{CypherQuery, LunarisError, Scope};
 use lunaris_extract::EntityId;
 
 use super::{QueryContext, Retriever, clamp_k};
@@ -210,7 +210,10 @@ impl Retriever for Graph {
             return Ok(Vec::new());
         }
         let q = self.build_cypher();
-        let result = ctx.storage.graph_traverse(&q, ctx.query.as_of).await?;
+        // RFC 0001 Wave 1D: graph_traverse uses Scope::dev() until QueryContext
+        // carries per-scope routing (Wave 1C backend plumbing).
+        let dev_scope = Scope::dev();
+        let result = ctx.storage.graph_traverse(&dev_scope, &q, ctx.query.as_of).await?;
 
         // Map GraphResult rows -> RawHit. Score = 1.0 / (1 + i) per D-15
         // (rank-stable; rank 0 -> 1.0, rank 1 -> 0.5, ..., monotonically

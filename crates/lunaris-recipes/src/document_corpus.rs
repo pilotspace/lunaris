@@ -113,6 +113,9 @@ impl DocumentCorpus {
     ) -> Result<(), LunarisError> {
         for (content, metadata) in chunks {
             let mut episode = Episode::new(
+                // RFC 0001 Wave 1D: use Scope::dev() until DocumentCorpus
+                // receives a real Scope parameter (Wave 3 SDK layer).
+                lunaris_core::Scope::dev(),
                 format!("{}{}", self.source_prefix, ulid::Ulid::new()),
                 content,
                 self.lunaris.clock().as_ref(),

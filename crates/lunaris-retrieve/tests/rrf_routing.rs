@@ -48,11 +48,16 @@ impl PretendNativeMoon {
 
 #[async_trait]
 impl StoragePort for PretendNativeMoon {
-    async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -64,6 +69,7 @@ impl StoragePort for PretendNativeMoon {
     }
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -71,6 +77,7 @@ impl StoragePort for PretendNativeMoon {
     }
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -78,6 +85,7 @@ impl StoragePort for PretendNativeMoon {
     }
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         _key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -85,6 +93,7 @@ impl StoragePort for PretendNativeMoon {
     }
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -93,6 +102,7 @@ impl StoragePort for PretendNativeMoon {
     }
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,

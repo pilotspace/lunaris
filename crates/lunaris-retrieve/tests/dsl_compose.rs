@@ -66,12 +66,17 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         index: &str,
         _query: &[f32],
         k: usize,
@@ -85,6 +90,7 @@ impl StoragePort for RecordingStorage {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         q: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -98,6 +104,7 @@ impl StoragePort for RecordingStorage {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -106,6 +113,7 @@ impl StoragePort for RecordingStorage {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -128,6 +136,7 @@ impl StoragePort for RecordingStorage {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -137,6 +146,7 @@ impl StoragePort for RecordingStorage {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -326,9 +336,17 @@ async fn hydrate_returns_chunk_text_and_source() {
 
     let rec = Arc::new(RecordingStorage::new());
     let clock = HlcClock::new(0);
-    let episode = Episode::new("notes.md", "raw content unused here", &clock);
-    let mut chunk =
-        Chunk::new(episode.id, "the brown fox", 4, 0, vec!["Notes".to_string()], &clock);
+    let episode =
+        Episode::new(lunaris_core::Scope::dev(), "notes.md", "raw content unused here", &clock);
+    let mut chunk = Chunk::new(
+        lunaris_core::Scope::dev(),
+        episode.id,
+        "the brown fox",
+        4,
+        0,
+        vec!["Notes".to_string()],
+        &clock,
+    );
     chunk.embedding = Some(vec![0.0_f32; 768]);
 
     let chunk_id_bytes = chunk.id.to_bytes().to_vec();

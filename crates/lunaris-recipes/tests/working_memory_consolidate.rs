@@ -102,7 +102,11 @@ impl BridgedStorage {
 
 #[async_trait]
 impl StoragePort for BridgedStorage {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             if let WriteOp::KvPut { key, value } = op {
                 self.rows.lock().insert(key.clone(), value.clone());
@@ -113,6 +117,7 @@ impl StoragePort for BridgedStorage {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -125,6 +130,7 @@ impl StoragePort for BridgedStorage {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -133,6 +139,7 @@ impl StoragePort for BridgedStorage {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -141,6 +148,7 @@ impl StoragePort for BridgedStorage {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -153,6 +161,7 @@ impl StoragePort for BridgedStorage {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -175,6 +184,7 @@ impl StoragePort for BridgedStorage {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         topic: &str,
         _partition: u16,
@@ -302,7 +312,10 @@ async fn seed_events(
             source: format!("test:wm/note-{i}"),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage.publish(CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
+        storage
+            .publish(&lunaris_core::Scope::dev(), CONSOLIDATE_TOPIC, 0, payload.into())
+            .await
+            .unwrap();
     }
     for i in 0..other_count {
         let ep_id = Ulid::new();
@@ -314,7 +327,10 @@ async fn seed_events(
             source: format!("other:note-{i}"),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage.publish(CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
+        storage
+            .publish(&lunaris_core::Scope::dev(), CONSOLIDATE_TOPIC, 0, payload.into())
+            .await
+            .unwrap();
     }
     ids
 }
