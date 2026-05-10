@@ -31,13 +31,13 @@ pub async fn all_or_nothing(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()
         .map(|(i, k)| WriteOp::KvPut { key: k.to_vec(), value: format!("v{i}").into_bytes() })
         .collect();
 
-    let lsn = storage.atomic_write(&ops).await?;
+    let lsn = storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
 
     // Read at a generous "now" — backends with snapshot pinning need
     // a timestamp that comfortably overlaps the commit's HLC.
     let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
     for k in keys.iter() {
-        let row = storage.read_as_of(k, now).await?;
+        let row = storage.read_as_of(&lunaris_core::Scope::dev(), k, now).await?;
         anyhow::ensure!(
             row.is_some(),
             "atomic_write::all_or_nothing: key {:?} missing after commit (lsn={:?})",
@@ -60,7 +60,7 @@ pub async fn lsn_monotonic(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()>
     for i in 0..5u32 {
         let key = format!("conformance:lsn:{i:03}").into_bytes();
         let ops = vec![WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }];
-        let lsn = storage.atomic_write(&ops).await?;
+        let lsn = storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
         if let Some(p) = prev {
             anyhow::ensure!(
                 lsn > p,

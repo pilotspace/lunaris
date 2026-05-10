@@ -125,9 +125,11 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        // Count per variant + persist KvPuts in `rows` for read_as_of +
-        // chunk_ids for vector_search.
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         {
             let mut counts = self.writeop_counts.lock();
             for op in ops {
@@ -151,6 +153,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         k: usize,
@@ -174,6 +177,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -182,6 +186,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -190,6 +195,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -202,6 +208,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -216,6 +223,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -389,6 +397,7 @@ async fn graph_off_default_uses_phase2_fast_path() {
     );
 
     let ep = Episode::new(
+        lunaris_core::Scope::dev(),
         "graph_off.md",
         "# Notes\nThe quick brown fox jumps over the lazy dog.",
         &clock,
@@ -415,7 +424,12 @@ async fn graph_enable_then_ingest_produces_graph_writeops() {
     handle.graph_pipeline().enable();
     assert!(handle.graph_pipeline().is_enabled());
 
-    let ep = Episode::new("alice.md", "# Notes\nAlice knows Bob since 2024.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "alice.md",
+        "# Notes\nAlice knows Bob since 2024.",
+        &clock,
+    );
     handle.ingest(ep).await.expect("ingest must succeed");
 
     let counts = rec.writeop_counts();
@@ -441,7 +455,8 @@ async fn single_atomic_write_call_invariant_holds_under_graph_on() {
     let handle = handle.with_extractor(mock as Arc<dyn Extractor>);
     handle.graph_pipeline().enable();
 
-    let ep = Episode::new("alice.md", "# Notes\nAlice and Bob.", &clock);
+    let ep =
+        Episode::new(lunaris_core::Scope::dev(), "alice.md", "# Notes\nAlice and Bob.", &clock);
     handle.ingest(ep).await.expect("ingest must succeed");
 
     assert_eq!(
@@ -489,7 +504,12 @@ async fn validator_needs_review_publishes_verify_message() {
     let handle = handle.with_extractor(mock as Arc<dyn Extractor>);
     handle.graph_pipeline().enable();
 
-    let ep = Episode::new("alice_inverted.md", "# Notes\nAlice with inverted timestamps.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "alice_inverted.md",
+        "# Notes\nAlice with inverted timestamps.",
+        &clock,
+    );
     handle.ingest(ep).await.expect("ingest must succeed even when Validator demotes");
 
     // The bad entity went to needs_review, NOT to out.entities → no
@@ -529,7 +549,7 @@ async fn noop_extractor_with_graph_on_emits_no_graph_writeops() {
         "NoopExtractor.applies() MUST be false"
     );
 
-    let ep = Episode::new("noop.md", "# Notes\nAlice and Bob.", &clock);
+    let ep = Episode::new(lunaris_core::Scope::dev(), "noop.md", "# Notes\nAlice and Bob.", &clock);
     handle.ingest(ep).await.expect("ingest must succeed");
 
     let counts = rec.writeop_counts();
@@ -555,14 +575,14 @@ async fn with_extractor_swaps_handle_extractor() {
     let mock_b = Arc::new(MockExtractor::with_alice_knows_bob());
     let handle = handle.with_extractor(mock_a.clone() as Arc<dyn Extractor>);
 
-    let ep1 = Episode::new("e1.md", "# E1\nAlice.", &clock);
+    let ep1 = Episode::new(lunaris_core::Scope::dev(), "e1.md", "# E1\nAlice.", &clock);
     handle.ingest(ep1).await.expect("ingest 1");
     assert_eq!(mock_a.call_count(), 1, "first extractor must be called for ep1");
     assert_eq!(mock_b.call_count(), 0);
 
     // Swap to mock_b.
     let handle = handle.with_extractor(mock_b.clone() as Arc<dyn Extractor>);
-    let ep2 = Episode::new("e2.md", "# E2\nBob.", &clock);
+    let ep2 = Episode::new(lunaris_core::Scope::dev(), "e2.md", "# E2\nBob.", &clock);
     handle.ingest(ep2).await.expect("ingest 2");
     assert_eq!(mock_a.call_count(), 1, "first extractor must NOT be called again after swap");
     assert_eq!(mock_b.call_count(), 1, "second extractor must be called for ep2");
@@ -593,7 +613,8 @@ async fn id_hex_round_trip_ingest_then_graph_anchored() {
     let handle = handle.with_extractor(mock as Arc<dyn Extractor>);
     handle.graph_pipeline().enable();
 
-    let ep = Episode::new("alice.md", "# Notes\nAlice knows Bob.", &clock);
+    let ep =
+        Episode::new(lunaris_core::Scope::dev(), "alice.md", "# Notes\nAlice knows Bob.", &clock);
     handle.ingest(ep).await.expect("ingest must succeed");
 
     // Step 1 — confirm props.id_hex was written for Alice.
@@ -660,7 +681,8 @@ async fn recall_with_graph_anchored_composes_end_to_end() {
     let handle = handle.with_extractor(mock as Arc<dyn Extractor>);
     handle.graph_pipeline().enable();
 
-    let ep = Episode::new("alice.md", "# Notes\nAlice knows Bob.", &clock);
+    let ep =
+        Episode::new(lunaris_core::Scope::dev(), "alice.md", "# Notes\nAlice knows Bob.", &clock);
     handle.ingest(ep).await.expect("ingest");
 
     // Canned graph row for the recall path.

@@ -27,7 +27,7 @@ pub async fn cypher_subset(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()>
         cypher: "MATCH (n)-[r]->(m) RETURN n LIMIT 5".to_string(),
         params: serde_json::Map::new(),
     };
-    let result = storage.graph_traverse(&query, None).await?;
+    let result = storage.graph_traverse(&lunaris_core::Scope::dev(), &query, None).await?;
 
     anyhow::ensure!(
         !result.rows.is_empty(),

@@ -79,7 +79,11 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
@@ -95,9 +99,9 @@ impl StoragePort for RecordingStorageWithKeyword {
         Ok(Lsn { wall_ms: 1, counter: 1 })
     }
 
-    // B-6 fix: vector_search has 6 params (index, query, k, filter, as_of, rerank).
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -108,9 +112,9 @@ impl StoragePort for RecordingStorageWithKeyword {
         Ok(Vec::new())
     }
 
-    // B-6 fix: graph_traverse takes &CypherQuery + Option<Hlc>.
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -119,16 +123,16 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
         Ok(Box::pin(stream::iter(Vec::<Result<(Bytes, Bytes), StorageError>>::new())))
     }
 
-    // B-6 fix: read_as_of returns Row { key, value, bt } — key field present;
-    // bt uses Hlc::ZERO (NOT Hlc::default — Hlc has no Default impl).
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -141,6 +145,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -152,15 +157,11 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        // For this smoke test we do NOT need the worker to actually receive
-        // messages — we ONLY assert the pipeline TOGGLE state and the
-        // publish path (D-16). Returning an empty stream lets the worker
-        // spin once + idle without consuming anything; the
-        // tokio::time::sleep below the spawn keeps the test deterministic.
         Ok(Box::pin(stream::empty()))
     }
 
@@ -263,7 +264,12 @@ async fn consolidate_enable_then_ingest_publishes_event() {
     // __lunaris_consolidate__ event, even with the pipeline OFF (the
     // pipeline ON/OFF gates the WORKER, not the publish path).
     let (handle, rec, clock) = build_handle();
-    let ep = Episode::new("ingest.md", "# Notes\nThe quick brown fox.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "ingest.md",
+        "# Notes\nThe quick brown fox.",
+        &clock,
+    );
     handle.ingest(ep).await.expect("ingest must succeed");
 
     assert_eq!(
@@ -293,7 +299,12 @@ async fn consolidate_enable_then_ingest_publishes_event() {
 #[tokio::test]
 async fn ingest_publishes_consolidate_envelope_with_episode_source() {
     let (handle, rec, clock) = build_handle();
-    let ep = Episode::new("test:wm/note-0", "# Notes\nScope-aware consolidate payload.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "test:wm/note-0",
+        "# Notes\nScope-aware consolidate payload.",
+        &clock,
+    );
     handle.ingest(ep).await.expect("ingest must succeed");
 
     let envelope =
@@ -311,7 +322,12 @@ async fn ingest_publishes_one_consolidate_event_per_call() {
     // D-16 strictness — N ingests produce exactly N consolidate publishes.
     let (handle, rec, clock) = build_handle();
     for i in 0..3 {
-        let ep = Episode::new(format!("ep{i}.md"), format!("# E{i}\nAlice and Bob."), &clock);
+        let ep = Episode::new(
+            lunaris_core::Scope::dev(),
+            format!("ep{i}.md"),
+            format!("# E{i}\nAlice and Bob."),
+            &clock,
+        );
         handle.ingest(ep).await.expect("ingest must succeed");
     }
     assert_eq!(

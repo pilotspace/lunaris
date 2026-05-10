@@ -82,7 +82,13 @@ impl WorkingMemory {
         let source = self.scope_key(k);
         let content = serde_json::to_string(&v)
             .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-        let episode = Episode::new(source, content, self.lunaris.clock().as_ref());
+        // RFC 0001 Wave 0: use Scope::dev() until WorkingMemory receives a real scope (Wave 1D).
+        let episode = Episode::new(
+            lunaris_core::Scope::dev(),
+            source,
+            content,
+            self.lunaris.clock().as_ref(),
+        );
         self.lunaris.ingest(episode).await
     }
 
@@ -176,8 +182,9 @@ async fn drain_consolidate_events(
 ) -> Result<Vec<ConsolidateEvent>, LunarisError> {
     let pull_timeout = Duration::from_millis(PULL_TIMEOUT_MS);
 
+    // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
     let mut stream = storage
-        .subscribe(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 

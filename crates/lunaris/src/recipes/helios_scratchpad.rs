@@ -163,7 +163,11 @@ impl HeliosScratchpad {
         let key_prefix: &[u8] = b"episode:";
         let storage = self.lunaris.storage();
         let mut stream =
-            storage.scan_range(key_prefix, None).await.map_err(LunarisError::Storage)?;
+            // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+            storage
+                .scan_range(&lunaris_core::Scope::dev(), key_prefix, None)
+                .await
+                .map_err(LunarisError::Storage)?;
         let target_prefix = match prefix {
             Some(p) => format!("{}{}", self.session_prefix, p),
             None => self.session_prefix.clone(),

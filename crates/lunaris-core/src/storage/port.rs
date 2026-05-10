@@ -7,6 +7,11 @@
 //!      trait is still defined and exported in `super::types`).
 //!   2. Stream items are wrapped in `Result<_, StorageError>` so mid-stream backend failures
 //!      surface per-row instead of silently truncating.
+//!
+//! RFC 0001 (v0.2): every partitioning method now takes `scope: &Scope` as the first
+//! argument after `&self`. `capabilities()` is unchanged. Wave 0 backend impls thread scope
+//! through to the underlying free functions; the free functions may `let _ = scope;` —
+//! real per-scope partitioning is Wave 1B (Postgres RLS) and Wave 1C (Moon keyspace prefix).
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -14,21 +19,37 @@ use futures::stream::BoxStream;
 
 use crate::error::StorageError;
 use crate::hlc::Hlc;
+use crate::scope::Scope;
 
 use super::capabilities::StorageCapabilities;
 use super::types::{CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp};
 
+/// The storage abstraction for Lunaris.
+///
+/// See module-level doc for the object-safety contract and RFC 0001 §3.4 for the
+/// `&Scope` argument rationale.
 #[async_trait]
 pub trait StoragePort: Send + Sync + 'static {
     /// Atomic multi-key write. Either all ops commit or none do.
     /// Returns the `Lsn` at which the writes became visible.
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError>;
+    ///
+    /// `scope` is authoritative for the whole batch — `WriteOp` variants do NOT carry
+    /// individual scopes (RFC 0001 §3.4: a single `atomic_write` is by definition one
+    /// scope; cross-scope atomicity is out of scope for v0.2).
+    async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError>;
 
     /// Vector search with structured filter. `rerank=true` is a HINT — backends without
     /// native rerank should return `rerank_applied=false` in each hit; the retriever
     /// may then apply rerank downstream or skip per `degraded_fallback`.
+    ///
+    /// The 8-argument signature exceeds clippy's default limit of 7. The arguments
+    /// are all semantically distinct and cannot be collapsed without introducing a
+    /// `VectorSearchRequest` builder that adds more boilerplate than it saves. The
+    /// lint is suppressed here and at every impl site.
+    #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
+        scope: &Scope,
         index: &str,
         query: &[f32],
         k: usize,
@@ -41,6 +62,7 @@ pub trait StoragePort: Send + Sync + 'static {
     /// `Err(StorageError::NotSupported(_))`; retrievers degrade to vector-only.
     async fn graph_traverse(
         &self,
+        scope: &Scope,
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError>;
@@ -57,6 +79,7 @@ pub trait StoragePort: Send + Sync + 'static {
     /// drops, snapshot expiry) surface per-row instead of silently truncating.
     async fn scan_range(
         &self,
+        scope: &Scope,
         prefix: &[u8],
         as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError>;
@@ -67,12 +90,18 @@ pub trait StoragePort: Send + Sync + 'static {
     /// **Deviation 1 from blueprint §6:** the blueprint signature is
     /// `read_as_of<K: Key>(...)` — see the `scan_range` doc-comment for why this method
     /// takes `&[u8]`.
-    async fn read_as_of(&self, key: &[u8], as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError>;
+    async fn read_as_of(
+        &self,
+        scope: &Scope,
+        key: &[u8],
+        as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError>;
 
     /// Queue publish. Returns the offset assigned by the broker (monotonic within
     /// `(topic, partition)`).
     async fn publish(
         &self,
+        scope: &Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -85,6 +114,7 @@ pub trait StoragePort: Send + Sync + 'static {
     /// mid-stream broker failures surface per-message.
     async fn subscribe(
         &self,
+        scope: &Scope,
         group: &str,
         topic: &str,
         partition: u16,
@@ -104,7 +134,13 @@ pub trait StoragePort: Send + Sync + 'static {
     /// Plan 04-04 `Lunaris::recall_with_degraded_check` reads this once per
     /// recall to set `Hit::degraded = true` when the verifier queue depth
     /// crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` (VERIFY-05 + VERIFY-06).
-    async fn queue_depth(&self, _topic: &str, _partition: u16) -> Result<u64, StorageError> {
+    async fn queue_depth(
+        &self,
+        scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<u64, StorageError> {
+        let _ = scope;
         Err(StorageError::NotSupported("queue_depth not implemented for this StoragePort backend"))
     }
 

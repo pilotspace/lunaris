@@ -5,6 +5,7 @@
 
 #![cfg(feature = "moon-it")]
 
+use lunaris_core::Scope;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::keyword::KeywordPort;
 use lunaris_core::storage::types::WriteOp;
@@ -47,7 +48,7 @@ async fn keyword_search_returns_normalized_bm25_hits_on_moon() {
             metadata: serde_json::json!({"text": text}),
         });
     }
-    moon.atomic_write(&ops).await.expect("atomic_write");
+    moon.atomic_write(&Scope::dev(), &ops).await.expect("atomic_write");
 
     // Query "fox" — fixtures 0 and 2 contain it; fixture 1 does not.
     let hits = moon.keyword_search("chunks", "fox", 5, None, None).await.expect("keyword_search");

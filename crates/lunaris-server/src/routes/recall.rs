@@ -36,7 +36,7 @@ pub async fn recall_handler(
     headers: HeaderMap,
     Json(req): Json<RecallRequest>,
 ) -> Response {
-    let tenant = claims.tenant.as_str();
+    let tenant = claims.scope.as_str();
     let mode_label = match req.mode {
         RetrievalMode::Semantic => "semantic",
         RetrievalMode::Graph => "graph",

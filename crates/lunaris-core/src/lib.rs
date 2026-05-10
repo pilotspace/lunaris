@@ -8,6 +8,8 @@ pub mod embedder;
 pub mod error;
 pub mod hlc;
 pub mod primitives;
+// RFC 0001 — Scope newtype + ScopeError for multi-agent partition isolation.
+pub mod scope;
 pub mod storage;
 
 pub use bitemporal::BiTemporal;
@@ -17,6 +19,9 @@ pub use error::{
 };
 pub use hlc::{Hlc, HlcClock};
 pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
+// RFC 0001 — re-export Scope + ScopeError at the crate root so callers use
+// `lunaris_core::Scope` / `lunaris::Scope` without path qualification.
+pub use scope::{Scope, ScopeError};
 pub use storage::{
     CypherQuery, Filter, GraphResult, Key, KeywordHit, KeywordPort, Lsn, QueueMsg, Row, RrfFusion,
     StorageCapabilities, StoragePort, VectorHit, WriteOp,

@@ -9,32 +9,12 @@
 //! cargo test -p lunaris-storage-moon --features moon-it --test moon_client_smoke
 //! ```
 //!
-//! Expects Moon at `MOON_URL` env var (default `moon://localhost:6390`).
-//!
-//! ## What this proves
-//!
-//! 1. `MoonStorage::connect(url)` now uses `moon-client::MoonClient::connect(...)`
-//!    under the hood and produces an Episode round-trip identical to Phase 1's
-//!    `episode_roundtrip.rs`.
-//! 2. `MoonStorage::capabilities().native_rrf == true` after the Gap 9
-//!    closure. `ensure_indexes` now declares `SchemaField::Text("content")`
-//!    on every Lunaris FT index and `WriteOp::VectorUpsert` writes the
-//!    per-row text payload via `extract_content_for_index` (mirrors the
-//!    Postgres tsvector convention), so Moon's HYBRID FT.SEARCH resolves
-//!    `@content` and `fuse_rrf` opts into `RrfFusion::Moon` for one-RTT
-//!    server-side fusion.
-//!
-//! ## What this does NOT prove
-//!
-//! End-to-end `text().hybrid_search()` against live indexes — that is exercised in
-//! Phase 2 plan 02-02 (Keyword BM25 + RRF) once the BM25 + vector indexes exist.
-//! Here we only assert the `native_rrf` capability bit so the planner has the
-//! signal it needs.
+//! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
 
 #![cfg(feature = "moon-it")]
 
 use bytes::Bytes;
-use lunaris_core::{Episode, HlcClock, StoragePort, WriteOp};
+use lunaris_core::{Episode, HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
 
 fn moon_url() -> String {
@@ -48,12 +28,12 @@ async fn round_trip_via_moon_client() {
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
 
     let clock = HlcClock::new(0);
-    let ep = Episode::new("smoke://retrofit", "hello moon-client", &clock);
+    let ep = Episode::new(Scope::dev(), "smoke://retrofit", "hello moon-client", &clock);
     let key = keyspace::episode_key(ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
     let lsn = storage
-        .atomic_write(&[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
+        .atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
         .await
         .expect("atomic_write commit via moon-client");
     assert!(
@@ -63,7 +43,7 @@ async fn round_trip_via_moon_client() {
 
     let now = clock.tick();
     let row = storage
-        .read_as_of(&key, now)
+        .read_as_of(&Scope::dev(), &key, now)
         .await
         .expect("read_as_of ok via moon-client")
         .expect("episode exists");
@@ -87,11 +67,9 @@ async fn capabilities_reports_native_rrf() {
          resolves @content and fuse_rrf opts into RrfFusion::Moon (Gap 9 \
          closure 2026-04-21)."
     );
-    // Also re-assert the rest of the Moon profile so any drift surfaces here.
     assert!(
         !cap.bi_temporal_native,
-        "Moon does not natively support KV bi-temporal reads (HGET ignores AS_OF) — \
-         only FT.SEARCH AS_OF + GRAPH.QUERY VALID_AT are temporal (Gap 8)"
+        "Moon does not natively support KV bi-temporal reads (HGET ignores AS_OF)"
     );
     assert!(cap.graph_native);
     assert!(cap.rerank_native);
@@ -99,12 +77,6 @@ async fn capabilities_reports_native_rrf() {
     assert_eq!(cap.max_vector_dim, 768);
 }
 
-/// Gap 9 follow-on guard — proves that `native_rrf=true` is more than a
-/// claim: a real `text().hybrid_search()` round-trip against a freshly-seeded
-/// row resolves `@content` and returns the row instead of "unknown index".
-///
-/// Without this assertion, the bit and the behavior can drift again — it
-/// took the live recall_q probe to catch the previous regression.
 #[tokio::test]
 async fn hybrid_search_round_trip_after_ensure_indexes() {
     use lunaris_core::WriteOp;
@@ -113,27 +85,27 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
         .await
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
 
-    // Seed one fact with a distinctive predicate so BM25 can find it.
     let id = ulid::Ulid::new().to_bytes().to_vec();
     let predicate = "moon-it-smoke-hybrid-marker";
     let fact_text = format!("subject-id-stub {predicate}");
     let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.001).collect();
     storage
-        .atomic_write(&[WriteOp::VectorUpsert {
-            index: "facts".into(),
-            id: id.clone(),
-            embedding: embedding.clone(),
-            metadata: serde_json::json!({
-                "predicate": predicate,
-                "subject": "subject-id-stub",
-                "fact_text": fact_text,
-            }),
-        }])
+        .atomic_write(
+            &Scope::dev(),
+            &[WriteOp::VectorUpsert {
+                index: "facts".into(),
+                id: id.clone(),
+                embedding: embedding.clone(),
+                metadata: serde_json::json!({
+                    "predicate": predicate,
+                    "subject": "subject-id-stub",
+                    "fact_text": fact_text,
+                }),
+            }],
+        )
         .await
         .expect("seed VectorUpsert via Gap-9 content schema");
 
-    // Drive the same call path the recall hot loop uses: native HYBRID via
-    // the moon SDK, with both BM25 and dense weights non-zero.
     let mut typed = storage.client().typed();
     let mut text = typed.text();
     let weights: [f64; 3] = [0.5, 0.5, 0.0];

@@ -128,19 +128,11 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        // B-2-RESIDUAL: parse bt from the payload JSON so the mock mirrors
-        // the real backend semantics. Moon HSET stores `v` + `bt` as separate
-        // fields BUT writes them from the same `Row<Bytes>` payload; Postgres
-        // stores bt in a column derived from the persisted payload. Either
-        // way, the bt that ends up persisted is the bt embedded in the
-        // serialized payload — NOT a separately-tracked side value.
-        //
-        // Preserving the existing bt from self.rows would hide the bt
-        // mutation that apply_supersede produces and defeat the purpose of
-        // the rewrite. Falling back to BiTemporal::at(Hlc::ZERO, Hlc::ZERO)
-        // when the payload doesn't carry a `bt` field keeps Plan 02 callers
-        // (who don't write bt-shaped JSON) compiling.
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         let mut rows = self.rows.lock();
         for op in ops {
             match op {
@@ -164,9 +156,9 @@ impl StoragePort for RecordingStorageWithKeyword {
         Ok(Lsn { wall_ms: self.next_lsn_value(), counter: 0 })
     }
 
-    // B-6: vector_search has 6 params (index, query, k, filter, as_of, rerank).
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -177,9 +169,9 @@ impl StoragePort for RecordingStorageWithKeyword {
         Ok(Vec::new())
     }
 
-    // B-6: graph_traverse takes &CypherQuery + Option<Hlc>.
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -188,16 +180,16 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
         Ok(Box::pin(stream::iter(Vec::<Result<(Bytes, Bytes), StorageError>>::new())))
     }
 
-    // B-6: read_as_of returns Row { key, value, bt } — bt is the persisted
-    // value (parsed from the payload at atomic_write time).
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -210,6 +202,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -221,20 +214,11 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        // Plan 04-04 Task 4: take the receiver out of the slot (single-
-        // subscriber fixture). The B-2 integration test pushes envelopes via
-        // push_subscribe_envelope; the worker's stream pops them via
-        // futures::stream::unfold (no `tokio-stream` dep needed). After the
-        // worker ends, the channel closes naturally — the worker observes
-        // None from stream.next() and exits cleanly.
-        //
-        // Falls back to an empty stream if some prior test in this fixture
-        // already took the receiver (the toggle-only smoke tests don't need
-        // it; only the B-2 integration test does).
         let mut rx_guard = self.subscribe_rx.lock().await;
         match rx_guard.take() {
             Some(rx) => {
@@ -364,7 +348,12 @@ async fn ingest_does_not_publish_to_verify_queue_in_v0_default() {
     // to make the worker side READY to consume; the ingest emit is
     // unchanged here.
     let (handle, rec, clock) = build_handle();
-    let ep = Episode::new("ingest.md", "# Notes\nThe quick brown fox.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "ingest.md",
+        "# Notes\nThe quick brown fox.",
+        &clock,
+    );
     handle.ingest(ep).await.expect("ingest must succeed");
 
     assert_eq!(

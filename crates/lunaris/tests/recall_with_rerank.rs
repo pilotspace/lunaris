@@ -41,7 +41,11 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
@@ -58,6 +62,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         k: usize,
@@ -81,6 +86,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -89,6 +95,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -97,6 +104,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -109,6 +117,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -118,6 +127,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -163,8 +173,12 @@ async fn recall_with_noop_reranker_returns_hits() {
         .with_reranker(Arc::new(NoopReranker) as Arc<dyn Reranker>);
 
     // Ingest one Episode.
-    let ep =
-        Episode::new("notes.md", "# Notes\nThe quick brown fox jumps over the lazy dog.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "notes.md",
+        "# Notes\nThe quick brown fox jumps over the lazy dog.",
+        &clock,
+    );
     let _ = handle.ingest(ep).await.expect("ingest must succeed");
 
     // Recall via the DSL — vector → rerank(handle.reranker()) → top(3).
@@ -244,7 +258,12 @@ async fn rerank_then_degraded_fallback_composes() {
     let handle = Lunaris::with_parts_keyword(storage, keyword, embedder, clock.clone())
         .with_reranker(Arc::new(NoopReranker) as Arc<dyn Reranker>);
 
-    let ep = Episode::new("notes.md", "# Notes\nLazy dog and brown fox content here.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "notes.md",
+        "# Notes\nLazy dog and brown fox content here.",
+        &clock,
+    );
     let _ = handle.ingest(ep).await.expect("ingest must succeed");
 
     // Build: Vector("chunks", 30).rerank(noop).degraded_fallback(Vector("chunks", 5)).top(3)

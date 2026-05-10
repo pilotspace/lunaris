@@ -79,8 +79,12 @@ pub async fn run(
     for (query, as_of) in fixtures.query_set() {
         let q_vec = stub_embed(query);
 
-        let hits_moon = moon.vector_search("chunks", &q_vec, 5, None, *as_of, false).await?;
-        let hits_pg = postgres.vector_search("chunks", &q_vec, 5, None, *as_of, false).await?;
+        let hits_moon = moon
+            .vector_search(&lunaris_core::Scope::dev(), "chunks", &q_vec, 5, None, *as_of, false)
+            .await?;
+        let hits_pg = postgres
+            .vector_search(&lunaris_core::Scope::dev(), "chunks", &q_vec, 5, None, *as_of, false)
+            .await?;
 
         if hits_moon.len() != hits_pg.len() {
             divergences.push(Divergence {

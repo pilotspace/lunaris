@@ -44,7 +44,7 @@ pub async fn ingest_handler(
     Json(episode): Json<Episode>,
 ) -> Response {
     let storage = state.lunaris.storage();
-    let tenant = claims.tenant.as_str();
+    let tenant = claims.scope.as_str();
 
     // Plan 05-05 OPS-06 — start the duration timer. Histogram observes
     // wall-clock from request entry to response sent.
@@ -65,7 +65,9 @@ pub async fn ingest_handler(
         Ok(lsn) => {
             // Phase 4 backpressure: read queue_depth and surface
             // queue_lag_warn. NotSupported / errors → no warning (best-effort).
-            let warn = match storage.queue_depth(VERIFY_TOPIC, 0).await {
+            // RFC 0001 Wave 0: Scope::dev() until per-scope queue routing (Wave 1E).
+            let warn = match storage.queue_depth(&lunaris_core::Scope::dev(), VERIFY_TOPIC, 0).await
+            {
                 Ok(d) => d > VERIFY_WARN_THRESHOLD,
                 Err(_) => false,
             };

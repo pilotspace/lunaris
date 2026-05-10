@@ -2,6 +2,11 @@
 //!
 //! Every primitive carries a `BiTemporal { valid, sys }` stamp from a shared `HlcClock`.
 //! Every primitive is `Send + Sync + 'static`, `Debug`, `Clone`, `PartialEq`, and serde-roundtrippable.
+//!
+//! RFC 0001 (v0.2): every primitive now carries `pub scope: Scope` as a first-class
+//! partition key for multi-agent / multi-tenant isolation. Constructors take `scope`
+//! as the first argument. Existing call sites use `Scope::dev()` during the Wave 0
+//! migration; Wave 1 replaces those with real per-agent scopes.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,12 +14,15 @@ use ulid::Ulid;
 
 use crate::bitemporal::BiTemporal;
 use crate::hlc::HlcClock;
+use crate::scope::Scope;
 
 // ---------------- Episode ----------------
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Episode {
     pub id: Ulid,
+    /// RFC 0001 — partition key for multi-agent / multi-tenant isolation.
+    pub scope: Scope,
     pub source: String,
     pub content: String,
     pub t_ref: Option<DateTime<Utc>>,
@@ -24,9 +32,19 @@ pub struct Episode {
 }
 
 impl Episode {
-    pub fn new(source: impl Into<String>, content: impl Into<String>, clock: &HlcClock) -> Self {
+    /// Construct a new [`Episode`].
+    ///
+    /// `scope` is the partition key (RFC 0001). Use [`Scope::dev()`] at Wave 0
+    /// call sites where the real scope has not yet been threaded through.
+    pub fn new(
+        scope: Scope,
+        source: impl Into<String>,
+        content: impl Into<String>,
+        clock: &HlcClock,
+    ) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             source: source.into(),
             content: content.into(),
             t_ref: None,
@@ -41,6 +59,8 @@ impl Episode {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Chunk {
     pub id: Ulid,
+    /// RFC 0001 — partition key, inherited from the parent [`Episode`].
+    pub scope: Scope,
     pub episode_id: Ulid,
     pub text: String,
     pub tokens: u32,
@@ -55,7 +75,11 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    /// Construct a new [`Chunk`].
+    ///
+    /// `scope` must match the parent [`Episode::scope`] (RFC 0001 §3.2).
     pub fn new(
+        scope: Scope,
         episode_id: Ulid,
         text: impl Into<String>,
         tokens: u32,
@@ -65,6 +89,7 @@ impl Chunk {
     ) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             episode_id,
             text: text.into(),
             tokens,
@@ -82,6 +107,8 @@ impl Chunk {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     pub id: Ulid,
+    /// RFC 0001 — partition key for multi-agent / multi-tenant isolation.
+    pub scope: Scope,
     pub name: String,
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -93,7 +120,13 @@ pub struct Entity {
 }
 
 impl Entity {
+    /// Construct a new [`Entity`].
+    ///
+    /// `scope` is the partition key (RFC 0001). `src` and `dst` of any
+    /// [`Relation`] referencing this entity MUST share the same scope —
+    /// cross-scope relations are disallowed by construction in v0.2.
     pub fn new(
+        scope: Scope,
         name: impl Into<String>,
         entity_type: impl Into<String>,
         confidence: f32,
@@ -101,6 +134,7 @@ impl Entity {
     ) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             name: name.into(),
             aliases: Vec::new(),
             entity_type: entity_type.into(),
@@ -116,6 +150,8 @@ impl Entity {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Relation {
     pub id: Ulid,
+    /// RFC 0001 — partition key. `src` and `dst` MUST resolve within this scope.
+    pub scope: Scope,
     pub src: Ulid,
     pub dst: Ulid,
     pub rel_type: String,
@@ -126,7 +162,12 @@ pub struct Relation {
 }
 
 impl Relation {
+    /// Construct a new [`Relation`].
+    ///
+    /// `src` and `dst` MUST resolve within `scope` — cross-scope graph
+    /// references are disallowed by construction in v0.2 (RFC 0001 §2.3).
     pub fn new(
+        scope: Scope,
         src: Ulid,
         dst: Ulid,
         rel_type: impl Into<String>,
@@ -135,6 +176,7 @@ impl Relation {
     ) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             src,
             dst,
             rel_type: rel_type.into(),
@@ -150,6 +192,8 @@ impl Relation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Fact {
     pub id: Ulid,
+    /// RFC 0001 — partition key for multi-agent / multi-tenant isolation.
+    pub scope: Scope,
     pub subject: Ulid,
     pub predicate: String,
     pub object: Ulid,
@@ -164,7 +208,12 @@ pub struct Fact {
 }
 
 impl Fact {
+    /// Construct a new [`Fact`].
+    ///
+    /// `scope` is the partition key (RFC 0001). Corresponds to "Claim" in the
+    /// RFC §3.2 primitive list (the codebase uses `Fact` as the canonical name).
     pub fn new(
+        scope: Scope,
         subject: Ulid,
         predicate: impl Into<String>,
         object: Ulid,
@@ -174,6 +223,7 @@ impl Fact {
     ) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             subject,
             predicate: predicate.into(),
             object,
@@ -192,6 +242,9 @@ impl Fact {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Community {
     pub id: Ulid,
+    /// RFC 0001 — partition key. Corresponds to "Source" in the RFC §3.2
+    /// primitive list (the codebase uses `Community` as the canonical name).
+    pub scope: Scope,
     pub level: u8,
     pub parent: Option<Ulid>,
     #[serde(default)]
@@ -203,9 +256,14 @@ pub struct Community {
 }
 
 impl Community {
-    pub fn new(level: u8, summary: impl Into<String>, clock: &HlcClock) -> Self {
+    /// Construct a new [`Community`].
+    ///
+    /// `scope` is the partition key (RFC 0001). All member entity IDs in
+    /// `members` MUST resolve within this scope.
+    pub fn new(scope: Scope, level: u8, summary: impl Into<String>, clock: &HlcClock) -> Self {
         Self {
             id: Ulid::new(),
+            scope,
             level,
             parent: None,
             members: Vec::new(),

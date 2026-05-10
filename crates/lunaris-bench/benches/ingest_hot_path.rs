@@ -224,7 +224,12 @@ fn ingest_benches(c: &mut Criterion) {
                 b.to_async(&runtime).iter(|| async {
                     // Each iteration constructs a fresh Episode (new ULID) so
                     // we measure ingest, not idempotent re-write.
-                    let ep = Episode::new("bench/12kb_doc.md", *content, &handle.clock());
+                    let ep = Episode::new(
+                        lunaris::Scope::dev(),
+                        "bench/12kb_doc.md",
+                        *content,
+                        &handle.clock(),
+                    );
                     let _lsn = handle.ingest(ep).await.expect("ingest");
                 });
             },
@@ -257,7 +262,12 @@ fn ingest_benches(c: &mut Criterion) {
                     // VectorUpsert + per-extracted-entity GraphNode +
                     // per-relation GraphEdge + per-fact KvPut), NOT
                     // idempotent re-write.
-                    let ep = Episode::new("bench/12kb_doc.md", *content, &handle_graph_on.clock());
+                    let ep = Episode::new(
+                        lunaris::Scope::dev(),
+                        "bench/12kb_doc.md",
+                        *content,
+                        &handle_graph_on.clock(),
+                    );
                     let _lsn = handle_graph_on.ingest(ep).await.expect("ingest graph_on");
                 });
             },

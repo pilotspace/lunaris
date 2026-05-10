@@ -275,7 +275,12 @@ impl Lunaris {
             // call. Skip when there are zero matches (publishing an empty op
             // batch would be a no-op anyway and some backends reject it).
             if !ops.is_empty() {
-                let _lsn = self.storage.atomic_write(&ops).await.map_err(LunarisError::Storage)?;
+                // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+                let _lsn = self
+                    .storage
+                    .atomic_write(&lunaris_core::Scope::dev(), &ops)
+                    .await
+                    .map_err(LunarisError::Storage)?;
             }
 
             let receipt = ForgetReceipt {
@@ -349,8 +354,10 @@ async fn scan_matches(
         let key_str = format!("episode:{ulid}");
         // B-4: clock.tick() — Hlc::now() doesn't exist in this codebase.
         let now = clock.tick();
-        let row =
-            storage.read_as_of(key_str.as_bytes(), now).await.map_err(LunarisError::Storage)?;
+        let row = storage
+            .read_as_of(&lunaris_core::Scope::dev(), key_str.as_bytes(), now)
+            .await
+            .map_err(LunarisError::Storage)?;
         return Ok(match row {
             Some(r) => {
                 vec![ForgetMatch { key: key_str.into_bytes(), payload: r.value.to_vec(), bt: r.bt }]
@@ -363,7 +370,11 @@ async fn scan_matches(
     // `episode:` prefix; richer scope languages (chunk:, fact:, ...) are v1.
     let prefix: &[u8] = b"episode:";
 
-    let mut stream = storage.scan_range(prefix, None).await.map_err(LunarisError::Storage)?;
+    // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+    let mut stream = storage
+        .scan_range(&lunaris_core::Scope::dev(), prefix, None)
+        .await
+        .map_err(LunarisError::Storage)?;
     let mut out = Vec::new();
     while let Some(item) = stream.next().await {
         let (k, v) = item.map_err(LunarisError::Storage)?;
@@ -372,7 +383,10 @@ async fn scan_matches(
             // can mutate the typed struct via `invalidate_sys`. now is bumped
             // per row to preserve HLC monotony.
             let now = clock.tick();
-            let row_opt = storage.read_as_of(&k, now).await.map_err(LunarisError::Storage)?;
+            let row_opt = storage
+                .read_as_of(&lunaris_core::Scope::dev(), &k, now)
+                .await
+                .map_err(LunarisError::Storage)?;
             let bt = row_opt
                 .as_ref()
                 .map(|r| r.bt)

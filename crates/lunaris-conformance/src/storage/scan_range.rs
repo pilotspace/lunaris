@@ -31,7 +31,10 @@ pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     for i in 0..SEEDED_ROWS {
         let key = format!("conformance:scan_range:{i:03}").into_bytes();
         storage
-            .atomic_write(&[WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }])
+            .atomic_write(
+                &lunaris_core::Scope::dev(),
+                &[WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }],
+            )
             .await?;
     }
 
@@ -51,7 +54,7 @@ pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
 /// returning a `Result` instead of `panic!()` so the failure surfaces
 /// through `anyhow` rather than a runtime panic.
 async fn count_under_prefix(storage: &Arc<dyn StoragePort>, prefix: &[u8]) -> anyhow::Result<u64> {
-    let mut stream = storage.scan_range(prefix, None).await?;
+    let mut stream = storage.scan_range(&lunaris_core::Scope::dev(), prefix, None).await?;
     let mut total = 0u64;
     while let Some(item) = stream.next().await {
         match item {

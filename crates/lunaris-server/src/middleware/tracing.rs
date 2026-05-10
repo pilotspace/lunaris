@@ -67,7 +67,7 @@ pub async fn tracing_middleware(req: Request<Body>, next: Next) -> Response {
     let tenant = req
         .extensions()
         .get::<AuthClaims>()
-        .map(|c| c.tenant.clone())
+        .map(|c| c.scope.as_str().to_string())
         .unwrap_or_else(|| "anonymous".to_string());
 
     let method = req.method().clone();

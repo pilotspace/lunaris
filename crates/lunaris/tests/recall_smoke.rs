@@ -45,7 +45,11 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
@@ -62,6 +66,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         k: usize,
@@ -69,8 +74,6 @@ impl StoragePort for RecordingStorageWithKeyword {
         _as_of: Option<Hlc>,
         _rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        // Return up to k canned hits from the recorded chunk ids — score by
-        // arbitrary descending rank.
         let ids = self.chunk_ids.lock().clone();
         Ok(ids
             .into_iter()
@@ -87,6 +90,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -95,6 +99,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -103,6 +108,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -115,6 +121,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -124,6 +131,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -192,8 +200,12 @@ async fn ingest_then_recall_returns_hit() {
     let handle = Lunaris::with_parts_keyword(storage, keyword, embedder, clock.clone());
 
     // Ingest one Episode.
-    let ep =
-        Episode::new("notes.md", "# Notes\nThe quick brown fox jumps over the lazy dog.", &clock);
+    let ep = Episode::new(
+        lunaris_core::Scope::dev(),
+        "notes.md",
+        "# Notes\nThe quick brown fox jumps over the lazy dog.",
+        &clock,
+    );
     let lsn = handle.ingest(ep).await.expect("ingest must succeed");
     assert!(lsn.wall_ms > 0 || lsn.counter > 0, "lsn must be non-zero");
 

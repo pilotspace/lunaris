@@ -173,7 +173,10 @@ mod chaos {
 
             let mut total: u64 = 0;
             for prefix in prefixes {
-                let mut stream = match storage.scan_range(prefix, None).await {
+                let mut stream = match storage
+                    .scan_range(&lunaris_core::Scope::dev(), prefix, None)
+                    .await
+                {
                     Ok(s) => s,
                     Err(e) => {
                         // Backend rejected the scan (e.g., NotSupported on a

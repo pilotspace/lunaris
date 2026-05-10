@@ -46,6 +46,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::scope::Scope;
 use crate::storage::types::Lsn;
 use crate::{StorageError, StoragePort};
 
@@ -171,7 +172,9 @@ impl Publisher for Arc<dyn StoragePort> {
         partition: u16,
         payload: Bytes,
     ) -> Result<u64, PublishError> {
-        StoragePort::publish(self.as_ref(), topic, partition, payload)
+        // RFC 0001 Wave 0: audit publishes use Scope::dev() as migration crutch.
+        // Wave 1E will thread the real scope through the audit path.
+        StoragePort::publish(self.as_ref(), &Scope::dev(), topic, partition, payload)
             .await
             .map_err(|e: StorageError| PublishError::Backend(e.to_string()))
     }

@@ -1,4 +1,7 @@
 //! Serde roundtrip + bi-temporal stamp + Send/Sync proofs for all six primitives.
+//!
+//! RFC 0001 Wave 0: constructors now take `Scope` as first argument.
+//! Tests use `Scope::dev()` as the migration crutch.
 
 use lunaris_core::*;
 use ulid::Ulid;
@@ -18,7 +21,7 @@ fn all_six_are_send_sync_static() {
 #[test]
 fn primitives_carry_bitemporal_stamp_on_construct() {
     let clock = HlcClock::new(0);
-    let ep = Episode::new("notes.md", "hello", &clock);
+    let ep = Episode::new(Scope::dev(), "notes.md", "hello", &clock);
     let later = clock.tick();
     assert!(ep.bt.valid_at(later), "Episode bt should include later timestamps");
     assert!(ep.bt.system_at(later));
@@ -27,7 +30,7 @@ fn primitives_carry_bitemporal_stamp_on_construct() {
 #[test]
 fn episode_roundtrip() {
     let clock = HlcClock::new(0);
-    let ep = Episode::new("notes.md", "hello world", &clock);
+    let ep = Episode::new(Scope::dev(), "notes.md", "hello world", &clock);
     let s = serde_json::to_string(&ep).unwrap();
     let back: Episode = serde_json::from_str(&s).unwrap();
     assert_eq!(ep, back);
@@ -36,7 +39,7 @@ fn episode_roundtrip() {
 #[test]
 fn chunk_roundtrip() {
     let clock = HlcClock::new(0);
-    let mut c = Chunk::new(Ulid::new(), "hi", 1, 0, vec!["H1".into()], &clock);
+    let mut c = Chunk::new(Scope::dev(), Ulid::new(), "hi", 1, 0, vec!["H1".into()], &clock);
     c.embedding = Some(vec![0.1, 0.2, 0.3]);
     c.overlap_tail = "...".into();
     let s = serde_json::to_string(&c).unwrap();
@@ -47,7 +50,7 @@ fn chunk_roundtrip() {
 #[test]
 fn entity_roundtrip() {
     let clock = HlcClock::new(0);
-    let mut e = Entity::new("Alice", "Person", 0.9, &clock);
+    let mut e = Entity::new(Scope::dev(), "Alice", "Person", 0.9, &clock);
     e.aliases = vec!["Al".into()];
     let s = serde_json::to_string(&e).unwrap();
     let back: Entity = serde_json::from_str(&s).unwrap();
@@ -57,7 +60,7 @@ fn entity_roundtrip() {
 #[test]
 fn relation_roundtrip() {
     let clock = HlcClock::new(0);
-    let r = Relation::new(Ulid::new(), Ulid::new(), "WORKS_AT", 0.8, &clock);
+    let r = Relation::new(Scope::dev(), Ulid::new(), Ulid::new(), "WORKS_AT", 0.8, &clock);
     let s = serde_json::to_string(&r).unwrap();
     let back: Relation = serde_json::from_str(&s).unwrap();
     assert_eq!(r, back);
@@ -66,7 +69,15 @@ fn relation_roundtrip() {
 #[test]
 fn fact_roundtrip() {
     let clock = HlcClock::new(0);
-    let f = Fact::new(Ulid::new(), "joined", Ulid::new(), "Alice joined Acme", 0.95, &clock);
+    let f = Fact::new(
+        Scope::dev(),
+        Ulid::new(),
+        "joined",
+        Ulid::new(),
+        "Alice joined Acme",
+        0.95,
+        &clock,
+    );
     let s = serde_json::to_string(&f).unwrap();
     let back: Fact = serde_json::from_str(&s).unwrap();
     assert_eq!(f, back);
@@ -75,7 +86,7 @@ fn fact_roundtrip() {
 #[test]
 fn community_roundtrip() {
     let clock = HlcClock::new(0);
-    let mut c = Community::new(0, "founders", &clock);
+    let mut c = Community::new(Scope::dev(), 0, "founders", &clock);
     c.members = vec![Ulid::new(), Ulid::new()];
     let s = serde_json::to_string(&c).unwrap();
     let back: Community = serde_json::from_str(&s).unwrap();

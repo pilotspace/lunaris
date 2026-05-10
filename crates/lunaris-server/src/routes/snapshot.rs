@@ -60,7 +60,8 @@ pub async fn snapshot_handler(
     // we materialize the snapshot fully (single-tenant; bounded by storage
     // size) — Plan 05-05 may add `?limit=N` for streaming-bounded responses.
     let pairs: Vec<Result<(Bytes, Bytes), lunaris_core::StorageError>> =
-        match storage.scan_range(b"", Some(hlc)).await {
+        // RFC 0001 Wave 0: Scope::dev() until per-scope routing (Wave 1E).
+        match storage.scan_range(&lunaris_core::Scope::dev(), b"", Some(hlc)).await {
             Ok(mut s) => {
                 let mut acc = Vec::new();
                 while let Some(item) = s.next().await {

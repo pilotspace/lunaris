@@ -37,7 +37,7 @@ pub async fn forget_handler(
     Json(req): Json<ForgetRequestDto>,
 ) -> Response {
     let target = req.target.clone();
-    let tenant = claims.tenant.as_str();
+    let tenant = claims.scope.as_str();
 
     // Plan 05-05 OPS-06 — `target_kind` + `hard` labels per CONTEXT.md D-25.
     // Cardinality: target_kind ∈ {id, scope, before} (3 values); hard ∈

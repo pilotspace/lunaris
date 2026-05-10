@@ -322,8 +322,10 @@ async fn scan_session_episodes(
 ) -> Result<(HashSet<String>, BTreeMap<String, String>), lunaris_core::LunarisError> {
     let mut ids: HashSet<String> = HashSet::new();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();
-    let mut stream =
-        storage.scan_range(b"episode:", None).await.map_err(lunaris_core::LunarisError::Storage)?;
+    let mut stream = storage
+        .scan_range(&lunaris_core::Scope::dev(), b"episode:", None)
+        .await
+        .map_err(lunaris_core::LunarisError::Storage)?;
     while let Some(item) = stream.next().await {
         let (k, v) = item.map_err(lunaris_core::LunarisError::Storage)?;
         let key_str = match std::str::from_utf8(&k) {
@@ -359,7 +361,7 @@ async fn scan_chunk_episode_ids(
     // The chunk key family uses BOTH `chunk:` and `chunks:` as prefixes
     // depending on backend + timeline; sweep both for safety.
     for prefix in [b"chunk:".as_slice(), b"chunks:".as_slice()] {
-        let mut stream = match storage.scan_range(prefix, None).await {
+        let mut stream = match storage.scan_range(&lunaris_core::Scope::dev(), prefix, None).await {
             Ok(s) => s,
             Err(_) => continue, // backend rejects this prefix — treat as empty
         };

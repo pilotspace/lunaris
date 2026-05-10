@@ -184,12 +184,14 @@ mod tests {
         impl lunaris_core::StoragePort for UnusedStorage {
             async fn atomic_write(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _ops: &[lunaris_core::WriteOp],
             ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
                 Ok(lunaris_core::Lsn { wall_ms: 0, counter: 0 })
             }
             async fn vector_search(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _index: &str,
                 _query: &[f32],
                 _k: usize,
@@ -201,6 +203,7 @@ mod tests {
             }
             async fn graph_traverse(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _q: &lunaris_core::CypherQuery,
                 _as_of: Option<lunaris_core::Hlc>,
             ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
@@ -208,6 +211,7 @@ mod tests {
             }
             async fn scan_range(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _prefix: &[u8],
                 _as_of: Option<lunaris_core::Hlc>,
             ) -> Result<
@@ -221,6 +225,7 @@ mod tests {
             }
             async fn read_as_of(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _key: &[u8],
                 _as_of: lunaris_core::Hlc,
             ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError>
@@ -229,6 +234,7 @@ mod tests {
             }
             async fn publish(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _topic: &str,
                 _partition: u16,
                 _payload: bytes::Bytes,
@@ -237,6 +243,7 @@ mod tests {
             }
             async fn subscribe(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _group: &str,
                 _topic: &str,
                 _partition: u16,

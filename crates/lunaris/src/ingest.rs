@@ -178,7 +178,11 @@ async fn publish_consolidate_event(
             return;
         }
     };
-    if let Err(e) = storage.publish(CONSOLIDATE_QUEUE_TOPIC, 0, payload.into()).await {
+    // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 1D).
+    if let Err(e) = storage
+        .publish(&lunaris_core::Scope::dev(), CONSOLIDATE_QUEUE_TOPIC, 0, payload.into())
+        .await
+    {
         tracing::warn!(
             err = %e,
             "consolidate-queue publish failed; ingest still succeeded"
@@ -399,7 +403,8 @@ async fn ingest_episode_graph_on(
     }
 
     // Step 6: ONE atomic_write call (INGEST-04 + D-18 + T-03-03-06).
-    let lsn = storage.atomic_write(&ops).await?;
+    // RFC 0001: pass episode scope as the partition key.
+    let lsn = storage.atomic_write(&episode.scope, &ops).await?;
 
     // Step 7: NeedsReview items publish to verify queue (D-19 Phase 4 hook).
     // Non-blocking — failure logs + continues; the ingest still succeeded.
@@ -481,7 +486,11 @@ async fn publish_needs_review(storage: &dyn StoragePort, items: &[NeedsReviewIte
                 continue;
             }
         };
-        if let Err(e) = storage.publish(VERIFY_QUEUE_TOPIC, 0, payload.into()).await {
+        // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 1D).
+        if let Err(e) = storage
+            .publish(&lunaris_core::Scope::dev(), VERIFY_QUEUE_TOPIC, 0, payload.into())
+            .await
+        {
             tracing::warn!(err = %e, "verify-queue publish failed; ingest still succeeded");
         }
     }

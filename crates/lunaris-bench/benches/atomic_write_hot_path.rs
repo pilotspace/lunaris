@@ -94,7 +94,10 @@ fn atomic_write_benches(c: &mut Criterion) {
                                 metadata: serde_json::json!({"bench": true}),
                             },
                         ];
-                        let _lsn = storage.atomic_write(&ops).await.expect("atomic_write");
+                        let _lsn = storage
+                            .atomic_write(&lunaris::Scope::dev(), &ops)
+                            .await
+                            .expect("atomic_write");
                     }
                 });
             },

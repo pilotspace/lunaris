@@ -23,12 +23,18 @@ use axum::http::{Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use lunaris::Scope;
+
 use crate::state::AppState;
 
 /// Per-request bearer-token claims attached by [`auth_middleware`].
 #[derive(Clone, Debug)]
 pub struct AuthClaims {
-    pub tenant: String,
+    /// RFC 0001 Wave 0: `tenant` renamed to `scope` and typed as [`Scope`].
+    /// The token-file format still uses the key `"tenant"` (see
+    /// [`crate::state::TokenClaims`]); the middleware validates and converts
+    /// on each request. An invalid scope string → 401 Unauthorized.
+    pub scope: Scope,
     pub scopes: Arc<Vec<String>>,
 }
 
@@ -57,13 +63,19 @@ pub async fn auth_middleware(
         None => return unauth("invalid bearer token"),
     };
 
+    // RFC 0001 Wave 0: parse the tenant string from the token file into a
+    // typed `Scope`. An invalid value (violates `^[A-Za-z0-9_\-:.]{1,128}$`)
+    // is rejected with 401 rather than silently coerced — failing loudly here
+    // is safer than forwarding an invalid scope into storage partitioning.
+    let scope = match Scope::new(&claims.tenant) {
+        Ok(s) => s,
+        Err(_) => return unauth("token tenant is not a valid scope identifier"),
+    };
+
     // Attach claims for downstream consumers (rate-limit + handlers). The
-    // rate-limit `KeyExtractor` reads `AuthClaims.tenant` from the request
+    // rate-limit `KeyExtractor` reads `AuthClaims.scope` from the request
     // extensions to key per tenant (D-08).
-    req.extensions_mut().insert(AuthClaims {
-        tenant: claims.tenant.clone(),
-        scopes: Arc::new(claims.scopes.clone()),
-    });
+    req.extensions_mut().insert(AuthClaims { scope, scopes: Arc::new(claims.scopes.clone()) });
 
     // Scope check — `RequiredScope` was attached by the per-route layer.
     if let Some(req_scope) = req.extensions().get::<RequiredScope>().cloned()

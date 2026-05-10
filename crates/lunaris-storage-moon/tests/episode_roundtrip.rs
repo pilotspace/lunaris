@@ -9,21 +9,12 @@
 //!
 //! Expects Moon at `MOON_URL` env var (default `moon://localhost:6390`).
 //!
-//! ## What this proves
-//!
-//! ROADMAP success criterion #3 (Moon side): an `Episode` can be written through
-//! `StoragePort::atomic_write` and read back byte-identically through `read_as_of`.
-//! The Postgres side of #3 is exercised in Plan 04's matching test.
-//!
-//! ## What this does NOT prove
-//!
-//! Cross-backend identity (writing to Moon and reading from Postgres). That comparator
-//! lives in the conformance harness in Phase 5 (`STORE-05`).
+//! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
 
 #![cfg(feature = "moon-it")]
 
 use bytes::Bytes;
-use lunaris_core::{Episode, HlcClock, StorageError, StoragePort, WriteOp};
+use lunaris_core::{Episode, HlcClock, Scope, StorageError, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
 
 fn moon_url() -> String {
@@ -37,21 +28,24 @@ async fn episode_atomic_write_then_read_back() {
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
 
     let clock = HlcClock::new(0);
-    let ep = Episode::new("notes.md", "Alice joined Acme on 2024-04-01.", &clock);
+    let ep = Episode::new(Scope::dev(), "notes.md", "Alice joined Acme on 2024-04-01.", &clock);
     let key = keyspace::episode_key(ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
-    // Single KvPut to keep the round-trip simple. The HSET writes `v` field; the
-    // `read_as_of` reads the same field back.
+    // Single KvPut to keep the round-trip simple.
     let lsn = s
-        .atomic_write(&[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
+        .atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
         .await
         .expect("atomic_write commit");
     assert!(lsn.wall_ms > 0 || lsn.counter > 0, "Lsn must be non-zero, got {lsn:?}",);
 
     // Read via read_as_of(now()) — must return exactly the bytes we wrote.
     let now = clock.tick();
-    let row = s.read_as_of(&key, now).await.expect("read_as_of ok").expect("episode exists");
+    let row = s
+        .read_as_of(&Scope::dev(), &key, now)
+        .await
+        .expect("read_as_of ok")
+        .expect("episode exists");
     assert_eq!(row.key, key, "key roundtrip");
     assert_eq!(row.value, Bytes::from(value), "value roundtrip — bytes must be identical");
 }
@@ -70,8 +64,7 @@ async fn capabilities_reports_moon_native_profile() {
 }
 
 /// Defense-in-depth check: even with the moon-it feature, a non-`moon://` URL is rejected
-/// before any TCP IO. (The unit-test version of this lives in `client.rs`; this test
-/// asserts the same shape via the public `MoonStorage::connect` constructor.)
+/// before any TCP IO.
 #[tokio::test]
 async fn unsupported_url_scheme_rejected() {
     let r = MoonStorage::connect("redis://localhost:6379").await;

@@ -124,7 +124,8 @@ pub async fn collect_normalized_chunk_rows(
     keys_prefix: &str,
 ) -> anyhow::Result<NormalizedRows> {
     let storage = handle.storage();
-    let stream = storage.scan_range(keys_prefix.as_bytes(), None).await?;
+    let stream =
+        storage.scan_range(&lunaris_core::Scope::dev(), keys_prefix.as_bytes(), None).await?;
     let rows: Vec<(bytes::Bytes, bytes::Bytes)> = stream.try_collect().await?;
 
     // Distinct episode IDs: parse the key as "{prefix}{ulid}" and

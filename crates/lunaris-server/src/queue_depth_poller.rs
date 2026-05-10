@@ -111,7 +111,8 @@ async fn poll_topic<F: FnOnce(u64)>(
     warned: &Arc<RwLock<bool>>,
     update: F,
 ) {
-    match storage.queue_depth(topic, 0).await {
+    // RFC 0001 Wave 0: Scope::dev() until per-scope queue routing (Wave 1E).
+    match storage.queue_depth(&lunaris::Scope::dev(), topic, 0).await {
         Ok(depth) => update(depth),
         Err(StorageError::NotSupported(_)) => {
             // Backend doesn't support queue_depth — warn ONCE then go quiet.

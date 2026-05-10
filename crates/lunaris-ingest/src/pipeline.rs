@@ -112,7 +112,8 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
 
     // Step 5: ONE atomic_write call (INGEST-04). Anything that goes wrong is
     // all-or-nothing thanks to the Phase 1 StoragePort contract.
-    let lsn = storage.atomic_write(&ops).await?;
+    // RFC 0001: pass episode scope as the partition key.
+    let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(lsn)
 }
 

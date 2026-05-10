@@ -94,7 +94,7 @@ impl FixtureCorpus {
     pub async fn ingest_into(&self, storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
         for ep in &self.episodes {
             let ops = build_episode_ops(ep)?;
-            storage.atomic_write(&ops).await?;
+            storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
         }
         Ok(())
     }
@@ -108,6 +108,7 @@ fn build_ten_episodes(seed: u64) -> Vec<Episode> {
             let stamp = Hlc { wall_ms: 1_000_000 + (i as u64) * 1_000, counter: 0, node_id: 0 };
             Episode {
                 id,
+                scope: lunaris_core::Scope::dev(), // RFC 0001 Wave 0 migration crutch
                 source: format!("conformance:fixture/{i}"),
                 content: lorem_for(i),
                 t_ref: None,
@@ -248,7 +249,7 @@ pub async fn seed_three_chunks(
         });
     }
     let count = ops.len();
-    storage.atomic_write(&ops).await?;
+    storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
     Ok(count)
 }
 
@@ -265,27 +266,30 @@ pub async fn seed_one_edge(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()>
     let bob_id = b"conformance_bob".to_vec();
 
     storage
-        .atomic_write(&[
-            WriteOp::GraphNode {
-                graph: "lunaris_graph".to_string(),
-                id: alice_id.clone(),
-                label: "Person".to_string(),
-                props: serde_json::json!({ "name": "Alice" }),
-            },
-            WriteOp::GraphNode {
-                graph: "lunaris_graph".to_string(),
-                id: bob_id.clone(),
-                label: "Person".to_string(),
-                props: serde_json::json!({ "name": "Bob" }),
-            },
-            WriteOp::GraphEdge {
-                graph: "lunaris_graph".to_string(),
-                src: alice_id,
-                dst: bob_id,
-                rel: "KNOWS".to_string(),
-                props: serde_json::json!({}),
-            },
-        ])
+        .atomic_write(
+            &lunaris_core::Scope::dev(),
+            &[
+                WriteOp::GraphNode {
+                    graph: "lunaris_graph".to_string(),
+                    id: alice_id.clone(),
+                    label: "Person".to_string(),
+                    props: serde_json::json!({ "name": "Alice" }),
+                },
+                WriteOp::GraphNode {
+                    graph: "lunaris_graph".to_string(),
+                    id: bob_id.clone(),
+                    label: "Person".to_string(),
+                    props: serde_json::json!({ "name": "Bob" }),
+                },
+                WriteOp::GraphEdge {
+                    graph: "lunaris_graph".to_string(),
+                    src: alice_id,
+                    dst: bob_id,
+                    rel: "KNOWS".to_string(),
+                    props: serde_json::json!({}),
+                },
+            ],
+        )
         .await?;
     Ok(())
 }

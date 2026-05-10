@@ -48,7 +48,7 @@ pub use consolidator_pipeline::{
 };
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
-pub use handle::Lunaris;
+pub use handle::{Lunaris, ScopedLunaris};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`
 // re-exports this path so the established `lunaris_recipes::WorkingMemory`
 // import stays stable.

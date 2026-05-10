@@ -29,7 +29,7 @@ impl KeyExtractor for TenantKey {
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, tower_governor::GovernorError> {
         req.extensions()
             .get::<AuthClaims>()
-            .map(|c| c.tenant.clone())
+            .map(|c| c.scope.as_str().to_string())
             .ok_or(tower_governor::GovernorError::UnableToExtractKey)
     }
 }

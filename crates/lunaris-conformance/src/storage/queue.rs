@@ -32,9 +32,12 @@ pub async fn publish_subscribe_round_trip(storage: &Arc<dyn StoragePort>) -> any
     // pre-subscriber publishes are still durable, but ordering this way
     // also lets the test pass on hypothetical brokers that drop pre-
     // subscriber messages.
-    let mut stream = storage.subscribe(CONFORMANCE_GROUP, CONFORMANCE_TOPIC, 0).await?;
+    let mut stream = storage
+        .subscribe(&lunaris_core::Scope::dev(), CONFORMANCE_GROUP, CONFORMANCE_TOPIC, 0)
+        .await?;
 
-    let _offset = storage.publish(CONFORMANCE_TOPIC, 0, payload.clone()).await?;
+    let _offset =
+        storage.publish(&lunaris_core::Scope::dev(), CONFORMANCE_TOPIC, 0, payload.clone()).await?;
 
     let result = tokio::time::timeout(ROUND_TRIP_TIMEOUT, async {
         while let Some(msg) = stream.next().await {

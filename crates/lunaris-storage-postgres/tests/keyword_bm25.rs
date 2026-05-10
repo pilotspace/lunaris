@@ -9,6 +9,7 @@ use bytes::Bytes;
 use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::hlc::HlcClock;
 use lunaris_core::primitives::Chunk;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::keyword::KeywordPort;
 use lunaris_core::storage::types::WriteOp;
@@ -48,6 +49,7 @@ async fn keyword_search_returns_normalized_bm25_hits() {
         let id = Ulid::new();
         let chunk = Chunk {
             id,
+            scope: Scope::dev(), // RFC 0001 Wave 0 migration crutch
             episode_id,
             text: text.to_string(),
             tokens: text.split_whitespace().count() as u32,
@@ -68,7 +70,7 @@ async fn keyword_search_returns_normalized_bm25_hits() {
         });
         let _ = chunk_value;
     }
-    pg.atomic_write(&ops).await.expect("atomic_write");
+    pg.atomic_write(&Scope::dev(), &ops).await.expect("atomic_write");
 
     // Query "fox" — fixtures 0 and 2 contain it; fixture 1 does not.
     let hits = pg.keyword_search("chunks", "fox", 5, None, None).await.expect("keyword_search");

@@ -375,7 +375,7 @@ async fn run_one_backend(
 /// prefix (caller treats that as 0 delta; the SLO gate catches flat counts).
 async fn count_facts(mem: &Arc<Lunaris>) -> Option<u64> {
     let storage = mem.storage();
-    let stream = storage.scan_range(b"fact:", None).await.ok()?;
+    let stream = storage.scan_range(&lunaris::Scope::dev(), b"fact:", None).await.ok()?;
     let mut count = 0u64;
     let mut stream = stream;
     while let Some(row) = stream.next().await {

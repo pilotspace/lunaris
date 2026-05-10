@@ -28,7 +28,7 @@
 use std::sync::Arc;
 
 use lunaris_consolidate::Consolidator;
-use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, StoragePort};
+use lunaris_core::{Embedder, HlcClock, KeywordPort, LunarisError, Scope, StoragePort};
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;
@@ -442,6 +442,19 @@ impl Lunaris {
     pub fn consolidator(&self) -> Option<Arc<dyn Consolidator>> {
         self.consolidator_pipeline.snapshot_consolidator()
     }
+
+    /// RFC 0001 Wave 0 — construct a scope-bound view over this handle.
+    ///
+    /// All operations issued through the returned [`ScopedLunaris`] carry
+    /// `scope` as their partitioning key. The underlying `Lunaris` handle is
+    /// borrowed for the lifetime `'a` — no cloning occurs.
+    ///
+    /// Wave 1 will route each method through the real scope-aware backends.
+    /// Wave 0 stubs return `todo!()` so the API surface is frozen before the
+    /// routing logic lands.
+    pub fn scoped(&self, scope: Scope) -> ScopedLunaris<'_> {
+        ScopedLunaris { engine: self, scope }
+    }
 }
 
 /// Sentinel `KeywordPort` impl returned by [`Lunaris::with_parts`] when the
@@ -464,6 +477,55 @@ impl KeywordPort for NoKeywordSupport {
         Err(lunaris_core::StorageError::NotSupported(
             "Lunaris::with_parts was called without a KeywordPort — use with_parts_keyword or open(url)",
         ))
+    }
+}
+
+/// RFC 0001 Wave 0 — scope-bound view over a [`Lunaris`] handle.
+///
+/// Constructed via [`Lunaris::scoped`]. All operations issued through this
+/// wrapper carry the bound [`Scope`] as their partitioning key. The `'a`
+/// lifetime ties the view to the underlying handle so no `Arc` clone is
+/// required for the wrapper itself.
+///
+/// Wave 0: method bodies are `todo!()` — the public API surface is frozen for
+/// downstream crate + binding codegen. Wave 1B/1C will replace the stubs with
+/// real scope-aware routing through the storage backends.
+// Wave 0: `engine` is not yet read by the stub method bodies — it will be
+// used in Wave 1B when the real routing logic replaces the `todo!()` stubs.
+#[allow(dead_code)]
+pub struct ScopedLunaris<'a> {
+    pub(crate) engine: &'a Lunaris,
+    pub(crate) scope: Scope,
+}
+
+impl<'a> ScopedLunaris<'a> {
+    /// Returns the [`Scope`] this view is bound to.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    /// Ingest an [`lunaris_core::Episode`] under the bound scope.
+    ///
+    /// Wave 0 stub — implementation deferred to Wave 1B.
+    pub async fn ingest(
+        &self,
+        ep: lunaris_core::Episode,
+    ) -> Result<lunaris_core::Lsn, LunarisError> {
+        // Wave 1B: route through self.engine.ingest with scope override.
+        let _ = ep;
+        todo!("ScopedLunaris::ingest — Wave 1B")
+    }
+
+    /// Recall hits under the bound scope.
+    ///
+    /// Wave 0 stub — implementation deferred to Wave 1B.
+    pub async fn recall(
+        &self,
+        query: lunaris_retrieve::Query,
+    ) -> Result<Vec<lunaris_retrieve::Hit>, LunarisError> {
+        // Wave 1B: route through self.engine.recall() with scope predicate.
+        let _ = query;
+        todo!("ScopedLunaris::recall — Wave 1B")
     }
 }
 

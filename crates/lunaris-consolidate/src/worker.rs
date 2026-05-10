@@ -92,8 +92,9 @@ pub async fn run_consolidate_worker(
     shutdown: Arc<Notify>,
     source_prefix: Option<String>,
 ) -> Result<JoinHandle<()>, LunarisError> {
+    // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
     let stream = storage
-        .subscribe(CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 
@@ -511,12 +512,14 @@ mod tests {
         impl StoragePort for NoopStorage {
             async fn atomic_write(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _ops: &[lunaris_core::WriteOp],
             ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
                 Ok(lunaris_core::Lsn { wall_ms: 0, counter: 0 })
             }
             async fn vector_search(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _i: &str,
                 _q: &[f32],
                 _k: usize,
@@ -528,6 +531,7 @@ mod tests {
             }
             async fn graph_traverse(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _q: &lunaris_core::CypherQuery,
                 _a: Option<lunaris_core::Hlc>,
             ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
@@ -535,6 +539,7 @@ mod tests {
             }
             async fn scan_range(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _p: &[u8],
                 _a: Option<lunaris_core::Hlc>,
             ) -> Result<
@@ -545,6 +550,7 @@ mod tests {
             }
             async fn read_as_of(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _k: &[u8],
                 _a: lunaris_core::Hlc,
             ) -> Result<Option<lunaris_core::Row<Bytes>>, lunaris_core::StorageError> {
@@ -552,6 +558,7 @@ mod tests {
             }
             async fn publish(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _t: &str,
                 _p: u16,
                 _payload: Bytes,
@@ -560,6 +567,7 @@ mod tests {
             }
             async fn subscribe(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _g: &str,
                 _t: &str,
                 _p: u16,
@@ -652,12 +660,14 @@ mod tests {
         impl StoragePort for NullStorage {
             async fn atomic_write(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _ops: &[lunaris_core::WriteOp],
             ) -> Result<lunaris_core::Lsn, lunaris_core::StorageError> {
                 Ok(lunaris_core::Lsn { wall_ms: 0, counter: 0 })
             }
             async fn vector_search(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _i: &str,
                 _q: &[f32],
                 _k: usize,
@@ -669,6 +679,7 @@ mod tests {
             }
             async fn graph_traverse(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _q: &lunaris_core::CypherQuery,
                 _a: Option<lunaris_core::Hlc>,
             ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
@@ -676,6 +687,7 @@ mod tests {
             }
             async fn scan_range(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _p: &[u8],
                 _a: Option<lunaris_core::Hlc>,
             ) -> Result<
@@ -686,6 +698,7 @@ mod tests {
             }
             async fn read_as_of(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _k: &[u8],
                 _a: lunaris_core::Hlc,
             ) -> Result<Option<lunaris_core::Row<Bytes>>, lunaris_core::StorageError> {
@@ -693,6 +706,7 @@ mod tests {
             }
             async fn publish(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _t: &str,
                 _p: u16,
                 _payload: Bytes,
@@ -701,6 +715,7 @@ mod tests {
             }
             async fn subscribe(
                 &self,
+                _scope: &lunaris_core::Scope,
                 _g: &str,
                 _t: &str,
                 _p: u16,

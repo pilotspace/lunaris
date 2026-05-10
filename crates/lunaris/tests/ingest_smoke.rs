@@ -24,12 +24,17 @@ struct RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         self.batches.lock().push(ops.to_vec());
         Ok(Lsn { wall_ms: 1, counter: 0 })
     }
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -41,6 +46,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _query: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -48,6 +54,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -55,6 +62,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         _key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -62,6 +70,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -70,6 +79,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -96,6 +106,7 @@ async fn ingest_against_recording_storage_returns_nonzero_lsn() {
     let handle = Lunaris::with_parts(storage.clone(), embedder, clock.clone());
 
     let ep = Episode::new(
+        lunaris_core::Scope::dev(),
         "smoke.md",
         "# A\nfoo bar baz qux quux corge grault garply waldo fred\n",
         &handle.clock(),

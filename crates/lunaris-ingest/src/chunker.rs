@@ -34,7 +34,7 @@
 //! expect 4–8 chunks. The fixture in `tests/fixtures/12kb_doc.md` is hand-tuned
 //! to land squarely in that range.
 
-use lunaris_core::{Chunk, HlcClock};
+use lunaris_core::{Chunk, HlcClock, Scope};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ulid::Ulid;
 
@@ -57,9 +57,20 @@ pub struct ChunkDraft {
 impl ChunkDraft {
     /// Convert to a Phase 1 [`Chunk`]. The caller controls the `episode_id`;
     /// `clock` issues the `BiTemporal::now` stamp.
+    ///
+    /// RFC 0001 Wave 0: `scope` defaults to `Scope::dev()`. Wave 1D will thread
+    /// the real episode scope through this call site.
     pub fn into_chunk(self, episode_id: Ulid, clock: &HlcClock) -> Chunk {
-        let mut c =
-            Chunk::new(episode_id, self.text, self.tokens, self.offset, self.heading_path, clock);
+        // Wave 0 migration crutch: use dev scope. Wave 1D replaces this.
+        let mut c = Chunk::new(
+            Scope::dev(),
+            episode_id,
+            self.text,
+            self.tokens,
+            self.offset,
+            self.heading_path,
+            clock,
+        );
         c.overlap_tail = self.overlap_tail;
         c
     }

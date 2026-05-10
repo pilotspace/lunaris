@@ -110,7 +110,12 @@ impl Lunaris {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(DEFAULT_VERIFY_WARN_THRESHOLD);
 
-            let degraded_signal = match self.storage.queue_depth(VERIFY_TOPIC, 0).await {
+            // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 1D).
+            let degraded_signal = match self
+                .storage
+                .queue_depth(&lunaris_core::Scope::dev(), VERIFY_TOPIC, 0)
+                .await
+            {
                 Ok(depth) => {
                     tracing::debug!(
                         verify_queue_depth = depth,

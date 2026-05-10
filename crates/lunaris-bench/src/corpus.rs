@@ -610,7 +610,7 @@ pub async fn build_corpus_with_options(
             chunk_idx += 1;
         }
         storage
-            .atomic_write(&ops)
+            .atomic_write(&lunaris_core::Scope::dev(), &ops)
             .await
             .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
         emitted += batch_size;
@@ -670,6 +670,7 @@ fn next_fact(rng: &mut ChaCha20Rng, clock: &HlcClock) -> Result<Fact, BenchCorpu
     let embedding = det_vec(&fact_text, CORPUS_EMBEDDING_DIM);
     Ok(Fact {
         id,
+        scope: lunaris_core::Scope::dev(), // RFC 0001 Wave 0 migration crutch
         subject,
         predicate: predicate.to_string(),
         object,
@@ -814,7 +815,7 @@ pub async fn build_md_doc_corpus(
 
         if batch_ops.len() as u64 >= BATCH {
             storage
-                .atomic_write(&batch_ops)
+                .atomic_write(&lunaris_core::Scope::dev(), &batch_ops)
                 .await
                 .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
             written += batch_ops.len() as u64;
@@ -823,7 +824,7 @@ pub async fn build_md_doc_corpus(
     }
     if !batch_ops.is_empty() {
         storage
-            .atomic_write(&batch_ops)
+            .atomic_write(&lunaris_core::Scope::dev(), &batch_ops)
             .await
             .map_err(|e| BenchCorpusError::Backend(LunarisError::Storage(e)))?;
         written += batch_ops.len() as u64;
@@ -853,6 +854,7 @@ fn synth_md_episode(idx: u64, rng: &mut ChaCha20Rng) -> lunaris_core::Episode {
     rng.fill(&mut id_bytes);
     lunaris_core::Episode {
         id: Ulid::from_bytes(id_bytes),
+        scope: lunaris_core::Scope::dev(), // RFC 0001 Wave 0 migration crutch
         source: format!("bench:md-doc/{idx}"),
         content: body,
         t_ref: None,
@@ -1243,12 +1245,17 @@ pub mod tests_recording {
 
     #[async_trait]
     impl StoragePort for RecordingStorage {
-        async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        async fn atomic_write(
+            &self,
+            _scope: &lunaris_core::Scope,
+            ops: &[WriteOp],
+        ) -> Result<Lsn, StorageError> {
             self.batches.lock().push(ops.to_vec());
             Ok(Lsn { wall_ms: 1, counter: self.batches.lock().len() as u32 })
         }
         async fn vector_search(
             &self,
+            _scope: &lunaris_core::Scope,
             _index: &str,
             _query: &[f32],
             _k: usize,
@@ -1260,6 +1267,7 @@ pub mod tests_recording {
         }
         async fn graph_traverse(
             &self,
+            _scope: &lunaris_core::Scope,
             _query: &CypherQuery,
             _as_of: Option<Hlc>,
         ) -> Result<GraphResult, StorageError> {
@@ -1267,6 +1275,7 @@ pub mod tests_recording {
         }
         async fn scan_range(
             &self,
+            _scope: &lunaris_core::Scope,
             _prefix: &[u8],
             _as_of: Option<Hlc>,
         ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -1274,6 +1283,7 @@ pub mod tests_recording {
         }
         async fn read_as_of(
             &self,
+            _scope: &lunaris_core::Scope,
             _key: &[u8],
             _as_of: Hlc,
         ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -1281,6 +1291,7 @@ pub mod tests_recording {
         }
         async fn publish(
             &self,
+            _scope: &lunaris_core::Scope,
             _topic: &str,
             _partition: u16,
             _payload: Bytes,
@@ -1289,6 +1300,7 @@ pub mod tests_recording {
         }
         async fn subscribe(
             &self,
+            _scope: &lunaris_core::Scope,
             _group: &str,
             _topic: &str,
             _partition: u16,

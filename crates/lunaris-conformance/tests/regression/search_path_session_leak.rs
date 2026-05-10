@@ -92,6 +92,7 @@ async fn search_path_session_leak() -> anyhow::Result<()> {
     let missing_key = b"lunaris-regression-14-03-missing-key";
     let _ = lunaris_core::StoragePort::read_as_of(
         &storage,
+        &lunaris_core::Scope::dev(),
         missing_key,
         lunaris_core::hlc::Hlc::from_parts(u64::MAX / 2, 0, 0),
     )
@@ -99,7 +100,13 @@ async fn search_path_session_leak() -> anyhow::Result<()> {
     // scan_range returns a stream; drain it (empty) to ensure the full
     // query lifecycle executed.
     use futures::stream::StreamExt;
-    let mut s = lunaris_core::StoragePort::scan_range(&storage, missing_key, None).await?;
+    let mut s = lunaris_core::StoragePort::scan_range(
+        &storage,
+        &lunaris_core::Scope::dev(),
+        missing_key,
+        None,
+    )
+    .await?;
     while s.next().await.is_some() {}
     // atomic_write with zero ops is a no-op; we skip it to avoid
     // touching the bitemporal write path (which has its own fixtures).

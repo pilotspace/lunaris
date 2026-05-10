@@ -27,19 +27,25 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     // never been written. (Note: any other test in this suite writing
     // under the same key would invalidate this; the conformance contract
     // assumes a clean slate per-key.)
-    let pre = storage.read_as_of(&key, Hlc::ZERO).await?;
+    let pre = storage.read_as_of(&lunaris_core::Scope::dev(), &key, Hlc::ZERO).await?;
     anyhow::ensure!(
         pre.is_none(),
         "read_as_of::snapshot: expected None at Hlc::ZERO before any write, got {:?}",
         pre,
     );
 
-    storage.atomic_write(&[WriteOp::KvPut { key: key.clone(), value: value.clone() }]).await?;
+    storage
+        .atomic_write(
+            &lunaris_core::Scope::dev(),
+            &[WriteOp::KvPut { key: key.clone(), value: value.clone() }],
+        )
+        .await?;
 
     let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
-    let post = storage.read_as_of(&key, now).await?.ok_or_else(|| {
-        anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None")
-    })?;
+    let post =
+        storage.read_as_of(&lunaris_core::Scope::dev(), &key, now).await?.ok_or_else(|| {
+            anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None")
+        })?;
     anyhow::ensure!(
         post.value.as_ref() == value.as_slice(),
         "read_as_of::snapshot: payload mismatch — got {} bytes, want {}",

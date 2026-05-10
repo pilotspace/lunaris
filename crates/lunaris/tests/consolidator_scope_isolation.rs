@@ -140,7 +140,11 @@ impl InProcessBroker {
 
 #[async_trait]
 impl StoragePort for InProcessBroker {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             if let WriteOp::KvPut { key, value } = op {
                 self.rows.lock().insert(key.clone(), value.clone());
@@ -151,6 +155,7 @@ impl StoragePort for InProcessBroker {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -163,6 +168,7 @@ impl StoragePort for InProcessBroker {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -171,6 +177,7 @@ impl StoragePort for InProcessBroker {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -179,6 +186,7 @@ impl StoragePort for InProcessBroker {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -191,6 +199,7 @@ impl StoragePort for InProcessBroker {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -217,8 +226,6 @@ impl StoragePort for InProcessBroker {
                     partition,
                     payload: payload.clone(),
                 };
-                // Record for assertions BEFORE forwarding so the snapshot is
-                // authoritative even if no subscriber ever drains.
                 if let Ok(env) = serde_json::from_slice::<serde_json::Value>(&payload) {
                     self.audit_log.lock().push(env);
                 }
@@ -231,6 +238,7 @@ impl StoragePort for InProcessBroker {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         topic: &str,
         _partition: u16,
@@ -241,10 +249,6 @@ impl StoragePort for InProcessBroker {
             _ => None,
         };
         let Some(rx) = rx_opt else {
-            // Second subscribe on same topic — empty (test subscribes once
-            // via the worker's spawn path for `__lunaris_consolidate__`;
-            // `__lunaris_audit__` is never subscribed to in the default
-            // in-process test — audit capture happens inside `publish()`).
             return Ok(Box::pin(stream::empty()));
         };
         Ok(Box::pin(stream::unfold(rx, |mut rx| async move {
@@ -333,13 +337,22 @@ async fn consolidator_scope_isolation_zero_other_promotions() {
 
     for i in 0..PER_SIDE {
         let src_helios = format!("helios:fs/session-isolation/note-{i}");
-        let ep =
-            Episode::new(&src_helios, format!("Helios note {i} body"), lunaris.clock().as_ref());
+        let ep = Episode::new(
+            lunaris_core::Scope::dev(),
+            &src_helios,
+            format!("Helios note {i} body"),
+            lunaris.clock().as_ref(),
+        );
         id_to_source.insert(ep.id, src_helios);
         lunaris.ingest(ep).await.expect("ingest helios");
 
         let src_other = format!("other:tenant-{i}/note");
-        let ep = Episode::new(&src_other, format!("Other note {i} body"), lunaris.clock().as_ref());
+        let ep = Episode::new(
+            lunaris_core::Scope::dev(),
+            &src_other,
+            format!("Other note {i} body"),
+            lunaris.clock().as_ref(),
+        );
         id_to_source.insert(ep.id, src_other);
         lunaris.ingest(ep).await.expect("ingest other");
     }
@@ -428,12 +441,14 @@ async fn consolidator_system_wide_sees_other_promotions_control() {
     let mut id_to_source: HashMap<ulid::Ulid, String> = HashMap::new();
     for i in 0..PER_SIDE {
         let src_helios = format!("helios:fs/session-control/note-{i}");
-        let ep = Episode::new(&src_helios, "h", lunaris.clock().as_ref());
+        let ep =
+            Episode::new(lunaris_core::Scope::dev(), &src_helios, "h", lunaris.clock().as_ref());
         id_to_source.insert(ep.id, src_helios);
         lunaris.ingest(ep).await.unwrap();
 
         let src_other = format!("other:tenant-{i}/note");
-        let ep = Episode::new(&src_other, "o", lunaris.clock().as_ref());
+        let ep =
+            Episode::new(lunaris_core::Scope::dev(), &src_other, "o", lunaris.clock().as_ref());
         id_to_source.insert(ep.id, src_other);
         lunaris.ingest(ep).await.unwrap();
     }
@@ -540,12 +555,22 @@ async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> 
         let mut id_to_source: HashMap<ulid::Ulid, String> = HashMap::new();
         for i in 0..per_side {
             let src_helios = format!("helios:fs/{session}/note-{i}");
-            let ep = Episode::new(&src_helios, format!("H {i}"), lunaris.clock().as_ref());
+            let ep = Episode::new(
+                lunaris_core::Scope::dev(),
+                &src_helios,
+                format!("H {i}"),
+                lunaris.clock().as_ref(),
+            );
             id_to_source.insert(ep.id, src_helios);
             lunaris.ingest(ep).await?;
 
             let src_other = format!("other:{session}/note-{i}");
-            let ep = Episode::new(&src_other, format!("O {i}"), lunaris.clock().as_ref());
+            let ep = Episode::new(
+                lunaris_core::Scope::dev(),
+                &src_other,
+                format!("O {i}"),
+                lunaris.clock().as_ref(),
+            );
             id_to_source.insert(ep.id, src_other);
             lunaris.ingest(ep).await?;
         }
@@ -558,7 +583,12 @@ async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> 
         // Drain __lunaris_audit__ bounded — 5s total.
         let audit_stream = lunaris
             .storage()
-            .subscribe("lunaris-scope-isolation-test", "__lunaris_audit__", 0)
+            .subscribe(
+                &lunaris_core::Scope::dev(),
+                "lunaris-scope-isolation-test",
+                "__lunaris_audit__",
+                0,
+            )
             .await?;
         let mut audit_stream = audit_stream;
         let mut other_promotions = 0usize;
@@ -682,7 +712,7 @@ async fn publish_n_refs_for(
         });
         let payload = serde_json::to_vec(&envelope).expect("envelope serialize");
         broker
-            .publish(CONSOLIDATE_TOPIC, 0, payload.into())
+            .publish(&lunaris_core::Scope::dev(), CONSOLIDATE_TOPIC, 0, payload.into())
             .await
             .expect("publish consolidate event");
     }

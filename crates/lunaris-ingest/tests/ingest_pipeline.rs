@@ -6,6 +6,8 @@
 //!   `embed_batch` errors on a multi-input call (INGEST-02).
 //! - `episode_and_chunks_appear_in_single_batch`: counts the WriteOp shapes
 //!   (1 Episode KvPut + 2 ops per chunk: KvPut + VectorUpsert).
+//!
+//! RFC 0001 Wave 0: `RecordingStorage` updated to accept `&Scope` on all trait methods.
 
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
     CypherQuery, Embedder, Episode, Filter, GraphResult, Hlc, HlcClock, Lsn, LunarisError,
-    QueueMsg, Row, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit,
+    QueueMsg, Row, Scope, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit,
     WriteOp,
 };
 use lunaris_ingest::ingest_episode;
@@ -40,13 +42,14 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         self.batches.lock().push(ops.to_vec());
         Ok(Lsn { wall_ms: 1, counter: 0 })
     }
 
     async fn vector_search(
         &self,
+        _scope: &Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -59,6 +62,7 @@ impl StoragePort for RecordingStorage {
 
     async fn graph_traverse(
         &self,
+        _scope: &Scope,
         _query: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -67,6 +71,7 @@ impl StoragePort for RecordingStorage {
 
     async fn scan_range(
         &self,
+        _scope: &Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -75,6 +80,7 @@ impl StoragePort for RecordingStorage {
 
     async fn read_as_of(
         &self,
+        _scope: &Scope,
         _key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -83,6 +89,7 @@ impl StoragePort for RecordingStorage {
 
     async fn publish(
         &self,
+        _scope: &Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -92,6 +99,7 @@ impl StoragePort for RecordingStorage {
 
     async fn subscribe(
         &self,
+        _scope: &Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -151,12 +159,12 @@ impl Embedder for FlakyEmbedder {
 
 fn small_episode(clock: &HlcClock) -> Episode {
     let body = "# Section 1\nfoo bar baz qux\n\n## Subsection 1.1\nthis is some prose that the chunker will see and process at runtime.\n\n# Section 2\nmore content with enough words to trigger at least one chunk under the v0 token estimator heuristic of words times 1.3 ceiled.\n";
-    Episode::new("smoke.md", body, clock)
+    Episode::new(Scope::dev(), "smoke.md", body, clock)
 }
 
 fn twelve_kb_episode(clock: &HlcClock) -> Episode {
     let body = include_str!("fixtures/12kb_doc.md");
-    Episode::new("arch.md", body, clock)
+    Episode::new(Scope::dev(), "arch.md", body, clock)
 }
 
 // --------------------------- tests ---------------------------

@@ -43,7 +43,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row,
+    CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row, Scope,
     StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 
@@ -67,12 +67,18 @@ impl MoonStorage {
 
 #[async_trait]
 impl StoragePort for MoonStorage {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    // RFC 0001 Wave 0: scope is threaded through to the underlying free functions.
+    // The free functions currently ignore it (`let _ = scope;`). Real per-scope
+    // keyspace prefix routing is Wave 1C work.
+
+    async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        let _ = scope; // Wave 1C: will prefix keys with `lunaris:{scope}:`
         crate::atomic::atomic_write(&self.client, ops).await
     }
 
     async fn vector_search(
         &self,
+        scope: &Scope,
         index: &str,
         query: &[f32],
         k: usize,
@@ -80,50 +86,71 @@ impl StoragePort for MoonStorage {
         as_of: Option<Hlc>,
         rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
+        let _ = scope; // Wave 1C: will route to per-scope FT index `lunaris_{scope}_chunk_idx`
         crate::vector::vector_search(&self.client, index, query, k, filter, as_of, rerank).await
     }
 
     async fn graph_traverse(
         &self,
+        scope: &Scope,
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
+        let _ = scope; // Wave 1C: will route to `GRAPH.QUERY lunaris_{scope}_graph`
         crate::graph::graph_traverse(&self.client, query, as_of).await
     }
 
     async fn scan_range(
         &self,
+        scope: &Scope,
         prefix: &[u8],
         as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+        let _ = scope; // Wave 1C: will prepend `lunaris:{scope}:` to prefix
         crate::kv::scan_range(&self.client, prefix, as_of).await
     }
 
-    async fn read_as_of(&self, key: &[u8], as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        scope: &Scope,
+        key: &[u8],
+        as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
+        let _ = scope; // Wave 1C: will prepend `lunaris:{scope}:` to key
         crate::kv::read_as_of(&self.client, key, as_of).await
     }
 
     async fn publish(
         &self,
+        scope: &Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
     ) -> Result<u64, StorageError> {
+        let _ = scope; // Wave 1C: will use `MQ.PUSH lunaris:{scope}:{topic}`
         crate::queue::publish(&self.client, topic, partition, payload).await
     }
 
     async fn subscribe(
         &self,
+        scope: &Scope,
         group: &str,
         topic: &str,
         partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+        let _ = scope; // Wave 1C: will subscribe to per-scope topic
         crate::queue::subscribe(self.client.clone(), group, topic, partition).await
     }
 
     /// Plan 04 D-12 — see [`crate::queue::queue_length`] for the raw
     /// `MQ.LENGTH` escape hatch rationale.
-    async fn queue_depth(&self, topic: &str, partition: u16) -> Result<u64, StorageError> {
+    async fn queue_depth(
+        &self,
+        scope: &Scope,
+        topic: &str,
+        partition: u16,
+    ) -> Result<u64, StorageError> {
+        let _ = scope; // Wave 1C: will query per-scope topic depth
         crate::queue::queue_length(&self.client, topic, partition).await
     }
 

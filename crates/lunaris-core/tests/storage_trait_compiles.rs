@@ -12,11 +12,12 @@ struct StubStorage;
 
 #[async_trait]
 impl StoragePort for StubStorage {
-    async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(&self, _scope: &Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         Err(StorageError::NotSupported("stub"))
     }
     async fn vector_search(
         &self,
+        _scope: &Scope,
         _index: &str,
         _q: &[f32],
         _k: usize,
@@ -28,6 +29,7 @@ impl StoragePort for StubStorage {
     }
     async fn graph_traverse(
         &self,
+        _scope: &Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -35,19 +37,32 @@ impl StoragePort for StubStorage {
     }
     async fn scan_range(
         &self,
+        _scope: &Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
         Err(StorageError::NotSupported("stub"))
     }
-    async fn read_as_of(&self, _k: &[u8], _as_of: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        _k: &[u8],
+        _as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
         Err(StorageError::NotSupported("stub"))
     }
-    async fn publish(&self, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _scope: &Scope,
+        _t: &str,
+        _p: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
         Err(StorageError::NotSupported("stub"))
     }
     async fn subscribe(
         &self,
+        _scope: &Scope,
         _g: &str,
         _t: &str,
         _p: u16,
@@ -77,7 +92,7 @@ fn arc_dyn_storage_port_is_send_sync() {
 #[tokio::test]
 async fn stub_returns_not_supported() {
     let s: Arc<dyn StoragePort> = Arc::new(StubStorage);
-    let r = s.atomic_write(&[]).await;
+    let r = s.atomic_write(&Scope::dev(), &[]).await;
     assert!(matches!(r, Err(StorageError::NotSupported(_))));
     let cap = s.capabilities();
     assert!(cap.bi_temporal_native);
