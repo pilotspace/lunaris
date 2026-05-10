@@ -92,7 +92,7 @@ fn arc_dyn_storage_port_is_send_sync() {
 #[tokio::test]
 async fn stub_returns_not_supported() {
     let s: Arc<dyn StoragePort> = Arc::new(StubStorage);
-    let r = s.atomic_write(&Scope::dev(), &[]).await;
+    let r = s.atomic_write(&Scope::new("test-scope").unwrap(), &[]).await;
     assert!(matches!(r, Err(StorageError::NotSupported(_))));
     let cap = s.capabilities();
     assert!(cap.bi_temporal_native);
