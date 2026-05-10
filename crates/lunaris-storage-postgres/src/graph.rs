@@ -13,6 +13,7 @@
 
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 use sqlx::{AssertSqlSafe, Row};
 
@@ -20,6 +21,7 @@ use crate::pool::{PgClient, sqlx_err};
 
 pub(crate) async fn graph_traverse(
     c: &PgClient,
+    scope: &Scope,
     query: &CypherQuery,
     _as_of: Option<Hlc>,
 ) -> Result<GraphResult, StorageError> {
@@ -32,7 +34,17 @@ pub(crate) async fn graph_traverse(
         cypher = query.cypher,
     );
 
-    let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(&c.pool).await.map_err(sqlx_err)?;
+    // RFC 0001 Wave 1B: SET LOCAL inside a transaction so the scope GUC is
+    // scoped to this connection use only.
+    let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
+    sqlx::query("SET LOCAL lunaris.scope = $1")
+        .bind(scope.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
+
+    let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(&mut *tx).await.map_err(sqlx_err)?;
+    tx.commit().await.map_err(sqlx_err)?;
 
     let mut out_rows: Vec<Vec<serde_json::Value>> = Vec::new();
     for r in rows {

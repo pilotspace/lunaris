@@ -65,14 +65,15 @@ impl PostgresStorage {
 
 #[async_trait]
 impl StoragePort for PostgresStorage {
-    // RFC 0001 Wave 0: scope is threaded through to the underlying free functions.
-    // The free functions currently ignore it (`let _ = scope;`). Real per-scope
-    // Postgres RLS (`SET LOCAL lunaris.scope = $1`) is Wave 1B work.
+    // RFC 0001 Wave 1B: scope is now wired into every underlying free function.
+    // Every transaction issues `SET LOCAL lunaris.scope = $1` before any
+    // primitive ops so RLS policies on episodes/chunks/entities/relations/
+    // facts/communities enforce per-scope isolation automatically.
 
     async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        let _ = scope; // Wave 1B: will SET LOCAL lunaris.scope before each transaction
-        crate::atomic::atomic_write(&self.client, ops).await
+        crate::atomic::atomic_write(&self.client, scope, ops).await
     }
+    #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
         scope: &Scope,
@@ -83,8 +84,8 @@ impl StoragePort for PostgresStorage {
         as_of: Option<Hlc>,
         rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        let _ = scope; // Wave 1B: RLS will filter by scope column
-        crate::vector::vector_search(&self.client, index, query, k, filter, as_of, rerank).await
+        crate::vector::vector_search(&self.client, scope, index, query, k, filter, as_of, rerank)
+            .await
     }
     async fn graph_traverse(
         &self,
@@ -92,8 +93,7 @@ impl StoragePort for PostgresStorage {
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
-        let _ = scope; // Wave 1B: RLS will filter by scope column
-        crate::graph::graph_traverse(&self.client, query, as_of).await
+        crate::graph::graph_traverse(&self.client, scope, query, as_of).await
     }
     async fn scan_range(
         &self,
@@ -101,8 +101,7 @@ impl StoragePort for PostgresStorage {
         prefix: &[u8],
         as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        let _ = scope; // Wave 1B: RLS will filter by scope column
-        crate::kv::scan_range(&self.client, prefix, as_of).await
+        crate::kv::scan_range(&self.client, scope, prefix, as_of).await
     }
     async fn read_as_of(
         &self,
@@ -110,8 +109,7 @@ impl StoragePort for PostgresStorage {
         key: &[u8],
         as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
-        let _ = scope; // Wave 1B: RLS will filter by scope column
-        crate::kv::read_as_of(&self.client, key, as_of).await
+        crate::kv::read_as_of(&self.client, scope, key, as_of).await
     }
     async fn publish(
         &self,
@@ -120,8 +118,7 @@ impl StoragePort for PostgresStorage {
         partition: u16,
         payload: Bytes,
     ) -> Result<u64, StorageError> {
-        let _ = scope; // Wave 1B: per-scope pgmq queue routing
-        crate::queue::publish(&self.client, topic, partition, payload).await
+        crate::queue::publish(&self.client, scope, topic, partition, payload).await
     }
     async fn subscribe(
         &self,
@@ -130,8 +127,7 @@ impl StoragePort for PostgresStorage {
         topic: &str,
         partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        let _ = scope; // Wave 1B: per-scope pgmq queue routing
-        crate::queue::subscribe(self.client.clone(), group, topic, partition).await
+        crate::queue::subscribe(self.client.clone(), scope, group, topic, partition).await
     }
     /// Plan 04 D-12 + B-11 — see [`crate::queue::queue_length`] for the
     /// pgmq.queue_length($1) primary path + SqlState 42883 fallback.
@@ -141,8 +137,7 @@ impl StoragePort for PostgresStorage {
         topic: &str,
         partition: u16,
     ) -> Result<u64, StorageError> {
-        let _ = scope; // Wave 1B: per-scope pgmq queue routing
-        crate::queue::queue_length(&self.client, topic, partition).await
+        crate::queue::queue_length(&self.client, scope, topic, partition).await
     }
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {

@@ -19,6 +19,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::error::StorageError;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::QueueMsg;
 use sqlx::{AssertSqlSafe, Row};
 
@@ -38,6 +39,7 @@ use crate::pool::{PgClient, sqlx_err};
 /// shape (mirror of Plan 03's atomic.rs T-01-03-01 contract).
 pub(crate) async fn queue_length(
     c: &PgClient,
+    _scope: &Scope,
     topic: &str,
     _partition: u16,
 ) -> Result<u64, StorageError> {
@@ -116,6 +118,7 @@ fn validate_topic(topic: &str) -> Result<&str, StorageError> {
 
 pub(crate) async fn publish(
     c: &PgClient,
+    _scope: &Scope,
     topic: &str,
     partition: u16,
     payload: Bytes,
@@ -136,6 +139,7 @@ pub(crate) async fn publish(
 
 pub(crate) async fn subscribe(
     client: PgClient,
+    _scope: &Scope,
     _group: &str,
     topic: &str,
     partition: u16,
