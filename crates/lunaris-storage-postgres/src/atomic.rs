@@ -52,7 +52,9 @@ pub(crate) async fn atomic_write(
     // RFC 0001 Wave 1B: set the scope GUC for this transaction so every RLS
     // policy on primitive tables filters to the correct scope. SET LOCAL reverts
     // automatically when the transaction ends — no cross-request contamination.
-    sqlx::query("SET LOCAL lunaris.scope = $1")
+    // `SET LOCAL` cannot be parameterized in Postgres; use set_config() with
+    // is_local=true, which is transaction-scoped (equivalent to SET LOCAL).
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
         .bind(scope.as_str())
         .execute(&mut *tx)
         .await
@@ -69,11 +71,16 @@ pub(crate) async fn atomic_write(
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
+                // RFC 0001 Wave 1B: scope column added to lunaris_kv so RLS
+                // isolates KvPut writes between scopes. The primary key stays
+                // `key` (BYTEA) — the scope is stored as a column and enforced
+                // by the RLS policy set via SET LOCAL above.
                 sqlx::query(
                     "INSERT INTO lunaris_kv \
-                       (key, value, bt, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
-                     VALUES ($1, $2, $3, $4, NULL, $5, NULL, $6, $7) \
+                       (key, scope, value, bt, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
+                     VALUES ($1, $2, $3, $4, $5, NULL, $6, NULL, $7, $8) \
                      ON CONFLICT (key) DO UPDATE SET \
+                       scope = EXCLUDED.scope, \
                        value = EXCLUDED.value, \
                        bt = EXCLUDED.bt, \
                        valid_from = EXCLUDED.valid_from, \
@@ -84,6 +91,7 @@ pub(crate) async fn atomic_write(
                        sys_from_hlc   = EXCLUDED.sys_from_hlc",
                 )
                 .bind(key.as_slice())
+                .bind(scope.as_str())
                 .bind(value.as_slice())
                 .bind(&bt_json)
                 .bind(row.valid_from_ts)
@@ -96,6 +104,8 @@ pub(crate) async fn atomic_write(
             }
             WriteOp::KvDelete { key } => {
                 // Soft delete: close the open interval on the latest row.
+                // RLS (via SET LOCAL already set) restricts to the caller's scope,
+                // so this only soft-deletes the row visible to the current scope.
                 sqlx::query(
                     "UPDATE lunaris_kv SET valid_to = $2, sys_to = $2 \
                      WHERE key = $1 AND valid_to IS NULL",

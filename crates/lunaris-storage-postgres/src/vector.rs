@@ -81,7 +81,9 @@ pub(crate) async fn vector_search(
     // scopes the GUC to this connection use only (reverts at transaction end,
     // preventing pool-connection reuse from inheriting a stale scope value).
     let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
-    sqlx::query("SET LOCAL lunaris.scope = $1")
+    // `SET LOCAL` cannot be parameterized in Postgres; use set_config() with
+    // is_local=true, which is transaction-scoped (equivalent to SET LOCAL).
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
         .bind(scope.as_str())
         .execute(&mut *tx)
         .await

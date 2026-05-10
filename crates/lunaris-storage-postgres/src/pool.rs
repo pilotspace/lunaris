@@ -38,6 +38,25 @@ impl PgClient {
 
         Ok(Self { url: url.to_string(), pool })
     }
+
+    /// Connect without running migrations. Used by non-privileged application roles
+    /// (e.g., `lunaris_app`) that have DML but not DDL access. Migrations MUST be
+    /// applied by a privileged connection first.
+    pub async fn connect_no_migrate(url: &str) -> Result<Self, StorageError> {
+        let parsed = url::Url::parse(url)
+            .map_err(|e| StorageError::UnsupportedScheme(format!("postgres parse: {e}")))?;
+        match parsed.scheme() {
+            "postgres" | "postgresql" => {}
+            other => return Err(StorageError::UnsupportedScheme(other.into())),
+        }
+        let pool = PgPoolOptions::new().max_connections(8).connect(url).await.map_err(sqlx_err)?;
+
+        // Per-session AGE bootstrap — best-effort, same as connect().
+        let _ = sqlx::query("LOAD 'age'").execute(&pool).await;
+        let _ = sqlx::query("SET search_path = ag_catalog, \"$user\", public").execute(&pool).await;
+
+        Ok(Self { url: url.to_string(), pool })
+    }
 }
 
 #[inline]

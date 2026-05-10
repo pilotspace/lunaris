@@ -57,6 +57,16 @@ impl PostgresStorage {
         Ok(Self { client: PgClient::connect(url).await? })
     }
 
+    /// Open a connection to Postgres without running migrations.
+    ///
+    /// Used by tests and integration harnesses that connect as a non-privileged
+    /// application role (e.g., `lunaris_app`) that cannot run DDL but whose RLS
+    /// policies must be verified. Migrations MUST have already been applied via
+    /// a privileged connection before calling this.
+    pub async fn connect_no_migrate(url: &str) -> Result<Self, StorageError> {
+        Ok(Self { client: PgClient::connect_no_migrate(url).await? })
+    }
+
     /// Borrow the underlying client (used by integration tests).
     pub fn client(&self) -> &PgClient {
         &self.client
@@ -66,9 +76,11 @@ impl PostgresStorage {
 #[async_trait]
 impl StoragePort for PostgresStorage {
     // RFC 0001 Wave 1B: scope is now wired into every underlying free function.
-    // Every transaction issues `SET LOCAL lunaris.scope = $1` before any
-    // primitive ops so RLS policies on episodes/chunks/entities/relations/
-    // facts/communities enforce per-scope isolation automatically.
+    // Every transaction issues `SELECT set_config('lunaris.scope', $1, true)`
+    // before primitive ops so RLS policies on episodes/chunks/entities/
+    // relations/facts/communities/lunaris_kv enforce per-scope isolation.
+    // set_config with is_local=true is transaction-scoped (like SET LOCAL),
+    // but unlike SET/SET LOCAL it accepts a parameterized $1 bind value.
 
     async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         crate::atomic::atomic_write(&self.client, scope, ops).await

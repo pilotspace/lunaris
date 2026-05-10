@@ -37,7 +37,9 @@ pub(crate) async fn graph_traverse(
     // RFC 0001 Wave 1B: SET LOCAL inside a transaction so the scope GUC is
     // scoped to this connection use only.
     let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
-    sqlx::query("SET LOCAL lunaris.scope = $1")
+    // `SET LOCAL` cannot be parameterized in Postgres; use set_config() with
+    // is_local=true, which is transaction-scoped (equivalent to SET LOCAL).
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
         .bind(scope.as_str())
         .execute(&mut *tx)
         .await
