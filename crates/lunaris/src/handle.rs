@@ -28,9 +28,9 @@
 use std::sync::Arc;
 
 use lunaris_consolidate::Consolidator;
-use lunaris_core::{
-    Embedder, EpisodeBuilder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort,
-};
+use lunaris_core::{Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort};
+
+use crate::episode_builder::EpisodeBuilder;
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_moon::MoonStorage;

@@ -18,7 +18,7 @@ pub use error::{
     ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
 };
 pub use hlc::{Hlc, HlcClock};
-pub use primitives::{Chunk, Community, Entity, Episode, EpisodeBuilder, Fact, Relation};
+pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
 // RFC 0001 — re-export Scope + ScopeError at the crate root so callers use
 // `lunaris_core::Scope` / `lunaris::Scope` without path qualification.
 pub use scope::{Scope, ScopeError};
