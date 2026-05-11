@@ -1,0 +1,210 @@
+Removed items from the public API
+=================================
+(none)
+
+Changed items in the public API
+===============================
+(none)
+
+Added items to the public API
+=============================
++pub mod lunaris::episode_builder
++pub struct lunaris::episode_builder::EpisodeBuilder
++impl lunaris::episode_builder::EpisodeBuilder
++impl lunaris::episode_builder::EpisodeBuilder
++pub fn lunaris::episode_builder::EpisodeBuilder::id(self, id: ulid::Ulid) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::id(self, id: ulid::Ulid) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::metadata(self, m: serde_json::map::Map<alloc::string::String, serde_json::value::Value>) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::metadata(self, m: serde_json::map::Map<alloc::string::String, serde_json::value::Value>) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::new(source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::new(source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::t_ref(self, t: chrono::datetime::DateTime<chrono::offset::utc::Utc>) -> Self
++pub fn lunaris::episode_builder::EpisodeBuilder::t_ref(self, t: chrono::datetime::DateTime<chrono::offset::utc::Utc>) -> Self
++impl core::clone::Clone for lunaris::episode_builder::EpisodeBuilder
++impl core::clone::Clone for lunaris::episode_builder::EpisodeBuilder
++pub fn lunaris::episode_builder::EpisodeBuilder::clone(&self) -> lunaris::episode_builder::EpisodeBuilder
++pub fn lunaris::episode_builder::EpisodeBuilder::clone(&self) -> lunaris::episode_builder::EpisodeBuilder
++impl core::fmt::Debug for lunaris::episode_builder::EpisodeBuilder
++impl core::fmt::Debug for lunaris::episode_builder::EpisodeBuilder
++pub fn lunaris::episode_builder::EpisodeBuilder::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris::episode_builder::EpisodeBuilder::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++impl core::marker::Freeze for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Freeze for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Send for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Send for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Sync for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Sync for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Unpin for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::Unpin for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::UnsafeUnpin for lunaris::episode_builder::EpisodeBuilder
++impl core::marker::UnsafeUnpin for lunaris::episode_builder::EpisodeBuilder
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris::episode_builder::EpisodeBuilder
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris::episode_builder::EpisodeBuilder
++impl core::panic::unwind_safe::UnwindSafe for lunaris::episode_builder::EpisodeBuilder
++impl core::panic::unwind_safe::UnwindSafe for lunaris::episode_builder::EpisodeBuilder
++impl<T, U> core::convert::Into<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::From<T>
++impl<T, U> core::convert::Into<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::From<T>
++pub fn lunaris::episode_builder::EpisodeBuilder::into(self) -> U
++pub fn lunaris::episode_builder::EpisodeBuilder::into(self) -> U
++impl<T, U> core::convert::TryFrom<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::Into<T>
++impl<T, U> core::convert::TryFrom<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::Into<T>
++pub type lunaris::episode_builder::EpisodeBuilder::Error = core::convert::Infallible
++pub type lunaris::episode_builder::EpisodeBuilder::Error = core::convert::Infallible
++pub fn lunaris::episode_builder::EpisodeBuilder::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn lunaris::episode_builder::EpisodeBuilder::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++impl<T, U> core::convert::TryInto<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::TryFrom<T>
++impl<T, U> core::convert::TryInto<U> for lunaris::episode_builder::EpisodeBuilder where U: core::convert::TryFrom<T>
++pub type lunaris::episode_builder::EpisodeBuilder::Error = <U as core::convert::TryFrom<T>>::Error
++pub type lunaris::episode_builder::EpisodeBuilder::Error = <U as core::convert::TryFrom<T>>::Error
++pub fn lunaris::episode_builder::EpisodeBuilder::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn lunaris::episode_builder::EpisodeBuilder::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++impl<T> alloc::borrow::ToOwned for lunaris::episode_builder::EpisodeBuilder where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for lunaris::episode_builder::EpisodeBuilder where T: core::clone::Clone
++pub type lunaris::episode_builder::EpisodeBuilder::Owned = T
++pub type lunaris::episode_builder::EpisodeBuilder::Owned = T
++pub fn lunaris::episode_builder::EpisodeBuilder::clone_into(&self, target: &mut T)
++pub fn lunaris::episode_builder::EpisodeBuilder::clone_into(&self, target: &mut T)
++pub fn lunaris::episode_builder::EpisodeBuilder::to_owned(&self) -> T
++pub fn lunaris::episode_builder::EpisodeBuilder::to_owned(&self) -> T
++impl<T> core::any::Any for lunaris::episode_builder::EpisodeBuilder where T: 'static + ?core::marker::Sized
++impl<T> core::any::Any for lunaris::episode_builder::EpisodeBuilder where T: 'static + ?core::marker::Sized
++pub fn lunaris::episode_builder::EpisodeBuilder::type_id(&self) -> core::any::TypeId
++pub fn lunaris::episode_builder::EpisodeBuilder::type_id(&self) -> core::any::TypeId
++impl<T> core::borrow::Borrow<T> for lunaris::episode_builder::EpisodeBuilder where T: ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for lunaris::episode_builder::EpisodeBuilder where T: ?core::marker::Sized
++pub fn lunaris::episode_builder::EpisodeBuilder::borrow(&self) -> &T
++pub fn lunaris::episode_builder::EpisodeBuilder::borrow(&self) -> &T
++impl<T> core::borrow::BorrowMut<T> for lunaris::episode_builder::EpisodeBuilder where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for lunaris::episode_builder::EpisodeBuilder where T: ?core::marker::Sized
++pub fn lunaris::episode_builder::EpisodeBuilder::borrow_mut(&mut self) -> &mut T
++pub fn lunaris::episode_builder::EpisodeBuilder::borrow_mut(&mut self) -> &mut T
++impl<T> core::clone::CloneToUninit for lunaris::episode_builder::EpisodeBuilder where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for lunaris::episode_builder::EpisodeBuilder where T: core::clone::Clone
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::clone_to_uninit(&self, dest: *mut u8)
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::clone_to_uninit(&self, dest: *mut u8)
++impl<T> core::convert::From<T> for lunaris::episode_builder::EpisodeBuilder
++impl<T> core::convert::From<T> for lunaris::episode_builder::EpisodeBuilder
++pub fn lunaris::episode_builder::EpisodeBuilder::from(t: T) -> T
++pub fn lunaris::episode_builder::EpisodeBuilder::from(t: T) -> T
++impl<T> crossbeam_epoch::atomic::Pointable for lunaris::episode_builder::EpisodeBuilder
++impl<T> crossbeam_epoch::atomic::Pointable for lunaris::episode_builder::EpisodeBuilder
++pub type lunaris::episode_builder::EpisodeBuilder::Init = T
++pub type lunaris::episode_builder::EpisodeBuilder::Init = T
++pub const lunaris::episode_builder::EpisodeBuilder::ALIGN: usize
++pub const lunaris::episode_builder::EpisodeBuilder::ALIGN: usize
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::deref<'a>(ptr: usize) -> &'a T
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::deref<'a>(ptr: usize) -> &'a T
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::deref_mut<'a>(ptr: usize) -> &'a mut T
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::deref_mut<'a>(ptr: usize) -> &'a mut T
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::drop(ptr: usize)
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::drop(ptr: usize)
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::init(init: <T as crossbeam_epoch::atomic::Pointable>::Init) -> usize
++pub unsafe fn lunaris::episode_builder::EpisodeBuilder::init(init: <T as crossbeam_epoch::atomic::Pointable>::Init) -> usize
++impl<T> either::into_either::IntoEither for lunaris::episode_builder::EpisodeBuilder
++impl<T> either::into_either::IntoEither for lunaris::episode_builder::EpisodeBuilder
++impl<T> tracing::instrument::Instrument for lunaris::episode_builder::EpisodeBuilder
++impl<T> tracing::instrument::Instrument for lunaris::episode_builder::EpisodeBuilder
++impl<T> tracing::instrument::WithSubscriber for lunaris::episode_builder::EpisodeBuilder
++impl<T> tracing::instrument::WithSubscriber for lunaris::episode_builder::EpisodeBuilder
++impl<T> typenum::type_operators::Same for lunaris::episode_builder::EpisodeBuilder
++impl<T> typenum::type_operators::Same for lunaris::episode_builder::EpisodeBuilder
++pub type lunaris::episode_builder::EpisodeBuilder::Output = T
++pub type lunaris::episode_builder::EpisodeBuilder::Output = T
++impl<T> yoke::erased::ErasedDestructor for lunaris::episode_builder::EpisodeBuilder where T: 'static
++impl<T> yoke::erased::ErasedDestructor for lunaris::episode_builder::EpisodeBuilder where T: 'static
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris::episode_builder::EpisodeBuilder where V: ppv_lite86::types::MultiLane<T>
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris::episode_builder::EpisodeBuilder where V: ppv_lite86::types::MultiLane<T>
++pub fn lunaris::episode_builder::EpisodeBuilder::vzip(self) -> V
++pub fn lunaris::episode_builder::EpisodeBuilder::vzip(self) -> V
++pub fn lunaris::handle::Lunaris::scoped(&self, scope: lunaris_core::scope::Scope) -> lunaris::handle::ScopedLunaris<'_>
++pub fn lunaris::handle::Lunaris::scoped(&self, scope: lunaris_core::scope::Scope) -> lunaris::handle::ScopedLunaris<'_>
++pub struct lunaris::handle::ScopedLunaris<'a>
++impl<'a> lunaris::handle::ScopedLunaris<'a>
++impl<'a> lunaris::handle::ScopedLunaris<'a>
++pub fn lunaris::handle::ScopedLunaris<'a>::dsl(&self) -> lunaris_retrieve::builder::RetrievalBuilder
++pub fn lunaris::handle::ScopedLunaris<'a>::dsl(&self) -> lunaris_retrieve::builder::RetrievalBuilder
++pub async fn lunaris::handle::ScopedLunaris<'a>::ingest(&self, builder: lunaris::episode_builder::EpisodeBuilder) -> core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::LunarisError>
++pub async fn lunaris::handle::ScopedLunaris<'a>::ingest(&self, builder: lunaris::episode_builder::EpisodeBuilder) -> core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::LunarisError>
++pub async fn lunaris::handle::ScopedLunaris<'a>::recall(&self, query: lunaris_retrieve::types::Query) -> core::result::Result<alloc::vec::Vec<lunaris_retrieve::types::Hit>, lunaris_core::error::LunarisError>
++pub async fn lunaris::handle::ScopedLunaris<'a>::recall(&self, query: lunaris_retrieve::types::Query) -> core::result::Result<alloc::vec::Vec<lunaris_retrieve::types::Hit>, lunaris_core::error::LunarisError>
++pub fn lunaris::handle::ScopedLunaris<'a>::scope(&self) -> &lunaris_core::scope::Scope
++pub fn lunaris::handle::ScopedLunaris<'a>::scope(&self) -> &lunaris_core::scope::Scope
++impl<'a> core::marker::Freeze for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Freeze for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Send for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Send for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Sync for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Sync for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Unpin for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::Unpin for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::UnsafeUnpin for lunaris::handle::ScopedLunaris<'a>
++impl<'a> core::marker::UnsafeUnpin for lunaris::handle::ScopedLunaris<'a>
++impl<'a> !core::panic::unwind_safe::RefUnwindSafe for lunaris::handle::ScopedLunaris<'a>
++impl<'a> !core::panic::unwind_safe::RefUnwindSafe for lunaris::handle::ScopedLunaris<'a>
++impl<'a> !core::panic::unwind_safe::UnwindSafe for lunaris::handle::ScopedLunaris<'a>
++impl<'a> !core::panic::unwind_safe::UnwindSafe for lunaris::handle::ScopedLunaris<'a>
++impl<T, U> core::convert::Into<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::From<T>
++impl<T, U> core::convert::Into<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::From<T>
++pub fn lunaris::handle::ScopedLunaris<'a>::into(self) -> U
++pub fn lunaris::handle::ScopedLunaris<'a>::into(self) -> U
++impl<T, U> core::convert::TryFrom<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::Into<T>
++impl<T, U> core::convert::TryFrom<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::Into<T>
++pub type lunaris::handle::ScopedLunaris<'a>::Error = core::convert::Infallible
++pub type lunaris::handle::ScopedLunaris<'a>::Error = core::convert::Infallible
++pub fn lunaris::handle::ScopedLunaris<'a>::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn lunaris::handle::ScopedLunaris<'a>::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++impl<T, U> core::convert::TryInto<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::TryFrom<T>
++impl<T, U> core::convert::TryInto<U> for lunaris::handle::ScopedLunaris<'a> where U: core::convert::TryFrom<T>
++pub type lunaris::handle::ScopedLunaris<'a>::Error = <U as core::convert::TryFrom<T>>::Error
++pub type lunaris::handle::ScopedLunaris<'a>::Error = <U as core::convert::TryFrom<T>>::Error
++pub fn lunaris::handle::ScopedLunaris<'a>::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn lunaris::handle::ScopedLunaris<'a>::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++impl<T> core::any::Any for lunaris::handle::ScopedLunaris<'a> where T: 'static + ?core::marker::Sized
++impl<T> core::any::Any for lunaris::handle::ScopedLunaris<'a> where T: 'static + ?core::marker::Sized
++pub fn lunaris::handle::ScopedLunaris<'a>::type_id(&self) -> core::any::TypeId
++pub fn lunaris::handle::ScopedLunaris<'a>::type_id(&self) -> core::any::TypeId
++impl<T> core::borrow::Borrow<T> for lunaris::handle::ScopedLunaris<'a> where T: ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for lunaris::handle::ScopedLunaris<'a> where T: ?core::marker::Sized
++pub fn lunaris::handle::ScopedLunaris<'a>::borrow(&self) -> &T
++pub fn lunaris::handle::ScopedLunaris<'a>::borrow(&self) -> &T
++impl<T> core::borrow::BorrowMut<T> for lunaris::handle::ScopedLunaris<'a> where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for lunaris::handle::ScopedLunaris<'a> where T: ?core::marker::Sized
++pub fn lunaris::handle::ScopedLunaris<'a>::borrow_mut(&mut self) -> &mut T
++pub fn lunaris::handle::ScopedLunaris<'a>::borrow_mut(&mut self) -> &mut T
++impl<T> core::convert::From<T> for lunaris::handle::ScopedLunaris<'a>
++impl<T> core::convert::From<T> for lunaris::handle::ScopedLunaris<'a>
++pub fn lunaris::handle::ScopedLunaris<'a>::from(t: T) -> T
++pub fn lunaris::handle::ScopedLunaris<'a>::from(t: T) -> T
++impl<T> crossbeam_epoch::atomic::Pointable for lunaris::handle::ScopedLunaris<'a>
++impl<T> crossbeam_epoch::atomic::Pointable for lunaris::handle::ScopedLunaris<'a>
++pub type lunaris::handle::ScopedLunaris<'a>::Init = T
++pub type lunaris::handle::ScopedLunaris<'a>::Init = T
++pub const lunaris::handle::ScopedLunaris<'a>::ALIGN: usize
++pub const lunaris::handle::ScopedLunaris<'a>::ALIGN: usize
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::deref<'a>(ptr: usize) -> &'a T
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::deref<'a>(ptr: usize) -> &'a T
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::deref_mut<'a>(ptr: usize) -> &'a mut T
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::deref_mut<'a>(ptr: usize) -> &'a mut T
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::drop(ptr: usize)
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::drop(ptr: usize)
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::init(init: <T as crossbeam_epoch::atomic::Pointable>::Init) -> usize
++pub unsafe fn lunaris::handle::ScopedLunaris<'a>::init(init: <T as crossbeam_epoch::atomic::Pointable>::Init) -> usize
++impl<T> either::into_either::IntoEither for lunaris::handle::ScopedLunaris<'a>
++impl<T> either::into_either::IntoEither for lunaris::handle::ScopedLunaris<'a>
++impl<T> tracing::instrument::Instrument for lunaris::handle::ScopedLunaris<'a>
++impl<T> tracing::instrument::Instrument for lunaris::handle::ScopedLunaris<'a>
++impl<T> tracing::instrument::WithSubscriber for lunaris::handle::ScopedLunaris<'a>
++impl<T> tracing::instrument::WithSubscriber for lunaris::handle::ScopedLunaris<'a>
++impl<T> typenum::type_operators::Same for lunaris::handle::ScopedLunaris<'a>
++impl<T> typenum::type_operators::Same for lunaris::handle::ScopedLunaris<'a>
++pub type lunaris::handle::ScopedLunaris<'a>::Output = T
++pub type lunaris::handle::ScopedLunaris<'a>::Output = T
++impl<T> yoke::erased::ErasedDestructor for lunaris::handle::ScopedLunaris<'a> where T: 'static
++impl<T> yoke::erased::ErasedDestructor for lunaris::handle::ScopedLunaris<'a> where T: 'static
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris::handle::ScopedLunaris<'a> where V: ppv_lite86::types::MultiLane<T>
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris::handle::ScopedLunaris<'a> where V: ppv_lite86::types::MultiLane<T>
++pub fn lunaris::handle::ScopedLunaris<'a>::vzip(self) -> V
++pub fn lunaris::handle::ScopedLunaris<'a>::vzip(self) -> V
++pub struct lunaris::EpisodeBuilder
++pub struct lunaris::ScopedLunaris<'a>
+

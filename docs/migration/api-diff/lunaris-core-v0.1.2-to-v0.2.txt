@@ -1,0 +1,336 @@
+Removed items from the public API
+=================================
+(none)
+
+Changed items in the public API
+===============================
+-pub fn lunaris_core::primitives::Chunk::new(episode_id: ulid::Ulid, text: impl core::convert::Into<alloc::string::String>, tokens: u32, offset: u32, heading_path: alloc::vec::Vec<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Chunk::new(scope: lunaris_core::scope::Scope, episode_id: ulid::Ulid, text: impl core::convert::Into<alloc::string::String>, tokens: u32, offset: u32, heading_path: alloc::vec::Vec<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Chunk::new(episode_id: ulid::Ulid, text: impl core::convert::Into<alloc::string::String>, tokens: u32, offset: u32, heading_path: alloc::vec::Vec<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Chunk::new(scope: lunaris_core::scope::Scope, episode_id: ulid::Ulid, text: impl core::convert::Into<alloc::string::String>, tokens: u32, offset: u32, heading_path: alloc::vec::Vec<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Community::new(level: u8, summary: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Community::new(scope: lunaris_core::scope::Scope, level: u8, summary: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Community::new(level: u8, summary: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Community::new(scope: lunaris_core::scope::Scope, level: u8, summary: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Entity::new(name: impl core::convert::Into<alloc::string::String>, entity_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Entity::new(scope: lunaris_core::scope::Scope, name: impl core::convert::Into<alloc::string::String>, entity_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Entity::new(name: impl core::convert::Into<alloc::string::String>, entity_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Entity::new(scope: lunaris_core::scope::Scope, name: impl core::convert::Into<alloc::string::String>, entity_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Episode::new(source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Episode::new(scope: lunaris_core::scope::Scope, source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Episode::new(source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Episode::new(scope: lunaris_core::scope::Scope, source: impl core::convert::Into<alloc::string::String>, content: impl core::convert::Into<alloc::string::String>, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Fact::new(subject: ulid::Ulid, predicate: impl core::convert::Into<alloc::string::String>, object: ulid::Ulid, fact_text: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Fact::new(scope: lunaris_core::scope::Scope, subject: ulid::Ulid, predicate: impl core::convert::Into<alloc::string::String>, object: ulid::Ulid, fact_text: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Fact::new(subject: ulid::Ulid, predicate: impl core::convert::Into<alloc::string::String>, object: ulid::Ulid, fact_text: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Fact::new(scope: lunaris_core::scope::Scope, subject: ulid::Ulid, predicate: impl core::convert::Into<alloc::string::String>, object: ulid::Ulid, fact_text: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Relation::new(src: ulid::Ulid, dst: ulid::Ulid, rel_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Relation::new(scope: lunaris_core::scope::Scope, src: ulid::Ulid, dst: ulid::Ulid, rel_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::primitives::Relation::new(src: ulid::Ulid, dst: ulid::Ulid, rel_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
++pub fn lunaris_core::primitives::Relation::new(scope: lunaris_core::scope::Scope, src: ulid::Ulid, dst: ulid::Ulid, rel_type: impl core::convert::Into<alloc::string::String>, confidence: f32, clock: &lunaris_core::hlc::HlcClock) -> Self
+-pub fn lunaris_core::storage::port::StoragePort::atomic_write<'life0, 'life1, 'async_trait>(&'life0 self, ops: &'life1 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::atomic_write<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, ops: &'life2 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::graph_traverse<'life0, 'life1, 'async_trait>(&'life0 self, query: &'life1 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::graph_traverse<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, query: &'life2 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::publish<'life0, 'life1, 'async_trait>(&'life0 self, topic: &'life1 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::publish<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, topic: &'life2 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::queue_depth<'life0, 'life1, 'async_trait>(&'life0 self, _topic: &'life1 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::queue_depth<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, _topic: &'life2 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::read_as_of<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::read_as_of<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, key: &'life2 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::scan_range<'life0, 'life1, 'async_trait>(&'life0 self, prefix: &'life1 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::scan_range<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, prefix: &'life2 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::subscribe<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, group: &'life1 str, topic: &'life2 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::subscribe<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, group: &'life2 str, topic: &'life3 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+-pub fn lunaris_core::storage::port::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, index: &'life1 str, query: &'life2 [f32], k: usize, filter: core::option::Option<&'life3 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
++pub fn lunaris_core::storage::port::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, index: &'life2 str, query: &'life3 [f32], k: usize, filter: core::option::Option<&'life4 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::atomic_write<'life0, 'life1, 'async_trait>(&'life0 self, ops: &'life1 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::atomic_write<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, ops: &'life2 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::graph_traverse<'life0, 'life1, 'async_trait>(&'life0 self, query: &'life1 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::graph_traverse<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, query: &'life2 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::publish<'life0, 'life1, 'async_trait>(&'life0 self, topic: &'life1 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::publish<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, topic: &'life2 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::queue_depth<'life0, 'life1, 'async_trait>(&'life0 self, _topic: &'life1 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::queue_depth<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, _topic: &'life2 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::read_as_of<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::read_as_of<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, key: &'life2 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::scan_range<'life0, 'life1, 'async_trait>(&'life0 self, prefix: &'life1 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::storage::StoragePort::scan_range<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, prefix: &'life2 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::subscribe<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, group: &'life1 str, topic: &'life2 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
++pub fn lunaris_core::storage::StoragePort::subscribe<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, group: &'life2 str, topic: &'life3 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+-pub fn lunaris_core::storage::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, index: &'life1 str, query: &'life2 [f32], k: usize, filter: core::option::Option<&'life3 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
++pub fn lunaris_core::storage::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, index: &'life2 str, query: &'life3 [f32], k: usize, filter: core::option::Option<&'life4 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait
+-pub fn lunaris_core::StoragePort::atomic_write<'life0, 'life1, 'async_trait>(&'life0 self, ops: &'life1 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::atomic_write<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, ops: &'life2 [lunaris_core::storage::types::WriteOp]) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::Lsn, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::graph_traverse<'life0, 'life1, 'async_trait>(&'life0 self, query: &'life1 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::graph_traverse<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, query: &'life2 lunaris_core::storage::types::CypherQuery, as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<lunaris_core::storage::types::GraphResult, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::publish<'life0, 'life1, 'async_trait>(&'life0 self, topic: &'life1 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::publish<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, topic: &'life2 str, partition: u16, payload: bytes::bytes::Bytes) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::queue_depth<'life0, 'life1, 'async_trait>(&'life0 self, _topic: &'life1 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::queue_depth<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, _topic: &'life2 str, _partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<u64, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::read_as_of<'life0, 'life1, 'async_trait>(&'life0 self, key: &'life1 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::read_as_of<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, key: &'life2 [u8], as_of: lunaris_core::hlc::Hlc) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<lunaris_core::storage::types::Row<bytes::bytes::Bytes>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::scan_range<'life0, 'life1, 'async_trait>(&'life0 self, prefix: &'life1 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
++pub fn lunaris_core::StoragePort::scan_range<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, prefix: &'life2 [u8], as_of: core::option::Option<lunaris_core::hlc::Hlc>) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'_, core::result::Result<(bytes::bytes::Bytes, bytes::bytes::Bytes), lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
+-pub fn lunaris_core::StoragePort::subscribe<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, group: &'life1 str, topic: &'life2 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
++pub fn lunaris_core::StoragePort::subscribe<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, group: &'life2 str, topic: &'life3 str, partition: u16) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<futures_core::stream::BoxStream<'static, core::result::Result<lunaris_core::storage::types::QueueMsg, lunaris_core::error::StorageError>>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
+-pub fn lunaris_core::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'async_trait>(&'life0 self, index: &'life1 str, query: &'life2 [f32], k: usize, filter: core::option::Option<&'life3 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait
++pub fn lunaris_core::StoragePort::vector_search<'life0, 'life1, 'life2, 'life3, 'life4, 'async_trait>(&'life0 self, scope: &'life1 lunaris_core::scope::Scope, index: &'life2 str, query: &'life3 [f32], k: usize, filter: core::option::Option<&'life4 lunaris_core::storage::types::Filter>, as_of: core::option::Option<lunaris_core::hlc::Hlc>, rerank: bool) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<lunaris_core::storage::types::VectorHit>, lunaris_core::error::StorageError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait, 'life3: 'async_trait, 'life4: 'async_trait
+
+Added items to the public API
+=============================
++impl<T> smol_str::ToSmolStr for lunaris_core::audit::PublishError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::audit::PublishError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ConsolError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ConsolError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::ConsolError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::ConsolError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ExtractError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ExtractError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::ExtractError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::ExtractError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::LunarisError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::LunarisError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::LunarisError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::LunarisError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::RetrieveError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::RetrieveError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::RetrieveError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::RetrieveError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::StorageError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::StorageError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::StorageError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::StorageError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ValidateError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::error::ValidateError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::error::ValidateError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::error::ValidateError::to_smolstr(&self) -> smol_str::SmolStr
++pub lunaris_core::primitives::Chunk::scope: lunaris_core::scope::Scope
++pub lunaris_core::primitives::Community::scope: lunaris_core::scope::Scope
++pub lunaris_core::primitives::Entity::scope: lunaris_core::scope::Scope
++pub lunaris_core::primitives::Episode::scope: lunaris_core::scope::Scope
++pub lunaris_core::primitives::Fact::scope: lunaris_core::scope::Scope
++pub lunaris_core::primitives::Relation::scope: lunaris_core::scope::Scope
++pub mod lunaris_core::scope
++pub enum lunaris_core::scope::ScopeError
++pub lunaris_core::scope::ScopeError::Invalid(alloc::string::String)
++impl core::error::Error for lunaris_core::scope::ScopeError
++impl core::error::Error for lunaris_core::scope::ScopeError
++impl core::fmt::Debug for lunaris_core::scope::ScopeError
++impl core::fmt::Debug for lunaris_core::scope::ScopeError
++pub fn lunaris_core::scope::ScopeError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris_core::scope::ScopeError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++impl core::fmt::Display for lunaris_core::scope::ScopeError
++impl core::fmt::Display for lunaris_core::scope::ScopeError
++pub fn lunaris_core::scope::ScopeError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris_core::scope::ScopeError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++impl core::marker::Freeze for lunaris_core::scope::ScopeError
++impl core::marker::Freeze for lunaris_core::scope::ScopeError
++impl core::marker::Send for lunaris_core::scope::ScopeError
++impl core::marker::Send for lunaris_core::scope::ScopeError
++impl core::marker::Sync for lunaris_core::scope::ScopeError
++impl core::marker::Sync for lunaris_core::scope::ScopeError
++impl core::marker::Unpin for lunaris_core::scope::ScopeError
++impl core::marker::Unpin for lunaris_core::scope::ScopeError
++impl core::marker::UnsafeUnpin for lunaris_core::scope::ScopeError
++impl core::marker::UnsafeUnpin for lunaris_core::scope::ScopeError
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris_core::scope::ScopeError
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris_core::scope::ScopeError
++impl core::panic::unwind_safe::UnwindSafe for lunaris_core::scope::ScopeError
++impl core::panic::unwind_safe::UnwindSafe for lunaris_core::scope::ScopeError
++impl<T, U> core::convert::Into<U> for lunaris_core::scope::ScopeError where U: core::convert::From<T>
++impl<T, U> core::convert::Into<U> for lunaris_core::scope::ScopeError where U: core::convert::From<T>
++pub fn lunaris_core::scope::ScopeError::into(self) -> U
++pub fn lunaris_core::scope::ScopeError::into(self) -> U
++impl<T, U> core::convert::TryFrom<U> for lunaris_core::scope::ScopeError where U: core::convert::Into<T>
++impl<T, U> core::convert::TryFrom<U> for lunaris_core::scope::ScopeError where U: core::convert::Into<T>
++pub type lunaris_core::scope::ScopeError::Error = core::convert::Infallible
++pub type lunaris_core::scope::ScopeError::Error = core::convert::Infallible
++pub fn lunaris_core::scope::ScopeError::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn lunaris_core::scope::ScopeError::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++impl<T, U> core::convert::TryInto<U> for lunaris_core::scope::ScopeError where U: core::convert::TryFrom<T>
++impl<T, U> core::convert::TryInto<U> for lunaris_core::scope::ScopeError where U: core::convert::TryFrom<T>
++pub type lunaris_core::scope::ScopeError::Error = <U as core::convert::TryFrom<T>>::Error
++pub type lunaris_core::scope::ScopeError::Error = <U as core::convert::TryFrom<T>>::Error
++pub fn lunaris_core::scope::ScopeError::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn lunaris_core::scope::ScopeError::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++impl<T> alloc::string::ToString for lunaris_core::scope::ScopeError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> alloc::string::ToString for lunaris_core::scope::ScopeError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::scope::ScopeError::to_string(&self) -> alloc::string::String
++pub fn lunaris_core::scope::ScopeError::to_string(&self) -> alloc::string::String
++impl<T> core::any::Any for lunaris_core::scope::ScopeError where T: 'static + ?core::marker::Sized
++impl<T> core::any::Any for lunaris_core::scope::ScopeError where T: 'static + ?core::marker::Sized
++pub fn lunaris_core::scope::ScopeError::type_id(&self) -> core::any::TypeId
++pub fn lunaris_core::scope::ScopeError::type_id(&self) -> core::any::TypeId
++impl<T> core::borrow::Borrow<T> for lunaris_core::scope::ScopeError where T: ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for lunaris_core::scope::ScopeError where T: ?core::marker::Sized
++pub fn lunaris_core::scope::ScopeError::borrow(&self) -> &T
++pub fn lunaris_core::scope::ScopeError::borrow(&self) -> &T
++impl<T> core::borrow::BorrowMut<T> for lunaris_core::scope::ScopeError where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for lunaris_core::scope::ScopeError where T: ?core::marker::Sized
++pub fn lunaris_core::scope::ScopeError::borrow_mut(&mut self) -> &mut T
++pub fn lunaris_core::scope::ScopeError::borrow_mut(&mut self) -> &mut T
++impl<T> core::convert::From<T> for lunaris_core::scope::ScopeError
++impl<T> core::convert::From<T> for lunaris_core::scope::ScopeError
++pub fn lunaris_core::scope::ScopeError::from(t: T) -> T
++pub fn lunaris_core::scope::ScopeError::from(t: T) -> T
++impl<T> smol_str::ToSmolStr for lunaris_core::scope::ScopeError where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::scope::ScopeError where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::scope::ScopeError::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::scope::ScopeError::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> tracing::instrument::Instrument for lunaris_core::scope::ScopeError
++impl<T> tracing::instrument::Instrument for lunaris_core::scope::ScopeError
++impl<T> tracing::instrument::WithSubscriber for lunaris_core::scope::ScopeError
++impl<T> tracing::instrument::WithSubscriber for lunaris_core::scope::ScopeError
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris_core::scope::ScopeError where V: ppv_lite86::types::MultiLane<T>
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris_core::scope::ScopeError where V: ppv_lite86::types::MultiLane<T>
++pub fn lunaris_core::scope::ScopeError::vzip(self) -> V
++pub fn lunaris_core::scope::ScopeError::vzip(self) -> V
++pub struct lunaris_core::scope::Scope(_)
++impl lunaris_core::scope::Scope
++impl lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::as_bytes(&self) -> &[u8]
++pub fn lunaris_core::scope::Scope::as_bytes(&self) -> &[u8]
++pub fn lunaris_core::scope::Scope::as_str(&self) -> &str
++pub fn lunaris_core::scope::Scope::as_str(&self) -> &str
++pub fn lunaris_core::scope::Scope::new(s: impl core::convert::AsRef<str>) -> core::result::Result<Self, lunaris_core::scope::ScopeError>
++pub fn lunaris_core::scope::Scope::new(s: impl core::convert::AsRef<str>) -> core::result::Result<Self, lunaris_core::scope::ScopeError>
++impl core::clone::Clone for lunaris_core::scope::Scope
++impl core::clone::Clone for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::clone(&self) -> lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::clone(&self) -> lunaris_core::scope::Scope
++impl core::cmp::Eq for lunaris_core::scope::Scope
++impl core::cmp::Eq for lunaris_core::scope::Scope
++impl core::cmp::Ord for lunaris_core::scope::Scope
++impl core::cmp::Ord for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::cmp(&self, other: &lunaris_core::scope::Scope) -> core::cmp::Ordering
++pub fn lunaris_core::scope::Scope::cmp(&self, other: &lunaris_core::scope::Scope) -> core::cmp::Ordering
++impl core::cmp::PartialEq for lunaris_core::scope::Scope
++impl core::cmp::PartialEq for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::eq(&self, other: &lunaris_core::scope::Scope) -> bool
++pub fn lunaris_core::scope::Scope::eq(&self, other: &lunaris_core::scope::Scope) -> bool
++impl core::cmp::PartialOrd for lunaris_core::scope::Scope
++impl core::cmp::PartialOrd for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::partial_cmp(&self, other: &lunaris_core::scope::Scope) -> core::option::Option<core::cmp::Ordering>
++pub fn lunaris_core::scope::Scope::partial_cmp(&self, other: &lunaris_core::scope::Scope) -> core::option::Option<core::cmp::Ordering>
++impl core::convert::AsRef<str> for lunaris_core::scope::Scope
++impl core::convert::AsRef<str> for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::as_ref(&self) -> &str
++pub fn lunaris_core::scope::Scope::as_ref(&self) -> &str
++impl core::fmt::Debug for lunaris_core::scope::Scope
++impl core::fmt::Debug for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris_core::scope::Scope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris_core::scope::Scope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++pub fn lunaris_core::scope::Scope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
++impl core::fmt::Display for lunaris_core::scope::Scope
++impl core::fmt::Display for lunaris_core::scope::Scope
++impl core::hash::Hash for lunaris_core::scope::Scope
++impl core::hash::Hash for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
++pub fn lunaris_core::scope::Scope::hash<__H: core::hash::Hasher>(&self, state: &mut __H)
++impl core::marker::StructuralPartialEq for lunaris_core::scope::Scope
++impl core::marker::StructuralPartialEq for lunaris_core::scope::Scope
++impl serde_core::ser::Serialize for lunaris_core::scope::Scope
++impl serde_core::ser::Serialize for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
++pub fn lunaris_core::scope::Scope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
++impl<'de> serde_core::de::Deserialize<'de> for lunaris_core::scope::Scope
++impl<'de> serde_core::de::Deserialize<'de> for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
++pub fn lunaris_core::scope::Scope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
++impl core::marker::Freeze for lunaris_core::scope::Scope
++impl core::marker::Freeze for lunaris_core::scope::Scope
++impl core::marker::Send for lunaris_core::scope::Scope
++impl core::marker::Send for lunaris_core::scope::Scope
++impl core::marker::Sync for lunaris_core::scope::Scope
++impl core::marker::Sync for lunaris_core::scope::Scope
++impl core::marker::Unpin for lunaris_core::scope::Scope
++impl core::marker::Unpin for lunaris_core::scope::Scope
++impl core::marker::UnsafeUnpin for lunaris_core::scope::Scope
++impl core::marker::UnsafeUnpin for lunaris_core::scope::Scope
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris_core::scope::Scope
++impl core::panic::unwind_safe::RefUnwindSafe for lunaris_core::scope::Scope
++impl core::panic::unwind_safe::UnwindSafe for lunaris_core::scope::Scope
++impl core::panic::unwind_safe::UnwindSafe for lunaris_core::scope::Scope
++impl<T, U> core::convert::Into<U> for lunaris_core::scope::Scope where U: core::convert::From<T>
++impl<T, U> core::convert::Into<U> for lunaris_core::scope::Scope where U: core::convert::From<T>
++pub fn lunaris_core::scope::Scope::into(self) -> U
++pub fn lunaris_core::scope::Scope::into(self) -> U
++impl<T, U> core::convert::TryFrom<U> for lunaris_core::scope::Scope where U: core::convert::Into<T>
++impl<T, U> core::convert::TryFrom<U> for lunaris_core::scope::Scope where U: core::convert::Into<T>
++pub type lunaris_core::scope::Scope::Error = core::convert::Infallible
++pub type lunaris_core::scope::Scope::Error = core::convert::Infallible
++pub fn lunaris_core::scope::Scope::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn lunaris_core::scope::Scope::try_from(value: U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++impl<T, U> core::convert::TryInto<U> for lunaris_core::scope::Scope where U: core::convert::TryFrom<T>
++impl<T, U> core::convert::TryInto<U> for lunaris_core::scope::Scope where U: core::convert::TryFrom<T>
++pub type lunaris_core::scope::Scope::Error = <U as core::convert::TryFrom<T>>::Error
++pub type lunaris_core::scope::Scope::Error = <U as core::convert::TryFrom<T>>::Error
++pub fn lunaris_core::scope::Scope::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn lunaris_core::scope::Scope::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++impl<T> alloc::borrow::ToOwned for lunaris_core::scope::Scope where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for lunaris_core::scope::Scope where T: core::clone::Clone
++pub type lunaris_core::scope::Scope::Owned = T
++pub type lunaris_core::scope::Scope::Owned = T
++pub fn lunaris_core::scope::Scope::clone_into(&self, target: &mut T)
++pub fn lunaris_core::scope::Scope::clone_into(&self, target: &mut T)
++pub fn lunaris_core::scope::Scope::to_owned(&self) -> T
++pub fn lunaris_core::scope::Scope::to_owned(&self) -> T
++impl<T> alloc::string::ToString for lunaris_core::scope::Scope where T: core::fmt::Display + ?core::marker::Sized
++impl<T> alloc::string::ToString for lunaris_core::scope::Scope where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::scope::Scope::to_string(&self) -> alloc::string::String
++pub fn lunaris_core::scope::Scope::to_string(&self) -> alloc::string::String
++impl<T> core::any::Any for lunaris_core::scope::Scope where T: 'static + ?core::marker::Sized
++impl<T> core::any::Any for lunaris_core::scope::Scope where T: 'static + ?core::marker::Sized
++pub fn lunaris_core::scope::Scope::type_id(&self) -> core::any::TypeId
++pub fn lunaris_core::scope::Scope::type_id(&self) -> core::any::TypeId
++impl<T> core::borrow::Borrow<T> for lunaris_core::scope::Scope where T: ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for lunaris_core::scope::Scope where T: ?core::marker::Sized
++pub fn lunaris_core::scope::Scope::borrow(&self) -> &T
++pub fn lunaris_core::scope::Scope::borrow(&self) -> &T
++impl<T> core::borrow::BorrowMut<T> for lunaris_core::scope::Scope where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for lunaris_core::scope::Scope where T: ?core::marker::Sized
++pub fn lunaris_core::scope::Scope::borrow_mut(&mut self) -> &mut T
++pub fn lunaris_core::scope::Scope::borrow_mut(&mut self) -> &mut T
++impl<T> core::clone::CloneToUninit for lunaris_core::scope::Scope where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for lunaris_core::scope::Scope where T: core::clone::Clone
++pub unsafe fn lunaris_core::scope::Scope::clone_to_uninit(&self, dest: *mut u8)
++pub unsafe fn lunaris_core::scope::Scope::clone_to_uninit(&self, dest: *mut u8)
++impl<T> core::convert::From<T> for lunaris_core::scope::Scope
++impl<T> core::convert::From<T> for lunaris_core::scope::Scope
++pub fn lunaris_core::scope::Scope::from(t: T) -> T
++pub fn lunaris_core::scope::Scope::from(t: T) -> T
++impl<T> serde_core::de::DeserializeOwned for lunaris_core::scope::Scope where T: for<'de> serde_core::de::Deserialize<'de>
++impl<T> serde_core::de::DeserializeOwned for lunaris_core::scope::Scope where T: for<'de> serde_core::de::Deserialize<'de>
++impl<T> smol_str::ToSmolStr for lunaris_core::scope::Scope where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::scope::Scope where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::scope::Scope::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::scope::Scope::to_smolstr(&self) -> smol_str::SmolStr
++impl<T> tracing::instrument::Instrument for lunaris_core::scope::Scope
++impl<T> tracing::instrument::Instrument for lunaris_core::scope::Scope
++impl<T> tracing::instrument::WithSubscriber for lunaris_core::scope::Scope
++impl<T> tracing::instrument::WithSubscriber for lunaris_core::scope::Scope
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris_core::scope::Scope where V: ppv_lite86::types::MultiLane<T>
++impl<V, T> ppv_lite86::types::VZip<V> for lunaris_core::scope::Scope where V: ppv_lite86::types::MultiLane<T>
++pub fn lunaris_core::scope::Scope::vzip(self) -> V
++pub fn lunaris_core::scope::Scope::vzip(self) -> V
++pub lunaris_core::storage::capabilities::StorageCapabilities::max_scopes_recommended: usize
++impl<T> smol_str::ToSmolStr for lunaris_core::storage::types::Lsn where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::storage::types::Lsn where T: core::fmt::Display + ?core::marker::Sized
++impl<T> smol_str::ToSmolStr for lunaris_core::storage::types::Lsn where T: core::fmt::Display + ?core::marker::Sized
++pub fn lunaris_core::storage::types::Lsn::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::storage::types::Lsn::to_smolstr(&self) -> smol_str::SmolStr
++pub fn lunaris_core::storage::types::Lsn::to_smolstr(&self) -> smol_str::SmolStr
++pub lunaris_core::storage::StorageCapabilities::max_scopes_recommended: usize
++pub enum lunaris_core::ScopeError
++pub lunaris_core::ScopeError::Invalid(alloc::string::String)
++pub lunaris_core::Chunk::scope: lunaris_core::scope::Scope
++pub lunaris_core::Community::scope: lunaris_core::scope::Scope
++pub lunaris_core::Entity::scope: lunaris_core::scope::Scope
++pub lunaris_core::Episode::scope: lunaris_core::scope::Scope
++pub lunaris_core::Fact::scope: lunaris_core::scope::Scope
++pub lunaris_core::Relation::scope: lunaris_core::scope::Scope
++pub struct lunaris_core::Scope(_)
++pub lunaris_core::StorageCapabilities::max_scopes_recommended: usize
+
