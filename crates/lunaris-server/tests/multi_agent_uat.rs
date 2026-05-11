@@ -363,25 +363,27 @@ fn build_app(
 // ---------------------------------------------------------------------------
 
 /// Ingest "Alice met Bob today" under scope_a, "Quarterly revenue grew 12%" under
-/// scope_b. Assert:
+/// scope_b. Both scopes' data lives in the **same** `MockMultiTenantStorage`
+/// instance to prove that a shared backend correctly partitions at the `&Scope`
+/// argument level. Assert:
 ///
 /// - UAT-1a: scope_a recalls "Alice" → hit text contains "Alice".
-/// - UAT-1b: scope_b recalls "Alice" → hits do NOT contain scope_a's text
-///   ("Alice met Bob today"). The storage is partitioned by scope, so scope_b's
-///   `vector_search` only returns scope_b's own seeded hits. Since scope_b has
-///   zero seeded hits in this sub-scenario, it gets zero results.
+/// - UAT-1b: scope_b recalls "Alice" → **zero hits** even though scope_a's chunk
+///   and episode rows are present in the same KV storage. `vector_search` is
+///   keyed by `Scope` — scope_b's call only looks up `"agent:beta"` hits, which
+///   are absent at this point → zero results → no cross-scope bleed.
 /// - UAT-1c: scope_b recalls "revenue" → hit text contains "revenue".
 ///
-/// ## Mock note
+/// ## Implementation note
 ///
 /// `MockMultiTenantStorage::vector_search` returns all pre-seeded hits for a
 /// scope regardless of the query embedding (the `StubEmbedder` always produces
-/// a zero vector). This is intentional — the mock proves storage-level scope
-/// partitioning, not semantic similarity.
-///
-/// For UAT-1b (zero hits for scope_b → "Alice"), we use a fresh storage
-/// instance seeded with only scope_a's data. Scope_b has no seeded hits and
-/// therefore `vector_search(&scope_b, ...)` returns an empty vector.
+/// a zero vector). For UAT-1b to return zero hits, scope_b must have NO seeded
+/// vector_hits at call time. We seed scope_b's vector_hit ONLY after UAT-1b
+/// completes, then run UAT-1c. The KV rows (chunk + episode) for BOTH scopes
+/// are seeded upfront in the shared storage — `read_as_of` is also scope-keyed,
+/// so scope_b's hydration cannot retrieve scope_a's chunk even if a hit were
+/// returned by a misconfigured `vector_search`.
 #[tokio::test]
 async fn uat1_cross_scope_ingest_recall_isolation() {
     let clock = HlcClock::new(0);
@@ -394,15 +396,17 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
         ("tok-beta", "agent:beta", &["ingest", "recall", "forget"]),
     ]);
 
-    // ── UAT-1a + UAT-1b: storage seeded with only scope_a's data ────────────
+    // Shared storage — both scopes' KV rows coexist here.
+    // This proves KV-level partitioning (read_as_of keyed by scope) in addition
+    // to the vector_hits partitioning.
+    let storage = Arc::new(MockMultiTenantStorage::new());
 
-    let storage_ab = Arc::new(MockMultiTenantStorage::new());
-
+    // Seed scope_a: chunk + episode + vector_hit
     let (chunk_a, episode_a) =
         make_chunk_and_episode(&scope_a, "Alice met Bob today", "agent-alpha:notes", &clock);
-    storage_ab.seed_chunk(&scope_a, &chunk_a);
-    storage_ab.seed_episode(&scope_a, &episode_a);
-    storage_ab.seed_vector_hit(
+    storage.seed_chunk(&scope_a, &chunk_a);
+    storage.seed_episode(&scope_a, &episode_a);
+    storage.seed_vector_hit(
         &scope_a,
         VectorHit {
             id: chunk_a.id.to_bytes().to_vec(),
@@ -411,12 +415,23 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
             metadata: serde_json::json!({}),
         },
     );
-    // scope_b has NO seeded vector hits in storage_ab.
 
-    let app_ab = build_app(storage_ab.clone(), tokens_file.clone());
+    // Seed scope_b: chunk + episode ONLY (no vector_hit yet — seeded after UAT-1b).
+    // This proves the KV partition: scope_b's rows are in the same HashMap but
+    // cannot be accessed via scope_a's key tuple (scope_a_str, key_bytes).
+    let (chunk_b, episode_b) = make_chunk_and_episode(
+        &scope_b,
+        "Quarterly revenue grew 12%",
+        "agent-beta:reports",
+        &clock,
+    );
+    storage.seed_chunk(&scope_b, &chunk_b);
+    storage.seed_episode(&scope_b, &episode_b);
+
+    let app = build_app(storage.clone(), tokens_file);
 
     // UAT-1a: scope_a recalls "Alice" → sees its own data
-    let resp_a = app_ab
+    let resp_a = app
         .clone()
         .oneshot(
             Request::builder()
@@ -437,8 +452,13 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
     let text_a = arr_a[0]["text"].as_str().unwrap_or("");
     assert!(text_a.contains("Alice"), "UAT-1a: hit text must contain 'Alice'; got: {text_a}");
 
-    // UAT-1b: scope_b recalls "Alice" → ZERO hits (scope_b has no seeded data)
-    let resp_b_alice = app_ab
+    // UAT-1b: scope_b recalls "Alice" → ZERO hits.
+    // - scope_b has no seeded vector_hits → vector_search(&scope_b) returns empty.
+    // - scope_a's vector_hit IS seeded but lives under "agent:alpha" key, not "agent:beta".
+    // - Even if a hit were somehow returned, read_as_of(&scope_b, scope_a_chunk_key)
+    //   would return None (different scope tuple in the KV map).
+    let resp_b_alice = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -458,26 +478,14 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
     let bytes_b_alice = to_bytes(resp_b_alice.into_body(), 65_536).await.unwrap();
     let hits_b_alice: serde_json::Value = serde_json::from_slice(&bytes_b_alice).unwrap();
     let arr_b_alice = hits_b_alice.as_array().expect("UAT-1b: must be array");
-    // scope_b has no seeded vector_hits → storage returns empty → zero results.
     assert_eq!(
         arr_b_alice.len(),
         0,
-        "UAT-1b: scope_b must see ZERO hits (no seeded data, no cross-scope leak); got: {hits_b_alice}"
+        "UAT-1b: scope_b must see ZERO hits (no cross-scope leak, no scope_b vector_hits yet); got: {hits_b_alice}"
     );
 
-    // ── UAT-1c: storage seeded with only scope_b's data ─────────────────────
-
-    let storage_c = Arc::new(MockMultiTenantStorage::new());
-
-    let (chunk_b, episode_b) = make_chunk_and_episode(
-        &scope_b,
-        "Quarterly revenue grew 12%",
-        "agent-beta:reports",
-        &clock,
-    );
-    storage_c.seed_chunk(&scope_b, &chunk_b);
-    storage_c.seed_episode(&scope_b, &episode_b);
-    storage_c.seed_vector_hit(
+    // Now seed scope_b's vector_hit so UAT-1c can verify scope_b sees its own data.
+    storage.seed_vector_hit(
         &scope_b,
         VectorHit {
             id: chunk_b.id.to_bytes().to_vec(),
@@ -487,9 +495,10 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
         },
     );
 
-    let app_c = build_app(storage_c, tokens_file);
-
-    let resp_b_rev = app_c
+    // UAT-1c: scope_b recalls "revenue" → sees its own data.
+    // Same shared storage — scope_b now has a vector_hit → hydrate finds chunk_b
+    // in the (scope_b, key) partition → returns Hit with text "Quarterly revenue...".
+    let resp_b_rev = app
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -773,6 +782,62 @@ async fn uat4_forget_honors_scope() {
     assert!(
         !arr.is_empty(),
         "UAT-4e: scope_a data must survive the cross-scope forget; got empty hits"
+    );
+}
+
+/// **Target contract for UAT-4 once `ScopedLunaris::forget` lands (Wave 1F).**
+///
+/// This test is currently `#[ignore]`'d because the forget handler has not yet
+/// been migrated from `state.lunaris.forget(request)` to a scoped equivalent.
+/// Once the migration lands, un-ignore this test — it will fail until the
+/// handler returns `403 Forbidden` or `404 Not Found` for a cross-scope target.
+///
+/// External consumers (Helios): once this test turns green, the v0.3 contract
+/// applies and your client code must handle 403/404 on cross-scope forget
+/// attempts (not just 200 with rows_written=0).
+#[tokio::test]
+#[ignore = "un-ignore after ScopedLunaris::forget migration lands (Wave 1F / v0.3)"]
+async fn uat4_forget_honors_scope_target_contract() {
+    let clock = HlcClock::new(0);
+    let storage = Arc::new(MockMultiTenantStorage::new());
+
+    let scope_a = Scope::new("agent-a").unwrap();
+
+    let (chunk_1, episode_1) =
+        make_chunk_and_episode(&scope_a, "Episode 1 content", "src:ep1", &clock);
+    storage.seed_chunk(&scope_a, &chunk_1);
+    storage.seed_episode(&scope_a, &episode_1);
+
+    let tokens_file = write_tokens_file(&[
+        ("tok-a", "agent-a", &["ingest", "recall", "forget"]),
+        ("tok-b", "agent-b", &["ingest", "recall", "forget"]),
+    ]);
+    let app = build_app(storage.clone(), tokens_file);
+
+    // JWT_B attempts to forget scope_a's episode.
+    // POST /forget target cross-scope → must return 403 or 404 once scoped.
+    let forget_body = serde_json::json!({
+        "target": { "Id": episode_1.id.to_string() },
+        "dry_run": true,
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/forget")
+                .header("authorization", "Bearer tok-b")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&forget_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // This assertion will FAIL on Wave 1E (returns 200) and PASS on Wave 1F+.
+    assert!(
+        resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::NOT_FOUND,
+        "UAT-4 target: cross-scope forget MUST return 403 or 404 once ScopedLunaris::forget lands; got {}",
+        resp.status()
     );
 }
 
