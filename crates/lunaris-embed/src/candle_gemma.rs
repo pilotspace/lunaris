@@ -1,5 +1,29 @@
 //! `CandleEmbeddingGemma` — real EmbeddingGemma 300M backed by candle.
 //!
+//! # Deprecation status (v0.2)
+//!
+//! As of v0.2 (Phase 20-02, 2026-05-11) this backend is kept as an **opt-in
+//! fallback** for air-gapped or HF-Hub-unreachable deployments. The default
+//! embedder is now [`crate::FastembedEmbedder`] (ONNX runtime, HF Hub
+//! auto-download — see the `fastembed` module). Operators who still need the
+//! candle path should pin it via `LUNARIS_EMBEDDER_BACKEND=candle` (the
+//! runtime env-var resolver lives in `lunaris::handle`) OR build with
+//! `cargo build --no-default-features --features lunaris/candle-only` to
+//! strip fastembed / ort / hf-hub from the dep tree entirely.
+//!
+//! This module is **scheduled for removal no earlier than v0.4**. The flip is
+//! also motivated by the architectural shortcut documented under
+//! "v0 forward-pass strategy" below: this backend is not a full transformer
+//! forward pass, and fastembed's ONNX path is the higher-fidelity default
+//! going forward.
+//!
+//! See `docs/migration/0.1-to-0.2-fastembed-default.md` for the operator
+//! upgrade procedure + revert path.
+//!
+//! No `#[deprecated]` attribute is applied — that would emit warnings on
+//! every use and pollute the build output for operators who deliberately
+//! depend on this opt-in path. The rustdoc note is the signal.
+//!
 //! ## v0 forward-pass strategy
 //!
 //! candle 0.10.2's `candle_transformers::models::gemma3::Model::forward` returns
