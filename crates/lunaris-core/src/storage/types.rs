@@ -64,6 +64,7 @@ pub trait Key: Send + Sync {
 /// to their native command (e.g., `HSET`, `FT.SUGADD`, `GRAPH.QUERY MERGE` on Moon;
 /// `INSERT`, `pgvector` upsert, AGE Cypher `MERGE` on Postgres).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WriteOp {
     /// KV put at this key/value pair.
     KvPut { key: Vec<u8>, value: Vec<u8> },
@@ -99,6 +100,7 @@ pub struct VectorHit {
 /// translate to their native filter language (`FT.SEARCH ... FILTER ...` on Moon,
 /// `WHERE ...` on Postgres).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Filter {
     /// Equality on a metadata field.
     Eq { field: String, value: serde_json::Value },

@@ -47,6 +47,7 @@ use crate::handle::Lunaris;
 /// Single-entry-point target for `Lunaris::forget` per D-18. Three variants
 /// closing OPS-01 / OPS-02 / OPS-03.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ForgetTarget {
     /// OPS-01: single-target purge across KV + vector + graph indices.
     Id(Ulid),
@@ -61,6 +62,7 @@ pub enum ForgetTarget {
 /// on `source` (the helios:fs/ session-pruning case), exact metadata kv match,
 /// and exact episode-id match. Richer predicate languages are v1.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ScopeSpec {
     /// Prefix match on the JSON `source` field (e.g., `"helios:fs/session-42/"`).
     BySource(String),
@@ -74,6 +76,7 @@ pub enum ScopeSpec {
 /// `lunaris_consolidate::types::IndexKind` shape so Plan 04-05 can wire them
 /// 1:1 when the audit emit surface is unified.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IndexKind {
     Kv,
     Vector,

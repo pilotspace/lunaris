@@ -190,6 +190,15 @@ pub(crate) async fn atomic_write(
                 );
                 sqlx::query(AssertSqlSafe(sql)).execute(&mut *tx).await.map_err(sqlx_err)?;
             }
+            // `#[non_exhaustive]` on `WriteOp` requires a wildcard arm.
+            // Any new variant added by lunaris-core MUST be wired into
+            // both backends. Return NotSupported until that lands —
+            // never silently skip.
+            _ => {
+                return Err(lunaris_core::StorageError::NotSupported(
+                    "unknown WriteOp variant — Postgres backend needs update",
+                ));
+            }
         }
     }
 

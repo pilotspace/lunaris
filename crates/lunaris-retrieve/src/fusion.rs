@@ -250,6 +250,13 @@ fn filter_to_moon_tag(f: &Filter) -> String {
             let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
             format!("@valid_time:[{lo} {hi}]")
         }
+        // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New
+        // variants need explicit fusion-side rendering; until that
+        // lands, emit an unconstrained predicate and warn.
+        _ => {
+            tracing::warn!("unknown Filter variant in retrieve fusion path — emitting unconstrained predicate");
+            "*".to_string()
+        }
     }
 }
 

@@ -216,6 +216,15 @@ async fn run_ops(
                     .await
                     .map_err(moon_err)?;
             }
+            // `#[non_exhaustive]` on `WriteOp` requires a wildcard arm —
+            // any new variant added by lunaris-core in the future MUST
+            // be wired into both backends. Return a clear NotSupported
+            // until that wiring lands; never silently skip.
+            _ => {
+                return Err(StorageError::NotSupported(
+                    "unknown WriteOp variant — Moon backend needs update",
+                ));
+            }
         }
     }
     Ok(())

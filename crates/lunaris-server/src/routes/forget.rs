@@ -48,6 +48,7 @@ pub async fn forget_handler(
         ForgetTarget::Id(_) => "id",
         ForgetTarget::Scope(_) => "scope",
         ForgetTarget::Before(_) => "before",
+        _ => "unknown",
     };
     let hard_label = if req.hard { "true" } else { "false" };
 

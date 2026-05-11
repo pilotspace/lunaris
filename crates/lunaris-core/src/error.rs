@@ -2,7 +2,14 @@
 
 use thiserror::Error;
 
+/// Top-level error type returned by every public `lunaris` API.
+///
+/// `#[non_exhaustive]` lets us add new top-level subsystems (e.g. a
+/// future `Verify(VerifyError)` variant) in a patch release without
+/// breaking downstream `match` exhaustiveness checks. Downstream code
+/// should always include a wildcard arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LunarisError {
     #[error("storage: {0}")]
     Storage(#[from] StorageError),
@@ -17,6 +24,7 @@ pub enum LunarisError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum StorageError {
     #[error("backend: {0}")]
     Backend(String),
@@ -31,6 +39,7 @@ pub enum StorageError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ExtractError {
     #[error("model timeout")]
     Timeout,
@@ -41,6 +50,7 @@ pub enum ExtractError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ValidateError {
     #[error("temporal: valid_from >= valid_to")]
     Temporal,
@@ -55,6 +65,7 @@ pub enum ValidateError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RetrieveError {
     #[error("operator failed: {0}")]
     OperatorFailed(String),
@@ -63,6 +74,7 @@ pub enum RetrieveError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConsolError {
     #[error("activation underflow")]
     ActivationUnderflow,

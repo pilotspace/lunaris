@@ -42,6 +42,7 @@ pub fn map_error(err: LunarisError) -> Response {
         LunarisError::Consolidate(_) => {
             (StatusCode::INTERNAL_SERVER_ERROR, "consolidate", err.to_string())
         }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "unknown", err.to_string()),
     };
     (status, Json(serde_json::json!({ "error": code, "message": message }))).into_response()
 }

@@ -36,6 +36,7 @@ fn classify(err: &::lunaris::LunarisError) -> &'static str {
         ::lunaris::LunarisError::Validate(_) => "VALIDATE",
         ::lunaris::LunarisError::Retrieve(_) => "RETRIEVE",
         ::lunaris::LunarisError::Consolidate(_) => "CONSOLIDATE",
+        _ => "UNKNOWN",
     }
 }
 

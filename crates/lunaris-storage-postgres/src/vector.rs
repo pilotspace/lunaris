@@ -165,6 +165,13 @@ fn filter_to_sql(f: &Filter, payload_col: &str) -> String {
             }
             if parts.is_empty() { "TRUE".to_string() } else { format!("({})", parts.join(" AND ")) }
         }
+        // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New
+        // variants need explicit Postgres-side SQL rendering; until
+        // that lands, degrade to TRUE (predicate no-op) and warn.
+        _ => {
+            tracing::warn!("unknown Filter variant in Postgres vector path — degrading to TRUE");
+            "TRUE".to_string()
+        }
     }
 }
 

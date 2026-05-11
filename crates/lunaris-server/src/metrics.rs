@@ -135,6 +135,7 @@ pub fn error_kind(err: &lunaris_core::LunarisError) -> &'static str {
         LunarisError::Extract(_) => "extract",
         LunarisError::Retrieve(_) => "retrieve",
         LunarisError::Consolidate(_) => "consolidate",
+        _ => "unknown",
     }
 }
 

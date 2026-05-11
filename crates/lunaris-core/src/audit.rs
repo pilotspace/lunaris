@@ -68,6 +68,7 @@ pub struct FactIdData(pub [u8; 16]);
 /// Mirror of `lunaris::forget::IndexKind`. External-tag serialization ⇒ bare
 /// strings `"Kv"` / `"Vector"` / `"Graph"`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IndexKindData {
     Kv,
     Vector,
@@ -77,6 +78,7 @@ pub enum IndexKindData {
 /// Mirror of `lunaris::forget::ScopeSpec`. External-tag serialization ⇒
 /// `{"BySource":"..."}` / `{"ByMetadata":["k","v"]}` / `{"ByEpisode":"<ulid>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ScopeSpecData {
     BySource(String),
     ByMetadata(String, String),
@@ -86,6 +88,7 @@ pub enum ScopeSpecData {
 /// Mirror of `lunaris::forget::ForgetTarget`. External-tag serialization ⇒
 /// `{"Id":"<ulid>"}` / `{"Scope":{...}}` / `{"Before":{<hlc>}}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ForgetTargetData {
     Id(Ulid),
     Scope(ScopeSpecData),
@@ -112,6 +115,7 @@ pub struct ForgetReceiptData {
 /// carries `"kind": "<variant-name>"` for grep-friendly ops triage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
+#[non_exhaustive]
 pub enum AuditEvent {
     /// Emitted by `Lunaris::forget` after every successful call (D-22 / OPS-04).
     Forget(ForgetReceiptData),
@@ -144,6 +148,7 @@ pub enum AuditEvent {
 /// `tracing::warn!` — callers may ignore the error per the fire-and-forget
 /// contract (blueprint §11).
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PublishError {
     #[error("audit serialize failed: {0}")]
     Serialize(#[from] serde_json::Error),
