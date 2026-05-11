@@ -17,7 +17,8 @@
 use std::sync::Arc;
 
 use lunaris_core::{
-    Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
+    Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, Scope, StorageError, StoragePort,
+    WriteOp,
 };
 use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate};
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines
@@ -293,14 +294,14 @@ async fn ingest_episode_graph_on(
     let episode_value = serde_json::to_vec(&episode).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
     })?;
-    ops.push(WriteOp::KvPut { key: episode_key(episode.id), value: episode_value });
+    ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
 
     // Per-chunk KvPut + VectorUpsert (matches Phase 2 fast path verbatim).
     for chunk in &chunks {
         let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
         })?;
-        ops.push(WriteOp::KvPut { key: chunk_key(chunk.id), value: chunk_value });
+        ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
         let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 2").clone();
         ops.push(WriteOp::VectorUpsert {
             index: CHUNK_VECTOR_INDEX.into(),

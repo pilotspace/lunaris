@@ -1,5 +1,8 @@
 //! `atomic_write` — `TXN.BEGIN` + per-op fan-out + `TXN.COMMIT` (or `TXN.ABORT` on error).
 //!
+//! RFC 0001 Wave 1C: all keys and FT index names are now scope-prefixed via
+//! `keyspace::{scope_prefix, ft_index_name, graph_key}`.
+//!
 //! Phase 1.5 retrofit (STORE-09): all per-op commands are now dispatched through the
 //! typed `moon-client` SDK (`txn_begin / txn_commit / txn_abort`, `set / del`,
 //! `hset_multiple`, `graph().query_raw`).
@@ -10,9 +13,9 @@
 //! |--------------------|-----------------------------------------------------------|
 //! | `KvPut`            | `client.hset(key, "v", value)` (single-field hash to keep `read_as_of`'s `HGET v` shape) |
 //! | `KvDelete`         | `client.del(key)`                                         |
-//! | `VectorUpsert`     | `client.hset_multiple("<index>:<id_hex>", [("vec", blob), ("meta", json)])` |
-//! | `GraphNode`        | `client.graph().query_raw(graph, "MERGE (n:{label} {id:'...'}) SET n.k = v, ... RETURN n")` |
-//! | `GraphEdge`        | `client.graph().query_raw(graph, "MATCH (a {id:'..'}),(b {id:'..}) MERGE (a)-[r:{rel}]->(b) SET r.k = v, ... RETURN r")` |
+//! | `VectorUpsert`     | `client.hset_multiple("{ft_index_name(scope,kind)}:{id_hex}", [...])` |
+//! | `GraphNode`        | `client.graph().query_raw(graph_key(scope), "MERGE ...")` |
+//! | `GraphEdge`        | `client.graph().query_raw(graph_key(scope), "MATCH ... MERGE ...")` |
 //!
 //! ## Storage-shape note: SET vs HSET
 //!
@@ -20,6 +23,13 @@
 //! piggy-back the bi-temporal `bt` field on the same hash. Phase 1.5 keeps the same
 //! single-hash convention via the typed `MoonClient::hset` calls because `read_as_of`
 //! depends on the `HGET <key> v` / `HGET <key> bt` shape — see `kv.rs` rustdoc.
+//!
+//! ## FT key shape (Wave 1C)
+//!
+//! `VectorUpsert` writes to `{ft_index_name(scope, kind)}:{id_hex}`. The FT index
+//! `ft_index_name(scope, kind)` is created lazily on first write (see `MoonStorage`).
+//! `vector::decode_key(raw, ft_idx)` strips the `<ft_idx>:` prefix + hex-decodes to
+//! a 16-byte ULID — this contract is unchanged; only the prefix length changes.
 //!
 //! ## Threat note (T-01-03-01) — Cypher injection
 //!
@@ -49,19 +59,25 @@
 //! one transaction land on the same shard. Tracked as future work; not a
 //! blocker for v0.1.0-alpha measurement on a single-node Moon dev box.
 
+use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::{Lsn, WriteOp};
 
 use crate::client::{MoonClient, moon_err};
+use crate::keyspace::{ft_index_name, graph_key};
 
-pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+pub(crate) async fn atomic_write(
+    c: &MoonClient,
+    scope: &Scope,
+    ops: &[WriteOp],
+) -> Result<Lsn, StorageError> {
     let mut typed = c.typed();
 
     // 1) TXN.BEGIN — opens a Moon transaction on this connection.
     typed.txn_begin().await.map_err(moon_err)?;
 
     // 2) Per-op fan-out. On any per-op error, ABORT and bubble the original error.
-    if let Err(e) = run_ops(&mut typed, ops).await {
+    if let Err(e) = run_ops(&mut typed, scope, ops).await {
         // Best-effort abort; ignore its error (the transaction's already broken).
         let _ = typed.txn_abort().await;
         return Err(e);
@@ -78,10 +94,16 @@ pub(crate) async fn atomic_write(c: &MoonClient, ops: &[WriteOp]) -> Result<Lsn,
     Ok(Lsn { wall_ms: now_ms, counter: 0 })
 }
 
-async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), StorageError> {
+async fn run_ops(
+    typed: &mut moon::MoonClient,
+    scope: &Scope,
+    ops: &[WriteOp],
+) -> Result<(), StorageError> {
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
+                // KvPut keys already carry the full scope-prefixed path from the caller
+                // (keyspace::episode_key(scope, id) etc.) — we write them verbatim.
                 // Single-field hash so HGET <key> v is the canonical read in `read_as_of`.
                 let _: i64 =
                     typed.hset(key.as_slice(), "v", value.as_slice()).await.map_err(moon_err)?;
@@ -105,14 +127,12 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 // score against. Without this, the FT index sees only `vec`
                 // and FT.SEARCH returns "no such index" / "unknown index".
                 let content = extract_content_for_index(index, metadata);
-                // Moon's vector model: write to `<index_prefix>:<id>` via HSET; the
-                // FT index created by MoonClient::ensure_indexes auto-picks the row up
-                // (per `moon/docs/vector-search-guide.md`). Phase 1.5 used the SDK
-                // helper `vector().upsert(...)` which emits a phantom `FT.UPSERT`
-                // (Moon server only exposes FT.{CREATE,SEARCH,AGGREGATE,...}, not
-                // FT.UPSERT). Live-measurement gap fix 2026-04-21.
+                // RFC 0001 Wave 1C: write to `{ft_index_name(scope, kind)}:{id_hex}`.
+                // The FT index name is per-scope so each agent's vectors are isolated.
+                // `vector::decode_key` strips this prefix to recover the 16-byte ULID.
                 let id_hex = hex::encode(id);
-                let key = format!("{index}:{id_hex}");
+                let per_scope_ft_idx = ft_index_name(scope, index);
+                let key = format!("{per_scope_ft_idx}:{id_hex}");
                 // Plan 09.1-02 Task 2b — valid_time numeric field on chunks only.
                 // The `chunks` FT index declares `valid_time` as
                 // `SchemaField::Numeric` (Task 2 / `ensure_indexes`). Moon's
@@ -150,7 +170,9 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 }
                 typed.hset_multiple(key.as_bytes(), &fields).await.map_err(moon_err)?;
             }
-            WriteOp::GraphNode { graph, id, label, props } => {
+            WriteOp::GraphNode { graph: _, id, label, props } => {
+                // RFC 0001 Wave 1C: use per-scope graph key, ignoring the WriteOp's
+                // `graph` field (which was the global "lunaris_graph" pre-RFC).
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
                 // Moon Cypher only supports `SET n.prop = expr` (no map-merge `+=`).
                 // Moon's GRAPH.QUERY handler also ignores `--params` (always empty
@@ -164,10 +186,15 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                 } else {
                     format!("MERGE (n:{label} {{id: '{id_hex}'}}) {set_clause} RETURN n")
                 };
-                let _: redis::Value =
-                    typed.graph().query_raw(graph.as_str(), &cypher).await.map_err(moon_err)?;
+                let scope_graph = graph_key(scope);
+                let _: redis::Value = typed
+                    .graph()
+                    .query_raw(scope_graph.as_str(), &cypher)
+                    .await
+                    .map_err(moon_err)?;
             }
-            WriteOp::GraphEdge { graph, src, dst, rel, props } => {
+            WriteOp::GraphEdge { graph: _, src, dst, rel, props } => {
+                // RFC 0001 Wave 1C: use per-scope graph key.
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
                 // Same constraints as GraphNode: inline literals, no params, no `+=`.
                 let src_hex = hex::encode(src);
@@ -182,8 +209,12 @@ async fn run_ops(typed: &mut moon::MoonClient, ops: &[WriteOp]) -> Result<(), St
                         "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
                     )
                 };
-                let _: redis::Value =
-                    typed.graph().query_raw(graph.as_str(), &cypher).await.map_err(moon_err)?;
+                let scope_graph = graph_key(scope);
+                let _: redis::Value = typed
+                    .graph()
+                    .query_raw(scope_graph.as_str(), &cypher)
+                    .await
+                    .map_err(moon_err)?;
             }
         }
     }
@@ -331,6 +362,33 @@ mod valid_time_tests {
         assert!(
             src.contains(".and_then(|v| v.as_u64())"),
             "valid_time population must require u64 (missing / non-u64 => None)"
+        );
+    }
+
+    /// RFC 0001 Wave 1C — structural guard: VectorUpsert must use the
+    /// per-scope FT index name (`ft_index_name(scope, kind)`) as the key
+    /// prefix instead of the bare `index` name.
+    #[test]
+    fn vector_upsert_uses_per_scope_ft_index_name() {
+        let src = include_str!("atomic.rs");
+        assert!(
+            src.contains("ft_index_name(scope, index)"),
+            "VectorUpsert must compute per-scope FT index name via ft_index_name(scope, index)"
+        );
+        assert!(
+            src.contains("per_scope_ft_idx"),
+            "VectorUpsert must use per_scope_ft_idx as the HSET key prefix"
+        );
+    }
+
+    /// RFC 0001 Wave 1C — structural guard: GraphNode/GraphEdge must use
+    /// `graph_key(scope)` not a hardcoded graph name.
+    #[test]
+    fn graph_ops_use_per_scope_graph_key() {
+        let src = include_str!("atomic.rs");
+        assert!(
+            src.contains("graph_key(scope)"),
+            "GraphNode/GraphEdge must use graph_key(scope) for the GRAPH.QUERY target"
         );
     }
 }

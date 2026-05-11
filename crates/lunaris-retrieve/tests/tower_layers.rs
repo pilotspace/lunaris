@@ -36,11 +36,13 @@ impl TowerStorage {
 
 #[async_trait]
 impl StoragePort for TowerStorage {
-    async fn atomic_write(&self, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
+    #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -52,6 +54,7 @@ impl StoragePort for TowerStorage {
     }
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         _q: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -59,6 +62,7 @@ impl StoragePort for TowerStorage {
     }
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -66,6 +70,7 @@ impl StoragePort for TowerStorage {
     }
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         _key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -73,6 +78,7 @@ impl StoragePort for TowerStorage {
     }
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
@@ -81,6 +87,7 @@ impl StoragePort for TowerStorage {
     }
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
@@ -95,6 +102,7 @@ impl StoragePort for TowerStorage {
             queue_native: false,
             max_vector_dim: 768,
             native_rrf: false,
+            max_scopes_recommended: 0,
         }
     }
 }

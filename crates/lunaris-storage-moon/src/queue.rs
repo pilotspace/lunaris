@@ -1,6 +1,10 @@
 //! `publish` (`client.mq().push_partitioned(...)`) and `subscribe`
 //! (`client.mq().pop_partitioned(...)` polling stream).
 //!
+//! RFC 0001 Wave 1C: MQ topic names are scoped via `mq_topic(scope, name)` —
+//! `lunaris:{scope}:{name}`. A hot scope's queue cannot starve a cold scope's
+//! queue because each scope has its own MQ topic (RFC 0001 §3.7).
+//!
 //! Phase 1.5 retrofit (STORE-09): typed `moon-client::MqClient` calls replace the
 //! previous hand-rolled raw RESP `MQ.PUSH` / `MQ.POP` invocations. Lunaris's
 //! partitioned `(topic, partition)` queue model is now exposed as typed
@@ -22,22 +26,27 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
+use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
 
 use crate::client::{MoonClient, moon_err, redis_err};
+use crate::keyspace::mq_topic;
 
 pub(crate) async fn publish(
     c: &MoonClient,
+    scope: &Scope,
     topic: &str,
     partition: u16,
     payload: Bytes,
 ) -> Result<u64, StorageError> {
     let typed = c.typed();
-    typed.mq().push_partitioned(topic, partition, payload.as_ref()).await.map_err(moon_err)
+    // RFC 0001 Wave 1C: route to per-scope MQ topic.
+    let scoped_topic = mq_topic(scope, topic);
+    typed.mq().push_partitioned(&scoped_topic, partition, payload.as_ref()).await.map_err(moon_err)
 }
 
-/// Plan 04 D-12 — pending (un-ACKed) message count for `(topic, partition)`.
+/// Plan 04 D-12 — pending (un-ACKed) message count for `(scope, topic, partition)`.
 ///
 /// ## Path 2 (raw `redis::cmd("MQ.LENGTH")`)
 ///
@@ -48,17 +57,21 @@ pub(crate) async fn publish(
 /// the SECOND raw RESP cmd invocation in `lunaris-storage-moon/src/` and is
 /// covered by the same Phase 1.5 retrofit (STORE-09) constraint comment.
 ///
+/// RFC 0001 Wave 1C: MQ.LENGTH is issued against the per-scope topic.
+///
 /// Returns 0 when MQ.LENGTH replies a negative number (defensive cast — a
 /// well-behaved Moon server returns a non-negative i64 here).
 pub(crate) async fn queue_length(
     c: &MoonClient,
+    scope: &Scope,
     topic: &str,
     partition: u16,
 ) -> Result<u64, StorageError> {
     let mut typed = c.typed();
     let raw_conn = typed.inner_mut();
+    let scoped_topic = mq_topic(scope, topic);
     let n: i64 = redis::cmd("MQ.LENGTH")
-        .arg(topic)
+        .arg(scoped_topic.as_str())
         .arg(partition)
         .query_async(raw_conn)
         .await
@@ -70,6 +83,7 @@ pub(crate) async fn queue_length(
 struct PollState {
     client: MoonClient,
     group: String,
+    /// Fully-scoped topic name: `lunaris:{scope}:{name}`.
     topic: String,
     partition: u16,
     last_offset: u64,
@@ -77,14 +91,20 @@ struct PollState {
 
 pub(crate) async fn subscribe(
     client: MoonClient,
+    scope: &Scope,
     group: &str,
     topic: &str,
     partition: u16,
 ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+    // RFC 0001 Wave 1C: compute per-scope topic name eagerly so the stream
+    // owns a `String` rather than a `&Scope` reference (avoids lifetime bleed
+    // into the `'static` stream).
+    let scoped_topic = mq_topic(scope, topic);
+
     let state = PollState {
         client,
         group: group.to_string(),
-        topic: topic.to_string(),
+        topic: scoped_topic,
         partition,
         last_offset: 0,
     };
@@ -153,5 +173,21 @@ mod tests {
         fn assert_send_static<T: Send + 'static + ?Sized>() {}
         type BS = Pin<Box<dyn Stream<Item = Result<QueueMsg, StorageError>> + Send + 'static>>;
         assert_send_static::<BS>();
+    }
+
+    /// RFC 0001 Wave 1C — mq_topic produces scoped topic names.
+    #[test]
+    fn scoped_topic_format() {
+        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        assert_eq!(mq_topic(&scope, "consolidate"), "lunaris:acme:agent-1:consolidate");
+        assert_eq!(mq_topic(&scope, "verify"), "lunaris:acme:agent-1:verify");
+    }
+
+    /// RFC 0001 Wave 1C — topics from different scopes must not collide.
+    #[test]
+    fn scoped_topics_differ_across_scopes() {
+        let scope_a = lunaris_core::Scope::new("agent-a").unwrap();
+        let scope_b = lunaris_core::Scope::new("agent-b").unwrap();
+        assert_ne!(mq_topic(&scope_a, "consolidate"), mq_topic(&scope_b, "consolidate"));
     }
 }

@@ -4,6 +4,11 @@
 //! allowed in `lunaris-storage-moon/src/`) then typed `client.hget(<key>, "v")`
 //! per match.
 //!
+//! RFC 0001 Wave 1C: `scan_range` prepends `scope_prefix(scope)` to the caller-
+//! supplied prefix so SCAN MATCH only iterates keys belonging to this scope.
+//! `read_as_of` receives the fully-scoped key from the caller (the caller uses
+//! `keyspace::episode_key(scope, id)` etc.) — no additional prefix is needed here.
+//!
 //! Phase 1.5 retrofit (STORE-09): all RESP commands here go through the typed
 //! `moon-client` SDK except for the single documented HSCAN call below.
 //!
@@ -21,20 +26,26 @@
 
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
+use lunaris_core::Scope;
 use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::Row;
 
 use crate::client::{MoonClient, moon_err, redis_err};
+use crate::keyspace::scope_prefix;
 
 pub(crate) async fn read_as_of(
     c: &MoonClient,
+    _scope: &Scope,
     key: &[u8],
     _as_of: Hlc,
 ) -> Result<Option<Row<Bytes>>, StorageError> {
     let mut typed = c.typed();
 
+    // RFC 0001 Wave 1C: `key` is already scope-prefixed by the caller
+    // (e.g. `keyspace::episode_key(scope, id)`). No additional prefixing needed.
+    //
     // Moon KV (HSET-based) does not yet expose an AS_OF read clause —
     // `TEMPORAL.SNAPSHOT_AT` is a 0-arg snapshot recorder, not a per-query
     // pin. Phase 1.5 used the SDK's `snapshot_at_packed(ts)` which sends
@@ -67,6 +78,7 @@ fn zero_bt() -> BiTemporal {
 
 pub(crate) async fn scan_range<'a>(
     c: &'a MoonClient,
+    scope: &Scope,
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -75,11 +87,21 @@ pub(crate) async fn scan_range<'a>(
     // AS_OF deferred per `read_as_of` rationale above — return current state.
     let _ = as_of;
 
-    // Build `<prefix>*` MATCH pattern. We construct it from raw bytes since prefixes are
-    // expected to be ASCII (`lunaris:<primitive>:<ulid>`); fall back to lossy UTF-8 only
-    // when constructing the MATCH arg.
+    // RFC 0001 Wave 1C: prepend the scope prefix so SCAN MATCH is bounded to
+    // this scope's keyspace. `scope_prefix(scope)` returns `lunaris:{scope}:`,
+    // and the caller's `prefix` is a primitive kind prefix like `episode:`.
+    // Together they form `lunaris:{scope}:episode:*` which restricts iteration
+    // to exactly this scope's episodes.
+    let scoped_prefix = {
+        let sp = scope_prefix(scope);
+        let mut full = sp.into_bytes();
+        full.extend_from_slice(prefix);
+        full
+    };
+
+    // Build `<scoped_prefix>*` MATCH pattern.
     let pattern = {
-        let mut p = prefix.to_vec();
+        let mut p = scoped_prefix.clone();
         p.push(b'*');
         String::from_utf8_lossy(&p).into_owned()
     };
@@ -141,8 +163,15 @@ mod tests {
         assert_eq!(bt.sys.0.counter, bt2.sys.0.counter);
     }
 
-    // pack_hlc_used_by_kv_matches_vector_module — removed alongside the
-    // `pack_hlc` helper itself (Gap 8 / live-measurement 2026-04-21). Restore
-    // from git history if Moon ships a real KV-AS_OF / TEMPORAL.HGET surface
-    // that needs the packing back.
+    /// RFC 0001 Wave 1C — scan_range MATCH pattern must be scoped.
+    #[test]
+    fn scan_range_pattern_is_scope_prefixed() {
+        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let sp = scope_prefix(&scope);
+        // The MATCH pattern must start with the scope prefix.
+        assert!(
+            format!("{sp}episode:*").starts_with("lunaris:acme:agent-1:"),
+            "scope_prefix must produce lunaris:{{scope}}: prefix"
+        );
+    }
 }

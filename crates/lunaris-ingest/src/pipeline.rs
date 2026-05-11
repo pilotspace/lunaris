@@ -81,12 +81,12 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
     let episode_value = serde_json::to_vec(&episode).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
     })?;
-    ops.push(WriteOp::KvPut { key: episode_key(episode.id), value: episode_value });
+    ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
     for chunk in &chunks {
         let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
         })?;
-        ops.push(WriteOp::KvPut { key: chunk_key(chunk.id), value: chunk_value });
+        ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
         let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 3").clone();
         ops.push(WriteOp::VectorUpsert {
             index: CHUNK_VECTOR_INDEX.to_string(),

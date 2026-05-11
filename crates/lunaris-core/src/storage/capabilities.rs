@@ -28,4 +28,15 @@ pub struct StorageCapabilities {
     /// Backends with `native_rrf=false` (e.g., Postgres) fall back to client-side
     /// fusion (`RrfFusion::Client`).
     pub native_rrf: bool,
+    /// Recommended upper bound on active scopes for this backend.
+    ///
+    /// Moon creates one FT index + one graph key + N MQ topics **per scope**.
+    /// Moon's soft limit is ~512 FT indices per node before recall p99 degrades
+    /// (per Moon docs §6.4 "index count"). Above `max_scopes_recommended` the
+    /// operator should consider workspace-level pooling (future RFC). A value of
+    /// `0` means no limit is documented (e.g., Postgres with RLS has no index
+    /// multiplier per scope).
+    ///
+    /// RFC 0001 §3.6: set to `512` for Moon, `0` for Postgres.
+    pub max_scopes_recommended: usize,
 }

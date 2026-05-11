@@ -1,5 +1,10 @@
 //! `MoonStorage` — `StoragePort` impl backed by Moon (Redis-compatible RESP).
 //!
+//! RFC 0001 Wave 1C: every `StoragePort` method now routes through per-scope
+//! keyspace helpers (`keyspace::{scope_prefix, ft_index_name, graph_key, mq_topic}`).
+//! Per-scope FT indices, graph keys, and MQ topics are created lazily on first
+//! write via `ensure_scope`.
+//!
 //! Per blueprint §6, every method is a thin pass-through to a Moon native command:
 //!
 //! | trait method      | Moon command(s)                                                         |
@@ -13,8 +18,14 @@
 //! | `subscribe`       | `MQ.POP ... BLOCK` polling stream                                       |
 //! | `capabilities`    | constant — Moon-native everything                                       |
 //!
-//! Phase 1 ships a thin pass-through. Phase 2 wraps in retry / circuit breaker
-//! (see Phase 4 `OPS-04`).
+//! ## Lazy per-scope init
+//!
+//! On first write under a scope, `ensure_scope` creates:
+//! - `FT.CREATE lunaris_{scope}_{kind}_idx` for each of chunks / entities / facts / communities
+//! - `GRAPH.CREATE lunaris_{scope}_graph`
+//!
+//! Subsequent calls for an already-initialized scope skip the Moon round-trips via
+//! an in-memory `initialized_scopes` set (lock-free read path once initialized).
 //!
 //! ## Threat model snapshot (T-01-03-*)
 //!
@@ -39,6 +50,9 @@ pub mod vector;
 
 pub use client::MoonClient;
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
@@ -46,36 +60,138 @@ use lunaris_core::{
     CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row, Scope,
     StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
+use parking_lot::Mutex;
+
+use crate::keyspace::{ft_index_name, graph_key};
 
 /// `StoragePort` backed by a single Moon RESP connection manager.
+///
+/// `initialized_scopes` tracks which scopes have had their FT indices and graph
+/// key created (lazy init on first write). `Mutex` is held only during the
+/// brief check + insert — never across `.await` points.
 #[derive(Debug, Clone)]
 pub struct MoonStorage {
     pub(crate) client: MoonClient,
+    /// Set of scopes whose FT indices + graph key have been created on Moon.
+    /// `parking_lot::Mutex` (not `std::sync::Mutex`) per CLAUDE.md lock discipline.
+    /// The lock is NEVER held across an `.await` — it is taken, the bool is checked,
+    /// optionally the scope is inserted, and the lock is dropped BEFORE the async
+    /// Moon calls in `ensure_scope`.
+    initialized_scopes: Arc<Mutex<HashSet<String>>>,
 }
 
 impl MoonStorage {
     /// Open a connection to Moon at `url` (`moon://host:port[?ws=workspace]`).
     pub async fn connect(url: &str) -> Result<Self, StorageError> {
-        Ok(Self { client: MoonClient::connect(url).await? })
+        Ok(Self {
+            client: MoonClient::connect(url).await?,
+            initialized_scopes: Arc::new(Mutex::new(HashSet::new())),
+        })
     }
 
     /// Borrow the underlying client (used by integration tests).
     pub fn client(&self) -> &MoonClient {
         &self.client
     }
+
+    /// Lazily ensure per-scope FT indices and graph key exist on Moon.
+    ///
+    /// On first call for a given scope, creates:
+    /// - `FT.CREATE lunaris_{scope}_{kind}_idx` for chunks / entities / facts / communities
+    /// - `GRAPH.CREATE lunaris_{scope}_graph`
+    ///
+    /// Idempotent: "already exists" errors from Moon are swallowed. Subsequent calls
+    /// for the same scope return immediately (in-memory set check, no Moon I/O).
+    ///
+    /// ## Lock discipline
+    ///
+    /// The `Mutex` is locked only to read/write the `HashSet<String>` — it is
+    /// dropped BEFORE any `.await` call so it is NEVER held across an await point.
+    async fn ensure_scope(&self, scope: &Scope) -> Result<(), StorageError> {
+        let scope_str = scope.as_str().to_string();
+
+        // Fast path: scope already initialized — lock, check, drop.
+        {
+            let guard = self.initialized_scopes.lock();
+            if guard.contains(&scope_str) {
+                return Ok(());
+            }
+        } // lock dropped here
+
+        // Slow path: create FT indices and graph on Moon.
+        self.create_scope_indexes(scope).await?;
+
+        // Mark initialized — lock, insert, drop.
+        {
+            let mut guard = self.initialized_scopes.lock();
+            guard.insert(scope_str);
+        } // lock dropped here
+
+        Ok(())
+    }
+
+    /// Create per-scope FT indices and graph key. Called at most once per scope
+    /// (guarded by `ensure_scope`'s in-memory set).
+    async fn create_scope_indexes(&self, scope: &Scope) -> Result<(), StorageError> {
+        use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
+        const DIM: usize = 768;
+
+        for kind in &["chunks", "entities", "facts", "communities"] {
+            let idx_name = ft_index_name(scope, kind);
+            // The FT prefix must match the key shape written by `atomic.rs::VectorUpsert`:
+            // `{ft_index_name(scope, kind)}:{id_hex}`.
+            let prefix = format!("{idx_name}:");
+
+            let mut opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
+                .prefix(&prefix)
+                .field_name("vec")
+                .add_field(SchemaField::Text("content".to_string()));
+
+            if *kind == "chunks" {
+                opts = opts.add_field(SchemaField::Numeric("valid_time".to_string()));
+                opts = opts.add_field(SchemaField::Tag("source".to_string()));
+            }
+
+            let typed = self.client.typed();
+            match typed.vector().create_index(&idx_name, opts).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("Index already exists") || msg.contains("already exists") {
+                        continue;
+                    }
+                    return Err(crate::client::moon_err(e));
+                }
+            }
+        }
+
+        // Create per-scope graph. Moon does not auto-create graphs on first GRAPH.QUERY.
+        let gkey = graph_key(scope);
+        let typed = self.client.typed();
+        match typed.graph().create(&gkey).await {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                if !(msg.contains("already exists") || msg.contains("Graph already exists")) {
+                    return Err(crate::client::moon_err(e));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl StoragePort for MoonStorage {
-    // RFC 0001 Wave 0: scope is threaded through to the underlying free functions.
-    // The free functions currently ignore it (`let _ = scope;`). Real per-scope
-    // keyspace prefix routing is Wave 1C work.
-
+    /// RFC 0001 Wave 1C: lazy per-scope init before writing, then route all ops
+    /// through scope-prefixed keys / indices.
     async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
-        let _ = scope; // Wave 1C: will prefix keys with `lunaris:{scope}:`
-        crate::atomic::atomic_write(&self.client, ops).await
+        self.ensure_scope(scope).await?;
+        crate::atomic::atomic_write(&self.client, scope, ops).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
         scope: &Scope,
@@ -86,8 +202,8 @@ impl StoragePort for MoonStorage {
         as_of: Option<Hlc>,
         rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        let _ = scope; // Wave 1C: will route to per-scope FT index `lunaris_{scope}_chunk_idx`
-        crate::vector::vector_search(&self.client, index, query, k, filter, as_of, rerank).await
+        crate::vector::vector_search(&self.client, scope, index, query, k, filter, as_of, rerank)
+            .await
     }
 
     async fn graph_traverse(
@@ -96,8 +212,7 @@ impl StoragePort for MoonStorage {
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
-        let _ = scope; // Wave 1C: will route to `GRAPH.QUERY lunaris_{scope}_graph`
-        crate::graph::graph_traverse(&self.client, query, as_of).await
+        crate::graph::graph_traverse(&self.client, scope, query, as_of).await
     }
 
     async fn scan_range(
@@ -106,8 +221,7 @@ impl StoragePort for MoonStorage {
         prefix: &[u8],
         as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        let _ = scope; // Wave 1C: will prepend `lunaris:{scope}:` to prefix
-        crate::kv::scan_range(&self.client, prefix, as_of).await
+        crate::kv::scan_range(&self.client, scope, prefix, as_of).await
     }
 
     async fn read_as_of(
@@ -116,8 +230,7 @@ impl StoragePort for MoonStorage {
         key: &[u8],
         as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
-        let _ = scope; // Wave 1C: will prepend `lunaris:{scope}:` to key
-        crate::kv::read_as_of(&self.client, key, as_of).await
+        crate::kv::read_as_of(&self.client, scope, key, as_of).await
     }
 
     async fn publish(
@@ -127,8 +240,7 @@ impl StoragePort for MoonStorage {
         partition: u16,
         payload: Bytes,
     ) -> Result<u64, StorageError> {
-        let _ = scope; // Wave 1C: will use `MQ.PUSH lunaris:{scope}:{topic}`
-        crate::queue::publish(&self.client, topic, partition, payload).await
+        crate::queue::publish(&self.client, scope, topic, partition, payload).await
     }
 
     async fn subscribe(
@@ -138,8 +250,7 @@ impl StoragePort for MoonStorage {
         topic: &str,
         partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
-        let _ = scope; // Wave 1C: will subscribe to per-scope topic
-        crate::queue::subscribe(self.client.clone(), group, topic, partition).await
+        crate::queue::subscribe(self.client.clone(), scope, group, topic, partition).await
     }
 
     /// Plan 04 D-12 — see [`crate::queue::queue_length`] for the raw
@@ -150,8 +261,7 @@ impl StoragePort for MoonStorage {
         topic: &str,
         partition: u16,
     ) -> Result<u64, StorageError> {
-        let _ = scope; // Wave 1C: will query per-scope topic depth
-        crate::queue::queue_length(&self.client, topic, partition).await
+        crate::queue::queue_length(&self.client, scope, topic, partition).await
     }
 
     fn capabilities(&self) -> StorageCapabilities {
@@ -185,12 +295,23 @@ impl StoragePort for MoonStorage {
             // older Moon binary that ignores extra_schema), set this back to
             // `false` to force the always-correct local fusion path.
             native_rrf: true,
+            // RFC 0001 §3.6 — Moon's soft FT-index limit is ~512 per node
+            // before recall p99 degrades (Moon docs §6.4). Above this,
+            // operators should consider workspace-level pooling (future RFC).
+            max_scopes_recommended: 512,
         }
     }
 }
 
 #[async_trait]
 impl KeywordPort for MoonStorage {
+    /// `KeywordPort` does not carry `&Scope` (the trait is not part of the Wave 0
+    /// type-freeze — RFC 0001 §3.4 only covers `StoragePort`). Callers of the
+    /// scoped keyword path go through `StoragePort::vector_search` with a scope.
+    /// This `KeywordPort` impl uses `Scope::dev()` as a fallback so the unscoped
+    /// extension-trait surface remains callable from legacy / test code that
+    /// predates the v0.2 scope rollout. Scoped keyword search for production use
+    /// should be called via `ScopedLunaris` which routes through `StoragePort`.
     async fn keyword_search(
         &self,
         index: &str,
@@ -199,7 +320,8 @@ impl KeywordPort for MoonStorage {
         filter: Option<&Filter>,
         as_of: Option<Hlc>,
     ) -> Result<Vec<KeywordHit>, StorageError> {
-        crate::keyword::keyword_search(&self.client, index, query, k, filter, as_of).await
+        crate::keyword::keyword_search(&self.client, &Scope::dev(), index, query, k, filter, as_of)
+            .await
     }
 }
 
@@ -226,6 +348,7 @@ mod tests {
             queue_native: true,
             max_vector_dim: 768,
             native_rrf: true,
+            max_scopes_recommended: 512,
         };
         assert!(
             !want.bi_temporal_native,
@@ -238,6 +361,10 @@ mod tests {
         assert!(
             want.native_rrf,
             "Moon HYBRID FT.SEARCH now resolves @content via the SchemaField::Text added by ensure_indexes; fuse_rrf opts into RrfFusion::Moon — Gap 9 closure 2026-04-21"
+        );
+        assert_eq!(
+            want.max_scopes_recommended, 512,
+            "Moon FT soft limit is ~512 indices per node (RFC 0001 §3.6)"
         );
     }
 }

@@ -51,7 +51,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lunaris::Lunaris;
-use lunaris_core::{BiTemporal, Fact, HlcClock, LunarisError, StorageError, StoragePort, WriteOp};
+use lunaris_core::{
+    BiTemporal, Fact, HlcClock, LunarisError, Scope, StorageError, StoragePort, WriteOp,
+};
 use lunaris_extract::EntityId;
 use lunaris_storage_moon::keyspace::fact_key;
 use rand::{Rng, SeedableRng};
@@ -518,7 +520,7 @@ pub async fn build_corpus_with_options(
         let mut ops: Vec<WriteOp> = Vec::with_capacity(cap);
         for _ in 0..batch_size {
             let fact = next_fact(&mut rng, &clock)?;
-            let key = fact_key(fact.id);
+            let key = fact_key(&Scope::dev(), fact.id);
             let value = serde_json::to_vec(&fact)?;
             let embedding = fact.embedding.clone().unwrap_or_default();
             ops.push(WriteOp::KvPut { key, value });
@@ -1315,6 +1317,7 @@ pub mod tests_recording {
                 queue_native: false,
                 max_vector_dim: CORPUS_EMBEDDING_DIM as u32,
                 native_rrf: false,
+            max_scopes_recommended: 0,
             }
         }
     }
