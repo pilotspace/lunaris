@@ -24,6 +24,17 @@ authors.workspace      = true
 [features]
 default      = []
 candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
+# RFC 0006 scaffold — gates the Gemma-3 270M verifier impl (the
+# "Lunaris on a laptop" target). Shares the candle dependency set with
+# `candle`. The production default-flip (270M as the Verifier default)
+# lands separately after the Phase 24 head-to-head bench passes the
+# 100-item quality gate. Until then, 270M is opt-in.
+verify-small = ["candle"]
+# Mirror of the existing `candle` feature, named explicitly for RFC 0006
+# symmetry. Selects the Gemma-3 27B path. Kept as an alias for forward
+# compatibility — once the default flips, `candle` becomes equivalent
+# to `verify-small` and `verify-large` becomes the opt-in for 27B.
+verify-large = ["candle"]
 ollama       = ["dep:reqwest"]
 cloud-api    = ["dep:reqwest"]
 # Gates live-backend integration tests (real Gemma-3 27B model load + Ollama HTTP

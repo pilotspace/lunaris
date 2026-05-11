@@ -46,6 +46,8 @@ use lunaris_core::LunarisError;
 
 #[cfg(feature = "candle")]
 pub mod candle_gemma3_27b;
+#[cfg(feature = "verify-small")]
+pub mod candle_gemma3_270m;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 pub mod noop;
@@ -57,6 +59,8 @@ pub mod worker;
 
 #[cfg(feature = "candle")]
 pub use candle_gemma3_27b::{CandleGemma3_27B, CandleGemma3_27BOpts};
+#[cfg(feature = "verify-small")]
+pub use candle_gemma3_270m::{CandleGemma3_270M, CandleGemma3_270MOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiVerifier, CloudApiVerifierOpts, CloudProvider};
 pub use noop::NoopVerifier;
