@@ -13,7 +13,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lunaris_core::{Embedder, KeywordPort, LunarisError, StoragePort};
+use lunaris_core::{Embedder, KeywordPort, LunarisError, Scope, StoragePort};
 use tokio::sync::OnceCell;
 
 use crate::types::{Query, RawHit};
@@ -64,8 +64,17 @@ pub trait Retriever: Send + Sync {
 /// reads this to invoke `text().hybrid_search()` in one round trip — without
 /// it the dispatch falls back to client-side RRF even when the backend
 /// reports `capabilities().native_rrf == true` (graceful degradation).
+///
+/// ## RFC 0001 Wave 2.5A + 2.5C: `scope` field
+///
+/// `scope` carries the per-call partition scope so every operator dispatches to
+/// the correct scope-isolated index without needing `Scope::dev()` placeholders.
+/// Wave 2.5A adds the field (defaulting to `Scope::dev()` for bare `Lunaris::recall()`
+/// callers); Wave 2.5C seeds it from `RetrievalBuilder::with_scope` so
+/// `ScopedLunaris::recall()` routes to the correct scope at the storage layer.
 pub struct QueryContext {
     pub query: Query,
+    pub scope: Scope,
     pub embedder: Arc<dyn Embedder>,
     pub storage: Arc<dyn StoragePort>,
     pub keyword: Arc<dyn KeywordPort>,
@@ -74,16 +83,18 @@ pub struct QueryContext {
 }
 
 impl QueryContext {
-    /// Construct a fresh context. Builders typically create one of these per
-    /// `recall().execute()` call.
+    /// Construct a fresh context with an explicit scope.
+    /// Builders typically create one of these per `recall().execute()` call.
     pub fn new(
         query: Query,
+        scope: Scope,
         embedder: Arc<dyn Embedder>,
         storage: Arc<dyn StoragePort>,
         keyword: Arc<dyn KeywordPort>,
     ) -> Self {
         Self {
             query,
+            scope,
             embedder,
             storage,
             keyword,
@@ -98,6 +109,7 @@ impl QueryContext {
     /// `ctx.storage.capabilities().native_rrf` — both must hold.
     pub fn with_moon(
         query: Query,
+        scope: Scope,
         embedder: Arc<dyn Embedder>,
         storage: Arc<dyn StoragePort>,
         keyword: Arc<dyn KeywordPort>,
@@ -105,6 +117,7 @@ impl QueryContext {
     ) -> Self {
         Self {
             query,
+            scope,
             embedder,
             storage,
             keyword,

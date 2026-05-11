@@ -177,6 +177,7 @@ impl StoragePort for RecordingStorage {
 impl KeywordPort for RecordingStorage {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         index: &str,
         query: &str,
         k: usize,
@@ -216,7 +217,7 @@ fn make_ctx(storage: Arc<RecordingStorage>, as_of: Option<Hlc>) -> QueryContext 
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
     let mut q = Query::text("brown fox");
     q.as_of = as_of;
-    QueryContext::new(q, embedder, storage_dyn, keyword_dyn)
+    QueryContext::new(q, lunaris_core::Scope::dev(), embedder, storage_dyn, keyword_dyn)
 }
 
 // ============================================================ Tests

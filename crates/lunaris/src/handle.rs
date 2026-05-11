@@ -468,8 +468,11 @@ struct NoKeywordSupport;
 
 #[async_trait::async_trait]
 impl KeywordPort for NoKeywordSupport {
+    /// Wave 2.5A: gains `scope: &Scope` per RFC 0001 §3.4 amendment.
+    /// Scope is ignored — this sentinel returns NotSupported regardless.
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,

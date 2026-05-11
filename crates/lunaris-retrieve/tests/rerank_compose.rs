@@ -138,6 +138,7 @@ impl StoragePort for RecordingStorage {
 impl KeywordPort for RecordingStorage {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,
@@ -247,7 +248,7 @@ async fn rerank_with_noop_preserves_order() {
     rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7), vh(&id_c, 0.5)]);
 
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("anything"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("anything"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let root = Vector::new("chunks", 30).rerank(Arc::new(NoopReranker));
     let raw = root.retrieve(&ctx).await.unwrap();
@@ -277,7 +278,7 @@ async fn rerank_with_mock_inverts_order() {
     rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7), vh(&id_c, 0.5)]);
 
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let root = Vector::new("chunks", 30).rerank(Arc::new(LexicographicReranker));
     let raw = root.retrieve(&ctx).await.unwrap();
@@ -308,7 +309,7 @@ async fn rerank_truncates_to_k_in() {
     rec.set_vector_hits(hits);
 
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let recorder = Arc::new(RecordingReranker::new());
     let root = Vector::new("chunks", 50).rerank(recorder.clone() as Arc<dyn Reranker>);
@@ -329,7 +330,7 @@ async fn rerank_partial_hydrates_text() {
     rec.set_vector_hits(vec![vh(&id_x, 0.9), vh(&id_y, 0.8)]);
 
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let recorder = Arc::new(RecordingReranker::new());
     let root = Vector::new("chunks", 30).rerank(recorder.clone() as Arc<dyn Reranker>);
@@ -368,7 +369,7 @@ async fn rerank_validates_doc_count() {
     rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7)]);
 
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let root = Vector::new("chunks", 30).rerank(Arc::new(DroppingReranker));
     let res = root.retrieve(&ctx).await;
@@ -405,7 +406,7 @@ async fn rerank_preserves_degraded_flag_through_rerank_pass() {
     let rec = Arc::new(RecordingStorage::new());
     let id_a = seed_chunk(&rec, "alpha");
     let (storage, keyword, embedder) = build_ctx(rec.clone());
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let upstream: Box<dyn Retriever> = Box::new(DegradedSource(id_a.clone()));
     let root = lunaris_retrieve::rerank(upstream, Arc::new(NoopReranker));

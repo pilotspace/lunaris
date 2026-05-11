@@ -33,6 +33,7 @@
 
 use std::time::Duration;
 
+use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::keyword::{KeywordHit, min_max_normalize};
@@ -47,6 +48,11 @@ const KEYWORD_SEARCH_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) async fn keyword_search(
     c: &PgClient,
+    // Wave 2.5A: scope accepted for API parity with RFC 0001 §3.4 amendment.
+    // Postgres partitioning is enforced via RLS at the connection level (Wave 1B)
+    // rather than per-query WHERE clauses, so _scope is unused here but the
+    // parameter ensures the trait boundary is met across all backends.
+    _scope: &Scope,
     index: &str,
     query: &str,
     k: usize,

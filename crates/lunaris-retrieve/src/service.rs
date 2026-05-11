@@ -20,7 +20,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use lunaris_core::{Embedder, KeywordPort, LunarisError, StoragePort};
+use lunaris_core::{Embedder, KeywordPort, LunarisError, Scope, StoragePort};
 use tower::Service;
 
 use crate::hydrate::hydrate;
@@ -76,7 +76,10 @@ impl Service<Query> for RetrievalService {
         let as_of = q.as_of;
 
         Box::pin(async move {
-            let ctx = QueryContext::new(q, embedder, storage.clone(), keyword);
+            // Wave 2.5A/2.5C: RetrievalService has no scope context — use dev
+            // scope as the default. Callers needing scope isolation should use
+            // RetrievalBuilder (via Lunaris::recall() / ScopedLunaris::dsl()).
+            let ctx = QueryContext::new(q, Scope::dev(), embedder, storage.clone(), keyword);
             let raw = root.retrieve(&ctx).await?;
             // Plan 04-04 B-9: RetrievalService callers don't have a verifier
             // queue-depth check (only `Lunaris::recall_with_degraded_check`

@@ -30,10 +30,20 @@ use crate::hlc::Hlc;
 /// Backends opt in by implementing this trait alongside [`StoragePort`](super::port::StoragePort).
 /// The Phase 2 [`Keyword::bm25`](https://docs.rs/lunaris-retrieve) operator takes
 /// `Arc<dyn KeywordPort>` and dispatches to the backend.
+///
+/// ## RFC 0001 §3.4 amendment (Wave 2.5A)
+///
+/// `keyword_search` gains `scope: &Scope` as its first argument after `&self`.
+/// Wave 0 froze `StoragePort` with `&Scope` on 8 methods but missed this trait.
+/// BM25 keyword search was therefore not scope-isolated at the trait level.
+/// Wave 2.5A closes the gap — backends thread `scope` through to the underlying
+/// FT index routing (Moon) or `tsvector` partitioning (Postgres).
 #[async_trait]
 pub trait KeywordPort: Send + Sync + 'static {
     /// BM25 keyword search.
     ///
+    /// * `scope` — the agent/tenant scope; backends MUST restrict results to
+    ///   this scope only (RFC 0001 §3.4 amendment, Wave 2.5A).
     /// * `index` is the table / FT index name (e.g., `"chunks"`).
     /// * `query` is the user-supplied query text. Backends MUST escape any
     ///   index-DSL specials (FT escape on Moon; parameterized on Postgres).
@@ -46,6 +56,7 @@ pub trait KeywordPort: Send + Sync + 'static {
     /// preserving the original score in `raw_score`.
     async fn keyword_search(
         &self,
+        scope: &crate::scope::Scope,
         index: &str,
         query: &str,
         k: usize,

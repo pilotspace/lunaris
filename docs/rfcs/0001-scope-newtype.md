@@ -187,12 +187,19 @@ before handing it to the engine. Callers cannot *override* the bound scope
 mid-call. This is the type-system enforcement that makes cross-agent leaks a
 compile error.
 
-### 3.4 `StoragePort` signature changes
+### 3.4 `StoragePort` and `KeywordPort` signature changes
 
-The trait acquires an explicit `&Scope` argument on every method that needs
-to partition (everything except pure metadata operations). The arrow points
-inward — the trait stays in `lunaris-core`, implementations land in
+The `StoragePort` trait acquires an explicit `&Scope` argument on every method
+that needs to partition (everything except pure metadata operations). The arrow
+points inward — the trait stays in `lunaris-core`, implementations land in
 `lunaris-storage-postgres` and `lunaris-storage-moon`.
+
+**Amendment (Wave 2.5A, 2026-05-11):** `KeywordPort::keyword_search` was
+overlooked in the Wave 0 type freeze — `&Scope` was added to `StoragePort`'s
+8 methods but not to the BM25 extension trait. Wave 2.5A closes the gap:
+`keyword_search` gains `scope: &Scope` as its first argument after `&self`.
+Moon routes to the per-scope FT index; Postgres accepts the parameter for API
+parity (partitioning is enforced via RLS at the connection level, Wave 1B).
 
 ```rust
 #[async_trait]
@@ -508,6 +515,9 @@ explicit. Mitigations:
   `crates/lunaris-consolidate/src/act_r.rs`.
 - **2026-05-10** — Spawn gate confirmed: this RFC ⇒ stub commit ⇒ Wave 1
   parallel. No subagent runs against a moving signature.
+- **2026-05-11** — `KeywordPort` gained `&Scope` in Wave 2.5A (overlooked in
+  Wave 0 type freeze — §3.4 covered `StoragePort`'s 8 methods but missed the
+  BM25 extension trait). See §3.4 amendment above.
 
 ---
 

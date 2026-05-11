@@ -128,6 +128,7 @@ impl StoragePort for PretendNativeMoon {
 impl KeywordPort for PretendNativeMoon {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,
@@ -162,7 +163,7 @@ async fn routing_falls_back_when_moon_storage_unset() {
     let root = Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60);
 
     // QueryContext::new — moon_storage is None.
-    let ctx = QueryContext::new(Query::text("query"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("query"), lunaris_core::Scope::dev(), embedder, storage, keyword);
     let raw = root.retrieve(&ctx).await.expect("dispatch must fall back to client-side");
 
     // Client-side path produces fused hits. Moon-native would have errored.
@@ -190,7 +191,7 @@ async fn routing_falls_back_when_branches_dont_match_pattern() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     let root = Vector::new("chunks", 30).and(Vector::new("chunks", 30)).fuse_rrf(60);
-    let ctx = QueryContext::new(Query::text("query"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("query"), lunaris_core::Scope::dev(), embedder, storage, keyword);
     let raw = root.retrieve(&ctx).await.expect("dispatch falls back");
     assert!(raw.iter().all(|h| h.source_op == lunaris_retrieve::SourceOp::Fused));
 }
@@ -213,7 +214,7 @@ async fn routing_falls_back_when_indices_differ() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     let root = Vector::new("chunks", 30).and(Keyword::bm25("entities", 30)).fuse_rrf(60);
-    let ctx = QueryContext::new(Query::text("q"), embedder, storage, keyword);
+    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
     let raw = root.retrieve(&ctx).await.expect("falls back");
     // Both x and y survive (no dedupe) because client-side fold treats them
     // as distinct ids tagged Fused.

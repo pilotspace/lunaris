@@ -42,7 +42,7 @@
 use std::sync::Arc;
 
 use lunaris_core::storage::types::Filter;
-use lunaris_core::{Embedder, Hlc, KeywordPort, LunarisError, StoragePort};
+use lunaris_core::{Embedder, Hlc, KeywordPort, LunarisError, Scope, StoragePort};
 
 // Plan 03-02: Re-export Graph constants alongside the builder so callers
 // constructing a `recall()` chain can reach the hop / k defaults via the
@@ -65,6 +65,11 @@ pub struct RetrievalBuilder {
     pub(crate) moon_storage: Option<Arc<lunaris_storage_moon::MoonStorage>>,
     pub(crate) base_filter: Option<Filter>,
     pub(crate) base_as_of: Option<Hlc>,
+    /// Wave 2.5A/2.5C: scope for this retrieval call. Seeded by
+    /// `ScopedLunaris::recall()` / `::dsl()` with the bound scope; bare
+    /// `Lunaris::recall()` seeds `Scope::dev()` with a `tracing::warn!` for
+    /// backwards compat — adopters should migrate to `engine.scoped(s).recall()`.
+    pub(crate) scope: Scope,
     /// Plan 04-04 B-9 fix: when `true`, hydration ORs this into every
     /// `Hit::degraded`. Set by `Lunaris::recall_with_degraded_check` when the
     /// verifier queue depth crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD`.
@@ -73,6 +78,10 @@ pub struct RetrievalBuilder {
 
 impl RetrievalBuilder {
     /// Construct a fresh builder. Default root = `Vector::new("chunks", 30)`.
+    ///
+    /// Wave 2.5A: `scope` defaults to `Scope::dev()` here. Callers that want
+    /// real scope-isolation should use `with_scope(scope)` or go through
+    /// `ScopedLunaris::dsl()` which pre-seeds the scope automatically.
     pub fn new(
         storage: Arc<dyn StoragePort>,
         keyword: Arc<dyn KeywordPort>,
@@ -86,6 +95,7 @@ impl RetrievalBuilder {
             moon_storage: None,
             base_filter: None,
             base_as_of: None,
+            scope: Scope::dev(),
             initial_degraded: false,
         }
     }
@@ -99,6 +109,16 @@ impl RetrievalBuilder {
         embedder: Arc<dyn Embedder>,
     ) -> Self {
         Self::new(storage, keyword, embedder)
+    }
+
+    /// Wave 2.5C: set the scope for this retrieval call.
+    ///
+    /// `ScopedLunaris::recall()` and `::dsl()` call this automatically so
+    /// scope-bound callers don't need to. Bare `Lunaris::recall()` keeps
+    /// `Scope::dev()` as the default with a `tracing::warn!` in `execute`.
+    pub fn with_scope(mut self, scope: Scope) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// Wire a typed `MoonStorage` Arc into the builder so the Phase 1.5
@@ -200,15 +220,17 @@ impl RetrievalBuilder {
         // Plan 04-04 B-9: snapshot the initial_degraded flag BEFORE moving
         // the rest of the builder into the QueryContext / hydrate calls.
         let initial_degraded = self.initial_degraded;
+        let scope = self.scope.clone();
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
+                scope,
                 self.embedder,
                 self.storage.clone(),
                 self.keyword,
                 moon,
             ),
-            None => QueryContext::new(query, self.embedder, self.storage.clone(), self.keyword),
+            None => QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword),
         };
         let raw = self.root.retrieve(&ctx).await?;
         hydrate(self.storage.as_ref(), raw, as_of, initial_degraded).await
@@ -237,15 +259,17 @@ impl RetrievalBuilder {
         if query.as_of.is_none() {
             query.as_of = self.base_as_of;
         }
+        let scope = self.scope.clone();
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
+                scope,
                 self.embedder,
                 self.storage.clone(),
                 self.keyword,
                 moon,
             ),
-            None => QueryContext::new(query, self.embedder, self.storage.clone(), self.keyword),
+            None => QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword),
         };
         self.root.retrieve(&ctx).await
     }

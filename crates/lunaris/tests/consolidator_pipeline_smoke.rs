@@ -182,6 +182,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 impl KeywordPort for RecordingStorageWithKeyword {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,

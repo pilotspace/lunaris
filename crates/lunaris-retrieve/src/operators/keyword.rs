@@ -60,9 +60,14 @@ impl Keyword {
 #[async_trait]
 impl Retriever for Keyword {
     async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
+        // Wave 2.5A: thread scope into keyword_search (RFC 0001 §3.4 amendment).
+        // Wave 2.5C plumbs the real per-call scope from ctx.scope; until then
+        // ctx.scope == Scope::dev() for bare Lunaris::recall() callers and the
+        // caller-supplied scope for ScopedLunaris::recall() callers.
         let hits = ctx
             .keyword
             .keyword_search(
+                &ctx.scope,
                 &self.index,
                 &ctx.query.text,
                 self.k,

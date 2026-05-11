@@ -273,6 +273,7 @@ impl StoragePort for InProcessBroker {
 impl KeywordPort for InProcessBroker {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,

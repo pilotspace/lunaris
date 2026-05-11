@@ -114,6 +114,7 @@ impl StoragePort for TowerStorage {
 impl KeywordPort for TowerStorage {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,

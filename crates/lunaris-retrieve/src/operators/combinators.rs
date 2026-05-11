@@ -167,6 +167,7 @@ impl Retriever for ThenRetriever {
 
         let narrowed_ctx = QueryContext {
             query: narrowed_query,
+            scope: ctx.scope.clone(),
             embedder: ctx.embedder.clone(),
             storage: ctx.storage.clone(),
             keyword: ctx.keyword.clone(),

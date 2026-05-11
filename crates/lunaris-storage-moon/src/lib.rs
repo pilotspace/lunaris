@@ -305,23 +305,21 @@ impl StoragePort for MoonStorage {
 
 #[async_trait]
 impl KeywordPort for MoonStorage {
-    /// `KeywordPort` does not carry `&Scope` (the trait is not part of the Wave 0
-    /// type-freeze — RFC 0001 §3.4 only covers `StoragePort`). Callers of the
-    /// scoped keyword path go through `StoragePort::vector_search` with a scope.
-    /// This `KeywordPort` impl uses `Scope::dev()` as a fallback so the unscoped
-    /// extension-trait surface remains callable from legacy / test code that
-    /// predates the v0.2 scope rollout. Scoped keyword search for production use
-    /// should be called via `ScopedLunaris` which routes through `StoragePort`.
+    /// Wave 2.5A: `KeywordPort::keyword_search` now carries `scope: &Scope`
+    /// (RFC 0001 §3.4 amendment). The Moon backend threads scope through to
+    /// `keyword::keyword_search` which routes to the per-scope FT index
+    /// (`ft_index_name(scope, index)`). Previously this impl used `Scope::dev()`
+    /// as a placeholder — that placeholder is now replaced by the caller-supplied scope.
     async fn keyword_search(
         &self,
+        scope: &Scope,
         index: &str,
         query: &str,
         k: usize,
         filter: Option<&Filter>,
         as_of: Option<Hlc>,
     ) -> Result<Vec<KeywordHit>, StorageError> {
-        crate::keyword::keyword_search(&self.client, &Scope::dev(), index, query, k, filter, as_of)
-            .await
+        crate::keyword::keyword_search(&self.client, scope, index, query, k, filter, as_of).await
     }
 }
 

@@ -166,15 +166,18 @@ impl StoragePort for PostgresStorage {
 
 #[async_trait]
 impl KeywordPort for PostgresStorage {
+    /// Wave 2.5A: gains `scope: &Scope` per RFC 0001 §3.4 amendment.
+    /// Scope is threaded through to the underlying keyword search free function.
     async fn keyword_search(
         &self,
+        scope: &lunaris_core::Scope,
         index: &str,
         query: &str,
         k: usize,
         filter: Option<&Filter>,
         as_of: Option<Hlc>,
     ) -> Result<Vec<KeywordHit>, StorageError> {
-        crate::keyword::keyword_search(&self.client, index, query, k, filter, as_of).await
+        crate::keyword::keyword_search(&self.client, scope, index, query, k, filter, as_of).await
     }
 }
 

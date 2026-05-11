@@ -174,6 +174,7 @@ impl StoragePort for RecordingStorage {
 impl KeywordPort for RecordingStorage {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         index: &str,
         query: &str,
         k: usize,
@@ -261,7 +262,7 @@ async fn or_unions_by_id_with_max_score() {
 
     use lunaris_retrieve::QueryContext;
     let q = Query::text("query");
-    let ctx = QueryContext::new(q, embedder, storage, keyword);
+    let ctx = QueryContext::new(q, lunaris_core::Scope::dev(), embedder, storage, keyword);
     let raw = root.retrieve(&ctx).await.unwrap();
     // Union by id: a, b (max 0.95), c. The duplicate `b` collapses into one
     // entry with score 0.95.
@@ -285,7 +286,7 @@ async fn then_passes_a_hits_as_b_filter() {
 
     use lunaris_retrieve::QueryContext;
     let q = Query::text("query");
-    let ctx = QueryContext::new(q, embedder, storage, keyword);
+    let ctx = QueryContext::new(q, lunaris_core::Scope::dev(), embedder, storage, keyword);
     let _ = root.retrieve(&ctx).await.unwrap();
 
     // After A runs (returns x/y/z), B receives a filter built from those ids.
@@ -317,7 +318,7 @@ async fn as_of_threads_through_to_storage() {
     let stamp = Hlc { wall_ms: 12345, counter: 7, node_id: 0 };
     let mut q = Query::text("query");
     q.as_of = Some(stamp);
-    let ctx = QueryContext::new(q, embedder, storage, keyword);
+    let ctx = QueryContext::new(q, lunaris_core::Scope::dev(), embedder, storage, keyword);
     let v = Vector::new("chunks", 30);
     let _ = v.retrieve(&ctx).await.unwrap();
 
@@ -385,7 +386,7 @@ async fn fuse_rrf_client_side_path_runs_for_non_native_backend() {
     use lunaris_retrieve::QueryContext;
     let root = Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60);
     let q = Query::text("query");
-    let ctx = QueryContext::new(q, embedder, storage, keyword);
+    let ctx = QueryContext::new(q, lunaris_core::Scope::dev(), embedder, storage, keyword);
     let raw = root.retrieve(&ctx).await.unwrap();
 
     // Three unique ids — a, b, c. b appears in both branches → top of fused.
