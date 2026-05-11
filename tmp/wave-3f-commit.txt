@@ -1,0 +1,42 @@
+feat(consolidate,verify): Wave 3F — per-scope worker pools with supervisor (RFC 0001 §3.7)
+
+Closes the cross-scope starvation hazard in the consolidator and
+verifier workers. The Wave 1 cut left a single-topic consumer per
+worker — a hot scope drowning the queue would block every other
+scope's consolidation/verification. This commit introduces per-scope
+supervisors with bounded concurrency and panic isolation via
+detached tokio::spawn tasks.
+
+- ConsolidateSupervisor + VerifySupervisor own one detached tokio::spawn
+  task per active scope; register/deregister/shutdown lifecycle via
+  parking_lot::RwLock<HashMap<Scope, oneshot::Sender<()>>>
+- Per-scope tasks subscribe via StoragePort::subscribe(&scope, ...)
+  to the per-scope MQ topic (Wave 1C lunaris:{scope}:consolidate /
+  :verify — scope_consolidate_topic / scope_verify_topic helpers)
+- Semaphore::new(LUNARIS_SCOPE_CONCURRENCY default 8) gates per-scope
+  event processing to prevent embedder GPU saturation
+- Panic in scope A's task causes that task to exit and removes the scope
+  from active; scope B is completely unaffected. Re-register via
+  register_scope() to restart a failed scope.
+- Idle-scope timeout (LUNARIS_SCOPE_IDLE_TIMEOUT_MS default 30m)
+  deregisters cold scopes to release subscribe resources
+- apply_supersede + process_one in lunaris-verify now accept &Scope
+  (real per-scope read_as_of + atomic_write — replaces Scope::dev()
+  placeholder in the live arbitration path)
+- Legacy run_consolidate_worker / run_verify_worker preserved as thin
+  deprecated wrappers around Scope::dev() for backwards compat;
+  marked #[deprecated(note = "use ConsolidateSupervisor / VerifySupervisor")]
+- parking_lot promoted from optional to unconditional in lunaris-verify
+  (was gated behind candle feature; supervisor needs it always)
+- Tests: consolidate/tests/supervisor.rs — 4 integration tests:
+  cross-scope isolation (scope_a sees 2 events, scope_b sees 3,
+  zero cross-contamination), panic isolation (scope_a panics, scope_b
+  continues), double-register noop, deregister lifecycle
+- Scope::dev() before: 2 functional call sites (worker.rs in each
+  crate) + Scope::dev() in apply_supersede + drain paths = 4+ sites
+  Scope::dev() after: 2 sites only (deprecated legacy wrappers);
+  all new supervisor + arbitration code uses real scope
+
+Closes Wave 3F subtask of v0.2 multi-agent rollout.
+
+author: Tin Dang
