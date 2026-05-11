@@ -1,20 +1,18 @@
 //! Moon keyspace conventions for Lunaris primitives — RFC 0001 §3.6 (Wave 1C).
 //!
-//! All key helpers are scope-aware: every Moon key is prefixed `lunaris:{scope}:`.
-//! The four scope-routing helpers are the **single source of truth** for:
+//! ## What lives here vs. `lunaris_core::keyspace` (Wave 2.5B)
 //!
-//! | helper            | key / name produced                          | used by                |
-//! |-------------------|----------------------------------------------|------------------------|
-//! | `scope_prefix`    | `lunaris:{scope}:`                           | `kv.rs`, `atomic.rs`   |
-//! | `ft_index_name`   | `lunaris_{scope}_{kind}_idx`                 | `vector.rs`, `keyword.rs`, `atomic.rs` |
-//! | `graph_key`       | `lunaris_{scope}_graph`                      | `graph.rs`, `atomic.rs` |
-//! | `mq_topic`        | `lunaris:{scope}:{name}`                     | `queue.rs`             |
+//! | This module (Moon-specific)  | `lunaris_core::keyspace` (storage-agnostic) |
+//! |------------------------------|----------------------------------------------|
+//! | `ft_index_name`              | `scope_prefix`                               |
+//! | `graph_key`                  | `episode_key`, `chunk_key`, …               |
+//! | `mq_topic`                   | `*_prefix` scan helpers                      |
 //!
-//! ## Primitive key helpers (scope-aware)
-//!
-//! Every primitive key (`episode_key`, `chunk_key`, …) is now scoped:
-//! `lunaris:{scope}:{kind}:{ulid}`. The corresponding `*_prefix` helpers
-//! return the `lunaris:{scope}:{kind}:` scan prefix for `scan_range`.
+//! The primitive KV key helpers (`episode_key`, `chunk_key`, etc.) were moved to
+//! `lunaris_core::keyspace` in Wave 2.5B so the engine layer (`lunaris-ingest`,
+//! `lunaris-retrieve`) can import them without depending on this infra crate.
+//! They are re-exported here for backwards compatibility within this crate and
+//! for any `lunaris_storage_moon::keyspace::*` import paths in integration tests.
 //!
 //! ## FT.SEARCH key-decode contract (preserved)
 //!
@@ -25,20 +23,19 @@
 //! (prefix) changes per scope.
 
 use lunaris_core::Scope;
-use ulid::Ulid;
+
+// Wave 2.5B: primitive KV key helpers now live in lunaris-core::keyspace.
+// Re-export here so any code within this crate (and any existing
+// `lunaris_storage_moon::keyspace::*` import paths in tests) keeps compiling.
+pub use lunaris_core::keyspace::{
+    chunk_key, chunk_prefix, community_key, community_prefix, entity_key, entity_prefix,
+    episode_key, episode_prefix, fact_key, fact_prefix, relation_key, relation_prefix,
+    scope_prefix,
+};
 
 // ---------------------------------------------------------------------------
-// Scope-routing helpers (RFC 0001 §3.6) — single source of truth
+// Moon-specific scope-routing helpers (RFC 0001 §3.6)
 // ---------------------------------------------------------------------------
-
-/// Returns the Moon keyspace prefix for `scope`: `lunaris:{scope}:`.
-///
-/// All KV entries under a scope share this prefix, enabling per-scope
-/// `SCAN MATCH <prefix>*` iteration without cross-scope bleed.
-#[inline]
-pub fn scope_prefix(scope: &Scope) -> String {
-    format!("lunaris:{}:", scope.as_str())
-}
 
 /// Returns the FT index name for a `scope + kind` pair: `lunaris_{scope}_{kind}_idx`.
 ///
@@ -78,86 +75,6 @@ pub fn mq_topic(scope: &Scope, name: &str) -> String {
     format!("lunaris:{}:{}", scope.as_str(), name)
 }
 
-// ---------------------------------------------------------------------------
-// Scoped primitive-key helpers
-// ---------------------------------------------------------------------------
-
-/// KV key for an episode: `lunaris:{scope}:episode:{ulid}`
-#[inline]
-pub fn episode_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}episode:{id}", scope_prefix(scope)).into_bytes()
-}
-
-/// KV key for a chunk: `lunaris:{scope}:chunk:{ulid}`
-#[inline]
-pub fn chunk_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}chunk:{id}", scope_prefix(scope)).into_bytes()
-}
-
-/// KV key for an entity: `lunaris:{scope}:entity:{ulid}`
-#[inline]
-pub fn entity_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}entity:{id}", scope_prefix(scope)).into_bytes()
-}
-
-/// KV key for a relation: `lunaris:{scope}:relation:{ulid}`
-#[inline]
-pub fn relation_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}relation:{id}", scope_prefix(scope)).into_bytes()
-}
-
-/// KV key for a fact: `lunaris:{scope}:fact:{ulid}`
-#[inline]
-pub fn fact_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}fact:{id}", scope_prefix(scope)).into_bytes()
-}
-
-/// KV key for a community: `lunaris:{scope}:community:{ulid}`
-#[inline]
-pub fn community_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    format!("{}community:{id}", scope_prefix(scope)).into_bytes()
-}
-
-// ---------------------------------------------------------------------------
-// Scoped primitive scan-prefix helpers
-// ---------------------------------------------------------------------------
-
-/// Scan prefix for episodes under `scope`: `lunaris:{scope}:episode:`
-#[inline]
-pub fn episode_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}episode:", scope_prefix(scope)).into_bytes()
-}
-
-/// Scan prefix for chunks under `scope`: `lunaris:{scope}:chunk:`
-#[inline]
-pub fn chunk_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}chunk:", scope_prefix(scope)).into_bytes()
-}
-
-/// Scan prefix for entities under `scope`: `lunaris:{scope}:entity:`
-#[inline]
-pub fn entity_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}entity:", scope_prefix(scope)).into_bytes()
-}
-
-/// Scan prefix for relations under `scope`: `lunaris:{scope}:relation:`
-#[inline]
-pub fn relation_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}relation:", scope_prefix(scope)).into_bytes()
-}
-
-/// Scan prefix for facts under `scope`: `lunaris:{scope}:fact:`
-#[inline]
-pub fn fact_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}fact:", scope_prefix(scope)).into_bytes()
-}
-
-/// Scan prefix for communities under `scope`: `lunaris:{scope}:community:`
-#[inline]
-pub fn community_prefix(scope: &Scope) -> Vec<u8> {
-    format!("{}community:", scope_prefix(scope)).into_bytes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,13 +89,7 @@ mod tests {
         Scope::new("acme:agent-2").unwrap()
     }
 
-    // ---- RFC 0001 §3.6 routing-helper contract tests ----
-
-    #[test]
-    fn scope_prefix_format() {
-        let s = scope_a();
-        assert_eq!(scope_prefix(&s), "lunaris:acme:agent-1:");
-    }
+    // ---- RFC 0001 §3.6 routing-helper contract tests (Moon-specific) ----
 
     #[test]
     fn ft_index_name_format() {
@@ -229,6 +140,14 @@ mod tests {
         assert_eq!(decoded.len(), 16, "ULID must be exactly 16 bytes");
     }
 
+    // ---- Re-exported primitive key helpers (from lunaris-core::keyspace) ----
+
+    #[test]
+    fn scope_prefix_re_export_format() {
+        let s = scope_a();
+        assert_eq!(scope_prefix(&s), "lunaris:acme:agent-1:");
+    }
+
     #[test]
     fn scoped_keys_differ_across_scopes() {
         let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
@@ -251,31 +170,6 @@ mod tests {
             chunk_key(&scope, id),
             b"lunaris:_dev_:chunk:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
         );
-        assert_eq!(
-            entity_key(&scope, id),
-            b"lunaris:_dev_:entity:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(
-            relation_key(&scope, id),
-            b"lunaris:_dev_:relation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-        assert_eq!(fact_key(&scope, id), b"lunaris:_dev_:fact:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
-        assert_eq!(
-            community_key(&scope, id),
-            b"lunaris:_dev_:community:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
-    }
-
-    #[test]
-    fn prefix_matches_key_starts() {
-        let scope = Scope::new("org.team").unwrap();
-        let id = Ulid::new();
-        assert!(episode_key(&scope, id).starts_with(&episode_prefix(&scope)));
-        assert!(chunk_key(&scope, id).starts_with(&chunk_prefix(&scope)));
-        assert!(entity_key(&scope, id).starts_with(&entity_prefix(&scope)));
-        assert!(relation_key(&scope, id).starts_with(&relation_prefix(&scope)));
-        assert!(fact_key(&scope, id).starts_with(&fact_prefix(&scope)));
-        assert!(community_key(&scope, id).starts_with(&community_prefix(&scope)));
     }
 
     #[test]

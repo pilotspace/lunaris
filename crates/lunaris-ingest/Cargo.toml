@@ -13,7 +13,7 @@ authors.workspace      = true
 
 [dependencies]
 lunaris-core         = { path = "../lunaris-core" }
-lunaris-storage-moon = { path = "../lunaris-storage-moon" }   # for keyspace helpers (re-exported)
+# Wave 2.5B: lunaris-storage-moon removed — keyspace helpers moved to lunaris-core
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
 pulldown-cmark = { workspace = true }

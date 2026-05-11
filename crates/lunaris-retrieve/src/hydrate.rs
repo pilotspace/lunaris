@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use lunaris_core::keyspace::{chunk_key, episode_key};
 use lunaris_core::{Chunk, Episode, Hlc, HlcClock, LunarisError, Scope, StoragePort};
 use ulid::Ulid;
 
@@ -25,17 +26,17 @@ use crate::types::{Hit, RawHit};
 
 /// Build the chunk lookup key from the raw hit's id bytes.
 ///
-/// RFC 0001 Wave 1C: chunk keys are now scope-prefixed via
-/// `lunaris_storage_moon::keyspace::chunk_key`. The reader MUST use the
-/// same helper so writer/reader key formats stay in lockstep.
+/// RFC 0001 Wave 1C: chunk keys are scope-prefixed via
+/// `lunaris_core::keyspace::chunk_key` (Wave 2.5B: moved from lunaris-storage-moon).
+/// The reader MUST use the same helper so writer/reader key formats stay in lockstep.
 fn chunk_lookup_key(scope: &Scope, id_bytes: &[u8]) -> Option<Vec<u8>> {
     let ulid = Ulid::from_bytes(id_bytes.try_into().ok()?);
-    Some(lunaris_storage_moon::keyspace::chunk_key(scope, ulid))
+    Some(chunk_key(scope, ulid))
 }
 
 /// Build the episode lookup key from a ulid (scope-prefixed per RFC 0001 Wave 1C).
 fn episode_lookup_key(scope: &Scope, id: Ulid) -> Vec<u8> {
-    lunaris_storage_moon::keyspace::episode_key(scope, id)
+    episode_key(scope, id)
 }
 
 /// Hydrate a list of `RawHit`s into full `Hit`s.

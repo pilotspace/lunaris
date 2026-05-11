@@ -7,6 +7,8 @@ pub mod bitemporal;
 pub mod embedder;
 pub mod error;
 pub mod hlc;
+// Wave 2.5B: storage-agnostic primitive KV key helpers (moved from lunaris-storage-moon).
+pub mod keyspace;
 pub mod primitives;
 // RFC 0001 — Scope newtype + ScopeError for multi-agent partition isolation.
 pub mod scope;

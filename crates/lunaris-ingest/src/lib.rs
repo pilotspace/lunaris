@@ -18,8 +18,6 @@ pub mod pipeline;
 pub use chunker::{ChunkDraft, chunk_markdown, est_token_count};
 pub use pipeline::{INGEST_EMBED_BATCH_SIZE, ingest_episode};
 
-// Re-export the keyspace helpers from the moon backend so callers don't depend
-// directly on a backend crate (Phase 1 convention — Moon's keyspace.rs is the
-// canonical key format; Postgres `lunaris_kv` uses the same byte prefix
-// convention).
-pub use lunaris_storage_moon::keyspace::{chunk_key, chunk_prefix, episode_key, episode_prefix};
+// Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved
+// from lunaris-storage-moon so the engine layer has no infra dependency for keys).
+pub use lunaris_core::keyspace::{chunk_key, chunk_prefix, episode_key, episode_prefix};
