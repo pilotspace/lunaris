@@ -49,6 +49,27 @@ async function main() {
 main();
 ```
 
+## Custom embedder + reranker
+
+Pick a preset or bring your own ONNX model. The `EmbedderConfig` and
+`RerankerConfig` factories swap the backend on a freshly-opened handle via
+the chainable `withEmbedder` / `withReranker` extension; the env-driven
+default remains in place for callers that don't chain.
+
+```typescript
+import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
+
+const cfg = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed" });
+const handle = (await Lunaris.open("moon://127.0.0.1:6379"))
+  .withEmbedder(cfg)
+  .withReranker(RerankerConfig.noop());   // disable cross-encoder rerank
+// ... ingest / recall as usual
+```
+
+See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
+the full customization guide — preset fastembed, preset Ollama, BYO ONNX
+bytes, and BYO ONNX path — with troubleshooting and the FFI-cliff limits.
+
 ## Surface parity
 
 The TypeScript class / method surface is generated from `crates/lunaris-codegen/annotations/surface.toml` (Plan 08-01). The parity-check CI job fails any PR that drifts the committed snapshot from the regenerated output — `npm i lunaris` never lags the Rust crate.
