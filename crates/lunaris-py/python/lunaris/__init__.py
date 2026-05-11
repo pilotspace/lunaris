@@ -38,6 +38,9 @@ from .lunaris import (  # type: ignore[attr-defined]
     EpisodeBuilder,
     ScopedLunaris,
     lunaris_scoped as _lunaris_scoped,
+    # Phase 21 Plan 21-01 — SDK custom embedder + reranker config.
+    EmbedderConfig,
+    RerankerConfig,
 )
 from .dsl import Vector, Keyword, Graph, RetrievalBuilder, open
 from .toggles import (
@@ -91,4 +94,7 @@ __all__ = [
     "Scope",
     "EpisodeBuilder",
     "ScopedLunaris",
+    # Phase 21 Plan 21-01 — SDK custom embedder + reranker config.
+    "EmbedderConfig",
+    "RerankerConfig",
 ]
