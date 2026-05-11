@@ -10,7 +10,8 @@
 # files use `make foo OUTPUT=...`.
 
 .PHONY: help bench-public bench-recall bench-ingest bench-helios \
-        bench-baseline test test-pg test-moon docs ci-local clean
+        bench-baseline test test-pg test-moon docs ci-local clean \
+        release-preflight release-preflight-fast
 
 help:
 	@echo "Lunaris top-level targets"
@@ -26,6 +27,10 @@ help:
 	@echo "    test              Full workspace test (skips backends if envs unset)"
 	@echo "    test-pg           Postgres integration tests (requires PG_URL)"
 	@echo "    test-moon         Moon integration tests (requires MOON_URL)"
+	@echo ""
+	@echo "  Release (Phase 22)"
+	@echo "    release-preflight       Full 10-check gate (clean tree, fmt, clippy, build, test, doc, deny, publish-dry-run, manifest, version)"
+	@echo "    release-preflight-fast  Same with --skip-tests --skip-doc (~30s; iteration loop)"
 	@echo ""
 	@echo "  Misc"
 	@echo "    docs              Build rustdoc for the workspace"
@@ -114,3 +119,18 @@ ci-local:
 clean:
 	cargo clean
 	rm -rf $(BENCH_DIR)
+
+# ---------------------------------------------------------------------------
+# Phase 22 — publish gate
+# ---------------------------------------------------------------------------
+#
+# `release-preflight` is the canonical pre-`cargo publish` gate. Runs the
+# 10-check sequence in scripts/release-preflight.sh; exit 0 means it is
+# safe to follow docs/RELEASE.md and actually publish. Time budget ~5 min
+# warm cache; ~30s with --skip-tests --skip-doc.
+
+release-preflight:
+	scripts/release-preflight.sh
+
+release-preflight-fast:
+	scripts/release-preflight.sh --skip-tests --skip-doc
