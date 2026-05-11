@@ -24,6 +24,11 @@ license.workspace      = true
 authors.workspace      = true
 
 publish     = true
+description = "LLM-backed entity, relation, and fact extractor for Lunaris"
+repository.workspace = true
+readme      = "README.md"
+keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
+categories  = ["database", "asynchronous", "data-structures"]
 [features]
 default      = ["candle"]
 candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]

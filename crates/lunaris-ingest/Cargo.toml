@@ -12,6 +12,11 @@ license.workspace      = true
 authors.workspace      = true
 
 publish     = true
+description = "Atomic ingest pipeline for the Lunaris agent memory engine"
+repository.workspace = true
+readme      = "README.md"
+keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
+categories  = ["database", "asynchronous", "data-structures"]
 [dependencies]
 lunaris-core = { workspace = true }
 # Wave 2.5B: lunaris-storage-moon removed — keyspace helpers moved to lunaris-core

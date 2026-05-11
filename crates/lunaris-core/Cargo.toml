@@ -7,6 +7,11 @@ license.workspace      = true
 authors.workspace      = true
 
 publish     = true
+description = "Core types, traits, and bi-temporal primitives for the Lunaris agent memory engine"
+repository.workspace = true
+readme      = "README.md"
+keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
+categories  = ["database", "asynchronous", "data-structures"]
 [dependencies]
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
