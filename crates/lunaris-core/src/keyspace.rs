@@ -42,8 +42,8 @@ use crate::scope::Scope;
 ///
 /// ```
 /// use lunaris_core::{Scope, keyspace::scope_prefix};
-/// let scope = Scope::new("acme:agent-1").unwrap();
-/// assert_eq!(scope_prefix(&scope), "lunaris:acme:agent-1:");
+/// let scope = Scope::new("acme.agent-1").unwrap();
+/// assert_eq!(scope_prefix(&scope), "lunaris:acme.agent-1:");
 /// ```
 #[inline]
 pub fn scope_prefix(scope: &Scope) -> String {
@@ -145,17 +145,17 @@ mod tests {
     use super::*;
 
     fn scope_a() -> Scope {
-        Scope::new("acme:agent-1").unwrap()
+        Scope::new("acme.agent-1").unwrap()
     }
 
     fn scope_b() -> Scope {
-        Scope::new("acme:agent-2").unwrap()
+        Scope::new("acme.agent-2").unwrap()
     }
 
     #[test]
     fn scope_prefix_format() {
         let s = scope_a();
-        assert_eq!(scope_prefix(&s), "lunaris:acme:agent-1:");
+        assert_eq!(scope_prefix(&s), "lunaris:acme.agent-1:");
     }
 
     #[test]
@@ -191,28 +191,36 @@ mod tests {
         let ka = episode_key(&scope_a(), id);
         let kb = episode_key(&scope_b(), id);
         assert_ne!(ka, kb, "same ULID in different scopes must produce different keys");
-        assert!(ka.starts_with(b"lunaris:acme:agent-1:episode:"));
-        assert!(kb.starts_with(b"lunaris:acme:agent-2:episode:"));
+        assert!(ka.starts_with(b"lunaris:acme.agent-1:episode:"));
+        assert!(kb.starts_with(b"lunaris:acme.agent-2:episode:"));
     }
 
-    /// RC-2 (v0.2 release-gate review): the validation regex permits `:` in
-    /// scope strings, which collides with the `:{kind}:` delimiter in the key
-    /// format `lunaris:{scope}:{kind}:{ulid}`. A scope `"a:episode"` produces
-    /// `scope_prefix == "lunaris:a:episode:"` — byte-identical to
-    /// `episode_prefix(&Scope("a"))`. Moon SCAN under the colliding scope can
-    /// enumerate the other scope's episodes.
+    /// RC-2 (v0.2.1) closure — the validation regex no longer permits `:`
+    /// so the `lunaris:{scope}:{kind}:{ulid}` format is unambiguous at the
+    /// type level. Any colon-containing scope is rejected by `Scope::new`,
+    /// and any colon-free scope's `scope_prefix` cannot byte-alias any
+    /// other scope's `*_prefix`.
     ///
-    /// v0.2.0 ships this as a documented operational constraint
-    /// (`docs/migration/0.1-to-0.2.md` §"Known operational constraints":
-    /// issuers MUST NOT mint scope strings ending in `:episode`, `:chunk`,
-    /// `:entity`, `:relation`, `:fact`, or `:community`). v0.2.1 will tighten
-    /// the regex to drop `:` entirely and flip this test to active.
+    /// Before v0.2.1: `Scope::new("a:episode")` was Ok and
+    /// `scope_prefix(&Scope("a:episode")) == episode_prefix(&Scope("a"))`.
+    /// After v0.2.1: `Scope::new("a:episode")` is Err and the test below
+    /// is the regression pin.
     #[test]
-    #[ignore = "RC-2: scope_prefix delimiter ambiguity; tracked for v0.2.1 regex tightening"]
     fn scan_prefix_does_not_alias_across_kinds() {
+        // The previously-dangerous form is now type-rejected.
+        assert!(Scope::new("a:episode").is_err(), "colon-containing scope must be rejected");
+        assert!(Scope::new("a:chunk").is_err());
+        assert!(Scope::new("a:fact").is_err());
+
+        // For any valid scope, scope_prefix and episode_prefix are
+        // structurally distinct (different suffixes).
         let a = Scope::new("a").unwrap();
-        let evil = Scope::new("a:episode").unwrap();
-        assert_ne!(scope_prefix(&evil).into_bytes(), episode_prefix(&a));
+        let sp = scope_prefix(&a).into_bytes();
+        let ep = episode_prefix(&a);
+        assert_ne!(sp, ep, "scope_prefix and episode_prefix must differ for any scope");
+        // The episode prefix is the scope prefix + "episode:".
+        assert!(ep.starts_with(&sp));
+        assert!(ep.ends_with(b"episode:"));
     }
 
     #[test]

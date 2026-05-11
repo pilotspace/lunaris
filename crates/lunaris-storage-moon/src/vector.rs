@@ -322,7 +322,7 @@ mod tests {
     /// `decode_key` must strip the per-scope prefix correctly to recover 16-byte ULID.
     #[test]
     fn parse_ft_search_decodes_per_scope_index_prefixed_hex_keys() {
-        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
         let ft_idx = ft_index_name(&scope, "chunks");
         let ulid_bytes: [u8; 16] =
             [1, 157, 184, 227, 97, 47, 203, 75, 14, 1, 202, 211, 92, 115, 47, 72];
@@ -357,13 +357,13 @@ mod tests {
 
     #[test]
     fn decode_key_round_trip_with_scope() {
-        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
         let ft_idx = ft_index_name(&scope, "chunks");
         let ulid: [u8; 16] = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let key = format!("{ft_idx}:{}", hex::encode(ulid));
         assert_eq!(decode_key(key.as_bytes(), &ft_idx), Some(ulid.to_vec()));
         // A key from a different scope's index must not decode against scope_a's index.
-        let scope_b = lunaris_core::Scope::new("other:agent-2").unwrap();
+        let scope_b = lunaris_core::Scope::new("other.agent-2").unwrap();
         let ft_idx_b = ft_index_name(&scope_b, "chunks");
         assert_eq!(decode_key(key.as_bytes(), &ft_idx_b), None);
     }

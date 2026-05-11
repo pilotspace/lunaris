@@ -81,7 +81,7 @@ pub const ENV_SCOPE_IDLE_TIMEOUT_MS: &str = "LUNARIS_SCOPE_IDLE_TIMEOUT_MS";
 ///
 /// ```ignore
 /// let supervisor = VerifySupervisor::new(storage, verifier, clock, 8);
-/// supervisor.register_scope(Scope::new("acme:agent-1").unwrap()).await?;
+/// supervisor.register_scope(Scope::new("acme.agent-1").unwrap()).await?;
 /// // ... on shutdown:
 /// supervisor.shutdown_all().await;
 /// ```
@@ -391,8 +391,8 @@ mod tests {
 
     #[test]
     fn scope_verify_topic_format() {
-        let scope = Scope::new("acme:agent-1").unwrap();
-        assert_eq!(scope_verify_topic(&scope), "lunaris:acme:agent-1:verify");
+        let scope = Scope::new("acme.agent-1").unwrap();
+        assert_eq!(scope_verify_topic(&scope), "lunaris:acme.agent-1:verify");
     }
 
     #[test]

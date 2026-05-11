@@ -49,8 +49,8 @@ pub use lunaris_core::keyspace::{
 /// ```
 /// use lunaris_core::Scope;
 /// use lunaris_storage_moon::keyspace::ft_index_name;
-/// let scope = Scope::new("acme:agent-42").unwrap();
-/// assert_eq!(ft_index_name(&scope, "chunks"), "lunaris_acme:agent-42_chunks_idx");
+/// let scope = Scope::new("acme.agent-42").unwrap();
+/// assert_eq!(ft_index_name(&scope, "chunks"), "lunaris_acme.agent-42_chunks_idx");
 /// ```
 #[inline]
 pub fn ft_index_name(scope: &Scope, kind: &str) -> String {
@@ -82,11 +82,11 @@ mod tests {
     use ulid::Ulid;
 
     fn scope_a() -> Scope {
-        Scope::new("acme:agent-1").unwrap()
+        Scope::new("acme.agent-1").unwrap()
     }
 
     fn scope_b() -> Scope {
-        Scope::new("acme:agent-2").unwrap()
+        Scope::new("acme.agent-2").unwrap()
     }
 
     // ---- RFC 0001 §3.6 routing-helper contract tests (Moon-specific) ----
@@ -94,23 +94,23 @@ mod tests {
     #[test]
     fn ft_index_name_format() {
         let s = scope_a();
-        assert_eq!(ft_index_name(&s, "chunks"), "lunaris_acme:agent-1_chunks_idx");
-        assert_eq!(ft_index_name(&s, "entities"), "lunaris_acme:agent-1_entities_idx");
-        assert_eq!(ft_index_name(&s, "facts"), "lunaris_acme:agent-1_facts_idx");
-        assert_eq!(ft_index_name(&s, "communities"), "lunaris_acme:agent-1_communities_idx");
+        assert_eq!(ft_index_name(&s, "chunks"), "lunaris_acme.agent-1_chunks_idx");
+        assert_eq!(ft_index_name(&s, "entities"), "lunaris_acme.agent-1_entities_idx");
+        assert_eq!(ft_index_name(&s, "facts"), "lunaris_acme.agent-1_facts_idx");
+        assert_eq!(ft_index_name(&s, "communities"), "lunaris_acme.agent-1_communities_idx");
     }
 
     #[test]
     fn graph_key_format() {
         let s = scope_a();
-        assert_eq!(graph_key(&s), "lunaris_acme:agent-1_graph");
+        assert_eq!(graph_key(&s), "lunaris_acme.agent-1_graph");
     }
 
     #[test]
     fn mq_topic_format() {
         let s = scope_a();
-        assert_eq!(mq_topic(&s, "consolidate"), "lunaris:acme:agent-1:consolidate");
-        assert_eq!(mq_topic(&s, "verify"), "lunaris:acme:agent-1:verify");
+        assert_eq!(mq_topic(&s, "consolidate"), "lunaris:acme.agent-1:consolidate");
+        assert_eq!(mq_topic(&s, "verify"), "lunaris:acme.agent-1:verify");
     }
 
     // ---- FT.SEARCH key-decode contract (preserved from pre-RFC baseline) ----
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn scope_prefix_re_export_format() {
         let s = scope_a();
-        assert_eq!(scope_prefix(&s), "lunaris:acme:agent-1:");
+        assert_eq!(scope_prefix(&s), "lunaris:acme.agent-1:");
     }
 
     #[test]
@@ -154,8 +154,8 @@ mod tests {
         let ka = episode_key(&scope_a(), id);
         let kb = episode_key(&scope_b(), id);
         assert_ne!(ka, kb, "same ULID in different scopes must produce different keys");
-        assert!(ka.starts_with(b"lunaris:acme:agent-1:episode:"));
-        assert!(kb.starts_with(b"lunaris:acme:agent-2:episode:"));
+        assert!(ka.starts_with(b"lunaris:acme.agent-1:episode:"));
+        assert!(kb.starts_with(b"lunaris:acme.agent-2:episode:"));
     }
 
     #[test]

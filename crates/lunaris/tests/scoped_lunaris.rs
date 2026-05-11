@@ -155,8 +155,8 @@ async fn scoped_ingest_stamps_episode_with_bound_scope() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope_a = Scope::new("agent:alpha").unwrap();
-    let scope_b = Scope::new("agent:beta").unwrap();
+    let scope_a = Scope::new("agent.alpha").unwrap();
+    let scope_b = Scope::new("agent.beta").unwrap();
 
     let builder_a = EpisodeBuilder::new("test:source", "# Hello\nSame payload for both scopes.");
     let builder_b = EpisodeBuilder::new("test:source", "# Hello\nSame payload for both scopes.");
@@ -211,7 +211,7 @@ fn scoped_handle_exposes_bound_scope() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope = Scope::new("agent:gamma").unwrap();
+    let scope = Scope::new("agent.gamma").unwrap();
     let scoped = engine.scoped(scope.clone());
     assert_eq!(scoped.scope(), &scope);
 }
@@ -228,7 +228,7 @@ fn scoped_dsl_returns_retrieval_builder() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope = Scope::new("agent:delta").unwrap();
+    let scope = Scope::new("agent.delta").unwrap();
     // Should not panic; the return type is RetrievalBuilder.
     let _builder: RetrievalBuilder = engine.scoped(scope).dsl();
 }
@@ -250,8 +250,8 @@ async fn scoped_recall_propagates_scope_to_vector_search() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope_a = Scope::new("agent:alpha").unwrap();
-    let scope_b = Scope::new("agent:beta").unwrap();
+    let scope_a = Scope::new("agent.alpha").unwrap();
+    let scope_b = Scope::new("agent.beta").unwrap();
 
     // Run two scope_a recalls and one scope_b recall through the DSL path so
     // every recorded scope is unambiguous.
@@ -323,8 +323,8 @@ async fn scoped_ingest_propagates_scope_to_atomic_write() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope_a = Scope::new("agent:p5-a").unwrap();
-    let scope_b = Scope::new("agent:p5-b").unwrap();
+    let scope_a = Scope::new("agent.p5-a").unwrap();
+    let scope_b = Scope::new("agent.p5-b").unwrap();
 
     engine
         .scoped(scope_a.clone())
@@ -357,8 +357,8 @@ async fn scoped_ingest_propagates_scope_to_publish() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope_a = Scope::new("agent:p5-pub-a").unwrap();
-    let scope_b = Scope::new("agent:p5-pub-b").unwrap();
+    let scope_a = Scope::new("agent.p5-pub-a").unwrap();
+    let scope_b = Scope::new("agent.p5-pub-b").unwrap();
 
     engine
         .scoped(scope_a.clone())
@@ -396,8 +396,8 @@ async fn scoped_recall_propagates_scope_to_graph_traverse() {
     let clock = HlcClock::new(0);
     let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
 
-    let scope_a = Scope::new("agent:p5-gt-a").unwrap();
-    let scope_b = Scope::new("agent:p5-gt-b").unwrap();
+    let scope_a = Scope::new("agent.p5-gt-a").unwrap();
+    let scope_b = Scope::new("agent.p5-gt-b").unwrap();
 
     let _ = engine
         .scoped(scope_a.clone())

@@ -235,8 +235,8 @@ fn make_event_payload(source: &str) -> Bytes {
 /// (sender already dropped), and flushes. Assert no cross-contamination.
 #[tokio::test]
 async fn supervisor_cross_scope_isolation() {
-    let scope_a = Scope::new("tenant:alpha").unwrap();
-    let scope_b = Scope::new("tenant:beta").unwrap();
+    let scope_a = Scope::new("tenant.alpha").unwrap();
+    let scope_b = Scope::new("tenant.beta").unwrap();
 
     let topic_a = scope_consolidate_topic(&scope_a);
     let topic_b = scope_consolidate_topic(&scope_b);
@@ -248,14 +248,14 @@ async fn supervisor_cross_scope_isolation() {
     {
         let tx_a = storage.create_topic(&topic_a);
         for _ in 0..2 {
-            tx_a.send(make_event_payload("tenant:alpha/note")).unwrap();
+            tx_a.send(make_event_payload("tenant.alpha/note")).unwrap();
         }
         // tx_a dropped here → receiver will yield 2 msgs then None.
     }
     {
         let tx_b = storage.create_topic(&topic_b);
         for _ in 0..3 {
-            tx_b.send(make_event_payload("tenant:beta/note")).unwrap();
+            tx_b.send(make_event_payload("tenant.beta/note")).unwrap();
         }
         // tx_b dropped here → receiver will yield 3 msgs then None.
     }
@@ -283,16 +283,16 @@ async fn supervisor_cross_scope_isolation() {
     let calls_snap = calls.lock().clone();
 
     // consolidate_scoped records (Some(scope), filtered_count).
-    // scope_a's task passes "tenant:alpha" as scope_prefix; events with source
-    // "tenant:alpha/note" match → filtered_count = 2.
+    // scope_a's task passes "tenant.alpha" as scope_prefix; events with source
+    // "tenant.alpha/note" match → filtered_count = 2.
     let scope_a_events: usize = calls_snap
         .iter()
-        .filter(|(s, _)| s.as_deref() == Some("tenant:alpha"))
+        .filter(|(s, _)| s.as_deref() == Some("tenant.alpha"))
         .map(|(_, n)| *n)
         .sum();
     let scope_b_events: usize = calls_snap
         .iter()
-        .filter(|(s, _)| s.as_deref() == Some("tenant:beta"))
+        .filter(|(s, _)| s.as_deref() == Some("tenant.beta"))
         .map(|(_, n)| *n)
         .sum();
 
@@ -352,8 +352,8 @@ impl Consolidator for PanicOnScopeConsolidator {
 /// completely independent.
 #[tokio::test]
 async fn supervisor_panic_in_scope_a_does_not_affect_scope_b() {
-    let scope_a = Scope::new("panic:scope-a").unwrap();
-    let scope_b = Scope::new("good:scope-b").unwrap();
+    let scope_a = Scope::new("panic.scope-a").unwrap();
+    let scope_b = Scope::new("good.scope-b").unwrap();
 
     let topic_a = scope_consolidate_topic(&scope_a);
     let topic_b = scope_consolidate_topic(&scope_b);
@@ -403,7 +403,7 @@ async fn supervisor_panic_in_scope_a_does_not_affect_scope_b() {
 
 #[tokio::test]
 async fn supervisor_double_register_is_noop() {
-    let scope = Scope::new("acme:agent-1").unwrap();
+    let scope = Scope::new("acme.agent-1").unwrap();
     let storage = ChannelStorage::new();
     storage.create_topic(&scope_consolidate_topic(&scope));
 
@@ -427,7 +427,7 @@ async fn supervisor_double_register_is_noop() {
 
 #[tokio::test]
 async fn supervisor_deregister_removes_scope() {
-    let scope = Scope::new("acme:agent-2").unwrap();
+    let scope = Scope::new("acme.agent-2").unwrap();
     let storage = ChannelStorage::new();
     storage.create_topic(&scope_consolidate_topic(&scope));
 

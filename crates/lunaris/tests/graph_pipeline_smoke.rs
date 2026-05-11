@@ -787,7 +787,7 @@ async fn rc1_graph_on_ingest_all_kv_keys_are_scope_prefixed() {
     let handle = handle.with_extractor(mock.clone() as Arc<dyn Extractor>);
     handle.graph_pipeline().enable();
 
-    let scope = lunaris_core::Scope::new("agent:rc1").unwrap();
+    let scope = lunaris_core::Scope::new("agent.rc1").unwrap();
     let expected_prefix = format!("lunaris:{}:", scope.as_str());
     let ep = Episode::new(scope.clone(), "rc1.md", "# Notes\nAlice and Chocolate.", &clock);
     handle.ingest(ep).await.expect("graph-on ingest must succeed");

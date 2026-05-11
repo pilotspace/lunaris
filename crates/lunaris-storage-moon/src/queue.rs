@@ -178,9 +178,9 @@ mod tests {
     /// RFC 0001 Wave 1C — mq_topic produces scoped topic names.
     #[test]
     fn scoped_topic_format() {
-        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
-        assert_eq!(mq_topic(&scope, "consolidate"), "lunaris:acme:agent-1:consolidate");
-        assert_eq!(mq_topic(&scope, "verify"), "lunaris:acme:agent-1:verify");
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
+        assert_eq!(mq_topic(&scope, "consolidate"), "lunaris:acme.agent-1:consolidate");
+        assert_eq!(mq_topic(&scope, "verify"), "lunaris:acme.agent-1:verify");
     }
 
     /// RFC 0001 Wave 1C — topics from different scopes must not collide.

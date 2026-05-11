@@ -166,11 +166,11 @@ mod tests {
     /// RFC 0001 Wave 1C — scan_range MATCH pattern must be scoped.
     #[test]
     fn scan_range_pattern_is_scope_prefixed() {
-        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
         let sp = scope_prefix(&scope);
         // The MATCH pattern must start with the scope prefix.
         assert!(
-            format!("{sp}episode:*").starts_with("lunaris:acme:agent-1:"),
+            format!("{sp}episode:*").starts_with("lunaris:acme.agent-1:"),
             "scope_prefix must produce lunaris:{{scope}}: prefix"
         );
     }

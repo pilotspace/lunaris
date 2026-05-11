@@ -370,7 +370,7 @@ fn build_app(
 /// - UAT-1a: scope_a recalls "Alice" → hit text contains "Alice".
 /// - UAT-1b: scope_b recalls "Alice" → **zero hits** even though scope_a's chunk
 ///   and episode rows are present in the same KV storage. `vector_search` is
-///   keyed by `Scope` — scope_b's call only looks up `"agent:beta"` hits, which
+///   keyed by `Scope` — scope_b's call only looks up `"agent.beta"` hits, which
 ///   are absent at this point → zero results → no cross-scope bleed.
 /// - UAT-1c: scope_b recalls "revenue" → hit text contains "revenue".
 ///
@@ -388,12 +388,12 @@ fn build_app(
 async fn uat1_cross_scope_ingest_recall_isolation() {
     let clock = HlcClock::new(0);
 
-    let scope_a = Scope::new("agent:alpha").unwrap();
-    let scope_b = Scope::new("agent:beta").unwrap();
+    let scope_a = Scope::new("agent.alpha").unwrap();
+    let scope_b = Scope::new("agent.beta").unwrap();
 
     let tokens_file = write_tokens_file(&[
-        ("tok-alpha", "agent:alpha", &["ingest", "recall", "forget"]),
-        ("tok-beta", "agent:beta", &["ingest", "recall", "forget"]),
+        ("tok-alpha", "agent.alpha", &["ingest", "recall", "forget"]),
+        ("tok-beta", "agent.beta", &["ingest", "recall", "forget"]),
     ]);
 
     // Shared storage — both scopes' KV rows coexist here.
@@ -454,7 +454,7 @@ async fn uat1_cross_scope_ingest_recall_isolation() {
 
     // UAT-1b: scope_b recalls "Alice" → ZERO hits.
     // - scope_b has no seeded vector_hits → vector_search(&scope_b) returns empty.
-    // - scope_a's vector_hit IS seeded but lives under "agent:alpha" key, not "agent:beta".
+    // - scope_a's vector_hit IS seeded but lives under "agent.alpha" key, not "agent.beta".
     // - Even if a hit were somehow returned, read_as_of(&scope_b, scope_a_chunk_key)
     //   would return None (different scope tuple in the KV map).
     let resp_b_alice = app
@@ -870,7 +870,7 @@ async fn uat5_concurrent_multi_agent_smoke() {
     // Build a tokens file with all 10 agent tokens.
     let token_entries: Vec<(String, String, Vec<&str>)> = (0..N_AGENTS)
         .map(|i| {
-            (format!("tok-agent-{i}"), format!("agent:{i}"), vec!["ingest", "recall", "forget"])
+            (format!("tok-agent-{i}"), format!("agent.{i}"), vec!["ingest", "recall", "forget"])
         })
         .collect();
 
@@ -887,7 +887,7 @@ async fn uat5_concurrent_multi_agent_smoke() {
         let storage_clone = storage.clone();
         let tokens_file_clone = tokens_file.clone();
         let token = format!("tok-agent-{i}");
-        let scope_str = format!("agent:{i}");
+        let scope_str = format!("agent.{i}");
 
         tasks.spawn(async move {
             let app = build_app(storage_clone, tokens_file_clone);
@@ -973,7 +973,7 @@ async fn uat5_concurrent_multi_agent_smoke() {
 
     // Assert each agent's scope appears in the write_log.
     for i in 0..N_AGENTS {
-        let scope_str = format!("agent:{i}");
+        let scope_str = format!("agent.{i}");
         assert!(
             written_scopes.contains(&scope_str),
             "UAT-5: scope '{scope_str}' must appear in write_log"

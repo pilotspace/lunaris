@@ -323,14 +323,14 @@ mod tests {
     /// RFC 0001 Wave 1C — decode_moon_key must use the per-scope FT index name.
     #[test]
     fn decode_moon_key_per_scope_round_trip() {
-        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
         let ft_idx = ft_index_name(&scope, "chunks");
         let ulid: [u8; 16] = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let key = format!("{ft_idx}:{}", hex::encode(ulid));
         assert_eq!(decode_moon_key(key.as_bytes(), &ft_idx), Some(ulid.to_vec()));
 
         // Key from a different scope must not decode against scope_a's index.
-        let scope_b = lunaris_core::Scope::new("other:agent").unwrap();
+        let scope_b = lunaris_core::Scope::new("other.agent").unwrap();
         let ft_idx_b = ft_index_name(&scope_b, "chunks");
         assert_eq!(decode_moon_key(key.as_bytes(), &ft_idx_b), None);
     }

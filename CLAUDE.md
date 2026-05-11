@@ -51,9 +51,12 @@ Technology stack not yet documented. Will populate after codebase mapping or fir
   test/migration use only. Any new `Scope::dev()` call site in production
   code is a v0.3 carry-over, not a steady-state pattern; thread the real
   scope through instead.
-- **Operator constraint (v0.2.0):** issuers MUST NOT mint scope strings
-  ending in `:episode`, `:chunk`, `:entity`, `:relation`, `:fact`, or
-  `:community` — RC-2 delimiter ambiguity. v0.2.1 tightens the regex.
+- **Scope alphabet is `[A-Za-z0-9_\-.]{1,128}` (v0.2.1+).** `:` is rejected
+  by `Scope::new` so the `lunaris:{scope}:{kind}:{ulid}` KV format cannot
+  byte-alias across scopes. The v0.2.0 operator workaround ("don't mint
+  scope strings ending in `:episode`...") is obsolete — closure is at the
+  type level. Postgres enforces the same alphabet via the per-table
+  `<table>_scope_check` constraint (migration 7).
 
 ### HTTP DTO discipline (`lunaris-server`)
 

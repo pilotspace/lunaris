@@ -8,7 +8,7 @@
 //!
 //! ## Validation
 //!
-//! The string must match `^[A-Za-z0-9_\-:.]{1,128}$` (enforced by
+//! The string must match `^[A-Za-z0-9_\-.]{1,128}$` (enforced by
 //! [`Scope::new`]). The unchecked constructor `Scope::from_trusted` is
 //! `pub(crate)` and is only used by trusted internal call sites (e.g.,
 //! deserialization of previously-validated wire data).
@@ -17,8 +17,8 @@
 //!
 //! ```
 //! use lunaris_core::Scope;
-//! let s = Scope::new("acme:agent-42").unwrap();
-//! assert_eq!(s.as_str(), "acme:agent-42");
+//! let s = Scope::new("acme.agent-42").unwrap();
+//! assert_eq!(s.as_str(), "acme.agent-42");
 //! ```
 
 use smol_str::SmolStr;
@@ -27,9 +27,23 @@ use thiserror::Error;
 /// Validation regex fragment — kept as a const so backends and tests can
 /// re-use it without duplicating the pattern.
 ///
-/// Pattern: `^[A-Za-z0-9_\-:.]{1,128}$`
+/// Pattern: `^[A-Za-z0-9_\-.]{1,128}$`
+///
+/// RC-2 (v0.2.1): `:` was removed from the allowed alphabet to close the
+/// SCAN prefix delimiter ambiguity. The KV key format
+/// `lunaris:{scope}:{kind}:{ulid}` uses `:` as the field separator, so a
+/// scope like `"a:episode"` previously produced byte-identical bytes to
+/// `episode_prefix(&Scope("a"))` and `SCAN MATCH <prefix>*` under the
+/// colliding scope on Moon could enumerate the other scope's episodes.
+/// Dropping `:` makes the format unambiguous at the type level.
+///
+/// **Breaking change** for any v0.2.0 deployment that minted scope strings
+/// containing `:` (e.g. `acme:agent-42`). The recommended replacement is
+/// `.` or `-` (`acme.agent-42`). The Postgres CHECK constraint on every
+/// `scope` column is tightened in migration
+/// `20260512000007_scope_regex_tighten.sql` to match.
 const VALID_SCOPE_CHARS: fn(char) -> bool =
-    |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.');
+    |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
 const MAX_SCOPE_LEN: usize = 128;
 
 /// A partition key for multi-agent / multi-tenant isolation.
@@ -41,7 +55,7 @@ const MAX_SCOPE_LEN: usize = 128;
 ///
 /// # Validation
 ///
-/// The string must match `^[A-Za-z0-9_\-:.]{1,128}$`. This is enforced by
+/// The string must match `^[A-Za-z0-9_\-.]{1,128}$`. This is enforced by
 /// [`Scope::new`]; the unchecked constructor is `pub(crate)` and only used by
 /// trusted internal call sites (deserialization of validated wire data).
 ///
@@ -49,8 +63,8 @@ const MAX_SCOPE_LEN: usize = 128;
 ///
 /// ```
 /// use lunaris_core::Scope;
-/// let s = Scope::new("acme:agent-42").unwrap();
-/// assert_eq!(s.as_str(), "acme:agent-42");
+/// let s = Scope::new("acme.agent-42").unwrap();
+/// assert_eq!(s.as_str(), "acme.agent-42");
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
 #[serde(transparent)]
@@ -72,7 +86,7 @@ impl<'de> serde::Deserialize<'de> for Scope {
 
 impl Scope {
     /// Construct a `Scope` from `s`, enforcing the validation regex
-    /// `^[A-Za-z0-9_\-:.]{1,128}$`.
+    /// `^[A-Za-z0-9_\-.]{1,128}$`.
     ///
     /// Returns `Err(ScopeError::Invalid)` on empty string, string longer than
     /// 128 bytes, or any character outside the allowed set.
@@ -99,7 +113,7 @@ impl Scope {
     /// Trusted constructor for internal use at call sites that have already
     /// validated the string (e.g., deserialization of a row fetched from
     /// the validated database column). Caller is responsible for ensuring
-    /// the invariant `^[A-Za-z0-9_\-:.]{1,128}$` holds.
+    /// the invariant `^[A-Za-z0-9_\-.]{1,128}$` holds.
     ///
     /// Wave 0: no call sites exist yet — Wave 1B (Postgres) and Wave 1C (Moon)
     /// will use this when deserializing scope values from storage rows.
@@ -119,7 +133,7 @@ impl Scope {
     /// Callers outside this crate should not use it in production code.
     #[doc(hidden)]
     pub fn dev() -> Self {
-        // SAFETY: "_dev_" matches ^[A-Za-z0-9_\-:.]{1,128}$ by inspection.
+        // SAFETY: "_dev_" matches ^[A-Za-z0-9_\-.]{1,128}$ by inspection.
         Self(SmolStr::new("_dev_"))
     }
 }
@@ -140,8 +154,8 @@ impl AsRef<str> for Scope {
 #[derive(Debug, Error)]
 pub enum ScopeError {
     /// The string is empty, too long (> 128 chars), or contains a character
-    /// outside `[A-Za-z0-9_\-:.]`.
-    #[error("scope must be 1..=128 chars of [A-Za-z0-9_\\-:.]; got {0:?}")]
+    /// outside `[A-Za-z0-9_\-.]`.
+    #[error("scope must be 1..=128 chars of [A-Za-z0-9_\\-.]; got {0:?}")]
     Invalid(String),
 }
 
@@ -154,8 +168,8 @@ mod tests {
 
     #[test]
     fn valid_scope_roundtrip() {
-        let s = Scope::new("acme:agent-42").unwrap();
-        assert_eq!(s.as_str(), "acme:agent-42");
+        let s = Scope::new("acme.agent-42").unwrap();
+        assert_eq!(s.as_str(), "acme.agent-42");
     }
 
     #[test]
@@ -177,15 +191,30 @@ mod tests {
         // Every character outside alphanumerics that the regex permits.
         assert!(Scope::new("under_score").is_ok(), "underscore must be valid");
         assert!(Scope::new("hy-phen").is_ok(), "hyphen must be valid");
-        assert!(Scope::new("co:lon").is_ok(), "colon must be valid");
         assert!(Scope::new("do.t").is_ok(), "dot must be valid");
-        // Combined in one identifier — same as the pattern A0._:-
-        assert!(Scope::new("A0._:-").is_ok(), "all specials together must be valid");
+        // Combined in one identifier — same as the pattern A0._-
+        assert!(Scope::new("A0._.-").is_ok(), "all specials together must be valid");
+    }
+
+    /// RC-2 (v0.2.1): `:` is no longer in the allowed alphabet. This test
+    /// pins the breaking-change boundary so any future relaxation that
+    /// re-adds `:` will fail loudly here AND in the doc comment.
+    #[test]
+    fn colon_is_rejected() {
+        assert!(Scope::new("co:lon").is_err(), "colon MUST be rejected post-v0.2.1");
+        assert!(
+            Scope::new("a:episode").is_err(),
+            "the SCAN-aliasing scope form `a:episode` MUST be rejected at the type level"
+        );
+        assert!(Scope::new("tenant:1").is_err());
+        // Bare colon at the end / start.
+        assert!(Scope::new(":lead").is_err());
+        assert!(Scope::new("trail:").is_err());
     }
 
     #[test]
     fn valid_chars_accepted() {
-        assert!(Scope::new("org.team_agent-1:v2").is_ok());
+        assert!(Scope::new("org.team_agent-1.v2").is_ok());
         assert!(Scope::new("_dev_").is_ok());
     }
 
@@ -223,6 +252,8 @@ mod tests {
             "has{brace",
             "has\"quote",
             "has\\backslash",
+            // RC-2 (v0.2.1) — colon is no longer in the allowed alphabet.
+            "has:colon",
         ] {
             let err = Scope::new(*bad);
             assert!(err.is_err(), "expected rejection for {:?} but got Ok", bad);
@@ -269,8 +300,13 @@ mod tests {
         assert!(result.is_err(), "invalid scope must be rejected at deserialize");
 
         // Sanity: a valid wire string still round-trips.
-        let ok: Scope = serde_json::from_str(r#""acme:agent-1""#).unwrap();
-        assert_eq!(ok.as_str(), "acme:agent-1");
+        let ok: Scope = serde_json::from_str(r#""acme.agent-1""#).unwrap();
+        assert_eq!(ok.as_str(), "acme.agent-1");
+
+        // RC-2: a wire string with `:` is now rejected at deserialize
+        // (regression-pin for the v0.2.1 regex tightening).
+        let colon: Result<Scope, _> = serde_json::from_str(r#""acme:agent-1""#);
+        assert!(colon.is_err(), "post-v0.2.1: colon must be rejected on the wire too");
 
         // And a too-long string is rejected.
         let too_long = format!("\"{}\"", "a".repeat(129));
@@ -289,8 +325,8 @@ mod tests {
 
     #[test]
     fn equal_scopes_have_equal_hashes() {
-        let a = Scope::new("acme:agent-1").unwrap();
-        let b = Scope::new("acme:agent-1").unwrap();
+        let a = Scope::new("acme.agent-1").unwrap();
+        let b = Scope::new("acme.agent-1").unwrap();
         assert_eq!(a, b);
         // Hash must agree with Eq: a == b => hash(a) == hash(b).
         let mut set = HashSet::new();
@@ -300,8 +336,8 @@ mod tests {
 
     #[test]
     fn distinct_scopes_are_not_equal() {
-        let a = Scope::new("acme:agent-1").unwrap();
-        let b = Scope::new("acme:agent-2").unwrap();
+        let a = Scope::new("acme.agent-1").unwrap();
+        let b = Scope::new("acme.agent-2").unwrap();
         assert_ne!(a, b);
     }
 
@@ -319,21 +355,21 @@ mod tests {
     #[test]
     fn scope_sort_is_stable() {
         let mut scopes: Vec<Scope> = vec![
-            Scope::new("z:agent").unwrap(),
-            Scope::new("a:agent").unwrap(),
-            Scope::new("m:agent").unwrap(),
+            Scope::new("z.agent").unwrap(),
+            Scope::new("a.agent").unwrap(),
+            Scope::new("m.agent").unwrap(),
         ];
         scopes.sort();
-        assert_eq!(scopes[0].as_str(), "a:agent");
-        assert_eq!(scopes[1].as_str(), "m:agent");
-        assert_eq!(scopes[2].as_str(), "z:agent");
+        assert_eq!(scopes[0].as_str(), "a.agent");
+        assert_eq!(scopes[1].as_str(), "m.agent");
+        assert_eq!(scopes[2].as_str(), "z.agent");
     }
 
     // ── display ──────────────────────────────────────────────────────────────
 
     #[test]
     fn display_matches_as_str() {
-        let s = Scope::new("org.team_agent-1:v2").unwrap();
+        let s = Scope::new("org.team_agent-1.v2").unwrap();
         assert_eq!(format!("{s}"), s.as_str());
     }
 
@@ -341,7 +377,7 @@ mod tests {
 
     #[test]
     fn as_ref_str_matches_as_str() {
-        let s = Scope::new("acme:agent-42").unwrap();
+        let s = Scope::new("acme.agent-42").unwrap();
         let r: &str = s.as_ref();
         assert_eq!(r, s.as_str());
     }

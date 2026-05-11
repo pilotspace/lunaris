@@ -2,6 +2,63 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.2.1 — 2026-05-11 — Scope alphabet hardening (RC-2 closure)
+
+Patch release that closes RC-2 from the v0.2.0 release-gate review: the
+scope validation regex no longer permits `:`. The `lunaris:{scope}:{kind}:{ulid}`
+KV format is now unambiguous at the type level — no scope string can
+byte-alias another scope's per-kind SCAN prefix.
+
+### Breaking
+
+- **`Scope::new` rejects `:`.** The validation regex tightens from
+  `^[A-Za-z0-9_\-:.]{1,128}$` (v0.2.0) to `^[A-Za-z0-9_\-.]{1,128}$`
+  (v0.2.1). Any v0.2.0 caller that minted scope strings containing `:`
+  (e.g. `acme:agent-1`) must rewrite to `.` or `-` (e.g. `acme.agent-1`)
+  before upgrading. The hand-rolled `Deserialize` re-validates wire input,
+  so v0.2.0 JWTs or request payloads with colon-containing tenant claims
+  will now fail at the HTTP boundary with `invalid scope`.
+- **Postgres CHECK constraint tightens to match.** Migration
+  `20260512000007_scope_regex_tighten.sql` drops + recreates the
+  `<table>_scope_check` constraint on `episodes`, `chunks`, `entities`,
+  `relations`, `facts`, `communities`, and `lunaris_kv`. **Operators
+  with v0.2.0 data containing `:` in scope strings MUST rewrite those
+  rows before applying the migration** — the `ADD CHECK` step otherwise
+  aborts with a constraint-violation per row. Recipe in the migration's
+  header comment:
+  ```sql
+  UPDATE episodes    SET scope = replace(scope, ':', '.');
+  UPDATE chunks      SET scope = replace(scope, ':', '.');
+  UPDATE entities    SET scope = replace(scope, ':', '.');
+  UPDATE relations   SET scope = replace(scope, ':', '.');
+  UPDATE facts       SET scope = replace(scope, ':', '.');
+  UPDATE communities SET scope = replace(scope, ':', '.');
+  UPDATE lunaris_kv  SET scope = replace(scope, ':', '.');
+  ```
+  Run inside a transaction, then `sqlx migrate run`.
+
+### Fixed
+
+- **RC-2 — scope prefix delimiter ambiguity closed at the type level.**
+  v0.2.0 allowed `Scope::new("a:episode")` — that scope's KV prefix
+  `lunaris:a:episode:` byte-aliased `Scope("a")`'s episode-kind SCAN
+  prefix on Moon, enabling cross-scope SCAN bleed. v0.2.1 rejects the
+  colon form at the validating constructor, so the structural invariant
+  is now compiler-enforced: for any valid scope, `scope_prefix(&s)` and
+  `<kind>_prefix(&s)` cannot alias because the kind suffix is the only
+  segment containing `:`. The previously-`#[ignore]`'d regression test
+  `keyspace::scan_prefix_does_not_alias_across_kinds` is now active and
+  pins the contract.
+
+### Known issues / v0.3 carryover
+
+- `Lunaris::forget` is still hard-coded to `Scope::dev()` (P-2 emits a
+  `tracing::warn!` at the call site; `ScopedLunaris::forget` is a v0.3
+  deliverable).
+- Pipeline handles still use deprecated single-topic workers (carryover).
+- Postgres production deployments must use a `NOSUPERUSER NOBYPASSRLS`
+  role (operational, not a code bug).
+
 ## v0.2.0 — 2026-05-11 — Multi-agent partitioning
 
 First-class multi-agent / multi-tenant isolation via the new `Scope`
