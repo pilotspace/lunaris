@@ -27,7 +27,8 @@ async fn episode_atomic_write_then_read_back() {
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "notes.md", "Alice joined Acme on 2024-04-01.", &clock);
-    let key = format!("lunaris:episode:{}", ep.id).into_bytes();
+    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:episode:{ulid}`.
+    let key = lunaris_core::keyspace::episode_key(&Scope::dev(), ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
     let lsn = s
@@ -83,7 +84,8 @@ async fn cross_backend_identity_with_moon() {
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "notes.md", "cross-backend Alice", &clock);
-    let key = format!("lunaris:episode:{}", ep.id).into_bytes();
+    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:episode:{ulid}`.
+    let key = lunaris_core::keyspace::episode_key(&Scope::dev(), ep.id);
     let value = serde_json::to_vec(&ep).unwrap();
 
     pg.atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
