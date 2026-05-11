@@ -20,14 +20,17 @@
 
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::{Filter, VectorHit};
 use sqlx::{AssertSqlSafe, Row};
 
 use crate::pool::{PgClient, sqlx_err};
 use crate::schema::hlc_to_ts;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn vector_search(
     c: &PgClient,
+    scope: &Scope,
     index: &str,
     query: &[f32],
     k: usize,
@@ -74,8 +77,23 @@ pub(crate) async fn vector_search(
         where_clause = where_parts.join(" AND "),
     );
 
+    // RFC 0001 Wave 1B: wrap the SELECT in a read transaction so SET LOCAL
+    // scopes the GUC to this connection use only (reverts at transaction end,
+    // preventing pool-connection reuse from inheriting a stale scope value).
+    let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
+    // `SET LOCAL` cannot be parameterized in Postgres; use set_config() with
+    // is_local=true, which is transaction-scoped (equivalent to SET LOCAL).
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
+        .bind(scope.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
+
     let rows =
-        sqlx::query(AssertSqlSafe(sql)).bind(qlit).fetch_all(&c.pool).await.map_err(sqlx_err)?;
+        sqlx::query(AssertSqlSafe(sql)).bind(qlit).fetch_all(&mut *tx).await.map_err(sqlx_err)?;
+
+    // Commit the read transaction — no writes, just releases the GUC scope cleanly.
+    tx.commit().await.map_err(sqlx_err)?;
 
     Ok(rows
         .into_iter()

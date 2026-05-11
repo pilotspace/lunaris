@@ -23,10 +23,18 @@
 //! Any per-op error short-circuits with `?`, which drops the transaction (sqlx auto-rolls
 //! back on drop). The returned `Lsn` is derived from the `HlcClock::tick()` issued at the
 //! start of the batch — single commit point, total order across writes.
+//!
+//! ## Scope partitioning (RFC 0001 Wave 1B)
+//!
+//! `SET LOCAL lunaris.scope = $1` is issued inside every transaction immediately after
+//! `BEGIN`. Postgres RLS policies on every primitive table use
+//! `current_setting('lunaris.scope', true)` to enforce per-scope isolation. `SET LOCAL`
+//! ensures the GUC reverts when the transaction ends — no cross-transaction contamination.
 
 use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::HlcClock;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::{Lsn, WriteOp};
 
 use sqlx::AssertSqlSafe;
@@ -34,8 +42,23 @@ use sqlx::AssertSqlSafe;
 use crate::pool::{PgClient, sqlx_err};
 use crate::schema::{BtRow, hlc_to_ts};
 
-pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+pub(crate) async fn atomic_write(
+    c: &PgClient,
+    scope: &Scope,
+    ops: &[WriteOp],
+) -> Result<Lsn, StorageError> {
     let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
+
+    // RFC 0001 Wave 1B: set the scope GUC for this transaction so every RLS
+    // policy on primitive tables filters to the correct scope. SET LOCAL reverts
+    // automatically when the transaction ends — no cross-request contamination.
+    // `SET LOCAL` cannot be parameterized in Postgres; use set_config() with
+    // is_local=true, which is transaction-scoped (equivalent to SET LOCAL).
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
+        .bind(scope.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
 
     // Single LSN HLC for the whole batch — all rows share valid_from / sys_from.
     let clock = HlcClock::new(0);
@@ -48,11 +71,16 @@ pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, S
     for op in ops {
         match op {
             WriteOp::KvPut { key, value } => {
+                // RFC 0001 Wave 1B: scope column added to lunaris_kv so RLS
+                // isolates KvPut writes between scopes. The primary key stays
+                // `key` (BYTEA) — the scope is stored as a column and enforced
+                // by the RLS policy set via SET LOCAL above.
                 sqlx::query(
                     "INSERT INTO lunaris_kv \
-                       (key, value, bt, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
-                     VALUES ($1, $2, $3, $4, NULL, $5, NULL, $6, $7) \
+                       (key, scope, value, bt, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
+                     VALUES ($1, $2, $3, $4, $5, NULL, $6, NULL, $7, $8) \
                      ON CONFLICT (key) DO UPDATE SET \
+                       scope = EXCLUDED.scope, \
                        value = EXCLUDED.value, \
                        bt = EXCLUDED.bt, \
                        valid_from = EXCLUDED.valid_from, \
@@ -63,6 +91,7 @@ pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, S
                        sys_from_hlc   = EXCLUDED.sys_from_hlc",
                 )
                 .bind(key.as_slice())
+                .bind(scope.as_str())
                 .bind(value.as_slice())
                 .bind(&bt_json)
                 .bind(row.valid_from_ts)
@@ -75,6 +104,8 @@ pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, S
             }
             WriteOp::KvDelete { key } => {
                 // Soft delete: close the open interval on the latest row.
+                // RLS (via SET LOCAL already set) restricts to the caller's scope,
+                // so this only soft-deletes the row visible to the current scope.
                 sqlx::query(
                     "UPDATE lunaris_kv SET valid_to = $2, sys_to = $2 \
                      WHERE key = $1 AND valid_to IS NULL",
@@ -104,11 +135,16 @@ pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, S
                 };
                 // pgvector accepts the literal string form: '[v0,v1,...]'
                 let emb_lit = vec_to_literal(embedding);
+                // RFC 0001 Wave 1B: scope column is included in INSERT.
+                // The RLS SET LOCAL above also enforces the scope during the
+                // INSERT; storing scope in the row allows future migrations to
+                // rebuild RLS policies without reprocessing data.
                 let sql = format!(
                     "INSERT INTO {table} \
-                       (id, payload, {embedding_col}, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
-                     VALUES ($1, $2, $3::vector, $4, NULL, $5, NULL, $6, $7) \
+                       (id, scope, payload, {embedding_col}, valid_from, valid_to, sys_from, sys_to, valid_from_hlc, sys_from_hlc) \
+                     VALUES ($1, $2, $3, $4::vector, $5, NULL, $6, NULL, $7, $8) \
                      ON CONFLICT (id) DO UPDATE SET \
+                       scope = EXCLUDED.scope, \
                        payload = EXCLUDED.payload, \
                        {embedding_col} = EXCLUDED.{embedding_col}, \
                        valid_from = EXCLUDED.valid_from, \
@@ -118,6 +154,7 @@ pub(crate) async fn atomic_write(c: &PgClient, ops: &[WriteOp]) -> Result<Lsn, S
                 );
                 sqlx::query(AssertSqlSafe(sql))
                     .bind(id.as_slice())
+                    .bind(scope.as_str())
                     .bind(metadata)
                     .bind(emb_lit)
                     .bind(row.valid_from_ts)
