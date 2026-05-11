@@ -25,17 +25,17 @@ use crate::types::{Hit, RawHit};
 
 /// Build the chunk lookup key from the raw hit's id bytes.
 ///
-/// The Phase 2 ingest pipeline writes chunks at key `lunaris:chunk:<ulid>`
-/// and stores the same ulid bytes (16) in `VectorUpsert.id`. So we recover
-/// the ulid string from the bytes and prepend the prefix.
-fn chunk_lookup_key(id_bytes: &[u8]) -> Option<Vec<u8>> {
+/// RFC 0001 Wave 1C: chunk keys are now scope-prefixed via
+/// `lunaris_storage_moon::keyspace::chunk_key`. The reader MUST use the
+/// same helper so writer/reader key formats stay in lockstep.
+fn chunk_lookup_key(scope: &Scope, id_bytes: &[u8]) -> Option<Vec<u8>> {
     let ulid = Ulid::from_bytes(id_bytes.try_into().ok()?);
-    Some(format!("lunaris:chunk:{ulid}").into_bytes())
+    Some(lunaris_storage_moon::keyspace::chunk_key(scope, ulid))
 }
 
-/// Build the episode lookup key from a ulid.
-fn episode_lookup_key(id: Ulid) -> Vec<u8> {
-    format!("lunaris:episode:{id}").into_bytes()
+/// Build the episode lookup key from a ulid (scope-prefixed per RFC 0001 Wave 1C).
+fn episode_lookup_key(scope: &Scope, id: Ulid) -> Vec<u8> {
+    lunaris_storage_moon::keyspace::episode_key(scope, id)
 }
 
 /// Hydrate a list of `RawHit`s into full `Hit`s.
@@ -56,16 +56,17 @@ pub async fn hydrate(
     let live_clock = HlcClock::new(0);
     let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
 
+    // RFC 0001 Wave 1D: hydrate reads under Scope::dev() until the
+    // RetrievalBuilder carries per-scope routing (Wave 1C backend plumbing).
+    let dev_scope = Scope::dev();
+
     // First pass: pull chunk rows.
     let mut chunks: Vec<(RawHit, Chunk)> = Vec::with_capacity(hits.len());
     for raw in hits {
-        let key = match chunk_lookup_key(&raw.id) {
+        let key = match chunk_lookup_key(&dev_scope, &raw.id) {
             Some(k) => k,
             None => continue, // bytes don't decode to a ulid — skip
         };
-        // RFC 0001 Wave 1D: hydrate reads under Scope::dev() until the
-        // RetrievalBuilder carries per-scope routing (Wave 1C backend plumbing).
-        let dev_scope = Scope::dev();
         match storage.read_as_of(&dev_scope, &key, snapshot).await? {
             Some(row) => {
                 let chunk: Chunk = match serde_json::from_slice(&row.value) {
@@ -91,9 +92,8 @@ pub async fn hydrate(
     };
 
     let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
-    let dev_scope = Scope::dev();
     for ep_id in unique_ep {
-        let key = episode_lookup_key(ep_id);
+        let key = episode_lookup_key(&dev_scope, ep_id);
         if let Some(row) = storage.read_as_of(&dev_scope, &key, snapshot).await?
             && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
         {
@@ -151,7 +151,7 @@ pub async fn partial_hydrate_text(
     let dev_scope = Scope::dev();
     let mut by_id: HashMap<Vec<u8>, String> = HashMap::with_capacity(hits.len());
     for raw in hits {
-        let key = match chunk_lookup_key(&raw.id) {
+        let key = match chunk_lookup_key(&dev_scope, &raw.id) {
             Some(k) => k,
             None => continue,
         };
@@ -178,14 +178,16 @@ mod tests {
     fn chunk_lookup_key_round_trips_ulid() {
         let id = Ulid::new();
         let bytes = id.to_bytes().to_vec();
-        let key = chunk_lookup_key(&bytes).unwrap();
+        let scope = Scope::dev();
+        let key = chunk_lookup_key(&scope, &bytes).unwrap();
         let s = String::from_utf8(key).unwrap();
-        assert!(s.starts_with("lunaris:chunk:"));
+        assert!(s.contains(":chunk:"));
         assert!(s.contains(&id.to_string()));
     }
 
     #[test]
     fn chunk_lookup_key_rejects_wrong_size() {
-        assert!(chunk_lookup_key(b"too-short").is_none());
+        let scope = Scope::dev();
+        assert!(chunk_lookup_key(&scope, b"too-short").is_none());
     }
 }

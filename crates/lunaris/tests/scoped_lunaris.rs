@@ -112,11 +112,13 @@ impl StoragePort for RecordingStorage {
 fn extract_episode_scope(batch: &[WriteOp]) -> Option<Scope> {
     for op in batch {
         if let WriteOp::KvPut { key, value } = op {
-            // Episode keys start with "lunaris:episode:"
-            if key.starts_with(b"lunaris:episode:") {
-                if let Ok(ep) = serde_json::from_slice::<Episode>(value) {
-                    return Some(ep.scope);
-                }
+            // RFC 0001 Wave 1C: keys are now scope-prefixed
+            // `lunaris:{scope}:episode:{ulid}`. Probe by middle segment.
+            let key_str = std::str::from_utf8(key).ok()?;
+            if key_str.contains(":episode:")
+                && let Ok(ep) = serde_json::from_slice::<Episode>(value)
+            {
+                return Some(ep.scope);
             }
         }
     }
