@@ -7,19 +7,20 @@ license.workspace      = true
 authors.workspace      = true
 
 [dependencies]
-lunaris-core              = { path = "../lunaris-core" }
-lunaris-storage-moon      = { path = "../lunaris-storage-moon" }
-lunaris-storage-postgres  = { path = "../lunaris-storage-postgres" }
-lunaris-embed             = { path = "../lunaris-embed", default-features = false }
-lunaris-extract           = { path = "../lunaris-extract", default-features = false }
-lunaris-ingest            = { path = "../lunaris-ingest" }
-lunaris-rerank            = { path = "../lunaris-rerank", default-features = false }
-lunaris-retrieve          = { path = "../lunaris-retrieve" }
-# Plan 04 — verifier + consolidator crates. default-features = false keeps the
-# candle / ollama / cloud-api stacks out of the umbrella build unless the
-# matching feature is forwarded (see [features] below — W-5 AUGMENT forwards).
-lunaris-verify            = { path = "../lunaris-verify", default-features = false }
-lunaris-consolidate       = { path = "../lunaris-consolidate", default-features = false }
+lunaris-core              = { workspace = true }
+lunaris-storage-moon      = { workspace = true }
+lunaris-storage-postgres  = { workspace = true }
+lunaris-embed             = { workspace = true }
+lunaris-extract           = { workspace = true }
+lunaris-ingest            = { workspace = true }
+lunaris-rerank            = { workspace = true }
+lunaris-retrieve          = { workspace = true }
+# Plan 04 — verifier + consolidator crates. default-features = false is
+# inherited from workspace.dependencies so the candle / ollama / cloud-api
+# stacks stay out of the umbrella build unless the matching feature is
+# forwarded (see [features] below — W-5 AUGMENT forwards).
+lunaris-verify            = { workspace = true }
+lunaris-consolidate       = { workspace = true }
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
 chrono         = { workspace = true }

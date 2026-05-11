@@ -45,6 +45,34 @@ repository   = "https://github.com/lunaris-dev/lunaris"
 publish      = false
 
 [workspace.dependencies]
+# Internal lunaris-* crates. Declared with BOTH `path` and `version`
+# so a downstream `lunaris-X = { workspace = true }` resolves to the
+# local path for in-workspace builds AND carries the correct
+# crates.io version for `cargo publish`. Version stays in lockstep
+# with `[workspace.package].version` above; bump them together.
+# `default-features = false` here so downstream callers can opt back
+# in via `features = ["candle", ...]` without colliding with cargo's
+# rule that disallows downstream `default-features = false` when the
+# workspace entry leaves defaults enabled.
+lunaris                   = { path = "crates/lunaris",                   version = "0.2.1", default-features = false }
+lunaris-core              = { path = "crates/lunaris-core",              version = "0.2.1" }
+lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.2.1", default-features = false }
+lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.2.1", default-features = false }
+lunaris-embed             = { path = "crates/lunaris-embed",             version = "0.2.1", default-features = false }
+lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.2.1", default-features = false }
+lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.2.1", default-features = false }
+lunaris-verify            = { path = "crates/lunaris-verify",            version = "0.2.1", default-features = false }
+lunaris-consolidate       = { path = "crates/lunaris-consolidate",       version = "0.2.1", default-features = false }
+lunaris-ingest            = { path = "crates/lunaris-ingest",            version = "0.2.1", default-features = false }
+lunaris-retrieve          = { path = "crates/lunaris-retrieve",          version = "0.2.1", default-features = false }
+lunaris-recipes           = { path = "crates/lunaris-recipes",           version = "0.2.1", default-features = false }
+lunaris-server            = { path = "crates/lunaris-server",            version = "0.2.1", default-features = false }
+lunaris-bench             = { path = "crates/lunaris-bench",             version = "0.2.1", default-features = false }
+lunaris-conformance       = { path = "crates/lunaris-conformance",       version = "0.2.1", default-features = false }
+lunaris-codegen           = { path = "crates/lunaris-codegen",           version = "0.2.1", default-features = false }
+lunaris-py                = { path = "crates/lunaris-py",                version = "0.2.1", default-features = false }
+lunaris-ts                = { path = "crates/lunaris-ts",                version = "0.2.1", default-features = false }
+
 # async runtime
 tokio          = { version = "1", features = ["full"] }
 async-trait    = "0.1"

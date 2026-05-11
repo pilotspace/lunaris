@@ -21,12 +21,12 @@ crate-type = ["cdylib", "rlib"]
 # weights to be present at runtime. Production deploys that need a real
 # embedder pass one through `Lunaris::with_parts` after construction or
 # enable the `candle` feature explicitly at wheel-build time.
-lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
-lunaris-core        = { path = "../lunaris-core" }
-lunaris-recipes     = { path = "../lunaris-recipes" }
-lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
+lunaris = { workspace = true, features = ["ollama"] }
+lunaris-core = { workspace = true }
+lunaris-recipes = { workspace = true }
+lunaris-retrieve = { workspace = true }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
-lunaris-conformance = { path = "../lunaris-conformance", optional = true }
+lunaris-conformance = { workspace = true, optional = true }
 # PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
 pyo3                = { workspace = true }
 pyo3-async-runtimes = { workspace = true }

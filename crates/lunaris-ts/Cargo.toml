@@ -21,12 +21,12 @@ crate-type = ["cdylib", "rlib"]
 # weights to be present at runtime — same Rule 1 fix Plan 08-02 applied
 # to lunaris-py. Production deploys that want the real candle embedder
 # enable the feature at `napi build` time.
-lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
-lunaris-core        = { path = "../lunaris-core" }
-lunaris-recipes     = { path = "../lunaris-recipes" }
-lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
+lunaris = { workspace = true, features = ["ollama"] }
+lunaris-core = { workspace = true }
+lunaris-recipes = { workspace = true }
+lunaris-retrieve = { workspace = true }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
-lunaris-conformance = { path = "../lunaris-conformance", optional = true }
+lunaris-conformance = { workspace = true, optional = true }
 # napi-rs 3.x + NAPI-8 ABI pin (ROADMAP Phase 8 risk-register row 4).
 napi                = { workspace = true }
 napi-derive         = { workspace = true }

@@ -42,8 +42,8 @@ cloud-api    = ["dep:reqwest"]
 verifier-it  = []
 
 [dependencies]
-lunaris-core    = { path = "../lunaris-core" }
-lunaris-extract = { path = "../lunaris-extract", default-features = false }   # NeedsReviewItem + DTOs reuse
+lunaris-core = { workspace = true }
+lunaris-extract = { workspace = true }   # NeedsReviewItem + DTOs reuse
 async-trait     = { workspace = true }
 thiserror       = { workspace = true }
 tracing         = { workspace = true }

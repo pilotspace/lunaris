@@ -14,20 +14,20 @@ publish     = false
 # 1M-fact corpus generator and the 12 KB markdown fixture.
 
 [dependencies]
-lunaris            = { path = "../lunaris", default-features = false, features = ["ollama"] }
-lunaris-core       = { path = "../lunaris-core" }
-lunaris-storage-moon = { path = "../lunaris-storage-moon" }
-lunaris-ingest     = { path = "../lunaris-ingest" }
+lunaris = { workspace = true, features = ["ollama"] }
+lunaris-core = { workspace = true }
+lunaris-storage-moon = { workspace = true }
+lunaris-ingest = { workspace = true }
 # Plan 03-04 — bench needs the Extractor trait + EntityId for the graph-on
 # StubExtractor (D-03 isolates storage cost from real Gemma forward-pass).
 # default-features = false keeps the candle / ollama / cloud-api stack out of
 # the bench build (mirrors B-3 fix from Plan 03-02).
-lunaris-extract    = { path = "../lunaris-extract", default-features = false }
+lunaris-extract = { workspace = true }
 # Plan 16-03 — consolidator_tick bench exercises `ActRConsolidator::default()`
 # directly (independent of the `Lunaris` handle's internal consolidator pipeline
 # wiring in 16-01) so we depend on `lunaris-consolidate` explicitly. No extra
 # features — the default build is NoopConsolidator + ActRConsolidator types.
-lunaris-consolidate = { path = "../lunaris-consolidate" }
+lunaris-consolidate = { workspace = true }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
 futures            = { workspace = true }

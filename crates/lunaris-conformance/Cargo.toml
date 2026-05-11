@@ -12,10 +12,10 @@ authors.workspace      = true
 # the thin entry tests, and adds reqwest + url for the Plan 05-03 protocol
 # suite (the `protocol::*` module body lands in Plan 05-03; the dep is wired
 # here so `cargo build -p lunaris-conformance` does not break between plans).
-lunaris                  = { path = "../lunaris" }
-lunaris-core             = { path = "../lunaris-core" }
-lunaris-storage-moon     = { path = "../lunaris-storage-moon" }       # Plan 05-02
-lunaris-storage-postgres = { path = "../lunaris-storage-postgres" }   # Plan 05-02
+lunaris = { workspace = true }
+lunaris-core = { workspace = true }
+lunaris-storage-moon = { workspace = true }       # Plan 05-02
+lunaris-storage-postgres = { workspace = true }   # Plan 05-02
 async-trait              = { workspace = true }
 tokio                    = { workspace = true }
 futures                  = { workspace = true }                       # Plan 05-02 — scan_range stream walker
@@ -37,7 +37,7 @@ reqwest                  = { workspace = true, features = ["stream"] }
 # Plan 04-03 — chaos / crash-recovery property test (D-23 .. D-25).
 # `lunaris-bench` provides both the `chaos` binary (spawned via
 # `env!("CARGO_BIN_EXE_chaos")`) AND `build_chaos_corpus` (corpus helper).
-lunaris-bench  = { path = "../lunaris-bench" }
+lunaris-bench = { workspace = true }
 proptest       = { workspace = true }
 # Plan 14-03 — the 4 EVAL-05 regression tests (`tests/regression/*.rs`) issue
 # raw sqlx queries against the pg-lunaris pool (EXPLAIN shape, migration table
@@ -49,7 +49,7 @@ sqlx           = { workspace = true }
 # for SentenceTransformer layout) drives `CandleEmbeddingGemma::new` directly
 # against the cached EmbeddingGemma 300M weights. Dev-only dep; feature-gated
 # to candle so the `ollama`-only build matrix does not force a candle compile.
-lunaris-embed  = { path = "../lunaris-embed", default-features = false, features = ["candle"] }
+lunaris-embed = { workspace = true, features = ["candle"] }
 # Plan 14-03 — `dirs::cache_dir()` resolves the default EmbeddingGemma weights
 # path the same way `CandleEmbeddingGemmaOpts::default` does. Dev-only.
 dirs           = { workspace = true }

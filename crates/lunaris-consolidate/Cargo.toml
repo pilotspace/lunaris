@@ -26,11 +26,11 @@ default          = []
 consolidator-it  = []
 
 [dependencies]
-lunaris-core     = { path = "../lunaris-core" }
+lunaris-core = { workspace = true }
 # EntityId reuse — consolidator's FactId / CommunityId derivation consumes
 # `lunaris_extract::EntityId` byte arrays. default-features=false keeps the
 # extractor's candle/ollama/cloud-api stack out of the consolidator build.
-lunaris-extract  = { path = "../lunaris-extract", default-features = false }
+lunaris-extract = { workspace = true }
 async-trait      = { workspace = true }
 thiserror        = { workspace = true }
 tracing          = { workspace = true }

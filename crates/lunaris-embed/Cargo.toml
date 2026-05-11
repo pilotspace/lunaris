@@ -24,7 +24,7 @@ ollama      = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 embedder-it = []   # gates live-backend integration tests (real model load + Ollama HTTP)
 
 [dependencies]
-lunaris-core   = { path = "../lunaris-core" }
+lunaris-core = { workspace = true }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }

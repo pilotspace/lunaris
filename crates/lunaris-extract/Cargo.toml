@@ -34,7 +34,7 @@ cloud-api    = ["dep:reqwest"]
 extractor-it = []
 
 [dependencies]
-lunaris-core   = { path = "../lunaris-core" }
+lunaris-core = { workspace = true }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }

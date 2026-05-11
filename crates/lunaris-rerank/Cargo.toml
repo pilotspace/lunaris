@@ -24,7 +24,7 @@ candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "d
 rerank-it   = []   # gates live-model integration tests (real bge-reranker-v2-m3 load)
 
 [dependencies]
-lunaris-core   = { path = "../lunaris-core" }
+lunaris-core = { workspace = true }
 async-trait    = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
