@@ -113,6 +113,13 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
+## Coming from another agent-memory tool?
+
+- **[`docs/MIGRATING-FROM-MEM0.md`](docs/MIGRATING-FROM-MEM0.md)** —
+  Mem0 → Lunaris with code-side comparisons (ingest, recall,
+  time-travel, forget), a 5-step incremental migration plan, and
+  honest "stay on Mem0 if…" criteria.
+
 ## For contributors
 
 - **[`CLAUDE.md`](CLAUDE.md)** — project-wide engineering constraints (Rust edition, MSRV, file size, lock discipline).
