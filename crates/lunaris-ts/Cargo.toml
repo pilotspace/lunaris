@@ -1,6 +1,6 @@
 [package]
 name    = "lunaris-ts"
-version = "0.1.1"                       # aligned with workspace v0.1.1 target
+version.workspace = true
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
