@@ -1045,6 +1045,7 @@ mod tests {
                     WriteOp::GraphNode { .. } => nodes += 1,
                     WriteOp::GraphEdge { .. } => edges += 1,
                     WriteOp::KvDelete { .. } => {}
+                    _ => {}
                 }
             }
         }

@@ -57,6 +57,7 @@ use crate::types::RawHit;
 use crate::types::{Hit, Query};
 
 /// Builder returned by `Lunaris::recall()`.
+#[must_use = "RetrievalBuilder must be terminated with .vector(..) / .keyword(..) / .graph(..) and awaited to actually retrieve hits"]
 pub struct RetrievalBuilder {
     pub(crate) root: Box<dyn Retriever>,
     pub(crate) embedder: Arc<dyn Embedder>,

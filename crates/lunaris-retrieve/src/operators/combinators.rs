@@ -27,6 +27,7 @@ use super::{QueryContext, Retriever};
 use crate::types::RawHit;
 
 /// `.and(A, B)` — concurrent fan-out, concatenated output (with per-source tag preserved).
+#[must_use = "AndRetriever is a query node — pass it to RetrievalBuilder::with_root() or wrap it via .fuse_rrf / .or, otherwise it never executes"]
 pub struct AndRetriever {
     pub(crate) left: Box<dyn Retriever>,
     pub(crate) right: Box<dyn Retriever>,
@@ -78,6 +79,7 @@ impl Retriever for AndRetriever {
 }
 
 /// `.or(A, B)` — concurrent fan-out, unioned output (by id, max score).
+#[must_use = "OrRetriever is a query node — pass it to RetrievalBuilder::with_root() or wrap further, otherwise it never executes"]
 pub struct OrRetriever {
     pub(crate) left: Box<dyn Retriever>,
     pub(crate) right: Box<dyn Retriever>,
@@ -120,6 +122,7 @@ impl Retriever for OrRetriever {
 }
 
 /// `.then(A, B)` — sequential narrow: A's ids constrain B via `Filter::Or(Eq{id})`.
+#[must_use = "ThenRetriever is a query node — pass it to RetrievalBuilder::with_root() or wrap further, otherwise it never executes"]
 pub struct ThenRetriever {
     pub(crate) first: Box<dyn Retriever>,
     pub(crate) second: Box<dyn Retriever>,

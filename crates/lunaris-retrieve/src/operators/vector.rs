@@ -17,6 +17,7 @@ use crate::types::{RawHit, SourceOp};
 /// Construction is fluent — you wire it up at `recall()`-build time, the
 /// network call only happens at `.execute()` time.
 #[derive(Clone, Debug)]
+#[must_use = "Vector is a query node — pass it to RetrievalBuilder::with_root() or chain via .and/.or/.fuse_rrf, otherwise it never executes"]
 pub struct Vector {
     pub index: String,
     pub k: usize,

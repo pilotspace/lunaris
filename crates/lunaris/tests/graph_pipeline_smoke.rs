@@ -62,6 +62,7 @@ impl WriteOpCounts {
             WriteOp::VectorUpsert { .. } => self.vector_upsert += 1,
             WriteOp::GraphNode { .. } => self.graph_node += 1,
             WriteOp::GraphEdge { .. } => self.graph_edge += 1,
+            _ => {}
         }
     }
 }

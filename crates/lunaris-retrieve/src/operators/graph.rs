@@ -76,6 +76,7 @@ pub const LUNARIS_GRAPH_NAME: &str = "lunaris_graph";
 /// mentions; treat that as "graph branch contributes nothing" rather than an
 /// error).
 #[derive(Clone, Debug)]
+#[must_use = "Graph is a query node — pass it to RetrievalBuilder::with_root() or chain via .and/.or/.fuse_rrf, otherwise it never executes"]
 pub struct Graph {
     pub entity_ids: Vec<EntityId>,
     pub hops: usize,

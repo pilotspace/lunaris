@@ -32,6 +32,7 @@ use crate::types::{RawHit, SourceOp};
 /// Wraps an upstream [`Retriever`] (typically an [`super::combinators::AndRetriever`])
 /// and folds its `RawHit`s into a single fused ranking. Tags every output hit with
 /// `SourceOp::Fused`.
+#[must_use = "FuseRrfRetriever is a query node — pass it to RetrievalBuilder::with_root() or wrap further, otherwise it never executes"]
 pub struct FuseRrfRetriever {
     pub(crate) inner: Box<dyn Retriever>,
     pub(crate) k: usize,

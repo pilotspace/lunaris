@@ -15,6 +15,7 @@ use crate::types::{RawHit, SourceOp};
 
 /// Keyword (BM25) retrieval operator.
 #[derive(Clone, Debug)]
+#[must_use = "Keyword is a query node — pass it to RetrievalBuilder::with_root() or chain via .and/.or/.fuse_rrf, otherwise it never executes"]
 pub struct Keyword {
     pub index: String,
     pub k: usize,

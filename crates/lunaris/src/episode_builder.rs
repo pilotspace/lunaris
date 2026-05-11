@@ -37,6 +37,7 @@ use ulid::Ulid;
 /// // scope is injected by engine.scoped(scope_a).ingest(builder).await?
 /// ```
 #[derive(Clone, Debug)]
+#[must_use = "EpisodeBuilder is consumed by ScopedLunaris::ingest; constructing it without calling .ingest() is a no-op"]
 pub struct EpisodeBuilder {
     id: Option<Ulid>,
     source: String,
