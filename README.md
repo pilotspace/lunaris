@@ -123,6 +123,11 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
   Zep → Lunaris with the parallel comparison. Differs from Mem0
   because Zep already has bi-temporal facts — the focus is latency
   + substrate simplification, not the bi-temporal upgrade.
+- **[`docs/MIGRATING-FROM-COGNEE.md`](docs/MIGRATING-FROM-COGNEE.md)** —
+  Cognee → Lunaris. Different conversation again: pipeline-vs-DSL
+  tradeoff. If your custom logic lives at ingest time, Cognee's
+  Task model maps cleaner; if it lives at recall time, Lunaris's
+  composable operator DSL is the simpler model.
 
 ## For contributors
 
