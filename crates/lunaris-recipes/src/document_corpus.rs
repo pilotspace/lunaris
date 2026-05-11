@@ -49,7 +49,7 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_core::storage::types::Filter;
-use lunaris_core::{Episode, LunarisError};
+use lunaris_core::{Episode, LunarisError, Scope};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 
 /// Default RRF constant from Cormack et al. (2009). Matches `fuse_rrf`'s
@@ -112,7 +112,9 @@ impl DocumentCorpus {
         chunks: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
     ) -> Result<(), LunarisError> {
         for (content, metadata) in chunks {
+            // Wave 1C stub: scope not yet threaded through DocumentCorpus — Wave 1D wires it.
             let mut episode = Episode::new(
+                Scope::dev(),
                 format!("{}{}", self.source_prefix, ulid::Ulid::new()),
                 content,
                 self.lunaris.clock().as_ref(),

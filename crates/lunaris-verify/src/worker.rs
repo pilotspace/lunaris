@@ -38,7 +38,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::stream::{BoxStream, StreamExt};
 use lunaris_core::QueueMsg;
-use lunaris_core::{BiTemporal, HlcClock, LunarisError, StorageError, StoragePort, WriteOp};
+use lunaris_core::{BiTemporal, HlcClock, LunarisError, Scope, StorageError, StoragePort, WriteOp};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -89,8 +89,9 @@ pub async fn run_verify_worker(
     shutdown: Arc<Notify>,
     clock: Arc<HlcClock>,
 ) -> Result<JoinHandle<()>, LunarisError> {
+    // Wave 1C stub: scope not yet threaded through verify worker — Wave 1D/1F wires it.
     let stream = storage
-        .subscribe(VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)
+        .subscribe(&Scope::dev(), VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 
@@ -312,10 +313,15 @@ async fn apply_supersede(
     let now = clock.tick();
 
     // 3. Load existing rows.
-    let winner_existing =
-        storage.read_as_of(&winner_key, now).await.map_err(LunarisError::Storage)?;
-    let loser_existing =
-        storage.read_as_of(&loser_key, now).await.map_err(LunarisError::Storage)?;
+    // Wave 1C stub: scope not yet threaded through arbitration — Wave 1F wires it.
+    let winner_existing = storage
+        .read_as_of(&Scope::dev(), &winner_key, now)
+        .await
+        .map_err(LunarisError::Storage)?;
+    let loser_existing = storage
+        .read_as_of(&Scope::dev(), &loser_key, now)
+        .await
+        .map_err(LunarisError::Storage)?;
 
     // 4. LOSER WriteOp — invalidate_sys + JSON-patch payload["bt"].
     let loser_op = match loser_existing {
@@ -417,7 +423,12 @@ async fn apply_supersede(
 
     // 6. ONE atomic_write per decision (D-11 invariant).
     //    Exactly TWO ops in this call: [loser_op, winner_op].
-    storage.atomic_write(&[loser_op, winner_op]).await.map(|_lsn| ()).map_err(LunarisError::Storage)
+    // Wave 1C stub: scope not yet threaded through arbitration — Wave 1F wires it.
+    storage
+        .atomic_write(&Scope::dev(), &[loser_op, winner_op])
+        .await
+        .map(|_lsn| ())
+        .map_err(LunarisError::Storage)
 }
 
 /// Publish one `AuditEvent::VerifierArbitration` to `__lunaris_audit__`
