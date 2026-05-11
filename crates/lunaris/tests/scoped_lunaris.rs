@@ -22,10 +22,14 @@ use serde_json;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-/// Recording storage that captures every `atomic_write` batch for inspection.
+/// Recording storage that captures every `atomic_write` batch AND every
+/// `vector_search` scope for inspection. Wave 2.5C: the second recorder
+/// proves the retrieval-path scope propagation contract — `ctx.scope`
+/// reaches `StoragePort::vector_search` as the bound `ScopedLunaris.scope`.
 #[derive(Default)]
 struct RecordingStorage {
     batches: Mutex<Vec<Vec<WriteOp>>>,
+    vector_search_scopes: Mutex<Vec<Scope>>,
 }
 
 #[async_trait]
@@ -40,7 +44,7 @@ impl StoragePort for RecordingStorage {
     }
     async fn vector_search(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -48,7 +52,11 @@ impl StoragePort for RecordingStorage {
         _as_of: Option<Hlc>,
         _rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        Err(StorageError::NotSupported("RecordingStorage::vector_search"))
+        self.vector_search_scopes.lock().push(scope.clone());
+        // Empty hits — assertion is on the recorded scope, not the hit
+        // payload. Returning Ok(vec![]) instead of NotSupported lets recall()
+        // complete past this call (vs short-circuiting to error).
+        Ok(Vec::new())
     }
     async fn graph_traverse(
         &self,
@@ -215,4 +223,75 @@ fn scoped_dsl_returns_retrieval_builder() {
     let scope = Scope::new("agent:delta").unwrap();
     // Should not panic; the return type is RetrievalBuilder.
     let _builder: RetrievalBuilder = engine.scoped(scope).dsl();
+}
+
+/// Wave 2.5C retrieval-layer scope-isolation contract:
+///
+/// `engine.scoped(scope_a).recall(query)` MUST route the storage-layer
+/// `vector_search` call with `&scope_a`, not `Scope::dev()` or `scope_b`.
+/// This proves `QueryContext` propagates the bound scope all the way down
+/// the operator tree to the storage port — closing the gap Wave 2 flagged
+/// where ingest-time isolation was enforced but retrieval-time was not.
+#[tokio::test]
+async fn scoped_recall_propagates_scope_to_vector_search() {
+    use lunaris::Vector;
+    use lunaris_retrieve::Query;
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
+
+    let scope_a = Scope::new("agent:alpha").unwrap();
+    let scope_b = Scope::new("agent:beta").unwrap();
+
+    // Run two scope_a recalls and one scope_b recall through the DSL path so
+    // every recorded scope is unambiguous.
+    let _ = engine
+        .scoped(scope_a.clone())
+        .dsl()
+        .with_root(Vector::new("chunks", 5).top(5))
+        .execute(Query::text("hello"))
+        .await
+        .expect("scope_a recall must not error on empty hits");
+
+    let _ = engine
+        .scoped(scope_a.clone())
+        .dsl()
+        .with_root(Vector::new("chunks", 5).top(5))
+        .execute(Query::text("world"))
+        .await
+        .expect("second scope_a recall must not error");
+
+    let _ = engine
+        .scoped(scope_b.clone())
+        .dsl()
+        .with_root(Vector::new("chunks", 5).top(5))
+        .execute(Query::text("hello"))
+        .await
+        .expect("scope_b recall must not error");
+
+    let recorded = storage.vector_search_scopes.lock().clone();
+    assert!(
+        recorded.len() >= 3,
+        "expected at least 3 vector_search calls (2x scope_a + 1x scope_b); got {}",
+        recorded.len()
+    );
+
+    let scope_a_count = recorded.iter().filter(|s| *s == &scope_a).count();
+    let scope_b_count = recorded.iter().filter(|s| *s == &scope_b).count();
+    let dev_count = recorded.iter().filter(|s| s.as_str() == "_dev_").count();
+
+    assert_eq!(
+        scope_a_count, 2,
+        "scope_a's recalls must each pass scope_a to vector_search; recorded: {recorded:?}"
+    );
+    assert_eq!(
+        scope_b_count, 1,
+        "scope_b's recall must pass scope_b to vector_search; recorded: {recorded:?}"
+    );
+    assert_eq!(
+        dev_count, 0,
+        "no Scope::dev() leakage allowed on scoped recall paths; recorded: {recorded:?}"
+    );
 }
