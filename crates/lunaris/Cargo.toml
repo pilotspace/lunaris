@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
+description = "Lunaris agent memory engine — umbrella crate"
+repository.workspace = true
+readme      = "README.md"
+keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
+categories  = ["database", "asynchronous", "data-structures"]
+
 [dependencies]
 lunaris-core              = { workspace = true }
 lunaris-storage-moon      = { workspace = true }
