@@ -18,6 +18,7 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
+publish     = true
 [features]
 default          = []
 # Gates live-backend integration tests (real Moon MQ + Postgres pgmq subscribe

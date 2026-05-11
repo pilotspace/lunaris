@@ -69,6 +69,18 @@ jobs:
             exit 1
           }
 
+      # Phase 22 publish-readiness gate — only runs against `lunaris-core`
+      # (the leaf of the publishable dep graph). The 7 downstream
+      # publishable crates would also dry-run cleanly but only AFTER
+      # lunaris-core is actually on crates.io — the dry-run resolves
+      # `version = "0.2.1"` for internal deps via the index, not the
+      # local workspace, so an unpublished version errors out. The leaf
+      # check catches the most-likely regression (missing files,
+      # mismatched workspace version) without needing a live crates.io
+      # publish in CI.
+      - name: cargo_publish_dry_run_core
+        run: cargo publish -p lunaris-core --dry-run --allow-dirty
+
       # INGEST-04 invariant — single atomic_write per ingest path.
       # Strip line-comments first so doc references don't inflate the
       # count, then require exactly one real `storage.atomic_write` call

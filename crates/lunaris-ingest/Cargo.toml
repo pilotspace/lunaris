@@ -11,6 +11,7 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
+publish     = true
 [dependencies]
 lunaris-core = { workspace = true }
 # Wave 2.5B: lunaris-storage-moon removed — keyspace helpers moved to lunaris-core

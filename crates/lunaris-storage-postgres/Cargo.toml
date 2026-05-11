@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
+publish     = true
 # Integration tests:
 #   cargo test -p lunaris-storage-postgres --lib                      # unit tests, no Postgres required
 #   cargo test -p lunaris-storage-postgres --features pg-it           # round-trip vs live Postgres

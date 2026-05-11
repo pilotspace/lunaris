@@ -21,20 +21,24 @@ grep '^version' Cargo.toml | head -1         # must be 0.2.1
 git tag -a v0.2.1 -m "v0.2.1 — RC-2 scope alphabet tighten + v0.2 close-out"
 git push origin v0.2.1
 
-# 3. CI runs and stays green on the tag (semver-checks vs v0.2.0)
+# 3. CI runs and stays green on the tag (semver-checks vs v0.2.0,
+#    cargo publish --dry-run on lunaris-core)
 
-# 4. Publish to crates.io (publishable set: see §3 below)
+# 4. Publish the 8 unblocked crates to crates.io in topological order.
+#    The 3 moondb-blocked crates (storage-moon, retrieve, lunaris
+#    umbrella) wait until moondb itself publishes — see §3.
 cd crates/lunaris-core         && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-storage-postgres && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-storage-moon     && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-embed            && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-rerank           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-extract          && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-verify           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-consolidate      && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 cd ../lunaris-ingest           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-retrieve         && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris                  && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+# BLOCKED until moondb is on crates.io:
+# cd ../lunaris-storage-moon   && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+# cd ../lunaris-retrieve       && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+# cd ../lunaris                && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 
 # 5. Publish Python wheels
 cd ../lunaris-py
@@ -92,17 +96,17 @@ The v0.2.x publishable set:
 
 | Crate | Status | Notes |
 |---|---|---|
-| `lunaris-core` | publish | Core types — must publish first (every other crate depends on it). |
-| `lunaris-storage-postgres` | publish | OSS-default backend. |
-| `lunaris-storage-moon` | publish | High-perf backend; depends on `moondb` from a sibling repo. |
-| `lunaris-embed` | publish | Embedders (candle, ollama). |
-| `lunaris-rerank` | publish | Cross-encoder reranker. |
-| `lunaris-extract` | publish | Extractor (candle, ollama, cloud-api). |
-| `lunaris-verify` | publish | Verifier (incl. RFC 0006 270M scaffold). |
-| `lunaris-consolidate` | publish | ACT-R consolidator. |
-| `lunaris-ingest` | publish | Ingest pipeline. |
-| `lunaris-retrieve` | publish | Retrieval DSL. |
-| `lunaris` | publish | Umbrella crate — must publish last. |
+| `lunaris-core` | **publish=true** | Core types — must publish first (every other crate depends on it). |
+| `lunaris-storage-postgres` | **publish=true** | OSS-default backend. `lunaris-storage-moon` is an OPTIONAL dep behind the `moon-it` feature. |
+| `lunaris-embed` | **publish=true** | Embedders (candle, ollama). |
+| `lunaris-rerank` | **publish=true** | Cross-encoder reranker. |
+| `lunaris-extract` | **publish=true** | Extractor (candle, ollama, cloud-api). |
+| `lunaris-verify` | **publish=true** | Verifier (incl. RFC 0006 270M scaffold). |
+| `lunaris-consolidate` | **publish=true** | ACT-R consolidator. |
+| `lunaris-ingest` | **publish=true** | Ingest pipeline. |
+| `lunaris-storage-moon` | BLOCKED | Depends on `moondb` (path-only, sibling repo). Publish `moondb` to crates.io FIRST, then flip. |
+| `lunaris-retrieve` | BLOCKED | Transitively depends on `lunaris-storage-moon`. Unblocks once that one publishes. |
+| `lunaris` | BLOCKED | Umbrella crate — transitively depends on `lunaris-storage-moon`. |
 | `lunaris-bench` | internal | Benches; not published. |
 | `lunaris-conformance` | internal | Cross-backend test harness. |
 | `lunaris-codegen` | internal | Build-time codegen. |
