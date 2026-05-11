@@ -166,7 +166,7 @@ const PARITY_CORPUS: &[&str] = &[
     "summary md plan directory",
 ];
 
-const CORPUS_LEN: usize = 100;
+const CORPUS_LEN: usize = 102;
 const EMBED_DIM: usize = 768;
 
 // ---------------------------------------------------------------------------

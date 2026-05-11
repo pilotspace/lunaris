@@ -69,6 +69,48 @@ export declare class EmailThreading {
 }
 
 /**
+ * Opaque container around a resolved [`lunaris_core::Embedder`]. Constructed
+ * via one of the four `#[napi(factory)]` methods; consumed by
+ * [`crate::Lunaris::withEmbedder`].
+ *
+ * The inner `Arc<dyn Embedder>` is intentionally `pub(crate)` so only the
+ * host crate's `with_embedder` napi extension can read it — TS callers
+ * see an opaque token.
+ */
+export declare class EmbedderConfig {
+  /**
+   * Build an [`EmbedderConfig`] from the fastembed EmbeddingGemma300M
+   * preset. All opts are optional.
+   */
+  static fastembed(opts?: FastembedConfigOpts | undefined | null): EmbedderConfig
+  /**
+   * Bring-your-own ONNX model via in-memory bytes (e.g., fetched from S3).
+   * `dim` MUST match the ONNX model's output shape; a mismatch surfaces
+   * on the first `embed_batch` call.
+   */
+  static fromOnnxBytes(opts: FromOnnxBytesOpts): EmbedderConfig
+  /**
+   * Bring-your-own ONNX model from disk. Reads the bytes via
+   * `std::fs::read` (operator-trusted paths only) and delegates to the
+   * same constructor as `fromOnnxBytes`.
+   */
+  static fromOnnxPath(opts: FromOnnxPathOpts): EmbedderConfig
+  /**
+   * Build an [`EmbedderConfig`] backed by Ollama's `/api/embed` HTTP API.
+   * Defaults: `endpoint=http://localhost:11434`, `model=embeddinggemma`,
+   * `dim=768`. The constructor only builds a `reqwest::Client` — it does
+   * not contact Ollama until the first `embed_batch`.
+   */
+  static ollama(opts?: OllamaConfigOpts | undefined | null): EmbedderConfig
+  /**
+   * Output dimensionality declared by the operator at config time.
+   * For preset paths this matches the model constant; for BYO this is
+   * what the caller passed (and what [`DimValidatingEmbedder`] enforces).
+   */
+  get declaredDim(): number
+}
+
+/**
  * Scope-less payload builder for an `Episode`.
  *
  * Assemble all Episode fields **except** scope using this builder. The scope
@@ -133,6 +175,17 @@ export declare class Keyword {
 
 /** High-level memory-engine handle. Opens a storage backend by URL and drives ingest, recall, forget, and snapshot. */
 export declare class Lunaris {
+  /**
+   * Plan 21-02 — swap the embedder on this handle and return a new
+   * `Lunaris` carrying the override. The original handle is unaffected
+   * (its `Arc` keeps pointing at the unwrapped inner).
+   */
+  withEmbedder(embedder: EmbedderConfig): Lunaris
+  /**
+   * Plan 21-02 — swap the reranker on this handle and return a new
+   * `Lunaris` carrying the override. Symmetric to [`Self::with_embedder`].
+   */
+  withReranker(reranker: RerankerConfig): Lunaris
   /** Production constructor. Routes `url` through the scheme dispatcher to pick a StoragePort backend. */
   static open(url: string): Promise<Lunaris>
   /** Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON). */
@@ -143,14 +196,6 @@ export declare class Lunaris {
   forget(req: any): Promise<any>
   /** Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]). */
   snapshot(): Promise<string>
-  /**
-   * Wave 3G — construct a scope-bound view over this handle.
-   *
-   * All operations issued through the returned `ScopedLunaris` carry `scope`
-   * as their partitioning key. Patched onto `Lunaris.prototype` by `index.mjs`
-   * via `lunarisScoped`.
-   */
-  scoped(scope: Scope): ScopedLunaris
 }
 
 /** Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder. */
@@ -183,6 +228,26 @@ export declare class MultiTurnConversation {
   recall(query: string): Promise<Array<any>>
   /** Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation). */
   consolidate(): Promise<any>
+}
+
+/**
+ * Opaque container around a resolved [`lunaris_rerank::Reranker`]. Constructed
+ * via one of the `#[napi(factory)]` methods; consumed by
+ * [`crate::Lunaris::withReranker`].
+ */
+export declare class RerankerConfig {
+  /**
+   * Build a [`RerankerConfig`] backed by the fastembed BGE-Reranker-v2-m3
+   * cross-encoder preset. All opts are optional.
+   */
+  static fastembed(opts?: FastembedRerankerConfigOpts | undefined | null): RerankerConfig
+  /**
+   * RETRIEVE-06 fallback — passes candidates through with their original
+   * scores. Used when (a) the per-batch rerank budget is too tight on the
+   * deployment hardware, or (b) the operator wants the BM25/vector fusion
+   * score directly with no cross-encoder rescoring.
+   */
+  static noop(): RerankerConfig
 }
 
 /** Research-paper corpus wrapper with opt-in citation graph. */
@@ -329,11 +394,48 @@ export declare class Vector {
   static new(index: string, k: number): Vector
 }
 
+/**
+ * Returns an array of objects mirroring `FixtureCorpus::episodes()`.
+ *
+ * `seed` and `count` MUST match `lunaris_conformance::fixtures::SEED` /
+ * `EPISODE_COUNT` — we accept them as args so drivers can assert the
+ * constants at the FFI boundary, but the underlying `FixtureCorpus::new()`
+ * always uses the canonical Rust constants. Drift surfaces as a hard
+ * napi::Error with the canonical Rust value in the message so operators
+ * know which side of the FFI needs updating.
+ *
+ * `seed` is a `BigInt` because TypeScript's `number` loses precision
+ * above 2^53; the `0xCAFE_F00D` seed is representable as `number` but
+ * the API intentionally uses `BigInt` to future-proof against a larger
+ * seed.
+ */
+export declare function conformanceFixtureEpisodes(seed: bigint, count: number): any
+
 export declare function consolidatorPipelineDisable(handle: ConsolidatorPipelineHandle): void
 
 export declare function consolidatorPipelineEnable(handle: ConsolidatorPipelineHandle): void
 
 export declare function consolidatorPipelineIsEnabled(handle: ConsolidatorPipelineHandle): boolean
+
+/**
+ * Plan 21-03 — cross-SDK embedder parity probe. Returns raw f32 vectors
+ * from the wrapped `Arc<dyn Embedder>` inside an `EmbedderConfig`.
+ * Feature-gated; release npm builds strip it.
+ */
+export declare function embedderConfigEmbedBatch(cfg: EmbedderConfig, inputs: Array<string>): Promise<Array<Array<number>>>
+
+export interface FastembedConfigOpts {
+  cacheDir?: string
+  /** `"cpu"` | `"coreml"` | `"cuda"` — case-insensitive. Default `cpu`. */
+  execution?: string
+  showDownloadProgress?: boolean
+}
+
+export interface FastembedRerankerConfigOpts {
+  cacheDir?: string
+  execution?: string
+  showDownloadProgress?: boolean
+}
 
 /**
  * Pure decision helper mirroring the Rust-side initial-state-from-env
@@ -377,6 +479,29 @@ export declare function fromEnv(): Array<boolean>
  */
 export declare function fromEnvValue(graphVal?: string | undefined | null, consolidatorVal?: string | undefined | null): Array<boolean>
 
+export interface FromOnnxBytesOpts {
+  onnxBytes: Buffer
+  tokenizerBytes: Buffer
+  dim: number
+  /** `"mean"` | `"cls"`. Default `mean`. */
+  pooling?: string
+  tokenizerConfigBytes?: Buffer
+  specialTokensMapBytes?: Buffer
+  configBytes?: Buffer
+  execution?: string
+}
+
+export interface FromOnnxPathOpts {
+  onnxPath: string
+  tokenizerPath: string
+  dim: number
+  pooling?: string
+  tokenizerConfigPath?: string
+  specialTokensMapPath?: string
+  configPath?: string
+  execution?: string
+}
+
 /** Return a `ConsolidatorPipelineHandle` wrapping the inner Rust handle. */
 export declare function getConsolidatorPipeline(handle: Lunaris): ConsolidatorPipelineHandle
 
@@ -405,6 +530,12 @@ export declare function graphPipelineIsEnabled(handle: GraphPipelineHandle): boo
  */
 export declare function lunarisScoped(handle: Lunaris, scope: Scope): ScopedLunaris
 
+export interface OllamaConfigOpts {
+  endpoint?: string
+  model?: string
+  dim?: number
+}
+
 /**
  * Ergonomic async `open` free function so TypeScript callers can write
  * `await open(url)` without importing the `Lunaris` class directly —
@@ -426,3 +557,20 @@ export declare function openHandle(url: string): Promise<Lunaris>
  * objects which napi-rs 3.x converts to a `Promise<Array<object>>` in TS.
  */
 export declare function recallSimpleExecute(handle: Lunaris, plan: any): Promise<any>
+
+/**
+ * Additional free `#[napi]` function that takes the `Lunaris` handle by
+ * reference and dumps every row under the given prefix.
+ *
+ * Returns `Array<[Buffer, Buffer]>` — one 2-element array per KV row.
+ * napi-rs 3.x maps `Vec<Vec<Buffer>>` to exactly that shape at the TS
+ * layer.
+ *
+ * Plan 08-04's driver dumps every row under the fixture-corpus write
+ * prefixes from Moon and Postgres separately, then asserts the two
+ * dumps are structurally-equal against a committed golden reference.
+ * Exposed as a free function rather than a method on `Lunaris` because
+ * a second `#[napi] impl Lunaris` block would introduce duplicate-symbol
+ * risk with the generated `impl` in `generated.rs`.
+ */
+export declare function scanKvPrefix(handle: Lunaris, prefix: Buffer): Promise<Array<Array<Buffer>>>

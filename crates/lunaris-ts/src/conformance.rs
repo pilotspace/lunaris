@@ -103,8 +103,9 @@ pub async fn scan_kv_prefix(handle: &Lunaris, prefix: Buffer) -> napi::Result<Ve
     use futures::TryStreamExt;
     let storage = handle.inner.storage();
     let prefix_vec: Vec<u8> = prefix.to_vec();
+    let scope = ::lunaris_core::scope::Scope::dev();
     let stream = storage
-        .scan_range(&prefix_vec, None)
+        .scan_range(&scope, &prefix_vec, None)
         .await
         .map_err(|e| napi_err(::lunaris::LunarisError::Storage(e)))?;
     let rows: Vec<(bytes::Bytes, bytes::Bytes)> =
@@ -113,6 +114,20 @@ pub async fn scan_kv_prefix(handle: &Lunaris, prefix: Buffer) -> napi::Result<Ve
         .into_iter()
         .map(|(k, v)| vec![Buffer::from(k.to_vec()), Buffer::from(v.to_vec())])
         .collect())
+}
+
+/// Plan 21-03 — cross-SDK embedder parity probe. Returns raw f32 vectors
+/// from the wrapped `Arc<dyn Embedder>` inside an `EmbedderConfig`.
+/// Feature-gated; release npm builds strip it.
+#[napi(js_name = "embedderConfigEmbedBatch")]
+pub async fn embedder_config_embed_batch(
+    cfg: &crate::embedder_config::EmbedderConfig,
+    inputs: Vec<String>,
+) -> napi::Result<Vec<Vec<f64>>> {
+    let embedder = cfg.inner.clone();
+    let refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
+    let out = embedder.embed_batch(&refs).await.map_err(napi_err)?;
+    Ok(out.into_iter().map(|row| row.into_iter().map(|x| x as f64).collect()).collect())
 }
 
 #[cfg(test)]
