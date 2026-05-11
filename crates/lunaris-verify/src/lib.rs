@@ -50,6 +50,7 @@ pub mod candle_gemma3_27b;
 pub mod candle_gemma3_270m;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
+pub mod divergence;
 pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
