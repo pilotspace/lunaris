@@ -68,6 +68,10 @@
 
 mod dsl;
 mod errors;
+// Wave 3G — handwritten bindings for the v0.2 multi-agent partitioning surface:
+// Scope, EpisodeBuilder, ScopedLunaris, lunarisScoped. NOT codegen-managed;
+// see scope.rs for the lifetime/visibility rationale.
+mod scope;
 mod toggles;
 
 // Handwritten conformance-only helpers — feature-gated so production
@@ -115,6 +119,9 @@ pub use generated::{
     TimelineReconstruction,
     Vector,
 };
+
+// Wave 3G — v0.2 multi-agent partitioning surface (RFC 0001).
+pub use scope::{EpisodeBuilder, Scope, ScopedLunaris, lunaris_scoped};
 
 /// Plan 11-02b — conversational namespace. Pure Rust re-exports so TS
 /// callers can `import { ChatAgentMemory } from 'lunaris'` at the crate

@@ -33,6 +33,11 @@ from .lunaris import (  # type: ignore[attr-defined]
     consolidator_pipeline_is_enabled as _consolidator_pipeline_is_enabled,
     from_env,
     from_config,
+    # Wave 3G — v0.2 multi-agent partitioning surface (RFC 0001).
+    Scope,
+    EpisodeBuilder,
+    ScopedLunaris,
+    lunaris_scoped as _lunaris_scoped,
 )
 from .dsl import Vector, Keyword, Graph, RetrievalBuilder, open
 from .toggles import (
@@ -61,6 +66,12 @@ del _sys
 # the raw free-function form.
 attach_pipeline_properties(_RustLunaris)
 
+# Wave 3G — patch `.scoped(scope)` onto the Rust Lunaris class so callers can
+# write `engine.scoped(Scope("acme:agent-1"))` naturally. The free function
+# `_lunaris_scoped(handle, scope)` is the Rust implementation; the lambda
+# adapts it to the method call shape without any `py.eval` unsafe path.
+_RustLunaris.scoped = lambda self, scope: _lunaris_scoped(self, scope)  # type: ignore[attr-defined]
+
 Lunaris = _RustLunaris  # Public re-export under the ergonomic name.
 
 __all__ = [
@@ -76,4 +87,8 @@ __all__ = [
     "from_env",
     "from_config",
     "__version__",
+    # Wave 3G — v0.2 multi-agent partitioning surface.
+    "Scope",
+    "EpisodeBuilder",
+    "ScopedLunaris",
 ]
