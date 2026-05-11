@@ -80,6 +80,10 @@ use ulid::Ulid;
 pub mod candle_gemma3;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
+// RFC 0007 §3 — FallbackExtractor<P, F> static-dispatch combinator with
+// per-instance CircuitBreaker. Always built; the breaker primitive lives
+// in lunaris-core::circuit_breaker.
+pub mod fallback;
 pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
