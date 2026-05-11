@@ -609,3 +609,139 @@ Items deferred to v0.2.1:
   idle-timeout deregistration.
 - **P-5** Scope-propagation regression matrix is recall-only at the
   umbrella level; extend to cover the remaining 6 partitioned ports.
+
+---
+
+## 11. As-shipped — v0.2.0 / v0.2.1 closure
+
+The RFC header's `Status: Implemented (v0.2.0)` covers the type-system
+contract. This section records the **closure of the release-gate and
+target-review findings** against that contract, including the two
+wire-level breaking changes that landed in the v0.2.1 patch release
+(2026-05-11). It supersedes §10.x in characterising the final
+as-shipped surface; §10 remains accurate for the v0.2.0 ship itself.
+
+### 11.1 v0.2.0 ship surface (recap)
+
+The Wave 0–4 deliverables landed verbatim against §3:
+
+- `Scope` newtype with initial validation regex `^[A-Za-z0-9_\-:.]{1,128}$`
+  (note the colon — see §11.3 below).
+- Hand-rolled `Deserialize` re-validating against `Scope::new` — see
+  `crates/lunaris-core/src/scope.rs:80-85`. The derived
+  `#[serde(transparent)]` `Deserialize` that shipped at the Wave 0 stub
+  was replaced before tag (RC-4 closure).
+- `ScopedLunaris<'a>` typestate; `EpisodeBuilder` with `pub(crate)`
+  terminal `into_episode`; cross-scope ingest is a compile error at the
+  module boundary.
+- `ConsolidateSupervisor` / `VerifySupervisor` with bounded concurrency
+  (`LUNARIS_SCOPE_CONCURRENCY`, default 8) and 30-min idle-scope timeout.
+- `StoragePort` (8 methods) + `KeywordPort::keyword_search` (the §3.4
+  amendment) all partition by `&Scope`.
+
+### 11.2 Release-gate review (`tmp/v0.2-code-review.md`, 27 commits)
+
+A bug / security / cross-file-consistency review across
+`cace8bc..c9c560c` produced **0 BLOCK, 4 REQUEST_CHANGES, 7 v0.2.1
+patches, 4 nits**. Closed at v0.2.0 HEAD before the tag:
+
+| Finding | Closure | Anchor |
+|---------|---------|--------|
+| **RC-1** Unscoped `fact_key` in `lunaris/src/ingest.rs` retained after the Wave 2.5B keyspace move; two scopes writing facts with the same ULID would overwrite on Moon. | Replaced with `lunaris_core::keyspace::fact_key(&episode.scope, f.id)`; local helper deleted. | `crates/lunaris/src/ingest.rs` |
+| **RC-3** Postgres `tenant_isolation` policies declared `USING`-only; per Postgres §5.8 INSERT consults only `WITH CHECK`, so DB-side scope enforcement on INSERT was silently absent. | Follow-up migration drops + recreates every policy with both clauses. | `crates/lunaris-storage-postgres/migrations/20260511000006_rls_with_check.sql` |
+| **RC-4** Derived `#[serde(transparent)]` `Deserialize` for `Scope` accepted any string, bypassing `Scope::new`. | Hand-rolled `Deserialize` calls `Scope::new` on wire bytes; existing `serde_rejects_invalid_scope_string` test flipped from "documents permissive bug" to "asserts rejection." | `crates/lunaris-core/src/scope.rs:80-85` |
+| **P-1** `RecallRequest` and `ForgetRequestDto` lacked `#[serde(deny_unknown_fields)]`, leaving a wire-side `scope` / `tenant` smuggling path past the JWT-bound partition key. | Both DTOs gained the attribute, matching `IngestBody`. | `crates/lunaris-server/src/routes/recall.rs`, `crates/lunaris-server/src/routes/forget.rs` |
+
+A separate target-review against the "Sub-25 ms recall" Core Value
+(`tmp/v0.2-target-review.md`) added one finding closed at v0.2.0:
+
+| Finding | Closure | Anchor |
+|---------|---------|--------|
+| **RC-A** Postgres `keyword_search` queried the pool directly without opening a read tx + `SELECT set_config('lunaris.scope', $1, true)`. Under the documented `NOSUPERUSER NOBYPASSRLS` role, `FORCE ROW LEVEL SECURITY` filtered every row out for any non-`_legacy` scope — BM25 silently returned zero hits in production. Masked because `tests/scope_isolation.rs` covered `vector_search`/`read_as_of` but not `keyword_search` under the app role. | Wrapped the BM25 query in the same tx + `set_config` pattern as `vector.rs::vector_search`. New live regression test `cross_scope_keyword_search_returns_zero_for_wrong_scope`. | `crates/lunaris-storage-postgres/src/keyword.rs` |
+
+### 11.3 v0.2.1 patch closures (2026-05-11)
+
+The five items deferred to v0.2.1 closed in a same-day patch. Two of
+them are **wire-level breaking changes against v0.2.0** — operators
+upgrading from v0.2.0 must read this section.
+
+| Finding | Closure | Breaking? |
+|---------|---------|-----------|
+| **RC-2** Validation regex permitted `:`, so a scope `"a:episode"` produced the same byte sequence as `Scope("a")`'s episode-kind SCAN prefix on Moon (`lunaris:a:episode:`). `SCAN MATCH <prefix>*` under the colliding scope could enumerate the other scope's episodes. v0.2.0 ship-doc carried operator-side guidance ("MUST NOT mint scope strings ending in `:episode`...") as a stopgap. | Regex tightens to `^[A-Za-z0-9_\-.]{1,128}$` (drop `:`). The prefix-aliasing class is now closed **at the type level** — `Scope::new` and the hand-rolled `Deserialize` both reject `:` on the wire. Postgres CHECK constraints tightened to match. The previously-`#[ignore]`'d `keyspace::scan_prefix_does_not_alias_across_kinds` test is now active and pins the contract. | **Yes** — `Scope::new("acme:agent-1")` was OK in v0.2.0, errors in v0.2.1. JWTs with colon-containing tenant claims fail at the HTTP boundary with `invalid scope`. |
+| **P-2** `Lunaris::forget` was a silent zero-match on real scopes — the forget path used `Scope::dev()` internally for `atomic_write`, `read_as_of`, `scan_range`, plus a non-scoped `b"episode:"` prefix scan. | Emits `tracing::warn!` at the call site when invoked with a non-`_dev_` scope. **`ScopedLunaris::forget` remains a v0.3 deliverable** (see §11.5). | No — observable behaviour is unchanged; only a log line is added. |
+| **P-3** `register_scope` (both `ConsolidateSupervisor` and `VerifySupervisor`) had a check-then-insert race: two concurrent registers for the same scope could both observe absence, both `subscribe.await`, then both write — the second write overwrites the first, leaving one task holding a closed shutdown channel. | Atomic placeholder-oneshot reservation: take the write lock, check, insert a placeholder sender under the same critical section, then run `subscribe.await` without the lock. On success the placeholder is replaced with the real sender; on failure it is removed so a later `register_scope` can retry. | No — bug fix. |
+| **P-5** Scope-propagation regression matrix was recall-only at the `lunaris` umbrella level; six other partitioned port methods (`atomic_write`, `graph_traverse`, `scan_range`, `read_as_of`, `publish`, `queue_depth`) were covered only at the backend integration tier. | Matrix extended at the umbrella level to assert scope propagation on each remaining port — see commit `81eb961` and `crates/lunaris/tests/scoped_lunaris.rs`. | No — test coverage only. |
+
+`crates/lunaris-core/src/scope.rs:45-47` is the final regex (a
+`fn(char) -> bool` rather than a literal regex to keep the validator
+zero-dep); `crates/lunaris-core/src/scope.rs:203-213` is the
+`colon_is_rejected` regression test that pins the v0.2.1 boundary.
+
+### 11.4 Operator data-rewrite recipe (RC-2)
+
+Postgres deployments holding v0.2.0 rows whose `scope` columns contain
+`:` MUST rewrite those rows **before** applying migration
+`20260512000007_scope_regex_tighten.sql`; otherwise the new
+`<table>_scope_check` constraint aborts the `ADD CHECK` step on the
+first offending row. The migration header carries the canonical recipe;
+reproduced here for visibility:
+
+```sql
+BEGIN;
+UPDATE episodes    SET scope = replace(scope, ':', '.');
+UPDATE chunks      SET scope = replace(scope, ':', '.');
+UPDATE entities    SET scope = replace(scope, ':', '.');
+UPDATE relations   SET scope = replace(scope, ':', '.');
+UPDATE facts       SET scope = replace(scope, ':', '.');
+UPDATE communities SET scope = replace(scope, ':', '.');
+UPDATE lunaris_kv  SET scope = replace(scope, ':', '.');
+COMMIT;
+-- then: sqlx migrate run
+```
+
+Moon deployments require no data rewrite — `lunaris:{scope}:{kind}:{ulid}`
+keys are immutable after write; operators must instead reissue any
+JWTs whose `tenant` claim contained `:` (e.g. rotate `acme:agent-42` to
+`acme.agent-42`). Existing colon-keyed data on Moon remains readable
+only by a v0.2.0 process; v0.2.1 will refuse to construct a `Scope`
+matching those keys, so the data is effectively orphaned and should be
+re-ingested under the rewritten scope identifier.
+
+### 11.5 Final as-shipped state
+
+After v0.2.1, the structural invariants this RFC was written to enforce
+hold **at the type level**, not by operator discipline:
+
+- `Scope::new` and `Scope`'s `Deserialize` impl agree byte-for-byte on
+  the validation regex `^[A-Za-z0-9_\-.]{1,128}$`.
+- For any valid `Scope`, `scope_prefix(&s)` cannot alias any
+  `<kind>_prefix(&s')` for `s != s'` — `:` is the only delimiter and
+  is not in the scope alphabet.
+- Postgres column-level CHECK constraints, app-side `Scope::new`, and
+  the wire-side `Deserialize` impl all enforce the same alphabet.
+- RLS policies declare both `USING` and `WITH CHECK`; production
+  connections under a `NOSUPERUSER NOBYPASSRLS` role get DB-side
+  enforcement on every primitive op, including BM25 keyword search.
+- All public request DTOs in `lunaris-server` carry
+  `#[serde(deny_unknown_fields)]`; the JWT `tenant` claim is the sole
+  source of truth for the partition scope.
+
+### 11.6 Known v0.3 carryover
+
+- **`Lunaris::forget` is still hard-coded to `Scope::dev()` internally.**
+  v0.2.1 added the `tracing::warn!` (P-2) so the silent zero-match is
+  no longer silent, but the real fix — `ScopedLunaris::forget` with
+  the `403/404` cross-scope contract pinned in `#[ignore]`'d UAT-4 —
+  is a v0.3 deliverable. This is the only RFC-0001 contract item not
+  closed at the type level in the v0.2.x line.
+- **Pipeline handles (`ConsolidatorPipelineHandle`, `VerifyPipelineHandle`)
+  continue to use the deprecated single-topic workers** at
+  `#[allow(deprecated)]` call sites. Supervisor migration requires
+  threading scope through the handle and is tracked for v0.3.
+- **`Scope::dev()` remains `#[doc(hidden)] pub`** for test and
+  migration use. Any new `Scope::dev()` call site in production code
+  is a v0.3 carry-over, not a steady-state pattern.
+
+RFC 0001 is **fully implemented for the in-scope surface** at v0.2.1.
+The forget-path carry-over is tracked separately and does not modify
+the contracts established here.
