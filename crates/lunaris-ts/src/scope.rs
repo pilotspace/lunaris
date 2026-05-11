@@ -57,9 +57,8 @@ impl Scope {
     /// is empty, longer than 128 bytes, or contains an invalid character.
     #[napi(factory)]
     pub fn new(s: String) -> napi::Result<Self> {
-        let inner = ::lunaris::Scope::new(&s).map_err(|e| {
-            napi::Error::from_reason(format!("Scope: {e}"))
-        })?;
+        let inner = ::lunaris::Scope::new(&s)
+            .map_err(|e| napi::Error::from_reason(format!("Scope: {e}")))?;
         Ok(Self { inner })
     }
 
@@ -239,8 +238,5 @@ impl ScopedLunaris {
 /// napi-rs exposes this as `lunarisScoped(handle, scope): ScopedLunaris`.
 #[napi(js_name = "lunarisScoped")]
 pub fn lunaris_scoped(handle: &Lunaris, scope: &Scope) -> ScopedLunaris {
-    ScopedLunaris {
-        inner: handle.inner.clone(),
-        scope: scope.inner.clone(),
-    }
+    ScopedLunaris { inner: handle.inner.clone(), scope: scope.inner.clone() }
 }

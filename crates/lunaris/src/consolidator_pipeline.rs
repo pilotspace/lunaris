@@ -137,6 +137,12 @@ impl ConsolidatorPipelineHandle {
         // semantics; `Some(prefix)` activates the hard prefix filter.
         let source_prefix = self.scope_prefix.read().clone();
         let handle = tokio::spawn(async move {
+            // RFC 0001 Wave 3F: ConsolidateSupervisor is the new per-scope
+            // entrypoint; the pipeline wrapper still uses the single-topic
+            // legacy worker for backwards compat. Migrating this pipeline to
+            // use the supervisor is a v0.3 task (requires per-scope scope_prefix
+            // routing through ConsolidatorPipelineHandle).
+            #[allow(deprecated)]
             match lunaris_consolidate::run_consolidate_worker(
                 storage,
                 consolidator,

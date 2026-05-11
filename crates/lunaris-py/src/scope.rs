@@ -55,9 +55,8 @@ impl PyScope {
     /// outside the allowed set.
     #[new]
     fn new(s: &str) -> PyResult<Self> {
-        let inner = ::lunaris::Scope::new(s).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("Scope: {e}"))
-        })?;
+        let inner = ::lunaris::Scope::new(s)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Scope: {e}")))?;
         Ok(Self { inner })
     }
 
@@ -219,11 +218,7 @@ impl PyScopedLunaris {
     /// Returns a list of hit dicts via `pythonize::pythonize`. The scope is
     /// threaded through the entire retrieval path — only hits from this scope's
     /// partition are returned.
-    fn recall<'py>(
-        &self,
-        py: Python<'py>,
-        query: String,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn recall<'py>(&self, py: Python<'py>, query: String) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let scope = self.scope.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -270,10 +265,7 @@ pub(crate) fn lunaris_scoped(
     handle: PyRef<'_, PyLunaris>,
     scope: PyRef<'_, PyScope>,
 ) -> PyResult<PyScopedLunaris> {
-    Ok(PyScopedLunaris {
-        inner: handle.inner.clone(),
-        scope: scope.inner.clone(),
-    })
+    Ok(PyScopedLunaris { inner: handle.inner.clone(), scope: scope.inner.clone() })
 }
 
 pub(crate) fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -160,6 +160,11 @@ impl VerifierPipelineHandle {
             self.snapshot_verifier().unwrap_or_else(|| Arc::new(NoopVerifier) as Arc<dyn Verifier>);
         let shutdown = self.shutdown.clone();
         let handle = tokio::spawn(async move {
+            // RFC 0001 Wave 3F: VerifySupervisor is the new per-scope
+            // entrypoint; the pipeline wrapper still uses the single-topic
+            // legacy worker for backwards compat. Migration to supervisor is
+            // a v0.3 task (requires plumbing scope through VerifyPipelineHandle).
+            #[allow(deprecated)]
             match lunaris_verify::run_verify_worker(storage, verifier, shutdown, clock).await {
                 Ok(jh) => {
                     // The inner tokio::spawn's JoinHandle drives the event
