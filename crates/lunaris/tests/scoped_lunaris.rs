@@ -29,15 +29,22 @@ use parking_lot::Mutex;
 struct RecordingStorage {
     batches: Mutex<Vec<Vec<WriteOp>>>,
     vector_search_scopes: Mutex<Vec<Scope>>,
+    // P-5 (v0.2 review) — propagation regression matrix extension.
+    atomic_write_scopes: Mutex<Vec<Scope>>,
+    graph_traverse_scopes: Mutex<Vec<Scope>>,
+    read_as_of_scopes: Mutex<Vec<Scope>>,
+    publish_scopes: Mutex<Vec<Scope>>,
+    scan_range_scopes: Mutex<Vec<Scope>>,
 }
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
     async fn atomic_write(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         ops: &[WriteOp],
     ) -> Result<Lsn, StorageError> {
+        self.atomic_write_scopes.lock().push(scope.clone());
         self.batches.lock().push(ops.to_vec());
         Ok(Lsn { wall_ms: 1, counter: self.batches.lock().len() as u32 })
     }
@@ -59,37 +66,39 @@ impl StoragePort for RecordingStorage {
     }
     async fn graph_traverse(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         _query: &CypherQuery,
         _as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
-        Err(StorageError::NotSupported("RecordingStorage::graph_traverse"))
+        self.graph_traverse_scopes.lock().push(scope.clone());
+        Ok(GraphResult::default())
     }
     async fn scan_range(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         _prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-        Err(StorageError::NotSupported("RecordingStorage::scan_range"))
+        self.scan_range_scopes.lock().push(scope.clone());
+        Ok(Box::pin(futures::stream::empty()))
     }
     async fn read_as_of(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         _key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
-        Err(StorageError::NotSupported("RecordingStorage::read_as_of"))
+        self.read_as_of_scopes.lock().push(scope.clone());
+        Ok(None)
     }
     async fn publish(
         &self,
-        _scope: &lunaris_core::Scope,
+        scope: &lunaris_core::Scope,
         _topic: &str,
         _partition: u16,
         _payload: Bytes,
     ) -> Result<u64, StorageError> {
-        // Fire-and-forget — silently succeed so ingest doesn't fail on
-        // the consolidate-queue publish.
+        self.publish_scopes.lock().push(scope.clone());
         Ok(0)
     }
     async fn subscribe(
@@ -292,5 +301,130 @@ async fn scoped_recall_propagates_scope_to_vector_search() {
     assert_eq!(
         dev_count, 0,
         "no Scope::dev() leakage allowed on scoped recall paths; recorded: {recorded:?}"
+    );
+}
+
+// ── P-5 (v0.2 review) — propagation regression matrix ───────────────────────
+//
+// The release-gate review noted that `RecordingStorage` recorded all
+// six partitioned port arguments but only `vector_search` was asserted.
+// These four tests close the matrix: atomic_write (ingest path),
+// publish (consolidate-queue), read_as_of (DSL hydrate path), and
+// graph_traverse (Graph operator DSL branch). Each test follows the
+// same pattern as `scoped_recall_propagates_scope_to_vector_search`:
+// drive the path under two distinct scopes via the public typestate
+// API and assert the recorder saw exactly the bound scope on every
+// call, with zero `Scope::dev()` leakage.
+
+#[tokio::test]
+async fn scoped_ingest_propagates_scope_to_atomic_write() {
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
+
+    let scope_a = Scope::new("agent:p5-a").unwrap();
+    let scope_b = Scope::new("agent:p5-b").unwrap();
+
+    engine
+        .scoped(scope_a.clone())
+        .ingest(EpisodeBuilder::new("src", "hello"))
+        .await
+        .expect("ingest under scope_a");
+    engine
+        .scoped(scope_b.clone())
+        .ingest(EpisodeBuilder::new("src", "world"))
+        .await
+        .expect("ingest under scope_b");
+
+    let recorded = storage.atomic_write_scopes.lock().clone();
+    assert_eq!(recorded.len(), 2, "expected 2 atomic_write calls; got {recorded:?}");
+    assert_eq!(&recorded[0], &scope_a, "first atomic_write must use scope_a");
+    assert_eq!(&recorded[1], &scope_b, "second atomic_write must use scope_b");
+    assert!(
+        recorded.iter().all(|s| s.as_str() != "_dev_"),
+        "Scope::dev() leakage detected on atomic_write path: {recorded:?}"
+    );
+}
+
+#[tokio::test]
+async fn scoped_ingest_propagates_scope_to_publish() {
+    // Lunaris::ingest fires one __lunaris_consolidate__ publish per call
+    // (Plan 04-04 D-16). The publish MUST carry the bound scope, not
+    // Scope::dev().
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
+
+    let scope_a = Scope::new("agent:p5-pub-a").unwrap();
+    let scope_b = Scope::new("agent:p5-pub-b").unwrap();
+
+    engine
+        .scoped(scope_a.clone())
+        .ingest(EpisodeBuilder::new("src", "alpha payload"))
+        .await
+        .expect("ingest under scope_a");
+    engine
+        .scoped(scope_b.clone())
+        .ingest(EpisodeBuilder::new("src", "beta payload"))
+        .await
+        .expect("ingest under scope_b");
+
+    let recorded = storage.publish_scopes.lock().clone();
+    assert!(
+        recorded.iter().any(|s| s == &scope_a),
+        "publish must carry scope_a at least once; recorded: {recorded:?}"
+    );
+    assert!(
+        recorded.iter().any(|s| s == &scope_b),
+        "publish must carry scope_b at least once; recorded: {recorded:?}"
+    );
+    assert!(
+        recorded.iter().all(|s| s.as_str() != "_dev_"),
+        "Scope::dev() leakage detected on publish path: {recorded:?}"
+    );
+}
+
+#[tokio::test]
+async fn scoped_recall_propagates_scope_to_graph_traverse() {
+    use lunaris::{EntityId, Graph};
+    use lunaris_retrieve::Query;
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let engine = Lunaris::with_parts(storage.clone() as Arc<dyn StoragePort>, embedder, clock);
+
+    let scope_a = Scope::new("agent:p5-gt-a").unwrap();
+    let scope_b = Scope::new("agent:p5-gt-b").unwrap();
+
+    let _ = engine
+        .scoped(scope_a.clone())
+        .dsl()
+        .with_root(Graph::anchored(vec![EntityId::from_name_and_type("Probe", "Test")], 2))
+        .execute(Query::text("alpha"))
+        .await
+        .expect("scope_a graph recall must not error");
+    let _ = engine
+        .scoped(scope_b.clone())
+        .dsl()
+        .with_root(Graph::anchored(vec![EntityId::from_name_and_type("Probe", "Test")], 2))
+        .execute(Query::text("beta"))
+        .await
+        .expect("scope_b graph recall must not error");
+
+    let recorded = storage.graph_traverse_scopes.lock().clone();
+    assert!(
+        recorded.iter().any(|s| s == &scope_a),
+        "graph_traverse must carry scope_a at least once; recorded: {recorded:?}"
+    );
+    assert!(
+        recorded.iter().any(|s| s == &scope_b),
+        "graph_traverse must carry scope_b at least once; recorded: {recorded:?}"
+    );
+    assert!(
+        recorded.iter().all(|s| s.as_str() != "_dev_"),
+        "Scope::dev() leakage detected on graph_traverse path: {recorded:?}"
     );
 }
