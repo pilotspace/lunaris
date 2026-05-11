@@ -23,7 +23,7 @@ authors.workspace      = true
 
 [features]
 default      = []
-candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
 ollama       = ["dep:reqwest"]
 cloud-api    = ["dep:reqwest"]
 # Gates live-backend integration tests (real Gemma-3 27B model load + Ollama HTTP
@@ -51,7 +51,9 @@ candle-nn           = { workspace = true, optional = true }
 candle-transformers = { workspace = true, optional = true }
 tokenizers          = { workspace = true, optional = true }
 dirs                = { workspace = true, optional = true }
-parking_lot         = { workspace = true, optional = true }
+# Wave 3F: parking_lot is now unconditional — VerifySupervisor uses RwLock
+# regardless of which backend feature is enabled.
+parking_lot         = { workspace = true }
 # http stack — shared by `ollama` and `cloud-api` features.
 reqwest        = { workspace = true, optional = true }
 

@@ -51,6 +51,7 @@ pub mod cloud_api;
 pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
+pub mod supervisor;
 pub mod types;
 pub mod worker;
 
@@ -61,7 +62,12 @@ pub use cloud_api::{CloudApiVerifier, CloudApiVerifierOpts, CloudProvider};
 pub use noop::NoopVerifier;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaVerifier, OllamaVerifierOpts};
+pub use supervisor::{
+    ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, VerifySupervisor, VerifySupervisorHandle,
+    scope_verify_topic,
+};
 pub use types::{VerifierBackend, VerifyDecision};
+#[allow(deprecated)]
 pub use worker::{VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, run_verify_worker};
 
 // Re-export the NeedsReview DTOs so downstream callers don't need a direct

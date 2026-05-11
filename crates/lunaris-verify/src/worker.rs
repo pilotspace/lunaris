@@ -58,10 +58,10 @@ pub const VERIFY_CONSUMER_GROUP: &str = "lunaris-verify-v0";
 pub const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
 /// Default drain grace period (D-07).
-const DEFAULT_DRAIN_MS: u64 = 5000;
+pub(crate) const DEFAULT_DRAIN_MS: u64 = 5000;
 
 /// Env override for [`DEFAULT_DRAIN_MS`].
-const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
+pub(crate) const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
 
 /// Spawn the in-process verifier worker. Returns the `JoinHandle` so the
 /// caller (Plan 04-04 `VerifierPipelineHandle::enable()`) can `.await` it
@@ -83,6 +83,15 @@ const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
 /// broker will redeliver on atomic_write failure; deserialize/audit/verifier
 /// failures surface as dropped messages on purpose so a poisoned message
 /// doesn't block the queue.
+///
+/// # Deprecation
+///
+/// This single-topic entry point is superseded by
+/// [`crate::supervisor::VerifySupervisor`] (Wave 3F, RFC 0001 §3.7).
+/// It is preserved as a backwards-compatible wrapper that registers one
+/// `Scope::dev()` task with the supervisor. New code should construct
+/// `VerifySupervisor` directly and register scopes via `register_scope`.
+#[deprecated(note = "use VerifySupervisor (crate::supervisor) — Wave 3F RFC 0001 §3.7")]
 pub async fn run_verify_worker(
     storage: Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
@@ -102,6 +111,9 @@ pub async fn run_verify_worker(
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(DEFAULT_DRAIN_MS);
 
+    // dev_scope is moved into the spawned task for use in process_one /
+    // drain_loop calls. The deprecated legacy wrapper keeps Scope::dev() here;
+    // VerifySupervisor passes the real scope in its per-scope task.
     let handle = tokio::spawn(async move {
         tracing::info!(
             consumer_group = VERIFY_CONSUMER_GROUP,
@@ -109,6 +121,7 @@ pub async fn run_verify_worker(
             "verify_worker_started"
         );
 
+        let scope = dev_scope;
         let mut stream = stream;
         loop {
             tokio::select! {
@@ -118,7 +131,7 @@ pub async fn run_verify_worker(
                         drain_ms,
                         "verify_worker_shutdown_requested; entering drain"
                     );
-                    drain_loop(&mut stream, &storage, verifier.clone(), &clock, drain_ms).await;
+                    drain_loop(&mut stream, &storage, verifier.clone(), &clock, &scope, drain_ms).await;
                     break;
                 }
                 maybe_msg = stream.next() => {
@@ -128,7 +141,7 @@ pub async fn run_verify_worker(
                             break;
                         }
                         Some(Ok(msg)) => {
-                            process_one(&storage, verifier.clone(), &clock, msg.payload).await;
+                            process_one(&storage, verifier.clone(), &clock, &scope, msg.payload).await;
                         }
                         Some(Err(e)) => {
                             tracing::warn!(err = %e, "verify_worker_stream_error; continuing");
@@ -155,13 +168,14 @@ async fn drain_loop(
     storage: &Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
     clock: &Arc<HlcClock>,
+    scope: &Scope,
     drain_ms: u64,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(drain_ms);
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, stream.next()).await {
             Ok(Some(Ok(msg))) => {
-                process_one(storage, verifier.clone(), clock, msg.payload).await;
+                process_one(storage, verifier.clone(), clock, scope, msg.payload).await;
             }
             Ok(Some(Err(e))) => {
                 tracing::warn!(err = %e, "verify_worker_drain_stream_error");
@@ -172,10 +186,14 @@ async fn drain_loop(
     }
 }
 
-async fn process_one(
+/// Process one message from the verify queue. Exposed as `pub(crate)` so the
+/// per-scope supervisor task can reuse this logic with the real scope instead
+/// of `Scope::dev()`.
+pub(crate) async fn process_one(
     storage: &Arc<dyn StoragePort>,
     verifier: Arc<dyn Verifier>,
     clock: &Arc<HlcClock>,
+    scope: &Scope,
     payload: Bytes,
 ) {
     // Plan 05-05 OPS-05 — `lunaris.verify_pipeline.process_message` per-message
@@ -243,7 +261,7 @@ async fn process_one(
             return;
         }
 
-        if let Err(e) = apply_supersede(storage, &result, clock, &envelope_kind).await {
+        if let Err(e) = apply_supersede(storage, &result, clock, &envelope_kind, scope).await {
             tracing::warn!(err = %e, "verify_worker_atomic_write_failed; broker will redeliver");
             return;
         }
@@ -287,6 +305,7 @@ async fn apply_supersede(
     decision: &VerifyDecision,
     clock: &Arc<HlcClock>,
     envelope_kind: &str,
+    scope: &Scope,
 ) -> Result<(), LunarisError> {
     let winner_id = decision.winner_id.expect("checked applies() earlier");
     let loser_id = decision.loser_id.expect("checked applies() earlier");
@@ -314,14 +333,12 @@ async fn apply_supersede(
     //    is the source of monotonic timestamps).
     let now = clock.tick();
 
-    // 3. Load existing rows.
-    // RFC 0001: arbitration reads use Scope::dev() — the verifier worker
-    // operates on the global arbitration queue and does not yet route per-scope.
-    let dev_scope = Scope::dev();
+    // 3. Load existing rows using the caller-supplied scope (real per-scope
+    //    routing — Wave 3F RFC 0001 §3.7 replaces the former Scope::dev() placeholder).
     let winner_existing =
-        storage.read_as_of(&dev_scope, &winner_key, now).await.map_err(LunarisError::Storage)?;
+        storage.read_as_of(scope, &winner_key, now).await.map_err(LunarisError::Storage)?;
     let loser_existing =
-        storage.read_as_of(&dev_scope, &loser_key, now).await.map_err(LunarisError::Storage)?;
+        storage.read_as_of(scope, &loser_key, now).await.map_err(LunarisError::Storage)?;
 
     // 4. LOSER WriteOp — invalidate_sys + JSON-patch payload["bt"].
     let loser_op = match loser_existing {
@@ -423,10 +440,9 @@ async fn apply_supersede(
 
     // 6. ONE atomic_write per decision (D-11 invariant).
     //    Exactly TWO ops in this call: [loser_op, winner_op].
-    // RFC 0001: uses Scope::dev() — arbitration write scope routing deferred.
-    let dev_scope = Scope::dev();
+    //    Wave 3F: uses the caller-supplied scope (real per-scope routing).
     storage
-        .atomic_write(&dev_scope, &[loser_op, winner_op])
+        .atomic_write(scope, &[loser_op, winner_op])
         .await
         .map(|_lsn| ())
         .map_err(LunarisError::Storage)

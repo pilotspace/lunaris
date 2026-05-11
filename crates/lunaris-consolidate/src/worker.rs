@@ -63,16 +63,16 @@ pub const CONSOLIDATE_CONSUMER_GROUP: &str = "lunaris-consolidate-v0";
 pub const CONSOLIDATE_TOPIC: &str = "__lunaris_consolidate__";
 
 /// Debounce window default (D-17).
-const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
+pub(crate) const DEFAULT_DEBOUNCE_MS: u64 = 60_000;
 
 /// Env override for [`DEFAULT_DEBOUNCE_MS`].
-const ENV_DEBOUNCE_MS: &str = "LUNARIS_CONSOLIDATE_DEBOUNCE_MS";
+pub(crate) const ENV_DEBOUNCE_MS: &str = "LUNARIS_CONSOLIDATE_DEBOUNCE_MS";
 
 /// Drain grace-period default (D-07 — mirrors verifier worker contract).
-const DEFAULT_DRAIN_MS: u64 = 5000;
+pub(crate) const DEFAULT_DRAIN_MS: u64 = 5000;
 
 /// Env override for [`DEFAULT_DRAIN_MS`].
-const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
+pub(crate) const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
 
 /// Spawn the in-process consolidator worker. Returns the `JoinHandle` so the
 /// caller (Plan 04-04 `ConsolidatorPipelineHandle::enable()`) can `.await`
@@ -86,6 +86,16 @@ const ENV_DRAIN_MS: &str = "LUNARIS_WORKER_DRAIN_MS";
 /// inside `tokio::spawn` so a panic in the backend never takes down the
 /// worker. Per-promotion + per-archive audit messages are emitted to
 /// `__lunaris_audit__` after each successful pass (B-1).
+///
+/// # Deprecation
+///
+/// This single-topic entry point is superseded by
+/// [`crate::supervisor::ConsolidateSupervisor`] (Wave 3F, RFC 0001 §3.7).
+/// It is preserved as a backwards-compatible wrapper that registers one
+/// `Scope::dev()` task with the supervisor. New code should construct
+/// `ConsolidateSupervisor` directly and register scopes via
+/// `register_scope`.
+#[deprecated(note = "use ConsolidateSupervisor (crate::supervisor) — Wave 3F RFC 0001 §3.7")]
 pub async fn run_consolidate_worker(
     storage: Arc<dyn StoragePort>,
     consolidator: Arc<dyn Consolidator>,
@@ -204,7 +214,7 @@ fn ingest_into_buffer(buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>, payload
 /// W-6 fix: the events vec is cloned into the `tokio::spawn` closure BY
 /// VALUE so no borrow crosses the spawn boundary —
 /// `let evts = events.clone(); ... async move { c.consolidate(s, &evts).await }`.
-async fn flush(
+pub(crate) async fn flush(
     storage: &Arc<dyn StoragePort>,
     consolidator: Arc<dyn Consolidator>,
     buffer: &mut HashMap<Ulid, Vec<ConsolidateEvent>>,
@@ -283,7 +293,10 @@ async fn flush(
 /// `report.communities_rebuilt` is logged via `tracing::info!` only — there
 /// is no `AuditEvent::ConsolidatorRebuild` variant in v0 (deferred per the
 /// plan's threat model + D-22 audit shape).
-async fn publish_per_event_audits(storage: &Arc<dyn StoragePort>, report: &ConsolidationReport) {
+pub(crate) async fn publish_per_event_audits(
+    storage: &Arc<dyn StoragePort>,
+    report: &ConsolidationReport,
+) {
     for p in &report.promotions {
         let _ = lunaris_core::audit::publish_audit_event(storage, promotion_event(p)).await;
     }
@@ -303,7 +316,7 @@ async fn publish_per_event_audits(storage: &Arc<dyn StoragePort>, report: &Conso
 /// `AuditEvent::ConsolidatorPromotion` variant from `lunaris-core::audit`.
 /// The v0.1.0 wire shape is preserved (see
 /// `crates/lunaris-core/tests/fixtures/audit/v0.1.0/consolidator_promotion.json`).
-fn promotion_event(p: &PromotionEvent) -> lunaris_core::audit::AuditEvent {
+pub(crate) fn promotion_event(p: &PromotionEvent) -> lunaris_core::audit::AuditEvent {
     lunaris_core::audit::AuditEvent::ConsolidatorPromotion {
         episode_id: p.episode_id,
         fact_id: lunaris_core::audit::FactIdData(p.fact_id.0),
@@ -313,7 +326,7 @@ fn promotion_event(p: &PromotionEvent) -> lunaris_core::audit::AuditEvent {
 
 /// Build the per-archive typed audit event. See `promotion_event` for the
 /// refactor context.
-fn archive_event(a: &ArchiveEvent) -> lunaris_core::audit::AuditEvent {
+pub(crate) fn archive_event(a: &ArchiveEvent) -> lunaris_core::audit::AuditEvent {
     lunaris_core::audit::AuditEvent::ConsolidatorArchive {
         fact_id: lunaris_core::audit::FactIdData(a.fact_id.0),
         final_activation: a.final_activation,

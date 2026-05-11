@@ -51,16 +51,22 @@ use lunaris_core::{LunarisError, StoragePort};
 pub mod act_r;
 pub mod leiden;
 pub mod noop;
+pub mod supervisor;
 pub mod types;
 pub mod worker;
 
 pub use act_r::{ActRConsolidator, ActRScorer};
 pub use leiden::{CommunityAssignment, GraphSnapshot, leiden_pass};
 pub use noop::NoopConsolidator;
+pub use supervisor::{
+    ConsolidateSupervisor, ConsolidateSupervisorHandle, DEFAULT_SCOPE_CONCURRENCY,
+    ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, scope_consolidate_topic,
+};
 pub use types::{
     ArchiveEvent, CommunityId, ConsolidateEvent, ConsolidationReport, ConsolidatorConfig, FactId,
     IndexKind, PromotionEvent, ReferenceTime,
 };
+#[allow(deprecated)]
 pub use worker::{CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, run_consolidate_worker};
 
 /// Object-safe async consolidator.
