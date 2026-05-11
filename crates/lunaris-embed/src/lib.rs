@@ -27,11 +27,15 @@
 
 #[cfg(feature = "candle")]
 pub mod candle_gemma;
+#[cfg(feature = "fastembed")]
+pub mod fastembed;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
 #[cfg(feature = "candle")]
 pub use candle_gemma::{CandleEmbeddingGemma, CandleEmbeddingGemmaOpts};
+#[cfg(feature = "fastembed")]
+pub use fastembed::{FastembedEmbedder, FastembedEmbedderOpts};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaEmbedder, OllamaEmbedderOpts};
 
