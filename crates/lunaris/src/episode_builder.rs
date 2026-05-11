@@ -17,8 +17,8 @@
 //! | `EpisodeBuilder::into_episode` | `pub(crate)` | Only `ScopedLunaris::ingest` may call this |
 //! | struct fields                | private       | Enforce construction only via `new()`      |
 
-use lunaris_core::{Episode, HlcClock, Scope};
 use lunaris_core::bitemporal::BiTemporal;
+use lunaris_core::{Episode, HlcClock, Scope};
 use ulid::Ulid;
 
 /// Scope-less payload builder for [`Episode`].

@@ -14,8 +14,8 @@ use futures::stream::BoxStream;
 use lunaris::Lunaris;
 use lunaris::episode_builder::EpisodeBuilder;
 use lunaris_core::{
-    CypherQuery, Episode, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg, Row,
-    Scope, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit, WriteOp,
+    CypherQuery, Episode, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg, Row, Scope,
+    StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
 use serde_json;

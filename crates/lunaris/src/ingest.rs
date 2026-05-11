@@ -17,8 +17,7 @@
 use std::sync::Arc;
 
 use lunaris_core::{
-    Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort,
-    WriteOp,
+    Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
 };
 use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate};
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines

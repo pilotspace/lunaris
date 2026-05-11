@@ -68,10 +68,7 @@ async fn cross_scope_kv_keys_are_disjoint() {
 
     // Write under scope_a via atomic_write.
     let ops = vec![WriteOp::KvPut { key: key_a.clone(), value: value.clone() }];
-    storage
-        .atomic_write(&scope_a, &ops)
-        .await
-        .expect("atomic_write under scope_a must succeed");
+    storage.atomic_write(&scope_a, &ops).await.expect("atomic_write under scope_a must succeed");
 
     // Build the equivalent key under scope_b for the same ULID.
     // This key does NOT exist — we never wrote it.
@@ -102,11 +99,7 @@ async fn cross_scope_kv_keys_are_disjoint() {
     );
 
     let row = result_a.unwrap();
-    assert_eq!(
-        row.value.as_ref(),
-        value.as_slice(),
-        "returned value must match what was written"
-    );
+    assert_eq!(row.value.as_ref(), value.as_slice(), "returned value must match what was written");
 }
 
 /// Verify the keyspace prefix helper produces disjoint keys for different scopes.
