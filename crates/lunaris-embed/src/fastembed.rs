@@ -326,9 +326,9 @@ mod live_tests {
         let embedder = FastembedEmbedder::new(FastembedEmbedderOpts::default())
             .expect("real model load — auto-download to ~/.cache/lunaris/models/fastembed/");
         assert_eq!(embedder.dim(), FASTEMBED_GEMMA_DIM);
-        let inputs = vec!["hello world", "lunaris memory engine"];
+        let inputs: [&str; 2] = ["hello world", "lunaris memory engine"];
         let vecs = embedder
-            .embed_batch(inputs.iter().copied().collect::<Vec<&str>>().as_slice())
+            .embed_batch(&inputs)
             .await
             .expect("embed_batch");
         assert_eq!(vecs.len(), 2);
