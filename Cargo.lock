@@ -2194,6 +2194,7 @@ dependencies = [
  "lunaris-extract",
  "lunaris-ingest",
  "lunaris-storage-moon",
+ "lunaris-verify",
  "parking_lot",
  "procfs",
  "proptest",

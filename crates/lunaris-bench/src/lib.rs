@@ -45,6 +45,13 @@ pub mod eval;
 pub mod eval_05_slo;
 pub mod eval_05_trace;
 pub mod fixtures;
+// Phase 24 / RFC 0006 §4 — deterministic NeedsReviewItem corpus that
+// drives `lunaris_verify::divergence::compare_verifiers` against the
+// 27B + 270M Candle backends. Lives here (not in lunaris-verify)
+// because the corpus depends on lunaris-extract types and on the
+// `rand` / `rand_chacha` seeded generator already pulled in by the
+// 1M-fact corpus.
+pub mod verifier_corpus;
 
 pub use corpus::{
     BenchCorpusError, CORPUS_BATCH_OPS, CORPUS_EMBEDDING_DIM, CorpusFingerprint, CorpusGenOpts,
