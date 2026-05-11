@@ -2,10 +2,11 @@
 
 | Field        | Value                                          |
 |--------------|------------------------------------------------|
-| Status       | **Accepted** (Wave 0 — pre-implementation)     |
+| Status       | **Implemented** (v0.2.0, 2026-05-11)           |
 | Author       | Tin Dang                                       |
 | Created      | 2026-05-10                                     |
-| Target       | Lunaris **v0.2** OSS                           |
+| Implemented  | 2026-05-11 (Wave 4 close-out)                  |
+| Target       | Lunaris **v0.2.0** OSS                         |
 | Supersedes   | —                                              |
 | Related      | `tmp/lunaris-ship-to-product-v2.md`, `tmp/lunaris-multi-agent-flow.md`, `tmp/xmem-grounded-findings-and-pickups.md` |
 
@@ -523,6 +524,55 @@ explicit. Mitigations:
 
 ## 9. Acceptance
 
-This RFC is **Accepted** at v0.2 planning time. The next concrete action is
-the Wave 0 stub commit on branch `v0.2/scope`. Status will flip to
-**Implemented** at the close of Wave 4.
+This RFC was **Accepted** at v0.2 planning time and **Implemented** in v0.2.0
+on 2026-05-11. Status flipped after Wave 4 close-out.
+
+## 10. Implementation Outcome (v0.2.0 close-out)
+
+Shipped across six waves on branch `v0.2/scope`, base commit `cace8bc`:
+
+| Wave | Scope | Key commits |
+|------|-------|------------|
+| **0** — Type freeze | `Scope` newtype, primitive scope fields, `StoragePort` signature change, `ScopedLunaris<'a>` stub, `AuthClaims.scope` | `cace8bc` |
+| **1** — Parallel implementation | A: core hardening / B: Postgres RLS / C: Moon per-scope keyspace / D: ScopedLunaris bodies + EpisodeBuilder security fix / E: server routes | `4fd5e1f`, `664bb93`, `d266593`, `f674b95`, `5e5ca34`, `0e92ff0`, `6ec6bb9` |
+| **2** — Migration docs + ergonomics review | `docs/migration/0.1-to-0.2.md`, `cargo public-api` diff dumps | `bd6d36d` |
+| **2.5** — Carry-over debt | B: keyspace helpers moved to `lunaris-core` / A: `KeywordPort` gains `&Scope` (§3.4 amendment) / C: scope plumbed through `QueryContext` and operators / D: regression test pinning the contract | `7cbdf50`, `e74095b`, `e056aaf`, `c71bc96` |
+| **3** — Parallel completion | F: per-scope `ConsolidateSupervisor` / `VerifySupervisor` / G: PyO3 + napi SDK regen / H: HTTP multi-agent UAT contract + `docs/multi-agent.md` | `b273381`, `cbd8d3e`, `c2018c1`, `f8b228b` |
+| **4** — Close-out | CHANGELOG, RFC status flip, migration guide finalization, `recall_graph_mode` regression fix | this commit |
+
+**Outcome vs RFC contract:**
+
+- ✅ Every primitive carries `Scope` at the type level
+- ✅ `ScopedLunaris<'a>` typestate makes cross-scope ingest a compile error
+  via `EpisodeBuilder::into_episode` being `pub(crate)` to `lunaris`
+- ✅ `StoragePort` and `KeywordPort` both partition by `&Scope`
+- ✅ Postgres RLS + non-superuser role requirement documented; cross-scope
+  leak test green
+- ✅ Moon per-scope keyspace (`lunaris:{scope}:`) + per-scope FT/GRAPH/MQ
+  resources; soft cap of 512 scopes per Moon node surfaced via
+  `StorageCapabilities.max_scopes_recommended`
+- ✅ HTTP 422 rejects `metadata.tenant` and top-level `scope` body overrides
+- ✅ Per-scope consolidator/verifier supervisors with bounded concurrency
+  and panic isolation
+- ✅ PyO3 and napi SDK bindings expose the v0.2 API
+- ✅ External-consumer UAT contract in `docs/multi-agent.md` + executable
+  `crates/lunaris-server/tests/multi_agent_uat.rs`
+- ⏭️ `forget` per-scope routing — deferred to v0.3 (`ScopedLunaris::forget`
+  with target HTTP 403/404 contract pinned in an `#[ignore]`'d UAT-4)
+- ⏭️ Pipeline handles (`ConsolidatorPipelineHandle`, `VerifyPipelineHandle`)
+  using deprecated single-topic workers — supervisor migration deferred to
+  v0.3 (`#[allow(deprecated)]` at the call sites with a v0.3 TODO)
+
+**Verifier gates (close-out, on v0.2/scope HEAD):**
+
+- `cargo build --workspace --exclude lunaris-py --exclude lunaris-ts --all-features` ✅
+- `cargo clippy ... -- -D warnings` ✅
+- `cargo fmt --check` ✅
+- `cargo test --workspace --exclude lunaris-py --exclude lunaris-ts --all-features` ✅ (offline; live `moon_url_*` / `postgres_url_*` UAT require running services)
+- `cargo test -p lunaris-server --test multi_agent_uat` ✅ (5/5 UAT scenarios)
+- INGEST-04 invariant: single `atomic_write` at `crates/lunaris-ingest/src/pipeline.rs:116` ✅
+- `maturin develop` + pytest ✅ (14/14)
+- `napi build` + vitest ✅ (50/50)
+
+RFC 0001 is **Implemented**. Carry-over items are tracked in CHANGELOG
+§"Known issues / v0.3 carryover" and `docs/migration/0.1-to-0.2.md` §10.

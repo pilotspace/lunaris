@@ -2,6 +2,118 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.2.0 — 2026-05-11 — Multi-agent partitioning
+
+First-class multi-agent / multi-tenant isolation via the new `Scope`
+newtype. **Breaking change at the v0.1 → v0.2 boundary** — see
+`docs/migration/0.1-to-0.2.md` for the upgrade path. No on-the-wire
+compatibility with v0.1.
+
+### Added
+
+- **`lunaris_core::Scope`** — validated newtype around `SmolStr` (regex
+  `^[A-Za-z0-9_\-:.]{1,128}$`). Cheap to clone, inline up to 23 bytes,
+  derives `Ord, PartialOrd` for per-scope supervisor maps. `Scope::dev()`
+  is a doc-hidden test/migration helper.
+- **`lunaris_core::keyspace`** — storage-agnostic primitive KV key helpers
+  (`episode_key`, `chunk_key`, `entity_key`, `relation_key`, `fact_key`,
+  `community_key`, `scope_prefix`). Format `lunaris:{scope}:{kind}:{ulid}`.
+- **`ScopedLunaris<'a>`** typestate wrapper returned by
+  `Lunaris::scoped(scope)`. The bound scope propagates through ingest,
+  recall, and the DSL builder.
+- **`EpisodeBuilder`** — scope-less Episode payload with `pub(crate)`
+  terminal `into_episode`. Only `ScopedLunaris::ingest` can stamp a scope
+  onto an Episode — cross-scope ingest is a compile error.
+- **`ConsolidateSupervisor` / `VerifySupervisor`** — per-scope worker pools
+  with bounded concurrency (`LUNARIS_SCOPE_CONCURRENCY`, default 8) and
+  idle-scope timeout (`LUNARIS_SCOPE_IDLE_TIMEOUT_MS`, default 30 min).
+  Panic in one scope's task is contained; the scope is re-registered.
+- **Postgres backend** — `scope TEXT NOT NULL` column on every primitive
+  table + Row-Level Security policies + `SET LOCAL lunaris.scope` per
+  transaction. Migration `20260510000005_scope_partitioning.sql` backfills
+  pre-existing rows with the reserved literal `_legacy`.
+- **Moon backend** — per-scope keyspace prefix `lunaris:{scope}:` + per-scope
+  FT / GRAPH / MQ resources. Lazy index init per scope.
+  `StorageCapabilities.max_scopes_recommended = 512` reflects Moon's FT
+  index soft limit.
+- **`lunaris-server`** — `AuthClaims.scope: Scope` (was `tenant: String`),
+  parsed from the JWT `tenant` claim via `Scope::new()` (401 on invalid).
+  Request bodies use `#[serde(deny_unknown_fields)]`: top-level `scope` or
+  `metadata.tenant` overrides return HTTP 422.
+- **`docs/multi-agent.md`** — public-facing 5-scenario HTTP UAT contract
+  for external consumers (Helios + others).
+  `crates/lunaris-server/tests/multi_agent_uat.rs` is the executable
+  companion (982 lines, all 5 scenarios green).
+- **SDK regen** — `lunaris-py` (PyO3 0.26) + `lunaris-ts` (napi-rs 3.x)
+  bindings for `Scope`, `EpisodeBuilder`, `ScopedLunaris`. 14 pytest + 50
+  vitest assertions green via `maturin develop` and `napi build`.
+- **`docs/rfcs/0001-scope-newtype.md`** — full RFC for this release.
+- **`docs/migration/0.1-to-0.2.md`** + `docs/migration/api-diff/` —
+  migration guide and full public-API diff dumps (546 lines).
+
+### Changed (breaking)
+
+- **Primitive constructors** — `Episode::new`, `Chunk::new`, `Entity::new`,
+  `Relation::new`, `Fact::new`, `Community::new` all take `scope: Scope`
+  as the first argument.
+- **`StoragePort`** — every partitioning method gains `scope: &Scope` as
+  the first argument after `&self`. Eight methods affected: `atomic_write`,
+  `vector_search`, `graph_traverse`, `scan_range`, `read_as_of`, `publish`,
+  `subscribe`, `queue_depth`. `capabilities()` is unchanged.
+- **`KeywordPort::keyword_search`** — gains `scope: &Scope` as the first
+  argument (RFC 0001 §3.4 amendment; originally overlooked in Wave 0).
+- **`QueryContext`** — carries `pub scope: Scope`. `RetrievalBuilder` gains
+  `with_scope(scope)` and is pre-seeded by `ScopedLunaris::dsl()`.
+- **HTTP API** — JWT `tenant` claim is now mandatory and validated via
+  `Scope::new()`. Request bodies cannot override scope via `metadata.tenant`
+  or a top-level `scope` field.
+
+### Deprecated
+
+- **`lunaris_consolidate::run_consolidate_worker`** and
+  **`lunaris_verify::run_verify_worker`** — single-topic legacy entry
+  points. Use `ConsolidateSupervisor` / `VerifySupervisor` instead. Pipeline
+  handles (`ConsolidatorPipelineHandle`, `VerifyPipelineHandle`) continue
+  using the legacy workers for backwards compat; migration to supervisors
+  is tracked for v0.3.
+
+### Removed
+
+- **`AuthClaims.tenant: String`** — replaced by `AuthClaims.scope: Scope`.
+- **`metadata.tenant` override on request bodies** — previously honored
+  silently as a tenant key. Now rejected with HTTP 422.
+
+### Fixed
+
+- **`hydrate.rs` key-format regression** — Wave 1C scope-prefixed write keys
+  via `keyspace::chunk_key` but the READ path in
+  `lunaris-retrieve::hydrate` still used the obsolete non-scoped
+  `lunaris:chunk:{ulid}` format. Every graph-anchored recall silently
+  returned zero hits. Regression pinned by
+  `scoped_lunaris::scoped_recall_propagates_scope_to_vector_search`.
+- **`recall_graph_mode::mode_graph_falls_back_to_semantic_with_degraded_when_no_entities`** —
+  test fixture used obsolete pre-Wave-2.5B key format with `Scope::dev()`
+  while the HTTP path read under the JWT's `tenant="t-1"` scope. Migrated
+  to `keyspace::chunk_key(&Scope::new("t-1"))` so writer/reader scopes
+  match.
+
+### Known issues / v0.3 carryover
+
+- **`forget` not yet scoped at the engine layer** — `Lunaris::forget` still
+  uses `Scope::dev()` internally. UAT-4 documents the target contract
+  (`403/404` on cross-scope forget) as an `#[ignore]`'d test.
+  `ScopedLunaris::forget` is a v0.3 deliverable.
+- **Pipeline handles still use deprecated single-topic workers** —
+  `ConsolidatorPipelineHandle` and `VerifyPipelineHandle` will migrate to
+  the supervisors in v0.3 (requires plumbing scope through the handle).
+- **`index.d.ts` for `lunaris-ts`** — napi-rs regenerates this file on
+  every `napi build`. The `Lunaris.scoped()` declaration is added manually
+  post-gen and will be lost on the next full rebuild. Proper fix via
+  declaration merging lands in v0.2.1.
+- **Postgres production deployments must use a non-superuser role** — RLS
+  is bypassed by `rolsuper=t` or `BYPASSRLS`. `docs/migration/0.1-to-0.2.md`
+  §6.2 has the role-creation recipe.
+
 ## v0.1.2
 
 ### Changed

@@ -102,10 +102,13 @@ impl RecordingStorageWithKeyword {
         assert_eq!(id.len(), 16, "id must be 16 ULID bytes");
         let ulid = ulid::Ulid::from_bytes(id.try_into().expect("16 bytes"));
         let episode_id = ulid::Ulid::new();
+        // The HTTP tests use `tok-all` whose JWT carries tenant="t-1", so
+        // recall reads under Scope("t-1"). Key + payload scope must match.
+        let scope = lunaris_core::Scope::new("t-1").expect("valid scope");
         let payload = serde_json::json!({
             "id": ulid.to_string(),
             // RFC 0001 Wave 0: Chunk now carries a `scope` field.
-            "scope": "_dev_",
+            "scope": scope.as_str(),
             "episode_id": episode_id.to_string(),
             "text": "stub chunk text",
             "tokens": 3,
@@ -117,7 +120,12 @@ impl RecordingStorageWithKeyword {
                 "sys":   [{"wall_ms": 1, "counter": 0, "node_id": 0}, null],
             },
         });
-        let key = format!("lunaris:chunk:{ulid}").into_bytes();
+        // RFC 0001 Wave 1C / 2.5B: chunk keys are scope-prefixed
+        // `lunaris:{scope}:chunk:{ulid}` via lunaris_core::keyspace::chunk_key.
+        // The reader hydrate.rs uses the same helper so writer/reader stay in
+        // lockstep. The chunk row's scope payload field must match the key's
+        // scope segment.
+        let key = lunaris_core::keyspace::chunk_key(&scope, ulid);
         let bt = BiTemporal {
             valid: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
             sys: (Hlc { wall_ms: 1, counter: 0, node_id: 0 }, None),
