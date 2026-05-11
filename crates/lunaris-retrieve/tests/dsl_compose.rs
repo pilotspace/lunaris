@@ -165,6 +165,7 @@ impl StoragePort for RecordingStorage {
             // path requires a real MoonStorage Arc + native_rrf=true (see
             // moon_native_rrf integration test).
             native_rrf: false,
+            max_scopes_recommended: 0,
         }
     }
 }

@@ -29,7 +29,7 @@ async fn episode_atomic_write_then_read_back() {
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "notes.md", "Alice joined Acme on 2024-04-01.", &clock);
-    let key = keyspace::episode_key(ep.id);
+    let key = keyspace::episode_key(&Scope::dev(), ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
     // Single KvPut to keep the round-trip simple.

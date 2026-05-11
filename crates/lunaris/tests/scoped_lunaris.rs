@@ -12,8 +12,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris::Lunaris;
+use lunaris::episode_builder::EpisodeBuilder;
 use lunaris_core::{
-    CypherQuery, Episode, EpisodeBuilder, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg, Row,
+    CypherQuery, Episode, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg, Row,
     Scope, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
@@ -101,6 +102,7 @@ impl StoragePort for RecordingStorage {
             queue_native: false,
             max_vector_dim: 768,
             native_rrf: false,
+            max_scopes_recommended: 0,
         }
     }
 }

@@ -168,6 +168,7 @@ impl StoragePort for RecordingStorage {
             // fusion::inspect_branches forces client-side when Graph branch
             // is present).
             native_rrf: false,
+            max_scopes_recommended: 0,
         }
     }
 }

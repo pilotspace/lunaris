@@ -119,6 +119,7 @@ impl StoragePort for PretendNativeMoon {
             // KEY: report native_rrf=true so the dispatch gate evaluates the
             // remaining conditions.
             native_rrf: true,
+            max_scopes_recommended: 0,
         }
     }
 }

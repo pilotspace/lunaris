@@ -29,7 +29,7 @@ async fn round_trip_via_moon_client() {
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "smoke://retrofit", "hello moon-client", &clock);
-    let key = keyspace::episode_key(ep.id);
+    let key = keyspace::episode_key(&Scope::dev(), ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
     let lsn = storage

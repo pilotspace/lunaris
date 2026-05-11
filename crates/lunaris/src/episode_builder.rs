@@ -95,7 +95,7 @@ impl EpisodeBuilder {
     /// the bi-temporal `(valid, sys)` pair at the moment of ingest.
     pub(crate) fn into_episode(self, scope: Scope, clock: &HlcClock) -> Episode {
         Episode {
-            id: self.id.unwrap_or_else(Ulid::new),
+            id: self.id.unwrap_or_default(),
             scope,
             source: self.source,
             content: self.content,
