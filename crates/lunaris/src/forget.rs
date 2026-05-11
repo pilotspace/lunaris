@@ -227,6 +227,25 @@ impl Lunaris {
             dry_run = %request.options.dry_run,
         );
         async move {
+            // P-2 (v0.2 review) — operator-visible warning that this path is
+            // hard-coded to `Scope::dev()` for `atomic_write`, `read_as_of`,
+            // and `scan_range`. Under any non-`_dev_` scope the call silently
+            // returns `rows_deleted = 0, rows_written = 0` because RLS
+            // (Postgres) or the SCAN prefix (Moon) filters everything out.
+            // The full per-scope routing lands in v0.3 as
+            // `ScopedLunaris::forget(target)`. Emitting this every call (not
+            // once-per-process) so operators chasing "why didn't my forget
+            // work" see the warning in the line right above their forget
+            // invocation. Suppressible via the standard tracing filter
+            // (`LUNARIS_LOG=lunaris::forget=error` or similar).
+            tracing::warn!(
+                target: "lunaris::forget",
+                "Lunaris::forget is hard-coded to Scope::dev() in v0.2.x — \
+                 same-scope forget under any non-`_dev_` scope silently \
+                 returns zero matches. ScopedLunaris::forget(target) lands \
+                 in v0.3. See CHANGELOG.md v0.2.0 Known issues."
+            );
+
             // B-3: hard delete must carry a confirmation token. Returns the typed
             // ValidateError::ConfirmationRequired variant added in Task 0.
             if request.options.hard && request.options.confirmation_token.is_none() {
