@@ -197,15 +197,17 @@ async fn episode_and_chunks_appear_in_single_batch() {
     ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
 
     let batch = storage.first_batch();
+    // v0.2.1 keyspace: `lunaris:{scope}:episode:{ulid}` (RFC 0001).
+    // twelve_kb_episode binds Scope::dev() ("_dev_"), so the prefix is
+    // `lunaris:_dev_:episode:`. Match by infix to stay scope-agnostic if
+    // the fixture moves.
     let n_episode_kvput = batch
         .iter()
-        .filter(
-            |op| matches!(op, WriteOp::KvPut { key, .. } if key.starts_with(b"lunaris:episode:")),
-        )
+        .filter(|op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(8).any(|w| w == b":episode")))
         .count();
     let n_chunk_kvput = batch
         .iter()
-        .filter(|op| matches!(op, WriteOp::KvPut { key, .. } if key.starts_with(b"lunaris:chunk:")))
+        .filter(|op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(6).any(|w| w == b":chunk")))
         .count();
     let n_vec_upsert = batch
         .iter()

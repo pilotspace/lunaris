@@ -352,8 +352,11 @@ async fn hydrate_returns_chunk_text_and_source() {
     chunk.embedding = Some(vec![0.0_f32; 768]);
 
     let chunk_id_bytes = chunk.id.to_bytes().to_vec();
-    let chunk_key = format!("lunaris:chunk:{}", chunk.id).into_bytes();
-    let episode_key = format!("lunaris:episode:{}", episode.id).into_bytes();
+    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:{kind}:{ulid}`. Use the
+    // canonical helpers so this fixture tracks the keyspace format.
+    let scope = lunaris_core::Scope::dev();
+    let chunk_key = lunaris_core::keyspace::chunk_key(&scope, chunk.id);
+    let episode_key = lunaris_core::keyspace::episode_key(&scope, episode.id);
     rec.chunks_by_key.lock().insert(chunk_key, serde_json::to_vec(&chunk).unwrap());
     rec.episodes_by_key.lock().insert(episode_key, serde_json::to_vec(&episode).unwrap());
     // Vector hit must use the same id bytes as the chunk's ulid.

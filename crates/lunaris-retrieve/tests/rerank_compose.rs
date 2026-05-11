@@ -180,7 +180,8 @@ fn seed_chunk(rec: &RecordingStorage, text: &str) -> Vec<u8> {
         &clock,
     );
     let id_bytes = chunk.id.to_bytes().to_vec();
-    let key = format!("lunaris:chunk:{}", chunk.id).into_bytes();
+    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:chunk:{ulid}`.
+    let key = lunaris_core::keyspace::chunk_key(&lunaris_core::Scope::dev(), chunk.id);
     rec.chunks_by_key.lock().insert(key, serde_json::to_vec(&chunk).unwrap());
     id_bytes
 }

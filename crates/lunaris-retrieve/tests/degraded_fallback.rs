@@ -186,12 +186,16 @@ fn build_ctx(
 }
 
 fn seed_chunk(rec: &RecordingStorage, text: &str) -> Vec<u8> {
+    use lunaris_core::keyspace::chunk_key;
     use lunaris_core::primitives::Chunk;
     let clock = HlcClock::new(0);
     let episode_id = ulid::Ulid::new();
-    let chunk = Chunk::new(lunaris_core::Scope::dev(), episode_id, text, 4, 0, vec![], &clock);
+    let scope = lunaris_core::Scope::dev();
+    let chunk = Chunk::new(scope.clone(), episode_id, text, 4, 0, vec![], &clock);
     let id_bytes = chunk.id.to_bytes().to_vec();
-    let key = format!("lunaris:chunk:{}", chunk.id).into_bytes();
+    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:chunk:{ulid}`. Use the
+    // canonical helper so this fixture tracks the keyspace format.
+    let key = chunk_key(&scope, chunk.id);
     rec.chunks_by_key.lock().insert(key, serde_json::to_vec(&chunk).unwrap());
     id_bytes
 }
