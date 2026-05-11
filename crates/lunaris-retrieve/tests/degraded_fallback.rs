@@ -249,7 +249,8 @@ async fn primary_ok_fallback_unused() {
 
     let rec = Arc::new(RecordingStorage::new());
     let (storage, keyword, embedder) = build_ctx(rec);
-    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let raw = r.retrieve(&ctx).await.unwrap();
 
@@ -270,7 +271,8 @@ async fn primary_err_flips_to_fallback_with_degraded_flag() {
 
     let rec = Arc::new(RecordingStorage::new());
     let (storage, keyword, embedder) = build_ctx(rec);
-    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let raw = r.retrieve(&ctx).await.unwrap();
 
@@ -322,7 +324,8 @@ async fn fallback_error_propagates_to_caller() {
 
     let rec = Arc::new(RecordingStorage::new());
     let (storage, keyword, embedder) = build_ctx(rec);
-    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let res = r.retrieve(&ctx).await;
     let err = res.expect_err("both backends down MUST surface error");
@@ -345,7 +348,8 @@ async fn nested_degraded_fallback_still_tags_terminal_hits() {
 
     let rec = Arc::new(RecordingStorage::new());
     let (storage, keyword, embedder) = build_ctx(rec);
-    let ctx = QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
 
     let raw = outer.retrieve(&ctx).await.unwrap();
     assert_eq!(raw.len(), 1);

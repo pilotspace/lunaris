@@ -650,7 +650,13 @@ async fn id_hex_round_trip_ingest_then_graph_anchored() {
     let storage_arc: Arc<dyn StoragePort> = rec.clone();
     let keyword_arc: Arc<dyn KeywordPort> = rec.clone();
     let embedder_arc: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
-    let ctx = QueryContext::new(Query::text("Alice"), lunaris_core::Scope::dev(), embedder_arc, storage_arc, keyword_arc);
+    let ctx = QueryContext::new(
+        Query::text("Alice"),
+        lunaris_core::Scope::dev(),
+        embedder_arc,
+        storage_arc,
+        keyword_arc,
+    );
 
     let op = Graph::anchored(vec![alice_id], 2);
     let hits = op.retrieve(&ctx).await.expect("Graph::anchored retrieve must succeed");

@@ -162,12 +162,27 @@ mod tests {
     fn scoped_key_stable_format() {
         let scope = Scope::new("_dev_").unwrap();
         let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
-        assert_eq!(episode_key(&scope, id), b"lunaris:_dev_:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
-        assert_eq!(chunk_key(&scope, id), b"lunaris:_dev_:chunk:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
-        assert_eq!(entity_key(&scope, id), b"lunaris:_dev_:entity:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
-        assert_eq!(relation_key(&scope, id), b"lunaris:_dev_:relation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(
+            episode_key(&scope, id),
+            b"lunaris:_dev_:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
+        assert_eq!(
+            chunk_key(&scope, id),
+            b"lunaris:_dev_:chunk:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
+        assert_eq!(
+            entity_key(&scope, id),
+            b"lunaris:_dev_:entity:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
+        assert_eq!(
+            relation_key(&scope, id),
+            b"lunaris:_dev_:relation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
         assert_eq!(fact_key(&scope, id), b"lunaris:_dev_:fact:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
-        assert_eq!(community_key(&scope, id), b"lunaris:_dev_:community:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
+        assert_eq!(
+            community_key(&scope, id),
+            b"lunaris:_dev_:community:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
     }
 
     #[test]
