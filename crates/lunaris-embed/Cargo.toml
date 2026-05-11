@@ -4,10 +4,10 @@
 # mean-pool + L2-normalize). Alt backend: OllamaEmbedder (POSTs to /api/embed).
 # Phase 1's StubEmbedder remains in lunaris-core for tests.
 #
-# Build matrix:
-#   cargo check -p lunaris-embed                                      # candle (default)
+# Build matrix (Phase 20-02 — fastembed is now the default; candle/ollama opt-in):
+#   cargo check -p lunaris-embed                                      # fastembed (default, Phase 20-02 flip)
+#   cargo check -p lunaris-embed --no-default-features --features candle
 #   cargo check -p lunaris-embed --no-default-features --features ollama
-#   cargo check -p lunaris-embed --no-default-features --features fastembed
 #   cargo check -p lunaris-embed --no-default-features --features fastembed-coreml   # macOS CoreML EP (Phase 20-01)
 #   cargo check -p lunaris-embed --no-default-features --features fastembed-cuda     # Linux/NVIDIA CUDA EP (Phase 20-01)
 #   cargo test  -p lunaris-embed --features embedder-it               # gated live-backend tests
@@ -21,7 +21,10 @@ license.workspace      = true
 authors.workspace      = true
 
 [features]
-default     = ["candle"]
+# Phase 20-02 default flip (2026-05-11, operator override per
+# .planning/phases/20-fastembed-adoption/20-02-SCOPE-DECISION.md):
+# fastembed is now the default; candle and ollama remain opt-in.
+default     = ["fastembed"]
 candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
 # Phase 19 Plan 19-01 — fastembed-rs ONNX backend. Sub-features pinned
 # explicitly because we use `default-features = false` on the workspace dep.

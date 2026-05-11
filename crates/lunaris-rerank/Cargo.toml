@@ -5,10 +5,10 @@
 # per the RETRIEVE-06 contract: the operator code path MUST be present even when
 # the model file is unavailable.
 #
-# Build matrix:
-#   cargo check -p lunaris-rerank                                      # candle (default)
+# Build matrix (Phase 20-02 — fastembed is now the default; candle opt-in, noop always available):
+#   cargo check -p lunaris-rerank                                      # fastembed (default, Phase 20-02 flip)
+#   cargo check -p lunaris-rerank --no-default-features --features candle
 #   cargo check -p lunaris-rerank --no-default-features                # noop only
-#   cargo check -p lunaris-rerank --no-default-features --features fastembed
 #   cargo check -p lunaris-rerank --no-default-features --features fastembed-coreml  # macOS CoreML EP (Phase 20-01)
 #   cargo check -p lunaris-rerank --no-default-features --features fastembed-cuda    # Linux/NVIDIA CUDA EP (Phase 20-01)
 #   cargo test  -p lunaris-rerank --features rerank-it                 # gated candle live-model tests
@@ -23,7 +23,11 @@ license.workspace      = true
 authors.workspace      = true
 
 [features]
-default     = ["candle"]
+# Phase 20-02 default flip (2026-05-11, operator override per
+# .planning/phases/20-fastembed-adoption/20-02-SCOPE-DECISION.md):
+# fastembed is now the default; candle remains opt-in. NoopReranker is
+# unconditionally available (no feature gate) per RETRIEVE-06.
+default     = ["fastembed"]
 candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
 # Phase 19 Plan 19-04 — fastembed-rs ONNX cross-encoder reranker
 # (BGERerankerV2M3). Mirrors the lunaris-embed Plan 19-01 wiring:
