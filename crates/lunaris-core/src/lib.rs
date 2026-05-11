@@ -4,6 +4,12 @@
 
 pub mod audit;
 pub mod bitemporal;
+// RFC 0007 §3.2 — per-provider circuit breaker (Closed → Open → HalfOpen).
+// Consumed by the `FallbackExtractor` + `FallbackEmbedder` combinators
+// in lunaris-extract / lunaris-embed; lives here because both downstream
+// crates need the primitive and pulling either into the other would
+// re-introduce a layering loop.
+pub mod circuit_breaker;
 pub mod embedder;
 pub mod error;
 pub mod hlc;
@@ -15,6 +21,7 @@ pub mod scope;
 pub mod storage;
 
 pub use bitemporal::BiTemporal;
+pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitState};
 pub use embedder::{Embedder, StubEmbedder};
 pub use error::{
     ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
