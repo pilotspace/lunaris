@@ -32,6 +32,23 @@ jobs:
       # `maturin build` + `napi build` correctly.
       - run: cargo check -p lunaris-py -p lunaris-ts --all-targets
 
+      # INGEST-04 invariant — single atomic_write per ingest path.
+      # Strip line-comments first so doc references don't inflate the
+      # count, then require exactly one real `storage.atomic_write` call
+      # site in the ingest pipeline. Adding a second fan-out atomic write
+      # silently breaks the "all-or-nothing" Core Value (CLAUDE.md §Core
+      # Value) and is rejected here at the CI boundary.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: ingest_04_single_atomic_write
+        run: |
+          set -e
+          count=$(grep -v '^\s*//' crates/lunaris-ingest/src/pipeline.rs | grep -c 'storage\.atomic_write' || true)
+          if [ "$count" != "1" ]; then
+            echo "::error::INGEST-04 violated: expected 1 storage.atomic_write call site in crates/lunaris-ingest/src/pipeline.rs, found $count"
+            exit 1
+          fi
+
       # Plan 13-01 RELEASE-02 — audit envelope grep gate. Blocks
       # reintroduction of inline `serde_json::json!({"kind":"..."})`
       # envelopes in either worker crate. The canonical shape lives in
