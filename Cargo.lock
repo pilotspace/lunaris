@@ -2700,13 +2700,16 @@ dependencies = [
 name = "lunaris-ts"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "bytes",
  "chrono",
  "futures",
  "lunaris",
  "lunaris-conformance",
  "lunaris-core",
+ "lunaris-embed",
  "lunaris-recipes",
+ "lunaris-rerank",
  "lunaris-retrieve",
  "napi",
  "napi-build",

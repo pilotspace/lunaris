@@ -67,12 +67,25 @@
 // module that uses it has its own `use napi_derive::napi;` import.
 
 mod dsl;
+// Phase 21 Plan 21-02 — handwritten `EmbedderConfig` + `RerankerConfig`
+// napi classes (preset / Ollama / BYO-ONNX factories). NOT codegen-managed.
+mod embedder_config;
 mod errors;
+// Phase 21 Plan 21-02 Task 3 — handwritten `#[napi] impl Lunaris` extension
+// that adds `withEmbedder` / `withReranker` chainable methods. NOT
+// codegen-managed; generated.rs stays untouched.
+mod open_overrides;
+mod reranker_config;
 // Wave 3G — handwritten bindings for the v0.2 multi-agent partitioning surface:
 // Scope, EpisodeBuilder, ScopedLunaris, lunarisScoped. NOT codegen-managed;
 // see scope.rs for the lifetime/visibility rationale.
 mod scope;
 mod toggles;
+
+pub use embedder_config::{
+    EmbedderConfig, FastembedConfigOpts, FromOnnxBytesOpts, FromOnnxPathOpts, OllamaConfigOpts,
+};
+pub use reranker_config::{FastembedRerankerConfigOpts, RerankerConfig};
 
 // Handwritten conformance-only helpers — feature-gated so production
 // `.node` binaries never ship them. NOT codegen-managed; excluded from the

@@ -23,6 +23,12 @@ crate-type = ["cdylib", "rlib"]
 # enable the feature at `napi build` time.
 lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
 lunaris-core        = { path = "../lunaris-core" }
+# Phase 21 Plan 21-02 — handwritten EmbedderConfig / RerankerConfig wrap the
+# fastembed + ollama backends directly. Pull lunaris-embed / lunaris-rerank
+# with the matching feature flags. default-features=false keeps the candle /
+# bge tree out of the cdylib unless the operator opts in at `napi build` time.
+lunaris-embed       = { path = "../lunaris-embed", default-features = false, features = ["fastembed", "ollama"] }
+lunaris-rerank      = { path = "../lunaris-rerank", default-features = false, features = ["fastembed"] }
 lunaris-recipes     = { path = "../lunaris-recipes" }
 lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
@@ -31,6 +37,7 @@ lunaris-conformance = { path = "../lunaris-conformance", optional = true }
 napi                = { workspace = true }
 napi-derive         = { workspace = true }
 # Upstream Rust deps reused via workspace.
+async-trait         = { workspace = true }
 chrono              = { workspace = true }
 tokio               = { workspace = true }
 serde               = { workspace = true }
@@ -58,6 +65,12 @@ default = []
 # canonical `lunaris_conformance::fixtures::{SEED, EPISODE_COUNT, FixtureCorpus}`
 # constants.
 bindings-it = ["dep:lunaris-conformance"]
+
+# Phase 21 Plan 21-02 — pass-through execution-provider features so the SDK
+# cdylib can be built with accelerator support. Off by default to keep the
+# CPU-only `.node` binary slim; operators enable at `napi build` time.
+fastembed-coreml = ["lunaris-embed/fastembed-coreml", "lunaris-rerank/fastembed-coreml"]
+fastembed-cuda   = ["lunaris-embed/fastembed-cuda",   "lunaris-rerank/fastembed-cuda"]
 
 [package.metadata.docs.rs]
 # lunaris-ts is a cdylib — docs.rs doesn't build napi-rs extension modules,
