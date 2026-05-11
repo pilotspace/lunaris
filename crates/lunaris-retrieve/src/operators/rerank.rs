@@ -114,7 +114,10 @@ impl Retriever for RerankRetriever {
 
         // 3. Partial-hydrate text for each surviving id (chunk-only, no Episode
         //    lookup — text is all the cross-encoder needs).
-        let texts = partial_hydrate_text(ctx.storage.as_ref(), &raw, ctx.query.as_of).await?;
+        // Wave 2.5C: pass ctx.scope so partial_hydrate_text reads from the
+        // correct scope partition (not Scope::dev()).
+        let texts =
+            partial_hydrate_text(ctx.storage.as_ref(), &ctx.scope, &raw, ctx.query.as_of).await?;
 
         // 4. Build candidate list. Hits without a hydrated text get an empty
         //    string — the cross-encoder will produce a low score and the

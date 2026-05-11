@@ -71,6 +71,13 @@ impl Lunaris {
     ///     .await?;
     /// ```
     pub fn recall(&self) -> RetrievalBuilder {
+        // Wave 2.5C: bare Lunaris::recall() seeds Scope::dev() for backwards
+        // compat. Adopters should migrate to engine.scoped(scope).recall() so
+        // retrieval is scope-isolated at the storage layer. The warn fires once
+        // per call so it's visible in tracing output without log-spamming.
+        tracing::warn!(
+            "Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval"
+        );
         let mut b = RetrievalBuilder::from_handle(self.storage(), self.keyword(), self.embedder());
         if let Some(moon) = self.moon_storage() {
             b = b.with_moon_storage(moon);

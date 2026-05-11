@@ -529,21 +529,21 @@ impl<'a> ScopedLunaris<'a> {
     /// Recall hits under the bound scope.
     ///
     /// Returns a [`lunaris_retrieve::RetrievalBuilder`] pre-seeded with the
-    /// engine's storage / embedder / keyword Arcs, ready for the caller to
-    /// customise and `.execute()`. Scope-aware storage filtering (Wave 1C
-    /// backend plumbing) will tighten this to only return hits within
-    /// `self.scope`; for Wave 1D the scope is recorded on every ingested
-    /// episode and chunk but storage-level filtering is still `Scope::dev()`
-    /// placeholders — the isolation contract holds at ingest time.
+    /// engine's storage / embedder / keyword Arcs AND this wrapper's scope,
+    /// ready for the caller to customise and `.execute()`. Wave 2.5C: the
+    /// scope is now threaded through the entire retrieval path — Vector,
+    /// Graph, Keyword operators, and hydrate all use `self.scope` so only
+    /// hits from this scope's partition are returned.
     pub async fn recall(
         &self,
         query: lunaris_retrieve::Query,
     ) -> Result<Vec<lunaris_retrieve::Hit>, LunarisError> {
-        self.engine.recall().execute(query).await
+        self.engine.recall().with_scope(self.scope.clone()).execute(query).await
     }
 
     /// Return a [`lunaris_retrieve::RetrievalBuilder`] bound to the engine's
-    /// storage / embedder / keyword Arcs for DSL-style query composition.
+    /// storage / embedder / keyword Arcs AND this wrapper's scope for
+    /// DSL-style query composition.
     ///
     /// ```ignore
     /// let hits = engine.scoped(scope)
@@ -553,7 +553,9 @@ impl<'a> ScopedLunaris<'a> {
     ///     .await?;
     /// ```
     pub fn dsl(&self) -> lunaris_retrieve::RetrievalBuilder {
-        self.engine.recall()
+        // Wave 2.5C: pre-seed scope so all operators in the tree use the
+        // bound scope rather than Scope::dev() placeholders.
+        self.engine.recall().with_scope(self.scope.clone())
     }
 }
 

@@ -230,10 +230,12 @@ impl RetrievalBuilder {
                 self.keyword,
                 moon,
             ),
-            None => QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword),
+            None => {
+                QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword)
+            }
         };
         let raw = self.root.retrieve(&ctx).await?;
-        hydrate(self.storage.as_ref(), raw, as_of, initial_degraded).await
+        hydrate(self.storage.as_ref(), &ctx.scope, raw, as_of, initial_degraded).await
     }
 
     /// Run the tree and return the unhydrated [`RawHit`]s. Terminal —
@@ -269,7 +271,9 @@ impl RetrievalBuilder {
                 self.keyword,
                 moon,
             ),
-            None => QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword),
+            None => {
+                QueryContext::new(query, scope, self.embedder, self.storage.clone(), self.keyword)
+            }
         };
         self.root.retrieve(&ctx).await
     }

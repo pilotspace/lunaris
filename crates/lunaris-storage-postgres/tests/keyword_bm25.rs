@@ -73,7 +73,10 @@ async fn keyword_search_returns_normalized_bm25_hits() {
     pg.atomic_write(&Scope::dev(), &ops).await.expect("atomic_write");
 
     // Query "fox" — fixtures 0 and 2 contain it; fixture 1 does not.
-    let hits = pg.keyword_search("chunks", "fox", 5, None, None).await.expect("keyword_search");
+    let hits = pg
+        .keyword_search(&Scope::dev(), "chunks", "fox", 5, None, None)
+        .await
+        .expect("keyword_search");
 
     assert_eq!(hits.len(), 2, "exactly 2 chunks contain `fox`, got {}", hits.len());
     for h in &hits {
@@ -100,7 +103,7 @@ async fn keyword_search_rejects_unknown_index() {
             return;
         }
     };
-    let r = pg.keyword_search("unknown_table", "x", 1, None, None).await;
+    let r = pg.keyword_search(&Scope::dev(), "unknown_table", "x", 1, None, None).await;
     assert!(r.is_err(), "unknown index must error");
 }
 
@@ -122,7 +125,7 @@ async fn keyword_search_handles_sql_injection_attempt() {
     };
 
     let r = pg
-        .keyword_search("chunks", "foo'; DROP TABLE chunks;--", 5, None, None)
+        .keyword_search(&Scope::dev(), "chunks", "foo'; DROP TABLE chunks;--", 5, None, None)
         .await
         .expect("keyword_search must not error on injection attempt");
 

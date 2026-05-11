@@ -44,11 +44,13 @@ fn episode_lookup_key(scope: &Scope, id: Ulid) -> Vec<u8> {
 /// Looks up each chunk and its parent episode (batched per unique episode_id).
 /// Hits whose chunk row is missing are skipped (since-deleted chunks).
 ///
+/// `scope` narrows the KV lookups to the correct scope partition (Wave 2.5C).
 /// `initial_degraded` (Plan 04-04 B-9) is OR-ed into every produced
 /// `Hit::degraded` so callers using `Lunaris::recall_with_degraded_check`
 /// see the verifier-queue-lag flag on every hit.
 pub async fn hydrate(
     storage: &dyn StoragePort,
+    scope: &Scope,
     hits: Vec<RawHit>,
     as_of: Option<Hlc>,
     initial_degraded: bool,
@@ -57,18 +59,14 @@ pub async fn hydrate(
     let live_clock = HlcClock::new(0);
     let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
 
-    // RFC 0001 Wave 1D: hydrate reads under Scope::dev() until the
-    // RetrievalBuilder carries per-scope routing (Wave 1C backend plumbing).
-    let dev_scope = Scope::dev();
-
-    // First pass: pull chunk rows.
+    // First pass: pull chunk rows using the caller-supplied scope.
     let mut chunks: Vec<(RawHit, Chunk)> = Vec::with_capacity(hits.len());
     for raw in hits {
-        let key = match chunk_lookup_key(&dev_scope, &raw.id) {
+        let key = match chunk_lookup_key(scope, &raw.id) {
             Some(k) => k,
             None => continue, // bytes don't decode to a ulid — skip
         };
-        match storage.read_as_of(&dev_scope, &key, snapshot).await? {
+        match storage.read_as_of(scope, &key, snapshot).await? {
             Some(row) => {
                 let chunk: Chunk = match serde_json::from_slice(&row.value) {
                     Ok(c) => c,
@@ -94,8 +92,8 @@ pub async fn hydrate(
 
     let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
     for ep_id in unique_ep {
-        let key = episode_lookup_key(&dev_scope, ep_id);
-        if let Some(row) = storage.read_as_of(&dev_scope, &key, snapshot).await?
+        let key = episode_lookup_key(scope, ep_id);
+        if let Some(row) = storage.read_as_of(scope, &key, snapshot).await?
             && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
         {
             episode_sources.insert(ep_id, ep.source);
@@ -143,20 +141,20 @@ pub async fn hydrate(
 /// truncates them out.
 pub async fn partial_hydrate_text(
     storage: &dyn StoragePort,
+    scope: &Scope,
     hits: &[RawHit],
     as_of: Option<Hlc>,
 ) -> Result<HashMap<Vec<u8>, String>, LunarisError> {
     let live_clock = HlcClock::new(0);
     let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
 
-    let dev_scope = Scope::dev();
     let mut by_id: HashMap<Vec<u8>, String> = HashMap::with_capacity(hits.len());
     for raw in hits {
-        let key = match chunk_lookup_key(&dev_scope, &raw.id) {
+        let key = match chunk_lookup_key(scope, &raw.id) {
             Some(k) => k,
             None => continue,
         };
-        match storage.read_as_of(&dev_scope, &key, snapshot).await? {
+        match storage.read_as_of(scope, &key, snapshot).await? {
             Some(row) => {
                 if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
                     by_id.insert(raw.id.clone(), chunk.text);

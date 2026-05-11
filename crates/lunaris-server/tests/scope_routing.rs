@@ -162,6 +162,7 @@ impl StoragePort for ScopedTestStorage {
 impl KeywordPort for ScopedTestStorage {
     async fn keyword_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &str,
         _k: usize,

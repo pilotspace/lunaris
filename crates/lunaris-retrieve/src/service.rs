@@ -84,7 +84,7 @@ impl Service<Query> for RetrievalService {
             // Plan 04-04 B-9: RetrievalService callers don't have a verifier
             // queue-depth check (only `Lunaris::recall_with_degraded_check`
             // does), so initial_degraded is unconditionally false here.
-            hydrate(storage.as_ref(), raw, as_of, false).await
+            hydrate(storage.as_ref(), &ctx.scope, raw, as_of, false).await
         })
     }
 }
