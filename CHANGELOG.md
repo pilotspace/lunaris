@@ -116,6 +116,18 @@ compatibility with v0.1.
 - **P-1 — `RecallRequest` and `ForgetRequestDto` missing
   `deny_unknown_fields`.** Closed the wire-side `scope` / `tenant`
   smuggling vector on the two remaining DTOs, matching `IngestBody`.
+- **RC-A — Postgres `keyword_search` did not set `lunaris.scope` GUC.**
+  Found during target-review of v0.2 vs the "Sub-25 ms recall" Core
+  Value (`tmp/v0.2-target-review.md`). Every other PG read path wraps in
+  a read tx + `SET LOCAL lunaris.scope`; `keyword_search` queried the
+  pool directly. Under the documented `NOSUPERUSER NOBYPASSRLS` role,
+  `FORCE ROW LEVEL SECURITY` then filtered every row out for any
+  non-`_legacy` scope — BM25 silently returned zero hits in production.
+  The bug was masked because `tests/scope_isolation.rs` covered
+  `vector_search` + `read_as_of` but not `keyword_search` under the
+  app role. Fixed: wrap the BM25 query in the same tx + `set_config()`
+  pattern as `vector.rs`. New live regression test
+  `cross_scope_keyword_search_returns_zero_for_wrong_scope`.
 
 ### Known issues / v0.3 carryover
 

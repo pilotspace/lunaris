@@ -74,6 +74,13 @@ Technology stack not yet documented. Will populate after codebase mapping or fir
 - Production connections MUST use a `NOSUPERUSER NOBYPASSRLS` role —
   superusers bypass RLS regardless of `FORCE ROW LEVEL SECURITY`. See
   `docs/migration/0.1-to-0.2.md` §6.2 for the role-creation recipe.
+- **Every Postgres read path** in `lunaris-storage-postgres` MUST open a
+  read tx and run `SELECT set_config('lunaris.scope', $1, true)` before
+  the body. Mirror the `vector.rs::vector_search` pattern. The
+  `RC-A` v0.2 target-review found `keyword_search` skipping this step —
+  BM25 silently returned zero hits under the production role. Tests
+  under the app role MUST cover every port method, not just
+  `vector_search`/`read_as_of`. Owner/superuser tests pass by accident.
 
 ### Invariants worth grep-pinning
 

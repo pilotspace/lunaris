@@ -48,11 +48,13 @@ const KEYWORD_SEARCH_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) async fn keyword_search(
     c: &PgClient,
-    // Wave 2.5A: scope accepted for API parity with RFC 0001 §3.4 amendment.
-    // Postgres partitioning is enforced via RLS at the connection level (Wave 1B)
-    // rather than per-query WHERE clauses, so _scope is unused here but the
-    // parameter ensures the trait boundary is met across all backends.
-    _scope: &Scope,
+    // RC-A (v0.2 target-review): scope is bound into `SET LOCAL lunaris.scope`
+    // inside a read transaction, mirroring the `vector_search` /
+    // `read_as_of` / `scan_range` / `graph_traverse` pattern. Without this,
+    // every BM25 query under a non-`_legacy` scope returns zero hits when
+    // the connection role is the documented `NOSUPERUSER NOBYPASSRLS`
+    // production role (RLS USING predicate fails the empty-string GUC).
+    scope: &Scope,
     index: &str,
     query: &str,
     k: usize,
@@ -99,7 +101,19 @@ pub(crate) async fn keyword_search(
         where_clause = where_parts.join(" AND "),
     );
 
-    let fut = sqlx::query(AssertSqlSafe(sql)).bind(query).fetch_all(&c.pool);
+    // RC-A (v0.2 target-review): wrap in a read transaction with
+    // SET LOCAL lunaris.scope so RLS sees the bound partition key. Mirrors
+    // the pattern in `vector.rs::vector_search` (lines 80-96). Without this
+    // wrap, `FORCE ROW LEVEL SECURITY` filters every row out for the
+    // documented NOSUPERUSER NOBYPASSRLS role and BM25 returns zero hits.
+    let mut tx = c.pool.begin().await.map_err(sqlx_err)?;
+    sqlx::query("SELECT set_config('lunaris.scope', $1, true)")
+        .bind(scope.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_err)?;
+
+    let fut = sqlx::query(AssertSqlSafe(sql)).bind(query).fetch_all(&mut *tx);
     let rows = match timeout(KEYWORD_SEARCH_TIMEOUT, fut).await {
         Ok(res) => res.map_err(sqlx_err)?,
         Err(_) => {
@@ -109,6 +123,8 @@ pub(crate) async fn keyword_search(
             )));
         }
     };
+
+    tx.commit().await.map_err(sqlx_err)?;
 
     // Collect raw scores first so min-max can normalize per-call.
     let mut staged: Vec<(Vec<u8>, serde_json::Value, f32)> = Vec::with_capacity(rows.len());

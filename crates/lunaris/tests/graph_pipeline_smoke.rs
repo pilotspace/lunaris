@@ -789,12 +789,7 @@ async fn rc1_graph_on_ingest_all_kv_keys_are_scope_prefixed() {
 
     let scope = lunaris_core::Scope::new("agent:rc1").unwrap();
     let expected_prefix = format!("lunaris:{}:", scope.as_str());
-    let ep = Episode::new(
-        scope.clone(),
-        "rc1.md",
-        "# Notes\nAlice and Chocolate.",
-        &clock,
-    );
+    let ep = Episode::new(scope.clone(), "rc1.md", "# Notes\nAlice and Chocolate.", &clock);
     handle.ingest(ep).await.expect("graph-on ingest must succeed");
 
     // INGEST-04 holds: ONE atomic_write batch.
@@ -829,9 +824,7 @@ async fn rc1_graph_on_ingest_all_kv_keys_are_scope_prefixed() {
     // actually exercised the previously-buggy code path).
     let fact_prefix = format!("{}fact:", expected_prefix);
     assert!(
-        kv_keys
-            .iter()
-            .any(|k| std::str::from_utf8(k).unwrap().starts_with(&fact_prefix)),
+        kv_keys.iter().any(|k| std::str::from_utf8(k).unwrap().starts_with(&fact_prefix)),
         "expected at least one Fact KvPut under `{fact_prefix}` but none found"
     );
 }

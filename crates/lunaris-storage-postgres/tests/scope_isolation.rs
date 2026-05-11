@@ -293,3 +293,121 @@ async fn cross_scope_vector_search_returns_zero_for_wrong_scope() {
         our_hits_a.len()
     );
 }
+
+/// RC-A (v0.2 target-review) regression test — Postgres `keyword_search` must
+/// honour `SET LOCAL lunaris.scope` so RLS sees the bound partition key.
+///
+/// Before the fix, `keyword_search` queried the pool directly with no
+/// transaction wrap and no `SET LOCAL`. Under the production
+/// `NOSUPERUSER NOBYPASSRLS` role, the `tenant_isolation USING` predicate
+/// then evaluated `scope = current_setting('lunaris.scope', true)` against
+/// an empty-string GUC and returned zero hits for every non-`_legacy`
+/// scope. This test inserts a chunk under `tenant_a` (owner connection,
+/// RLS bypassed for the write), then runs `keyword_search` under both
+/// `tenant_a` (must hit) and `tenant_b` (must miss) via the
+/// non-superuser `lunaris_app` role.
+#[tokio::test]
+async fn cross_scope_keyword_search_returns_zero_for_wrong_scope() {
+    use lunaris_core::KeywordPort;
+
+    let base_url = pg_url();
+
+    let owner = match PostgresStorage::connect(&base_url).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("PG_URL not reachable ({e}); SKIP scope_isolation keyword test");
+            return;
+        }
+    };
+
+    match ensure_app_role(&owner).await {
+        Ok(false) | Err(_) => {
+            eprintln!("SKIP scope_isolation keyword: could not provision lunaris_app role");
+            return;
+        }
+        Ok(true) => {}
+    }
+
+    let app_url = match pg_app_url(&base_url) {
+        Some(u) => u,
+        None => {
+            eprintln!("SKIP scope_isolation keyword: PG_APP_URL='' opt-out");
+            return;
+        }
+    };
+
+    let app = match PostgresStorage::connect_no_migrate(&app_url).await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("lunaris_app connection failed ({e}); SKIP scope_isolation keyword test");
+            return;
+        }
+    };
+
+    let scope_a = Scope::new("tenant_a").expect("valid");
+    let scope_b = Scope::new("tenant_b").expect("valid");
+    let clock = HlcClock::new(0);
+
+    // Insert a chunk row directly via owner — `text_tsv` is a generated
+    // column populated from the payload, so we set the payload that the
+    // chunks-table tsvector trigger reads. The actual column wiring is in
+    // migration 20260421000004_tsvector_bm25.sql.
+    let chunk_id = Ulid::new();
+    let needle_token = "rcaprobeneedlexyz"; // unique to this test, lowercase
+    let chunk_payload = serde_json::json!({
+        "text": format!("the {needle_token} is a unique BM25 probe token"),
+        "rc_a_marker": true,
+    });
+
+    sqlx::query(
+        "INSERT INTO chunks (id, payload, valid_from, sys_from, valid_from_hlc, sys_from_hlc, scope) \
+         VALUES ($1, $2, NOW(), NOW(), $3, $4, $5)",
+    )
+    .bind(chunk_id.to_bytes().to_vec())
+    .bind(&chunk_payload)
+    .bind(0_i64)
+    .bind(0_i64)
+    .bind(scope_a.as_str())
+    .execute(&owner.client().pool)
+    .await
+    .expect("owner INSERT under scope_a must succeed");
+
+    let as_of = clock.tick();
+
+    // keyword_search under scope_b via app role: MUST NOT see our chunk.
+    let hits_b = app
+        .keyword_search(&scope_b, "chunks", needle_token, 10, None, Some(as_of))
+        .await
+        .expect("keyword_search under scope_b must not error");
+    let our_hits_b: Vec<_> =
+        hits_b.iter().filter(|h| h.id == chunk_id.to_bytes().to_vec()).collect();
+    assert!(
+        our_hits_b.is_empty(),
+        "RLS LEAK (RC-A): keyword_search(&scope_b) via app role returned {} hit(s) — \
+         cross-scope data visible.",
+        our_hits_b.len()
+    );
+
+    // keyword_search under scope_a via app role: MUST see our chunk.
+    // Before the RC-A fix this returned zero (the bug); after the fix this
+    // returns one.
+    let hits_a = app
+        .keyword_search(&scope_a, "chunks", needle_token, 10, None, Some(as_of))
+        .await
+        .expect("keyword_search under scope_a must not error");
+    let our_hits_a: Vec<_> =
+        hits_a.iter().filter(|h| h.id == chunk_id.to_bytes().to_vec()).collect();
+    assert!(
+        !our_hits_a.is_empty(),
+        "RC-A REGRESSION: keyword_search(&scope_a) via app role returned zero hits \
+         for the unique probe `{needle_token}` — keyword_search is NOT setting \
+         lunaris.scope inside its read transaction, so FORCE RLS filters \
+         everything out. See crates/lunaris-storage-postgres/src/keyword.rs."
+    );
+
+    eprintln!(
+        "scope_isolation KeywordSearch: scope_b hits = 0 (RLS enforced) ✓  \
+         scope_a hits = {} ✓",
+        our_hits_a.len()
+    );
+}
