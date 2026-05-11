@@ -87,6 +87,11 @@ proptest           = { workspace = true }
 # AFTER `cargo bench` populates `target/criterion/`.
 default = []
 budget-it = []
+# Phase 24 / RFC 0006 §4 — verifier divergence capture binary forwards.
+# These match the lunaris-verify feature names; the binary's
+# required-features gate references them in [[bin]].required-features.
+verify-small = ["lunaris-verify/verify-small"]
+verify-large = ["lunaris-verify/verify-large"]
 
 [[bench]]
 name = "ingest_hot_path"
@@ -141,3 +146,12 @@ path = "src/bin/evals.rs"
 [[bin]]
 name = "eval_05_helios_10k"
 path = "src/bin/eval_05_helios_10k.rs"
+
+# Phase 24 / RFC 0006 §4 — verifier divergence capture binary. Loads
+# both Candle backends, runs compare_verifiers over the 100-item corpus,
+# prints divergence_rate + PASS/FAIL. required-features = both Candle
+# backends; a bare `cargo build -p lunaris-bench` skips this binary.
+[[bin]]
+name = "verifier-divergence"
+path = "src/bin/verifier_divergence.rs"
+required-features = ["verify-small", "verify-large"]
