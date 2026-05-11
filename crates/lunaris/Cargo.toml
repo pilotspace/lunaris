@@ -83,6 +83,28 @@ default = ["candle"]
 candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle", "lunaris-verify/candle"]
 ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama", "lunaris-verify/ollama"]
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
+# Plan 20-03 Task 2 — air-gapped operator escape hatch. Produces a build with
+# ZERO fastembed / ort / hf-hub in the transitive dep tree, so operators on
+# isolated networks (no HF Hub reachability, no ORT prebuilt download) can
+# ship a lunaris binary that runs entirely on candle 0.10 + manually-staged
+# model weights. Forwards the candle backend on embed + rerank + extract +
+# verify (same set as `candle` above — kept as a distinct feature so the name
+# documents intent at build sites: `--features candle-only` is operator-facing
+# air-gap signalling, `--features candle` is the default umbrella).
+# Operators MUST pre-populate `~/.cache/lunaris/models/{embedding-gemma-300m,
+# bge-reranker-v2-m3,...}` before first `Lunaris::open()` — see
+# docs/migration/0.1-to-0.2-fastembed-default.md §3 "Opt-out paths".
+# Verification (normal/build edges only — dev-deps are bench/test-only and
+# don't ship in the binary): `cargo tree -p lunaris --no-default-features
+# --features candle-only --edges normal | grep -cE "fastembed|ort|hf-hub"`
+# MUST return 0. NOTE: the default-edges tree shows `hf-hub` once via
+# `lunaris-bench` dev-deps — that's bench scaffolding, not a binary leak.
+candle-only = [
+    "lunaris-embed/candle",
+    "lunaris-rerank/candle",
+    "lunaris-extract/candle",
+    "lunaris-verify/candle",
+]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris
