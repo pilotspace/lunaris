@@ -79,9 +79,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("ERROR: failed to load CandleGemma3_27B: {e}");
             eprintln!("Install weights via:");
-            eprintln!(
-                "  huggingface-cli download google/gemma-3-27b-it \\"
-            );
+            eprintln!("  huggingface-cli download google/gemma-3-27b-it \\");
             eprintln!("    --local-dir ~/.cache/lunaris/models/gemma-3-27b-it");
             return ExitCode::from(2);
         }
@@ -93,9 +91,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("ERROR: failed to load CandleGemma3_270M: {e}");
             eprintln!("Install weights via:");
-            eprintln!(
-                "  huggingface-cli download google/gemma-3-270m-it \\"
-            );
+            eprintln!("  huggingface-cli download google/gemma-3-270m-it \\");
             eprintln!("    --local-dir ~/.cache/lunaris/models/gemma-3-270m-it");
             return ExitCode::from(2);
         }

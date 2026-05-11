@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use lunaris_core::LunarisError;
 
-use crate::{NeedsReviewItem, VerifyDecision, Verifier};
+use crate::{NeedsReviewItem, Verifier, VerifyDecision};
 
 /// One row in the divergence-comparison output. Carries the underlying
 /// item + both verifier decisions so a UI / debug print can show "here's
@@ -143,8 +143,8 @@ mod tests {
         // The harness ignores the item body — build a minimal Entity-shaped
         // NeedsReviewItem to satisfy the type. If lunaris-extract's Entity
         // shape changes upstream this fixture gets a single-line update.
-        use lunaris_extract::types::{Entity, EntityId};
         use lunaris_extract::NeedsReviewReason;
+        use lunaris_extract::types::{Entity, EntityId};
         NeedsReviewItem::Entity {
             reason: NeedsReviewReason::GbnfFailure {
                 schema_path: "test".to_string(),

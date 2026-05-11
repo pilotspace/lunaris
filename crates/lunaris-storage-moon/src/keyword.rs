@@ -162,7 +162,9 @@ fn filter_to_moon(f: &Filter) -> String {
         // skip the predicate (matches everything) and warn — never
         // silently misrepresent the filter.
         _ => {
-            tracing::warn!("unknown Filter variant in Moon keyword path — emitting unconstrained predicate");
+            tracing::warn!(
+                "unknown Filter variant in Moon keyword path — emitting unconstrained predicate"
+            );
             "*".to_string()
         }
     }

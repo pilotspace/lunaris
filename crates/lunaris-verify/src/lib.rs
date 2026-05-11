@@ -44,10 +44,10 @@
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 
-#[cfg(feature = "candle")]
-pub mod candle_gemma3_27b;
 #[cfg(feature = "verify-small")]
 pub mod candle_gemma3_270m;
+#[cfg(feature = "candle")]
+pub mod candle_gemma3_27b;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 pub mod divergence;

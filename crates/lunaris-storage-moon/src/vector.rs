@@ -136,7 +136,9 @@ fn filter_to_moon(f: &Filter) -> String {
         // variants need explicit Moon-side rendering; until that lands,
         // emit an unconstrained predicate and warn.
         _ => {
-            tracing::warn!("unknown Filter variant in Moon vector path — emitting unconstrained predicate");
+            tracing::warn!(
+                "unknown Filter variant in Moon vector path — emitting unconstrained predicate"
+            );
             "*".to_string()
         }
     }

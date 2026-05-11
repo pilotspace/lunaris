@@ -254,7 +254,9 @@ fn filter_to_moon_tag(f: &Filter) -> String {
         // variants need explicit fusion-side rendering; until that
         // lands, emit an unconstrained predicate and warn.
         _ => {
-            tracing::warn!("unknown Filter variant in retrieve fusion path — emitting unconstrained predicate");
+            tracing::warn!(
+                "unknown Filter variant in retrieve fusion path — emitting unconstrained predicate"
+            );
             "*".to_string()
         }
     }

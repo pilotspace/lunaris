@@ -207,7 +207,9 @@ async fn episode_and_chunks_appear_in_single_batch() {
         .count();
     let n_chunk_kvput = batch
         .iter()
-        .filter(|op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(6).any(|w| w == b":chunk")))
+        .filter(
+            |op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(6).any(|w| w == b":chunk")),
+        )
         .count();
     let n_vec_upsert = batch
         .iter()
