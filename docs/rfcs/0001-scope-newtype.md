@@ -576,3 +576,36 @@ Shipped across six waves on branch `v0.2/scope`, base commit `cace8bc`:
 
 RFC 0001 is **Implemented**. Carry-over items are tracked in CHANGELOG
 §"Known issues / v0.3 carryover" and `docs/migration/0.1-to-0.2.md` §10.
+
+### 10.x v0.2 release-gate code review
+
+A full bug / security / cross-file-consistency review of the 27 commits
+between v0.1.2 and v0.2.0 (`cace8bc..c9c560c`) was performed against this
+RFC's contract on 2026-05-11. Captured in `tmp/v0.2-code-review.md`.
+Severity outcome: **0 BLOCK, 4 REQUEST_CHANGES, 7 v0.2.1 patches, 4 nits**.
+
+Items closed at v0.2.0 HEAD:
+
+- **RC-1** Unscoped `fact_key` in `crates/lunaris/src/ingest.rs` (graph-on
+  path) replaced with `lunaris_core::keyspace::fact_key(&scope, id)`.
+- **RC-3** Postgres `tenant_isolation` policies amended with `WITH CHECK`
+  via migration `20260511000006_rls_with_check.sql` so INSERT/UPDATE row
+  scope is database-enforced (not only application-enforced).
+- **RC-4** `Scope` `Deserialize` impl now re-validates against
+  `Scope::new`. Wire bytes are no longer trusted; existing test flipped
+  from "documents permissive bug" to "asserts rejection."
+- **P-1** `RecallRequest` and `ForgetRequestDto` both gained
+  `#[serde(deny_unknown_fields)]`.
+
+Items deferred to v0.2.1:
+
+- **RC-2** `scope_prefix` delimiter ambiguity — operator-side constraint
+  documented in `docs/migration/0.1-to-0.2.md` §10.1. Test
+  `keyspace::scan_prefix_does_not_alias_across_kinds` is `#[ignore]`'d
+  until the regex tightening lands.
+- **P-2** `Lunaris::forget` silent zero-match on real scopes — see
+  CHANGELOG §"Known issues" and migration guide §10.2.
+- **P-3** Supervisor `register_scope` TOCTOU between fast-path check and
+  idle-timeout deregistration.
+- **P-5** Scope-propagation regression matrix is recall-only at the
+  umbrella level; extend to cover the remaining 6 partitioned ports.

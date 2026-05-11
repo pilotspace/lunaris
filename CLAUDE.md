@@ -33,7 +33,59 @@ Technology stack not yet documented. Will populate after codebase mapping or fir
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
+### Scope (RFC 0001) — multi-agent partition key
+
+- **Keyspace helpers belong in `lunaris-core`, not backend crates.** The
+  canonical KV format `lunaris:{scope}:{kind}:{ulid}` is encoded by
+  `lunaris_core::keyspace::{episode,chunk,entity,relation,fact,community}_key`.
+  Any caller that mints a Lunaris KV key from a local helper is a bug — see
+  RC-1 (v0.2 review): `lunaris/src/ingest.rs` retained a local unscoped
+  `fact_key` after the Wave 2.5B move and silently produced collision-prone
+  keys. Backend crates re-export the helpers; engine and infra crates must
+  import them from `lunaris_core::keyspace`.
+- **Never derive `Deserialize` on a validated newtype.** `Scope` is the
+  canonical example: the derived `#[serde(transparent)]` impl bypasses
+  `Scope::new` and trusts the wire. Hand-roll a `Deserialize` that calls the
+  validating constructor (see `crates/lunaris-core/src/scope.rs`).
+- **`Scope::dev()` is a migration crutch.** It is `#[doc(hidden)] pub` for
+  test/migration use only. Any new `Scope::dev()` call site in production
+  code is a v0.3 carry-over, not a steady-state pattern; thread the real
+  scope through instead.
+- **Operator constraint (v0.2.0):** issuers MUST NOT mint scope strings
+  ending in `:episode`, `:chunk`, `:entity`, `:relation`, `:fact`, or
+  `:community` — RC-2 delimiter ambiguity. v0.2.1 tightens the regex.
+
+### HTTP DTO discipline (`lunaris-server`)
+
+- Every public request DTO MUST carry `#[serde(deny_unknown_fields)]`. The
+  v0.2 review (P-1) found two of three v0.2 DTOs missing it; both now have it
+  (`IngestBody`, `RecallRequest`, `ForgetRequestDto`). Without the attribute,
+  clients can smuggle `scope` / `tenant` overrides past the JWT-bound
+  partition key.
+- The JWT `tenant` claim is the **only** source of truth for the partition
+  scope. Route handlers MUST consume `claims.scope` and ignore any wire-side
+  `scope` / `tenant` fields.
+
+### Postgres RLS
+
+- Every `tenant_isolation` policy MUST declare both `USING` and `WITH CHECK`.
+  `USING`-only is read-tight on SELECT/UPDATE but leaves INSERT
+  scope-unchecked at the database boundary — RC-3 (v0.2 review).
+- Production connections MUST use a `NOSUPERUSER NOBYPASSRLS` role —
+  superusers bypass RLS regardless of `FORCE ROW LEVEL SECURITY`. See
+  `docs/migration/0.1-to-0.2.md` §6.2 for the role-creation recipe.
+
+### Invariants worth grep-pinning
+
+- **INGEST-04 — one `atomic_write` per ingest.** `grep -c 'atomic_write'
+  crates/lunaris-ingest/src/pipeline.rs` must return exactly one real call
+  site (line 116). Any new ingest fan-out MUST extend the single
+  `WriteOp` vector, not introduce a second `atomic_write`.
+- **Lock-across-await — never.** Snapshot under `read()`/`write()`, drop the
+  guard before the next `.await`. The v0.2 review confirmed four hot files
+  (`consolidate/supervisor.rs`, `verify/supervisor.rs`,
+  `lunaris/consolidator_pipeline.rs`, `verify_pipeline.rs`) follow this
+  pattern; new code MUST too.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

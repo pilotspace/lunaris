@@ -33,7 +33,7 @@ use lunaris_core::{
     StoragePort, StubEmbedder,
 };
 use lunaris_extract::{
-    ChunkInput, Entity as ExtractEntity, RawExtraction, RawExtractionBatch,
+    ChunkInput, Entity as ExtractEntity, Fact as ExtractFact, RawExtraction, RawExtractionBatch,
     Relation as ExtractRelation,
 };
 use lunaris_retrieve::{QueryContext, Retriever};
@@ -270,6 +270,11 @@ impl KeywordPort for RecordingStorageWithKeyword {
 struct MockExtractor {
     entities: Vec<ExtractEntity>,
     relations: Vec<ExtractRelation>,
+    /// RC-1 (v0.2 release-gate): optional facts the extractor returns. Empty
+    /// by default to preserve every existing fixture's behavior; the
+    /// `with_alice_likes_chocolate_fact` constructor populates this for the
+    /// scope-prefix regression test.
+    facts: Vec<ExtractFact>,
     /// Per-instance call counter so the with_extractor swap test can prove
     /// the new extractor is the one being invoked.
     call_count: Arc<Mutex<u64>>,
@@ -307,7 +312,46 @@ impl MockExtractor {
             valid_from_iso: "2024-01-01T00:00:00Z".into(),
             valid_to_iso: None,
         }];
-        Self { entities, relations, call_count: Arc::new(Mutex::new(0)) }
+        Self { entities, relations, facts: vec![], call_count: Arc::new(Mutex::new(0)) }
+    }
+
+    /// RC-1 (v0.2 release-gate) fixture: returns one Entity + one Fact so
+    /// the graph-on ingest path emits a `WriteOp::KvPut` for the fact under
+    /// the scope-prefixed `lunaris:{scope}:fact:{ulid}` key.
+    fn with_alice_likes_chocolate_fact() -> Self {
+        let alice = EntityId::from_name_and_type("Alice", "Person");
+        let chocolate = EntityId::from_name_and_type("Chocolate", "Food");
+        let entities = vec![
+            ExtractEntity {
+                id: alice,
+                name: "Alice".into(),
+                aliases: vec![],
+                entity_type: "Person".into(),
+                confidence: 0.95,
+                valid_from_iso: "2024-01-01T00:00:00Z".into(),
+                valid_to_iso: None,
+            },
+            ExtractEntity {
+                id: chocolate,
+                name: "Chocolate".into(),
+                aliases: vec![],
+                entity_type: "Food".into(),
+                confidence: 0.9,
+                valid_from_iso: "2024-01-01T00:00:00Z".into(),
+                valid_to_iso: None,
+            },
+        ];
+        let facts = vec![ExtractFact {
+            id: Ulid::new(),
+            subject_id: alice,
+            predicate: "likes".into(),
+            object_id: chocolate,
+            fact_text: "Alice likes chocolate.".into(),
+            confidence: 0.9,
+            valid_from_iso: "2024-01-01T00:00:00Z".into(),
+            valid_to_iso: None,
+        }];
+        Self { entities, relations: vec![], facts, call_count: Arc::new(Mutex::new(0)) }
     }
 
     /// MockExtractor whose entities have `valid_from >= valid_to` so the
@@ -323,7 +367,7 @@ impl MockExtractor {
             valid_from_iso: "2025-01-01T00:00:00Z".into(),
             valid_to_iso: Some("2024-01-01T00:00:00Z".into()), // INVERTED
         }];
-        Self { entities, relations: vec![], call_count: Arc::new(Mutex::new(0)) }
+        Self { entities, relations: vec![], facts: vec![], call_count: Arc::new(Mutex::new(0)) }
     }
 
     fn call_count(&self) -> u64 {
@@ -350,7 +394,7 @@ impl Extractor for MockExtractor {
                         source_chunk_id: c.chunk_id,
                         entities: self.entities.clone(),
                         relations: self.relations.clone(),
-                        facts: vec![],
+                        facts: self.facts.clone(),
                     }
                 } else {
                     RawExtraction {
@@ -724,4 +768,70 @@ async fn empty_validated_extraction_default_is_constructible() {
     let _: Arc<dyn Extractor> = Arc::new(NoopExtractor);
     // GraphPipelineHandle is reachable on the umbrella crate.
     let _: Arc<GraphPipelineHandle> = Arc::new(GraphPipelineHandle::with_noop());
+}
+
+/// RC-1 (v0.2 release-gate review) regression test.
+///
+/// Before the fix, `Lunaris::ingest` (graph-on) wrote Fact KV rows via a
+/// local unscoped `fact_key(id)` helper that produced bytes `fact:{ulid}` —
+/// no `lunaris:{scope}:` prefix. Two scopes writing the same fact ULID
+/// would overwrite each other on Moon. The fix routes through
+/// `lunaris_core::keyspace::fact_key(&scope, id)`.
+///
+/// This test asserts the post-fix invariant: every `WriteOp::KvPut` emitted
+/// by the graph-on ingest path starts with `lunaris:{scope}:`.
+#[tokio::test]
+async fn rc1_graph_on_ingest_all_kv_keys_are_scope_prefixed() {
+    let (handle, rec, clock) = build_handle();
+    let mock = Arc::new(MockExtractor::with_alice_likes_chocolate_fact());
+    let handle = handle.with_extractor(mock.clone() as Arc<dyn Extractor>);
+    handle.graph_pipeline().enable();
+
+    let scope = lunaris_core::Scope::new("agent:rc1").unwrap();
+    let expected_prefix = format!("lunaris:{}:", scope.as_str());
+    let ep = Episode::new(
+        scope.clone(),
+        "rc1.md",
+        "# Notes\nAlice and Chocolate.",
+        &clock,
+    );
+    handle.ingest(ep).await.expect("graph-on ingest must succeed");
+
+    // INGEST-04 holds: ONE atomic_write batch.
+    assert_eq!(rec.batch_count(), 1, "graph-on ingest MUST commit one atomic_write batch");
+
+    let batches = rec.batches.lock().clone();
+    let batch = &batches[0];
+
+    // Counts: Episode + ≥1 Chunk + 2 Entities (Alice, Chocolate) + 1 Fact
+    // — all KvPut. The fact must be present (proves the path emitted it).
+    let kv_keys: Vec<Vec<u8>> = batch
+        .iter()
+        .filter_map(|op| match op {
+            WriteOp::KvPut { key, .. } => Some(key.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(!kv_keys.is_empty(), "graph-on ingest MUST emit at least one KvPut");
+
+    // The core RC-1 assertion: every key starts with `lunaris:{scope}:`.
+    for key in &kv_keys {
+        let key_str = std::str::from_utf8(key).expect("KvPut keys must be utf-8");
+        assert!(
+            key_str.starts_with(&expected_prefix),
+            "KvPut key {:?} MUST start with {:?} (RC-1 scope-prefix invariant)",
+            key_str,
+            expected_prefix,
+        );
+    }
+
+    // Bonus: at least one of the keys is a fact key (proves the fixture
+    // actually exercised the previously-buggy code path).
+    let fact_prefix = format!("{}fact:", expected_prefix);
+    assert!(
+        kv_keys
+            .iter()
+            .any(|k| std::str::from_utf8(k).unwrap().starts_with(&fact_prefix)),
+        "expected at least one Fact KvPut under `{fact_prefix}` but none found"
+    );
 }

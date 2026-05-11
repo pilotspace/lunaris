@@ -50,7 +50,12 @@ pub struct IngestBody {
 }
 
 /// `POST /v1/recall` request body. Two retrieval modes per D-05 + PROTO-03.
+///
+/// P-1 (v0.2 release-gate review): `deny_unknown_fields` closes the
+/// `scope` / `tenant` smuggling vector at the wire boundary, matching
+/// `IngestBody`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RecallRequest {
     /// Free-form query text.
     pub query: String,
@@ -100,6 +105,7 @@ pub struct IngestResponse {
 /// `confirmation_token` (encoded as `"<wall_ms>.<counter>"`). Missing token →
 /// 428 Precondition Required.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ForgetRequestDto {
     pub target: lunaris::ForgetTarget,
     #[serde(default)]
@@ -182,6 +188,45 @@ mod tests {
         let body = serde_json::json!({"query":"hi"});
         let req: RecallRequest = serde_json::from_value(body).expect("parse");
         assert_eq!(req.k, 10);
+    }
+
+    // ---- P-1 (v0.2 release-gate) — deny_unknown_fields parity for the
+    //       two remaining DTOs. Mirrors `ingest_body_rejects_scope_field` /
+    //       `ingest_body_rejects_tenant_field`. ---------------------------
+
+    #[test]
+    fn recall_request_rejects_scope_field() {
+        let body = serde_json::json!({"query":"hi","scope":"evil"});
+        let result: Result<RecallRequest, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "scope field MUST be rejected on RecallRequest");
+    }
+
+    #[test]
+    fn recall_request_rejects_tenant_field() {
+        let body = serde_json::json!({"query":"hi","tenant":"evil"});
+        let result: Result<RecallRequest, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "tenant field MUST be rejected on RecallRequest");
+    }
+
+    #[test]
+    fn forget_request_rejects_scope_field() {
+        // Use a minimal ForgetTarget that round-trips through serde.
+        let body = serde_json::json!({
+            "target": {"Id": "01HZZZZZZZZZZZZZZZZZZZZZZZ"},
+            "scope": "evil"
+        });
+        let result: Result<ForgetRequestDto, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "scope field MUST be rejected on ForgetRequestDto");
+    }
+
+    #[test]
+    fn forget_request_rejects_tenant_field() {
+        let body = serde_json::json!({
+            "target": {"Id": "01HZZZZZZZZZZZZZZZZZZZZZZZ"},
+            "tenant": "evil"
+        });
+        let result: Result<ForgetRequestDto, _> = serde_json::from_value(body);
+        assert!(result.is_err(), "tenant field MUST be rejected on ForgetRequestDto");
     }
 
     #[test]

@@ -195,6 +195,26 @@ mod tests {
         assert!(kb.starts_with(b"lunaris:acme:agent-2:episode:"));
     }
 
+    /// RC-2 (v0.2 release-gate review): the validation regex permits `:` in
+    /// scope strings, which collides with the `:{kind}:` delimiter in the key
+    /// format `lunaris:{scope}:{kind}:{ulid}`. A scope `"a:episode"` produces
+    /// `scope_prefix == "lunaris:a:episode:"` — byte-identical to
+    /// `episode_prefix(&Scope("a"))`. Moon SCAN under the colliding scope can
+    /// enumerate the other scope's episodes.
+    ///
+    /// v0.2.0 ships this as a documented operational constraint
+    /// (`docs/migration/0.1-to-0.2.md` §"Known operational constraints":
+    /// issuers MUST NOT mint scope strings ending in `:episode`, `:chunk`,
+    /// `:entity`, `:relation`, `:fact`, or `:community`). v0.2.1 will tighten
+    /// the regex to drop `:` entirely and flip this test to active.
+    #[test]
+    #[ignore = "RC-2: scope_prefix delimiter ambiguity; tracked for v0.2.1 regex tightening"]
+    fn scan_prefix_does_not_alias_across_kinds() {
+        let a = Scope::new("a").unwrap();
+        let evil = Scope::new("a:episode").unwrap();
+        assert_ne!(scope_prefix(&evil).into_bytes(), episode_prefix(&a));
+    }
+
     #[test]
     fn prefix_matches_key_starts() {
         let scope = Scope::new("org.team").unwrap();

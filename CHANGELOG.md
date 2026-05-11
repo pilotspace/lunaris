@@ -96,6 +96,26 @@ compatibility with v0.1.
   while the HTTP path read under the JWT's `tenant="t-1"` scope. Migrated
   to `keyspace::chunk_key(&Scope::new("t-1"))` so writer/reader scopes
   match.
+- **RC-1 — `Lunaris::ingest` graph-on path wrote Fact KV rows without the
+  scope prefix.** `crates/lunaris/src/ingest.rs` retained a local unscoped
+  `fact_key(id)` after the Wave 2.5B keyspace move. Two scopes writing
+  facts with the same ULID would overwrite each other on Moon. Replaced
+  with `lunaris_core::keyspace::fact_key(&episode.scope, f.id)`; deleted
+  the local helper.
+- **RC-3 — Postgres RLS policies missing `WITH CHECK`.** Original migration
+  declared `USING`-only policies. Per Postgres §5.8, INSERT consults only
+  `WITH CHECK`; with both clauses omitted, no row-side scope check fires
+  on INSERT. Added follow-up migration `20260511000006_rls_with_check.sql`
+  that drops + recreates every `tenant_isolation` policy with both clauses.
+- **RC-4 — `serde::Deserialize` for `Scope` did not re-validate.** The
+  derived `#[serde(transparent)]` impl accepted any string, bypassing
+  `Scope::new`'s regex. Replaced with a hand-rolled `Deserialize` that
+  calls `Scope::new` on the wire bytes. The existing
+  `scope::serde_rejects_invalid_scope_string` test now asserts rejection
+  (was asserting the permissive bug).
+- **P-1 — `RecallRequest` and `ForgetRequestDto` missing
+  `deny_unknown_fields`.** Closed the wire-side `scope` / `tenant`
+  smuggling vector on the two remaining DTOs, matching `IngestBody`.
 
 ### Known issues / v0.3 carryover
 
@@ -113,6 +133,22 @@ compatibility with v0.1.
 - **Postgres production deployments must use a non-superuser role** — RLS
   is bypassed by `rolsuper=t` or `BYPASSRLS`. `docs/migration/0.1-to-0.2.md`
   §6.2 has the role-creation recipe.
+- **RC-2 — `scope_prefix` is not delimiter-safe.** The validation regex
+  permits `:` in scope strings, which collides with the `:{kind}:`
+  delimiter in `lunaris:{scope}:{kind}:{ulid}`. A scope `"a:episode"` aliases
+  `Scope("a")`'s episode prefix on Moon SCAN. **Operational guidance for
+  v0.2.0:** issuers MUST NOT mint scope strings ending in `:episode`,
+  `:chunk`, `:entity`, `:relation`, `:fact`, or `:community`. v0.2.1 will
+  tighten the regex to drop `:` entirely. Regression test
+  `keyspace::scan_prefix_does_not_alias_across_kinds` is `#[ignore]`'d
+  until the regex change lands. Postgres RLS is unaffected (row-level
+  scope match is column-bound, not prefix-bound).
+- **`Lunaris::forget` is a silent zero-match on real scopes.** The forget
+  path still uses `Scope::dev()` internally for `atomic_write`, `read_as_of`,
+  and `scan_range`, plus a non-scoped `b"episode:"` prefix scan. Same-scope
+  forget under a real (non-`_dev_`) scope returns `rows_deleted=0,
+  rows_written=0` with no error. Tracked for v0.2.1 (warn-on-non-dev-scope)
+  and v0.3 (`ScopedLunaris::forget`).
 
 ## v0.1.2
 

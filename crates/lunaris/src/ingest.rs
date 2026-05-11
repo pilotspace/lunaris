@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
+    keyspace::fact_key as scoped_fact_key,
 };
 use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate};
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines
@@ -399,7 +400,7 @@ async fn ingest_episode_graph_on(
         let fact_value = serde_json::to_vec(f).map_err(|err| {
             LunarisError::Storage(StorageError::Backend(format!("fact serialize: {err}")))
         })?;
-        ops.push(WriteOp::KvPut { key: fact_key(f.id), value: fact_value });
+        ops.push(WriteOp::KvPut { key: scoped_fact_key(&episode.scope, f.id), value: fact_value });
         let stub_embedding = det_vec(&f.fact_text, embedder_dim);
         ops.push(WriteOp::VectorUpsert {
             index: FACTS_INDEX.into(),
@@ -550,15 +551,4 @@ fn det_vec(text: &str, dim: usize) -> Vec<f32> {
         *x /= norm;
     }
     v
-}
-
-/// Build the storage key for a Fact's KvPut. Mirrors lunaris_ingest's
-/// `chunk_key` / `episode_key` prefix conventions: `fact:` ASCII prefix +
-/// Ulid bytes. Distinct from chunk/episode keyspace so backend whitelists
-/// don't collide.
-fn fact_key(id: Ulid) -> Vec<u8> {
-    let mut k = Vec::with_capacity(5 + 16);
-    k.extend_from_slice(b"fact:");
-    k.extend_from_slice(&id.to_bytes());
-    k
 }

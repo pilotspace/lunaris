@@ -52,11 +52,23 @@ const MAX_SCOPE_LEN: usize = 128;
 /// let s = Scope::new("acme:agent-42").unwrap();
 /// assert_eq!(s.as_str(), "acme:agent-42");
 /// ```
-#[derive(
-    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
 #[serde(transparent)]
 pub struct Scope(SmolStr);
+
+/// RC-4 (v0.2 release-gate review): re-validate on the wire boundary.
+///
+/// The previous derived `Deserialize` with `#[serde(transparent)]` accepted
+/// any string, bypassing [`Scope::new`]'s regex. Internal deserialization
+/// sites (rows fetched from a future cloud-API backend, MQ envelopes that
+/// gain a `scope` field, etc.) would have trusted attacker-controlled bytes.
+/// This impl forces every wire-side `Scope` to clear [`Scope::new`].
+impl<'de> serde::Deserialize<'de> for Scope {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = SmolStr::deserialize(d)?;
+        Scope::new(s.as_str()).map_err(serde::de::Error::custom)
+    }
+}
 
 impl Scope {
     /// Construct a `Scope` from `s`, enforcing the validation regex
@@ -251,19 +263,19 @@ mod tests {
 
     #[test]
     fn serde_rejects_invalid_scope_string() {
-        // Deserialising an invalid scope value (e.g. containing a space) must fail —
-        // the transparent serde impl delegates to SmolStr, which accepts any string,
-        // so we document the current behaviour: serde does NOT re-validate.
-        // Wave 1B/C will add a custom Deserialize that calls Scope::new.
-        // This test is intentionally asserting the CURRENT (permissive) behaviour so
-        // that any future tightening is deliberate and visible in diff.
+        // RC-4 (v0.2 release-gate): custom Deserialize now re-validates against
+        // Scope::new. Any wire string that fails the regex must fail deserialize.
         let result: Result<Scope, _> = serde_json::from_str(r#""has space""#);
-        // Current: deserialization succeeds (SmolStr accepts any string).
-        // If this assertion flips to Err in future, update scope.rs's Deserialize impl.
-        assert!(
-            result.is_ok(),
-            "note: serde currently trusts the wire value without re-validation"
-        );
+        assert!(result.is_err(), "invalid scope must be rejected at deserialize");
+
+        // Sanity: a valid wire string still round-trips.
+        let ok: Scope = serde_json::from_str(r#""acme:agent-1""#).unwrap();
+        assert_eq!(ok.as_str(), "acme:agent-1");
+
+        // And a too-long string is rejected.
+        let too_long = format!("\"{}\"", "a".repeat(129));
+        let bad: Result<Scope, _> = serde_json::from_str(&too_long);
+        assert!(bad.is_err(), "129-char scope must be rejected at deserialize");
     }
 
     // ── equality / hash ──────────────────────────────────────────────────────

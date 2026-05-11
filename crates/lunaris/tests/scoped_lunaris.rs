@@ -18,7 +18,6 @@ use lunaris_core::{
     StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
-use serde_json;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
