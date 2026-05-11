@@ -23,7 +23,7 @@
 //!
 //! ## Default-OFF contract (blueprint §5.1)
 //!
-//! `default = []` in `Cargo.toml` ([features] section). v0 ships verifier
+//! `default = []` in `Cargo.toml` (`[features]` section). v0 ships verifier
 //! OFF; loading a 27B model by default is a non-starter on dev hardware.
 //! Plan 04-04 wires the `VerifierPipelineHandle::enable()` toggle that
 //! spawns the worker via `run_verify_worker`.

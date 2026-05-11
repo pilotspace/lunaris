@@ -8,7 +8,7 @@
 //!
 //! `enable()` spawns one [`lunaris_consolidate::run_consolidate_worker`]
 //! task; `disable()` signals shutdown via [`tokio::sync::Notify`] and
-//! [`Self::join_worker`] joins.
+//! `join_worker` joins.
 //!
 //! ## Surfaces (D-08/D-10)
 //!
@@ -21,7 +21,7 @@
 //!
 //! Same late-bind pattern as [`crate::verify_pipeline::VerifierPipelineHandle`]
 //! — the handle is constructed BEFORE storage, and the outer constructor
-//! calls [`Self::bind_storage`] after the `Arc<dyn StoragePort>` exists.
+//! calls `bind_storage` after the `Arc<dyn StoragePort>` exists.
 //!
 //! ## D-26 zero-overhead-when-OFF
 //!
@@ -46,7 +46,7 @@ pub const ENABLED_ENV_VAR: &str = "LUNARIS_CONSOLIDATE_ENABLED";
 ///   (production default per CONSOL-V1-01 D-01).
 /// - `"noop"` (case-insensitive, trimmed) → [`NoopConsolidator`]
 ///   (operator opt-out preserved per D-02 three-surface toggle).
-/// - anything else → fail-fast with [`LunarisError::Config`] (NO silent
+/// - anything else → fail-fast with a config-shaped [`LunarisError`] (NO silent
 ///   fallback — unknown values are a configuration error, not a hint).
 ///
 /// The corresponding resolver is [`ConsolidatorPipelineHandle::backend_from_env`].

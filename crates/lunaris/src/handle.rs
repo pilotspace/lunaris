@@ -513,7 +513,7 @@ impl<'a> ScopedLunaris<'a> {
     /// Ingest an episode payload under the bound scope.
     ///
     /// Takes an [`EpisodeBuilder`] (scope-less payload) rather than a fully
-    /// constructed [`Episode`] so the caller cannot inject an arbitrary scope.
+    /// constructed `Episode` so the caller cannot inject an arbitrary scope.
     /// The wrapper stamps `self.scope` onto the episode via
     /// `builder.into_episode(self.scope.clone(), &self.engine.clock)` before
     /// delegating to [`Lunaris::ingest`].

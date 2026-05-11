@@ -23,7 +23,7 @@
 //!
 //! ## Storage backend introspection
 //!
-//! Same pattern: [`AsStorageAny`] is a blanket-impl trait that lets us
+//! Same pattern: an `AsStorageAny`-style blanket-impl trait lets us
 //! recover `&dyn Any` from `&dyn StoragePort` without polluting the locked
 //! Phase 1 trait. `fuse_via_moon_native` uses it to confirm the backend is
 //! `MoonStorage` before invoking the Moon-native call.

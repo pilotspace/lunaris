@@ -162,14 +162,14 @@ fn synthesize_fact_id_from_episode(episode_id: Ulid) -> FactId {
 /// directly. Per the crate-root docstring (B-1: D-22 verbatim) the
 /// worker iterates `report.promotions` / `report.archives` and publishes
 /// one audit envelope per event via `lunaris_core::audit::publish_audit_event`.
-/// This keeps [`NoopConsolidator`] and [`ActRConsolidator`] on identical
+/// This keeps `NoopConsolidator` and `ActRConsolidator` on identical
 /// emission contracts and leaves the `no_inline_audit_envelopes.rs` grep-gate
 /// green by construction — no new emission sites added.
 ///
 /// ## Known gap (Leiden spreading activation)
 ///
 /// D-14 specifies spreading activation from 1-hop graph neighbors as an
-/// additive term in the Anderson 1996 formula. Building the [`GraphSnapshot`]
+/// additive term in the Anderson 1996 formula. Building the [`crate::GraphSnapshot`]
 /// requires `StoragePort::graph_traverse`; wiring that read is deferred to a
 /// follow-up plan (tracked alongside CONSOL-V2-01 in REQUIREMENTS.md). Until
 /// then `spreading=0.0` matches the scorer's `noise=0.0` default — the

@@ -1,7 +1,7 @@
 //! [`EpisodeBuilder`] — scope-less payload builder for [`lunaris_core::Episode`].
 //!
 //! Lives in the `lunaris` crate (NOT `lunaris-core`) so that
-//! [`EpisodeBuilder::into_episode`] can be `pub(crate)`. Placing the method
+//! `EpisodeBuilder::into_episode` can be `pub(crate)`. Placing the method
 //! here means only code inside the `lunaris` crate (i.e., only
 //! [`crate::handle::ScopedLunaris::ingest`]) can call `into_episode` — callers
 //! outside the crate cannot stamp an arbitrary scope onto an episode.
@@ -25,7 +25,7 @@ use ulid::Ulid;
 ///
 /// Callers assemble all Episode fields **except** scope using this builder.
 /// Scope is injected exactly once — by [`crate::handle::ScopedLunaris::ingest`]
-/// — via the `pub(crate)` [`EpisodeBuilder::into_episode`] method. This makes it
+/// — via the `pub(crate)` `EpisodeBuilder::into_episode` method. This makes it
 /// impossible to construct an [`Episode`] with an arbitrary scope by reaching
 /// around the `ScopedLunaris` wrapper.
 ///

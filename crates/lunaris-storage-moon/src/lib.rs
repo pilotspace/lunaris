@@ -253,7 +253,7 @@ impl StoragePort for MoonStorage {
         crate::queue::subscribe(self.client.clone(), scope, group, topic, partition).await
     }
 
-    /// Plan 04 D-12 — see [`crate::queue::queue_length`] for the raw
+    /// Plan 04 D-12 — see `crate::queue::queue_length` (private) for the raw
     /// `MQ.LENGTH` escape hatch rationale.
     async fn queue_depth(
         &self,

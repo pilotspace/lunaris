@@ -9,7 +9,7 @@
 //! Unlike the graph pipeline handle, this one OWNS a tokio worker lifecycle:
 //! `enable()` spawns one [`lunaris_verify::run_verify_worker`] task and
 //! `disable()` signals shutdown via [`tokio::sync::Notify`] then
-//! [`Self::join_worker`] joins.
+//! `join_worker` joins.
 //!
 //! ## Surfaces (D-08/D-10)
 //!
@@ -22,7 +22,7 @@
 //!
 //! The handle is constructed BEFORE `StoragePort` in the `Lunaris::open` flow.
 //! To spawn the worker we need storage, so the handle exposes
-//! [`Self::bind_storage`] that the outer constructor calls after the
+//! `bind_storage` that the outer constructor calls after the
 //! `Arc<dyn StoragePort>` exists. `enable()` only spawns the worker when
 //! storage is bound — otherwise logs a warning and proceeds (the toggle flips
 //! but the worker stays unsaddled; caller visibility via `worker_handle.is_none()`).
@@ -70,7 +70,7 @@ pub struct VerifierPipelineHandle {
     /// after `disable()` + `join_worker()`.
     worker_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Storage handle the worker subscribes through. Late-bound by
-    /// [`crate::Lunaris::open`] via [`Self::bind_storage`].
+    /// [`crate::Lunaris::open`] via `bind_storage`.
     storage: RwLock<Option<Arc<dyn lunaris_core::StoragePort>>>,
     /// Plan 04-04 Task 4 (B-2): HlcClock for the worker's apply_supersede
     /// to call `clock.tick()` when stamping winner/loser bt. Late-bound by
@@ -200,7 +200,7 @@ impl VerifierPipelineHandle {
     /// observability semantics. Signals shutdown via
     /// [`tokio::sync::Notify::notify_one`] so the worker drain-loop + exit.
     /// Callers that need to guarantee the worker task has EXITED call
-    /// [`Self::join_worker`] after `disable()`.
+    /// `join_worker` after `disable()`.
     pub fn disable(&self) {
         let mut w = self.enabled.write();
         if *w {

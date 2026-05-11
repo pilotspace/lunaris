@@ -5,7 +5,7 @@
 //! NOT spawned until `handle.consolidator_pipeline().enable()` is called
 //! (Plan 04-04).
 //!
-//! Unlike [`lunaris_verify`], this crate has **no LLM backends** per D-15 —
+//! Unlike `lunaris_verify`, this crate has **no LLM backends** per D-15 —
 //! community summaries for CONSOL-04 are produced by Phase 3's `Extractor`
 //! trait acting as a summarizer and are wired at the umbrella handle layer
 //! in Plan 04-04. Keeping this crate pure-data keeps the build fast and the
@@ -20,7 +20,7 @@
 //!   incremental approximation per D-13.
 //! - [`leiden_pass`] — hand-rolled label-propagation community detection per
 //!   D-15 Option A. Rustworkx is explicitly rejected because it carries
-//!   unsafe blocks and would violate [`#![forbid(unsafe_code)]`].
+//!   unsafe blocks and would violate `#![forbid(unsafe_code)]`.
 //! - [`run_consolidate_worker`] — in-process tokio worker subscribing to
 //!   `__lunaris_consolidate__` (D-06 consumer group `lunaris-consolidate-v0`).
 //!
@@ -109,8 +109,8 @@ pub trait Consolidator: Send + Sync + 'static {
     /// `scope_prefix = "helios:fs/"` through this path.
     ///
     /// `dyn`-compat is preserved — no `Self: Sized` bound is added; the
-    /// existing [`consolidator_is_dyn_compat`](tests::consolidator_is_dyn_compat)
-    /// test continues to pass.
+    /// existing `consolidator_is_dyn_compat` compile-time test continues to
+    /// pass.
     async fn consolidate_scoped(
         &self,
         storage: Arc<dyn StoragePort>,

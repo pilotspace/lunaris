@@ -88,7 +88,7 @@ impl Lunaris {
     /// Plan 04-04 B-8 fix: NEW async variant that reads the verifier queue
     /// depth ONCE per call and seeds the resulting [`RetrievalBuilder`] with
     /// `with_initial_degraded(true)` when the depth crosses
-    /// [`LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD`] (default 1000).
+    /// `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` (default 1000).
     ///
     /// The existing sync [`Self::recall`] is unchanged — this is purely an
     /// additive method so prior callers (Phase 2 tests, recall_smoke.rs,

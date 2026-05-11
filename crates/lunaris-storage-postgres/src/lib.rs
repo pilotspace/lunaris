@@ -141,7 +141,7 @@ impl StoragePort for PostgresStorage {
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
         crate::queue::subscribe(self.client.clone(), scope, group, topic, partition).await
     }
-    /// Plan 04 D-12 + B-11 — see [`crate::queue::queue_length`] for the
+    /// Plan 04 D-12 + B-11 — see `crate::queue::queue_length` (private) for the
     /// pgmq.queue_length($1) primary path + SqlState 42883 fallback.
     async fn queue_depth(
         &self,
