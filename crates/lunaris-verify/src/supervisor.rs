@@ -136,27 +136,40 @@ impl VerifySupervisor {
     /// If the scope is already registered this is a no-op. If the subscribe
     /// call fails, returns `Err` and the scope is NOT added to the active map.
     pub async fn register_scope(&self, scope: Scope) -> Result<(), LunarisError> {
-        {
-            let guard = self.active.read();
+        // P-3 (v0.2 review) — atomic check-and-reserve under one write lock.
+        // See consolidate supervisor's register_scope for the full rationale.
+        let needs_spawn = {
+            let mut guard = self.active.write();
             if guard.contains_key(&scope) {
-                return Ok(());
+                false
+            } else {
+                let (placeholder, _placeholder_rx) = oneshot::channel::<()>();
+                guard.insert(scope.clone(), placeholder);
+                true
             }
+        };
+        if !needs_spawn {
+            return Ok(());
         }
         self.spawn_scope_task(scope).await
     }
 
+    /// **Invariant (P-3):** caller MUST have reserved the active-map slot
+    /// before invoking this function (see `register_scope`).
     async fn spawn_scope_task(&self, scope: Scope) -> Result<(), LunarisError> {
         let topic = scope_verify_topic(&scope);
 
-        let stream = self
-            .storage
-            .subscribe(&scope, VERIFY_CONSUMER_GROUP, &topic, 0)
-            .await
-            .map_err(LunarisError::Storage)?;
+        let stream = match self.storage.subscribe(&scope, VERIFY_CONSUMER_GROUP, &topic, 0).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.active.write().remove(&scope);
+                return Err(LunarisError::Storage(e));
+            }
+        };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        // Lock, insert, unlock — no await between lock and unlock.
+        // Replace placeholder with real sender.
         {
             let mut guard = self.active.write();
             guard.insert(scope.clone(), shutdown_tx);

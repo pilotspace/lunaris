@@ -153,12 +153,33 @@ impl ConsolidateSupervisor {
     /// If the subscribe call fails, returns `Err` and the scope is NOT added
     /// to the active map.
     pub async fn register_scope(&self, scope: Scope) -> Result<(), LunarisError> {
-        // Fast path: already registered. Read lock, no await.
-        {
-            let guard = self.active.read();
+        // P-3 (v0.2 review) — atomic check-and-reserve under one write lock.
+        //
+        // The prior implementation read-checked, then dropped the lock and
+        // awaited `subscribe`, then write-inserted. Two concurrent
+        // `register_scope` calls for the same scope could both pass the
+        // read check, both subscribe, and the second `insert` would
+        // overwrite the first sender — leaving the first task with a
+        // closed shutdown channel and a stranded subscriber.
+        //
+        // The fix: take a write lock and reserve the slot with a placeholder
+        // sender under the SAME lock that observed the scope was absent.
+        // Concurrent callers see the placeholder and return Ok early
+        // (registration is idempotent). The placeholder is replaced with
+        // the real sender once `subscribe` completes; if `subscribe` fails
+        // the placeholder is removed so a later retry can proceed.
+        let needs_spawn = {
+            let mut guard = self.active.write();
             if guard.contains_key(&scope) {
-                return Ok(());
+                false
+            } else {
+                let (placeholder, _placeholder_rx) = oneshot::channel::<()>();
+                guard.insert(scope.clone(), placeholder);
+                true
             }
+        };
+        if !needs_spawn {
+            return Ok(());
         }
 
         self.spawn_scope_task(scope, 0).await
@@ -166,19 +187,30 @@ impl ConsolidateSupervisor {
 
     /// Internal: spawn (or re-spawn) a scope task. `attempt` tracks the
     /// restart count for bounded backoff.
+    ///
+    /// **Invariant (P-3):** caller MUST have reserved the active-map slot
+    /// for `scope` via `register_scope`'s placeholder insert before
+    /// invoking this function. On any error before the real sender is
+    /// installed, the placeholder is removed to leave the supervisor in
+    /// the same state as if `register_scope` had never been called.
     async fn spawn_scope_task(&self, scope: Scope, attempt: u32) -> Result<(), LunarisError> {
         // Build the per-scope topic: `lunaris:{scope}:consolidate`
         let topic = scope_consolidate_topic(&scope);
 
-        let stream = self
-            .storage
-            .subscribe(&scope, CONSOLIDATE_CONSUMER_GROUP, &topic, 0)
-            .await
-            .map_err(LunarisError::Storage)?;
+        let stream =
+            match self.storage.subscribe(&scope, CONSOLIDATE_CONSUMER_GROUP, &topic, 0).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // Subscribe failed — clean up the placeholder so a later
+                    // register_scope call can retry.
+                    self.active.write().remove(&scope);
+                    return Err(LunarisError::Storage(e));
+                }
+            };
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        // Lock, insert, immediately unlock before any await.
+        // Replace placeholder with real sender under one write lock.
         {
             let mut guard = self.active.write();
             guard.insert(scope.clone(), shutdown_tx);
