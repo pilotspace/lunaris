@@ -24,7 +24,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lunaris_core::{StorageError, StoragePort};
+use lunaris_core::{Scope, StorageError, StoragePort};
 use parking_lot::RwLock;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -111,8 +111,12 @@ async fn poll_topic<F: FnOnce(u64)>(
     warned: &Arc<RwLock<bool>>,
     update: F,
 ) {
-    // RFC 0001 Wave 0: Scope::dev() until per-scope queue routing (Wave 1E).
-    match storage.queue_depth(&lunaris::Scope::dev(), topic, 0).await {
+    // RFC 0001 Wave 1E: this background poller has no per-request JWT context.
+    // It uses the "_dev_" scope explicitly as an aggregate sentinel until
+    // Wave 3F introduces per-scope JoinSet workers that replace this global poll.
+    // SAFETY: "_dev_" matches ^[A-Za-z0-9_\-:.]{1,128}$ by inspection.
+    let dev_scope = Scope::new("_dev_").expect("_dev_ is a valid scope literal");
+    match storage.queue_depth(&dev_scope, topic, 0).await {
         Ok(depth) => update(depth),
         Err(StorageError::NotSupported(_)) => {
             // Backend doesn't support queue_depth — warn ONCE then go quiet.

@@ -104,6 +104,8 @@ impl RecordingStorageWithKeyword {
         let episode_id = ulid::Ulid::new();
         let payload = serde_json::json!({
             "id": ulid.to_string(),
+            // RFC 0001 Wave 0: Chunk now carries a `scope` field.
+            "scope": "_dev_",
             "episode_id": episode_id.to_string(),
             "text": "stub chunk text",
             "tokens": 3,
@@ -126,7 +128,12 @@ impl RecordingStorageWithKeyword {
 
 #[async_trait]
 impl StoragePort for RecordingStorageWithKeyword {
-    async fn atomic_write(&self, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    // RFC 0001 Wave 0: StoragePort methods now take scope: &Scope as first arg.
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
@@ -149,6 +156,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn vector_search(
         &self,
+        _scope: &lunaris_core::Scope,
         _index: &str,
         _query: &[f32],
         _k: usize,
@@ -161,6 +169,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn graph_traverse(
         &self,
+        _scope: &lunaris_core::Scope,
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError> {
@@ -172,6 +181,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn scan_range(
         &self,
+        _scope: &lunaris_core::Scope,
         prefix: &[u8],
         _as_of: Option<Hlc>,
     ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -186,6 +196,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn read_as_of(
         &self,
+        _scope: &lunaris_core::Scope,
         key: &[u8],
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
@@ -199,6 +210,7 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn publish(
         &self,
+        _scope: &lunaris_core::Scope,
         topic: &str,
         partition: u16,
         payload: Bytes,
@@ -209,11 +221,21 @@ impl StoragePort for RecordingStorageWithKeyword {
 
     async fn subscribe(
         &self,
+        _scope: &lunaris_core::Scope,
         _group: &str,
         _topic: &str,
         _partition: u16,
     ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
         Ok(Box::pin(stream::empty()))
+    }
+
+    async fn queue_depth(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<u64, StorageError> {
+        Ok(0)
     }
 
     fn capabilities(&self) -> StorageCapabilities {

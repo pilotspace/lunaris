@@ -38,6 +38,7 @@ use ulid::Ulid;
 /// ```
 #[derive(Clone, Debug)]
 pub struct EpisodeBuilder {
+    id: Option<Ulid>,
     source: String,
     content: String,
     t_ref: Option<chrono::DateTime<chrono::Utc>>,
@@ -52,11 +53,21 @@ impl EpisodeBuilder {
     /// `content` is the raw text that will be chunked + embedded.
     pub fn new(source: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
+            id: None,
             source: source.into(),
             content: content.into(),
             t_ref: None,
             metadata: serde_json::Map::new(),
         }
+    }
+
+    /// Override the auto-generated ULID with a deterministic `id`.
+    ///
+    /// Useful for idempotent ingest (replay / migration tooling). When not
+    /// set, `into_episode` generates a fresh ULID via [`Ulid::new`].
+    pub fn id(mut self, id: Ulid) -> Self {
+        self.id = Some(id);
+        self
     }
 
     /// Set the reference timestamp (valid time anchor).
@@ -84,7 +95,7 @@ impl EpisodeBuilder {
     /// the bi-temporal `(valid, sys)` pair at the moment of ingest.
     pub(crate) fn into_episode(self, scope: Scope, clock: &HlcClock) -> Episode {
         Episode {
-            id: Ulid::new(),
+            id: self.id.unwrap_or_else(Ulid::new),
             scope,
             source: self.source,
             content: self.content,
