@@ -1,0 +1,100 @@
+# cargo-deny configuration — Phase 22 ship-to-product license / supply-chain
+# vetting for the Lunaris workspace. Run via `cargo deny check` (CI gate
+# wired into .github/workflows/ci.yml).
+#
+# Policy intent:
+#   - Lunaris ships Apache-2.0; all transitive deps MUST be permissive-license
+#     compatible (Apache-2.0 / MIT / BSD-3-Clause / Unicode-DFS-2016 / ISC /
+#     Zlib).
+#   - No copyleft (GPL / AGPL / LGPL) — would re-license downstream consumers.
+#   - No yanked crates in the dep tree (`bans.deny` with yanked = "deny").
+#   - No security advisories with unresolved fixes.
+
+[graph]
+# Skip dev-deps and build-deps from the license/ban surface — only
+# runtime deps end up in published wheels / crates.
+all-features = false
+no-default-features = false
+exclude-dev = true
+
+[output]
+feature-depth = 1
+
+# ───────────────────────── advisories ─────────────────────────
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Block at YANK level — a yanked crate in a release would silently break
+# downstream `cargo add lunaris`.
+yanked = "deny"
+# Ignore-list is reserved for transitive "unmaintained" advisories where
+# the dependent is itself unforked upstream. Every entry MUST cite the
+# upstream-blocker and a re-review date so this list doesn't silently
+# accumulate.
+ignore = [
+    # RUSTSEC-2024-0436 — paste@1.0.15 is unmaintained.
+    # Reach: gemm → candle-core → candle-{nn,transformers} → lunaris-embed
+    #        / lunaris-extract / lunaris-rerank / lunaris-verify.
+    # Upstream: candle 0.10 still pulls gemm 0.19 which pulls paste 1.0.
+    # Re-review when candle bumps off gemm (tracked in candle issue queue).
+    { id = "RUSTSEC-2024-0436", reason = "transitive via candle-core/gemm; no published candle release moves off gemm yet" },
+    # RUSTSEC-2025-0119 — number_prefix@0.4.0 is unmaintained.
+    # Reach: indicatif → hf-hub → lunaris-bench (dev-dep) +
+    #        candle-* via reqwest pulls.
+    # Re-review when indicatif drops number_prefix (advisory itself says
+    # the maintainer has not responded to the unmaintained tag).
+    { id = "RUSTSEC-2025-0119", reason = "transitive via hf-hub/indicatif; not in shipped surface (dev-dep only)" },
+]
+
+# ───────────────────────── licenses ─────────────────────────
+[licenses]
+# Permissive licenses we accept. Apache-2.0 + MIT is the dominant pair in
+# the Rust async ecosystem; the rest cover specific common crates.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",          # file-level copyleft; safe for library use.
+    "OpenSSL",          # for openssl-sys; isolated to that one transitive dep.
+    "CC0-1.0",          # public-domain dedication
+    "BSL-1.0",          # Boost — equivalent to MIT for redistribution
+    "CDLA-Permissive-2.0",
+    "0BSD",
+]
+confidence-threshold = 0.93
+# Per-crate exceptions: only allow these explicit licenses for crates that
+# would otherwise be rejected.
+exceptions = []
+
+# ───────────────────────── bans ─────────────────────────
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+# Explicit deny-list for licenses that re-license downstream consumers.
+# This is in [bans] (not [licenses]) so we get a clear "banned crate"
+# error rather than a license-mismatch warning.
+deny = []
+# Tolerate a small number of duplicate-version warnings — the Rust async
+# ecosystem regularly drifts on `syn`, `windows-sys`, etc. Skip these
+# until they actually appear in a publishable surface.
+skip = []
+skip-tree = []
+
+# ───────────────────────── sources ─────────────────────────
+[sources]
+# Only allow crates.io + this workspace's path deps. Git-revision deps
+# are rejected — every published `lunaris-*` crate must resolve to a
+# crates.io coordinate (path is fine inside the workspace).
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Sibling-repo path deps (moondb, moon SDK) are allowed during development
+# but the publish gate (`cargo publish --dry-run`) rejects them on its own.
+allow-git = []

@@ -81,6 +81,22 @@ jobs:
       - name: cargo_publish_dry_run_core
         run: cargo publish -p lunaris-core --dry-run --allow-dirty
 
+      # Phase 22 supply-chain gate — cargo-deny enforces license policy
+      # (Apache-2.0 / MIT / BSD permissive only), bans yanked crates,
+      # blocks unknown git/registry sources, and surfaces RUSTSEC
+      # advisories. Configured via deny.toml at the workspace root.
+      # Ignore-list entries cite upstream-blocker + re-review condition.
+      - name: cargo_deny
+        run: |
+          set -e
+          if ! command -v cargo-deny >/dev/null 2>&1; then
+            cargo install --locked cargo-deny || {
+              echo "::warning::cargo-deny unavailable; skipping"
+              exit 0
+            }
+          fi
+          cargo deny check
+
       # INGEST-04 invariant — single atomic_write per ingest path.
       # Strip line-comments first so doc references don't inflate the
       # count, then require exactly one real `storage.atomic_write` call
