@@ -9,6 +9,8 @@
 #   cargo check -p lunaris-rerank                                      # candle (default)
 #   cargo check -p lunaris-rerank --no-default-features                # noop only
 #   cargo check -p lunaris-rerank --no-default-features --features fastembed
+#   cargo check -p lunaris-rerank --no-default-features --features fastembed-coreml  # macOS CoreML EP (Phase 20-01)
+#   cargo check -p lunaris-rerank --no-default-features --features fastembed-cuda    # Linux/NVIDIA CUDA EP (Phase 20-01)
 #   cargo test  -p lunaris-rerank --features rerank-it                 # gated candle live-model tests
 #   cargo test  -p lunaris-rerank --features "fastembed,embedder-it"   # gated fastembed live-model tests
 
@@ -36,6 +38,11 @@ fastembed   = [
     "fastembed/ort-download-binaries-native-tls",
     "fastembed/hf-hub-native-tls",
 ]
+# Phase 20 Plan 20-01 — ORT execution providers (mirrors lunaris-embed
+# outcome B). fastembed's `cuda` feature is candle-only; the ONNX path uses
+# `ort` directly. See lunaris-embed/Cargo.toml for the full rationale.
+fastembed-coreml = ["fastembed", "dep:ort", "ort/coreml"]
+fastembed-cuda   = ["fastembed", "dep:ort", "ort/cuda"]
 rerank-it   = []   # gates candle live-model integration tests (real bge-reranker-v2-m3 load)
 # Phase 19 Plan 19-04 — parallel to lunaris-embed's gate so the fastembed
 # reranker integration matrix activates with the same CI feature flag as the
@@ -69,6 +76,9 @@ dirs                = { workspace = true, optional = true }
 fastembed           = { workspace = true, optional = true }
 parking_lot         = { workspace = true, optional = true }
 anyhow              = { workspace = true, optional = true }
+# Phase 20 Plan 20-01 — direct ORT dep for execution providers (mirrors
+# lunaris-embed). Same version pin so the dep graph collapses to one ORT.
+ort                 = { version = "=2.0.0-rc.12", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

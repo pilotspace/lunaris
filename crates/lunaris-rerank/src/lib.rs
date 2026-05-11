@@ -45,6 +45,8 @@ use serde::{Deserialize, Serialize};
 pub mod bge;
 #[cfg(feature = "fastembed")]
 pub mod fastembed;
+#[cfg(feature = "fastembed")]
+pub mod fastembed_exec;
 pub mod noop;
 
 #[cfg(feature = "candle")]

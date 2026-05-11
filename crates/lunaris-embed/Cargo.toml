@@ -8,6 +8,8 @@
 #   cargo check -p lunaris-embed                                      # candle (default)
 #   cargo check -p lunaris-embed --no-default-features --features ollama
 #   cargo check -p lunaris-embed --no-default-features --features fastembed
+#   cargo check -p lunaris-embed --no-default-features --features fastembed-coreml   # macOS CoreML EP (Phase 20-01)
+#   cargo check -p lunaris-embed --no-default-features --features fastembed-cuda     # Linux/NVIDIA CUDA EP (Phase 20-01)
 #   cargo test  -p lunaris-embed --features embedder-it               # gated live-backend tests
 
 [package]
@@ -30,6 +32,16 @@ candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "d
 # those gate `qwen3`/`nomic-v2-moe` and pull the candle stack a SECOND time
 # (we already have it via the `candle` feature on a different path).
 fastembed   = ["dep:fastembed", "dep:dirs", "dep:parking_lot", "dep:anyhow", "fastembed/ort-download-binaries-native-tls", "fastembed/hf-hub-native-tls"]
+# Phase 20 Plan 20-01 — ORT execution providers (outcome B: fastembed's own
+# `cuda` feature couples to candle backends, NOT to ORT execution providers.
+# For the ONNX path we depend on `ort` directly (same v2.0.0-rc.12 fastembed
+# already pulls transitively) and feature-gate the EP linking via `ort/coreml`
+# / `ort/cuda`. The Rust types in `ort::ep` are always available; the feature
+# only controls whether the prebuilt ORT binary links the EP runtime. On hosts
+# missing the underlying SDK (CUDA toolkit on Linux, CoreML framework on
+# non-macOS) construction falls back to CPU at runtime with `tracing::warn`.
+fastembed-coreml = ["fastembed", "dep:ort", "ort/coreml"]
+fastembed-cuda   = ["fastembed", "dep:ort", "ort/cuda"]
 ollama      = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 embedder-it = []   # gates live-backend integration tests (real model load + Ollama HTTP)
 
@@ -53,6 +65,13 @@ dirs                = { workspace = true, optional = true }
 fastembed           = { workspace = true, optional = true }
 parking_lot         = { workspace = true, optional = true }
 anyhow              = { workspace = true, optional = true }
+# Phase 20 Plan 20-01 — direct `ort` dep so we can opt into specific ORT
+# execution providers (coreml / cuda) via Cargo features. Pinned to the SAME
+# version fastembed 5.13.4 transitively depends on (`ort = 2.0.0-rc.12`) so
+# the version-unifying graph collapses both edges onto one ORT crate. Default
+# features disabled — only the EP feature(s) from `fastembed-coreml` /
+# `fastembed-cuda` light up.
+ort                 = { version = "=2.0.0-rc.12", optional = true, default-features = false }
 # ollama stack — gated behind `ollama` feature
 reqwest        = { workspace = true, optional = true }
 serde          = { workspace = true, optional = true }

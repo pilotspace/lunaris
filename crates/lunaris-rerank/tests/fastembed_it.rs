@@ -119,7 +119,10 @@ async fn preserved_set_under_repeats() {
     got_ids.sort();
     let mut want_sorted = want_ids.clone();
     want_sorted.sort();
-    assert_eq!(got_ids, want_sorted, "all 4 distinct ids must survive — including the two identical-text docs");
+    assert_eq!(
+        got_ids, want_sorted,
+        "all 4 distinct ids must survive — including the two identical-text docs"
+    );
 
     // Both repeat-text rows must still have their original ids tagged on
     // distinct output entries.
@@ -170,8 +173,13 @@ async fn empty_query_or_empty_docs() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bogus_cache_dir_returns_actionable_error() {
     let bogus = PathBuf::from("/dev/null/lunaris-fastembed-reranker-it/cannot-exist");
-    let opts =
-        FastembedRerankerOpts { cache_dir: Some(bogus), show_download_progress: false };
+    // Phase 20 Plan 20-01: opts gained an `execution` field. Spread-default
+    // it so this test pins the cache_dir failure mode regardless of EP build.
+    let opts = FastembedRerankerOpts {
+        cache_dir: Some(bogus),
+        show_download_progress: false,
+        ..FastembedRerankerOpts::default()
+    };
     let err = FastembedReranker::new(opts)
         .expect_err("constructing under /dev/null/... must fail before any network call");
 

@@ -37,8 +37,8 @@
 use std::path::PathBuf;
 
 use lunaris_core::{Embedder, LunarisError, StorageError};
-use lunaris_embed::{FastembedEmbedder, FastembedEmbedderOpts};
 use lunaris_embed::fastembed::FASTEMBED_GEMMA_DIM;
+use lunaris_embed::{FastembedEmbedder, FastembedEmbedderOpts};
 
 /// Build a fresh embedder using the default cache resolution chain. Callers
 /// can pre-warm by setting `LUNARIS_FASTEMBED_CACHE_DIR` to a pre-populated
@@ -64,10 +64,7 @@ async fn batch_of_four_returns_four_normalised_rows() {
     assert_eq!(embedder.dim(), FASTEMBED_GEMMA_DIM);
 
     let inputs: Vec<&str> = vec!["alpha", "beta", "gamma", "delta"];
-    let vecs = embedder
-        .embed_batch(&inputs)
-        .await
-        .expect("embed_batch (batch of 4)");
+    let vecs = embedder.embed_batch(&inputs).await.expect("embed_batch (batch of 4)");
 
     assert_eq!(vecs.len(), 4, "expected 4 rows, got {}", vecs.len());
     for (idx, row) in vecs.iter().enumerate() {
@@ -78,10 +75,7 @@ async fn batch_of_four_returns_four_normalised_rows() {
             row.len()
         );
         let l2 = row.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-        assert!(
-            (l2 - 1.0).abs() < L2_TOL,
-            "row {idx} L2 = {l2}, expected within {L2_TOL} of 1.0"
-        );
+        assert!((l2 - 1.0).abs() < L2_TOL, "row {idx} L2 = {l2}, expected within {L2_TOL} of 1.0");
     }
 }
 
@@ -95,10 +89,7 @@ async fn batch_of_four_returns_four_normalised_rows() {
 async fn identical_inputs_produce_identical_vectors() {
     let embedder = fresh_embedder();
     let inputs: Vec<&str> = vec!["lunaris memory engine", "lunaris memory engine"];
-    let vecs = embedder
-        .embed_batch(&inputs)
-        .await
-        .expect("embed_batch (identical pair)");
+    let vecs = embedder.embed_batch(&inputs).await.expect("embed_batch (identical pair)");
 
     assert_eq!(vecs.len(), 2);
     assert_eq!(vecs[0].len(), FASTEMBED_GEMMA_DIM);
@@ -120,14 +111,8 @@ async fn two_separate_calls_produce_stable_output() {
     let embedder = fresh_embedder();
     let inputs: Vec<&str> = vec!["alpha"];
 
-    let first = embedder
-        .embed_batch(&inputs)
-        .await
-        .expect("embed_batch (call 1)");
-    let second = embedder
-        .embed_batch(&inputs)
-        .await
-        .expect("embed_batch (call 2)");
+    let first = embedder.embed_batch(&inputs).await.expect("embed_batch (call 1)");
+    let second = embedder.embed_batch(&inputs).await.expect("embed_batch (call 2)");
 
     assert_eq!(first.len(), 1);
     assert_eq!(second.len(), 1);
@@ -155,9 +140,12 @@ async fn two_separate_calls_produce_stable_output() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bogus_cache_dir_returns_actionable_error() {
     let bogus = PathBuf::from("/dev/null/lunaris-fastembed-it/cannot-exist");
+    // Phase 20 Plan 20-01: opts gained an `execution` field. Spread-default
+    // it so this test pins the cache_dir failure mode regardless of EP build.
     let opts = FastembedEmbedderOpts {
         cache_dir: Some(bogus),
         show_download_progress: false,
+        ..FastembedEmbedderOpts::default()
     };
     let err = FastembedEmbedder::new(opts)
         .expect_err("constructing under /dev/null/... must fail before any network call");
@@ -174,8 +162,6 @@ async fn bogus_cache_dir_returns_actionable_error() {
             );
             eprintln!("// fastembed reported: {msg}");
         }
-        other => panic!(
-            "expected LunarisError::Storage(StorageError::Backend(_)), got: {other:?}"
-        ),
+        other => panic!("expected LunarisError::Storage(StorageError::Backend(_)), got: {other:?}"),
     }
 }

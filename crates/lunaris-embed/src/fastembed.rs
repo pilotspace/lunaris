@@ -55,7 +55,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{
+    EmbeddingModel, InitOptions, InitOptionsUserDefined, Pooling, QuantizationMode, TextEmbedding,
+    TokenizerFiles, UserDefinedEmbeddingModel,
+};
 use lunaris_core::{Embedder, LunarisError, StorageError};
 use parking_lot::Mutex;
 
@@ -74,6 +77,15 @@ pub const FASTEMBED_GEMMA_MAX_TOKENS: usize = 2048;
 /// Mirrors the `LUNARIS_OLLAMA_URL` / `LUNARIS_OLLAMA_MODEL` env-override
 /// convention established in [`crate::ollama`].
 pub const FASTEMBED_CACHE_DIR_ENV: &str = "LUNARIS_FASTEMBED_CACHE_DIR";
+
+// Phase 20 Plan 20-01 — execution-provider plumbing lives in a sibling module
+// to keep this file under the project's split threshold. Re-exported so the
+// public API surface (`lunaris_embed::fastembed::ExecutionPreference`) stays
+// unchanged for downstream callers.
+pub use crate::fastembed_exec::{
+    ExecutionPreference, FASTEMBED_EXECUTION_ENV, execution_from_env, parse_execution,
+};
+use crate::fastembed_exec::{build_execution_providers, requests_accelerator};
 
 /// Construction options for [`FastembedEmbedder`].
 ///
@@ -94,6 +106,11 @@ pub struct FastembedEmbedderOpts {
     /// Forwarded to `fastembed::InitOptions::with_show_download_progress`.
     /// Default `false` to keep server logs clean.
     pub show_download_progress: bool,
+    /// ORT execution-provider preference (Phase 20 Plan 20-01). `Default`
+    /// reads `$LUNARIS_FASTEMBED_EXECUTION`; unknown values resolve to `Cpu`
+    /// with a `tracing::warn`. Set programmatically when callers want to
+    /// override the environment.
+    pub execution: ExecutionPreference,
 }
 
 impl Default for FastembedEmbedderOpts {
@@ -101,6 +118,7 @@ impl Default for FastembedEmbedderOpts {
         Self {
             cache_dir: Some(resolve_default_cache_dir()),
             show_download_progress: false,
+            execution: execution_from_env(),
         }
     }
 }
@@ -128,7 +146,7 @@ pub struct FastembedEmbedder {
 impl std::fmt::Debug for FastembedEmbedder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FastembedEmbedder")
-            .field("dim", &FASTEMBED_GEMMA_DIM)
+            .field("dim", &self.inner.dim)
             .field("cache_dir", &self.inner.cache_dir)
             .finish()
     }
@@ -139,8 +157,18 @@ struct Inner {
     /// serialisation point — see module doc.
     model: Mutex<TextEmbedding>,
     /// Retained for `Debug` + future operator triage tracing. Not used in the
-    /// hot path.
+    /// hot path. For the user-defined-model path this is `PathBuf::new()`
+    /// (empty) since the operator hands us bytes directly — there is no
+    /// on-disk cache by definition.
     cache_dir: PathBuf,
+    /// Embedding dimensionality. For the default path this is
+    /// [`FASTEMBED_GEMMA_DIM`]; for the user-defined path it is the
+    /// operator-declared `dim` from [`FastembedUserDefinedOpts`].
+    ///
+    /// Made runtime (rather than the compile-time constant the Phase 19
+    /// implementation read) by Plan 20-01 Task 3 so bring-your-own-model
+    /// callers see their own dim through the [`Embedder`] trait surface.
+    dim: usize,
 }
 
 impl FastembedEmbedder {
@@ -155,38 +183,314 @@ impl FastembedEmbedder {
     /// NOT wrap inside `new` so the error mapping stays straightforward and
     /// the caller controls the spawn context.
     pub fn new(opts: FastembedEmbedderOpts) -> Result<Self, LunarisError> {
-        let cache_dir = opts
-            .cache_dir
-            .unwrap_or_else(resolve_default_cache_dir);
+        let cache_dir = opts.cache_dir.unwrap_or_else(resolve_default_cache_dir);
+        let execution = opts.execution.clone();
 
         // T-19-01-03 mitigation: log model + cache_dir at INFO so operators can
         // diff env-to-env. Do NOT log inputs anywhere in this module
         // (T-19-01-04).
         tracing::info!(
+            backend = "fastembed",
             model = "EmbeddingGemma300M",
             cache_dir = %cache_dir.display(),
+            execution = ?execution,
             "fastembed embedder constructing"
         );
 
-        let init = InitOptions::new(EmbeddingModel::EmbeddingGemma300M)
-            .with_cache_dir(cache_dir.clone())
-            .with_show_download_progress(opts.show_download_progress);
+        let build = |providers_enabled: bool| -> Result<TextEmbedding, anyhow::Error> {
+            let mut init = InitOptions::new(EmbeddingModel::EmbeddingGemma300M)
+                .with_cache_dir(cache_dir.clone())
+                .with_show_download_progress(opts.show_download_progress);
+            if providers_enabled {
+                init = init.with_execution_providers(build_execution_providers(&execution));
+            }
+            TextEmbedding::try_new(init)
+        };
 
-        let model = TextEmbedding::try_new(init).map_err(anyhow_to_lunaris)?;
+        let model = try_with_fallback(&execution, build)?;
+
+        // Best-effort label: fastembed's `Session` doesn't expose the active
+        // EP, so we report the requested preference here. The fallback path
+        // emits its own `warn` if it kicked in, which is the durable signal
+        // for "you asked for accelerator but got CPU".
+        let resolved = execution.clone();
+        tracing::info!(
+            backend = "fastembed",
+            model = "EmbeddingGemma300M",
+            execution = ?resolved,
+            "fastembed embedder initialized"
+        );
 
         Ok(Self {
             inner: Arc::new(Inner {
                 model: Mutex::new(model),
                 cache_dir,
+                dim: FASTEMBED_GEMMA_DIM,
             }),
         })
+    }
+
+    /// Bring-your-own ONNX model (Phase 20 Plan 20-01). The operator supplies
+    /// the model bytes + tokenizer bytes in [`FastembedUserDefinedOpts`] and
+    /// declares the output dimensionality (`dim`); the constructor wires
+    /// fastembed's [`UserDefinedEmbeddingModel`] / `InitOptionsUserDefined`
+    /// and returns a ready embedder.
+    ///
+    /// # Trust requirement
+    ///
+    /// The ONNX bytes execute in-process through ONNX Runtime. They MUST come
+    /// from a trusted source (operator-controlled model registry, not
+    /// user-uploaded content) — Lunaris performs no graph validation. See
+    /// `.planning/phases/20-fastembed-adoption/20-01-PLAN.md` threat
+    /// `T-20-01-01`.
+    ///
+    /// # Storage-dim constraint
+    ///
+    /// Lunaris's default storage schema is **768-d** (Moon FT index + Postgres
+    /// `vector(768)` column). Operators bringing a model whose `dim != 768`
+    /// MUST also reindex storage — this is the storage-side migration covered
+    /// by Plan 20-03. Lunaris does NOT enforce dim parity between embedder
+    /// and storage on the hot path; a mismatch surfaces as a backend insert
+    /// error at first ingest.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lunaris_embed::fastembed::{
+    ///     FastembedEmbedder, FastembedUserDefinedOpts, PoolingMode, ExecutionPreference,
+    /// };
+    ///
+    /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
+    /// let onnx = std::fs::read("models/helios-finetuned.onnx")?;
+    /// let tok = std::fs::read("models/helios-finetuned/tokenizer.json")?;
+    /// let embedder = FastembedEmbedder::from_user_defined(FastembedUserDefinedOpts {
+    ///     onnx_file: onnx,
+    ///     tokenizer_file: tok,
+    ///     tokenizer_config_file: None,
+    ///     special_tokens_map_file: None,
+    ///     config_file: None,
+    ///     dim: 1024, // MUST match the ONNX model's output dim
+    ///     pooling: PoolingMode::Mean,
+    ///     execution: ExecutionPreference::Cpu,
+    ///     max_length: 2048,
+    /// })?;
+    /// // let lunaris = Lunaris::open(url).await?.with_embedder(Arc::new(embedder));
+    /// let _ = Arc::new(embedder);
+    /// # Ok(()) }
+    /// ```
+    pub fn from_user_defined(opts: FastembedUserDefinedOpts) -> Result<Self, LunarisError> {
+        if opts.onnx_file.is_empty() {
+            return Err(LunarisError::Storage(StorageError::Backend(
+                "fastembed: from_user_defined called with empty onnx_file bytes".to_string(),
+            )));
+        }
+        if opts.tokenizer_file.is_empty() {
+            return Err(LunarisError::Storage(StorageError::Backend(
+                "fastembed: from_user_defined called with empty tokenizer_file bytes".to_string(),
+            )));
+        }
+        if opts.dim == 0 {
+            return Err(LunarisError::Storage(StorageError::Backend(
+                "fastembed: from_user_defined called with dim = 0".to_string(),
+            )));
+        }
+
+        let execution = opts.execution.clone();
+        let dim = opts.dim;
+        let max_length = opts.max_length;
+
+        tracing::info!(
+            backend = "fastembed",
+            model = "user-defined",
+            dim,
+            execution = ?execution,
+            "fastembed user-defined embedder constructing"
+        );
+
+        // The struct is non-`Clone` once we move bytes in. Construct once;
+        // fallback retry below requires a second model — for the user-defined
+        // path we keep buffers around in `Option<...>` so the fallback path
+        // can reuse them without double-copying multi-MB onnx blobs.
+        let user_model = UserDefinedEmbeddingModel {
+            onnx_file: opts.onnx_file,
+            external_initializers: Vec::new(),
+            tokenizer_files: TokenizerFiles {
+                tokenizer_file: opts.tokenizer_file,
+                config_file: opts.config_file.unwrap_or_default(),
+                special_tokens_map_file: opts.special_tokens_map_file.unwrap_or_default(),
+                tokenizer_config_file: opts.tokenizer_config_file.unwrap_or_default(),
+            },
+            pooling: Some(opts.pooling.into()),
+            quantization: QuantizationMode::None,
+            output_key: None,
+        };
+
+        let model = try_user_defined_with_fallback(&execution, user_model, max_length)?;
+
+        // Best-effort label: fastembed's `Session` doesn't expose the active
+        // EP, so we report the requested preference here. The fallback path
+        // emits its own `warn` if it kicked in, which is the durable signal
+        // for "you asked for accelerator but got CPU".
+        let resolved = execution.clone();
+        tracing::info!(
+            backend = "fastembed",
+            model = "user-defined",
+            dim,
+            execution = ?resolved,
+            "fastembed user-defined embedder initialized"
+        );
+
+        Ok(Self {
+            inner: Arc::new(Inner { model: Mutex::new(model), cache_dir: PathBuf::new(), dim }),
+        })
+    }
+}
+
+/// Options for [`FastembedEmbedder::from_user_defined`]. All byte buffers are
+/// moved into the constructor — they aren't retained inside the embedder once
+/// the ONNX session has been built (the session owns its parsed graph).
+///
+/// **Storage-side dim invariant:** see the constructor's rustdoc — `dim` must
+/// match the ONNX model's output AND should match Lunaris's storage schema
+/// (default 768) unless storage is reindexed.
+#[derive(Clone, Debug)]
+pub struct FastembedUserDefinedOpts {
+    /// Raw bytes of the ONNX graph (e.g., `model.onnx`).
+    pub onnx_file: Vec<u8>,
+    /// Raw bytes of the HF-format `tokenizer.json`.
+    pub tokenizer_file: Vec<u8>,
+    /// Optional `tokenizer_config.json` bytes. Empty if `None`.
+    pub tokenizer_config_file: Option<Vec<u8>>,
+    /// Optional `special_tokens_map.json` bytes.
+    pub special_tokens_map_file: Option<Vec<u8>>,
+    /// Optional model `config.json` bytes (architecture metadata).
+    pub config_file: Option<Vec<u8>>,
+    /// Output dimensionality declared by the operator. MUST match what the
+    /// ONNX graph actually emits; a mismatch surfaces as a vector-index
+    /// rejection at the first ingest call.
+    pub dim: usize,
+    /// Pooling strategy applied to token-level embeddings to produce the
+    /// sentence vector. Mirrors fastembed's [`Pooling`] enum.
+    pub pooling: PoolingMode,
+    /// ORT execution provider preference (same enum as the default path).
+    pub execution: ExecutionPreference,
+    /// Token context window. Defaults to 2048 to match `EmbeddingGemma300M`.
+    pub max_length: usize,
+}
+
+impl Default for FastembedUserDefinedOpts {
+    fn default() -> Self {
+        Self {
+            onnx_file: Vec::new(),
+            tokenizer_file: Vec::new(),
+            tokenizer_config_file: None,
+            special_tokens_map_file: None,
+            config_file: None,
+            dim: 0,
+            pooling: PoolingMode::Mean,
+            execution: execution_from_env(),
+            max_length: FASTEMBED_GEMMA_MAX_TOKENS,
+        }
+    }
+}
+
+/// Lunaris-facing pooling enum — decouples callers from a direct
+/// [`fastembed::Pooling`] type dependency.
+///
+/// `Cls` mirrors fastembed's BERT-style first-token pooling; `Mean` is the
+/// recommended setting for sentence-similarity models (EmbeddingGemma + most
+/// BGE variants).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PoolingMode {
+    /// CLS-token pooling (BERT-style). Maps to [`fastembed::Pooling::Cls`].
+    Cls,
+    /// Mean pooling with attention-mask weighting. Maps to
+    /// [`fastembed::Pooling::Mean`].
+    #[default]
+    Mean,
+}
+
+impl From<PoolingMode> for Pooling {
+    fn from(m: PoolingMode) -> Self {
+        match m {
+            PoolingMode::Cls => Pooling::Cls,
+            PoolingMode::Mean => Pooling::Mean,
+        }
+    }
+}
+
+/// Try the construction closure with execution providers; on failure when an
+/// accelerator was requested, retry once with CPU only and a `tracing::warn`.
+fn try_with_fallback<F>(
+    pref: &ExecutionPreference,
+    mut build: F,
+) -> Result<TextEmbedding, LunarisError>
+where
+    F: FnMut(bool) -> Result<TextEmbedding, anyhow::Error>,
+{
+    let want_accelerator = requests_accelerator(pref);
+    match build(want_accelerator) {
+        Ok(m) => Ok(m),
+        Err(e) if want_accelerator => {
+            // T-20-01-03 mitigation: %e (Display) — don't dump full provider
+            // debug context (which may include driver paths) into logs.
+            tracing::warn!(
+                error = %e,
+                requested = ?pref,
+                "fastembed execution provider init failed, falling back to CPU"
+            );
+            build(false).map_err(anyhow_to_lunaris)
+        }
+        Err(e) => Err(anyhow_to_lunaris(e)),
+    }
+}
+
+/// User-defined variant of [`try_with_fallback`]. Owns the
+/// `UserDefinedEmbeddingModel` so the fallback retry doesn't have to clone
+/// multi-MB byte buffers — fastembed's struct is `Clone`, so we keep the
+/// owned copy in scope and pass clones in.
+fn try_user_defined_with_fallback(
+    pref: &ExecutionPreference,
+    user_model: UserDefinedEmbeddingModel,
+    max_length: usize,
+) -> Result<TextEmbedding, LunarisError> {
+    let want_accelerator = requests_accelerator(pref);
+    let build = |providers_enabled: bool, m: UserDefinedEmbeddingModel| {
+        let mut init = InitOptionsUserDefined::new().with_max_length(max_length);
+        if providers_enabled {
+            init = init.with_execution_providers(build_execution_providers(pref));
+        }
+        TextEmbedding::try_new_from_user_defined(m, init)
+    };
+
+    if want_accelerator {
+        // Keep an unconsumed clone to retry on the CPU path if the accelerator
+        // session-build fails.
+        let retry_model = user_model.clone();
+        match build(true, user_model) {
+            Ok(m) => Ok(m),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    requested = ?pref,
+                    "fastembed (user-defined) execution provider init failed, falling back to CPU"
+                );
+                build(false, retry_model).map_err(anyhow_to_lunaris)
+            }
+        }
+    } else {
+        build(false, user_model).map_err(anyhow_to_lunaris)
     }
 }
 
 #[async_trait]
 impl Embedder for FastembedEmbedder {
     fn dim(&self) -> usize {
-        FASTEMBED_GEMMA_DIM
+        // Phase 20 Plan 20-01 Task 3 — read runtime dim from Inner. For the
+        // default `new()` path this is `FASTEMBED_GEMMA_DIM` (768); for the
+        // `from_user_defined` path it is operator-declared.
+        self.inner.dim
     }
 
     async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
@@ -198,6 +502,7 @@ impl Embedder for FastembedEmbedder {
         // borrows are not `'static` so we have to materialise `String`s.
         let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
         let inner = self.inner.clone();
+        let expected_dim = inner.dim;
 
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
             // Acquire the Mutex INSIDE the blocking closure. CLAUDE.md lock
@@ -211,35 +516,37 @@ impl Embedder for FastembedEmbedder {
 
             let mut out: Vec<Vec<f32>> = Vec::with_capacity(raw.len());
             for row in raw.into_iter() {
-                if row.len() != FASTEMBED_GEMMA_DIM {
+                if row.len() != expected_dim {
                     return Err(LunarisError::Storage(StorageError::Backend(format!(
-                        "fastembed: dim mismatch — model returned {} dims, expected {FASTEMBED_GEMMA_DIM}",
+                        "fastembed: dim mismatch — model returned {} dims, expected {expected_dim}",
                         row.len()
                     ))));
                 }
-                out.push(l2_normalize_row(row));
+                out.push(l2_normalize_row(row, expected_dim));
             }
             Ok(out)
         })
         .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("fastembed join: {e}")))
-        })?
+        .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("fastembed join: {e}"))))?
     }
 }
 
 /// L2-normalise a single row in place. If the row is degenerate
 /// (`l2 < f64::EPSILON`) it is returned unchanged — matches
 /// [`crate::candle_gemma`]'s behaviour and avoids dividing by zero.
+///
+/// `expected_dim` is passed for the debug-assert only; the function is
+/// dim-agnostic post Phase 20 Plan 20-01 (the user-defined model path may
+/// have `dim != 768`).
 #[inline]
-fn l2_normalize_row(row: Vec<f32>) -> Vec<f32> {
+fn l2_normalize_row(row: Vec<f32>, expected_dim: usize) -> Vec<f32> {
     let l2 = row.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
     if l2 > f64::EPSILON {
         let mut out: Vec<f32> = row;
         for v in out.iter_mut() {
             *v = (*v as f64 / l2) as f32;
         }
-        debug_assert_eq!(out.len(), FASTEMBED_GEMMA_DIM);
+        debug_assert_eq!(out.len(), expected_dim);
         out
     } else {
         row
@@ -290,7 +597,7 @@ mod tests {
         let mut row = vec![0.0_f32; FASTEMBED_GEMMA_DIM];
         row[0] = 3.0;
         row[1] = 4.0; // ‖row‖₂ = 5
-        let out = l2_normalize_row(row);
+        let out = l2_normalize_row(row, FASTEMBED_GEMMA_DIM);
         let l2 = out.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
         assert!((l2 - 1.0).abs() < 1e-6, "expected unit norm, got {l2}");
         // 3/5 = 0.6, 4/5 = 0.8 — exact in f32.
@@ -303,9 +610,88 @@ mod tests {
         // All-zero row: norm < EPSILON → returned unchanged (matches
         // candle_gemma).
         let row = vec![0.0_f32; FASTEMBED_GEMMA_DIM];
-        let out = l2_normalize_row(row);
+        let out = l2_normalize_row(row, FASTEMBED_GEMMA_DIM);
         assert_eq!(out.len(), FASTEMBED_GEMMA_DIM);
         assert!(out.iter().all(|&x| x == 0.0));
+    }
+
+    // ---- Phase 20 Plan 20-01 ------------------------------------------------
+    // ExecutionPreference + parse_execution tests live alongside their
+    // implementation in `crate::fastembed_exec`. Tests below cover the parts
+    // of Plan 20-01 that touch the embedder construction surface specifically:
+    // from_user_defined error paths + PoolingMode mapping.
+
+    #[test]
+    fn from_user_defined_empty_onnx_returns_actionable_error() {
+        // Empty bytes path — the constructor short-circuits BEFORE calling
+        // into fastembed/ORT (so this test is offline-runnable). The error
+        // string MUST contain `"fastembed"` so operators can grep for it.
+        let opts = FastembedUserDefinedOpts {
+            onnx_file: Vec::new(),
+            tokenizer_file: vec![0u8; 4],
+            dim: 768,
+            ..Default::default()
+        };
+        let err = FastembedEmbedder::from_user_defined(opts).expect_err("empty onnx");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("fastembed") && msg.contains("onnx_file"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn from_user_defined_empty_tokenizer_returns_actionable_error() {
+        let opts = FastembedUserDefinedOpts {
+            onnx_file: vec![0u8; 4],
+            tokenizer_file: Vec::new(),
+            dim: 768,
+            ..Default::default()
+        };
+        let err = FastembedEmbedder::from_user_defined(opts).expect_err("empty tokenizer");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("fastembed") && msg.contains("tokenizer_file"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn from_user_defined_zero_dim_returns_actionable_error() {
+        let opts = FastembedUserDefinedOpts {
+            onnx_file: vec![0u8; 4],
+            tokenizer_file: vec![0u8; 4],
+            dim: 0,
+            ..Default::default()
+        };
+        let err = FastembedEmbedder::from_user_defined(opts).expect_err("zero dim");
+        let msg = format!("{err}");
+        assert!(msg.contains("fastembed") && msg.contains("dim"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn from_user_defined_bad_onnx_bytes_surfaces_fastembed_error() {
+        // Non-empty but invalid ONNX bytes — passes our front-door validation
+        // and hits fastembed/ORT proper, which rejects them. The error MUST
+        // be a `LunarisError::Storage(StorageError::Backend(..))` containing
+        // the `"fastembed"` substring.
+        let opts = FastembedUserDefinedOpts {
+            onnx_file: b"not-a-real-onnx-graph".to_vec(),
+            tokenizer_file: b"not-a-real-tokenizer".to_vec(),
+            dim: 768,
+            ..Default::default()
+        };
+        let err = FastembedEmbedder::from_user_defined(opts).expect_err("bad bytes");
+        let msg = format!("{err}");
+        assert!(msg.contains("fastembed"), "expected fastembed-prefixed error, got: {msg}");
+    }
+
+    #[test]
+    fn pooling_mode_maps_to_fastembed_pooling() {
+        let cls: Pooling = PoolingMode::Cls.into();
+        assert!(matches!(cls, Pooling::Cls));
+        let mean: Pooling = PoolingMode::Mean.into();
+        assert!(matches!(mean, Pooling::Mean));
     }
 }
 
@@ -327,10 +713,7 @@ mod live_tests {
             .expect("real model load — auto-download to ~/.cache/lunaris/models/fastembed/");
         assert_eq!(embedder.dim(), FASTEMBED_GEMMA_DIM);
         let inputs: [&str; 2] = ["hello world", "lunaris memory engine"];
-        let vecs = embedder
-            .embed_batch(&inputs)
-            .await
-            .expect("embed_batch");
+        let vecs = embedder.embed_batch(&inputs).await.expect("embed_batch");
         assert_eq!(vecs.len(), 2);
         for v in &vecs {
             assert_eq!(v.len(), FASTEMBED_GEMMA_DIM);

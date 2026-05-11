@@ -63,6 +63,10 @@ use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
 use lunaris_core::{LunarisError, StorageError};
 use parking_lot::Mutex;
 
+pub use crate::fastembed_exec::{
+    ExecutionPreference, FASTEMBED_EXECUTION_ENV, execution_from_env, parse_execution,
+};
+use crate::fastembed_exec::{build_execution_providers, requests_accelerator};
 use crate::{RerankCandidate, Reranker};
 
 /// Maximum input tokens per pair-encoding for BGE-Reranker-v2-m3 (XLM-RoBERTa
@@ -100,11 +104,19 @@ pub struct FastembedRerankerOpts {
     /// Forwarded to `fastembed::RerankInitOptions::with_show_download_progress`.
     /// Default `false` to keep server logs clean.
     pub show_download_progress: bool,
+    /// ORT execution-provider preference (Phase 20 Plan 20-01). `Default`
+    /// reads `$LUNARIS_FASTEMBED_EXECUTION`; mirrors the embedder backend so
+    /// one env var controls both.
+    pub execution: ExecutionPreference,
 }
 
 impl Default for FastembedRerankerOpts {
     fn default() -> Self {
-        Self { cache_dir: Some(resolve_default_cache_dir()), show_download_progress: false }
+        Self {
+            cache_dir: Some(resolve_default_cache_dir()),
+            show_download_progress: false,
+            execution: execution_from_env(),
+        }
     }
 }
 
@@ -161,23 +173,64 @@ impl FastembedReranker {
     /// `FastembedEmbedder::new` from Plan 19-01).
     pub fn new(opts: FastembedRerankerOpts) -> Result<Self, LunarisError> {
         let cache_dir = opts.cache_dir.unwrap_or_else(resolve_default_cache_dir);
+        let execution = opts.execution.clone();
 
         // T-19-04-03 mitigation: log model + cache_dir at INFO so operators can
         // diff env-to-env. Do NOT log query/doc strings anywhere in this
         // module — they are user-facing PII candidates.
         tracing::info!(
+            backend = "fastembed",
             model = "BGERerankerV2M3",
             cache_dir = %cache_dir.display(),
+            execution = ?execution,
             "fastembed reranker constructing"
         );
 
-        let init = RerankInitOptions::new(RerankerModel::BGERerankerV2M3)
-            .with_cache_dir(cache_dir.clone())
-            .with_show_download_progress(opts.show_download_progress);
+        let build = |providers_enabled: bool| -> Result<TextRerank, anyhow::Error> {
+            let mut init = RerankInitOptions::new(RerankerModel::BGERerankerV2M3)
+                .with_cache_dir(cache_dir.clone())
+                .with_show_download_progress(opts.show_download_progress);
+            if providers_enabled {
+                init = init.with_execution_providers(build_execution_providers(&execution));
+            }
+            TextRerank::try_new(init)
+        };
 
-        let model = TextRerank::try_new(init).map_err(anyhow_to_lunaris)?;
+        let model = try_with_fallback(&execution, build)?;
+
+        tracing::info!(
+            backend = "fastembed",
+            model = "BGERerankerV2M3",
+            execution = ?execution,
+            "fastembed reranker initialized"
+        );
 
         Ok(Self { inner: Arc::new(Inner { model: Mutex::new(model), cache_dir }) })
+    }
+}
+
+/// Try the construction closure with execution providers; on failure when an
+/// accelerator was requested, retry once with CPU only and a `tracing::warn`.
+fn try_with_fallback<F>(
+    pref: &ExecutionPreference,
+    mut build: F,
+) -> Result<TextRerank, LunarisError>
+where
+    F: FnMut(bool) -> Result<TextRerank, anyhow::Error>,
+{
+    let want_accelerator = requests_accelerator(pref);
+    match build(want_accelerator) {
+        Ok(m) => Ok(m),
+        Err(e) if want_accelerator => {
+            // T-20-01-03 mitigation: %e (Display) only.
+            tracing::warn!(
+                error = %e,
+                requested = ?pref,
+                "fastembed reranker execution provider init failed, falling back to CPU"
+            );
+            build(false).map_err(anyhow_to_lunaris)
+        }
+        Err(e) => Err(anyhow_to_lunaris(e)),
     }
 }
 
@@ -384,5 +437,22 @@ mod tests {
         let out = Shim.rerank("q", docs).await.expect("one ok");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, b"x".to_vec());
+    }
+
+    // ---- Phase 20 Plan 20-01 ------------------------------------------------
+    // ExecutionPreference + parser tests live in `crate::fastembed_exec`. The
+    // single test below covers the `Default` glue specific to the reranker
+    // opts struct.
+
+    #[test]
+    fn opts_default_execution_is_cpu_when_env_unset() {
+        // Env var resolution is the contract Default depends on. When the
+        // env var is absent the resolved value is `Cpu`. (Env-pollution
+        // skip mirrors `opts_default_resolves_to_cache_subdir`.)
+        if std::env::var(FASTEMBED_EXECUTION_ENV).is_ok() {
+            return;
+        }
+        let opts = FastembedRerankerOpts::default();
+        assert_eq!(opts.execution, ExecutionPreference::Cpu);
     }
 }

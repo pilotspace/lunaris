@@ -29,13 +29,20 @@
 pub mod candle_gemma;
 #[cfg(feature = "fastembed")]
 pub mod fastembed;
+#[cfg(feature = "fastembed")]
+pub mod fastembed_exec;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
 #[cfg(feature = "candle")]
 pub use candle_gemma::{CandleEmbeddingGemma, CandleEmbeddingGemmaOpts};
 #[cfg(feature = "fastembed")]
-pub use fastembed::{FastembedEmbedder, FastembedEmbedderOpts};
+pub use fastembed::{
+    FASTEMBED_EXECUTION_ENV, FastembedEmbedder, FastembedEmbedderOpts, FastembedUserDefinedOpts,
+    PoolingMode,
+};
+#[cfg(feature = "fastembed")]
+pub use fastembed_exec::{ExecutionPreference, execution_from_env, parse_execution};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaEmbedder, OllamaEmbedderOpts};
 
