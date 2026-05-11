@@ -8,6 +8,10 @@ Python and TypeScript SDKs. Raw observations in; structured,
 bi-temporal facts out. Backed by Postgres (default) or Moon (the
 high-performance Redis-compatible substrate).
 
+> **First time here?** [`docs/POSITIONING.md`](docs/POSITIONING.md) is
+> the one-page elevator pitch + honest "use a different tool when…"
+> criteria. Read that before evaluating.
+
 ```rust
 use lunaris::{EpisodeBuilder, Lunaris, Scope};
 
