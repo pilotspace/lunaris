@@ -119,6 +119,10 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
   Mem0 → Lunaris with code-side comparisons (ingest, recall,
   time-travel, forget), a 5-step incremental migration plan, and
   honest "stay on Mem0 if…" criteria.
+- **[`docs/MIGRATING-FROM-ZEP.md`](docs/MIGRATING-FROM-ZEP.md)** —
+  Zep → Lunaris with the parallel comparison. Differs from Mem0
+  because Zep already has bi-temporal facts — the focus is latency
+  + substrate simplification, not the bi-temporal upgrade.
 
 ## For contributors
 
