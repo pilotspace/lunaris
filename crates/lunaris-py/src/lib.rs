@@ -44,6 +44,11 @@ use pyo3::prelude::*;
 
 mod dsl;
 mod errors;
+// Wave 3G — handwritten bindings for the v0.2 multi-agent partitioning surface:
+// Scope, EpisodeBuilder, ScopedLunaris. NOT codegen-managed; see scope.rs for
+// the rationale (lifetime constraints + `pub(crate)` into_episode visibility
+// preclude codegen IR coverage).
+mod scope;
 mod toggles;
 mod types;
 
@@ -132,6 +137,12 @@ fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("LunarisError", py.get_type::<LunarisError>())?;
     dsl::register(py, m)?;
     toggles::register(py, m)?;
+
+    // Wave 3G — v0.2 multi-agent partitioning surface: Scope, EpisodeBuilder,
+    // ScopedLunaris, and the `lunaris_scoped` free function. The `Lunaris`
+    // class gains a `.scoped(scope)` method via the pure-Python `__init__.py`
+    // lambda that calls `lunaris_scoped(self, scope)`.
+    scope::register(py, m)?;
 
     #[cfg(feature = "bindings-it")]
     conformance::register(py, m)?;

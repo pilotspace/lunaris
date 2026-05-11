@@ -31,6 +31,7 @@ lunaris-conformance = { path = "../lunaris-conformance", optional = true }
 napi                = { workspace = true }
 napi-derive         = { workspace = true }
 # Upstream Rust deps reused via workspace.
+chrono              = { workspace = true }
 tokio               = { workspace = true }
 serde               = { workspace = true }
 serde_json          = { workspace = true }

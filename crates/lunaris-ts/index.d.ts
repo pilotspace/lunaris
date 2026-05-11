@@ -68,6 +68,51 @@ export declare class EmailThreading {
   withGraphPipeline(enable: boolean): EmailThreading
 }
 
+/**
+ * Scope-less payload builder for an `Episode`.
+ *
+ * Assemble all Episode fields **except** scope using this builder. The scope
+ * is injected exactly once by `ScopedLunaris.ingest`. This makes it
+ * impossible to construct an Episode with an arbitrary scope by bypassing
+ * the `ScopedLunaris` wrapper.
+ *
+ * ```ts
+ * import { EpisodeBuilder, Scope } from 'lunaris';
+ *
+ * const builder = new EpisodeBuilder("agent:fs/report.md", "# Q3 Report")
+ *   .tRef("2026-01-01T00:00:00Z")
+ *   .metadata({ author: "helios" });
+ *
+ * const lsn = await engine.scoped(Scope.new("acme:agent-1")).ingest(builder);
+ * ```
+ */
+export declare class EpisodeBuilder {
+  /**
+   * Construct a builder with the required `source` and `content`.
+   *
+   * `source` is the namespace-qualified origin (e.g. `"helios:fs/report.md"`).
+   * `content` is the raw text that will be chunked + embedded.
+   */
+  constructor(source: string, content: string)
+  /**
+   * Set the reference timestamp (valid time anchor).
+   *
+   * Accepts an ISO-8601 string (e.g. `"2026-01-01T00:00:00Z"`). When not
+   * set the ingest pipeline uses the current wall time from the HlcClock.
+   *
+   * Returns a new `EpisodeBuilder` (builder pattern).
+   */
+  tRef(t: string): EpisodeBuilder
+  /**
+   * Merge metadata key/value pairs into the builder.
+   *
+   * `m` must be a JSON object. Values must be JSON-serialisable.
+   *
+   * Returns a new `EpisodeBuilder` (builder pattern).
+   */
+  metadata(m: any): EpisodeBuilder
+}
+
 /** Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops. */
 export declare class Graph {
   /** Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph. */
@@ -98,6 +143,14 @@ export declare class Lunaris {
   forget(req: any): Promise<any>
   /** Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]). */
   snapshot(): Promise<string>
+  /**
+   * Wave 3G — construct a scope-bound view over this handle.
+   *
+   * All operations issued through the returned `ScopedLunaris` carry `scope`
+   * as their partitioning key. Patched onto `Lunaris.prototype` by `index.mjs`
+   * via `lunarisScoped`.
+   */
+  scoped(scope: Scope): ScopedLunaris
 }
 
 /** Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder. */
@@ -156,6 +209,84 @@ export declare class RetrievalBuilder {
   filter(pred: string): RetrievalBuilder
   /** Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read). */
   asOf(hlc: any): RetrievalBuilder
+}
+
+/**
+ * Multi-agent / multi-tenant partition key (RFC 0001).
+ *
+ * Validates against `^[A-Za-z0-9_\\-:.]{1,128}$`. Throws on construction if
+ * the string is empty, > 128 chars, or contains a character outside the
+ * allowed set.
+ *
+ * ```ts
+ * import { Scope } from 'lunaris';
+ *
+ * const s = Scope.new("acme:agent-42");   // OK
+ * Scope.new("");                           // throws
+ * Scope.new("a".repeat(129));             // throws
+ * ```
+ */
+export declare class Scope {
+  /**
+   * Construct a `Scope` from `s`.
+   *
+   * Validates `^[A-Za-z0-9_\\-:.]{1,128}$`. Throws `Error` if the string
+   * is empty, longer than 128 bytes, or contains an invalid character.
+   */
+  static new(s: string): Scope
+  /** Return the scope as a plain string. */
+  asStr(): string
+  /** Return the scope as a plain string (alias for ergonomic `.toString()` TS usage). */
+  toString(): string
+}
+
+/**
+ * Scope-bound view over a `Lunaris` handle.
+ *
+ * Constructed via `engine.scoped(scope)`. All operations issued through this
+ * wrapper carry the bound scope as their partitioning key.
+ *
+ * ```ts
+ * import { Scope, EpisodeBuilder } from 'lunaris';
+ *
+ * const scoped = engine.scoped(Scope.new("acme:agent-1"));
+ * const lsn = await scoped.ingest(new EpisodeBuilder("src", "content"));
+ * const hits = await scoped.recall("brown fox");
+ * ```
+ *
+ * ## Lifetime note
+ *
+ * The TS-side wrapper owns `Arc<Lunaris>` so it is safe to use from async
+ * contexts. On each method call the Rust side re-derives `ScopedLunaris<'_>`
+ * via `inner.scoped(scope.clone())` — the borrow is local to the async block.
+ */
+export declare class ScopedLunaris {
+  /** Returns the scope this view is bound to. */
+  get scope(): Scope
+  /**
+   * Ingest an episode payload under the bound scope.
+   *
+   * `builder` must be an `EpisodeBuilder`. The scope is stamped onto the
+   * episode by this method — callers cannot inject an arbitrary scope.
+   *
+   * Returns the string-formatted Lsn (e.g. `"1746000000000:1"`).
+   */
+  ingest(builder: EpisodeBuilder): Promise<string>
+  /**
+   * Recall hits under the bound scope using a text query string.
+   *
+   * Returns a JSON array of hit objects. The scope is threaded through the
+   * entire retrieval path — only hits from this scope's partition are
+   * returned.
+   */
+  recall(query: string): Promise<any>
+  /**
+   * Return a `RetrievalBuilder` pre-seeded with this scope.
+   *
+   * Equivalent to `engine.recall().withScope(scope)` for DSL-style
+   * query composition.
+   */
+  dsl(): RetrievalBuilder
 }
 
 /** Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`. */
@@ -261,6 +392,18 @@ export declare function graphPipelineDisable(handle: GraphPipelineHandle): void
 export declare function graphPipelineEnable(handle: GraphPipelineHandle): void
 
 export declare function graphPipelineIsEnabled(handle: GraphPipelineHandle): boolean
+
+/**
+ * Construct a `ScopedLunaris` bound to `scope`.
+ *
+ * Exposed as a free function because napi-rs 3.x does not support adding
+ * methods to a struct from outside its definition block. The TS-side
+ * `index.mts` wrapper patches this as `Lunaris.prototype.scoped` so
+ * callers can write `engine.scoped(scope)` naturally.
+ *
+ * napi-rs exposes this as `lunarisScoped(handle, scope): ScopedLunaris`.
+ */
+export declare function lunarisScoped(handle: Lunaris, scope: Scope): ScopedLunaris
 
 /**
  * Ergonomic async `open` free function so TypeScript callers can write

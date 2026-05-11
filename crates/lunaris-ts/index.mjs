@@ -42,6 +42,22 @@ export const fromEnvValue = native.fromEnvValue;
 export const fromConfig = native.fromConfig;
 export const __version__ = "0.1.1";
 
+// Wave 3G — v0.2 multi-agent partitioning surface (RFC 0001).
+// Scope, EpisodeBuilder, ScopedLunaris, and the lunarisScoped factory are
+// emitted by crates/lunaris-ts/src/scope.rs (handwritten, not codegen).
+export const Scope = native.Scope;
+export const EpisodeBuilder = native.EpisodeBuilder;
+export const ScopedLunaris = native.ScopedLunaris;
+export const lunarisScoped = native.lunarisScoped;
+
+// Patch Lunaris.prototype.scoped so callers write `handle.scoped(scope)` in
+// the idiomatic ergonomic form rather than the free-function form.
+if (Lunaris && native.lunarisScoped) {
+  Lunaris.prototype.scoped = function (scope) {
+    return native.lunarisScoped(this, scope);
+  };
+}
+
 // Plan 10-03 + 11-03 — expose the Phase 10 conversational + Phase 11
 // documentary recipe wrappers flat at the crate root. napi-rs 3.x's
 // proc-macro registry surfaces every `#[napi]` class as a top-level

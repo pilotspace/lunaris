@@ -2366,6 +2366,7 @@ name = "lunaris-py"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "chrono",
  "futures",
  "lunaris",
  "lunaris-conformance",
@@ -2525,6 +2526,7 @@ name = "lunaris-ts"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "chrono",
  "futures",
  "lunaris",
  "lunaris-conformance",

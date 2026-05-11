@@ -32,6 +32,7 @@ pyo3                = { workspace = true }
 pyo3-async-runtimes = { workspace = true }
 pythonize           = { workspace = true }
 # Upstream Rust deps reused via workspace.
+chrono              = { workspace = true }
 tokio               = { workspace = true }
 serde               = { workspace = true }
 serde_json          = { workspace = true }

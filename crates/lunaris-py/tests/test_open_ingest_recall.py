@@ -20,14 +20,20 @@ import lunaris
 def _build_episode(content: str) -> dict:
     """Construct a dict shaped like `lunaris_core::primitives::Episode`.
 
-    Mirrors the `serde` shape from `crates/lunaris-core/src/primitives.rs:16-24`.
+    Mirrors the `serde` shape from `crates/lunaris-core/src/primitives.rs`.
     All optional fields are filled with zero-valued defaults.
+
+    v0.2 (RFC 0001): the `scope` field is now required. We pass `"_dev_"` here
+    so the existing backwards-compat tests continue to pass. Production callers
+    should use `engine.scoped(Scope(...)).ingest(EpisodeBuilder(...))` instead
+    of constructing the raw Episode dict.
     """
     import ulid
 
     ep_id = ulid.ULID()  # type: ignore[call-arg]
     return {
         "id": str(ep_id),
+        "scope": "_dev_",
         "source": "py-test",
         "content": content,
         "t_ref": None,

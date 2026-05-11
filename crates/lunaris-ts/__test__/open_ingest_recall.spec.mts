@@ -44,7 +44,12 @@ async function moonReachable(url: string): Promise<boolean> {
 
 function buildEpisode(content: string): object {
   // Construct a dict shaped like lunaris_core::primitives::Episode.
-  // Mirrors the serde shape from crates/lunaris-core/src/primitives.rs:16-24.
+  // Mirrors the serde shape from crates/lunaris-core/src/primitives.rs.
+  //
+  // v0.2 (RFC 0001): the `scope` field is now required. We pass "_dev_" here
+  // so the existing backwards-compat tests continue to pass. Production callers
+  // should use `engine.scoped(Scope.new(...)).ingest(new EpisodeBuilder(...))`
+  // instead of constructing the raw Episode object.
   const ts = Date.now();
   const rand = Math.floor(Math.random() * 1_000_000_000)
     .toString(36)
@@ -54,6 +59,7 @@ function buildEpisode(content: string): object {
   const id = `01${ts.toString(32).toUpperCase().padStart(10, "0")}${rand.toUpperCase().padStart(14, "0")}`.slice(0, 26);
   return {
     id,
+    scope: "_dev_",
     source: "ts-test",
     content,
     t_ref: null,
