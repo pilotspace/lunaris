@@ -8,7 +8,9 @@
 # Build matrix:
 #   cargo check -p lunaris-rerank                                      # candle (default)
 #   cargo check -p lunaris-rerank --no-default-features                # noop only
-#   cargo test  -p lunaris-rerank --features rerank-it                 # gated live-model tests
+#   cargo check -p lunaris-rerank --no-default-features --features fastembed
+#   cargo test  -p lunaris-rerank --features rerank-it                 # gated candle live-model tests
+#   cargo test  -p lunaris-rerank --features "fastembed,embedder-it"   # gated fastembed live-model tests
 
 [package]
 name        = "lunaris-rerank"
@@ -21,7 +23,24 @@ authors.workspace      = true
 [features]
 default     = ["candle"]
 candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
-rerank-it   = []   # gates live-model integration tests (real bge-reranker-v2-m3 load)
+# Phase 19 Plan 19-04 — fastembed-rs ONNX cross-encoder reranker
+# (BGERerankerV2M3). Mirrors the lunaris-embed Plan 19-01 wiring:
+# `default-features = false` on the workspace dep, with this crate pinning
+# exactly the prebuilt-ORT downloader + TLS-enforced HF Hub auto-downloader.
+# `image-models` and all candle-based sub-features deliberately omitted.
+fastembed   = [
+    "dep:fastembed",
+    "dep:dirs",
+    "dep:parking_lot",
+    "dep:anyhow",
+    "fastembed/ort-download-binaries-native-tls",
+    "fastembed/hf-hub-native-tls",
+]
+rerank-it   = []   # gates candle live-model integration tests (real bge-reranker-v2-m3 load)
+# Phase 19 Plan 19-04 — parallel to lunaris-embed's gate so the fastembed
+# reranker integration matrix activates with the same CI feature flag as the
+# fastembed embedder matrix.
+embedder-it = []   # gates fastembed live-model integration tests
 
 [dependencies]
 lunaris-core   = { path = "../lunaris-core" }
@@ -37,7 +56,19 @@ candle-core         = { workspace = true, optional = true }
 candle-nn           = { workspace = true, optional = true }
 candle-transformers = { workspace = true, optional = true }
 tokenizers          = { workspace = true, optional = true }
+# `dirs` is shared between `candle` (cache path resolution for bge weights)
+# and `fastembed` (cache path resolution for ONNX weights). Listed once,
+# pulled in by either feature.
 dirs                = { workspace = true, optional = true }
+# fastembed stack — gated behind `fastembed` feature. `parking_lot::Mutex`
+# wraps the `&mut self` sync `TextRerank` so the Reranker trait's `&self`
+# method can hand off to spawn_blocking; lock is acquired INSIDE the blocking
+# closure (CLAUDE.md: never across `.await`). `anyhow` is fastembed's error
+# surface — bridged to `LunarisError` via the local `anyhow_to_lunaris`
+# helper.
+fastembed           = { workspace = true, optional = true }
+parking_lot         = { workspace = true, optional = true }
+anyhow              = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

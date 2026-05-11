@@ -31,6 +31,7 @@
 //! ## Module layout
 //!
 //! - [`bge`] — `BgeRerankerV2M3` (gated `candle`)
+//! - [`fastembed`] — `FastembedReranker` (gated `fastembed`, Phase 19-04)
 //! - [`noop`] — `NoopReranker`
 
 #![deny(rust_2018_idioms, unreachable_pub)]
@@ -42,10 +43,14 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "candle")]
 pub mod bge;
+#[cfg(feature = "fastembed")]
+pub mod fastembed;
 pub mod noop;
 
 #[cfg(feature = "candle")]
 pub use bge::{BgeRerankerV2M3, BgeRerankerV2M3Opts};
+#[cfg(feature = "fastembed")]
+pub use fastembed::{FastembedReranker, FastembedRerankerOpts};
 pub use noop::NoopReranker;
 
 /// One pre-rerank candidate. The operator hydrates the chunk text BEFORE

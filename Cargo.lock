@@ -2581,12 +2581,15 @@ dependencies = [
 name = "lunaris-rerank"
 version = "0.1.1"
 dependencies = [
+ "anyhow",
  "async-trait",
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "dirs",
+ "fastembed",
  "lunaris-core",
+ "parking_lot",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
