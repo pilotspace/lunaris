@@ -585,7 +585,7 @@ mod tests {
                     queue_native: false,
                     max_vector_dim: 768,
                     native_rrf: false,
-            max_scopes_recommended: 0,
+                    max_scopes_recommended: 0,
                 }
             }
         }
@@ -734,7 +734,7 @@ mod tests {
                     queue_native: false,
                     max_vector_dim: 768,
                     native_rrf: false,
-            max_scopes_recommended: 0,
+                    max_scopes_recommended: 0,
                 }
             }
         }

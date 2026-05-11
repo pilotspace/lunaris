@@ -50,9 +50,9 @@ pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
 pub use consolidator_pipeline::{
     ConsolidatorPipelineHandle, ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR,
 };
+pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
-pub use episode_builder::EpisodeBuilder;
 pub use handle::{Lunaris, ScopedLunaris};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`
 // re-exports this path so the established `lunaris_recipes::WorkingMemory`

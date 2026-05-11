@@ -1317,7 +1317,7 @@ pub mod tests_recording {
                 queue_native: false,
                 max_vector_dim: CORPUS_EMBEDDING_DIM as u32,
                 native_rrf: false,
-            max_scopes_recommended: 0,
+                max_scopes_recommended: 0,
             }
         }
     }

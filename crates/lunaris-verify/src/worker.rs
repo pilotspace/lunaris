@@ -318,14 +318,10 @@ async fn apply_supersede(
     // RFC 0001: arbitration reads use Scope::dev() — the verifier worker
     // operates on the global arbitration queue and does not yet route per-scope.
     let dev_scope = Scope::dev();
-    let winner_existing = storage
-        .read_as_of(&dev_scope, &winner_key, now)
-        .await
-        .map_err(LunarisError::Storage)?;
-    let loser_existing = storage
-        .read_as_of(&dev_scope, &loser_key, now)
-        .await
-        .map_err(LunarisError::Storage)?;
+    let winner_existing =
+        storage.read_as_of(&dev_scope, &winner_key, now).await.map_err(LunarisError::Storage)?;
+    let loser_existing =
+        storage.read_as_of(&dev_scope, &loser_key, now).await.map_err(LunarisError::Storage)?;
 
     // 4. LOSER WriteOp — invalidate_sys + JSON-patch payload["bt"].
     let loser_op = match loser_existing {
