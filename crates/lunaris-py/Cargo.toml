@@ -11,8 +11,13 @@ publish.workspace      = true
 # Python imports by module name "lunaris" (see pyproject.toml module-name =
 # "lunaris.lunaris" — the inner ".lunaris" is THIS cdylib). `rlib` is kept so
 # `cargo test --lib` still compiles against the Rust test harness.
+#
+# `doc = false` so `cargo doc --workspace --no-deps` doesn't collide with
+# the umbrella `lunaris` crate's rustdoc output — the PyO3 cdylib's Rust
+# surface is internal; readers consume it through the Python type stubs.
 name       = "lunaris"
 crate-type = ["cdylib", "rlib"]
+doc        = false
 
 [dependencies]
 # Rust surface being bound. `default-features = false` opts out of the

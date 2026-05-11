@@ -6,7 +6,7 @@
 //!
 //! Phase 2 (`RETRIEVE-02`) wires both `MoonStorage` (`FT.SEARCH ... SCORER BM25`
 //! via `moon-client`'s `text().search`) and `PostgresStorage` (`tsvector` +
-//! `ts_rank_cd`). The umbrella [`crate::Lunaris`] handle stores
+//! `ts_rank_cd`). The umbrella `lunaris::Lunaris` handle stores
 //! `Arc<dyn KeywordPort>` alongside `Arc<dyn StoragePort>` (both point at the
 //! same backend struct via two trait Arcs — no duplicate connection).
 //!
