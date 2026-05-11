@@ -11,9 +11,9 @@
 //!
 //! ## Graph opt-in semantics
 //!
-//! `with_graph_pipeline(true)` calls [`GraphPipelineHandle::enable`]
+//! `with_graph_pipeline(true)` calls `GraphPipelineHandle::enable`
 //! immediately (idempotent; fires once). `with_graph_pipeline(false)` calls
-//! [`GraphPipelineHandle::disable`]. Default remains OFF per blueprint §5.2.
+//! `GraphPipelineHandle::disable`. Default remains OFF per blueprint §5.2.
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
@@ -41,7 +41,7 @@ impl ResearchPaperCorpus {
     }
 
     /// Opt-in the citation graph (1 primitive call on
-    /// [`GraphPipelineHandle`]). Default OFF per blueprint §5.2.
+    /// `GraphPipelineHandle`). Default OFF per blueprint §5.2.
     pub fn with_graph_pipeline(self, on: bool) -> Self {
         let handle = self.lunaris.graph_pipeline();
         if on {

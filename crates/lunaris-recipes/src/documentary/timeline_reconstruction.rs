@@ -30,7 +30,7 @@ use lunaris_retrieve::Hit;
 use crate::{DocumentCorpus, Documents, TemporalQuery};
 
 /// Timeline-reconstruction wrapper. Two-call composition of
-/// DocumentCorpus + TemporalQuery<Documents>.
+/// `DocumentCorpus` + `TemporalQuery<Documents>`.
 #[derive(Clone)]
 pub struct TimelineReconstruction {
     lunaris: Arc<Lunaris>,

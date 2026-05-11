@@ -64,7 +64,7 @@ pub struct SlackArchive {
 
 impl SlackArchive {
     /// Construct a root archive handle. `MessageStream` is scoped at
-    /// [`SLACK_ARCHIVE_PREFIX`].
+    /// `SLACK_ARCHIVE_PREFIX` (private).
     pub fn new(lunaris: Arc<Lunaris>) -> Self {
         Self { inner_ms: MessageStream::new(lunaris.clone(), SLACK_ARCHIVE_PREFIX), lunaris }
     }

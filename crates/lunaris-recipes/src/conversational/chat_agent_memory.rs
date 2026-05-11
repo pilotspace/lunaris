@@ -57,7 +57,7 @@ impl ChatAgentMemory {
     ///
     /// `thread_id="default"` + `participant_id="user"` — chat sessions are a
     /// flat stream in this wrapper. Consumers wanting per-thread partitioning
-    /// compose [`MultiTurnConversation`] instead.
+    /// compose [`MultiTurnConversation`](super::MultiTurnConversation) instead.
     pub async fn remember(&self, turn: impl Into<String>) -> Result<Lsn, LunarisError> {
         self.inner_ms.ingest(turn, "default", "user").await
     }

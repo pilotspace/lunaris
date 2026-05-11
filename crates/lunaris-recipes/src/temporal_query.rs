@@ -205,7 +205,7 @@ where
 {
     /// Constrain to items whose valid_time falls within `[after, before]`.
     /// Panics if `after > before` — check is factored into
-    /// [`check_between_bounds`] (Blocker #3 fix) so the test exercises
+    /// `check_between_bounds` (private; Blocker #3 fix) so the test exercises
     /// the production assertion directly.
     pub fn between(mut self, after: Hlc, before: Hlc) -> Self {
         check_between_bounds(after, before);

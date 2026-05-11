@@ -40,7 +40,7 @@ pub struct MeetingNotesMemory {
 }
 
 impl MeetingNotesMemory {
-    /// Construct bound to [`MEETING_PREFIX`].
+    /// Construct bound to `MEETING_PREFIX` (private).
     pub fn new(lunaris: Arc<Lunaris>) -> Self {
         Self {
             inner_ms: MessageStream::new(lunaris.clone(), MEETING_PREFIX),

@@ -77,7 +77,7 @@ pub struct MessageStream {
 impl MessageStream {
     /// Construct a new [`MessageStream`] bound to `thread_prefix`. Every
     /// [`ingest`](Self::ingest) / [`recall`](Self::recall) call scopes
-    /// through this prefix via [`Filter::StartsWith`] on the Episode `source`
+    /// through this prefix via [`Filter::StartsWith`](lunaris_core::storage::types::Filter::StartsWith) on the Episode `source`
     /// field. Conventional value: `"messages:"`; per-wrapper recipes
     /// specialise further (e.g. `"slack:archive/"`, `"email:"`).
     pub fn new(lunaris: Arc<Lunaris>, thread_prefix: impl Into<String>) -> Self {
@@ -127,7 +127,7 @@ impl MessageStream {
     }
 
     /// Recall with recency-weighted ordering. Fuses `Vector + Keyword` via
-    /// RRF(k=60), filters to `thread_prefix` via [`Filter::StartsWith`], then
+    /// RRF(k=60), filters to `thread_prefix` via [`Filter::StartsWith`](lunaris_core::storage::types::Filter::StartsWith), then
     /// blends the ACT-R base-level activation score (Anderson 1996,
     /// `d = 0.5`) with the fused RRF score to rerank hits by age.
     pub async fn recall(&self, query: &str) -> Result<Vec<Hit>, LunarisError> {

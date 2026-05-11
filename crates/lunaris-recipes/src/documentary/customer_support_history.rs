@@ -64,7 +64,7 @@ impl CustomerSupportHistory {
     }
 
     /// Opt-in the product/customer relationship graph (1 primitive call on
-    /// [`GraphPipelineHandle`]). Default OFF per blueprint §5.2.
+    /// `GraphPipelineHandle`). Default OFF per blueprint §5.2.
     pub fn with_graph_pipeline(self, on: bool) -> Self {
         let handle = self.lunaris.graph_pipeline();
         if on {

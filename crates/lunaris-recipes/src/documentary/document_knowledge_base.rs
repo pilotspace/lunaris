@@ -15,7 +15,7 @@
 //! ## Scoping
 //!
 //! `new(mem, source_prefix)` constructs the inner [`DocumentCorpus`] bound to
-//! `source_prefix`. Every `search` call scopes through [`Filter::StartsWith`]
+//! `source_prefix`. Every `search` call scopes through [`Filter::StartsWith`](lunaris_core::storage::types::Filter::StartsWith)
 //! on the Episode `source` field inside [`DocumentCorpus::search`] — the
 //! wrapper does not re-filter.
 

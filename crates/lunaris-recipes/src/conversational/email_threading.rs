@@ -30,7 +30,7 @@ use crate::{MessageStream, WorkingMemory};
 const EMAIL_PREFIX: &str = "email:thread/";
 
 /// Thread-scoped email wrapper. Holds a root [`MessageStream`] scoped at
-/// [`EMAIL_PREFIX`] and an `Arc<Lunaris>` re-used by `.thread()` to narrow
+/// `EMAIL_PREFIX` (private) and an `Arc<Lunaris>` re-used by `.thread()` to narrow
 /// and by `.with_graph_pipeline()` to toggle the graph handle.
 #[derive(Clone)]
 pub struct EmailThreading {
@@ -45,7 +45,7 @@ pub struct EmailThreading {
 }
 
 impl EmailThreading {
-    /// Construct a new email-archive handle rooted at [`EMAIL_PREFIX`].
+    /// Construct a new email-archive handle rooted at `EMAIL_PREFIX` (private).
     pub fn new(lunaris: Arc<Lunaris>) -> Self {
         Self {
             inner_ms: MessageStream::new(lunaris.clone(), EMAIL_PREFIX),
