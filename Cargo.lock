@@ -2146,6 +2146,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "is-terminal",
  "lunaris-bench",

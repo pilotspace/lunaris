@@ -68,7 +68,11 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
 
@@ -164,7 +168,6 @@ impl StoragePort for RecordingStorage {
             // fusion::inspect_branches forces client-side when Graph branch
             // is present).
             native_rrf: false,
-            max_scopes_recommended: 0,
         }
     }
 }

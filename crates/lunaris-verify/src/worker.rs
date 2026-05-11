@@ -89,9 +89,11 @@ pub async fn run_verify_worker(
     shutdown: Arc<Notify>,
     clock: Arc<HlcClock>,
 ) -> Result<JoinHandle<()>, LunarisError> {
-    // Wave 1C stub: scope not yet threaded through verify worker — Wave 1D/1F wires it.
+    // RFC 0001: the verify queue is a global topic shared across scopes.
+    // Scope::dev() is intentional here — per-scope verify routing is deferred.
+    let dev_scope = Scope::dev();
     let stream = storage
-        .subscribe(&Scope::dev(), VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)
+        .subscribe(&dev_scope, VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 
@@ -313,13 +315,15 @@ async fn apply_supersede(
     let now = clock.tick();
 
     // 3. Load existing rows.
-    // Wave 1C stub: scope not yet threaded through arbitration — Wave 1F wires it.
+    // RFC 0001: arbitration reads use Scope::dev() — the verifier worker
+    // operates on the global arbitration queue and does not yet route per-scope.
+    let dev_scope = Scope::dev();
     let winner_existing = storage
-        .read_as_of(&Scope::dev(), &winner_key, now)
+        .read_as_of(&dev_scope, &winner_key, now)
         .await
         .map_err(LunarisError::Storage)?;
     let loser_existing = storage
-        .read_as_of(&Scope::dev(), &loser_key, now)
+        .read_as_of(&dev_scope, &loser_key, now)
         .await
         .map_err(LunarisError::Storage)?;
 
@@ -423,9 +427,10 @@ async fn apply_supersede(
 
     // 6. ONE atomic_write per decision (D-11 invariant).
     //    Exactly TWO ops in this call: [loser_op, winner_op].
-    // Wave 1C stub: scope not yet threaded through arbitration — Wave 1F wires it.
+    // RFC 0001: uses Scope::dev() — arbitration write scope routing deferred.
+    let dev_scope = Scope::dev();
     storage
-        .atomic_write(&Scope::dev(), &[loser_op, winner_op])
+        .atomic_write(&dev_scope, &[loser_op, winner_op])
         .await
         .map(|_lsn| ())
         .map_err(LunarisError::Storage)

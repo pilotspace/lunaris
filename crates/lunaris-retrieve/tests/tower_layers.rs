@@ -36,10 +36,13 @@ impl TowerStorage {
 
 #[async_trait]
 impl StoragePort for TowerStorage {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
-    #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
         _scope: &lunaris_core::Scope,
@@ -102,7 +105,6 @@ impl StoragePort for TowerStorage {
             queue_native: false,
             max_vector_dim: 768,
             native_rrf: false,
-            max_scopes_recommended: 0,
         }
     }
 }

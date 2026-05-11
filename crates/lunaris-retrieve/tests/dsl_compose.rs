@@ -66,7 +66,11 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
 
@@ -161,7 +165,6 @@ impl StoragePort for RecordingStorage {
             // path requires a real MoonStorage Arc + native_rrf=true (see
             // moon_native_rrf integration test).
             native_rrf: false,
-            max_scopes_recommended: 0,
         }
     }
 }
@@ -333,9 +336,17 @@ async fn hydrate_returns_chunk_text_and_source() {
 
     let rec = Arc::new(RecordingStorage::new());
     let clock = HlcClock::new(0);
-    let episode = Episode::new(lunaris_core::Scope::dev(), "notes.md", "raw content unused here", &clock);
-    let mut chunk =
-        Chunk::new(lunaris_core::Scope::dev(), episode.id, "the brown fox", 4, 0, vec!["Notes".to_string()], &clock);
+    let episode =
+        Episode::new(lunaris_core::Scope::dev(), "notes.md", "raw content unused here", &clock);
+    let mut chunk = Chunk::new(
+        lunaris_core::Scope::dev(),
+        episode.id,
+        "the brown fox",
+        4,
+        0,
+        vec!["Notes".to_string()],
+        &clock,
+    );
     chunk.embedding = Some(vec![0.0_f32; 768]);
 
     let chunk_id_bytes = chunk.id.to_bytes().to_vec();

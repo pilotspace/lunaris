@@ -48,7 +48,11 @@ impl PretendNativeMoon {
 
 #[async_trait]
 impl StoragePort for PretendNativeMoon {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
     async fn vector_search(
@@ -115,7 +119,6 @@ impl StoragePort for PretendNativeMoon {
             // KEY: report native_rrf=true so the dispatch gate evaluates the
             // remaining conditions.
             native_rrf: true,
-            max_scopes_recommended: 0,
         }
     }
 }

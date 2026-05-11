@@ -84,6 +84,10 @@ impl Lunaris {
         // prefix (T-09-1-01-02 fail-closed posture).
         let episode_id = episode.id;
         let episode_source = episode.source.clone();
+        // RFC 0001 Wave 1D: lift scope before move so publish_consolidate_event
+        // and publish_needs_review can route queue messages under the correct
+        // partition key instead of the Scope::dev() crutch.
+        let episode_scope = episode.scope.clone();
 
         // Plan 05-05 OPS-05 — `lunaris.ingest` root span (CONTEXT.md D-24).
         // `correlation_id` is reserved as `tracing::field::Empty` so the
@@ -131,8 +135,14 @@ impl Lunaris {
             // Plan 09.1-01 Task 2 — `&episode_source` carries Episode.source
             // into the envelope so Consolidator::consolidate_scoped can
             // filter by `event.source.starts_with(prefix)` downstream.
-            publish_consolidate_event(self.storage.as_ref(), episode_id, lsn, &episode_source)
-                .await;
+            publish_consolidate_event(
+                self.storage.as_ref(),
+                episode_id,
+                lsn,
+                &episode_source,
+                &episode_scope,
+            )
+            .await;
 
             Ok(lsn)
         }
@@ -154,6 +164,7 @@ async fn publish_consolidate_event(
     episode_id: Ulid,
     lsn: Lsn,
     source: &str,
+    scope: &lunaris_core::Scope,
 ) {
     let envelope = json!({
         "kind": "ingest_committed",
@@ -179,11 +190,7 @@ async fn publish_consolidate_event(
             return;
         }
     };
-    // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 1D).
-    if let Err(e) = storage
-        .publish(&lunaris_core::Scope::dev(), CONSOLIDATE_QUEUE_TOPIC, 0, payload.into())
-        .await
-    {
+    if let Err(e) = storage.publish(scope, CONSOLIDATE_QUEUE_TOPIC, 0, payload.into()).await {
         tracing::warn!(
             err = %e,
             "consolidate-queue publish failed; ingest still succeeded"
@@ -409,7 +416,9 @@ async fn ingest_episode_graph_on(
 
     // Step 7: NeedsReview items publish to verify queue (D-19 Phase 4 hook).
     // Non-blocking — failure logs + continues; the ingest still succeeded.
-    publish_needs_review(storage, &validated.needs_review).await;
+    // RFC 0001 Wave 1D: pass episode.scope so the verify queue publish carries
+    // the correct partition key.
+    publish_needs_review(storage, &episode.scope, &validated.needs_review).await;
 
     Ok(lsn)
 }
@@ -477,7 +486,11 @@ async fn embed_with_fallback(
 /// The Phase 4 Verifier worker reads `kind` to pick the deserialize shape
 /// for `item.raw`. Kept intentionally small and stable — adding fields here
 /// is fine; renaming or removing requires a Phase 4 coordination ping.
-async fn publish_needs_review(storage: &dyn StoragePort, items: &[NeedsReviewItem]) {
+async fn publish_needs_review(
+    storage: &dyn StoragePort,
+    scope: &lunaris_core::Scope,
+    items: &[NeedsReviewItem],
+) {
     for item in items {
         let envelope = needs_review_envelope(item);
         let payload = match serde_json::to_vec(&envelope) {
@@ -487,11 +500,7 @@ async fn publish_needs_review(storage: &dyn StoragePort, items: &[NeedsReviewIte
                 continue;
             }
         };
-        // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 1D).
-        if let Err(e) = storage
-            .publish(&lunaris_core::Scope::dev(), VERIFY_QUEUE_TOPIC, 0, payload.into())
-            .await
-        {
+        if let Err(e) = storage.publish(scope, VERIFY_QUEUE_TOPIC, 0, payload.into()).await {
             tracing::warn!(err = %e, "verify-queue publish failed; ingest still succeeded");
         }
     }

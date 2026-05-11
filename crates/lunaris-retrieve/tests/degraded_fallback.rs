@@ -65,7 +65,11 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
     async fn vector_search(
@@ -148,7 +152,6 @@ impl StoragePort for RecordingStorage {
             queue_native: false,
             max_vector_dim: 768,
             native_rrf: false,
-            max_scopes_recommended: 0,
         }
     }
 }

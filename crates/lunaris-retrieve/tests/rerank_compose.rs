@@ -53,7 +53,11 @@ impl RecordingStorage {
 
 #[async_trait]
 impl StoragePort for RecordingStorage {
-    async fn atomic_write(&self, _scope: &lunaris_core::Scope, _ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(
+        &self,
+        _scope: &lunaris_core::Scope,
+        _ops: &[WriteOp],
+    ) -> Result<Lsn, StorageError> {
         Ok(Lsn::ZERO)
     }
     async fn vector_search(
@@ -125,7 +129,6 @@ impl StoragePort for RecordingStorage {
             queue_native: false,
             max_vector_dim: 768,
             native_rrf: false,
-            max_scopes_recommended: 0,
         }
     }
 }
@@ -165,7 +168,15 @@ fn seed_chunk(rec: &RecordingStorage, text: &str) -> Vec<u8> {
     let clock = HlcClock::new(0);
     // Use a stable episode_id per chunk; tests don't depend on Episode lookup.
     let episode_id = ulid::Ulid::new();
-    let chunk = Chunk::new(lunaris_core::Scope::dev(), episode_id, text, 4, 0, vec!["Notes".to_string()], &clock);
+    let chunk = Chunk::new(
+        lunaris_core::Scope::dev(),
+        episode_id,
+        text,
+        4,
+        0,
+        vec!["Notes".to_string()],
+        &clock,
+    );
     let id_bytes = chunk.id.to_bytes().to_vec();
     let key = format!("lunaris:chunk:{}", chunk.id).into_bytes();
     rec.chunks_by_key.lock().insert(key, serde_json::to_vec(&chunk).unwrap());

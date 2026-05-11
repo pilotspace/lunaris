@@ -70,11 +70,13 @@ impl Vector {
 impl Retriever for Vector {
     async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
         let q_emb = ctx.embed_once().await?;
-        // Wave 1C stub: scope not yet threaded through QueryContext — Wave 1D wires it.
+        // RFC 0001 Wave 1D: vector_search uses Scope::dev() until the
+        // QueryContext carries per-scope routing (Wave 1C backend plumbing).
+        let dev_scope = Scope::dev();
         let hits = ctx
             .storage
             .vector_search(
-                &Scope::dev(),
+                &dev_scope,
                 &self.index,
                 &q_emb,
                 self.k,

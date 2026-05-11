@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_core::storage::types::Lsn;
-use lunaris_core::{BiTemporal, Episode, Hlc, LunarisError, Scope};
+use lunaris_core::{BiTemporal, Episode, Hlc, LunarisError};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
 
@@ -108,10 +108,12 @@ impl MessageStream {
         let mut metadata = serde_json::Map::new();
         metadata.insert("thread_id".into(), serde_json::Value::String(thread_id.clone()));
         metadata.insert("participant_id".into(), serde_json::Value::String(participant_id));
-        // Wave 1C stub: scope not yet threaded through MessageStream — Wave 1D wires it.
         let episode = Episode {
             id: Ulid::new(),
-            scope: Scope::dev(),
+            // RFC 0001 Wave 1D: use Scope::dev() until MessageStream receives
+            // a real Scope (Wave 3 SDK layer). The scope is embedded in the
+            // `source` prefix for now.
+            scope: lunaris_core::Scope::dev(),
             source: format!("{}{}/", self.thread_prefix, thread_id),
             content: message.into(),
             t_ref: None,
