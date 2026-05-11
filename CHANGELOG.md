@@ -50,6 +50,86 @@ byte-alias another scope's per-kind SCAN prefix.
   `keyspace::scan_prefix_does_not_alias_across_kinds` is now active and
   pins the contract.
 
+### Added — OSS ship-to-product surface (Phases 20–24)
+
+This release also lands the bulk of the OSS-foundation work tracked in
+`tmp/lunaris-ship-to-product-v2.md`. Every item below is additive
+unless flagged otherwise.
+
+- **Workspace versioning** — every crate now inherits
+  `version.workspace = true` from `[workspace.package]` so a single
+  bump propagates across all 18 crates.
+- **`[workspace.dependencies]` centralisation** — every internal
+  `lunaris-*` dep flows through one declaration with `path` + `version`,
+  unblocking `cargo publish`. Member crates use `{ workspace = true }`.
+- **`#[non_exhaustive]` on growable public enums** — `LunarisError`,
+  `StorageError`, `ExtractError`, `ValidateError`, `RetrieveError`,
+  `ConsolError`, `PublishError`, `AuditEvent`, `IndexKindData`,
+  `ScopeSpecData`, `ForgetTargetData`, `WriteOp`, `Filter`,
+  `ForgetTarget`, `ScopeSpec`, `IndexKind`. Downstream `match` sites
+  add wildcard arms with `NotSupported` / "unknown" labels.
+- **crates.io manifest hygiene** — 8 publishable crates gain
+  `description`, `repository.workspace = true`, `readme`, `keywords`,
+  `categories`, plus a per-crate `README.md` stub. `cargo publish
+  --dry-run` on `lunaris-core` is now warning-free.
+- **`publish = true`** on 8 ready crates (`lunaris-core`,
+  `lunaris-storage-postgres`, `lunaris-embed`, `lunaris-rerank`,
+  `lunaris-extract`, `lunaris-verify`, `lunaris-consolidate`,
+  `lunaris-ingest`). The 3 moondb-blocked crates wait on the sibling
+  Moon repo to publish — `docs/RELEASE.md` §3 documents the
+  resolution path.
+- **RFC 0006 scaffold** — `crates/lunaris-verify/src/candle_gemma3_270m.rs`
+  behind the new `verify-small` feature. Mirrors the 27B impl with
+  laptop-floor constants (~540 MB RAM target). Production default-flip
+  is gated on the Phase 24 head-to-head bench + the 100-item quality
+  gate from RFC 0006 §4.
+- **`LICENSE`** at the repo root (Apache-2.0; matches the `license`
+  field every Cargo.toml declared since v0.1.0).
+- **`Makefile`** with `make bench-public`, `make ci-local`, and
+  `make test-pg` / `make test-moon` reproducibility targets (Phase 24).
+- **`docs/RELEASE.md`** — concrete release runbook for v0.2.x cuts:
+  TL;DR shell flow, pre-flight checklist, SemVer discipline,
+  publishable-surface table, multi-platform wheel + .node matrix,
+  rollback procedure, open questions.
+- **`examples/quickstart-rs/`, `quickstart-py/`, `quickstart-ts/`**
+  — three-language 10-minute scaffolds against a shared docker-compose
+  Postgres image. Phase 23.
+- **README rewrite** — first 30 lines now answer the OSS reader's
+  "what is this and why should I use it" question. The internal
+  milestone-phase progress moves to `CHANGELOG.md` / RFCs.
+- **RFCs opened (Draft)**: RFC 0004 (`ExtractorTier` typestate),
+  RFC 0006 (Verifier 27B → 270M default swap), RFC 0007
+  (`FallbackExtractor`/`FallbackEmbedder` combinators).
+- **RFC 0001 amendment §11** — as-shipped closure for the v0.2.0 +
+  v0.2.1 release-gate review.
+
+### Fixed — additional v0.2.1 closures
+
+- **P-2 — `Lunaris::forget` warn-on-non-dev-scope.** Emits
+  `tracing::warn!` at the call site documenting that the forget path
+  still routes through `Scope::dev()` until the v0.3 typed surface lands.
+- **P-3 — supervisor `register_scope` TOCTOU.** Placeholder-oneshot
+  reservation under a single write-lock; `ConsolidateSupervisor` and
+  `VerifySupervisor` close the race between fast-path check and
+  idle-timeout deregistration.
+- **P-5 — propagation matrix extended.** `scoped_lunaris.rs` regression
+  tests now cover `graph_traverse`, `read_as_of`, `publish`,
+  `subscribe`, `scan_range` in addition to `vector_search`.
+
+### CI gates added
+
+- `ingest_04_single_atomic_write` — grep gate at
+  `crates/lunaris-ingest/src/pipeline.rs` asserting exactly one
+  `storage.atomic_write` call site. Core-value enforcement.
+- `cargo check -p lunaris-verify --features verify-small` — keeps the
+  RFC 0006 scaffold from rotting.
+- `cargo check -p lunaris-verify --features verify-large` — symmetry
+  alias for the 27B path.
+- `cargo_semver_checks` — Phase 20 gate against the `v0.2.0` baseline
+  for `lunaris-core` + `lunaris`.
+- `cargo_publish_dry_run_core` — Phase 22 gate for the leaf of the
+  publish dep graph.
+
 ### Known issues / v0.3 carryover
 
 - `Lunaris::forget` is still hard-coded to `Scope::dev()` (P-2 emits a
@@ -58,6 +138,10 @@ byte-alias another scope's per-kind SCAN prefix.
 - Pipeline handles still use deprecated single-topic workers (carryover).
 - Postgres production deployments must use a `NOSUPERUSER NOBYPASSRLS`
   role (operational, not a code bug).
+- `lunaris-storage-moon`, `lunaris-retrieve`, and the `lunaris` umbrella
+  crate are NOT yet on crates.io — they transitively depend on `moondb`
+  (path-only sibling repo). Resolution: publish `moondb` upstream, then
+  flip `publish = true` on the three.
 
 ## v0.2.0 — 2026-05-11 — Multi-agent partitioning
 
