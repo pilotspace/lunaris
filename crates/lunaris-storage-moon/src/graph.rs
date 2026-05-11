@@ -80,8 +80,10 @@ fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {
         return Ok(GraphResult { headers: vec![], rows: vec![] });
     }
     let mut iter = arr.into_iter();
-    let header_v = iter.next().unwrap();
-    let rows_v = iter.next().unwrap();
+    // SAFETY: the `arr.len() < 2` early-return above guarantees at
+    // least two elements remain — header at index 0, rows at index 1.
+    let header_v = iter.next().expect("guarded by arr.len() < 2 above");
+    let rows_v = iter.next().expect("guarded by arr.len() < 2 above");
 
     let headers: Vec<String> = match header_v {
         redis::Value::Array(hs) => hs
