@@ -32,6 +32,14 @@ jobs:
       # `maturin build` + `napi build` correctly.
       - run: cargo check -p lunaris-py -p lunaris-ts --all-targets
 
+      # RFC 0006 scaffold gate — verify-small (Gemma 3 270M) and
+      # verify-large (Gemma 3 27B alias) must compile cleanly on every PR.
+      # Without this gate the laptop-floor scaffold rots silently the
+      # next time someone refactors candle types.
+      - run: cargo check -p lunaris-verify --no-default-features
+      - run: cargo check -p lunaris-verify --features verify-small
+      - run: cargo check -p lunaris-verify --features verify-large
+
       # INGEST-04 invariant — single atomic_write per ingest path.
       # Strip line-comments first so doc references don't inflate the
       # count, then require exactly one real `storage.atomic_write` call

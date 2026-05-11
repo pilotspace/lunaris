@@ -1,0 +1,27 @@
+# Lunaris Quickstart — Postgres + pgvector + pgmq + AGE on localhost:5432.
+#
+# Reuses the production image from `scripts/pg-lunaris/` so the quickstart
+# exercises the same extensions matrix as CI. See `README.md` for the runbook.
+
+services:
+  pg-lunaris:
+    container_name: lunaris-quickstart-pg
+    build:
+      context: ../../scripts/pg-lunaris
+    image: pg-lunaris:quickstart
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: lunaris
+      POSTGRES_DB: lunaris
+      POSTGRES_USER: lunaris
+    volumes:
+      - pg-quickstart-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lunaris -d lunaris"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pg-quickstart-data:

@@ -1,0 +1,27 @@
+# Empty [workspace] keeps this example OUT of the parent workspace so
+# the dependency surface stays minimal — a fresh-clone user can run
+# `cd examples/quickstart-rs && cargo run` without inheriting all 18
+# workspace crates' dev-deps.
+[workspace]
+
+[package]
+name        = "lunaris-quickstart-rs"
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.94"
+publish     = false
+
+# Phase 23 scaffold: standalone example for the 10-minute Postgres
+# quickstart. NOT a workspace member — keeps the example flow honest
+# (a fresh-clone user can `cd examples/quickstart-rs && cargo run`
+# without inheriting workspace dev-deps or features).
+
+[dependencies]
+# `ollama` is the smallest external-dep build that gives a real
+# default embedder + extractor + verifier path. Users who prefer the
+# in-process candle path can swap to `default-features = false,
+# features = ["candle"]` — pre-downloads ~5 GB of Gemma 3 4B weights.
+lunaris = { path = "../../crates/lunaris", default-features = false, features = ["ollama"] }
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow  = "1"
+tracing-subscriber = "0.3"
