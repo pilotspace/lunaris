@@ -83,6 +83,16 @@ unless flagged otherwise.
   laptop-floor constants (~540 MB RAM target). Production default-flip
   is gated on the Phase 24 head-to-head bench + the 100-item quality
   gate from RFC 0006 §4.
+- **RFC 0006 backend selector** — `LUNARIS_VERIFIER_BACKEND` env var,
+  resolved by `default_verifier()` in `crates/lunaris/src/handle.rs`.
+  Values: `270m` / `small` (RFC 0006 laptop floor, default with
+  `verify-small`), `27b` / `large` (legacy default, opt-in via
+  `verify-large`), `noop` (operator opt-out), anything-else →
+  `tracing::warn!` + `NoopVerifier`. Cache-miss on either Candle
+  backend falls back to `NoopVerifier` per the D-02 default-OFF
+  contract — identical to the `default_extractor` shape. Umbrella
+  `lunaris/Cargo.toml` now forwards `verify-small` + `verify-large`
+  so callers can opt in without depending on `lunaris-verify` directly.
 - **`LICENSE`** at the repo root (Apache-2.0; matches the `license`
   field every Cargo.toml declared since v0.1.0).
 - **`Makefile`** with `make bench-public`, `make ci-local`, and

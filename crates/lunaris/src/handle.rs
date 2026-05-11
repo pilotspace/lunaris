@@ -649,26 +649,75 @@ async fn default_extractor() -> Arc<dyn Extractor> {
     Arc::new(NoopExtractor) as Arc<dyn Extractor>
 }
 
-/// Plan 04-04: Construct the default verifier for [`Lunaris::open`].
+/// Plan 04-04 + RFC 0006: Construct the default verifier for [`Lunaris::open`].
 ///
-/// Tries to load [`lunaris_verify::CandleGemma3_27B`] from the default cache.
-/// On cache miss (the common case on dev boxes without ~14 GiB of Gemma-3 27B
-/// weights pre-downloaded) emits a `tracing::warn!` and substitutes
-/// [`NoopVerifier`] per the D-02 default-OFF contract.
+/// Backend resolved from `LUNARIS_VERIFIER_BACKEND`:
+/// - unset OR `"270m"` / `"small"` → [`lunaris_verify::CandleGemma3_270M`]
+///   when the `verify-small` feature is on. This is the **RFC 0006 laptop
+///   floor**: ~600 MB weights, ~1 GB RAM, runs on a dev laptop.
+/// - `"27b"` / `"large"` → [`lunaris_verify::CandleGemma3_27B`] when the
+///   `verify-large` (or compatibility-alias `candle`) feature is on. The
+///   legacy default; ~14 GiB weights, ~24 GB RAM.
+/// - `"noop"` → [`NoopVerifier`] (operator opt-out).
+/// - anything else → fail-soft to [`NoopVerifier`] with a `tracing::warn!`
+///   naming the bad value (matches `default_extractor` cache-miss shape).
 ///
-/// Mirrors the [`default_extractor`] CandleGemma3_4B pattern — even when the
-/// `candle` feature is enabled, a missing cache produces a working binary
-/// that has the trait wired but never calls a real model.
+/// On cache-miss for the resolved backend (the common case on dev boxes
+/// without weights pre-downloaded) emits a `tracing::warn!` and
+/// substitutes [`NoopVerifier`] per the D-02 default-OFF contract.
 ///
 /// Callers wire their own verifier via [`Lunaris::with_verifier`].
 #[cfg(feature = "candle")]
 async fn default_verifier() -> Arc<dyn Verifier> {
+    let raw = std::env::var("LUNARIS_VERIFIER_BACKEND").unwrap_or_default();
+    let backend = raw.trim().to_ascii_lowercase();
+    match backend.as_str() {
+        "" | "270m" | "small" => default_verifier_270m().await,
+        "27b" | "large" => default_verifier_27b().await,
+        "noop" => Arc::new(NoopVerifier) as Arc<dyn Verifier>,
+        other => {
+            tracing::warn!(
+                backend = %other,
+                "LUNARIS_VERIFIER_BACKEND unrecognised — falling back to NoopVerifier (valid: 270m, 27b, noop)"
+            );
+            Arc::new(NoopVerifier) as Arc<dyn Verifier>
+        }
+    }
+}
+
+#[cfg(all(feature = "candle", feature = "verify-small"))]
+async fn default_verifier_270m() -> Arc<dyn Verifier> {
+    match lunaris_verify::CandleGemma3_270M::new(Default::default()).await {
+        Ok(v) => Arc::new(v) as Arc<dyn Verifier>,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "gemma-3-270m-it unavailable; using NoopVerifier (install weights via `huggingface-cli download google/gemma-3-270m-it --local-dir ~/.cache/lunaris/models/gemma-3-270m-it`)"
+            );
+            Arc::new(NoopVerifier) as Arc<dyn Verifier>
+        }
+    }
+}
+
+/// Without `verify-small`, fall back to 27B so a bare `candle` build still
+/// gets a real verifier when one is in cache. Matches the v0.2.0 behaviour
+/// for callers who haven't opted into the laptop floor.
+#[cfg(all(feature = "candle", not(feature = "verify-small")))]
+async fn default_verifier_270m() -> Arc<dyn Verifier> {
+    tracing::debug!(
+        "LUNARIS_VERIFIER_BACKEND=270m requested but `verify-small` feature is off; falling back to 27B"
+    );
+    default_verifier_27b().await
+}
+
+#[cfg(feature = "candle")]
+async fn default_verifier_27b() -> Arc<dyn Verifier> {
     match lunaris_verify::CandleGemma3_27B::new(Default::default()).await {
         Ok(v) => Arc::new(v) as Arc<dyn Verifier>,
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "gemma-3-27b-it unavailable; using NoopVerifier (verifier worker disabled at runtime — install weights via `huggingface-cli download google/gemma-3-27b-it --local-dir ~/.cache/lunaris/models/gemma-3-27b-it`)"
+                "gemma-3-27b-it unavailable; using NoopVerifier (install weights via `huggingface-cli download google/gemma-3-27b-it --local-dir ~/.cache/lunaris/models/gemma-3-27b-it`)"
             );
             Arc::new(NoopVerifier) as Arc<dyn Verifier>
         }

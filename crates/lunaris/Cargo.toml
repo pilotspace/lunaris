@@ -90,6 +90,11 @@ default = ["candle"]
 candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle", "lunaris-verify/candle"]
 ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama", "lunaris-verify/ollama"]
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
+# RFC 0006 — laptop-floor verifier (Gemma-3 270M) + legacy 27B opt-in.
+# Forwards through to lunaris-verify so umbrella callers can enable either
+# tier without depending on lunaris-verify directly.
+verify-small = ["lunaris-verify/verify-small"]
+verify-large = ["lunaris-verify/verify-large"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris
