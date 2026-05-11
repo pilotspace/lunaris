@@ -1,6 +1,10 @@
 //! `graph_traverse` — typed `client.graph().query_with_params(...)` (or `query_raw`)
 //! wrapped with `client.temporal().snapshot_at_packed(...)` for AS_OF queries.
 //!
+//! RFC 0001 Wave 1C: `GRAPH.QUERY` is routed to `graph_key(scope)` —
+//! `lunaris_{scope}_graph` — so each scope has its own graph. The per-scope graph
+//! is created lazily on first write (see `MoonStorage::ensure_scope`).
+//!
 //! Phase 1.5 retrofit (STORE-09): all RESP commands here go through the typed
 //! `moon-client` SDK. The Lunaris-shaped GRAPH.QUERY wire format with `--params <json>`
 //! is exposed by `GraphClient::query_with_params` upstream so we keep our own
@@ -23,14 +27,17 @@
 //! Int / String / Array / Nil shapes; `Boolean` mapped to `Bool`; everything else
 //! falls back to its Debug-formatted form so callers can still see what came back).
 
+use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 
 use crate::client::{MoonClient, moon_err};
+use crate::keyspace::graph_key;
 
 pub(crate) async fn graph_traverse(
     c: &MoonClient,
+    scope: &Scope,
     query: &CypherQuery,
     as_of: Option<Hlc>,
 ) -> Result<GraphResult, StorageError> {
@@ -44,14 +51,17 @@ pub(crate) async fn graph_traverse(
     // current state. Tracked as B-task for STORE-07.
     let _ = as_of;
 
+    // RFC 0001 Wave 1C: route to per-scope graph key.
+    let scope_graph = graph_key(scope);
+
     let result = if !query.params.is_empty() {
         let params_json = serde_json::to_string(&query.params)?;
         typed
             .graph()
-            .query_with_params(query.graph.as_str(), query.cypher.as_str(), &params_json)
+            .query_with_params(scope_graph.as_str(), query.cypher.as_str(), &params_json)
             .await
     } else {
-        typed.graph().query_raw(query.graph.as_str(), query.cypher.as_str()).await
+        typed.graph().query_raw(scope_graph.as_str(), query.cypher.as_str()).await
     };
 
     parse_graph_reply(result.map_err(moon_err)?)

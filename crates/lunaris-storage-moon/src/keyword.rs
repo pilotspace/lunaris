@@ -1,5 +1,10 @@
 //! `keyword_search` — Moon BM25 via the typed `moon-client` `text().search()`.
 //!
+//! RFC 0001 Wave 1C: the FT index consulted is the per-scope index
+//! `ft_index_name(scope, index)` so keyword searches are scoped-isolated.
+//! The key-decode path mirrors `vector::decode_key` — strip `<ft_idx>:` prefix
+//! and hex-decode to 16-byte ULID.
+//!
 //! Wire shape: the SDK issues
 //!
 //! ```text
@@ -36,15 +41,18 @@
 //! [`ft_escape`] backslash-escapes every special character per the RediSearch FT
 //! spec before the query reaches the wire.
 
+use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::keyword::{KeywordHit, min_max_normalize};
 use lunaris_core::storage::types::Filter;
 
 use crate::client::{MoonClient, moon_err};
+use crate::keyspace::ft_index_name;
 
 pub(crate) async fn keyword_search(
     c: &MoonClient,
+    scope: &Scope,
     index: &str,
     query: &str,
     k: usize,
@@ -70,6 +78,9 @@ pub(crate) async fn keyword_search(
     // args server-side. Tracked as B-task for STORE-07.
     let _ = as_of;
 
+    // RFC 0001 Wave 1C: route to per-scope FT index.
+    let per_scope_index = ft_index_name(scope, index);
+
     let query_escaped = ft_escape(query);
     let composite = match filter {
         Some(f) => format!("({}) {}", filter_to_moon(f), query_escaped),
@@ -79,15 +90,16 @@ pub(crate) async fn keyword_search(
     // Moon's FT.SEARCH default scorer is BM25 (per RediSearch behavior).
     // The typed SDK returns Vec<TextSearchHit> with `key`, `score`, `fields`.
     let mut text = typed.text();
-    let hits = text.search(index, &composite, k, None).await.map_err(moon_err)?;
+    let hits = text.search(&per_scope_index, &composite, k, None).await.map_err(moon_err)?;
 
     // Stage raw scores so we can min-max normalize per the KeywordPort contract.
     let mut staged: Vec<(Vec<u8>, serde_json::Value, f32)> = Vec::with_capacity(hits.len());
     for h in hits {
-        // Moon returns keys as `<index>:<hex32>` (per atomic.rs::VectorUpsert).
-        // Symmetric with vector::decode_key — hydrate expects 16-byte ULID.
+        // Moon returns keys as `{ft_index_name(scope,kind)}:{hex32}` (per
+        // atomic.rs::VectorUpsert). Symmetric with vector::decode_key —
+        // hydrate expects 16-byte ULID.
         let raw_key = h.key.into_bytes();
-        let id_bytes = match decode_moon_key(&raw_key, index) {
+        let id_bytes = match decode_moon_key(&raw_key, &per_scope_index) {
             Some(b) => b,
             None => continue,
         };
@@ -148,11 +160,17 @@ fn filter_to_moon(f: &Filter) -> String {
     }
 }
 
-/// Strip `<index>:` prefix and hex-decode the rest to 16-byte ULID, mirroring
-/// `vector::decode_key`. See that fn's doc for rationale.
-fn decode_moon_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
-    let prefix_len = index.len() + 1;
-    if key.len() < prefix_len || !key.starts_with(index.as_bytes()) || key[index.len()] != b':' {
+/// Strip `{ft_index}:` prefix and hex-decode the rest to 16-byte ULID.
+///
+/// RFC 0001 Wave 1C: `ft_index` is now the per-scope index name
+/// (`lunaris_{scope}_{kind}_idx`). The 16-byte ULID decode contract is preserved —
+/// only the prefix length changes. Mirrors `vector::decode_key`.
+fn decode_moon_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
+    let prefix_len = ft_index.len() + 1; // +1 for ':'
+    if key.len() < prefix_len
+        || !key.starts_with(ft_index.as_bytes())
+        || key[ft_index.len()] != b':'
+    {
         return None;
     }
     hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
@@ -300,5 +318,20 @@ mod tests {
     fn filter_to_moon_valid_time_range_both_none() {
         let f = Filter::ValidTimeRange { after: None, before: None };
         assert_eq!(filter_to_moon(&f), "@valid_time:[-inf +inf]");
+    }
+
+    /// RFC 0001 Wave 1C — decode_moon_key must use the per-scope FT index name.
+    #[test]
+    fn decode_moon_key_per_scope_round_trip() {
+        let scope = lunaris_core::Scope::new("acme:agent-1").unwrap();
+        let ft_idx = ft_index_name(&scope, "chunks");
+        let ulid: [u8; 16] = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+        let key = format!("{ft_idx}:{}", hex::encode(ulid));
+        assert_eq!(decode_moon_key(key.as_bytes(), &ft_idx), Some(ulid.to_vec()));
+
+        // Key from a different scope must not decode against scope_a's index.
+        let scope_b = lunaris_core::Scope::new("other:agent").unwrap();
+        let ft_idx_b = ft_index_name(&scope_b, "chunks");
+        assert_eq!(decode_moon_key(key.as_bytes(), &ft_idx_b), None);
     }
 }
