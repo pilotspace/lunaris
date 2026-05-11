@@ -1,0 +1,17 @@
+{
+  "name": "lunaris-quickstart-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lunaris 10-minute quickstart — TypeScript",
+  "scripts": {
+    "start": "tsx quickstart.mts"
+  },
+  "dependencies": {
+    "lunaris": "^0.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
