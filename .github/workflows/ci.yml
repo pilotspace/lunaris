@@ -40,6 +40,35 @@ jobs:
       - run: cargo check -p lunaris-verify --features verify-small
       - run: cargo check -p lunaris-verify --features verify-large
 
+      # Phase 20 — semver-checks gate. Runs cargo-semver-checks against
+      # the previously-published v0.2.0 surface so any accidental SemVer
+      # break (renamed pub item, removed variant, narrowed type bound)
+      # fails CI before the v0.2.1 cut. Only runs on the publishable
+      # surface crates — lunaris-core + lunaris are the load-bearing
+      # APIs; internal crates (lunaris-storage-*, lunaris-bench, etc.)
+      # are version-bumped together so semver drift inside them is
+      # documented in CHANGELOG and not gated here.
+      #
+      # Skip cleanly if cargo-binstall is unavailable on the runner
+      # (semver-checks is advisory until the release pipeline lands;
+      # the cargo install fallback keeps it useful on a stock runner).
+      - name: cargo_semver_checks
+        run: |
+          set -e
+          if ! command -v cargo-semver-checks >/dev/null 2>&1; then
+            cargo install --locked cargo-semver-checks || {
+              echo "::warning::cargo-semver-checks unavailable; skipping"
+              exit 0
+            }
+          fi
+          cargo semver-checks check-release \
+            --package lunaris-core \
+            --package lunaris \
+            --baseline-rev v0.2.0 || {
+            echo "::error::SemVer break detected vs v0.2.0 — bump major version or revert the break"
+            exit 1
+          }
+
       # INGEST-04 invariant — single atomic_write per ingest path.
       # Strip line-comments first so doc references don't inflate the
       # count, then require exactly one real `storage.atomic_write` call
