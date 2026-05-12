@@ -485,3 +485,200 @@ async fn graph_anchored_handles_malformed_graph_result_defensively() {
     // All hits carry SourceOp::Graph.
     assert!(hits.iter().all(|h| h.source_op == SourceOp::Graph));
 }
+
+// ============================================================ P0 #4 Wave 3 — Real graph scoring
+//
+// New score formula:
+//   score = (edge_weight_product / (1.0 + path_length)) * anchor_confidence
+//
+// Three optional columns are read by HEADER NAME from GraphResult:
+//   `path_length`, `edge_weight_product`, `anchor_confidence`
+//
+// When all three are absent, the operator substitutes documented defaults
+// `(i, 1.0, 1.0)` so the formula reduces to the legacy `1.0 / (1.0 + i)`.
+// This is the back-compat property the regression test below pins.
+
+/// Build a GraphResult with rows extended by optional Wave-3 columns. The
+/// first 3 columns stay positional (`id`, `name`, `type`); the trailing
+/// columns are header-keyed and only included when `Some(...)` is provided.
+fn graph_with_columns(
+    rows: Vec<(EntityId, &str, &str, Option<f64>, Option<f64>, Option<f64>)>,
+) -> GraphResult {
+    let mut headers = vec!["id".to_string(), "name".to_string(), "type".to_string()];
+    // Decide which optional columns to emit based on the first row's Some-ness.
+    // Mixed presence isn't expected in real backends; for tests we expect
+    // every row to follow the same column shape.
+    let has_path_len = rows.first().is_some_and(|r| r.3.is_some());
+    let has_edge_w = rows.first().is_some_and(|r| r.4.is_some());
+    let has_anchor = rows.first().is_some_and(|r| r.5.is_some());
+    if has_path_len {
+        headers.push("path_length".into());
+    }
+    if has_edge_w {
+        headers.push("edge_weight_product".into());
+    }
+    if has_anchor {
+        headers.push("anchor_confidence".into());
+    }
+    let rows_out = rows
+        .into_iter()
+        .map(|(id, name, typ, pl, ew, ac)| {
+            let mut row = vec![
+                serde_json::Value::String(format!("{}", id)),
+                serde_json::Value::String(name.into()),
+                serde_json::Value::String(typ.into()),
+            ];
+            if has_path_len {
+                row.push(serde_json::json!(pl.unwrap_or(0.0)));
+            }
+            if has_edge_w {
+                row.push(serde_json::json!(ew.unwrap_or(1.0)));
+            }
+            if has_anchor {
+                row.push(serde_json::json!(ac.unwrap_or(1.0)));
+            }
+            row
+        })
+        .collect();
+    GraphResult { headers, rows: rows_out }
+}
+
+#[tokio::test]
+async fn graph_score_back_compat_when_no_new_headers() {
+    // Regression: GraphResult with ONLY the legacy `id`/`name`/`type` columns
+    // (no `path_length`/`edge_weight_product`/`anchor_confidence`) MUST produce
+    // byte-identical scores to the pre-Wave-3 `1.0 / (1.0 + i)` formula.
+    let alice = EntityId::from_name_and_type("Alice", "Person");
+    let storage = Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![
+        (EntityId::from_name_and_type("A", "X"), "A", "X"),
+        (EntityId::from_name_and_type("B", "X"), "B", "X"),
+        (EntityId::from_name_and_type("C", "X"), "C", "X"),
+        (EntityId::from_name_and_type("D", "X"), "D", "X"),
+    ])));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 4);
+    for (i, hit) in hits.iter().enumerate() {
+        let expected = 1.0_f32 / (1.0_f32 + i as f32);
+        assert!(
+            (hit.score - expected).abs() < 1e-6,
+            "row {i}: legacy score MUST be 1/(1+i)={expected}, got {}",
+            hit.score
+        );
+    }
+}
+
+#[tokio::test]
+async fn graph_score_path_length_decay() {
+    // Equal edge_weight (1.0) + equal anchor_confidence (1.0):
+    //   row 0: path_length = 1 → score = 1.0 / (1+1) = 0.5
+    //   row 1: path_length = 3 → score = 1.0 / (1+3) = 0.25
+    // Shorter path → higher score. The row order is preserved (no resort),
+    // but the SCORE values diverge from the legacy `1/(1+i)` rank.
+    let alice = EntityId::from_name_and_type("Alice", "Person");
+    let result = graph_with_columns(vec![
+        (
+            EntityId::from_name_and_type("Near", "X"),
+            "Near",
+            "X",
+            Some(1.0),
+            Some(1.0),
+            Some(1.0),
+        ),
+        (
+            EntityId::from_name_and_type("Far", "X"),
+            "Far",
+            "X",
+            Some(3.0),
+            Some(1.0),
+            Some(1.0),
+        ),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!(
+        (hits[0].score - 0.5_f32).abs() < 1e-6,
+        "path_length=1 should score 0.5, got {}",
+        hits[0].score
+    );
+    assert!(
+        (hits[1].score - 0.25_f32).abs() < 1e-6,
+        "path_length=3 should score 0.25, got {}",
+        hits[1].score
+    );
+    assert!(hits[0].score > hits[1].score, "shorter path MUST score higher");
+}
+
+#[tokio::test]
+async fn graph_score_edge_weight_dominance() {
+    // Equal path_length (1) + equal anchor_confidence (1.0):
+    //   row 0: edge_weight = 0.9 → score = 0.9 / 2.0 = 0.45
+    //   row 1: edge_weight = 0.5 → score = 0.5 / 2.0 = 0.25
+    // Higher edge weight → higher score.
+    let alice = EntityId::from_name_and_type("Alice", "Person");
+    let result = graph_with_columns(vec![
+        (
+            EntityId::from_name_and_type("Strong", "X"),
+            "Strong",
+            "X",
+            Some(1.0),
+            Some(0.9),
+            Some(1.0),
+        ),
+        (
+            EntityId::from_name_and_type("Weak", "X"),
+            "Weak",
+            "X",
+            Some(1.0),
+            Some(0.5),
+            Some(1.0),
+        ),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!((hits[0].score - 0.45_f32).abs() < 1e-6, "got {}", hits[0].score);
+    assert!((hits[1].score - 0.25_f32).abs() < 1e-6, "got {}", hits[1].score);
+    assert!(hits[0].score > hits[1].score, "higher edge weight MUST score higher");
+}
+
+#[tokio::test]
+async fn graph_score_anchor_confidence_effect() {
+    // Equal path_length (1) + equal edge_weight (1.0):
+    //   row 0: anchor_confidence = 1.0 → score = (1.0 / 2.0) * 1.0 = 0.5
+    //   row 1: anchor_confidence = 0.3 → score = (1.0 / 2.0) * 0.3 = 0.15
+    // Higher anchor confidence → higher score.
+    let alice = EntityId::from_name_and_type("Alice", "Person");
+    let result = graph_with_columns(vec![
+        (
+            EntityId::from_name_and_type("Trusted", "X"),
+            "Trusted",
+            "X",
+            Some(1.0),
+            Some(1.0),
+            Some(1.0),
+        ),
+        (
+            EntityId::from_name_and_type("Uncertain", "X"),
+            "Uncertain",
+            "X",
+            Some(1.0),
+            Some(1.0),
+            Some(0.3),
+        ),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!((hits[0].score - 0.5_f32).abs() < 1e-6, "got {}", hits[0].score);
+    assert!((hits[1].score - 0.15_f32).abs() < 1e-6, "got {}", hits[1].score);
+    assert!(hits[0].score > hits[1].score, "higher anchor confidence MUST score higher");
+}

@@ -216,15 +216,41 @@ impl Retriever for Graph {
         // at the storage layer. Bare Lunaris::recall() uses Scope::dev().
         let result = ctx.storage.graph_traverse(&ctx.scope, &q, ctx.query.as_of).await?;
 
-        // Map GraphResult rows -> RawHit. Score = 1.0 / (1 + i) per D-15
-        // (rank-stable; rank 0 -> 1.0, rank 1 -> 0.5, ..., monotonically
-        // decreasing). RRF fusion groups by source_op so per-branch ranking
-        // stays isolated.
+        // P0 #4 Wave 3 — Real graph scoring.
+        //
+        // Score formula:
+        //     score = (edge_weight_product / (1.0 + path_length)) * anchor_confidence
+        //
+        // Components are read by HEADER NAME from GraphResult (additive — backends
+        // that don't emit the columns get documented defaults):
+        //
+        //   path_length         → defaults to row index `i` (legacy positional rank)
+        //   edge_weight_product → defaults to 1.0
+        //   anchor_confidence   → defaults to 1.0
+        //
+        // When all three columns are absent, the formula reduces to
+        // `(1.0 / (1.0 + i)) * 1.0` — byte-identical to the pre-Wave-3 legacy
+        // score `1.0 / (1.0 + i)`. This is the back-compat property the regression
+        // test pins.
+        //
+        // anchor_confidence currently defaults to 1.0 unconditionally — threading
+        // per-EntityId confidence through `Graph::anchored(Vec<EntityId>, ...)` is
+        // tracked as v0.4 known debt (EntityId is a 16-byte newtype with no
+        // confidence field today). See docs/v0.3-known-debt.md.
+        //
+        // The first three columns (`id`/`name`/`type`) stay positional —
+        // 30+ existing test fixtures and the `canned_graph_with` helper build
+        // rows positionally; switching them to header lookup would break the
+        // whole fixture surface.
         //
         // Defensive parsing (T-03-02-04 mitigation against malformed
         // GraphResult): row.first().and_then(...).unwrap_or("") + hex::decode
         // .unwrap_or_default() — a malformed row produces an empty-id RawHit
         // rather than panicking. Hit count never exceeds result.rows.len().
+        let path_len_idx = result.headers.iter().position(|h| h == "path_length");
+        let edge_w_idx = result.headers.iter().position(|h| h == "edge_weight_product");
+        let anchor_conf_idx = result.headers.iter().position(|h| h == "anchor_confidence");
+
         let hits: Vec<RawHit> = result
             .rows
             .into_iter()
@@ -234,9 +260,31 @@ impl Retriever for Graph {
                 let id_bytes = hex::decode(&id_hex).unwrap_or_default();
                 let name = row.get(1).cloned().unwrap_or(serde_json::Value::Null);
                 let typ = row.get(2).cloned().unwrap_or(serde_json::Value::Null);
+
+                // Header-keyed optional columns. f64 inputs are clamped at the
+                // f32 conversion boundary; non-numeric / out-of-range cells
+                // fall back to defaults rather than poisoning the score.
+                let path_length = path_len_idx
+                    .and_then(|idx| row.get(idx))
+                    .and_then(|v| v.as_f64())
+                    .map(|x| x as f32)
+                    .unwrap_or(i as f32);
+                let edge_weight_product = edge_w_idx
+                    .and_then(|idx| row.get(idx))
+                    .and_then(|v| v.as_f64())
+                    .map(|x| x as f32)
+                    .unwrap_or(1.0);
+                let anchor_confidence = anchor_conf_idx
+                    .and_then(|idx| row.get(idx))
+                    .and_then(|v| v.as_f64())
+                    .map(|x| x as f32)
+                    .unwrap_or(1.0);
+
+                let score = (edge_weight_product / (1.0 + path_length)) * anchor_confidence;
+
                 RawHit {
                     id: id_bytes,
-                    score: 1.0 / (1.0 + i as f32),
+                    score,
                     rerank_applied: false,
                     degraded: false,
                     metadata: serde_json::json!({"name": name, "type": typ}),
