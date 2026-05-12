@@ -1,5 +1,34 @@
 //! `BgeRerankerV2M3` — bge-reranker-v2-m3 cross-encoder via candle 0.10.
 //!
+//! # Deprecation status (v0.2)
+//!
+//! As of v0.2 (Phase 20-02, 2026-05-11) this backend is kept as an **opt-in
+//! fallback** for air-gapped or HF-Hub-unreachable deployments. The default
+//! reranker is now [`crate::FastembedReranker`] (ONNX runtime, HF Hub
+//! auto-download — see the `fastembed` module). Operators who still need the
+//! candle path should pin it via `LUNARIS_RERANKER_BACKEND=candle` (the
+//! runtime env-var resolver lives in `lunaris::handle`) OR build with
+//! `cargo build --no-default-features --features lunaris/candle-only` to
+//! strip fastembed / ort / hf-hub from the dep tree entirely.
+//!
+//! This module is **scheduled for removal no earlier than v0.4**. Unlike the
+//! embedder candle backend, this module IS a full XLM-RoBERTa forward pass —
+//! quality parity vs the fastembed ONNX export is expected. The flip is
+//! primarily a UX call (auto-download vs manual `huggingface-cli`).
+//!
+//! The RETRIEVE-06 contract still holds: a cache-miss on the candle path
+//! falls back to [`crate::NoopReranker`] with a `tracing::warn!` so recall
+//! continues end-to-end without the 12 ms cross-encoder pass. Operators who
+//! prefer to pin the no-op path explicitly can set
+//! `LUNARIS_RERANKER_BACKEND=noop`.
+//!
+//! See `docs/migration/0.1-to-0.2-fastembed-default.md` for the operator
+//! upgrade procedure + revert path.
+//!
+//! No `#[deprecated]` attribute is applied — that would emit warnings on
+//! every use and pollute the build output for operators who deliberately
+//! depend on this opt-in path. The rustdoc note is the signal.
+//!
 //! ## v0 forward-pass strategy
 //!
 //! candle 0.10.2 ships

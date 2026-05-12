@@ -108,8 +108,26 @@ pulldown-cmark = { version = "0.13", default-features = false }
 candle-core    = "0.10"
 candle-nn      = "0.10"
 candle-transformers = "0.10"
+# Phase 19 Plan 19-01 — fastembed-rs ONNX backend for `lunaris-embed`
+# (and later `lunaris-rerank` in Plan 19-04). Pinned to major `5` so 5.x
+# patch updates ride free; 5.13.4 was the version verified during
+# pre-flight (model card, `InitOptions::new(EmbeddingModel)` builder,
+# `TextEmbedding::embed(&mut self, Vec<S>, Option<usize>)`, MSRV 1.82
+# ≤ workspace 1.94, Apache-2.0). `default-features = false` here so each
+# consumer crate enables only the sub-features it needs
+# (`ort-download-binaries-native-tls` + `hf-hub-native-tls`); we opt OUT
+# of `image-models` to keep the dep tree slim.
+fastembed      = { version = "5", default-features = false }
 tokenizers     = { version = "0.22", default-features = false, features = ["onig"] }
 dirs           = "6"
+# Phase 19 Plan 19-01 — fastembed-rs ONNX backend for `lunaris-embed`
+# (and Plan 19-04 for `lunaris-rerank`). Pinned to major `5` so 5.x
+# patch updates ride free; 5.13.4 was the version verified during
+# pre-flight inspection. `default-features = false` keeps the workspace
+# in control of which fastembed sub-features each consumer crate opts in to
+# (e.g. ORT prebuilt binaries + HF Hub TLS for the embedder/reranker; never
+# `image-models`, never the candle-based qwen3/nomic-v2-moe variants which
+# would pull the candle stack a second time).
 reqwest        = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # Phase 2 retrieve hot path (RETRIEVE-01..13) — tower service composition + cached
 # query embedding via async OnceCell

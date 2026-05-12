@@ -25,10 +25,12 @@
 //! borrow of the three Arcs, so the same handle is safe to use from multiple
 //! tokio tasks concurrently.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use lunaris_consolidate::Consolidator;
-use lunaris_core::{Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort};
+use lunaris_core::{
+    Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StorageError, StoragePort,
+};
 
 use crate::episode_builder::EpisodeBuilder;
 use lunaris_extract::{Extractor, NoopExtractor};
@@ -104,22 +106,41 @@ impl Lunaris {
     /// - `postgres://...` → [`lunaris_storage_postgres::PostgresStorage`] backend.
     ///   `moon_storage` field stays `None`; `recall().fuse_rrf()` falls back
     ///   to client-side reciprocal rank fusion.
-    /// - default embedder under `candle` feature: `lunaris_embed::CandleEmbeddingGemma`
-    ///   with default cache path `~/.cache/lunaris/models/embedding-gemma-300m/`.
-    ///   When the cache is missing the constructor surfaces the actionable
-    ///   `embedding-gemma weights missing at PATH — run huggingface-cli ...`
-    ///   error from `CandleEmbeddingGemma::new`.
-    /// - default embedder under `ollama`-only feature build:
-    ///   `lunaris_embed::OllamaEmbedder` pointing at `http://localhost:11434`.
-    /// - default embedder when neither feature is on: returns
-    ///   `LunarisError::Storage(StorageError::NotSupported(...))` — callers
-    ///   in this configuration MUST use [`Self::with_parts`] with their own
-    ///   embedder.
+    ///
+    /// ## Default backend resolution (Phase 20-02)
+    ///
+    /// Embedder and reranker are resolved from environment variables:
+    ///
+    /// - `LUNARIS_EMBEDDER_BACKEND` ∈ `{fastembed, candle, ollama}` —
+    ///   default **`fastembed`** (auto-downloads ONNX EmbeddingGemma 300M
+    ///   weights to `~/.cache/lunaris/models/fastembed/` on first call).
+    /// - `LUNARIS_RERANKER_BACKEND` ∈ `{fastembed, candle, noop}` —
+    ///   default **`fastembed`** (auto-downloads ONNX BGE-Reranker-V2-M3
+    ///   on first call).
+    /// - `LUNARIS_VERIFIER_BACKEND` ∈ `{270m, small, 27b, large, noop}` —
+    ///   default **`270m`** (RFC 0006 laptop-floor verifier). `27b/large`
+    ///   requires `--features verify-large`; `270m/small` requires
+    ///   `--features verify-small`. Cache miss / feature off → tracing
+    ///   warn + `NoopVerifier` (verifier worker disabled at runtime).
+    /// - `LUNARIS_CONSOLIDATOR_BACKEND` ∈ `{actr, noop}` — default
+    ///   **`actr`** (production ACT-R consolidator). Fail-fast on
+    ///   unknown values.
+    ///
+    /// Unknown env values fail fast with `LunarisError::Storage(Backend(...))`
+    /// — there is **no** silent fallback. Empty string / unset both use the
+    /// default. See [`resolve_embedder`], [`resolve_reranker`],
+    /// [`default_verifier`], and [`default_consolidator`].
+    ///
+    /// Air-gapped deployments: set the env vars to `candle` and pre-stage
+    /// weights via `huggingface-cli`; OR build with
+    /// `--no-default-features --features candle-only` to strip fastembed/ort/hf-hub
+    /// from the dep tree entirely. See
+    /// `docs/migration/0.1-to-0.2-fastembed-default.md`.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
         let scheme = url.split("://").next().unwrap_or("");
-        let embedder = default_embedder().await?;
+        let embedder = resolve_embedder().await?;
         let clock = HlcClock::new(0);
-        let reranker = default_reranker().await;
+        let reranker = resolve_reranker().await?;
         // Plan 03-03: Construct the graph pipeline handle. Initial state
         // comes from `LUNARIS_GRAPH_ENABLED=1|0` env var (D-10); default OFF
         // per blueprint §5.2. The default extractor is candle Gemma-3 4B (or
@@ -307,18 +328,30 @@ impl Lunaris {
     }
 
     /// Public escape hatch — replace the embedder on an existing handle.
-    /// Used by the Plan 02-01 latency-budget swap (candle → Ollama).
+    ///
+    /// [`Lunaris::open`] resolves the default embedder from
+    /// [`EMBEDDER_BACKEND_ENV_VAR`] (`LUNARIS_EMBEDDER_BACKEND`), defaulting
+    /// to `fastembed` since Phase 20-02 (2026-05-11). Override via the env var
+    /// at startup OR call this method post-construction to swap in any
+    /// `Arc<dyn Embedder>` (e.g., a `StubEmbedder` in tests, or a remote
+    /// embedder service). Used by the Plan 02-01 latency-budget swap
+    /// (candle → Ollama).
     pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
         self.embedder = embedder;
         self
     }
 
     /// Plan 02-03 escape hatch — replace the reranker on an existing handle.
-    /// Tests pass `Arc::new(NoopReranker)` for determinism; production callers
-    /// can wire a custom cross-encoder (e.g., a remote rerank service) without
-    /// touching the rest of the construction path. Per RETRIEVE-06 this is
-    /// also how callers turn the rerank pass off entirely if the per-batch
-    /// budget busts on their hardware: `handle.with_reranker(Arc::new(NoopReranker))`.
+    ///
+    /// [`Lunaris::open`] resolves the default reranker from
+    /// [`RERANKER_BACKEND_ENV_VAR`] (`LUNARIS_RERANKER_BACKEND`), defaulting
+    /// to `fastembed` since Phase 20-02. Tests pass `Arc::new(NoopReranker)`
+    /// for determinism; production callers can wire a custom cross-encoder
+    /// (e.g., a remote rerank service) without touching the rest of the
+    /// construction path. Per RETRIEVE-06 this is also how callers turn the
+    /// rerank pass off entirely if the per-batch budget busts on their
+    /// hardware: `handle.with_reranker(Arc::new(NoopReranker))` (or set
+    /// `LUNARIS_RERANKER_BACKEND=noop` at startup).
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
         self.reranker = reranker;
         self
@@ -559,59 +592,226 @@ impl<'a> ScopedLunaris<'a> {
     }
 }
 
-/// Construct the default embedder for [`Lunaris::open`]. Uses the candle
-/// backend when available, falls back to Ollama otherwise. When neither is
-/// compiled in, returns an actionable error so the caller knows to use
-/// [`Lunaris::with_parts`].
-#[cfg(feature = "candle")]
-async fn default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
-    let e = lunaris_embed::CandleEmbeddingGemma::new(Default::default()).await?;
-    Ok(Arc::new(e) as Arc<dyn Embedder>)
+// ── Phase 20-02: env-resolved embedder + reranker backends ──────────────────
+//
+// `resolve_embedder()` and `resolve_reranker()` mirror the
+// `ConsolidatorPipelineHandle::backend_from_env` pattern (see
+// crates/lunaris/src/consolidator_pipeline.rs): `.trim()` +
+// `eq_ignore_ascii_case`, empty-string treated as unset, unknown values fail
+// fast via `LunarisError::Storage(StorageError::Backend(...))` with an
+// `"is not one of"` substring for grep-ability. One-shot `tracing::info!`
+// per-process on resolution (T-20-02-03 mitigation — operators see which
+// backend their deployment is running without per-handle log spam).
+
+/// Env var that pins the embedder backend resolved by [`Lunaris::open`].
+/// Domain: `{fastembed, candle, ollama}`. Default (unset / empty): `fastembed`.
+pub const EMBEDDER_BACKEND_ENV_VAR: &str = "LUNARIS_EMBEDDER_BACKEND";
+
+/// Env var that pins the reranker backend resolved by [`Lunaris::open`].
+/// Domain: `{fastembed, candle, noop}`. Default (unset / empty): `fastembed`.
+pub const RERANKER_BACKEND_ENV_VAR: &str = "LUNARIS_RERANKER_BACKEND";
+
+static EMBEDDER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
+static RERANKER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
+
+/// Parsed embedder backend selection. Internal — the public surface is the
+/// env var + `resolve_embedder()`. Lifted out for unit-testability without
+/// triggering model construction / network I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmbedderBackendKind {
+    Fastembed,
+    Candle,
+    Ollama,
 }
 
-#[cfg(all(not(feature = "candle"), feature = "ollama"))]
-async fn default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
-    let e = lunaris_embed::OllamaEmbedder::new(Default::default())?;
-    Ok(Arc::new(e) as Arc<dyn Embedder>)
+/// Parsed reranker backend selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RerankerBackendKind {
+    Fastembed,
+    Candle,
+    Noop,
 }
 
-#[cfg(not(any(feature = "candle", feature = "ollama")))]
-async fn default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
-    Err(LunarisError::Storage(lunaris_core::StorageError::NotSupported(
-        "no default embedder compiled in — enable feature `candle` or `ollama`, or pass a custom embedder via Lunaris::with_parts",
-    )))
-}
-
-/// Plan 02-03: Construct the default reranker for [`Lunaris::open`].
-///
-/// Tries to load `BgeRerankerV2M3` from the default cache. On cache miss
-/// (the common case on dev boxes without 1.1 GB of weights pre-downloaded)
-/// emits a `tracing::warn!` describing what's missing and substitutes
-/// [`NoopReranker`] per the RETRIEVE-06 contract — recall still runs
-/// end-to-end, just without the 12 ms cross-encoder relevance boost.
-///
-/// Callers wire their own reranker via `Lunaris::with_reranker(reranker)`.
-#[cfg(feature = "candle")]
-async fn default_reranker() -> Arc<dyn Reranker> {
-    match lunaris_rerank::BgeRerankerV2M3::try_new_from_default_cache().await {
-        Ok(r) => Arc::new(r) as Arc<dyn Reranker>,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "bge-reranker-v2-m3 unavailable; using NoopReranker (recall budget skips the rerank pass per RETRIEVE-06 contract — install weights via `python -m huggingface_hub download BAAI/bge-reranker-v2-m3 --local-dir ~/.cache/lunaris/models/bge-reranker-v2-m3`)"
-            );
-            Arc::new(NoopReranker) as Arc<dyn Reranker>
-        }
+/// Parse the embedder env-var value. Defaults to `Fastembed` for both unset
+/// (`None`) and empty-string. Trims whitespace and matches case-insensitively
+/// (mirrors `ConsolidatorPipelineHandle::backend_from_env`). Unknown values
+/// produce `LunarisError::Storage(Backend(..))` with the `"is not one of"`
+/// substring.
+fn parse_embedder_backend(raw: Option<&str>) -> Result<EmbedderBackendKind, LunarisError> {
+    let trimmed = raw.map(|v| v.trim());
+    match trimmed {
+        None | Some("") => Ok(EmbedderBackendKind::Fastembed),
+        Some(v) if v.eq_ignore_ascii_case("fastembed") => Ok(EmbedderBackendKind::Fastembed),
+        Some(v) if v.eq_ignore_ascii_case("candle") => Ok(EmbedderBackendKind::Candle),
+        Some(v) if v.eq_ignore_ascii_case("ollama") => Ok(EmbedderBackendKind::Ollama),
+        Some(other) => Err(LunarisError::Storage(StorageError::Backend(format!(
+            "{EMBEDDER_BACKEND_ENV_VAR}={other:?} is not one of [fastembed, candle, ollama]; \
+             unset for the fastembed default, or set to one of those literals. \
+             See docs/migration/0.1-to-0.2-fastembed-default.md."
+        )))),
     }
 }
 
-/// Without the `candle` feature there's no real reranker to fall back FROM,
-/// so the default is unconditionally [`NoopReranker`]. Production callers that
-/// want a real rerank pass enable the `candle` feature OR pass a custom
-/// `Reranker` impl via [`Lunaris::with_reranker`].
-#[cfg(not(feature = "candle"))]
-async fn default_reranker() -> Arc<dyn Reranker> {
-    Arc::new(NoopReranker) as Arc<dyn Reranker>
+/// Parse the reranker env-var value. Defaults to `Fastembed`. Same trim +
+/// case-insensitive shape as [`parse_embedder_backend`].
+fn parse_reranker_backend(raw: Option<&str>) -> Result<RerankerBackendKind, LunarisError> {
+    let trimmed = raw.map(|v| v.trim());
+    match trimmed {
+        None | Some("") => Ok(RerankerBackendKind::Fastembed),
+        Some(v) if v.eq_ignore_ascii_case("fastembed") => Ok(RerankerBackendKind::Fastembed),
+        Some(v) if v.eq_ignore_ascii_case("candle") => Ok(RerankerBackendKind::Candle),
+        Some(v) if v.eq_ignore_ascii_case("noop") => Ok(RerankerBackendKind::Noop),
+        Some(other) => Err(LunarisError::Storage(StorageError::Backend(format!(
+            "{RERANKER_BACKEND_ENV_VAR}={other:?} is not one of [fastembed, candle, noop]; \
+             unset for the fastembed default, or set to one of those literals. \
+             See docs/migration/0.1-to-0.2-fastembed-default.md."
+        )))),
+    }
+}
+
+/// Phase 20-02 — resolve the default embedder for [`Lunaris::open`] from
+/// [`EMBEDDER_BACKEND_ENV_VAR`]. Default `fastembed`; unknown values fail
+/// fast (no silent fallback). Emits one `tracing::info!` per process on
+/// first call (T-20-02-03).
+///
+/// Behaviour per backend:
+/// - **fastembed** — [`lunaris_embed::FastembedEmbedder`]. On first call this
+///   downloads the EmbeddingGemma 300M ONNX weights (~600 MB) from HF Hub
+///   into `~/.cache/lunaris/models/fastembed/`. Subsequent calls hit the
+///   cache. Construction errors (network unreachable + cold cache) propagate
+///   — they are NOT silently downgraded to candle. Operators who need
+///   air-gapped behaviour use `LUNARIS_EMBEDDER_BACKEND=candle` or build
+///   with `--features candle-only`.
+/// - **candle** — [`lunaris_embed::CandleEmbeddingGemma`] from
+///   `~/.cache/lunaris/models/embedding-gemma-300m/`. Missing-weights error
+///   surfaces the actionable `huggingface-cli` instruction from the
+///   constructor.
+/// - **ollama** — [`lunaris_embed::OllamaEmbedder`] pointing at
+///   `http://localhost:11434`. Constructor is synchronous.
+async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
+    let raw = std::env::var(EMBEDDER_BACKEND_ENV_VAR).ok();
+    let kind = parse_embedder_backend(raw.as_deref())?;
+    let backend_name: &'static str = match kind {
+        EmbedderBackendKind::Fastembed => "fastembed",
+        EmbedderBackendKind::Candle => "candle",
+        EmbedderBackendKind::Ollama => "ollama",
+    };
+    EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
+        tracing::info!(
+            target: "lunaris::handle",
+            embedder_backend = backend_name,
+            "embedder_backend_resolved"
+        );
+    });
+    match kind {
+        #[cfg(feature = "fastembed")]
+        EmbedderBackendKind::Fastembed => {
+            let e = lunaris_embed::FastembedEmbedder::new(Default::default())?;
+            Ok(Arc::new(e) as Arc<dyn Embedder>)
+        }
+        #[cfg(not(feature = "fastembed"))]
+        EmbedderBackendKind::Fastembed => Err(LunarisError::Storage(StorageError::Backend(
+            format!(
+                "{EMBEDDER_BACKEND_ENV_VAR}=fastembed but this build was compiled without the \
+                 `fastembed` feature. Rebuild without `--no-default-features` or pass \
+                 `--features fastembed`, OR set {EMBEDDER_BACKEND_ENV_VAR}=candle to use the \
+                 candle backend (this is the expected air-gapped path; see \
+                 docs/migration/0.1-to-0.2-fastembed-default.md)."
+            ),
+        ))),
+        #[cfg(feature = "candle")]
+        EmbedderBackendKind::Candle => {
+            let e = lunaris_embed::CandleEmbeddingGemma::new(Default::default()).await?;
+            Ok(Arc::new(e) as Arc<dyn Embedder>)
+        }
+        #[cfg(not(feature = "candle"))]
+        EmbedderBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(
+            format!(
+                "{EMBEDDER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
+                 `candle` feature. Rebuild with `--features candle` or unset the env var to use \
+                 the fastembed default."
+            ),
+        ))),
+        #[cfg(feature = "ollama")]
+        EmbedderBackendKind::Ollama => {
+            let e = lunaris_embed::OllamaEmbedder::new(Default::default())?;
+            Ok(Arc::new(e) as Arc<dyn Embedder>)
+        }
+        #[cfg(not(feature = "ollama"))]
+        EmbedderBackendKind::Ollama => Err(LunarisError::Storage(StorageError::Backend(
+            format!(
+                "{EMBEDDER_BACKEND_ENV_VAR}=ollama but this build was compiled without the \
+                 `ollama` feature. Rebuild with `--features ollama` or unset the env var."
+            ),
+        ))),
+    }
+}
+
+/// Phase 20-02 — resolve the default reranker for [`Lunaris::open`] from
+/// [`RERANKER_BACKEND_ENV_VAR`]. Default `fastembed`; unknown values fail fast.
+///
+/// Behaviour per backend:
+/// - **fastembed** — [`lunaris_rerank::FastembedReranker`]. HF Hub auto-download
+///   on first call. Construction errors propagate.
+/// - **candle** — [`lunaris_rerank::BgeRerankerV2M3::try_new_from_default_cache`].
+///   On cache miss falls back to [`NoopReranker`] with `tracing::warn!`
+///   (RETRIEVE-06 contract — recall still runs end-to-end without the
+///   12 ms cross-encoder pass). This fallback is **specific to the candle
+///   branch**; fastembed errors are NOT silently downgraded.
+/// - **noop** — [`NoopReranker`]. Always available; no feature gate. Operators
+///   pin this to skip the rerank pass entirely on budget-constrained hardware.
+async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
+    let raw = std::env::var(RERANKER_BACKEND_ENV_VAR).ok();
+    let kind = parse_reranker_backend(raw.as_deref())?;
+    let backend_name: &'static str = match kind {
+        RerankerBackendKind::Fastembed => "fastembed",
+        RerankerBackendKind::Candle => "candle",
+        RerankerBackendKind::Noop => "noop",
+    };
+    RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
+        tracing::info!(
+            target: "lunaris::handle",
+            reranker_backend = backend_name,
+            "reranker_backend_resolved"
+        );
+    });
+    match kind {
+        #[cfg(feature = "fastembed")]
+        RerankerBackendKind::Fastembed => {
+            let r = lunaris_rerank::FastembedReranker::new(Default::default())?;
+            Ok(Arc::new(r) as Arc<dyn Reranker>)
+        }
+        #[cfg(not(feature = "fastembed"))]
+        RerankerBackendKind::Fastembed => Err(LunarisError::Storage(StorageError::Backend(
+            format!(
+                "{RERANKER_BACKEND_ENV_VAR}=fastembed but this build was compiled without the \
+                 `fastembed` feature. Set {RERANKER_BACKEND_ENV_VAR}=candle for the candle \
+                 cross-encoder, or =noop to skip the rerank pass. See \
+                 docs/migration/0.1-to-0.2-fastembed-default.md."
+            ),
+        ))),
+        #[cfg(feature = "candle")]
+        RerankerBackendKind::Candle => {
+            match lunaris_rerank::BgeRerankerV2M3::try_new_from_default_cache().await {
+                Ok(r) => Ok(Arc::new(r) as Arc<dyn Reranker>),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "bge-reranker-v2-m3 unavailable; using NoopReranker (recall budget skips the rerank pass per RETRIEVE-06 contract — install weights via `python -m huggingface_hub download BAAI/bge-reranker-v2-m3 --local-dir ~/.cache/lunaris/models/bge-reranker-v2-m3`)"
+                    );
+                    Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
+                }
+            }
+        }
+        #[cfg(not(feature = "candle"))]
+        RerankerBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(
+            format!(
+                "{RERANKER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
+                 `candle` feature. Rebuild with `--features candle` or unset for fastembed default."
+            ),
+        ))),
+        RerankerBackendKind::Noop => Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>),
+    }
 }
 
 /// Plan 03-03: Construct the default extractor for [`Lunaris::open`].
@@ -745,4 +945,105 @@ async fn default_verifier() -> Arc<dyn Verifier> {
 /// (`StorageError::Backend`) — NO silent fallback.
 fn default_consolidator() -> Result<Arc<dyn Consolidator>, LunarisError> {
     ConsolidatorPipelineHandle::backend_from_env()
+}
+
+// ── Phase 20-02 unit tests — env-var parsing only ──────────────────────────
+//
+// We deliberately do NOT construct `FastembedEmbedder` / `CandleEmbeddingGemma`
+// in unit tests because both backends do I/O (HF Hub download / cache disk
+// read) which would make `cargo test -p lunaris --lib` hit the network. The
+// `resolve_*` async wrappers are exercised by the recipe integration suite
+// (Plan 20-02 Task 4 smoke); here we cover the parse / unknown-value /
+// case-and-whitespace behaviour exhaustively.
+#[cfg(test)]
+mod backend_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn embedder_default_when_unset() {
+        assert_eq!(parse_embedder_backend(None).unwrap(), EmbedderBackendKind::Fastembed);
+    }
+
+    #[test]
+    fn embedder_default_when_empty() {
+        assert_eq!(parse_embedder_backend(Some("")).unwrap(), EmbedderBackendKind::Fastembed);
+        assert_eq!(parse_embedder_backend(Some("   ")).unwrap(), EmbedderBackendKind::Fastembed);
+    }
+
+    #[test]
+    fn embedder_explicit_fastembed() {
+        assert_eq!(
+            parse_embedder_backend(Some("fastembed")).unwrap(),
+            EmbedderBackendKind::Fastembed
+        );
+        assert_eq!(
+            parse_embedder_backend(Some("FASTEMBED")).unwrap(),
+            EmbedderBackendKind::Fastembed
+        );
+        assert_eq!(
+            parse_embedder_backend(Some("  Fastembed  ")).unwrap(),
+            EmbedderBackendKind::Fastembed
+        );
+    }
+
+    #[test]
+    fn embedder_explicit_candle() {
+        assert_eq!(parse_embedder_backend(Some("candle")).unwrap(), EmbedderBackendKind::Candle);
+        assert_eq!(parse_embedder_backend(Some("Candle")).unwrap(), EmbedderBackendKind::Candle);
+    }
+
+    #[test]
+    fn embedder_explicit_ollama() {
+        assert_eq!(parse_embedder_backend(Some("ollama")).unwrap(), EmbedderBackendKind::Ollama);
+    }
+
+    #[test]
+    fn embedder_unknown_fails_fast() {
+        let err = parse_embedder_backend(Some("bogus")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("is not one of"), "msg should contain 'is not one of': {msg}");
+        assert!(msg.contains("bogus"), "msg should echo the bad value: {msg}");
+        assert!(
+            msg.contains("LUNARIS_EMBEDDER_BACKEND"),
+            "msg should name the env var: {msg}"
+        );
+    }
+
+    #[test]
+    fn reranker_default_when_unset() {
+        assert_eq!(parse_reranker_backend(None).unwrap(), RerankerBackendKind::Fastembed);
+    }
+
+    #[test]
+    fn reranker_default_when_empty() {
+        assert_eq!(parse_reranker_backend(Some("")).unwrap(), RerankerBackendKind::Fastembed);
+    }
+
+    #[test]
+    fn reranker_explicit_fastembed() {
+        assert_eq!(
+            parse_reranker_backend(Some("fastembed")).unwrap(),
+            RerankerBackendKind::Fastembed
+        );
+    }
+
+    #[test]
+    fn reranker_explicit_candle() {
+        assert_eq!(parse_reranker_backend(Some("candle")).unwrap(), RerankerBackendKind::Candle);
+    }
+
+    #[test]
+    fn reranker_explicit_noop() {
+        assert_eq!(parse_reranker_backend(Some("noop")).unwrap(), RerankerBackendKind::Noop);
+        assert_eq!(parse_reranker_backend(Some("NOOP")).unwrap(), RerankerBackendKind::Noop);
+    }
+
+    #[test]
+    fn reranker_unknown_fails_fast() {
+        let err = parse_reranker_backend(Some("xyzzy")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("is not one of"), "msg should contain 'is not one of': {msg}");
+        assert!(msg.contains("xyzzy"));
+        assert!(msg.contains("LUNARIS_RERANKER_BACKEND"));
+    }
 }

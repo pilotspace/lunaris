@@ -26,16 +26,28 @@ doc        = false
 # weights to be present at runtime. Production deploys that need a real
 # embedder pass one through `Lunaris::with_parts` after construction or
 # enable the `candle` feature explicitly at wheel-build time.
-lunaris = { workspace = true, features = ["ollama"] }
-lunaris-core = { workspace = true }
-lunaris-recipes = { workspace = true }
-lunaris-retrieve = { workspace = true }
+lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
+lunaris-core        = { path = "../lunaris-core" }
+lunaris-recipes     = { path = "../lunaris-recipes" }
+lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
+# Phase 21 Plan 21-01 — direct deps on the backend crates so the handwritten
+# `EmbedderConfig` / `RerankerConfig` pyclasses can construct `FastembedEmbedder`
+# / `FastembedReranker` / `OllamaEmbedder` without forwarding feature flags
+# through the umbrella `lunaris` crate. The umbrella stays at
+# `default-features = false, features = ["ollama"]` so production wheels don't
+# accidentally pull candle.
+lunaris-embed       = { path = "../lunaris-embed", default-features = false, features = ["fastembed", "ollama"] }
+lunaris-rerank      = { path = "../lunaris-rerank", default-features = false, features = ["fastembed"] }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
 lunaris-conformance = { workspace = true, optional = true }
 # PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
 pyo3                = { workspace = true }
 pyo3-async-runtimes = { workspace = true }
 pythonize           = { workspace = true }
+# Phase 21 Plan 21-01 — `DimValidatingEmbedder` in `src/embedder_config.rs`
+# implements the `Embedder` trait, which is `#[async_trait]`-decorated. The
+# macro must be in scope at the impl site.
+async-trait         = { workspace = true }
 # Upstream Rust deps reused via workspace.
 chrono              = { workspace = true }
 tokio               = { workspace = true }
@@ -61,6 +73,19 @@ default = []
 # canonical `lunaris_conformance::fixtures::{SEED, EPISODE_COUNT, FixtureCorpus}`
 # constants.
 bindings-it = ["dep:lunaris-conformance"]
+
+# Phase 21 Plan 21-01 — pass-through ORT execution-provider features. When
+# enabled the `EmbedderConfig`/`RerankerConfig` parsers accept `"coreml"` /
+# `"cuda"` and forward to the matching lunaris-embed + lunaris-rerank feature.
+# Default-off: production wheels are CPU-only unless the build pipeline opts in.
+fastembed-coreml = [
+    "lunaris-embed/fastembed-coreml",
+    "lunaris-rerank/fastembed-coreml",
+]
+fastembed-cuda = [
+    "lunaris-embed/fastembed-cuda",
+    "lunaris-rerank/fastembed-cuda",
+]
 
 [package.metadata.docs.rs]
 # lunaris-py is a cdylib — docs.rs doesn't build Python extension modules,

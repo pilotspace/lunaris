@@ -43,7 +43,14 @@
 use pyo3::prelude::*;
 
 mod dsl;
+// Phase 21 Plan 21-01 — handwritten EmbedderConfig / RerankerConfig + the
+// `lunaris_with_embedder` / `lunaris_with_reranker` free functions that the
+// Python-side `dsl.open(url, embedder=..., reranker=...)` wrapper invokes.
+// NOT codegen-managed; the codegen IR models the 15-item method surface,
+// not builder-style construction (see embedder_config.rs module doc).
+mod embedder_config;
 mod errors;
+mod reranker_config;
 // Wave 3G — handwritten bindings for the v0.2 multi-agent partitioning surface:
 // Scope, EpisodeBuilder, ScopedLunaris. NOT codegen-managed; see scope.rs for
 // the rationale (lifetime constraints + `pub(crate)` into_episode visibility
@@ -143,6 +150,13 @@ fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // class gains a `.scoped(scope)` method via the pure-Python `__init__.py`
     // lambda that calls `lunaris_scoped(self, scope)`.
     scope::register(py, m)?;
+
+    // Phase 21 Plan 21-01 — EmbedderConfig / RerankerConfig pyclasses plus the
+    // `lunaris_with_embedder` / `lunaris_with_reranker` free functions. The
+    // Python-side `dsl.open(url, embedder=..., reranker=...)` wrapper threads
+    // these through after `_open_handle(url)` resolves.
+    embedder_config::register(py, m)?;
+    reranker_config::register(py, m)?;
 
     #[cfg(feature = "bindings-it")]
     conformance::register(py, m)?;

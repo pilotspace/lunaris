@@ -5,10 +5,14 @@
 # per the RETRIEVE-06 contract: the operator code path MUST be present even when
 # the model file is unavailable.
 #
-# Build matrix:
-#   cargo check -p lunaris-rerank                                      # candle (default)
+# Build matrix (Phase 20-02 — fastembed is now the default; candle opt-in, noop always available):
+#   cargo check -p lunaris-rerank                                      # fastembed (default, Phase 20-02 flip)
+#   cargo check -p lunaris-rerank --no-default-features --features candle
 #   cargo check -p lunaris-rerank --no-default-features                # noop only
-#   cargo test  -p lunaris-rerank --features rerank-it                 # gated live-model tests
+#   cargo check -p lunaris-rerank --no-default-features --features fastembed-coreml  # macOS CoreML EP (Phase 20-01)
+#   cargo check -p lunaris-rerank --no-default-features --features fastembed-cuda    # Linux/NVIDIA CUDA EP (Phase 20-01)
+#   cargo test  -p lunaris-rerank --features rerank-it                 # gated candle live-model tests
+#   cargo test  -p lunaris-rerank --features "fastembed,embedder-it"   # gated fastembed live-model tests
 
 [package]
 name        = "lunaris-rerank"
@@ -25,9 +29,35 @@ readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
 [features]
-default     = ["candle"]
+# Phase 20-02 default flip (2026-05-11, operator override per
+# .planning/phases/20-fastembed-adoption/20-02-SCOPE-DECISION.md):
+# fastembed is now the default; candle remains opt-in. NoopReranker is
+# unconditionally available (no feature gate) per RETRIEVE-06.
+default     = ["fastembed"]
 candle      = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
-rerank-it   = []   # gates live-model integration tests (real bge-reranker-v2-m3 load)
+# Phase 19 Plan 19-04 — fastembed-rs ONNX cross-encoder reranker
+# (BGERerankerV2M3). Mirrors the lunaris-embed Plan 19-01 wiring:
+# `default-features = false` on the workspace dep, with this crate pinning
+# exactly the prebuilt-ORT downloader + TLS-enforced HF Hub auto-downloader.
+# `image-models` and all candle-based sub-features deliberately omitted.
+fastembed   = [
+    "dep:fastembed",
+    "dep:dirs",
+    "dep:parking_lot",
+    "dep:anyhow",
+    "fastembed/ort-download-binaries-native-tls",
+    "fastembed/hf-hub-native-tls",
+]
+# Phase 20 Plan 20-01 — ORT execution providers (mirrors lunaris-embed
+# outcome B). fastembed's `cuda` feature is candle-only; the ONNX path uses
+# `ort` directly. See lunaris-embed/Cargo.toml for the full rationale.
+fastembed-coreml = ["fastembed", "dep:ort", "ort/coreml"]
+fastembed-cuda   = ["fastembed", "dep:ort", "ort/cuda"]
+rerank-it   = []   # gates candle live-model integration tests (real bge-reranker-v2-m3 load)
+# Phase 19 Plan 19-04 — parallel to lunaris-embed's gate so the fastembed
+# reranker integration matrix activates with the same CI feature flag as the
+# fastembed embedder matrix.
+embedder-it = []   # gates fastembed live-model integration tests
 
 [dependencies]
 lunaris-core = { workspace = true }
@@ -43,7 +73,22 @@ candle-core         = { workspace = true, optional = true }
 candle-nn           = { workspace = true, optional = true }
 candle-transformers = { workspace = true, optional = true }
 tokenizers          = { workspace = true, optional = true }
+# `dirs` is shared between `candle` (cache path resolution for bge weights)
+# and `fastembed` (cache path resolution for ONNX weights). Listed once,
+# pulled in by either feature.
 dirs                = { workspace = true, optional = true }
+# fastembed stack — gated behind `fastembed` feature. `parking_lot::Mutex`
+# wraps the `&mut self` sync `TextRerank` so the Reranker trait's `&self`
+# method can hand off to spawn_blocking; lock is acquired INSIDE the blocking
+# closure (CLAUDE.md: never across `.await`). `anyhow` is fastembed's error
+# surface — bridged to `LunarisError` via the local `anyhow_to_lunaris`
+# helper.
+fastembed           = { workspace = true, optional = true }
+parking_lot         = { workspace = true, optional = true }
+anyhow              = { workspace = true, optional = true }
+# Phase 20 Plan 20-01 — direct ORT dep for execution providers (mirrors
+# lunaris-embed). Same version pin so the dep graph collapses to one ORT.
+ort                 = { version = "=2.0.0-rc.12", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

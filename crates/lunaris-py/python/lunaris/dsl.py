@@ -32,6 +32,12 @@ from typing import Any, Optional
 from .lunaris import (  # type: ignore[attr-defined]
     open_handle as _open_handle,
     recall_simple_execute as _recall_simple_execute,
+    # Phase 21 Plan 21-01 — kwarg passthroughs for `open(url, embedder=...,
+    # reranker=...)`. Imported here so the module-local `open()` wrapper can
+    # apply them post-construction without exposing the helper names at the
+    # `lunaris.*` package surface.
+    lunaris_with_embedder as _lunaris_with_embedder,
+    lunaris_with_reranker as _lunaris_with_reranker,
 )
 
 
@@ -208,18 +214,36 @@ def _collapse_plan(node: _OpNode) -> dict:
     return plan
 
 
-async def open(url: str, *, config: Optional[dict] = None):
-    """Ergonomic `await lunaris.open(url, config=...)` wrapper.
+async def open(
+    url: str,
+    *,
+    config: Optional[dict] = None,
+    embedder: Optional[Any] = None,
+    reranker: Optional[Any] = None,
+):
+    """Ergonomic `await lunaris.open(url, config=..., embedder=..., reranker=...)` wrapper.
 
     1. Calls the Rust-side `open_handle(url)` — inherits env-surface toggle
        reads via `Lunaris::open`.
-    2. Walks the `config` dict (if provided) and calls
+    2. **Phase 21 Plan 21-01** — if `embedder` is an `EmbedderConfig` instance,
+       swaps the handle's embedder via `_lunaris_with_embedder`. Same for
+       `reranker` / `RerankerConfig`. Both `None` preserves the env-driven
+       default (existing callers see no behaviour change).
+    3. Walks the `config` dict (if provided) and calls
        `handle.graph_pipeline.enable()` / `handle.consolidator_pipeline.enable()`
        for any `enabled: true` entry. This is the config surface
        (BIND-PY-04 "config" path). Code surface comes LAST — any subsequent
        `handle.graph_pipeline.enable()` call overrides both env and config.
     """
     handle = await _open_handle(url)
+
+    # Phase 21 — apply the embedder + reranker overrides BEFORE the config-dict
+    # toggles so the toggle handlers see the final embedder choice (matters for
+    # consolidator pipelines that re-embed on flush).
+    if embedder is not None:
+        handle = _lunaris_with_embedder(handle, embedder)
+    if reranker is not None:
+        handle = _lunaris_with_reranker(handle, reranker)
 
     # Attach a `.recall()` method that returns a pre-bound RetrievalBuilder.
     # Done via a thin wrapper class method since we can't monkey-patch

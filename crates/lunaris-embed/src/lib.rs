@@ -30,11 +30,22 @@ pub mod candle_gemma;
 // RFC 0007 §3 — FallbackEmbedder<P, F> static-dispatch combinator with
 // per-instance CircuitBreaker. Always built; mirrors lunaris-extract::fallback.
 pub mod fallback;
+#[cfg(feature = "fastembed")]
+pub mod fastembed;
+#[cfg(feature = "fastembed")]
+pub mod fastembed_exec;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
 #[cfg(feature = "candle")]
 pub use candle_gemma::{CandleEmbeddingGemma, CandleEmbeddingGemmaOpts};
+#[cfg(feature = "fastembed")]
+pub use fastembed::{
+    FASTEMBED_EXECUTION_ENV, FastembedEmbedder, FastembedEmbedderOpts, FastembedUserDefinedOpts,
+    PoolingMode,
+};
+#[cfg(feature = "fastembed")]
+pub use fastembed_exec::{ExecutionPreference, execution_from_env, parse_execution};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaEmbedder, OllamaEmbedderOpts};
 

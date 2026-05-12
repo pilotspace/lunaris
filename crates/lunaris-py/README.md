@@ -49,6 +49,33 @@ async def main():
 asyncio.run(main())
 ```
 
+## Custom embedder + reranker
+
+Pick a preset or bring your own ONNX model. The `EmbedderConfig` and
+`RerankerConfig` factories swap the backend at handle-construction time;
+the env-driven default remains in place for callers that don't pass one.
+
+```python
+import asyncio
+import lunaris
+from lunaris import EmbedderConfig, RerankerConfig
+
+async def main():
+    cfg = EmbedderConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed")
+    handle = await lunaris.open(
+        "moon://127.0.0.1:6379",
+        embedder=cfg,
+        reranker=RerankerConfig.noop(),   # disable cross-encoder rerank
+    )
+    # ... ingest / recall as usual
+
+asyncio.run(main())
+```
+
+See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
+the full customization guide — preset fastembed, preset Ollama, BYO ONNX
+bytes, and BYO ONNX path — with troubleshooting and the FFI-cliff limits.
+
 ## Surface parity
 
 The Python class / method surface is generated from `crates/lunaris-codegen/annotations/surface.toml` (Plan 08-01). The parity-check CI job fails any PR that drifts the committed snapshot from the regenerated output — `pip install lunaris` never lags the Rust crate.

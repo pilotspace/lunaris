@@ -38,6 +38,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 
 use ::lunaris_conformance::fixtures::FixtureCorpus;
+use ::lunaris_embed::Embedder;
 
 use crate::PyLunaris;
 use crate::errors::py_err;
@@ -96,8 +97,9 @@ fn scan_kv_prefix<'py>(
     let prefix: Vec<u8> = prefix.to_vec();
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         use futures::TryStreamExt;
+        let scope = ::lunaris_core::scope::Scope::dev();
         let stream = storage
-            .scan_range(&prefix, None)
+            .scan_range(&scope, &prefix, None)
             .await
             .map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
         let rows: Vec<(bytes::Bytes, bytes::Bytes)> =
@@ -115,9 +117,28 @@ fn scan_kv_prefix<'py>(
     })
 }
 
+/// Plan 21-03 — cross-SDK embedder parity probe. Async function that
+/// drives `Embedder::embed_batch` directly on the wrapped `Arc<dyn
+/// Embedder>` inside an `EmbedderConfig`, returning the raw f32 matrix
+/// as `list[list[float]]`. Feature-gated; release wheels strip it.
+#[pyfunction]
+fn embedder_config_embed_batch<'py>(
+    py: Python<'py>,
+    cfg: PyRef<'py, crate::embedder_config::EmbedderConfig>,
+    inputs: Vec<String>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let embedder = cfg.inner.clone();
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
+        let out = embedder.embed_batch(&refs).await.map_err(py_err)?;
+        Ok(out)
+    })
+}
+
 pub(crate) fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(conformance_fixture_episodes, m)?)?;
     m.add_function(wrap_pyfunction!(scan_kv_prefix, m)?)?;
+    m.add_function(wrap_pyfunction!(embedder_config_embed_batch, m)?)?;
     Ok(())
 }
 
