@@ -96,7 +96,12 @@ impl EpisodeBuilder {
     /// the bi-temporal `(valid, sys)` pair at the moment of ingest.
     pub(crate) fn into_episode(self, scope: Scope, clock: &HlcClock) -> Episode {
         Episode {
-            id: self.id.unwrap_or_default(),
+            // No `.id(...)` override → a fresh ULID. `unwrap_or_default()`
+            // would hand back `Ulid(0)` for *every* builder-built episode,
+            // so two ingests under the same scope would collide on
+            // `episode_key(scope, Ulid(0))` and the second would silently
+            // overwrite the first.
+            id: self.id.unwrap_or_else(Ulid::new),
             scope,
             source: self.source,
             content: self.content,
@@ -104,5 +109,28 @@ impl EpisodeBuilder {
             bt: BiTemporal::now(clock),
             metadata: self.metadata,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distinct_builders_get_distinct_ids() {
+        let clock = HlcClock::new(0);
+        let scope = Scope::dev();
+        let a = EpisodeBuilder::new("s", "a").into_episode(scope.clone(), &clock);
+        let b = EpisodeBuilder::new("s", "b").into_episode(scope, &clock);
+        assert_ne!(a.id, b.id, "auto-generated episode ids must be unique");
+        assert_ne!(a.id, Ulid::nil());
+    }
+
+    #[test]
+    fn explicit_id_is_preserved() {
+        let clock = HlcClock::new(0);
+        let id = Ulid::new();
+        let ep = EpisodeBuilder::new("s", "c").id(id).into_episode(Scope::dev(), &clock);
+        assert_eq!(ep.id, id);
     }
 }
