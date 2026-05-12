@@ -40,9 +40,12 @@
 //! `id_hex` as the match property.
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use lunaris_core::storage::types::Filter;
 use lunaris_core::{Embedder, Hlc, KeywordPort, LunarisError, Scope, StoragePort};
+
+use crate::operators::recency::{RecencyConfig, rescore_recency};
 
 // Plan 03-02: Re-export Graph constants alongside the builder so callers
 // constructing a `recall()` chain can reach the hop / k defaults via the
@@ -75,6 +78,11 @@ pub struct RetrievalBuilder {
     /// `Hit::degraded`. Set by `Lunaris::recall_with_degraded_check` when the
     /// verifier queue depth crosses `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD`.
     pub(crate) initial_degraded: bool,
+    /// P0 #3 Wave 1: optional post-hydrate recency rescorer. When `Some`,
+    /// `execute()` calls `rescore_recency` after `hydrate()` and before
+    /// returning hits. Default `None` preserves pre-recency ordering for
+    /// every caller that doesn't opt in.
+    pub(crate) recency_config: Option<RecencyConfig>,
 }
 
 impl RetrievalBuilder {
@@ -98,6 +106,7 @@ impl RetrievalBuilder {
             base_as_of: None,
             scope: Scope::dev(),
             initial_degraded: false,
+            recency_config: None,
         }
     }
 
@@ -205,6 +214,32 @@ impl RetrievalBuilder {
         Self { root: Box::new(new_root), ..self }
     }
 
+    /// P0 #3 Wave 1: opt into post-hydrate recency rescoring.
+    ///
+    /// After `hydrate()` produces the final `Vec<Hit>`, [`rescore_recency`]
+    /// applies the configured [`RecencyConfig`] (Exp half-life or ActR by
+    /// default; pluggable via [`crate::RecencyScorer`]) and re-sorts in
+    /// descending fused-score order. `now` is `query.as_of` when set (so
+    /// bi-temporal replay stays temporally consistent), otherwise wall-clock
+    /// system time.
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    /// use lunaris_retrieve::{Exp, RecencyConfig, TimeSource};
+    ///
+    /// let hits = lunaris.recall()
+    ///     .recency(RecencyConfig::new(
+    ///         TimeSource::ValidFrom,
+    ///         Box::new(Exp::new(Duration::from_secs(86_400 * 7))),
+    ///     ))
+    ///     .execute(Query::text("acme commitments"))
+    ///     .await?;
+    /// ```
+    pub fn recency(mut self, config: RecencyConfig) -> Self {
+        self.recency_config = Some(config);
+        self
+    }
+
     /// Run the tree and hydrate. Terminal — consumes the builder.
     pub async fn execute(self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
         // Builder-level filter / as_of override the per-query fields IFF the
@@ -222,6 +257,9 @@ impl RetrievalBuilder {
         // the rest of the builder into the QueryContext / hydrate calls.
         let initial_degraded = self.initial_degraded;
         let scope = self.scope.clone();
+        // P0 #3 Wave 1: snapshot the recency config BEFORE moving self into
+        // the QueryContext. None = recency pass disabled (default).
+        let recency_config = self.recency_config;
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
@@ -236,7 +274,23 @@ impl RetrievalBuilder {
             }
         };
         let raw = self.root.retrieve(&ctx).await?;
-        hydrate(self.storage.as_ref(), &ctx.scope, raw, as_of, initial_degraded).await
+        let mut hits =
+            hydrate(self.storage.as_ref(), &ctx.scope, raw, as_of, initial_degraded).await?;
+        if let Some(cfg) = recency_config {
+            // `as_of` wins as the recency anchor when set, so bi-temporal
+            // replay stays temporally consistent ("recency at that moment").
+            // Otherwise use wall-clock now. node_id/counter are 0 since the
+            // recency math only reads `wall_ms`.
+            let now = as_of.unwrap_or_else(|| {
+                let wall_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                Hlc::from_parts(wall_ms, 0, 0)
+            });
+            rescore_recency(&mut hits, now, &cfg);
+        }
+        Ok(hits)
     }
 
     /// Run the tree and return the unhydrated [`RawHit`]s. Terminal —
