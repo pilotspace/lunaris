@@ -100,13 +100,43 @@ impl Retriever for FuseRrfRetriever {
     }
 }
 
-/// Client-side reciprocal rank fusion.
+/// Client-side reciprocal rank fusion (unweighted).
+///
+/// Equivalent to [`client_side_rrf_weighted`] with weight `1.0` for every
+/// branch. Retained as a stable public function so existing call sites
+/// don't need to thread a weights map.
 ///
 /// Group by `source_op`, sort each group by descending score, assign rank
 /// (1-indexed), then for each id sum `1 / (k + rank_i)` across groups.
 /// Returns hits sorted by descending fused score, each tagged
 /// `SourceOp::Fused`.
 pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
+    // Regression-safety: forward to the weighted impl with an empty map.
+    // An empty map means "every branch gets weight 1.0" — see
+    // `client_side_rrf_weighted` doc and the
+    // `weighted_rrf_with_unit_weights_matches_unweighted` test.
+    client_side_rrf_weighted(raw, &HashMap::new(), k)
+}
+
+/// Client-side reciprocal rank fusion with per-branch weights.
+///
+/// For each id, fused score = `Σ weight[source_op_i] / (k + rank_i)` summed
+/// across the branches in which the id appears. `weights` maps each
+/// [`SourceOp`] branch to its trust multiplier. Branches missing from the
+/// map default to weight `1.0` (so `weights == &HashMap::new()` is the
+/// no-op / unweighted path).
+///
+/// Edge cases:
+/// - Zero weight removes a branch's contribution but does not remove ids
+///   that only appear in that branch — they surface with score `0.0`.
+/// - Weights for branches that have no hits are silently ignored.
+/// - `NaN` / negative weights are allowed but yield non-sensible scores;
+///   callers should validate inputs upstream.
+pub fn client_side_rrf_weighted(
+    raw: Vec<RawHit>,
+    weights: &HashMap<SourceOp, f32>,
+    k: usize,
+) -> Vec<RawHit> {
     if raw.is_empty() {
         return Vec::new();
     }
@@ -118,14 +148,18 @@ pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
     }
 
     // 2. Within each bucket, sort descending by score and assign rank.
-    //    Then accumulate the RRF contribution per id.
+    //    Then accumulate the weighted RRF contribution per id.
     let mut fused: HashMap<Vec<u8>, f32> = HashMap::new();
     let mut sample: HashMap<Vec<u8>, RawHit> = HashMap::new();
-    for (_src, mut group) in by_source {
+    for (src, mut group) in by_source {
+        // Default weight is 1.0 for any branch missing from the map — this
+        // preserves the legacy `client_side_rrf` semantics when callers
+        // pass an empty HashMap.
+        let w = weights.get(&src).copied().unwrap_or(1.0_f32);
         group.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         for (rank, hit) in group.into_iter().enumerate() {
             let r = rank + 1; // 1-indexed
-            let contribution = 1.0_f32 / (k as f32 + r as f32);
+            let contribution = w / (k as f32 + r as f32);
             *fused.entry(hit.id.clone()).or_insert(0.0) += contribution;
             // Keep the highest-score-so-far hit as the "shape" of the fused row
             // (carries metadata + rerank flag).
