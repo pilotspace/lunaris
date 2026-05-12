@@ -142,8 +142,17 @@ pub async fn fuse_via_moon_native(
     // `moon/src/command/vector_search/hybrid.rs::HybridQuery::sparse: Option`.
     let weights: [f64; 3] = [0.5_f64, 0.5_f64, 0.0_f64];
     let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
+    // RFC 0001 Wave 1C parity fix: the write path routes to the per-scope FT
+    // index (`lunaris_{scope}_{kind}_idx`) but this hybrid-fusion read path
+    // was still passing the bare `hint.index` ("chunks") to Moon — so it
+    // queried an empty index and silently returned zero hits. Build the
+    // per-scope name locally; `lunaris-storage-moon::keyspace::ft_index_name`
+    // is the canonical helper but lives in a downstream crate we can't
+    // depend on. The format is duplicated alongside `decode_moon_vector_key`
+    // for the same reason. Live-measurement gap, 2026-05-12.
+    let per_scope_index = format!("lunaris_{}_{}_idx", ctx.scope.as_str(), hint.index);
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&hint.index, &composite_query, &q_emb, "vec", None, k, weights)
+        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", None, k, weights)
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
@@ -180,7 +189,7 @@ pub async fn fuse_via_moon_native(
         .zip(normalized)
         .filter_map(|(h, score)| {
             let raw_key = h.key.into_bytes();
-            let id = decode_moon_vector_key(&raw_key, &hint.index)?;
+            let id = decode_moon_vector_key(&raw_key, &per_scope_index)?;
             let metadata = h
                 .fields
                 .get("__metadata")
