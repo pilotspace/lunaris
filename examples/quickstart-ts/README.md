@@ -55,18 +55,32 @@ npx tsx quickstart.mts
 local install resolves to that build, so the script imports the
 just-built binding.
 
-## Recall walkthrough (Phase 23 follow-up)
+## Recall — current binding limitations (v0.2.x)
 
-Same shape as the Python and Rust quickstarts — the typed `Scope` +
-`EpisodeBuilder` TypeScript surface lands in v0.3. The DSL side is
-already wired:
+The Rust quickstart ([../quickstart-rs/](../quickstart-rs/)) does a
+real scoped recall. The TypeScript binding is **not there yet** — two
+gaps, both v0.3 deliverables:
 
-```typescript
-const hits = await handle.recall().vector("hello", { topK: 3 }).execute();
-```
+1. **No scope-aware recall.** `handle.recall().…​.execute()` exists, but
+   it always queries the default `_dev_` partition — there's no scope
+   parameter on the TS builder, so it can't see the `quickstart` scope
+   this script ingests into. (The Rust path threads a real `Scope`
+   through ingest *and* recall.)
+2. **No query-text parameter.** The TS DSL builder (`new Vector(index,
+   k)`, `.top(n)`, `.fuseRrf(k)`, `.asOf(ms)`, `.filter(...)`) collapses
+   to a plan whose `query` field is always the empty string — the FFI
+   bridge `recallSimpleExecute` accepts the `Vector("chunks", k)`
+   default shape only (see `crates/lunaris-ts/src/dsl.rs`). So
+   `handle.recall().execute()` returns hits for an *empty* query, not a
+   useful one. A real query string lands when the FFI surface is
+   widened in v0.3.
 
-A full recall walkthrough lands alongside the Rust example once the
-v0.2.x DSL stabilises for OSS adoption.
+The typed `Scope` + `EpisodeBuilder` TypeScript surface also lands in
+v0.3; today the wire shape is a plain object (mirrors
+`lunaris_core::primitives::Episode`).
+
+Until then, this quickstart stops at the ingest contract. Follow the
+Rust quickstart for the end-to-end recall walkthrough.
 
 ## Troubleshooting
 

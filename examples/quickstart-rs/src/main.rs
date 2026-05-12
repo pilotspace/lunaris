@@ -16,9 +16,10 @@
 //! Expected output:
 //!
 //! ```text
-//! quickstart: opened lunaris handle at postgres://...
-//! quickstart: ingested 1 episode under scope `quickstart`
-//! quickstart: recalled 1 result matching "hello"
+//! quickstart: opening lunaris handle at postgres://...
+//! quickstart: ingested episode at lsn=Lsn(1) under scope `quickstart`
+//! quickstart: recalled 1 hit(s) for "hello"
+//! quickstart:   top hit score=0.83 text="# Hello from Lunaris …"
 //! ```
 //!
 //! See `examples/quickstart-rs/README.md` for the full runbook + a
@@ -28,7 +29,7 @@
 use std::env;
 
 use anyhow::{Context, Result};
-use lunaris::{EpisodeBuilder, Lunaris, Scope};
+use lunaris::{EpisodeBuilder, Lunaris, Scope, Vector};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,12 +51,29 @@ async fn main() -> Result<()> {
     let lsn = scoped.ingest(episode).await.context("scoped.ingest failed")?;
     println!("quickstart: ingested episode at lsn={lsn:?} under scope `quickstart`");
 
-    // Phase 23 follow-up — wire the recall path through the typed DSL.
-    // The recall call returns a `Vec<Hit>` filtered by the bound scope;
-    // we just count results here to keep the quickstart focused on the
-    // ingest contract. See `examples/quickstart-rs/README.md` for the
-    // expanded recall walkthrough.
-    println!("quickstart: ingest path verified; see README for recall walkthrough");
+    // Recall through the scope-bound handle. `ScopedLunaris::recall` takes a
+    // `Query` and returns `Vec<Hit>` already filtered to this scope's
+    // partition; the default retrieval root is `Vector::new("chunks", 30)`.
+    let query = "hello";
+    let hits = scoped
+        .recall(lunaris::Query::text(query))
+        .await
+        .context("scoped.recall failed")?;
+    println!("quickstart: recalled {} hit(s) for {query:?}", hits.len());
+    if let Some(top) = hits.first() {
+        // Trim the chunk body to one line so the demo output stays tidy.
+        let snippet: String = top.text.chars().take(60).collect();
+        println!("quickstart:   top hit score={:.2} text={snippet:?}", top.score);
+    }
+
+    // Equivalent DSL form — explicit operator tree, capped at 5 hits:
+    let dsl_hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30).top(5))
+        .execute(lunaris::Query::text(query))
+        .await
+        .context("scoped.dsl().execute failed")?;
+    println!("quickstart: DSL form returned {} hit(s)", dsl_hits.len());
 
     Ok(())
 }

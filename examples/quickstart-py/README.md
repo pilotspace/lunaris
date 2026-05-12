@@ -54,22 +54,31 @@ python quickstart.py
 `maturin develop` compiles the lunaris-py cdylib in-place and installs
 it into the active virtualenv. The script then imports the local build.
 
-## Recall walkthrough (Phase 23 follow-up)
+## Recall — current binding limitations (v0.2.x)
 
-The typed `Scope` + `EpisodeBuilder` Python surface lands in v0.3 as
-part of the multi-tenant SDK story. Today the Python wire-shape is a
-dict (mirrors the `lunaris_core::primitives::Episode` serde form). The
-upgrade path is a one-liner — `Scope("quickstart")` swaps in once
-exposed.
+The Rust quickstart ([../quickstart-rs/](../quickstart-rs/)) does a
+real scoped recall. The Python binding is **not there yet** — two gaps,
+both v0.3 deliverables:
 
-For the recall side, the DSL is already exposed:
+1. **No scope-aware recall.** `handle.recall().…​.execute()` exists, but
+   it always queries the default `_dev_` partition — there's no scope
+   parameter on the Python builder, so it can't see the `quickstart`
+   scope this script ingests into. (The Rust path threads a real `Scope`
+   all the way through ingest *and* recall.)
+2. **No query-text parameter.** The Python DSL builder (`Vector(index,
+   k)`, `.top(n)`, `.fuse_rrf(k)`, `.as_of(ms)`, `.filter(...)`)
+   collapses to a plan whose `query` field is always the empty string —
+   the FFI bridge `recall_simple_execute` accepts the
+   `Vector("chunks", k)` default shape only (see
+   `crates/lunaris-py/src/dsl.rs`). So `handle.recall().execute()`
+   returns hits for an *empty* query, not a useful one. Passing a real
+   query string lands when the FFI surface is widened in v0.3.
 
-```python
-hits = await handle.recall().vector("hello", top_k=3).execute()
-```
+The typed `Scope` + `EpisodeBuilder` Python surface also lands in v0.3;
+today the wire shape is a dict (mirrors `lunaris_core::primitives::Episode`).
 
-A full recall walkthrough lands alongside `examples/quickstart-rs/`'s
-recall example once the v0.2.x DSL stabilises for OSS.
+Until then, this quickstart stops at the ingest contract. Follow the
+Rust quickstart for the end-to-end recall walkthrough.
 
 ## Troubleshooting
 

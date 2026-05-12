@@ -1105,36 +1105,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
-name = "lunaris"
-version = "0.2.1"
-dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "futures",
- "is-terminal",
- "lunaris-consolidate",
- "lunaris-core",
- "lunaris-embed",
- "lunaris-extract",
- "lunaris-ingest",
- "lunaris-rerank",
- "lunaris-retrieve",
- "lunaris-storage-moon",
- "lunaris-storage-postgres",
- "lunaris-verify",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "ulid",
- "url",
-]
-
-[[package]]
 name = "lunaris-consolidate"
 version = "0.2.1"
 dependencies = [
@@ -1221,11 +1191,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-memory"
+version = "0.2.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "is-terminal",
+ "lunaris-consolidate",
+ "lunaris-core",
+ "lunaris-embed",
+ "lunaris-extract",
+ "lunaris-ingest",
+ "lunaris-rerank",
+ "lunaris-retrieve",
+ "lunaris-storage-moon",
+ "lunaris-storage-postgres",
+ "lunaris-verify",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "url",
+]
+
+[[package]]
 name = "lunaris-quickstart-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "lunaris",
+ "lunaris-memory",
  "tokio",
  "tracing-subscriber",
 ]
@@ -1367,6 +1367,8 @@ dependencies = [
 [[package]]
 name = "moondb"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efa8fc6e0305eba36fc1908e547bbbc50ebf754ac5d3e3ea0a5cd739fe77e4c0"
 dependencies = [
  "bytes",
  "redis",

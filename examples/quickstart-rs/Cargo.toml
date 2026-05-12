@@ -21,7 +21,9 @@ publish     = false
 # default embedder + extractor + verifier path. Users who prefer the
 # in-process candle path can swap to `default-features = false,
 # features = ["candle"]` — pre-downloads ~5 GB of Gemma 3 4B weights.
-lunaris = { path = "../../crates/lunaris", default-features = false, features = ["ollama"] }
+# Published on crates.io as `lunaris-memory` (the bare `lunaris` name is
+# owned by an unrelated project); the import path is still `use lunaris::…`.
+lunaris = { package = "lunaris-memory", path = "../../crates/lunaris", default-features = false, features = ["ollama"] }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow  = "1"
 tracing-subscriber = "0.3"

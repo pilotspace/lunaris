@@ -41,7 +41,9 @@ Expected output:
 ```
 quickstart: opening lunaris handle at postgres://lunaris:lunaris@localhost:5432/lunaris
 quickstart: ingested episode at lsn=Lsn(1) under scope `quickstart`
-quickstart: ingest path verified; see README for recall walkthrough
+quickstart: recalled 1 hit(s) for "hello"
+quickstart:   top hit score=0.83 text="# Hello from Lunaris …"
+quickstart: DSL form returned 1 hit(s)
 ```
 
 ## Tear-down
@@ -65,12 +67,33 @@ For the **laptop-floor** path (RFC 0006 — Gemma 3 270M verifier, ~540 MB),
 add `features = ["candle", "verify-small"]`. Note: 270M is a scaffold
 in v0.2.x; the production default-flip is gated on Phase 24 bench.
 
-## Recall walkthrough (Phase 23 follow-up)
+## Recall walkthrough
 
-The current binary verifies the ingest contract. The full recall
-walkthrough (semantic search via the retrieval DSL, BM25 keyword,
-graph traversal) lands as `examples/quickstart-rs/src/recall.rs`
-once the v0.2.x DSL stabilizes for OSS adoption.
+The binary recalls the episode it just ingested, scoped to the bound
+`Scope`. Two equivalent forms:
+
+```rust
+// 1. The one-liner — default retrieval root is Vector::new("chunks", 30).
+let hits = scoped.recall(lunaris::Query::text("hello")).await?;
+println!("recalled {} hit(s); top score = {}", hits.len(), hits[0].score);
+
+// 2. The DSL form — build the operator tree explicitly, cap at 5 hits.
+use lunaris::Vector;
+let hits = scoped
+    .dsl()
+    .with_root(Vector::new("chunks", 30).top(5))
+    .execute(lunaris::Query::text("hello"))
+    .await?;
+```
+
+`recall` returns `Vec<lunaris::Hit>`; each `Hit` carries `id`, `score`,
+`text`, `source`, `heading_path`, `valid_from` / `valid_to`, plus the
+`degraded` / `rerank_applied` / `source_op` provenance flags. See
+`crates/lunaris-retrieve/src/types.rs`.
+
+For the full DSL surface (BM25 keyword, graph traversal, RRF fusion,
+cross-encoder rerank, `as_of` time-travel) see the retrieval DSL guide
+at `docs.lunaris.dev`.
 
 ## Troubleshooting
 
