@@ -37,6 +37,11 @@ pub struct FuseRrfRetriever {
     pub(crate) inner: Box<dyn Retriever>,
     pub(crate) k: usize,
     pub(crate) hint: Option<FusedBranchHint>,
+    /// Per-branch RRF weights. Empty by default — every branch contributes
+    /// with weight `1.0` on the client-side path and the Moon-native path
+    /// uses its historical `[0.5, 0.5]` balanced default. Populate via
+    /// [`FuseRrfRetriever::with_weights`].
+    pub(crate) weights: HashMap<SourceOp, f32>,
 }
 
 impl FuseRrfRetriever {
@@ -46,7 +51,36 @@ impl FuseRrfRetriever {
     /// value is 60 (Cormack 2009).
     pub fn new(inner: Box<dyn Retriever>, k: usize) -> Self {
         let hint = inspect_branches(inner.as_ref());
-        Self { inner, k, hint }
+        Self { inner, k, hint, weights: HashMap::new() }
+    }
+
+    /// Set per-branch RRF weights. Each [`SourceOp`] branch (e.g.
+    /// `Vector`, `Keyword`, `Graph`) is multiplied by its weight before
+    /// summing reciprocal-rank contributions:
+    /// `Σ weight[branch_i] / (k + rank_i)`.
+    ///
+    /// Branches missing from the map default to weight `1.0`. Calling this
+    /// with an empty map is equivalent to never calling it at all.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::collections::HashMap;
+    /// use lunaris_retrieve::{FuseRrfRetriever, Keyword, Vector, SourceOp};
+    ///
+    /// let weights = HashMap::from([
+    ///     (SourceOp::Vector, 1.0_f32),
+    ///     (SourceOp::Keyword, 0.5_f32),
+    /// ]);
+    /// let _node = Vector::new("chunks", 30)
+    ///     .and(Keyword::bm25("chunks", 30))
+    ///     .fuse_rrf(60)
+    ///     .with_weights(weights);
+    /// ```
+    #[must_use = "with_weights returns a configured FuseRrfRetriever; assign it back to the chain"]
+    pub fn with_weights(mut self, weights: HashMap<SourceOp, f32>) -> Self {
+        self.weights = weights;
+        self
     }
 
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
@@ -86,13 +120,13 @@ impl Retriever for FuseRrfRetriever {
             && ctx.storage.capabilities().native_rrf
             && ctx.moon_storage.is_some()
         {
-            return fuse_via_moon_native(ctx, hint, self.k).await;
+            return fuse_via_moon_native(ctx, hint, self.k, &self.weights).await;
         }
 
         // Client-side fallback path: collect both branches concurrently,
         // group by source_op, rank within group, compute RRF score.
         let raw = self.inner.retrieve(ctx).await?;
-        Ok(client_side_rrf(raw, self.k))
+        Ok(client_side_rrf_weighted(raw, &self.weights, self.k))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -284,14 +318,20 @@ mod tests {
             .collect::<HashMap<_, _>>();
         let weighted = client_side_rrf_weighted(hits, &weights, 60);
 
+        // Compare by id-keyed score map — both paths use unstable sort,
+        // so equal-score ids may swap positions across runs. The contract
+        // is "same id set, same per-id score", not "same vec ordering".
         assert_eq!(unweighted.len(), weighted.len(), "id set must match");
-        for (u, w) in unweighted.iter().zip(weighted.iter()) {
-            assert_eq!(u.id, w.id, "ordering must match");
+        let u_map: HashMap<Vec<u8>, f32> =
+            unweighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> =
+            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        for (id, us) in &u_map {
+            let ws = w_map.get(id).expect("id present in weighted output");
             assert!(
-                (u.score - w.score).abs() < 1e-6,
-                "score equality required: unweighted={} weighted={}",
-                u.score,
-                w.score
+                (us - ws).abs() < 1e-6,
+                "score equality required for {:?}: unweighted={us} weighted={ws}",
+                id
             );
         }
     }
@@ -301,17 +341,30 @@ mod tests {
     /// MUST be a no-op vs the unweighted call.
     #[test]
     fn weighted_rrf_empty_weights_map_is_no_op() {
+        // Use distinct branch sizes so per-id fused scores are all distinct
+        // — avoids a flaky tie under the unstable sort downstream.
         let hits = vec![
             rh(b"a", 0.9, SourceOp::Vector),
             rh(b"b", 0.5, SourceOp::Vector),
+            rh(b"a", 0.7, SourceOp::Keyword),
             rh(b"c", 0.8, SourceOp::Keyword),
         ];
         let unweighted = client_side_rrf(hits.clone(), 60);
         let weighted = client_side_rrf_weighted(hits, &HashMap::new(), 60);
         assert_eq!(unweighted.len(), weighted.len());
-        for (u, w) in unweighted.iter().zip(weighted.iter()) {
-            assert_eq!(u.id, w.id);
-            assert!((u.score - w.score).abs() < 1e-6);
+        // Compare by id-keyed score map — independent of sort stability.
+        let u_map: HashMap<Vec<u8>, f32> =
+            unweighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> =
+            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        assert_eq!(u_map.len(), w_map.len());
+        for (id, us) in &u_map {
+            let ws = w_map.get(id).expect("id present in weighted output");
+            assert!(
+                (us - ws).abs() < 1e-6,
+                "score mismatch for {:?}: unweighted={us} weighted={ws}",
+                id
+            );
         }
     }
 
