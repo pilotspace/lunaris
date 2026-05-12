@@ -128,8 +128,8 @@ impl Lunaris {
     ///
     /// Unknown env values fail fast with `LunarisError::Storage(Backend(...))`
     /// — there is **no** silent fallback. Empty string / unset both use the
-    /// default. See [`resolve_embedder`], [`resolve_reranker`],
-    /// [`default_verifier`], and [`default_consolidator`].
+    /// default. See `resolve_embedder`, `resolve_reranker`,
+    /// `default_verifier`, and `default_consolidator` (private helpers).
     ///
     /// Air-gapped deployments: set the env vars to `candle` and pre-stage
     /// weights via `huggingface-cli`; OR build with

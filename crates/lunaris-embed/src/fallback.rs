@@ -1,6 +1,6 @@
 //! RFC 0007 §3 — `FallbackEmbedder<P, F>` static-dispatch combinator.
 //!
-//! Mirror of [`FallbackExtractor`](lunaris_extract::fallback::FallbackExtractor)
+//! Mirror of `lunaris_extract::fallback::FallbackExtractor`
 //! over the [`Embedder`] trait. Static dispatch keeps the per-chunk embed
 //! hot path monomorphised (RFC §2.2 #4 — `Box<dyn Embedder>` on the inner
 //! loop costs measurable p99).
@@ -16,7 +16,7 @@
 //!
 //! ## Transient vs terminal
 //!
-//! Same classifier as [`lunaris_extract::fallback::is_transient`] —
+//! Same classifier as `lunaris_extract::fallback::is_transient` —
 //! transports + 5xx are transient; schema-level errors are terminal.
 //! `Embedder` errors flow through `LunarisError` so the policy
 //! is reusable.
@@ -29,7 +29,7 @@ use lunaris_core::circuit_breaker::CircuitBreaker;
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
 /// Opaque provider tag — tracing label only. Mirrors
-/// [`lunaris_extract::fallback::ProviderId`] but lives here so
+/// `lunaris_extract::fallback::ProviderId` but lives here so
 /// downstream callers don't need a lunaris-extract dep for the embedder
 /// stack.
 #[derive(Clone, Debug)]

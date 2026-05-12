@@ -75,7 +75,7 @@ pub const FASTEMBED_GEMMA_MAX_TOKENS: usize = 2048;
 
 /// Environment variable that overrides the default fastembed cache directory.
 /// Mirrors the `LUNARIS_OLLAMA_URL` / `LUNARIS_OLLAMA_MODEL` env-override
-/// convention established in [`crate::ollama`].
+/// convention established in `crate::ollama` (feature-gated).
 pub const FASTEMBED_CACHE_DIR_ENV: &str = "LUNARIS_FASTEMBED_CACHE_DIR";
 
 // Phase 20 Plan 20-01 — execution-provider plumbing lives in a sibling module
