@@ -77,6 +77,11 @@ pub use primitives::WorkingMemory;
 pub use logging::init as init_logging;
 pub use lunaris_core::*;
 pub use open::open;
+// Postgres operational helpers (production role bootstrap), re-exported so
+// `lunaris-server` and other consumers don't need a direct dependency on the
+// backend crate. `PostgresStorage` itself is re-exported below alongside the
+// other backend types; these back the `lunaris-server bootstrap-db` subcommand.
+pub use lunaris_storage_postgres::bootstrap::{BootstrapReport, bootstrap_app_role};
 // Plan 05-04 — opinionated v0 recipes (helios-rfc §5.3 surface). v0 ships only
 // HeliosScratchpad + its borrowed AsOfScratchpad time-travel view; the other
 // 9 recipes (RECIPE-V1-01..11) ship in v1.
