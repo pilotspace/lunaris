@@ -135,6 +135,32 @@ pub struct CypherQuery {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Dynamic header-keyed result table returned by `StoragePort::graph_traverse`.
+///
+/// `headers` carries column names in row order; `rows` are row-major with
+/// `rows[i].len() == headers.len()`. The shape is **wire-additive**: backends
+/// MAY append new columns without breaking older consumers, and consumers
+/// SHOULD locate columns by header name (not positional index) when they need
+/// optional metadata.
+///
+/// # Canonical columns (Plan 03-03 + P0 #4 Wave 3)
+///
+/// The `Graph::anchored` operator emits a Cypher RETURN whose canonical
+/// header order is:
+///
+/// | Header                 | Type      | Meaning                                                  | Default if missing |
+/// |------------------------|-----------|----------------------------------------------------------|--------------------|
+/// | `id`                   | hex str   | `m.id_hex` — destination entity's 16-byte ULID, hex.     | `""` (empty hit)   |
+/// | `name`                 | str/null  | `m.name` — display name.                                 | `null`             |
+/// | `type`                 | str/null  | `m.type` — entity type tag.                              | `null`             |
+/// | `path_length`          | int       | Number of edges traversed (`length(path)`).              | row index `i`      |
+/// | `edge_weight_product`  | float     | product of `coalesce(r.weight, 1.0)` over path edges      | `1.0`              |
+/// | `anchor_confidence`    | float     | Confidence of the seed entity that anchored this path.   | `1.0`              |
+///
+/// The first three are required by the operator today (positional read for
+/// back-compat with all `canned_graph_with`-shaped test fixtures). The last
+/// three are **optional**: when absent, the operator substitutes the documented
+/// defaults so the scoring formula reduces to the legacy `1.0 / (1.0 + i)`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GraphResult {
     pub headers: Vec<String>,

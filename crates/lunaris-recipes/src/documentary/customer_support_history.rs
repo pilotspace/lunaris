@@ -30,8 +30,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::storage::types::Lsn;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{DocumentCorpus, MessageStream};
@@ -55,11 +55,11 @@ impl CustomerSupportHistory {
     /// wrapper is a named recipe, not a general-purpose composer. Downstream
     /// callers that need alternate prefixes should compose DocumentCorpus +
     /// MessageStream directly.
-    pub fn new(lunaris: Arc<Lunaris>) -> Self {
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
         Self {
             lunaris: lunaris.clone(),
-            tickets: DocumentCorpus::new(lunaris.clone(), TICKET_PREFIX),
-            chats: MessageStream::new(lunaris, CHAT_PREFIX),
+            tickets: DocumentCorpus::new(lunaris.clone(), scope.clone(), TICKET_PREFIX),
+            chats: MessageStream::new(lunaris, scope, CHAT_PREFIX),
         }
     }
 

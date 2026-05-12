@@ -49,7 +49,7 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_core::storage::types::Filter;
-use lunaris_core::{Episode, LunarisError};
+use lunaris_core::{Episode, LunarisError, Scope};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 
 /// Default RRF constant from Cormack et al. (2009). Matches `fuse_rrf`'s
@@ -80,20 +80,27 @@ const POST_FILTER_OVERFETCH: usize = 4;
 #[derive(Clone)]
 pub struct DocumentCorpus {
     lunaris: Arc<Lunaris>,
+    scope: Scope,
     source_prefix: String,
     filters: Vec<Filter>,
     top_k: usize,
 }
 
 impl DocumentCorpus {
-    /// Construct a new corpus bound to `source_prefix`. Every
+    /// Construct a new corpus bound to `scope` (RFC 0001 partition key) and
+    /// `source_prefix` (source-key namespace). Every
     /// [`ingest`](Self::ingest) stamps the prefix onto the Episode `source`
     /// field; every [`search`](Self::search) scopes recall via
     /// [`Filter::StartsWith`] on that same field. Conventional values:
     /// `"kb:papers/"`, `"kb:docs/"`, `"repo:src/"`.
-    pub fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self {
+    pub fn new(
+        lunaris: Arc<Lunaris>,
+        scope: Scope,
+        source_prefix: impl Into<String>,
+    ) -> Self {
         Self {
             lunaris,
+            scope,
             source_prefix: source_prefix.into(),
             filters: Vec::new(),
             top_k: DEFAULT_TOP_K,
@@ -113,9 +120,7 @@ impl DocumentCorpus {
     ) -> Result<(), LunarisError> {
         for (content, metadata) in chunks {
             let mut episode = Episode::new(
-                // RFC 0001 Wave 1D: use Scope::dev() until DocumentCorpus
-                // receives a real Scope parameter (Wave 3 SDK layer).
-                lunaris_core::Scope::dev(),
+                self.scope.clone(),
                 format!("{}{}", self.source_prefix, ulid::Ulid::new()),
                 content,
                 self.lunaris.clock().as_ref(),

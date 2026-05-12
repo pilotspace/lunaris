@@ -175,8 +175,8 @@ async fn working_memory_moon_postgres_parity() -> anyhow::Result<()> {
     let postgres = Arc::new(Lunaris::open(&pg_url).await?);
 
     // Seed 5 notes under scope_prefix "test:wm/" on each backend.
-    let wm_moon = WorkingMemory::new(moon.clone(), "test:wm/");
-    let wm_pg = WorkingMemory::new(postgres.clone(), "test:wm/");
+    let wm_moon = WorkingMemory::new(moon.clone(), lunaris_core::Scope::dev(), "test:wm/");
+    let wm_pg = WorkingMemory::new(postgres.clone(), lunaris_core::Scope::dev(), "test:wm/");
     for i in 0..5 {
         let k = format!("note-{i}");
         let v = json!({ "seq": i, "body": format!("fixture note {i}") });
@@ -238,8 +238,8 @@ async fn working_memory_moon_postgres_parity() -> anyhow::Result<()> {
     moon.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
     postgres.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
 
-    let wm_moon_other = WorkingMemory::new(moon.clone(), "other:");
-    let wm_pg_other = WorkingMemory::new(postgres.clone(), "other:");
+    let wm_moon_other = WorkingMemory::new(moon.clone(), lunaris_core::Scope::dev(), "other:");
+    let wm_pg_other = WorkingMemory::new(postgres.clone(), lunaris_core::Scope::dev(), "other:");
     for i in 0..5 {
         let k = format!("note-{i}");
         let v = json!({ "seq": i, "scope": "other:" });

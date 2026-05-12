@@ -55,7 +55,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use lunaris_core::storage::types::{Filter, Lsn};
-use lunaris_core::{Hlc, LunarisError, StorageError};
+use lunaris_core::{Hlc, LunarisError, Scope, StorageError};
 use lunaris_retrieve::Hit;
 
 use crate::forget::{ForgetReceipt, ForgetTarget, ScopeSpec};
@@ -80,6 +80,9 @@ const READ_TOP: usize = 8;
 #[derive(Clone)]
 pub struct HeliosScratchpad {
     lunaris: Arc<Lunaris>,
+    /// RFC 0001 partition key. Threaded into the inner [`WorkingMemory`] and
+    /// into every direct `StoragePort` call (e.g., `ls`'s `scan_range`).
+    scope: Scope,
     /// Full prefix including session id, e.g. `"helios:fs/session-42/"`.
     session_prefix: String,
     /// Phase 9 primitive handling write / read scoping. Owns its own
@@ -88,13 +91,15 @@ pub struct HeliosScratchpad {
 }
 
 impl HeliosScratchpad {
-    /// Construct a new scratchpad bound to `session_id`. The session prefix
-    /// becomes `helios:fs/<session_id>/` — every write/read/edit/grep/ls
-    /// operation scopes through it.
-    pub fn new(lunaris: Arc<Lunaris>, session_id: &str) -> Self {
+    /// Construct a new scratchpad bound to `scope` (RFC 0001 partition key)
+    /// and `session_id`. The session prefix becomes
+    /// `helios:fs/<session_id>/` — every write/read/edit/grep/ls operation
+    /// scopes through it on the source field, while `scope` partitions the
+    /// underlying KV / FT keyspace.
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, session_id: &str) -> Self {
         let session_prefix = format!("{HELIOS_PREFIX}{session_id}/");
-        let wm = WorkingMemory::new(lunaris.clone(), session_prefix.clone());
-        Self { lunaris, session_prefix, wm }
+        let wm = WorkingMemory::new(lunaris.clone(), scope.clone(), session_prefix.clone());
+        Self { lunaris, scope, session_prefix, wm }
     }
 
     /// Write `content` to `path`. Delegates to [`WorkingMemory::write`] with the
@@ -162,12 +167,10 @@ impl HeliosScratchpad {
     pub async fn ls(&self, prefix: Option<&str>) -> Result<Vec<String>, LunarisError> {
         let key_prefix: &[u8] = b"episode:";
         let storage = self.lunaris.storage();
-        let mut stream =
-            // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
-            storage
-                .scan_range(&lunaris_core::Scope::dev(), key_prefix, None)
-                .await
-                .map_err(LunarisError::Storage)?;
+        let mut stream = storage
+            .scan_range(&self.scope, key_prefix, None)
+            .await
+            .map_err(LunarisError::Storage)?;
         let target_prefix = match prefix {
             Some(p) => format!("{}{}", self.session_prefix, p),
             None => self.session_prefix.clone(),

@@ -29,7 +29,7 @@ use lunaris_consolidate::{
     CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, ConsolidateEvent, ConsolidationReport,
 };
 use lunaris_core::storage::types::{Filter, Lsn};
-use lunaris_core::{Episode, LunarisError, StoragePort};
+use lunaris_core::{Episode, LunarisError, Scope, StoragePort};
 use lunaris_retrieve::{Keyword, Query, Vector};
 
 use crate::{AuditEvent, Lunaris, publish_audit_event};
@@ -68,13 +68,23 @@ const RRF_K: u32 = 60;
 #[derive(Clone)]
 pub struct WorkingMemory {
     lunaris: Arc<Lunaris>,
+    scope: Scope,
     scope_prefix: String,
 }
 
 impl WorkingMemory {
-    /// Construct a new scratchpad bound to `scope_prefix`.
-    pub fn new(lunaris: Arc<Lunaris>, scope_prefix: impl Into<String>) -> Self {
-        Self { lunaris, scope_prefix: scope_prefix.into() }
+    /// Construct a new scratchpad bound to `scope` (RFC 0001 partition key)
+    /// and `scope_prefix` (source-key namespace). The two concepts are
+    /// orthogonal: `scope` partitions the KV / FT keyspace, while
+    /// `scope_prefix` namespaces the `source` field on each Episode so a
+    /// single scope can host multiple WorkingMemory instances (e.g.,
+    /// `"helios:fs/"` vs `"chat:user-42/"`).
+    pub fn new(
+        lunaris: Arc<Lunaris>,
+        scope: Scope,
+        scope_prefix: impl Into<String>,
+    ) -> Self {
+        Self { lunaris, scope, scope_prefix: scope_prefix.into() }
     }
 
     /// Write `(k, v)` under `{scope_prefix}{k}` as an [`Episode`].
@@ -82,9 +92,8 @@ impl WorkingMemory {
         let source = self.scope_key(k);
         let content = serde_json::to_string(&v)
             .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-        // RFC 0001 Wave 0: use Scope::dev() until WorkingMemory receives a real scope (Wave 1D).
         let episode = Episode::new(
-            lunaris_core::Scope::dev(),
+            self.scope.clone(),
             source,
             content,
             self.lunaris.clock().as_ref(),

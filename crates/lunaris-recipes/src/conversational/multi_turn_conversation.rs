@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_consolidate::ConsolidationReport;
-use lunaris_core::LunarisError;
 use lunaris_core::storage::types::Lsn;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{MessageStream, WorkingMemory};
@@ -42,11 +42,11 @@ impl MultiTurnConversation {
     /// ([`MessageStream::ingest`]) and the promotion filter
     /// ([`WorkingMemory::consolidate`]) share the same prefix so the
     /// per-user scope invariant is enforced at both ends of the pipeline.
-    pub fn new(lunaris: Arc<Lunaris>, user_id: &str) -> Self {
-        let scope = format!("chat:{}/", user_id);
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, user_id: &str) -> Self {
+        let prefix = format!("chat:{}/", user_id);
         Self {
-            inner_ms: MessageStream::new(lunaris.clone(), scope.clone()),
-            inner_wm: WorkingMemory::new(lunaris, scope),
+            inner_ms: MessageStream::new(lunaris.clone(), scope.clone(), prefix.clone()),
+            inner_wm: WorkingMemory::new(lunaris, scope, prefix),
         }
     }
 

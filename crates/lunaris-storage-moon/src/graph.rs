@@ -1,6 +1,13 @@
 //! `graph_traverse` — typed `client.graph().query_with_params(...)` (or `query_raw`)
 //! wrapped with `client.temporal().snapshot_at_packed(...)` for AS_OF queries.
 //!
+//! TODO(v0.4): emit optional `path_length` + `edge_weight_product` columns to
+//! feed `Graph::anchored`'s scoring formula
+//! `(edge_weight_product / (1.0 + path_length)) * anchor_confidence`. Requires
+//! lifting the operator's Cypher template to `MATCH p = (n)-[*1..N]-(m)` and
+//! verifying Moon GRAPH.QUERY supports `length(p)` / `reduce(...)` over
+//! variable-length paths. See `docs/v0.3-known-debt.md` § "Graph scoring".
+//!
 //! RFC 0001 Wave 1C: `GRAPH.QUERY` is routed to `graph_key(scope)` —
 //! `lunaris_{scope}_graph` — so each scope has its own graph. The per-scope graph
 //! is created lazily on first write (see `MoonStorage::ensure_scope`).
