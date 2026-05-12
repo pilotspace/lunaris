@@ -2891,6 +2891,8 @@ dependencies = [
 [[package]]
 name = "moondb"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efa8fc6e0305eba36fc1908e547bbbc50ebf754ac5d3e3ea0a5cd739fe77e4c0"
 dependencies = [
  "bytes",
  "redis",

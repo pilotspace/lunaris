@@ -132,15 +132,16 @@ pub async fn fuse_via_moon_native(
 
     let typed = moon.client().typed();
     let mut text = typed.text();
-    // Default balanced weights [bm25, dense, sparse] = [0.5, 0.5, 0.0].
-    // Sparse weight is 0 because Lunaris does not populate a sparse field —
-    // and to keep Moon happy we pass `sparse_field: None` so the SDK omits
-    // the SPARSE clause entirely (Moon would otherwise reject with
-    // "sparse field not defined in index" because `content` is a TEXT field,
-    // not SPARSE). Two-way fusion (BM25 + dense) is the documented
-    // Moon-server fallback when the SPARSE clause is absent — see
-    // `moon/src/command/vector_search/hybrid.rs::HybridQuery::sparse: Option`.
-    let weights: [f64; 3] = [0.5_f64, 0.5_f64, 0.0_f64];
+    // Default balanced weights [bm25, dense] = [0.5, 0.5] for the
+    // moondb 0.1.1 two-way fusion API (BM25 + dense). The earlier
+    // three-way `[bm25, dense, sparse]` shape with `sparse_field: None`
+    // was on a local Moon SDK that is not yet on crates.io; v0.2.1 ships
+    // against the published moondb 0.1.1 surface. Moon-server's two-way
+    // fusion is the documented fallback path when no sparse clause is
+    // present — see `moon/src/command/vector_search/hybrid.rs`. When
+    // moondb publishes a release exposing the three-way `hybrid_search`
+    // signature, this call site lifts back to the wider form.
+    let weights: [f64; 2] = [0.5_f64, 0.5_f64];
     let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
     // RFC 0001 Wave 1C parity fix: the write path routes to the per-scope FT
     // index (`lunaris_{scope}_{kind}_idx`) but this hybrid-fusion read path
@@ -152,7 +153,7 @@ pub async fn fuse_via_moon_native(
     // for the same reason. Live-measurement gap, 2026-05-12.
     let per_scope_index = format!("lunaris_{}_{}_idx", ctx.scope.as_str(), hint.index);
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", None, k, weights)
+        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", k, weights)
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
