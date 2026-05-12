@@ -1,9 +1,49 @@
-//! Recency rescorer — P0 #3 (Wave 1) — RED skeleton.
+//! Recency rescorer — P0 #3 (Wave 1).
 //!
-//! Failing tests for the pluggable recency rescorer. The implementation
-//! lands in the next commit; this file establishes the public surface
-//! (config, scorer trait, `rescore_recency` entrypoint) and the
-//! red/green TDD contract.
+//! Promotes the recency-weighting pattern from `lunaris-recipes::MessageStream`
+//! into a first-class, reusable operator-layer rescorer. The recipe blends
+//! ACT-R base-level activation with a fused RRF score; this module generalises
+//! that to a pluggable [`RecencyScorer`] trait so callers can pick exponential
+//! half-life decay (default), ACT-R, or a custom curve.
+//!
+//! ## Design — three alternatives, recommended path
+//!
+//! 1. Hard-coded ACT-R blend (`.recency_act_r()`). Simple but inflexible —
+//!    every new decay shape forces a new method.
+//! 2. Single configurable knob (`.recency(half_life)`). Better, but bakes in
+//!    one curve.
+//! 3. Pluggable scorer trait (this module): `RecencyConfig { source, scorer }`
+//!    with [`Exp`] as the default and [`ActR`] as the parity scorer for the
+//!    recipe layer. Default config: `TimeSource::ValidFrom` +
+//!    `Exp { half_life = 7 days }`.
+//!
+//! ## Why post-hydrate?
+//!
+//! `RawHit` does not carry `valid_from`; the bi-temporal stamp only lands on
+//! the `Hit` after [`crate::hydrate::hydrate`] looks the chunk up. Two
+//! candidate placements:
+//!
+//! - (a) Add `valid_from: Option<Hlc>` to `RawHit`. Requires every backend's
+//!   `vector_search` / `keyword_search` to populate the field — a wide,
+//!   cross-crate change.
+//! - (b) Run the rescorer AFTER hydrate, on `Vec<Hit>` (this module).
+//!
+//! We pick (b). It is additive — no `RawHit` field, no `Retriever` trait
+//! change, no `SourceOp` variant. The public entrypoint is the free function
+//! [`rescore_recency`]; wiring it into [`crate::builder::RetrievalBuilder`]
+//! via `.recency(config)` is intentionally deferred to a follow-up commit on
+//! main (P0 #2 — parallel agent — owns `builder.rs` this round).
+//!
+//! ## Edge cases
+//!
+//! - `valid_from == Hlc::ZERO` — treat as "no recency signal"; pass-through
+//!   the prior score unchanged so a deleted/unstamped fact does not get a
+//!   spurious decay penalty.
+//! - `now.wall_ms < valid_from.wall_ms` (clock skew) — clamp age to zero
+//!   via `saturating_sub`.
+//! - NaN scorer output — guarded by [`f32::is_nan`]; falls back to the prior
+//!   score so the sort never destabilises.
+//! - Empty hits — no-op.
 
 use std::time::Duration;
 
@@ -26,7 +66,15 @@ pub trait RecencyScorer: Send + Sync {
     fn decay(&self, age_seconds: f32, prior_score: f32) -> f32;
 }
 
-/// Exponential half-life decay — stub for RED commit.
+/// Exponential half-life decay: `score' = score * 2^(-age / half_life)`.
+///
+/// Equivalent to `score * exp(-ln(2) * age / half_life)`. At `age = 0` the
+/// score is unchanged; at `age = half_life` the score is exactly halved;
+/// at `age = 2 * half_life` the score is quartered.
+///
+/// Default in [`RecencyConfig::default`]: `half_life = 7 days`. Wide enough
+/// not to upend the relative ordering of week-old hits, narrow enough to
+/// noticeably penalise month-old ones.
 #[derive(Clone, Copy, Debug)]
 pub struct Exp {
     pub half_life: Duration,
@@ -39,10 +87,14 @@ impl Exp {
 }
 
 impl RecencyScorer for Exp {
-    fn decay(&self, _age_seconds: f32, prior_score: f32) -> f32 {
-        // RED: returns the prior score unchanged so the "boosts newer"
-        // and "half-life" tests fail.
-        prior_score
+    fn decay(&self, age_seconds: f32, prior_score: f32) -> f32 {
+        let hl = self.half_life.as_secs_f32();
+        if hl <= 0.0 {
+            // Degenerate config — refuse to penalise.
+            return prior_score;
+        }
+        let factor = (-age_seconds / hl).exp2();
+        prior_score * factor
     }
 }
 
@@ -92,11 +144,71 @@ impl RecencyConfig {
     pub fn new(source: TimeSource, scorer: Box<dyn RecencyScorer>) -> Self {
         Self { source, scorer }
     }
+
+    pub fn with_source(mut self, source: TimeSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub fn with_scorer(mut self, scorer: Box<dyn RecencyScorer>) -> Self {
+        self.scorer = scorer;
+        self
+    }
 }
 
-/// Apply the recency rescorer in-place. RED stub — does nothing.
-pub fn rescore_recency(_hits: &mut Vec<Hit>, _now: Hlc, _config: &RecencyConfig) {
-    // GREEN commit replaces this body with the real rescore + sort.
+/// Read the relevant timestamp from a [`Hit`] given a [`TimeSource`].
+fn hit_timestamp(hit: &Hit, source: TimeSource) -> Hlc {
+    match source {
+        // Both variants currently map to `valid_from` — `Hit` only carries
+        // the valid-time stamp today. The `SysFrom` arm reserves the
+        // surface for when hydrate threads sys-time through.
+        TimeSource::ValidFrom | TimeSource::SysFrom => hit.valid_from,
+    }
+}
+
+/// Compute the age (seconds, f32, clamped to non-negative) between `now` and
+/// the hit's selected timestamp. Returns `None` when the hit carries no
+/// recency signal (`valid_from == Hlc::ZERO`), so the rescorer can pass the
+/// prior score through unchanged.
+fn hit_age_seconds(hit: &Hit, now: Hlc, source: TimeSource) -> Option<f32> {
+    let ts = hit_timestamp(hit, source);
+    if ts == Hlc::ZERO {
+        return None;
+    }
+    let delta_ms = now.wall_ms.saturating_sub(ts.wall_ms);
+    Some((delta_ms as f32) / 1000.0)
+}
+
+/// Apply the recency rescorer in-place and re-sort descending.
+///
+/// Public entrypoint — call AFTER [`crate::hydrate::hydrate`] and BEFORE
+/// returning hits to the caller. The free-function shape (rather than a
+/// builder method) is intentional: P0 #2 (parallel agent) owns `builder.rs`
+/// this round, so the recency wiring is a follow-up.
+///
+/// Guarantees:
+///
+/// - O(n) decay pass + O(n log n) sort.
+/// - No allocation beyond the existing `hits` buffer.
+/// - Stable under simultaneous timestamps (sort uses `partial_cmp` and the
+///   pre-existing slot order acts as a tiebreaker via the stable sort).
+/// - NaN scorer output is treated as "no signal" and falls back to the
+///   prior score.
+pub fn rescore_recency(hits: &mut Vec<Hit>, now: Hlc, config: &RecencyConfig) {
+    if hits.is_empty() {
+        return;
+    }
+    for hit in hits.iter_mut() {
+        let new_score = match hit_age_seconds(hit, now, config.source) {
+            Some(age) => {
+                let candidate = config.scorer.decay(age, hit.score);
+                if candidate.is_nan() { hit.score } else { candidate }
+            }
+            None => hit.score,
+        };
+        hit.score = new_score;
+    }
+    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 }
 
 #[cfg(test)]
