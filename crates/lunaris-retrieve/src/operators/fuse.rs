@@ -37,6 +37,11 @@ pub struct FuseRrfRetriever {
     pub(crate) inner: Box<dyn Retriever>,
     pub(crate) k: usize,
     pub(crate) hint: Option<FusedBranchHint>,
+    /// Per-branch RRF weights. Empty by default — every branch contributes
+    /// with weight `1.0` on the client-side path and the Moon-native path
+    /// uses its historical `[0.5, 0.5]` balanced default. Populate via
+    /// [`FuseRrfRetriever::with_weights`].
+    pub(crate) weights: HashMap<SourceOp, f32>,
 }
 
 impl FuseRrfRetriever {
@@ -46,7 +51,43 @@ impl FuseRrfRetriever {
     /// value is 60 (Cormack 2009).
     pub fn new(inner: Box<dyn Retriever>, k: usize) -> Self {
         let hint = inspect_branches(inner.as_ref());
-        Self { inner, k, hint }
+        Self { inner, k, hint, weights: HashMap::new() }
+    }
+
+    /// Set per-branch RRF weights. Each [`SourceOp`] branch (e.g.
+    /// `Vector`, `Keyword`, `Graph`) is multiplied by its weight before
+    /// summing reciprocal-rank contributions:
+    /// `Σ weight[branch_i] / (k + rank_i)`.
+    ///
+    /// Branches missing from the map default to weight `1.0`. Calling this
+    /// with an empty map is equivalent to never calling it at all.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::collections::HashMap;
+    /// use lunaris_retrieve::{FuseRrfRetriever, Keyword, Vector, SourceOp};
+    ///
+    /// let weights = HashMap::from([
+    ///     (SourceOp::Vector, 1.0_f32),
+    ///     (SourceOp::Keyword, 0.5_f32),
+    /// ]);
+    /// let _node = Vector::new("chunks", 30)
+    ///     .and(Keyword::bm25("chunks", 30))
+    ///     .fuse_rrf(60)
+    ///     .with_weights(weights);
+    /// ```
+    #[must_use = "with_weights returns a configured FuseRrfRetriever; assign it back to the chain"]
+    pub fn with_weights(mut self, weights: HashMap<SourceOp, f32>) -> Self {
+        self.weights = weights;
+        self
+    }
+
+    /// Borrow the per-branch weights currently configured on this node.
+    /// Returns an empty map when no `.with_weights(...)` call has been
+    /// made — i.e. the legacy unweighted / `[0.5, 0.5]` default path.
+    pub fn weights(&self) -> &HashMap<SourceOp, f32> {
+        &self.weights
     }
 
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
@@ -86,13 +127,13 @@ impl Retriever for FuseRrfRetriever {
             && ctx.storage.capabilities().native_rrf
             && ctx.moon_storage.is_some()
         {
-            return fuse_via_moon_native(ctx, hint, self.k).await;
+            return fuse_via_moon_native(ctx, hint, self.k, &self.weights).await;
         }
 
         // Client-side fallback path: collect both branches concurrently,
         // group by source_op, rank within group, compute RRF score.
         let raw = self.inner.retrieve(ctx).await?;
-        Ok(client_side_rrf(raw, self.k))
+        Ok(client_side_rrf_weighted(raw, &self.weights, self.k))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -100,13 +141,43 @@ impl Retriever for FuseRrfRetriever {
     }
 }
 
-/// Client-side reciprocal rank fusion.
+/// Client-side reciprocal rank fusion (unweighted).
+///
+/// Equivalent to [`client_side_rrf_weighted`] with weight `1.0` for every
+/// branch. Retained as a stable public function so existing call sites
+/// don't need to thread a weights map.
 ///
 /// Group by `source_op`, sort each group by descending score, assign rank
 /// (1-indexed), then for each id sum `1 / (k + rank_i)` across groups.
 /// Returns hits sorted by descending fused score, each tagged
 /// `SourceOp::Fused`.
 pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
+    // Regression-safety: forward to the weighted impl with an empty map.
+    // An empty map means "every branch gets weight 1.0" — see
+    // `client_side_rrf_weighted` doc and the
+    // `weighted_rrf_with_unit_weights_matches_unweighted` test.
+    client_side_rrf_weighted(raw, &HashMap::new(), k)
+}
+
+/// Client-side reciprocal rank fusion with per-branch weights.
+///
+/// For each id, fused score = `Σ weight[source_op_i] / (k + rank_i)` summed
+/// across the branches in which the id appears. `weights` maps each
+/// [`SourceOp`] branch to its trust multiplier. Branches missing from the
+/// map default to weight `1.0` (so `weights == &HashMap::new()` is the
+/// no-op / unweighted path).
+///
+/// Edge cases:
+/// - Zero weight removes a branch's contribution but does not remove ids
+///   that only appear in that branch — they surface with score `0.0`.
+/// - Weights for branches that have no hits are silently ignored.
+/// - `NaN` / negative weights are allowed but yield non-sensible scores;
+///   callers should validate inputs upstream.
+pub fn client_side_rrf_weighted(
+    raw: Vec<RawHit>,
+    weights: &HashMap<SourceOp, f32>,
+    k: usize,
+) -> Vec<RawHit> {
     if raw.is_empty() {
         return Vec::new();
     }
@@ -118,14 +189,18 @@ pub fn client_side_rrf(raw: Vec<RawHit>, k: usize) -> Vec<RawHit> {
     }
 
     // 2. Within each bucket, sort descending by score and assign rank.
-    //    Then accumulate the RRF contribution per id.
+    //    Then accumulate the weighted RRF contribution per id.
     let mut fused: HashMap<Vec<u8>, f32> = HashMap::new();
     let mut sample: HashMap<Vec<u8>, RawHit> = HashMap::new();
-    for (_src, mut group) in by_source {
+    for (src, mut group) in by_source {
+        // Default weight is 1.0 for any branch missing from the map — this
+        // preserves the legacy `client_side_rrf` semantics when callers
+        // pass an empty HashMap.
+        let w = weights.get(&src).copied().unwrap_or(1.0_f32);
         group.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         for (rank, hit) in group.into_iter().enumerate() {
             let r = rank + 1; // 1-indexed
-            let contribution = 1.0_f32 / (k as f32 + r as f32);
+            let contribution = w / (k as f32 + r as f32);
             *fused.entry(hit.id.clone()).or_insert(0.0) += contribution;
             // Keep the highest-score-so-far hit as the "shape" of the fused row
             // (carries metadata + rerank flag).
@@ -226,5 +301,139 @@ mod tests {
     fn rrf_constant_default_60() {
         // Sanity: rank 1 contribution at k=60 is 1/61 = 0.0163934...
         assert!(((1.0_f32 / 61.0) - 0.0163934).abs() < 1e-6);
+    }
+
+    // ── P0 #2 weighted RRF tests (RED → GREEN) ──
+
+    /// Regression-safety: default weights of `1.0` for every branch MUST
+    /// produce mathematically identical output to the legacy unweighted
+    /// `client_side_rrf`. This is the invariant that protects every existing
+    /// caller — without it, a refactor that switches `client_side_rrf` to
+    /// call the weighted version could silently change rankings.
+    #[test]
+    fn weighted_rrf_with_unit_weights_matches_unweighted() {
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"b", 0.5, SourceOp::Vector),
+            rh(b"c", 0.8, SourceOp::Keyword),
+            rh(b"a", 0.6, SourceOp::Keyword),
+        ];
+
+        let unweighted = client_side_rrf(hits.clone(), 60);
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 1.0_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let weighted = client_side_rrf_weighted(hits, &weights, 60);
+
+        // Compare by id-keyed score map — both paths use unstable sort,
+        // so equal-score ids may swap positions across runs. The contract
+        // is "same id set, same per-id score", not "same vec ordering".
+        assert_eq!(unweighted.len(), weighted.len(), "id set must match");
+        let u_map: HashMap<Vec<u8>, f32> =
+            unweighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> =
+            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        for (id, us) in &u_map {
+            let ws = w_map.get(id).expect("id present in weighted output");
+            assert!(
+                (us - ws).abs() < 1e-6,
+                "score equality required for {:?}: unweighted={us} weighted={ws}",
+                id
+            );
+        }
+    }
+
+    /// Missing branches in the weights map default to weight `1.0`. The
+    /// empty-map case is the canonical "no weights specified" signal and
+    /// MUST be a no-op vs the unweighted call.
+    #[test]
+    fn weighted_rrf_empty_weights_map_is_no_op() {
+        // Use distinct branch sizes so per-id fused scores are all distinct
+        // — avoids a flaky tie under the unstable sort downstream.
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"b", 0.5, SourceOp::Vector),
+            rh(b"a", 0.7, SourceOp::Keyword),
+            rh(b"c", 0.8, SourceOp::Keyword),
+        ];
+        let unweighted = client_side_rrf(hits.clone(), 60);
+        let weighted = client_side_rrf_weighted(hits, &HashMap::new(), 60);
+        assert_eq!(unweighted.len(), weighted.len());
+        // Compare by id-keyed score map — independent of sort stability.
+        let u_map: HashMap<Vec<u8>, f32> =
+            unweighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> =
+            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        assert_eq!(u_map.len(), w_map.len());
+        for (id, us) in &u_map {
+            let ws = w_map.get(id).expect("id present in weighted output");
+            assert!(
+                (us - ws).abs() < 1e-6,
+                "score mismatch for {:?}: unweighted={us} weighted={ws}",
+                id
+            );
+        }
+    }
+
+    /// Weighting changes the relative ordering. With `Vector=1.0, Keyword=0.5`
+    /// a hit that only appears in Keyword should score below a hit that only
+    /// appears in Vector at the same rank.
+    #[test]
+    fn weighted_rrf_changes_ordering() {
+        // id=v_only: vector rank 1 (no keyword)
+        // id=k_only: keyword rank 1 (no vector)
+        // Unweighted: both score 1/61 — tie.
+        // Weighted (Vector=1.0, Keyword=0.5): v_only=1/61, k_only=0.5/61
+        let hits = vec![rh(b"v_only", 0.9, SourceOp::Vector), rh(b"k_only", 0.9, SourceOp::Keyword)];
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.5_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let weighted = client_side_rrf_weighted(hits, &weights, 60);
+        assert_eq!(weighted.len(), 2);
+        assert_eq!(weighted[0].id, b"v_only".to_vec(), "vector branch (weight 1.0) must win");
+        assert_eq!(weighted[1].id, b"k_only".to_vec());
+        let v_score = 1.0_f32 / 61.0;
+        let k_score = 0.5_f32 / 61.0;
+        assert!((weighted[0].score - v_score).abs() < 1e-6);
+        assert!((weighted[1].score - k_score).abs() < 1e-6);
+    }
+
+    /// Zero weight removes a branch's contribution entirely (but the id
+    /// still surfaces if it appears in another branch with positive weight).
+    #[test]
+    fn weighted_rrf_zero_weight_removes_branch_contribution() {
+        // id=a in both, id=b only in Keyword.
+        // Weights: Vector=1.0, Keyword=0.0
+        // → a scores 1/61 (vector only), b scores 0 (keyword zero'd).
+        // b still surfaces because the hit exists, but its score is 0.
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"a", 0.7, SourceOp::Keyword),
+            rh(b"b", 0.8, SourceOp::Keyword),
+        ];
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.0_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let out = client_side_rrf_weighted(hits, &weights, 60);
+        let a = out.iter().find(|h| h.id == b"a".to_vec()).expect("a present");
+        let b = out.iter().find(|h| h.id == b"b".to_vec()).expect("b present");
+        assert!((a.score - 1.0_f32 / 61.0).abs() < 1e-6, "a comes from vector only");
+        assert!(b.score.abs() < 1e-6, "b's keyword contribution is zero'd: score={}", b.score);
+    }
+
+    /// Weight specified for a branch with no hits is harmless.
+    #[test]
+    fn weighted_rrf_weight_on_missing_branch_is_harmless() {
+        let hits = vec![rh(b"a", 0.9, SourceOp::Vector)];
+        let weights = [
+            (SourceOp::Vector, 1.0_f32),
+            (SourceOp::Keyword, 2.0_f32), // no Keyword hits exist
+            (SourceOp::Graph, 3.0_f32),   // no Graph hits exist
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+        let out = client_side_rrf_weighted(hits, &weights, 60);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].score - 1.0_f32 / 61.0).abs() < 1e-6);
     }
 }
