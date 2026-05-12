@@ -28,6 +28,8 @@
 //! Phase 1 trait. `fuse_via_moon_native` uses it to confirm the backend is
 //! `MoonStorage` before invoking the Moon-native call.
 
+use std::collections::HashMap;
+
 use lunaris_core::LunarisError;
 use lunaris_core::storage::keyword::min_max_normalize;
 use lunaris_core::storage::types::Filter;
@@ -119,6 +121,7 @@ pub async fn fuse_via_moon_native(
     ctx: &QueryContext,
     hint: &FusedBranchHint,
     k: usize,
+    branch_weights: &HashMap<SourceOp, f32>,
 ) -> Result<Vec<RawHit>, LunarisError> {
     let moon = ctx.moon_storage.as_ref().ok_or_else(|| {
         LunarisError::Storage(lunaris_core::StorageError::Backend(
@@ -132,16 +135,30 @@ pub async fn fuse_via_moon_native(
 
     let typed = moon.client().typed();
     let mut text = typed.text();
-    // Default balanced weights [bm25, dense] = [0.5, 0.5] for the
-    // moondb 0.1.1 two-way fusion API (BM25 + dense). The earlier
-    // three-way `[bm25, dense, sparse]` shape with `sparse_field: None`
-    // was on a local Moon SDK that is not yet on crates.io; v0.2.1 ships
-    // against the published moondb 0.1.1 surface. Moon-server's two-way
-    // fusion is the documented fallback path when no sparse clause is
-    // present — see `moon/src/command/vector_search/hybrid.rs`. When
-    // moondb publishes a release exposing the three-way `hybrid_search`
-    // signature, this call site lifts back to the wider form.
-    let weights: [f64; 2] = [0.5_f64, 0.5_f64];
+    // Resolve per-branch weights for the moondb 0.1.1 two-way fusion API
+    // (BM25 + dense). The SDK signature is `hybrid_search(..., k,
+    // [w_bm25, w_dense])`, so we map:
+    //   SourceOp::Keyword -> w_bm25
+    //   SourceOp::Vector  -> w_dense
+    // When the caller passes an empty weights map (default
+    // `FuseRrfRetriever` with no `.with_weights(...)` call), preserve the
+    // historical `[0.5, 0.5]` balanced default so existing call sites
+    // observe NO behaviour change. Any explicit weight present in the map
+    // overrides the 0.5 default; missing branches stay at 0.5.
+    //
+    // The earlier three-way `[bm25, dense, sparse]` shape with
+    // `sparse_field: None` was on a local Moon SDK that is not yet on
+    // crates.io; v0.2.1 ships against the published moondb 0.1.1 surface.
+    // When moondb publishes a release exposing the three-way
+    // `hybrid_search` signature, this call site lifts back to the wider
+    // form.
+    let weights: [f64; 2] = if branch_weights.is_empty() {
+        [0.5_f64, 0.5_f64]
+    } else {
+        let w_bm25 = branch_weights.get(&SourceOp::Keyword).copied().unwrap_or(0.5_f32) as f64;
+        let w_dense = branch_weights.get(&SourceOp::Vector).copied().unwrap_or(0.5_f32) as f64;
+        [w_bm25, w_dense]
+    };
     let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
     // RFC 0001 Wave 1C parity fix: the write path routes to the per-scope FT
     // index (`lunaris_{scope}_{kind}_idx`) but this hybrid-fusion read path
