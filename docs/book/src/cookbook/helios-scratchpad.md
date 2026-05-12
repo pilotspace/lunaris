@@ -21,8 +21,12 @@ primitive — Lunaris doesn't know Helios exists; the recipe is not a coupling.
 ## The frozen 9-method surface
 
 `HeliosScratchpad` holds an `Arc<Lunaris>` + a `session_prefix` (e.g.
-`"helios:fs/session-42/"`) and is `Clone` (both fields are cheap). Its
-public surface is frozen at nine symbols (enforced at compile time):
+`"helios:fs/session-42/"`) + a delegated `WorkingMemory` (itself
+`Arc<Lunaris>` + `String`), and is `Clone` (every field is cheap). Its
+public surface is frozen at nine symbols — the
+`helios_scratchpad_public_surface_under_50_loc` test asserts *exactly* nine
+at compile time, so the surface can neither grow nor shrink without an
+`HELIOS-*` requirement update:
 
 | # | Method | Signature |
 |---|---|---|
