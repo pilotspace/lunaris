@@ -6,6 +6,7 @@ pub mod fuse;
 pub mod graph;
 pub mod keyword;
 pub mod modifiers;
+pub mod recency;
 pub mod rerank;
 pub mod vector;
 
