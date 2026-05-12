@@ -103,6 +103,8 @@ pub async fn run_consolidate_worker(
     source_prefix: Option<String>,
 ) -> Result<JoinHandle<()>, LunarisError> {
     // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
+    // scope-dev-allowed: inside-deprecated-wrapper — v0.3 supervisor migration
+    // tracked in RFC 0001 §3.7 / docs/v0.3-known-debt.md.
     let stream = storage
         .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await

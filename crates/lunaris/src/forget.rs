@@ -241,6 +241,8 @@ impl Lunaris {
             // work" see the warning in the line right above their forget
             // invocation. Suppressible via the standard tracing filter
             // (`LUNARIS_LOG=lunaris::forget=error` or similar).
+            // scope-dev-allowed: warn-string-mentions-marker — operator
+            // readability text; ScopedLunaris::forget is the canonical fix.
             tracing::warn!(
                 target: "lunaris::forget",
                 "Lunaris::forget is hard-coded to Scope::dev() in v0.2.x — \
@@ -298,6 +300,7 @@ impl Lunaris {
             // batch would be a no-op anyway and some backends reject it).
             if !ops.is_empty() {
                 // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+                // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
                 let _lsn = self
                     .storage
                     .atomic_write(&lunaris_core::Scope::dev(), &ops)
@@ -376,6 +379,7 @@ async fn scan_matches(
         let key_str = format!("episode:{ulid}");
         // B-4: clock.tick() — Hlc::now() doesn't exist in this codebase.
         let now = clock.tick();
+        // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
         let row = storage
             .read_as_of(&lunaris_core::Scope::dev(), key_str.as_bytes(), now)
             .await
@@ -393,6 +397,7 @@ async fn scan_matches(
     let prefix: &[u8] = b"episode:";
 
     // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+    // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
     let mut stream = storage
         .scan_range(&lunaris_core::Scope::dev(), prefix, None)
         .await
@@ -405,6 +410,7 @@ async fn scan_matches(
             // can mutate the typed struct via `invalidate_sys`. now is bumped
             // per row to preserve HLC monotony.
             let now = clock.tick();
+            // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
             let row_opt = storage
                 .read_as_of(&lunaris_core::Scope::dev(), &k, now)
                 .await
