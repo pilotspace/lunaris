@@ -83,6 +83,13 @@ impl FuseRrfRetriever {
         self
     }
 
+    /// Borrow the per-branch weights currently configured on this node.
+    /// Returns an empty map when no `.with_weights(...)` call has been
+    /// made — i.e. the legacy unweighted / `[0.5, 0.5]` default path.
+    pub fn weights(&self) -> &HashMap<SourceOp, f32> {
+        &self.weights
+    }
+
     pub fn top(self, n: usize) -> super::modifiers::TopRetriever {
         super::modifiers::TopRetriever::new(Box::new(self), n)
     }
