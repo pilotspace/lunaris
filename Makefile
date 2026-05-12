@@ -11,7 +11,8 @@
 
 .PHONY: help bench-public bench-recall bench-ingest bench-helios \
         bench-baseline test test-pg test-moon docs docs-serve docs-rust \
-        ci-local clean release-preflight release-preflight-fast
+        ci-local clean release-preflight release-preflight-fast \
+        check-scope-leaks
 
 help:
 	@echo "Lunaris top-level targets"
@@ -153,3 +154,15 @@ release-preflight:
 
 release-preflight-fast:
 	scripts/release-preflight.sh --skip-tests --skip-doc
+
+# ---------------------------------------------------------------------------
+# P0 #1 Wave 2 — Scope::dev() grep-pin guard
+# ---------------------------------------------------------------------------
+#
+# CI-side guard against new `Scope::dev()` leaks in production code.
+# Delegates to `cargo xtask check-scope`, which walks every `.rs` file
+# under `crates/` and flags any un-marked call site. See CLAUDE.md
+# §Conventions / RFC 0001 for marker policy.
+
+check-scope-leaks:
+	cargo run -p xtask --quiet -- check-scope
