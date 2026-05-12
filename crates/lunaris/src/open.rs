@@ -1,7 +1,9 @@
 //! `lunaris::open(url)` — single entry point for both backends.
 //!
 //! Per `STORE-08`: `moon://host:port[?ws=workspace]` → `MoonStorage`,
-//! `postgres://user:pass@host/db` → `PostgresStorage`. Anything else returns
+//! `postgres://user:pass@host/db` → `PostgresStorage`,
+//! `memory://` / `sqlite:///path` → `EmbeddedStorage` (the zero-dependency
+//! dev/embedded backend). Anything else returns
 //! `LunarisError::Storage(StorageError::UnsupportedScheme(_))`.
 //!
 //! The dispatcher returns `Arc<dyn StoragePort>` so the caller can hand the same
@@ -36,6 +38,32 @@ pub async fn open(url: &str) -> Result<Arc<dyn StoragePort>, LunarisError> {
             .await?;
             Ok(Arc::new(s) as Arc<dyn StoragePort>)
         }
+        "memory" | "sqlite" => {
+            let s = lunaris_storage_embedded::EmbeddedStorage::connect(url).await?;
+            Ok(Arc::new(s) as Arc<dyn StoragePort>)
+        }
         other => Err(LunarisError::Storage(StorageError::UnsupportedScheme(other.into()))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn memory_scheme_opens_embedded_backend() {
+        let s = open("memory://").await.expect("memory:// opens");
+        let caps = s.capabilities();
+        assert!(caps.bi_temporal_native);
+        assert!(!caps.graph_native);
+        assert!(!caps.queue_native);
+    }
+
+    #[tokio::test]
+    async fn unknown_scheme_is_rejected() {
+        assert!(matches!(
+            open("mysql://localhost/db").await,
+            Err(LunarisError::Storage(StorageError::UnsupportedScheme(_)))
+        ));
     }
 }

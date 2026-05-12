@@ -1,0 +1,623 @@
+//! `EmbeddedStorage` — a zero-dependency [`StoragePort`] backed by SQLite.
+//!
+//! Two URL forms route here from `lunaris::open` / `Lunaris::open`:
+//!
+//! - `memory://` — an in-process, ephemeral database (one pinned connection to
+//!   `sqlite::memory:`). The "just trying it" backend: no Docker, no Postgres,
+//!   no Moon.
+//! - `sqlite:///abs/path` / `sqlite://rel/path` / `sqlite:path` — file-backed
+//!   and durable; the file is created if missing.
+//!
+//! ## What's implemented (onboarding-overhaul phase 1, skeleton)
+//!
+//! - bi-temporal MVCC KV: [`StoragePort::atomic_write`] /
+//!   [`StoragePort::read_as_of`] / [`StoragePort::scan_range`]. The
+//!   atomic-write-once invariant holds — exactly one SQLite transaction per
+//!   `atomic_write`, all-or-nothing.
+//! - `atomic_write` also *persists* `VectorUpsert` / `GraphNode` / `GraphEdge`
+//!   ops into side tables so no data is dropped, but `vector_search` /
+//!   `graph_traverse` still return [`StorageError::NotSupported`] until the
+//!   brute-force cosine / adjacency-walk impls land.
+//! - queue (`publish` / `subscribe` / `queue_depth`) and [`KeywordPort`] return
+//!   `NotSupported` for now.
+//!
+//! ## Bi-temporal encoding
+//!
+//! HLC stamps are stored as zero-padded, lexically-sortable `TEXT`
+//! (`{wall_ms:020}.{counter:010}.{node_id:05}`); an open-ended bound is `NULL`.
+//! The visibility predicate mirrors the Postgres backend:
+//!
+//! ```sql
+//!   valid_from <= ?as_of AND (valid_to IS NULL OR ?as_of < valid_to)
+//!   AND sys_from <= ?as_of AND (sys_to IS NULL OR ?as_of < sys_to)
+//! ```
+//!
+//! A `None` `as_of` ("live") collapses to `valid_to IS NULL AND sys_to IS NULL`.
+
+#![deny(rust_2018_idioms, unreachable_pub)]
+#![forbid(unsafe_code)]
+
+use std::str::FromStr;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use bytes::Bytes;
+use futures::stream::{self, BoxStream};
+use lunaris_core::bitemporal::BiTemporal;
+use lunaris_core::error::StorageError;
+use lunaris_core::hlc::{Hlc, HlcClock};
+use lunaris_core::scope::Scope;
+use lunaris_core::storage::capabilities::StorageCapabilities;
+use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
+use lunaris_core::storage::types::{
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, VectorHit, WriteOp,
+};
+use lunaris_core::storage::StoragePort;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::Row as _;
+
+mod schema;
+
+/// SQLite-backed embedded storage handle. Cheap to clone (`Arc`-shared pool).
+#[derive(Clone)]
+pub struct EmbeddedStorage {
+    pool: SqlitePool,
+    clock: Arc<HlcClock>,
+}
+
+impl std::fmt::Debug for EmbeddedStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmbeddedStorage").finish_non_exhaustive()
+    }
+}
+
+impl EmbeddedStorage {
+    /// Open the embedded backend for `url` (`memory://` or `sqlite:…`),
+    /// creating the schema if needed.
+    pub async fn connect(url: &str) -> Result<Self, StorageError> {
+        let (opts, pin_single) = parse_url(url)?;
+        let mut pool_opts = SqlitePoolOptions::new();
+        if pin_single {
+            // `sqlite::memory:` gives each connection its own database — pin the
+            // pool to one connection so every query sees the same data.
+            pool_opts = pool_opts.max_connections(1);
+        }
+        let pool = pool_opts.connect_with(opts).await.map_err(backend)?;
+        schema::init(&pool).await?;
+        Ok(Self { pool, clock: HlcClock::new(0) })
+    }
+
+    /// Borrow the underlying pool (used by tests).
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+fn backend(e: sqlx::Error) -> StorageError {
+    StorageError::Backend(format!("embedded(sqlite): {e}"))
+}
+
+/// Parse a Lunaris embedded-backend URL into `(SqliteConnectOptions, pin_single)`.
+fn parse_url(url: &str) -> Result<(SqliteConnectOptions, bool), StorageError> {
+    if url == "memory://" || url.starts_with("memory://") {
+        // `?cache=shared` is unnecessary because we pin a single connection.
+        let opts = SqliteConnectOptions::from_str("sqlite::memory:").map_err(backend)?;
+        return Ok((opts, true));
+    }
+    if let Some(rest) = url.strip_prefix("sqlite:") {
+        // Accept `sqlite:///abs`, `sqlite://rel`, and bare `sqlite:rel`.
+        let path = rest.trim_start_matches("//");
+        if path.is_empty() || path == "/" {
+            return Err(StorageError::UnsupportedScheme(format!(
+                "embedded: empty sqlite path in {url:?} (use `memory://` or `sqlite:///path`)"
+            )));
+        }
+        let opts = SqliteConnectOptions::new().filename(path).create_if_missing(true);
+        return Ok((opts, false));
+    }
+    Err(StorageError::UnsupportedScheme(format!(
+        "embedded: {url:?} is not a `memory://` or `sqlite:` URL"
+    )))
+}
+
+// ---- HLC <-> sortable TEXT ------------------------------------------------
+
+/// Encode an HLC as a zero-padded, lexically-sortable string.
+fn hlc_key(h: Hlc) -> String {
+    format!("{:020}.{:010}.{:05}", h.wall_ms, h.counter, h.node_id)
+}
+
+fn bt_open(h: Hlc) -> BiTemporal {
+    BiTemporal { valid: (h, None), sys: (h, None) }
+}
+
+// ---- atomic_write helpers -------------------------------------------------
+
+async fn close_open_kv(
+    tx: &mut sqlx::SqliteConnection,
+    key: &[u8],
+    at: &str,
+) -> Result<(), StorageError> {
+    sqlx::query("UPDATE lunaris_kv SET sys_to = ?1, valid_to = ?1 WHERE key = ?2 AND sys_to IS NULL")
+        .bind(at)
+        .bind(key)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+    Ok(())
+}
+
+#[async_trait]
+impl StoragePort for EmbeddedStorage {
+    async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        // One HLC tick → one commit point → one transaction. All ops share the
+        // commit stamp. Scope is carried inside the KV keys (the
+        // `lunaris:{scope}:…` keyspace), mirroring the Postgres `lunaris_kv`
+        // which also has no separate scope column.
+        let h = self.clock.tick();
+        let hk = hlc_key(h);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        for op in ops {
+            match op {
+                WriteOp::KvPut { key, value } => {
+                    close_open_kv(&mut *tx, key, &hk).await?;
+                    let bt = serde_json::to_string(&bt_open(h))?;
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO lunaris_kv \
+                         (key, value, valid_from, valid_to, sys_from, sys_to, bt) \
+                         VALUES (?1, ?2, ?3, NULL, ?3, NULL, ?4)",
+                    )
+                    .bind(key)
+                    .bind(value)
+                    .bind(&hk)
+                    .bind(&bt)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                WriteOp::KvDelete { key } => {
+                    // Tombstone-by-absence: close the open version, insert nothing.
+                    close_open_kv(&mut *tx, key, &hk).await?;
+                }
+                WriteOp::VectorUpsert { index, id, embedding, metadata } => {
+                    sqlx::query(
+                        "UPDATE lunaris_vec SET sys_to = ?1 \
+                         WHERE idx = ?2 AND id = ?3 AND sys_to IS NULL",
+                    )
+                    .bind(&hk)
+                    .bind(index)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO lunaris_vec \
+                         (idx, id, embedding, metadata, sys_from, sys_to) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                    )
+                    .bind(index)
+                    .bind(id)
+                    .bind(serde_json::to_string(embedding)?)
+                    .bind(serde_json::to_string(metadata)?)
+                    .bind(&hk)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                WriteOp::GraphNode { graph, id, label, props } => {
+                    sqlx::query(
+                        "UPDATE lunaris_graph_node SET sys_to = ?1 \
+                         WHERE graph = ?2 AND id = ?3 AND sys_to IS NULL",
+                    )
+                    .bind(&hk)
+                    .bind(graph)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO lunaris_graph_node \
+                         (graph, id, label, props, sys_from, sys_to) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                    )
+                    .bind(graph)
+                    .bind(id)
+                    .bind(label)
+                    .bind(serde_json::to_string(props)?)
+                    .bind(&hk)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                WriteOp::GraphEdge { graph, src, dst, rel, props } => {
+                    sqlx::query(
+                        "UPDATE lunaris_graph_edge SET sys_to = ?1 \
+                         WHERE graph = ?2 AND src = ?3 AND dst = ?4 AND rel = ?5 AND sys_to IS NULL",
+                    )
+                    .bind(&hk)
+                    .bind(graph)
+                    .bind(src)
+                    .bind(dst)
+                    .bind(rel)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO lunaris_graph_edge \
+                         (graph, src, dst, rel, props, sys_from, sys_to) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+                    )
+                    .bind(graph)
+                    .bind(src)
+                    .bind(dst)
+                    .bind(rel)
+                    .bind(serde_json::to_string(props)?)
+                    .bind(&hk)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                }
+                // `WriteOp` is `#[non_exhaustive]`: a variant we don't know how
+                // to persist must abort the whole batch, never silently drop.
+                _ => {
+                    return Err(StorageError::NotSupported(
+                        "embedded backend: unrecognised WriteOp variant",
+                    ));
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(Lsn::from_hlc(h))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn vector_search(
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &[f32],
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+        _rerank: bool,
+    ) -> Result<Vec<VectorHit>, StorageError> {
+        Err(StorageError::NotSupported(
+            "embedded backend: vector_search not yet implemented (brute-force cosine pending)",
+        ))
+    }
+
+    async fn graph_traverse(
+        &self,
+        _scope: &Scope,
+        _query: &CypherQuery,
+        _as_of: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
+        Err(StorageError::NotSupported(
+            "embedded backend: graph_traverse not yet implemented (adjacency walk pending)",
+        ))
+    }
+
+    async fn scan_range(
+        &self,
+        _scope: &Scope,
+        prefix: &[u8],
+        as_of: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+        let lower = prefix.to_vec();
+        let upper = prefix_upper_bound(prefix);
+        let rows = match (as_of, upper) {
+            (Some(t), Some(u)) => {
+                let ts = hlc_key(t);
+                sqlx::query(
+                    "SELECT key, value FROM lunaris_kv \
+                     WHERE key >= ?1 AND key < ?2 \
+                       AND valid_from <= ?3 AND (valid_to IS NULL OR ?3 < valid_to) \
+                       AND sys_from   <= ?3 AND (sys_to   IS NULL OR ?3 < sys_to) \
+                     ORDER BY key, valid_from DESC",
+                )
+                .bind(&lower)
+                .bind(&u)
+                .bind(&ts)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (Some(t), None) => {
+                let ts = hlc_key(t);
+                sqlx::query(
+                    "SELECT key, value FROM lunaris_kv \
+                     WHERE key >= ?1 \
+                       AND valid_from <= ?2 AND (valid_to IS NULL OR ?2 < valid_to) \
+                       AND sys_from   <= ?2 AND (sys_to   IS NULL OR ?2 < sys_to) \
+                     ORDER BY key, valid_from DESC",
+                )
+                .bind(&lower)
+                .bind(&ts)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (None, Some(u)) => {
+                sqlx::query(
+                    "SELECT key, value FROM lunaris_kv \
+                     WHERE key >= ?1 AND key < ?2 AND valid_to IS NULL AND sys_to IS NULL \
+                     ORDER BY key",
+                )
+                .bind(&lower)
+                .bind(&u)
+                .fetch_all(&self.pool)
+                .await
+            }
+            (None, None) => {
+                sqlx::query(
+                    "SELECT key, value FROM lunaris_kv \
+                     WHERE key >= ?1 AND valid_to IS NULL AND sys_to IS NULL \
+                     ORDER BY key",
+                )
+                .bind(&lower)
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(backend)?;
+
+        // De-dup to the latest visible version per key (the DESC ordering puts
+        // it first), then materialise — v0 buffers like the Postgres backend.
+        let mut out: Vec<Result<(Bytes, Bytes), StorageError>> = Vec::with_capacity(rows.len());
+        let mut last_key: Option<Vec<u8>> = None;
+        for r in rows {
+            let k: Vec<u8> = r.try_get("key").map_err(backend)?;
+            if last_key.as_deref() == Some(k.as_slice()) {
+                continue;
+            }
+            let v: Vec<u8> = r.try_get("value").map_err(backend)?;
+            last_key = Some(k.clone());
+            out.push(Ok((Bytes::from(k), Bytes::from(v))));
+        }
+        Ok(Box::pin(stream::iter(out)))
+    }
+
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        key: &[u8],
+        as_of: Hlc,
+    ) -> Result<Option<LRow<Bytes>>, StorageError> {
+        let ts = hlc_key(as_of);
+        let row_opt = sqlx::query(
+            "SELECT key, value, bt FROM lunaris_kv \
+             WHERE key = ?1 \
+               AND valid_from <= ?2 AND (valid_to IS NULL OR ?2 < valid_to) \
+               AND sys_from   <= ?2 AND (sys_to   IS NULL OR ?2 < sys_to) \
+             ORDER BY valid_from DESC LIMIT 1",
+        )
+        .bind(key)
+        .bind(&ts)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        Ok(row_opt.map(|r| {
+            let k: Vec<u8> = r.try_get("key").unwrap_or_default();
+            let v: Vec<u8> = r.try_get("value").unwrap_or_default();
+            let bt_str: String = r.try_get("bt").unwrap_or_default();
+            let bt: BiTemporal = serde_json::from_str(&bt_str).unwrap_or_else(|_| bt_open(Hlc::ZERO));
+            LRow { key: k, value: Bytes::from(v), bt }
+        }))
+    }
+
+    async fn publish(
+        &self,
+        _scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported(
+            "embedded backend: publish not yet implemented (in-table SKIP-LOCKED queue pending)",
+        ))
+    }
+
+    async fn subscribe(
+        &self,
+        _scope: &Scope,
+        _group: &str,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+        Err(StorageError::NotSupported(
+            "embedded backend: subscribe not yet implemented (in-table SKIP-LOCKED queue pending)",
+        ))
+    }
+
+    async fn queue_depth(
+        &self,
+        _scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported("embedded backend: queue_depth not yet implemented"))
+    }
+
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            bi_temporal_native: true, // first-class MVCC columns, same as the emulated Postgres path
+            graph_native: false,      // graph_traverse pending
+            rerank_native: false,
+            queue_native: false, // queue pending
+            max_vector_dim: 4096,
+            native_rrf: false,
+            max_scopes_recommended: 0,
+        }
+    }
+}
+
+#[async_trait]
+impl KeywordPort for EmbeddedStorage {
+    async fn keyword_search(
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &str,
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+    ) -> Result<Vec<KeywordHit>, StorageError> {
+        Err(StorageError::NotSupported(
+            "embedded backend: keyword_search not yet implemented (FTS5 BM25 pending)",
+        ))
+    }
+}
+
+/// Exclusive upper bound for a byte-wise prefix scan — `None` when `prefix` is
+/// empty or all-`0xFF` (scan is open-ended above). Mirrors the Postgres backend.
+fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut out = prefix.to_vec();
+    for i in (0..out.len()).rev() {
+        if out[i] < 0xFF {
+            out[i] += 1;
+            out.truncate(i + 1);
+            return Some(out);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    async fn mem() -> EmbeddedStorage {
+        EmbeddedStorage::connect("memory://").await.expect("open memory backend")
+    }
+
+    fn put(key: &[u8], val: &[u8]) -> WriteOp {
+        WriteOp::KvPut { key: key.to_vec(), value: val.to_vec() }
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_scheme() {
+        assert!(matches!(
+            EmbeddedStorage::connect("postgres://x/y").await,
+            Err(StorageError::UnsupportedScheme(_))
+        ));
+        assert!(matches!(
+            EmbeddedStorage::connect("sqlite:").await,
+            Err(StorageError::UnsupportedScheme(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn kv_roundtrip_and_lsn_monotonic() {
+        let s = mem().await;
+        let l1 = s.atomic_write(&Scope::dev(), &[put(b"k", b"v1")]).await.expect("write 1");
+        let l2 = s.atomic_write(&Scope::dev(), &[put(b"k", b"v2")]).await.expect("write 2");
+        assert!(l2 > l1, "Lsn must be monotonic: {l2:?} !> {l1:?}");
+
+        let now = s.clock.tick();
+        let row = s.read_as_of(&Scope::dev(), b"k", now).await.expect("read").expect("present");
+        assert_eq!(&row.value[..], b"v2");
+    }
+
+    #[tokio::test]
+    async fn bitemporal_snapshot_sees_old_version() {
+        let s = mem().await;
+        let l1 = s.atomic_write(&Scope::dev(), &[put(b"k", b"v1")]).await.expect("w1");
+        let at_v1 = Hlc { wall_ms: l1.wall_ms, counter: l1.counter, node_id: 0 };
+        s.atomic_write(&Scope::dev(), &[put(b"k", b"v2")]).await.expect("w2");
+
+        let old = s.read_as_of(&Scope::dev(), b"k", at_v1).await.expect("read@v1").expect("present");
+        assert_eq!(&old.value[..], b"v1", "snapshot at v1's stamp must see v1");
+
+        let live = s
+            .read_as_of(&Scope::dev(), b"k", s.clock.tick())
+            .await
+            .expect("read live")
+            .expect("present");
+        assert_eq!(&live.value[..], b"v2");
+    }
+
+    #[tokio::test]
+    async fn delete_tombstones_but_history_remains() {
+        let s = mem().await;
+        let l1 = s.atomic_write(&Scope::dev(), &[put(b"k", b"v1")]).await.expect("w1");
+        let at_v1 = Hlc { wall_ms: l1.wall_ms, counter: l1.counter, node_id: 0 };
+        s.atomic_write(&Scope::dev(), &[WriteOp::KvDelete { key: b"k".to_vec() }])
+            .await
+            .expect("del");
+
+        assert!(
+            s.read_as_of(&Scope::dev(), b"k", s.clock.tick()).await.expect("read live").is_none(),
+            "deleted key must be absent live"
+        );
+        assert!(
+            s.read_as_of(&Scope::dev(), b"k", at_v1).await.expect("read@v1").is_some(),
+            "history before the delete must remain readable"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_range_returns_latest_per_key_under_prefix() {
+        let s = mem().await;
+        s.atomic_write(
+            &Scope::dev(),
+            &[put(b"lunaris:_dev:episode:a", b"A1"), put(b"lunaris:_dev:episode:b", b"B1")],
+        )
+        .await
+        .expect("seed");
+        s.atomic_write(&Scope::dev(), &[put(b"lunaris:_dev:episode:a", b"A2")])
+            .await
+            .expect("update a");
+        s.atomic_write(&Scope::dev(), &[put(b"other:key", b"X")]).await.expect("noise");
+
+        let mut stream =
+            s.scan_range(&Scope::dev(), b"lunaris:_dev:episode:", None).await.expect("scan");
+        let mut got = Vec::new();
+        while let Some(item) = stream.next().await {
+            let (k, v) = item.expect("row");
+            got.push((String::from_utf8_lossy(&k).into_owned(), String::from_utf8_lossy(&v).into_owned()));
+        }
+        assert_eq!(
+            got,
+            vec![
+                ("lunaris:_dev:episode:a".to_string(), "A2".to_string()),
+                ("lunaris:_dev:episode:b".to_string(), "B1".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn vector_upsert_is_persisted_even_though_search_is_unsupported() {
+        let s = mem().await;
+        s.atomic_write(
+            &Scope::dev(),
+            &[WriteOp::VectorUpsert {
+                index: "chunks".into(),
+                id: b"id1".to_vec(),
+                embedding: vec![0.1, 0.2, 0.3],
+                metadata: serde_json::json!({"src": "t"}),
+            }],
+        )
+        .await
+        .expect("vector upsert persists");
+
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM lunaris_vec")
+            .fetch_one(s.pool())
+            .await
+            .expect("count");
+        assert_eq!(n, 1);
+
+        assert!(matches!(
+            s.vector_search(&Scope::dev(), "chunks", &[0.1, 0.2, 0.3], 1, None, None, false).await,
+            Err(StorageError::NotSupported(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn capabilities_are_the_embedded_profile() {
+        let c = mem().await.capabilities();
+        assert!(c.bi_temporal_native);
+        assert!(!c.graph_native);
+        assert!(!c.queue_native);
+        assert!(!c.native_rrf);
+    }
+}
