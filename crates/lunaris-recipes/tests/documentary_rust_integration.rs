@@ -196,7 +196,11 @@ async fn run_code_repo_as_of_commit_50(
     use lunaris_recipes::documentary::CodeRepoMemory;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let repo = CodeRepoMemory::new(mem.clone(), format!("repo:doc-11-01/{backend_label}/"));
+    let repo = CodeRepoMemory::new(
+        mem.clone(),
+        lunaris_core::Scope::dev(),
+        format!("repo:doc-11-01/{backend_label}/"),
+    );
     let commits = load_commits()?;
     let commit_50 = &commits[49]; // 1-indexed → idx 49 is "commit 50"
     let commit_50_ms = rfc3339_to_unix_ms(&commit_50.committer_date_rfc3339)?;
@@ -269,8 +273,11 @@ async fn run_timeline_between_10_15(backend_label: &str, url: &str) -> anyhow::R
     use lunaris_recipes::documentary::TimelineReconstruction;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let timeline =
-        TimelineReconstruction::new(mem.clone(), format!("timeline:doc-11-01/{backend_label}/"));
+    let timeline = TimelineReconstruction::new(
+        mem.clone(),
+        lunaris_core::Scope::dev(),
+        format!("timeline:doc-11-01/{backend_label}/"),
+    );
     let events = load_events()?;
 
     for e in &events {
@@ -338,7 +345,7 @@ async fn run_customer_support_refund(
     use lunaris_recipes::documentary::CustomerSupportHistory;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let hist = CustomerSupportHistory::new(mem.clone());
+    let hist = CustomerSupportHistory::new(mem.clone(), lunaris_core::Scope::dev());
     let fixture = load_customer_support()?;
 
     for t in &fixture.tickets {

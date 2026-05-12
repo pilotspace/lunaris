@@ -269,7 +269,7 @@ async fn run_one_backend(
     mem.consolidator_pipeline().enable_for_scope("helios:fs/");
 
     let session_id = format!("eval05-{}", Ulid::new());
-    let pad = HeliosScratchpad::new(mem.clone(), &session_id);
+    let pad = HeliosScratchpad::new(mem.clone(), lunaris_core::Scope::dev(), &session_id);
 
     // Warm-up: seed every path in the trace's 500-path pool so subsequent
     // reads/edits/greps hit real content (measurement hygiene — empty reads

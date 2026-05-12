@@ -18,8 +18,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{MessageStream, WorkingMemory};
@@ -41,10 +41,10 @@ pub struct MeetingNotesMemory {
 
 impl MeetingNotesMemory {
     /// Construct bound to `MEETING_PREFIX` (private).
-    pub fn new(lunaris: Arc<Lunaris>) -> Self {
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
         Self {
-            inner_ms: MessageStream::new(lunaris.clone(), MEETING_PREFIX),
-            inner_wm: WorkingMemory::new(lunaris.clone(), MEETING_PREFIX),
+            inner_ms: MessageStream::new(lunaris.clone(), scope.clone(), MEETING_PREFIX),
+            inner_wm: WorkingMemory::new(lunaris.clone(), scope, MEETING_PREFIX),
             lunaris,
         }
     }

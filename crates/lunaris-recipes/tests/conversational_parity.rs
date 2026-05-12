@@ -184,8 +184,8 @@ async fn chat_agent_memory_moon_postgres_parity() -> anyhow::Result<()> {
 
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     let postgres = Arc::new(Lunaris::open(&pg_url).await?);
-    let chat_moon = ChatAgentMemory::new(moon.clone(), user_id);
-    let chat_pg = ChatAgentMemory::new(postgres.clone(), user_id);
+    let chat_moon = ChatAgentMemory::new(moon.clone(), lunaris_core::Scope::dev(), user_id);
+    let chat_pg = ChatAgentMemory::new(postgres.clone(), lunaris_core::Scope::dev(), user_id);
 
     for turn in turns {
         let text = turn["text"].as_str().unwrap().to_string();
@@ -237,10 +237,10 @@ async fn multi_turn_conversation_cross_session_consolidation_parity() -> anyhow:
     moon.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
     postgres.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator));
 
-    let conv_moon = MultiTurnConversation::new(moon.clone(), user_id);
-    let conv_pg = MultiTurnConversation::new(postgres.clone(), user_id);
-    let other_moon = MultiTurnConversation::new(moon.clone(), other_user_id);
-    let other_pg = MultiTurnConversation::new(postgres.clone(), other_user_id);
+    let conv_moon = MultiTurnConversation::new(moon.clone(), lunaris_core::Scope::dev(), user_id);
+    let conv_pg = MultiTurnConversation::new(postgres.clone(), lunaris_core::Scope::dev(), user_id);
+    let other_moon = MultiTurnConversation::new(moon.clone(), lunaris_core::Scope::dev(), other_user_id);
+    let other_pg = MultiTurnConversation::new(postgres.clone(), lunaris_core::Scope::dev(), other_user_id);
 
     // Seed 20 turns across 2 sessions under the user scope on both backends.
     for session in sessions {
@@ -320,8 +320,8 @@ async fn slack_archive_channel_filter_parity() -> anyhow::Result<()> {
 
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     let postgres = Arc::new(Lunaris::open(&pg_url).await?);
-    let sl_moon = SlackArchive::new(moon.clone());
-    let sl_pg = SlackArchive::new(postgres.clone());
+    let sl_moon = SlackArchive::new(moon.clone(), lunaris_core::Scope::dev());
+    let sl_pg = SlackArchive::new(postgres.clone(), lunaris_core::Scope::dev());
 
     for channel in channels {
         let ch_id = channel["id"].as_str().unwrap().to_string();
@@ -386,8 +386,8 @@ async fn email_threading_graph_off_parity() -> anyhow::Result<()> {
 
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     let postgres = Arc::new(Lunaris::open(&pg_url).await?);
-    let em_moon = EmailThreading::new(moon.clone());
-    let em_pg = EmailThreading::new(postgres.clone());
+    let em_moon = EmailThreading::new(moon.clone(), lunaris_core::Scope::dev());
+    let em_pg = EmailThreading::new(postgres.clone(), lunaris_core::Scope::dev());
 
     // Assertion 1: graph pipeline is OFF by default on a fresh handle
     // (blueprint §5.2 graph-default-off — D-07). If this ever flips,
@@ -458,7 +458,7 @@ async fn email_threading_graph_on_opt_in() -> anyhow::Result<()> {
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     assert!(!moon.graph_pipeline().is_enabled());
 
-    let em_moon = EmailThreading::new(moon.clone()).with_graph_pipeline(true);
+    let em_moon = EmailThreading::new(moon.clone(), lunaris_core::Scope::dev()).with_graph_pipeline(true);
     // `.with_graph_pipeline(true)` MUST flip the handle state.
     assert!(
         moon.graph_pipeline().is_enabled(),
@@ -499,8 +499,8 @@ async fn meeting_notes_memory_transcript_parity() -> anyhow::Result<()> {
 
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     let postgres = Arc::new(Lunaris::open(&pg_url).await?);
-    let mn_moon = MeetingNotesMemory::new(moon.clone());
-    let mn_pg = MeetingNotesMemory::new(postgres.clone());
+    let mn_moon = MeetingNotesMemory::new(moon.clone(), lunaris_core::Scope::dev());
+    let mn_pg = MeetingNotesMemory::new(postgres.clone(), lunaris_core::Scope::dev());
 
     for n in notes {
         let heading = n["heading"].as_str().unwrap().to_string();

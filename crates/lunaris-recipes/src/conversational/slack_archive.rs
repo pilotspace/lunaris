@@ -41,8 +41,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::MessageStream;
@@ -65,8 +65,11 @@ pub struct SlackArchive {
 impl SlackArchive {
     /// Construct a root archive handle. `MessageStream` is scoped at
     /// `SLACK_ARCHIVE_PREFIX` (private).
-    pub fn new(lunaris: Arc<Lunaris>) -> Self {
-        Self { inner_ms: MessageStream::new(lunaris.clone(), SLACK_ARCHIVE_PREFIX), lunaris }
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
+        Self {
+            inner_ms: MessageStream::new(lunaris.clone(), scope, SLACK_ARCHIVE_PREFIX),
+            lunaris,
+        }
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.

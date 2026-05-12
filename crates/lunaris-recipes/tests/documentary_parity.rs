@@ -231,7 +231,7 @@ async fn run_kb_quickstart(
 
     let mem = Arc::new(Lunaris::open(url).await?);
     let prefix = format!("kb:docs/doc-11-03/{backend_label}/");
-    let kb = DocumentKnowledgeBase::new(mem, prefix.clone());
+    let kb = DocumentKnowledgeBase::new(mem, lunaris_core::Scope::dev(), prefix.clone());
     let docs = load_kb_docs()?;
     for d in &docs {
         let mut meta = serde_json::Map::new();
@@ -316,7 +316,7 @@ async fn run_research_paper_rrf(
     let mem = Arc::new(Lunaris::open(url).await?);
     let prefix = format!("papers:doc-11-03/{backend_label}/");
     // Graph-off default per blueprint §5.2; scenario.graph_on is false.
-    let corpus = ResearchPaperCorpus::new(mem, prefix).with_graph_pipeline(false);
+    let corpus = ResearchPaperCorpus::new(mem, lunaris_core::Scope::dev(), prefix).with_graph_pipeline(false);
     let papers = load_papers()?;
     for p in &papers {
         let body = format!("{}\n\n{}", p.title, p.abstract_text);
@@ -401,7 +401,7 @@ async fn run_code_repo_as_of(
 
     let mem = Arc::new(Lunaris::open(url).await?);
     let prefix = format!("repo:doc-11-03/{backend_label}/");
-    let repo = CodeRepoMemory::new(mem, prefix);
+    let repo = CodeRepoMemory::new(mem, lunaris_core::Scope::dev(), prefix);
     let commits = load_commits()?;
     let target_commit = &commits[commit_index_0based];
     let target_ms = rfc3339_to_unix_ms(&target_commit.committer_date_rfc3339)?;
@@ -488,7 +488,7 @@ async fn run_timeline_between(
 
     let mem = Arc::new(Lunaris::open(url).await?);
     let prefix = format!("timeline:doc-11-03/{backend_label}/");
-    let timeline = TimelineReconstruction::new(mem, prefix);
+    let timeline = TimelineReconstruction::new(mem, lunaris_core::Scope::dev(), prefix);
     let events = load_events()?;
     for e in &events {
         let ms = rfc3339_to_unix_ms(&e.valid_time_rfc3339)?;
@@ -579,7 +579,7 @@ async fn run_customer_support_refund(
     use lunaris_recipes::documentary::CustomerSupportHistory;
 
     let mem = Arc::new(Lunaris::open(url).await?);
-    let hist = CustomerSupportHistory::new(mem);
+    let hist = CustomerSupportHistory::new(mem, lunaris_core::Scope::dev());
     let fixture = load_customer_support()?;
     for t in &fixture.tickets {
         hist.ingest_ticket(&t.id, &t.body).await?;

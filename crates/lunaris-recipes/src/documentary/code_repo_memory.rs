@@ -33,8 +33,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{DocumentCorpus, Documents, TemporalQuery};
@@ -51,8 +51,8 @@ pub struct CodeRepoMemory {
 impl CodeRepoMemory {
     /// Construct bound to `repo_prefix` (e.g. `"repo:lunaris/"`). Every
     /// `ingest_commit` call stamps `repo_prefix` onto the Episode `source`.
-    pub fn new(lunaris: Arc<Lunaris>, repo_prefix: impl Into<String>) -> Self {
-        let corpus = DocumentCorpus::new(lunaris.clone(), repo_prefix);
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, repo_prefix: impl Into<String>) -> Self {
+        let corpus = DocumentCorpus::new(lunaris.clone(), scope, repo_prefix);
         Self { lunaris, corpus }
     }
 
