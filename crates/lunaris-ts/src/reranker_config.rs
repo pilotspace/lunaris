@@ -89,9 +89,7 @@ fn parse_rerank_execution(s: Option<&str>) -> Result<ExecutionPreference> {
     match raw.to_ascii_lowercase().as_str() {
         "" | "cpu" => Ok(ExecutionPreference::Cpu),
         #[cfg(feature = "fastembed-coreml")]
-        "coreml" | "coreml_then_cpu" | "coreml-then-cpu" => {
-            Ok(ExecutionPreference::CoreMlThenCpu)
-        }
+        "coreml" | "coreml_then_cpu" | "coreml-then-cpu" => Ok(ExecutionPreference::CoreMlThenCpu),
         #[cfg(feature = "fastembed-cuda")]
         "cuda" | "cuda_then_cpu" | "cuda-then-cpu" => Ok(ExecutionPreference::CudaThenCpu),
         #[cfg(not(feature = "fastembed-coreml"))]

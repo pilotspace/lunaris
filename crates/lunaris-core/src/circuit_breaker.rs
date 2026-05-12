@@ -33,7 +33,7 @@
 //! `lunaris::registry` module can manage the per-provider registry; this
 //! primitive deliberately doesn't.
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;

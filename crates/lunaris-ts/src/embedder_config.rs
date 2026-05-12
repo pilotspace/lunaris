@@ -250,9 +250,7 @@ pub(crate) fn parse_execution(s: Option<&str>) -> Result<ExecutionPreference> {
     match raw.to_ascii_lowercase().as_str() {
         "" | "cpu" => Ok(ExecutionPreference::Cpu),
         #[cfg(feature = "fastembed-coreml")]
-        "coreml" | "coreml_then_cpu" | "coreml-then-cpu" => {
-            Ok(ExecutionPreference::CoreMlThenCpu)
-        }
+        "coreml" | "coreml_then_cpu" | "coreml-then-cpu" => Ok(ExecutionPreference::CoreMlThenCpu),
         #[cfg(feature = "fastembed-cuda")]
         "cuda" | "cuda_then_cpu" | "cuda-then-cpu" => Ok(ExecutionPreference::CudaThenCpu),
         // For CPU-only builds, accept the value silently as Cpu rather than
@@ -294,9 +292,7 @@ fn parse_pooling(s: Option<&str>) -> Result<PoolingMode> {
         "cls" => Ok(PoolingMode::Cls),
         other => Err(napi::Error::new(
             napi::Status::InvalidArg,
-            format!(
-                "VALIDATE: unknown pooling mode '{other}' — expected 'mean' or 'cls'"
-            ),
+            format!("VALIDATE: unknown pooling mode '{other}' — expected 'mean' or 'cls'"),
         )),
     }
 }
@@ -333,7 +329,10 @@ impl Embedder for DimValidatingEmbedder {
         self.declared_dim
     }
 
-    async fn embed_batch(&self, inputs: &[&str]) -> std::result::Result<Vec<Vec<f32>>, LunarisError> {
+    async fn embed_batch(
+        &self,
+        inputs: &[&str],
+    ) -> std::result::Result<Vec<Vec<f32>>, LunarisError> {
         let out = self.inner.embed_batch(inputs).await?;
         if !self.validated.swap(true, Ordering::Relaxed)
             && let Some(first) = out.first()

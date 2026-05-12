@@ -710,40 +710,36 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
             Ok(Arc::new(e) as Arc<dyn Embedder>)
         }
         #[cfg(not(feature = "fastembed"))]
-        EmbedderBackendKind::Fastembed => Err(LunarisError::Storage(StorageError::Backend(
-            format!(
+        EmbedderBackendKind::Fastembed => {
+            Err(LunarisError::Storage(StorageError::Backend(format!(
                 "{EMBEDDER_BACKEND_ENV_VAR}=fastembed but this build was compiled without the \
                  `fastembed` feature. Rebuild without `--no-default-features` or pass \
                  `--features fastembed`, OR set {EMBEDDER_BACKEND_ENV_VAR}=candle to use the \
                  candle backend (this is the expected air-gapped path; see \
                  docs/migration/0.1-to-0.2-fastembed-default.md)."
-            ),
-        ))),
+            ))))
+        }
         #[cfg(feature = "candle")]
         EmbedderBackendKind::Candle => {
             let e = lunaris_embed::CandleEmbeddingGemma::new(Default::default()).await?;
             Ok(Arc::new(e) as Arc<dyn Embedder>)
         }
         #[cfg(not(feature = "candle"))]
-        EmbedderBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(
-            format!(
-                "{EMBEDDER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
+        EmbedderBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(format!(
+            "{EMBEDDER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
                  `candle` feature. Rebuild with `--features candle` or unset the env var to use \
                  the fastembed default."
-            ),
-        ))),
+        )))),
         #[cfg(feature = "ollama")]
         EmbedderBackendKind::Ollama => {
             let e = lunaris_embed::OllamaEmbedder::new(Default::default())?;
             Ok(Arc::new(e) as Arc<dyn Embedder>)
         }
         #[cfg(not(feature = "ollama"))]
-        EmbedderBackendKind::Ollama => Err(LunarisError::Storage(StorageError::Backend(
-            format!(
-                "{EMBEDDER_BACKEND_ENV_VAR}=ollama but this build was compiled without the \
+        EmbedderBackendKind::Ollama => Err(LunarisError::Storage(StorageError::Backend(format!(
+            "{EMBEDDER_BACKEND_ENV_VAR}=ollama but this build was compiled without the \
                  `ollama` feature. Rebuild with `--features ollama` or unset the env var."
-            ),
-        ))),
+        )))),
     }
 }
 
@@ -782,14 +778,14 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
             Ok(Arc::new(r) as Arc<dyn Reranker>)
         }
         #[cfg(not(feature = "fastembed"))]
-        RerankerBackendKind::Fastembed => Err(LunarisError::Storage(StorageError::Backend(
-            format!(
+        RerankerBackendKind::Fastembed => {
+            Err(LunarisError::Storage(StorageError::Backend(format!(
                 "{RERANKER_BACKEND_ENV_VAR}=fastembed but this build was compiled without the \
                  `fastembed` feature. Set {RERANKER_BACKEND_ENV_VAR}=candle for the candle \
                  cross-encoder, or =noop to skip the rerank pass. See \
                  docs/migration/0.1-to-0.2-fastembed-default.md."
-            ),
-        ))),
+            ))))
+        }
         #[cfg(feature = "candle")]
         RerankerBackendKind::Candle => {
             match lunaris_rerank::BgeRerankerV2M3::try_new_from_default_cache().await {
@@ -804,12 +800,10 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
             }
         }
         #[cfg(not(feature = "candle"))]
-        RerankerBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(
-            format!(
-                "{RERANKER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
+        RerankerBackendKind::Candle => Err(LunarisError::Storage(StorageError::Backend(format!(
+            "{RERANKER_BACKEND_ENV_VAR}=candle but this build was compiled without the \
                  `candle` feature. Rebuild with `--features candle` or unset for fastembed default."
-            ),
-        ))),
+        )))),
         RerankerBackendKind::Noop => Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>),
     }
 }
@@ -1003,10 +997,7 @@ mod backend_resolution_tests {
         let msg = format!("{err}");
         assert!(msg.contains("is not one of"), "msg should contain 'is not one of': {msg}");
         assert!(msg.contains("bogus"), "msg should echo the bad value: {msg}");
-        assert!(
-            msg.contains("LUNARIS_EMBEDDER_BACKEND"),
-            "msg should name the env var: {msg}"
-        );
+        assert!(msg.contains("LUNARIS_EMBEDDER_BACKEND"), "msg should name the env var: {msg}");
     }
 
     #[test]

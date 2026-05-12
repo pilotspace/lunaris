@@ -90,16 +90,9 @@ impl RerankerConfig {
         show_download_progress: bool,
     ) -> PyResult<Self> {
         let exec = parse_execution(execution)?;
-        let opts = FastembedRerankerOpts {
-            cache_dir,
-            show_download_progress,
-            execution: exec,
-        };
+        let opts = FastembedRerankerOpts { cache_dir, show_download_progress, execution: exec };
         let reranker = FastembedReranker::new(opts).map_err(py_err)?;
-        Ok(Self {
-            inner: Arc::new(reranker),
-            backend: "fastembed",
-        })
+        Ok(Self { inner: Arc::new(reranker), backend: "fastembed" })
     }
 
     /// `NoopReranker` — passthrough that returns docs unchanged.
@@ -109,10 +102,7 @@ impl RerankerConfig {
     /// this reranker, so callers can tell they got the degraded path.
     #[staticmethod]
     fn noop() -> Self {
-        Self {
-            inner: Arc::new(NoopReranker),
-            backend: "noop",
-        }
+        Self { inner: Arc::new(NoopReranker), backend: "noop" }
     }
 
     /// Debug-friendly repr: `RerankerConfig(backend='fastembed')`.
@@ -193,19 +183,13 @@ mod tests {
     #[cfg(feature = "fastembed-coreml")]
     #[test]
     fn parse_execution_coreml() {
-        assert!(matches!(
-            parse_execution("coreml").unwrap(),
-            ExecutionPreference::CoreMlThenCpu
-        ));
+        assert!(matches!(parse_execution("coreml").unwrap(), ExecutionPreference::CoreMlThenCpu));
     }
 
     #[cfg(feature = "fastembed-cuda")]
     #[test]
     fn parse_execution_cuda() {
-        assert!(matches!(
-            parse_execution("cuda").unwrap(),
-            ExecutionPreference::CudaThenCpu
-        ));
+        assert!(matches!(parse_execution("cuda").unwrap(), ExecutionPreference::CudaThenCpu));
     }
 
     #[cfg(not(feature = "fastembed-coreml"))]

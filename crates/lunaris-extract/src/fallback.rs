@@ -82,12 +82,7 @@ where
 {
     /// Construct a fallback chain with a fresh per-instance breaker.
     pub fn new(primary: P, fallback: F, provider_id: ProviderId) -> Self {
-        Self {
-            primary,
-            fallback,
-            breaker: Arc::new(CircuitBreaker::new()),
-            provider_id,
-        }
+        Self { primary, fallback, breaker: Arc::new(CircuitBreaker::new()), provider_id }
     }
 
     /// Construct with an explicit `Arc<CircuitBreaker>` so two
@@ -204,11 +199,7 @@ mod tests {
     }
     impl ScriptedExtractor {
         fn new(results: Vec<Result<RawExtractionBatch, LunarisError>>) -> Self {
-            Self {
-                results: Mutex::new(results.into()),
-                calls: AtomicUsize::new(0),
-                applies: true,
-            }
+            Self { results: Mutex::new(results.into()), calls: AtomicUsize::new(0), applies: true }
         }
         fn calls(&self) -> usize {
             self.calls.load(Ordering::Relaxed)

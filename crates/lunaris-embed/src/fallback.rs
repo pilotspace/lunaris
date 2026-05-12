@@ -76,12 +76,7 @@ where
             primary.dim(),
             fallback.dim()
         );
-        Self {
-            primary,
-            fallback,
-            breaker: Arc::new(CircuitBreaker::new()),
-            provider_id,
-        }
+        Self { primary, fallback, breaker: Arc::new(CircuitBreaker::new()), provider_id }
     }
 
     #[must_use]
@@ -188,11 +183,7 @@ mod tests {
     }
     impl ScriptedEmbedder {
         fn new(dim: usize, results: Vec<Result<Vec<Vec<f32>>, LunarisError>>) -> Self {
-            Self {
-                dim,
-                results: Mutex::new(results.into()),
-                calls: AtomicUsize::new(0),
-            }
+            Self { dim, results: Mutex::new(results.into()), calls: AtomicUsize::new(0) }
         }
         fn calls(&self) -> usize {
             self.calls.load(Ordering::Relaxed)
@@ -227,8 +218,7 @@ mod tests {
     async fn primary_success_skips_fallback() {
         let primary = ScriptedEmbedder::new(768, vec![ok_vec(768)]);
         let fallback = ScriptedEmbedder::new(768, vec![ok_vec(768)]);
-        let f =
-            FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
+        let f = FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
         let _ = f.embed_batch(&["hello"]).await.unwrap();
         assert_eq!(f.primary.calls(), 1);
         assert_eq!(f.fallback.calls(), 0);
@@ -238,8 +228,7 @@ mod tests {
     async fn transient_failure_routes_to_fallback() {
         let primary = ScriptedEmbedder::new(768, vec![transient_err()]);
         let fallback = ScriptedEmbedder::new(768, vec![ok_vec(768)]);
-        let f =
-            FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
+        let f = FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
         let _ = f.embed_batch(&["hello"]).await.unwrap();
         assert_eq!(f.primary.calls(), 1);
         assert_eq!(f.fallback.calls(), 1);
@@ -249,8 +238,7 @@ mod tests {
     async fn terminal_failure_propagates() {
         let primary = ScriptedEmbedder::new(768, vec![terminal_err()]);
         let fallback = ScriptedEmbedder::new(768, vec![ok_vec(768)]);
-        let f =
-            FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
+        let f = FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
         let err = f.embed_batch(&["hello"]).await.unwrap_err();
         assert!(matches!(err, LunarisError::Validate(_)));
         assert_eq!(f.primary.calls(), 1);
@@ -259,14 +247,12 @@ mod tests {
 
     #[tokio::test]
     async fn breaker_trips_after_threshold() {
-        let primary_calls: Vec<_> = (0..6)
-            .map(|i| if i < 5 { transient_err() } else { ok_vec(768) })
-            .collect();
+        let primary_calls: Vec<_> =
+            (0..6).map(|i| if i < 5 { transient_err() } else { ok_vec(768) }).collect();
         let fallback_calls: Vec<_> = (0..6).map(|_| ok_vec(768)).collect();
         let primary = ScriptedEmbedder::new(768, primary_calls);
         let fallback = ScriptedEmbedder::new(768, fallback_calls);
-        let f =
-            FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
+        let f = FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
 
         for _ in 0..5 {
             let _ = f.embed_batch(&["x"]).await.unwrap();
@@ -283,8 +269,7 @@ mod tests {
     fn dim_returns_primary() {
         let primary = ScriptedEmbedder::new(768, vec![]);
         let fallback = ScriptedEmbedder::new(768, vec![]);
-        let f =
-            FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
+        let f = FallbackEmbedder::new(primary, fallback, EmbedderProviderId::new("test"));
         assert_eq!(f.dim(), 768);
     }
 

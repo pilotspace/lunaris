@@ -104,18 +104,10 @@ impl EmbedderConfig {
         show_download_progress: bool,
     ) -> PyResult<Self> {
         let exec = parse_execution(execution)?;
-        let opts = FastembedEmbedderOpts {
-            cache_dir,
-            show_download_progress,
-            execution: exec,
-        };
+        let opts = FastembedEmbedderOpts { cache_dir, show_download_progress, execution: exec };
         let embedder = FastembedEmbedder::new(opts).map_err(py_err)?;
         let dim = embedder.dim();
-        Ok(Self {
-            inner: Arc::new(embedder),
-            backend: "fastembed",
-            dim,
-        })
+        Ok(Self { inner: Arc::new(embedder), backend: "fastembed", dim })
     }
 
     /// Bring-your-own ONNX model from in-memory bytes.
@@ -178,11 +170,7 @@ impl EmbedderConfig {
         let embedder = FastembedEmbedder::from_user_defined(opts).map_err(py_err)?;
         // BYO models must validate dim on first call — see DimValidatingEmbedder.
         let validating = DimValidatingEmbedder::new(Arc::new(embedder), dim);
-        Ok(Self {
-            inner: Arc::new(validating),
-            backend: "fastembed-user-defined",
-            dim,
-        })
+        Ok(Self { inner: Arc::new(validating), backend: "fastembed-user-defined", dim })
     }
 
     /// Bring-your-own ONNX model from on-disk paths.
@@ -223,10 +211,8 @@ impl EmbedderConfig {
             .as_deref()
             .map(|p| read_path("special_tokens_map_path", p))
             .transpose()?;
-        let config_bytes = config_path
-            .as_deref()
-            .map(|p| read_path("config_path", p))
-            .transpose()?;
+        let config_bytes =
+            config_path.as_deref().map(|p| read_path("config_path", p)).transpose()?;
         Self::from_onnx_bytes(
             onnx_bytes,
             tokenizer_bytes,
@@ -261,11 +247,7 @@ impl EmbedderConfig {
             dim,
         };
         let embedder = OllamaEmbedder::new(opts).map_err(py_err)?;
-        Ok(Self {
-            inner: Arc::new(embedder),
-            backend: "ollama",
-            dim,
-        })
+        Ok(Self { inner: Arc::new(embedder), backend: "ollama", dim })
     }
 
     /// Debug-friendly repr: `EmbedderConfig(backend='fastembed', dim=768)`.
@@ -367,11 +349,7 @@ struct DimValidatingEmbedder {
 
 impl DimValidatingEmbedder {
     fn new(inner: Arc<dyn Embedder>, declared_dim: usize) -> Self {
-        Self {
-            inner,
-            declared_dim,
-            validated: AtomicBool::new(false),
-        }
+        Self { inner, declared_dim, validated: AtomicBool::new(false) }
     }
 }
 
@@ -442,28 +420,19 @@ mod tests {
 
     #[test]
     fn parse_execution_cpu() {
-        assert!(matches!(
-            parse_execution("cpu").unwrap(),
-            ExecutionPreference::Cpu
-        ));
+        assert!(matches!(parse_execution("cpu").unwrap(), ExecutionPreference::Cpu));
     }
 
     #[cfg(feature = "fastembed-coreml")]
     #[test]
     fn parse_execution_coreml() {
-        assert!(matches!(
-            parse_execution("coreml").unwrap(),
-            ExecutionPreference::CoreMlThenCpu
-        ));
+        assert!(matches!(parse_execution("coreml").unwrap(), ExecutionPreference::CoreMlThenCpu));
     }
 
     #[cfg(feature = "fastembed-cuda")]
     #[test]
     fn parse_execution_cuda() {
-        assert!(matches!(
-            parse_execution("cuda").unwrap(),
-            ExecutionPreference::CudaThenCpu
-        ));
+        assert!(matches!(parse_execution("cuda").unwrap(), ExecutionPreference::CudaThenCpu));
     }
 
     /// Without the `fastembed-coreml` / `fastembed-cuda` features, asking
