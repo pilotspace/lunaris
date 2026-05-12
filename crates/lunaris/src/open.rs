@@ -23,7 +23,17 @@ pub async fn open(url: &str) -> Result<Arc<dyn StoragePort>, LunarisError> {
             Ok(Arc::new(s) as Arc<dyn StoragePort>)
         }
         "postgres" | "postgresql" => {
-            let s = lunaris_storage_postgres::PostgresStorage::connect(url).await?;
+            // Mirror `Lunaris::open`: honour `LUNARIS_ADMIN_URL` so migrations
+            // run over a DDL-capable admin connection and the runtime handle
+            // binds to a (possibly non-DDL) app role — no out-of-band
+            // `sqlx migrate run` step.
+            let admin_url =
+                std::env::var("LUNARIS_ADMIN_URL").ok().filter(|s| !s.trim().is_empty());
+            let s = lunaris_storage_postgres::PostgresStorage::connect_with_admin(
+                url,
+                admin_url.as_deref(),
+            )
+            .await?;
             Ok(Arc::new(s) as Arc<dyn StoragePort>)
         }
         other => Err(LunarisError::Storage(StorageError::UnsupportedScheme(other.into()))),

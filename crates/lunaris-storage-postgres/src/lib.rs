@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 pub mod atomic;
+pub mod bootstrap;
 pub mod graph;
 pub mod keyword;
 pub mod kv;
@@ -65,6 +66,57 @@ impl PostgresStorage {
     /// a privileged connection before calling this.
     pub async fn connect_no_migrate(url: &str) -> Result<Self, StorageError> {
         Ok(Self { client: PgClient::connect_no_migrate(url).await? })
+    }
+
+    /// Apply every embedded migration at `admin_url` (a DDL-capable role).
+    ///
+    /// This is the in-process replacement for the out-of-band
+    /// `sqlx migrate run --source crates/lunaris-storage-postgres/migrations`
+    /// step — no `sqlx-cli`, no checked-out migrations directory. Surfaced on
+    /// the CLI as `lunaris-server migrate --storage <admin_url>` and invoked
+    /// automatically by [`crate::PostgresStorage::connect`]-equivalents when
+    /// `LUNARIS_ADMIN_URL` is set.
+    pub async fn migrate(admin_url: &str) -> Result<(), StorageError> {
+        PgClient::migrate(admin_url).await
+    }
+
+    /// Connect for runtime use, migrating first if an admin URL is supplied.
+    ///
+    /// - `admin_url = Some(_)`: run migrations over the privileged admin
+    ///   connection, then bind the handle to the (possibly non-DDL) app role at
+    ///   `url` without re-running migrations. This is the recommended
+    ///   production wiring — `url` is a `NOSUPERUSER NOBYPASSRLS` role.
+    /// - `admin_url = None`: behave like [`Self::connect`] (migrate as the role
+    ///   behind `url`). If that fails with a permission error and the schema is
+    ///   behind, the error is rewrapped with a hint to run migrations as an
+    ///   admin role or set `LUNARIS_ADMIN_URL`.
+    pub async fn connect_with_admin(
+        url: &str,
+        admin_url: Option<&str>,
+    ) -> Result<Self, StorageError> {
+        match admin_url {
+            Some(admin) => {
+                PgClient::migrate(admin).await?;
+                Self::connect_no_migrate(url).await
+            }
+            None => match Self::connect(url).await {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    let behind = !matches!(PgClient::schema_is_current(url).await, Ok(true));
+                    if behind {
+                        Err(StorageError::Backend(format!(
+                            "{e}\n\nhint: the Lunaris schema is missing or out of date and this \
+                             role cannot run DDL. Apply migrations as an admin role:\n  \
+                             lunaris-server migrate --storage <admin_postgres_url>\n\
+                             or set LUNARIS_ADMIN_URL=<admin_postgres_url> so the server migrates \
+                             on start."
+                        )))
+                    } else {
+                        Err(e)
+                    }
+                }
+            },
+        }
     }
 
     /// Borrow the underlying client (used by integration tests).

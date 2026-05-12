@@ -16,12 +16,10 @@ use std::sync::Arc;
 
 use clap::Parser;
 
-use lunaris_server::{Config, Shutdown};
+use lunaris_server::{Command, Config, OpsCli, Shutdown};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cfg = Config::parse();
-
     // Plan 05-05 Task 3 — REPLACES the Plan 05-01 minimal subscriber init with
     // `lunaris::logging::init()` (the OPS-08 JSON-vs-pretty selector helper
     // per CONTEXT.md D-26). JSON when `LUNARIS_ENV=production` OR
@@ -29,6 +27,19 @@ async fn main() -> ExitCode {
     // try_init().ok() so test code with its own subscriber doesn't panic.
     lunaris::logging::init();
 
+    // Dispatch: a recognised operational subcommand (`migrate`, `bootstrap-db`)
+    // → run it and exit; anything else → the unchanged serve path. See
+    // `config.rs` for why this is a manual peek rather than one clap struct.
+    if std::env::args().nth(1).is_some_and(|a| Command::is_subcommand_name(&a)) {
+        return match OpsCli::parse().command {
+            Command::Migrate { storage } => run_migrate(&storage).await,
+            Command::BootstrapDb { admin_url, app_role, app_password } => {
+                run_bootstrap_db(&admin_url, &app_role, &app_password).await
+            }
+        };
+    }
+
+    let cfg = Config::parse();
     let lunaris = match lunaris::Lunaris::open(&cfg.storage).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
@@ -81,6 +92,61 @@ async fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+/// `lunaris-server migrate --storage <admin_url>` — apply every embedded
+/// Postgres migration, then exit. No `sqlx-cli`, no checked-out migrations dir.
+async fn run_migrate(storage: &str) -> ExitCode {
+    match lunaris::PostgresStorage::migrate(storage).await {
+        Ok(()) => {
+            tracing::info!(storage = %redact(storage), "migrations applied");
+            println!("ok: migrations applied at {}", redact(storage));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("migrate failed: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `lunaris-server bootstrap-db --admin-url … --app-role … --app-password …` —
+/// migrate as admin, create/repair the `NOSUPERUSER NOBYPASSRLS` app role +
+/// grants, then report any RLS hardening gaps. Replaces the §6.2 recipe.
+async fn run_bootstrap_db(admin_url: &str, app_role: &str, app_password: &str) -> ExitCode {
+    match lunaris::bootstrap_app_role(admin_url, app_role, app_password).await {
+        Ok(report) => {
+            println!("ok: migrations applied; role {app_role:?} created/updated with DML grants");
+            for t in &report.tables_missing_force_rls {
+                eprintln!("warning: table {t:?} has RLS enabled but FORCE ROW LEVEL SECURITY off");
+            }
+            for (p, t) in &report.policies_missing_with_check {
+                eprintln!(
+                    "warning: policy {p:?} on {t:?} is write-capable but has no WITH CHECK clause"
+                );
+            }
+            if report.is_clean() {
+                println!("rls: all tenant tables FORCE-enabled and write policies have WITH CHECK");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("bootstrap-db failed: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Redact `user:pass@` userinfo from a connection string for logging.
+fn redact(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut u) if !u.username().is_empty() || u.password().is_some() => {
+            let _ = u.set_username("***");
+            let _ = u.set_password(None);
+            u.to_string()
+        }
+        _ => url.to_string(),
+    }
 }
 
 async fn shutdown_signal() {
