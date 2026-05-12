@@ -98,12 +98,21 @@ impl RecencyScorer for Exp {
     }
 }
 
-/// ACT-R scorer — stub for RED commit.
+/// ACT-R base-level activation per Anderson (1996):
+/// `B(i) = ln(age^-decay)` for a single access; blended additively with
+/// the prior score to mirror `lunaris_recipes::MessageStream::recall`.
+///
+/// `decay` defaults to `0.5` per Anderson (1996). Ages below
+/// [`ACT_R_MIN_AGE_SECONDS`] are clamped so `age.powf(-decay)` never
+/// explodes when a fact is recalled within the same wall-millisecond it
+/// was ingested (this is the same clamp `MessageStream` applies via its
+/// `MIN_AGE_SECONDS` constant).
 #[derive(Clone, Copy, Debug)]
 pub struct ActR {
     pub decay: f32,
 }
 
+/// Lower bound on age (seconds) for the [`ActR`] scorer — see [`ActR`].
 pub const ACT_R_MIN_AGE_SECONDS: f32 = 1.0;
 
 impl Default for ActR {
@@ -119,10 +128,10 @@ impl ActR {
 }
 
 impl RecencyScorer for ActR {
-    fn decay(&self, _age_seconds: f32, prior_score: f32) -> f32 {
-        // RED: parity test fails until GREEN commit implements the
-        // Anderson (1996) base-level formula.
-        prior_score
+    fn decay(&self, age_seconds: f32, prior_score: f32) -> f32 {
+        let clamped = age_seconds.max(ACT_R_MIN_AGE_SECONDS);
+        let activation = clamped.powf(-self.decay).ln();
+        prior_score + activation
     }
 }
 
