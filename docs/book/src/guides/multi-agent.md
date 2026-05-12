@@ -179,6 +179,170 @@ ready for both shapes.)
 concurrently (60 HTTP calls). All `200 OK`; no agent sees another's data in
 its recall results.
 
+## Multi-agent patterns
+
+There are **three** ways memory gets partitioned in Lunaris, nested from
+hardest to softest. Pick the level that matches the boundary you actually
+need — a tenant wall costs Moon resources; a thread label costs nothing.
+
+| Level | How you set it | Strength | Cost |
+|---|---|---|---|
+| **Scope** | `lunaris.scoped(Scope::new("acme.agent-a")?)` — or, over HTTP, the JWT `tenant` claim → scope | **Hard wall.** Postgres RLS `USING` + `WITH CHECK`; per-scope Moon keyspace `lunaris:{scope}:` + per-scope FT/GRAPH/MQ resources. A cross-scope read is a type error (you'd need a *different* `ScopedLunaris`) or an RLS denial. | One Moon FT index + one MQ topic **per scope**; soft ceiling ~512 scopes/node before recall p99 degrades (`StorageCapabilities::max_scopes_recommended`). Postgres: free. |
+| **Source prefix** | The `source` string on `EpisodeBuilder::new(source, content)` — or the `prefix` arg to `MessageStream::new` / the `"chat:<user>/"` prefix `MultiTurnConversation` derives | **Soft, filter-based.** Within one scope, `Hit.source` carries the episode's source; you narrow client-side (`hits.retain(\|h\| h.source.starts_with("conv:mon"))`). Nothing stops a same-scope query from seeing all prefixes. | Free — it's just a string. |
+| **Session / thread id** | `MultiTurnConversation::remember(turn, thread_id)` — or `MessageStream::ingest(msg, thread_id, participant)` | A *segment* of the source prefix (`chat:<user>/<thread_id>/`). Recall spans all threads by default; narrow by source prefix as above. `thread_id` + `participant_id` also land in the episode `metadata` map. | Free. |
+
+```text
+Scope  "acme.agent-a"                      ← hard wall (RLS / per-scope keyspace)
+  └─ source prefix  "conv:"                ← soft, client-side filter on Hit.source
+       └─ thread id  "conv:mon/"           ← a segment of the source string
+            └─ episode  "conv:mon/" + ULID + chunks
+  └─ source prefix  "task:"
+       └─ thread id  "task:deploy/"
+```
+
+### The honest caveat: recipes use `Scope::dev()` today
+
+The recipe wrappers — `ChatAgentMemory`, `MultiTurnConversation`,
+`MessageStream`, `EmailThreading`, `MeetingNotesMemory`, … — currently
+construct every `Episode` with `Scope::dev()` and partition **only by source
+prefix** (verified in `crates/lunaris-recipes/src/message_stream.rs`:
+`scope: lunaris_core::Scope::dev()`). Threading a real `Scope` through the
+recipe surface is a **v0.3 SDK item**. So today:
+
+- **Hard per-agent isolation** goes through the low-level
+  `lunaris.scoped(scope)` handle (or, in `lunaris-server`, the JWT `tenant`
+  claim → scope). That is the only path with an RLS-grade / type-level wall.
+- **The recipes** give you source-prefix + thread partitioning *within one
+  (dev) scope* — fine for a single-tenant agent that wants per-conversation
+  organization, **not** fine for multi-tenant isolation.
+
+If you need both — a chat-agent ergonomic surface *and* a tenant wall — wrap
+your own thin type over `ScopedLunaris` for now, mirroring
+`MultiTurnConversation`'s shape but taking a `Scope`.
+
+### Worked snippets (from the runnable example)
+
+These are distilled from `examples/multi-agent-rs/` — a standalone crate that
+runs end-to-end against a live Moon backend. It builds the handle by hand
+(`Lunaris::with_parts_keyword(storage, keyword, embedder, clock)` with
+`MoonStorage` as both the storage and the BM25 keyword port, and a
+deterministic `StubEmbedder::new(768)`) so it needs **no external services and
+no model download** — swap the stub for `Lunaris::open("moon://…")` (the
+`fastembed` default) and the same code recalls semantically.
+
+**Handle construction (what the example actually does — no model download):**
+
+```rust
+use std::sync::Arc;
+use lunaris::{Embedder, HlcClock, KeywordPort, Lunaris, MoonStorage, StoragePort, StubEmbedder};
+
+let moon = Arc::new(MoonStorage::connect("moon://localhost:6380").await?);
+let storage: Arc<dyn StoragePort> = moon.clone();
+let keyword: Arc<dyn KeywordPort>  = moon.clone();              // MoonStorage IS the BM25 port too
+let embedder: Arc<dyn Embedder>    = Arc::new(StubEmbedder::new(768));   // 768d == Moon's `chunks` FT index
+let lunaris = Lunaris::with_parts_keyword(storage, keyword, embedder, HlcClock::new(0));
+// Production: `let lunaris = Lunaris::open("moon://localhost:6380").await?;` instead — the
+// `fastembed` default downloads EmbeddingGemma-300M ONNX weights once and recalls semantically.
+```
+
+**Agent-a vs agent-b — the scoped handle is the wall:**
+
+```rust
+use lunaris::{EpisodeBuilder, Query, Scope, Vector};
+
+let scoped_a = lunaris.scoped(Scope::new("acme.agent-a")?);
+let scoped_b = lunaris.scoped(Scope::new("acme.agent-b")?);
+
+scoped_a.ingest(EpisodeBuilder::new("agent-a:notes", "The acme widget ships Friday. Owner: Alice.")).await?;
+scoped_b.ingest(EpisodeBuilder::new("agent-b:notes", "The beta gadget recall is paused. Owner: Bob.")).await?;
+
+let a_hits = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("owner")).await?;
+let b_hits = scoped_b.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("owner")).await?;
+assert!(a_hits.iter().all(|h| h.source.starts_with("agent-a:")));   // no agent-b leak
+assert!(b_hits.iter().all(|h| h.source.starts_with("agent-b:")));   // no agent-a leak
+```
+
+**Sessions / tasks within one agent — the `source` field:**
+
+```rust
+// The first arg to EpisodeBuilder::new IS the `source` — encode the session there.
+// EpisodeBuilder auto-generates a fresh ULID per episode; override with `.id(...)`
+// only for idempotent replay.
+scoped_a.ingest(EpisodeBuilder::new("conv:mon",    "Monday standup: acme widget rollout Friday.")).await?;
+scoped_a.ingest(EpisodeBuilder::new("conv:tue",    "Tuesday sync: QA signed off on the acme widget.")).await?;
+scoped_a.ingest(EpisodeBuilder::new("task:deploy", "Deploy task: cut the acme widget release branch.")).await?;
+
+// One recall spans all sessions:
+let all = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("acme widget")).await?;
+// Narrow to one session — client-side over Hit.source (there is no server-side
+// source-prefix push-down today; the v0 `filter_str` DSL targets episode
+// METADATA, not the source string):
+let mon_only: Vec<_> = all.iter().filter(|h| h.source.starts_with("conv:mon")).collect();
+```
+
+**Resume across a process boundary — re-open + re-scope, no load step:**
+
+```rust
+drop(lunaris);                                          // process exits
+let lunaris = Lunaris::open("moon://localhost:6380").await?;   // new process
+let scoped_a = lunaris.scoped(Scope::new("acme.agent-a")?);
+let hits = scoped_a.dsl().with_root(Vector::new("chunks", 30).top(5)).execute(Query::text("owner")).await?;
+assert!(!hits.is_empty());                              // agent-a's episodes are still there
+```
+
+> **Episode IDs.** `EpisodeBuilder` auto-generates a fresh ULID per episode
+> (`into_episode` does `self.id.unwrap_or_else(Ulid::new)`), so distinct
+> ingests never collide on a KV row. Override the id with `.id(...)` only when
+> you want idempotent replay — re-ingesting the same logical episode without
+> creating a duplicate.
+
+### Verified run output
+
+The example was run against a single-shard Moon server
+(`moon://localhost:6380`, `moon --port 6380 --shards 1`) — `cargo run` exits
+`0` with all assertions passing. Verbatim stdout (`RUST_LOG=error`):
+
+```text
+multi-agent: run id 36619
+multi-agent: scope_a = acme.agent-a-36619
+multi-agent: scope_b = acme.agent-b-36619
+
+=== 1. hard isolation between two agents (distinct Scopes) ===
+multi-agent: ingested agent-a episode at lsn=Lsn { wall_ms: 1778570918020, counter: 0 }
+multi-agent: ingested agent-b episode at lsn=Lsn { wall_ms: 1778570918061, counter: 0 }
+multi-agent: scope_a recall("owner") -> 1 hit(s), sources=["agent-a:notes"]
+multi-agent: scope_b recall("owner") -> 1 hit(s), sources=["agent-b:notes"]
+multi-agent: OK — neither agent can see the other's episode
+
+=== 2. multiple sessions / tasks within agent-a (source-prefix partition) ===
+multi-agent: ingested 3 session/task episodes under scope_a
+multi-agent: scope_a recall("acme widget") -> 4 hit(s), sources=["agent-a:notes", "conv:mon", "conv:tue", "task:deploy"]
+multi-agent: distinct source-prefix kinds seen across the recall: ["agent-a", "conv", "task"]
+multi-agent: client-side narrowed to source-prefix `conv:mon` -> 1 hit(s): ["conv:mon"]
+multi-agent: NOTE — there is no server-side `source`-prefix filter today; the v0 `filter_str` DSL targets Episode metadata, not the source string. Narrowing is client-side over `Hit.source` (matches the recipes' MessageStream behaviour).
+
+=== 3. resume across a process boundary (drop handle, re-open, re-scope) ===
+multi-agent: dropped the Lunaris handle (simulating process exit)
+multi-agent: after re-open, scope_a recall("owner") -> 4 hit(s), sources=["agent-a:notes", "conv:mon", "conv:tue", "task:deploy"]
+multi-agent: after re-open, scope_b recall("owner") -> 1 hit(s)
+multi-agent: OK — agent-a memory is durable across the process boundary
+
+multi-agent: ALL ASSERTIONS PASSED ✔
+multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemory, MessageStream) currently build episodes with Scope::dev() and partition only by source prefix; hard per-agent isolation today goes through the low-level lunaris.scoped(scope) handle shown above (or, in lunaris-server, the JWT `tenant` claim). See docs/book/src/guides/multi-agent.md.
+```
+
+> **What this proves and what it doesn't.** The `StubEmbedder` emits
+> deterministic, *non-semantic* 768-d vectors, so cosine scores are all `0.0`
+> and ranking is meaningless — the assertions check *"≥ 1 hit" / "no
+> cross-scope source leak"*, not *"the right hit ranked first"*. What the run
+> does establish: (1) the ingest → recall round-trip works against a real
+> Moon backend; (2) two `Scope`s under one handle are isolated — neither
+> agent's recall returns the other's chunks; (3) several `source`-tagged
+> episodes under one scope all show up in a single recall, and the source
+> prefix is preserved on `Hit.source`; (4) the data survives dropping and
+> re-opening the handle (Moon is durable; there is no explicit load step). Run
+> it yourself: [`examples/multi-agent-rs/`](https://github.com/lunaris-dev/lunaris/tree/main/examples/multi-agent-rs).
+
 ## Gotchas
 
 - **No hierarchical scopes** in v0.2 — flat strings only. `org/team/agent`

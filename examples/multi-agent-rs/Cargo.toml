@@ -1,0 +1,25 @@
+# Empty [workspace] keeps this example OUT of the parent workspace so the
+# dependency surface stays minimal — a fresh-clone user can run
+# `cd examples/multi-agent-rs && cargo run` without inheriting all of the
+# workspace crates' dev-deps.
+[workspace]
+
+[package]
+name        = "lunaris-multi-agent-rs"
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.94"
+publish     = false
+
+[dependencies]
+# We build the handle by hand via `Lunaris::with_parts_keyword(storage,
+# keyword, embedder, clock)` so the example runs with ZERO external services:
+# no Ollama, no ONNX weight download. `MoonStorage` doubles as the keyword
+# (BM25) port; `StubEmbedder` produces deterministic 768d vectors. That means
+# vector recall does not rank *semantically* — but the round-trip, scope
+# isolation, and durability all work, which is what this example proves.
+# `default-features = false` keeps fastembed/candle/ort out of the build.
+lunaris = { package = "lunaris-memory", path = "../../crates/lunaris", default-features = false }
+tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow  = "1"
+tracing-subscriber = "0.3"

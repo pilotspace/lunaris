@@ -1,18 +1,23 @@
 # Lunaris examples
 
-10-minute quickstarts mirrored across the three supported language
-surfaces. Each shows the same end-to-end flow: open a Lunaris handle
-against a local Postgres backend, ingest one episode, then recall it.
+Runnable examples. The three `quickstart-*` crates show the same
+10-minute end-to-end flow (open a handle against a local Postgres backend,
+ingest one episode, recall it); `multi-agent-rs` is a deeper Rust walkthrough
+of the multi-agent / multi-session memory model run against a live Moon
+backend.
 
-| Language   | Path                  | Install                   |
-|------------|-----------------------|---------------------------|
-| Rust       | [quickstart-rs/](quickstart-rs/) | `cargo add lunaris` |
-| Python     | [quickstart-py/](quickstart-py/) | `pip install lunaris` |
-| TypeScript | [quickstart-ts/](quickstart-ts/) | `npm i lunaris` |
+| Example | Path | What it shows | Backend / install |
+|---|---|---|---|
+| Quickstart — Rust | [quickstart-rs/](quickstart-rs/) | open → ingest → scoped `recall()` (one-liner + typed DSL) | Postgres; `cargo add lunaris` |
+| Quickstart — Python | [quickstart-py/](quickstart-py/) | ingest contract (recall is v0.3 for the binding) | Postgres; `pip install lunaris` |
+| Quickstart — TypeScript | [quickstart-ts/](quickstart-ts/) | ingest contract (recall is v0.3 for the binding) | Postgres; `npm i lunaris` |
+| Multi-agent / multi-session — Rust | [multi-agent-rs/](multi-agent-rs/) | hard scope isolation between two agents, multiple sessions inside one agent (via the `source` field), resume across a process boundary — all asserted against a live Moon backend | Moon (`--shards 1`); `cargo run` |
 
-All three reuse the **same** docker-compose Postgres image (built
+The three quickstarts reuse the **same** docker-compose Postgres image (built
 from `scripts/pg-lunaris/`) so a developer can stand up one container
-and exercise all three SDKs against it.
+and exercise all three SDKs against it. `multi-agent-rs` builds its handle by
+hand (`Lunaris::with_parts_keyword` + `StubEmbedder`) so it needs no external
+services beyond a single-shard Moon server — see its README for the runbook.
 
 The Rust example is canonical; the Python and TypeScript variants
 mirror its shape line-for-line so the API translation is obvious.

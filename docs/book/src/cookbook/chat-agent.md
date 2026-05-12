@@ -108,9 +108,12 @@ store, and constructing the wrapper is just a name binding.
   `MultiTurnConversation`'s differentiator. See [Multi-Turn
   Conversation](./multi-turn.md).
 - **Multi-agent scoping.** The `"chat:<user_id>/"` prefix isolates one
-  user's turns inside this `MessageStream`. For tenant-level isolation
-  (separate agent platforms, RLS, the HTTP `tenant` claim) see
-  [Multi-Agent & Scope](../guides/multi-agent.md).
+  user's turns inside this `MessageStream` — but `MessageStream` builds
+  episodes with `Scope::dev()`, so that is *source-prefix* isolation, not a
+  tenant wall. For RLS-grade per-agent isolation (separate agent platforms,
+  the HTTP `tenant` claim, the low-level `lunaris.scoped(scope)` handle), see
+  [Multi-Agent & Scope → Multi-agent patterns](../guides/multi-agent.md#multi-agent-patterns)
+  and the runnable [`examples/multi-agent-rs/`](https://github.com/lunaris-dev/lunaris/tree/main/examples/multi-agent-rs).
 - **Embedder / backend tuning** lives in the
   [Configuration Reference](../reference/configuration.md) — the recipe adds
   no knobs of its own beyond `MessageStream::with_top_k` on the underlying
