@@ -2307,41 +2307,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
-name = "lunaris"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "futures",
- "is-terminal",
- "lunaris-bench",
- "lunaris-conformance",
- "lunaris-consolidate",
- "lunaris-core",
- "lunaris-embed",
- "lunaris-extract",
- "lunaris-ingest",
- "lunaris-rerank",
- "lunaris-retrieve",
- "lunaris-storage-moon",
- "lunaris-storage-postgres",
- "lunaris-verify",
- "nix",
- "parking_lot",
- "rand 0.9.4",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "ulid",
- "url",
-]
-
-[[package]]
 name = "lunaris-bench"
 version = "0.2.1"
 dependencies = [
@@ -2355,11 +2320,11 @@ dependencies = [
  "futures",
  "hex",
  "hf-hub 0.4.3",
- "lunaris",
  "lunaris-consolidate",
  "lunaris-core",
  "lunaris-extract",
  "lunaris-ingest",
+ "lunaris-memory",
  "lunaris-storage-moon",
  "lunaris-verify",
  "parking_lot",
@@ -2408,10 +2373,10 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
- "lunaris",
  "lunaris-bench",
  "lunaris-core",
  "lunaris-embed",
+ "lunaris-memory",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",
  "nix",
@@ -2534,6 +2499,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-memory"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures",
+ "is-terminal",
+ "lunaris-bench",
+ "lunaris-conformance",
+ "lunaris-consolidate",
+ "lunaris-core",
+ "lunaris-embed",
+ "lunaris-extract",
+ "lunaris-ingest",
+ "lunaris-rerank",
+ "lunaris-retrieve",
+ "lunaris-storage-moon",
+ "lunaris-storage-postgres",
+ "lunaris-verify",
+ "nix",
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "url",
+]
+
+[[package]]
 name = "lunaris-py"
 version = "0.2.1"
 dependencies = [
@@ -2541,10 +2541,10 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
- "lunaris",
  "lunaris-conformance",
  "lunaris-core",
  "lunaris-embed",
+ "lunaris-memory",
  "lunaris-recipes",
  "lunaris-rerank",
  "lunaris-retrieve",
@@ -2566,11 +2566,11 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
- "lunaris",
  "lunaris-conformance",
  "lunaris-consolidate",
  "lunaris-core",
  "lunaris-extract",
+ "lunaris-memory",
  "lunaris-retrieve",
  "lunaris-storage-moon",
  "lunaris-storage-postgres",
@@ -2640,8 +2640,8 @@ dependencies = [
  "futures",
  "governor",
  "is-terminal",
- "lunaris",
  "lunaris-core",
+ "lunaris-memory",
  "lunaris-retrieve",
  "parking_lot",
  "prometheus",
@@ -2707,10 +2707,10 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
- "lunaris",
  "lunaris-conformance",
  "lunaris-core",
  "lunaris-embed",
+ "lunaris-memory",
  "lunaris-recipes",
  "lunaris-rerank",
  "lunaris-retrieve",

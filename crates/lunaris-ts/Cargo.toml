@@ -21,7 +21,7 @@ crate-type = ["cdylib", "rlib"]
 # weights to be present at runtime — same Rule 1 fix Plan 08-02 applied
 # to lunaris-py. Production deploys that want the real candle embedder
 # enable the feature at `napi build` time.
-lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"] }
+lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"], package = "lunaris-memory" }
 lunaris-core        = { path = "../lunaris-core" }
 # Phase 21 Plan 21-02 — handwritten EmbedderConfig / RerankerConfig wrap the
 # fastembed + ollama backends directly. Pull lunaris-embed / lunaris-rerank

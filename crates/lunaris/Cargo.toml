@@ -1,16 +1,30 @@
 [package]
-name        = "lunaris"
+name        = "lunaris-memory"
 version.workspace = true
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 
-description = "Lunaris agent memory engine — umbrella crate"
+description = "Lunaris agent memory engine — umbrella crate (Apache-2.0 OR MIT)"
 repository.workspace = true
 readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
+
+# Cargo's package-name vs library-name distinction: published as
+# `lunaris-memory` on crates.io (the bare `lunaris` name is owned by an
+# unrelated v0.1.0 video-editor project), but the import path stays
+# `use lunaris::Lunaris;` so adopters' code is unaffected by the package
+# rename. Downstream consumers do:
+#
+#   [dependencies]
+#   lunaris-memory = "0.2.1"
+#
+#   // src/main.rs
+#   use lunaris::Lunaris;
+[lib]
+name = "lunaris"
 
 [dependencies]
 lunaris-core              = { workspace = true }

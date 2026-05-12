@@ -54,7 +54,7 @@ publish      = false
 # in via `features = ["candle", ...]` without colliding with cargo's
 # rule that disallows downstream `default-features = false` when the
 # workspace entry leaves defaults enabled.
-lunaris                   = { path = "crates/lunaris",                   version = "0.2.1", default-features = false }
+lunaris                   = { path = "crates/lunaris",                   version = "0.2.1", default-features = false, package = "lunaris-memory" }
 lunaris-core              = { path = "crates/lunaris-core",              version = "0.2.1" }
 lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.2.1", default-features = false }
 lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.2.1", default-features = false }
