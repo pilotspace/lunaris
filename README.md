@@ -8,6 +8,11 @@ Python and TypeScript SDKs. Raw observations in; structured,
 bi-temporal facts out. Backed by Postgres (default) or Moon (the
 high-performance Redis-compatible substrate).
 
+> **Documentation:** the full guide lives in the **[Lunaris Book](docs/book/)**
+> (`mdbook serve docs/book` locally, or the published site at lunaris.dev once
+> live) — getting started, the retrieval-DSL guide, the cookbook, and the
+> complete [configuration reference](docs/book/src/reference/configuration.md).
+>
 > **First time here?** [`docs/POSITIONING.md`](docs/POSITIONING.md) is
 > the one-page elevator pitch + honest "use a different tool when…"
 > criteria. Read that before evaluating.
@@ -30,15 +35,15 @@ against them; any feature that weakens any of the three is rejected.
 
 | Moat | What it means | Where enforced |
 |---|---|---|
-| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench eval05` |
+| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench recall_hot_path` |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
 | **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 
 ## Install
 
 ```bash
-# Rust
-cargo add lunaris
+# Rust — the crate is published as `lunaris-memory`; import it as `lunaris`
+cargo add lunaris-memory --rename lunaris
 
 # Python
 pip install lunaris
@@ -47,9 +52,11 @@ pip install lunaris
 npm i lunaris
 ```
 
-Default features assume Postgres + Ollama running locally. For the
-laptop-floor build (~540 MB RAM, no external Ollama), see RFC 0006
-and the `verify-small` feature in `crates/lunaris-verify/Cargo.toml`.
+Default features build the bundled `fastembed` embedder (auto-downloads ONNX
+weights — no external Ollama needed); the `candle` backend is also compiled in
+for air-gapped use. For the laptop-floor build (~600 MB disk / ~1 GB RAM), see RFC 0006 and
+the `verify-small` feature in `crates/lunaris-verify/Cargo.toml`. Full matrix
+in the [configuration reference](docs/book/src/reference/configuration.md).
 
 ## 10-minute quickstart
 

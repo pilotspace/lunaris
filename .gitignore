@@ -85,3 +85,6 @@ replication.state
 # --- Live measurement scratch reports ---
 LIVE-MEASUREMENT-REPORT.md
 milestones/v0.1.1-bench/cache/
+
+# mdBook build output
+/docs/book/book/
