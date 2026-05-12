@@ -54,6 +54,9 @@ pub use operators::graph::{
 };
 pub use operators::keyword::Keyword;
 pub use operators::modifiers::{TopRetriever, filter_str};
+pub use operators::recency::{
+    ACT_R_MIN_AGE_SECONDS, ActR, Exp, RecencyConfig, RecencyScorer, TimeSource, rescore_recency,
+};
 pub use operators::rerank::{DEFAULT_RERANK_TOP_IN, RerankRetriever, rerank};
 pub use operators::vector::Vector;
 pub use operators::{QueryContext, Retriever};

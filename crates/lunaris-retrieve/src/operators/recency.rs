@@ -203,7 +203,7 @@ fn hit_age_seconds(hit: &Hit, now: Hlc, source: TimeSource) -> Option<f32> {
 ///   pre-existing slot order acts as a tiebreaker via the stable sort).
 /// - NaN scorer output is treated as "no signal" and falls back to the
 ///   prior score.
-pub fn rescore_recency(hits: &mut Vec<Hit>, now: Hlc, config: &RecencyConfig) {
+pub fn rescore_recency(hits: &mut [Hit], now: Hlc, config: &RecencyConfig) {
     if hits.is_empty() {
         return;
     }
