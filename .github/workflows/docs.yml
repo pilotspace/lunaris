@@ -1,0 +1,67 @@
+# mdBook documentation site — build on every PR, deploy to GitHub Pages on
+# push to `main`.
+#
+# The book lives at `docs/book/` (book.toml + src/). `peaceiris/actions-mdbook`
+# installs the `mdbook` CLI; `mdbook build` renders to `docs/book/book/`.
+#
+# (Link checking is deliberately not wired here yet: `mdbook-linkcheck` 0.7.x
+# does not support `mdbook` 0.5.x's RenderContext schema. Re-add a linkcheck
+# step once a compatible release lands, or pin both versions.)
+#
+# Deploy uses the modern GitHub Pages flow: `actions/upload-pages-artifact`
+# + `actions/deploy-pages`, which needs `pages: write` + `id-token: write`
+# and a `concurrency` group so overlapping deploys serialise instead of
+# clobbering each other.
+#
+# Security: every `run:` step below uses static literal strings only. No
+# `github.event.*` / PR-body / commit-message input flows into any command.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+      - name: Build the book
+        run: mdbook build docs/book
+      - name: Upload Pages artifact
+        # Only the main-branch run feeds the deploy job; PR runs stop after
+        # the build above.
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/book/book
+
+  deploy:
+    name: deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    # Serialise Pages deploys; never cancel an in-flight deploy (a
+    # half-applied Pages publish is worse than a slightly stale one). Scoped
+    # to the deploy job so PR build runs stay parallel.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

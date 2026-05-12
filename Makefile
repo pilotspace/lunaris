@@ -10,8 +10,8 @@
 # files use `make foo OUTPUT=...`.
 
 .PHONY: help bench-public bench-recall bench-ingest bench-helios \
-        bench-baseline test test-pg test-moon docs ci-local clean \
-        release-preflight release-preflight-fast
+        bench-baseline test test-pg test-moon docs docs-serve docs-rust \
+        ci-local clean release-preflight release-preflight-fast
 
 help:
 	@echo "Lunaris top-level targets"
@@ -32,8 +32,12 @@ help:
 	@echo "    release-preflight       Full 10-check gate (clean tree, fmt, clippy, build, test, doc, deny, publish-dry-run, manifest, version)"
 	@echo "    release-preflight-fast  Same with --skip-tests --skip-doc (~30s; iteration loop)"
 	@echo ""
+	@echo "  Docs (needs: cargo install mdbook)"
+	@echo "    docs              Build the mdBook site (docs/book/ -> docs/book/book/)"
+	@echo "    docs-serve        Serve the mdBook site locally with live reload (--open)"
+	@echo "    docs-rust         Build rustdoc for the workspace (cargo doc --no-deps)"
+	@echo ""
 	@echo "  Misc"
-	@echo "    docs              Build rustdoc for the workspace"
 	@echo "    ci-local          Reproduce the CI gate locally (fmt + clippy + test)"
 	@echo "    clean             Remove target/, docs/benchmarks/v0.2.x-tmp/"
 
@@ -105,7 +109,22 @@ test-moon:
 # Misc
 # ---------------------------------------------------------------------------
 
+# --- Docs ------------------------------------------------------------------
+#
+# `make docs` / `make docs-serve` drive the mdBook site under docs/book/.
+# Requires the `mdbook` CLI:
+#
+#     cargo install mdbook
+#
+# `make docs-rust` keeps the original rustdoc build (the old `make docs`).
+
 docs:
+	mdbook build docs/book
+
+docs-serve:
+	mdbook serve docs/book --open
+
+docs-rust:
 	cargo doc --workspace --no-deps
 
 ci-local:
