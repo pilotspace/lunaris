@@ -7,7 +7,7 @@
 //! ## Construction
 //!
 //! ```ignore
-//! let svc = RetrievalService::new(root, embedder, storage, keyword);
+//! let svc = RetrievalService::new(root, embedder, storage, keyword, scope);
 //! let mut wrapped = ServiceBuilder::new()
 //!     .rate_limit(10, Duration::from_secs(1))
 //!     .timeout(Duration::from_secs(5))
@@ -36,12 +36,17 @@ type BoxFuture = Pin<Box<dyn Future<Output = Result<Vec<Hit>, LunarisError>> + S
 ///
 /// Cloneable — every clone shares the same `Arc<dyn Retriever>` so wrapping
 /// in a `Buffer` / `Limit` layer is cheap.
+///
+/// RFC 0001 Wave 2: every constructed service carries a [`Scope`] that
+/// scopes the per-call retrieval. `RetrievalService::new` now requires
+/// the scope explicitly; the v0.2 `Scope::dev()` default is gone.
 #[derive(Clone)]
 pub struct RetrievalService {
     pub(crate) root: Arc<dyn Retriever>,
     pub(crate) embedder: Arc<dyn Embedder>,
     pub(crate) storage: Arc<dyn StoragePort>,
     pub(crate) keyword: Arc<dyn KeywordPort>,
+    pub(crate) scope: Scope,
 }
 
 impl RetrievalService {
@@ -50,8 +55,9 @@ impl RetrievalService {
         embedder: Arc<dyn Embedder>,
         storage: Arc<dyn StoragePort>,
         keyword: Arc<dyn KeywordPort>,
+        scope: Scope,
     ) -> Self {
-        Self { root, embedder, storage, keyword }
+        Self { root, embedder, storage, keyword, scope }
     }
 }
 
@@ -73,13 +79,13 @@ impl Service<Query> for RetrievalService {
         let embedder = self.embedder.clone();
         let keyword = self.keyword.clone();
         let root = self.root.clone();
+        let scope = self.scope.clone();
         let as_of = q.as_of;
 
         Box::pin(async move {
-            // Wave 2.5A/2.5C: RetrievalService has no scope context — use dev
-            // scope as the default. Callers needing scope isolation should use
-            // RetrievalBuilder (via Lunaris::recall() / ScopedLunaris::dsl()).
-            let ctx = QueryContext::new(q, Scope::dev(), embedder, storage.clone(), keyword);
+            // P0 #1 Wave 2: scope is carried on the service itself — every
+            // call inherits the constructor-supplied partition key.
+            let ctx = QueryContext::new(q, scope, embedder, storage.clone(), keyword);
             let raw = root.retrieve(&ctx).await?;
             // Plan 04-04 B-9: RetrievalService callers don't have a verifier
             // queue-depth check (only `Lunaris::recall_with_degraded_check`
