@@ -20,7 +20,6 @@ categories  = ["database", "asynchronous", "data-structures"]
 
 [dependencies]
 lunaris-core = { workspace = true }
-lunaris-storage-moon = { workspace = true, optional = true }
 async-trait              = { workspace = true }
 bytes                    = { workspace = true }
 futures                  = { workspace = true }
@@ -42,6 +41,6 @@ tokio                    = { workspace = true, features = ["macros", "rt-multi-t
 default = []
 # Run integration tests against a live Postgres with vector + age + pgmq at PG_URL.
 pg-it   = []
-# Cross-backend identity test additionally pulls MoonStorage so writes to both backends
-# can be byte-compared. Requires MOON_URL to be set at test time.
-moon-it = ["dep:lunaris-storage-moon"]
+# Cross-backend identity assertions live in `lunaris-conformance` (which can
+# depend on both backends) since `lunaris-storage-moon` carries a `moondb`
+# path-dep that isn't on crates.io and would block publish for this crate.

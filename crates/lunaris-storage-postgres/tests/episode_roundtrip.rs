@@ -69,34 +69,10 @@ async fn unsupported_url_scheme_rejected() {
     assert!(matches!(r, Err(StorageError::UnsupportedScheme(_))));
 }
 
-#[cfg(feature = "moon-it")]
-#[tokio::test]
-async fn cross_backend_identity_with_moon() {
-    let moon_url = match std::env::var("MOON_URL") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("SKIP cross_backend_identity_with_moon — set MOON_URL to enable");
-            return;
-        }
-    };
-    let pg = PostgresStorage::connect(&pg_url()).await.expect("connect pg");
-    let moon = lunaris_storage_moon::MoonStorage::connect(&moon_url).await.expect("connect moon");
-
-    let clock = HlcClock::new(0);
-    let ep = Episode::new(Scope::dev(), "notes.md", "cross-backend Alice", &clock);
-    // v0.2.1 keyspace (RFC 0001): `lunaris:{scope}:episode:{ulid}`.
-    let key = lunaris_core::keyspace::episode_key(&Scope::dev(), ep.id);
-    let value = serde_json::to_vec(&ep).unwrap();
-
-    pg.atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
-        .await
-        .unwrap();
-    moon.atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
-        .await
-        .unwrap();
-
-    let pg_row = pg.read_as_of(&Scope::dev(), &key, clock.tick()).await.unwrap().unwrap();
-    let moon_row = moon.read_as_of(&Scope::dev(), &key, clock.tick()).await.unwrap().unwrap();
-
-    assert_eq!(pg_row.value, moon_row.value, "cross-backend value bytes must match");
-}
+// Cross-backend identity test moved to `lunaris-conformance` (which has
+// access to both backends via `Arc<dyn StoragePort>`). Pulling
+// `lunaris-storage-moon` into this crate as an optional dep was blocking
+// the `lunaris-storage-postgres` crates.io publish — the workspace's
+// `moon` dep is a path-only reference to `moondb` which isn't on
+// crates.io yet. See `crates/lunaris-conformance/src/storage/` for the
+// cross-backend parity gauntlet.
