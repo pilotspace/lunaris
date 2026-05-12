@@ -627,6 +627,26 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.recall().with_scope(self.scope.clone()).execute(query).await
     }
 
+    /// Forget primitive bound to the wrapper's scope. **P0 #1 Wave 2:** this
+    /// is the canonical entry point superseding the deprecated
+    /// [`Lunaris::forget`]. Today it delegates to the underlying handle's
+    /// implementation — the per-scope storage routing (so the call honours
+    /// `self.scope` instead of `Scope::dev()`) is tracked as a v0.3 debt
+    /// item in `docs/v0.3-known-debt.md`. The deprecation + canonical API
+    /// surface lands here so external adopters can migrate today; the
+    /// internal routing flips under the hood when the Wave 1D forget
+    /// pipeline ships.
+    pub async fn forget(
+        &self,
+        request: impl Into<crate::forget::ForgetRequest>,
+    ) -> Result<crate::forget::ForgetReceipt, LunarisError> {
+        // scope-dev-allowed: scoped-forget-shim — delegates to the
+        // deprecated bare path until the Wave 1D scope-aware forget
+        // pipeline replaces the body (tracked in docs/v0.3-known-debt.md).
+        #[allow(deprecated)]
+        self.engine.forget(request).await
+    }
+
     /// Return a [`lunaris_retrieve::RetrievalBuilder`] bound to the engine's
     /// storage / embedder / keyword Arcs AND this wrapper's scope for
     /// DSL-style query composition.
