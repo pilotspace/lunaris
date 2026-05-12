@@ -35,6 +35,10 @@ name = "lunaris"
 lunaris-core              = { workspace = true }
 lunaris-storage-moon      = { workspace = true }
 lunaris-storage-postgres  = { workspace = true }
+# Onboarding overhaul (phase 1): always-on so `memory://` works out of the box
+# with zero external services. Pure SQLite — no heavy deps to gate behind a
+# feature.
+lunaris-storage-embedded  = { workspace = true }
 lunaris-embed             = { workspace = true }
 lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }

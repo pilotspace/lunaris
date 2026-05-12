@@ -1,0 +1,37 @@
+[package]
+name        = "lunaris-storage-embedded"
+version.workspace = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+publish     = true
+description = "Zero-dependency embedded storage backend for Lunaris (SQLite — memory:// and sqlite:///path)"
+repository.workspace = true
+readme      = "README.md"
+keywords    = ["agent", "memory", "llm", "bi-temporal", "sqlite"]
+categories  = ["database", "asynchronous", "data-structures"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+lunaris-core = { workspace = true }
+async-trait  = { workspace = true }
+bytes        = { workspace = true }
+futures      = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+sqlx         = { workspace = true, features = ["macros"] }
+url          = { workspace = true }
+
+[dev-dependencies]
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []

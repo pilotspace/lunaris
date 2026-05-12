@@ -4,6 +4,10 @@ members = [
   "crates/lunaris-core",
   "crates/lunaris-storage-moon",
   "crates/lunaris-storage-postgres",
+  # Onboarding overhaul (phase 1): zero-dependency embedded backend on SQLite —
+  # `memory://` (in-process) and `sqlite:///path` (file). Grouped with the other
+  # storage backends per the grouping-by-concern rule.
+  "crates/lunaris-storage-embedded",
   "crates/lunaris-verify",
   "crates/lunaris",
   "crates/lunaris-bench",
@@ -58,6 +62,7 @@ lunaris                   = { path = "crates/lunaris",                   version
 lunaris-core              = { path = "crates/lunaris-core",              version = "0.2.1" }
 lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.2.1", default-features = false }
 lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.2.1", default-features = false }
+lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.2.1", default-features = false }
 lunaris-embed             = { path = "crates/lunaris-embed",             version = "0.2.1", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.2.1", default-features = false }
 lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.2.1", default-features = false }
@@ -101,7 +106,7 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 # previously published as `moon-client`; Lunaris keeps the local alias `moon`
 # so internal use sites keep their stable `use moon::` form.
 moon           = { version = "0.1.1", package = "moondb" }
-sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
+sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "sqlite", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
 pulldown-cmark = { version = "0.13", default-features = false }

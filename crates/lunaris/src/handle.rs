@@ -35,6 +35,7 @@ use lunaris_core::{
 use crate::episode_builder::EpisodeBuilder;
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
+use lunaris_storage_embedded::EmbeddedStorage;
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
 use lunaris_verify::{NoopVerifier, Verifier};
@@ -105,7 +106,14 @@ impl Lunaris {
     ///   round-trip path.
     /// - `postgres://...` → [`lunaris_storage_postgres::PostgresStorage`] backend.
     ///   `moon_storage` field stays `None`; `recall().fuse_rrf()` falls back
-    ///   to client-side reciprocal rank fusion.
+    ///   to client-side reciprocal rank fusion. If `LUNARIS_ADMIN_URL` is set,
+    ///   migrations run over that DDL-capable admin connection first and the
+    ///   handle binds to (the possibly non-DDL) `url` — no out-of-band
+    ///   `sqlx migrate run`.
+    /// - `memory://` / `sqlite:///path` →
+    ///   [`lunaris_storage_embedded::EmbeddedStorage`] — the zero-dependency
+    ///   dev/embedded backend (no Docker, no Postgres, no Moon). `memory://`
+    ///   is in-process and ephemeral; `sqlite:///path` is file-backed.
     ///
     /// ## Default backend resolution (Phase 20-02)
     ///
@@ -225,6 +233,34 @@ impl Lunaris {
                 Ok(Self {
                     storage: storage_arc,
                     keyword: p as Arc<dyn KeywordPort>,
+                    embedder,
+                    clock,
+                    moon_storage: None,
+                    reranker,
+                    graph_pipeline,
+                    verify_pipeline,
+                    consolidator_pipeline,
+                })
+            }
+            // Onboarding overhaul (phase 1): the zero-dependency embedded
+            // backend — `memory://` (in-process) / `sqlite:///path` (file).
+            // Same wiring shape as the Postgres arm; `EmbeddedStorage` impls
+            // both `StoragePort` and `KeywordPort`.
+            "memory" | "sqlite" => {
+                let e = Arc::new(EmbeddedStorage::connect(url).await?);
+                let storage_arc: Arc<dyn StoragePort> = e.clone();
+                verify_pipeline.bind_storage(storage_arc.clone());
+                verify_pipeline.bind_clock(clock.clone());
+                consolidator_pipeline.bind_storage(storage_arc.clone());
+                if initial_verify_state {
+                    verify_pipeline.spawn_worker_if_idle();
+                }
+                if initial_consolidate_state {
+                    consolidator_pipeline.spawn_worker_if_idle();
+                }
+                Ok(Self {
+                    storage: storage_arc,
+                    keyword: e as Arc<dyn KeywordPort>,
                     embedder,
                     clock,
                     moon_storage: None,

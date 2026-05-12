@@ -16,6 +16,7 @@ lunaris = { workspace = true }
 lunaris-core = { workspace = true }
 lunaris-storage-moon = { workspace = true }       # Plan 05-02
 lunaris-storage-postgres = { workspace = true }   # Plan 05-02
+lunaris-storage-embedded = { workspace = true }   # onboarding overhaul (phase 1)
 async-trait              = { workspace = true }
 tokio                    = { workspace = true }
 futures                  = { workspace = true }                       # Plan 05-02 — scan_range stream walker
