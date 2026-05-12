@@ -165,7 +165,7 @@ fn helios_p50_bench(c: &mut Criterion) {
         };
 
         let session_id = format!("bench-{}", Ulid::new());
-        let pad = HeliosScratchpad::new(handle.clone(), &session_id);
+        let pad = HeliosScratchpad::new(handle.clone(), lunaris_core::Scope::dev(), &session_id);
 
         // Warm-up: seed WARMUP_NOTES notes so every op type has real content
         // to touch. Any write failure here means the backend is functionally

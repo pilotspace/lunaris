@@ -350,7 +350,7 @@ async fn wm_consolidate_scope_isolation() {
     let storage: Arc<dyn StoragePort> = rec.clone();
     let scoped_ids = seed_events(&storage, 5, 5).await;
 
-    let wm = WorkingMemory::new(handle.clone(), "test:wm/");
+    let wm = WorkingMemory::new(handle.clone(), lunaris_core::Scope::dev(), "test:wm/");
     let report = wm.consolidate().await.expect("consolidate must succeed");
 
     assert_eq!(
@@ -379,7 +379,7 @@ async fn wm_consolidate_publishes_audit_event_per_promotion() {
     let storage: Arc<dyn StoragePort> = rec.clone();
     let _scoped_ids = seed_events(&storage, 5, 5).await;
 
-    let wm = WorkingMemory::new(handle.clone(), "test:wm/");
+    let wm = WorkingMemory::new(handle.clone(), lunaris_core::Scope::dev(), "test:wm/");
     let report = wm.consolidate().await.expect("consolidate must succeed");
     assert_eq!(report.promotions.len(), 5);
 
@@ -401,7 +401,7 @@ async fn wm_consolidate_with_empty_queue_returns_empty_report() {
     let handle = Arc::new(handle);
     handle.consolidator_pipeline().set_consolidator(Arc::new(TestConsolidator::default()));
 
-    let wm = WorkingMemory::new(handle.clone(), "test:wm/");
+    let wm = WorkingMemory::new(handle.clone(), lunaris_core::Scope::dev(), "test:wm/");
     let report = wm.consolidate().await.expect("consolidate on empty queue must succeed");
     assert!(report.promotions.is_empty(), "empty queue → empty promotions");
     assert!(report.archives.is_empty(), "empty queue → empty archives");
@@ -417,7 +417,7 @@ async fn wm_consolidate_noop_consolidator_returns_empty_report() {
     let storage: Arc<dyn StoragePort> = rec.clone();
     let _ = seed_events(&storage, 5, 5).await;
 
-    let wm = WorkingMemory::new(handle.clone(), "test:wm/");
+    let wm = WorkingMemory::new(handle.clone(), lunaris_core::Scope::dev(), "test:wm/");
     let report = wm.consolidate().await.expect("noop consolidate must succeed");
     assert!(report.promotions.is_empty(), "NoopConsolidator returns empty report for any input");
     assert_eq!(

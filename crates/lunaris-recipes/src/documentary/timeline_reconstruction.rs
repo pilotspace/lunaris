@@ -23,8 +23,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{DocumentCorpus, Documents, TemporalQuery};
@@ -39,8 +39,8 @@ pub struct TimelineReconstruction {
 
 impl TimelineReconstruction {
     /// Construct bound to `source_prefix` (e.g. `"timeline:events/"`).
-    pub fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self {
-        let corpus = DocumentCorpus::new(lunaris.clone(), source_prefix);
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self {
+        let corpus = DocumentCorpus::new(lunaris.clone(), scope, source_prefix);
         Self { lunaris, corpus }
     }
 

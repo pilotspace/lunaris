@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_core::storage::types::Lsn;
-use lunaris_core::{BiTemporal, Episode, Hlc, LunarisError};
+use lunaris_core::{BiTemporal, Episode, Hlc, LunarisError, Scope};
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
 
@@ -70,18 +70,29 @@ const MIN_AGE_SECONDS: f32 = 1.0;
 #[derive(Clone)]
 pub struct MessageStream {
     lunaris: Arc<Lunaris>,
+    scope: Scope,
     thread_prefix: String,
     top_k: usize,
 }
 
 impl MessageStream {
-    /// Construct a new [`MessageStream`] bound to `thread_prefix`. Every
+    /// Construct a new [`MessageStream`] bound to `scope` (RFC 0001
+    /// partition key) and `thread_prefix` (source-key namespace). Every
     /// [`ingest`](Self::ingest) / [`recall`](Self::recall) call scopes
     /// through this prefix via [`Filter::StartsWith`](lunaris_core::storage::types::Filter::StartsWith) on the Episode `source`
     /// field. Conventional value: `"messages:"`; per-wrapper recipes
     /// specialise further (e.g. `"slack:archive/"`, `"email:"`).
-    pub fn new(lunaris: Arc<Lunaris>, thread_prefix: impl Into<String>) -> Self {
-        Self { lunaris, thread_prefix: thread_prefix.into(), top_k: DEFAULT_TOP_K }
+    pub fn new(
+        lunaris: Arc<Lunaris>,
+        scope: Scope,
+        thread_prefix: impl Into<String>,
+    ) -> Self {
+        Self {
+            lunaris,
+            scope,
+            thread_prefix: thread_prefix.into(),
+            top_k: DEFAULT_TOP_K,
+        }
     }
 
     /// Override the default `top_k` for [`recall`](Self::recall). Returns
@@ -110,10 +121,7 @@ impl MessageStream {
         metadata.insert("participant_id".into(), serde_json::Value::String(participant_id));
         let episode = Episode {
             id: Ulid::new(),
-            // RFC 0001 Wave 1D: use Scope::dev() until MessageStream receives
-            // a real Scope (Wave 3 SDK layer). The scope is embedded in the
-            // `source` prefix for now.
-            scope: lunaris_core::Scope::dev(),
+            scope: self.scope.clone(),
             source: format!("{}{}/", self.thread_prefix, thread_id),
             content: message.into(),
             t_ref: None,

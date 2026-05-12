@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::DocumentCorpus;
@@ -39,8 +39,8 @@ pub struct DocumentKnowledgeBase {
 
 impl DocumentKnowledgeBase {
     /// Construct a knowledge base bound to `source_prefix` (e.g. `"kb:docs/"`).
-    pub fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self {
-        Self { corpus: DocumentCorpus::new(lunaris, source_prefix) }
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self {
+        Self { corpus: DocumentCorpus::new(lunaris, scope, source_prefix) }
     }
 
     /// Ingest chunked `(content, metadata)` pairs. Forwards to

@@ -101,8 +101,8 @@ async fn message_stream_moon_postgres_parity() -> anyhow::Result<()> {
     corpus.ingest_into(&moon_store).await?;
     corpus.ingest_into(&pg_store).await?;
 
-    let ms_moon = MessageStream::new(moon.clone(), "messages:");
-    let ms_pg = MessageStream::new(postgres.clone(), "messages:");
+    let ms_moon = MessageStream::new(moon.clone(), lunaris_core::Scope::dev(), "messages:");
+    let ms_pg = MessageStream::new(postgres.clone(), lunaris_core::Scope::dev(), "messages:");
 
     let mut divergences: Vec<String> = Vec::new();
     for (query, _as_of) in corpus.query_set() {

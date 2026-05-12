@@ -20,8 +20,8 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::LunarisError;
 use lunaris_core::storage::types::Lsn;
+use lunaris_core::{LunarisError, Scope};
 use lunaris_retrieve::Hit;
 
 use crate::{MessageStream, WorkingMemory};
@@ -42,15 +42,17 @@ pub struct EmailThreading {
     #[allow(dead_code)]
     inner_wm: WorkingMemory,
     lunaris: Arc<Lunaris>,
+    scope: Scope,
 }
 
 impl EmailThreading {
     /// Construct a new email-archive handle rooted at `EMAIL_PREFIX` (private).
-    pub fn new(lunaris: Arc<Lunaris>) -> Self {
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
         Self {
-            inner_ms: MessageStream::new(lunaris.clone(), EMAIL_PREFIX),
-            inner_wm: WorkingMemory::new(lunaris.clone(), EMAIL_PREFIX),
+            inner_ms: MessageStream::new(lunaris.clone(), scope.clone(), EMAIL_PREFIX),
+            inner_wm: WorkingMemory::new(lunaris.clone(), scope.clone(), EMAIL_PREFIX),
             lunaris,
+            scope,
         }
     }
 
@@ -71,11 +73,16 @@ impl EmailThreading {
     /// does the thread-narrowing work via the primitive's existing
     /// filter, NOT a new DSL. 0 primitive calls (pure construction).
     pub fn thread(&self, root_id: impl Into<String>) -> Self {
-        let scope = format!("{}{}/", EMAIL_PREFIX, root_id.into());
+        let prefix = format!("{}{}/", EMAIL_PREFIX, root_id.into());
         Self {
-            inner_ms: MessageStream::new(self.lunaris.clone(), scope.clone()),
-            inner_wm: WorkingMemory::new(self.lunaris.clone(), scope),
+            inner_ms: MessageStream::new(
+                self.lunaris.clone(),
+                self.scope.clone(),
+                prefix.clone(),
+            ),
+            inner_wm: WorkingMemory::new(self.lunaris.clone(), self.scope.clone(), prefix),
             lunaris: self.lunaris.clone(),
+            scope: self.scope.clone(),
         }
     }
 
