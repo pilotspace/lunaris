@@ -1,5 +1,14 @@
 //! `graph_traverse` — AGE `cypher()` SQL function.
 //!
+//! TODO(v0.4): switch from the single-column `AS (v ag_catalog.agtype)` shape
+//! to the multi-column `AS (id agtype, name agtype, type agtype, path_length
+//! agtype, edge_weight_product agtype)` shape so `Graph::anchored`'s positional
+//! `id`/`name`/`type` reads plus the optional `path_length` /
+//! `edge_weight_product` header lookups all see real values. The current
+//! single-column path is a pre-existing latent gap (positional reads of
+//! `row.get(0).as_str()` against the AGE JSON blob produce empty-id hits);
+//! see `docs/v0.3-known-debt.md` § "Graph scoring".
+//!
 //! SQL pattern:
 //!
 //! ```sql
