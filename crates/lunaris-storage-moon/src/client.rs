@@ -85,12 +85,22 @@ impl MoonClient {
 
         // Moon speaks RESP2/RESP3 over the Redis protocol. We dial via the typed
         // moon-client SDK which internally opens a `redis::aio::MultiplexedConnection`.
-        // Use a 5-minute response timeout to handle bulk-write bench workloads
-        // (corpus seeding of 50K-1M HSET ops can exceed the default ~60s timeout).
+        // Bulk-write bench workloads (50K-1M HSET ops) can exceed the SDK's
+        // default ~60s timeout; we wrap the connect call in a 5-minute tokio
+        // timeout. `TypedClient::connect_with_timeout` exists on the local
+        // path-dep build of moondb but isn't in the crates.io 0.1.1 release,
+        // so we use the always-available `connect` + outer `tokio::time::timeout`
+        // for crates.io compatibility (semver-friendly).
         let redis_url = format!("redis://{host}:{port}");
-        let timeout = std::time::Duration::from_secs(300);
-        let inner = TypedClient::connect_with_timeout(redis_url.as_str(), timeout)
+        let connect_timeout = std::time::Duration::from_secs(300);
+        let inner = tokio::time::timeout(connect_timeout, TypedClient::connect(redis_url.as_str()))
             .await
+            .map_err(|_| {
+                StorageError::Backend(format!(
+                    "moon connect timed out after {}s",
+                    connect_timeout.as_secs()
+                ))
+            })?
             .map_err(moon_err)?;
         let me = Self { host, port, workspace, inner };
         me.ensure_indexes().await?;

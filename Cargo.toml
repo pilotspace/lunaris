@@ -100,7 +100,7 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 # Upstream rename: this crate was previously published as `moon-client`; renamed to
 # `moondb` in moon repo. Lunaris keeps the local alias `moon` so internal use sites
 # keep their stable `use moon::` form (one place to update if Moon renames again).
-moon           = { path = "../moon/sdk/rust", package = "moondb" }
+moon           = { path = "../moon/sdk/rust", version = "0.1.1", package = "moondb" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
