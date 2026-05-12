@@ -109,6 +109,10 @@ pub async fn forget_handler(
         request.options.confirmation_token = Some(token);
     }
 
+    // P0 #1 Wave 2: HTTP forget route still routes through the deprecated
+    // bare `Lunaris::forget`. Migration to `engine.scoped(claims.scope).forget`
+    // is tracked in docs/v0.3-known-debt.md (per-handler scoped-API work).
+    #[allow(deprecated)]
     let result = state.lunaris.forget(request).await;
 
     // Always increment forget_total — both success + error contribute to the

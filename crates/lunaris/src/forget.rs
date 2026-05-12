@@ -194,10 +194,14 @@ impl From<ForgetTarget> for ForgetRequest {
 
 impl Lunaris {
     /// `Lunaris::forget(target) -> Result<ForgetReceipt, LunarisError>` —
-    /// single entry point per D-18. Closes OPS-01 / OPS-02 / OPS-03 and
-    /// emits one `__lunaris_audit__` event per call (OPS-04).
+    /// **DEPRECATED** as of P0 #1 Wave 2. Use
+    /// `engine.scoped(scope).forget(request)` instead so the forget call
+    /// inherits the bound partition key. The legacy path routes its
+    /// internal storage calls through `Scope::dev()` and silently returns
+    /// `rows_deleted = 0, rows_written = 0` under any non-`_dev_` scope.
+    /// See `docs/v0.3-known-debt.md` for the removal plan (v0.4 task).
     ///
-    /// ## Behaviour matrix
+    /// ## Behaviour matrix (unchanged from v0.2)
     ///
     /// | Request                              | Result                                  |
     /// |--------------------------------------|-----------------------------------------|
@@ -205,6 +209,12 @@ impl Lunaris {
     /// | `target.dry_run()`                   | No `atomic_write`; preview receipt      |
     /// | `target.hard()` (no token)           | `Err(Validate(ConfirmationRequired))`   |
     /// | `target.hard().with_token(t)`        | One `atomic_write` of `KvDelete` ops    |
+    // scope-dev-allowed: deprecation-note — message text references the
+    // marker for adopters reading the rustc warning.
+    #[deprecated(
+        since = "0.3.0",
+        note = "use `engine.scoped(scope).forget(request)` — Lunaris::forget routes through Scope::dev() and returns zero matches under any non-_dev_ scope"
+    )]
     pub async fn forget(
         &self,
         request: impl Into<ForgetRequest>,
