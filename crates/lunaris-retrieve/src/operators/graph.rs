@@ -23,6 +23,14 @@
 //! entity_id), ... } }`. Earlier drafts used `id`, which silently returned
 //! zero rows because the node property is `id_hex`, not `id`.
 //!
+//! TODO(v0.4): extend the RETURN clause with `length(p) AS path_length` +
+//! `reduce(w=1.0, r in relationships(p) | w * coalesce(r.weight, 1.0))
+//! AS edge_weight_product` to feed the scoring formula
+//! `(edge_weight_product / (1.0 + path_length)) * anchor_confidence`.
+//! Today the operator scores by row-index fallback (legacy `1.0 / (1.0 + i)`)
+//! because Moon/Postgres backends do not yet emit those columns. See
+//! `docs/v0.3-known-debt.md` § "Graph scoring".
+//!
 //! `<hops>` is spliced into the cypher string at construction time — the
 //! openCypher spec requires variable-length pattern bounds (`[*lo..hi]`) to
 //! be literals; both Moon GRAPH.QUERY and Apache AGE refuse `[*1..$hops]`.
