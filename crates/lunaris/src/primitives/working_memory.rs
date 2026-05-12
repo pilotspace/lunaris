@@ -183,6 +183,8 @@ async fn drain_consolidate_events(
     let pull_timeout = Duration::from_millis(PULL_TIMEOUT_MS);
 
     // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
+    // scope-dev-allowed: inside-deprecated-wrapper — Wave 3F per-scope queue routing
+    // tracked in RFC 0001 §3.7 / docs/v0.3-known-debt.md.
     let mut stream = storage
         .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await

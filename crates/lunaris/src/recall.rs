@@ -75,6 +75,8 @@ impl Lunaris {
         // compat. Adopters should migrate to engine.scoped(scope).recall() so
         // retrieval is scope-isolated at the storage layer. The warn fires once
         // per call so it's visible in tracing output without log-spamming.
+        // scope-dev-allowed: bare-recall-fallback — Lunaris::recall warns and
+        // degrades; ScopedLunaris::recall is canonical.
         tracing::warn!(
             "Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval"
         );
@@ -121,6 +123,8 @@ impl Lunaris {
             // per-scope). `Scope::dev()` is intentional — the verify queue is
             // a global topic shared across scopes. Per-scope queue depth routing
             // would require ScopedLunaris::recall_with_degraded_check (Wave 1E).
+            // scope-dev-allowed: bare-recall-queue-depth — verify topic is global,
+            // per-scope routing deferred to Wave 1E.
             let degraded_signal = match self
                 .storage
                 .queue_depth(&lunaris_core::Scope::dev(), VERIFY_TOPIC, 0)
