@@ -15,7 +15,7 @@ URL scheme: `moon://host:port` or `postgres://user:pass@host/db`.
 | RRF fusion | **Native** (in-substrate) | **Client-side** (Lunaris fuses in process) |
 | Graph traversal | Native `GRAPH.QUERY` | Apache AGE Cypher |
 | Pipeline queue | Native Streams | `pgmq` |
-| Embedding dim cap | **≤ 768** | **≤ 1536** |
+| Embedding dim (adapter) | **Embedder-sized** — the Moon adapter creates its vector index at the configured embedder's dimension (default **768-d**, EmbeddingGemma-300M; `Lunaris::open` passes `embedder.dim()` through, and `MoonStorage::connect_with_dim` lets you set it directly). No upper cap. | up to ~**1536-d** (pgvector practical ceiling) |
 | Bi-temporal `as_of` | Native bi-temporal index | `tstzrange &&` |
 | Tenant isolation | Per-scope keyspace prefix `lunaris:{scope}:` + per-scope FT/GRAPH/MQ | Postgres **RLS** (`SET LOCAL lunaris.scope`) |
 | Scope soft cap | ~512 scopes/node (`max_scopes_recommended`) | n/a (RLS scales with rows) |
@@ -26,6 +26,22 @@ behaviour (graph mode, native vs client RRF, queue mode); the AS_OF parity
 test (`lunaris_conformance::storage::as_of_parity::run`) asserts the two
 backends return identical hits + ordering for the same input.
 
+> **About the embedding dimension.** Moon (the substrate) has *no* hard
+> vector-dimension limit — `FT.CREATE` only requires `DIM > 0`. The Moon
+> adapter creates its `chunks` (and `entities` / `facts` / `communities`) FT
+> indices at the **configured embedder's dimension**: `Lunaris::open(url)`
+> reads `embedder.dim()` and calls `MoonStorage::connect_with_dim(url, dim)`,
+> so a 1536-d embedder (OpenAI `text-embedding-3`) works against Moon out of
+> the box. The default is **768-d** (EmbeddingGemma-300M); `max_vector_dim` in
+> `StorageCapabilities` then reports whatever dimension the index was actually
+> created at. Operator footgun: Moon's `FT.CREATE` is idempotent and does
+> **not** resize an existing index — if a Moon instance already holds a 768-d
+> `chunks` index and you reopen with a wider embedder, the old index stays and
+> the mismatch only shows up on the first vector write; drop the stale index
+> (`FT.DROPINDEX <name>`) first. And it remains a latency trade-off (wider
+> vectors = more bytes/vector and more distance-compute per query), not a
+> capability boundary.
+
 ## When to pick which
 
 **Pick Moon when:**
@@ -33,14 +49,19 @@ backends return identical hits + ordering for the same input.
 - Recall latency is a hard contract — Moon is the path the sub-25 ms-p50 moat
   is measured on.
 - You already run (or are willing to run) Moon as infra.
-- Your embedder emits ≤ 768-d vectors (EmbeddingGemma-300M, the default, is
-  768-d — so this is the common case).
+- The Moon adapter sizes its FT vector index to your embedder — the default
+  768-d (EmbeddingGemma-300M) is the common case, but a wider embedder works
+  on Moon too (`Lunaris::open` passes `embedder.dim()` through). See the note
+  above for the "existing index won't auto-resize" footgun.
 - You don't need more than ~512 scopes per node.
 
 **Pick Postgres when:**
 
 - You already operate Postgres and want zero new infra.
-- You need ≥ 769-d embeddings (up to 1536-d — e.g. OpenAI `text-embedding-3`).
+- You want pgvector's SQL-queryable storage and up to ~1536-d embeddings —
+  e.g. OpenAI `text-embedding-3`. (Moon now also sizes its index to wider
+  embedders, so this is a "SQL access + ecosystem" choice, not a hard
+  dimension boundary.)
 - You want the database boundary itself (RLS) enforcing tenant isolation, or
   you want ad-hoc SQL access to the stored primitives.
 - The extra ~hundreds of ms vs Moon on the hot path is acceptable.

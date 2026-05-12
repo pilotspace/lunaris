@@ -201,14 +201,14 @@ pipeline with no real backend wired just runs the shipped `Noop*` impl
 
 | Scheme | Backend | Notes |
 |---|---|---|
-| `moon://host:port` | **Moon** (Redis-compatible substrate) | Native `FT.SEARCH` (vector + BM25), `GRAPH.QUERY`, message queue, **native RRF fusion** (one round trip for `vector.and(keyword).fuse_rrf()`). Embedding dim ≤ 768. |
-| `postgres://` / `postgresql://` | **Postgres** + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. Embedding dim ≤ 1536. RLS-enforced tenant isolation. The portable default. |
+| `moon://host:port` | **Moon** (Redis-compatible substrate) | Native `FT.SEARCH` (vector + BM25), `GRAPH.QUERY`, message queue, **native RRF fusion** (one round trip for `vector.and(keyword).fuse_rrf()`). The Moon adapter sizes its vector index to the configured embedder (default 768-d; a wider embedder works on Moon too via `Lunaris::open` / `connect_with_dim`). |
+| `postgres://` / `postgresql://` | **Postgres** + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. pgvector handles embeddings up to ~1536-d. RLS-enforced tenant isolation. The portable default. |
 | anything else | — | `StorageError::UnsupportedScheme` |
 
 Every `Lunaris` call works identically against either — the scheme is
 the only thing that changes. Moon is the performance ceiling (we own
 it); Postgres is the portability proof (you probably already run one).
-Trade-offs and the dimension-cap reasoning:
+Trade-offs and the embedding-dimension details:
 [Choosing a Backend](../operations/backends.md).
 
 ## Next

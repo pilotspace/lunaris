@@ -47,8 +47,10 @@ sqlx migrate run --source crates/lunaris-storage-postgres/migrations \
 
 The connection-string scheme picks the backend: `postgres://…` /
 `postgresql://…` → Postgres; `moon://host:port` → Moon. See
-[Choosing a Backend](../operations/backends.md) for the trade-offs and
-the dimension caps (Postgres ≤ 1536-d vectors, Moon ≤ 768-d).
+[Choosing a Backend](../operations/backends.md) for the trade-offs and the
+embedding-dimension story (the Moon adapter sizes its vector index to the
+embedder — default 768-d, set wider via `connect_with_dim`; pgvector handles
+up to ~1536-d).
 
 ### Storage: Moon (the high-performance substrate)
 

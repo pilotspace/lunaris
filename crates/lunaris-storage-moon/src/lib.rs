@@ -81,10 +81,28 @@ pub struct MoonStorage {
 }
 
 impl MoonStorage {
-    /// Open a connection to Moon at `url` (`moon://host:port[?ws=workspace]`).
+    /// Open a connection to Moon at `url` (`moon://host:port[?ws=workspace]`),
+    /// creating FT vector indices at the default dimension
+    /// ([`client::DEFAULT_VECTOR_DIM`] = 768, matching EmbeddingGemma-300M).
     pub async fn connect(url: &str) -> Result<Self, StorageError> {
+        Self::connect_with_dim(url, crate::client::DEFAULT_VECTOR_DIM).await
+    }
+
+    /// Like [`MoonStorage::connect`], but creates the FT vector indices at
+    /// `dim` instead of the default 768. `dim` MUST be `> 0`. Moon's
+    /// `FT.CREATE` has no upper cap, so a 1536-d embedder (OpenAI
+    /// `text-embedding-3`) works against Moon out of the box.
+    ///
+    /// ## Operator footgun — existing index won't auto-resize
+    ///
+    /// Moon's `FT.CREATE` is idempotent and does NOT update an existing
+    /// index's schema. If a Moon instance already holds a 768-d `chunks`
+    /// index from a prior run, reopening with a 1536-d embedder leaves the
+    /// 768-d index in place; the mismatch surfaces only on the first vector
+    /// write. Drop the stale index first (`FT.DROPINDEX <name>`).
+    pub async fn connect_with_dim(url: &str, dim: usize) -> Result<Self, StorageError> {
         Ok(Self {
-            client: MoonClient::connect(url).await?,
+            client: MoonClient::connect_with_dim(url, dim).await?,
             initialized_scopes: Arc::new(Mutex::new(HashSet::new())),
         })
     }
@@ -134,7 +152,10 @@ impl MoonStorage {
     /// (guarded by `ensure_scope`'s in-memory set).
     async fn create_scope_indexes(&self, scope: &Scope) -> Result<(), StorageError> {
         use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
-        const DIM: usize = 768;
+        // Single-sourced: the FT vector dimension is configured once on the
+        // underlying client (`connect`/`connect_with_dim`); per-scope indices
+        // inherit it so engine-level `Lunaris::open` sizing flows through here.
+        let dim = self.client.dim;
 
         for kind in &["chunks", "entities", "facts", "communities"] {
             let idx_name = ft_index_name(scope, kind);
@@ -142,7 +163,7 @@ impl MoonStorage {
             // `{ft_index_name(scope, kind)}:{id_hex}`.
             let prefix = format!("{idx_name}:");
 
-            let mut opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
+            let mut opts = VectorIndexOptions::new(dim, DistanceMetric::Cosine)
                 .prefix(&prefix)
                 .field_name("vec")
                 .add_field(SchemaField::Text("content".to_string()));
@@ -282,8 +303,12 @@ impl StoragePort for MoonStorage {
             graph_native: true,
             rerank_native: true,
             queue_native: true,
-            // Moon profile uses 768d (matches EmbeddingGemma); Postgres uses 1536d.
-            max_vector_dim: 768,
+            // Moon's FT.CREATE has no dimension cap — report the dimension the
+            // adapter actually created its indices at (default 768d matching
+            // EmbeddingGemma-300M; `connect_with_dim` / `Lunaris::open` size it
+            // to the embedder). This stays an accurate description of what the
+            // FT `vec` field will accept.
+            max_vector_dim: self.client.dim as u32,
             // Gap 9 closure (2026-04-21): `ensure_indexes` now declares
             // `SchemaField::Text("content")` on chunks/entities/facts/communities
             // and `WriteOp::VectorUpsert` writes the `content` field via

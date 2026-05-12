@@ -164,7 +164,13 @@ impl Lunaris {
             Arc::new(ConsolidatorPipelineHandle::new(initial_consolidate_state, consolidator));
         match scheme {
             "moon" => {
-                let m = Arc::new(MoonStorage::connect(url).await?);
+                // Size the Moon FT vector indices to the resolved embedder's
+                // dimension (default 768-d for EmbeddingGemma; pass a wider
+                // embedder via LUNARIS_EMBEDDER_BACKEND and the indices grow to
+                // match). Moon's FT.CREATE has no dimension cap. Footgun: if the
+                // Moon instance already holds indices at a different dim, they
+                // are NOT auto-resized — drop them first.
+                let m = Arc::new(MoonStorage::connect_with_dim(url, embedder.dim()).await?);
                 let storage_arc: Arc<dyn StoragePort> = m.clone();
                 // B-10: bind the StoragePort Arc to BOTH pipelines AFTER
                 // we've constructed it. Also bind the HlcClock so the

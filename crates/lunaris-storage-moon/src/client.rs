@@ -30,6 +30,14 @@ use moon::{MoonClient as TypedClient, MoonError};
 /// Default Moon RESP port (matches Moon's `bin/moond` default).
 pub const DEFAULT_MOON_PORT: u16 = 6390;
 
+/// Default FT vector-index dimension used by the bare [`MoonClient::connect`] /
+/// [`MoonStorage::connect`](crate::MoonStorage::connect) constructors. Matches
+/// EmbeddingGemma-300M (the default Lunaris embedder). Callers wiring a wider
+/// embedder (e.g. OpenAI `text-embedding-3` at 1536-d) should use
+/// [`MoonClient::connect_with_dim`] instead — Moon's `FT.CREATE` has no
+/// dimension cap (`DIM > 0` is the only constraint).
+pub const DEFAULT_VECTOR_DIM: usize = 768;
+
 /// A live typed `moon-client` connection to a Moon instance, parsed from a `moon://` URL.
 ///
 /// `Clone` is cheap — the underlying `moon_client::MoonClient` shares its
@@ -47,6 +55,11 @@ pub struct MoonClient {
     pub port: u16,
     /// Optional workspace selector from the `?ws=...` query param.
     pub workspace: Option<String>,
+    /// FT vector-index dimension this client creates indices at. Set at
+    /// `connect`/`connect_with_dim` time; `> 0` invariant enforced by the
+    /// constructor. Read by `ensure_indexes` (and re-exported to
+    /// `MoonStorage::create_scope_indexes` via `self.client.dim`).
+    pub dim: usize,
     /// The typed `moon-client` SDK handle. Cheap to clone.
     pub(crate) inner: TypedClient,
 }
@@ -57,6 +70,7 @@ impl std::fmt::Debug for MoonClient {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("workspace", &self.workspace)
+            .field("dim", &self.dim)
             .field("inner", &"<moon_client::MoonClient>")
             .finish()
     }
@@ -71,10 +85,32 @@ impl MoonClient {
     /// network IO so a malicious `redis://` URL cannot exercise the Moon code path
     /// (defense in depth — mirrors the URL dispatcher in `crates/lunaris/src/open.rs`).
     pub async fn connect(url: &str) -> Result<Self, StorageError> {
+        Self::connect_with_dim(url, DEFAULT_VECTOR_DIM).await
+    }
+
+    /// Like [`MoonClient::connect`], but creates the FT vector indices at `dim`
+    /// instead of the [`DEFAULT_VECTOR_DIM`] (768).
+    ///
+    /// `dim` MUST be `> 0`; `0` returns `StorageError::Backend("vector dim must
+    /// be > 0")` before any network IO. Moon's `FT.CREATE` has no upper cap, so
+    /// a 1536-d embedder (OpenAI `text-embedding-3`), 384-d, etc. all work.
+    ///
+    /// ## Operator footgun — existing index won't auto-resize
+    ///
+    /// Moon's `FT.CREATE` is idempotent and does NOT update an existing index's
+    /// schema. If a Moon instance already holds a 768-d `chunks` index from a
+    /// previous run and you reopen with a 1536-d embedder, `create_index`
+    /// returns "already exists" and the dimension mismatch only surfaces later
+    /// on the first vector write. Drop the stale index (`FT.DROPINDEX <name>`)
+    /// before reopening at the new dimension.
+    pub async fn connect_with_dim(url: &str, dim: usize) -> Result<Self, StorageError> {
         let parsed = url::Url::parse(url)
             .map_err(|e| StorageError::UnsupportedScheme(format!("moon parse: {e}")))?;
         if parsed.scheme() != "moon" {
             return Err(StorageError::UnsupportedScheme(parsed.scheme().into()));
+        }
+        if dim == 0 {
+            return Err(StorageError::Backend("vector dim must be > 0".into()));
         }
         let host = parsed
             .host_str()
@@ -102,7 +138,7 @@ impl MoonClient {
                 ))
             })?
             .map_err(moon_err)?;
-        let me = Self { host, port, workspace, inner };
+        let me = Self { host, port, workspace, dim, inner };
         me.ensure_indexes().await?;
         Ok(me)
     }
@@ -114,7 +150,8 @@ impl MoonClient {
 
     /// Idempotently create the FT indexes Lunaris uses (`chunks`, `entities`,
     /// `facts`, `communities`). Each index declares the dense `vec` field
-    /// (HNSW Cosine, 768d) AND a TEXT `content` field so BM25 / HYBRID
+    /// (HNSW Cosine, `self.dim`-d — set at `connect`/`connect_with_dim`;
+    /// defaults to [`DEFAULT_VECTOR_DIM`]) AND a TEXT `content` field so BM25 / HYBRID
     /// `FT.SEARCH` can score against the per-row text payload populated by
     /// `WriteOp::VectorUpsert` (Gap 9 fix 2026-04-21 —
     /// `extract_content_for_index` mirrors the Postgres tsvector convention).
@@ -133,14 +170,14 @@ impl MoonClient {
     /// schema takes effect (Moon will recreate on next `ensure_indexes` call).
     async fn ensure_indexes(&self) -> Result<(), StorageError> {
         use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
-        const DIM: usize = 768;
+        let dim = self.dim;
         for (name, prefix) in &[
             ("chunks", "chunks:"),
             ("entities", "entities:"),
             ("facts", "facts:"),
             ("communities", "communities:"),
         ] {
-            let mut opts = VectorIndexOptions::new(DIM, DistanceMetric::Cosine)
+            let mut opts = VectorIndexOptions::new(dim, DistanceMetric::Cosine)
                 .prefix(*prefix)
                 .field_name("vec")
                 .add_field(SchemaField::Text("content".to_string()));
@@ -237,6 +274,42 @@ mod tests {
     async fn rejects_garbage_url() {
         let r = MoonClient::connect("not a url").await;
         assert!(matches!(r, Err(StorageError::UnsupportedScheme(_))));
+    }
+
+    /// `connect_with_dim(url, 0)` MUST reject before any network IO — the
+    /// `dim > 0` invariant is checked right after URL parse / scheme check,
+    /// so this test needs no live Moon. (We pass a syntactically valid
+    /// `moon://` URL so the scheme check passes and we reach the dim guard.)
+    #[tokio::test]
+    async fn connect_with_dim_rejects_zero_dim() {
+        let r = MoonClient::connect_with_dim("moon://localhost:6390", 0).await;
+        match r {
+            Err(StorageError::Backend(msg)) => {
+                assert!(msg.contains("vector dim must be > 0"), "unexpected msg: {msg}");
+            }
+            other => panic!("expected Backend(vector dim must be > 0), got {other:?}"),
+        }
+    }
+
+    /// Structural guard: `ensure_indexes` builds `VectorIndexOptions` from the
+    /// per-client `dim` field, not a hard-coded constant. A 1536-d embedder
+    /// must produce a 1536-d `vec` field (validated end-to-end by the
+    /// `moon-it`-gated `dim_configurable` integration test).
+    #[test]
+    fn ensure_indexes_uses_per_client_dim_not_const() {
+        let source = include_str!("client.rs");
+        assert!(
+            source.contains("VectorIndexOptions::new(dim, DistanceMetric::Cosine)"),
+            "ensure_indexes must size the FT index from the stored `dim`, not a const"
+        );
+        // The old hard-coded constant for the FT vector dimension must be gone
+        // from this file. We assemble the needle from pieces so this assertion
+        // does not match itself in the `include_str!`'d source.
+        let needle = format!("const {} usize = {}", "DIM:", 768);
+        assert!(
+            !source.contains(&needle),
+            "the hard-coded const-DIM declaration must be gone from ensure_indexes"
+        );
     }
 
     /// Plan 09.1-02 Task 2 — structural guard on `ensure_indexes`.

@@ -46,5 +46,5 @@ default = []
 # Run integration tests against a live Postgres with vector + age + pgmq at PG_URL.
 pg-it   = []
 # Cross-backend identity assertions live in `lunaris-conformance` (which can
-# depend on both backends) since `lunaris-storage-moon` carries a `moondb`
-# path-dep that isn't on crates.io and would block publish for this crate.
+# depend on both storage backends) — this crate stays Moon-free so it doesn't
+# pull the Moon SDK into a Postgres-only build.

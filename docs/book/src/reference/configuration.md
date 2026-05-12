@@ -221,8 +221,8 @@ The handles are obtained from the `Lunaris` value after `open`; see
 
 | Scheme | Backend | Notes |
 |---|---|---|
-| `moon://host:port` | Moon (Redis-compatible) | Native `FT.SEARCH` vector + BM25, `GRAPH.QUERY`, message queue, native RRF fusion. Embedding dim ≤ 768. |
-| `postgres://` / `postgresql://[user[:pass]@]host[:port]/db` | Postgres + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. Embedding dim ≤ 1536. |
+| `moon://host:port` | Moon (Redis-compatible) | Native `FT.SEARCH` vector + BM25, `GRAPH.QUERY`, message queue, native RRF fusion. The Moon adapter creates its `chunks` FT index at the configured embedder's dimension (default 768; `Lunaris::open` passes `embedder.dim()`, `MoonStorage::connect_with_dim` sets it directly) — Moon itself has no dim cap. See [Choosing a Backend](../operations/backends.md). |
+| `postgres://` / `postgresql://[user[:pass]@]host[:port]/db` | Postgres + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. pgvector handles embeddings up to ~1536-d. |
 | anything else | — | `StorageError::UnsupportedScheme` |
 
 **Postgres connection details** (`lunaris-storage-postgres/src/pool.rs`):

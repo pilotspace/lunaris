@@ -51,8 +51,9 @@ types, `init_logging`, the pipeline handles, etc.
 > `lunaris-codegen`, `lunaris-conformance`, and `lunaris-bench` are internal
 > tooling crates — not part of the public API.
 
-> **Publishing note.** `lunaris-storage-moon` currently carries a path
-> dependency on the (unpublished) `moondb` crate, so the workspace cannot be
-> published to crates.io as-is; the `docs.rs` metadata is in place for when
-> that dependency lands. Until then, depend on Lunaris via a git or path
-> dependency.
+> **Publishing note.** The umbrella crate is published as **`lunaris-memory`**
+> (the bare `lunaris` name on crates.io is taken; the *library* name stays
+> `lunaris`, so the import path is unchanged). `lunaris-storage-moon` depends
+> on `moondb` from crates.io (version-pinned), so the workspace is
+> crates.io-publishable; the `[package.metadata.docs.rs]` blocks are wired so
+> `docs.rs` builds the right feature set.
