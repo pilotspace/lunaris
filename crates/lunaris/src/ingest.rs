@@ -236,7 +236,7 @@ async fn ingest_episode_graph_on(
     // Build typed Chunks
     let mut chunks: Vec<Chunk> = Vec::with_capacity(drafts.len());
     for (draft, embedding) in drafts.into_iter().zip(embeddings.into_iter()) {
-        let mut c = draft.into_chunk(episode.id, clock);
+        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
         c.embedding = Some(embedding);
         chunks.push(c);
     }
