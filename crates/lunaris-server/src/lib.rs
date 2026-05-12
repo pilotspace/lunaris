@@ -10,10 +10,10 @@
 //!
 //! | Method & path        | Purpose                                  |
 //! |----------------------|------------------------------------------|
-//! | `POST /v1/ingest`    | ingest an episode (streams progress over SSE) |
-//! | `POST /v1/recall`    | run a retrieval-DSL query                 |
+//! | `POST /v1/ingest`    | ingest an episode; returns the assigned `Lsn` |
+//! | `POST /v1/recall`    | run a retrieval-DSL query; streams hits as Server-Sent Events (`event: hit`) |
 //! | `POST /v1/forget`    | forget by scope / target                  |
-//! | `GET  /v1/snapshot/{lsn}` | monotonic LSN read marker            |
+//! | `GET  /v1/snapshot/{lsn}` | NDJSON stream of every primitive visible at `{lsn}` |
 //! | `GET  /healthz`      | unauthenticated liveness probe            |
 //! | `GET  /metrics`      | Prometheus text-format metrics (root, no Bearer) |
 //!
@@ -35,7 +35,7 @@
 //!
 //! - [`config`] — clap `Config` struct (D-01..D-09 flags + matching env vars).
 //! - [`state`] — `AppState { lunaris: Arc<Lunaris>, tokens, runtime_flags }`.
-//! - [`dto`] — JSON wire DTOs (`RecallRequest`, `IngestResponse`, `RetrievalMode`).
+//! - [`dto`] — JSON wire DTOs (`IngestBody`, `IngestResponse`, `RecallRequest`, `RetrievalMode`, `ForgetRequestDto`).
 //! - [`shutdown`] — `tokio::sync::Notify` graceful-shutdown wrapper.
 //! - [`routes`] — per-verb handler modules (`ingest`, `recall`, `forget`, `snapshot`, `healthz`).
 //! - [`middleware`] — `auth`, `rate_limit`, `cors`, `error`.
