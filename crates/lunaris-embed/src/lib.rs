@@ -27,6 +27,9 @@
 
 #[cfg(feature = "candle")]
 pub mod candle_gemma;
+// RFC 0007 §3 — FallbackEmbedder<P, F> static-dispatch combinator with
+// per-instance CircuitBreaker. Always built; mirrors lunaris-extract::fallback.
+pub mod fallback;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
