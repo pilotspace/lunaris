@@ -10,10 +10,10 @@
 //! handles), parses it into a strongly-typed [`SurfaceIR`], then hands it to
 //! two emitters:
 //!
-//! - [`emit_py`] — PyO3 0.26 wrapper code. Every async method is wrapped in
+//! - [`emit_py`](mod@emit_py) — PyO3 0.26 wrapper code. Every async method is wrapped in
 //!   `pyo3_async_runtimes::tokio::future_into_py` so the GIL is released
 //!   across every `.await` (CLAUDE.md "never hold a lock across `.await`").
-//! - [`emit_ts`] — napi-rs 3.x glue + matching `.d.ts` declarations.
+//! - [`emit_ts`](mod@emit_ts) — napi-rs 3.x glue + matching `.d.ts` declarations.
 //!
 //! The binary `lunaris-codegen` drives the pipeline via clap-derived flags:
 //!

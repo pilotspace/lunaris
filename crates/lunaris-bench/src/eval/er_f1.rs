@@ -1,7 +1,7 @@
 //! Plan 05-06 EVAL-03 — Entity Resolution F1 harness.
 //!
 //! Loads `tner/wnut2017` (held-out NER corpus per CONTEXT.md D-19) via
-//! [`crate::eval::longmemeval::download_dataset`] (W-7 fix — shared
+//! `crate::eval::longmemeval::download_dataset` (W-7 fix — shared
 //! `pub(crate)` helper, NOT a fictional `__download_test_helper` alias);
 //! runs lunaris-extract Gemma-3 4B on the same text; compares predicted
 //! `(entity, type)` pairs to gold; computes F1; asserts F1 ≥ 0.80.

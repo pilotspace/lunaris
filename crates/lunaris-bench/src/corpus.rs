@@ -755,7 +755,7 @@ pub async fn ensure_corpus_or_skip(
 ///
 /// Same deterministic ChaCha20-seeded generator family as
 /// [`build_chaos_corpus`] + [`build_one_million_fact_corpus`], but emits one
-/// [`Episode`] per document with a markdown body shaped like the
+/// [`Episode`](lunaris_core::Episode) per document with a markdown body shaped like the
 /// `lunaris-ingest` `twelve_kb_markdown_fixture` (heading + paragraphs
 /// targeting ~12 KB).
 ///

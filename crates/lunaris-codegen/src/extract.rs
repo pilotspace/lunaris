@@ -2,7 +2,7 @@
 //!
 //! Reads the declarative `crates/lunaris-codegen/annotations/surface.toml`
 //! file and deserialises it directly into [`SurfaceIR`] via `toml::from_str`.
-//! No custom string grammar — structured-table [`IrTyRef`] variants map
+//! No custom string grammar — structured-table [`IrTyRef`](crate::ir::IrTyRef) variants map
 //! one-to-one onto TOML tables (see `ir.rs` module docs).
 //!
 //! The extractor is deterministic: given an unchanged TOML file, the output

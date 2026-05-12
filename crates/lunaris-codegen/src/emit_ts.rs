@@ -45,7 +45,7 @@ pub struct TsOutput {
 /// (`mod generated;`) by the host crate (Plan 08-03 `crates/lunaris-ts`),
 /// NOT via `include!` — napi-rs 3.x's `#[napi]` proc-macro maintains
 /// global struct-registration state that `include!` disrupts, surfacing
-/// as "Did not find struct `X` parsed before expand #[napi] for impl"
+/// as "Did not find struct `X` parsed before expand #\[napi\] for impl"
 /// on factory methods. Using a real module keeps proc-macro expansion
 /// order stable.
 ///

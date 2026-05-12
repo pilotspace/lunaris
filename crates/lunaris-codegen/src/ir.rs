@@ -24,7 +24,7 @@
 //! Serde round-trips the shape directly — `#[serde(tag = "kind",
 //! rename_all = "snake_case")]` on the enum matches the TOML. No custom
 //! `TryFrom<String>` parser is needed. The
-//! [`tests::every_ir_ty_ref_variant_round_trips`] test (in
+//! `tests::every_ir_ty_ref_variant_round_trips` test (in
 //! `tests/surface_toml_roundtrip.rs`) locks the contract: every variant must
 //! survive a `toml::to_string` → `toml::from_str` round trip unchanged.
 //!

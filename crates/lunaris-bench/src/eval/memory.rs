@@ -1,12 +1,12 @@
 //! Plan 05-06 EVAL-04 — RSS sampling at 1M facts.
 //!
 //! Per CONTEXT.md D-19: ingest 1M facts via
-//! [`build_one_million_fact_corpus`]; sample resident-set-size via per-OS
+//! [`build_one_million_fact_corpus`](crate::corpus::build_one_million_fact_corpus); sample resident-set-size via per-OS
 //! sampler; assert RSS ≤ 2 GB on Moon TQ4 4-bit per blueprint §13.
 //!
 //! ## Per-OS sampler (B-6 fix)
 //!
-//! - **Linux**: [`procfs::process::Process::myself`].stat() × page_size.
+//! - **Linux**: `procfs::process::Process::myself().stat() × page_size`.
 //! - **macOS**: shell-out to `ps -o rss= -p <pid>` (returns RSS in KB; multiply
 //!   by 1024). NO `mach2` FFI — CLAUDE.md `#![forbid(unsafe_code)]` mandate
 //!   would require an unsafe wrapper crate (Plan 04-03 set the precedent:

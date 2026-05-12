@@ -1,6 +1,6 @@
 //! Plan 05-06 EVAL-05 + EVAL-06 — end-to-end Helios scenarios.
 //!
-//! Re-implements the [`HeliosScratchpad`] smoke loop from Plan 05-04
+//! Re-implements the `HeliosScratchpad` smoke loop from Plan 05-04
 //! (`crates/lunaris/tests/helios_scratchpad_smoke.rs`) as a callable harness
 //! so `lunaris-evals e2e` can produce JSON-serializable EvalRows from the
 //! same workload. Same Helios-shaped writes / reads / grep + same

@@ -13,7 +13,7 @@
 //!
 //! ## B-4 fix (CLAUDE.md `#![forbid(unsafe_code)]`)
 //!
-//! [`download_dataset`] uses `hf_hub::api::tokio::ApiBuilder::with_cache_dir`
+//! `download_dataset` uses `hf_hub::api::tokio::ApiBuilder::with_cache_dir`
 //! for caller-controlled cache directories. ZERO unsafe blocks. ZERO env
 //! mutation. The prior plan-body shape that used
 //! `unsafe { std::env::set_var("HF_HOME", ...) }` was rejected by the B-4
@@ -21,7 +21,7 @@
 //!
 //! ## W-7 fix (visibility)
 //!
-//! [`download_dataset`] is `pub(crate)` so [`crate::eval::locomo`] and
+//! `download_dataset` is `pub(crate)` so [`crate::eval::locomo`] and
 //! [`crate::eval::er_f1`] reuse this same helper for their HF datasets
 //! (no `__download_test_helper` alias anywhere — single source of truth).
 //!

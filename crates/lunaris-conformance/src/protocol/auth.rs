@@ -35,7 +35,7 @@ pub async fn missing_token_returns_401(client: &Client, base: &Url) -> anyhow::R
 /// `/v1/recall` route (which requires the `recall` scope per Plan 05-01
 /// `lib.rs::scoped_auth`).
 ///
-/// The subprocess runner ([`crates/lunaris-conformance/tests/run_protocol_lunaris_server.rs`])
+/// The subprocess runner (`crates/lunaris-conformance/tests/run_protocol_lunaris_server.rs`)
 /// writes this token into the `--tokens-file` JSON when it spawns the server.
 pub async fn wrong_scope_returns_403(client: &Client, base: &Url) -> anyhow::Result<()> {
     let url = base.join("/v1/recall")?;

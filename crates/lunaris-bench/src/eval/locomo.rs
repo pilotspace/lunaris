@@ -3,7 +3,7 @@
 //! Same shape as [`crate::eval::longmemeval`]; HF dataset
 //! `snap-research/locomo10`; threshold J ≥ 70 (alpha bar per blueprint §13).
 //!
-//! Calls [`crate::eval::longmemeval::download_dataset`] (W-7 fix — shared
+//! Calls `crate::eval::longmemeval::download_dataset` (W-7 fix — shared
 //! `pub(crate)` helper, NOT a fictional `__download_test_helper` alias).
 //! Single source of truth for HF download semantics in the eval gauntlet.
 //!

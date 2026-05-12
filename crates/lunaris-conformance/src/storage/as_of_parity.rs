@@ -9,7 +9,7 @@
 //! of stopping at the first one (T-05-02-04 mitigation).
 //!
 //! Per CONTEXT.md D-12 the score-epsilon comparison is gated on
-//! [`StorageCapabilities`] — when one backend reports
+//! [`StorageCapabilities`](lunaris_core::StorageCapabilities) — when one backend reports
 //! `rerank_native = false` (Postgres) and the other reports `true`
 //! (Moon), score precision divergence is documented in the
 //! [`DivergenceKind::ScoreEpsilon`] variant rather than blanket failure.
