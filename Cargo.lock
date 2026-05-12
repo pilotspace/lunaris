@@ -2688,7 +2688,6 @@ dependencies = [
  "chrono",
  "futures",
  "lunaris-core",
- "lunaris-storage-moon",
  "parking_lot",
  "serde",
  "serde_json",
