@@ -178,7 +178,12 @@ impl Publisher for Arc<dyn StoragePort> {
         payload: Bytes,
     ) -> Result<u64, PublishError> {
         // RFC 0001 Wave 0: audit publishes use Scope::dev() as migration crutch.
-        // Wave 1E will thread the real scope through the audit path.
+        // Wave 1E will thread the real scope through the audit path — that
+        // requires extending the `Publisher` trait surface (`publish` gains
+        // a `scope` parameter) plus updating every `publish_audit_event`
+        // call site to forward the scope from its `Lunaris{,Scoped}` handle.
+        // scope-dev-allowed: audit-publish-trait-surface — Publisher::publish
+        // is scope-less; tracked in docs/v0.3-known-debt.md as Wave 1E.
         StoragePort::publish(self.as_ref(), &Scope::dev(), topic, partition, payload)
             .await
             .map_err(|e: StorageError| PublishError::Backend(e.to_string()))

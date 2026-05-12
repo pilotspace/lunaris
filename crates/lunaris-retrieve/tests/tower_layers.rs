@@ -15,7 +15,8 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
 };
 use lunaris_core::{
-    Embedder, Hlc, LunarisError, StorageCapabilities, StorageError, StoragePort, StubEmbedder,
+    Embedder, Hlc, LunarisError, Scope, StorageCapabilities, StorageError, StoragePort,
+    StubEmbedder,
 };
 use lunaris_retrieve::{Query, RetrievalService, Vector};
 use parking_lot::Mutex;
@@ -138,7 +139,7 @@ async fn wraps_in_tower_service_builder() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     let root: Arc<dyn lunaris_retrieve::Retriever> = Arc::new(Vector::new("chunks", 30));
-    let svc = RetrievalService::new(root, embedder, storage, keyword);
+    let svc = RetrievalService::new(root, embedder, storage, keyword, Scope::dev());
 
     // Compose with rate-limit + timeout. The compile is the proof — every
     // layer on the chain has to type-check the inner service shape.
@@ -161,7 +162,7 @@ async fn retrieval_service_is_clone_so_tower_buffer_works() {
     let keyword: Arc<dyn KeywordPort> = store.clone();
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
     let root: Arc<dyn lunaris_retrieve::Retriever> = Arc::new(Vector::new("chunks", 30));
-    let svc = RetrievalService::new(root, embedder, storage, keyword);
+    let svc = RetrievalService::new(root, embedder, storage, keyword, Scope::dev());
     let _clone = svc.clone();
 }
 

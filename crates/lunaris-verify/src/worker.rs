@@ -100,6 +100,8 @@ pub async fn run_verify_worker(
 ) -> Result<JoinHandle<()>, LunarisError> {
     // RFC 0001: the verify queue is a global topic shared across scopes.
     // Scope::dev() is intentional here — per-scope verify routing is deferred.
+    // scope-dev-allowed: inside-deprecated-wrapper — v0.3 supervisor migration
+    // tracked in RFC 0001 §3.7 / docs/v0.3-known-debt.md.
     let dev_scope = Scope::dev();
     let stream = storage
         .subscribe(&dev_scope, VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, 0)

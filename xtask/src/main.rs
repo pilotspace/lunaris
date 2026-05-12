@@ -20,6 +20,8 @@
 //! ✗ Postgres: ingest p99 over budget (153.4 ms > 110 ms)
 //! ```
 
+mod check_scope;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -64,6 +66,10 @@ enum Cmd {
         #[arg(long, value_parser = ["moon", "postgres"])]
         backend: String,
     },
+    /// P0 #1 Wave 2 — fail when an un-marked `Scope::dev()` site appears
+    /// under `crates/`. Production sites MUST carry a
+    /// `// scope-dev-allowed: <reason>` marker per RFC 0001 / CLAUDE.md.
+    CheckScope,
 }
 
 fn main() -> Result<()> {
@@ -76,7 +82,21 @@ fn main() -> Result<()> {
         Some(Cmd::Bench { skip_bench, groups }) => cmd_bench(skip_bench, &groups),
         Some(Cmd::Eval { output }) => cmd_eval_gauntlet(&output),
         Some(Cmd::Conformance { backend }) => cmd_conformance(&backend),
+        Some(Cmd::CheckScope) => check_scope::cmd_check_scope(&workspace_root()),
     }
+}
+
+/// Resolve the workspace root path. xtask is itself a workspace member, so
+/// `CARGO_MANIFEST_DIR` (set by Cargo at build time) points to `xtask/`,
+/// whose parent is the workspace root. Falls back to the current working
+/// directory when the env var is missing (e.g., running the binary by hand).
+fn workspace_root() -> PathBuf {
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR")
+        && let Some(parent) = Path::new(manifest_dir).parent()
+    {
+        return parent.to_path_buf();
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn print_help() {
@@ -97,6 +117,10 @@ fn print_help() {
     println!("                       harnesses (else they SKIP cleanly).");
     println!("  conformance --backend moon|postgres");
     println!("                       Run the lunaris-conformance suite against a backend.");
+    println!("  check-scope          P0 #1 Wave 2 grep-pin guard. Fails when an");
+    println!("                       un-marked `Scope::dev()` site is found under crates/.");
+    println!("                       Each production call site MUST carry a");
+    println!("                       `// scope-dev-allowed: <reason>` marker.");
     println!("  help                 Print this help.");
 }
 

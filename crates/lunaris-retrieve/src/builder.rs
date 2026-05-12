@@ -104,6 +104,8 @@ impl RetrievalBuilder {
             moon_storage: None,
             base_filter: None,
             base_as_of: None,
+            // scope-dev-allowed: bare-recall-default — warn-on-execute when
+            // scope==Scope::dev(); ScopedLunaris::dsl() overrides via with_scope().
             scope: Scope::dev(),
             initial_degraded: false,
             recency_config: None,
@@ -242,6 +244,21 @@ impl RetrievalBuilder {
 
     /// Run the tree and hydrate. Terminal — consumes the builder.
     pub async fn execute(self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
+        // P0 #1 Wave 2 — warn when the builder is still seeded with the
+        // bare-recall `Scope::dev()` default. ScopedLunaris::dsl() / .recall()
+        // both call `with_scope(self.scope)` so the warn only fires on the
+        // unscoped `Lunaris::recall().execute(...)` path (the documented
+        // backward-compat shim). One warn per execute is sufficient — query
+        // throughput already aggregates upstream of this call.
+        // scope-dev-allowed: bare-recall-default-detector — equality check + warn
+        // message both reference Scope::dev() for the detector itself.
+        if self.scope == Scope::dev() {
+            // scope-dev-allowed: warn-message-text — message references the
+            // marker for operator readability.
+            tracing::warn!(
+                "RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()"
+            );
+        }
         // Builder-level filter / as_of override the per-query fields IFF the
         // query didn't already set them. Builder fields are the persistent
         // "this handle's defaults"; per-query fields are the one-shot

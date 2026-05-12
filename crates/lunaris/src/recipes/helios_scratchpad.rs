@@ -204,6 +204,12 @@ impl HeliosScratchpad {
     /// requiring hard delete go through the umbrella
     /// [`Lunaris::confirm_hard_forget`] two-step rail (D-21).
     pub async fn forget(&self) -> Result<ForgetReceipt, LunarisError> {
+        // P0 #1 Wave 2: HeliosScratchpad still routes through the deprecated
+        // bare `Lunaris::forget` path because the recipe does not yet carry
+        // an explicit `Scope` field. Wave 2 recipe-ctor migration adds that
+        // (tracked in docs/v0.3-known-debt.md alongside the WorkingMemory
+        // /  MessageStream / DocumentCorpus ctor work).
+        #[allow(deprecated)]
         self.lunaris
             .forget(ForgetTarget::Scope(ScopeSpec::BySource(self.session_prefix.clone())))
             .await

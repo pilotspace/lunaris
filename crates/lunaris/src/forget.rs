@@ -194,10 +194,14 @@ impl From<ForgetTarget> for ForgetRequest {
 
 impl Lunaris {
     /// `Lunaris::forget(target) -> Result<ForgetReceipt, LunarisError>` —
-    /// single entry point per D-18. Closes OPS-01 / OPS-02 / OPS-03 and
-    /// emits one `__lunaris_audit__` event per call (OPS-04).
+    /// **DEPRECATED** as of P0 #1 Wave 2. Use
+    /// `engine.scoped(scope).forget(request)` instead so the forget call
+    /// inherits the bound partition key. The legacy path routes its
+    /// internal storage calls through `Scope::dev()` and silently returns
+    /// `rows_deleted = 0, rows_written = 0` under any non-`_dev_` scope.
+    /// See `docs/v0.3-known-debt.md` for the removal plan (v0.4 task).
     ///
-    /// ## Behaviour matrix
+    /// ## Behaviour matrix (unchanged from v0.2)
     ///
     /// | Request                              | Result                                  |
     /// |--------------------------------------|-----------------------------------------|
@@ -205,6 +209,12 @@ impl Lunaris {
     /// | `target.dry_run()`                   | No `atomic_write`; preview receipt      |
     /// | `target.hard()` (no token)           | `Err(Validate(ConfirmationRequired))`   |
     /// | `target.hard().with_token(t)`        | One `atomic_write` of `KvDelete` ops    |
+    // scope-dev-allowed: deprecation-note — message text references the
+    // marker for adopters reading the rustc warning.
+    #[deprecated(
+        since = "0.3.0",
+        note = "use `engine.scoped(scope).forget(request)` — Lunaris::forget routes through Scope::dev() and returns zero matches under any non-_dev_ scope"
+    )]
     pub async fn forget(
         &self,
         request: impl Into<ForgetRequest>,
@@ -241,6 +251,8 @@ impl Lunaris {
             // work" see the warning in the line right above their forget
             // invocation. Suppressible via the standard tracing filter
             // (`LUNARIS_LOG=lunaris::forget=error` or similar).
+            // scope-dev-allowed: warn-string-mentions-marker — operator
+            // readability text; ScopedLunaris::forget is the canonical fix.
             tracing::warn!(
                 target: "lunaris::forget",
                 "Lunaris::forget is hard-coded to Scope::dev() in v0.2.x — \
@@ -298,6 +310,7 @@ impl Lunaris {
             // batch would be a no-op anyway and some backends reject it).
             if !ops.is_empty() {
                 // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+                // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
                 let _lsn = self
                     .storage
                     .atomic_write(&lunaris_core::Scope::dev(), &ops)
@@ -376,6 +389,7 @@ async fn scan_matches(
         let key_str = format!("episode:{ulid}");
         // B-4: clock.tick() — Hlc::now() doesn't exist in this codebase.
         let now = clock.tick();
+        // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
         let row = storage
             .read_as_of(&lunaris_core::Scope::dev(), key_str.as_bytes(), now)
             .await
@@ -393,6 +407,7 @@ async fn scan_matches(
     let prefix: &[u8] = b"episode:";
 
     // RFC 0001 Wave 0: use Scope::dev() until per-scope routing (Wave 1D).
+    // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
     let mut stream = storage
         .scan_range(&lunaris_core::Scope::dev(), prefix, None)
         .await
@@ -405,6 +420,7 @@ async fn scan_matches(
             // can mutate the typed struct via `invalidate_sys`. now is bumped
             // per row to preserve HLC monotony.
             let now = clock.tick();
+            // scope-dev-allowed: deprecated-Lunaris::forget-routes-here-until-v0.4
             let row_opt = storage
                 .read_as_of(&lunaris_core::Scope::dev(), &k, now)
                 .await
