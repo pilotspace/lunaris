@@ -1,26 +1,56 @@
-//! Composable Lunaris recipe primitives.
+//! Composable, opinionated memory recipes for [Lunaris].
 //!
-//! Each primitive wraps an [`std::sync::Arc<lunaris::Lunaris>`] handle and
-//! exposes a ≤ 30 LOC public surface. Parity tests under `tests/` (Wave 3)
-//! enforce Moon + Postgres semantic equivalence per Phase 4 Plan 04-03
-//! `probe_backend` discipline.
+//! Where the umbrella `lunaris` crate gives you the raw engine (ingest,
+//! retrieval DSL, forget, the optional graph/verify/consolidate pipelines),
+//! this crate layers ready-made *recipes* on top — small wrappers (each a
+//! ≤ 30 LOC public surface over an `Arc<lunaris::Lunaris>`) that encode the
+//! right defaults for a concrete use case so callers don't re-derive them.
+//! Every wrapper has Moon + Postgres parity tests under `tests/*_parity.rs`.
 //!
-//! ## Primitives
+//! See the Lunaris book's **Cookbook** chapter for worked examples of each.
 //!
-//! - [`MessageStream`] — recency-weighted message recall (ACT-R base-level,
-//!   Anderson 1996 `d = 0.5`).
-//! - [`DocumentCorpus`] — RRF-fused Vector + Keyword RAG.     *(Wave 2 stub)*
-//! - [`TemporalQuery`] — typestate time-travel combinator.    *(Wave 2 stub)*
-//! - [`WorkingMemory`] — scope-prefixed scratchpad + Consolidator promotion.
-//!   *(Wave 2 stub)*
+//! ## Layering
 //!
-//! ## Wave 1 scope (Plan 09-01)
+//! ### 4 primitives — the reusable building blocks
 //!
-//! This wave lands [`MessageStream`] fully implemented and the other three
-//! primitives as compiling stubs. Wave 2 Plans 09-02 (DocumentCorpus), 09-03
-//! (WorkingMemory), and 09-04 (TemporalQuery) each replace ONE stub file
-//! wholesale — `files_modified` sets stay disjoint so the three plans run in
-//! parallel without touching this `lib.rs` again.
+//! - [`MessageStream`] — recency-weighted message recall (ACT-R base-level
+//!   activation, Anderson 1996, `d = 0.5`); the substrate for conversational
+//!   recipes.
+//! - [`DocumentCorpus`] — RRF-fused Vector + Keyword (BM25) retrieval; the
+//!   substrate for documentary recipes.
+//! - [`TemporalQuery`] — typestate time-travel combinator (`as_of` / `between`
+//!   over `Messages` / `Documents` / `Facts` markers).
+//! - [`WorkingMemory`] — scope-prefixed scratchpad with `Consolidator`
+//!   promotion (re-exported here from [`lunaris::primitives`] so the long-lived
+//!   `lunaris_recipes::WorkingMemory` import path stays stable).
+//!
+//! ### 5 conversational wrappers (`conversational/`)
+//!
+//! - [`ChatAgentMemory`](conversational::ChatAgentMemory) — a single agent's
+//!   running conversation memory.
+//! - [`MultiTurnConversation`](conversational::MultiTurnConversation) —
+//!   turn-structured dialogue with role attribution.
+//! - [`SlackArchive`](conversational::SlackArchive) — channel/thread-aware
+//!   chat history.
+//! - [`EmailThreading`](conversational::EmailThreading) — reply-chain-aware
+//!   mail memory.
+//! - [`MeetingNotesMemory`](conversational::MeetingNotesMemory) — transcript +
+//!   action-item recall.
+//!
+//! ### 5 documentary wrappers (`documentary/`)
+//!
+//! - [`DocumentKnowledgeBase`](documentary::DocumentKnowledgeBase) — general
+//!   document KB with hybrid retrieval.
+//! - [`ResearchPaperCorpus`](documentary::ResearchPaperCorpus) — paper-aware
+//!   corpus (sections, citations).
+//! - [`CodeRepoMemory`](documentary::CodeRepoMemory) — source-tree-aware code
+//!   memory.
+//! - [`TimelineReconstruction`](documentary::TimelineReconstruction) —
+//!   bi-temporal event-timeline rebuild.
+//! - [`CustomerSupportHistory`](documentary::CustomerSupportHistory) — ticket
+//!   / case-history recall.
+//!
+//! [Lunaris]: https://github.com/lunaris-dev/lunaris
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]

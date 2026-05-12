@@ -11,6 +11,18 @@
 //!   handle wired with a default [`Embedder`] + [`HlcClock`] so callers can
 //!   call `lunaris.ingest(episode).await?` without manually plumbing the
 //!   Phase 2 pipeline. This is what Helios uses.
+//!
+//! ## Prelude
+//!
+//! For day-to-day use, glob-import the curated common surface:
+//!
+//! ```rust
+//! use lunaris::prelude::*;
+//! ```
+//!
+//! See [`prelude`] for the exact list — it intentionally stays small
+//! (handle, scope, episode builder, retrieval DSL, the pluggable
+//! trait + `Noop*` pairs, and the umbrella error type).
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
@@ -133,3 +145,34 @@ pub use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 // (bypassing URL routing — needed by the conformance harness in Phase 5).
 pub use lunaris_storage_moon::MoonStorage;
 pub use lunaris_storage_postgres::PostgresStorage;
+
+/// Glob-import the common surface: `use lunaris::prelude::*;`.
+///
+/// This is a *curated* set — the handful of symbols a typical caller needs to
+/// open a store, build an episode, run a retrieval, and plug in (or stub out)
+/// the optional pipeline stages. It is deliberately **not** a glob of every
+/// re-export; reach into `lunaris::` directly for the long tail (pipeline
+/// handles, backend opts, conformance helpers, env-var constants, …).
+pub mod prelude {
+    // Handle + scoping.
+    pub use crate::handle::{Lunaris, ScopedLunaris};
+    pub use lunaris_core::scope::Scope;
+
+    // Building an episode + targeting a forget.
+    pub use crate::episode_builder::EpisodeBuilder;
+    pub use crate::forget::{ForgetTarget, ScopeSpec};
+
+    // Retrieval DSL.
+    pub use lunaris_retrieve::{Graph, Hit, Keyword, Query, RetrievalBuilder, Vector};
+
+    // Umbrella error type.
+    pub use lunaris_core::error::LunarisError;
+
+    // Pluggable trait surface + their Noop fallbacks.
+    pub use lunaris_consolidate::{Consolidator, NoopConsolidator};
+    pub use lunaris_core::embedder::Embedder;
+    pub use lunaris_core::hlc::HlcClock;
+    pub use lunaris_extract::{Extractor, NoopExtractor};
+    pub use lunaris_rerank::{NoopReranker, Reranker};
+    pub use lunaris_verify::{NoopVerifier, Verifier};
+}

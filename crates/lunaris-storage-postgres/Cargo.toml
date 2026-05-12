@@ -18,6 +18,10 @@ categories  = ["database", "asynchronous", "data-structures"]
 # Live tests expect Postgres+pgvector+age+pgmq at PG_URL (default postgres://localhost/lunaris).
 # Cross-backend identity test additionally requires MOON_URL.
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 lunaris-core = { workspace = true }
 async-trait              = { workspace = true }

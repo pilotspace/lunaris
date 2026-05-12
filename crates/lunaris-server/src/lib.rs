@@ -1,9 +1,38 @@
-//! Plan 05-01 — `lunaris-server` crate.
+//! HTTP + SSE memory server for [Lunaris].
 //!
-//! MemoryProtocol 0.1 HTTP+SSE wrapper around `lunaris::Lunaris`. Per
-//! CONTEXT.md D-01..D-09 + ROADMAP Phase 5 success criterion #1.
+//! `lunaris-server` is an [axum]-based service that exposes a
+//! [`lunaris::Lunaris`] handle over **MemoryProtocol 0.1** (see
+//! `docs/protocol/memoryprotocol-0.1.md`). It is the network front door for
+//! agent platforms that talk to a shared Lunaris deployment rather than
+//! linking the engine directly.
 //!
-//! Module map:
+//! ## Routes
+//!
+//! | Method & path        | Purpose                                  |
+//! |----------------------|------------------------------------------|
+//! | `POST /v1/ingest`    | ingest an episode (streams progress over SSE) |
+//! | `POST /v1/recall`    | run a retrieval-DSL query                 |
+//! | `POST /v1/forget`    | forget by scope / target                  |
+//! | `GET  /v1/snapshot/{lsn}` | monotonic LSN read marker            |
+//! | `GET  /healthz`      | unauthenticated liveness probe            |
+//! | `GET  /metrics`      | Prometheus text-format metrics (root, no Bearer) |
+//!
+//! ## Security
+//!
+//! Every `/v1/*` route requires a `Bearer` token (mapped to a tenant scope via
+//! the tokens file) and is subject to a per-tenant token-bucket rate limit. The
+//! JWT/tenant claim is the only source of truth for the partition scope —
+//! wire-side `scope` fields are ignored. An outer CORS layer is applied per the
+//! configured origin list.
+//!
+//! ## Configuration
+//!
+//! The server is configured entirely via CLI flags / matching environment
+//! variables — see [`config::Config`] and the Lunaris book's **Operations**
+//! chapter for the full table.
+//!
+//! ## Module map
+//!
 //! - [`config`] — clap `Config` struct (D-01..D-09 flags + matching env vars).
 //! - [`state`] — `AppState { lunaris: Arc<Lunaris>, tokens, runtime_flags }`.
 //! - [`dto`] — JSON wire DTOs (`RecallRequest`, `IngestResponse`, `RetrievalMode`).
@@ -19,6 +48,9 @@
 //! let app = lunaris_server::build(cfg, lunaris);
 //! axum::serve(listener, app).await?;
 //! ```
+//!
+//! [Lunaris]: https://github.com/lunaris-dev/lunaris
+//! [axum]: https://docs.rs/axum
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]

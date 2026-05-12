@@ -12,6 +12,10 @@ repository.workspace = true
 readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 async-trait    = { workspace = true }
 bytes          = { workspace = true }

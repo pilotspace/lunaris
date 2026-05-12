@@ -26,6 +26,11 @@ repository.workspace = true
 readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
+[package.metadata.docs.rs]
+all-features = false
+features = ["fastembed", "candle", "ollama"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 # Phase 20-02 default flip (2026-05-11, operator override per
 # .planning/phases/20-fastembed-adoption/20-02-SCOPE-DECISION.md):

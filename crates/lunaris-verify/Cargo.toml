@@ -27,6 +27,11 @@ repository.workspace = true
 readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
+[package.metadata.docs.rs]
+all-features = false
+features = ["candle", "ollama", "cloud-api", "verify-small", "verify-large"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default      = []
 candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]

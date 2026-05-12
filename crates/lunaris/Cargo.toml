@@ -23,6 +23,11 @@ categories  = ["database", "asynchronous", "data-structures"]
 #
 #   // src/main.rs
 #   use lunaris::Lunaris;
+[package.metadata.docs.rs]
+all-features = false
+features = ["fastembed", "candle", "ollama", "cloud-api"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [lib]
 name = "lunaris"
 

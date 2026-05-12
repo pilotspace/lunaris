@@ -11,6 +11,10 @@ publish     = false
 # Boots a `Lunaris::open(url)` handle and exposes the four MemoryProtocol verbs at
 # /v1/{ingest,recall,forget,snapshot/:lsn} + /healthz. Plan 05-05 will add /metrics.
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 lunaris = { workspace = true }
 lunaris-core = { workspace = true }

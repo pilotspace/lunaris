@@ -17,6 +17,10 @@ repository.workspace = true
 readme      = "README.md"
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 lunaris-core = { workspace = true }
 # Wave 2.5B: lunaris-storage-moon removed — keyspace helpers moved to lunaris-core

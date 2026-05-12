@@ -27,6 +27,10 @@ authors.workspace      = true
 repository.workspace   = true
 publish              = false
 
+[package.metadata.docs.rs]
+all-features = false
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 lunaris = { workspace = true }
 lunaris-core = { workspace = true }
