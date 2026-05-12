@@ -69,6 +69,9 @@ A handful of statuses are produced by **handler-local validation** rather than
 | malformed `as_of` (not RFC-3339) on `/v1/recall` | `400 Bad Request` | `invalid_request` |
 | malformed `confirmation_token` (not a serialized `ForgetReceipt`) on `/v1/forget` | `400 Bad Request` | `invalid_confirmation_token` |
 | malformed snapshot Lsn path segment on `/v1/snapshot/{lsn}` | `400 Bad Request` | `invalid_lsn` |
+| `{id}` path segment on `/v1/episode/{id}` is not a valid Crockford base-32 ULID | `400 Bad Request` | `invalid_episode_id` |
+| `{lsn}` wall_ms on `/v1/snapshot/{lsn}` is strictly greater than the engine's current wall clock | `404 Not Found` | `snapshot_out_of_range` |
+| no episode found for `{id}` in the caller's JWT-bound scope on `/v1/episode/{id}` | `404 Not Found` | `episode_not_found` |
 | `/metrics` requested while `--metrics-disabled` is set | `404 Not Found` | (plain-text body) |
 
 The auth / rate-limit middleware emits `401` / `403` / `429` *before* the

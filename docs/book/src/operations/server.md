@@ -4,7 +4,7 @@
 needs to talk to a shared Lunaris memory engine over HTTP/SSE instead of
 linking the crate.** It is the reference implementation of
 [MemoryProtocol 0.1](../protocol/memoryprotocol-0.1.md): an axum 0.8 binary
-exposing the four blueprint verbs plus a Prometheus `/metrics` endpoint.
+exposing the blueprint verbs plus a Prometheus `/metrics` endpoint.
 
 The crate is `lunaris-server`; config lives in
 `crates/lunaris-server/src/config.rs`. The full env-var / feature-flag matrix
@@ -96,7 +96,8 @@ operational summary:
 | `POST /v1/ingest` | `ingest` | Ingest one Episode; server chunks + embeds + does **one** `atomic_write`. Returns `{lsn, queue_lag_warn}`. |
 | `POST /v1/recall` | `recall` | Hybrid retrieval (Vector + BM25 + RRF + optional rerank). `Accept: application/json` → array of hits; `Accept: text/event-stream` → SSE stream (`event: hit` … `event: done`, 15 s keep-alive). `mode: "graph"` needs a graph-capable backend or `GraphPipeline::enable()` (else `501`). |
 | `POST /v1/forget` | `forget` | Single-target / by-source / temporal-bound purge. Two-step hard-delete rail: `dry_run:true` → preview receipt; then `hard:true` + `confirmation_token: <serialized prior receipt>` → real delete. `hard:true` without the token → `428 Precondition Required`. |
-| `GET /v1/snapshot/{lsn}` | `recall` | Streams every primitive at the given Hlc (`<wall_ms>.<counter>[.<node_id>]`) as `application/x-ndjson`. |
+| `GET /v1/snapshot/{lsn}` | `recall` | Streams every primitive at the given Hlc (`<wall_ms>.<counter>[.<node_id>]`) as `application/x-ndjson`. Returns `404 snapshot_out_of_range` if the wall_ms is strictly in the future; an empty past snapshot is `200` + empty body. |
+| `GET /v1/episode/{id}` | `recall` | Fetch a single episode by ULID from the caller's scope. `200` + JSON on hit; `400 invalid_episode_id` on malformed ULID; `404 episode_not_found` when absent. |
 | `GET /healthz` | *(none)* | LB probe — `{"ok":true,"version":...}`. No auth, not rate-limited. |
 | `GET /metrics` | *(none)* | Prometheus text exposition. **No auth** — front it with a network ACL or reverse-proxy auth. `404` when `--metrics-disabled`. |
 

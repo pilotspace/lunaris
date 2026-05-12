@@ -9,11 +9,11 @@
 **Reference implementation:** `lunaris-server` (`crates/lunaris-server/`, axum 0.8 binary)
 
 MemoryProtocol is the HTTP+SSE wire protocol an agent harness uses to talk to
-a Lunaris memory engine. It exposes the four blueprint §5.4 verbs
+a Lunaris memory engine. It exposes the blueprint §5.4 verbs
 (`POST /v1/ingest`, `POST /v1/recall`, `POST /v1/forget`,
-`GET /v1/snapshot/:lsn`) plus a Prometheus `/metrics` endpoint and a no-auth
-`/healthz` probe. v0 is JSON-only over HTTP/1.1 + HTTP/2; bincode/CBOR/
-MessagePack wire formats are deferred to v1.
+`GET /v1/snapshot/:lsn`, `GET /v1/episode/:id`) plus a Prometheus `/metrics`
+endpoint and a no-auth `/healthz` probe. v0 is JSON-only over HTTP/1.1 +
+HTTP/2; bincode/CBOR/MessagePack wire formats are deferred to v1.
 
 The implementation under test for the conformance harness is `lunaris-server`
 from this workspace. Third-party servers (Go, Python, etc.) are conformant if
@@ -57,6 +57,7 @@ Per-route scope requirements:
 | `POST /v1/recall`           | `recall`       |
 | `POST /v1/forget`           | `forget`       |
 | `GET  /v1/snapshot/{lsn}`   | `recall`       |
+| `GET  /v1/episode/{id}`     | `recall`       |
 | `GET  /healthz`             | (none)         |
 | `GET  /metrics`             | (none)         |
 
@@ -274,8 +275,38 @@ pair), or `<wall_ms>.<counter>.<node_id>` (decimal triple). Examples:
 
 One JSON object per line. Stream may be empty on a fresh backend.
 
-**Errors:** `400 invalid_lsn` (not in `wall_ms.counter[.node_id]` form),
-`401`, `403`, `429`, `500`.
+**Errors:**
+- `400 invalid_lsn` — path param is not in `wall_ms.counter[.node_id]` form.
+- `404 snapshot_out_of_range` — `{lsn}` wall_ms is **strictly greater** than the engine's current wall clock. A past LSN with zero visible rows returns `200` + empty NDJSON (valid empty snapshot, not "not found").
+- `401`, `403`, `429`, `500`.
+
+### GET /v1/episode/{id}
+
+Fetch a single episode by ULID from the caller's JWT-bound scope.
+
+**Required scope:** `recall`
+
+**Path param:** `{id}` is a 26-character Crockford base-32 ULID string (e.g. `01HZZZZZZZZZZZZZZZZZZZZZZZ`).
+
+**Response** (`200 OK`, `application/json`):
+
+The stored episode value as a JSON object (the same bytes written by `POST /v1/ingest`).
+
+```json
+{
+  "id":       "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+  "source":   "helios:fs/notes.md",
+  "content":  "...",
+  "metadata": { "any": "json" }
+}
+```
+
+**Errors:**
+- `400 invalid_episode_id` — `{id}` is not a valid 26-character Crockford base-32 ULID.
+- `404 episode_not_found` — no episode with that ULID exists in the caller's scope.
+- `401`, `403`, `429`, `500`.
+
+The JWT `tenant` claim is the exclusive scope partition key; no wire-side `scope` field is accepted. The KV key is constructed as `lunaris:{scope}:episode:{ulid}` (canonical format per `lunaris_core::keyspace::episode_key`).
 
 ### GET /healthz
 
@@ -329,8 +360,11 @@ Prometheus scraper or `prometheus-client` library.
 | 400         | Bad confirmation_token JSON           | n/a (handler-local validation)              | `{ "error": "invalid_confirmation_token", "message": "..." }`  |
 | 400         | Bad RFC-3339 `as_of`                  | n/a (handler-local validation)              | `{ "error": "invalid_request", "message": "..." }`             |
 | 400         | Bad NDJSON snapshot Lsn               | n/a (handler-local validation)              | `{ "error": "invalid_lsn", "message": "..." }`                 |
+| 400         | Bad episode ULID path param           | n/a (handler-local validation)              | `{ "error": "invalid_episode_id", "message": "..." }`          |
 | 401         | Missing / invalid bearer              | n/a (auth middleware)                       | `{ "error": "unauthorized", "message": "..." }`                |
 | 403         | Token lacks required scope            | n/a (auth middleware)                       | `{ "error": "forbidden", "message": "..." }`                   |
+| 404         | Snapshot LSN wall_ms strictly future  | n/a (handler-local validation)              | `{ "error": "snapshot_out_of_range", "message": "..." }`       |
+| 404         | Episode not found in caller's scope   | n/a (handler-local: `read_as_of` → `None`) | `{ "error": "episode_not_found", "message": "..." }`           |
 | 404         | `/metrics` disabled at startup        | n/a (`--metrics-disabled` runtime flag)     | `metrics disabled at startup via --metrics-disabled`           |
 | 422         | `scope` / `tenant` field in body      | n/a (`#[serde(deny_unknown_fields)]`)       | (serde rejection)                                              |
 | 428         | Hard-delete without confirmation      | `LunarisError::Validate(ValidateError::ConfirmationRequired(_))` | `{ "error": "confirmation_required", "message": "..." }` |

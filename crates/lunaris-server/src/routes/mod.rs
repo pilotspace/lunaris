@@ -5,9 +5,11 @@
 //! - [`recall`] — `POST /v1/recall` with SSE branch (PROTO-02 + PROTO-03).
 //! - [`forget`] — `POST /v1/forget` (Plan 04-05 surface + D-21 two-step rail).
 //! - [`snapshot`] — `GET /v1/snapshot/{lsn}` NDJSON stream.
+//! - [`episode`] — `GET /v1/episode/{id}` single-episode lookup by ULID.
 //! - [`metrics`] — `GET /metrics` Prometheus text format (Plan 05-05 OPS-06;
 //!   open probe surface, NOT under `/v1`).
 
+pub mod episode;
 pub mod forget;
 pub mod healthz;
 pub mod ingest;

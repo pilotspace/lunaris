@@ -8,14 +8,15 @@
 //!
 //! ## Routes
 //!
-//! | Method & path        | Purpose                                  |
-//! |----------------------|------------------------------------------|
-//! | `POST /v1/ingest`    | ingest an episode; returns the assigned `Lsn` |
-//! | `POST /v1/recall`    | run a retrieval-DSL query; streams hits as Server-Sent Events (`event: hit`) |
-//! | `POST /v1/forget`    | forget by scope / target                  |
-//! | `GET  /v1/snapshot/{lsn}` | NDJSON stream of every primitive visible at `{lsn}` |
-//! | `GET  /healthz`      | unauthenticated liveness probe            |
-//! | `GET  /metrics`      | Prometheus text-format metrics (root, no Bearer) |
+//! | Method & path             | Purpose                                  |
+//! |---------------------------|------------------------------------------|
+//! | `POST /v1/ingest`         | ingest an episode; returns the assigned `Lsn` |
+//! | `POST /v1/recall`         | run a retrieval-DSL query; streams hits as Server-Sent Events (`event: hit`) |
+//! | `POST /v1/forget`         | forget by scope / target                  |
+//! | `GET  /v1/snapshot/{lsn}` | NDJSON stream of every primitive visible at `{lsn}`; `404` if `{lsn}` wall_ms is strictly in the future |
+//! | `GET  /v1/episode/{id}`   | fetch a single episode by ULID; `400` on bad ULID, `404` if absent in scope |
+//! | `GET  /healthz`           | unauthenticated liveness probe            |
+//! | `GET  /metrics`           | Prometheus text-format metrics (root, no Bearer) |
 //!
 //! ## Security
 //!
@@ -37,7 +38,7 @@
 //! - [`state`] — `AppState { lunaris: Arc<Lunaris>, tokens, runtime_flags }`.
 //! - [`dto`] — JSON wire DTOs (`IngestBody`, `IngestResponse`, `RecallRequest`, `RetrievalMode`, `ForgetRequestDto`).
 //! - [`shutdown`] — `tokio::sync::Notify` graceful-shutdown wrapper.
-//! - [`routes`] — per-verb handler modules (`ingest`, `recall`, `forget`, `snapshot`, `healthz`).
+//! - [`routes`] — per-verb handler modules (`ingest`, `recall`, `forget`, `snapshot`, `episode`, `healthz`).
 //! - [`middleware`] — `auth`, `rate_limit`, `cors`, `error`.
 //!
 //! ## Construction
@@ -174,6 +175,16 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
         .route(
             "/snapshot/{lsn}",
             get(routes::snapshot::snapshot_handler)
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
+        )
+        .route(
+            "/episode/{id}",
+            get(routes::episode::episode_handler)
                 .route_layer(rate_limit.clone())
                 .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
                 .route_layer(axum::middleware::from_fn_with_state(

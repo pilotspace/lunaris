@@ -51,6 +51,33 @@ pub async fn snapshot_handler(
         }
     };
 
+    // RFC: a future LSN is one whose wall_ms is strictly ahead of the engine's
+    // current wall clock. We read "now" from the system clock (same source as
+    // HlcClock::tick) to avoid minting a tick just for comparison. A past LSN
+    // with zero visible rows is a valid empty snapshot (200); only a future
+    // wall_ms is 404.
+    let current_wall_ms = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    };
+    if is_future_hlc(&hlc, current_wall_ms) {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({
+                "error": "snapshot_out_of_range",
+                "message": format!(
+                    "LSN wall_ms={} is beyond the engine clock (now={}); \
+                     request a past or current snapshot",
+                    hlc.wall_ms, current_wall_ms
+                ),
+            })),
+        )
+            .into_response();
+    }
+
     let storage = state.lunaris.storage();
 
     // We need the stream to outlive `storage` borrow, so we acquire the stream
@@ -103,6 +130,20 @@ pub async fn snapshot_handler(
         .expect("build NDJSON response")
 }
 
+/// Returns `true` when `requested.wall_ms` is *strictly* in the future relative
+/// to `current_wall_ms`.
+///
+/// A past or present LSN — including one in the same wall-millis with a higher
+/// counter — is NOT a future LSN. Only `requested.wall_ms > current_wall_ms`
+/// triggers 404; an LSN with a wall clock in the past but no visible rows is a
+/// valid empty snapshot (200 + empty NDJSON).
+///
+/// Factored out for deterministic unit testing without real-time dependency.
+#[inline]
+pub(crate) fn is_future_hlc(requested: &Hlc, current_wall_ms: u64) -> bool {
+    requested.wall_ms > current_wall_ms
+}
+
 fn parse_hlc(s: &str) -> Result<Hlc, &'static str> {
     let parts: Vec<&str> = s.split('.').collect();
     let (wall_str, counter_str, node_str) = match parts.as_slice() {
@@ -143,5 +184,46 @@ mod tests {
     #[test]
     fn parse_hlc_rejects_single_part() {
         assert!(parse_hlc("1714000000").is_err());
+    }
+
+    // ── is_future_hlc predicate tests ────────────────────────────────────────
+
+    /// A wall_ms strictly greater than current is a future LSN → 404.
+    #[test]
+    fn is_future_hlc_strictly_greater_wall_ms_is_future() {
+        let hlc = Hlc { wall_ms: 2_000_000_000, counter: 0, node_id: 0 };
+        assert!(is_future_hlc(&hlc, 1_000_000_000));
+    }
+
+    /// A wall_ms equal to current is NOT future (same-millisecond LSN is valid).
+    #[test]
+    fn is_future_hlc_equal_wall_ms_is_not_future() {
+        let hlc = Hlc { wall_ms: 1_000_000_000, counter: 99, node_id: 0 };
+        assert!(!is_future_hlc(&hlc, 1_000_000_000));
+    }
+
+    /// A wall_ms less than current is NOT future (past snapshot → valid empty 200).
+    #[test]
+    fn is_future_hlc_past_wall_ms_is_not_future() {
+        let hlc = Hlc { wall_ms: 500_000_000, counter: 0, node_id: 0 };
+        assert!(!is_future_hlc(&hlc, 1_000_000_000));
+    }
+
+    /// wall_ms=0 (Hlc::ZERO) is never future regardless of current_wall_ms.
+    #[test]
+    fn is_future_hlc_zero_hlc_is_never_future() {
+        let hlc = Hlc::ZERO;
+        assert!(!is_future_hlc(&hlc, 0));
+        assert!(!is_future_hlc(&hlc, 1_000_000_000));
+        assert!(!is_future_hlc(&hlc, u64::MAX));
+    }
+
+    /// u64::MAX wall_ms is always future (unless current is also u64::MAX).
+    #[test]
+    fn is_future_hlc_max_wall_ms_is_future_unless_current_also_max() {
+        let hlc = Hlc { wall_ms: u64::MAX, counter: 0, node_id: 0 };
+        assert!(is_future_hlc(&hlc, u64::MAX - 1));
+        // Equal → not future
+        assert!(!is_future_hlc(&hlc, u64::MAX));
     }
 }
