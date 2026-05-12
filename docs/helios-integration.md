@@ -1,32 +1,32 @@
 # Helios Integration Guide
 
-Status: alpha (tracks `lunaris = "0.0.1"`, Phase 5 `HELIOS-01` / `HELIOS-02`). Companion to [`docs/guide.md`](guide.md) — the user guide covers the full Lunaris surface; this document zooms into the one named v0 downstream consumer, Helios. If a claim here disagrees with the Rust source, the source wins — every symbol below carries a `path:line` cross-reference.
+Status: alpha (tracks `lunaris = "0.0.1"`; Phase 5 `HELIOS-01` / `HELIOS-02`, Phase 12 `HELIOS-03` rewrote the recipe to delegate `write` / `read` to the `WorkingMemory` primitive — the public API is byte-stable). Companion to [`docs/guide.md`](guide.md) — the user guide covers the full Lunaris surface; this document zooms into the one named v0 downstream consumer, Helios. If a claim here disagrees with the Rust source, the source wins — every symbol below carries a `path:line` cross-reference.
 
 ## How Helios talks to Lunaris
 
-Per `helios-rfc.md` §5.3, Helios replaces deepagents' ephemeral `dict`-backed mock filesystem with a bi-temporal MVCC store. The v0 binding is the `HeliosScratchpad` recipe (`crates/lunaris/src/recipes/helios_scratchpad.rs`) — a ≤50-LOC public surface wrapping `Lunaris` in the Helios file-tool contract. Helios's Read / Write / Edit / Grep / Ls / Forget tool surface maps 1:1 onto Lunaris ingest + recall under the frozen source prefix `helios:fs/<session_id>/<path>`.
+Per `helios-rfc.md` §5.3, Helios replaces deepagents' ephemeral `dict`-backed mock filesystem with a bi-temporal MVCC store. The v0 binding is the `HeliosScratchpad` recipe (`crates/lunaris/src/recipes/helios_scratchpad.rs`) — a ≤50-LOC public surface wrapping `Lunaris` in the Helios file-tool contract. Helios's Read / Write / Edit / Grep / Ls / Forget tool surface maps 1:1 onto Lunaris under the frozen source prefix `helios:fs/<session_id>/<path>`; as of Phase 12 (`HELIOS-03`) `write` / `read` go through the `WorkingMemory` primitive, while `grep` / `ls` / `forget` / `as_of` stay on the direct `Lunaris` recall / storage / forget paths.
 
 ### Boundary statement
 
-**Helios uses Lunaris; Lunaris doesn't know Helios exists.** This is enforced at the crate boundary: `lunaris` exports `HeliosScratchpad` and its borrowed `AsOfScratchpad` view (`crates/lunaris/src/lib.rs:51`) and otherwise has zero Helios-shaped types. Helios owns the tool UX, the session model, the chat-turn scheduler, and the prompt-rendering decision of whether to surface a degraded-result banner. Lunaris only sees opaque `Episode`s whose `source` happens to begin with `helios:fs/`. Dropping Helios would not require any change inside Lunaris — the recipe is a convenience, not a coupling.
+**Helios uses Lunaris; Lunaris doesn't know Helios exists.** This is enforced at the crate boundary: `lunaris` exports `HeliosScratchpad` and its borrowed `AsOfScratchpad` view (`crates/lunaris/src/lib.rs:83`) and otherwise has zero Helios-shaped types. Helios owns the tool UX, the session model, the chat-turn scheduler, and the prompt-rendering decision of whether to surface a degraded-result banner. Lunaris only sees opaque `Episode`s whose `source` happens to begin with `helios:fs/`. Dropping Helios would not require any change inside Lunaris — the recipe is a convenience, not a coupling.
 
 See also the Out-of-Scope row in `PROJECT.md` ("Claude Code FS adapter shape (CAS, mtime, prefix_scan_meta_only) inside Lunaris") — Helios FS-tool ergonomics live in the Helios repo, not this one.
 
 ### Tool-surface mapping
 
-Reproduced verbatim from the module docstring at `crates/lunaris/src/recipes/helios_scratchpad.rs:5-15`:
+**v2 (Phase 12 `HELIOS-03`):** `write` / `read` route through the Phase 9 `WorkingMemory` primitive — the `content: String` is wrapped as `serde_json::Value::String(...)` on write and unwrapped on read, so the v0.1.0 caller surface is byte-stable. Reproduced from the module docstring at `crates/lunaris/src/recipes/helios_scratchpad.rs:7-15`:
 
-| helios-rfc §5.3 | Lunaris call                                                  |
-|-----------------|---------------------------------------------------------------|
-| write(p, c)     | `ingest(Episode { source: "helios:fs/<sid>/<p>", content })`  |
-| read(p)         | `recall_with_degraded_check().filter("source = '...'") ...`   |
-| edit(p, _, n)   | `write(p, n)` — MVCC supersede via Plan 04-04 path             |
-| grep(pat, k)    | hybrid recall over `helios:fs/<sid>/` prefix                   |
-| ls(p)           | `storage().scan_range(<prefix bytes>, None)`                   |
-| forget()        | `Lunaris::forget(ForgetTarget::Scope(ScopeSpec::BySource))`    |
-| as_of(ts)       | borrowed view that re-runs `read` against a fixed `Hlc`         |
+| helios-rfc §5.3 | Lunaris call                                                 |
+|-----------------|--------------------------------------------------------------|
+| write(p, c)     | `WorkingMemory::write(p, Value::String(c))`                  |
+| read(p)         | `WorkingMemory::read(p)` → unwrap `Value::String` (multi-chunk `read_at` fallback) |
+| edit(p, _, n)   | `write(p, n)` — MVCC supersede via Plan 04-04 path           |
+| grep(pat, k)    | `Lunaris::recall().filter(Filter::StartsWith { field: "source", prefix: "helios:fs/<sid>/" })` |
+| ls(p)           | `storage().scan_range(<prefix bytes>, None)`                 |
+| forget()        | `Lunaris::forget(ForgetTarget::Scope(ScopeSpec::BySource))`  |
+| as_of(ts)       | borrowed view re-running `read_at` against a fixed `Hlc`     |
 
-The ≤50-LOC public-surface contract (`HELIOS-01`) is enforced at compile time by the test `helios_scratchpad_public_surface_under_50_loc` (`crates/lunaris/src/recipes/helios_scratchpad.rs:290`). The nine public symbols are:
+The ≤50-LOC public-surface contract (`HELIOS-01`) is enforced at compile time by the test `helios_scratchpad_public_surface_under_50_loc` (`crates/lunaris/src/recipes/helios_scratchpad.rs:290`) — which now asserts *exactly* nine public symbols (the surface may not shrink either). The nine public symbols are:
 
 1. `HeliosScratchpad::new(Arc<Lunaris>, &str) -> Self`
 2. `HeliosScratchpad::write(&self, path, content) -> Result<Lsn, LunarisError>`
@@ -67,9 +67,9 @@ Every other operation (graph recall, dry-run forget, hard-delete confirmation, v
            +----------------+
 ```
 
-One `Arc<Lunaris>` per process. One `HeliosScratchpad` per in-flight session. The pad holds `Arc<Lunaris>` + `session_prefix: String` (`helios_scratchpad.rs:70-73`) and is `Clone` — both fields are cheap. Concurrency is the `Arc<Lunaris>` handle's problem; the pad adds nothing except the prefix string.
+One `Arc<Lunaris>` per process. One `HeliosScratchpad` per in-flight session. The pad holds `Arc<Lunaris>` + `session_prefix: String` + a `WorkingMemory` (itself `Arc<Lunaris>` + `String`) (`helios_scratchpad.rs:80-88`) and is `Clone` — every field is cheap. Concurrency is the `Arc<Lunaris>` handle's problem; the pad adds nothing except the prefix string and the delegated primitive.
 
-Source convention: `HELIOS_PREFIX = "helios:fs/"` (`helios_scratchpad.rs:56`). Changing that constant would ripple through every downstream consumer — treat it as frozen for v0.
+Source convention: `HELIOS_PREFIX = "helios:fs/"` (`helios_scratchpad.rs:66`). Changing that constant would ripple through every downstream consumer — treat it as frozen for v0.
 
 ---
 
@@ -97,7 +97,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     // backend by URL scheme (`crates/lunaris/src/handle.rs:148-206`).
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
 
-    // Session prefix = "helios:fs/session-42/" (helios_scratchpad.rs:82).
+    // Session prefix = "helios:fs/session-42/" (helios_scratchpad.rs:95).
     let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
 
     // Write two docs.
@@ -109,13 +109,13 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     assert!(notes.is_some());
 
     // Edit — `_old` parameter is present for Helios Read/Edit symmetry but
-    // unused in the implementation (helios_scratchpad.rs:126-133). MVCC
+    // unused in the implementation (helios_scratchpad.rs:131-137). MVCC
     // supersedes via Plan 04-04's `apply_supersede` path — no per-recipe
     // mutation logic.
     pad.edit("notes.md", "First draft.", "# Notes\nSecond draft.").await?;
 
     // List — returns unique `<sid>/`-stripped paths sorted + deduped
-    // (helios_scratchpad.rs:157-193).
+    // (helios_scratchpad.rs:162-200).
     let paths: Vec<String> = pad.ls(None).await?;
     eprintln!("session paths: {paths:?}");
 
@@ -131,7 +131,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 - **`forget()` is soft-delete by default.** It writes an MVCC supersede op that stamps `bt.sys[1]` on every matched primitive (`crates/lunaris/src/forget.rs:468-502`). The rows are still physically present and return from `read_as_of(ts)` for any `ts` before the soft-delete. For GDPR-irreversible purge see Scenario 6 — you must route through `Lunaris::confirm_hard_forget` (`crates/lunaris/src/forget.rs:307`), NOT through the recipe surface.
 - **`edit` preserves history automatically.** The old version is never overwritten in place. A later `pad.as_of(pre_edit_ts).read("notes.md")` returns the pre-edit bytes. Scenario 5 covers the time-travel read path.
 - **Session lifetime is the caller's concern.** The pad is `Clone` but carries no drop hook — if you never call `forget()`, every episode stays until a retention-bound `ForgetTarget::Before` sweep or an explicit purge. Scenario 6 walks the retention path.
-- **`read` returns `Option<String>`.** `None` = zero hits (never written / already purged / empty path). Don't conflate empty-string (`Some("")`) with "no such file" (`None`). The concatenation of up to `READ_TOP = 8` hits is best-effort chunk-reassembly (`helios_scratchpad.rs:62, 238-272`).
+- **`read` returns `Option<String>`.** `None` = zero hits (never written / already purged / empty path). Don't conflate empty-string (`Some("")`) with "no such file" (`None`). It first tries `WorkingMemory::read` (single `Value::String`); on a miss it falls back to the multi-chunk `read_at` path that concatenates up to `READ_TOP = 8` hits (`helios_scratchpad.rs:71, 113-129, 247-272`).
 
 ---
 
@@ -195,9 +195,9 @@ async fn handle_connection(state: Arc<AppState>) -> Result<(), lunaris::LunarisE
 
 ### Gotchas
 
-- **Uniqueness of `session_id` is Helios's responsibility.** The recipe formats `helios:fs/<session_id>/` without any sanity check (`helios_scratchpad.rs:82`). If two pads choose the same id their data co-mingles — and one `forget()` wipes both. Use `Ulid::new()` (monotonic, lexicographically sortable) or UUIDv7.
+- **Uniqueness of `session_id` is Helios's responsibility.** The recipe formats `helios:fs/<session_id>/` without any sanity check (`helios_scratchpad.rs:95`). If two pads choose the same id their data co-mingles — and one `forget()` wipes both. Use `Ulid::new()` (monotonic, lexicographically sortable) or UUIDv7.
 - **`Arc<Lunaris>` is the sharing unit, not the pad.** The pad holds `Arc<Lunaris>` + `String` — cloning the pad is cheap but conceptually you're handing out a separate session-view object. Share the handle, construct fresh pads per session.
-- **Cross-session reads require dropping to `Lunaris::recall`.** `pad.grep(...)` installs the scope filter `source LIKE 'helios:fs/<sid>/%'` (`helios_scratchpad.rs:139-151`) — by construction it only hits this session's bytes. If Helios needs a cross-session view (e.g., admin debugging), it bypasses the pad and calls `lunaris.recall()` with a wider filter. See Scenario 7 for the pattern.
+- **Cross-session reads require dropping to `Lunaris::recall`.** `pad.grep(...)` installs the scope filter `Filter::StartsWith { field: "source", prefix: "helios:fs/<sid>/" }` (`helios_scratchpad.rs:151-156`) — never a SQL wildcard fragment (T-12-01-01 mitigation), and by construction it only hits this session's bytes. If Helios needs a cross-session view (e.g., admin debugging), it bypasses the pad and calls `lunaris.recall()` with a wider filter — `recall().filter_str("source LIKE 'helios:fs/%'")` is fine there, since `filter_str`'s v0 grammar parses `LIKE 'prefix%'` into the same `Filter::StartsWith`. See Scenario 7 for the pattern.
 - **No per-pad warm-up.** `HeliosScratchpad::new` is pure (no I/O). You can create and drop pads freely without round-tripping to the backend — the first storage call happens in the first `write`/`read`/`grep`/`ls`/`forget`.
 - **Backpressure is process-level.** Every pad shares the same underlying `Arc<dyn StoragePort>`, so per-session concurrency limits are Helios's orchestration layer (e.g., `tower::limit::ConcurrencyLimit`), not something the pad enforces.
 
@@ -284,10 +284,10 @@ Moon over budget is a **hard-fail** — the blueprint §4.2 differentiator is th
 ### Gotchas
 
 - **Run the full 10K target on real hardware.** The smoke test defaults to `turns = 200` — a dev-box accommodation. Set `LUNARIS_HELIOS_SMOKE_TURNS=10000` on CI / UAT to hit the documented target (`helios_scratchpad_smoke.rs:57-60`).
-- **Per-turn `read(&path)` is NOT the same as looking up a KV row.** It runs the full `recall_with_degraded_check` pipeline, filters by `source LIKE 'helios:fs/<sid>/<path>%'`, and concatenates up to 8 chunk hits (`helios_scratchpad.rs:116-119, 238-272`). The p50 budget covers this full pipeline — ingest + chunker + embedder + vector + BM25 + RRF + rerank on the recall side. See `docs/guide.md` §3 for the full recall DSL this lowers into.
-- **`edit` retains history automatically via MVCC.** Plan 04-04's `apply_supersede` stamps `bt.sys[1]` on the old chunk rows when the new ingest commits. No per-recipe mutation code — the pad's `edit` is literally `self.write(path, new)` (`helios_scratchpad.rs:126-133`). If you forgot to call `forget()` at session end, every edit is still queryable via `pad.as_of(pre_edit_ts)`.
-- **Recall latency is bounded by `READ_TOP = 8` chunks.** If your scratchpad documents exceed 8×500 tokens (`helios_scratchpad.rs:58-62`) you will silently see truncated reconstructions. Increase via a wider `Lunaris::recall()` call with a larger `.top(n)` and your own scope filter — the ergonomic path doesn't expose a knob.
-- **`LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` tunes the degraded flag.** Default 1000 (`crates/lunaris/src/recall.rs:31`). Set higher on workloads that run with the verifier worker off entirely — see Scenario 8.
+- **Per-turn `read(&path)` is NOT the same as looking up a KV row.** It first tries `WorkingMemory::read` (a single `Value::String`); on a miss it runs the full `recall_with_degraded_check` pipeline via `read_at`, filters by `Filter::StartsWith { field: "source", prefix: "helios:fs/<sid>/<path>" }`, and concatenates up to 8 chunk hits (`helios_scratchpad.rs:113-129, 247-272`). The p50 budget covers this full pipeline — ingest + chunker + embedder + vector + BM25 + RRF + rerank on the recall side. See `docs/guide.md` §3 for the full recall DSL this lowers into.
+- **`edit` retains history automatically via MVCC.** Plan 04-04's `apply_supersede` stamps `bt.sys[1]` on the old chunk rows when the new ingest commits. No per-recipe mutation code — the pad's `edit` is literally `self.write(path, new)` (`helios_scratchpad.rs:131-137`). If you forgot to call `forget()` at session end, every edit is still queryable via `pad.as_of(pre_edit_ts)`.
+- **Recall latency is bounded by `READ_TOP = 8` chunks.** If your scratchpad documents exceed 8×500 tokens (`helios_scratchpad.rs:71`) you will silently see truncated reconstructions. Increase via a wider `Lunaris::recall()` call with a larger `.top(n)` and your own scope filter — the ergonomic path doesn't expose a knob.
+- **`LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` tunes the degraded flag.** Default 1000 (`crates/lunaris/src/recall.rs:26`). Set higher on workloads that run with the verifier worker off entirely — see Scenario 8.
 
 ---
 
@@ -354,7 +354,7 @@ async fn build_and_query(url: &str, docs: u64)
 
 ### Gotchas
 
-- **`build_md_doc_corpus` writes under `bench:md-doc/<idx>`, not `helios:fs/<sid>/<path>`.** This is documented at `crates/lunaris-bench/src/corpus.rs:772-775`: *"Synthetic episodes use `source = "bench:md-doc/<idx>"` so they don't collide with `helios:fs/...` Helios-namespaced data when both run on the same backend."* The pad's `grep` is scoped to `source LIKE 'helios:fs/<sid>/%'` (`helios_scratchpad.rs:139`), so the grep loop above will return zero hits. Two valid workarounds:
+- **`build_md_doc_corpus` writes under `bench:md-doc/<idx>`, not `helios:fs/<sid>/<path>`.** This is documented at `crates/lunaris-bench/src/corpus.rs:772-775`: *"Synthetic episodes use `source = "bench:md-doc/<idx>"` so they don't collide with `helios:fs/...` Helios-namespaced data when both run on the same backend."* The pad's `grep` is scoped via `Filter::StartsWith { field: "source", prefix: "helios:fs/<sid>/" }` (`helios_scratchpad.rs:151-156`), so the grep loop above will return zero hits. Two valid workarounds:
   1. **Ingest via `pad.write` under the session prefix.** Each markdown body becomes one `Episode { source: "helios:fs/<sid>/<path>", ... }` and the pad's `grep` finds it. Slower at ingest (no 64-wide batching) but data stays inside the pad abstraction.
   2. **Drop to `lunaris.recall()` with a wider filter.** Bypass the pad for retrieval:
      ```rust
@@ -415,7 +415,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     // ... but the time-travel view reads the state as-of t1.
     //
     // `pad.as_of(ts)` returns an `AsOfScratchpad<'_>` — a borrowed view
-    // that cannot outlive `pad` (helios_scratchpad.rs:210-232).
+    // that cannot outlive `pad` (helios_scratchpad.rs:215-237).
     let as_of_view = pad.as_of(decision_hlc);
     let historical: Option<String> = as_of_view.read("plan.md").await?;
     assert_eq!(historical.as_deref(), Some("Plan v1: go left"));
@@ -426,10 +426,10 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ### Gotchas
 
-- **`AsOfScratchpad` is a borrowed view.** It holds `&HeliosScratchpad` (`helios_scratchpad.rs:220-223`), so the borrow checker will stop you from moving the pad while an `as_of` view is alive. Good — this is the intentional invariant. Don't try to store the view in a long-lived struct.
-- **Time-travel is read-only.** `AsOfScratchpad` exposes one method — `read(path)` (`helios_scratchpad.rs:228-231`). There is no `write`, `edit`, `forget`, or `grep` at a historical timestamp. If you need a historical write (i.e., compensating rewrite), you issue a fresh `pad.write()` now and let MVCC stamp the current time.
+- **`AsOfScratchpad` is a borrowed view.** It holds `&HeliosScratchpad` (`helios_scratchpad.rs:225-228`), so the borrow checker will stop you from moving the pad while an `as_of` view is alive. Good — this is the intentional invariant. Don't try to store the view in a long-lived struct.
+- **Time-travel is read-only.** `AsOfScratchpad` exposes one method — `read(path)` (`helios_scratchpad.rs:233-236`). There is no `write`, `edit`, `forget`, or `grep` at a historical timestamp. If you need a historical write (i.e., compensating rewrite), you issue a fresh `pad.write()` now and let MVCC stamp the current time.
 - **Capture the HLC, not wall-clock time.** `HlcClock::tick()` returns a causal timestamp bound to the handle's monotonic counter (`crates/lunaris-core/src/hlc.rs:41-57`). Using `std::time::SystemTime::now()` and parsing it into an `Hlc` is wrong — the HLC has a node id and a counter; two HLCs with different node ids can compare equal at the `wall_ms` field while being distinct causal points.
-- **The `Hlc` the backend stamps at ingest is NOT the `clock.tick()` you observe at the call site.** The ingest pipeline stamps `BiTemporal::now(clock)` inside the chunker (`crates/lunaris/src/recipes/helios_scratchpad.rs:101-103` passes `Hlc::ZERO` as a placeholder — the chunker overwrites it). Capture your decision HLC from `lunaris.clock().tick()` at your own call site, which will be a causal successor to all the episodes the handle has ingested up to that point.
+- **The `Hlc` the backend stamps at ingest is NOT the `clock.tick()` you observe at the call site.** The bi-temporal coordinates are stamped deep in the ingest pipeline (the chunker), not at the recipe boundary — `HeliosScratchpad::write` just forwards the content to `WorkingMemory::write` (`crates/lunaris/src/recipes/helios_scratchpad.rs:104-106`), which routes through `Lunaris::ingest`. Capture your decision HLC from `lunaris.clock().tick()` at your own call site, which will be a causal successor to all the episodes the handle has ingested up to that point.
 - **`as_of` does not bypass `forget`.** A soft-delete (`pad.forget()`) also records a `bt.sys[1]` timestamp at the moment of deletion; `as_of(t)` for `t` prior to the forget still returns the content, but the bi-temporal model is valid-time-based. See `docs/guide.md` §5 for the full bi-temporal semantics.
 
 ---
@@ -460,7 +460,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     // --- SOFT path ----------------------------------------------------------
     // Reversible via `read_as_of(ts_before_forget)`. Good for session expiry
     // where you might want to resurrect. This is what the recipe's
-    // `pad.forget()` does under the hood (helios_scratchpad.rs:199-205).
+    // `pad.forget()` does under the hood (helios_scratchpad.rs:206-210).
     let _soft_receipt = pad.forget().await?;
 
     // --- HARD path ----------------------------------------------------------
@@ -510,7 +510,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
       other => { other?; }
   }
   ```
-- **The recipe surface is soft-only.** `HeliosScratchpad::forget()` always lowers to `ForgetTarget::Scope(ScopeSpec::BySource(session_prefix))` with default options (`helios_scratchpad.rs:199-205`). There is no `pad.hard_forget()` — you must drop to the `Lunaris` handle as above. This is intentional: a `pad.` method that could irreversibly delete data would be a footgun in agent code-gen paths.
+- **The recipe surface is soft-only.** `HeliosScratchpad::forget()` always lowers to `ForgetTarget::Scope(ScopeSpec::BySource(session_prefix))` with default options (`helios_scratchpad.rs:206-210`). There is no `pad.hard_forget()` — you must drop to the `Lunaris` handle as above. This is intentional: a `pad.` method that could irreversibly delete data would be a footgun in agent code-gen paths.
 - **`ScopeSpec::BySource` is a prefix match on the JSON `source` field.** It is NOT regex, glob, or substring (`crates/lunaris/src/forget.rs:417-421`). Passing `"helios:fs/session-42"` without the trailing `/` would also match `helios:fs/session-42-extra/` — always include the terminator.
 - **Write once, delete many.** The `forget` call issues a **single** `atomic_write` (D-19 invariant at `forget.rs:275-279`) regardless of how many rows matched the scope. Memory is bounded by `scan_range` + `read_as_of` results held briefly in a `Vec<ForgetMatch>`. For pan-tenant sweeps of millions of rows, partition the scope into per-day `Before(hlc)` sweeps instead.
 - **`before` is a separate target, not a scope modifier.** `ForgetTarget::Before(hlc)` is the retention-sweep path (`forget.rs:56-58`). Combining "this session AND before this date" requires two calls, not one fused target — v0 scope language is intentionally small (`forget.rs:60-72`).
@@ -531,7 +531,7 @@ The agent asks *"tell me everything you know about Alice"*. Pure vector recall r
 
 ### Code
 
-The HeliosScratchpad public surface is intentionally narrow (`helios_scratchpad.rs:18-28`) — 9 methods, zero graph ops. Graph-aware recall drops to the `Lunaris` handle directly.
+The HeliosScratchpad public surface is intentionally narrow (`helios_scratchpad.rs:17-32`) — 9 public symbols, zero graph ops. Graph-aware recall drops to the `Lunaris` handle directly.
 
 ```rust
 use std::sync::Arc;
@@ -543,8 +543,8 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
     // (1) Turn the graph pipeline on BEFORE ingest. Default is OFF per
     //     blueprint §5.2 — `handle.graph_pipeline().is_enabled()` returns
-    //     false until this flip (crates/lunaris/src/handle.rs:404-406,
-    //     umbrella re-export at lib.rs:39).
+    //     false until this flip (crates/lunaris/src/handle.rs:444,
+    //     umbrella re-export at lib.rs:67).
     lunaris.graph_pipeline().enable();
 
     // (2) (Re-)ingest the session's episodes so the extractor runs and
@@ -587,7 +587,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ### Gotchas
 
-- **Graph pipeline is OFF by default.** The single-switch surface is `handle.graph_pipeline().enable()` / `.disable()` / `.is_enabled()` (`crates/lunaris/src/handle.rs:395-406`). The env equivalent is `LUNARIS_GRAPH_ENABLED=1` (`crates/lunaris/src/lib.rs:39` — `GRAPH_ENABLED_ENV_VAR`). When OFF, the extractor is dead code and ingest stays in the no-graph budget (`INGEST-05`).
+- **Graph pipeline is OFF by default.** The single-switch surface is `handle.graph_pipeline().enable()` / `.disable()` / `.is_enabled()` (`crates/lunaris/src/handle.rs:444`). The env equivalent is `LUNARIS_GRAPH_ENABLED=1` (`crates/lunaris/src/lib.rs:67` — `GRAPH_ENABLED_ENV_VAR`). When OFF, the extractor is dead code and ingest stays in the no-graph budget (`INGEST-05`).
 - **Extractor default is Candle Gemma-3 4B.** Weights load from the default cache — if they are missing the pipeline falls back to `NoopExtractor` (`lib.rs:96`). See `docs/guide.md` §4 for the Extractor trait and how to swap to `OllamaExtractor` or `CloudApiExtractor` (both umbrella-re-exported under feature flags at `lib.rs:102-107`).
 - **Retrofitting graph on an already-ingested corpus requires re-ingest.** Toggling `enable()` after ingest does not back-fill entities — the extraction step runs inside `Lunaris::ingest`, not as a background sweep. In production you either (a) ingest with graph ON from day zero or (b) replay the session through `pad.write(path, content)` after flipping the toggle.
 - **`Graph::anchored` requires resolvable `EntityId`s.** Use `EntityId::from_name_and_type` (`crates/lunaris-extract/src/types.rs:60`) for the canonical hash. Passing an unresolved name is a silent zero-hit — there is no "find-nearest-entity" fallback at the operator level.
@@ -622,7 +622,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
 
     // `pad.grep` already lowers to `recall_with_degraded_check().execute(...)`
-    // under the hood (helios_scratchpad.rs:138-151). The degraded flag is
+    // under the hood (helios_scratchpad.rs:151-156). The degraded flag is
     // surfaced on each returned Hit.
     let hits: Vec<Hit> = pad.grep("brown fox", 5).await?;
 
@@ -652,7 +652,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 - **`degraded` is a `Hit`-level boolean flag**, not a per-call exception. Every `Hit` in the returned `Vec` carries its own `degraded: bool` (`crates/lunaris-retrieve/src/types.rs:87-92`). A partial-degrade (some hits from a lagging index, some fresh) is representable. The `recall_with_degraded_check` path seeds the builder's `initial_degraded` based on queue depth at call start (`crates/lunaris/src/recall.rs:99-139`); per-hit degrade from `degraded_fallback` operators composes on top.
 - **Backends without `queue_depth` fall through as non-degraded.** `StoragePort::queue_depth` is an additive method (`crates/lunaris-core/src/...`). Older backends return `Err(StorageError::NotSupported(_))`, which the recall path catches and logs at `debug` (`recall.rs:121-128`). This is best-effort observability — a silent "no queue introspection available" does NOT fail the recall.
 - **`Hit::degraded` is an advisory, not a correctness claim.** An unverified extraction is still a real extraction — it just has not passed the two-model validator (`VERIFY-04` contradiction arbitration). The agent-side decision (surface a warning, re-query, ignore) is Helios's call.
-- **`pad.grep` is the only scratchpad method that surfaces degrade.** `pad.read` also lowers to `recall_with_degraded_check` (`helios_scratchpad.rs:248-260`) but aggregates chunks into a `String` — the per-hit flag is lost in the concatenation. If you care about degrade in the `read` path, call `lunaris.recall_with_degraded_check().await?` directly and inspect hits before flattening.
+- **`pad.grep` is the only scratchpad method that surfaces degrade.** `pad.read`'s multi-chunk fallback (`read_at`) also lowers to `recall_with_degraded_check` (`helios_scratchpad.rs:113-129, 247-272`) but aggregates chunks into a `String` — the per-hit flag is lost in the concatenation. If you care about degrade in the `read` path, call `lunaris.recall_with_degraded_check().await?` directly and inspect hits before flattening.
 - **VERIFY-V1 will enable the worker by default.** Today (v0) the verifier worker is scaffolded but off; the warn threshold is a guard against a deployment that turns it on and then falls behind. Keep the threshold tuned for expected queue depth — a too-low threshold flags every recall, a too-high one masks real lag.
 
 ---
@@ -745,7 +745,7 @@ Before shipping Helios-on-Lunaris to production, confirm each item below. These 
 - [ ] **Session id uniqueness.** Use `Ulid::new().to_string()` or UUIDv7 — NOT a per-process counter. Two pads with the same id co-mingle and one `forget()` purges both. Scenario 2.
 - [ ] **Forget strategy.** Decide per-tenant / per-session which of (soft `pad.forget()`, hard `lunaris.confirm_hard_forget + forget(...hard().with_token(...))`, temporal sweep `ForgetTarget::Before(hlc)`) you run and on what schedule. Audit events fire on every call — treat `__lunaris_audit__` as the compliance source of truth. Scenario 6.
 - [ ] **Degraded observability wired.** `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` tuned for expected queue depth; UI / metric surfaces `Hit::degraded` so operators can see lag before an outage. Scenario 8.
-- [ ] **Verifier + consolidator toggles explicit.** Both default OFF in v0. If you turn on the verifier (`VerifierPipelineHandle::enable()` — umbrella at `crates/lunaris/src/lib.rs:52`), monitor `__lunaris_verify__` queue lag per `VERIFY-05`. Same for `ConsolidatorPipelineHandle`. Keep toggles in one place (startup config), not scattered across request-path code.
+- [ ] **Verifier + consolidator toggles explicit.** Both default OFF in v0. If you turn on the verifier (`VerifierPipelineHandle::enable()` — umbrella at `crates/lunaris/src/lib.rs:84`), monitor `__lunaris_verify__` queue lag per `VERIFY-05`. Same for `ConsolidatorPipelineHandle`. Keep toggles in one place (startup config), not scattered across request-path code.
 - [ ] **Moon vs Postgres tuning.** In production the default path is Moon — its latency budgets are the load-bearing `Core Value` from `PROJECT.md`. Postgres is the portability proof and runs at a relaxed budget (`2×` over hard-fails, beyond that soft-fails per Plan 02-04 D-12). If your CI runs dual-backend, don't treat a Postgres soft-fail as a Moon regression.
 - [ ] **Hard-delete audit trail archived.** `__lunaris_audit__` events for hard forgets are the only forensic record after the KV rows are gone. Persist the topic to cold storage for the retention window your compliance regime requires.
 - [ ] **Graph pipeline posture explicit.** If Helios depends on graph-aware recall (Scenario 7), ingest with graph ON from day zero — retrofitting requires re-ingest. If Helios does NOT need graph (pure RAG workloads), keep it OFF to stay inside the no-graph ingest budget.
