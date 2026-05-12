@@ -44,7 +44,13 @@ impl Lunaris {
     /// per the atomic_write monotonicity rule. Errors from the storage layer
     /// flow through the `#[from]`-derived `LunarisError::Storage` variant.
     pub async fn snapshot(&self) -> Result<Lsn, LunarisError> {
-        // RFC 0001 Wave 0: no-op snapshot uses Scope::dev() as migration crutch.
+        // RFC 0001: snapshot is a backend-level LSN observation, not a
+        // per-scope read. The empty atomic_write advances the global LSN
+        // counter regardless of scope partition, so `Scope::dev()` here is
+        // the same allow-listed class as the verify queue_depth health
+        // check — both observe handle-level state, not partition data.
+        // scope-dev-allowed: snapshot-is-global-lsn — empty atomic_write advances
+        // the backend's global LSN counter; no partition data is touched.
         self.storage
             .atomic_write(&lunaris_core::Scope::dev(), &[])
             .await

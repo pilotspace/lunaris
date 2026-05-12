@@ -58,12 +58,13 @@ impl ChunkDraft {
     /// Convert to a Phase 1 [`Chunk`]. The caller controls the `episode_id`;
     /// `clock` issues the `BiTemporal::now` stamp.
     ///
-    /// RFC 0001 Wave 0: `scope` defaults to `Scope::dev()`. Wave 1D will thread
-    /// the real episode scope through this call site.
-    pub fn into_chunk(self, episode_id: Ulid, clock: &HlcClock) -> Chunk {
-        // Wave 0 migration crutch: use dev scope. Wave 1D replaces this.
+    /// Build a Phase 1 [`Chunk`] under `scope`. The caller MUST forward the
+    /// owning Episode's [`Scope`] so the chunk inherits the same partition
+    /// key (the typical pattern is `draft.into_chunk(episode.scope.clone(),
+    /// episode.id, &clock)`).
+    pub fn into_chunk(self, scope: Scope, episode_id: Ulid, clock: &HlcClock) -> Chunk {
         let mut c = Chunk::new(
-            Scope::dev(),
+            scope,
             episode_id,
             self.text,
             self.tokens,
