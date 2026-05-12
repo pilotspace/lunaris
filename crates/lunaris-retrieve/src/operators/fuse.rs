@@ -227,4 +227,119 @@ mod tests {
         // Sanity: rank 1 contribution at k=60 is 1/61 = 0.0163934...
         assert!(((1.0_f32 / 61.0) - 0.0163934).abs() < 1e-6);
     }
+
+    // ── P0 #2 weighted RRF tests (RED → GREEN) ──
+
+    /// Regression-safety: default weights of `1.0` for every branch MUST
+    /// produce mathematically identical output to the legacy unweighted
+    /// `client_side_rrf`. This is the invariant that protects every existing
+    /// caller — without it, a refactor that switches `client_side_rrf` to
+    /// call the weighted version could silently change rankings.
+    #[test]
+    fn weighted_rrf_with_unit_weights_matches_unweighted() {
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"b", 0.5, SourceOp::Vector),
+            rh(b"c", 0.8, SourceOp::Keyword),
+            rh(b"a", 0.6, SourceOp::Keyword),
+        ];
+
+        let unweighted = client_side_rrf(hits.clone(), 60);
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 1.0_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let weighted = client_side_rrf_weighted(hits, &weights, 60);
+
+        assert_eq!(unweighted.len(), weighted.len(), "id set must match");
+        for (u, w) in unweighted.iter().zip(weighted.iter()) {
+            assert_eq!(u.id, w.id, "ordering must match");
+            assert!(
+                (u.score - w.score).abs() < 1e-6,
+                "score equality required: unweighted={} weighted={}",
+                u.score,
+                w.score
+            );
+        }
+    }
+
+    /// Missing branches in the weights map default to weight `1.0`. The
+    /// empty-map case is the canonical "no weights specified" signal and
+    /// MUST be a no-op vs the unweighted call.
+    #[test]
+    fn weighted_rrf_empty_weights_map_is_no_op() {
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"b", 0.5, SourceOp::Vector),
+            rh(b"c", 0.8, SourceOp::Keyword),
+        ];
+        let unweighted = client_side_rrf(hits.clone(), 60);
+        let weighted = client_side_rrf_weighted(hits, &HashMap::new(), 60);
+        assert_eq!(unweighted.len(), weighted.len());
+        for (u, w) in unweighted.iter().zip(weighted.iter()) {
+            assert_eq!(u.id, w.id);
+            assert!((u.score - w.score).abs() < 1e-6);
+        }
+    }
+
+    /// Weighting changes the relative ordering. With `Vector=1.0, Keyword=0.5`
+    /// a hit that only appears in Keyword should score below a hit that only
+    /// appears in Vector at the same rank.
+    #[test]
+    fn weighted_rrf_changes_ordering() {
+        // id=v_only: vector rank 1 (no keyword)
+        // id=k_only: keyword rank 1 (no vector)
+        // Unweighted: both score 1/61 — tie.
+        // Weighted (Vector=1.0, Keyword=0.5): v_only=1/61, k_only=0.5/61
+        let hits = vec![rh(b"v_only", 0.9, SourceOp::Vector), rh(b"k_only", 0.9, SourceOp::Keyword)];
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.5_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let weighted = client_side_rrf_weighted(hits, &weights, 60);
+        assert_eq!(weighted.len(), 2);
+        assert_eq!(weighted[0].id, b"v_only".to_vec(), "vector branch (weight 1.0) must win");
+        assert_eq!(weighted[1].id, b"k_only".to_vec());
+        let v_score = 1.0_f32 / 61.0;
+        let k_score = 0.5_f32 / 61.0;
+        assert!((weighted[0].score - v_score).abs() < 1e-6);
+        assert!((weighted[1].score - k_score).abs() < 1e-6);
+    }
+
+    /// Zero weight removes a branch's contribution entirely (but the id
+    /// still surfaces if it appears in another branch with positive weight).
+    #[test]
+    fn weighted_rrf_zero_weight_removes_branch_contribution() {
+        // id=a in both, id=b only in Keyword.
+        // Weights: Vector=1.0, Keyword=0.0
+        // → a scores 1/61 (vector only), b scores 0 (keyword zero'd).
+        // b still surfaces because the hit exists, but its score is 0.
+        let hits = vec![
+            rh(b"a", 0.9, SourceOp::Vector),
+            rh(b"a", 0.7, SourceOp::Keyword),
+            rh(b"b", 0.8, SourceOp::Keyword),
+        ];
+        let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.0_f32)]
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let out = client_side_rrf_weighted(hits, &weights, 60);
+        let a = out.iter().find(|h| h.id == b"a".to_vec()).expect("a present");
+        let b = out.iter().find(|h| h.id == b"b".to_vec()).expect("b present");
+        assert!((a.score - 1.0_f32 / 61.0).abs() < 1e-6, "a comes from vector only");
+        assert!(b.score.abs() < 1e-6, "b's keyword contribution is zero'd: score={}", b.score);
+    }
+
+    /// Weight specified for a branch with no hits is harmless.
+    #[test]
+    fn weighted_rrf_weight_on_missing_branch_is_harmless() {
+        let hits = vec![rh(b"a", 0.9, SourceOp::Vector)];
+        let weights = [
+            (SourceOp::Vector, 1.0_f32),
+            (SourceOp::Keyword, 2.0_f32), // no Keyword hits exist
+            (SourceOp::Graph, 3.0_f32),   // no Graph hits exist
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+        let out = client_side_rrf_weighted(hits, &weights, 60);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].score - 1.0_f32 / 61.0).abs() < 1e-6);
+    }
 }
