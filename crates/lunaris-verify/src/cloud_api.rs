@@ -233,6 +233,11 @@ impl CloudApiVerifier {
                 // tools, OpenAI response_format, Gemini responseSchema) so
                 // structured output is enforced server-side.
                 schema: Some(decision_schema()),
+                // R3: restore D-21 audit-reason signal — on retry-exhausted
+                // transient failure the decision carries `cause =
+                // "transient_after_retry: <err>"` and the correct provider
+                // backend tag rather than generic Noop + empty cause.
+                defer_with_cause_on_error: true,
                 ..LlmVerifierOpts::default()
             },
         );
@@ -322,6 +327,91 @@ mod tests {
         let dbg = format!("{verifier:?}");
         assert!(!dbg.contains("SECRET"), "Debug must redact api_key, got: {dbg}");
         assert!(!dbg.contains("sk-ant"), "Debug must redact api_key, got: {dbg}");
+    }
+
+    // ── R3 regression: transient failure preserves audit reason + backend tag ─
+    /// After D-21 retry exhaustion the cloud wrapper must emit
+    /// `Ok(VerifyDecision::deferred_with_cause(...))` so the D-22 audit
+    /// pipeline can distinguish transient backend failures from NoopVerifier
+    /// passthroughs. `cause` must contain the `transient_after_retry:` prefix
+    /// and the error detail; `backend` must be the provider tag, not `Noop`.
+    #[tokio::test]
+    async fn cloud_api_transient_failure_preserves_audit_reason() {
+        use std::sync::Arc;
+
+        use async_trait::async_trait;
+        use lunaris_core::{LunarisError, StorageError};
+        use lunaris_extract::{EntityId, Fact, NeedsReviewItem, NeedsReviewReason};
+        use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
+        use ulid::Ulid;
+
+        use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
+        use crate::types::VerifierBackend;
+        use crate::Verifier;
+
+        struct TransientCloudBackend;
+        #[async_trait]
+        impl LlmBackend for TransientCloudBackend {
+            async fn generate(
+                &self,
+                _: &str,
+                _: SchemaConstraint<'_>,
+                _: GenOpts,
+            ) -> Result<String, LunarisError> {
+                Err(LunarisError::Storage(StorageError::Backend(
+                    "cloud-api: HTTP 503: upstream overloaded".into(),
+                )))
+            }
+            fn model_id(&self) -> &str {
+                "stub://cloud-transient"
+            }
+        }
+
+        let verifier = LlmVerifier::with_opts(
+            Arc::new(TransientCloudBackend),
+            LlmVerifierOpts {
+                backend_tag: VerifierBackend::CloudAnthropic,
+                defer_with_cause_on_error: true,
+                schema: Some(super::decision_schema()),
+                ..LlmVerifierOpts::default()
+            },
+        );
+
+        let sid = EntityId::from_name_and_type("Alice", "Person");
+        let oid = EntityId::from_name_and_type("Bob", "Person");
+        let item = NeedsReviewItem::Fact {
+            reason: NeedsReviewReason::GbnfFailure {
+                schema_path: "facts/0".into(),
+                error: "fixture".into(),
+            },
+            raw: Fact {
+                id: Ulid::new(),
+                subject_id: sid,
+                predicate: "knows".into(),
+                object_id: oid,
+                fact_text: "Alice knows Bob".into(),
+                confidence: 0.9,
+                valid_from_iso: "2025-01-01".into(),
+                valid_to_iso: None,
+            },
+        };
+
+        let decision = verifier.verify(item).await.expect("must be Ok(deferred)");
+        assert!(!decision.applies(), "transient failure must defer, not arbitrate");
+        assert_eq!(
+            decision.backend,
+            VerifierBackend::CloudAnthropic,
+            "backend tag must be CloudAnthropic, not Noop"
+        );
+        let cause = decision.cause.expect("cause must be Some after transient failure");
+        assert!(
+            cause.contains("transient_after_retry"),
+            "cause must have transient_after_retry prefix: {cause}"
+        );
+        assert!(
+            cause.contains("HTTP 503"),
+            "cause must include upstream error detail: {cause}"
+        );
     }
 
     // ── R4 regression: decision_schema contains required arbitration fields ────

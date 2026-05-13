@@ -61,6 +61,12 @@ pub struct LlmVerifierOpts {
     /// (R1); cloud-API wires the same schema so provider-native structured
     /// output is used (R4). Additive, non-breaking — `Default` is `None`.
     pub schema: Option<serde_json::Value>,
+    /// When `true`, backend errors are returned as
+    /// `Ok(VerifyDecision::deferred_with_cause(...))` with the error message
+    /// embedded in `cause` and `backend_tag` preserved. Default is `false`
+    /// (plain `deferred()`). Cloud-api sets this `true` to restore the D-21
+    /// audit-reason signal lost in Phase 12b (R3).
+    pub defer_with_cause_on_error: bool,
 }
 
 impl Default for LlmVerifierOpts {
@@ -71,6 +77,7 @@ impl Default for LlmVerifierOpts {
             temperature: 0.0,
             backend_tag: VerifierBackend::Candle,
             schema: None,
+            defer_with_cause_on_error: false,
         }
     }
 }
@@ -123,7 +130,14 @@ impl Verifier for LlmVerifier {
                     model_id = self.backend.model_id(),
                     "LlmVerifier generate failed; emitting deferred decision"
                 );
-                Ok(VerifyDecision::deferred())
+                if self.opts.defer_with_cause_on_error {
+                    Ok(VerifyDecision::deferred_with_cause(
+                        format!("transient_after_retry: {e}"),
+                        self.opts.backend_tag,
+                    ))
+                } else {
+                    Ok(VerifyDecision::deferred())
+                }
             }
         }
     }
@@ -271,6 +285,56 @@ mod tests {
         assert!(
             *flag.lock().unwrap(),
             "backend must receive SchemaConstraint::JsonSchema when opts.schema is set"
+        );
+    }
+
+    // ── R3 regression: deferred_with_cause carries reason + backend tag ───────
+    /// When `defer_with_cause_on_error = true`, a backend `Err` must return
+    /// `Ok(deferred_with_cause(...))` so the D-22 audit event carries the
+    /// `transient_after_retry` signal and the correct provider backend tag.
+    #[tokio::test]
+    async fn backend_error_deferred_with_cause_preserves_audit_reason() {
+        use lunaris_core::StorageError;
+        struct TransientBackend;
+        #[async_trait]
+        impl LlmBackend for TransientBackend {
+            async fn generate(
+                &self,
+                _: &str,
+                _: SchemaConstraint<'_>,
+                _: GenOpts,
+            ) -> Result<String, LunarisError> {
+                Err(LunarisError::Storage(StorageError::Backend(
+                    "cloud-api: HTTP 503: service unavailable".into(),
+                )))
+            }
+            fn model_id(&self) -> &str {
+                "stub://transient"
+            }
+        }
+        let verifier = LlmVerifier::with_opts(
+            Arc::new(TransientBackend),
+            LlmVerifierOpts {
+                backend_tag: VerifierBackend::CloudAnthropic,
+                defer_with_cause_on_error: true,
+                ..LlmVerifierOpts::default()
+            },
+        );
+        let decision = verifier.verify(fact_item()).await.expect("must return Ok(deferred)");
+        assert!(!decision.applies(), "deferred_with_cause must not apply");
+        assert_eq!(
+            decision.backend,
+            VerifierBackend::CloudAnthropic,
+            "backend tag must be preserved for D-22 audit"
+        );
+        let cause = decision.cause.expect("cause must be Some for transient_after_retry audit");
+        assert!(
+            cause.contains("transient_after_retry"),
+            "cause must contain transient_after_retry prefix: {cause}"
+        );
+        assert!(
+            cause.contains("HTTP 503"),
+            "cause must include the upstream error detail: {cause}"
         );
     }
 }

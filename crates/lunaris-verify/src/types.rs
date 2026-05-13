@@ -21,6 +21,13 @@ pub struct VerifyDecision {
     pub reason: String,
     pub backend: VerifierBackend,
     pub decided_at_iso: String,
+    /// Optional machine-readable cause for deferred decisions. Set by the
+    /// cloud-api wrapper after D-21 retry exhaustion so the D-22 audit
+    /// pipeline can distinguish "transient backend failure" from "NoopVerifier
+    /// passthrough". Omitted from serialized audit records when `None`
+    /// (additive, backwards-compatible — existing records round-trip fine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
 }
 
 impl VerifyDecision {
@@ -33,6 +40,22 @@ impl VerifyDecision {
             reason: "deferred (NoopVerifier or backend abstain)".to_string(),
             backend: VerifierBackend::Noop,
             decided_at_iso: chrono_iso_now(),
+            cause: None,
+        }
+    }
+
+    /// Abstain with a machine-readable cause and a specific backend tag. Used
+    /// by the cloud-api wrapper (R3) to preserve the D-21 audit signal after
+    /// retry exhaustion: `cause = "transient_after_retry: <err>"` and the
+    /// correct provider `backend` tag flow through to the D-22 audit event.
+    pub fn deferred_with_cause(cause: impl Into<String>, backend: VerifierBackend) -> Self {
+        Self {
+            winner_id: None,
+            loser_id: None,
+            reason: "deferred (transient backend failure after retry)".to_string(),
+            backend,
+            decided_at_iso: chrono_iso_now(),
+            cause: Some(cause.into()),
         }
     }
 
@@ -50,6 +73,7 @@ impl VerifyDecision {
             reason: reason.into(),
             backend,
             decided_at_iso: chrono_iso_now(),
+            cause: None,
         }
     }
 
