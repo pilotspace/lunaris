@@ -73,6 +73,7 @@ use ulid::Ulid;
 ///    seeded hit → `hydrate` calls `read_as_of` → finds the chunk → finds the
 ///    episode → builds a `Hit` with `text` from the chunk.
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct MockMultiTenantStorage {
     /// KV rows: (scope_str, key_bytes) → value_bytes
     rows: Mutex<HashMap<(String, Vec<u8>), Vec<u8>>>,

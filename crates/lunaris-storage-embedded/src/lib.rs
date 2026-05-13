@@ -162,7 +162,7 @@ impl StoragePort for EmbeddedStorage {
         for op in ops {
             match op {
                 WriteOp::KvPut { key, value } => {
-                    close_open_kv(&mut *tx, key, &hk).await?;
+                    close_open_kv(&mut tx, key, &hk).await?;
                     let bt = serde_json::to_string(&bt_open(h))?;
                     sqlx::query(
                         "INSERT OR REPLACE INTO lunaris_kv \
@@ -179,7 +179,7 @@ impl StoragePort for EmbeddedStorage {
                 }
                 WriteOp::KvDelete { key } => {
                     // Tombstone-by-absence: close the open version, insert nothing.
-                    close_open_kv(&mut *tx, key, &hk).await?;
+                    close_open_kv(&mut tx, key, &hk).await?;
                 }
                 WriteOp::VectorUpsert { index, id, embedding, metadata } => {
                     sqlx::query(

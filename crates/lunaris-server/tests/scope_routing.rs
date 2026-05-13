@@ -47,6 +47,7 @@ use tower::ServiceExt;
 /// Simple in-memory storage that records atomic_write calls and makes the
 /// written rows available for assertion.
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 struct ScopedTestStorage {
     /// Rows stored per scope, keyed as (scope_str, key_bytes).
     rows: Mutex<HashMap<(String, Vec<u8>), Vec<u8>>>,

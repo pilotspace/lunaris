@@ -170,9 +170,11 @@ impl StoragePort for ChannelStorage {
 // ---------------------------------------------------------------------------
 
 /// Records calls to `consolidate_scoped` as `(scope_prefix, filtered_event_count)`.
+type RecordedCalls = Arc<Mutex<Vec<(Option<String>, usize)>>>;
+
 #[derive(Default)]
 struct RecordingConsolidator {
-    calls: Arc<Mutex<Vec<(Option<String>, usize)>>>,
+    calls: RecordedCalls,
 }
 
 #[async_trait]

@@ -1,3 +1,8 @@
+// Tests exercise the deprecated `Lunaris::forget` path on purpose — the
+// canonical entry point is `ScopedLunaris::forget(request)` (RFC 0001), but
+// this module retains coverage of the deprecated wrapper until it is removed.
+#![allow(deprecated)]
+
 //! Plan 04-05 — integration smoke tests for `Lunaris::forget(target)`.
 //!
 //! Seven mandatory test cases per PATTERNS.md `forget_smoke.rs` section:

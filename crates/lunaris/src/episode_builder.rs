@@ -101,6 +101,8 @@ impl EpisodeBuilder {
             // so two ingests under the same scope would collide on
             // `episode_key(scope, Ulid(0))` and the second would silently
             // overwrite the first.
+            // Must use `Ulid::new` (random) not `Ulid::default()` (which is `Ulid(0)`).
+            #[allow(clippy::unwrap_or_default)]
             id: self.id.unwrap_or_else(Ulid::new),
             scope,
             source: self.source,
