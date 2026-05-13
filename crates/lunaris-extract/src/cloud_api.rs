@@ -280,6 +280,10 @@ impl Extractor for CloudApiExtractor {
             }
         }
     }
+
+    fn applies(&self) -> bool {
+        self.backend.applies()
+    }
 }
 
 #[cfg(test)]
