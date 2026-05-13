@@ -334,7 +334,8 @@ async fn graph_anchored_composes_with_vector_via_fuse_rrf() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     // Build the canonical compose: Vector + Graph + fuse_rrf + top(5).
-    let root = Vector::new("chunks", 30).and(Graph::anchored(vec![(alice, 1.0)], 2)).fuse_rrf(60).top(5);
+    let root =
+        Vector::new("chunks", 30).and(Graph::anchored(vec![(alice, 1.0)], 2)).fuse_rrf(60).top(5);
     let builder = RetrievalBuilder::new(storage_dyn, keyword_dyn, embedder).with_root(root);
 
     // Execute end-to-end. Hydration drops hits without a chunk row in
@@ -676,10 +677,8 @@ async fn graph_score_anchor_confidence_effect() {
     let ctx = make_ctx(storage.clone(), None);
 
     // Pass BOTH seeds with their respective confidences.
-    let hits = Graph::anchored(vec![(trusted, 1.0), (uncertain, 0.3)], 5)
-        .retrieve(&ctx)
-        .await
-        .unwrap();
+    let hits =
+        Graph::anchored(vec![(trusted, 1.0), (uncertain, 0.3)], 5).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 2);
     assert!((hits[0].score - 0.5_f32).abs() < 1e-6, "got {}", hits[0].score);
     assert!((hits[1].score - 0.15_f32).abs() < 1e-6, "got {}", hits[1].score);
@@ -784,7 +783,14 @@ async fn graph_anchor_confidence_default_one_when_seed_missing() {
     let result = graph_with_source_entity(vec![
         // Source is `ghost_seed`, but the caller's seeds vec does NOT
         // include it. Operator must fall back to confidence = 1.0.
-        (EntityId::from_name_and_type("Orphan", "X"), "Orphan", "X", Some(1.0), Some(1.0), ghost_seed),
+        (
+            EntityId::from_name_and_type("Orphan", "X"),
+            "Orphan",
+            "X",
+            Some(1.0),
+            Some(1.0),
+            ghost_seed,
+        ),
     ]);
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
@@ -805,17 +811,19 @@ async fn graph_anchor_confidence_uses_max_for_duplicate_seeds() {
     // operator MUST collapse to MAX so a low-confidence duplicate cannot
     // demote a high-confidence anchor.
     let seed = EntityId::from_name_and_type("DupSeed", "Person");
-    let result = graph_with_source_entity(vec![
-        (EntityId::from_name_and_type("Hit", "X"), "Hit", "X", Some(1.0), Some(1.0), seed),
-    ]);
+    let result = graph_with_source_entity(vec![(
+        EntityId::from_name_and_type("Hit", "X"),
+        "Hit",
+        "X",
+        Some(1.0),
+        Some(1.0),
+        seed,
+    )]);
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
 
     // Duplicate seed: low + high confidence. MAX wins → 0.9.
-    let hits = Graph::anchored(vec![(seed, 0.1), (seed, 0.9)], 5)
-        .retrieve(&ctx)
-        .await
-        .unwrap();
+    let hits = Graph::anchored(vec![(seed, 0.1), (seed, 0.9)], 5).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 1);
     // score = (1.0 / 2.0) * 0.9 = 0.45
     assert!(
@@ -834,9 +842,8 @@ async fn graph_anchor_confidence_uses_max_for_duplicate_seeds() {
 // that the operator actually sent to `graph_traverse`.
 
 async fn dispatched_cypher_with_dialect(d: CypherDialect) -> String {
-    let storage = Arc::new(
-        RecordingStorage::new_with_graph(canned_graph_with(vec![])).with_dialect(d),
-    );
+    let storage =
+        Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![])).with_dialect(d));
     let ctx = make_ctx(storage.clone(), None);
     let seed = EntityId::from_name_and_type("Anchor", "Person");
     let _ = Graph::anchored(vec![(seed, 1.0)], 2).retrieve(&ctx).await.unwrap();
@@ -909,10 +916,7 @@ async fn dispatch_full_dialect_emits_reduce_for_edge_weight_product() {
     // operator MUST emit the full Wave-4 template including reduce(...) for
     // edge_weight_product.
     let cypher = dispatched_cypher_with_dialect(CypherDialect::Full).await;
-    assert!(
-        cypher.contains("MATCH p ="),
-        "Full dialect MUST bind a path variable: {cypher}"
-    );
+    assert!(cypher.contains("MATCH p ="), "Full dialect MUST bind a path variable: {cypher}");
     assert!(
         cypher.contains("length(p) AS path_length"),
         "Full dialect MUST emit length(p) AS path_length: {cypher}"
@@ -941,16 +945,11 @@ async fn score_back_compat_with_dialect(d: CypherDialect) -> f32 {
         // and source-entity columns are absent regardless of declared
         // dialect tier. Mirrors the real-world "backend updated but
         // response sometimes lacks columns" case.
-        RecordingStorage::new_with_graph(canned_graph_with(vec![
-            (bob, "Bob", "Person"),
-        ]))
-        .with_dialect(d),
+        RecordingStorage::new_with_graph(canned_graph_with(vec![(bob, "Bob", "Person")]))
+            .with_dialect(d),
     );
     let ctx = make_ctx(storage.clone(), None);
-    let hits = Graph::anchored(vec![(alice, 1.0)], 2)
-        .retrieve(&ctx)
-        .await
-        .unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 1, "single canned row must yield one hit");
     hits[0].score
 }

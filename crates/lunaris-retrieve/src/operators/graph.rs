@@ -632,11 +632,7 @@ mod tests {
             "Full MUST emit length(p) AS path_length: {}",
             q.cypher
         );
-        assert!(
-            q.cypher.contains("reduce("),
-            "Full MUST emit reduce(...): {}",
-            q.cypher
-        );
+        assert!(q.cypher.contains("reduce("), "Full MUST emit reduce(...): {}", q.cypher);
         assert!(
             q.cypher.contains("edge_weight_product"),
             "Full MUST emit edge_weight_product alias: {}",
