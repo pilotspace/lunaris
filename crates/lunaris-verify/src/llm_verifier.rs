@@ -161,32 +161,9 @@ impl Verifier for LlmVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use lunaris_extract::{EntityId, Fact, NeedsReviewReason};
+    use lunaris_llm::FauxBackend;
     use ulid::Ulid;
-
-    struct StubBackend {
-        out: String,
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl LlmBackend for StubBackend {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _constraint: SchemaConstraint<'_>,
-            _opts: GenOpts,
-        ) -> Result<String, LunarisError> {
-            if !self.delay.is_zero() {
-                tokio::time::sleep(self.delay).await;
-            }
-            Ok(self.out.clone())
-        }
-        fn model_id(&self) -> &str {
-            "stub://verify-test"
-        }
-    }
 
     fn fact_item() -> NeedsReviewItem {
         let sid = EntityId::from_name_and_type("Alice", "Person");
@@ -216,7 +193,7 @@ mod tests {
         let out = format!(
             r#"{{"winner_id":"{winner}","loser_id":"{loser}","reason":"newer fact wins"}}"#
         );
-        let backend: Arc<dyn LlmBackend> = Arc::new(StubBackend { out, delay: Duration::ZERO });
+        let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new().with_response(out));
         let verifier = LlmVerifier::new(backend);
         let decision = verifier.verify(fact_item()).await.unwrap();
         assert!(decision.applies());
@@ -225,7 +202,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_output_returns_deferred() {
         let backend: Arc<dyn LlmBackend> =
-            Arc::new(StubBackend { out: "totally not JSON".into(), delay: Duration::ZERO });
+            Arc::new(FauxBackend::new().with_response("totally not JSON"));
         let verifier = LlmVerifier::new(backend);
         let decision = verifier.verify(fact_item()).await.unwrap();
         assert!(!decision.applies());
@@ -233,25 +210,8 @@ mod tests {
 
     #[tokio::test]
     async fn applies_reflects_backend() {
-        struct NoopBackend;
-        #[async_trait]
-        impl LlmBackend for NoopBackend {
-            async fn generate(
-                &self,
-                _: &str,
-                _: SchemaConstraint<'_>,
-                _: GenOpts,
-            ) -> Result<String, LunarisError> {
-                Ok(String::new())
-            }
-            fn model_id(&self) -> &str {
-                "stub://noop"
-            }
-            fn applies(&self) -> bool {
-                false
-            }
-        }
-        let v = LlmVerifier::new(Arc::new(NoopBackend));
+        // FauxBackend with applies=false — covers the NoopBackend pattern.
+        let v = LlmVerifier::new(Arc::new(FauxBackend::new().with_applies(false)));
         assert!(!v.applies());
     }
 

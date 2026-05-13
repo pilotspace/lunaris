@@ -46,6 +46,9 @@ cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
 # + cloud-api keys). SKIPs cleanly without env vars (mirrors `embedder-it` from
 # lunaris-embed).
 extractor-it = []
+# Forwards the lunaris-llm faux feature so external consumers can enable
+# FauxBackend via `lunaris-extract/faux` in their own dev-dependencies.
+faux         = ["lunaris-llm/faux"]
 
 [dependencies]
 lunaris-core = { workspace = true }
@@ -84,3 +87,6 @@ reqwest        = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Force the `faux` feature on during `cargo test` so test modules can use
+# `FauxBackend` without every test binary having to pass `--features faux`.
+lunaris-llm    = { workspace = true, features = ["faux"] }

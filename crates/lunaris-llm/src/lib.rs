@@ -68,6 +68,8 @@ pub mod candle;
 #[cfg(feature = "cloud-api")]
 pub mod cloud;
 pub mod config;
+#[cfg(any(test, feature = "faux"))]
+pub mod faux;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
@@ -76,6 +78,8 @@ pub use candle::{CandleBackend, CandleBackendOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider, is_transient};
 pub use config::{LlmConfig, Pipeline, ProviderKind};
+#[cfg(any(test, feature = "faux"))]
+pub use faux::FauxBackend;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaBackend, OllamaBackendOpts};
 

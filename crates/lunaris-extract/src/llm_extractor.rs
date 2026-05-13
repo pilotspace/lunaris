@@ -323,31 +323,7 @@ impl ExtractionJson {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
-
-    /// Test backend that returns a fixed string regardless of prompt.
-    struct StubBackend {
-        out: String,
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl LlmBackend for StubBackend {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            _constraint: SchemaConstraint<'_>,
-            _opts: GenOpts,
-        ) -> Result<String, LunarisError> {
-            if !self.delay.is_zero() {
-                tokio::time::sleep(self.delay).await;
-            }
-            Ok(self.out.clone())
-        }
-        fn model_id(&self) -> &str {
-            "stub://test"
-        }
-    }
+    use lunaris_llm::FauxBackend;
 
     fn chunk(text: &str) -> ChunkInput {
         ChunkInput {
@@ -359,8 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_chunks_returns_empty_batch() {
-        let backend: Arc<dyn LlmBackend> =
-            Arc::new(StubBackend { out: String::new(), delay: Duration::ZERO });
+        let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new());
         let extractor = LlmExtractor::new(backend);
         let out = extractor.extract(Ulid::new(), &[]).await.unwrap();
         assert!(out.by_chunk.is_empty());
@@ -368,17 +343,15 @@ mod tests {
 
     #[tokio::test]
     async fn parses_valid_json_into_entities() {
-        let backend: Arc<dyn LlmBackend> = Arc::new(StubBackend {
-            out: r#"{
+        let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new().with_response(
+            r#"{
                 "entities":[
                     {"name":"Alice","entity_type":"Person","confidence":0.9,
                      "valid_from_iso":"2025-01-01"}
                 ],
                 "relations":[]
-            }"#
-            .into(),
-            delay: Duration::ZERO,
-        });
+            }"#,
+        ));
         let extractor = LlmExtractor::new(backend);
         let c = chunk("Alice met Bob in Paris.");
         let out = extractor.extract(Ulid::new(), &[c]).await.unwrap();
@@ -390,7 +363,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_json_emits_empty_extraction() {
         let backend: Arc<dyn LlmBackend> =
-            Arc::new(StubBackend { out: "not json at all".into(), delay: Duration::ZERO });
+            Arc::new(FauxBackend::new().with_response("not json at all"));
         let extractor = LlmExtractor::new(backend);
         let c = chunk("hello");
         let out = extractor.extract(Ulid::new(), &[c]).await.unwrap();
@@ -401,8 +374,9 @@ mod tests {
 
     #[tokio::test]
     async fn batch_timeout_emits_empty_per_chunk_partials() {
+        // 500 ms delay exceeds the 50 ms batch timeout → timeout path fires.
         let backend: Arc<dyn LlmBackend> =
-            Arc::new(StubBackend { out: String::new(), delay: Duration::from_millis(500) });
+            Arc::new(FauxBackend::new().with_delay_ms(500));
         let extractor = LlmExtractor::with_opts(
             backend,
             LlmExtractorOpts {
@@ -422,36 +396,11 @@ mod tests {
         }
     }
 
-    /// Capturing backend — records the [`SchemaConstraint`] variant tag
-    /// of the most recent `generate` call so the test can pin that
-    /// `LlmExtractorOpts::gbnf` is faithfully threaded through.
-    struct CapturingBackend {
-        last_constraint: parking_lot::Mutex<&'static str>,
-    }
-
-    #[async_trait]
-    impl LlmBackend for CapturingBackend {
-        async fn generate(
-            &self,
-            _prompt: &str,
-            constraint: SchemaConstraint<'_>,
-            _opts: GenOpts,
-        ) -> Result<String, LunarisError> {
-            *self.last_constraint.lock() = match constraint {
-                SchemaConstraint::None => "none",
-                SchemaConstraint::Gbnf(_) => "gbnf",
-                SchemaConstraint::JsonSchema(_) => "json_schema",
-            };
-            Ok(String::new())
-        }
-        fn model_id(&self) -> &str {
-            "stub://capturing"
-        }
-    }
-
+    /// Pin that `LlmExtractorOpts::gbnf` is faithfully threaded through
+    /// to the backend as `SchemaConstraint::Gbnf`.
     #[tokio::test]
     async fn gbnf_opt_threads_through_to_backend() {
-        let cap = Arc::new(CapturingBackend { last_constraint: parking_lot::Mutex::new("?") });
+        let cap = Arc::new(FauxBackend::new().with_model_id("faux://capturing"));
         let extractor = LlmExtractor::with_opts(
             cap.clone() as Arc<dyn LlmBackend>,
             LlmExtractorOpts {
@@ -460,15 +409,15 @@ mod tests {
             },
         );
         let _ = extractor.extract(Ulid::new(), &[chunk("hi")]).await.unwrap();
-        assert_eq!(*cap.last_constraint.lock(), "gbnf");
+        assert_eq!(cap.last_constraint_tag(), Some("gbnf"));
     }
 
     #[tokio::test]
     async fn no_gbnf_opt_sends_constraint_none() {
-        let cap = Arc::new(CapturingBackend { last_constraint: parking_lot::Mutex::new("?") });
+        let cap = Arc::new(FauxBackend::new());
         let extractor = LlmExtractor::new(cap.clone() as Arc<dyn LlmBackend>);
         let _ = extractor.extract(Ulid::new(), &[chunk("hi")]).await.unwrap();
-        assert_eq!(*cap.last_constraint.lock(), "none");
+        assert_eq!(cap.last_constraint_tag(), Some("none"));
     }
 
     #[test]

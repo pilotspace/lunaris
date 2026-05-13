@@ -45,6 +45,10 @@ default      = []
 candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
 ollama       = ["dep:reqwest"]
 cloud-api    = ["dep:reqwest"]
+# Test-double utilities. Never compiled into production binaries.
+# Consuming crates add `lunaris-llm = { workspace = true, features = ["faux"] }`
+# to their `[dev-dependencies]` to get `FauxBackend`.
+faux         = ["dep:parking_lot"]
 
 [dependencies]
 lunaris-core   = { workspace = true }
@@ -73,3 +77,8 @@ reqwest        = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# FauxBackend (cfg(test)) needs parking_lot::Mutex. Listed here so that
+# `cargo test -p lunaris-llm --lib` without --features faux still compiles
+# the faux::tests module. The `faux` feature activates parking_lot for
+# external consumers; this dev-dep covers the internal cfg(test) path.
+parking_lot    = { workspace = true }
