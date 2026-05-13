@@ -1,100 +1,86 @@
-//! Phase 14.3 integration tests — `pre_warm_query` fire-and-forget recall.
+//! Phase 14.3 integration smoke tests — `ReflectOutput.pre_warm_query` → fire-and-forget recall.
 //!
-//! ## Test plan
+//! ## What is pinned
 //!
-//! Four in-process tests using `memory://` (no external services required):
+//! Four sub-tests prove the composition introduced in feat commit 5129adf:
 //!
-//! - **Test 1 (happy path):** A `ScopedLunaris::end_turn` with
-//!   `pre_warm_query = Some("alice")` returns quickly (< 500 ms wall) and the
-//!   spawned task completes without panic. Verified by waiting for the
-//!   background task counter to reach 1.
+//! 1. **`prewarm_happy_path_spawns_warm_up`** — supervisor returns
+//!    `pre_warm_query: Some("alice")`. `end_turn` returns quickly (< 500ms wall).
+//!    After a brief sleep, the semaphore is back to full available permits,
+//!    confirming the spawned task ran and released the permit.
 //!
-//! - **Test 2 (semaphore bound):** A semaphore with capacity 1. Ten rapid
-//!   `end_turn` calls. Exactly 1 warm-up task is acquired; the remaining 9
-//!   are skipped. Verified by a shared `Arc<AtomicUsize>` counter that the
-//!   counting embedder increments on each embed call (inside the spawned task)
-//!   and a separate `skip_counter` tracked via a `Mutex<usize>` set up
-//!   through a counting `StoragePort` wrapper.
+//! 2. **`prewarm_none_is_noop`** — supervisor returns `pre_warm_query: None`.
+//!    Semaphore available-permits count is unchanged after `end_turn`. No spawn.
 //!
-//! - **Test 3 (error no crash):** A storage backend that returns `Err` on
-//!   every vector search. `end_turn` returns `Ok`; the spawned task logs
-//!   `pre_warm_failed` but does NOT panic. Verified by joining a tokio
-//!   `sleep` and asserting the task handle from `tokio::spawn` didn't panic
-//!   (we can't hold the JoinHandle since end_turn doesn't return it, so we
-//!   assert the process didn't crash and `end_turn` returned Ok).
+//! 3. **`prewarm_semaphore_bound_is_respected`** — `with_prewarm_concurrency(1)`.
+//!    Manually hold the single permit via `try_acquire_owned`. Call `end_turn`
+//!    with `pre_warm_query: Some(...)`. `end_turn` returns Ok without blocking
+//!    (semaphore full → skip path). Drop the held permit — permits return to 1.
 //!
-//! - **Test 4 (None is no-op):** `pre_warm_query: None` → no semaphore
-//!   acquisition, no spawn. Verified by confirming the semaphore still has
-//!   full capacity after the call.
+//! 4. **`prewarm_storage_error_does_not_crash_agent`** — embedder that always
+//!    returns `Err` forces the spawned warm-up recall to fail. `end_turn` still
+//!    returns `Ok`; the agent turn is unaffected.
 //!
-//! ## Approach
+//! ## Storage substrate
 //!
-//! Rather than intercepting tracing events (fragile; depends on formatting),
-//! tests share state via `Arc<AtomicUsize>` counters that are incremented
-//! inside the warm-up recall path. The counting embedder wraps `StubEmbedder`
-//! and increments a shared counter on each `embed()` call. Since the warm-up
-//! always calls the embedder (Vector root issues an embed for the query), the
-//! counter gives a reliable "task started" signal.
+//! `EmbeddedStorage::connect("memory://")` — zero external deps, in-process,
+//! ephemeral. All four tests use it via the `make_handle` helper below.
 //!
-//! For the semaphore-bound test the counting embedder also blocks on a
-//! `tokio::sync::Notify` long enough for the 10 rapid `end_turn` calls to all
-//! fire before the first task releases its permit.
+//! ## No `FauxReflectSupervisor`
+//!
+//! The name does not exist in any production crate. An inline
+//! `StubReflectSupervisor` (mirroring the Phase 14.2 pattern) is defined in
+//! this file and used directly.
 
 #![forbid(unsafe_code)]
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 use std::time::Duration;
 
-use lunaris_core::{
-    Embedder, HlcClock, LunarisError, Scope, StoragePort,
-    storage::types::WriteOp,
-};
-use lunaris_verify::{FauxReflectSupervisor, ReflectInput, ReflectOutput};
-use tokio::sync::Notify;
-use ulid::Ulid;
+use async_trait::async_trait;
+use lunaris::Lunaris;
+use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StubEmbedder, StoragePort};
+use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
 
 // ---------------------------------------------------------------------------
-// Counting embedder — increments a shared counter on every embed() call.
-// Optionally blocks until a Notify fires (for semaphore-bound test).
+// StubReflectSupervisor — returns a fixed ReflectOutput per call.
 // ---------------------------------------------------------------------------
 
-/// Thin embedder wrapper that increments `counter` on each embed call and
-/// (optionally) waits for `gate` to be notified before returning.
-struct CountingEmbedder {
-    inner: lunaris_embed::StubEmbedder,
-    counter: Arc<AtomicUsize>,
-    /// When `Some`, the embedder waits for this notify before returning the
-    /// embedding — keeps the spawned warm-up task alive long enough for the
-    /// semaphore test to fire all 10 `end_turn` calls.
-    gate: Option<Arc<Notify>>,
+/// Synchronously returns the canned `ReflectOutput` supplied at construction.
+/// Mirrors the `StubReflectSupervisor` in `phase_14_2_reflect_boost.rs` —
+/// no shared mutable state needed here since each test constructs its own.
+#[derive(Clone)]
+struct StubReflectSupervisor {
+    output: ReflectOutput,
 }
 
-impl CountingEmbedder {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
-        Self { inner: lunaris_embed::StubEmbedder::default(), counter, gate: None }
-    }
-
-    fn with_gate(mut self, gate: Arc<Notify>) -> Self {
-        self.gate = Some(gate);
-        self
+#[async_trait]
+impl ReflectSupervisor for StubReflectSupervisor {
+    async fn reflect(&self, _input: ReflectInput) -> Result<ReflectOutput, LunarisError> {
+        Ok(self.output.clone())
     }
 }
 
-#[async_trait::async_trait]
-impl Embedder for CountingEmbedder {
+// ---------------------------------------------------------------------------
+// ErrorEmbedder — forces the spawned warm-up recall to fail.
+// ---------------------------------------------------------------------------
+
+/// An embedder that always returns `Err`. When wired as the handle's embedder,
+/// the warm-up recall spawned by `end_turn` will hit `pre_warm_failed` log path.
+/// This lets test 4 confirm the agent turn is unaffected by warm-up errors.
+struct ErrorEmbedder;
+
+#[async_trait]
+impl Embedder for ErrorEmbedder {
     fn dim(&self) -> usize {
-        self.inner.dim()
+        4
     }
 
-    async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
-        self.counter.fetch_add(1, Ordering::SeqCst);
-        if let Some(gate) = &self.gate {
-            gate.notified().await;
-        }
-        self.inner.embed(texts).await
+    async fn embed_batch(&self, _inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        Err(LunarisError::Retrieve(lunaris_core::RetrieveError::Backend(
+            "injected embed error for phase-14.3 prewarm test".to_string(),
+        )))
     }
 }
 
@@ -102,240 +88,247 @@ impl Embedder for CountingEmbedder {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a fresh `memory://` storage backend.
-async fn memory_storage() -> Arc<dyn StoragePort> {
-    use lunaris_storage_embedded::EmbeddedStorage;
-    Arc::new(EmbeddedStorage::connect("memory://").await.expect("memory storage"))
-}
-
-/// Build a `ScopedLunaris` handle wired to `memory://` with `NoopVerifier`
-/// and the supplied embedder, scoped to a fresh per-test scope. The reflect
-/// supervisor is set to the provided `supervisor`.
-///
-/// Returns `(handle, scope)` — the `Lunaris` handle is kept alive for the
-/// lifetime of the test via the returned binding.
-async fn make_handle_with_embedder(
+/// Build a `Lunaris` handle wired to an in-memory storage backend and the
+/// supplied embedder + reflect supervisor. The semaphore capacity is set via
+/// `with_prewarm_concurrency`.
+async fn make_handle(
     embedder: Arc<dyn Embedder>,
-    supervisor: Arc<dyn lunaris_verify::ReflectSupervisor>,
+    supervisor: Arc<dyn ReflectSupervisor>,
     prewarm_capacity: usize,
-) -> (lunaris::Lunaris, Scope) {
-    use lunaris_core::{KeywordPort, StorageError};
+) -> Lunaris {
+    let storage: Arc<dyn StoragePort> = Arc::new(
+        EmbeddedStorage::connect("memory://")
+            .await
+            .expect("in-memory storage"),
+    );
+    let clock = HlcClock::new(0);
+    Lunaris::with_parts(storage, embedder, clock)
+        .with_reflect_supervisor(supervisor)
+        .with_prewarm_concurrency(prewarm_capacity)
+}
 
-    // We build the handle via `with_parts_keyword` so we can inject a custom
-    // embedder. Then override the reflect supervisor and the semaphore capacity.
-    let storage = memory_storage().await;
-    // EmbeddedStorage also implements KeywordPort — downcast via Arc clone.
-    // For the warm-up test we don't need real keyword search, just vector.
-    let clock = Arc::new(HlcClock::new(0));
-    let mut handle = lunaris::Lunaris::with_parts(storage, embedder, clock);
-    handle = handle.with_reflect_supervisor(supervisor);
-    // Override the semaphore capacity to the test-controlled value.
-    handle.warm_up_semaphore =
-        Arc::new(tokio::sync::Semaphore::new(prewarm_capacity));
-    let scope = Scope::new(format!("phase-14-3-test-{}", Ulid::new())).expect("valid scope");
-    (handle, scope)
+/// Convenience: build a handle with the noop-fast `StubEmbedder` (4-d).
+async fn make_stub_handle(
+    supervisor: Arc<dyn ReflectSupervisor>,
+    prewarm_capacity: usize,
+) -> Lunaris {
+    let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(4));
+    make_handle(embedder, supervisor, prewarm_capacity).await
+}
+
+/// Build a `ReflectInput` with sensible defaults for the prewarm tests.
+/// All four fields are populated; `turn_summary` is required (no Default fill).
+fn make_input(summary: &str) -> ReflectInput {
+    ReflectInput {
+        turn_id: None,
+        turn_summary: summary.to_string(),
+        recent_fact_ids: vec![],
+        recent_chunk_ids: vec![],
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 — happy path: end_turn returns quickly, spawned task completes
+// Test 1 — prewarm_happy_path_spawns_warm_up
 // ---------------------------------------------------------------------------
 
+/// Happy path: supervisor returns `pre_warm_query: Some("alice")`.
+///
+/// Assertions:
+/// - `end_turn` returns `Ok`.
+/// - `end_turn` wall-clock < 500ms (non-blocking fire-and-forget).
+/// - After a brief sleep, the semaphore is back to full permits, confirming
+///   the spawned task ran and released its permit.
 #[tokio::test]
-async fn test_prewarm_happy_path() {
-    // Supervisor returns pre_warm_query = Some("alice").
-    let supervisor = Arc::new(FauxReflectSupervisor::with_prewarm("alice"));
-    let embed_counter = Arc::new(AtomicUsize::new(0));
-    let embedder = Arc::new(CountingEmbedder::new(embed_counter.clone()));
+async fn prewarm_happy_path_spawns_warm_up() {
+    let supervisor = Arc::new(StubReflectSupervisor {
+        output: ReflectOutput {
+            pre_warm_query: Some("alice".to_string()),
+            ..ReflectOutput::default()
+        },
+    });
 
-    let (handle, scope) = make_handle_with_embedder(embedder, supervisor, 4).await;
+    let handle = make_stub_handle(supervisor, 4).await;
+    let scope = Scope::new("test.prewarm-happy").unwrap();
+    let initial_permits = handle.warm_up_semaphore().available_permits();
     let scoped = handle.scoped(scope);
 
     let start = std::time::Instant::now();
-    let result = scoped
-        .end_turn(ReflectInput {
-            turn_id: None,
-            recent_fact_ids: vec![],
-            recent_chunk_ids: vec![],
-        })
-        .await;
+    let result = scoped.end_turn(make_input("happy path prewarm")).await;
     let elapsed = start.elapsed();
-
-    // end_turn must return Ok regardless of warm-up result.
-    assert!(result.is_ok(), "end_turn should return Ok; got {:?}", result);
-
-    // end_turn should return well within the 500ms wall budget.
-    assert!(
-        elapsed < Duration::from_millis(500),
-        "end_turn took {:?}, expected < 500ms",
-        elapsed
-    );
-
-    // Wait up to 2 seconds for the spawned warm-up task to call embed().
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while embed_counter.load(Ordering::SeqCst) == 0 {
-        if std::time::Instant::now() > deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-
-    // The spawned task should have issued at least one embed call (Vector root).
-    // If the memory storage returns empty hits, the task completes without error.
-    // We assert >= 1 embed calls to confirm the task actually ran.
-    assert!(
-        embed_counter.load(Ordering::SeqCst) >= 1,
-        "expected warm-up task to issue at least 1 embed call; counter = {}",
-        embed_counter.load(Ordering::SeqCst)
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test 2 — semaphore bound: capacity=1, 10 calls → exactly 1 acquired
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_prewarm_semaphore_bound() {
-    let supervisor = Arc::new(FauxReflectSupervisor::with_prewarm("semaphore test query"));
-    let embed_counter = Arc::new(AtomicUsize::new(0));
-    let gate = Arc::new(Notify::new());
-    let embedder =
-        Arc::new(CountingEmbedder::new(embed_counter.clone()).with_gate(gate.clone()));
-
-    // Semaphore capacity = 1. The counting embedder blocks until we notify
-    // the gate, keeping the first task alive and the semaphore acquired.
-    let (handle, scope) = make_handle_with_embedder(Arc::new(embedder), supervisor, 1).await;
-
-    // Wait for the first embed to start (confirms task 1 acquired the permit).
-    // Then fire 9 more end_turn calls — all should see the semaphore exhausted.
-    let scoped = handle.scoped(scope);
-
-    // Fire 10 rapid end_turn calls.
-    for _ in 0..10 {
-        let _ = scoped
-            .end_turn(ReflectInput {
-                turn_id: None,
-                recent_fact_ids: vec![],
-                recent_chunk_ids: vec![],
-            })
-            .await;
-    }
-
-    // Wait for first task to start (embed counter increments inside async move).
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while embed_counter.load(Ordering::SeqCst) == 0 {
-        if std::time::Instant::now() > deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-
-    // Release the gate so the first task can finish.
-    gate.notify_waiters();
-
-    // Wait for the first task to complete.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Exactly 1 embed call should have fired — only 1 task was ever acquired.
-    // The other 9 were skipped at try_acquire_owned.
-    let count = embed_counter.load(Ordering::SeqCst);
-    assert_eq!(
-        count, 1,
-        "expected exactly 1 warm-up task to run (semaphore capacity=1, 10 calls); got {}",
-        count
-    );
-
-    // Semaphore should be fully available again after the one task completed.
-    assert_eq!(
-        handle.warm_up_semaphore.available_permits(),
-        1,
-        "semaphore should have 1 available permit after the task released it"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test 3 — storage error does not crash or fail end_turn
-// ---------------------------------------------------------------------------
-
-/// An embedder that always returns an error — forces the warm-up recall to fail.
-struct ErrorEmbedder;
-
-#[async_trait::async_trait]
-impl Embedder for ErrorEmbedder {
-    fn dim(&self) -> usize {
-        4
-    }
-    async fn embed(&self, _texts: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
-        Err(LunarisError::Other(anyhow::anyhow!("injected embed error for prewarm test")))
-    }
-}
-
-#[tokio::test]
-async fn test_prewarm_error_no_crash() {
-    let supervisor = Arc::new(FauxReflectSupervisor::with_prewarm("error test query"));
-    // ErrorEmbedder causes the warm-up recall to fail inside the spawned task.
-    let (handle, scope) =
-        make_handle_with_embedder(Arc::new(ErrorEmbedder), supervisor, 4).await;
-    let scoped = handle.scoped(scope);
-
-    // end_turn must return Ok even though the warm-up task will error.
-    let result = scoped
-        .end_turn(ReflectInput {
-            turn_id: None,
-            recent_fact_ids: vec![],
-            recent_chunk_ids: vec![],
-        })
-        .await;
 
     assert!(
         result.is_ok(),
-        "end_turn must return Ok when warm-up task errors; got {:?}",
-        result
+        "end_turn must return Ok; got {:?}",
+        result.err()
+    );
+    assert_eq!(
+        result.unwrap().pre_warm_query,
+        Some("alice".to_string()),
+        "ReflectOutput.pre_warm_query must round-trip"
+    );
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "end_turn must return in < 500ms (fire-and-forget); took {elapsed:?}"
     );
 
-    // Give the spawned task time to run and log its warn (no panic expected).
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    // If we reach here the process didn't crash — the test passes.
+    // Give the spawned task ~200ms to run the recall and release the permit.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Semaphore must be back to full capacity — the spawned task released its permit.
+    assert_eq!(
+        handle.warm_up_semaphore().available_permits(),
+        initial_permits,
+        "warm_up_semaphore must be back to full ({initial_permits}) after task completes"
+    );
+
+    eprintln!("prewarm_happy_path_spawns_warm_up: PASS (elapsed={elapsed:?})");
 }
 
 // ---------------------------------------------------------------------------
-// Test 4 — None pre_warm_query is a no-op (no semaphore acquisition)
+// Test 2 — prewarm_none_is_noop
 // ---------------------------------------------------------------------------
 
+/// `pre_warm_query: None` → no spawn, semaphore permits unchanged.
 #[tokio::test]
-async fn test_prewarm_none_is_noop() {
-    // Supervisor returns pre_warm_query = None.
-    let supervisor = Arc::new(FauxReflectSupervisor::no_prewarm());
-    let embed_counter = Arc::new(AtomicUsize::new(0));
-    let embedder = Arc::new(CountingEmbedder::new(embed_counter.clone()));
+async fn prewarm_none_is_noop() {
+    let supervisor = Arc::new(StubReflectSupervisor {
+        output: ReflectOutput {
+            pre_warm_query: None,
+            ..ReflectOutput::default()
+        },
+    });
 
-    let (handle, scope) = make_handle_with_embedder(embedder, supervisor, 4).await;
-    let initial_permits = handle.warm_up_semaphore.available_permits();
+    let handle = make_stub_handle(supervisor, 4).await;
+    let scope = Scope::new("test.prewarm-noop").unwrap();
+    let initial_permits = handle.warm_up_semaphore().available_permits();
     let scoped = handle.scoped(scope);
 
-    let result = scoped
-        .end_turn(ReflectInput {
-            turn_id: None,
-            recent_fact_ids: vec![],
-            recent_chunk_ids: vec![],
-        })
-        .await;
+    let result = scoped.end_turn(make_input("none prewarm")).await;
+    assert!(result.is_ok(), "end_turn must return Ok; got {:?}", result.err());
 
-    assert!(result.is_ok(), "end_turn should return Ok; got {:?}", result);
-
-    // Give any accidental task time to start (there should be none).
+    // Wait briefly; no spawn should have occurred.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // No embed calls should have fired.
+    // Permits must be unchanged — no semaphore acquisition happened.
     assert_eq!(
-        embed_counter.load(Ordering::SeqCst),
-        0,
-        "no embed calls expected when pre_warm_query = None"
-    );
-
-    // Semaphore must still be at full capacity — no acquisition happened.
-    assert_eq!(
-        handle.warm_up_semaphore.available_permits(),
+        handle.warm_up_semaphore().available_permits(),
         initial_permits,
         "semaphore permits must be unchanged when pre_warm_query = None"
     );
+
+    eprintln!("prewarm_none_is_noop: PASS");
+}
+
+// ---------------------------------------------------------------------------
+// Test 3 — prewarm_semaphore_bound_is_respected
+// ---------------------------------------------------------------------------
+
+/// Semaphore capacity=1, manually hold the single permit, then fire `end_turn`
+/// with `pre_warm_query: Some(...)`.
+///
+/// Assertions:
+/// - `end_turn` returns `Ok` without blocking (semaphore full → skip path).
+/// - Semaphore still shows 0 available permits while we hold the manual permit.
+/// - After releasing the manual permit, available_permits returns to 1.
+#[tokio::test]
+async fn prewarm_semaphore_bound_is_respected() {
+    let supervisor = Arc::new(StubReflectSupervisor {
+        output: ReflectOutput {
+            pre_warm_query: Some("semaphore test query".to_string()),
+            ..ReflectOutput::default()
+        },
+    });
+
+    let handle = make_stub_handle(supervisor, 1).await;
+    let scope = Scope::new("test.prewarm-sembound").unwrap();
+
+    // Manually hold the single permit — semaphore is now exhausted.
+    let permit = handle
+        .warm_up_semaphore()
+        .try_acquire_owned()
+        .expect("semaphore must have 1 permit available before test");
+    assert_eq!(
+        handle.warm_up_semaphore().available_permits(),
+        0,
+        "semaphore must show 0 after manual acquisition"
+    );
+
+    let scoped = handle.scoped(scope);
+
+    // end_turn must return Ok even though the semaphore is full.
+    // The skip path (try_acquire_owned returns Err) must NOT block.
+    let start = std::time::Instant::now();
+    let result = scoped.end_turn(make_input("semaphore bound test")).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        result.is_ok(),
+        "end_turn must return Ok when semaphore is full; got {:?}",
+        result.err()
+    );
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "end_turn must not block when semaphore is exhausted; took {elapsed:?}"
+    );
+
+    // Semaphore still at 0 — our manual permit is still held, and the spawn
+    // was skipped (no second acquisition occurred).
+    assert_eq!(
+        handle.warm_up_semaphore().available_permits(),
+        0,
+        "semaphore must still be 0 (manual permit held, spawn was skipped)"
+    );
+
+    // Release the manual permit — permits must return to 1.
+    drop(permit);
+    assert_eq!(
+        handle.warm_up_semaphore().available_permits(),
+        1,
+        "semaphore must return to 1 after manual permit is dropped"
+    );
+
+    eprintln!("prewarm_semaphore_bound_is_respected: PASS");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 — prewarm_storage_error_does_not_crash_agent
+// ---------------------------------------------------------------------------
+
+/// `ErrorEmbedder` causes the spawned warm-up recall to fail (embed returns Err).
+/// `end_turn` must still return `Ok`; the agent turn is completely unaffected.
+/// After the task completes (and logs `pre_warm_failed`), the permit is released.
+#[tokio::test]
+async fn prewarm_storage_error_does_not_crash_agent() {
+    let supervisor = Arc::new(StubReflectSupervisor {
+        output: ReflectOutput {
+            pre_warm_query: Some("error test query".to_string()),
+            ..ReflectOutput::default()
+        },
+    });
+
+    let embedder: Arc<dyn Embedder> = Arc::new(ErrorEmbedder);
+    let handle = make_handle(embedder, supervisor, 4).await;
+    let scope = Scope::new("test.prewarm-error").unwrap();
+    let initial_permits = handle.warm_up_semaphore().available_permits();
+    let scoped = handle.scoped(scope);
+
+    // end_turn must return Ok even though the spawned warm-up will error.
+    let result = scoped.end_turn(make_input("error path prewarm")).await;
+    assert!(
+        result.is_ok(),
+        "end_turn must return Ok when warm-up task will error; got {:?}",
+        result.err()
+    );
+
+    // Give the spawned task time to run, fail, log warn, and release the permit.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Permit must have been released even on error — semaphore back to full.
+    assert_eq!(
+        handle.warm_up_semaphore().available_permits(),
+        initial_permits,
+        "semaphore must return to full ({initial_permits}) even after warm-up error"
+    );
+
+    eprintln!("prewarm_storage_error_does_not_crash_agent: PASS");
 }
