@@ -2501,6 +2501,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-llm"
+version = "0.2.1"
+dependencies = [
+ "async-trait",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "dirs",
+ "lunaris-core",
+ "parking_lot",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "lunaris-memory"
 version = "0.2.1"
 dependencies = [

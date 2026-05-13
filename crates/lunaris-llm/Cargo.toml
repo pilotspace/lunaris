@@ -1,0 +1,75 @@
+# lunaris-llm — shared LLM-backend abstraction for Lunaris.
+#
+# Hosts the dyn-compatible `LlmBackend` trait + `LlmConfig` (env + optional
+# TOML file) consumed by `lunaris-extract`, `lunaris-verify`, and the
+# turn-end reflect supervisor. Today this crate is scaffold-only: the
+# `candle`, `ollama`, and `cloud-api` feature flags are declared so
+# downstream forwarding compiles, but the move of CandleGemma3 / Ollama /
+# CloudApi impls from the extract/verify crates lands in the *next* commit
+# (per the agreed commit order — see `git log --grep lunaris-llm`).
+#
+# Build matrix (mirrors lunaris-extract):
+#   cargo check -p lunaris-llm                                            # noop (no transport features)
+#   cargo check -p lunaris-llm --features candle
+#   cargo check -p lunaris-llm --features ollama
+#   cargo check -p lunaris-llm --features cloud-api
+#   cargo check -p lunaris-llm --features candle,ollama,cloud-api
+
+[package]
+name        = "lunaris-llm"
+version.workspace = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+publish     = true
+description = "Pluggable LLM-backend abstraction shared by lunaris-extract and lunaris-verify"
+repository.workspace = true
+keywords    = ["agent", "memory", "llm"]
+categories  = ["asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = false
+features = ["candle", "ollama", "cloud-api"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+# `default = []` — like lunaris-verify, this crate ships with no transport
+# backends linked unless a consumer (or downstream user) explicitly opts in.
+# Each consuming crate forwards exactly the transports it needs. NOTE: do
+# NOT add a `default = ["candle"]` here without coordinating with both
+# lunaris-extract (default candle) and lunaris-verify (default-OFF) — a
+# silent default flip pulls candle into every workspace member.
+default      = []
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
+ollama       = ["dep:reqwest"]
+cloud-api    = ["dep:reqwest"]
+
+[dependencies]
+lunaris-core   = { workspace = true }
+async-trait    = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+tokio          = { workspace = true }
+serde          = { workspace = true, features = ["derive"] }
+serde_json     = { workspace = true }
+toml           = { workspace = true }
+
+# candle stack — gated. Mirrors lunaris-extract exactly so workspace-pinned
+# 0.10 versions stay aligned across the LLM-using crates.
+candle-core         = { workspace = true, optional = true }
+candle-nn           = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers          = { workspace = true, optional = true }
+dirs                = { workspace = true, optional = true }
+# parking_lot::Mutex wraps the candle model handle (forward(&mut self) needs
+# &mut). Lock is taken INSIDE spawn_blocking so the CLAUDE.md "never hold
+# lock across .await" rule is upheld trivially.
+parking_lot         = { workspace = true, optional = true }
+
+# http stack — shared by `ollama` + `cloud-api`.
+reqwest        = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
