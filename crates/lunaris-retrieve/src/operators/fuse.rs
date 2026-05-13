@@ -331,8 +331,7 @@ mod tests {
         assert_eq!(unweighted.len(), weighted.len(), "id set must match");
         let u_map: HashMap<Vec<u8>, f32> =
             unweighted.into_iter().map(|h| (h.id, h.score)).collect();
-        let w_map: HashMap<Vec<u8>, f32> =
-            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> = weighted.into_iter().map(|h| (h.id, h.score)).collect();
         for (id, us) in &u_map {
             let ws = w_map.get(id).expect("id present in weighted output");
             assert!(
@@ -362,8 +361,7 @@ mod tests {
         // Compare by id-keyed score map — independent of sort stability.
         let u_map: HashMap<Vec<u8>, f32> =
             unweighted.into_iter().map(|h| (h.id, h.score)).collect();
-        let w_map: HashMap<Vec<u8>, f32> =
-            weighted.into_iter().map(|h| (h.id, h.score)).collect();
+        let w_map: HashMap<Vec<u8>, f32> = weighted.into_iter().map(|h| (h.id, h.score)).collect();
         assert_eq!(u_map.len(), w_map.len());
         for (id, us) in &u_map {
             let ws = w_map.get(id).expect("id present in weighted output");
@@ -384,7 +382,8 @@ mod tests {
         // id=k_only: keyword rank 1 (no vector)
         // Unweighted: both score 1/61 — tie.
         // Weighted (Vector=1.0, Keyword=0.5): v_only=1/61, k_only=0.5/61
-        let hits = vec![rh(b"v_only", 0.9, SourceOp::Vector), rh(b"k_only", 0.9, SourceOp::Keyword)];
+        let hits =
+            vec![rh(b"v_only", 0.9, SourceOp::Vector), rh(b"k_only", 0.9, SourceOp::Keyword)];
         let weights = [(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.5_f32)]
             .into_iter()
             .collect::<HashMap<_, _>>();

@@ -54,8 +54,7 @@ impl PgClient {
             "postgres" | "postgresql" => {}
             other => return Err(StorageError::UnsupportedScheme(other.into())),
         }
-        let pool =
-            PgPoolOptions::new().max_connections(2).connect(url).await.map_err(sqlx_err)?;
+        let pool = PgPoolOptions::new().max_connections(2).connect(url).await.map_err(sqlx_err)?;
         let res = sqlx::migrate!("./migrations").run(&pool).await.map_err(migrate_err);
         pool.close().await;
         res
@@ -66,8 +65,7 @@ impl PgClient {
     /// or behind; used by [`crate::PostgresStorage::connect_or_hint`] to turn a
     /// permission error into an actionable "run `lunaris-server migrate`" hint.
     pub async fn schema_is_current(url: &str) -> Result<bool, StorageError> {
-        let pool =
-            PgPoolOptions::new().max_connections(1).connect(url).await.map_err(sqlx_err)?;
+        let pool = PgPoolOptions::new().max_connections(1).connect(url).await.map_err(sqlx_err)?;
         let want_max: i64 =
             sqlx::migrate!("./migrations").iter().map(|m| m.version).max().unwrap_or(0);
         // `_sqlx_migrations` may not exist yet — treat any read error as "behind".

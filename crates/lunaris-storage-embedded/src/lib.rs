@@ -47,14 +47,14 @@ use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::{Hlc, HlcClock};
 use lunaris_core::scope::Scope;
+use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::capabilities::StorageCapabilities;
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
 use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, VectorHit, WriteOp,
 };
-use lunaris_core::storage::StoragePort;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row as _;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 mod schema;
 
@@ -138,12 +138,14 @@ async fn close_open_kv(
     key: &[u8],
     at: &str,
 ) -> Result<(), StorageError> {
-    sqlx::query("UPDATE lunaris_kv SET sys_to = ?1, valid_to = ?1 WHERE key = ?2 AND sys_to IS NULL")
-        .bind(at)
-        .bind(key)
-        .execute(&mut *tx)
-        .await
-        .map_err(backend)?;
+    sqlx::query(
+        "UPDATE lunaris_kv SET sys_to = ?1, valid_to = ?1 WHERE key = ?2 AND sys_to IS NULL",
+    )
+    .bind(at)
+    .bind(key)
+    .execute(&mut *tx)
+    .await
+    .map_err(backend)?;
     Ok(())
 }
 
@@ -399,7 +401,8 @@ impl StoragePort for EmbeddedStorage {
             let k: Vec<u8> = r.try_get("key").unwrap_or_default();
             let v: Vec<u8> = r.try_get("value").unwrap_or_default();
             let bt_str: String = r.try_get("bt").unwrap_or_default();
-            let bt: BiTemporal = serde_json::from_str(&bt_str).unwrap_or_else(|_| bt_open(Hlc::ZERO));
+            let bt: BiTemporal =
+                serde_json::from_str(&bt_str).unwrap_or_else(|_| bt_open(Hlc::ZERO));
             LRow { key: k, value: Bytes::from(v), bt }
         }))
     }
@@ -525,7 +528,8 @@ mod tests {
         let at_v1 = Hlc { wall_ms: l1.wall_ms, counter: l1.counter, node_id: 0 };
         s.atomic_write(&Scope::dev(), &[put(b"k", b"v2")]).await.expect("w2");
 
-        let old = s.read_as_of(&Scope::dev(), b"k", at_v1).await.expect("read@v1").expect("present");
+        let old =
+            s.read_as_of(&Scope::dev(), b"k", at_v1).await.expect("read@v1").expect("present");
         assert_eq!(&old.value[..], b"v1", "snapshot at v1's stamp must see v1");
 
         let live = s
@@ -574,7 +578,10 @@ mod tests {
         let mut got = Vec::new();
         while let Some(item) = stream.next().await {
             let (k, v) = item.expect("row");
-            got.push((String::from_utf8_lossy(&k).into_owned(), String::from_utf8_lossy(&v).into_owned()));
+            got.push((
+                String::from_utf8_lossy(&k).into_owned(),
+                String::from_utf8_lossy(&v).into_owned(),
+            ));
         }
         assert_eq!(
             got,

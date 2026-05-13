@@ -82,17 +82,8 @@ impl MessageStream {
     /// through this prefix via [`Filter::StartsWith`](lunaris_core::storage::types::Filter::StartsWith) on the Episode `source`
     /// field. Conventional value: `"messages:"`; per-wrapper recipes
     /// specialise further (e.g. `"slack:archive/"`, `"email:"`).
-    pub fn new(
-        lunaris: Arc<Lunaris>,
-        scope: Scope,
-        thread_prefix: impl Into<String>,
-    ) -> Self {
-        Self {
-            lunaris,
-            scope,
-            thread_prefix: thread_prefix.into(),
-            top_k: DEFAULT_TOP_K,
-        }
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, thread_prefix: impl Into<String>) -> Self {
+        Self { lunaris, scope, thread_prefix: thread_prefix.into(), top_k: DEFAULT_TOP_K }
     }
 
     /// Override the default `top_k` for [`recall`](Self::recall). Returns

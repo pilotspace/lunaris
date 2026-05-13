@@ -100,7 +100,8 @@ async fn run_chat_scenario(url: &str, env: &str, budget: Budgets) -> anyhow::Res
     let started = Instant::now();
     let lunaris = Arc::new(lunaris::Lunaris::open(url).await?);
     let session_id = format!("eval-chat-{}", ulid::Ulid::new());
-    let pad = lunaris::HeliosScratchpad::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+    let pad =
+        lunaris::HeliosScratchpad::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
     let turns: usize =
         std::env::var("LUNARIS_EVAL_E2E_TURNS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
@@ -135,7 +136,8 @@ async fn run_doc_scenario(url: &str, env: &str, budget: Budgets) -> anyhow::Resu
     let started = Instant::now();
     let lunaris = Arc::new(lunaris::Lunaris::open(url).await?);
     let session_id = format!("eval-doc-{}", ulid::Ulid::new());
-    let pad = lunaris::HeliosScratchpad::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+    let pad =
+        lunaris::HeliosScratchpad::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
     let docs: u64 =
         std::env::var("LUNARIS_EVAL_E2E_DOCS").ok().and_then(|v| v.parse().ok()).unwrap_or(1_000);

@@ -58,7 +58,7 @@ fn act_r_rescorer_matches_recipe_blend() {
     let hour = 3_600_000_u64;
     let mut hits = vec![
         mk_hit(10, 0.4, now_ms - 24 * hour), // 24h old
-        mk_hit(11, 0.4, now_ms - hour),     // 1h old
+        mk_hit(11, 0.4, now_ms - hour),      // 1h old
     ];
     let cfg = RecencyConfig::new(TimeSource::ValidFrom, Box::new(ActR::default()));
     rescore_recency(&mut hits, at(now_ms), &cfg);
@@ -84,17 +84,13 @@ fn custom_half_life_changes_decay_curve() {
     let hour = 3_600_000_u64;
 
     let mut hits_a = vec![mk_hit(1, 1.0, now_ms - hour)];
-    let cfg_a = RecencyConfig::new(
-        TimeSource::ValidFrom,
-        Box::new(Exp::new(Duration::from_secs(3600))),
-    );
+    let cfg_a =
+        RecencyConfig::new(TimeSource::ValidFrom, Box::new(Exp::new(Duration::from_secs(3600))));
     rescore_recency(&mut hits_a, at(now_ms), &cfg_a);
 
     let mut hits_b = vec![mk_hit(1, 1.0, now_ms - hour)];
-    let cfg_b = RecencyConfig::new(
-        TimeSource::ValidFrom,
-        Box::new(Exp::new(Duration::from_secs(86_400))),
-    );
+    let cfg_b =
+        RecencyConfig::new(TimeSource::ValidFrom, Box::new(Exp::new(Duration::from_secs(86_400))));
     rescore_recency(&mut hits_b, at(now_ms), &cfg_b);
 
     assert!(
@@ -114,9 +110,9 @@ fn zero_valid_from_hits_keep_their_priors() {
     // by prior score.
     let now_ms: u64 = 50_000_000_000;
     let mut hits = vec![
-        mk_hit(1, 0.10, 0),               // no signal, low prior
-        mk_hit(2, 0.90, now_ms - 1_000),  // recent, high prior
-        mk_hit(3, 0.50, 0),               // no signal, mid prior
+        mk_hit(1, 0.10, 0),              // no signal, low prior
+        mk_hit(2, 0.90, now_ms - 1_000), // recent, high prior
+        mk_hit(3, 0.50, 0),              // no signal, mid prior
     ];
     let cfg = RecencyConfig::default();
     rescore_recency(&mut hits, at(now_ms), &cfg);

@@ -19,10 +19,10 @@
 //! both the identifier and the password literal are quoted by Postgres.
 
 use lunaris_core::error::StorageError;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
+use sqlx::postgres::PgPoolOptions;
 
-use crate::pool::{sqlx_err, PgClient};
+use crate::pool::{PgClient, sqlx_err};
 
 /// Result of a [`bootstrap_app_role`] run — empty vectors mean "nothing to fix".
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -70,7 +70,8 @@ pub async fn bootstrap_app_role(
     // 1. Migrations first — over the admin connection.
     PgClient::migrate(admin_url).await?;
 
-    let pool = PgPoolOptions::new().max_connections(2).connect(admin_url).await.map_err(sqlx_err)?;
+    let pool =
+        PgPoolOptions::new().max_connections(2).connect(admin_url).await.map_err(sqlx_err)?;
 
     // 2 + 3. Create/repair the role and grant it the runtime privileges.
     // The custom GUCs `lunaris.bootstrap_role` / `lunaris.bootstrap_pw` carry
@@ -87,9 +88,8 @@ pub async fn bootstrap_app_role(
         .map_err(sqlx_err)?;
     sqlx::query(BOOTSTRAP_ROLE_DO).execute(&pool).await.map_err(sqlx_err)?;
     // Don't leave the password sitting in a session GUC.
-    let _ = sqlx::query("SELECT set_config('lunaris.bootstrap_pw', '', false)")
-        .execute(&pool)
-        .await;
+    let _ =
+        sqlx::query("SELECT set_config('lunaris.bootstrap_pw', '', false)").execute(&pool).await;
 
     // 4. Hardening report.
     let force_rows = sqlx::query(
@@ -102,8 +102,7 @@ pub async fn bootstrap_app_role(
     .fetch_all(&pool)
     .await
     .map_err(sqlx_err)?;
-    let tables_missing_force_rls =
-        force_rows.iter().map(|r| r.get::<String, _>("name")).collect();
+    let tables_missing_force_rls = force_rows.iter().map(|r| r.get::<String, _>("name")).collect();
 
     let policy_rows = sqlx::query(
         "SELECT policyname, tablename FROM pg_policies \

@@ -93,11 +93,7 @@ impl DocumentCorpus {
     /// field; every [`search`](Self::search) scopes recall via
     /// [`Filter::StartsWith`] on that same field. Conventional values:
     /// `"kb:papers/"`, `"kb:docs/"`, `"repo:src/"`.
-    pub fn new(
-        lunaris: Arc<Lunaris>,
-        scope: Scope,
-        source_prefix: impl Into<String>,
-    ) -> Self {
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self {
         Self {
             lunaris,
             scope,

@@ -77,12 +77,13 @@ pub async fn episode_handler(
         Ok(Some(row)) => {
             // The stored value bytes are JSON — decode to serde_json::Value so
             // the response body is idiomatic JSON (not a double-escaped string).
-            let value: serde_json::Value = serde_json::from_slice(&row.value).unwrap_or_else(|_| {
-                // If the bytes aren't valid JSON (shouldn't happen in a
-                // well-formed store), fall back to a base64-safe string
-                // representation rather than failing the request.
-                serde_json::Value::String(String::from_utf8_lossy(&row.value).to_string())
-            });
+            let value: serde_json::Value =
+                serde_json::from_slice(&row.value).unwrap_or_else(|_| {
+                    // If the bytes aren't valid JSON (shouldn't happen in a
+                    // well-formed store), fall back to a base64-safe string
+                    // representation rather than failing the request.
+                    serde_json::Value::String(String::from_utf8_lossy(&row.value).to_string())
+                });
             (StatusCode::OK, Json(value)).into_response()
         }
         Ok(None) => (
@@ -154,10 +155,7 @@ mod tests {
         let scope = Scope::new("acme.agent-1").unwrap();
         let ulid = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
         let key = episode_key(&scope, ulid);
-        assert_eq!(
-            key,
-            b"lunaris:acme.agent-1:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
-        );
+        assert_eq!(key, b"lunaris:acme.agent-1:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec());
     }
 
     /// Keys for the same ULID in different scopes must differ (no cross-scope bleed).

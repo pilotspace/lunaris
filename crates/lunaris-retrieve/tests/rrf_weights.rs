@@ -19,10 +19,7 @@ use lunaris_retrieve::{FuseRrfRetriever, Keyword, SourceOp, Vector};
 
 #[test]
 fn with_weights_propagates_to_fuse_rrf_node() {
-    let weights = HashMap::from([
-        (SourceOp::Vector, 1.0_f32),
-        (SourceOp::Keyword, 0.5_f32),
-    ]);
+    let weights = HashMap::from([(SourceOp::Vector, 1.0_f32), (SourceOp::Keyword, 0.5_f32)]);
 
     let fused = Vector::new("chunks", 30)
         .and(Keyword::bm25("chunks", 30))
@@ -34,9 +31,7 @@ fn with_weights_propagates_to_fuse_rrf_node() {
     // drop them. This mirrors the introspection mechanism used in
     // `fusion::inspect_branches` for routing decisions.
     let any = (&fused as &dyn Retriever).as_any();
-    let node = any
-        .downcast_ref::<FuseRrfRetriever>()
-        .expect("root is FuseRrfRetriever");
+    let node = any.downcast_ref::<FuseRrfRetriever>().expect("root is FuseRrfRetriever");
 
     assert_eq!(node.weights().len(), 2, "both weights present");
     assert!((node.weights().get(&SourceOp::Vector).copied().unwrap_or(0.0) - 1.0).abs() < 1e-6);

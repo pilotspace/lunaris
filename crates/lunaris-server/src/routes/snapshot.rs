@@ -58,10 +58,7 @@ pub async fn snapshot_handler(
     // wall_ms is 404.
     let current_wall_ms = {
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
     };
     if is_future_hlc(&hlc, current_wall_ms) {
         return (
