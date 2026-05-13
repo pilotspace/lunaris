@@ -76,16 +76,18 @@ impl Pipeline {
     /// Hard-coded default `(provider, model)` for this pipeline, used
     /// when neither env nor config file specifies one.
     ///
-    /// **Note on verify**: the default returned here is still 27B; the
-    /// behavior flip to 4B is gated on the ER-F1 quality test and lands
-    /// in a later commit. See `crates/lunaris-llm/README.md` (TBD) for
-    /// the flip rationale.
+    /// All three pipelines now default to Gemma-3 4B — a single weight
+    /// payload covers extract, verify, and reflect on dev hardware.
+    /// The verify flip from 27B → 4B is gated by the ER-F1 quality
+    /// test (`crates/lunaris-verify/tests/quality_gate_4b_vs_27b.rs`)
+    /// driven by `.github/workflows/llm-gates.yml`. Operators who
+    /// need 27B-fidelity arbitration override the default via
+    /// `LUNARIS_LLM_VERIFY_MODEL=gemma-3-27b-it` or the config-file
+    /// `[verify] model = "gemma-3-27b-it"` section.
     pub fn default_provider_and_model(self) -> (ProviderKind, &'static str) {
         match self {
             Pipeline::Extract => (ProviderKind::Candle, "gemma-3-4b-it"),
-            Pipeline::Verify => (ProviderKind::Candle, "gemma-3-27b-it"),
-            // Reflect ships 4B from day one — it's a new code path, no
-            // legacy default to preserve.
+            Pipeline::Verify => (ProviderKind::Candle, "gemma-3-4b-it"),
             Pipeline::Reflect => (ProviderKind::Candle, "gemma-3-4b-it"),
         }
     }
@@ -281,15 +283,18 @@ mod tests {
 
     #[test]
     fn defaults_match_today_hardcoded_pipeline_defaults() {
-        // Pin the current defaults so a silent flip (especially Verify →
-        // 4B) requires editing the test, not just the const.
+        // Pin the current defaults so a silent flip requires editing the
+        // test, not just the const. All three pipelines now default to
+        // 4B (verify-flip evidence gated by `.github/workflows/
+        // llm-gates.yml`); a future re-flip to 27B for any pipeline
+        // would need to touch this assertion deliberately.
         assert_eq!(
             Pipeline::Extract.default_provider_and_model(),
             (ProviderKind::Candle, "gemma-3-4b-it")
         );
         assert_eq!(
             Pipeline::Verify.default_provider_and_model(),
-            (ProviderKind::Candle, "gemma-3-27b-it")
+            (ProviderKind::Candle, "gemma-3-4b-it")
         );
         assert_eq!(
             Pipeline::Reflect.default_provider_and_model(),
