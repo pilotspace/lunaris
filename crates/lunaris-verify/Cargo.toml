@@ -34,7 +34,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default      = []
-candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs"]
+# `candle` also forwards `lunaris-llm/candle` so the unified `CandleBackend`
+# is available when the verify pipeline opts into the candle stack
+# (`LlmVerifier` consumes it via the ER-F1 quality-gate integration test).
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "lunaris-llm/candle"]
 # RFC 0006 scaffold — gates the Gemma-3 270M verifier impl (the
 # "Lunaris on a laptop" target). Shares the candle dependency set with
 # `candle`. The production default-flip (270M as the Verifier default)
@@ -46,8 +49,8 @@ verify-small = ["candle"]
 # compatibility — once the default flips, `candle` becomes equivalent
 # to `verify-small` and `verify-large` becomes the opt-in for 27B.
 verify-large = ["candle"]
-ollama       = ["dep:reqwest"]
-cloud-api    = ["dep:reqwest"]
+ollama       = ["dep:reqwest", "lunaris-llm/ollama"]
+cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
 # Gates live-backend integration tests (real Gemma-3 27B model load + Ollama HTTP
 # + cloud-api keys). SKIPs cleanly without env vars (mirrors `extractor-it`).
 verifier-it  = []

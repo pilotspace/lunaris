@@ -36,9 +36,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default      = ["candle"]
-candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
-ollama       = ["dep:reqwest"]
-cloud-api    = ["dep:reqwest"]
+# Each transport feature also forwards the matching `lunaris-llm/<feature>` so
+# downstream users that enable `--features candle` on lunaris-extract get
+# `lunaris_llm::CandleBackend` available too. Same shape for ollama / cloud-api.
+candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot", "lunaris-llm/candle"]
+ollama       = ["dep:reqwest", "lunaris-llm/ollama"]
+cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
 # Gates live-backend integration tests (real Gemma-3 4B model load + Ollama HTTP
 # + cloud-api keys). SKIPs cleanly without env vars (mirrors `embedder-it` from
 # lunaris-embed).
