@@ -174,6 +174,100 @@ mod tests {
         assert_eq!(r.rows[1][0], serde_json::json!("bob"));
     }
 
+    /// Wave 4 Piece C: pin the N-column passthrough contract.
+    ///
+    /// `parse_graph_reply` is header-keyed (line 95-105 reads headers from
+    /// the reply's first array element), so an arbitrary number of columns
+    /// flows through unchanged. This test fixes that contract against
+    /// regressions — when a future Cypher template (Moon-compatible variant
+    /// of Wave 4 Piece A's `path_length` / `edge_weight_product` emission)
+    /// returns six columns, the SDK layer MUST hand them off verbatim to the
+    /// retrieval operator. The operator reads headers by name
+    /// (`lunaris-retrieve::operators::graph`), so column order is irrelevant
+    /// as long as the headers are preserved.
+    ///
+    /// Why this test exists: `tmp/wave4c-dialect-verification.md` confirmed
+    /// that Moon's GRAPH dialect cannot emit `path_length` /
+    /// `edge_weight_product` over a variable-length path today (parser
+    /// rejects `MATCH p = (n)-[*1..N]-(m)` outside `shortestPath()` per
+    /// `vendor/moon/src/graph/cypher/parser/pattern.rs:172-216`). But the
+    /// Moon SDK layer should be ready the moment the operator switches to a
+    /// backend-aware template (e.g. `shortestPath()`-based or
+    /// post-traversal client-side accumulation). Pinning the contract here
+    /// avoids a silent regression when that switch lands.
+    #[test]
+    fn parse_six_column_reply_with_path_metrics() {
+        let v = redis::Value::Array(vec![
+            // Headers — mirrors the Wave 4 Piece A column set.
+            redis::Value::Array(vec![
+                redis::Value::BulkString(b"id".to_vec()),
+                redis::Value::BulkString(b"name".to_vec()),
+                redis::Value::BulkString(b"type".to_vec()),
+                redis::Value::BulkString(b"path_length".to_vec()),
+                redis::Value::BulkString(b"edge_weight_product".to_vec()),
+                redis::Value::BulkString(b"source_entity_id".to_vec()),
+            ]),
+            // Two rows: a 1-hop neighbour at weight 0.5, and a 2-hop
+            // neighbour at weight 0.5 * 0.8 = 0.4. Both share the same
+            // anchor entity. The 2-hop row carries a Nil `name` to confirm
+            // null passthrough.
+            redis::Value::Array(vec![
+                redis::Value::Array(vec![
+                    redis::Value::BulkString(b"BBB".to_vec()),
+                    redis::Value::BulkString(b"Bravo".to_vec()),
+                    redis::Value::BulkString(b"Person".to_vec()),
+                    redis::Value::Int(1),
+                    // Moon's typed reply uses bulk strings for floats; the
+                    // operator reads by header name and coerces via
+                    // `as_f64`/`parse`, so passthrough as a string is OK.
+                    redis::Value::BulkString(b"0.5".to_vec()),
+                    redis::Value::BulkString(b"AAA".to_vec()),
+                ]),
+                redis::Value::Array(vec![
+                    redis::Value::BulkString(b"CCC".to_vec()),
+                    redis::Value::Nil,
+                    redis::Value::BulkString(b"Place".to_vec()),
+                    redis::Value::Int(2),
+                    redis::Value::BulkString(b"0.4".to_vec()),
+                    redis::Value::BulkString(b"AAA".to_vec()),
+                ]),
+            ]),
+            // Stats — ignored by parser.
+            redis::Value::Array(vec![]),
+        ]);
+        let r = parse_graph_reply(v).expect("parse 6-column reply");
+
+        assert_eq!(
+            r.headers,
+            vec![
+                "id",
+                "name",
+                "type",
+                "path_length",
+                "edge_weight_product",
+                "source_entity_id",
+            ],
+            "headers must passthrough verbatim — operator reads by name",
+        );
+        assert_eq!(r.rows.len(), 2, "two rows expected");
+
+        // Row 0 — 1-hop neighbour.
+        assert_eq!(r.rows[0][0], serde_json::json!("BBB"));
+        assert_eq!(r.rows[0][1], serde_json::json!("Bravo"));
+        assert_eq!(r.rows[0][2], serde_json::json!("Person"));
+        assert_eq!(r.rows[0][3], serde_json::json!(1));
+        assert_eq!(r.rows[0][4], serde_json::json!("0.5"));
+        assert_eq!(r.rows[0][5], serde_json::json!("AAA"));
+
+        // Row 1 — 2-hop neighbour with Nil name passthrough.
+        assert_eq!(r.rows[1][0], serde_json::json!("CCC"));
+        assert_eq!(r.rows[1][1], serde_json::Value::Null);
+        assert_eq!(r.rows[1][2], serde_json::json!("Place"));
+        assert_eq!(r.rows[1][3], serde_json::json!(2));
+        assert_eq!(r.rows[1][4], serde_json::json!("0.4"));
+        assert_eq!(r.rows[1][5], serde_json::json!("AAA"));
+    }
+
     #[test]
     fn redis_to_json_handles_nested_array() {
         let v = redis::Value::Array(vec![
