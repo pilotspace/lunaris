@@ -198,6 +198,10 @@ fn build_prompt(chunk: &ChunkInput) -> String {
 /// `pub(crate)` so `cloud_api` can reuse the same parse path when building
 /// its own extraction result (it delegates `generate()` but not the full
 /// `LlmExtractor::extract` path, to preserve the D-21 sentinel contract).
+///
+/// Only callable when the `cloud-api` feature is enabled; the attribute
+/// suppresses a dead_code lint when it is not.
+#[cfg(feature = "cloud-api")]
 pub(crate) fn parse_extraction_json_pub(decoded: &str, chunk_id: Ulid) -> RawExtraction {
     parse_extraction_json(decoded, chunk_id)
 }
