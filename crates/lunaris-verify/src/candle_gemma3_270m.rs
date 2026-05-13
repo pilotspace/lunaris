@@ -1,47 +1,44 @@
 //! [`CandleGemma3_270M`] — Gemma-3 270M IT verifier backed by candle 0.10's
 //! typed `candle_transformers::models::gemma3::Model`.
 //!
-//! ## Wiring strategy (RFC 0006)
+//! ## Phase 12b — thin wrapper
 //!
-//! Scaffold for the v0.2.x verifier default swap. Mirrors
-//! `candle_gemma3_27b.rs` byte-for-byte where possible — same constructor
-//! shape (`new`, `try_new_from_default_cache`, `try_new_from_path`), same
-//! `Verifier` trait impl, same `spawn_blocking` + `parking_lot::Mutex`
-//! discipline. The divergences are constants:
+//! This file was migrated from a full candle load/forward/decode
+//! implementation to a thin wrapper around `Arc<dyn lunaris_llm::LlmBackend>`
+//! + `lunaris_verify::LlmVerifier`. The public API (struct names, `*Opts`
+//! types, constructor signatures, `Verifier` impl) is byte-identical on the
+//! public surface to preserve downstream callers.
 //!
-//! - Model weights path: `~/.cache/lunaris/models/gemma-3-270m-it/` (NOT
-//!   `gemma-3-27b-it`). The cache-miss error message carries the actionable
-//!   `huggingface-cli download google/gemma-3-270m-it` hint plus a corrected
-//!   disk + RAM headroom note (~600 MB disk / ~1 GB RAM — vs the 27B's
-//!   ~16 GB / ~24 GB).
-//! - Per-batch timeout dropped 7x to 200 ms (270M forward pass on CPU is
-//!   ~5-10x faster than 4B, ~50x faster than 27B).
-//! - `DEFAULT_PER_CHUNK_TIMEOUT_MS = 100`.
-//! - `DEFAULT_MAX_NEW_TOKENS = 512` — arbitration decisions need fewer
-//!   tokens at 270M (binary winner/loser + 1-sentence reason).
+//! Constructor shape (`new`, `try_new_from_default_cache`, `try_new_from_path`)
+//! is preserved verbatim so Plan 04-04 `default_verifier` can call
+//! `CandleGemma3_270M::new(CandleGemma3_270MOpts::default()).await` unchanged.
 //!
-//! ## RFC 0006 status (Draft)
+//! ## Cache-miss contract (preserved)
 //!
-//! This file lands as the *scaffold* behind `--features verify-small`. The
-//! production default flip (Verifier 27B → 270M) is gated on the Phase 24
-//! head-to-head bench numbers + the 100-item quality gate. Until that
-//! gate passes, 270M ships as opt-in. See `docs/rfcs/0006-verifier-default-swap.md`.
+//! The constructor still performs the pre-flight existence check for
+//! `tokenizer.json`, `config.json`, and `model.safetensors` and emits the
+//! exact actionable error string:
+//! ```text
+//! gemma-3-270m-it weights missing at PATH — run `huggingface-cli download google/gemma-3-270m-it --local-dir PATH` (note: 270M requires ~600MB disk + ~1GB RAM for inference)
+//! ```
+//! `default_verifier` catches this and substitutes [`crate::NoopVerifier`]
+//! with `tracing::warn!`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
-use candle_core::{DType, Device, Tensor};
-use candle_nn::VarBuilder;
-use candle_transformers::models::gemma3::{Config as Gemma3Config, Model as Gemma3Model};
-use lunaris_core::{LunarisError, StorageError};
-use parking_lot::Mutex;
-use tokenizers::Tokenizer;
+use candle_core::Device;
+use lunaris_core::LunarisError;
+use lunaris_llm::{CandleBackend, CandleBackendOpts, LlmBackend};
 
 use crate::Verifier;
+use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
 use crate::types::{VerifierBackend, VerifyDecision};
 use lunaris_extract::NeedsReviewItem;
+
+// Re-export StorageError for the cache-miss error path.
+use lunaris_core::StorageError;
 
 /// Default sub-directory under the user's cache root.
 const DEFAULT_CACHE_SUBDIR: &str = "lunaris/models/gemma-3-270m-it";
@@ -101,30 +98,23 @@ impl Default for CandleGemma3_270MOpts {
 /// `CandleGemma3_27B::new` so the dispatch site in `default_verifier`
 /// can swap one for the other behind a feature flag without other code
 /// changes.
+///
+/// ## Phase 12b implementation
+///
+/// Internally holds a `LlmVerifier` wrapping a `CandleBackend`
+/// (`lunaris-llm`). The public surface is unchanged.
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct CandleGemma3_270M {
-    inner: Arc<CandleInner>,
+    inner: LlmVerifier,
 }
 
 impl std::fmt::Debug for CandleGemma3_270M {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CandleGemma3_270M")
-            .field("device", &format_args!("{:?}", self.inner.device))
-            .field("max_new_tokens", &self.inner.max_new_tokens)
-            .field("batch_timeout_ms", &self.inner.batch_timeout_ms)
-            .field("per_chunk_timeout_ms", &self.inner.per_chunk_timeout_ms)
+            .field("inner", &self.inner)
             .finish()
     }
-}
-
-struct CandleInner {
-    tokenizer: Tokenizer,
-    model: Mutex<Gemma3Model>,
-    device: Device,
-    batch_timeout_ms: u64,
-    per_chunk_timeout_ms: u64,
-    max_new_tokens: usize,
 }
 
 impl CandleGemma3_270M {
@@ -156,6 +146,9 @@ impl CandleGemma3_270M {
             .clone()
             .unwrap_or_else(|| CandleGemma3_270MOpts::default().model_path.unwrap());
 
+        // Pre-flight cache-miss check — must preserve exact error strings for
+        // the actionable cache-miss message (Phase 12b contract: bit-for-bit
+        // error strings preserved, including the "600MB" disk-hint).
         let tokenizer_path = model_path.join("tokenizer.json");
         let config_path = model_path.join("config.json");
         let safetensors_path = model_path.join("model.safetensors");
@@ -173,160 +166,39 @@ impl CandleGemma3_270M {
             }
         }
 
-        let device = opts.device.clone();
-        let batch_timeout_ms = opts.batch_timeout_ms;
-        let per_chunk_timeout_ms = opts.per_chunk_timeout_ms;
-        let max_new_tokens = opts.max_new_tokens;
+        // Build the unified CandleBackend (lunaris-llm).
+        let backend_opts = CandleBackendOpts {
+            model_name: "gemma-3-270m-it".to_string(),
+            model_path,
+            device: opts.device,
+        };
+        let backend: Arc<dyn LlmBackend> = Arc::new(CandleBackend::new(backend_opts).await?);
 
-        let load = tokio::task::spawn_blocking(move || -> Result<CandleInner, LunarisError> {
-            let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-270m-it tokenizer: {e}"
-                )))
-            })?;
-            let cfg_bytes = std::fs::read(&config_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-270m-it config: read {} ({e})",
-                    config_path.display()
-                )))
-            })?;
-            let cfg: Gemma3Config = serde_json::from_slice(&cfg_bytes).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-270m-it config: parse {} ({e})",
-                    config_path.display()
-                )))
-            })?;
-            let bytes = std::fs::read(&safetensors_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-270m-it weights: read {} ({e})",
-                    safetensors_path.display()
-                )))
-            })?;
-            let vb =
-                VarBuilder::from_buffered_safetensors(bytes, DType::F32, &device).map_err(|e| {
-                    LunarisError::Storage(StorageError::Backend(format!(
-                        "gemma-3-270m-it weights: {e}"
-                    )))
-                })?;
-            let model = Gemma3Model::new(false, &cfg, vb).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-270m-it model construct: {e}"
-                )))
-            })?;
+        // timeout = max(batch, per_chunk) — matches legacy verify path.
+        let timeout_ms = opts.batch_timeout_ms.max(opts.per_chunk_timeout_ms);
+        let verifier = LlmVerifier::with_opts(
+            backend,
+            LlmVerifierOpts {
+                timeout_ms,
+                max_tokens: opts.max_new_tokens as u32,
+                temperature: 0.0,
+                backend_tag: VerifierBackend::Candle,
+            },
+        );
 
-            Ok(CandleInner {
-                tokenizer,
-                model: Mutex::new(model),
-                device,
-                batch_timeout_ms,
-                per_chunk_timeout_ms,
-                max_new_tokens,
-            })
-        })
-        .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-270m-it join: {e}")))
-        })??;
-
-        Ok(Self { inner: Arc::new(load) })
-    }
-
-    fn verify_one(
-        inner: &CandleInner,
-        item: &NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
-        let prompt = crate::arbitration_prompt(item);
-
-        let encoding = inner.tokenizer.encode(prompt.as_str(), true).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-270m-it tokenize: {e}")))
-        })?;
-        let input_ids = encoding.get_ids().to_vec();
-        if input_ids.is_empty() {
-            return Ok(VerifyDecision::deferred());
-        }
-
-        let mut model_guard = inner.model.lock();
-        let mut all_ids: Vec<u32> = input_ids;
-        let mut emitted: Vec<u32> = Vec::with_capacity(inner.max_new_tokens);
-
-        for step in 0..inner.max_new_tokens {
-            let context_len = if step == 0 { all_ids.len() } else { 1 };
-            let start = all_ids.len() - context_len;
-            let ctx = &all_ids[start..];
-            let input = Tensor::new(ctx, &inner.device).map_err(forward_err)?;
-            let input = input.unsqueeze(0).map_err(forward_err)?;
-            let logits = model_guard.forward(&input, start).map_err(forward_err)?;
-            let last = logits
-                .squeeze(0)
-                .map_err(forward_err)?
-                .narrow(0, ctx.len() - 1, 1)
-                .map_err(forward_err)?
-                .squeeze(0)
-                .map_err(forward_err)?;
-            let vocab: Vec<f32> = last.to_vec1::<f32>().map_err(forward_err)?;
-            let next = vocab
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i as u32)
-                .unwrap_or(0);
-            if next == 1 {
-                break;
-            }
-            emitted.push(next);
-            all_ids.push(next);
-        }
-        drop(model_guard);
-
-        let decoded = inner.tokenizer.decode(&emitted, true).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-270m-it detokenize: {e}")))
-        })?;
-
-        Ok(crate::parse_decision_json(&decoded, VerifierBackend::Candle))
+        Ok(Self { inner: verifier })
     }
 }
 
 #[async_trait]
 impl Verifier for CandleGemma3_270M {
     async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
-        let inner = self.inner.clone();
-
-        let timeout_ms = inner.batch_timeout_ms.max(inner.per_chunk_timeout_ms);
-        let timeout = Duration::from_millis(timeout_ms);
-
-        let item_owned = item.clone();
-        let inner_for_task = inner.clone();
-        let res = tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                CandleGemma3_270M::verify_one(&inner_for_task, &item_owned)
-            }),
-        )
-        .await;
-
-        match res {
-            Ok(Ok(Ok(d))) => Ok(d),
-            Ok(Ok(Err(e))) => {
-                tracing::warn!(err = %e, "gemma-3-270m-it verify failed; emitting deferred");
-                Ok(VerifyDecision::deferred())
-            }
-            Ok(Err(join_err)) => Err(LunarisError::Storage(StorageError::Backend(format!(
-                "gemma-3-270m-it join: {join_err}"
-            )))),
-            Err(_elapsed) => {
-                tracing::warn!(
-                    timeout_ms = timeout_ms,
-                    "gemma-3-270m-it verify timeout; emitting deferred"
-                );
-                Ok(VerifyDecision::deferred())
-            }
-        }
+        self.inner.verify(item).await
     }
-}
 
-#[inline]
-fn forward_err(e: candle_core::Error) -> LunarisError {
-    LunarisError::Storage(StorageError::Backend(format!("gemma-3-270m-it forward: {e}")))
+    fn applies(&self) -> bool {
+        self.inner.applies()
+    }
 }
 
 #[cfg(test)]
