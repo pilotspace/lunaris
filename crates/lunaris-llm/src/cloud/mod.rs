@@ -243,8 +243,10 @@ impl LlmBackend for CloudBackend {
 
 /// Returns `true` for HTTP statuses + error kinds that warrant a retry.
 /// Mirrors the existing classification in
-/// `lunaris-extract::cloud_api::is_transient`.
-fn is_transient(err: &LunarisError) -> bool {
+/// `lunaris-extract::cloud_api::is_transient`. Re-exported at the
+/// `lunaris_llm` crate root so verify/extract wrappers can apply the same
+/// classifier without duplicating the string-match logic.
+pub fn is_transient(err: &LunarisError) -> bool {
     let s = err.to_string();
     s.contains("HTTP 429")
         || s.contains("HTTP 500")

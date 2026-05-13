@@ -65,8 +65,15 @@ pub struct LlmVerifierOpts {
     /// `Ok(VerifyDecision::deferred_with_cause(...))` with the error message
     /// embedded in `cause` and `backend_tag` preserved. Default is `false`
     /// (plain `deferred()`). Cloud-api sets this `true` to restore the D-21
-    /// audit-reason signal lost in Phase 12b (R3).
+    /// audit-reason signal lost in Phase 12b (R3). Takes effect only when
+    /// `propagate_transport_errors` is `false` — propagation takes priority.
     pub defer_with_cause_on_error: bool,
+    /// When `true`, any `Err` returned by the backend is re-propagated as
+    /// `Err` instead of being silently downgraded to `Ok(deferred())`.
+    /// Default is `false` to preserve `LlmVerifier`'s no-error contract for
+    /// candle / cloud-api paths. Ollama sets this `true` to restore the
+    /// pre-Phase-12 nack-on-transport-failure behaviour (R2).
+    pub propagate_transport_errors: bool,
 }
 
 impl Default for LlmVerifierOpts {
@@ -78,6 +85,7 @@ impl Default for LlmVerifierOpts {
             backend_tag: VerifierBackend::Candle,
             schema: None,
             defer_with_cause_on_error: false,
+            propagate_transport_errors: false,
         }
     }
 }
@@ -125,6 +133,9 @@ impl Verifier for LlmVerifier {
         match self.backend.generate(&prompt, constraint, gen_opts).await {
             Ok(decoded) => Ok(parse_decision_json(&decoded, self.opts.backend_tag)),
             Err(e) => {
+                if self.opts.propagate_transport_errors {
+                    return Err(e);
+                }
                 tracing::warn!(
                     err = %e,
                     model_id = self.backend.model_id(),
@@ -286,6 +297,42 @@ mod tests {
             *flag.lock().unwrap(),
             "backend must receive SchemaConstraint::JsonSchema when opts.schema is set"
         );
+    }
+
+    // ── R2 regression: transport errors propagate when flag is set ────────────
+    /// When `propagate_transport_errors = true`, a backend `Err` must surface
+    /// as `Err` from `LlmVerifier::verify` so the worker nacks the message.
+    #[tokio::test]
+    async fn transport_error_propagates_when_flag_set() {
+        use lunaris_core::StorageError;
+        struct ErrorBackend;
+        #[async_trait]
+        impl LlmBackend for ErrorBackend {
+            async fn generate(
+                &self,
+                _: &str,
+                _: SchemaConstraint<'_>,
+                _: GenOpts,
+            ) -> Result<String, LunarisError> {
+                Err(LunarisError::Storage(StorageError::Backend(
+                    "ollama: connection reset by peer".into(),
+                )))
+            }
+            fn model_id(&self) -> &str {
+                "stub://error"
+            }
+        }
+        let verifier = LlmVerifier::with_opts(
+            Arc::new(ErrorBackend),
+            LlmVerifierOpts {
+                propagate_transport_errors: true,
+                ..LlmVerifierOpts::default()
+            },
+        );
+        let result = verifier.verify(fact_item()).await;
+        assert!(result.is_err(), "transport error must propagate as Err for worker nack");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("connection reset"), "error message must include the cause: {msg}");
     }
 
     // ── R3 regression: deferred_with_cause carries reason + backend tag ───────

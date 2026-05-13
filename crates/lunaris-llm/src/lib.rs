@@ -74,7 +74,7 @@ pub mod ollama;
 #[cfg(feature = "candle")]
 pub use candle::{CandleBackend, CandleBackendOpts};
 #[cfg(feature = "cloud-api")]
-pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider};
+pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider, is_transient};
 pub use config::{LlmConfig, Pipeline, ProviderKind};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaBackend, OllamaBackendOpts};

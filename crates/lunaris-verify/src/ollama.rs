@@ -117,6 +117,10 @@ impl OllamaVerifier {
                 // R1: restore server-side JSON-schema enforcement so Ollama
                 // constrains its output to {winner_id, loser_id, reason}.
                 schema: Some(decision_schema()),
+                // R2: restore pre-Phase-12 nack-on-transport-failure signal.
+                // When Ollama returns a transport error, the worker sees Err
+                // and nacks the message for redelivery (D-06 contract).
+                propagate_transport_errors: true,
                 ..LlmVerifierOpts::default()
             },
         );
@@ -154,6 +158,87 @@ mod tests {
     #[test]
     fn verifier_construction_succeeds_with_defaults() {
         let _v = OllamaVerifier::new(OllamaVerifierOpts::default()).expect("client builds");
+    }
+
+    // ── R2 regression: transport errors propagate as Err for worker nack ──────
+    /// When `OllamaBackend` returns a transport error, `OllamaVerifier::verify`
+    /// must surface it as `Err` so the worker nacks the message and the broker
+    /// redelivers. Pre-Phase-12 `OllamaVerifier` returned `Err` on every HTTP /
+    /// network failure; Phase 12b silently swallowed it as `Ok(deferred())`.
+    #[tokio::test]
+    async fn ollama_transport_error_propagates_for_worker_nack() {
+        use std::sync::Arc;
+
+        use async_trait::async_trait;
+        use lunaris_core::{LunarisError, StorageError};
+        use lunaris_extract::{EntityId, Fact, NeedsReviewItem, NeedsReviewReason};
+        use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
+        use ulid::Ulid;
+
+        use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
+        use crate::types::VerifierBackend;
+        use crate::Verifier;
+
+        struct TransportErrorBackend;
+        #[async_trait]
+        impl LlmBackend for TransportErrorBackend {
+            async fn generate(
+                &self,
+                _: &str,
+                _: SchemaConstraint<'_>,
+                _: GenOpts,
+            ) -> Result<String, LunarisError> {
+                Err(LunarisError::Storage(StorageError::Backend(
+                    "ollama: connection refused".into(),
+                )))
+            }
+            fn model_id(&self) -> &str {
+                "stub://ollama-transport-err"
+            }
+        }
+
+        let verifier = LlmVerifier::with_opts(
+            Arc::new(TransportErrorBackend),
+            LlmVerifierOpts {
+                timeout_ms: HTTP_TIMEOUT_MS,
+                max_tokens: 1024,
+                temperature: 0.0,
+                backend_tag: VerifierBackend::Ollama,
+                schema: Some(decision_schema()),
+                propagate_transport_errors: true,
+                ..LlmVerifierOpts::default()
+            },
+        );
+
+        let sid = EntityId::from_name_and_type("Alice", "Person");
+        let oid = EntityId::from_name_and_type("Bob", "Person");
+        let item = NeedsReviewItem::Fact {
+            reason: NeedsReviewReason::GbnfFailure {
+                schema_path: "facts/0".into(),
+                error: "fixture".into(),
+            },
+            raw: Fact {
+                id: Ulid::new(),
+                subject_id: sid,
+                predicate: "knows".into(),
+                object_id: oid,
+                fact_text: "Alice knows Bob".into(),
+                confidence: 0.9,
+                valid_from_iso: "2025-01-01".into(),
+                valid_to_iso: None,
+            },
+        };
+
+        let result: Result<_, lunaris_core::LunarisError> = verifier.verify(item).await;
+        assert!(
+            result.is_err(),
+            "transport error must propagate as Err so worker nacks the message"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("connection refused"),
+            "error must include the transport cause: {msg}"
+        );
     }
 
     // ── R1 regression: decision_schema contains all required arbitration fields ─
