@@ -1,12 +1,26 @@
 //! [`OllamaVerifier`] — Verifier backed by an Ollama HTTP endpoint.
 //!
-//! POSTs `/api/chat` with `{model, messages, format: <json_schema>, stream:
-//! false}` where `format` is the JSON-schema `{winner_id, loser_id, reason}`
-//! that constrains the model's output to the arbitration decision shape.
-//! 60s HTTP timeout per CLAUDE.md "design for failure" rule (27B is slower
-//! than 4B so budget is doubled from lunaris-extract's 30s default).
+//! ## Phase 12b — thin wrapper
 //!
-//! ## Failure modes
+//! This file was migrated from a direct `/api/chat` HTTP client to a thin
+//! wrapper around `Arc<dyn lunaris_llm::LlmBackend>` (`OllamaBackend`) +
+//! `LlmVerifier`. The public API is preserved byte-for-byte.
+//!
+//! ## Schema constraint note (Phase 12b behavioral change)
+//!
+//! The legacy `OllamaVerifier` sent a JSON-schema `format` field on every
+//! `/api/chat` request, constraining the server's output to the
+//! `{winner_id, loser_id, reason}` shape (Ollama structured-output mode).
+//! `LlmVerifier` delegates via `SchemaConstraint::None` — no `format` field
+//! is sent. This is a known behavioral delta: server-side schema enforcement
+//! is dropped. The post-hoc `parse_decision_json` parse still runs on the
+//! response, and malformed output returns `VerifyDecision::deferred()`.
+//! Impact: models that need the JSON-schema hint to stay on format will
+//! drift toward deferred decisions more often. A follow-up can wire
+//! `SchemaConstraint::JsonSchema` through `LlmVerifier` when that feature
+//! lands. Tracked: Phase 12c (schema-constraint propagation).
+//!
+//! ## Failure modes (unchanged)
 //!
 //! | Condition                                    | Returned error                                                          |
 //! |----------------------------------------------|--------------------------------------------------------------------------|
@@ -15,21 +29,21 @@
 //! | non-success HTTP status                      | `LunarisError::Storage(StorageError::Backend("ollama-verify: HTTP <status>"))` |
 //! | response body fails JSON parse               | `Ok(VerifyDecision::deferred())` — the worker treats parse failure as abstain (not an error) |
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use async_trait::async_trait;
-use lunaris_core::{LunarisError, StorageError};
-use serde::{Deserialize, Serialize};
+use lunaris_core::LunarisError;
+use lunaris_llm::{LlmBackend, OllamaBackend, OllamaBackendOpts};
+use std::sync::Arc;
 
 use crate::Verifier;
-use crate::parse_decision_json;
+use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
 use crate::types::{VerifierBackend, VerifyDecision};
 use lunaris_extract::NeedsReviewItem;
 
 /// Per-call HTTP timeout (CLAUDE.md "design for failure"). Ollama is local-
 /// network but 27B inference is slow; 60s gives the model room to answer.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
+///
+/// Note: `LlmVerifier` applies this as `timeout_ms` in `LlmVerifierOpts`.
+const HTTP_TIMEOUT_MS: u64 = 60_000;
 
 /// Default Ollama endpoint.
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
@@ -60,109 +74,49 @@ impl Default for OllamaVerifierOpts {
     }
 }
 
+/// Ollama-backed verifier. Phase 12b wraps `OllamaBackend` + `LlmVerifier`.
+///
+/// Construction is sync (unchanged from legacy — `OllamaBackend::new` is
+/// sync). The public surface is identical to Phase 4.
 #[derive(Clone)]
 pub struct OllamaVerifier {
-    client: reqwest::Client,
-    endpoint: String,
-    model: String,
-    /// Cached JSON-schema for the `{winner_id, loser_id, reason}` arbitration
-    /// output. Built once at construction time; sent in every `/api/chat`
-    /// request as the `format` field so Ollama enforces the structured
-    /// output server-side.
-    format_schema: Arc<serde_json::Value>,
+    inner: LlmVerifier,
 }
 
 impl std::fmt::Debug for OllamaVerifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OllamaVerifier")
-            .field("endpoint", &self.endpoint)
-            .field("model", &self.model)
+            .field("inner", &self.inner)
             .finish()
     }
 }
 
 impl OllamaVerifier {
     pub fn new(opts: OllamaVerifierOpts) -> Result<Self, LunarisError> {
-        let client = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build().map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("ollama-verify client: {e}")))
-        })?;
-        Ok(Self {
-            client,
-            endpoint: opts.endpoint,
-            model: opts.model,
-            format_schema: Arc::new(default_format_schema()),
-        })
+        let backend_opts = OllamaBackendOpts { endpoint: opts.endpoint, model: opts.model };
+        let backend: Arc<dyn LlmBackend> = Arc::new(OllamaBackend::new(backend_opts)?);
+        let verifier = LlmVerifier::with_opts(
+            backend,
+            LlmVerifierOpts {
+                timeout_ms: HTTP_TIMEOUT_MS,
+                max_tokens: 1024,
+                temperature: 0.0,
+                backend_tag: VerifierBackend::Ollama,
+            },
+        );
+        Ok(Self { inner: verifier })
     }
 }
 
 #[async_trait]
 impl Verifier for OllamaVerifier {
     async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
-        let url = format!("{}/api/chat", self.endpoint.trim_end_matches('/'));
-        let prompt = crate::arbitration_prompt(&item);
-        let body = ChatRequest {
-            model: self.model.clone(),
-            messages: vec![ChatMessage { role: "user".into(), content: prompt }],
-            format: (*self.format_schema).clone(),
-            stream: false,
-        };
-
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("ollama-verify: {e}")))
-        })?;
-        if !resp.status().is_success() {
-            return Err(LunarisError::Storage(StorageError::Backend(format!(
-                "ollama-verify: HTTP {}",
-                resp.status()
-            ))));
-        }
-
-        let parsed: ChatResponse = resp.json().await.map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("ollama-verify parse: {e}")))
-        })?;
-
-        // Defer gracefully on parse failure — the worker treats a deferred
-        // decision as "skip this item" rather than a hard error.
-        Ok(parse_decision_json(&parsed.message.content, VerifierBackend::Ollama))
+        self.inner.verify(item).await
     }
-}
 
-#[derive(Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    format: serde_json::Value,
-    stream: bool,
-}
-
-#[derive(Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    message: ChatMessageOut,
-}
-
-#[derive(Deserialize)]
-struct ChatMessageOut {
-    content: String,
-}
-
-/// JSON-schema for the decision shape. Matches the parse target of
-/// `crate::parse_decision_json` (the shared post-hoc parse helper).
-fn default_format_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "winner_id": {"type": "string"},
-            "loser_id":  {"type": "string"},
-            "reason":    {"type": "string"}
-        },
-        "required": ["winner_id", "loser_id", "reason"]
-    })
+    fn applies(&self) -> bool {
+        self.inner.applies()
+    }
 }
 
 #[cfg(test)]
@@ -184,14 +138,5 @@ mod tests {
     #[test]
     fn verifier_construction_succeeds_with_defaults() {
         let _v = OllamaVerifier::new(OllamaVerifierOpts::default()).expect("client builds");
-    }
-
-    #[test]
-    fn format_schema_has_required_top_level_keys() {
-        let s = default_format_schema();
-        assert_eq!(s["type"], "object");
-        assert!(s["properties"]["winner_id"].is_object());
-        assert!(s["properties"]["loser_id"].is_object());
-        assert!(s["properties"]["reason"].is_object());
     }
 }
