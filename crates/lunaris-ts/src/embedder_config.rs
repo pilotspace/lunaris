@@ -44,6 +44,8 @@ use lunaris_embed::fastembed::{
 };
 use lunaris_embed::fastembed_exec::ExecutionPreference;
 use lunaris_embed::ollama::{OllamaEmbedder, OllamaEmbedderOpts};
+// Phase 22 — always-on no-op backend (zero deps).
+use lunaris_embed::{NOOP_DEFAULT_DIM, NoopEmbedder};
 
 use crate::errors::napi_err;
 
@@ -71,6 +73,24 @@ pub struct EmbedderConfig {
 
 #[napi]
 impl EmbedderConfig {
+    /// Phase 22 — zero-vector embedder. Use for metadata-only ingest, BYO
+    /// vector flows, or unit tests. Vector recall returns empty rows but
+    /// BM25 / keyword recall and metadata surfaces work normally.
+    ///
+    /// `dim` defaults to `NOOP_DEFAULT_DIM` (768). Storage layers reject
+    /// `dim = 0` at `Lunaris.open(...)` time with an actionable error.
+    ///
+    /// ```ts
+    /// import { EmbedderConfig, open } from "lunaris";
+    /// const cfg = EmbedderConfig.noop(384);
+    /// const handle = await open("moon://localhost:6390", { embedder: cfg });
+    /// ```
+    #[napi(factory)]
+    pub fn noop(dim: Option<u32>) -> Self {
+        let dim = dim.unwrap_or(NOOP_DEFAULT_DIM as u32);
+        Self { inner: Arc::new(NoopEmbedder::new(dim as usize)), declared_dim: dim }
+    }
+
     /// Build an [`EmbedderConfig`] from the fastembed EmbeddingGemma300M
     /// preset. All opts are optional.
     #[napi(factory)]

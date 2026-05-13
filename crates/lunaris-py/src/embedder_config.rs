@@ -45,6 +45,10 @@ use lunaris_embed::fastembed::{
     FastembedUserDefinedOpts, PoolingMode,
 };
 use lunaris_embed::ollama::{OllamaEmbedder, OllamaEmbedderOpts};
+// Phase 22 — `EmbedderConfig.noop(dim=...)` factory uses the always-on
+// no-op backend.  No feature gate — `NoopEmbedder` is in the always-compiled
+// surface of `lunaris-embed` (no extra deps).
+use lunaris_embed::{NOOP_DEFAULT_DIM, NoopEmbedder};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -223,6 +227,31 @@ impl EmbedderConfig {
             config_bytes,
             execution,
         )
+    }
+
+    /// Phase 22 — zero-vector embedder for metadata-only ingest / BYO-vector
+    /// flows / unit tests.
+    ///
+    /// Returns all-zero vectors of length `dim` and reports
+    /// `EmbedderConfig.dim == dim`. Vector recall on a noop-backed handle
+    /// returns empty rows (cosine similarity over zero vectors is
+    /// degenerate), but BM25 / keyword recall and the metadata-only Memory
+    /// Layer 0 surfaces work normally.
+    ///
+    /// - `dim`: positive integer; `0` is accepted at the constructor but
+    ///   storage layers (Moon, Postgres, sqlite) will reject it at
+    ///   `Lunaris.open(...)` time with a clear error. Default
+    ///   [`NOOP_DEFAULT_DIM`] = 768.
+    ///
+    /// ```python
+    /// from lunaris import EmbedderConfig, open
+    /// cfg = EmbedderConfig.noop(dim=384)
+    /// handle = await open("moon://localhost:6390", embedder=cfg)
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (dim = NOOP_DEFAULT_DIM))]
+    fn noop(dim: usize) -> Self {
+        Self { inner: Arc::new(NoopEmbedder::new(dim)), backend: "noop", dim }
     }
 
     /// HTTP-backed Ollama embedder.
