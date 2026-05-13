@@ -194,6 +194,14 @@ fn build_prompt(chunk: &ChunkInput) -> String {
 
 /// Best-effort JSON parse of the model's decoded output. Tolerant of
 /// trailing junk; extracts the first balanced `{` ... `}` substring.
+///
+/// `pub(crate)` so `cloud_api` can reuse the same parse path when building
+/// its own extraction result (it delegates `generate()` but not the full
+/// `LlmExtractor::extract` path, to preserve the D-21 sentinel contract).
+pub(crate) fn parse_extraction_json_pub(decoded: &str, chunk_id: Ulid) -> RawExtraction {
+    parse_extraction_json(decoded, chunk_id)
+}
+
 fn parse_extraction_json(decoded: &str, chunk_id: Ulid) -> RawExtraction {
     let Some(start) = decoded.find('{') else {
         return RawExtraction { source_chunk_id: chunk_id, ..Default::default() };

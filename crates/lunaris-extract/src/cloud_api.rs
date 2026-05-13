@@ -1,59 +1,52 @@
 //! [`CloudApiExtractor`] — provider-mux extractor for Anthropic / OpenAI /
 //! Gemini.
 //!
-//! Per D-01 the cloud-API path is selectable via `LUNARIS_EXTRACT_PROVIDER` env
-//! (`anthropic` | `openai` | `gemini`, case-insensitive). Each provider speaks
-//! a slightly different structured-output API:
+//! Phase 12a duplication-delete: the per-provider HTTP client, request
+//! builders, and response decoders that previously lived here have been
+//! consolidated into `lunaris_llm::CloudBackend`. This file retains only:
 //!
-//! - **Anthropic** (`/v1/messages` with `tools` + `input_schema`): claude-3-5-
-//!   sonnet / claude-3-haiku style tool-use that constrains the model output
-//!   to a JSON schema. Headers: `x-api-key`, `anthropic-version: 2023-06-01`.
-//! - **OpenAI** (`/v1/chat/completions` with `response_format: {type:
-//!   "json_schema", json_schema: ...}`): gpt-4o / gpt-4o-mini structured
-//!   outputs. Header: `Authorization: Bearer <key>`.
-//! - **Gemini** (`generativelanguage.googleapis.com/v1beta/models/<model>:
-//!   generateContent?key=<key>` with `generationConfig.responseSchema`): same
-//!   schema shape as OpenAI; auth via query param.
+//! - The public API types: [`CloudApiExtractor`], [`CloudApiExtractorOpts`],
+//!   [`CloudProvider`] (re-exported from this module unchanged).
+//! - The `Extractor` impl, which preserves the D-21 sentinel-on-retry-exhaust
+//!   contract — see note below.
 //!
-//! ## D-21 single-retry-then-flag (W-1 fix)
+//! ## Why CloudApiExtractor does NOT fully delegate to LlmExtractor
 //!
-//! On a transient error (HTTP 429 / 5xx / network drop / timeout) the per-
-//! chunk path retries ONCE. If the retry also fails, the extractor emits a
-//! sentinel [`crate::Entity`] with `entity_type =
-//! "__lunaris_sentinel__"` + `name = "__transient_after_retry__"` and
-//! `valid_from_iso = "transient: <error>"`. The validator (`validator.rs`)
-//! detects this sentinel by `entity_type` and routes it to
-//! [`crate::NeedsReviewReason::TransientAfterRetry`] carrying the wrapped
-//! error text — so the sentinel NEVER lands in `out.entities` and Plan 03-03
-//! ingest fan-out can publish a `__lunaris_verify__` MQ message per item per
-//! D-19.
+//! `LlmExtractor::extract_one` swallows all backend errors into an empty
+//! extraction (same strategy as the candle and Ollama backends). That is the
+//! right default for local backends, but for the cloud-API path D-21 requires
+//! that retry exhaustion produce a SENTINEL entity
+//! (`entity_type = "__lunaris_sentinel__"`, `name = "__transient_after_retry__"`)
+//! that the validator routes to `NeedsReviewReason::TransientAfterRetry`.
 //!
-//! ## Failure modes
+//! To preserve this contract we call `backend.generate()` directly per chunk
+//! and wrap any error (after `CloudBackend`'s own internal retry) into the
+//! D-21 sentinel. The batch-level D-02 timeout wraps the whole loop exactly
+//! as before.
 //!
-//! Same shape as `ollama.rs`. Cloud-api specifically also has:
-//! - HTTP 429 / 5xx → transient → single retry → sentinel-on-exhaust
-//! - HTTP 4xx (auth, invalid request) → non-transient → bubble up as
-//!   `LunarisError::Storage(StorageError::Backend("cloud-api: HTTP <status>"))`
+//! ## Failure modes (unchanged)
+//!
+//! | Condition                                    | Behaviour                                                        |
+//! |----------------------------------------------|------------------------------------------------------------------|
+//! | HTTP 429 / 5xx / network / timeout           | `CloudBackend` retries once (D-21), then returns `LunarisError` |
+//! | `LunarisError` from `generate()`             | Sentinel entity emitted; validator routes → TransientAfterRetry  |
+//! | HTTP 4xx (auth, invalid)                     | `LunarisError` bubbled; no retry                                 |
+//! | Batch timeout (D-02)                         | Falls back to per-chunk extraction                               |
 
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use lunaris_core::{LunarisError, StorageError};
-use serde::Deserialize;
+use lunaris_llm::{CloudBackend, CloudBackendOpts, GenOpts, LlmBackend, SchemaConstraint};
 use ulid::Ulid;
 
 use crate::Extractor;
-use crate::types::{ChunkInput, Entity, EntityId, RawExtraction, RawExtractionBatch, Relation};
+use crate::types::{ChunkInput, Entity, EntityId, RawExtraction, RawExtractionBatch};
 use crate::validator::{TRANSIENT_SENTINEL_NAME, TRANSIENT_SENTINEL_TYPE};
 
-/// Per-call HTTP timeout for cloud APIs. 30s is generous; cloud APIs can take
-/// 5-10s under load. The per-batch timeout (D-02) clamps the overall extract.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Default per-batch timeout (D-02). For cloud-API the budget is informational
-/// — if the user picks cloud-API they accept the network latency floor. The
-/// fall-through to per-chunk still happens on timeout.
+/// Default per-batch timeout (D-02).
 const DEFAULT_BATCH_TIMEOUT_MS: u64 = 150;
 
 /// Default retry budget per D-21.
@@ -106,6 +99,18 @@ impl CloudProvider {
     }
 }
 
+/// Bridge from this module's `CloudProvider` to `lunaris_llm::CloudProvider`.
+/// Private — callers only see the extract-side type.
+impl From<CloudProvider> for lunaris_llm::CloudProvider {
+    fn from(p: CloudProvider) -> Self {
+        match p {
+            CloudProvider::Anthropic => lunaris_llm::CloudProvider::Anthropic,
+            CloudProvider::OpenAI => lunaris_llm::CloudProvider::OpenAI,
+            CloudProvider::Gemini => lunaris_llm::CloudProvider::Gemini,
+        }
+    }
+}
+
 /// Construction options for [`CloudApiExtractor`].
 ///
 /// `Default` reads provider from `LUNARIS_EXTRACT_PROVIDER` (defaults to
@@ -140,25 +145,27 @@ impl Default for CloudApiExtractorOpts {
     }
 }
 
+/// Cloud-API extractor — wraps `lunaris_llm::CloudBackend` per chunk and
+/// emits the D-21 sentinel on retry exhaust.
 #[derive(Clone)]
 pub struct CloudApiExtractor {
-    client: reqwest::Client,
+    backend: Arc<CloudBackend>,
     provider: CloudProvider,
-    model: String,
-    api_key: String,
     batch_timeout_ms: u64,
-    max_retries: u8,
+    /// Per-call GenOpts — max_tokens and temperature use the
+    /// LlmExtractorOpts defaults (512 / 0.0). timeout is set to the full
+    /// batch budget so CloudBackend's own D-21 retry stays within D-02.
+    gen_opts: GenOpts,
 }
 
 impl std::fmt::Debug for CloudApiExtractor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // T-03-01-03 mitigation: NEVER log the api_key. Print only the
-        // provider+model so a `tracing::debug!(?extractor)` line stays safe.
+        // provider + model so a `tracing::debug!(?extractor)` line stays safe.
         f.debug_struct("CloudApiExtractor")
             .field("provider", &self.provider)
-            .field("model", &self.model)
+            .field("model_id", &self.backend.model_id())
             .field("batch_timeout_ms", &self.batch_timeout_ms)
-            .field("max_retries", &self.max_retries)
             .finish()
     }
 }
@@ -166,30 +173,29 @@ impl std::fmt::Debug for CloudApiExtractor {
 impl CloudApiExtractor {
     /// Construct a new cloud-API extractor.
     pub fn new(opts: CloudApiExtractorOpts) -> Result<Self, LunarisError> {
-        if opts.api_key.is_empty() {
-            return Err(LunarisError::Storage(StorageError::Backend(format!(
-                "cloud-api: api_key is empty — set {} env",
-                opts.provider.api_key_env()
-            ))));
-        }
-        let client = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build().map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("cloud-api client: {e}")))
-        })?;
-        Ok(Self {
-            client,
-            provider: opts.provider,
+        let llm_provider = lunaris_llm::CloudProvider::from(opts.provider);
+        let backend_opts = CloudBackendOpts {
+            provider: llm_provider,
             model: opts.model,
             api_key: opts.api_key,
-            batch_timeout_ms: opts.batch_timeout_ms,
             max_retries: opts.max_retries,
-        })
+        };
+        let backend = Arc::new(CloudBackend::new(backend_opts)?);
+        // Per-call timeout = full batch budget so the internal retry in
+        // CloudBackend::generate stays bounded within D-02.
+        let gen_opts = GenOpts {
+            max_tokens: 512,
+            temperature: 0.0,
+            timeout: Duration::from_millis(opts.batch_timeout_ms),
+        };
+        Ok(Self { backend, provider: opts.provider, batch_timeout_ms: opts.batch_timeout_ms, gen_opts })
     }
 
-    /// Single attempt — POST to the provider's structured-output endpoint and
-    /// parse the response. Returns the raw extraction or a structured
-    /// `LunarisError`. The `Err` carries enough info for [`is_transient`] to
-    /// classify whether a retry is appropriate.
-    async fn try_once(&self, chunk: &ChunkInput) -> Result<RawExtraction, LunarisError> {
+    /// Single chunk with D-21 sentinel-on-error. The `CloudBackend` already
+    /// handles the internal retry budget (max_retries from opts). When
+    /// `generate()` returns `Err`, we emit the transient sentinel so the
+    /// validator can route it to `NeedsReviewReason::TransientAfterRetry`.
+    async fn extract_one_with_sentinel(&self, chunk: &ChunkInput) -> RawExtraction {
         let prompt = format!(
             "Extract entities and relations from the chunk below. Respond with \
              a JSON object {{\"entities\":[...],\"relations\":[...]}} only.\n\n\
@@ -197,142 +203,39 @@ impl CloudApiExtractor {
             chunk.heading_path.join(" / "),
             chunk.text
         );
-
-        let (url, body, headers) = match self.provider {
-            CloudProvider::Anthropic => self.build_anthropic_request(&prompt),
-            CloudProvider::OpenAI => self.build_openai_request(&prompt),
-            CloudProvider::Gemini => self.build_gemini_request(&prompt),
-        };
-
-        let mut req = self.client.post(&url).json(&body);
-        for (k, v) in headers {
-            req = req.header(k, v);
-        }
-        let resp = req
-            .send()
+        match self
+            .backend
+            .generate(&prompt, SchemaConstraint::None, self.gen_opts)
             .await
-            .map_err(|e| LunarisError::Storage(StorageError::Backend(format!("cloud-api: {e}"))))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(LunarisError::Storage(StorageError::Backend(format!(
-                "cloud-api: HTTP {status}"
-            ))));
-        }
-
-        let body_text = resp.text().await.map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("cloud-api read: {e}")))
-        })?;
-        let extraction = parse_provider_response(self.provider, &body_text)?;
-        Ok(extraction.into_raw(chunk.chunk_id))
-    }
-
-    fn build_anthropic_request(
-        &self,
-        prompt: &str,
-    ) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
-        let url = "https://api.anthropic.com/v1/messages".to_string();
-        let body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": 2048,
-            "tools": [{
-                "name": "emit_extractions",
-                "description": "Emit entities and relations extracted from the chunk.",
-                "input_schema": format_json_schema(),
-            }],
-            "tool_choice": {"type": "tool", "name": "emit_extractions"},
-            "messages": [{"role": "user", "content": prompt}]
-        });
-        let headers = vec![
-            ("x-api-key", self.api_key.clone()),
-            ("anthropic-version", "2023-06-01".to_string()),
-        ];
-        (url, body, headers)
-    }
-
-    fn build_openai_request(
-        &self,
-        prompt: &str,
-    ) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
-        let url = "https://api.openai.com/v1/chat/completions".to_string();
-        let body = serde_json::json!({
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "lunaris_extraction",
-                    "strict": true,
-                    "schema": format_json_schema(),
+        {
+            Ok(text) => crate::llm_extractor::parse_extraction_json_pub(&text, chunk.chunk_id),
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    chunk_id = %chunk.chunk_id,
+                    model_id = self.backend.model_id(),
+                    "cloud-api retry exhausted; emitting transient-after-retry sentinel"
+                );
+                let err_text = e.to_string();
+                let sentinel = Entity {
+                    id: EntityId::from_name_and_type(
+                        TRANSIENT_SENTINEL_NAME,
+                        TRANSIENT_SENTINEL_TYPE,
+                    ),
+                    name: TRANSIENT_SENTINEL_NAME.into(),
+                    aliases: Vec::new(),
+                    entity_type: TRANSIENT_SENTINEL_TYPE.into(),
+                    confidence: 0.0,
+                    valid_from_iso: format!("transient: {err_text}"),
+                    valid_to_iso: None,
+                };
+                RawExtraction {
+                    source_chunk_id: chunk.chunk_id,
+                    entities: vec![sentinel],
+                    relations: Vec::new(),
+                    facts: Vec::new(),
                 }
             }
-        });
-        let headers = vec![("authorization", format!("Bearer {}", self.api_key))];
-        (url, body, headers)
-    }
-
-    fn build_gemini_request(
-        &self,
-        prompt: &str,
-    ) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.api_key
-        );
-        let body = serde_json::json!({
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": format_json_schema(),
-            }
-        });
-        // Gemini uses query-param auth; no auth header.
-        (url, body, Vec::new())
-    }
-
-    /// Single chunk with retry budget per D-21. On retry exhaust returns the
-    /// sentinel-bearing [`RawExtraction`] that the validator routes to
-    /// [`crate::NeedsReviewReason::TransientAfterRetry`].
-    async fn extract_one_with_retry(&self, chunk: &ChunkInput) -> RawExtraction {
-        let mut last_err: Option<LunarisError> = None;
-        let attempts = self.max_retries.saturating_add(1) as usize;
-        for attempt in 0..attempts {
-            match self.try_once(chunk).await {
-                Ok(r) => return r,
-                Err(e) if is_transient(&e) && attempt + 1 < attempts => {
-                    tracing::warn!(err = %e, attempt = attempt + 1, max_attempts = attempts,
-                        "cloud-api transient; retrying");
-                    last_err = Some(e);
-                    continue;
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    break;
-                }
-            }
-        }
-        // Retry exhausted (or non-transient on first attempt) — emit the
-        // D-21 sentinel that the Validator routes to TransientAfterRetry.
-        let err_text =
-            last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".to_string());
-        tracing::warn!(err = %err_text, chunk_id = %chunk.chunk_id,
-            "cloud-api retry exhausted; emitting transient-after-retry sentinel");
-        let sentinel = Entity {
-            id: EntityId::from_name_and_type(TRANSIENT_SENTINEL_NAME, TRANSIENT_SENTINEL_TYPE),
-            name: TRANSIENT_SENTINEL_NAME.into(),
-            aliases: Vec::new(),
-            entity_type: TRANSIENT_SENTINEL_TYPE.into(),
-            // confidence=0.0 is in-range so the validator's GBNF check would
-            // pass; the Validator explicitly checks for the sentinel BEFORE
-            // its GBNF check so the order doesn't matter.
-            confidence: 0.0,
-            valid_from_iso: format!("transient: {err_text}"),
-            valid_to_iso: None,
-        };
-        RawExtraction {
-            source_chunk_id: chunk.chunk_id,
-            entities: vec![sentinel],
-            relations: Vec::new(),
-            facts: Vec::new(),
         }
     }
 }
@@ -349,14 +252,14 @@ impl Extractor for CloudApiExtractor {
         }
 
         // Per-batch timeout (D-02). On timeout we fall back to per-chunk
-        // (each per-chunk call has its own retry budget).
+        // (each per-chunk call has its own retry budget inside CloudBackend).
         let batch_timeout = Duration::from_millis(self.batch_timeout_ms);
         let chunks_owned: Vec<ChunkInput> = chunks.to_vec();
         let this = self.clone();
         let batch_fut = async move {
             let mut by_chunk = Vec::with_capacity(chunks_owned.len());
             for c in &chunks_owned {
-                by_chunk.push(this.extract_one_with_retry(c).await);
+                by_chunk.push(this.extract_one_with_sentinel(c).await);
             }
             RawExtractionBatch { by_chunk }
         };
@@ -371,220 +274,12 @@ impl Extractor for CloudApiExtractor {
                 );
                 let mut by_chunk = Vec::with_capacity(chunks.len());
                 for c in chunks {
-                    by_chunk.push(self.extract_one_with_retry(c).await);
+                    by_chunk.push(self.extract_one_with_sentinel(c).await);
                 }
                 Ok(RawExtractionBatch { by_chunk })
             }
         }
     }
-}
-
-// ----------------------------- Wire format -----------------------------------
-
-#[derive(Deserialize)]
-struct ExtractionWire {
-    #[serde(default)]
-    entities: Vec<EntityWire>,
-    #[serde(default)]
-    relations: Vec<RelationWire>,
-}
-
-#[derive(Deserialize)]
-struct EntityWire {
-    name: String,
-    entity_type: String,
-    #[serde(default)]
-    aliases: Vec<String>,
-    confidence: f32,
-    valid_from_iso: String,
-    #[serde(default)]
-    valid_to_iso: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RelationWire {
-    subject_name: String,
-    subject_type: String,
-    predicate: String,
-    object_name: String,
-    object_type: String,
-    confidence: f32,
-    valid_from_iso: String,
-    #[serde(default)]
-    valid_to_iso: Option<String>,
-}
-
-impl ExtractionWire {
-    fn into_raw(self, chunk_id: Ulid) -> RawExtraction {
-        let entities = self
-            .entities
-            .into_iter()
-            .map(|e| Entity {
-                id: EntityId::from_name_and_type(&e.name, &e.entity_type),
-                name: e.name,
-                aliases: e.aliases,
-                entity_type: e.entity_type,
-                confidence: e.confidence,
-                valid_from_iso: e.valid_from_iso,
-                valid_to_iso: e.valid_to_iso,
-            })
-            .collect();
-        let relations = self
-            .relations
-            .into_iter()
-            .map(|r| Relation {
-                subject_id: EntityId::from_name_and_type(&r.subject_name, &r.subject_type),
-                predicate: r.predicate,
-                object_id: EntityId::from_name_and_type(&r.object_name, &r.object_type),
-                confidence: r.confidence,
-                valid_from_iso: r.valid_from_iso,
-                valid_to_iso: r.valid_to_iso,
-            })
-            .collect();
-        RawExtraction { source_chunk_id: chunk_id, entities, relations, facts: Vec::new() }
-    }
-}
-
-/// Provider-specific response decoder. Each provider wraps the JSON object
-/// differently:
-/// - Anthropic returns `{content: [{type: "tool_use", input: <ext>}, ...]}`
-/// - OpenAI returns `{choices: [{message: {content: <stringified-json>}}]}`
-/// - Gemini returns `{candidates: [{content: {parts: [{text: <json>}]}}]}`
-fn parse_provider_response(
-    provider: CloudProvider,
-    body: &str,
-) -> Result<ExtractionWire, LunarisError> {
-    match provider {
-        CloudProvider::Anthropic => {
-            let v: serde_json::Value = serde_json::from_str(body).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (anthropic parse): {e}"
-                )))
-            })?;
-            let content = v["content"].as_array().ok_or_else(|| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (anthropic missing content): {body}"
-                )))
-            })?;
-            let tool_input = content
-                .iter()
-                .find(|c| c["type"] == "tool_use")
-                .and_then(|c| c.get("input"))
-                .ok_or_else(|| {
-                    LunarisError::Storage(StorageError::Backend(format!(
-                        "cloud-api returned wrong shape (anthropic missing tool_use): {body}"
-                    )))
-                })?;
-            serde_json::from_value(tool_input.clone()).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (anthropic tool_use parse): {e}"
-                )))
-            })
-        }
-        CloudProvider::OpenAI => {
-            let v: serde_json::Value = serde_json::from_str(body).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (openai parse): {e}"
-                )))
-            })?;
-            let content = v["choices"][0]["message"]["content"].as_str().ok_or_else(|| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (openai missing choices[0].message.content): {body}"
-                )))
-            })?;
-            serde_json::from_str(content).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (openai content parse): {e}"
-                )))
-            })
-        }
-        CloudProvider::Gemini => {
-            let v: serde_json::Value = serde_json::from_str(body).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (gemini parse): {e}"
-                )))
-            })?;
-            let text = v["candidates"][0]["content"]["parts"][0]["text"]
-                .as_str()
-                .ok_or_else(|| {
-                    LunarisError::Storage(StorageError::Backend(format!(
-                        "cloud-api returned wrong shape (gemini missing candidates[0].content.parts[0].text): {body}"
-                    )))
-                })?;
-            serde_json::from_str(text).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api returned wrong shape (gemini text parse): {e}"
-                )))
-            })
-        }
-    }
-}
-
-/// Classify a `LunarisError` as transient (D-21 retry-eligible) vs permanent.
-/// Transient = network-blip / 429-backoff / 5xx server error / timeout.
-fn is_transient(e: &LunarisError) -> bool {
-    let msg = e.to_string();
-    // HTTP 429 backoff
-    if msg.contains("HTTP 429") {
-        return true;
-    }
-    // HTTP 5xx server error
-    if msg.contains("HTTP 5") {
-        return true;
-    }
-    // Network / connect / timeout from reqwest's Display impl
-    if msg.contains("timeout")
-        || msg.contains("connection")
-        || msg.contains("connect")
-        || msg.contains("dns")
-        || msg.contains("transient")
-    {
-        return true;
-    }
-    false
-}
-
-/// Shared JSON-schema for `entities` + `relations` (passed verbatim to all
-/// three providers). Mirrors `default_format_schema` in `ollama.rs`.
-fn format_json_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "entities": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name", "entity_type", "confidence", "valid_from_iso"],
-                    "properties": {
-                        "name":          {"type": "string"},
-                        "entity_type":   {"type": "string"},
-                        "aliases":       {"type": "array", "items": {"type": "string"}},
-                        "confidence":    {"type": "number"},
-                        "valid_from_iso": {"type": "string"},
-                        "valid_to_iso":  {"type": ["string", "null"]}
-                    }
-                }
-            },
-            "relations": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["subject_name", "subject_type", "predicate", "object_name", "object_type", "confidence", "valid_from_iso"],
-                    "properties": {
-                        "subject_name": {"type": "string"},
-                        "subject_type": {"type": "string"},
-                        "predicate":    {"type": "string"},
-                        "object_name":  {"type": "string"},
-                        "object_type":  {"type": "string"},
-                        "confidence":   {"type": "number"},
-                        "valid_from_iso": {"type": "string"},
-                        "valid_to_iso": {"type": ["string", "null"]}
-                    }
-                }
-            }
-        },
-        "required": ["entities", "relations"]
-    })
 }
 
 #[cfg(test)]
@@ -623,18 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn is_transient_classifies_429_and_5xx() {
-        let e_429 = LunarisError::Storage(StorageError::Backend("cloud-api: HTTP 429".into()));
-        let e_503 = LunarisError::Storage(StorageError::Backend("cloud-api: HTTP 503".into()));
-        let e_400 = LunarisError::Storage(StorageError::Backend("cloud-api: HTTP 400".into()));
-        let e_to = LunarisError::Storage(StorageError::Backend("cloud-api: timeout".into()));
-        assert!(is_transient(&e_429));
-        assert!(is_transient(&e_503));
-        assert!(!is_transient(&e_400));
-        assert!(is_transient(&e_to));
-    }
-
-    #[test]
     fn debug_impl_redacts_api_key() {
         // Construct with a fake key and prove Debug doesn't print it.
         let opts = CloudApiExtractorOpts {
@@ -648,5 +331,21 @@ mod tests {
         let dbg = format!("{extractor:?}");
         assert!(!dbg.contains("SECRET"), "Debug must redact api_key, got: {dbg}");
         assert!(!dbg.contains("sk-ant"), "Debug must redact api_key, got: {dbg}");
+    }
+
+    #[test]
+    fn cloud_provider_bridge_maps_all_three() {
+        assert!(matches!(
+            lunaris_llm::CloudProvider::from(CloudProvider::Anthropic),
+            lunaris_llm::CloudProvider::Anthropic
+        ));
+        assert!(matches!(
+            lunaris_llm::CloudProvider::from(CloudProvider::OpenAI),
+            lunaris_llm::CloudProvider::OpenAI
+        ));
+        assert!(matches!(
+            lunaris_llm::CloudProvider::from(CloudProvider::Gemini),
+            lunaris_llm::CloudProvider::Gemini
+        ));
     }
 }
