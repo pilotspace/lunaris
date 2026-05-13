@@ -79,11 +79,7 @@ impl WorkingMemory {
     /// `scope_prefix` namespaces the `source` field on each Episode so a
     /// single scope can host multiple WorkingMemory instances (e.g.,
     /// `"helios:fs/"` vs `"chat:user-42/"`).
-    pub fn new(
-        lunaris: Arc<Lunaris>,
-        scope: Scope,
-        scope_prefix: impl Into<String>,
-    ) -> Self {
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope, scope_prefix: impl Into<String>) -> Self {
         Self { lunaris, scope, scope_prefix: scope_prefix.into() }
     }
 
@@ -92,12 +88,8 @@ impl WorkingMemory {
         let source = self.scope_key(k);
         let content = serde_json::to_string(&v)
             .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-        let episode = Episode::new(
-            self.scope.clone(),
-            source,
-            content,
-            self.lunaris.clock().as_ref(),
-        );
+        let episode =
+            Episode::new(self.scope.clone(), source, content, self.lunaris.clock().as_ref());
         self.lunaris.ingest(episode).await
     }
 

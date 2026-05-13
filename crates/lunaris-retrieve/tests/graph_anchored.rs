@@ -578,22 +578,8 @@ async fn graph_score_path_length_decay() {
     // but the SCORE values diverge from the legacy `1/(1+i)` rank.
     let alice = EntityId::from_name_and_type("Alice", "Person");
     let result = graph_with_columns(vec![
-        (
-            EntityId::from_name_and_type("Near", "X"),
-            "Near",
-            "X",
-            Some(1.0),
-            Some(1.0),
-            Some(1.0),
-        ),
-        (
-            EntityId::from_name_and_type("Far", "X"),
-            "Far",
-            "X",
-            Some(3.0),
-            Some(1.0),
-            Some(1.0),
-        ),
+        (EntityId::from_name_and_type("Near", "X"), "Near", "X", Some(1.0), Some(1.0), Some(1.0)),
+        (EntityId::from_name_and_type("Far", "X"), "Far", "X", Some(3.0), Some(1.0), Some(1.0)),
     ]);
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
@@ -629,14 +615,7 @@ async fn graph_score_edge_weight_dominance() {
             Some(0.9),
             Some(1.0),
         ),
-        (
-            EntityId::from_name_and_type("Weak", "X"),
-            "Weak",
-            "X",
-            Some(1.0),
-            Some(0.5),
-            Some(1.0),
-        ),
+        (EntityId::from_name_and_type("Weak", "X"), "Weak", "X", Some(1.0), Some(0.5), Some(1.0)),
     ]);
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);

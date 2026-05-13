@@ -214,12 +214,10 @@ impl Lunaris {
                 // Unset → legacy behaviour: migrate as the role behind `url`,
                 // with an actionable hint if it lacks DDL and the schema is
                 // behind. This removes the out-of-band `sqlx migrate run` step.
-                let admin_url = std::env::var("LUNARIS_ADMIN_URL")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty());
-                let p = Arc::new(
-                    PostgresStorage::connect_with_admin(url, admin_url.as_deref()).await?,
-                );
+                let admin_url =
+                    std::env::var("LUNARIS_ADMIN_URL").ok().filter(|s| !s.trim().is_empty());
+                let p =
+                    Arc::new(PostgresStorage::connect_with_admin(url, admin_url.as_deref()).await?);
                 let storage_arc: Arc<dyn StoragePort> = p.clone();
                 verify_pipeline.bind_storage(storage_arc.clone());
                 verify_pipeline.bind_clock(clock.clone());

@@ -259,10 +259,7 @@ mod tests {
     fn recency_boosts_newer_hits() {
         let now_ms: u64 = 10_000_000_000;
         let thirty_days_ms: u64 = 30 * 24 * 3600 * 1000;
-        let mut hits = vec![
-            mk_hit(99, 0.5, now_ms - thirty_days_ms),
-            mk_hit(7, 0.5, now_ms),
-        ];
+        let mut hits = vec![mk_hit(99, 0.5, now_ms - thirty_days_ms), mk_hit(7, 0.5, now_ms)];
         let cfg = RecencyConfig::default();
         rescore_recency(&mut hits, now(now_ms), &cfg);
         assert_eq!(hits[0].id, vec![7], "newer hit should rank first");

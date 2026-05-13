@@ -105,8 +105,14 @@ async fn document_corpus_moon_postgres_parity() -> anyhow::Result<()> {
         // `DocumentCorpus::search` consumes `self` — construct fresh builders
         // per query so the fluent `.top(5).search(query)` chain matches the
         // plan action block verbatim.
-        let moon_hits = DocumentCorpus::new(moon.clone(), lunaris_core::Scope::dev(), "chunks:").top(5).search(query).await?;
-        let pg_hits = DocumentCorpus::new(postgres.clone(), lunaris_core::Scope::dev(), "chunks:").top(5).search(query).await?;
+        let moon_hits = DocumentCorpus::new(moon.clone(), lunaris_core::Scope::dev(), "chunks:")
+            .top(5)
+            .search(query)
+            .await?;
+        let pg_hits = DocumentCorpus::new(postgres.clone(), lunaris_core::Scope::dev(), "chunks:")
+            .top(5)
+            .search(query)
+            .await?;
 
         if moon_hits.len() != pg_hits.len() {
             divergences.push(format!(

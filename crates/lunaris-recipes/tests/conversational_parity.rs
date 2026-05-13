@@ -239,8 +239,10 @@ async fn multi_turn_conversation_cross_session_consolidation_parity() -> anyhow:
 
     let conv_moon = MultiTurnConversation::new(moon.clone(), lunaris_core::Scope::dev(), user_id);
     let conv_pg = MultiTurnConversation::new(postgres.clone(), lunaris_core::Scope::dev(), user_id);
-    let other_moon = MultiTurnConversation::new(moon.clone(), lunaris_core::Scope::dev(), other_user_id);
-    let other_pg = MultiTurnConversation::new(postgres.clone(), lunaris_core::Scope::dev(), other_user_id);
+    let other_moon =
+        MultiTurnConversation::new(moon.clone(), lunaris_core::Scope::dev(), other_user_id);
+    let other_pg =
+        MultiTurnConversation::new(postgres.clone(), lunaris_core::Scope::dev(), other_user_id);
 
     // Seed 20 turns across 2 sessions under the user scope on both backends.
     for session in sessions {
@@ -458,7 +460,8 @@ async fn email_threading_graph_on_opt_in() -> anyhow::Result<()> {
     let moon = Arc::new(Lunaris::open(&moon_url).await?);
     assert!(!moon.graph_pipeline().is_enabled());
 
-    let em_moon = EmailThreading::new(moon.clone(), lunaris_core::Scope::dev()).with_graph_pipeline(true);
+    let em_moon =
+        EmailThreading::new(moon.clone(), lunaris_core::Scope::dev()).with_graph_pipeline(true);
     // `.with_graph_pipeline(true)` MUST flip the handle state.
     assert!(
         moon.graph_pipeline().is_enabled(),

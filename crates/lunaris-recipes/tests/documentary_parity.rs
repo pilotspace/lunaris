@@ -316,7 +316,8 @@ async fn run_research_paper_rrf(
     let mem = Arc::new(Lunaris::open(url).await?);
     let prefix = format!("papers:doc-11-03/{backend_label}/");
     // Graph-off default per blueprint §5.2; scenario.graph_on is false.
-    let corpus = ResearchPaperCorpus::new(mem, lunaris_core::Scope::dev(), prefix).with_graph_pipeline(false);
+    let corpus = ResearchPaperCorpus::new(mem, lunaris_core::Scope::dev(), prefix)
+        .with_graph_pipeline(false);
     let papers = load_papers()?;
     for p in &papers {
         let body = format!("{}\n\n{}", p.title, p.abstract_text);

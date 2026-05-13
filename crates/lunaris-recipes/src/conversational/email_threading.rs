@@ -75,11 +75,7 @@ impl EmailThreading {
     pub fn thread(&self, root_id: impl Into<String>) -> Self {
         let prefix = format!("{}{}/", EMAIL_PREFIX, root_id.into());
         Self {
-            inner_ms: MessageStream::new(
-                self.lunaris.clone(),
-                self.scope.clone(),
-                prefix.clone(),
-            ),
+            inner_ms: MessageStream::new(self.lunaris.clone(), self.scope.clone(), prefix.clone()),
             inner_wm: WorkingMemory::new(self.lunaris.clone(), self.scope.clone(), prefix),
             lunaris: self.lunaris.clone(),
             scope: self.scope.clone(),
