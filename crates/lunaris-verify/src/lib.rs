@@ -63,6 +63,8 @@ pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 pub mod reflect;
+// Phase 14.1 — MVCC invalidation helper for reflect-nominated facts.
+pub mod reflect_apply;
 pub mod supervisor;
 pub mod types;
 pub mod worker;
@@ -81,6 +83,7 @@ pub use reflect::{
     LlmReflectSupervisor, NoopReflectSupervisor, ReflectInput, ReflectOpts, ReflectOutput,
     ReflectSupervisor,
 };
+pub use reflect_apply::apply_reflect_invalidate;
 pub use supervisor::{
     ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, VerifySupervisor, VerifySupervisorHandle,
     scope_verify_topic,

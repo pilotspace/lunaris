@@ -138,6 +138,21 @@ pub enum AuditEvent {
 
     /// Per-archive event (one per archived Fact).
     ConsolidatorArchive { fact_id: FactIdData, final_activation: f64, moved_to: String },
+
+    /// Emitted by `ScopedLunaris::end_turn` after each successful reflect-driven
+    /// MVCC invalidation (D-22). One event per fact ulid stamped. `turn_id` is
+    /// `None` when the caller did not supply a turn boundary identifier.
+    ReflectInvalidation {
+        /// The fact ulid whose `bt.sys.1` was stamped.
+        ulid: String,
+        /// The tenant scope under which the invalidation was applied.
+        scope: String,
+        /// RFC-3339 timestamp of the invalidation (wall-clock, not HLC).
+        invalidated_at_iso: String,
+        /// Optional turn identifier supplied by the caller via `ReflectInput::turn_id`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------

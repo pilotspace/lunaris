@@ -22,6 +22,9 @@ const FIXTURE_FORGET: &str = include_str!("fixtures/audit/v0.1.0/forget.json");
 const FIXTURE_VERIFIER: &str = include_str!("fixtures/audit/v0.1.0/verifier_arbitration.json");
 const FIXTURE_PROMOTION: &str = include_str!("fixtures/audit/v0.1.0/consolidator_promotion.json");
 const FIXTURE_ARCHIVE: &str = include_str!("fixtures/audit/v0.1.0/consolidator_archive.json");
+// Phase 14.1 — reflect-driven MVCC invalidation audit shape.
+const FIXTURE_REFLECT_INVALIDATION: &str =
+    include_str!("fixtures/audit/v0.1.0/reflect_invalidation.json");
 
 fn fixture_value(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).expect("fixture is valid JSON")
@@ -91,6 +94,36 @@ fn fixture_parity_consolidator_archive() {
         moved_to: "cold_storage".to_string(),
     };
     assert_serializes_to(&event, FIXTURE_ARCHIVE);
+}
+
+#[test]
+fn fixture_parity_reflect_invalidation() {
+    let event = AuditEvent::ReflectInvalidation {
+        ulid: "01HKAPABCDEFGHIJKLMNOPQRST".to_string(),
+        scope: "agent-42".to_string(),
+        invalidated_at_iso: "2026-05-13T00:00:00+00:00".to_string(),
+        turn_id: Some("01HKAPABCDEFGHIJKLMNOPQRYZ".to_string()),
+    };
+    assert_serializes_to(&event, FIXTURE_REFLECT_INVALIDATION);
+}
+
+#[test]
+fn fixture_parity_reflect_invalidation_no_turn_id() {
+    // Verify that when turn_id is None the field is omitted from the JSON
+    // (skip_serializing_if = "Option::is_none") — not covered by the frozen
+    // fixture but still a wire-shape contract.
+    let event = AuditEvent::ReflectInvalidation {
+        ulid: "01HKAPABCDEFGHIJKLMNOPQRST".to_string(),
+        scope: "agent-42".to_string(),
+        invalidated_at_iso: "2026-05-13T00:00:00+00:00".to_string(),
+        turn_id: None,
+    };
+    let v = serde_json::to_value(&event).unwrap();
+    assert_eq!(v["kind"], "ReflectInvalidation");
+    assert!(v.get("turn_id").is_none(), "turn_id must be absent when None");
+    // Round-trip: deserializing must reconstruct the same event.
+    let back: AuditEvent = serde_json::from_value(v).unwrap();
+    assert_eq!(back, event);
 }
 
 // ---------------------------- publish round-trip -----------------------------

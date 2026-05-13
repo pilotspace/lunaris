@@ -1,0 +1,7 @@
+{
+  "kind": "ReflectInvalidation",
+  "ulid": "01HKAPABCDEFGHIJKLMNOPQRST",
+  "scope": "agent-42",
+  "invalidated_at_iso": "2026-05-13T00:00:00+00:00",
+  "turn_id": "01HKAPABCDEFGHIJKLMNOPQRYZ"
+}

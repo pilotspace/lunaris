@@ -40,6 +40,7 @@ use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
 use lunaris_verify::{
     NoopReflectSupervisor, NoopVerifier, ReflectInput, ReflectOutput, ReflectSupervisor, Verifier,
+    apply_reflect_invalidate,
 };
 
 use crate::consolidator_pipeline::ConsolidatorPipelineHandle;
@@ -735,6 +736,102 @@ impl<'a> ScopedLunaris<'a> {
         // Wave 2.5C: pre-seed scope so all operators in the tree use the
         // bound scope rather than Scope::dev() placeholders.
         self.engine.recall().with_scope(self.scope.clone())
+    }
+
+    /// Phase 14.1 — signal the end of an agent turn, run the reflection pass,
+    /// and apply MVCC invalidations for every ulid in [`ReflectOutput::invalidate`].
+    ///
+    /// ## What this does (Phase 14.1)
+    ///
+    /// 1. Delegates to the handle's [`ReflectSupervisor`] (same as
+    ///    [`Lunaris::end_turn`]). If the supervisor is a
+    ///    [`NoopReflectSupervisor`] (the default), the reflect call is a
+    ///    cheap no-op returning `ReflectOutput::default()`.
+    ///
+    /// 2. For every ulid in `output.invalidate`, calls
+    ///    [`apply_reflect_invalidate`] which:
+    ///    - reads the fact row,
+    ///    - stamps `bt.sys.1 = Some(now)` (JSON-patched into the payload),
+    ///    - commits **one `atomic_write`** for the entire batch (D-11), and
+    ///    - publishes one `AuditEvent::ReflectInvalidation` per stamped ulid
+    ///      (D-22, fire-and-forget).
+    ///
+    /// ## What is NOT done in this commit (Phase 14.2 / 14.3)
+    ///
+    /// - `boost` — deferred to Phase 14.2 (ephemeral LRU per-handle cache).
+    /// - `pre_warm_query` — deferred to Phase 14.3 (fire-and-forget recall).
+    ///
+    /// ## Failure discipline
+    ///
+    /// Reflect is advisory.  Supervisor errors and storage errors during
+    /// invalidation are logged via `tracing::warn!` and swallowed — this
+    /// method **never** fails the agent's next turn due to a reflect error.
+    /// The full `ReflectOutput` (including `boost` and `pre_warm_query`) is
+    /// returned to the caller regardless.
+    ///
+    /// ## Scope enforcement
+    ///
+    /// `self.scope` (the JWT-bound partition key) is the sole source of
+    /// truth for the storage partition.  The caller cannot inject a different
+    /// scope — that is the whole point of `ScopedLunaris`.
+    pub async fn end_turn(&self, input: ReflectInput) -> Result<ReflectOutput, LunarisError> {
+        let turn_id = input.turn_id;
+
+        // Step 1: run the reflection pass (best-effort — never fail the turn).
+        let output = match self.engine.reflect_supervisor.reflect(input).await {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!(
+                    target: "lunaris::scoped",
+                    err = %e,
+                    turn_id = ?turn_id,
+                    "reflect_supervisor_error; emitting empty output"
+                );
+                ReflectOutput::default()
+            }
+        };
+
+        // Step 2 (Phase 14.1): apply invalidations — one atomic_write for the batch.
+        if !output.invalidate.is_empty() {
+            match apply_reflect_invalidate(
+                &self.engine.storage,
+                &self.scope,
+                &self.engine.clock,
+                turn_id,
+                &output.invalidate,
+            )
+            .await
+            {
+                Ok(stamped) => {
+                    tracing::debug!(
+                        target: "lunaris::scoped",
+                        turn_id = ?turn_id,
+                        invalidated_count = stamped.len(),
+                        "reflect_invalidate_applied"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "lunaris::scoped",
+                        err = %e,
+                        turn_id = ?turn_id,
+                        "reflect_invalidate_storage_error; continuing"
+                    );
+                }
+            }
+        }
+
+        // Summary log at turn boundary (Phase 14.1 requirement).
+        tracing::info!(
+            target: "lunaris::scoped",
+            turn_id = ?turn_id,
+            invalidated_count = output.invalidate.len(),
+            boost_count = output.boost.len(),
+            pre_warm_query = output.pre_warm_query.is_some(),
+            "scoped_end_turn_complete"
+        );
+
+        Ok(output)
     }
 }
 
