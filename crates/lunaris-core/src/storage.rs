@@ -12,7 +12,7 @@ pub mod keyword;
 pub mod port;
 pub mod types;
 
-pub use capabilities::StorageCapabilities;
+pub use capabilities::{CypherDialect, StorageCapabilities};
 pub use keyword::{KeywordHit, KeywordPort, min_max_normalize};
 pub use port::StoragePort;
 pub use types::{

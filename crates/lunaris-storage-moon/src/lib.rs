@@ -324,6 +324,7 @@ impl StoragePort for MoonStorage {
             // before recall p99 degrades (Moon docs §6.4). Above this,
             // operators should consider workspace-level pooling (future RFC).
             max_scopes_recommended: 512,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
         }
     }
 }
@@ -372,6 +373,7 @@ mod tests {
             max_vector_dim: 768,
             native_rrf: true,
             max_scopes_recommended: 512,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
         };
         assert!(
             !want.bi_temporal_native,

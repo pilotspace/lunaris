@@ -116,6 +116,7 @@ impl StoragePort for RecordingStorage {
             max_vector_dim: 768,
             native_rrf: false,
             max_scopes_recommended: 0,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
         }
     }
 }

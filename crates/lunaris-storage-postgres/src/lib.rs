@@ -212,6 +212,7 @@ impl StoragePort for PostgresStorage {
             max_vector_dim: 1536,      // pgvector practical ceiling (Postgres profile)
             native_rrf: false,         // Postgres uses client-side RRF (Phase 1.5 STORE-09)
             max_scopes_recommended: 0,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
         }
     }
 }
@@ -257,6 +258,7 @@ mod tests {
             max_vector_dim: 1536,
             native_rrf: false,
             max_scopes_recommended: 0,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
         };
         assert!(!want.bi_temporal_native);
         assert!(want.graph_native);
