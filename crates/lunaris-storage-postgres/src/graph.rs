@@ -77,8 +77,7 @@ pub(crate) async fn graph_traverse(
     let column_list = if aliases.is_empty() {
         "(v ag_catalog.agtype)".to_string()
     } else {
-        let cols: Vec<String> =
-            aliases.iter().map(|a| format!("{a} ag_catalog.agtype")).collect();
+        let cols: Vec<String> = aliases.iter().map(|a| format!("{a} ag_catalog.agtype")).collect();
         format!("({})", cols.join(", "))
     };
 
@@ -155,8 +154,7 @@ pub(crate) async fn graph_traverse(
     // Determine the actual headers we return. When aliases are present the
     // header set IS the parsed alias list (preserves RETURN order). When
     // no aliases were detected, fall back to the legacy `v` column.
-    let headers: Vec<String> =
-        if aliases.is_empty() { vec!["v".into()] } else { aliases.clone() };
+    let headers: Vec<String> = if aliases.is_empty() { vec!["v".into()] } else { aliases.clone() };
 
     let mut out_rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(rows.len());
     for r in &rows {
@@ -169,8 +167,7 @@ pub(crate) async fn graph_traverse(
             // form is JSON-shaped per AGE convention:
             //   strings → `"foo"` (double-quoted), ints → `3`, floats →
             //   `3.14`, NULL → SQL NULL.
-            let cell: Option<String> =
-                r.try_get_unchecked::<Option<String>, _>(i).unwrap_or(None);
+            let cell: Option<String> = r.try_get_unchecked::<Option<String>, _>(i).unwrap_or(None);
             let value = match cell {
                 None => serde_json::Value::Null,
                 Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
@@ -197,10 +194,7 @@ pub(crate) async fn graph_traverse(
 /// Identifier boundary: `$` is followed by `[A-Za-z_][A-Za-z0-9_]*`.
 /// Anything that's not a known param name passes through unchanged so
 /// raw Cypher with `$$` quoting (the `$$ ... $$` outer envelope) survives.
-fn inline_params(
-    cypher: &str,
-    params: &serde_json::Map<String, serde_json::Value>,
-) -> String {
+fn inline_params(cypher: &str, params: &serde_json::Map<String, serde_json::Value>) -> String {
     let mut out = String::with_capacity(cypher.len());
     let bytes = cypher.as_bytes();
     let mut i = 0;
