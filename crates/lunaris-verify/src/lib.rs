@@ -51,6 +51,11 @@ pub mod candle_gemma3_27b;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 pub mod divergence;
+// Phase 11 — backend-agnostic Verifier over `lunaris_llm::LlmBackend`. Additive;
+// legacy CandleGemma3_27B / CandleGemma3_270M / OllamaVerifier /
+// CloudApiVerifier remain untouched. Default verify model stays 27B; the
+// flip to 4B is gated on ER-F1 and lands in a separate later commit.
+pub mod llm_verifier;
 pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
@@ -64,6 +69,7 @@ pub use candle_gemma3_27b::{CandleGemma3_27B, CandleGemma3_27BOpts};
 pub use candle_gemma3_270m::{CandleGemma3_270M, CandleGemma3_270MOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiVerifier, CloudApiVerifierOpts, CloudProvider};
+pub use llm_verifier::{LlmVerifier, LlmVerifierOpts};
 pub use noop::NoopVerifier;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaVerifier, OllamaVerifierOpts};

@@ -55,6 +55,11 @@ verifier-it  = []
 [dependencies]
 lunaris-core = { workspace = true }
 lunaris-extract = { workspace = true }   # NeedsReviewItem + DTOs reuse
+# Phase 11 — unified LlmBackend trait. Consumed by `llm_verifier::LlmVerifier`
+# alongside the legacy CandleGemma3_27B / OllamaVerifier / CloudApiVerifier
+# (untouched in this commit). Verify default stays 27B; flip is a separate
+# later commit gated on the ER-F1 quality test.
+lunaris-llm = { workspace = true }
 async-trait     = { workspace = true }
 thiserror       = { workspace = true }
 tracing         = { workspace = true }
