@@ -259,9 +259,12 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
     let calls = storage.graph_calls.lock().clone();
     assert_eq!(calls.len(), 1, "graph_traverse called exactly once");
     assert!(calls[0].0.cypher.contains("[*1..2]"), "hops literal: {}", calls[0].0.cypher);
+    // Wave 4 amendment: RecordingStorage defaults to CypherDialect::Legacy
+    // (no overrides). The operator therefore dispatches the Legacy template
+    // here. The dispatch_* tests cover the PathMetrics/Full assertions.
     assert!(
-        calls[0].0.cypher.contains("MATCH p = (n {id_hex: sid})"),
-        "MATCH must bind path p + use id_hex (W-7 + Wave 4): {}",
+        calls[0].0.cypher.contains("MATCH (n {id_hex: sid})"),
+        "Legacy MATCH must use id_hex property (W-7): {}",
         calls[0].0.cypher,
     );
     assert!(
@@ -271,7 +274,7 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
     );
     assert!(
         !calls[0].0.cypher.contains("DISTINCT"),
-        "Wave 4: DISTINCT must be removed (would collapse per-path metrics): {}",
+        "DISTINCT must not appear (would collapse rows): {}",
         calls[0].0.cypher,
     );
     assert_eq!(calls[0].0.graph, "lunaris_graph");
