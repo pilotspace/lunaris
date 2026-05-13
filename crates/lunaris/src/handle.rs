@@ -105,6 +105,14 @@ pub struct Lunaris {
     /// Capacity: controlled by `LUNARIS_BOOST_CACHE_CAPACITY` (default 10 000)
     /// via [`lunaris_verify::boost_cache_capacity`].
     pub(crate) boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>,
+    /// Phase 14.3 — concurrency bound for speculative warm-up recalls spawned
+    /// by [`ScopedLunaris::end_turn`] when [`ReflectOutput::pre_warm_query`] is
+    /// `Some`. Capacity defaults to 4; override via
+    /// `LUNARIS_PREWARM_CONCURRENCY` env var (positive integer; 0 or
+    /// non-numeric values fall back to the default). If the semaphore is
+    /// exhausted when `end_turn` fires, the warm-up is silently skipped (logged
+    /// at `DEBUG`) — `end_turn` never blocks on the semaphore.
+    pub(crate) warm_up_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -120,6 +128,7 @@ impl std::fmt::Debug for Lunaris {
             .field("consolidator_pipeline_enabled", &self.consolidator_pipeline.is_enabled())
             .field("reflect_supervisor_applies", &self.reflect_supervisor.applies())
             .field("boost_cache_len", &self.boost_cache.read().len())
+            .field("warm_up_semaphore_permits", &self.warm_up_semaphore.available_permits())
             .finish()
     }
 }
@@ -237,6 +246,9 @@ impl Lunaris {
                     boost_cache: Arc::new(parking_lot::RwLock::new(
                         lru::LruCache::new(boost_cache_capacity()),
                     )),
+                    warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                        resolve_prewarm_concurrency(),
+                    )),
                 })
             }
             "postgres" | "postgresql" => {
@@ -274,6 +286,9 @@ impl Lunaris {
                     boost_cache: Arc::new(parking_lot::RwLock::new(
                         lru::LruCache::new(boost_cache_capacity()),
                     )),
+                    warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                        resolve_prewarm_concurrency(),
+                    )),
                 })
             }
             // Onboarding overhaul (phase 1): the zero-dependency embedded
@@ -305,6 +320,9 @@ impl Lunaris {
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
                     boost_cache: Arc::new(parking_lot::RwLock::new(
                         lru::LruCache::new(boost_cache_capacity()),
+                    )),
+                    warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                        resolve_prewarm_concurrency(),
                     )),
                 })
             }
@@ -376,6 +394,10 @@ impl Lunaris {
             boost_cache: Arc::new(parking_lot::RwLock::new(
                 lru::LruCache::new(boost_cache_capacity()),
             )),
+            // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
+            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                resolve_prewarm_concurrency(),
+            )),
         }
     }
 
@@ -426,6 +448,10 @@ impl Lunaris {
             // Phase 14.2 — ephemeral boost cache, capacity from env (default 10_000).
             boost_cache: Arc::new(parking_lot::RwLock::new(
                 lru::LruCache::new(boost_cache_capacity()),
+            )),
+            // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
+            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
+                resolve_prewarm_concurrency(),
             )),
         }
     }
@@ -638,6 +664,26 @@ impl Lunaris {
     /// default, or whatever was last passed to [`Self::with_reflect_supervisor`].
     pub fn reflect_supervisor(&self) -> Arc<dyn ReflectSupervisor> {
         self.reflect_supervisor.clone()
+    }
+
+    /// Phase 14.3 — borrow the warm-up semaphore `Arc`.
+    ///
+    /// Primarily for testing: callers can assert `available_permits()` to
+    /// verify the semaphore was / was not acquired.
+    pub fn warm_up_semaphore(&self) -> Arc<tokio::sync::Semaphore> {
+        self.warm_up_semaphore.clone()
+    }
+
+    /// Phase 14.3 test seam — replace the warm-up semaphore with a custom
+    /// capacity. Use in integration tests that need to control the concurrency
+    /// bound (e.g., capacity=1 for the semaphore-bound test).
+    ///
+    /// This is intentionally `#[doc(hidden)]` — production code uses the
+    /// env-var knob (`LUNARIS_PREWARM_CONCURRENCY`) at construction time.
+    #[doc(hidden)]
+    pub fn with_prewarm_concurrency(mut self, capacity: usize) -> Self {
+        self.warm_up_semaphore = Arc::new(tokio::sync::Semaphore::new(capacity));
+        self
     }
 
     /// RFC 0001 Wave 0 — construct a scope-bound view over this handle.
@@ -880,6 +926,89 @@ impl<'a> ScopedLunaris<'a> {
         }
 
         // Summary log at turn boundary (Phase 14.1 + 14.2 combined).
+        // Step 3 (Phase 14.3): fire-and-forget speculative warm-up recall.
+        //
+        // If the reflector predicted a next-turn query, spawn a background task
+        // to issue a real recall against the storage backend. This populates
+        // Moon's FT page cache (or the OS page cache for Postgres) before the
+        // agent issues the actual query, reducing first-hit latency on the next
+        // turn.
+        //
+        // Design constraints (§4 of docs/design/phase-14-reflect-output-application.md):
+        // - MUST NOT block `end_turn` — use `try_acquire_owned`, never
+        //   `acquire_owned().await`.
+        // - Concurrency is bounded by `engine.warm_up_semaphore` (default 4,
+        //   configurable via `LUNARIS_PREWARM_CONCURRENCY`). Exhausted semaphore
+        //   → skip + DEBUG log, never block.
+        // - `OwnedSemaphorePermit` moves into the spawned task via
+        //   `let _permit = permit;` INSIDE the `async move {}` block so it is
+        //   released when the task ends, not when `end_turn` returns.
+        // - Errors inside the task become `tracing::warn!` — never propagate,
+        //   never panic.
+        // - Warm-up uses the same `Scope` as this `ScopedLunaris` handle so no
+        //   cross-tenant data can be accessed.
+        if let Some(query_str) = output.pre_warm_query.clone() {
+            match self.engine.warm_up_semaphore.clone().try_acquire_owned() {
+                Ok(permit) => {
+                    // Clone all Arcs needed by the spawned task before the move.
+                    // `moon_storage` is included so the warm-up uses the Moon-native
+                    // one-round-trip FT path when available — without it the task
+                    // would take the generic retrieval path and miss the FT cache.
+                    let storage = self.engine.storage.clone();
+                    let keyword = self.engine.keyword.clone();
+                    let embedder = self.engine.embedder.clone();
+                    let moon_storage = self.engine.moon_storage.clone();
+                    let scope = self.scope.clone();
+                    let q = query_str.clone();
+                    tokio::spawn(async move {
+                        // PERMIT MOVE: `_permit` is dropped when this task ends,
+                        // releasing the semaphore slot. It MUST live inside this
+                        // `async move {}` block — placing it outside would release
+                        // the permit when `end_turn` returns, defeating the bound.
+                        let _permit = permit;
+                        // Build a default Vector top-30 recall — the goal is to
+                        // warm the backend's FT/page cache, not to return results
+                        // to the caller. The default root is the same shape used
+                        // by `Lunaris::recall()` and `ScopedLunaris::dsl()`.
+                        let mut builder = lunaris_retrieve::RetrievalBuilder::from_handle(
+                            storage, keyword, embedder,
+                        )
+                        .with_scope(scope);
+                        if let Some(moon) = moon_storage {
+                            builder = builder.with_moon_storage(moon);
+                        }
+                        match builder.execute(lunaris_retrieve::Query::text(q.as_str())).await {
+                            Ok(hits) => tracing::debug!(
+                                target: "lunaris::scoped",
+                                hits = hits.len(),
+                                query = %q,
+                                "pre_warm_complete"
+                            ),
+                            Err(e) => tracing::warn!(
+                                target: "lunaris::scoped",
+                                err = %e,
+                                query = %q,
+                                "pre_warm_failed"
+                            ),
+                        }
+                    });
+                    tracing::debug!(
+                        target: "lunaris::scoped",
+                        query = %query_str,
+                        "pre_warm_spawned"
+                    );
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        target: "lunaris::scoped",
+                        query = %query_str,
+                        "pre_warm_skipped_semaphore_full"
+                    );
+                }
+            }
+        }
+
+        // Summary log at turn boundary (Phase 14.1 requirement).
         tracing::info!(
             target: "lunaris::scoped",
             turn_id = ?turn_id,
@@ -911,6 +1040,59 @@ pub const EMBEDDER_BACKEND_ENV_VAR: &str = "LUNARIS_EMBEDDER_BACKEND";
 /// Env var that pins the reranker backend resolved by [`Lunaris::open`].
 /// Domain: `{fastembed, candle, noop}`. Default (unset / empty): `fastembed`.
 pub const RERANKER_BACKEND_ENV_VAR: &str = "LUNARIS_RERANKER_BACKEND";
+
+/// Env var that controls the maximum number of concurrent speculative warm-up
+/// recall tasks spawned by [`ScopedLunaris::end_turn`] (Phase 14.3).
+/// Must be a positive integer. `0`, non-numeric, or unset values fall back to
+/// the default of `4`. One `tracing::info!` is emitted per process when the
+/// capacity is resolved.
+pub const PREWARM_CONCURRENCY_ENV_VAR: &str = "LUNARIS_PREWARM_CONCURRENCY";
+
+/// Default semaphore capacity for speculative warm-up recalls.
+const PREWARM_CONCURRENCY_DEFAULT: usize = 4;
+
+/// Resolve the warm-up semaphore capacity from [`PREWARM_CONCURRENCY_ENV_VAR`].
+///
+/// Non-numeric, `0`, and unset values all return `PREWARM_CONCURRENCY_DEFAULT`
+/// with a `tracing::warn!` for non-numeric/zero inputs. Negative values are
+/// impossible since we parse as `usize`. A one-shot `tracing::info!` is emitted
+/// per process on the resolved capacity.
+fn resolve_prewarm_concurrency() -> usize {
+    static LOG_ONCE: OnceLock<()> = OnceLock::new();
+    let capacity = match std::env::var(PREWARM_CONCURRENCY_ENV_VAR).ok().as_deref() {
+        None | Some("") => PREWARM_CONCURRENCY_DEFAULT,
+        Some(s) => match s.trim().parse::<usize>() {
+            Ok(0) => {
+                tracing::warn!(
+                    env = PREWARM_CONCURRENCY_ENV_VAR,
+                    value = s,
+                    default = PREWARM_CONCURRENCY_DEFAULT,
+                    "LUNARIS_PREWARM_CONCURRENCY=0 is invalid (would skip all warm-ups); \
+                     using default"
+                );
+                PREWARM_CONCURRENCY_DEFAULT
+            }
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    env = PREWARM_CONCURRENCY_ENV_VAR,
+                    value = s,
+                    default = PREWARM_CONCURRENCY_DEFAULT,
+                    "LUNARIS_PREWARM_CONCURRENCY is not a valid positive integer; using default"
+                );
+                PREWARM_CONCURRENCY_DEFAULT
+            }
+        },
+    };
+    LOG_ONCE.get_or_init(|| {
+        tracing::info!(
+            target: "lunaris::handle",
+            prewarm_concurrency = capacity,
+            "prewarm_concurrency_resolved"
+        );
+    });
+    capacity
+}
 
 static EMBEDDER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
 static RERANKER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
