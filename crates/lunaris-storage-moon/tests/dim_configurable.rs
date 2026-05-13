@@ -98,3 +98,45 @@ async fn vector_upsert_and_search_at_1536_dim() {
         hits.iter().map(|h| hex::encode(&h.id)).collect::<Vec<_>>()
     );
 }
+
+/// Phase 22 dim-guardrail — once the global `chunks` index exists at dim N,
+/// reopening `MoonStorage::connect_with_dim(url, M)` with `M != N` MUST
+/// surface a `StorageError::Backend("vector dim mismatch ...")` error before
+/// any `atomic_write` runs. Without the guardrail, FT.CREATE silently keeps
+/// the old dim and the first vector write blows up much later.
+///
+/// This test relies on a prior connect (any other test in this file or a
+/// shared Moon instance) having created `chunks` at SOME dim. If `chunks` is
+/// absent the test self-creates it via a first `connect_with_dim(_, 768)`,
+/// then re-opens at 1024 and asserts the mismatch.
+#[tokio::test]
+async fn reopen_at_mismatched_dim_is_rejected() {
+    // Step 1: ensure the global `chunks` / `entities` / `facts` /
+    // `communities` indices exist at 768d. Idempotent on Moon — if a prior
+    // test already created them at 768, this is a no-op.
+    let _baseline = MoonStorage::connect_with_dim(&moon_url(), 768)
+        .await
+        .expect("baseline connect_with_dim(768) — needs MOON_URL or Moon at localhost:6380");
+    drop(_baseline);
+
+    // Step 2: reopen at 1024 against the same instance. The dim guardrail
+    // must reject before ensure_indexes runs.
+    let r = MoonStorage::connect_with_dim(&moon_url(), 1024).await;
+    match r {
+        Err(StorageError::Backend(msg)) => {
+            assert!(
+                msg.contains("vector dim mismatch"),
+                "expected 'vector dim mismatch' in error, got: {msg}"
+            );
+            assert!(
+                msg.contains("1024") && msg.contains("768"),
+                "error must echo both wanted (1024) and existing (768) dims: {msg}"
+            );
+            assert!(
+                msg.contains("FT.DROPINDEX"),
+                "error must point operator at the recovery command: {msg}"
+            );
+        }
+        other => panic!("expected Backend(vector dim mismatch), got {other:?}"),
+    }
+}

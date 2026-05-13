@@ -139,8 +139,63 @@ impl MoonClient {
             })?
             .map_err(moon_err)?;
         let me = Self { host, port, workspace, dim, inner };
+        // Phase 22 dim-guardrail: probe existing indices BEFORE
+        // `ensure_indexes` creates anything. If any index already exists at
+        // a different dim, fail fast — Moon's FT.CREATE is idempotent so
+        // ensure_indexes would otherwise silently keep the old dim and the
+        // first vector write would explode at runtime with a length
+        // mismatch. See `assert_existing_index_dims_match`.
+        me.assert_existing_index_dims_match().await?;
         me.ensure_indexes().await?;
         Ok(me)
+    }
+
+    /// Phase 22 — fail-fast dim guardrail for Moon.
+    ///
+    /// Probes `FT._LIST` + `FT.INFO` for each Lunaris-owned index
+    /// (`chunks`, `entities`, `facts`, `communities`). If any pre-existing
+    /// index reports a dim that disagrees with `self.dim`, return a
+    /// `StorageError::Backend` with an actionable message naming the
+    /// mismatched index. Missing indices are NOT an error — they get
+    /// created at `self.dim` by `ensure_indexes` later in the same
+    /// connect flow.
+    ///
+    /// We surface `list_indexes` / `index_info` transport errors as
+    /// `StorageError::Backend` rather than silently letting `ensure_indexes`
+    /// proceed: a partial-failure probe is worse than a hard error because
+    /// the operator can't tell whether they're safe.
+    async fn assert_existing_index_dims_match(&self) -> Result<(), StorageError> {
+        let typed = self.inner.clone();
+        // FT._LIST returns every index name currently on the Moon instance.
+        // Cheap (single round-trip) and avoids per-index round-trips for
+        // indices that don't exist.
+        let existing = typed.vector().list_indexes().await.map_err(moon_err)?;
+        let expected = ["chunks", "entities", "facts", "communities"];
+        for name in expected.iter().filter(|n| existing.iter().any(|e| e == *n)) {
+            let info = typed.vector().index_info(name).await.map_err(moon_err)?;
+            let actual = info.dimension;
+            // FT.INFO reports dimension as i64. A negative or zero value would
+            // indicate a parse miss from `parse_index_info`; treat anything
+            // <= 0 as "couldn't determine" and skip rather than spuriously
+            // failing the open.
+            if actual <= 0 {
+                continue;
+            }
+            if (actual as usize) != self.dim {
+                return Err(StorageError::Backend(format!(
+                    "moon: vector dim mismatch on index {name:?} — existing index is {actual}-d, \
+                     this Lunaris handle is configured for {wanted}-d. \
+                     The Moon FT.CREATE schema is sticky and does NOT auto-resize. \
+                     To proceed: (a) reopen the handle at the existing dim by passing an embedder \
+                     that reports {actual}; OR (b) drop the stale indices \
+                     (FT.DROPINDEX chunks entities facts communities) and re-ingest from source. \
+                     There is no in-place rewrite path in v0.3 — see \
+                     docs/migration/0.2-to-0.3-optional-embedder.md.",
+                    wanted = self.dim,
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Cheap clone of the underlying typed client. Use one clone per concurrent task.
