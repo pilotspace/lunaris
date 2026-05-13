@@ -65,12 +65,16 @@ use lunaris_core::LunarisError;
 
 #[cfg(feature = "candle")]
 pub mod candle;
+#[cfg(feature = "cloud-api")]
+pub mod cloud;
 pub mod config;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
 #[cfg(feature = "candle")]
 pub use candle::{CandleBackend, CandleBackendOpts};
+#[cfg(feature = "cloud-api")]
+pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider};
 pub use config::{LlmConfig, Pipeline, ProviderKind};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaBackend, OllamaBackendOpts};
