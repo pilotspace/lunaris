@@ -212,7 +212,16 @@ impl StoragePort for PostgresStorage {
             max_vector_dim: 1536,      // pgvector practical ceiling (Postgres profile)
             native_rrf: false,         // Postgres uses client-side RRF (Phase 1.5 STORE-09)
             max_scopes_recommended: 0,
-            cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            // Wave 4b probe (2026-05-12): AGE 1.5 accepts `MATCH p = (n)-[*1..N]-(m)`
+            // path-variable binding, `length(p)` over variable-length paths, and
+            // `n.id_hex AS source_entity_id` aliasing in a single RETURN. It does NOT
+            // accept `reduce(acc, x in xs | ...)` — the parser errors at the `|`
+            // token. PathMetrics is therefore the correct ceiling: the operator
+            // gets path-length + source-entity columns natively, and synthesizes
+            // anchor_confidence post-Cypher; edge_weight_product defaults to 1.0
+            // until Apache AGE adds `reduce()` over variable-length paths and we
+            // can graduate to CypherDialect::Full.
+            cypher_dialect: lunaris_core::CypherDialect::PathMetrics,
         }
     }
 }
@@ -258,7 +267,7 @@ mod tests {
             max_vector_dim: 1536,
             native_rrf: false,
             max_scopes_recommended: 0,
-            cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            cypher_dialect: lunaris_core::CypherDialect::PathMetrics,
         };
         assert!(!want.bi_temporal_native);
         assert!(want.graph_native);
@@ -266,5 +275,11 @@ mod tests {
         assert!(want.queue_native);
         assert_eq!(want.max_vector_dim, 1536);
         assert!(!want.native_rrf, "Postgres backend uses client-side RRF (Phase 1.5 STORE-09)");
+        assert_eq!(
+            want.cypher_dialect,
+            lunaris_core::CypherDialect::PathMetrics,
+            "Postgres (AGE 1.5) supports MATCH p = ... + length(p) + source_entity_id; \
+             rejects reduce() (Wave 4b probe)"
+        );
     }
 }
