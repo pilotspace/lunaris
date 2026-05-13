@@ -1,63 +1,47 @@
 //! [`CandleGemma3_27B`] — Gemma-3 27B IT (instruction-tuned) verifier backed
 //! by candle 0.10's typed `candle_transformers::models::gemma3::Model`.
 //!
-//! ## Wiring strategy
+//! ## Phase 12b — thin wrapper
 //!
-//! This file is the Phase 4 slow-path verifier backend (D-01 + blueprint
-//! §5.1). The backend mirrors `lunaris-extract::CandleGemma3_4B` with these
-//! divergences:
-//!
-//! - Model weights path: `~/.cache/lunaris/models/gemma-3-27b-it/` (NOT the
-//!   `gemma-3-4b-it` subdir). The cache-miss error message carries the
-//!   actionable `huggingface-cli download google/gemma-3-27b-it` hint plus
-//!   the disk + RAM headroom warning (27B takes ~16GB disk / ~24GB RAM).
-//! - Per-batch timeout bumped 10x to 1500 ms (D-02 equivalent); per-chunk
-//!   fallback bumped to 800 ms (27B is 7-10x slower than 4B on CPU).
-//! - `DEFAULT_MAX_NEW_TOKENS = 1024` — arbitration explanations are longer
-//!   than entity extractions.
+//! This file was migrated from a full candle load/forward/decode
+//! implementation to a thin wrapper around `Arc<dyn lunaris_llm::LlmBackend>`
+//! + `lunaris_verify::LlmVerifier`. The public API (struct names, `*Opts`
+//! types, constructor signatures, `Verifier` impl) is byte-identical on the
+//! public surface to preserve downstream callers.
 //!
 //! B-12 fix: constructor shape mirrors `lunaris-extract::CandleGemma3_4B::new`
 //! verbatim so Plan 04-04 `default_verifier` can call
 //! `CandleGemma3_27B::new(CandleGemma3_27BOpts::default()).await`.
 //!
+//! ## Cache-miss contract (preserved)
+//!
+//! The constructor still performs the pre-flight existence check for
+//! `tokenizer.json`, `config.json`, and `model.safetensors` and emits the
+//! exact actionable error string:
+//! ```text
+//! gemma-3-27b-it weights missing at PATH — run `huggingface-cli download google/gemma-3-27b-it --local-dir PATH` (note: 27B requires ~16GB disk + ~24GB RAM for inference)
+//! ```
+//! The Plan 04-04 `default_verifier` catches this and substitutes
+//! [`crate::NoopVerifier`] with `tracing::warn!`.
+//!
 //! ## CLAUDE.md compliance
 //!
-//! - `#![forbid(unsafe_code)]` (lib.rs) — uses the safe
-//!   `VarBuilder::from_buffered_safetensors` instead of the unsafe
-//!   `from_mmaped_safetensors`.
-//! - All blocking work wrapped in `tokio::task::spawn_blocking` so the async
-//!   runtime never stalls on cold model load OR per-call forward pass.
-//! - `parking_lot::Mutex<Gemma3Model>` for the model handle (because
-//!   `forward(&mut self)` needs `&mut`); the lock is taken INSIDE
-//!   `spawn_blocking` so the "never hold a lock across `.await`" rule is
-//!   upheld trivially.
-//!
-//! ## Failure modes
-//!
-//! | Condition                                          | Returned error                                                                                                                  |
-//! |----------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-//! | `model_path/tokenizer.json` missing                | `LunarisError::Storage(StorageError::Backend("gemma-3-27b-it weights missing at <path> — run `huggingface-cli download ...`"))` |
-//! | `model_path/config.json` missing                   | same shape                                                                                                                       |
-//! | `model_path/model.safetensors` missing             | same shape                                                                                                                       |
-//! | tokenizer load failure                             | `LunarisError::Storage(StorageError::Backend("gemma-3-27b-it tokenizer: ..."))`                                                  |
-//! | safetensors load failure                           | `LunarisError::Storage(StorageError::Backend("gemma-3-27b-it weights: ..."))`                                                    |
-//! | candle tensor op failure during forward            | `LunarisError::Storage(StorageError::Backend("gemma-3-27b-it forward: ..."))`                                                    |
-//! | tokio `spawn_blocking` join failure                | `LunarisError::Storage(StorageError::Backend("gemma-3-27b-it join: ..."))`                                                       |
-//! | per-chunk timeout (D-02 equivalent)                | returns `VerifyDecision::deferred()` with a `tracing::warn!`                                                                     |
+//! - `#![forbid(unsafe_code)]` (lib.rs) — delegates to `CandleBackend` which
+//!   uses the safe `VarBuilder::from_buffered_safetensors`.
+//! - All blocking work wrapped in `tokio::task::spawn_blocking` inside
+//!   `CandleBackend::new` — the async runtime never stalls.
+//! - No lock held across `.await` — lock discipline is inside `CandleBackend`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
-use candle_core::{DType, Device, Tensor};
-use candle_nn::VarBuilder;
-use candle_transformers::models::gemma3::{Config as Gemma3Config, Model as Gemma3Model};
+use candle_core::Device;
 use lunaris_core::{LunarisError, StorageError};
-use parking_lot::Mutex;
-use tokenizers::Tokenizer;
+use lunaris_llm::{CandleBackend, CandleBackendOpts, LlmBackend};
 
 use crate::Verifier;
+use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
 use crate::types::{VerifierBackend, VerifyDecision};
 use lunaris_extract::NeedsReviewItem;
 
@@ -120,35 +104,23 @@ impl Default for CandleGemma3_27BOpts {
 /// avoid stalling the runtime on a cold cache. The shape mirrors
 /// `lunaris-extract::CandleGemma3_4B` for B-12 consistency — Plan 04-04
 /// `default_verifier` uses the same `Self::new(opts).await` entry point.
+///
+/// ## Phase 12b implementation
+///
+/// Internally holds a `LlmVerifier` wrapping a `CandleBackend`
+/// (`lunaris-llm`). The public surface is unchanged.
 #[derive(Clone)]
 #[allow(non_camel_case_types)]
 pub struct CandleGemma3_27B {
-    inner: Arc<CandleInner>,
+    inner: LlmVerifier,
 }
 
 impl std::fmt::Debug for CandleGemma3_27B {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CandleGemma3_27B")
-            .field("device", &format_args!("{:?}", self.inner.device))
-            .field("max_new_tokens", &self.inner.max_new_tokens)
-            .field("batch_timeout_ms", &self.inner.batch_timeout_ms)
-            .field("per_chunk_timeout_ms", &self.inner.per_chunk_timeout_ms)
+            .field("inner", &self.inner)
             .finish()
     }
-}
-
-struct CandleInner {
-    tokenizer: Tokenizer,
-    /// Gemma-3 model. Held under a parking_lot Mutex because
-    /// `Gemma3Model::forward(&mut self, ...)` requires `&mut`. The lock is
-    /// taken inside `spawn_blocking` so the CLAUDE.md "never hold lock across
-    /// await" rule is trivially upheld (the .await happens at the
-    /// spawn_blocking boundary, not inside the closure).
-    model: Mutex<Gemma3Model>,
-    device: Device,
-    batch_timeout_ms: u64,
-    per_chunk_timeout_ms: u64,
-    max_new_tokens: usize,
 }
 
 impl CandleGemma3_27B {
@@ -185,6 +157,9 @@ impl CandleGemma3_27B {
             .clone()
             .unwrap_or_else(|| CandleGemma3_27BOpts::default().model_path.unwrap());
 
+        // Pre-flight cache-miss check — must preserve exact error strings for
+        // the actionable cache-miss message (Phase 12b contract: bit-for-bit
+        // error strings preserved, including the "16GB" disk-hint).
         let tokenizer_path = model_path.join("tokenizer.json");
         let config_path = model_path.join("config.json");
         let safetensors_path = model_path.join("model.safetensors");
@@ -202,170 +177,39 @@ impl CandleGemma3_27B {
             }
         }
 
-        let device = opts.device.clone();
-        let batch_timeout_ms = opts.batch_timeout_ms;
-        let per_chunk_timeout_ms = opts.per_chunk_timeout_ms;
-        let max_new_tokens = opts.max_new_tokens;
+        // Build the unified CandleBackend (lunaris-llm).
+        let backend_opts = CandleBackendOpts {
+            model_name: "gemma-3-27b-it".to_string(),
+            model_path,
+            device: opts.device,
+        };
+        let backend: Arc<dyn LlmBackend> = Arc::new(CandleBackend::new(backend_opts).await?);
 
-        let load = tokio::task::spawn_blocking(move || -> Result<CandleInner, LunarisError> {
-            let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-27b-it tokenizer: {e}"
-                )))
-            })?;
-            let cfg_bytes = std::fs::read(&config_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-27b-it config: read {} ({e})",
-                    config_path.display()
-                )))
-            })?;
-            let cfg: Gemma3Config = serde_json::from_slice(&cfg_bytes).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-27b-it config: parse {} ({e})",
-                    config_path.display()
-                )))
-            })?;
-            let bytes = std::fs::read(&safetensors_path).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-27b-it weights: read {} ({e})",
-                    safetensors_path.display()
-                )))
-            })?;
-            let vb =
-                VarBuilder::from_buffered_safetensors(bytes, DType::F32, &device).map_err(|e| {
-                    LunarisError::Storage(StorageError::Backend(format!(
-                        "gemma-3-27b-it weights: {e}"
-                    )))
-                })?;
-            let model = Gemma3Model::new(false, &cfg, vb).map_err(|e| {
-                LunarisError::Storage(StorageError::Backend(format!(
-                    "gemma-3-27b-it model construct: {e}"
-                )))
-            })?;
+        // timeout = max(batch, per_chunk) — matches legacy verify path.
+        let timeout_ms = opts.batch_timeout_ms.max(opts.per_chunk_timeout_ms);
+        let verifier = LlmVerifier::with_opts(
+            backend,
+            LlmVerifierOpts {
+                timeout_ms,
+                max_tokens: opts.max_new_tokens as u32,
+                temperature: 0.0,
+                backend_tag: VerifierBackend::Candle,
+            },
+        );
 
-            Ok(CandleInner {
-                tokenizer,
-                model: Mutex::new(model),
-                device,
-                batch_timeout_ms,
-                per_chunk_timeout_ms,
-                max_new_tokens,
-            })
-        })
-        .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-27b-it join: {e}")))
-        })??;
-
-        Ok(Self { inner: Arc::new(load) })
-    }
-
-    /// Internal — verify one item synchronously inside `spawn_blocking`.
-    ///
-    /// v0 strategy: prompt the model with the item JSON + arbitration
-    /// instruction, greedy-sample up to `max_new_tokens` tokens, decode,
-    /// post-hoc parse `{"winner_id": ..., "reason": ...}`. On any parse
-    /// failure or missing ulid we return `VerifyDecision::deferred()` with
-    /// a tracing::warn — the worker treats this as abstain.
-    fn verify_one(
-        inner: &CandleInner,
-        item: &NeedsReviewItem,
-    ) -> Result<VerifyDecision, LunarisError> {
-        let prompt = crate::arbitration_prompt(item);
-
-        let encoding = inner.tokenizer.encode(prompt.as_str(), true).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-27b-it tokenize: {e}")))
-        })?;
-        let input_ids = encoding.get_ids().to_vec();
-        if input_ids.is_empty() {
-            return Ok(VerifyDecision::deferred());
-        }
-
-        let mut model_guard = inner.model.lock();
-        let mut all_ids: Vec<u32> = input_ids;
-        let mut emitted: Vec<u32> = Vec::with_capacity(inner.max_new_tokens);
-
-        for step in 0..inner.max_new_tokens {
-            let context_len = if step == 0 { all_ids.len() } else { 1 };
-            let start = all_ids.len() - context_len;
-            let ctx = &all_ids[start..];
-            let input = Tensor::new(ctx, &inner.device).map_err(forward_err)?;
-            let input = input.unsqueeze(0).map_err(forward_err)?;
-            let logits = model_guard.forward(&input, start).map_err(forward_err)?;
-            let last = logits
-                .squeeze(0)
-                .map_err(forward_err)?
-                .narrow(0, ctx.len() - 1, 1)
-                .map_err(forward_err)?
-                .squeeze(0)
-                .map_err(forward_err)?;
-            let vocab: Vec<f32> = last.to_vec1::<f32>().map_err(forward_err)?;
-            let next = vocab
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i as u32)
-                .unwrap_or(0);
-            if next == 1 {
-                break;
-            }
-            emitted.push(next);
-            all_ids.push(next);
-        }
-        drop(model_guard);
-
-        let decoded = inner.tokenizer.decode(&emitted, true).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("gemma-3-27b-it detokenize: {e}")))
-        })?;
-
-        Ok(crate::parse_decision_json(&decoded, VerifierBackend::Candle))
+        Ok(Self { inner: verifier })
     }
 }
 
 #[async_trait]
 impl Verifier for CandleGemma3_27B {
     async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
-        let inner = self.inner.clone();
-
-        // Per-chunk (single-item) timeout. The 27B path is always one item
-        // per call so we don't mirror extract's per-batch vs per-chunk
-        // split — instead we apply the max(batch, per_chunk) budget.
-        let timeout_ms = inner.batch_timeout_ms.max(inner.per_chunk_timeout_ms);
-        let timeout = Duration::from_millis(timeout_ms);
-
-        let item_owned = item.clone();
-        let inner_for_task = inner.clone();
-        let res = tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                CandleGemma3_27B::verify_one(&inner_for_task, &item_owned)
-            }),
-        )
-        .await;
-
-        match res {
-            Ok(Ok(Ok(d))) => Ok(d),
-            Ok(Ok(Err(e))) => {
-                tracing::warn!(err = %e, "gemma-3-27b-it verify failed; emitting deferred");
-                Ok(VerifyDecision::deferred())
-            }
-            Ok(Err(join_err)) => Err(LunarisError::Storage(StorageError::Backend(format!(
-                "gemma-3-27b-it join: {join_err}"
-            )))),
-            Err(_elapsed) => {
-                tracing::warn!(
-                    timeout_ms = timeout_ms,
-                    "gemma-3-27b-it verify timeout; emitting deferred"
-                );
-                Ok(VerifyDecision::deferred())
-            }
-        }
+        self.inner.verify(item).await
     }
-}
 
-#[inline]
-fn forward_err(e: candle_core::Error) -> LunarisError {
-    LunarisError::Storage(StorageError::Backend(format!("gemma-3-27b-it forward: {e}")))
+    fn applies(&self) -> bool {
+        self.inner.applies()
+    }
 }
 
 #[cfg(test)]
