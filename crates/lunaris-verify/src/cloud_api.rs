@@ -16,7 +16,7 @@
 //! from `LlmBackend::generate` as `Ok(VerifyDecision::deferred())` with
 //! `backend: Noop` and reason `"deferred (NoopVerifier or backend abstain)"`.
 //! The D-21 audit signal is therefore less specific in this path.
-//! Tracked: Phase 12c (error-audit propagation).
+//! Tracked: Phase 12c R3 (error-audit propagation).
 //!
 //! ## Schema constraint note (Phase 12b behavioral change)
 //!
@@ -25,7 +25,7 @@
 //! `LlmVerifier` delegates via `SchemaConstraint::None`. `CloudBackend`
 //! (lunaris-llm) handles per-provider request building without a schema
 //! constraint, falling back to free-form generation + post-hoc parse.
-//! Tracked: Phase 12c (schema-constraint propagation).
+//! Tracked: Phase 12c R4 (schema-constraint propagation).
 //!
 //! ## Default models (D-02, unchanged)
 //!
@@ -213,6 +213,9 @@ impl CloudApiVerifier {
                 max_tokens: 2048,
                 temperature: 0.0,
                 backend_tag: provider_to_backend(opts.provider),
+                // Forward-compat: absorb future LlmVerifierOpts fields
+                // added in Phase 12c R4/R3/R2 without breaking this literal.
+                ..LlmVerifierOpts::default()
             },
         );
 
@@ -302,4 +305,5 @@ mod tests {
         assert!(!dbg.contains("SECRET"), "Debug must redact api_key, got: {dbg}");
         assert!(!dbg.contains("sk-ant"), "Debug must redact api_key, got: {dbg}");
     }
+
 }

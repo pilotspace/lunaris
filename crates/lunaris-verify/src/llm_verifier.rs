@@ -54,6 +54,13 @@ pub struct LlmVerifierOpts {
     /// audit/telemetry. Defaults to [`VerifierBackend::Candle`]; ollama/
     /// cloud-api consumers should override.
     pub backend_tag: VerifierBackend,
+    /// Optional JSON schema to pass as [`SchemaConstraint::JsonSchema`] on
+    /// every `backend.generate()` call. When `None` (default), falls back
+    /// to [`SchemaConstraint::None`] — free-form generation + post-hoc
+    /// parse. Ollama wires the `{winner_id, loser_id, reason}` schema here
+    /// (R1); cloud-API wires the same schema so provider-native structured
+    /// output is used (R4). Additive, non-breaking — `Default` is `None`.
+    pub schema: Option<serde_json::Value>,
 }
 
 impl Default for LlmVerifierOpts {
@@ -63,6 +70,7 @@ impl Default for LlmVerifierOpts {
             max_tokens: 256,
             temperature: 0.0,
             backend_tag: VerifierBackend::Candle,
+            schema: None,
         }
     }
 }
@@ -103,7 +111,11 @@ impl Verifier for LlmVerifier {
             temperature: self.opts.temperature,
             timeout: Duration::from_millis(self.opts.timeout_ms),
         };
-        match self.backend.generate(&prompt, SchemaConstraint::None, gen_opts).await {
+        let constraint = match self.opts.schema.as_ref() {
+            Some(schema) => SchemaConstraint::JsonSchema(schema),
+            None => SchemaConstraint::None,
+        };
+        match self.backend.generate(&prompt, constraint, gen_opts).await {
             Ok(decoded) => Ok(parse_decision_json(&decoded, self.opts.backend_tag)),
             Err(e) => {
                 tracing::warn!(
@@ -216,5 +228,49 @@ mod tests {
         }
         let v = LlmVerifier::new(Arc::new(NoopBackend));
         assert!(!v.applies());
+    }
+
+    // ── R1 regression: schema opt is forwarded to backend as JsonSchema ───────
+    /// Verifies that when `LlmVerifierOpts.schema` is set, the backend receives
+    /// `SchemaConstraint::JsonSchema` rather than `SchemaConstraint::None`.
+    /// This is the unit contract for R1 (Ollama) and R4 (cloud-api) — the
+    /// wrappers set the schema; this test proves `LlmVerifier` plumbs it.
+    #[tokio::test]
+    async fn schema_opt_forwarded_to_backend_as_json_schema() {
+        use std::sync::{Arc, Mutex};
+        struct SchemaCapturingBackend {
+            received_json_schema: Arc<Mutex<bool>>,
+        }
+        #[async_trait]
+        impl LlmBackend for SchemaCapturingBackend {
+            async fn generate(
+                &self,
+                _prompt: &str,
+                constraint: SchemaConstraint<'_>,
+                _opts: GenOpts,
+            ) -> Result<String, LunarisError> {
+                if matches!(constraint, SchemaConstraint::JsonSchema(_)) {
+                    *self.received_json_schema.lock().unwrap() = true;
+                }
+                Ok("{}".into()) // returns empty JSON → deferred, but that's fine
+            }
+            fn model_id(&self) -> &str {
+                "stub://schema-test"
+            }
+        }
+
+        let flag = Arc::new(Mutex::new(false));
+        let backend: Arc<dyn LlmBackend> =
+            Arc::new(SchemaCapturingBackend { received_json_schema: flag.clone() });
+        let schema = serde_json::json!({"type": "object", "properties": {"winner_id": {"type": "string"}}});
+        let verifier = LlmVerifier::with_opts(
+            backend,
+            LlmVerifierOpts { schema: Some(schema), ..LlmVerifierOpts::default() },
+        );
+        let _ = verifier.verify(fact_item()).await.unwrap();
+        assert!(
+            *flag.lock().unwrap(),
+            "backend must receive SchemaConstraint::JsonSchema when opts.schema is set"
+        );
     }
 }

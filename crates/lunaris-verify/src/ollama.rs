@@ -6,19 +6,15 @@
 //! wrapper around `Arc<dyn lunaris_llm::LlmBackend>` (`OllamaBackend`) +
 //! `LlmVerifier`. The public API is preserved byte-for-byte.
 //!
-//! ## Schema constraint note (Phase 12b behavioral change)
+//! ## Schema constraint note (Phase 12c fix — R1)
 //!
 //! The legacy `OllamaVerifier` sent a JSON-schema `format` field on every
 //! `/api/chat` request, constraining the server's output to the
 //! `{winner_id, loser_id, reason}` shape (Ollama structured-output mode).
-//! `LlmVerifier` delegates via `SchemaConstraint::None` — no `format` field
-//! is sent. This is a known behavioral delta: server-side schema enforcement
-//! is dropped. The post-hoc `parse_decision_json` parse still runs on the
-//! response, and malformed output returns `VerifyDecision::deferred()`.
-//! Impact: models that need the JSON-schema hint to stay on format will
-//! drift toward deferred decisions more often. A follow-up can wire
-//! `SchemaConstraint::JsonSchema` through `LlmVerifier` when that feature
-//! lands. Tracked: Phase 12c (schema-constraint propagation).
+//! Phase 12b dropped this by passing `SchemaConstraint::None`. Phase 12c
+//! (this commit) restores it: `OllamaVerifier::new` sets `schema:
+//! Some(decision_schema())` in `LlmVerifierOpts`, which `LlmVerifier::verify`
+//! forwards as `SchemaConstraint::JsonSchema` to `OllamaBackend`.
 //!
 //! ## Failure modes (unchanged)
 //!
@@ -53,6 +49,22 @@ pub const DEFAULT_MODEL: &str = "gemma3:27b";
 
 /// Env var override for the model identifier.
 pub const ENV_MODEL_OVERRIDE: &str = "OLLAMA_VERIFY_MODEL";
+
+/// Build the canonical arbitration JSON schema for `{winner_id, loser_id, reason}`.
+/// This is the same schema the legacy `OllamaVerifier` inlined in the `/api/chat`
+/// request body. Passing it as `SchemaConstraint::JsonSchema` via `LlmVerifierOpts`
+/// restores Ollama's server-side structured-output enforcement (R1).
+fn decision_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "winner_id": { "type": "string" },
+            "loser_id":  { "type": "string" },
+            "reason":    { "type": "string" }
+        },
+        "required": ["winner_id", "loser_id", "reason"]
+    })
+}
 
 /// Construction options for [`OllamaVerifier`].
 ///
@@ -102,6 +114,10 @@ impl OllamaVerifier {
                 max_tokens: 1024,
                 temperature: 0.0,
                 backend_tag: VerifierBackend::Ollama,
+                // R1: restore server-side JSON-schema enforcement so Ollama
+                // constrains its output to {winner_id, loser_id, reason}.
+                schema: Some(decision_schema()),
+                ..LlmVerifierOpts::default()
             },
         );
         Ok(Self { inner: verifier })
@@ -138,5 +154,25 @@ mod tests {
     #[test]
     fn verifier_construction_succeeds_with_defaults() {
         let _v = OllamaVerifier::new(OllamaVerifierOpts::default()).expect("client builds");
+    }
+
+    // ── R1 regression: decision_schema contains all required arbitration fields ─
+    /// `decision_schema()` must produce a JSON schema that names all three
+    /// required fields (`winner_id`, `loser_id`, `reason`) so Ollama's
+    /// structured-output mode constrains its response to the arbitration shape.
+    /// This restores the server-side enforcement dropped in Phase 12b.
+    #[test]
+    fn ollama_decision_schema_has_required_arbitration_fields() {
+        let schema = decision_schema();
+        let props = schema["properties"].as_object().expect("schema must have properties");
+        assert!(props.contains_key("winner_id"), "schema must require winner_id");
+        assert!(props.contains_key("loser_id"), "schema must require loser_id");
+        assert!(props.contains_key("reason"), "schema must require reason");
+        let required = schema["required"].as_array().expect("schema must have required array");
+        let required_names: Vec<&str> =
+            required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_names.contains(&"winner_id"), "winner_id must be required");
+        assert!(required_names.contains(&"loser_id"), "loser_id must be required");
+        assert!(required_names.contains(&"reason"), "reason must be required");
     }
 }

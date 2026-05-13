@@ -194,6 +194,7 @@ impl CandleGemma3_27B {
                 max_tokens: opts.max_new_tokens as u32,
                 temperature: 0.0,
                 backend_tag: VerifierBackend::Candle,
+                ..LlmVerifierOpts::default()
             },
         );
 
