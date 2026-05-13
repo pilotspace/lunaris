@@ -35,10 +35,10 @@ impl PyLunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     fn ingest<'py>(&self, py: Python<'py>, episode: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let episode_owned: ::lunaris::Episode = pythonize::depythonize(&episode)?;
+        let episode_owned: ::lunaris::Episode = pythonize::depythonize(episode)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.ingest(episode_owned).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -51,10 +51,10 @@ impl PyLunaris {
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     fn forget<'py>(&self, py: Python<'py>, req: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let req_owned: ::lunaris::forget::ForgetRequest = pythonize::depythonize(&req)?;
+        let req_owned: ::lunaris::forget::ForgetRequest = pythonize::depythonize(req)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.forget(req_owned).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -63,7 +63,7 @@ impl PyLunaris {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.snapshot().await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -117,7 +117,7 @@ impl PyGraph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[staticmethod]
     fn anchored(entity_ids: &Bound<'_, PyAny>, hops: usize) -> PyResult<Self> {
-        let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(&entity_ids).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
+        let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(entity_ids).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
         let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -136,35 +136,35 @@ impl PyRetrievalBuilder {
     /// Compose `other` in parallel with the current plan; unions the result set.
     fn and(slf: PyRefMut<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = (other); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
+        let _ = slf; let _ = other;
         Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Fuse two parallel branches via reciprocal-rank fusion (client-side or Moon-native depending on capabilities).
     fn fuse_rrf(slf: PyRefMut<'_, Self>, k: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = (k); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
+        let _ = slf; let _ = k;
         Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Keep only the top `n` hits after fusion.
     fn top(slf: PyRefMut<'_, Self>, n: usize) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = (n); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
+        let _ = slf; let _ = n;
         Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Attach a filter predicate (parsed via filter_str) to the query; fails on a malformed predicate string.
     fn filter(slf: PyRefMut<'_, Self>, pred: String) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = (&pred); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
+        let _ = slf; let _ = &pred;
         Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
     /// Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read).
     fn as_of(slf: PyRefMut<'_, Self>, hlc: &Bound<'_, PyAny>) -> PyResult<PyRetrievalBuilder> {
         // Builder methods consume self; we clone the inner Arc so Python can keep the prior handle alive.
-        let _ = slf; let _ = (hlc); // wired by Plan 08-02's emitter body; Plan 08-01 snapshot freezes the signature.
+        let _ = slf; let _ = hlc;
         Err(pyo3::exceptions::PyNotImplementedError::new_err("Use lunaris.RetrievalBuilder from lunaris.dsl for a working builder; the PyO3-frozen class method is not wired."))
     }
 
@@ -237,7 +237,7 @@ impl PyChatAgentMemory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.remember(&turn).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -246,7 +246,7 @@ impl PyChatAgentMemory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -274,7 +274,7 @@ impl PyMultiTurnConversation {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.remember(&turn, &thread_id).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -283,7 +283,7 @@ impl PyMultiTurnConversation {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -292,7 +292,7 @@ impl PyMultiTurnConversation {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.consolidate().await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -320,7 +320,7 @@ impl PySlackArchive {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.ingest_channel(&channel, &participant_id, &message).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -329,7 +329,7 @@ impl PySlackArchive {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -367,7 +367,7 @@ impl PySlackArchiveQuery {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -395,7 +395,7 @@ impl PyEmailThreading {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.ingest(&root_id, &from, &body).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -410,7 +410,7 @@ impl PyEmailThreading {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -444,7 +444,7 @@ impl PyMeetingNotesMemory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.note(&heading, &body).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -453,13 +453,13 @@ impl PyMeetingNotesMemory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
     /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
     fn attendees(&self, attendees: &Bound<'_, PyAny>) -> PyResult<PyMeetingNotesQuery> {
-        let attendees_owned: Vec<String> = pythonize::depythonize(&attendees).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("attendees: {e}")))?;
+        let attendees_owned: Vec<String> = pythonize::depythonize(attendees).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("attendees: {e}")))?;
         let out = self.inner.attendees(attendees_owned);
         Ok(PyMeetingNotesQuery { inner: Arc::new(out) })
     }
@@ -486,7 +486,7 @@ impl PyMeetingNotesQuery {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -523,16 +523,16 @@ impl PyDocumentKnowledgeBase {
     /// Ingest chunked `(content, metadata)` pairs.
     fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest(chunks_owned).await.map_err(py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            inner.ingest(chunks_owned).await.map_err(py_err)?;
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Add an equality filter on a metadata field.
     fn filter(&self, field: String, value: &Bound<'_, PyAny>) -> PyResult<PyDocumentKnowledgeBase> {
-        let value_owned: serde_json::Value = pythonize::depythonize(&value).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("value: {e}")))?;
+        let value_owned: serde_json::Value = pythonize::depythonize(value).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("value: {e}")))?;
         let out = self.inner.as_ref().clone().filter(&field, value_owned);
         Ok(PyDocumentKnowledgeBase { inner: Arc::new(out) })
     }
@@ -548,7 +548,7 @@ impl PyDocumentKnowledgeBase {
         let cloned = self.inner.as_ref().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = cloned.search(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -580,10 +580,10 @@ impl PyResearchPaperCorpus {
     /// Ingest chunked `(content, metadata)` pairs.
     fn ingest<'py>(&self, py: Python<'py>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest(chunks_owned).await.map_err(py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            inner.ingest(chunks_owned).await.map_err(py_err)?;
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -592,7 +592,7 @@ impl PyResearchPaperCorpus {
         let cloned = self.inner.as_ref().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = cloned.search(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -618,21 +618,21 @@ impl PyCodeRepoMemory {
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
     fn ingest_commit<'py>(&self, py: Python<'py>, commit_sha: String, committer_date_unix_ms: &Bound<'_, PyAny>, chunks: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let committer_date_unix_ms_owned: i64 = pythonize::depythonize(&committer_date_unix_ms)?;
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&chunks)?;
+        let committer_date_unix_ms_owned: i64 = pythonize::depythonize(committer_date_unix_ms)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(chunks)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(py_err)?;
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Recall at point-in-time `as_of`.
     fn recall<'py>(&self, py: Python<'py>, query: String, as_of: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let as_of_owned: ::lunaris::Hlc = pythonize::depythonize(&as_of)?;
+        let as_of_owned: ::lunaris::Hlc = pythonize::depythonize(as_of)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query, as_of_owned).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -658,31 +658,31 @@ impl PyTimelineReconstruction {
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
     fn ingest<'py>(&self, py: Python<'py>, events: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(&events)?;
+        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = pythonize::depythonize(events)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest(events_owned).await.map_err(py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            inner.ingest(events_owned).await.map_err(py_err)?;
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
     /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
     fn between<'py>(&self, py: Python<'py>, query: String, lo: &Bound<'_, PyAny>, hi: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let lo_owned: ::lunaris::Hlc = pythonize::depythonize(&lo)?;
-        let hi_owned: ::lunaris::Hlc = pythonize::depythonize(&hi)?;
+        let lo_owned: ::lunaris::Hlc = pythonize::depythonize(lo)?;
+        let hi_owned: ::lunaris::Hlc = pythonize::depythonize(hi)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.between(&query, lo_owned, hi_owned).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
     /// Recall the snapshot at `ts`.
     fn as_of<'py>(&self, py: Python<'py>, query: String, ts: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
-        let ts_owned: ::lunaris::Hlc = pythonize::depythonize(&ts)?;
+        let ts_owned: ::lunaris::Hlc = pythonize::depythonize(ts)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.as_of(&query, ts_owned).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
@@ -715,8 +715,8 @@ impl PyCustomerSupportHistory {
     fn ingest_ticket<'py>(&self, py: Python<'py>, ticket_id: String, body: String) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let out = inner.ingest_ticket(&ticket_id, &body).await.map_err(py_err)?;
-            Ok(Python::with_gil(|py| py.None()))
+            inner.ingest_ticket(&ticket_id, &body).await.map_err(py_err)?;
+            Ok(Python::attach(|py| py.None()))
         })
     }
 
@@ -725,7 +725,7 @@ impl PyCustomerSupportHistory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.ingest_chat(&ticket_id, turn_idx, &participant, &msg).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
+            Python::attach(|py| Ok(out.to_string().into_pyobject(py)?.into_any().unbind()))
         })
     }
 
@@ -734,7 +734,7 @@ impl PyCustomerSupportHistory {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let out = inner.recall(&query).await.map_err(py_err)?;
-            Python::with_gil(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
+            Python::attach(|py| Ok(pythonize::pythonize(py, &out)?.unbind()))
         })
     }
 
