@@ -118,7 +118,7 @@ async fn graph_traverse_emits_named_columns() {
 
     // INVARIANT 3 — id is a non-empty string ("bbbb"), not the empty-id-hit
     // bug the old positional read produced.
-    let id = row[0].as_str().expect("id is a string");
+    let id = row[0].as_str().unwrap_or_else(|| panic!("id is a string, got row={row:?}"));
     assert!(!id.is_empty(), "id must not be the empty-hit bug, got {row:?}");
     assert_eq!(id, "bbbb", "expected neighbor id, got {row:?}");
     assert_eq!(row[1].as_str(), Some("Beta"));
