@@ -65,6 +65,22 @@ impl EntityId {
             h.as_bytes()[..16].try_into().expect("blake3 output is 32 bytes; first 16 always fit");
         EntityId(bytes)
     }
+
+    /// Decode an [`EntityId`] from its 32-char lowercase-hex `Display` form.
+    ///
+    /// Returns `None` if `s` is not exactly 32 ASCII hex chars. This is the
+    /// inverse of `Display` and is the round-trip path used by `Graph::anchored`
+    /// to map the Cypher-emitted `source_entity_id` (rendered with the same
+    /// `format!("{}", id)` shape on the write path) back to the seed key
+    /// for confidence lookups.
+    pub fn from_hex(s: &str) -> Option<Self> {
+        if s.len() != 32 {
+            return None;
+        }
+        let mut bytes = [0u8; 16];
+        hex::decode_to_slice(s, &mut bytes).ok()?;
+        Some(EntityId(bytes))
+    }
 }
 
 impl std::fmt::Display for EntityId {
@@ -259,6 +275,26 @@ mod tests {
         let alice = EntityId::from_name_and_type("Alice", "Person");
         let bob = EntityId::from_name_and_type("Bob", "Person");
         assert_ne!(alice, bob);
+    }
+
+    #[test]
+    fn entity_id_from_hex_roundtrips_display() {
+        let id = EntityId::from_name_and_type("Alice", "Person");
+        let hex = format!("{}", id);
+        let decoded = EntityId::from_hex(&hex).expect("valid 32-char hex must decode");
+        assert_eq!(id, decoded, "from_hex MUST be the inverse of Display");
+    }
+
+    #[test]
+    fn entity_id_from_hex_rejects_malformed() {
+        // Wrong length (33 chars instead of 32).
+        assert_eq!(EntityId::from_hex(&"a".repeat(33)), None);
+        // Wrong length (31 chars).
+        assert_eq!(EntityId::from_hex(&"a".repeat(31)), None);
+        // Right length, non-hex chars.
+        assert_eq!(EntityId::from_hex(&"z".repeat(32)), None);
+        // Empty string.
+        assert_eq!(EntityId::from_hex(""), None);
     }
 
     #[test]

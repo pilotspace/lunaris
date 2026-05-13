@@ -230,7 +230,7 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
         Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![(bob, "Bob", "Person")])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].source_op, SourceOp::Graph);
     assert_eq!(hits[0].id, hex::decode(format!("{}", bob)).unwrap());
@@ -241,13 +241,18 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
     assert_eq!(calls.len(), 1, "graph_traverse called exactly once");
     assert!(calls[0].0.cypher.contains("[*1..2]"), "hops literal: {}", calls[0].0.cypher);
     assert!(
-        calls[0].0.cypher.contains("MATCH (n {id_hex: sid})"),
-        "MATCH must use id_hex (W-7 alignment): {}",
+        calls[0].0.cypher.contains("MATCH p = (n {id_hex: sid})"),
+        "MATCH must bind path p + use id_hex (W-7 + Wave 4): {}",
         calls[0].0.cypher,
     );
     assert!(
-        calls[0].0.cypher.contains("RETURN DISTINCT m.id_hex"),
-        "RETURN must select m.id_hex (W-7 alignment): {}",
+        calls[0].0.cypher.contains("m.id_hex AS id"),
+        "RETURN must select m.id_hex AS id (W-7 alignment): {}",
+        calls[0].0.cypher,
+    );
+    assert!(
+        !calls[0].0.cypher.contains("DISTINCT"),
+        "Wave 4: DISTINCT must be removed (would collapse per-path metrics): {}",
         calls[0].0.cypher,
     );
     assert_eq!(calls[0].0.graph, "lunaris_graph");
@@ -263,7 +268,7 @@ async fn graph_anchored_passes_as_of_through_to_storage() {
     let pinned = Hlc { wall_ms: 123_456_789, counter: 0, node_id: 0 };
     let ctx = make_ctx(storage.clone(), Some(pinned));
 
-    let _ = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let _ = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     let calls = storage.graph_calls.lock().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].1, Some(pinned), "as_of MUST propagate to graph_traverse");
@@ -277,7 +282,7 @@ async fn graph_anchored_empty_entity_ids_returns_empty_without_calling_storage()
     let storage = Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![], 2).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(Vec::<(EntityId, f32)>::new(), 2).retrieve(&ctx).await.unwrap();
     assert!(hits.is_empty(), "empty entity_ids must produce empty result");
     assert_eq!(
         storage.graph_calls.lock().len(),
@@ -307,7 +312,7 @@ async fn graph_anchored_composes_with_vector_via_fuse_rrf() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     // Build the canonical compose: Vector + Graph + fuse_rrf + top(5).
-    let root = Vector::new("chunks", 30).and(Graph::anchored(vec![alice], 2)).fuse_rrf(60).top(5);
+    let root = Vector::new("chunks", 30).and(Graph::anchored(vec![(alice, 1.0)], 2)).fuse_rrf(60).top(5);
     let builder = RetrievalBuilder::new(storage_dyn, keyword_dyn, embedder).with_root(root);
 
     // Execute end-to-end. Hydration drops hits without a chunk row in
@@ -342,7 +347,7 @@ async fn graph_anchored_does_not_take_moon_native_dispatch_path() {
     use lunaris_retrieve::AndRetriever;
 
     let v: Box<dyn Retriever> = Box::new(Vector::new("chunks", 30));
-    let g: Box<dyn Retriever> = Box::new(Graph::anchored(vec![], 2));
+    let g: Box<dyn Retriever> = Box::new(Graph::anchored(Vec::<(EntityId, f32)>::new(), 2));
     let _and = AndRetriever::new(v, g);
     // Confirms inspect_branches handles Graph downcast — the actual
     // FusedKind::Other assertion lives in fusion.rs::tests
@@ -364,7 +369,7 @@ async fn graph_anchored_score_decreases_monotonically_with_rank() {
     ])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 3);
     assert!(
         hits[0].score > hits[1].score && hits[1].score > hits[2].score,
@@ -390,7 +395,7 @@ async fn cypher_template_does_not_contain_entity_id_text() {
     let storage = Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let _ = Graph::anchored(vec![evil], 2).retrieve(&ctx).await.unwrap();
+    let _ = Graph::anchored(vec![(evil, 1.0)], 2).retrieve(&ctx).await.unwrap();
     let calls = storage.graph_calls.lock().clone();
     assert_eq!(calls.len(), 1);
     let evil_hex = format!("{}", evil);
@@ -414,7 +419,7 @@ async fn graph_anchored_clamps_excessive_hops_at_max() {
     let storage = Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let _ = Graph::anchored(vec![alice], 100).retrieve(&ctx).await.unwrap();
+    let _ = Graph::anchored(vec![(alice, 1.0)], 100).retrieve(&ctx).await.unwrap();
     let calls = storage.graph_calls.lock().clone();
     assert!(
         calls[0].0.cypher.contains("[*1..5]"),
@@ -439,7 +444,7 @@ async fn graph_anchored_uses_lunaris_graph_default() {
     let storage = Arc::new(RecordingStorage::new_with_graph(canned_graph_with(vec![])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let _ = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let _ = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     let calls = storage.graph_calls.lock().clone();
     assert_eq!(calls[0].0.graph, "lunaris_graph");
 }
@@ -473,7 +478,7 @@ async fn graph_anchored_handles_malformed_graph_result_defensively() {
     let storage = Arc::new(RecordingStorage::new_with_graph(malformed));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     // 3 rows in → 3 hits out (no panic, no truncation).
     assert_eq!(hits.len(), 3);
     // Row 0 valid → id matches alice.
@@ -501,6 +506,7 @@ async fn graph_anchored_handles_malformed_graph_result_defensively() {
 /// Build a GraphResult with rows extended by optional Wave-3 columns. The
 /// first 3 columns stay positional (`id`, `name`, `type`); the trailing
 /// columns are header-keyed and only included when `Some(...)` is provided.
+#[allow(clippy::type_complexity)]
 fn graph_with_columns(
     rows: Vec<(EntityId, &str, &str, Option<f64>, Option<f64>, Option<f64>)>,
 ) -> GraphResult {
@@ -557,7 +563,7 @@ async fn graph_score_back_compat_when_no_new_headers() {
     ])));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 2).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 4);
     for (i, hit) in hits.iter().enumerate() {
         let expected = 1.0_f32 / (1.0_f32 + i as f32);
@@ -584,7 +590,7 @@ async fn graph_score_path_length_decay() {
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 5).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 2);
     assert!(
         (hits[0].score - 0.5_f32).abs() < 1e-6,
@@ -620,7 +626,7 @@ async fn graph_score_edge_weight_dominance() {
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    let hits = Graph::anchored(vec![(alice, 1.0)], 5).retrieve(&ctx).await.unwrap();
     assert_eq!(hits.len(), 2);
     assert!((hits[0].score - 0.45_f32).abs() < 1e-6, "got {}", hits[0].score);
     assert!((hits[1].score - 0.25_f32).abs() < 1e-6, "got {}", hits[1].score);
@@ -629,35 +635,170 @@ async fn graph_score_edge_weight_dominance() {
 
 #[tokio::test]
 async fn graph_score_anchor_confidence_effect() {
+    // Wave 4: anchor_confidence is no longer a Cypher-emitted column. The
+    // operator synthesizes it post-Cypher by joining `source_entity_id`
+    // (the seed that anchored each row's path) against the per-seed
+    // `confidence_by_seed` map built from `Graph::anchored`'s
+    // `Vec<(EntityId, f32)>` argument.
+    //
     // Equal path_length (1) + equal edge_weight (1.0):
-    //   row 0: anchor_confidence = 1.0 → score = (1.0 / 2.0) * 1.0 = 0.5
-    //   row 1: anchor_confidence = 0.3 → score = (1.0 / 2.0) * 0.3 = 0.15
-    // Higher anchor confidence → higher score.
-    let alice = EntityId::from_name_and_type("Alice", "Person");
-    let result = graph_with_columns(vec![
-        (
-            EntityId::from_name_and_type("Trusted", "X"),
-            "Trusted",
-            "X",
-            Some(1.0),
-            Some(1.0),
-            Some(1.0),
-        ),
-        (
-            EntityId::from_name_and_type("Uncertain", "X"),
-            "Uncertain",
-            "X",
-            Some(1.0),
-            Some(1.0),
-            Some(0.3),
-        ),
+    //   row 0: source = Trusted seed (conf 1.0) → score = (1.0/2.0) * 1.0 = 0.5
+    //   row 1: source = Uncertain seed (conf 0.3) → score = (1.0/2.0) * 0.3 = 0.15
+    let trusted = EntityId::from_name_and_type("Trusted", "Person");
+    let uncertain = EntityId::from_name_and_type("Uncertain", "Person");
+    let result = graph_with_source_entity(vec![
+        (EntityId::from_name_and_type("X", "Y"), "X", "Y", Some(1.0), Some(1.0), trusted),
+        (EntityId::from_name_and_type("Z", "Y"), "Z", "Y", Some(1.0), Some(1.0), uncertain),
     ]);
     let storage = Arc::new(RecordingStorage::new_with_graph(result));
     let ctx = make_ctx(storage.clone(), None);
 
-    let hits = Graph::anchored(vec![alice], 5).retrieve(&ctx).await.unwrap();
+    // Pass BOTH seeds with their respective confidences.
+    let hits = Graph::anchored(vec![(trusted, 1.0), (uncertain, 0.3)], 5)
+        .retrieve(&ctx)
+        .await
+        .unwrap();
     assert_eq!(hits.len(), 2);
     assert!((hits[0].score - 0.5_f32).abs() < 1e-6, "got {}", hits[0].score);
     assert!((hits[1].score - 0.15_f32).abs() < 1e-6, "got {}", hits[1].score);
     assert!(hits[0].score > hits[1].score, "higher anchor confidence MUST score higher");
+}
+
+// ===================================================== Wave 4 — source_entity_id join
+//
+// Build a Wave-4-shape GraphResult: id/name/type positional, plus header-keyed
+// `path_length`, `edge_weight_product`, and `source_entity_id`. The operator
+// reads `source_entity_id` and joins against the seed map to synthesize
+// `anchor_confidence`.
+
+#[allow(clippy::type_complexity)]
+fn graph_with_source_entity(
+    rows: Vec<(EntityId, &str, &str, Option<f64>, Option<f64>, EntityId)>,
+) -> GraphResult {
+    let headers = vec![
+        "id".to_string(),
+        "name".to_string(),
+        "type".to_string(),
+        "path_length".to_string(),
+        "edge_weight_product".to_string(),
+        "source_entity_id".to_string(),
+    ];
+    let rows_out = rows
+        .into_iter()
+        .map(|(id, name, typ, pl, ew, src)| {
+            vec![
+                serde_json::Value::String(format!("{}", id)),
+                serde_json::Value::String(name.into()),
+                serde_json::Value::String(typ.into()),
+                serde_json::json!(pl.unwrap_or(1.0)),
+                serde_json::json!(ew.unwrap_or(1.0)),
+                serde_json::Value::String(format!("{}", src)),
+            ]
+        })
+        .collect();
+    GraphResult { headers, rows: rows_out }
+}
+
+#[tokio::test]
+async fn graph_anchor_confidence_low_seed_demotes_path() {
+    // Two paths with equal edge_weight + equal path_length but anchored at
+    // different seeds (confidence 1.0 vs 0.3). The high-confidence anchor
+    // MUST score higher than the low-confidence one.
+    let strong_seed = EntityId::from_name_and_type("StrongSeed", "Person");
+    let weak_seed = EntityId::from_name_and_type("WeakSeed", "Person");
+    let result = graph_with_source_entity(vec![
+        // Both rows: path_length=1, edge_weight=1.0 → only confidence differs.
+        (EntityId::from_name_and_type("A", "X"), "A", "X", Some(1.0), Some(1.0), strong_seed),
+        (EntityId::from_name_and_type("B", "X"), "B", "X", Some(1.0), Some(1.0), weak_seed),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![(strong_seed, 1.0), (weak_seed, 0.3)], 5)
+        .retrieve(&ctx)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 2);
+    // Row 0: anchored at strong (1.0) → (1.0 / 2.0) * 1.0 = 0.5
+    assert!((hits[0].score - 0.5_f32).abs() < 1e-6, "strong-anchor row got {}", hits[0].score);
+    // Row 1: anchored at weak (0.3) → (1.0 / 2.0) * 0.3 = 0.15
+    assert!((hits[1].score - 0.15_f32).abs() < 1e-6, "weak-anchor row got {}", hits[1].score);
+    assert!(hits[0].score > hits[1].score, "high-confidence anchor MUST score higher");
+}
+
+#[tokio::test]
+async fn graph_edge_weight_overrides_path_length() {
+    // A heavy-edged 3-hop path (edge_weight_product = 0.9) beats a
+    // 1-hop path with low edge weight (edge_weight_product = 0.2).
+    //   heavy: 0.9 / (1.0 + 3.0) = 0.225
+    //   light: 0.2 / (1.0 + 1.0) = 0.10
+    let seed = EntityId::from_name_and_type("Seed", "Person");
+    let result = graph_with_source_entity(vec![
+        (EntityId::from_name_and_type("Heavy", "X"), "Heavy", "X", Some(3.0), Some(0.9), seed),
+        (EntityId::from_name_and_type("Light", "X"), "Light", "X", Some(1.0), Some(0.2), seed),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![(seed, 1.0)], 5).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert!((hits[0].score - 0.225_f32).abs() < 1e-5, "heavy 3-hop got {}", hits[0].score);
+    assert!((hits[1].score - 0.10_f32).abs() < 1e-5, "light 1-hop got {}", hits[1].score);
+    assert!(
+        hits[0].score > hits[1].score,
+        "edge_weight_product MUST dominate when it sufficiently exceeds the path-length penalty",
+    );
+}
+
+#[tokio::test]
+async fn graph_anchor_confidence_default_one_when_seed_missing() {
+    // Defensive: a Cypher row whose `source_entity_id` does NOT appear in
+    // the seed map (e.g., backend bug; planner seed list mismatch) MUST
+    // get anchor_confidence = 1.0 rather than 0.0. Zero-confidence
+    // fallback would silently delete legitimate hits from downstream
+    // fusion — wrong default.
+    let real_seed = EntityId::from_name_and_type("RealSeed", "Person");
+    let ghost_seed = EntityId::from_name_and_type("Ghost", "Person");
+    let result = graph_with_source_entity(vec![
+        // Source is `ghost_seed`, but the caller's seeds vec does NOT
+        // include it. Operator must fall back to confidence = 1.0.
+        (EntityId::from_name_and_type("Orphan", "X"), "Orphan", "X", Some(1.0), Some(1.0), ghost_seed),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    let hits = Graph::anchored(vec![(real_seed, 1.0)], 5).retrieve(&ctx).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    // Default anchor_confidence = 1.0 → score = (1.0 / 2.0) * 1.0 = 0.5.
+    assert!(
+        (hits[0].score - 0.5_f32).abs() < 1e-6,
+        "missing seed MUST default to confidence 1.0 (got score {})",
+        hits[0].score,
+    );
+}
+
+#[tokio::test]
+async fn graph_anchor_confidence_uses_max_for_duplicate_seeds() {
+    // Two callsites of the same seed with different confidences: the
+    // operator MUST collapse to MAX so a low-confidence duplicate cannot
+    // demote a high-confidence anchor.
+    let seed = EntityId::from_name_and_type("DupSeed", "Person");
+    let result = graph_with_source_entity(vec![
+        (EntityId::from_name_and_type("Hit", "X"), "Hit", "X", Some(1.0), Some(1.0), seed),
+    ]);
+    let storage = Arc::new(RecordingStorage::new_with_graph(result));
+    let ctx = make_ctx(storage.clone(), None);
+
+    // Duplicate seed: low + high confidence. MAX wins → 0.9.
+    let hits = Graph::anchored(vec![(seed, 0.1), (seed, 0.9)], 5)
+        .retrieve(&ctx)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    // score = (1.0 / 2.0) * 0.9 = 0.45
+    assert!(
+        (hits[0].score - 0.45_f32).abs() < 1e-6,
+        "duplicate seeds MUST collapse to MAX confidence (got {})",
+        hits[0].score,
+    );
 }
