@@ -157,19 +157,17 @@ impl LlmConfig {
         let segment = pipeline.env_segment();
 
         // Per-pipeline env override wins.
-        let provider_env =
-            env.get(&format!("LUNARIS_{segment}_PROVIDER"))
-                .or_else(|| env.get("LUNARIS_LLM_PROVIDER"));
-        let model_env = env
-            .get(&format!("LUNARIS_{segment}_MODEL"))
-            .or_else(|| env.get("LUNARIS_LLM_MODEL"));
+        let provider_env = env
+            .get(&format!("LUNARIS_{segment}_PROVIDER"))
+            .or_else(|| env.get("LUNARIS_LLM_PROVIDER"));
+        let model_env =
+            env.get(&format!("LUNARIS_{segment}_MODEL")).or_else(|| env.get("LUNARIS_LLM_MODEL"));
 
         // Config-file values, scoped first to the pipeline section, then
         // to [default].
         let section = file.section(pipeline);
-        let provider_file = section
-            .and_then(|s| s.provider)
-            .or(file.default.as_ref().and_then(|d| d.provider));
+        let provider_file =
+            section.and_then(|s| s.provider).or(file.default.as_ref().and_then(|d| d.provider));
         let model_file = section
             .and_then(|s| s.model.clone())
             .or_else(|| file.default.as_ref().and_then(|d| d.model.clone()));
@@ -200,10 +198,9 @@ impl<'a> EnvSource<'a> {
     fn get(&self, key: &str) -> Option<String> {
         match self {
             EnvSource::Process => env::var(key).ok(),
-            EnvSource::Map(entries) => entries
-                .iter()
-                .find(|(k, _)| *k == key)
-                .map(|(_, v)| (*v).to_string()),
+            EnvSource::Map(entries) => {
+                entries.iter().find(|(k, _)| *k == key).map(|(_, v)| (*v).to_string())
+            }
         }
     }
 }
@@ -268,7 +265,9 @@ fn load_config_file() -> Result<LlmConfigFile, LlmConfigError> {
 /// `source`) so thiserror 2.x doesn't auto-promote it to `#[source]`.
 #[derive(Debug, Error)]
 pub enum LlmConfigError {
-    #[error("unknown LLM provider: `{0}` (expected one of: candle, ollama, anthropic, openai, gemini)")]
+    #[error(
+        "unknown LLM provider: `{0}` (expected one of: candle, ollama, anthropic, openai, gemini)"
+    )]
     UnknownProvider(String),
     #[error("failed to read LLM config file `{path}`: {cause}")]
     ReadFile { path: String, cause: String },

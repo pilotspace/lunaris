@@ -63,8 +63,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 
+#[cfg(feature = "candle")]
+pub mod candle;
 pub mod config;
 
+#[cfg(feature = "candle")]
+pub use candle::{CandleBackend, CandleBackendOpts};
 pub use config::{LlmConfig, Pipeline, ProviderKind};
 
 /// Object-safe async LLM backend.
