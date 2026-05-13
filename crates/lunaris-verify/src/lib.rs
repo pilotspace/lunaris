@@ -57,8 +57,12 @@ pub mod divergence;
 // flip to 4B is gated on ER-F1 and lands in a separate later commit.
 pub mod llm_verifier;
 pub mod noop;
+// Phase 11 — per-turn reflection supervisor. Scaffold only in this commit:
+// DTOs + trait + LlmReflectSupervisor impl. Turn-end wire-up to the umbrella
+// `Lunaris` handle is a follow-up once a turn boundary signal is exposed.
 #[cfg(feature = "ollama")]
 pub mod ollama;
+pub mod reflect;
 pub mod supervisor;
 pub mod types;
 pub mod worker;
@@ -73,6 +77,10 @@ pub use llm_verifier::{LlmVerifier, LlmVerifierOpts};
 pub use noop::NoopVerifier;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaVerifier, OllamaVerifierOpts};
+pub use reflect::{
+    LlmReflectSupervisor, NoopReflectSupervisor, ReflectInput, ReflectOpts, ReflectOutput,
+    ReflectSupervisor,
+};
 pub use supervisor::{
     ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, VerifySupervisor, VerifySupervisorHandle,
     scope_verify_topic,
