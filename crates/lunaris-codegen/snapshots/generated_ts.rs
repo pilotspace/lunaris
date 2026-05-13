@@ -125,7 +125,7 @@ impl RetrievalBuilder {
     #[napi]
     pub fn and(&self, other: serde_json::Value) -> napi::Result<RetrievalBuilder> {
         // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body.
-        let _ = (other);
+        let _ = other;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
 
@@ -133,7 +133,7 @@ impl RetrievalBuilder {
     #[napi]
     pub fn fuse_rrf(&self, k: u32) -> napi::Result<RetrievalBuilder> {
         // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body.
-        let _ = (k);
+        let _ = k;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
 
@@ -141,7 +141,7 @@ impl RetrievalBuilder {
     #[napi]
     pub fn top(&self, n: u32) -> napi::Result<RetrievalBuilder> {
         // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body.
-        let _ = (n);
+        let _ = n;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
 
@@ -149,7 +149,7 @@ impl RetrievalBuilder {
     #[napi]
     pub fn filter(&self, pred: String) -> napi::Result<RetrievalBuilder> {
         // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body.
-        let _ = (&pred);
+        let _ = &pred;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
 
@@ -157,7 +157,7 @@ impl RetrievalBuilder {
     #[napi]
     pub fn as_of(&self, hlc: serde_json::Value) -> napi::Result<RetrievalBuilder> {
         // Owned-self builder methods return a new wrapper; Plan 08-03 wires the body.
-        let _ = (hlc);
+        let _ = hlc;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
 
