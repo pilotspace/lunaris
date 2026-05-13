@@ -49,11 +49,26 @@ pub struct LlmExtractorOpts {
     pub max_tokens: u32,
     /// Sampling temperature (0.0 = greedy).
     pub temperature: f32,
+    /// Optional GBNF grammar text passed through as
+    /// [`SchemaConstraint::Gbnf`]. The candle backend appends this to
+    /// the prompt; ollama drops it (no GBNF support); cloud-API drops
+    /// it (use `JsonSchema` mode instead). When this is `None`, the
+    /// extractor sends [`SchemaConstraint::None`] — the lighter prompt
+    /// path. Set this when wrapping a legacy v0.2 candle path that
+    /// expected the grammar text inline (preserves D-04 / D-05
+    /// behavior under the wrapper migration).
+    pub gbnf: Option<&'static str>,
 }
 
 impl Default for LlmExtractorOpts {
     fn default() -> Self {
-        Self { batch_timeout_ms: 150, per_chunk_timeout_ms: 450, max_tokens: 512, temperature: 0.0 }
+        Self {
+            batch_timeout_ms: 150,
+            per_chunk_timeout_ms: 450,
+            max_tokens: 512,
+            temperature: 0.0,
+            gbnf: None,
+        }
     }
 }
 
@@ -94,12 +109,17 @@ impl LlmExtractor {
             temperature: self.opts.temperature,
             timeout: Duration::from_millis(self.opts.per_chunk_timeout_ms),
         };
-        // SchemaConstraint::None — prompt already embeds GBNF text; the
-        // backend's per-transport schema mode (Ollama JSON-schema /
-        // cloud-API tool-use) is wired separately when the caller wants
-        // to push the constraint through. v0.3 of this adapter only
-        // honours the prompt-embedded path so behaviour matches today.
-        match self.backend.generate(&prompt, SchemaConstraint::None, gen_opts).await {
+        // Honour `opts.gbnf` when set — this preserves the legacy
+        // CandleGemma3_4B prompt-quality behaviour (which embedded the
+        // ENTITIES_GBNF + RELATIONS_GBNF grammars). When `None`, the
+        // lighter prompt-only path is used; backends that support a
+        // transport-level schema (Ollama JSON-schema / cloud-API
+        // tool-use) are wired separately on a per-call basis.
+        let constraint = match &self.opts.gbnf {
+            Some(g) => SchemaConstraint::Gbnf(g),
+            None => SchemaConstraint::None,
+        };
+        match self.backend.generate(&prompt, constraint, gen_opts).await {
             Ok(decoded) => parse_extraction_json(&decoded, chunk.chunk_id),
             Err(e) => {
                 tracing::warn!(
@@ -378,6 +398,7 @@ mod tests {
                 per_chunk_timeout_ms: 500,
                 max_tokens: 64,
                 temperature: 0.0,
+                gbnf: None,
             },
         );
         let chunks = vec![chunk("a"), chunk("b"), chunk("c")];
@@ -387,6 +408,55 @@ mod tests {
         for r in &out.by_chunk {
             assert!(r.entities.is_empty());
         }
+    }
+
+    /// Capturing backend — records the [`SchemaConstraint`] variant tag
+    /// of the most recent `generate` call so the test can pin that
+    /// `LlmExtractorOpts::gbnf` is faithfully threaded through.
+    struct CapturingBackend {
+        last_constraint: parking_lot::Mutex<&'static str>,
+    }
+
+    #[async_trait]
+    impl LlmBackend for CapturingBackend {
+        async fn generate(
+            &self,
+            _prompt: &str,
+            constraint: SchemaConstraint<'_>,
+            _opts: GenOpts,
+        ) -> Result<String, LunarisError> {
+            *self.last_constraint.lock() = match constraint {
+                SchemaConstraint::None => "none",
+                SchemaConstraint::Gbnf(_) => "gbnf",
+                SchemaConstraint::JsonSchema(_) => "json_schema",
+            };
+            Ok(String::new())
+        }
+        fn model_id(&self) -> &str {
+            "stub://capturing"
+        }
+    }
+
+    #[tokio::test]
+    async fn gbnf_opt_threads_through_to_backend() {
+        let cap = Arc::new(CapturingBackend { last_constraint: parking_lot::Mutex::new("?") });
+        let extractor = LlmExtractor::with_opts(
+            cap.clone() as Arc<dyn LlmBackend>,
+            LlmExtractorOpts {
+                gbnf: Some("root ::= \"{}\""),
+                ..LlmExtractorOpts::default()
+            },
+        );
+        let _ = extractor.extract(Ulid::new(), &[chunk("hi")]).await.unwrap();
+        assert_eq!(*cap.last_constraint.lock(), "gbnf");
+    }
+
+    #[tokio::test]
+    async fn no_gbnf_opt_sends_constraint_none() {
+        let cap = Arc::new(CapturingBackend { last_constraint: parking_lot::Mutex::new("?") });
+        let extractor = LlmExtractor::new(cap.clone() as Arc<dyn LlmBackend>);
+        let _ = extractor.extract(Ulid::new(), &[chunk("hi")]).await.unwrap();
+        assert_eq!(*cap.last_constraint.lock(), "none");
     }
 
     #[test]
