@@ -117,6 +117,22 @@ impl CloudProvider {
     }
 }
 
+/// Build the canonical arbitration JSON schema for `{winner_id, loser_id, reason}`.
+/// Passed as `SchemaConstraint::JsonSchema` so each cloud provider uses its
+/// native structured-output mechanism (Anthropic tools, OpenAI response_format,
+/// Gemini responseSchema). Restores R4 behavior dropped in Phase 12b.
+fn decision_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "winner_id": { "type": "string" },
+            "loser_id":  { "type": "string" },
+            "reason":    { "type": "string" }
+        },
+        "required": ["winner_id", "loser_id", "reason"]
+    })
+}
+
 /// Map a [`CloudProvider`] to its matching [`VerifierBackend`] tag for
 /// audit records (D-22).
 fn provider_to_backend(p: CloudProvider) -> VerifierBackend {
@@ -213,8 +229,10 @@ impl CloudApiVerifier {
                 max_tokens: 2048,
                 temperature: 0.0,
                 backend_tag: provider_to_backend(opts.provider),
-                // Forward-compat: absorb future LlmVerifierOpts fields
-                // added in Phase 12c R4/R3/R2 without breaking this literal.
+                // R4: restore provider-native schema constraints (Anthropic
+                // tools, OpenAI response_format, Gemini responseSchema) so
+                // structured output is enforced server-side.
+                schema: Some(decision_schema()),
                 ..LlmVerifierOpts::default()
             },
         );
@@ -306,4 +324,24 @@ mod tests {
         assert!(!dbg.contains("sk-ant"), "Debug must redact api_key, got: {dbg}");
     }
 
+    // ── R4 regression: decision_schema contains required arbitration fields ────
+    /// `decision_schema()` must produce a JSON schema that names all three
+    /// required fields (`winner_id`, `loser_id`, `reason`) so cloud providers
+    /// constrain their output to the arbitration shape. This is the structural
+    /// contract that R4 restores: provider-native schema mode (Anthropic tools,
+    /// OpenAI response_format, Gemini responseSchema) uses this schema.
+    #[test]
+    fn cloud_api_decision_schema_has_required_arbitration_fields() {
+        let schema = decision_schema();
+        let props = schema["properties"].as_object().expect("schema must have properties");
+        assert!(props.contains_key("winner_id"), "schema must require winner_id");
+        assert!(props.contains_key("loser_id"), "schema must require loser_id");
+        assert!(props.contains_key("reason"), "schema must require reason");
+        let required = schema["required"].as_array().expect("schema must have required array");
+        let required_names: Vec<&str> =
+            required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_names.contains(&"winner_id"), "winner_id must be required");
+        assert!(required_names.contains(&"loser_id"), "loser_id must be required");
+        assert!(required_names.contains(&"reason"), "reason must be required");
+    }
 }
