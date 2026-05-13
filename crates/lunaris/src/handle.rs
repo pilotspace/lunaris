@@ -182,8 +182,42 @@ impl Lunaris {
     /// from the dep tree entirely. See
     /// `docs/migration/0.1-to-0.2-fastembed-default.md`.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
-        let scheme = url.split("://").next().unwrap_or("");
         let embedder = resolve_embedder().await?;
+        Self::open_with_embedder(url, embedder).await
+    }
+
+    /// Like [`Lunaris::open`] but uses the caller-provided `embedder`
+    /// directly instead of resolving one from `LUNARIS_EMBEDDER_BACKEND`.
+    ///
+    /// Use this when:
+    ///
+    /// - The compile-time feature set has no real embedder backend and the
+    ///   silent-fallback `NoopEmbedder` is unacceptable — pass a BYO
+    ///   embedder you constructed elsewhere.
+    /// - You need to pin a specific vector dim BEFORE Moon creates its FT
+    ///   indices. Moon's `FT.CREATE` is idempotent and DOES NOT auto-resize
+    ///   an existing index, so post-`open()` `with_embedder` calls cannot
+    ///   change the on-disk dim of an existing collection. This method runs
+    ///   the embedder's `dim()` through `MoonStorage::connect_with_dim` on
+    ///   first open, which is the right time to size the index.
+    /// - You want a `NoopEmbedder` at a specific dim:
+    ///   ```ignore
+    ///   use std::sync::Arc;
+    ///   use lunaris::Lunaris;
+    ///   use lunaris_embed::NoopEmbedder;
+    ///   let handle = Lunaris::open_with_embedder(
+    ///       "moon://localhost:6390",
+    ///       Arc::new(NoopEmbedder::new(1536)),
+    ///   ).await?;
+    ///   ```
+    ///
+    /// The reranker / extractor / verifier / consolidator are still
+    /// resolved from their env vars exactly as in [`Lunaris::open`].
+    pub async fn open_with_embedder(
+        url: &str,
+        embedder: Arc<dyn Embedder>,
+    ) -> Result<Self, LunarisError> {
+        let scheme = url.split("://").next().unwrap_or("");
         let clock = HlcClock::new(0);
         let reranker = resolve_reranker().await?;
         // Plan 03-03: Construct the graph pipeline handle. Initial state
@@ -1034,8 +1068,24 @@ impl<'a> ScopedLunaris<'a> {
 // backend their deployment is running without per-handle log spam).
 
 /// Env var that pins the embedder backend resolved by [`Lunaris::open`].
-/// Domain: `{fastembed, candle, ollama}`. Default (unset / empty): `fastembed`.
+/// Domain: `{fastembed, candle, ollama, noop}`. Default (unset / empty)
+/// depends on the compile-time feature set:
+///
+/// - `fastembed` feature on → `fastembed` (preserves Phase 20-02 default).
+/// - else `candle` feature on → `candle`.
+/// - else `ollama` feature on → `ollama`.
+/// - else no embedder feature compiled in → `noop` (Phase 22 — emits a
+///   one-shot `tracing::warn!` on resolve so the operator sees that vector
+///   recall is dead until they enable a backend or call
+///   [`Lunaris::open_with_embedder`]).
 pub const EMBEDDER_BACKEND_ENV_VAR: &str = "LUNARIS_EMBEDDER_BACKEND";
+
+/// Env var that controls the dim of the `noop` embedder when it is the
+/// resolved backend. Positive integer; default
+/// [`lunaris_embed::NOOP_DEFAULT_DIM`] (768). Non-numeric / `0` / unset all
+/// fall back to the default with a `tracing::warn!`. Ignored for the
+/// real embedder backends (their dim is fixed by the model).
+pub const EMBED_DIM_ENV_VAR: &str = "LUNARIS_EMBED_DIM";
 
 /// Env var that pins the reranker backend resolved by [`Lunaris::open`].
 /// Domain: `{fastembed, candle, noop}`. Default (unset / empty): `fastembed`.
@@ -1105,6 +1155,51 @@ enum EmbedderBackendKind {
     Fastembed,
     Candle,
     Ollama,
+    /// Phase 22 — zero-vector backend. Used when no embedder feature is
+    /// compiled in (silent fallback + one-shot warn) or when the operator
+    /// explicitly sets `LUNARIS_EMBEDDER_BACKEND=noop`.
+    Noop,
+}
+
+/// Default embedder backend selected when `LUNARIS_EMBEDDER_BACKEND` is
+/// unset/empty. Picks the first compiled-in real backend in priority order
+/// (`fastembed > candle > ollama`), falling through to `Noop` if no backend
+/// feature is enabled.
+const fn default_embedder_backend() -> EmbedderBackendKind {
+    #[cfg(feature = "fastembed")]
+    {
+        EmbedderBackendKind::Fastembed
+    }
+    #[cfg(all(not(feature = "fastembed"), feature = "candle"))]
+    {
+        EmbedderBackendKind::Candle
+    }
+    #[cfg(all(not(feature = "fastembed"), not(feature = "candle"), feature = "ollama"))]
+    {
+        EmbedderBackendKind::Ollama
+    }
+    #[cfg(not(any(feature = "fastembed", feature = "candle", feature = "ollama")))]
+    {
+        EmbedderBackendKind::Noop
+    }
+}
+
+/// Mirror of [`default_embedder_backend`] for the reranker: picks the first
+/// compiled-in real backend in priority order (`fastembed > candle`), falling
+/// through to `Noop` when neither is enabled.
+const fn default_reranker_backend() -> RerankerBackendKind {
+    #[cfg(feature = "fastembed")]
+    {
+        RerankerBackendKind::Fastembed
+    }
+    #[cfg(all(not(feature = "fastembed"), feature = "candle"))]
+    {
+        RerankerBackendKind::Candle
+    }
+    #[cfg(not(any(feature = "fastembed", feature = "candle")))]
+    {
+        RerankerBackendKind::Noop
+    }
 }
 
 /// Parsed reranker backend selection.
@@ -1123,14 +1218,16 @@ enum RerankerBackendKind {
 fn parse_embedder_backend(raw: Option<&str>) -> Result<EmbedderBackendKind, LunarisError> {
     let trimmed = raw.map(|v| v.trim());
     match trimmed {
-        None | Some("") => Ok(EmbedderBackendKind::Fastembed),
+        None | Some("") => Ok(default_embedder_backend()),
         Some(v) if v.eq_ignore_ascii_case("fastembed") => Ok(EmbedderBackendKind::Fastembed),
         Some(v) if v.eq_ignore_ascii_case("candle") => Ok(EmbedderBackendKind::Candle),
         Some(v) if v.eq_ignore_ascii_case("ollama") => Ok(EmbedderBackendKind::Ollama),
+        Some(v) if v.eq_ignore_ascii_case("noop") => Ok(EmbedderBackendKind::Noop),
         Some(other) => Err(LunarisError::Storage(StorageError::Backend(format!(
-            "{EMBEDDER_BACKEND_ENV_VAR}={other:?} is not one of [fastembed, candle, ollama]; \
-             unset for the fastembed default, or set to one of those literals. \
-             See docs/migration/0.1-to-0.2-fastembed-default.md."
+            "{EMBEDDER_BACKEND_ENV_VAR}={other:?} is not one of [fastembed, candle, ollama, noop]; \
+             unset for the build-dependent default (see EMBEDDER_BACKEND_ENV_VAR docs), \
+             or set to one of those literals. \
+             See docs/migration/0.2-to-0.3-optional-embedder.md."
         )))),
     }
 }
@@ -1140,14 +1237,15 @@ fn parse_embedder_backend(raw: Option<&str>) -> Result<EmbedderBackendKind, Luna
 fn parse_reranker_backend(raw: Option<&str>) -> Result<RerankerBackendKind, LunarisError> {
     let trimmed = raw.map(|v| v.trim());
     match trimmed {
-        None | Some("") => Ok(RerankerBackendKind::Fastembed),
+        None | Some("") => Ok(default_reranker_backend()),
         Some(v) if v.eq_ignore_ascii_case("fastembed") => Ok(RerankerBackendKind::Fastembed),
         Some(v) if v.eq_ignore_ascii_case("candle") => Ok(RerankerBackendKind::Candle),
         Some(v) if v.eq_ignore_ascii_case("noop") => Ok(RerankerBackendKind::Noop),
         Some(other) => Err(LunarisError::Storage(StorageError::Backend(format!(
             "{RERANKER_BACKEND_ENV_VAR}={other:?} is not one of [fastembed, candle, noop]; \
-             unset for the fastembed default, or set to one of those literals. \
-             See docs/migration/0.1-to-0.2-fastembed-default.md."
+             unset for the build-dependent default (see RERANKER_BACKEND_ENV_VAR docs), \
+             or set to one of those literals. \
+             See docs/migration/0.2-to-0.3-optional-embedder.md."
         )))),
     }
 }
@@ -1173,18 +1271,36 @@ fn parse_reranker_backend(raw: Option<&str>) -> Result<RerankerBackendKind, Luna
 ///   `http://localhost:11434`. Constructor is synchronous.
 async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     let raw = std::env::var(EMBEDDER_BACKEND_ENV_VAR).ok();
+    let env_unset = matches!(raw.as_deref().map(str::trim), None | Some(""));
     let kind = parse_embedder_backend(raw.as_deref())?;
     let backend_name: &'static str = match kind {
         EmbedderBackendKind::Fastembed => "fastembed",
         EmbedderBackendKind::Candle => "candle",
         EmbedderBackendKind::Ollama => "ollama",
+        EmbedderBackendKind::Noop => "noop",
     };
     EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
-        tracing::info!(
-            target: "lunaris::handle",
-            embedder_backend = backend_name,
-            "embedder_backend_resolved"
-        );
+        // Phase 22 — silent-fallback warning: env unset AND we landed on
+        // Noop because no real backend feature is compiled in. The operator
+        // gets exactly one line per process so they know vector recall is
+        // dead until they rebuild with a feature or call open_with_embedder.
+        if env_unset && matches!(kind, EmbedderBackendKind::Noop) {
+            tracing::warn!(
+                target: "lunaris::handle",
+                embedder_backend = backend_name,
+                "no embedder backend compiled in — falling back to NoopEmbedder; \
+                 vector recall will return empty rows. Rebuild with \
+                 `--features fastembed` (or candle/ollama), set \
+                 LUNARIS_EMBEDDER_BACKEND=noop to silence this warning, or \
+                 pass a custom embedder via Lunaris::open_with_embedder."
+            );
+        } else {
+            tracing::info!(
+                target: "lunaris::handle",
+                embedder_backend = backend_name,
+                "embedder_backend_resolved"
+            );
+        }
     });
     match kind {
         #[cfg(feature = "fastembed")]
@@ -1223,7 +1339,54 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
             "{EMBEDDER_BACKEND_ENV_VAR}=ollama but this build was compiled without the \
                  `ollama` feature. Rebuild with `--features ollama` or unset the env var."
         )))),
+        // Phase 22 — zero-vector backend, always available (no feature gate).
+        // Dim is sourced from LUNARIS_EMBED_DIM; non-numeric/0/unset all
+        // resolve to NOOP_DEFAULT_DIM (768) with a warn from `resolve_embed_dim`.
+        EmbedderBackendKind::Noop => {
+            let dim = resolve_embed_dim();
+            Ok(Arc::new(lunaris_embed::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
+        }
     }
+}
+
+/// Phase 22 — resolve the noop embedder dim from [`EMBED_DIM_ENV_VAR`].
+/// Positive integer; `0`, non-numeric, and unset all return
+/// [`lunaris_embed::NOOP_DEFAULT_DIM`] with a `tracing::warn!` for the
+/// non-default-but-invalid cases.
+fn resolve_embed_dim() -> usize {
+    static LOG_ONCE: OnceLock<()> = OnceLock::new();
+    let dim = match std::env::var(EMBED_DIM_ENV_VAR).ok().as_deref() {
+        None | Some("") => lunaris_embed::NOOP_DEFAULT_DIM,
+        Some(s) => match s.trim().parse::<usize>() {
+            Ok(0) => {
+                tracing::warn!(
+                    env = EMBED_DIM_ENV_VAR,
+                    value = s,
+                    default = lunaris_embed::NOOP_DEFAULT_DIM,
+                    "LUNARIS_EMBED_DIM=0 is invalid (storage rejects dim=0); using default"
+                );
+                lunaris_embed::NOOP_DEFAULT_DIM
+            }
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    env = EMBED_DIM_ENV_VAR,
+                    value = s,
+                    default = lunaris_embed::NOOP_DEFAULT_DIM,
+                    "LUNARIS_EMBED_DIM is not a valid positive integer; using default"
+                );
+                lunaris_embed::NOOP_DEFAULT_DIM
+            }
+        },
+    };
+    LOG_ONCE.get_or_init(|| {
+        tracing::info!(
+            target: "lunaris::handle",
+            embed_dim = dim,
+            "embed_dim_resolved"
+        );
+    });
+    dim
 }
 
 /// Phase 20-02 — resolve the default reranker for [`Lunaris::open`] from
@@ -1438,13 +1601,37 @@ mod backend_resolution_tests {
 
     #[test]
     fn embedder_default_when_unset() {
-        assert_eq!(parse_embedder_backend(None).unwrap(), EmbedderBackendKind::Fastembed);
+        // Phase 22 — default depends on the compiled feature set; the
+        // priority order is fastembed > candle > ollama > noop. We assert
+        // the priority via `default_embedder_backend()` rather than pin a
+        // single variant so the test matrix tracks the build matrix.
+        assert_eq!(parse_embedder_backend(None).unwrap(), default_embedder_backend());
     }
 
     #[test]
     fn embedder_default_when_empty() {
-        assert_eq!(parse_embedder_backend(Some("")).unwrap(), EmbedderBackendKind::Fastembed);
-        assert_eq!(parse_embedder_backend(Some("   ")).unwrap(), EmbedderBackendKind::Fastembed);
+        assert_eq!(parse_embedder_backend(Some("")).unwrap(), default_embedder_backend());
+        assert_eq!(parse_embedder_backend(Some("   ")).unwrap(), default_embedder_backend());
+    }
+
+    #[test]
+    fn embedder_explicit_noop() {
+        assert_eq!(parse_embedder_backend(Some("noop")).unwrap(), EmbedderBackendKind::Noop);
+        assert_eq!(parse_embedder_backend(Some("NOOP")).unwrap(), EmbedderBackendKind::Noop);
+        assert_eq!(parse_embedder_backend(Some("  Noop  ")).unwrap(), EmbedderBackendKind::Noop);
+    }
+
+    #[test]
+    fn embedder_default_falls_back_to_noop_when_no_real_backend() {
+        // Compile-time assertion: when no real embedder feature is enabled,
+        // `default_embedder_backend()` MUST yield `Noop` so `Lunaris::open()`
+        // never fails for "no backend compiled" reasons. The test only fires
+        // in the matching feature configuration; in feature-rich builds it
+        // is silently filtered.
+        #[cfg(not(any(feature = "fastembed", feature = "candle", feature = "ollama")))]
+        {
+            assert_eq!(default_embedder_backend(), EmbedderBackendKind::Noop);
+        }
     }
 
     #[test]
@@ -1485,12 +1672,12 @@ mod backend_resolution_tests {
 
     #[test]
     fn reranker_default_when_unset() {
-        assert_eq!(parse_reranker_backend(None).unwrap(), RerankerBackendKind::Fastembed);
+        assert_eq!(parse_reranker_backend(None).unwrap(), default_reranker_backend());
     }
 
     #[test]
     fn reranker_default_when_empty() {
-        assert_eq!(parse_reranker_backend(Some("")).unwrap(), RerankerBackendKind::Fastembed);
+        assert_eq!(parse_reranker_backend(Some("")).unwrap(), default_reranker_backend());
     }
 
     #[test]

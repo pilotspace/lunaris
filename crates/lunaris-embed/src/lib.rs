@@ -34,6 +34,9 @@ pub mod fallback;
 pub mod fastembed;
 #[cfg(feature = "fastembed")]
 pub mod fastembed_exec;
+// Phase 22 — operator-facing no-op embedder (zero vectors, configurable
+// dim). Always built; no deps beyond the always-on `Embedder` trait.
+pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
@@ -46,6 +49,8 @@ pub use fastembed::{
 };
 #[cfg(feature = "fastembed")]
 pub use fastembed_exec::{ExecutionPreference, execution_from_env, parse_execution};
+// Phase 22 — always-on noop embedder re-export. See `noop.rs`.
+pub use noop::{NOOP_DEFAULT_DIM, NoopEmbedder};
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaEmbedder, OllamaEmbedderOpts};
 

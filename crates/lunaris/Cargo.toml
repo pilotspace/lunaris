@@ -99,14 +99,23 @@ rand           = { workspace = true }
 nix            = { workspace = true }
 
 [features]
-# Phase 20-02 default flip (operator override per
-# .planning/phases/20-fastembed-adoption/20-02-SCOPE-DECISION.md): both
-# `fastembed` and `candle` are compiled into the default umbrella so the
-# env-var resolver in `Lunaris::open()` (LUNARIS_EMBEDDER_BACKEND,
-# LUNARIS_RERANKER_BACKEND) can pick either backend at runtime without a
-# rebuild. The extractor stays candle-only by default (no fastembed extractor
-# backend exists yet — Phase 19/20 covered embed + rerank only).
-default = ["fastembed", "candle"]
+# Phase 22 default flip (2026-05-13): the umbrella ships ZERO embedder /
+# reranker backends by default. `cargo build -p lunaris-memory` no longer
+# pulls fastembed / candle / ORT / hf-hub. Operators opt into a real
+# backend via `--features fastembed` (recommended), `--features candle`
+# (air-gapped), or `--features ollama` (HTTP). Without any of those, the
+# `Lunaris::open()` resolver lands on `NoopEmbedder` (zero vectors at
+# `LUNARIS_EMBED_DIM`, default 768) with a one-shot `tracing::warn!` so
+# operators see that vector recall is dead until they pick a backend or
+# pass a custom one via `Lunaris::open_with_embedder`. See
+# `docs/migration/0.2-to-0.3-optional-embedder.md` for the full migration
+# matrix. The previous Phase 20-02 default (`["fastembed", "candle"]`)
+# moved here as `recommended` for one-flag opt-in.
+default     = []
+# Convenience meta-feature: equivalent to the pre-Phase-22 default. Pulls
+# both fastembed and candle so the env-var resolver in `Lunaris::open()`
+# can pick either backend at runtime without a rebuild.
+recommended = ["fastembed", "candle"]
 # Phase 20-02 — forwards the fastembed backend to both lunaris-embed (real
 # ONNX EmbeddingGemma 300M via fastembed-rs) and lunaris-rerank (real ONNX
 # BGE-Reranker-V2-M3). Pairs with `LUNARIS_EMBEDDER_BACKEND=fastembed` /
