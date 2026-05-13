@@ -100,6 +100,7 @@ impl std::fmt::Debug for Lunaris {
             .field("graph_pipeline_enabled", &self.graph_pipeline.is_enabled())
             .field("verify_pipeline_enabled", &self.verify_pipeline.is_enabled())
             .field("consolidator_pipeline_enabled", &self.consolidator_pipeline.is_enabled())
+            .field("reflect_supervisor_applies", &self.reflect_supervisor.applies())
             .finish()
     }
 }
