@@ -124,9 +124,15 @@ pub async fn recall_handler(
         if entities.is_empty() {
             fallback_degraded = true;
         } else {
+            // Wave 4 piece A: Graph::anchored takes Vec<(EntityId, f32)>.
+            // The RETRIEVE-13 planner stub does NOT yet emit per-entity
+            // confidence; pass 1.0 (full confidence) for every extracted
+            // entity. When the planner learns to emit confidence (tracked
+            // in v0.4 known-debt), this becomes a direct passthrough.
+            let seeds: Vec<(_, f32)> = entities.into_iter().map(|e| (e, 1.0_f32)).collect();
             builder = builder.with_root(
                 Vector::new("chunks", 30)
-                    .and(Graph::anchored(entities, DEFAULT_GRAPH_HOPS))
+                    .and(Graph::anchored(seeds, DEFAULT_GRAPH_HOPS))
                     .fuse_rrf(60),
             );
         }

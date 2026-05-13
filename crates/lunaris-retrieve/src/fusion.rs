@@ -407,7 +407,7 @@ mod tests {
         // path because Moon-native hybrid_search only supports Vector + BM25
         // fusion. Vector + Graph MUST NOT be detected as
         // VectorKeywordSameIndex (which would silently route to Moon-native).
-        let g = Graph::anchored(vec![], 2);
+        let g = Graph::anchored(Vec::<(lunaris_extract::EntityId, f32)>::new(), 2);
         let v = Vector::new("chunks", 30);
         let and = AndRetriever::new(Box::new(g), Box::new(v));
         let hint = inspect_branches(&and).expect("AND visible");
@@ -420,7 +420,7 @@ mod tests {
         // The canonical compose example from blueprint §8 puts Vector first
         // and Graph second: Vector::new(...).and(Graph::anchored(...)).
         let v = Vector::new("chunks", 30);
-        let g = Graph::anchored(vec![], 2);
+        let g = Graph::anchored(Vec::<(lunaris_extract::EntityId, f32)>::new(), 2);
         let and = AndRetriever::new(Box::new(v), Box::new(g));
         let hint = inspect_branches(&and).expect("AND visible");
         assert_eq!(

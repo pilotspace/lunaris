@@ -402,14 +402,14 @@ async fn scoped_recall_propagates_scope_to_graph_traverse() {
     let _ = engine
         .scoped(scope_a.clone())
         .dsl()
-        .with_root(Graph::anchored(vec![EntityId::from_name_and_type("Probe", "Test")], 2))
+        .with_root(Graph::anchored(vec![(EntityId::from_name_and_type("Probe", "Test"), 1.0)], 2))
         .execute(Query::text("alpha"))
         .await
         .expect("scope_a graph recall must not error");
     let _ = engine
         .scoped(scope_b.clone())
         .dsl()
-        .with_root(Graph::anchored(vec![EntityId::from_name_and_type("Probe", "Test")], 2))
+        .with_root(Graph::anchored(vec![(EntityId::from_name_and_type("Probe", "Test"), 1.0)], 2))
         .execute(Query::text("beta"))
         .await
         .expect("scope_b graph recall must not error");
