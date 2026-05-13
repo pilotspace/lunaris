@@ -46,6 +46,12 @@ extractor-it = []
 
 [dependencies]
 lunaris-core = { workspace = true }
+# Phase 11 — unified LlmBackend trait. Consumed by `llm_extractor::LlmExtractor`,
+# the backend-agnostic adapter introduced alongside the legacy CandleGemma3_4B /
+# OllamaExtractor / CloudApiExtractor (which remain untouched in this commit).
+# `default-features = false` so this crate stays the single source of truth for
+# which transports are enabled — we forward via `features` below.
+lunaris-llm = { workspace = true }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }

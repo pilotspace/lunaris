@@ -84,6 +84,10 @@ pub mod cloud_api;
 // per-instance CircuitBreaker. Always built; the breaker primitive lives
 // in lunaris-core::circuit_breaker.
 pub mod fallback;
+// Phase 11 — backend-agnostic adapter over `lunaris_llm::LlmBackend`. Additive;
+// legacy CandleGemma3_4B / OllamaExtractor / CloudApiExtractor remain untouched
+// in this commit. Duplication-delete happens in the follow-up commit.
+pub mod llm_extractor;
 pub mod noop;
 #[cfg(feature = "ollama")]
 pub mod ollama;
@@ -94,6 +98,7 @@ pub mod validator;
 pub use candle_gemma3::{CandleGemma3_4B, CandleGemma3_4BOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
+pub use llm_extractor::{LlmExtractor, LlmExtractorOpts};
 pub use noop::NoopExtractor;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaExtractor, OllamaExtractorOpts};

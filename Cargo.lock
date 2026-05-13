@@ -2470,6 +2470,7 @@ dependencies = [
  "dirs",
  "hex",
  "lunaris-core",
+ "lunaris-llm",
  "parking_lot",
  "reqwest 0.13.2",
  "serde",
