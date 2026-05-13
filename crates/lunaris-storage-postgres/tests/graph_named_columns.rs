@@ -66,11 +66,9 @@ async fn graph_traverse_emits_named_columns() {
 
     // Per-test graph isolates seed data.
     let graph = "w4b_named_cols";
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&mut *conn)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&mut *conn)
+        .await;
     sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.create_graph('{graph}')")))
         .execute(&mut *conn)
         .await
@@ -125,11 +123,9 @@ async fn graph_traverse_emits_named_columns() {
     assert_eq!(row[2].as_str(), Some("Y"));
 
     // Cleanup — best-effort; the test is rerunnable thanks to drop-first above.
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&pool)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&pool)
+        .await;
 }
 
 /// A node missing the `name` property must surface as `Value::Null` — NOT
@@ -150,11 +146,9 @@ async fn missing_property_decodes_as_value_null() {
         .expect("search_path");
 
     let graph = "w4b_null_prop";
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&mut *conn)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&mut *conn)
+        .await;
     sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.create_graph('{graph}')")))
         .execute(&mut *conn)
         .await
@@ -187,15 +181,9 @@ async fn missing_property_decodes_as_value_null() {
     let row = &result.rows[0];
     assert_eq!(row[0].as_str(), Some("bbbb"));
     // The KEY assertion: agtype `null` → `Value::Null`, not the string "null".
-    assert!(
-        row[1].is_null(),
-        "missing m.name must decode as Value::Null, got {:?}",
-        row[1]
-    );
+    assert!(row[1].is_null(), "missing m.name must decode as Value::Null, got {:?}", row[1]);
 
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&pool)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&pool)
+        .await;
 }

@@ -35,9 +35,7 @@ fn pg_url() -> String {
 
 #[tokio::test]
 async fn path_length_and_edge_weight_product_decode_correctly() {
-    let s = PostgresStorage::connect(&pg_url())
-        .await
-        .expect("connect to Postgres + AGE");
+    let s = PostgresStorage::connect(&pg_url()).await.expect("connect to Postgres + AGE");
     let pool = s.client().pool.clone();
 
     // Single-connection setup so `LOAD 'age'` persists across DDL + seed.
@@ -49,11 +47,9 @@ async fn path_length_and_edge_weight_product_decode_correctly() {
         .expect("search_path");
 
     let graph = "w4b_path_metrics";
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&mut *conn)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&mut *conn)
+        .await;
     sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.create_graph('{graph}')")))
         .execute(&mut *conn)
         .await
@@ -89,8 +85,7 @@ async fn path_length_and_edge_weight_product_decode_correctly() {
     params.insert("k".into(), serde_json::Value::Number(10.into()));
     let q = CypherQuery { graph: graph.into(), cypher, params };
 
-    let result =
-        s.graph_traverse(&Scope::dev(), &q, None).await.expect("graph_traverse new shape");
+    let result = s.graph_traverse(&Scope::dev(), &q, None).await.expect("graph_traverse new shape");
 
     assert_eq!(
         result.headers,
@@ -114,11 +109,8 @@ async fn path_length_and_edge_weight_product_decode_correctly() {
     let source_entity_col = 5;
 
     // Collect lengths to assert the spread {1,2,3} regardless of order.
-    let lengths: std::collections::BTreeSet<i64> = result
-        .rows
-        .iter()
-        .filter_map(|r| r[path_length_col].as_i64())
-        .collect();
+    let lengths: std::collections::BTreeSet<i64> =
+        result.rows.iter().filter_map(|r| r[path_length_col].as_i64()).collect();
     assert_eq!(
         lengths,
         [1, 2, 3].iter().copied().collect(),
@@ -128,9 +120,9 @@ async fn path_length_and_edge_weight_product_decode_correctly() {
 
     // Every row's edge_weight_product is the constant 0.4, decoded as f64.
     for row in &result.rows {
-        let ew = row[edge_weight_col].as_f64().unwrap_or_else(|| {
-            panic!("edge_weight_product must decode as f64, got {row:?}")
-        });
+        let ew = row[edge_weight_col]
+            .as_f64()
+            .unwrap_or_else(|| panic!("edge_weight_product must decode as f64, got {row:?}"));
         assert!((ew - 0.4).abs() < 1e-9, "edge_weight_product ≈ 0.4, got {ew}");
     }
 
@@ -142,9 +134,7 @@ async fn path_length_and_edge_weight_product_decode_correctly() {
         assert_eq!(sid, "a1", "source_entity_id must equal seed");
     }
 
-    let _ = sqlx::query(AssertSqlSafe(format!(
-        "SELECT ag_catalog.drop_graph('{graph}', true)"
-    )))
-    .execute(&pool)
-    .await;
+    let _ = sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.drop_graph('{graph}', true)")))
+        .execute(&pool)
+        .await;
 }
