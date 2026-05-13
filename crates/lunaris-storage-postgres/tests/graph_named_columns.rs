@@ -131,3 +131,71 @@ async fn graph_traverse_emits_named_columns() {
     .execute(&pool)
     .await;
 }
+
+/// A node missing the `name` property must surface as `Value::Null` — NOT
+/// as the JSON string `"null"`. The Wave-3 GraphResult contract documents
+/// "Default if missing: null" for the optional headers; downstream
+/// readers do `row[i].as_str().unwrap_or("")` and would silently treat
+/// the string `"null"` as a valid name. Pin the distinction.
+#[tokio::test]
+async fn missing_property_decodes_as_value_null() {
+    let s = PostgresStorage::connect(&pg_url()).await.expect("connect");
+    let pool = s.client().pool.clone();
+
+    let mut conn = pool.acquire().await.expect("acquire");
+    sqlx::query("LOAD 'age'").execute(&mut *conn).await.expect("LOAD age");
+    sqlx::query("SET search_path = ag_catalog, \"$user\", public")
+        .execute(&mut *conn)
+        .await
+        .expect("search_path");
+
+    let graph = "w4b_null_prop";
+    let _ = sqlx::query(AssertSqlSafe(format!(
+        "SELECT ag_catalog.drop_graph('{graph}', true)"
+    )))
+    .execute(&mut *conn)
+    .await;
+    sqlx::query(AssertSqlSafe(format!("SELECT ag_catalog.create_graph('{graph}')")))
+        .execute(&mut *conn)
+        .await
+        .expect("create scratch graph");
+
+    // Seed: a-->b where b has no `name` property.
+    let seed = format!(
+        "SELECT * FROM cypher('{graph}', $$ \
+         CREATE (a:E {{id_hex: 'aaaa', name: 'Alpha'}}), \
+                (b:E {{id_hex: 'bbbb'}}), \
+                (a)-[:R]->(b) \
+         RETURN 1 $$) AS (x ag_catalog.agtype)"
+    );
+    sqlx::query(AssertSqlSafe(seed)).execute(&mut *conn).await.expect("seed");
+    drop(conn);
+
+    let cypher = "UNWIND $ids AS sid \
+         MATCH (n {id_hex: sid})-[*1..1]-(m) \
+         RETURN m.id_hex AS id, m.name AS name \
+         LIMIT $k"
+        .to_string();
+    let mut params = serde_json::Map::new();
+    params.insert("ids".into(), serde_json::Value::Array(vec!["aaaa".into()]));
+    params.insert("k".into(), serde_json::Value::Number(10.into()));
+    let q = CypherQuery { graph: graph.into(), cypher, params };
+
+    let result = s.graph_traverse(&Scope::dev(), &q, None).await.expect("traverse");
+
+    assert_eq!(result.rows.len(), 1, "rows: {:?}", result.rows);
+    let row = &result.rows[0];
+    assert_eq!(row[0].as_str(), Some("bbbb"));
+    // The KEY assertion: agtype `null` → `Value::Null`, not the string "null".
+    assert!(
+        row[1].is_null(),
+        "missing m.name must decode as Value::Null, got {:?}",
+        row[1]
+    );
+
+    let _ = sqlx::query(AssertSqlSafe(format!(
+        "SELECT ag_catalog.drop_graph('{graph}', true)"
+    )))
+    .execute(&pool)
+    .await;
+}

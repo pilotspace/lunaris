@@ -228,6 +228,19 @@ fn inline_params(
                 if let Some(v) = params.get(name) {
                     // Encode as JSON, which is a subset of Cypher literal syntax.
                     if let Ok(s) = serde_json::to_string(v) {
+                        // Defense-in-depth: `$$` inside the inlined value
+                        // would terminate the outer `cypher('graph', $$ ...
+                        // $$)` dollar-quoted envelope and turn the rest
+                        // of the Cypher into raw SQL. Today's callers
+                        // (hex EntityIds + numeric `k`) cannot produce
+                        // `$$`, but pin the invariant at runtime so a
+                        // future widening to user text trips loudly in
+                        // debug builds.
+                        debug_assert!(
+                            !s.contains("$$"),
+                            "inline_params: param '{name}' encodes to '{s}' which contains the \
+                             dollar-quote sentinel '$$' — would escape the outer cypher() literal"
+                        );
                         out.push_str(&s);
                         i = end;
                         continue;
@@ -235,8 +248,14 @@ fn inline_params(
                 }
             }
         }
-        out.push(b as char);
-        i += 1;
+        // Copy the current UTF-8 codepoint verbatim. Using `b as char`
+        // here would mojibake every non-ASCII byte (each byte of a
+        // multi-byte sequence becomes its own `char`). Decode-then-push
+        // is safe because `$` itself is single-byte ASCII and can never
+        // appear inside a multi-byte UTF-8 codepoint.
+        let ch = cypher[i..].chars().next().expect("non-empty remainder");
+        out.push(ch);
+        i += ch.len_utf8();
     }
     out
 }
@@ -395,5 +414,20 @@ mod tests {
         let c = "RETURN $missing";
         let out = inline_params(c, &serde_json::Map::new());
         assert_eq!(out, "RETURN $missing");
+    }
+
+    #[test]
+    fn inline_params_preserves_utf8_in_surrounding_cypher() {
+        // Non-ASCII bytes in the Cypher text MUST round-trip codepoint-
+        // for-codepoint. A naive `byte as char` push would mojibake every
+        // multi-byte sequence into individual Latin-1-style chars.
+        let mut p = serde_json::Map::new();
+        p.insert("k".into(), serde_json::json!(7));
+        let c = "MATCH (n {name: 'Käse über'}) RETURN n.id AS id LIMIT $k";
+        let out = inline_params(c, &p);
+        assert_eq!(out, "MATCH (n {name: 'Käse über'}) RETURN n.id AS id LIMIT 7");
+        // Codepoint count round-trips.
+        assert!(out.chars().any(|c| c == 'ä'));
+        assert!(out.chars().any(|c| c == 'ü'));
     }
 }
