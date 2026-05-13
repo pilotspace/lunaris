@@ -22,7 +22,8 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
 };
 use lunaris_core::{
-    BiTemporal, Embedder, Hlc, StorageCapabilities, StorageError, StoragePort, StubEmbedder,
+    BiTemporal, CypherDialect, Embedder, Hlc, StorageCapabilities, StorageError, StoragePort,
+    StubEmbedder,
 };
 use lunaris_retrieve::{
     EntityId, Graph, Query, QueryContext, RetrievalBuilder, Retriever, SourceOp, Vector,
@@ -52,6 +53,12 @@ struct RecordingStorage {
     /// Plan 03-02: records every vector_search call for assertion in the
     /// canonical compose test (Vector + Graph + fuse_rrf).
     vector_calls: Mutex<Vec<VectorCallRecord>>,
+    /// Wave 4 amendment: dialect tier the fake storage reports through
+    /// `capabilities().cypher_dialect`. Defaults to Legacy (matches the
+    /// canonical no-overrides backend profile for graph-less fakes). The
+    /// dispatch-tier tests flip this via `set_dialect()` to verify the
+    /// operator picks the right Cypher template per tier.
+    dialect: Mutex<CypherDialect>,
 }
 
 impl RecordingStorage {
@@ -63,6 +70,15 @@ impl RecordingStorage {
 
     fn set_vector_hits(&self, hits: Vec<VectorHit>) {
         *self.vector_hits.lock() = hits;
+    }
+
+    /// Wave 4 amendment: configure the dialect tier the operator sees via
+    /// `ctx.storage.capabilities().cypher_dialect`. Default is
+    /// [`CypherDialect::Legacy`] (matches the unchanged historical fixture
+    /// shape so existing tests stay untouched).
+    fn with_dialect(self, d: CypherDialect) -> Self {
+        *self.dialect.lock() = d;
+        self
     }
 }
 
@@ -169,7 +185,9 @@ impl StoragePort for RecordingStorage {
             // is present).
             native_rrf: false,
             max_scopes_recommended: 0,
-            cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            // Wave 4 amendment: read from the configurable field so
+            // dispatch-tier tests can swap Legacy / PathMetrics / Full.
+            cypher_dialect: *self.dialect.lock(),
         }
     }
 }
@@ -802,4 +820,157 @@ async fn graph_anchor_confidence_uses_max_for_duplicate_seeds() {
         "duplicate seeds MUST collapse to MAX confidence (got {})",
         hits[0].score,
     );
+}
+
+// ============================ Wave 4 amendment — CypherDialect dispatch tests
+//
+// These tests verify the operator picks the Cypher template that matches the
+// backend's declared `capabilities().cypher_dialect` tier. The shared
+// `dispatched_cypher_with_dialect` helper builds a `RecordingStorage` fixed at
+// the requested tier, runs `Graph::anchored`, and returns the Cypher string
+// that the operator actually sent to `graph_traverse`.
+
+async fn dispatched_cypher_with_dialect(d: CypherDialect) -> String {
+    let storage = Arc::new(
+        RecordingStorage::new_with_graph(canned_graph_with(vec![])).with_dialect(d),
+    );
+    let ctx = make_ctx(storage.clone(), None);
+    let seed = EntityId::from_name_and_type("Anchor", "Person");
+    let _ = Graph::anchored(vec![(seed, 1.0)], 2).retrieve(&ctx).await.unwrap();
+    storage
+        .graph_calls
+        .lock()
+        .first()
+        .expect("graph_traverse must be called once when seeds are non-empty")
+        .0
+        .cypher
+        .clone()
+}
+
+#[tokio::test]
+async fn dispatch_legacy_dialect_emits_no_path_metrics_no_reduce() {
+    // Legacy tier (Moon + embedded): the operator MUST emit the universal
+    // template — id/name/type only, no path binding, no length(), no
+    // reduce(), no source_entity_id. This is what Moon's parser accepts.
+    let cypher = dispatched_cypher_with_dialect(CypherDialect::Legacy).await;
+    assert!(
+        !cypher.contains("MATCH p ="),
+        "Legacy dialect MUST NOT bind a path variable (Moon rejects it): {cypher}"
+    );
+    assert!(
+        !cypher.contains("length("),
+        "Legacy dialect MUST NOT call length() (Moon function table omits it): {cypher}"
+    );
+    assert!(
+        !cypher.contains("reduce("),
+        "Legacy dialect MUST NOT call reduce() (Moon function table omits it): {cypher}"
+    );
+    assert!(
+        !cypher.contains("source_entity_id"),
+        "Legacy dialect MUST NOT alias n.id_hex AS source_entity_id: {cypher}"
+    );
+    // It MUST still hit the same node property + parameter shape so the
+    // backend round trip behaves the same as before.
+    assert!(cypher.contains("id_hex"), "Legacy MUST still use id_hex: {cypher}");
+    assert!(cypher.contains("$ids"), "Legacy MUST parameterize $ids: {cypher}");
+    assert!(cypher.contains("$k"), "Legacy MUST parameterize $k: {cypher}");
+}
+
+#[tokio::test]
+async fn dispatch_path_metrics_dialect_emits_path_binding_and_length_but_no_reduce() {
+    // PathMetrics tier (Postgres AGE 1.5): the operator MUST emit
+    // MATCH p = ... + length(p) + source_entity_id, but MUST NOT emit
+    // reduce(...) (AGE 1.5 parser rejects the `|` token).
+    let cypher = dispatched_cypher_with_dialect(CypherDialect::PathMetrics).await;
+    assert!(
+        cypher.contains("MATCH p ="),
+        "PathMetrics dialect MUST bind a path variable: {cypher}"
+    );
+    assert!(
+        cypher.contains("length(p) AS path_length"),
+        "PathMetrics dialect MUST emit length(p) AS path_length: {cypher}"
+    );
+    assert!(
+        cypher.contains("source_entity_id"),
+        "PathMetrics dialect MUST emit source_entity_id alias: {cypher}"
+    );
+    assert!(
+        !cypher.contains("reduce("),
+        "PathMetrics dialect MUST NOT emit reduce() — AGE 1.5 rejects the `|` token: {cypher}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_full_dialect_emits_reduce_for_edge_weight_product() {
+    // Full tier (forward-compat — no current backend supports this): the
+    // operator MUST emit the full Wave-4 template including reduce(...) for
+    // edge_weight_product.
+    let cypher = dispatched_cypher_with_dialect(CypherDialect::Full).await;
+    assert!(
+        cypher.contains("MATCH p ="),
+        "Full dialect MUST bind a path variable: {cypher}"
+    );
+    assert!(
+        cypher.contains("length(p) AS path_length"),
+        "Full dialect MUST emit length(p) AS path_length: {cypher}"
+    );
+    assert!(
+        cypher.contains("reduce(") && cypher.contains("edge_weight_product"),
+        "Full dialect MUST emit reduce(...) AS edge_weight_product: {cypher}"
+    );
+    assert!(
+        cypher.contains("source_entity_id"),
+        "Full dialect MUST emit source_entity_id alias: {cypher}"
+    );
+}
+
+// Back-compat property — across ALL dialect tiers, when the backend returns
+// only id/name/type headers (the realistic "backend hasn't been upgraded"
+// case), the operator MUST fall back to the legacy `1/(1+i)` score formula.
+// The header-keyed parser handles this — these tests pin that the dispatch
+// commit does not regress the Wave-3 back-compat property.
+
+async fn score_back_compat_with_dialect(d: CypherDialect) -> f32 {
+    let alice = EntityId::from_name_and_type("AliceBC", "Person");
+    let bob = EntityId::from_name_and_type("BobBC", "Person");
+    let storage = Arc::new(
+        // Canned graph returns only id/name/type headers — the path-metrics
+        // and source-entity columns are absent regardless of declared
+        // dialect tier. Mirrors the real-world "backend updated but
+        // response sometimes lacks columns" case.
+        RecordingStorage::new_with_graph(canned_graph_with(vec![
+            (bob, "Bob", "Person"),
+        ]))
+        .with_dialect(d),
+    );
+    let ctx = make_ctx(storage.clone(), None);
+    let hits = Graph::anchored(vec![(alice, 1.0)], 2)
+        .retrieve(&ctx)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1, "single canned row must yield one hit");
+    hits[0].score
+}
+
+#[tokio::test]
+async fn dispatch_legacy_preserves_back_compat_score() {
+    // Legacy tier + 3-column response → Wave-3 fallback score: 1/(1+0)=1.0.
+    let score = score_back_compat_with_dialect(CypherDialect::Legacy).await;
+    assert!((score - 1.0).abs() < 1e-6, "expected 1.0, got {score}");
+}
+
+#[tokio::test]
+async fn dispatch_path_metrics_preserves_back_compat_score_when_columns_absent() {
+    // PathMetrics tier + 3-column response → same Wave-3 fallback. The
+    // dialect declaration says "backend CAN emit those columns" but the
+    // operator MUST handle the case where it didn't.
+    let score = score_back_compat_with_dialect(CypherDialect::PathMetrics).await;
+    assert!((score - 1.0).abs() < 1e-6, "expected 1.0, got {score}");
+}
+
+#[tokio::test]
+async fn dispatch_full_preserves_back_compat_score_when_columns_absent() {
+    // Full tier + 3-column response → same Wave-3 fallback.
+    let score = score_back_compat_with_dialect(CypherDialect::Full).await;
+    assert!((score - 1.0).abs() < 1e-6, "expected 1.0, got {score}");
 }
