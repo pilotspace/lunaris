@@ -748,7 +748,10 @@ async fn recall_with_graph_anchored_composes_end_to_end() {
     let hits = handle
         .recall()
         .with_root(
-            Vector::new("chunks", 30).and(Graph::anchored(vec![(alice_id, 1.0)], 2)).fuse_rrf(60).top(5),
+            Vector::new("chunks", 30)
+                .and(Graph::anchored(vec![(alice_id, 1.0)], 2))
+                .fuse_rrf(60)
+                .top(5),
         )
         .execute(Query::text("Alice"))
         .await
