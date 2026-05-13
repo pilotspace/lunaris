@@ -38,7 +38,9 @@ use lunaris_rerank::{NoopReranker, Reranker};
 use lunaris_storage_embedded::EmbeddedStorage;
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
-use lunaris_verify::{NoopVerifier, Verifier};
+use lunaris_verify::{
+    NoopReflectSupervisor, NoopVerifier, ReflectInput, ReflectOutput, ReflectSupervisor, Verifier,
+};
 
 use crate::consolidator_pipeline::ConsolidatorPipelineHandle;
 use crate::graph_pipeline::GraphPipelineHandle;
@@ -79,6 +81,12 @@ pub struct Lunaris {
     /// `handle.consolidator_pipeline().enable() / .disable()` (D-08
     /// single-switch surface, CONSOL-01..05).
     pub(crate) consolidator_pipeline: Arc<ConsolidatorPipelineHandle>,
+    /// Phase 13 — per-turn reflection supervisor. Default OFF
+    /// (`NoopReflectSupervisor`), matching blueprint §5.1 default-OFF pattern
+    /// for all optional LLM pipeline stages. Callers install a real supervisor
+    /// via [`Self::with_reflect_supervisor`] and call [`Self::end_turn`] at the
+    /// end of each agent turn to trigger the reflection pass.
+    pub(crate) reflect_supervisor: Arc<dyn ReflectSupervisor>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -205,6 +213,7 @@ impl Lunaris {
                     graph_pipeline,
                     verify_pipeline,
                     consolidator_pipeline,
+                    reflect_supervisor: Arc::new(NoopReflectSupervisor),
                 })
             }
             "postgres" | "postgresql" => {
@@ -238,6 +247,7 @@ impl Lunaris {
                     graph_pipeline,
                     verify_pipeline,
                     consolidator_pipeline,
+                    reflect_supervisor: Arc::new(NoopReflectSupervisor),
                 })
             }
             // Onboarding overhaul (phase 1): the zero-dependency embedded
@@ -266,6 +276,7 @@ impl Lunaris {
                     graph_pipeline,
                     verify_pipeline,
                     consolidator_pipeline,
+                    reflect_supervisor: Arc::new(NoopReflectSupervisor),
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -330,6 +341,8 @@ impl Lunaris {
             )),
             verify_pipeline,
             consolidator_pipeline,
+            // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
+            reflect_supervisor: Arc::new(NoopReflectSupervisor),
         }
     }
 
@@ -375,6 +388,8 @@ impl Lunaris {
             )),
             verify_pipeline,
             consolidator_pipeline,
+            // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
+            reflect_supervisor: Arc::new(NoopReflectSupervisor),
         }
     }
 
@@ -448,6 +463,58 @@ impl Lunaris {
     pub fn with_consolidator(self, consolidator: Arc<dyn Consolidator>) -> Self {
         self.consolidator_pipeline.set_consolidator(consolidator);
         self
+    }
+
+    /// Phase 13 escape hatch — replace the reflection supervisor on an existing
+    /// handle. Production callers install an [`LlmReflectSupervisor`] (or a
+    /// custom [`ReflectSupervisor`] impl) via this; tests pass
+    /// `Arc::new(NoopReflectSupervisor)` for determinism.
+    ///
+    /// Unlike `verify_pipeline` and `consolidator_pipeline`, the reflect
+    /// supervisor is a plain `Arc` (no background worker, no toggle) — it is
+    /// invoked synchronously per [`Self::end_turn`] call on the caller's task.
+    ///
+    /// [`LlmReflectSupervisor`]: lunaris_verify::LlmReflectSupervisor
+    pub fn with_reflect_supervisor(mut self, supervisor: Arc<dyn ReflectSupervisor>) -> Self {
+        self.reflect_supervisor = supervisor;
+        self
+    }
+
+    /// Phase 13 — signal the end of an agent turn and run the reflection pass.
+    ///
+    /// Calls [`ReflectSupervisor::reflect`] with `input` and returns the
+    /// advisory [`ReflectOutput`] (`invalidate`, `boost`, `pre_warm_query`).
+    ///
+    /// ## Budget + failure discipline
+    ///
+    /// The supervisor enforces its own timeout (default 500 ms for
+    /// [`LlmReflectSupervisor`]). If the supervisor returns `Err`, this method
+    /// propagates it — callers that treat reflect as best-effort should wrap
+    /// with `.unwrap_or_default()`. If the installed supervisor is
+    /// [`NoopReflectSupervisor`] (the default), this call is a cheap no-op
+    /// returning `ReflectOutput::default()`.
+    ///
+    /// ## Non-requirements in this commit
+    ///
+    /// The returned [`ReflectOutput`] is **advisory only** — storage-side
+    /// application (`invalidate` → `BiTemporal::invalidate_sys`, `boost` →
+    /// retrieval-rank adjustment, `pre_warm_query` → speculative recall) is a
+    /// Phase 13 follow-up. For now, the output is logged and returned to the
+    /// caller.
+    ///
+    /// [`LlmReflectSupervisor`]: lunaris_verify::LlmReflectSupervisor
+    pub async fn end_turn(&self, input: ReflectInput) -> Result<ReflectOutput, LunarisError> {
+        let turn_id = input.turn_id;
+        let output = self.reflect_supervisor.reflect(input).await?;
+        tracing::info!(
+            target: "lunaris::handle",
+            turn_id = ?turn_id,
+            invalidate_count = output.invalidate.len(),
+            boost_count = output.boost.len(),
+            pre_warm_query = output.pre_warm_query.is_some(),
+            "end_turn_reflect_complete"
+        );
+        Ok(output)
     }
 
     /// Borrow accessors — needed by Plan 02-02's retrieve DSL builder.
@@ -527,6 +594,13 @@ impl Lunaris {
     /// Plan 04-04 — snapshot the currently-installed [`Consolidator`] `Arc`.
     pub fn consolidator(&self) -> Option<Arc<dyn Consolidator>> {
         self.consolidator_pipeline.snapshot_consolidator()
+    }
+
+    /// Phase 13 — borrow the configured [`ReflectSupervisor`] `Arc`.
+    /// Returns the currently-installed supervisor — `NoopReflectSupervisor` by
+    /// default, or whatever was last passed to [`Self::with_reflect_supervisor`].
+    pub fn reflect_supervisor(&self) -> Arc<dyn ReflectSupervisor> {
+        self.reflect_supervisor.clone()
     }
 
     /// RFC 0001 Wave 0 — construct a scope-bound view over this handle.
@@ -1107,5 +1181,239 @@ mod backend_resolution_tests {
         assert!(msg.contains("is not one of"), "msg should contain 'is not one of': {msg}");
         assert!(msg.contains("xyzzy"));
         assert!(msg.contains("LUNARIS_RERANKER_BACKEND"));
+    }
+}
+
+// ── Phase 13 unit tests — end_turn / ReflectSupervisor wire-up ──────────────
+//
+// All tests use stub storage + `StubEmbedder` from lunaris_core (proven by
+// the existing verify_pipeline_smoke integration tests) so no I/O is
+// performed. The three tests cover:
+//   1. Default Noop supervisor → empty ReflectOutput.
+//   2. Custom stub supervisor → output propagates; input fields thread through.
+//   3. Supervisor returning Err → end_turn propagates the error.
+#[cfg(test)]
+mod end_turn_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use futures::stream::{self, BoxStream};
+    use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
+    use lunaris_core::storage::types::{
+        CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
+    };
+    use lunaris_core::{
+        CypherDialect, HlcClock, LunarisError, Scope, StorageCapabilities, StorageError,
+        StoragePort, StubEmbedder,
+    };
+    use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
+    use std::sync::Arc;
+    use ulid::Ulid;
+
+    // ── minimal stub storage (matches actual StoragePort signatures) ──────────
+
+    struct NullStorage;
+
+    #[async_trait]
+    impl StoragePort for NullStorage {
+        async fn atomic_write(
+            &self,
+            _scope: &Scope,
+            _ops: &[WriteOp],
+        ) -> Result<Lsn, StorageError> {
+            Ok(Lsn { wall_ms: 1, counter: 0 })
+        }
+
+        async fn read_as_of(
+            &self,
+            _scope: &Scope,
+            _key: &[u8],
+            _as_of: lunaris_core::Hlc,
+        ) -> Result<Option<Row<Bytes>>, StorageError> {
+            Ok(None)
+        }
+
+        async fn vector_search(
+            &self,
+            _scope: &Scope,
+            _index: &str,
+            _query: &[f32],
+            _k: usize,
+            _filter: Option<&Filter>,
+            _as_of: Option<lunaris_core::Hlc>,
+            _rerank: bool,
+        ) -> Result<Vec<VectorHit>, StorageError> {
+            Ok(vec![])
+        }
+
+        async fn graph_traverse(
+            &self,
+            _scope: &Scope,
+            _q: &CypherQuery,
+            _as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<GraphResult, StorageError> {
+            Ok(GraphResult::default())
+        }
+
+        async fn scan_range(
+            &self,
+            _scope: &Scope,
+            _prefix: &[u8],
+            _as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+            Ok(Box::pin(stream::iter(Vec::<Result<(Bytes, Bytes), StorageError>>::new())))
+        }
+
+        async fn publish(
+            &self,
+            _scope: &Scope,
+            _topic: &str,
+            _partition: u16,
+            _payload: Bytes,
+        ) -> Result<u64, StorageError> {
+            Ok(0)
+        }
+
+        async fn subscribe(
+            &self,
+            _scope: &Scope,
+            _group: &str,
+            _topic: &str,
+            _partition: u16,
+        ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn capabilities(&self) -> StorageCapabilities {
+            StorageCapabilities {
+                bi_temporal_native: false,
+                graph_native: false,
+                rerank_native: false,
+                queue_native: false,
+                max_vector_dim: 768,
+                native_rrf: false,
+                max_scopes_recommended: 0,
+                cypher_dialect: CypherDialect::Legacy,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl KeywordPort for NullStorage {
+        async fn keyword_search(
+            &self,
+            _scope: &Scope,
+            _index: &str,
+            _query: &str,
+            _k: usize,
+            _filter: Option<&Filter>,
+            _as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<Vec<KeywordHit>, StorageError> {
+            Ok(vec![])
+        }
+    }
+
+    fn make_handle() -> Lunaris {
+        // HlcClock::new already returns Arc<HlcClock> — no extra Arc::new wrap.
+        let storage: Arc<dyn StoragePort> = Arc::new(NullStorage);
+        let keyword: Arc<dyn KeywordPort> = Arc::new(NullStorage);
+        let embedder = Arc::new(StubEmbedder::new(4));
+        let clock = HlcClock::new(0);
+        Lunaris::with_parts_keyword(storage, keyword, embedder, clock)
+    }
+
+    // ── test 1: default noop supervisor → empty output ────────────────────────
+
+    #[tokio::test]
+    async fn end_turn_noop_returns_empty_output() {
+        let handle = make_handle();
+        // Default is NoopReflectSupervisor — applies() = false.
+        assert!(!handle.reflect_supervisor().applies());
+
+        let input = ReflectInput {
+            turn_id: Some(Ulid::new()),
+            turn_summary: "agent answered a question".into(),
+            recent_fact_ids: vec![Ulid::new()],
+            recent_chunk_ids: vec![Ulid::new()],
+        };
+        let out = handle.end_turn(input).await.unwrap();
+        assert_eq!(out, ReflectOutput::default());
+        assert!(out.invalidate.is_empty());
+        assert!(out.boost.is_empty());
+        assert!(out.pre_warm_query.is_none());
+    }
+
+    // ── test 2: custom stub supervisor → output + input fields thread through ─
+
+    /// Captures the input it received so the test can assert field propagation.
+    struct CapturingReflectSupervisor {
+        output: ReflectOutput,
+        captured: parking_lot::Mutex<Option<ReflectInput>>,
+    }
+
+    #[async_trait]
+    impl ReflectSupervisor for CapturingReflectSupervisor {
+        async fn reflect(&self, input: ReflectInput) -> Result<ReflectOutput, LunarisError> {
+            *self.captured.lock() = Some(input);
+            Ok(self.output.clone())
+        }
+        fn applies(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn end_turn_stub_supervisor_propagates_output_and_input() {
+        let fact_id = Ulid::new();
+        let chunk_id = Ulid::new();
+        let turn_id = Ulid::new();
+        let expected_output = ReflectOutput {
+            invalidate: vec![fact_id],
+            boost: vec![chunk_id],
+            pre_warm_query: Some("what is Alice's role?".into()),
+        };
+        let supervisor = Arc::new(CapturingReflectSupervisor {
+            output: expected_output.clone(),
+            captured: parking_lot::Mutex::new(None),
+        });
+
+        let handle = make_handle().with_reflect_supervisor(supervisor.clone());
+        assert!(handle.reflect_supervisor().applies());
+
+        let input = ReflectInput {
+            turn_id: Some(turn_id),
+            turn_summary: "turn summary text".into(),
+            recent_fact_ids: vec![fact_id],
+            recent_chunk_ids: vec![chunk_id],
+        };
+        let out = handle.end_turn(input).await.unwrap();
+        assert_eq!(out, expected_output);
+
+        // Confirm the supervisor received the exact input we passed.
+        let captured = supervisor.captured.lock().take().unwrap();
+        assert_eq!(captured.turn_id, Some(turn_id));
+        assert_eq!(captured.recent_fact_ids, vec![fact_id]);
+        assert_eq!(captured.recent_chunk_ids, vec![chunk_id]);
+        assert_eq!(captured.turn_summary, "turn summary text");
+    }
+
+    // ── test 3: supervisor returns Err → end_turn propagates error ────────────
+
+    struct ErrReflectSupervisor;
+
+    #[async_trait]
+    impl ReflectSupervisor for ErrReflectSupervisor {
+        async fn reflect(&self, _input: ReflectInput) -> Result<ReflectOutput, LunarisError> {
+            Err(LunarisError::Storage(StorageError::NotSupported("reflect budget exhausted")))
+        }
+    }
+
+    #[tokio::test]
+    async fn end_turn_propagates_supervisor_error() {
+        let handle = make_handle().with_reflect_supervisor(Arc::new(ErrReflectSupervisor));
+        let result = handle.end_turn(ReflectInput::default()).await;
+        assert!(result.is_err(), "end_turn must propagate supervisor error");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("reflect budget exhausted"), "error message: {msg}");
     }
 }

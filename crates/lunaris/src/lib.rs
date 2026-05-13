@@ -96,6 +96,14 @@ pub use lunaris_verify::{
     NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend,
     VerifyDecision,
 };
+// Phase 13 — per-turn reflect supervisor re-exports. Callers
+// `use lunaris::{ReflectSupervisor, NoopReflectSupervisor, LlmReflectSupervisor,
+//                ReflectInput, ReflectOutput, ReflectOpts}`
+// without reaching into lunaris-verify directly.
+pub use lunaris_verify::{
+    LlmReflectSupervisor, NoopReflectSupervisor, ReflectInput, ReflectOpts, ReflectOutput,
+    ReflectSupervisor,
+};
 
 // Cfg-gated verifier backends — mirror the extract backends gating pattern.
 #[cfg(feature = "candle")]
