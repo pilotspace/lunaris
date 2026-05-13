@@ -87,6 +87,10 @@ dirs                = { workspace = true, optional = true }
 # Wave 3F: parking_lot is now unconditional — VerifySupervisor uses RwLock
 # regardless of which backend feature is enabled.
 parking_lot         = { workspace = true }
+# Phase 14.2 — apply_reflect_boost uses LruCache<(Scope, Ulid), f32> passed
+# in by the caller (the Lunaris handle).  `lru` is declared here so the
+# function signature compiles without the lunaris umbrella crate in scope.
+lru                 = { workspace = true }
 # http stack — shared by `ollama` and `cloud-api` features.
 reqwest        = { workspace = true, optional = true }
 

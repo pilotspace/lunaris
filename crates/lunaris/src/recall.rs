@@ -84,6 +84,11 @@ impl Lunaris {
         if let Some(moon) = self.moon_storage() {
             b = b.with_moon_storage(moon);
         }
+        // Phase 14.2: thread the per-handle boost cache into every builder so
+        // the post-hydrate rescorer can apply boost deltas.  The Arc clone is
+        // cheap — the underlying LruCache is shared across all RetrievalBuilders
+        // spawned from this handle.
+        b = b.with_boost_cache(self.boost_cache.clone());
         b
     }
 

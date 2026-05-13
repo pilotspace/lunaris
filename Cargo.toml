@@ -172,6 +172,10 @@ tower-governor     = { package = "tower_governor", version = "0.8", default-feat
 # `governor::clock::QuantaInstant` in the GovernorLayer return type signature.
 governor           = "0.10"
 is-terminal        = "0.4"
+# Phase 14.2 — ephemeral per-handle LRU boost cache (ReflectOutput.boost rescoring).
+# `lru 0.12` is the standard LRU cache crate (hashbrown-backed, no_std-compatible).
+# Wrapped in `parking_lot::RwLock` for lock discipline.
+lru                = "0.12"
 # Phase 5 Plan 05-05 OPS-06 — Prometheus text-format metrics exporter mounted
 # at GET /metrics on lunaris-server. Pinned to the latest stable per CLAUDE.md
 # "Latest libraries policy"; default-features=false drops the procfs/protobuf

@@ -31,6 +31,7 @@ use lunaris_consolidate::Consolidator;
 use lunaris_core::{
     Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StorageError, StoragePort,
 };
+use ulid::Ulid;
 
 use crate::episode_builder::EpisodeBuilder;
 use lunaris_extract::{Extractor, NoopExtractor};
@@ -39,8 +40,9 @@ use lunaris_storage_embedded::EmbeddedStorage;
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_postgres::PostgresStorage;
 use lunaris_verify::{
-    NoopReflectSupervisor, NoopVerifier, ReflectInput, ReflectOutput, ReflectSupervisor, Verifier,
-    apply_reflect_invalidate,
+    BOOST_DELTA, NoopReflectSupervisor, NoopVerifier, ReflectInput, ReflectOutput,
+    ReflectSupervisor, Verifier, apply_reflect_boost, apply_reflect_invalidate,
+    boost_cache_capacity,
 };
 
 use crate::consolidator_pipeline::ConsolidatorPipelineHandle;
@@ -88,6 +90,21 @@ pub struct Lunaris {
     /// via [`Self::with_reflect_supervisor`] and call [`Self::end_turn`] at the
     /// end of each agent turn to trigger the reflection pass.
     pub(crate) reflect_supervisor: Arc<dyn ReflectSupervisor>,
+    /// Phase 14.2 — ephemeral per-handle LRU boost cache.
+    ///
+    /// Populated by [`ScopedLunaris::end_turn`] from
+    /// [`lunaris_verify::ReflectOutput::boost`]; consumed as a post-hydrate
+    /// rescorer by every [`lunaris_retrieve::RetrievalBuilder`] returned from
+    /// [`Self::recall`]. Cache key is `(Scope, Ulid)` so boost signals from
+    /// one tenant scope never leak into another scope's recall results.
+    ///
+    /// Lock discipline: the guard is acquired, all entries are written /
+    /// read, then the guard is dropped before the next `.await` point. This
+    /// upholds the CLAUDE.md "never hold a lock across `.await`" invariant.
+    ///
+    /// Capacity: controlled by `LUNARIS_BOOST_CACHE_CAPACITY` (default 10 000)
+    /// via [`lunaris_verify::boost_cache_capacity`].
+    pub(crate) boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -102,6 +119,7 @@ impl std::fmt::Debug for Lunaris {
             .field("verify_pipeline_enabled", &self.verify_pipeline.is_enabled())
             .field("consolidator_pipeline_enabled", &self.consolidator_pipeline.is_enabled())
             .field("reflect_supervisor_applies", &self.reflect_supervisor.applies())
+            .field("boost_cache_len", &self.boost_cache.read().len())
             .finish()
     }
 }
@@ -216,6 +234,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(
+                        lru::LruCache::new(boost_cache_capacity()),
+                    )),
                 })
             }
             "postgres" | "postgresql" => {
@@ -250,6 +271,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(
+                        lru::LruCache::new(boost_cache_capacity()),
+                    )),
                 })
             }
             // Onboarding overhaul (phase 1): the zero-dependency embedded
@@ -279,6 +303,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(
+                        lru::LruCache::new(boost_cache_capacity()),
+                    )),
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -345,6 +372,10 @@ impl Lunaris {
             consolidator_pipeline,
             // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
             reflect_supervisor: Arc::new(NoopReflectSupervisor),
+            // Phase 14.2 — ephemeral boost cache, capacity from env (default 10_000).
+            boost_cache: Arc::new(parking_lot::RwLock::new(
+                lru::LruCache::new(boost_cache_capacity()),
+            )),
         }
     }
 
@@ -392,6 +423,10 @@ impl Lunaris {
             consolidator_pipeline,
             // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
             reflect_supervisor: Arc::new(NoopReflectSupervisor),
+            // Phase 14.2 — ephemeral boost cache, capacity from env (default 10_000).
+            boost_cache: Arc::new(parking_lot::RwLock::new(
+                lru::LruCache::new(boost_cache_capacity()),
+            )),
         }
     }
 
@@ -821,7 +856,30 @@ impl<'a> ScopedLunaris<'a> {
             }
         }
 
-        // Summary log at turn boundary (Phase 14.1 requirement).
+        // Step 3 (Phase 14.2): populate the per-handle boost cache for every
+        // chunk ulid nominated by the reflect supervisor.
+        //
+        // `apply_reflect_boost` is synchronous — it acquires the write lock,
+        // writes all entries, and drops the guard before returning.  No `.await`
+        // appears between the guard acquisition and its release, satisfying the
+        // CLAUDE.md lock-across-await invariant.
+        if !output.boost.is_empty() {
+            apply_reflect_boost(
+                &self.engine.boost_cache,
+                &self.scope,
+                &output.boost,
+                BOOST_DELTA,
+            );
+            tracing::debug!(
+                target: "lunaris::scoped",
+                turn_id = ?turn_id,
+                boost_count = output.boost.len(),
+                boost_delta = BOOST_DELTA,
+                "reflect_boost_cache_populated"
+            );
+        }
+
+        // Summary log at turn boundary (Phase 14.1 + 14.2 combined).
         tracing::info!(
             target: "lunaris::scoped",
             turn_id = ?turn_id,

@@ -34,11 +34,71 @@
 //! rows added up to that point are written.  Per-row parse errors cause the
 //! row to be skipped rather than aborting the batch.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use lunaris_core::audit::{AuditEvent, publish_audit_event};
 use lunaris_core::{HlcClock, LunarisError, Scope, StoragePort, WriteOp};
 use ulid::Ulid;
+
+// ── Phase 14.2 ─────────────────────────────────────────────────────────────
+
+/// Score delta applied to every boosted chunk on each retrieval call.
+///
+/// 0.25 was chosen so a single boost lifts a 0.70 cosine-similarity chunk
+/// above a 0.90 chunk after one `end_turn` call (0.70 + 0.25 = 0.95 > 0.90).
+/// It is not configurable per-call to keep the cache entry shape simple
+/// (the stored value IS the delta; no per-entry config is needed).
+pub const BOOST_DELTA: f32 = 0.25;
+
+/// Populate the per-handle boost cache from `ReflectOutput::boost`.
+///
+/// ## Semantics
+///
+/// Writes `(scope.clone(), *ulid) → BOOST_DELTA` into the LRU cache for each
+/// ulid in `chunk_ids`. This is a **replacement** (not additive): a second
+/// `end_turn` boosting the same ulid stomps the prior entry.  Callers that
+/// want additive accumulation should not use this helper.
+///
+/// ## Lock discipline
+///
+/// Acquires the write lock, writes all entries, then drops the guard.
+/// No `.await` follows before the guard is released (the function is
+/// synchronous), so the CLAUDE.md "never hold a lock across `.await`"
+/// invariant is satisfied.
+///
+/// ## Capacity helper
+///
+/// The `boost_cache` must be constructed via [`boost_cache_capacity`] so
+/// the `NonZeroUsize` capacity is always > 0.
+pub fn apply_reflect_boost(
+    boost_cache: &Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>,
+    scope: &Scope,
+    chunk_ids: &[Ulid],
+    delta: f32,
+) {
+    if chunk_ids.is_empty() {
+        return;
+    }
+    let mut cache = boost_cache.write();
+    for &ulid in chunk_ids {
+        cache.put((scope.clone(), ulid), delta);
+    }
+    // write guard drops here — no .await follows
+}
+
+/// Return the LRU cache capacity from `LUNARIS_BOOST_CACHE_CAPACITY` env var,
+/// defaulting to 10 000 when unset, empty, zero, or non-numeric.
+///
+/// Panics are impossible: the fallback is a hard-coded `NonZeroUsize::new(10_000)`.
+pub fn boost_cache_capacity() -> NonZeroUsize {
+    std::env::var("LUNARIS_BOOST_CACHE_CAPACITY")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .and_then(NonZeroUsize::new)
+        // SAFETY: 10_000 is non-zero — this unwrap can never fail.
+        .unwrap_or_else(|| NonZeroUsize::new(10_000).unwrap())
+}
 
 /// Apply reflect-driven MVCC invalidation for every ulid in `fact_ids`.
 ///

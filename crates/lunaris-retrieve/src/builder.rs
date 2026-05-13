@@ -39,11 +39,14 @@
 //! Moon GRAPH.QUERY and Postgres AGE per D-16; W-7 alignment uses
 //! `id_hex` as the match property.
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lunaris_core::storage::types::Filter;
 use lunaris_core::{Embedder, Hlc, KeywordPort, LunarisError, Scope, StoragePort};
+use ulid::Ulid;
 
 use crate::operators::recency::{RecencyConfig, rescore_recency};
 
@@ -83,6 +86,14 @@ pub struct RetrievalBuilder {
     /// returning hits. Default `None` preserves pre-recency ordering for
     /// every caller that doesn't opt in.
     pub(crate) recency_config: Option<RecencyConfig>,
+    /// Phase 14.2: optional per-handle boost cache threaded in by
+    /// `Lunaris::recall()`. When `Some`, `execute()` snapshots the cache
+    /// under a read lock (guard dropped before any `.await`), applies the
+    /// delta to matching hits, and re-sorts. `None` = no boost pass (default,
+    /// preserves pre-14.2 ordering for callers that construct a builder
+    /// without going through `Lunaris::recall()`).
+    pub(crate) boost_cache:
+        Option<Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>>,
 }
 
 impl RetrievalBuilder {
@@ -109,6 +120,7 @@ impl RetrievalBuilder {
             scope: Scope::dev(),
             initial_degraded: false,
             recency_config: None,
+            boost_cache: None,
         }
     }
 
@@ -242,8 +254,25 @@ impl RetrievalBuilder {
         self
     }
 
+    /// Phase 14.2: wire the per-handle boost cache into this builder.
+    ///
+    /// Called automatically by `Lunaris::recall()` so callers using
+    /// `engine.scoped(scope).recall()` / `.dsl()` get the boost pass for
+    /// free. Callers constructing a builder directly via [`Self::new`] /
+    /// [`Self::from_handle`] can opt in explicitly.
+    ///
+    /// `None` (the default) disables the post-hydrate boost pass entirely,
+    /// preserving the pre-14.2 ordering contract.
+    pub fn with_boost_cache(
+        mut self,
+        cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>,
+    ) -> Self {
+        self.boost_cache = Some(cache);
+        self
+    }
+
     /// Run the tree and hydrate. Terminal — consumes the builder.
-    pub async fn execute(self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
+    pub async fn execute(mut self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
         // P0 #1 Wave 2 — warn when the builder is still seeded with the
         // bare-recall `Scope::dev()` default. ScopedLunaris::dsl() / .recall()
         // both call `with_scope(self.scope)` so the warn only fires on the
@@ -277,6 +306,9 @@ impl RetrievalBuilder {
         // P0 #3 Wave 1: snapshot the recency config BEFORE moving self into
         // the QueryContext. None = recency pass disabled (default).
         let recency_config = self.recency_config;
+        // Phase 14.2: snapshot the boost cache Arc BEFORE moving self into
+        // the QueryContext. None = boost pass disabled.
+        let boost_cache = self.boost_cache.take();
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
@@ -307,6 +339,39 @@ impl RetrievalBuilder {
             });
             rescore_recency(&mut hits, now, &cfg);
         }
+
+        // Phase 14.2: post-hydrate boost pass.
+        //
+        // Snapshot the cache under a read lock — guard is dropped before any
+        // subsequent `.await` (there are none after this block).  `peek` is
+        // used deliberately so consulting the cache does NOT update LRU
+        // recency; only `end_turn` writes (via `put`) should advance recency.
+        if let Some(cache) = boost_cache {
+            let snapshot: HashMap<Ulid, f32> = {
+                let guard = cache.read();
+                hits.iter()
+                    .filter_map(|h| {
+                        let id = Ulid::from_bytes(h.id.as_slice().try_into().ok()?);
+                        guard.peek(&(ctx.scope.clone(), id)).map(|&v| (id, v))
+                    })
+                    .collect()
+            }; // read guard dropped here — no .await follows
+
+            if !snapshot.is_empty() {
+                for hit in &mut hits {
+                    if let Ok(arr) = <[u8; 16]>::try_from(hit.id.as_slice()) {
+                        let id = Ulid::from_bytes(arr);
+                        if let Some(&delta) = snapshot.get(&id) {
+                            hit.score += delta;
+                        }
+                    }
+                }
+                hits.sort_by(|a, b| {
+                    b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
+                });
+            }
+        }
+
         Ok(hits)
     }
 

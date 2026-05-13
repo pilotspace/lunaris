@@ -70,6 +70,8 @@ tracing-subscriber = { workspace = true }
 is-terminal    = { workspace = true }
 ulid           = { workspace = true }
 url            = { workspace = true }
+# Phase 14.2 — ephemeral per-handle LRU boost cache.
+lru            = { workspace = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

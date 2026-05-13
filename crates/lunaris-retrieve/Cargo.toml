@@ -53,6 +53,10 @@ tokio                = { workspace = true, features = ["sync", "macros"] }
 tower                = { workspace = true }
 tracing              = { workspace = true }
 ulid                 = { workspace = true }
+# Phase 14.2 — boost-cache post-hydrate rescorer in RetrievalBuilder::execute.
+# parking_lot is already a workspace dep; lru provides the LruCache type.
+parking_lot          = { workspace = true }
+lru                  = { workspace = true }
 
 [dev-dependencies]
 tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
