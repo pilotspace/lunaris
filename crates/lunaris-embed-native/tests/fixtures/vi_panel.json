@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "_meta": {
+    "description": "Vietnamese-specific adversarial panel for POST-VERIFY-PLAN.md §3. Catches: (a) tokenizer silently stripping/lowercasing diacritics → diacritic group cosine collapses ≥0.95; (b) NFC↔NFD divergence → tokenizer not normalizing internally, cosine <0.999; (c) tone-mark collapse → all six tones embedded identically, cosine >0.99; (d) cross-lingual EN↔VI semantic collapse <0.75. NFD variants computed via Python unicodedata.normalize('NFD', s) and inlined as \\u-escapes so the JSON parser preserves exact byte sequence.",
+    "authored_by": "post-verify P1 spawn",
+    "non_llm_authored": true,
+    "categories": [
+      "diacritic",
+      "nfc_nfd",
+      "tone",
+      "cross_lingual"
+    ]
+  },
+  "prompts": [
+    {
+      "id": "vi-dia-001",
+      "category": "diacritic",
+      "text": "phở bò tái nạm",
+      "variant": "pho bo tai nam",
+      "assertion": {
+        "kind": "cos_lt",
+        "threshold": 0.95,
+        "rationale": "diacritics must matter — if tokenizer lowercases/strips, the two collapse"
+      }
+    },
+    {
+      "id": "vi-dia-002",
+      "category": "diacritic",
+      "text": "Tôi yêu lập trình",
+      "variant": "Toi yeu lap trinh",
+      "assertion": {
+        "kind": "cos_lt",
+        "threshold": 0.95,
+        "rationale": "common sentence; diacritic-stripped form is grammatical but semantically different"
+      }
+    },
+    {
+      "id": "vi-dia-003",
+      "category": "diacritic",
+      "text": "Hà Nội mùa thu",
+      "variant": "Ha Noi mua thu",
+      "assertion": {
+        "kind": "cos_lt",
+        "threshold": 0.95,
+        "rationale": "place names + season; diacritic loss == different proper nouns"
+      }
+    },
+    {
+      "id": "vi-dia-004",
+      "category": "diacritic",
+      "text": "cà phê sữa đá",
+      "variant": "ca phe sua da",
+      "assertion": {
+        "kind": "cos_lt",
+        "threshold": 0.95,
+        "rationale": "sữa (milk) vs sua (clean/rinse) — meaning genuinely changes"
+      }
+    },
+    {
+      "id": "vi-dia-005",
+      "category": "diacritic",
+      "text": "bánh mì thịt nướng",
+      "variant": "banh mi thit nuong",
+      "assertion": {
+        "kind": "cos_lt",
+        "threshold": 0.95,
+        "rationale": "noun phrase; stripped form is informal latin transliteration"
+      }
+    },
+    {
+      "id": "vi-nfc-001",
+      "category": "nfc_nfd",
+      "text": "Tiếng Việt",
+      "variant": "Tiếng Việt",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.999,
+        "rationale": "NFC vs NFD must normalize internally — bytes differ, vector must match"
+      }
+    },
+    {
+      "id": "vi-nfc-002",
+      "category": "nfc_nfd",
+      "text": "phở bò tái nạm",
+      "variant": "phở bò tái nạm",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.999,
+        "rationale": "same phrase as vi-dia-001 — NFD form must produce same vector"
+      }
+    },
+    {
+      "id": "vi-nfc-003",
+      "category": "nfc_nfd",
+      "text": "Hà Nội xinh đẹp",
+      "variant": "Hà Nội xinh đẹp",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.999,
+        "rationale": "NFD with multi-combining-mark syllable (Nội = N + o + dot-below + circumflex)"
+      }
+    },
+    {
+      "id": "vi-nfc-004",
+      "category": "nfc_nfd",
+      "text": "cà phê sữa đá",
+      "variant": "cà phê sữa đá",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.999,
+        "rationale": "stress-test horn (ư = u + horn-mark U+031B) decomposition"
+      }
+    },
+    {
+      "id": "vi-nfc-005",
+      "category": "nfc_nfd",
+      "text": "bánh mì thịt nướng",
+      "variant": "bánh mì thịt nướng",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.999,
+        "rationale": "ướng (u + horn + o + horn + acute) is the worst-case combining sequence"
+      }
+    },
+    {
+      "id": "vi-tone-001",
+      "category": "tone",
+      "text": "ma",
+      "variant": "má",
+      "assertion": {
+        "kind": "cos_between",
+        "lo": 0.4,
+        "hi": 0.99,
+        "rationale": "no-tone vs acute (sắc): ghost vs cheek/mother — distinguish but don't orthogonalize"
+      }
+    },
+    {
+      "id": "vi-tone-002",
+      "category": "tone",
+      "text": "ma",
+      "variant": "mà",
+      "assertion": {
+        "kind": "cos_between",
+        "lo": 0.4,
+        "hi": 0.99,
+        "rationale": "no-tone vs grave (huyền): ghost vs but/that"
+      }
+    },
+    {
+      "id": "vi-tone-003",
+      "category": "tone",
+      "text": "má",
+      "variant": "mả",
+      "assertion": {
+        "kind": "cos_between",
+        "lo": 0.4,
+        "hi": 0.99,
+        "rationale": "acute vs hook-above (hỏi): cheek vs grave/tomb"
+      }
+    },
+    {
+      "id": "vi-tone-004",
+      "category": "tone",
+      "text": "mã",
+      "variant": "mạ",
+      "assertion": {
+        "kind": "cos_between",
+        "lo": 0.4,
+        "hi": 0.99,
+        "rationale": "tilde (ngã) vs dot-below (nặng): horse/code vs rice-seedling/plate"
+      }
+    },
+    {
+      "id": "vi-tone-005",
+      "category": "tone",
+      "text": "mà",
+      "variant": "mã",
+      "assertion": {
+        "kind": "cos_between",
+        "lo": 0.4,
+        "hi": 0.99,
+        "rationale": "grave vs tilde: closes the 6-tone matrix in 5 pairs"
+      }
+    },
+    {
+      "id": "vi-xling-001",
+      "category": "cross_lingual",
+      "text": "I love programming.",
+      "variant": "Tôi yêu lập trình.",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.75,
+        "rationale": "canonical EN↔VI semantic equivalence; granite-r2 explicit VI training should land here"
+      }
+    },
+    {
+      "id": "vi-xling-002",
+      "category": "cross_lingual",
+      "text": "How do I sort a list in Python?",
+      "variant": "Làm sao để sắp xếp một danh sách trong Python?",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.75,
+        "rationale": "technical question form — the exact retrieval shape Lunaris cares about"
+      }
+    },
+    {
+      "id": "vi-xling-003",
+      "category": "cross_lingual",
+      "text": "The weather in Hanoi is hot and humid in summer.",
+      "variant": "Thời tiết ở Hà Nội nóng và ẩm vào mùa hè.",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.75,
+        "rationale": "factual sentence with proper noun + weather vocabulary"
+      }
+    },
+    {
+      "id": "vi-xling-004",
+      "category": "cross_lingual",
+      "text": "Please save the file before closing the editor.",
+      "variant": "Vui lòng lưu tệp trước khi đóng trình chỉnh sửa.",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.75,
+        "rationale": "imperative + software-tooling vocabulary"
+      }
+    },
+    {
+      "id": "vi-xling-005",
+      "category": "cross_lingual",
+      "text": "Machine learning models require large amounts of training data.",
+      "variant": "Các mô hình học máy cần một lượng lớn dữ liệu huấn luyện.",
+      "assertion": {
+        "kind": "cos_gt",
+        "threshold": 0.75,
+        "rationale": "ML-domain sentence — Lunaris's primary retrieval domain"
+      }
+    }
+  ]
+}
