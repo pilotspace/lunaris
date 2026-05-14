@@ -2470,6 +2470,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-embed-native"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "lunaris-core",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lunaris-extract"
 version = "0.2.1"
 dependencies = [

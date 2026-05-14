@@ -31,6 +31,10 @@ members = [
   "crates/lunaris-recipes",
   "crates/lunaris-consolidate",
   "crates/lunaris-embed",
+  # Milestone v0.4 — native candle ModernBERT embedder for granite-r2.
+  # Coexists with `lunaris-embed` during the transition; see
+  # crates/lunaris-embed-native/src/lib.rs for rationale.
+  "crates/lunaris-embed-native",
   "crates/lunaris-extract",
   # Phase 11 (LLM unification) — shared LlmBackend trait + LlmConfig consumed by
   # lunaris-extract, lunaris-verify, and the turn-end reflect supervisor. Placed
