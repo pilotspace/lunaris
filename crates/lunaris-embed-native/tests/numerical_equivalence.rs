@@ -36,7 +36,7 @@ use std::path::PathBuf;
 
 use candle_core::Device;
 use lunaris_core::Embedder;
-use lunaris_embed_native::{NativeEmbedder, NativeEmbedderOpts, GRANITE_R2_DIM};
+use lunaris_embed_native::{GRANITE_R2_DIM, NativeEmbedder, NativeEmbedderOpts};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -64,10 +64,14 @@ fn load_fixture() -> Fixture {
         .join("tests")
         .join("fixtures")
         .join("reference_embeddings.json");
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
     let fx: Fixture = serde_json::from_slice(&bytes).expect("parse fixture json");
-    assert_eq!(fx.schema_version, 1, "fixture schema version mismatch");
+    // why: v2 added an NFC-normalize pre-pass on both Python (reference)
+    // and Rust (tokenizer.rs::encode_batch) sides so callers passing NFD
+    // text get the same embedding as NFC. See P1-1 finding in
+    // `.planning/phases/N-01-step-1-modernbert-fp16/P1-VERIFICATION-RESULT.md`.
+    assert_eq!(fx.schema_version, 2, "fixture schema version mismatch");
     assert_eq!(fx.dim, GRANITE_R2_DIM, "fixture dim must match crate constant");
     assert_eq!(fx.rows.len(), fx.count, "fixture row count consistency");
     assert_eq!(fx.rows.len(), 100, "panel size must be exactly 100");
@@ -105,10 +109,7 @@ async fn native_embedder_matches_sentence_transformers_within_drift_gate() {
     };
 
     let fx = load_fixture();
-    eprintln!(
-        "[it] reference: {} @ {} ({} rows)",
-        fx.model_id, fx.revision, fx.rows.len()
-    );
+    eprintln!("[it] reference: {} @ {} ({} rows)", fx.model_id, fx.revision, fx.rows.len());
 
     let opts = NativeEmbedderOpts {
         weights_path: weights,
@@ -138,11 +139,8 @@ async fn native_embedder_matches_sentence_transformers_within_drift_gate() {
     for (idx, (row, native)) in fx.rows.iter().zip(native_vecs.iter()).enumerate() {
         assert_eq!(native.len(), GRANITE_R2_DIM);
         assert_eq!(row.embedding.len(), GRANITE_R2_DIM);
-        let dot: f64 = native
-            .iter()
-            .zip(row.embedding.iter())
-            .map(|(a, b)| (*a as f64) * (*b))
-            .sum();
+        let dot: f64 =
+            native.iter().zip(row.embedding.iter()).map(|(a, b)| (*a as f64) * (*b)).sum();
         // Clamp to [-1, 1] to defend against accumulated f64 error pushing
         // the dot a hair over 1.0.
         let cos = dot.clamp(-1.0, 1.0);
@@ -174,9 +172,7 @@ async fn native_embedder_matches_sentence_transformers_within_drift_gate() {
         .zip(fx.rows[1].embedding.iter())
         .map(|(a, b)| (*a as f64) * (*b))
         .sum();
-    eprintln!(
-        "[it] non-vacuity check — cross-prompt dot (native[0] vs ref[1]) = {cross_dot:.6}"
-    );
+    eprintln!("[it] non-vacuity check — cross-prompt dot (native[0] vs ref[1]) = {cross_dot:.6}");
     eprintln!(
         "[it] sample values — native[0][0] = {:.9}, ref[0][0] = {:.9}",
         native_vecs[0][0], fx.rows[0].embedding[0]
@@ -187,10 +183,7 @@ async fn native_embedder_matches_sentence_transformers_within_drift_gate() {
          embeddings may be degenerate / constant; drift gate would be vacuous"
     );
 
-    assert!(
-        mean <= 0.005,
-        "mean cosine drift {mean:.6} exceeds 0.005 gate"
-    );
+    assert!(mean <= 0.005, "mean cosine drift {mean:.6} exceeds 0.005 gate");
     assert!(
         max_drift <= 0.02,
         "max cosine drift {max_drift:.6} exceeds 0.02 gate \

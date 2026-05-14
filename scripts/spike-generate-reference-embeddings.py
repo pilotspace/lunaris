@@ -9,6 +9,15 @@ sentence-transformers embeddings, produced via the model's standard
 `encode(.., normalize_embeddings=True)` pipeline which executes the
 `modules.json` sequence (Transformer -> CLS-Pooling -> L2 Normalize).
 
+**Inputs are NFC-normalized before embedding** to match the Rust-side
+tokenizer's `nfc()` pre-pass (see
+`crates/lunaris-embed-native/src/tokenizer.rs::encode_batch`). The
+granite-r2 `tokenizer.json` does not include an NFC/NFKC normalizer, so
+without an explicit pre-pass identical user-visible text in NFC vs NFD
+forms produces different token streams (P1-1 finding,
+`.planning/phases/N-01-step-1-modernbert-fp16/P1-VERIFICATION-RESULT.md`).
+Bumped to `schema_version: 2` to record this contract shift.
+
 Requirements (already present in this dev environment as of 2026-05-14):
 
     pip install "sentence-transformers>=5.0" "huggingface_hub>=1.0" "torch>=2.4"
@@ -27,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import unicodedata
 from pathlib import Path
 
 import torch
@@ -165,6 +175,12 @@ def assert_panel_shape() -> list[str]:
     assert len(CODE_PROMPTS) == 30, f"CODE count {len(CODE_PROMPTS)} != 30"
     all_prompts = EN_PROMPTS + VI_PROMPTS + CODE_PROMPTS
     assert len(all_prompts) == 100
+    # why: NFC-normalize every prompt to match the Rust-side tokenizer's
+    # `nfc()` pre-pass. For the current hand-curated panel this is a no-op
+    # (all prompts are already NFC), but the explicit pass is part of the
+    # v2 fixture contract — re-runs from any source (clipboard, file) MUST
+    # produce the same canonical bytes.
+    all_prompts = [unicodedata.normalize("NFC", p) for p in all_prompts]
     # Deterministic ordering — sort by sha256 so re-runs produce an
     # identical fixture file.
     return sorted(all_prompts, key=lambda s: hashlib.sha256(s.encode("utf-8")).hexdigest())
@@ -210,7 +226,10 @@ def main() -> int:
     assert embs.shape == (100, 768), f"unexpected shape {embs.shape}"
 
     fixture = {
-        "schema_version": 1,
+        # v2 (2026-05-14): inputs are NFC-normalized before embedding to
+        # match the Rust-side tokenizer's `nfc()` pre-pass. See module
+        # docstring for the P1-1 finding that drove this contract shift.
+        "schema_version": 2,
         "model_id": MODEL_ID,
         "revision": revision,
         "torch_version": torch.__version__,
