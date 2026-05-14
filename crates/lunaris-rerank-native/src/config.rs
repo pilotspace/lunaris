@@ -136,7 +136,8 @@ impl XlmRobertaRerankerConfig {
     }
 
     /// Bridge to the candle-transformers config that the model loader consumes.
-    pub(crate) fn to_candle(&self) -> candle_transformers::models::xlm_roberta::Config {
+    #[doc(hidden)]
+    pub fn to_candle(&self) -> candle_transformers::models::xlm_roberta::Config {
         candle_transformers::models::xlm_roberta::Config {
             hidden_size: self.hidden_size,
             layer_norm_eps: self.layer_norm_eps,

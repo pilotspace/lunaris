@@ -115,6 +115,14 @@ impl NativeQuantizedReranker {
         Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }
 
+    /// Diagnostic-only accessor for the inner `QuantizedXlmRoberta`. Used by
+    /// the layerwise-diff test to call `forward_hidden`. Not part of the
+    /// stable public API; gated to test-relevant work only.
+    #[doc(hidden)]
+    pub fn inner_for_test(&self) -> &QuantizedXlmRoberta {
+        &self.inner.model
+    }
+
     /// Synchronous score path — for tests / direct callers that already have
     /// the inputs marshalled. The async trait method wraps this in
     /// `spawn_blocking`.
