@@ -102,14 +102,57 @@ let _: Arc<dyn Embedder> = Arc::new(embedder); // dyn-compatible
 # Ok(()) }
 ```
 
+## Q4_K_M quantized path (feature `embedder-gguf`)
+
+> **Status (2026-05-14): scaffold landed; forward-pass body pending.** The
+> GGUF conversion gate is cleared (artifact verified end-to-end), the
+> SHA-256 is pinned in `lib.rs::GRANITE_R2_GGUF_Q4_SHA256`, and the RED
+> integration test under `tests/quantized_equivalence.rs` is in place.
+> `NativeQuantizedEmbedder::embed_batch` returns
+> `NotImplemented` until the next-session port lands the actual quantized
+> forward pass — see `.planning/phases/N-01-step-2-quantized-gguf/SUMMARY.md`
+> for the handoff.
+
+```bash
+# 1) one-shot conversion: granite-r2 safetensors → Q4_K_M GGUF (idempotent)
+bash scripts/spike-convert-granite-r2-to-gguf.sh
+
+# 2) export env vars (the FP16 paths + the new GGUF path)
+export GRANITE_R2_WEIGHTS_PATH=~/.cache/lunaris/spike/granite-r2/models--ibm-granite--granite-embedding-311m-multilingual-r2/snapshots/dba7b0ee9d789f330fecfb85df57699f9e7d9c42/model.safetensors
+export GRANITE_R2_TOKENIZER_PATH=~/.cache/lunaris/spike/granite-r2/models--ibm-granite--granite-embedding-311m-multilingual-r2/snapshots/dba7b0ee9d789f330fecfb85df57699f9e7d9c42/tokenizer.json
+export GRANITE_R2_CONFIG_PATH=~/.cache/lunaris/spike/granite-r2/models--ibm-granite--granite-embedding-311m-multilingual-r2/snapshots/dba7b0ee9d789f330fecfb85df57699f9e7d9c42/config.json
+export GRANITE_R2_GGUF_PATH=~/.cache/lunaris/spike/granite-r2/gguf/granite-r2-311m-Q4_K_M.gguf
+
+# 3) drift gate (RED until the port lands)
+cargo test -p lunaris-embed-native \
+    --features 'embedder-it,embedder-gguf' \
+    --test quantized_equivalence -- --nocapture
+```
+
+Pinned artifact:
+
+| Field         | Value                                                                |
+|---------------|----------------------------------------------------------------------|
+| Path          | `~/.cache/lunaris/spike/granite-r2/gguf/granite-r2-311m-Q4_K_M.gguf` |
+| Size          | **240.7 MiB** (61.1 % smaller than the 620 MB fp16 safetensors)      |
+| SHA-256       | `0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276`   |
+| BPW           | 6.10 (Q4_K with Q5_0 / Q6_K / Q8_0 fallbacks per tensor)             |
+| llama.cpp HEAD| `ccb9e9b7c` (PR [#22716] applied for granite-r2 tokenizer support)   |
+
+Drift gate (asserted by `tests/quantized_equivalence.rs` once the port
+lands): **mean cosine drift ≤ 0.01 / max ≤ 0.03** versus the FP16 native
+path, with a non-vacuity guard on cross-prompt cosine < 0.97.
+
+[#22716]: https://github.com/ggml-org/llama.cpp/pull/22716
+
 ## Out of scope
 
-This crate is **only** the FP16 forward pass. Follow-up milestones:
+Even after both FP16 and Q4 land here, the following stay in follow-ups:
 
-- Q4 quantization (8-bit / 4-bit weights, target ~310 MB RSS)
 - Reranker port (`granite-reranker` or `bge-reranker-base`)
 - Deletion of fastembed / candle-gemma / ollama from `lunaris-embed`
 - Lunaris handle wiring (`Lunaris::open(...).with_native_embedder(...)`)
+- Metal / CUDA paths (the hardware-optimization milestone)
 
 ## References
 
