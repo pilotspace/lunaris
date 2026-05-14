@@ -43,14 +43,54 @@ pub mod reranker;
 pub mod tokenizer;
 pub mod xlmr_reranker;
 
+#[cfg(feature = "reranker-gguf")]
+pub mod quantized_reranker;
+#[cfg(feature = "reranker-gguf")]
+pub mod quantized_xlmr;
+
 pub use config::{ConfigError, XlmRobertaRerankerConfig};
 pub use reranker::{NativeReranker, NativeRerankerError, NativeRerankerOpts};
 pub use tokenizer::{EncodedPairBatch, PairTokenizer, TokenizerError};
 pub use xlmr_reranker::{ForwardError, XlmRobertaReranker};
 
+#[cfg(feature = "reranker-gguf")]
+pub use quantized_reranker::{
+    NativeQuantizedReranker, NativeQuantizedRerankerError, NativeQuantizedRerankerOpts,
+};
+#[cfg(feature = "reranker-gguf")]
+pub use quantized_xlmr::{QuantizedRerankError, QuantizedXlmRoberta};
+
 /// Hidden-state width of `BAAI/bge-reranker-v2-m3` (XLM-RoBERTa-large).
 /// Public for downstream sanity-checks.
 pub const BGE_RERANKER_V2_M3_DIM: usize = 1024;
+
+/// SHA-256 of the canonical imatrix-calibrated **Q5_K_M** GGUF for
+/// `BAAI/bge-reranker-v2-m3`, produced by
+/// `scripts/spike-imatrix-bge-rerank.sh` (llama.cpp mainline `ccb9e9b7c` +
+/// PR #22716). The constant name retains the historical `Q4` token for
+/// API-compat; the actual quant level is recorded here in the docstring
+/// and in the `Q4_K_M.sha256` artifact alongside the GGUF.
+///
+/// Producers should call `scripts/spike-imatrix-bge-rerank.sh` to
+/// (re)produce this artifact; consumers should verify the SHA-256 of the
+/// `.gguf` file at load time and refuse to proceed on mismatch.
+///
+/// File size at this pin: **446 MiB / 6.50 BPW** (imatrix Q5_K_M).
+///
+/// Why Q5_K_M and not plain Q4_K_M? The N-02 step 2 brief targeted
+/// ≤ 320 MiB. Plain Q4_K_M (240 MiB / 4.53 BPW) and imatrix-Q4_K_M
+/// (418 MiB / 6.08 BPW — `token_embd` auto-upgrades to Q6 when imatrix
+/// doesn't cover it) both fail the ≤ 0.10 sigmoid-space drift gate on
+/// rare-token / cross-lingual pairs (max delta 0.218 plain, 0.355
+/// imatrix-Q4). The non-quantizable F32 floor (250 k vocab × 1024 +
+/// 8192-row position table + per-tensor F32 biases on every linear)
+/// makes the 320 MiB target unreachable without aggressive embedding
+/// quant that drives drift > gate. Q5_K_M + imatrix at 446 MiB lands
+/// the drift gate at max=0.0425 / mean=0.00421 — both well inside the
+/// 0.10 / 0.04 contract. The size deviation vs the original 320 MiB
+/// target is the cost of correctness on multilingual inputs.
+pub const BGE_RERANKER_GGUF_Q4_SHA256: &str =
+    "6cdcc566200dba69553a89a9d59ff6d631e33969bc9367eff6914919f7722a1c";
 
 /// Max sequence length used for pair encoding `(query, doc)`. bge-reranker-v2-m3's
 /// `tokenizer_config.json` ships `model_max_length: 8192`, but the released

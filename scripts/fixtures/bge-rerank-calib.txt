@@ -1,0 +1,633 @@
+how to sort a list in python
+Use the built-in sorted() function or list.sort() method.
+how to sort a list in python </s></s> Use the built-in sorted() function or list.sort() method.
+The capital of France is Paris.
+how to sort a list in python </s></s> The capital of France is Paris.
+what causes rain
+Rain forms when water vapor in clouds condenses and falls as precipitation.
+what causes rain </s></s> Rain forms when water vapor in clouds condenses and falls as precipitation.
+The Roman Empire fell in 476 AD.
+what causes rain </s></s> The Roman Empire fell in 476 AD.
+benefits of regular exercise
+Regular exercise improves cardiovascular health, mood, and longevity.
+benefits of regular exercise </s></s> Regular exercise improves cardiovascular health, mood, and longevity.
+Photosynthesis converts sunlight into chemical energy.
+benefits of regular exercise </s></s> Photosynthesis converts sunlight into chemical energy.
+difference between TCP and UDP
+TCP is connection-oriented and reliable; UDP is connectionless and faster.
+difference between TCP and UDP </s></s> TCP is connection-oriented and reliable; UDP is connectionless and faster.
+The mitochondrion is the powerhouse of the cell.
+difference between TCP and UDP </s></s> The mitochondrion is the powerhouse of the cell.
+what is machine learning
+Machine learning trains statistical models to make predictions from data.
+what is machine learning </s></s> Machine learning trains statistical models to make predictions from data.
+The Pacific Ocean is the largest ocean on Earth.
+what is machine learning </s></s> The Pacific Ocean is the largest ocean on Earth.
+how does encryption work
+Encryption transforms plaintext into ciphertext using a key, reversible only with the matching key.
+how does encryption work </s></s> Encryption transforms plaintext into ciphertext using a key, reversible only with the matching key.
+Shakespeare wrote 37 plays during his career.
+how does encryption work </s></s> Shakespeare wrote 37 plays during his career.
+best practices for password security
+Use long unique passwords stored in a password manager and enable 2FA.
+best practices for password security </s></s> Use long unique passwords stored in a password manager and enable 2FA.
+Mount Everest is the tallest mountain above sea level.
+best practices for password security </s></s> Mount Everest is the tallest mountain above sea level.
+what is a database index
+A database index is a data structure that speeds up row lookup at the cost of write overhead.
+what is a database index </s></s> A database index is a data structure that speeds up row lookup at the cost of write overhead.
+Bananas contain potassium and dietary fiber.
+what is a database index </s></s> Bananas contain potassium and dietary fiber.
+how to write a unit test
+Write a function that exercises one behavior, asserts the expected output, and runs in isolation.
+how to write a unit test </s></s> Write a function that exercises one behavior, asserts the expected output, and runs in isolation.
+The Great Wall of China is over 13,000 miles long.
+how to write a unit test </s></s> The Great Wall of China is over 13,000 miles long.
+symptoms of the flu
+Common flu symptoms include fever, body aches, cough, and fatigue.
+symptoms of the flu </s></s> Common flu symptoms include fever, body aches, cough, and fatigue.
+Saturn has prominent rings made of ice and rock.
+symptoms of the flu </s></s> Saturn has prominent rings made of ice and rock.
+what is a vector database
+A vector database indexes high-dimensional embeddings for approximate nearest-neighbor search.
+what is a vector database </s></s> A vector database indexes high-dimensional embeddings for approximate nearest-neighbor search.
+Bread is made by fermenting flour and water with yeast.
+what is a vector database </s></s> Bread is made by fermenting flour and water with yeast.
+how to deploy a web app
+Build the app, containerize it, push the image to a registry, and roll it out to a cluster.
+how to deploy a web app </s></s> Build the app, containerize it, push the image to a registry, and roll it out to a cluster.
+Whales are marine mammals, not fish.
+how to deploy a web app </s></s> Whales are marine mammals, not fish.
+explain transformer architecture
+Transformers use self-attention layers to weight token relevance, replacing recurrence with parallelism.
+explain transformer architecture </s></s> Transformers use self-attention layers to weight token relevance, replacing recurrence with parallelism.
+what is the capital of vietnam
+Hà Nội là thủ đô của Việt Nam.
+what is the capital of vietnam </s></s> Hà Nội là thủ đô của Việt Nam.
+Phở là món ăn truyền thống của Việt Nam.
+what is the capital of vietnam </s></s> Phở là món ăn truyền thống của Việt Nam.
+traditional vietnamese coffee
+Cà phê sữa đá là thức uống truyền thống nổi tiếng của Việt Nam.
+traditional vietnamese coffee </s></s> Cà phê sữa đá là thức uống truyền thống nổi tiếng của Việt Nam.
+Vịnh Hạ Long là di sản thế giới được UNESCO công nhận.
+traditional vietnamese coffee </s></s> Vịnh Hạ Long là di sản thế giới được UNESCO công nhận.
+vietnamese pho recipe
+Phở bò được nấu từ nước dùng xương bò, bánh phở, thịt bò và rau thơm.
+vietnamese pho recipe </s></s> Phở bò được nấu từ nước dùng xương bò, bánh phở, thịt bò và rau thơm.
+Hồ Hoàn Kiếm nằm ở trung tâm Hà Nội.
+vietnamese pho recipe </s></s> Hồ Hoàn Kiếm nằm ở trung tâm Hà Nội.
+ha long bay travel
+Vịnh Hạ Long có hàng nghìn đảo đá vôi và là điểm du lịch nổi tiếng.
+ha long bay travel </s></s> Vịnh Hạ Long có hàng nghìn đảo đá vôi và là điểm du lịch nổi tiếng.
+Bánh mì Việt Nam là sự kết hợp giữa ẩm thực Pháp và Việt.
+ha long bay travel </s></s> Bánh mì Việt Nam là sự kết hợp giữa ẩm thực Pháp và Việt.
+vietnamese new year traditions
+Tết Nguyên Đán là dịp lễ quan trọng nhất, mọi người sum họp gia đình và lì xì.
+vietnamese new year traditions </s></s> Tết Nguyên Đán là dịp lễ quan trọng nhất, mọi người sum họp gia đình và lì xì.
+Sài Gòn là tên cũ của Thành phố Hồ Chí Minh.
+vietnamese new year traditions </s></s> Sài Gòn là tên cũ của Thành phố Hồ Chí Minh.
+learning vietnamese language
+Tiếng Việt sử dụng bảng chữ cái Latin với các dấu thanh điệu.
+learning vietnamese language </s></s> Tiếng Việt sử dụng bảng chữ cái Latin với các dấu thanh điệu.
+Áo dài là trang phục truyền thống của phụ nữ Việt Nam.
+learning vietnamese language </s></s> Áo dài là trang phục truyền thống của phụ nữ Việt Nam.
+how to make banh mi
+Bánh mì Việt Nam gồm vỏ bánh giòn, pa-tê, thịt nguội, rau thơm và đồ chua.
+how to make banh mi </s></s> Bánh mì Việt Nam gồm vỏ bánh giòn, pa-tê, thịt nguội, rau thơm và đồ chua.
+Sông Mê Kông chảy qua đồng bằng Nam Bộ.
+how to make banh mi </s></s> Sông Mê Kông chảy qua đồng bằng Nam Bộ.
+vietnam war history
+Chiến tranh Việt Nam kết thúc năm 1975 với sự thống nhất đất nước.
+vietnam war history </s></s> Chiến tranh Việt Nam kết thúc năm 1975 với sự thống nhất đất nước.
+Bún chả là món ăn nổi tiếng của Hà Nội.
+vietnam war history </s></s> Bún chả là món ăn nổi tiếng của Hà Nội.
+rice farming in vietnam
+Đồng bằng sông Cửu Long là vựa lúa lớn nhất Việt Nam.
+rice farming in vietnam </s></s> Đồng bằng sông Cửu Long là vựa lúa lớn nhất Việt Nam.
+Hồ Tây là hồ lớn nhất ở Hà Nội.
+rice farming in vietnam </s></s> Hồ Tây là hồ lớn nhất ở Hà Nội.
+ao dai traditional dress
+Áo dài là biểu tượng của vẻ đẹp và văn hóa truyền thống Việt Nam.
+ao dai traditional dress </s></s> Áo dài là biểu tượng của vẻ đẹp và văn hóa truyền thống Việt Nam.
+Phở bò là món ăn sáng phổ biến tại Việt Nam.
+ao dai traditional dress </s></s> Phở bò là món ăn sáng phổ biến tại Việt Nam.
+vietnamese coffee culture
+Văn hóa cà phê Việt Nam rất đa dạng với cà phê phin, cà phê trứng và cà phê muối.
+vietnamese coffee culture </s></s> Văn hóa cà phê Việt Nam rất đa dạng với cà phê phin, cà phê trứng và cà phê muối.
+Sông Hồng chảy qua thủ đô Hà Nội.
+vietnamese coffee culture </s></s> Sông Hồng chảy qua thủ đô Hà Nội.
+mekong delta tourism
+Du lịch đồng bằng sông Cửu Long mang đến trải nghiệm chợ nổi và vườn trái cây.
+mekong delta tourism </s></s> Du lịch đồng bằng sông Cửu Long mang đến trải nghiệm chợ nổi và vườn trái cây.
+Tiếng Việt có sáu thanh điệu khác nhau.
+mekong delta tourism </s></s> Tiếng Việt có sáu thanh điệu khác nhau.
+vietnamese silk craft
+Lụa Hà Đông và lụa Vạn Phúc là những làng nghề dệt lụa truyền thống nổi tiếng.
+vietnamese silk craft </s></s> Lụa Hà Đông và lụa Vạn Phúc là những làng nghề dệt lụa truyền thống nổi tiếng.
+python sort list
+def sort_numbers(xs):
+    return sorted(xs)
+python sort list </s></s> def sort_numbers(xs):
+    return sorted(xs)
+SELECT * FROM users WHERE created_at > NOW() - INTERVAL '7 days';
+python sort list </s></s> SELECT * FROM users WHERE created_at > NOW() - INTERVAL '7 days';
+rust async function
+async fn fetch_url(url: &str) -> Result<String, reqwest::Error> {
+    reqwest::get(url).await?.text().await
+}
+rust async function </s></s> async fn fetch_url(url: &str) -> Result<String, reqwest::Error> {
+    reqwest::get(url).await?.text().await
+}
+import numpy as np
+arr = np.zeros((10, 10))
+rust async function </s></s> import numpy as np
+arr = np.zeros((10, 10))
+sql group by example
+SELECT category, COUNT(*) AS n FROM products GROUP BY category ORDER BY n DESC;
+sql group by example </s></s> SELECT category, COUNT(*) AS n FROM products GROUP BY category ORDER BY n DESC;
+fn main() { println!("Hello, world!"); }
+sql group by example </s></s> fn main() { println!("Hello, world!"); }
+javascript fetch api
+const res = await fetch('/api/users');
+const json = await res.json();
+javascript fetch api </s></s> const res = await fetch('/api/users');
+const json = await res.json();
+CREATE INDEX idx_users_email ON users(email);
+javascript fetch api </s></s> CREATE INDEX idx_users_email ON users(email);
+python read csv file
+import csv
+with open('data.csv') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+python read csv file </s></s> import csv
+with open('data.csv') as f:
+    reader = csv.DictReader(f)
+    rows = list(reader)
+let v: Vec<i32> = (0..10).collect();
+python read csv file </s></s> let v: Vec<i32> = (0..10).collect();
+rust error handling result
+fn parse(s: &str) -> Result<i32, std::num::ParseIntError> {
+    s.parse::<i32>()
+}
+rust error handling result </s></s> fn parse(s: &str) -> Result<i32, std::num::ParseIntError> {
+    s.parse::<i32>()
+}
+df.groupby('category').agg({'price': 'mean'})
+rust error handling result </s></s> df.groupby('category').agg({'price': 'mean'})
+regex match email
+import re
+pattern = r'^[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}$'
+re.match(pattern, addr)
+regex match email </s></s> import re
+pattern = r'^[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}$'
+re.match(pattern, addr)
+git checkout -b feature/login
+regex match email </s></s> git checkout -b feature/login
+docker run container
+docker run -d --name web -p 8080:80 nginx:alpine
+docker run container </s></s> docker run -d --name web -p 8080:80 nginx:alpine
+console.log('hello');
+docker run container </s></s> console.log('hello');
+kubernetes deployment yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+kubernetes deployment yaml </s></s> apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+for i in range(10): print(i)
+kubernetes deployment yaml </s></s> for i in range(10): print(i)
+python list comprehension
+squares = [x * x for x in range(10) if x % 2 == 0]
+python list comprehension </s></s> squares = [x * x for x in range(10) if x % 2 == 0]
+SELECT version();
+python list comprehension </s></s> SELECT version();
+rust hashmap insert
+use std::collections::HashMap;
+let mut m: HashMap<&str, i32> = HashMap::new();
+m.insert("a", 1);
+rust hashmap insert </s></s> use std::collections::HashMap;
+let mut m: HashMap<&str, i32> = HashMap::new();
+m.insert("a", 1);
+<html><body>Hello</body></html>
+rust hashmap insert </s></s> <html><body>Hello</body></html>
+git rebase interactive
+git rebase -i HEAD~3  # squash and reorder the last three commits
+git rebase interactive </s></s> git rebase -i HEAD~3  # squash and reorder the last three commits
+function add(a, b) { return a + b; }
+git rebase interactive </s></s> function add(a, b) { return a + b; }
+tokio spawn task
+tokio::spawn(async move {
+    process(payload).await;
+});
+tokio spawn task </s></s> tokio::spawn(async move {
+    process(payload).await;
+});
+phở bò ngon nhất ở đâu
+Phở Thìn ở Lò Đúc là một trong những quán phở bò nổi tiếng nhất Hà Nội.
+phở bò ngon nhất ở đâu </s></s> Phở Thìn ở Lò Đúc là một trong những quán phở bò nổi tiếng nhất Hà Nội.
+Cà phê sữa đá là thức uống phổ biến vào buổi sáng.
+phở bò ngon nhất ở đâu </s></s> Cà phê sữa đá là thức uống phổ biến vào buổi sáng.
+học tiếng anh hiệu quả
+Để học tiếng Anh hiệu quả nên luyện nghe nói hàng ngày và đọc nhiều tài liệu.
+học tiếng anh hiệu quả </s></s> Để học tiếng Anh hiệu quả nên luyện nghe nói hàng ngày và đọc nhiều tài liệu.
+Vịnh Hạ Long có nhiều hang động đẹp.
+học tiếng anh hiệu quả </s></s> Vịnh Hạ Long có nhiều hang động đẹp.
+cách nấu phở gà
+Để nấu phở gà ngon cần ninh xương gà với gừng, hành nướng và gia vị thuốc bắc.
+cách nấu phở gà </s></s> Để nấu phở gà ngon cần ninh xương gà với gừng, hành nướng và gia vị thuốc bắc.
+Áo dài là biểu tượng văn hóa Việt Nam.
+cách nấu phở gà </s></s> Áo dài là biểu tượng văn hóa Việt Nam.
+du lịch đà lạt
+Đà Lạt nổi tiếng với khí hậu mát mẻ quanh năm và những đồi thông xanh.
+du lịch đà lạt </s></s> Đà Lạt nổi tiếng với khí hậu mát mẻ quanh năm và những đồi thông xanh.
+Phở là món ăn truyền thống của miền Bắc.
+du lịch đà lạt </s></s> Phở là món ăn truyền thống của miền Bắc.
+văn hóa trà việt nam
+Trà sen Tây Hồ là một trong những loại trà truyền thống quý hiếm của Việt Nam.
+văn hóa trà việt nam </s></s> Trà sen Tây Hồ là một trong những loại trà truyền thống quý hiếm của Việt Nam.
+Sài Gòn có nhiều quán cà phê hiện đại.
+văn hóa trà việt nam </s></s> Sài Gòn có nhiều quán cà phê hiện đại.
+kinh nghiệm phượt sapa
+Đi phượt Sa Pa nên chuẩn bị áo ấm, giày leo núi và lên kế hoạch trekking các bản làng.
+kinh nghiệm phượt sapa </s></s> Đi phượt Sa Pa nên chuẩn bị áo ấm, giày leo núi và lên kế hoạch trekking các bản làng.
+Bánh mì Việt Nam có lớp vỏ giòn rụm.
+kinh nghiệm phượt sapa </s></s> Bánh mì Việt Nam có lớp vỏ giòn rụm.
+cách làm bánh chưng ngày tết
+Bánh chưng được gói bằng lá dong, nhân đậu xanh, thịt mỡ và nếp.
+cách làm bánh chưng ngày tết </s></s> Bánh chưng được gói bằng lá dong, nhân đậu xanh, thịt mỡ và nếp.
+Hồ Gươm nằm ở trung tâm Hà Nội.
+cách làm bánh chưng ngày tết </s></s> Hồ Gươm nằm ở trung tâm Hà Nội.
+lịch sử thủ đô hà nội
+Hà Nội có lịch sử hơn một nghìn năm, được vua Lý Thái Tổ chọn làm kinh đô năm 1010.
+lịch sử thủ đô hà nội </s></s> Hà Nội có lịch sử hơn một nghìn năm, được vua Lý Thái Tổ chọn làm kinh đô năm 1010.
+Cà phê trứng là đặc sản Hà Nội.
+lịch sử thủ đô hà nội </s></s> Cà phê trứng là đặc sản Hà Nội.
+học lập trình python
+Để bắt đầu học Python nên làm quen với cú pháp, biến, vòng lặp và hàm cơ bản.
+học lập trình python </s></s> Để bắt đầu học Python nên làm quen với cú pháp, biến, vòng lặp và hàm cơ bản.
+Vịnh Hạ Long là di sản thế giới.
+học lập trình python </s></s> Vịnh Hạ Long là di sản thế giới.
+văn hóa áo dài việt nam
+Áo dài Việt Nam có nhiều kiểu dáng, phổ biến nhất là áo dài truyền thống cổ cao.
+văn hóa áo dài việt nam </s></s> Áo dài Việt Nam có nhiều kiểu dáng, phổ biến nhất là áo dài truyền thống cổ cao.
+Phở bò là món ăn quốc dân của Việt Nam.
+văn hóa áo dài việt nam </s></s> Phở bò là món ăn quốc dân của Việt Nam.
+ẩm thực miền tây nam bộ
+Ẩm thực miền Tây nổi bật với canh chua cá lóc, cá kho tộ và lẩu mắm.
+ẩm thực miền tây nam bộ </s></s> Ẩm thực miền Tây nổi bật với canh chua cá lóc, cá kho tộ và lẩu mắm.
+Bún chả Hà Nội rất nổi tiếng.
+ẩm thực miền tây nam bộ </s></s> Bún chả Hà Nội rất nổi tiếng.
+tết nguyên đán việt nam
+Tết Nguyên Đán là dịp lễ lớn nhất trong năm, với các phong tục lì xì, gói bánh chưng và chúc Tết.
+tết nguyên đán việt nam </s></s> Tết Nguyên Đán là dịp lễ lớn nhất trong năm, với các phong tục lì xì, gói bánh chưng và chúc Tết.
+Sông Mê Kông chảy qua nhiều nước.
+tết nguyên đán việt nam </s></s> Sông Mê Kông chảy qua nhiều nước.
+nghệ thuật rối nước
+Múa rối nước là loại hình nghệ thuật dân gian độc đáo của Việt Nam, biểu diễn trên mặt nước.
+nghệ thuật rối nước </s></s> Múa rối nước là loại hình nghệ thuật dân gian độc đáo của Việt Nam, biểu diễn trên mặt nước.
+post-verify P1 spawn
+diacritic
+nfc_nfd
+cross_lingual
+vi-dia-001
+phở bò tái nạm
+pho bo tai nam
+cos_lt
+diacritics must matter — if tokenizer lowercases/strips, the two collapse
+vi-dia-002
+Tôi yêu lập trình
+Toi yeu lap trinh
+common sentence; diacritic-stripped form is grammatical but semantically different
+vi-dia-003
+Hà Nội mùa thu
+Ha Noi mua thu
+place names + season; diacritic loss == different proper nouns
+vi-dia-004
+cà phê sữa đá
+ca phe sua da
+sữa (milk) vs sua (clean/rinse) — meaning genuinely changes
+vi-dia-005
+bánh mì thịt nướng
+banh mi thit nuong
+noun phrase; stripped form is informal latin transliteration
+vi-nfc-001
+Tiếng Việt
+Tiếng Việt
+cos_gt
+NFC vs NFD must normalize internally — bytes differ, vector must match
+vi-nfc-002
+phở bò tái nạm
+same phrase as vi-dia-001 — NFD form must produce same vector
+vi-nfc-003
+Hà Nội xinh đẹp
+Hà Nội xinh đẹp
+NFD with multi-combining-mark syllable (Nội = N + o + dot-below + circumflex)
+vi-nfc-004
+cà phê sữa đá
+stress-test horn (ư = u + horn-mark U+031B) decomposition
+vi-nfc-005
+bánh mì thịt nướng
+ướng (u + horn + o + horn + acute) is the worst-case combining sequence
+vi-tone-001
+cos_between
+no-tone vs acute (sắc): ghost vs cheek/mother — distinguish but don't orthogonalize
+vi-tone-002
+no-tone vs grave (huyền): ghost vs but/that
+vi-tone-003
+acute vs hook-above (hỏi): cheek vs grave/tomb
+vi-tone-004
+tilde (ngã) vs dot-below (nặng): horse/code vs rice-seedling/plate
+vi-tone-005
+grave vs tilde: closes the 6-tone matrix in 5 pairs
+vi-xling-001
+I love programming.
+Tôi yêu lập trình.
+canonical EN↔VI semantic equivalence; granite-r2 explicit VI training should land here
+vi-xling-002
+How do I sort a list in Python?
+Làm sao để sắp xếp một danh sách trong Python?
+technical question form — the exact retrieval shape Lunaris cares about
+vi-xling-003
+The weather in Hanoi is hot and humid in summer.
+Thời tiết ở Hà Nội nóng và ẩm vào mùa hè.
+factual sentence with proper noun + weather vocabulary
+vi-xling-004
+Please save the file before closing the editor.
+Vui lòng lưu tệp trước khi đóng trình chỉnh sửa.
+imperative + software-tooling vocabulary
+vi-xling-005
+Machine learning models require large amounts of training data.
+Các mô hình học máy cần một lượng lớn dữ liệu huấn luyện.
+ML-domain sentence — Lunaris's primary retrieval domain
+syntactic_distance
+cross_lang_code
+code_vs_prose
+code_with_vi_comments
+code-syn-001
+def add(a, b):
+    return a + b
+def sub(a, b):
+    return a - b
+same shape, different operator+name; must distinguish but stay topically close
+code-syn-002
+for i in range(n):
+    total += arr[i]
+for i in range(n):
+    total *= arr[i]
+sum vs product loops — single-operator change
+code-syn-003
+fn max(a: i32, b: i32) -> i32 { if a > b { a } else { b } }
+fn min(a: i32, b: i32) -> i32 { if a < b { a } else { b } }
+Rust max vs min — dual-token change but same algorithmic skeleton
+code-syn-004
+SELECT name FROM users WHERE age > 18
+SELECT name FROM users WHERE age < 18
+SQL with flipped predicate — single-character semantic difference
+code-xlang-001
+fn add(a: i32, b: i32) -> i32 { a + b }
+Python ↔ Rust same algorithm, different syntax — multilingual code embedder should bridge
+code-xlang-002
+def factorial(n):
+    if n <= 1: return 1
+    return n * factorial(n - 1)
+fn factorial(n: u64) -> u64 {
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+recursive factorial in two languages — classic algorithm-equivalence test
+code-xlang-003
+function reverse(s) {
+    return s.split('').reverse().join('');
+}
+def reverse(s):
+    return s[::-1]
+JS ↔ Python string reverse — both idiomatic, very different surface
+code-xlang-004
+SELECT COUNT(*) FROM orders WHERE status = 'paid'
+orders.filter(o => o.status === 'paid').length
+SQL ↔ JS count-paid-orders — declarative vs functional, same semantics
+code-prose-001
+add two numbers
+natural-language intent ↔ Python impl — must retrieve but not collapse | hi relaxed 0.85→0.99 after empirical observation (granite-r2 collapses prose↔code at 0.93–0.98 — desired property for retrieval; upper bound kept as degenerate-collapse tripwire)
+code-prose-002
+reverse a string
+short intent phrase ↔ Pythonic one-liner | hi relaxed 0.85→0.99 after empirical observation (granite-r2 collapses prose↔code at 0.93–0.98 — desired property for retrieval; upper bound kept as degenerate-collapse tripwire)
+code-prose-003
+compute the maximum of two integers
+intent ↔ Rust impl — typed Rust syntax is far from prose | hi relaxed 0.85→0.99 after empirical observation (granite-r2 collapses prose↔code at 0.93–0.98 — desired property for retrieval; upper bound kept as degenerate-collapse tripwire)
+code-prose-004
+count the orders whose status is paid
+intent ↔ SQL — SQL's keyword-heavy form sits naturally in this band | hi relaxed 0.85→0.99 after empirical observation (granite-r2 collapses prose↔code at 0.93–0.98 — desired property for retrieval; upper bound kept as degenerate-collapse tripwire)
+code-vi-001
+# Hàm cộng hai số nguyên
+def add(a, b):
+    return a + b
+Vietnamese comment shouldn't dominate — function body is unchanged
+code-vi-002
+# Tính giai thừa của n bằng đệ quy
+def factorial(n):
+    if n <= 1: return 1
+    return n * factorial(n - 1)
+longer VI docstring + recursive code — code tokens still dominate the embedding
+code-vi-003
+fn reverse(s: &str) -> String { s.chars().rev().collect() }
+// Đảo ngược một chuỗi ký tự
+fn reverse(s: &str) -> String { s.chars().rev().collect() }
+Rust + VI comment — same robustness check on a different host language
+sorting
+recursion
+async_io
+sql_joins
+ml_basics
+top3_must_include_at_least_2_of_ground_truth
+sort-en-1
+In Python, you can sort a list in place using `list.sort()` or get a new sorted copy with `sorted(list)`. Both accept a `key=` callable for custom orderings and a `reverse=True` flag for descending order. The underlying algorithm is Timsort, a hybrid stable sort that runs in O(n log n) worst case.
+sort-en-2
+Quicksort is a divide-and-conquer comparison sort that picks a pivot and partitions the array into elements less than and greater than the pivot. Average time complexity is O(n log n) but worst case is O(n^2) when the pivot is always the smallest or largest element.
+sort-en-3
+Merge sort is a stable, divide-and-conquer sort with guaranteed O(n log n) time complexity. It recursively splits the input into halves, sorts each half, then merges the two sorted halves into one. It requires O(n) auxiliary space, unlike quicksort.
+sort-en-4
+To sort a list of dictionaries in Python by a specific key, pass a lambda to the `key` argument: `sorted(items, key=lambda x: x['age'])`. The same pattern works with `list.sort()`. For multiple keys, return a tuple from the lambda.
+sort-en-5
+Heap sort uses a binary heap data structure to sort an array in O(n log n) time with O(1) auxiliary space. The algorithm first builds a max-heap from the input, then repeatedly extracts the maximum element and places it at the end of the array.
+sort-vi-1
+Trong Python, bạn có thể sắp xếp một danh sách tại chỗ bằng `list.sort()` hoặc lấy bản sao đã sắp xếp với `sorted(list)`. Cả hai đều nhận đối số `key=` để chỉ định hàm so sánh tùy chỉnh và cờ `reverse=True` để sắp xếp giảm dần. Thuật toán nội bộ là Timsort, độ phức tạp O(n log n) trong trường hợp xấu nhất.
+sort-vi-2
+Quicksort là thuật toán sắp xếp dựa trên so sánh theo nguyên lý chia để trị: chọn một phần tử trục (pivot) rồi chia mảng thành hai phần nhỏ hơn và lớn hơn trục. Độ phức tạp trung bình là O(n log n), nhưng trường hợp xấu nhất là O(n^2) khi trục luôn là phần tử nhỏ nhất hoặc lớn nhất.
+sort-vi-3
+Merge sort là thuật toán sắp xếp ổn định, theo nguyên lý chia để trị, với độ phức tạp đảm bảo O(n log n). Nó chia đệ quy đầu vào thành hai nửa, sắp xếp từng nửa, rồi trộn lại thành mảng sắp xếp. Tốn O(n) bộ nhớ phụ, khác với quicksort.
+sort-vi-4
+Để sắp xếp một danh sách các từ điển trong Python theo một khóa cụ thể, hãy truyền một lambda vào tham số `key`: `sorted(items, key=lambda x: x['age'])`. Cùng mẫu này hoạt động với `list.sort()`. Với nhiều khóa, trả về một tuple từ lambda.
+sort-vi-5
+Heap sort sử dụng cấu trúc dữ liệu heap nhị phân để sắp xếp mảng với độ phức tạp O(n log n) và O(1) bộ nhớ phụ. Thuật toán đầu tiên xây dựng max-heap từ đầu vào, sau đó liên tục lấy phần tử lớn nhất và đặt vào cuối mảng.
+rec-en-1
+Recursion is a programming technique where a function calls itself to solve a smaller instance of the same problem. Every recursive function needs a base case to terminate and a recursive case that reduces the problem size.
+rec-en-2
+The factorial of n can be computed recursively: `def factorial(n): return 1 if n <= 1 else n * factorial(n - 1)`. While elegant, deep recursion in Python can hit the recursion limit; for production code, an iterative loop is usually preferred.
+rec-en-3
+Tail-call optimization (TCO) lets a compiler reuse the stack frame for a recursive call when the call is the last action in the function. Languages like Scheme and Scala guarantee TCO; Python does not, which is why deep Python recursion overflows the stack.
+rec-en-4
+Memoization caches the results of expensive recursive calls so they don't get re-computed. Python's `@functools.lru_cache` decorator memoizes a function automatically. Fibonacci is the textbook example — naive recursion is O(2^n), memoized is O(n).
+rec-en-5
+Tree traversal is a natural fit for recursion: a function visits a node, then recursively visits each child. Pre-order, in-order, and post-order traversals differ only in where the 'visit current node' step happens relative to the recursive calls.
+rec-vi-1
+Đệ quy là kỹ thuật lập trình trong đó một hàm tự gọi chính nó để giải quyết một phiên bản nhỏ hơn của cùng bài toán. Mọi hàm đệ quy đều cần một trường hợp cơ sở để dừng và một trường hợp đệ quy thu nhỏ kích thước bài toán.
+rec-vi-2
+Giai thừa của n có thể được tính bằng đệ quy: `def factorial(n): return 1 if n <= 1 else n * factorial(n - 1)`. Tuy đẹp, đệ quy sâu trong Python có thể vượt giới hạn đệ quy; với mã sản phẩm, vòng lặp thường được ưu tiên hơn.
+rec-vi-3
+Tối ưu hóa lời gọi đuôi (TCO) cho phép trình biên dịch tái sử dụng khung ngăn xếp cho lời gọi đệ quy khi đó là hành động cuối cùng. Scheme và Scala đảm bảo TCO; Python thì không, đó là lý do đệ quy sâu trong Python gây tràn stack.
+rec-vi-4
+Memoization lưu cache kết quả của các lời gọi đệ quy tốn kém để tránh tính lại. Decorator `@functools.lru_cache` của Python tự động ghi nhớ. Fibonacci là ví dụ kinh điển — đệ quy ngây thơ là O(2^n), có memoize thì O(n).
+rec-vi-5
+Duyệt cây là ứng dụng tự nhiên của đệ quy: hàm thăm một nút rồi đệ quy thăm từng con. Các thứ tự duyệt tiền tự, trung tự, hậu tự chỉ khác nhau ở vị trí của bước 'thăm nút hiện tại' so với các lời gọi đệ quy.
+async-en-1
+Async I/O lets a program issue many concurrent I/O operations on a single thread by suspending each one while it waits for the OS to signal readiness. In Python, `asyncio` and the `async`/`await` keywords are the standard tools. The event loop drives all coroutines.
+async-en-2
+In Rust, `tokio` is the dominant async runtime. You mark functions `async fn`, call them with `.await`, and spawn tasks with `tokio::spawn`. The runtime multiplexes many tasks over a small thread pool — exactly what high-throughput servers need.
+async-en-3
+Async vs threads: async I/O is best when most of your time is spent waiting on the network or disk (high I/O, low CPU). Threads are better when you need to use multiple CPU cores in parallel for compute-bound work.
+async-en-4
+A common pitfall in async code is blocking the event loop with a synchronous call. In Rust, wrap CPU-heavy work in `tokio::task::spawn_blocking`. In Python, use `loop.run_in_executor` or `asyncio.to_thread`.
+async-en-5
+Backpressure is the ability for a consumer to slow down a producer when it can't keep up. Bounded channels (`tokio::sync::mpsc::channel(N)` in Rust) and bounded queues provide backpressure naturally — the producer blocks when the buffer is full.
+async-vi-1
+Async I/O cho phép một chương trình thực thi nhiều thao tác I/O đồng thời trên một luồng duy nhất bằng cách tạm dừng từng thao tác trong khi chờ OS báo sẵn sàng. Trong Python, `asyncio` và các từ khóa `async`/`await` là công cụ chuẩn. Vòng lặp sự kiện điều khiển tất cả các coroutine.
+async-vi-2
+Trong Rust, `tokio` là runtime async chủ đạo. Bạn đánh dấu hàm `async fn`, gọi chúng với `.await`, và sinh task bằng `tokio::spawn`. Runtime ghép nhiều task lên một pool luồng nhỏ — đúng thứ máy chủ thông lượng cao cần.
+async-vi-3
+Async so với thread: async I/O tốt nhất khi phần lớn thời gian bị chặn chờ mạng hoặc đĩa (I/O cao, CPU thấp). Thread tốt hơn khi bạn cần dùng nhiều lõi CPU song song cho công việc nặng tính toán.
+async-vi-4
+Một lỗi phổ biến trong mã async là chặn vòng lặp sự kiện bằng một lời gọi đồng bộ. Trong Rust, gói công việc nặng CPU vào `tokio::task::spawn_blocking`. Trong Python, dùng `loop.run_in_executor` hoặc `asyncio.to_thread`.
+async-vi-5
+Backpressure là khả năng người tiêu dùng làm chậm nhà sản xuất khi không theo kịp. Kênh có giới hạn (`tokio::sync::mpsc::channel(N)` trong Rust) và hàng đợi có giới hạn cung cấp backpressure tự nhiên — nhà sản xuất bị chặn khi bộ đệm đầy.
+sql-en-1
+An INNER JOIN returns only rows where the join condition matches in both tables. If a row in the left table has no match on the right, it's excluded. This is the default JOIN type and the one to use when you want strictly paired rows.
+sql-en-2
+A LEFT OUTER JOIN returns every row from the left table, plus matching rows from the right. Where there's no match on the right, the right-side columns come back as NULL. Use it to keep all rows from the primary table regardless of the join.
+sql-en-3
+A FULL OUTER JOIN returns every row from both tables, with NULL filling in the unmatched side. It's the union of LEFT JOIN and RIGHT JOIN. Less common in OLTP, useful for reconciliation queries.
+sql-en-4
+Use EXPLAIN ANALYZE in PostgreSQL to see the actual execution plan for a JOIN. The planner picks between nested loop, hash join, and merge join based on the size of each side and available indexes. Missing indexes on join keys is the #1 cause of slow queries.
+sql-en-5
+A CROSS JOIN returns the Cartesian product of two tables — every row on the left paired with every row on the right. Rarely useful directly; mostly appears implicitly when a JOIN condition is forgotten.
+sql-vi-1
+INNER JOIN chỉ trả về các hàng mà điều kiện join khớp ở cả hai bảng. Nếu một hàng ở bảng bên trái không có khớp bên phải, nó bị loại. Đây là kiểu JOIN mặc định và là lựa chọn khi bạn muốn các cặp hàng được ghép chặt chẽ.
+sql-vi-2
+LEFT OUTER JOIN trả về mọi hàng từ bảng bên trái, cộng với các hàng khớp ở bên phải. Khi không có khớp ở bên phải, các cột bên phải trả về NULL. Dùng để giữ tất cả hàng từ bảng chính bất kể join.
+sql-vi-3
+FULL OUTER JOIN trả về mọi hàng từ cả hai bảng, với NULL điền vào bên không khớp. Đây là hợp của LEFT JOIN và RIGHT JOIN. Ít gặp trong OLTP, hữu ích cho các truy vấn đối chiếu.
+sql-vi-4
+Dùng EXPLAIN ANALYZE trong PostgreSQL để xem kế hoạch thực thi thực tế cho một JOIN. Planner chọn giữa nested loop, hash join và merge join dựa trên kích thước hai bên và các chỉ mục có sẵn. Thiếu chỉ mục trên khóa join là nguyên nhân số 1 của truy vấn chậm.
+sql-vi-5
+CROSS JOIN trả về tích Đề-các của hai bảng — mỗi hàng bên trái ghép với mỗi hàng bên phải. Hiếm khi dùng trực tiếp; thường xuất hiện ngầm khi điều kiện JOIN bị bỏ sót.
+ml-en-1
+Supervised learning trains a model on labeled examples — pairs of input and expected output. The model learns a function from inputs to outputs, then predicts labels for new, unseen inputs. Classification and regression are the two main flavors.
+ml-en-2
+Overfitting happens when a model memorizes the training data rather than learning the underlying pattern. The signal is high training accuracy but low test accuracy. Combat it with more data, regularization, dropout, or simpler model architectures.
+ml-en-3
+Gradient descent is the workhorse optimization algorithm: compute the gradient of the loss with respect to each parameter, then nudge each parameter a small step in the opposite direction. Variants like Adam adapt the step size per parameter.
+ml-en-4
+A neural network is a stack of layers, each applying a linear transformation followed by a nonlinear activation (ReLU, GELU). Training adjusts the weights of each linear layer via backpropagation — the chain rule applied across the whole stack.
+ml-en-5
+Embeddings are dense vector representations of discrete objects (words, sentences, images). Similar inputs map to nearby vectors. They power semantic search, recommendation systems, and retrieval-augmented generation.
+ml-vi-1
+Học có giám sát huấn luyện mô hình trên các ví dụ có nhãn — cặp đầu vào và đầu ra mong muốn. Mô hình học một hàm từ đầu vào sang đầu ra, rồi dự đoán nhãn cho đầu vào mới chưa thấy. Phân loại và hồi quy là hai kiểu chính.
+ml-vi-2
+Overfitting xảy ra khi mô hình ghi nhớ dữ liệu huấn luyện thay vì học mẫu nền tảng. Dấu hiệu là độ chính xác cao trên tập huấn luyện nhưng thấp trên tập kiểm tra. Chống lại bằng nhiều dữ liệu hơn, regularization, dropout, hoặc kiến trúc đơn giản hơn.
+ml-vi-3
+Gradient descent là thuật toán tối ưu chủ đạo: tính gradient của hàm mất mát theo từng tham số, rồi đẩy mỗi tham số một bước nhỏ ngược chiều. Các biến thể như Adam tự điều chỉnh kích thước bước cho từng tham số.
+ml-vi-4
+Mạng nơ-ron là một chồng các tầng, mỗi tầng áp dụng một biến đổi tuyến tính rồi đến một hàm kích hoạt phi tuyến (ReLU, GELU). Huấn luyện điều chỉnh trọng số của từng tầng tuyến tính qua lan truyền ngược — quy tắc chuỗi áp dụng xuyên suốt chồng.
+ml-vi-5
+Embedding là biểu diễn vector dày đặc của các đối tượng rời rạc (từ, câu, ảnh). Đầu vào giống nhau ánh xạ tới các vector gần nhau. Chúng hỗ trợ tìm kiếm ngữ nghĩa, hệ gợi ý và sinh có truy xuất tăng cường.
+q-en-sort-python
+how to sort a list in Python
+q-en-recursion
+what is recursion and when does it overflow the stack
+q-en-async-tokio
+how does the tokio runtime schedule async tasks in Rust
+q-en-left-join
+difference between INNER JOIN and LEFT OUTER JOIN in SQL
+q-en-overfitting
+how to prevent overfitting in a machine learning model
+q-vi-sort-python
+làm sao để sắp xếp một danh sách trong Python
+q-vi-recursion
+đệ quy là gì và khi nào nó gây tràn stack
+q-vi-async-tokio
+tokio lập lịch các task async trong Rust như thế nào
+q-vi-left-join
+khác biệt giữa INNER JOIN và LEFT OUTER JOIN trong SQL
+q-vi-overfitting
+làm sao để tránh overfitting khi huấn luyện mô hình học máy
+Đồng bằng sông Cửu Long là vùng đất phù sa màu mỡ với hệ thống kênh rạch chằng chịt
+Du lịch miền Tây Nam Bộ thu hút khách quốc tế nhờ chợ nổi Cái Răng và vườn trái cây Mỹ Tho
+Cần Thơ là thành phố lớn nhất khu vực đồng bằng sông Cửu Long với dân số hơn 1.2 triệu người
+Phở bò Hà Nội được nấu từ xương bò ninh nhừ với quế hồi thảo quả và gừng nướng
+Bánh mì Việt Nam là sự kết hợp giữa baguette Pháp và pate gan heo cùng đồ chua
+Áo dài truyền thống được may từ lụa Hà Đông với cổ cao xẻ tà hai bên
+Vịnh Hạ Long với hàng nghìn hòn đảo đá vôi được UNESCO công nhận là di sản thiên nhiên thế giới
+Hồ Chí Minh từng sống nhiều năm ở Pháp Anh Mỹ Nga Trung Quốc và Thái Lan
+Tết Nguyên Đán là ngày lễ quan trọng nhất trong văn hóa Việt Nam diễn ra vào tháng Giêng âm lịch
+Cà phê Trung Nguyên xuất khẩu sang hơn 80 quốc gia trên toàn thế giới
+Sông Hồng bắt nguồn từ tỉnh Vân Nam Trung Quốc chảy qua miền Bắc Việt Nam ra Vịnh Bắc Bộ
+Trường Sa và Hoàng Sa là hai quần đảo thuộc chủ quyền không thể tranh cãi của Việt Nam
+Văn Miếu Quốc Tử Giám được xây dựng năm 1070 dưới triều vua Lý Thánh Tông
+Nhã nhạc cung đình Huế được UNESCO công nhận là kiệt tác văn hóa phi vật thể
+Trà sen Tây Hồ là đặc sản tinh tế được ướp từ hoa sen nở rộ vào buổi sớm mai
+Người miền Trung nói giọng khác với người miền Nam và người miền Bắc rất rõ rệt
+Lúa nước được trồng tại Việt Nam từ hơn bốn nghìn năm trước thời các vua Hùng
+Chợ Bến Thành nằm ngay trung tâm Quận 1 thành phố Hồ Chí Minh là điểm du lịch nổi tiếng
+Lễ hội Đền Hùng được tổ chức vào ngày mùng 10 tháng 3 âm lịch hàng năm
+Cao nguyên đá Đồng Văn ở Hà Giang là công viên địa chất toàn cầu của UNESCO
+fn fibonacci(n: u64) -> u64 { if n < 2 { n } else { fibonacci(n-1) + fibonacci(n-2) } }
+let result: Result<Vec<u8>, std::io::Error> = std::fs::read("/etc/hostname");
+impl<T: Send + Sync> Iterator for Stream<T> { type Item = T; fn next(&mut self) -> Option<T> { todo!() } }
+pub async fn fetch<T: serde::de::DeserializeOwned>(url: &str) -> anyhow::Result<T> { reqwest::get(url).await?.json().await.map_err(Into::into) }
+#[derive(Debug, Clone, serde::Serialize)] pub struct Config { pub host: String, pub port: u16, pub tls: Option<TlsConfig> }
+async def fetch_user(user_id: int) -> Optional[User]: return await db.fetch_one("SELECT * FROM users WHERE id = $1", user_id)
+def quicksort(arr): return arr if len(arr) <= 1 else quicksort([x for x in arr[1:] if x < arr[0]]) + [arr[0]] + quicksort([x for x in arr[1:] if x >= arr[0]])
+@dataclass(frozen=True, slots=True) class Point: x: float; y: float; def distance(self, other: "Point") -> float: return math.hypot(self.x - other.x, self.y - other.y)
+try: with open(path, "rb") as f: data = json.loads(f.read()) except (OSError, json.JSONDecodeError) as e: logger.error("read failed: %s", e); raise
+import torch; model = torch.nn.Sequential(torch.nn.Linear(512, 256), torch.nn.ReLU(), torch.nn.Linear(256, 10))
+const fetchJSON = async <T,>(url: string): Promise<T> => { const r = await fetch(url); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<T>; };
+interface User { readonly id: string; name: string; email: string; createdAt: Date; roles: Array<"admin" | "user" | "guest">; }
+export function debounce<F extends (...args: any[]) => void>(fn: F, ms: number): F { let t: NodeJS.Timeout; return ((...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }) as F; }
+type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
+ERROR: relation "users" does not exist at character 15
+panic: runtime error: index out of range [3] with length 2
+[ERROR] thread 'main' panicked at 'called Option::unwrap() on a None value', src/main.rs:42:18
+fatal: unable to access 'https://github.com/user/repo/': Could not resolve host
+SIGSEGV (signal 11) - segmentation fault at address 0x0000000000000008
+TLS handshake failure: certificate verify failed: unable to get local issuer certificate
+The mitochondrion is the powerhouse of the cell and is responsible for producing ATP through oxidative phosphorylation.
+Quantum entanglement is a physical phenomenon that occurs when pairs or groups of particles are generated, interact, or share spatial proximity.
+Climate change refers to long-term shifts in temperatures and weather patterns, mainly caused by human activities, especially the burning of fossil fuels.
+The Federal Reserve announced a quarter-point rate cut, citing weakening labor market conditions despite inflation remaining above target.
+Researchers at Stanford published findings showing that large language models can develop emergent capabilities at sufficient scale.
+The Roman Empire reached its greatest territorial extent under Trajan in 117 CE, spanning three continents and over 5 million square kilometers.
+Photosynthesis converts light energy into chemical energy stored in glucose molecules, releasing oxygen as a byproduct.
+∫ e^(-x²) dx from -∞ to ∞ = √π — the famous Gaussian integral with no elementary antiderivative
+Δt = Δx / v where v is velocity; for relativistic speeds use γ = 1/√(1 - v²/c²)
+E = mc² is Einstein's mass-energy equivalence from special relativity (1905)
+The Riemann zeta function ζ(s) = Σ 1/n^s converges for Re(s) > 1
+∀ε>0 ∃δ>0 such that |x - a| < δ implies |f(x) - f(a)| < ε (definition of continuity)
+日本語のテキストはユニコードの BMP 範囲外の文字を含むことがあります
+中文文本通常使用 UTF-8 编码,每个汉字占用 3 个字节
+한국어 텍스트는 한글 음절 단위로 인코딩되며 자모 분리도 가능합니다
+العربية تُكتب من اليمين إلى اليسار وهي لغة سامية
+Русский текст использует кириллицу с 33 буквами в алфавите
+🚀 launching the new feature today! 🎉 thanks to everyone who contributed 💪
+⚠️  Warning: API rate limit exceeded — please retry after 60 seconds ⏳
+✅ Build #1234 passed all checks (lint, test, coverage 94.2%) on commit a1b2c3d
+Visit https://docs.rust-lang.org/book/ch10-02-traits.html for the official trait documentation
+See RFC 0001 at https://github.com/rust-lang/rfcs/blob/master/text/0001-private-fields.md for the original proposal
+docker run --rm -it -v $(pwd):/work -p 8080:8080 ghcr.io/example/app:v2.3.1-beta
+curl -X POST https://api.example.com/v1/users -H "Authorization: Bearer $TOKEN" -d '{"name":"alice","role":"admin"}'
+git rebase -i HEAD~5 --autosquash && git push --force-with-lease origin feature/refactor-auth
