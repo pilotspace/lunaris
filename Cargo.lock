@@ -2663,6 +2663,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-rerank-native"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "lunaris-core",
+ "lunaris-rerank",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokenizers",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "lunaris-retrieve"
 version = "0.2.1"
 dependencies = [
