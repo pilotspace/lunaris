@@ -156,15 +156,35 @@ async fn native_embedder_matches_sentence_transformers_within_drift_gate() {
     let mean: f64 = drifts.iter().sum::<f64>() / (drifts.len() as f64);
 
     eprintln!(
-        "[it] cosine drift — mean = {:.6}, max = {:.6} (prompt #{}: {:?})",
+        "[it] cosine drift — mean = {:.9}, max = {:.9} (prompt #{}: {:?})",
         mean,
         max_drift,
         max_drift_idx,
-        fx.rows[max_drift_idx]
-            .prompt
-            .chars()
-            .take(60)
-            .collect::<String>()
+        fx.rows[max_drift_idx].prompt.chars().take(60).collect::<String>()
+    );
+
+    // Discriminator: confirm the test is non-vacuous by measuring the
+    // *cross-prompt* dot product (native[0] vs reference[1]). A genuine
+    // model produces semantically distinct vectors for distinct prompts —
+    // this dot should be in [-0.5, 0.95], never ~1.0. If it IS ~1.0 the
+    // embeddings are degenerate (constant) and the drift result is
+    // meaningless.
+    let cross_dot: f64 = native_vecs[0]
+        .iter()
+        .zip(fx.rows[1].embedding.iter())
+        .map(|(a, b)| (*a as f64) * (*b))
+        .sum();
+    eprintln!(
+        "[it] non-vacuity check — cross-prompt dot (native[0] vs ref[1]) = {cross_dot:.6}"
+    );
+    eprintln!(
+        "[it] sample values — native[0][0] = {:.9}, ref[0][0] = {:.9}",
+        native_vecs[0][0], fx.rows[0].embedding[0]
+    );
+    assert!(
+        cross_dot.abs() < 0.97,
+        "cross-prompt dot product {cross_dot:.6} suspiciously close to 1.0 — \
+         embeddings may be degenerate / constant; drift gate would be vacuous"
     );
 
     assert!(
