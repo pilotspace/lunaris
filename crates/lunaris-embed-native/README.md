@@ -163,6 +163,32 @@ Even after both FP16 and Q4 land here, the following stay in follow-ups:
 - `sentence_transformers.SentenceTransformer` — the reference pipeline
   whose output we match.
 
+## Unicode normalization contract
+
+Inputs are **NFC-normalized before tokenization** (see
+`src/tokenizer.rs::encode_batch`). Callers passing NFD-encoded text
+(iOS / macOS clipboards routinely emit NFD) get the same embedding as
+the equivalent NFC-encoded text — `"Tiếng Việt"` in NFC and in NFD
+produce bit-identical token streams and therefore bit-identical
+embeddings.
+
+**NFKC is not applied.** NFKC collapses compatibility characters
+(full-width ↔ half-width Latin, ligatures, super/subscripts) which
+changes semantics for code/identifier embeddings. NFC only re-composes
+canonically-equivalent sequences, which preserves all distinctions that
+matter to retrieval.
+
+The Python reference fixture
+(`scripts/spike-generate-reference-embeddings.py`) applies the same
+NFC pre-pass before calling `sentence-transformers`, so the
+numerical-equivalence drift gate stays at f32 epsilon (mean ≈ 1.5e-8,
+max ≈ 1.2e-7 as of `schema_version: 2`).
+
+History: pre-v0.2.2 the tokenizer skipped NFC normalization; NFC vs NFD
+of the same user-visible string produced cosines of 0.83–0.93 instead
+of 1.0 — see P1-1 in
+`.planning/phases/N-01-step-1-modernbert-fp16/P1-VERIFICATION-RESULT.md`.
+
 ## License
 
 Apache-2.0 OR MIT — same as the rest of the Lunaris workspace.
