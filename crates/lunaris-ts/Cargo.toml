@@ -28,6 +28,9 @@ lunaris-core        = { path = "../lunaris-core" }
 lunaris-rerank        = { path = "../lunaris-rerank", default-features = false }
 lunaris-embed-native  = { path = "../lunaris-embed-native", default-features = false }
 lunaris-rerank-native = { path = "../lunaris-rerank-native", default-features = false }
+# v0.4 N-03 — `EmbedderConfig.native(...)` / `RerankerConfig.native(...)` pass
+# `candle_core::Device::Cpu` into the native opts structs.
+candle-core           = { workspace = true }
 lunaris-recipes     = { path = "../lunaris-recipes" }
 lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.

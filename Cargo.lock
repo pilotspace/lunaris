@@ -2621,6 +2621,7 @@ version = "0.2.1"
 dependencies = [
  "async-trait",
  "bytes",
+ "candle-core",
  "chrono",
  "futures",
  "lunaris-conformance",
