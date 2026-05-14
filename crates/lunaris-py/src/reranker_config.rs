@@ -1,67 +1,29 @@
-//! Phase 21 Plan 21-01 — handwritten `RerankerConfig` for the Python SDK.
+//! v0.4 N-03 cutover — `RerankerConfig` for the Python SDK, rewritten on
+//! `lunaris-rerank-native::NativeReranker` (+ `NativeQuantizedReranker` under
+//! `reranker-gguf`). The retired `RerankerConfig.fastembed()` factory is
+//! replaced by `RerankerConfig.native()` and `::native_quantized()` — see
+//! `docs/migration/0.3-to-0.4-native-default.md`.
 //!
-//! This module is **NOT codegen-managed** (mirrors `embedder_config.rs` and
-//! the `scope.rs` / `toggles.rs` precedent). The Python SDK passes a
-//! `RerankerConfig` back to `Lunaris.open(url, reranker=cfg)` to override the
-//! env-driven default.
-//!
-//! ## FFI cliff
-//!
-//! Python callers CANNOT implement the [`Reranker`] trait directly — same
-//! reasoning as `embedder_config.rs`. The factories below cover the two
-//! presets that ship in `lunaris-rerank`.
-//!
-//! ## Factory methods
-//!
-//! - [`RerankerConfig::fastembed`] — preset ONNX-backed BGE-Reranker-v2-m3
-//!   cross-encoder via fastembed-rs (Phase 19-04).
-//! - [`RerankerConfig::noop`] — `NoopReranker` passthrough (RETRIEVE-06
-//!   fallback; equivalent to "disable rerank").
-//!
-//! ## BYO ONNX deferral (Task 1 finding)
-//!
-//! `grep user_defined ~/.cargo/registry/src/.../fastembed-5.13.4/src/reranking/`
-//! shows fastembed 5.13.4 DOES expose `try_new_from_user_defined`
-//! (`impl.rs:106`) and `UserDefinedRerankingModel` (`init.rs:81`). However
-//! `lunaris-rerank::FastembedReranker` does NOT yet wrap this constructor —
-//! only `FastembedReranker::new` exists today (Phase 19-04). Adding the BYO
-//! factory to the SDK requires first adding a `FastembedReranker::from_user_defined`
-//! wrapper in `lunaris-rerank`, which is outside Phase 21-01's
-//! `files_modified` scope. **Deferred** to a follow-up phase that updates
-//! `lunaris-rerank` then this module in lockstep.
+//! Not codegen-managed (mirrors `embedder_config.rs`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lunaris_rerank::Reranker;
-use lunaris_rerank::fastembed::{FastembedReranker, FastembedRerankerOpts};
-// `lunaris-rerank` re-exports its own `ExecutionPreference` (NOT the embed
-// crate's — they are distinct types because the cfg-gated variants live behind
-// per-crate feature flags). Use this one when constructing
-// `FastembedRerankerOpts`.
-use lunaris_rerank::fastembed_exec::ExecutionPreference;
-use lunaris_rerank::noop::NoopReranker;
+use lunaris_core::LunarisError;
+use lunaris_rerank::{NoopReranker, Reranker};
+use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
+#[cfg(feature = "reranker-gguf")]
+use lunaris_rerank_native::{NativeQuantizedReranker, NativeQuantizedRerankerOpts};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::errors::py_err;
 
-// ---------------------------------------------------------------------------
-// RerankerConfig
-// ---------------------------------------------------------------------------
-
 /// Opaque holder for a resolved [`Reranker`] backend.
 ///
-/// Construct via the [`RerankerConfig::fastembed`] / [`RerankerConfig::noop`]
-/// static methods, then pass to `Lunaris.open(url, reranker=cfg)`.
-///
-/// ```python
-/// from lunaris import RerankerConfig, open
-///
-/// cfg = RerankerConfig.fastembed(execution="cpu")
-/// handle = await open(url, reranker=cfg)
-/// ```
+/// Construct via [`RerankerConfig::native`] / [`RerankerConfig::native_quantized`]
+/// / [`RerankerConfig::noop`] then pass to `Lunaris.open(url, reranker=cfg)`.
 #[pyclass(frozen, name = "RerankerConfig", module = "lunaris")]
 #[derive(Clone)]
 pub struct RerankerConfig {
@@ -71,86 +33,74 @@ pub struct RerankerConfig {
 
 #[pymethods]
 impl RerankerConfig {
-    /// Construct a preset fastembed-rs BGE-Reranker-v2-m3 cross-encoder.
+    /// FP32 candle `NativeReranker` backed by `BAAI/bge-reranker-v2-m3`.
     ///
-    /// - `cache_dir`: filesystem path for the auto-downloaded ONNX weights.
-    ///   `None` defers to the
-    ///   `$LUNARIS_FASTEMBED_RERANKER_CACHE_DIR` /
-    ///   `~/.cache/lunaris/models/fastembed-reranker/` resolution chain.
-    /// - `execution`: ORT execution provider. One of `"cpu"` / `"coreml"` /
-    ///   `"cuda"`. Unknown values raise `ValueError`.
-    /// - `show_download_progress`: emit fastembed's progress bar to stderr.
-    ///
-    /// Raises `LunarisError` if the ONNX session fails to construct.
+    /// `model_dir` defaults to `<cache>/lunaris/models/bge-reranker-v2-m3/`.
     #[staticmethod]
-    #[pyo3(signature = (cache_dir=None, execution="cpu", show_download_progress=false))]
-    fn fastembed(
-        cache_dir: Option<PathBuf>,
-        execution: &str,
-        show_download_progress: bool,
-    ) -> PyResult<Self> {
-        let exec = parse_execution(execution)?;
-        let opts = FastembedRerankerOpts { cache_dir, show_download_progress, execution: exec };
-        let reranker = FastembedReranker::new(opts).map_err(py_err)?;
-        Ok(Self { inner: Arc::new(reranker), backend: "fastembed" })
+    #[pyo3(signature = (model_dir=None))]
+    fn native(model_dir: Option<PathBuf>) -> PyResult<Self> {
+        let dir = model_dir.unwrap_or_else(default_bge_dir);
+        let opts = NativeRerankerOpts {
+            weights_path: dir.join("model.safetensors"),
+            tokenizer_path: dir.join("tokenizer.json"),
+            config_path: dir.join("config.json"),
+            device: candle_core::Device::Cpu,
+        };
+        let r = NativeReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
+        Ok(Self { inner: Arc::new(r), backend: "native" })
     }
 
-    /// `NoopReranker` — passthrough that returns docs unchanged.
-    ///
-    /// Equivalent to disabling the rerank pass (RETRIEVE-06 fallback).
-    /// `Hit.rerank_applied` will be `false` for results that flow through
-    /// this reranker, so callers can tell they got the degraded path.
+    /// Q4_K_M GGUF `NativeQuantizedReranker` — requires the wheel built with
+    /// `reranker-gguf`.
+    #[staticmethod]
+    #[pyo3(signature = (gguf_path, model_dir=None))]
+    #[cfg(feature = "reranker-gguf")]
+    fn native_quantized(gguf_path: PathBuf, model_dir: Option<PathBuf>) -> PyResult<Self> {
+        let dir = model_dir.unwrap_or_else(default_bge_dir);
+        let opts = NativeQuantizedRerankerOpts {
+            gguf_path,
+            tokenizer_path: dir.join("tokenizer.json"),
+            config_path: dir.join("config.json"),
+            device: candle_core::Device::Cpu,
+        };
+        let r =
+            NativeQuantizedReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
+        Ok(Self { inner: Arc::new(r), backend: "native-quantized" })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (_gguf_path=None, _model_dir=None))]
+    #[cfg(not(feature = "reranker-gguf"))]
+    #[allow(unused_variables)]
+    fn native_quantized(_gguf_path: PathBuf, _model_dir: Option<PathBuf>) -> PyResult<Self> {
+        Err(PyValueError::new_err(
+            "RerankerConfig.native_quantized() requires the lunaris-py wheel to be built \
+             with the `reranker-gguf` feature.",
+        ))
+    }
+
+    /// `NoopReranker` — passthrough (RETRIEVE-06 fallback).
     #[staticmethod]
     fn noop() -> Self {
         Self { inner: Arc::new(NoopReranker), backend: "noop" }
     }
 
-    /// Debug-friendly repr: `RerankerConfig(backend='fastembed')`.
     fn __repr__(&self) -> String {
         format!("RerankerConfig(backend={:?})", self.backend)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Strict variant of execution-preference parsing — same shape as the
-/// helper in `embedder_config.rs`. Duplicated here (rather than extracted)
-/// to keep each handwritten module independently auditable and to avoid an
-/// extra `pub(crate)` cross-module dep just for two small parsers.
-fn parse_execution(s: &str) -> PyResult<ExecutionPreference> {
-    match s {
-        "cpu" => Ok(ExecutionPreference::Cpu),
-        #[cfg(feature = "fastembed-coreml")]
-        "coreml" => Ok(ExecutionPreference::CoreMlThenCpu),
-        #[cfg(feature = "fastembed-cuda")]
-        "cuda" => Ok(ExecutionPreference::CudaThenCpu),
-        // Matches the embedder side — feature-gated variants require a wheel
-        // rebuild; surface the requirement instead of a silent CPU fallback.
-        "coreml" => Err(PyValueError::new_err(
-            "RerankerConfig: execution=\"coreml\" requires the lunaris-py wheel \
-             to be built with the lunaris-rerank/fastembed-coreml feature",
-        )),
-        "cuda" => Err(PyValueError::new_err(
-            "RerankerConfig: execution=\"cuda\" requires the lunaris-py wheel \
-             to be built with the lunaris-rerank/fastembed-cuda feature",
-        )),
-        other => Err(PyValueError::new_err(format!(
-            "RerankerConfig: unknown execution {other:?} — expected one of \
-             \"cpu\", \"coreml\", \"cuda\""
-        ))),
-    }
+fn default_bge_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Caches"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("lunaris").join("models").join("bge-reranker-v2-m3")
 }
 
-// ---------------------------------------------------------------------------
-// Free function: lunaris_with_reranker — exposed in the pymodule
-// ---------------------------------------------------------------------------
-
 /// Apply a [`RerankerConfig`] to a freshly-constructed `Lunaris` handle.
-///
-/// Mirrors `lunaris_with_embedder` from `embedder_config.rs`. See that
-/// module for the PyO3-multiple-pymethods rationale.
 #[pyfunction]
 #[pyo3(signature = (handle, cfg))]
 pub(crate) fn lunaris_with_reranker(
@@ -160,10 +110,6 @@ pub(crate) fn lunaris_with_reranker(
     let new_handle = (*handle.inner).clone().with_reranker(cfg.inner.clone());
     Ok(crate::generated::PyLunaris { inner: Arc::new(new_handle) })
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 pub(crate) fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RerankerConfig>()?;
@@ -176,50 +122,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_execution_cpu() {
-        assert!(matches!(parse_execution("cpu").unwrap(), ExecutionPreference::Cpu));
-    }
-
-    #[cfg(feature = "fastembed-coreml")]
-    #[test]
-    fn parse_execution_coreml() {
-        assert!(matches!(parse_execution("coreml").unwrap(), ExecutionPreference::CoreMlThenCpu));
-    }
-
-    #[cfg(feature = "fastembed-cuda")]
-    #[test]
-    fn parse_execution_cuda() {
-        assert!(matches!(parse_execution("cuda").unwrap(), ExecutionPreference::CudaThenCpu));
-    }
-
-    #[cfg(not(feature = "fastembed-coreml"))]
-    #[test]
-    fn parse_execution_coreml_without_feature() {
-        let err = parse_execution("coreml").unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("fastembed-coreml"), "msg: {msg}");
-    }
-
-    #[cfg(not(feature = "fastembed-cuda"))]
-    #[test]
-    fn parse_execution_cuda_without_feature() {
-        let err = parse_execution("cuda").unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("fastembed-cuda"), "msg: {msg}");
-    }
-
-    #[test]
-    fn parse_execution_unknown_carries_bad_value() {
-        let err = parse_execution("bogus").unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("bogus"), "msg: {msg}");
-        assert!(msg.contains("execution"), "msg: {msg}");
-    }
-
-    #[test]
     fn noop_factory_is_passthrough() {
         let cfg = RerankerConfig::noop();
         assert_eq!(cfg.backend, "noop");
         assert!(!cfg.inner.applies());
+    }
+
+    #[test]
+    fn default_bge_dir_ends_with_canonical_name() {
+        let p = default_bge_dir();
+        assert!(p.ends_with("lunaris/models/bge-reranker-v2-m3"), "got {}", p.display());
     }
 }

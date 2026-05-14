@@ -38,7 +38,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 
 use ::lunaris_conformance::fixtures::FixtureCorpus;
-use ::lunaris_embed::Embedder;
+use ::lunaris_core::Embedder;
 
 use crate::PyLunaris;
 use crate::errors::py_err;

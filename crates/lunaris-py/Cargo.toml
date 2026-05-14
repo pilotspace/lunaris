@@ -43,6 +43,10 @@ lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 lunaris-rerank        = { path = "../lunaris-rerank", default-features = false }
 lunaris-embed-native  = { path = "../lunaris-embed-native", default-features = false }
 lunaris-rerank-native = { path = "../lunaris-rerank-native", default-features = false }
+# v0.4 N-03 — `EmbedderConfig.native(...)` / `RerankerConfig.native(...)` pass
+# `candle_core::Device::Cpu` into the native opts structs. Pulled directly so
+# the SDK does not depend on a re-export shim from the native crates.
+candle-core           = { workspace = true }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
 lunaris-conformance = { workspace = true, optional = true }
 # PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
