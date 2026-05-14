@@ -117,10 +117,11 @@ pub struct QuantizedModernBert {
     cfg: ModernBertConfig,
     device: Device,
     /// Word embeddings — `token_embd` dequantized to F32 once at load time.
-    /// We dequantize rather than wrap in `QMatMul` because `Embedding::forward`
-    /// does an index lookup, not a matmul, and candle's `Embedding` requires
-    /// a plain `Tensor`. The 768×262_152 table at F32 is ~768 MiB which we
-    /// can't afford — keep it at F16 by going through `dequantize_f16`.
+    /// We dequantize rather than wrap in `QMatMul` because the embedding op
+    /// is an index lookup, not a matmul. F32 (not F16) because candle's
+    /// CPU `dequantize_f16` does a transient F32 alloc then casts — same
+    /// peak as F32 during load, plus per-batch F16→F32 casts in the hot
+    /// path. F32-direct is the simpler and lower-peak-RSS choice.
     word_embd: Tensor,
     /// Post-embedding norm (= ModernBert's `embeddings.norm`). Always present.
     embd_norm: LayerNorm,
@@ -157,14 +158,15 @@ impl QuantizedModernBert {
         // Helper: load an F32 weight by name and wrap as a no-bias LayerNorm.
         // GGUF stores norm weights with the GGML type `F32` (the manifest
         // confirms this), so `dequantize` is a no-op materialization.
-        let load_ln = |reader: &mut std::fs::File, name: &str| -> Result<LayerNorm, QuantizedError> {
-            let qt = content
-                .tensor(reader, name, device)
-                .map_err(|e| QuantizedError::Gguf { reason: format!("tensor {name}: {e}") })?;
-            let w = qt.dequantize(device)?.to_dtype(DType::F32)?;
-            // ModernBert uses `layer_norm_no_bias` with `cfg.layer_norm_eps`.
-            Ok(LayerNorm::new_no_bias(w, cfg.layer_norm_eps))
-        };
+        let load_ln =
+            |reader: &mut std::fs::File, name: &str| -> Result<LayerNorm, QuantizedError> {
+                let qt = content
+                    .tensor(reader, name, device)
+                    .map_err(|e| QuantizedError::Gguf { reason: format!("tensor {name}: {e}") })?;
+                let w = qt.dequantize(device)?.to_dtype(DType::F32)?;
+                // ModernBert uses `layer_norm_no_bias` with `cfg.layer_norm_eps`.
+                Ok(LayerNorm::new_no_bias(w, cfg.layer_norm_eps))
+            };
 
         // ---------- token_embd ----------
         //
@@ -177,6 +179,15 @@ impl QuantizedModernBert {
         let word_qt = content.tensor(&mut file, "token_embd.weight", device).map_err(|e| {
             QuantizedError::Gguf { reason: format!("tensor token_embd.weight: {e}") }
         })?;
+        // why: keep the vocab table at F32. `dequantize_f16` on CPU does a
+        // transient F32 alloc + cast to F16 (see candle 0.10.2's
+        // `QTensor::dequantize_f16`), so peak RSS during load is the SAME
+        // either way; the F16 path then leaks a steady ~384 MiB F16 table
+        // plus per-batch F32 casts. F32-direct keeps steady-state RSS lower.
+        // The 262_152×768 F32 table is ~768 MiB resident; combined with the
+        // Q4 layer weights (~120 MiB packed) the Q4 path's steady-state RSS
+        // stays well under the FP16 path's (FP16 carries the same word
+        // table dequantized to F32 plus ~600 MiB of F32 layer weights).
         let word_embd = word_qt.dequantize(device)?.to_dtype(DType::F32)?;
         // Shape sanity — must be `[vocab_size, hidden_size]`.
         let we_dims = word_embd.dims().to_vec();
@@ -207,7 +218,8 @@ impl QuantizedModernBert {
             // FP16 convention: layer i is LOCAL iff `i % global_attn_every_n_layers != 0`.
             // i.e. layer 0,3,6,... are GLOBAL, the rest are LOCAL (128-window).
             let uses_local_attention = !i.is_multiple_of(cfg.global_attn_every_n_layers);
-            let rotary = if uses_local_attention { local_rotary.clone() } else { global_rotary.clone() };
+            let rotary =
+                if uses_local_attention { local_rotary.clone() } else { global_rotary.clone() };
 
             let attn_qkv = qmat(&mut file, &format!("{p}.attn_qkv.weight"))?;
             let attn_output = qmat(&mut file, &format!("{p}.attn_output.weight"))?;
@@ -257,13 +269,16 @@ impl QuantizedModernBert {
     ) -> Result<Tensor, QuantizedError> {
         let dims = input_ids.dims().to_vec();
         if dims.len() != 2 {
-            return Err(QuantizedError::UnexpectedHidden { actual: dims, expected: GRANITE_R2_DIM });
+            return Err(QuantizedError::UnexpectedHidden {
+                actual: dims,
+                expected: GRANITE_R2_DIM,
+            });
         }
         let seq_len = dims[1];
 
         // ---------- masks ----------
-        let global_attention_mask = prepare_4d_attention_mask(attention_mask, DType::F32)?
-            .to_device(input_ids.device())?;
+        let global_attention_mask =
+            prepare_4d_attention_mask(attention_mask, DType::F32)?.to_device(input_ids.device())?;
         let local_attention_mask =
             get_local_attention_mask(seq_len, self.cfg.local_attention / 2, input_ids.device())?;
 
@@ -271,10 +286,8 @@ impl QuantizedModernBert {
         //
         // `Embedding::forward` would require constructing a `candle_nn::Embedding`
         // every call (or holding one on Self); the cheaper path is a direct
-        // index_select against the F32 weight matrix. Same math, no extra
-        // wrapper struct.
+        // `index_select` against the F32 weight matrix.
         let mut xs = self.word_embd.index_select(&input_ids.flatten_all()?, 0)?;
-        // index_select returns (batch*seq, hidden) — reshape back to (b, s, h).
         let batch = dims[0];
         xs = xs.reshape((batch, seq_len, self.cfg.hidden_size))?;
         xs = xs.apply(&self.embd_norm)?;
@@ -387,11 +400,8 @@ fn prepare_4d_attention_mask(mask: &Tensor, dtype: DType) -> Result<Tensor, Quan
     let bsz = mask.dim(0)?;
     let src_len = mask.dim(1)?;
     let tgt_len = src_len;
-    let expanded = mask
-        .unsqueeze(1)?
-        .unsqueeze(2)?
-        .expand((bsz, 1, tgt_len, src_len))?
-        .to_dtype(dtype)?;
+    let expanded =
+        mask.unsqueeze(1)?.unsqueeze(2)?.expand((bsz, 1, tgt_len, src_len))?.to_dtype(dtype)?;
     let inverted = (1.0 - expanded)?;
     Ok((inverted * f32::MIN as f64)?.to_dtype(dtype)?)
 }

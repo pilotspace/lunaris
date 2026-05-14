@@ -143,9 +143,7 @@ impl NativeEmbedder {
             "native embedder initialized"
         );
 
-        Ok(Self {
-            inner: Arc::new(Inner { model, tokenizer, device: opts.device }),
-        })
+        Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }
 
     /// Synchronous embed path — for tests / direct callers that already have
