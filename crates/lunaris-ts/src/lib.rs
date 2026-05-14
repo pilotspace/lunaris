@@ -82,10 +82,10 @@ mod reranker_config;
 mod scope;
 mod toggles;
 
-pub use embedder_config::{
-    EmbedderConfig, FastembedConfigOpts, FromOnnxBytesOpts, FromOnnxPathOpts, OllamaConfigOpts,
+pub use embedder_config::{EmbedderConfig, NativeConfigOpts, NativeQuantizedConfigOpts};
+pub use reranker_config::{
+    NativeQuantizedRerankerConfigOpts, NativeRerankerConfigOpts, RerankerConfig,
 };
-pub use reranker_config::{FastembedRerankerConfigOpts, RerankerConfig};
 
 // Handwritten conformance-only helpers — feature-gated so production
 // `.node` binaries never ship them. NOT codegen-managed; excluded from the

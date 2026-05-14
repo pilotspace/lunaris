@@ -27,7 +27,28 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 <!-- GSD:stack-start source:STACK.md -->
 ## Technology Stack
 
-Technology stack not yet documented. Will populate after codebase mapping or first phase.
+- **ML runtime** — `candle 0.10` (CPU). Single backend for embedder +
+  reranker + extractor + verifier. **v0.4 N-03 cutover (2026-05-14)** deleted
+  the fastembed-rs / ONNX Runtime / production-Ollama paths; see
+  `docs/migration/0.3-to-0.4-native-default.md`.
+- **Embedder** — `ibm-granite/granite-embedding-311m-multilingual-r2`
+  (Apache-2.0, ModernBERT, 768-d, FP16) via `lunaris-embed-native`. Q4_K_M
+  GGUF variant available under `--features embedder-gguf` for RSS-constrained
+  hosts. Air-gap escape hatch: `lunaris-embed-remote::OllamaEmbedder`
+  behind `--features embed-remote` (operator-only, not the supported path).
+- **Reranker** — `BAAI/bge-reranker-v2-m3` (Apache-2.0, XLM-RoBERTa,
+  cross-encoder, FP32, sigmoid output ∈ [0,1]) via `lunaris-rerank-native`.
+  Q5_K_M-imatrix GGUF under `--features reranker-gguf`.
+- **Storage** — Moon (Redis-compatible, internal) + Postgres (portability
+  proof) + SQLite (`memory://`, `sqlite:///path`, zero-deps onboarding).
+- **HTTP** — `axum ≥0.8` + `tower ≥0.5` + `tower-http` + `tracing` +
+  `prometheus 0.14` (`/metrics`).
+- **Async** — `tokio` latest 1.x + `parking_lot` for sync primitives;
+  no `std::sync::*Lock` in workspace code (matches Moon's UNSAFE_POLICY).
+- **Errors** — `thiserror 2.x` (library) + `anyhow 1.x` (application).
+- **SDKs** — `pyo3 0.26` (Python) + `napi-rs 3.x` (TypeScript). Both
+  expose `EmbedderConfig.native()` / `RerankerConfig.native()` as v0.4 entry
+  points.
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->

@@ -57,8 +57,9 @@
 // would double-count the suite.
 #[path = "regression/bytea_like_byterange_scan.rs"]
 mod bytea_like_byterange_scan;
-#[path = "regression/candle_embed_tokens_fallback.rs"]
-mod candle_embed_tokens_fallback;
+// v0.4 N-03 — `candle_embed_tokens_fallback` deleted alongside the
+// `lunaris-embed::CandleEmbeddingGemma` backend it pinned. The native
+// embedder (granite-r2) has no equivalent slow-path BPE fallback to test.
 #[path = "regression/search_path_session_leak.rs"]
 mod search_path_session_leak;
 #[path = "regression/sqlx_migration_version_collision.rs"]
@@ -78,9 +79,7 @@ mod sqlx_migration_version_collision;
 pub const EXPECTED_VANILLA_ERRORS: &[(&str, Option<&str>)] = &[
     ("sqlx_migration_version_collision", Some("extension \"vector\" is not available")),
     ("search_path_session_leak", Some("extension \"vector\" is not available")),
-    // PG-independent — candle embed_tokens fallback lives in lunaris-embed;
-    // vanilla pg:16 passes this test unchanged. The negative-matrix post-step
-    // asserts exit code 0 for this entry, not a stderr substring.
-    ("candle_embed_tokens_fallback", None),
+    // v0.4 N-03 — `candle_embed_tokens_fallback` retired alongside the
+    // `lunaris-embed::CandleEmbeddingGemma` backend.
     ("bytea_like_byterange_scan", Some("extension \"vector\" is not available")),
 ];

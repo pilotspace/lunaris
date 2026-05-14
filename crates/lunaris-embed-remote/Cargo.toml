@@ -1,0 +1,34 @@
+# lunaris-embed-remote — feature-gated Ollama HTTP escape hatch.
+#
+# Milestone v0.4 N-03 cutover. Hosts the Ollama HTTP embedder ported out of
+# the retired `lunaris-embed::ollama` module. Off by default — the supported
+# v0.4 path is `lunaris-embed-native::NativeEmbedder` (candle + granite-r2).
+# This crate exists only so air-gapped operators with an Ollama instance
+# already running can keep the HTTP path without dragging the ONNX / fastembed
+# stack back into the binary.
+#
+# Build:
+#   cargo check -p lunaris-embed-remote
+#
+# Enabled at the umbrella via `--features embed-remote` on `lunaris-memory`.
+
+[package]
+name         = "lunaris-embed-remote"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Feature-gated Ollama HTTP escape-hatch embedder for Lunaris"
+
+[dependencies]
+lunaris-core = { workspace = true }
+async-trait  = { workspace = true }
+reqwest      = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+tracing      = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
