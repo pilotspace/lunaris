@@ -212,7 +212,8 @@ impl ChatAgentMemory {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, scope_owned, &user_id);
         Self { inner: Arc::new(inner) }
     }
 
@@ -245,7 +246,8 @@ impl MultiTurnConversation {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, scope_owned, &user_id);
         Self { inner: Arc::new(inner) }
     }
 
@@ -285,7 +287,8 @@ impl SlackArchive {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
@@ -357,7 +360,8 @@ impl EmailThreading {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
@@ -404,7 +408,8 @@ impl MeetingNotesMemory {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
@@ -470,7 +475,8 @@ impl DocumentKnowledgeBase {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
@@ -520,7 +526,8 @@ impl ResearchPaperCorpus {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
@@ -562,7 +569,8 @@ impl CodeRepoMemory {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, repo_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, &repo_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, scope_owned, &repo_prefix);
         Self { inner: Arc::new(inner) }
     }
 
@@ -598,7 +606,8 @@ impl TimelineReconstruction {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
@@ -642,7 +651,8 @@ impl CustomerSupportHistory {
     #[napi(factory)]
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 

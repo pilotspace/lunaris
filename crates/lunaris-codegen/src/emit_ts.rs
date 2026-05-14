@@ -444,6 +444,18 @@ fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
             }
+            // N-04 — synthesise Scope inside the binding layer; the napi-rs
+            // wrapper signature skips this param (see `format_params_rust`).
+            IrTyRef::Scope => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                    owned_name = owned_name,
+                )
+                .unwrap();
+                names.push(owned_name);
+            }
             // Plan 11-02a D3(a) — Handle wrapper: clone `.inner` directly,
             // no serde round-trip.
             IrTyRef::Handle { name } => {
@@ -501,6 +513,18 @@ fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Ve
             }
             IrTyRef::Str | IrTyRef::Usize | IrTyRef::Bool | IrTyRef::Unit | IrTyRef::RefSelf => {
                 names.push(p.name.clone());
+            }
+            // N-04 — synthesise Scope inside the binding layer; the napi-rs
+            // wrapper signature skips this param (see `format_params_rust`).
+            IrTyRef::Scope => {
+                let owned_name = format!("{}_owned", p.name);
+                writeln!(
+                    out,
+                    "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                    owned_name = owned_name,
+                )
+                .unwrap();
+                names.push(owned_name);
             }
             // Plan 11-02a D3(a) — Handle wrapper: clone `.inner` directly,
             // no serde round-trip (mirror of the fallible branch).
@@ -598,9 +622,13 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
     }
     let is_static = matches!(m.receiver, IrReceiver::None);
     let prefix = if is_static { "  static " } else { "  " };
+    // N-04 — Scope params are hidden from the SDK; the `.d.ts` MUST mirror
+    // the napi-rs Rust signature (which already skips Scope via
+    // `format_params_rust`).
     let params = m
         .params
         .iter()
+        .filter(|p| !matches!(p.ty, IrTyRef::Scope))
         .map(|p| format!("{}: {}", p.name, ts_param_ty_dts(&p.ty)))
         .collect::<Vec<_>>()
         .join(", ");
@@ -613,7 +641,10 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
 
 fn format_params_rust(params: &[IrParam], _with_self: bool) -> String {
     let mut s = String::new();
-    for p in params {
+    // N-04 — `Scope` params are synthesised at the call site
+    // (`::lunaris_core::scope::Scope::dev()`). They MUST NOT appear in the
+    // wrapper signature; the TS SDK is intentionally single-tenant.
+    for p in params.iter().filter(|p| !matches!(p.ty, IrTyRef::Scope)) {
         s.push_str(", ");
         s.push_str(&p.name);
         s.push_str(": ");
@@ -655,6 +686,10 @@ fn ts_param_ty_rust(ty: &IrTyRef) -> String {
         // Plan 11-02a D3(a) — Handle: napi-rs class reference (by Rust
         // struct name, which equals the TS class name for napi exports).
         IrTyRef::Handle { name } => format!("&{name}"),
+        // N-04 — Scope is filtered out by `format_params_rust`; this arm is
+        // defensive and emits a sentinel that would loudly fail rustc if it
+        // ever escaped the filter.
+        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
     }
 }
 
@@ -671,6 +706,8 @@ fn ts_param_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_param_ty_dts(inner)),
         // Plan 11-02a D3(a) — Handle: TS class name (same as Rust struct).
         IrTyRef::Handle { name } => name.clone(),
+        // N-04 — defensive arm; .d.ts param emission filters Scope.
+        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
     }
 }
 
@@ -757,6 +794,10 @@ fn ts_return_ty_dts(ty: &IrTyRef) -> String {
         IrTyRef::Handle { name } => name.clone(),
         IrTyRef::Option { inner } => format!("{} | null", ts_return_ty_dts(inner)),
         IrTyRef::Vec { inner } => format!("Array<{}>", ts_return_ty_dts(inner)),
+        // N-04 — Scope is a parameter-only type; if it ever shows up as a
+        // return type that's a surface-toml bug — surface a sentinel that
+        // would fail .d.ts lint loudly.
+        IrTyRef::Scope => "/* SCOPE_NOT_A_VALID_RETURN */ never".to_string(),
     }
 }
 

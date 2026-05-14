@@ -402,6 +402,12 @@
                   }
                 },
                 {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
+                  }
+                },
+                {
                   "name": "user_id",
                   "ty": {
                     "kind": "str"
@@ -479,6 +485,12 @@
                   "ty": {
                     "kind": "handle",
                     "name": "Lunaris"
+                  }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
                   }
                 },
                 {
@@ -579,6 +591,12 @@
                   "ty": {
                     "kind": "handle",
                     "name": "Lunaris"
+                  }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
                   }
                 }
               ],
@@ -761,6 +779,12 @@
                     "kind": "handle",
                     "name": "Lunaris"
                   }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
+                  }
                 }
               ],
               "returns": {
@@ -887,6 +911,12 @@
                   "ty": {
                     "kind": "handle",
                     "name": "Lunaris"
+                  }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
                   }
                 }
               ],
@@ -1051,6 +1081,12 @@
                   }
                 },
                 {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
+                  }
+                },
+                {
                   "name": "source_prefix",
                   "ty": {
                     "kind": "str"
@@ -1181,6 +1217,12 @@
                   }
                 },
                 {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
+                  }
+                },
+                {
                   "name": "source_prefix",
                   "ty": {
                     "kind": "str"
@@ -1283,6 +1325,12 @@
                   }
                 },
                 {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
+                  }
+                },
+                {
                   "name": "repo_prefix",
                   "ty": {
                     "kind": "str"
@@ -1380,6 +1428,12 @@
                   "ty": {
                     "kind": "handle",
                     "name": "Lunaris"
+                  }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
                   }
                 },
                 {
@@ -1505,6 +1559,12 @@
                   "ty": {
                     "kind": "handle",
                     "name": "Lunaris"
+                  }
+                },
+                {
+                  "name": "scope",
+                  "ty": {
+                    "kind": "scope"
                   }
                 }
               ],

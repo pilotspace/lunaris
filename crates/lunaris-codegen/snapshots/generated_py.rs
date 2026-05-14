@@ -228,7 +228,8 @@ impl PyChatAgentMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, scope_owned, &user_id);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -265,7 +266,8 @@ impl PyMultiTurnConversation {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, &user_id);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, scope_owned, &user_id);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -311,7 +313,8 @@ impl PySlackArchive {
     #[staticmethod]
     fn new(lunaris: &PyLunaris) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -386,7 +389,8 @@ impl PyEmailThreading {
     #[staticmethod]
     fn new(lunaris: &PyLunaris) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -435,7 +439,8 @@ impl PyMeetingNotesMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -516,7 +521,8 @@ impl PyDocumentKnowledgeBase {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -567,7 +573,8 @@ impl PyResearchPaperCorpus {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -611,7 +618,8 @@ impl PyCodeRepoMemory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, repo_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, &repo_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, scope_owned, &repo_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -651,7 +659,8 @@ impl PyTimelineReconstruction {
     #[staticmethod]
     fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, &source_prefix);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
 
@@ -701,7 +710,8 @@ impl PyCustomerSupportHistory {
     #[staticmethod]
     fn new(lunaris: &PyLunaris) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned);
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
 

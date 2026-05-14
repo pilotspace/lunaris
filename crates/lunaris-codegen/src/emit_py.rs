@@ -254,6 +254,18 @@ fn emit_py_method(
                         // depythonize step is needed.
                         owned_names.push(p.name.clone());
                     }
+                    // N-04 — synthesise Scope inside the binding layer.
+                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
+                    // SDK callers never see the Scope arg.
+                    IrTyRef::Scope => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            owned_name = owned_name,
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
                     _ => owned_names.push(p.name.clone()),
                 }
             }
@@ -333,6 +345,18 @@ fn emit_py_method(
                             owned_name = owned_name,
                             handle_name = handle_name,
                             param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    // N-04 — synthesise Scope inside the binding layer.
+                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
+                    // SDK callers never see the Scope arg.
+                    IrTyRef::Scope => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            owned_name = owned_name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -428,7 +452,19 @@ fn emit_py_method(
                             .unwrap();
                             owned_names.push(owned_name);
                         }
-                        _ => owned_names.push(p.name.clone()),
+                        // N-04 — synthesise Scope inside the binding layer.
+                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
+                    // SDK callers never see the Scope arg.
+                    IrTyRef::Scope => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            owned_name = owned_name,
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    _ => owned_names.push(p.name.clone()),
                     }
                 }
                 let call_args = m
@@ -512,6 +548,18 @@ fn emit_py_method(
                             owned_name = owned_name,
                             handle_name = handle_name,
                             param = p.name
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
+                    // N-04 — synthesise Scope inside the binding layer.
+                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
+                    // SDK callers never see the Scope arg.
+                    IrTyRef::Scope => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            owned_name = owned_name,
                         )
                         .unwrap();
                         owned_names.push(owned_name);
@@ -633,6 +681,18 @@ fn emit_py_method(
                         .unwrap();
                         owned_names.push(owned_name);
                     }
+                    // N-04 — synthesise Scope inside the binding layer.
+                    // Recipe constructors take `(Arc<Lunaris>, Scope, ...)`;
+                    // SDK callers never see the Scope arg.
+                    IrTyRef::Scope => {
+                        writeln!(
+                            out,
+                            "        let {owned_name}: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();",
+                            owned_name = owned_name,
+                        )
+                        .unwrap();
+                        owned_names.push(owned_name);
+                    }
                     _ => owned_names.push(p.name.clone()),
                 }
             }
@@ -715,7 +775,13 @@ fn owned_self_target_ty(type_name: &str, ret_ty: &IrTyRef) -> String {
 
 fn format_params(params: &[IrParam], leading_comma: bool) -> String {
     let mut s = String::new();
-    for (i, p) in params.iter().enumerate() {
+    // N-04 — `Scope` params are synthesised at the call site
+    // (`::lunaris_core::scope::Scope::dev()`); they are deliberately NOT
+    // exposed in the wrapper signature. Skip them when rendering the
+    // SDK-facing param list.
+    let visible: Vec<&IrParam> =
+        params.iter().filter(|p| !matches!(p.ty, IrTyRef::Scope)).collect();
+    for (i, p) in visible.iter().enumerate() {
         if leading_comma || i > 0 {
             s.push_str(", ");
         }
@@ -753,6 +819,11 @@ fn py_param_ty(ty: &IrTyRef) -> String {
         // (`&PyLunaris`) directly; the emitter then clones `.inner` (an
         // `Arc`) at the call site. No pythonize round-trip.
         IrTyRef::Handle { name } => format!("&Py{name}"),
+        // N-04 — `Scope` is synthesised in the binding layer and NOT exposed
+        // to the SDK caller. `format_params` filters Scope out of the wrapper
+        // signature so this arm is defensive: a sentinel string that would
+        // cause a loud Rust compile error if it ever escaped the filter.
+        IrTyRef::Scope => "<<SCOPE_SHOULD_BE_FILTERED>>".to_string(),
     }
 }
 

@@ -235,6 +235,23 @@ pub enum IrTyRef {
     /// Used by every Phase 10/11 wrapper constructor that takes
     /// `Arc<Lunaris>` as its first argument.
     Handle { name: String },
+    /// N-04 — multi-agent partition `Scope` synthesized inside the binding
+    /// layer. The recipe constructors take `(Arc<Lunaris>, Scope, ...)` but
+    /// the Python/TS SDK surface intentionally hides the Scope parameter —
+    /// the binding crate is currently single-tenant test/migration code, so
+    /// the emitter calls `::lunaris_core::scope::Scope::dev()` at the call
+    /// site (CLAUDE.md notes `Scope::dev()` is `#[doc(hidden)] pub` for
+    /// test/migration use, which matches the codegen consumer profile).
+    ///
+    /// Params tagged with `kind = "scope"` are:
+    ///   - NOT exposed in the wrapper signature (no `scope: ...` param)
+    ///   - synthesised as `let {name}_owned = ::lunaris_core::scope::Scope::dev();`
+    ///     before the call site
+    ///
+    /// When the SDK grows real scope plumbing this becomes the natural
+    /// extension point — flip `Scope` to surface a `scope: String` arg and
+    /// route through `Scope::new(...)` validation.
+    Scope,
 }
 
 /// `#[serde(skip_serializing_if = "is_false")]` helper. Keeps

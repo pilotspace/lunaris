@@ -239,6 +239,7 @@ rust_crate_path = "::lunaris_recipes::conversational"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "user_id", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -272,6 +273,7 @@ rust_crate_path = "::lunaris_recipes::conversational"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "user_id", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -314,7 +316,10 @@ rust_crate_path = "::lunaris_recipes::conversational"
     name = "new"
     is_async = "no"
     receiver = "none"
-    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
+    ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
     doc = "Construct a root archive handle."
 
@@ -387,7 +392,10 @@ rust_crate_path = "::lunaris_recipes::conversational"
     name = "new"
     is_async = "no"
     receiver = "none"
-    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
+    ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
     doc = "Construct a new email-archive handle rooted at `email:thread/`."
 
@@ -438,7 +446,10 @@ rust_crate_path = "::lunaris_recipes::conversational"
     name = "new"
     is_async = "no"
     receiver = "none"
-    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
+    ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
     doc = "Construct bound to `meeting:notes/`."
 
@@ -518,6 +529,7 @@ rust_crate_path = "::lunaris_recipes::documentary"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "source_prefix", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -573,6 +585,7 @@ rust_crate_path = "::lunaris_recipes::documentary"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "source_prefix", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -616,6 +629,7 @@ rust_crate_path = "::lunaris_recipes::documentary"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "repo_prefix", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -656,6 +670,7 @@ rust_crate_path = "::lunaris_recipes::documentary"
     receiver = "none"
     params = [
       { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
       { name = "source_prefix", ty = { kind = "str" } },
     ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
@@ -702,7 +717,10 @@ rust_crate_path = "::lunaris_recipes::documentary"
     name = "new"
     is_async = "no"
     receiver = "none"
-    params = [{ name = "lunaris", ty = { kind = "handle", name = "Lunaris" } }]
+    params = [
+      { name = "lunaris", ty = { kind = "handle", name = "Lunaris" } },
+      { name = "scope", ty = { kind = "scope" } },
+    ]
     returns = { ty = { kind = "ref_self" }, fallible = false }
     doc = "Construct with hard-coded source prefixes `ticket:` and `chat:`."
 
