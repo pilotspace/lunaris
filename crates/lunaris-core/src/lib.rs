@@ -22,7 +22,7 @@ pub mod storage;
 
 pub use bitemporal::BiTemporal;
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitState};
-pub use embedder::{Embedder, StubEmbedder};
+pub use embedder::{Embedder, NOOP_DEFAULT_DIM, NoopEmbedder, StubEmbedder};
 pub use error::{
     ConsolError, ExtractError, LunarisError, RetrieveError, StorageError, ValidateError,
 };

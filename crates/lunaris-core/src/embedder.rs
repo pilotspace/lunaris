@@ -37,6 +37,97 @@ impl Embedder for StubEmbedder {
     }
 }
 
+/// Default dim for [`NoopEmbedder`] when no override is supplied. Matches the
+/// historical EmbeddingGemma 300M / granite-r2 output width (768) so an
+/// operator who flips to the noop backend doesn't have to re-create their
+/// `FT.CREATE` HNSW index.
+///
+/// Moon's `FT.CREATE` requires `dim > 0` and Postgres/sqlite vector columns
+/// are sized at migration time; `NoopEmbedder::new(0)` therefore surfaces
+/// as a `StorageError::Backend("vector dim must be > 0")` at
+/// `Lunaris::open()` time. The constructor itself accepts `0` so the error
+/// path stays uniform across `Stub` / `Noop` / real backends.
+pub const NOOP_DEFAULT_DIM: usize = 768;
+
+/// Zero-vector [`Embedder`] of caller-configured `dim`. Used when no real
+/// embedder backend is wired (air-gapped builds, metadata-only ingest, tests
+/// that need a working `Arc<dyn Embedder>` without similarity semantics).
+///
+/// `StubEmbedder` is the *deterministic-random-vector* niche; `NoopEmbedder`
+/// is the *true-zero-vector* niche. Both live in `lunaris-core` so backend
+/// crates can be feature-gated without losing the no-op fallback (the v0.4
+/// N-03 cutover moved this out of the retired `lunaris-embed` crate into the
+/// core trait module).
+#[derive(Debug, Clone, Copy)]
+pub struct NoopEmbedder {
+    dim: usize,
+}
+
+impl NoopEmbedder {
+    /// Construct a noop embedder reporting `dim`. `0` is accepted at the
+    /// constructor level — the storage backends reject it downstream.
+    #[must_use]
+    pub const fn new(dim: usize) -> Self {
+        Self { dim }
+    }
+}
+
+impl Default for NoopEmbedder {
+    fn default() -> Self {
+        Self::new(NOOP_DEFAULT_DIM)
+    }
+}
+
+#[async_trait]
+impl Embedder for NoopEmbedder {
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        Ok((0..inputs.len()).map(|_| vec![0.0_f32; self.dim]).collect())
+    }
+}
+
+#[cfg(test)]
+mod noop_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_dim_is_768() {
+        let e = NoopEmbedder::default();
+        assert_eq!(e.dim(), NOOP_DEFAULT_DIM);
+        assert_eq!(e.dim(), 768);
+    }
+
+    #[tokio::test]
+    async fn embed_batch_returns_zero_vectors_at_configured_dim() {
+        let e = NoopEmbedder::new(384);
+        let out = e.embed_batch(&["a", "b", "c"]).await.unwrap();
+        assert_eq!(out.len(), 3);
+        for row in &out {
+            assert_eq!(row.len(), 384);
+            assert!(row.iter().all(|&v| v == 0.0));
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_input_yields_empty_output() {
+        let e = NoopEmbedder::new(768);
+        let out = e.embed_batch(&[]).await.unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dim_zero_is_accepted_at_constructor() {
+        let e = NoopEmbedder::new(0);
+        assert_eq!(e.dim(), 0);
+        let out = e.embed_batch(&["x"]).await.unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].is_empty());
+    }
+}
+
 fn det_vec(s: &str, dim: usize) -> Vec<f32> {
     // Deterministic: seed a tiny LCG by hashing the input; emit `dim` floats in [-1, 1].
     let mut h = DefaultHasher::new();
