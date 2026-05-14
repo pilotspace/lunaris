@@ -52,11 +52,16 @@ pip install lunaris
 npm i lunaris
 ```
 
-Default features build the bundled `fastembed` embedder (auto-downloads ONNX
-weights — no external Ollama needed); the `candle` backend is also compiled in
-for air-gapped use. For the laptop-floor build (~600 MB disk / ~1 GB RAM), see RFC 0006 and
-the `verify-small` feature in `crates/lunaris-verify/Cargo.toml`. Full matrix
-in the [configuration reference](docs/book/src/reference/configuration.md).
+v0.4 ships candle-native `granite-embedding-311m-multilingual-r2` (embedder,
+FP16, 768-d) + `bge-reranker-v2-m3` (cross-encoder reranker, FP32). Stage the
+weights once via `huggingface-cli download` — see
+[`docs/migration/0.3-to-0.4-native-default.md`](docs/migration/0.3-to-0.4-native-default.md).
+Operators on air-gapped networks with an existing Ollama deployment can opt
+into the HTTP escape hatch via `--features embed-remote` +
+`LUNARIS_EMBEDDER_OLLAMA_URL`. For Q4_K_M GGUF (RSS-constrained
+deployments), build with `--features embedder-gguf,reranker-gguf` and set
+`LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`. Full matrix in the
+[configuration reference](docs/book/src/reference/configuration.md).
 
 ## 10-minute quickstart
 
