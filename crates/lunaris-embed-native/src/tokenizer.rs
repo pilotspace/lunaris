@@ -11,6 +11,7 @@ use std::path::Path;
 
 use candle_core::{DType, Device, Tensor};
 use tokenizers::{PaddingParams, PaddingStrategy, Tokenizer, TruncationParams, TruncationStrategy};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::config::ModernBertConfig;
 
@@ -93,7 +94,20 @@ impl GraniteTokenizer {
             ));
         }
 
-        let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
+        // why: NFC-normalize every input before encoding. The granite-r2
+        // tokenizer.json does NOT include an NFC/NFKC normalizer step, so a
+        // string in NFD form (e.g. iOS/macOS clipboards routinely emit NFD)
+        // tokenizes into a completely different id sequence from the same
+        // user-visible string in NFC. See
+        // `.planning/phases/N-01-step-1-modernbert-fp16/P1-VERIFICATION-RESULT.md`
+        // finding #1 — `"Tiếng Việt"` produced 4 ids in NFC vs 8 ids in NFD
+        // and an embedding cosine of 0.8653 between the two forms.
+        // NFC is chosen over NFKC deliberately: NFKC collapses compatibility
+        // characters (full-width ↔ half-width Latin, ligatures, super/sub
+        // scripts) which changes semantics for code/identifier embeddings.
+        // NFC only re-composes canonically-equivalent sequences, which is
+        // exactly what we want: same user-visible text → same tokens.
+        let owned: Vec<String> = inputs.iter().map(|s| s.nfc().collect::<String>()).collect();
         let encodings = self
             .inner
             .encode_batch(owned, /*add_special_tokens=*/ true)
@@ -145,6 +159,72 @@ mod tests {
         match err {
             TokenizerError::Load { .. } => {}
             other => panic!("expected Load error, got {other:?}"),
+        }
+    }
+
+    /// Regression pin for the P1-1 finding: the granite-r2 tokenizer must
+    /// produce identical token-id sequences for canonically-equivalent
+    /// inputs (NFC vs NFD). This is the unit-level pre-image of the IT
+    /// assertion in `tests/p1_correctness.rs::p1_correctness_panel` —
+    /// without `nfc()` in `encode_batch`, "Tiếng Việt" tokenizes to 4 ids
+    /// in NFC and 8 ids in NFD.
+    ///
+    /// Env-var-skipped because it needs the real `tokenizer.json`. Same
+    /// convention as the `embedder-it` integration tests.
+    #[test]
+    fn encode_batch_normalizes_nfc_nfd_inputs() {
+        use unicode_normalization::UnicodeNormalization;
+
+        let Some(tokenizer_path) = std::env::var_os("GRANITE_R2_TOKENIZER_PATH") else {
+            eprintln!(
+                "[skip] encode_batch_normalizes_nfc_nfd_inputs — \
+                 GRANITE_R2_TOKENIZER_PATH unset"
+            );
+            return;
+        };
+
+        let cfg = ModernBertConfig::granite_r2();
+        let tok = GraniteTokenizer::from_file(&tokenizer_path, &cfg)
+            .expect("load granite-r2 tokenizer.json");
+
+        let device = Device::Cpu;
+
+        // Five strings that exercise the worst-case combining sequences:
+        // tone marks + horn (ư = u + U+031B), dot-below + circumflex
+        // (ộ = o + U+0323 + U+0302), and stacked diacritics (ướng).
+        let cases = [
+            "Tiếng Việt",
+            "phở bò tái nạm",
+            "Hà Nội xinh đẹp",
+            "cà phê sữa đá",
+            "bánh mì thịt nướng",
+        ];
+
+        for original in cases {
+            let nfc: String = original.nfc().collect();
+            let nfd: String = original.nfd().collect();
+            // sanity: the two forms have DIFFERENT bytes (otherwise the
+            // test is vacuous).
+            assert_ne!(
+                nfc.as_bytes(),
+                nfd.as_bytes(),
+                "NFC and NFD bytes must differ for {original:?}"
+            );
+
+            let enc_nfc = tok.encode_batch(&[nfc.as_str()], &device).expect("encode NFC");
+            let enc_nfd = tok.encode_batch(&[nfd.as_str()], &device).expect("encode NFD");
+
+            let ids_nfc: Vec<u32> =
+                enc_nfc.input_ids.flatten_all().unwrap().to_vec1::<u32>().unwrap();
+            let ids_nfd: Vec<u32> =
+                enc_nfd.input_ids.flatten_all().unwrap().to_vec1::<u32>().unwrap();
+
+            assert_eq!(
+                ids_nfc, ids_nfd,
+                "NFC/NFD must produce identical token ids for {original:?} \
+                 (got NFC={ids_nfc:?} vs NFD={ids_nfd:?}). If this fires, \
+                 the `nfc()` pre-pass in encode_batch was removed."
+            );
         }
     }
 }

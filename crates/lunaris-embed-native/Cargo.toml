@@ -35,6 +35,13 @@ tracing             = { workspace = true }
 serde               = { workspace = true }
 serde_json          = { workspace = true }
 async-trait         = { workspace = true }
+# why: tokenizer.rs pre-normalizes inputs to NFC before encoding so callers
+# passing NFD-encoded text (common from iOS/macOS sources) produce the same
+# token stream — and therefore the same embedding — as NFC-encoded text. See
+# `.planning/phases/N-01-step-1-modernbert-fp16/P1-VERIFICATION-RESULT.md`
+# finding #1. Pinned to major version 0 (workspace policy: no new transitive
+# vector/BM25 libs — this is unicode-only).
+unicode-normalization = "0"
 
 [dev-dependencies]
 tokio               = { workspace = true }

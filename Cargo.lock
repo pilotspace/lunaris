@@ -2487,6 +2487,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]
