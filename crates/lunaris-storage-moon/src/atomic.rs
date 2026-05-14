@@ -197,16 +197,27 @@ async fn run_ops(
                 // RFC 0001 Wave 1C: use per-scope graph key.
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
                 // Same constraints as GraphNode: inline literals, no params, no `+=`.
+                //
+                // Moon-Cypher gotcha (2026-05-14): the inline-property filter
+                // `MATCH (a {id:'<hex>'})` is silently IGNORED by Moon's
+                // Cypher executor — it returns every node, not just the one
+                // matching `id`. This caused the MERGE below to fan out into
+                // a cross-product (every (a,b) pair got an edge), wildly
+                // inflating graph edge counts. The fix is the WHERE clause
+                // form, which Moon evaluates correctly. Reproduced against
+                // Moon release v0.1.x via `GRAPH.QUERY` shell test.
                 let src_hex = hex::encode(src);
                 let dst_hex = hex::encode(dst);
                 let set_clause = build_set_clause("r", props);
                 let cypher = if set_clause.is_empty() {
                     format!(
-                        "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) RETURN r"
+                        "MATCH (a),(b) WHERE a.id='{src_hex}' AND b.id='{dst_hex}' \
+                         MERGE (a)-[r:{rel}]->(b) RETURN r"
                     )
                 } else {
                     format!(
-                        "MATCH (a {{id:'{src_hex}'}}),(b {{id:'{dst_hex}'}}) MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
+                        "MATCH (a),(b) WHERE a.id='{src_hex}' AND b.id='{dst_hex}' \
+                         MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
                     )
                 };
                 let scope_graph = graph_key(scope);
