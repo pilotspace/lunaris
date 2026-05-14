@@ -16,8 +16,7 @@
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::Embedder;
-use lunaris_embed::{NOOP_DEFAULT_DIM, NoopEmbedder};
+use lunaris_core::{Embedder, NOOP_DEFAULT_DIM, NoopEmbedder};
 
 #[tokio::test]
 async fn open_memory_succeeds_with_default_resolver() {

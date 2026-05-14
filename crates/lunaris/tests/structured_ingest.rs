@@ -9,8 +9,7 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use lunaris::structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
 use lunaris::{EpisodeBuilder, Lunaris};
-use lunaris_core::{Embedder, Scope};
-use lunaris_embed::NoopEmbedder;
+use lunaris_core::{Embedder, NoopEmbedder, Scope};
 
 /// Open a `memory://` Lunaris handle with a pinned NoopEmbedder so the
 /// resolver doesn't try to construct OllamaEmbedder (which lunaris-bench

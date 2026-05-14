@@ -25,7 +25,7 @@ categories  = ["database", "asynchronous", "data-structures"]
 #   use lunaris::Lunaris;
 [package.metadata.docs.rs]
 all-features = false
-features = ["fastembed", "candle", "ollama", "cloud-api"]
+features = ["candle", "ollama", "cloud-api", "embed-remote", "embedder-gguf", "reranker-gguf"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
@@ -40,9 +40,18 @@ lunaris-storage-postgres  = { workspace = true }
 # feature.
 lunaris-storage-embedded  = { workspace = true }
 lunaris-embed             = { workspace = true }
+# v0.4 N-03 cutover — native candle embedder + reranker are the supported
+# defaults. Always built (no feature gate): the umbrella's `Lunaris::open()`
+# constructs `NativeEmbedder` + `NativeReranker` and falls back to the
+# always-available `NoopEmbedder` / `NoopReranker` from `lunaris-core` /
+# `lunaris-rerank` on cache miss. Operators opt into the Ollama HTTP escape
+# hatch via the `embed-remote` feature below.
+lunaris-embed-native      = { workspace = true }
+lunaris-embed-remote      = { workspace = true, optional = true }
 lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }
 lunaris-rerank            = { workspace = true }
+lunaris-rerank-native     = { workspace = true }
 lunaris-retrieve          = { workspace = true }
 # Plan 04 — verifier + consolidator crates. default-features = false is
 # inherited from workspace.dependencies so the candle / ollama / cloud-api
@@ -50,6 +59,13 @@ lunaris-retrieve          = { workspace = true }
 # forwarded (see [features] below — W-5 AUGMENT forwards).
 lunaris-verify            = { workspace = true }
 lunaris-consolidate       = { workspace = true }
+# v0.4 N-03 — `resolve_embedder()` / `resolve_reranker()` construct
+# `lunaris_embed_native::NativeEmbedderOpts` and
+# `lunaris_rerank_native::NativeRerankerOpts` which carry a `candle_core::Device`
+# field. The native crates already pull candle transitively; this direct
+# entry exposes the `Device::Cpu` constructor at the umbrella so the resolver
+# does not need a separate re-export shim.
+candle-core    = { workspace = true }
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
 chrono         = { workspace = true }
@@ -70,6 +86,11 @@ tracing-subscriber = { workspace = true }
 is-terminal    = { workspace = true }
 ulid           = { workspace = true }
 url            = { workspace = true }
+# v0.4 N-03 — used by `resolve_embedder()` / `resolve_reranker()` to resolve
+# `~/.cache/lunaris/models/{granite-embedding-311m-multilingual-r2,bge-reranker-v2-m3}/`
+# as the canonical default load location for native model artifacts. Operator
+# overrides via `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR` bypass `dirs`.
+dirs           = { workspace = true }
 # Phase 14.2 — ephemeral per-handle LRU boost cache.
 lru            = { workspace = true }
 
@@ -99,72 +120,38 @@ rand           = { workspace = true }
 nix            = { workspace = true }
 
 [features]
-# Phase 22 default flip (2026-05-13): the umbrella ships ZERO embedder /
-# reranker backends by default. `cargo build -p lunaris-memory` no longer
-# pulls fastembed / candle / ORT / hf-hub. Operators opt into a real
-# backend via `--features fastembed` (recommended), `--features candle`
-# (air-gapped), or `--features ollama` (HTTP). Without any of those, the
-# `Lunaris::open()` resolver lands on `NoopEmbedder` (zero vectors at
-# `LUNARIS_EMBED_DIM`, default 768) with a one-shot `tracing::warn!` so
-# operators see that vector recall is dead until they pick a backend or
-# pass a custom one via `Lunaris::open_with_embedder`. See
-# `docs/migration/0.2-to-0.3-optional-embedder.md` for the full migration
-# matrix. The previous Phase 20-02 default (`["fastembed", "candle"]`)
-# moved here as `recommended` for one-flag opt-in.
+# v0.4 N-03 cutover (2026-05-14): the umbrella now ships `NativeEmbedder` +
+# `NativeReranker` (candle + granite-r2 + bge-reranker-v2-m3) as the supported
+# default. No env-var backend swap. The retired pre-v0.4 features
+# (`fastembed`, `ollama`, `candle-only`, `recommended`) are gone — operators
+# who relied on them must follow `docs/migration/0.3-to-0.4-native-default.md`.
+#
+# The `candle` / `cloud-api` features below ONLY gate the **extractor +
+# verifier** LLM backends (Gemma-3 4B / 270M / 27B + Anthropic/OpenAI/Gemini
+# provider mux) — the embedder + reranker no longer depend on `candle` as a
+# feature toggle (it's a permanent runtime dep on the native crates).
 default     = []
-# Convenience meta-feature: equivalent to the pre-Phase-22 default. Pulls
-# both fastembed and candle so the env-var resolver in `Lunaris::open()`
-# can pick either backend at runtime without a rebuild.
-recommended = ["fastembed", "candle"]
-# Phase 20-02 — forwards the fastembed backend to both lunaris-embed (real
-# ONNX EmbeddingGemma 300M via fastembed-rs) and lunaris-rerank (real ONNX
-# BGE-Reranker-V2-M3). Pairs with `LUNARIS_EMBEDDER_BACKEND=fastembed` /
-# `LUNARIS_RERANKER_BACKEND=fastembed` (the post-flip defaults).
-fastembed = ["lunaris-embed/fastembed", "lunaris-rerank/fastembed"]
-# Forwards the embedder + reranker + extractor backend choice to lunaris-embed +
-# lunaris-rerank + lunaris-extract. `candle` produces real EmbeddingGemma 768d
-# for embed + real bge-reranker-v2-m3 cross-encoder for rerank + real Gemma-3
-# 4B for extract, all via candle 0.10. After the Phase 20-02 flip, candle is
-# kept in the default umbrella for opt-in via `LUNARIS_EMBEDDER_BACKEND=candle`
-# / `LUNARIS_RERANKER_BACKEND=candle`. See docs/migration/0.1-to-0.2-fastembed-default.md.
-# `ollama` swaps the embedder + extractor to HTTP backends per the Plan 02-01
-# latency-budget escape hatch.
-# `cloud-api` (Plan 03-03) gates the lunaris-extract Anthropic / OpenAI / Gemini
-# provider-mux backend.
-# W-5 — AUGMENT (never replace) prior feature forwards with lunaris-verify
-# forwards for Plan 04. lunaris-consolidate has no backend feature flags per
-# D-15 (no LLM backends; community summaries reuse Phase 3 Extractor), so it
-# contributes nothing to these forwards.
-candle    = ["lunaris-embed/candle", "lunaris-rerank/candle", "lunaris-extract/candle", "lunaris-verify/candle"]
-ollama    = ["lunaris-embed/ollama", "lunaris-extract/ollama", "lunaris-verify/ollama"]
+# v0.4 N-03 — feature-gated Ollama HTTP escape hatch. Off by default. When
+# set, `resolve_embedder()` honours `LUNARIS_EMBEDDER_OLLAMA_URL` and
+# constructs `lunaris_embed_remote::OllamaEmbedder` instead of the native
+# default. NOT the supported path; documented as "operator escape hatch."
+embed-remote = ["dep:lunaris-embed-remote"]
+# v0.4 N-03 — GGUF Q4_K_M quantized variants of the native embedder +
+# reranker. Forwards to the `embedder-gguf` / `reranker-gguf` flags on the
+# respective native crates. When set, `LUNARIS_EMBEDDER_GGUF` /
+# `LUNARIS_RERANKER_GGUF` env-var overrides activate `NativeQuantizedEmbedder`
+# / `NativeQuantizedReranker`. Without this flag the env vars are ignored.
+embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
+reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
+# Extractor + verifier LLM backends. `candle` produces real Gemma-3 4B for
+# extract + Gemma-3 27B for verify (legacy); `cloud-api` enables the
+# provider-mux backend; `verify-small` / `verify-large` pick the verifier
+# tier per RFC 0006.
+candle    = ["lunaris-extract/candle", "lunaris-verify/candle"]
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
-# RFC 0006 — laptop-floor verifier (Gemma-3 270M) + legacy 27B opt-in.
-# Forwards through to lunaris-verify so umbrella callers can enable either
-# tier without depending on lunaris-verify directly.
+ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
-# Plan 20-03 Task 2 — air-gapped operator escape hatch. Produces a build with
-# ZERO fastembed / ort / hf-hub in the transitive dep tree, so operators on
-# isolated networks (no HF Hub reachability, no ORT prebuilt download) can
-# ship a lunaris binary that runs entirely on candle 0.10 + manually-staged
-# model weights. Forwards the candle backend on embed + rerank + extract +
-# verify (same set as `candle` above — kept as a distinct feature so the name
-# documents intent at build sites: `--features candle-only` is operator-facing
-# air-gap signalling, `--features candle` is the default umbrella).
-# Operators MUST pre-populate `~/.cache/lunaris/models/{embedding-gemma-300m,
-# bge-reranker-v2-m3,...}` before first `Lunaris::open()` — see
-# docs/migration/0.1-to-0.2-fastembed-default.md §3 "Opt-out paths".
-# Verification (normal/build edges only — dev-deps are bench/test-only and
-# don't ship in the binary): `cargo tree -p lunaris --no-default-features
-# --features candle-only --edges normal | grep -cE "fastembed|ort|hf-hub"`
-# MUST return 0. NOTE: the default-edges tree shows `hf-hub` once via
-# `lunaris-bench` dev-deps — that's bench scaffolding, not a binary leak.
-candle-only = [
-    "lunaris-embed/candle",
-    "lunaris-rerank/candle",
-    "lunaris-extract/candle",
-    "lunaris-verify/candle",
-]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris

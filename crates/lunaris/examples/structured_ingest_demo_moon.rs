@@ -53,8 +53,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use lunaris::structured_ingest::{EntityInput, RelationInput, StructuredIngest};
 use lunaris::{EpisodeBuilder, Lunaris};
-use lunaris_core::{Embedder, Scope};
-use lunaris_embed::NoopEmbedder;
+use lunaris_core::{Embedder, NoopEmbedder, Scope};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
