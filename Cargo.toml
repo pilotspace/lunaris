@@ -35,6 +35,10 @@ members = [
   # Coexists with `lunaris-embed` during the transition; see
   # crates/lunaris-embed-native/src/lib.rs for rationale.
   "crates/lunaris-embed-native",
+  # v0.4 N-03 cutover — Ollama HTTP escape hatch crate (feature-gated, off
+  # by default). The supported v0.4 embedder is lunaris-embed-native. See
+  # crates/lunaris-embed-remote/src/lib.rs for rationale.
+  "crates/lunaris-embed-remote",
   "crates/lunaris-extract",
   # Phase 11 (LLM unification) — shared LlmBackend trait + LlmConfig consumed by
   # lunaris-extract, lunaris-verify, and the turn-end reflect supervisor. Placed
@@ -77,6 +81,8 @@ lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version
 lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.2.1", default-features = false }
 lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.2.1", default-features = false }
 lunaris-embed             = { path = "crates/lunaris-embed",             version = "0.2.1", default-features = false }
+lunaris-embed-native      = { path = "crates/lunaris-embed-native",      version = "0.2.1", default-features = false }
+lunaris-embed-remote      = { path = "crates/lunaris-embed-remote",      version = "0.2.1", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.2.1", default-features = false }
 lunaris-rerank-native     = { path = "crates/lunaris-rerank-native",     version = "0.2.1", default-features = false }
 lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.2.1", default-features = false }

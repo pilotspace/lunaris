@@ -2491,6 +2491,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-embed-remote"
+version = "0.2.1"
+dependencies = [
+ "async-trait",
+ "lunaris-core",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "lunaris-extract"
 version = "0.2.1"
 dependencies = [
