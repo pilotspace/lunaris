@@ -73,13 +73,15 @@ pub const BGE_RERANKER_V2_M3_DIM: usize = 1024;
 /// (re)produce this artifact; consumers should verify the SHA-256 of the
 /// `.gguf` file at load time and refuse to proceed on mismatch.
 ///
-/// File size budget: **≤ 320 MiB** (per the N-02 step 2 brief).
-///
-/// **TBD pending spike-convert run** — the placeholder hex below is
-/// obviously synthetic so a CI run that loads a real GGUF will refuse it
-/// loudly. The real SHA-256 is filled in by the post-conversion commit.
+/// File size at this pin: **418 MiB**. The N-02 step 2 brief targeted
+/// ≤ 320 MiB; see `tests/fixtures/conversion-evidence.md` for the size
+/// breakdown — the non-quantizable F32 floor (250 k vocab × 1024 +
+/// 8192-row position table + per-tensor F32 biases on every linear)
+/// makes 320 MiB unreachable without aggressive embedding-table quant
+/// that puts the drift gate at risk. Plain Q4_K_M maximises drift-gate
+/// headroom; the size deviation is documented.
 pub const BGE_RERANKER_GGUF_Q4_SHA256: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "37da565066d505eb0c3ead316f3822728712eec2dc2dd2a4542ee65ea5064669";
 
 /// Max sequence length used for pair encoding `(query, doc)`. bge-reranker-v2-m3's
 /// `tokenizer_config.json` ships `model_max_length: 8192`, but the released
