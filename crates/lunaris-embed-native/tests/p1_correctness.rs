@@ -315,11 +315,7 @@ async fn p1_correctness_panel() {
         let top3_ids: Vec<&str> =
             scored.iter().take(3).map(|(i, _)| xling.corpus[*i].id.as_str()).collect();
 
-        let hits = q
-            .ground_truth_top3
-            .iter()
-            .filter(|gt| top3_ids.contains(&gt.as_str()))
-            .count();
+        let hits = q.ground_truth_top3.iter().filter(|gt| top3_ids.contains(&gt.as_str())).count();
 
         // why: gate is ≥2 of 3 ground-truth docs in top-3. Strict enough to
         // catch a broken multilingual model; lenient enough to allow one
