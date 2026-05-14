@@ -39,7 +39,6 @@ lunaris-storage-postgres  = { workspace = true }
 # with zero external services. Pure SQLite — no heavy deps to gate behind a
 # feature.
 lunaris-storage-embedded  = { workspace = true }
-lunaris-embed             = { workspace = true }
 # v0.4 N-03 cutover — native candle embedder + reranker are the supported
 # defaults. Always built (no feature gate): the umbrella's `Lunaris::open()`
 # constructs `NativeEmbedder` + `NativeReranker` and falls back to the

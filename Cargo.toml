@@ -30,10 +30,9 @@ members = [
   # grouping-by-concern rule (all downstream-consumer crates clustered).
   "crates/lunaris-recipes",
   "crates/lunaris-consolidate",
-  "crates/lunaris-embed",
-  # Milestone v0.4 — native candle ModernBERT embedder for granite-r2.
-  # Coexists with `lunaris-embed` during the transition; see
-  # crates/lunaris-embed-native/src/lib.rs for rationale.
+  # Milestone v0.4 N-03 cutover — the legacy `lunaris-embed` crate
+  # (fastembed/candle-gemma/ollama/fallback) was deleted; `lunaris-embed-native`
+  # (candle granite-r2) is the canonical embedder.
   "crates/lunaris-embed-native",
   # v0.4 N-03 cutover — Ollama HTTP escape hatch crate (feature-gated, off
   # by default). The supported v0.4 embedder is lunaris-embed-native. See
@@ -80,7 +79,6 @@ lunaris-core              = { path = "crates/lunaris-core",              version
 lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.2.1", default-features = false }
 lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.2.1", default-features = false }
 lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.2.1", default-features = false }
-lunaris-embed             = { path = "crates/lunaris-embed",             version = "0.2.1", default-features = false }
 lunaris-embed-native      = { path = "crates/lunaris-embed-native",      version = "0.2.1", default-features = false }
 lunaris-embed-remote      = { path = "crates/lunaris-embed-remote",      version = "0.2.1", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.2.1", default-features = false }

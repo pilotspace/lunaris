@@ -130,12 +130,11 @@ pub use lunaris_retrieve::{
     RetrievalService, SourceOp, Vector, degraded_fallback, filter_str, plan_query, rerank,
 };
 
-// Plan 02-03: Reranker trait + helpers re-exported from lunaris-rerank so
-// callers `use lunaris::{Reranker, NoopReranker}`. `BgeRerankerV2M3` is gated
-// behind the `candle` feature so a `cargo check --no-default-features` build
-// doesn't pull the candle stack.
-#[cfg(feature = "candle")]
-pub use lunaris_rerank::{BgeRerankerV2M3, BgeRerankerV2M3Opts};
+// Reranker trait + helpers re-exported from lunaris-rerank so callers
+// `use lunaris::{Reranker, NoopReranker}`. The concrete cross-encoder
+// (`NativeReranker`) lives in `lunaris-rerank-native` — operators who want
+// to construct it directly import from that crate; callers who only need
+// the trait + Noop seam stay on this re-export. v0.4 N-03 cutover.
 pub use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};
 
 // Plan 03-03: Extractor trait + helpers re-exported from lunaris-extract so

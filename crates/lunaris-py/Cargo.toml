@@ -36,8 +36,13 @@ lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 # through the umbrella `lunaris` crate. The umbrella stays at
 # `default-features = false, features = ["ollama"]` so production wheels don't
 # accidentally pull candle.
-lunaris-embed       = { path = "../lunaris-embed", default-features = false, features = ["fastembed", "ollama"] }
-lunaris-rerank      = { path = "../lunaris-rerank", default-features = false, features = ["fastembed"] }
+# v0.4 N-03 — lunaris-embed retired; SDK config rewrites in commit 5 will
+# replace fastembed/ollama factories with native()/native_quantized().
+# lunaris-rerank slimmed to trait + Noop; native impl lives in
+# lunaris-rerank-native (added below).
+lunaris-rerank        = { path = "../lunaris-rerank", default-features = false }
+lunaris-embed-native  = { path = "../lunaris-embed-native", default-features = false }
+lunaris-rerank-native = { path = "../lunaris-rerank-native", default-features = false }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
 lunaris-conformance = { workspace = true, optional = true }
 # PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
@@ -78,14 +83,8 @@ bindings-it = ["dep:lunaris-conformance"]
 # enabled the `EmbedderConfig`/`RerankerConfig` parsers accept `"coreml"` /
 # `"cuda"` and forward to the matching lunaris-embed + lunaris-rerank feature.
 # Default-off: production wheels are CPU-only unless the build pipeline opts in.
-fastembed-coreml = [
-    "lunaris-embed/fastembed-coreml",
-    "lunaris-rerank/fastembed-coreml",
-]
-fastembed-cuda = [
-    "lunaris-embed/fastembed-cuda",
-    "lunaris-rerank/fastembed-cuda",
-]
+# v0.4 N-03 — fastembed/ORT EP forwards retired. The native crates run on
+# candle (CPU; future hardware acceleration roadmap covered in O-02).
 
 [package.metadata.docs.rs]
 # lunaris-py is a cdylib — docs.rs doesn't build Python extension modules,

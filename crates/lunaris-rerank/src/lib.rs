@@ -1,38 +1,32 @@
-//! lunaris-rerank — cross-encoder reranker for the v0 recall hot path (RETRIEVE-06).
+//! lunaris-rerank — trait + NoopReranker for the v0 recall hot path (RETRIEVE-06).
 //!
-//! Per blueprint §4.2 latency budget the recall p50 ≤ 25 ms target ALLOCATES
-//! 12 ms to a cross-encoder rerank pass. Without it, the recall budget is
-//! fictional. This crate ships:
+//! v0.4 N-03 cutover: this crate slimmed from "default backend host" to
+//! "trait + Noop seam." The concrete cross-encoders moved out:
 //!
-//! - [`Reranker`] trait — async, dyn-compatible. Takes a query + docs, returns
-//!   the same set of docs re-scored and re-ordered.
-//! - [`BgeRerankerV2M3`] (default, behind `candle` feature) — bge-reranker-v2-m3
-//!   cross-encoder loaded via candle 0.10 on CPU.
-//! - [`NoopReranker`] — passthrough fallback used when the model weights are
-//!   unavailable. Per RETRIEVE-06 contract: the operator code path MUST be
-//!   present even when the model is missing — that's what makes the dev box
-//!   without 1.1 GB of cached weights still work.
+//! - `BgeRerankerV2M3` (candle) is deleted. The native replacement is
+//!   [`lunaris_rerank_native::NativeReranker`] (candle + bge-reranker-v2-m3
+//!   FP32, sigmoid output ∈ [0, 1]).
+//! - `FastembedReranker` (ORT) and the `fastembed_exec` EP helper are deleted
+//!   with the rest of the fastembed transitive surface.
+//!
+//! What stays:
+//!
+//! - [`Reranker`] trait — async, dyn-compatible. Implemented by
+//!   `NativeReranker` (default), `NativeQuantizedReranker` (Q4 GGUF), and
+//!   downstream BYO impls.
+//! - [`RerankCandidate`] DTO — input/output of `Reranker::rerank`.
+//! - [`NoopReranker`] — passthrough fallback for the RETRIEVE-06 contract.
 //!
 //! ## Cold-start contract
 //!
-//! `BgeRerankerV2M3::try_new_from_default_cache()` returns
-//! `Result<Self, LunarisError>`. The umbrella `Lunaris::open(url)` catches the
-//! `Err` from a cache miss and substitutes [`NoopReranker`], emitting
-//! `tracing::warn!` so the operator sees the degradation. Callers can wire
-//! their own reranker via `Lunaris::with_reranker(reranker)`.
+//! The umbrella `Lunaris::open(url)` catches `Err` from
+//! `NativeReranker::open` (cache miss) and substitutes [`NoopReranker`],
+//! emitting `tracing::warn!` so the operator sees the degradation. Callers
+//! wire their own reranker via `Lunaris::with_reranker(reranker)`.
 //!
 //! ## Latency budget
 //!
-//! The rerank pass receives the top-30 candidates from the upstream retriever
-//! and returns them re-ranked; the operator's downstream `.top(k)` modifier
-//! truncates to the user-facing k (typically 5). Per blueprint §4.2 the budget
-//! is 12 ms p50 / 35 ms p99 on CPU.
-//!
-//! ## Module layout
-//!
-//! - [`bge`] — `BgeRerankerV2M3` (gated `candle`)
-//! - [`fastembed`] — `FastembedReranker` (gated `fastembed`, Phase 19-04)
-//! - [`noop`] — `NoopReranker`
+//! Per blueprint §4.2 the budget is 12 ms p50 / 35 ms p99 on CPU.
 
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
@@ -41,18 +35,8 @@ use async_trait::async_trait;
 use lunaris_core::LunarisError;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "candle")]
-pub mod bge;
-#[cfg(feature = "fastembed")]
-pub mod fastembed;
-#[cfg(feature = "fastembed")]
-pub mod fastembed_exec;
 pub mod noop;
 
-#[cfg(feature = "candle")]
-pub use bge::{BgeRerankerV2M3, BgeRerankerV2M3Opts};
-#[cfg(feature = "fastembed")]
-pub use fastembed::{FastembedReranker, FastembedRerankerOpts};
 pub use noop::NoopReranker;
 
 /// One pre-rerank candidate. The operator hydrates the chunk text BEFORE
