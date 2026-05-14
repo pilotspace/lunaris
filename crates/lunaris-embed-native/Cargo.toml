@@ -38,11 +38,21 @@ async-trait         = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }
+# Used by `tests/quantized_equivalence.rs` to SHA-256-verify the GGUF
+# payload against the `GRANITE_R2_GGUF_Q4_SHA256` pin before running the
+# drift gate. Workspace dep — no new transitive surface.
+sha2                = { workspace = true }
 
 [features]
-default     = []
+default       = []
 # Gates the real-weights integration test under
 # `tests/numerical_equivalence.rs`. Mirrors the convention in `lunaris-embed`
 # so CI's existing `embedder-it` job picks it up uniformly:
 #   `cargo test -p lunaris-embed-native --features embedder-it -- --nocapture`
-embedder-it = []
+embedder-it  = []
+# Gates the Q4_K_M / GGUF quantized embedder (`NativeQuantizedEmbedder`)
+# + `quantized_modernbert` module. Compile-time opt-in keeps the default
+# crate surface unchanged for callers that only want the FP16 path.
+# When this flag is on, `candle-core`'s `quantized` module is the only
+# additional symbol surface — no new dependency lines required.
+embedder-gguf = []

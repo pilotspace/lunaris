@@ -44,7 +44,10 @@
 //!
 //! ## Out of scope (follow-up spawns)
 //!
-//! - Q4 / quantized path
+//! - Q4 / quantized path — partial: GGUF conversion gate cleared, scaffold
+//!   landed behind the `embedder-gguf` feature flag; forward-pass body is
+//!   the next-session deliverable. See
+//!   `.planning/phases/N-01-step-2-quantized-gguf/conversion-evidence.md`.
 //! - Reranker port
 //! - Backend deletions (`lunaris-embed`, candle-gemma, ollama)
 //!
@@ -59,11 +62,39 @@ pub mod embedder;
 pub mod modernbert;
 pub mod tokenizer;
 
+#[cfg(feature = "embedder-gguf")]
+pub mod quantized_embedder;
+#[cfg(feature = "embedder-gguf")]
+pub mod quantized_modernbert;
+
 pub use config::ModernBertConfig;
 pub use embedder::{NativeEmbedder, NativeEmbedderError, NativeEmbedderOpts};
+
+#[cfg(feature = "embedder-gguf")]
+pub use quantized_embedder::{
+    NativeQuantizedEmbedder, NativeQuantizedEmbedderError, NativeQuantizedEmbedderOpts,
+};
+#[cfg(feature = "embedder-gguf")]
+pub use quantized_modernbert::{QuantizedError, QuantizedModernBert};
 
 /// Output dimensionality of `granite-embedding-311m-multilingual-r2`.
 ///
 /// 768-d unit vectors, matching the Lunaris default storage schema
 /// (Moon `FT.SEARCH` 768-d HNSW index + Postgres `vector(768)`).
 pub const GRANITE_R2_DIM: usize = 768;
+
+/// SHA-256 of the canonical Q4_K_M GGUF for
+/// `ibm-granite/granite-embedding-311m-multilingual-r2`, produced by
+/// `scripts/spike-convert-granite-r2-to-gguf.sh` (llama.cpp HEAD at PR
+/// [#22716], converter `convert_hf_to_gguf.py` from the same PR, quantizer
+/// `llama-quantize Q4_K_M`).
+///
+/// Producers should call `scripts/spike-convert-granite-r2-to-gguf.sh` to
+/// (re)produce this artifact; consumers should verify the SHA-256 of the
+/// `.gguf` file at load time and refuse to proceed on mismatch.
+///
+/// File size at this pin: **240.7 MiB** (≤ 250 MiB phase budget).
+///
+/// [#22716]: https://github.com/ggml-org/llama.cpp/pull/22716
+pub const GRANITE_R2_GGUF_Q4_SHA256: &str =
+    "0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276";
