@@ -69,17 +69,26 @@ async fn quantized_vs_fp32_hidden_state_diff() {
         Ok(s) => {
             let idx: usize = s.parse().expect("DIAG_PAIR_INDEX must be a usize");
             #[derive(serde::Deserialize)]
-            struct Fx { pairs: Vec<Pair> }
+            struct Fx {
+                pairs: Vec<Pair>,
+            }
             #[derive(serde::Deserialize)]
-            struct Pair { query: String, doc: String }
+            struct Pair {
+                query: String,
+                doc: String,
+            }
             let fx_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests").join("fixtures").join("reference_scores.json");
+                .join("tests")
+                .join("fixtures")
+                .join("reference_scores.json");
             let bytes = std::fs::read(&fx_path).expect("read fixture");
             let fx: Fx = serde_json::from_slice(&bytes).expect("parse fixture");
             let p = fx.pairs.into_iter().nth(idx).expect("pair index out of range");
-            eprintln!("[diag] using fixture pair #{idx}: q={:?} d={:?}",
+            eprintln!(
+                "[diag] using fixture pair #{idx}: q={:?} d={:?}",
                 p.query.chars().take(40).collect::<String>(),
-                p.doc.chars().take(40).collect::<String>());
+                p.doc.chars().take(40).collect::<String>()
+            );
             (p.query, p.doc)
         }
         Err(_) => (
@@ -97,17 +106,9 @@ async fn quantized_vs_fp32_hidden_state_diff() {
     let candle_cfg = cfg.to_candle();
     // The safetensors prefix is "roberta.embeddings" / "roberta.encoder" — so
     // we descend one level via vb.pp("roberta") to instantiate XLMRobertaModel.
-    let model =
-        XLMRobertaModel::new(&candle_cfg, vb.pp("roberta")).expect("XLMRobertaModel::new");
+    let model = XLMRobertaModel::new(&candle_cfg, vb.pp("roberta")).expect("XLMRobertaModel::new");
     let fp32_hidden = model
-        .forward(
-            &batch.input_ids,
-            &batch.attention_mask,
-            &batch.token_type_ids,
-            None,
-            None,
-            None,
-        )
+        .forward(&batch.input_ids, &batch.attention_mask, &batch.token_type_ids, None, None, None)
         .expect("FP32 forward");
     let fp32_cls = fp32_hidden.i((.., 0, ..)).unwrap().contiguous().unwrap();
     drop(model);
@@ -117,8 +118,7 @@ async fn quantized_vs_fp32_hidden_state_diff() {
     // the FP32 baseline in this test is wired correctly to the same path the
     // equivalence test uses.
     let classifier_vb = vb.pp("classifier");
-    let dense_w =
-        classifier_vb.get((cfg.hidden_size, cfg.hidden_size), "dense.weight").unwrap();
+    let dense_w = classifier_vb.get((cfg.hidden_size, cfg.hidden_size), "dense.weight").unwrap();
     let dense_b = classifier_vb.get(cfg.hidden_size, "dense.bias").unwrap();
     let out_proj_w = classifier_vb.get((1, cfg.hidden_size), "out_proj.weight").unwrap();
     let out_proj_b = classifier_vb.get(1, "out_proj.bias").unwrap();
@@ -164,7 +164,11 @@ async fn quantized_vs_fp32_hidden_state_diff() {
         logit_q4_v[0]
     );
     let q4_native = q4.score_blocking(&[pair[0]]).unwrap();
-    eprintln!("[diag] Q4 native score = {:.4}  (logit {:.3})", q4_native[0], (q4_native[0] as f64 / (1.0 - q4_native[0] as f64)).ln());
+    eprintln!(
+        "[diag] Q4 native score = {:.4}  (logit {:.3})",
+        q4_native[0],
+        (q4_native[0] as f64 / (1.0 - q4_native[0] as f64)).ln()
+    );
     // Per-stop diff (binary-searchable layer hunt).
     eprintln!("[diag] per-stop relative L2 diff vs FP32-final:");
     for &k in &[0usize, 1, 2, 4, 8, 12, 16, 20, 23, 24] {
@@ -204,9 +208,7 @@ async fn quantized_vs_fp32_hidden_state_diff() {
         &device,
     )
     .expect("hybrid GGUF load");
-    hybrid
-        .swap_word_embd_from_safetensors(&weights)
-        .expect("swap word_embd");
+    hybrid.swap_word_embd_from_safetensors(&weights).expect("swap word_embd");
     let hy_hidden = hybrid
         .forward_hidden_upto(&batch.input_ids, &batch.attention_mask, None)
         .expect("hybrid forward_hidden");
@@ -222,8 +224,12 @@ async fn quantized_vs_fp32_hidden_state_diff() {
         logit_hy_v[0]
     );
     eprintln!("[diag] hybrid vs FP32: rel L2 CLS = {hy_rel_cls:.6}");
-    eprintln!("[diag] Interpretation: if score ~0.89 -> Q6_K on token_embd is the culprit (--token-embedding-type f16)");
-    eprintln!("[diag]                 if score ~0.83 -> drift is in Q4_K linear weights (needs imatrix or higher Q)");
+    eprintln!(
+        "[diag] Interpretation: if score ~0.89 -> Q6_K on token_embd is the culprit (--token-embedding-type f16)"
+    );
+    eprintln!(
+        "[diag]                 if score ~0.83 -> drift is in Q4_K linear weights (needs imatrix or higher Q)"
+    );
 
     // ---- Discriminator: same forward code, FP32 weights from safetensors ----
     //

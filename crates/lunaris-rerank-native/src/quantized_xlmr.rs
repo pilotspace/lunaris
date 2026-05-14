@@ -55,9 +55,9 @@
 
 use std::path::Path;
 
+use candle_core::Device;
 use candle_core::quantized::{QMatMul, gguf_file};
 use candle_core::{D, DType, IndexOp, Module, Tensor};
-use candle_core::Device;
 use candle_nn::{LayerNorm, VarBuilder, ops::softmax};
 
 use crate::config::XlmRobertaRerankerConfig;
@@ -171,35 +171,36 @@ impl QuantizedXlmRoberta {
             .map_err(|e| QuantizedRerankError::Gguf { reason: format!("read header: {e}") })?;
 
         // ---- helpers ----
-        let qmat = |reader: &mut std::fs::File, name: &str| -> Result<QMatMul, QuantizedRerankError> {
-            let qt = content
-                .tensor(reader, name, device)
-                .map_err(|e| QuantizedRerankError::Gguf { reason: format!("tensor {name}: {e}") })?;
-            QMatMul::from_qtensor(qt).map_err(QuantizedRerankError::Candle)
-        };
-        let load_f32 = |reader: &mut std::fs::File, name: &str| -> Result<Tensor, QuantizedRerankError> {
-            let qt = content
-                .tensor(reader, name, device)
-                .map_err(|e| QuantizedRerankError::Gguf { reason: format!("tensor {name}: {e}") })?;
-            Ok(qt.dequantize(device)?.to_dtype(DType::F32)?)
-        };
+        let qmat =
+            |reader: &mut std::fs::File, name: &str| -> Result<QMatMul, QuantizedRerankError> {
+                let qt = content.tensor(reader, name, device).map_err(|e| {
+                    QuantizedRerankError::Gguf { reason: format!("tensor {name}: {e}") }
+                })?;
+                QMatMul::from_qtensor(qt).map_err(QuantizedRerankError::Candle)
+            };
+        let load_f32 =
+            |reader: &mut std::fs::File, name: &str| -> Result<Tensor, QuantizedRerankError> {
+                let qt = content.tensor(reader, name, device).map_err(|e| {
+                    QuantizedRerankError::Gguf { reason: format!("tensor {name}: {e}") }
+                })?;
+                Ok(qt.dequantize(device)?.to_dtype(DType::F32)?)
+            };
         // LayerNorm helper: GGUF stores `weight` + `bias` as separate F32
         // tensors (the XLM-R LN uses both). The candle LayerNorm
         // constructor wants the weight as the "scale" tensor and a
         // separate bias.
-        let load_ln = |reader: &mut std::fs::File, prefix: &str| -> Result<LayerNorm, QuantizedRerankError> {
-            let w = load_f32(reader, &format!("{prefix}.weight"))?;
-            let b = load_f32(reader, &format!("{prefix}.bias"))?;
-            // candle_nn::LayerNorm::new(weight, bias, eps) — direct ctor.
-            Ok(LayerNorm::new(w, b, cfg.layer_norm_eps))
-        };
+        let load_ln =
+            |reader: &mut std::fs::File, prefix: &str| -> Result<LayerNorm, QuantizedRerankError> {
+                let w = load_f32(reader, &format!("{prefix}.weight"))?;
+                let b = load_f32(reader, &format!("{prefix}.bias"))?;
+                // candle_nn::LayerNorm::new(weight, bias, eps) — direct ctor.
+                Ok(LayerNorm::new(w, b, cfg.layer_norm_eps))
+            };
 
         // ---- token_embd ----
-        let word_qt = content
-            .tensor(&mut file, "token_embd.weight", device)
-            .map_err(|e| QuantizedRerankError::Gguf {
-                reason: format!("tensor token_embd.weight: {e}"),
-            })?;
+        let word_qt = content.tensor(&mut file, "token_embd.weight", device).map_err(|e| {
+            QuantizedRerankError::Gguf { reason: format!("tensor token_embd.weight: {e}") }
+        })?;
         let word_embd = word_qt.dequantize(device)?.to_dtype(DType::F32)?;
         let we_dims = word_embd.dims().to_vec();
         // Candle's QTensor::dequantize returns the row-first natural shape
@@ -242,8 +243,7 @@ impl QuantizedXlmRoberta {
         let tt = load_f32(&mut file, "token_types.weight")?;
         let token_type_embd = match tt.dims() {
             [hidden] if *hidden == cfg.hidden_size => tt.reshape((1, cfg.hidden_size))?,
-            [n, hidden]
-                if *hidden == cfg.hidden_size && *n == cfg.type_vocab_size => tt,
+            [n, hidden] if *hidden == cfg.hidden_size && *n == cfg.type_vocab_size => tt,
             other => {
                 return Err(QuantizedRerankError::Gguf {
                     reason: format!(
@@ -269,8 +269,7 @@ impl QuantizedXlmRoberta {
             let attn_v = qmat(&mut file, &format!("{p}.attn_v.weight"))?;
             let attn_v_bias = load_f32(&mut file, &format!("{p}.attn_v.bias"))?;
             let attn_output = qmat(&mut file, &format!("{p}.attn_output.weight"))?;
-            let attn_output_bias =
-                load_f32(&mut file, &format!("{p}.attn_output.bias"))?;
+            let attn_output_bias = load_f32(&mut file, &format!("{p}.attn_output.bias"))?;
             let attn_output_norm = load_ln(&mut file, &format!("{p}.attn_output_norm"))?;
             let ffn_up = qmat(&mut file, &format!("{p}.ffn_up.weight"))?;
             let ffn_up_bias = load_f32(&mut file, &format!("{p}.ffn_up.bias"))?;
@@ -305,9 +304,7 @@ impl QuantizedXlmRoberta {
         // `cls_hidden.matmul(&w_col)` to produce `(batch, 1)` logits.
         let out_proj_row = load_f32(&mut file, "cls.output.weight")?;
         let out_proj_w = match out_proj_row.dims() {
-            [hidden] if *hidden == cfg.hidden_size => {
-                out_proj_row.reshape((cfg.hidden_size, 1))?
-            }
+            [hidden] if *hidden == cfg.hidden_size => out_proj_row.reshape((cfg.hidden_size, 1))?,
             [hidden, one] if *hidden == cfg.hidden_size && *one == 1 => out_proj_row,
             other => {
                 return Err(QuantizedRerankError::Gguf {
@@ -390,8 +387,7 @@ impl QuantizedXlmRoberta {
         //    dequant. Discovered via CANDLE_DEQUANTIZE_ALL=1 still showing
         //    structural drift on the equivalence test.
         let pad_id = self.cfg.pad_token_id;
-        let pos_offset =
-            self.cfg.max_position_embeddings.saturating_sub(self.loaded_max_positions);
+        let pos_offset = self.cfg.max_position_embeddings.saturating_sub(self.loaded_max_positions);
         let mask_f32 = attention_mask.to_dtype(DType::F32)?;
         let cumsum = mask_f32.cumsum(1)?;
         // (cumsum * mask) keeps pad positions at 0, real positions at 1..n
@@ -420,10 +416,11 @@ impl QuantizedXlmRoberta {
         // tokenizer slipped through despite the 512-cap.
         // (We skip the runtime max() reduction since the tokenizer guarantees
         // seq_len ≤ BGE_RERANKER_V2_M3_MAX_SEQ; document the precondition.)
-        let pe = self
-            .position_embd
-            .index_select(&position_ids.flatten_all()?, 0)?
-            .reshape((batch, seq_len, self.cfg.hidden_size))?;
+        let pe = self.position_embd.index_select(&position_ids.flatten_all()?, 0)?.reshape((
+            batch,
+            seq_len,
+            self.cfg.hidden_size,
+        ))?;
         xs = (xs + pe)?;
 
         // 4. Post-embedding LayerNorm.
@@ -440,19 +437,13 @@ impl QuantizedXlmRoberta {
         let cls = xs.i((.., 0, ..))?.contiguous()?;
         // 2. Dense + bias.
         let h = cls.apply(&self.classifier.dense)?;
-        let h_bias = self
-            .classifier
-            .dense_bias
-            .broadcast_as(h.shape())?;
+        let h_bias = self.classifier.dense_bias.broadcast_as(h.shape())?;
         let h = (h + h_bias)?;
         // 3. Tanh.
         let h = h.tanh()?;
         // 4. out_proj — `(batch, hidden) @ (hidden, 1) = (batch, 1)`.
         let logits = h.matmul(&self.classifier.out_proj_w)?;
-        let op_bias = self
-            .classifier
-            .out_proj_bias
-            .broadcast_as(logits.shape())?;
+        let op_bias = self.classifier.out_proj_bias.broadcast_as(logits.shape())?;
         let logits = (logits + op_bias)?;
         // 5. Squeeze trailing dim → `(batch,)`.
         let logits_squeezed = logits.i((.., 0))?.contiguous()?;
@@ -492,15 +483,15 @@ impl QuantizedXlmRoberta {
         let mut xs = self.word_embd.index_select(&flat_ids, 0)?;
         xs = xs.reshape((batch, seq_len, self.cfg.hidden_size))?;
 
-        let tt = self
-            .token_type_embd
-            .unsqueeze(0)?
-            .broadcast_as((batch, seq_len, self.cfg.hidden_size))?;
+        let tt = self.token_type_embd.unsqueeze(0)?.broadcast_as((
+            batch,
+            seq_len,
+            self.cfg.hidden_size,
+        ))?;
         xs = xs.broadcast_add(&tt)?;
 
         let pad_id = self.cfg.pad_token_id;
-        let pos_offset =
-            self.cfg.max_position_embeddings.saturating_sub(self.loaded_max_positions);
+        let pos_offset = self.cfg.max_position_embeddings.saturating_sub(self.loaded_max_positions);
         let mask_f32 = attention_mask.to_dtype(DType::F32)?;
         let cumsum = mask_f32.cumsum(1)?;
         let active = (cumsum * &mask_f32)?;
@@ -510,10 +501,11 @@ impl QuantizedXlmRoberta {
         let pos_f32 = (active + bias_scalar)?;
         let pos_f32 = pos_f32.maximum(&Tensor::zeros_like(&pos_f32)?)?;
         let position_ids = pos_f32.to_dtype(DType::U32)?;
-        let pe = self
-            .position_embd
-            .index_select(&position_ids.flatten_all()?, 0)?
-            .reshape((batch, seq_len, self.cfg.hidden_size))?;
+        let pe = self.position_embd.index_select(&position_ids.flatten_all()?, 0)?.reshape((
+            batch,
+            seq_len,
+            self.cfg.hidden_size,
+        ))?;
         xs = (xs + pe)?;
         xs = xs.apply(&self.embd_norm)?;
 
@@ -554,9 +546,8 @@ impl QuantizedXlmRoberta {
         let embd = r.pp("embeddings");
 
         // ---- embeddings ----
-        let word_embd = embd
-            .pp("word_embeddings")
-            .get((cfg.vocab_size, cfg.hidden_size), "weight")?;
+        let word_embd =
+            embd.pp("word_embeddings").get((cfg.vocab_size, cfg.hidden_size), "weight")?;
         let token_type_embd = embd
             .pp("token_type_embeddings")
             .get((cfg.type_vocab_size, cfg.hidden_size), "weight")?;
@@ -711,11 +702,7 @@ impl Layer {
     /// Forward pass of one XLM-R encoder block. Post-norm pattern: the
     /// LayerNorms are applied AFTER the residual add (not before, as in
     /// ModernBERT/granite-r2).
-    fn forward(
-        &self,
-        xs: &Tensor,
-        attn_mask_4d: &Tensor,
-    ) -> Result<Tensor, QuantizedRerankError> {
+    fn forward(&self, xs: &Tensor, attn_mask_4d: &Tensor) -> Result<Tensor, QuantizedRerankError> {
         // ---------- attention block ----------
         let (b, s, _d) = xs.dims3()?;
 
@@ -793,8 +780,11 @@ fn prepare_4d_attention_mask(mask: &Tensor) -> Result<Tensor, QuantizedRerankErr
     let bsz = mask.dim(0)?;
     let src_len = mask.dim(1)?;
     let tgt_len = src_len;
-    let expanded =
-        mask.unsqueeze(1)?.unsqueeze(2)?.expand((bsz, 1, tgt_len, src_len))?.to_dtype(DType::F32)?;
+    let expanded = mask
+        .unsqueeze(1)?
+        .unsqueeze(2)?
+        .expand((bsz, 1, tgt_len, src_len))?
+        .to_dtype(DType::F32)?;
     let inverted = (1.0 - expanded)?;
     Ok((inverted * f32::MIN as f64)?.to_dtype(DType::F32)?)
 }

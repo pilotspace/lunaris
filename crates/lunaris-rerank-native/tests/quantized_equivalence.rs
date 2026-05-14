@@ -31,10 +31,10 @@
 //!
 //! - **max absolute score delta ≤ 0.10** per pair (per the N-02 step 2
 //!   brief — the load-bearing gate)
-//! - **mean absolute score delta ≤ 0.04** (derived: sigmoid is monotonic
-//!   + smooth; 0.10 in sigmoid space corresponds to ~0.4 in logit space at
-//!   logit≈0. A mean drift this loose would imply systemic shift; the
-//!   gate catches it.)
+//! - **mean absolute score delta ≤ 0.04** (derived: sigmoid is monotonic +
+//!   smooth; 0.10 in sigmoid space corresponds to ~0.4 in logit space at
+//!   logit≈0. A mean drift this loose would imply systemic shift; the gate
+//!   catches it.)
 //!
 //! Why compare against the FP32 native path (not the HF python reference)?
 //! - keeps the comparison local to candle's compute graph;
@@ -200,8 +200,7 @@ async fn quantized_matches_fp32_native_within_drift_gate() {
     let mean_delta: f64 = deltas.iter().sum::<f64>() / (deltas.len() as f64);
 
     // Variance of Q4 scores (non-vacuity).
-    let q4_mean: f64 =
-        q4_scores.iter().map(|s| *s as f64).sum::<f64>() / (q4_scores.len() as f64);
+    let q4_mean: f64 = q4_scores.iter().map(|s| *s as f64).sum::<f64>() / (q4_scores.len() as f64);
     let q4_var: f64 = q4_scores.iter().map(|s| (*s as f64 - q4_mean).powi(2)).sum::<f64>()
         / (q4_scores.len() as f64);
     let fp32_mean: f64 =
@@ -221,6 +220,45 @@ async fn quantized_matches_fp32_native_within_drift_gate() {
         "[it] variance — fp32 = {fp32_var:.6}, q4 = {q4_var:.6} \
          (means: fp32 {fp32_mean:.4}, q4 {q4_mean:.4})"
     );
+
+    // --- Diagnostic: top-15 deltas with pair lengths + logit-space ---
+    let logit = |s: f32| -> f64 {
+        let s = (s as f64).clamp(1e-7, 1.0 - 1e-7);
+        (s / (1.0 - s)).ln()
+    };
+    let mut diag: Vec<(usize, f64, f32, f32, f64, usize, usize)> = pairs
+        .iter()
+        .zip(fp32_scores.iter().zip(q4_scores.iter()))
+        .enumerate()
+        .map(|(i, ((q, d), (a, b)))| {
+            (
+                i,
+                ((*a as f64) - (*b as f64)).abs(),
+                *a,
+                *b,
+                (logit(*a) - logit(*b)),
+                q.len(),
+                d.len(),
+            )
+        })
+        .collect();
+    diag.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    eprintln!("[it] top-15 deltas (idx | sigDelta | fp32 | q4 | logitΔ | q_chars | d_chars):");
+    for (i, d, a, b, ld, ql, dl) in diag.iter().take(15) {
+        eprintln!(
+            "  #{i:>3} | {d:.4} | fp32={a:.4} | q4={b:.4} | Δlogit={ld:>+.3} | qch={ql:>4} dch={dl:>4}"
+        );
+    }
+
+    // --- 4-cell isolation: pair #0 ---
+    eprintln!("[it] === pair #0 isolation ===");
+    let pair0 = &pair_refs[0..1];
+    let fp32_solo = fp32.score_blocking(pair0).unwrap();
+    let q4_solo = q4.score_blocking(pair0).unwrap();
+    eprintln!("  fp32 batch=1   = {:.4}  (logit {:.3})", fp32_solo[0], logit(fp32_solo[0]));
+    eprintln!("  fp32 batch=8[0]= {:.4}  (logit {:.3})", fp32_scores[0], logit(fp32_scores[0]));
+    eprintln!("  q4   batch=1   = {:.4}  (logit {:.3})", q4_solo[0], logit(q4_solo[0]));
+    eprintln!("  q4   batch=8[0]= {:.4}  (logit {:.3})", q4_scores[0], logit(q4_scores[0]));
 
     // Non-vacuity guards.
     assert!(
