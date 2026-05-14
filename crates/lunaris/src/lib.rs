@@ -56,6 +56,9 @@ pub mod recipes;
 // to bind from PyO3 + napi-rs. The module only contains an `impl Lunaris`
 // block + `#[cfg(test)] mod tests`, so no extra `pub use` is required.
 pub mod snapshot;
+// Phase 23 — agent-facing structured ingest. Reuses the same INGEST-04
+// single-atomic_write invariant as `ingest` but skips the LLM extractor.
+pub mod structured_ingest;
 pub mod verify_pipeline;
 
 pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
@@ -66,6 +69,8 @@ pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
 pub use handle::{Lunaris, ScopedLunaris};
+// Phase 23 — agent-facing structured-ingest public surface.
+pub use structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`
 // re-exports this path so the established `lunaris_recipes::WorkingMemory`
 // import stays stable.

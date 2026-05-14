@@ -149,6 +149,37 @@ impl Lunaris {
         .instrument(span)
         .await
     }
+
+    /// Phase 23 — agent-supplied structured ingest. See
+    /// [`crate::structured_ingest`] for the design rationale and the
+    /// EntityId-determinism guarantee.
+    ///
+    /// This entry point bypasses the LLM extractor entirely and writes the
+    /// graph directly from the caller's [`StructuredIngest`] payload.
+    /// **Always** writes the graph regardless of
+    /// `LUNARIS_GRAPH_ENABLED` / `graph_pipeline().is_enabled()` — agents
+    /// explicitly supplied entities, so the toggle does not gate them.
+    /// (`is_enabled()` continues to gate ONLY the LLM-extractor branch in
+    /// [`Self::ingest`].)
+    ///
+    /// `scope` is the partition key the resulting episode lives under;
+    /// callers that already have a [`crate::ScopedLunaris`] should prefer
+    /// `scoped.ingest_structured(payload)` which sources the scope from
+    /// the wrapper.
+    pub async fn ingest_structured(
+        &self,
+        payload: crate::structured_ingest::StructuredIngest,
+        scope: lunaris_core::Scope,
+    ) -> Result<Lsn, LunarisError> {
+        crate::structured_ingest::ingest_structured_inner(
+            self.storage.as_ref(),
+            self.embedder.as_ref(),
+            &self.clock,
+            payload,
+            scope,
+        )
+        .await
+    }
 }
 
 /// Plan 04-04 D-16: publish one `__lunaris_consolidate__` envelope after

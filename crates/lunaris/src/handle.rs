@@ -801,6 +801,26 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.ingest(episode).await
     }
 
+    /// Phase 23 — agent-supplied structured ingest under the bound scope.
+    ///
+    /// Delegates to [`Lunaris::ingest_structured`] with `self.scope` so
+    /// the caller cannot inject an arbitrary scope. See the
+    /// [`crate::structured_ingest`] module rustdoc for the full design
+    /// (deterministic EntityId, always-on graph writes, single
+    /// `atomic_write` per call).
+    ///
+    /// INGEST-04 invariant: exactly one `atomic_write` call per ingest
+    /// path. The write lives in
+    /// [`crate::structured_ingest::ingest_structured_inner`] for this path
+    /// (vs. `lunaris_ingest::ingest_episode` / `ingest_episode_graph_on`
+    /// for [`Self::ingest`]).
+    pub async fn ingest_structured(
+        &self,
+        payload: crate::structured_ingest::StructuredIngest,
+    ) -> Result<Lsn, LunarisError> {
+        self.engine.ingest_structured(payload, self.scope.clone()).await
+    }
+
     /// Recall hits under the bound scope.
     ///
     /// Returns a [`lunaris_retrieve::RetrievalBuilder`] pre-seeded with the
