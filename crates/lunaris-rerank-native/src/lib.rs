@@ -43,14 +43,43 @@ pub mod reranker;
 pub mod tokenizer;
 pub mod xlmr_reranker;
 
+#[cfg(feature = "reranker-gguf")]
+pub mod quantized_reranker;
+#[cfg(feature = "reranker-gguf")]
+pub mod quantized_xlmr;
+
 pub use config::{ConfigError, XlmRobertaRerankerConfig};
 pub use reranker::{NativeReranker, NativeRerankerError, NativeRerankerOpts};
 pub use tokenizer::{EncodedPairBatch, PairTokenizer, TokenizerError};
 pub use xlmr_reranker::{ForwardError, XlmRobertaReranker};
 
+#[cfg(feature = "reranker-gguf")]
+pub use quantized_reranker::{
+    NativeQuantizedReranker, NativeQuantizedRerankerError, NativeQuantizedRerankerOpts,
+};
+#[cfg(feature = "reranker-gguf")]
+pub use quantized_xlmr::{QuantizedRerankError, QuantizedXlmRoberta};
+
 /// Hidden-state width of `BAAI/bge-reranker-v2-m3` (XLM-RoBERTa-large).
 /// Public for downstream sanity-checks.
 pub const BGE_RERANKER_V2_M3_DIM: usize = 1024;
+
+/// SHA-256 of the canonical Q4_K_M GGUF for `BAAI/bge-reranker-v2-m3`,
+/// produced by `scripts/spike-convert-bge-reranker-to-gguf.sh` (llama.cpp
+/// mainline at a BERT-family-supporting commit; the script's
+/// `Q4_K_M.sha256` artifact records the exact commit + size).
+///
+/// Producers should call `scripts/spike-convert-bge-reranker-to-gguf.sh` to
+/// (re)produce this artifact; consumers should verify the SHA-256 of the
+/// `.gguf` file at load time and refuse to proceed on mismatch.
+///
+/// File size budget: **≤ 320 MiB** (per the N-02 step 2 brief).
+///
+/// **TBD pending spike-convert run** — the placeholder hex below is
+/// obviously synthetic so a CI run that loads a real GGUF will refuse it
+/// loudly. The real SHA-256 is filled in by the post-conversion commit.
+pub const BGE_RERANKER_GGUF_Q4_SHA256: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Max sequence length used for pair encoding `(query, doc)`. bge-reranker-v2-m3's
 /// `tokenizer_config.json` ships `model_max_length: 8192`, but the released

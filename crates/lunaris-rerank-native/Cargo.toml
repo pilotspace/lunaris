@@ -59,6 +59,10 @@ unicode-normalization = "0"
 tokio               = { workspace = true }
 serde               = { workspace = true }
 serde_json          = { workspace = true }
+# Used by `tests/quantized_equivalence.rs` to SHA-256-verify the GGUF payload
+# against the `BGE_RERANKER_GGUF_Q4_SHA256` pin before running the drift gate.
+# Workspace dep — no new transitive surface.
+sha2                = { workspace = true }
 
 [features]
 default      = []
@@ -66,3 +70,9 @@ default      = []
 # `tests/numerical_equivalence.rs`. Mirrors the convention in `lunaris-rerank`
 # (`rerank-it`) and `lunaris-embed-native` (`embedder-it`).
 reranker-it  = []
+# Gates the Q4_K_M / GGUF quantized reranker (`NativeQuantizedReranker`) +
+# `quantized_xlmr` module. Compile-time opt-in keeps the default crate
+# surface unchanged for callers that only want the FP32 path. Only adds
+# `candle-core::quantized::*` to the symbol surface — no new dependency
+# lines required. Mirrors `lunaris-embed-native`'s `embedder-gguf`.
+reranker-gguf = []
