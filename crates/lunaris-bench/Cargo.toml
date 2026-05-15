@@ -87,6 +87,13 @@ proptest           = { workspace = true }
 # AFTER `cargo bench` populates `target/criterion/`.
 default = []
 budget-it = []
+# N-04 D4 — release-binary-size CI gate. Off by default so plain
+# `cargo test --workspace` doesn't fail on dev boxes that have never
+# built `--release`. CI runs:
+#   cargo build --release -p lunaris-server
+#   cargo test -p lunaris-bench --features ci-perf-gates --test binary_size_gate
+# (scripts/check-binary-size.sh wraps both.)
+ci-perf-gates = []
 # Phase 24 / RFC 0006 §4 — verifier divergence capture binary forwards.
 # These match the lunaris-verify feature names; the binary's
 # required-features gate references them in [[bin]].required-features.
