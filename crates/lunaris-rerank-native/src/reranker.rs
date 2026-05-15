@@ -28,6 +28,15 @@ use lunaris_core::{LunarisError, StorageError};
 use lunaris_rerank::{RerankCandidate, Reranker};
 
 use crate::config::{ConfigError, XlmRobertaRerankerConfig};
+
+/// O-01-E — Public-API rerank-pair batch ceiling. The reranker scores
+/// (query, doc) pairs; we re-chunk the doc list into windows of this size
+/// before dispatch so each forward pass touches at most `MAX_PUBLIC_BATCH`
+/// pair tokenizations. Same Metal activation-footprint rationale as the
+/// embedder's `MAX_PUBLIC_BATCH`. The HARDWARE-OPTIMIZATION-ROADMAP gate
+/// table specifies p50 at K=10 for rerank; this ceiling at 8 means K=10
+/// fits in two chunks (8 + 2) with no per-chunk fixed cost.
+pub const MAX_PUBLIC_BATCH: usize = 8;
 use crate::tokenizer::{EncodedPairBatch, PairTokenizer, TokenizerError};
 use crate::xlmr_reranker::{ForwardError, XlmRobertaReranker};
 
@@ -104,6 +113,14 @@ impl NativeReranker {
     /// `tokio::task::spawn_blocking`; the load path itself is not async
     /// because error mapping stays straightforward this way.
     pub fn open(opts: NativeRerankerOpts) -> Result<Self, NativeRerankerError> {
+        // O-01-B — physical-core rayon pool init. Idempotent with the
+        // embedder side's call (shared global). No-op on Metal/CUDA.
+        crate::rayon_pool::ensure_physical_core_pool();
+
+        // O-01-C/D — Device upgrade.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = XlmRobertaRerankerConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = PairTokenizer::from_file(&opts.tokenizer_path, cfg.pad_token_id)?;
 
@@ -126,6 +143,9 @@ impl NativeReranker {
             model = "bge-reranker-v2-m3",
             "native reranker initialized"
         );
+
+        // O-01-C — warm-up matmul on the selected device.
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }
@@ -195,15 +215,22 @@ impl Reranker for NativeReranker {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RerankCandidate>, LunarisError> {
-            // Build `(query, doc.text)` pairs as borrows over the owned
-            // RerankCandidate vector — saves one clone of the doc text per
-            // pair (only the query is cloned, once).
-            let pairs: Vec<(&str, &str)> =
-                docs.iter().map(|d| (owned_query.as_str(), d.text.as_str())).collect();
-            let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
+            // O-01-E — re-chunk docs into windows of MAX_PUBLIC_BATCH so
+            // each forward pass tokenizes ≤ 8 pairs. At K=10 (the rerank
+            // gate's test point) this is two chunks (8 + 2); at K=30 it's
+            // four chunks (8+8+8+6). The per-chunk fixed cost is one
+            // `encode_pair_batch` + one `score_blocking` — same kernel
+            // path as the pre-O-01-E single-shot dispatch, just bounded.
+            let mut all_scores: Vec<f32> = Vec::with_capacity(docs.len());
+            for chunk in docs.chunks(MAX_PUBLIC_BATCH) {
+                let pairs: Vec<(&str, &str)> =
+                    chunk.iter().map(|d| (owned_query.as_str(), d.text.as_str())).collect();
+                let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
+                all_scores.extend(scores);
+            }
 
             // Pair scores with docs, mutate score in place, sort desc.
-            let mut scored: Vec<(f32, RerankCandidate)> = scores
+            let mut scored: Vec<(f32, RerankCandidate)> = all_scores
                 .into_iter()
                 .zip(docs)
                 .map(|(s, mut d)| {

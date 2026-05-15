@@ -30,6 +30,23 @@ use candle_transformers::models::modernbert::ModernBert;
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
 use crate::GRANITE_R2_DIM;
+
+/// O-01-E — Public-API batch ceiling. User-supplied batches larger than this
+/// are re-chunked into windows of `MAX_PUBLIC_BATCH` before dispatch.
+///
+/// **Why 8 and not larger:** HARDWARE-OPTIMIZATION-ROADMAP §57 — "avoids
+/// activation-tensor OOM on Metal's smaller memory ceiling." On a unified-
+/// memory 8 GB M-series, granite-r2 FP32 weights take ~1.24 GB and each
+/// batch element's intermediate activations at max seq=512 are ~12 MB across
+/// the alternating-attention stack. A batch of 8 caps activation scratch at
+/// ~96 MB; doubling to 16 starts contending with the OS framebuffer at
+/// fragmentation-sensitive moments. CPU + CUDA can easily push higher but
+/// the public API guarantees the smallest acceptable ceiling so a single
+/// codepath works on every backend.
+///
+/// Operators who explicitly want larger batches must call `embed_blocking`
+/// directly (it does NOT re-chunk).
+pub const MAX_PUBLIC_BATCH: usize = 8;
 use crate::config::{ConfigError, ModernBertConfig};
 use crate::modernbert::{ForwardError, pooled_forward};
 use crate::tokenizer::{EncodedBatch, GraniteTokenizer, TokenizerError};
@@ -112,6 +129,18 @@ impl NativeEmbedder {
     /// in `tokio::task::spawn_blocking`; we deliberately do NOT wrap inside
     /// `open` so error mapping stays straightforward.
     pub fn open(opts: NativeEmbedderOpts) -> Result<Self, NativeEmbedderError> {
+        // O-01-B — install rayon's global thread pool at physical-core count
+        // before any candle CPU op fires. No-op on `Device::Metal` /
+        // `Device::Cuda` (those backends schedule their own kernels), but
+        // safe to call regardless — idempotent.
+        crate::rayon_pool::ensure_physical_core_pool();
+
+        // O-01-C/D — upgrade `Device::Cpu` to Metal/CUDA when the matching
+        // feature is on and the GPU init succeeds. Caller-supplied non-Cpu
+        // devices are honored verbatim.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
 
@@ -142,6 +171,12 @@ impl NativeEmbedder {
             model = "granite-embedding-311m-multilingual-r2",
             "native embedder initialized"
         );
+
+        // O-01-C — pay GPU JIT / kernel-cache cost up front on the selected
+        // device so the first user query doesn't eat the spike. Best-effort
+        // (errors are logged + swallowed; the real forward pass will surface
+        // any persistent device issue with proper context).
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }
@@ -220,8 +255,20 @@ impl Embedder for NativeEmbedder {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-            me.embed_blocking(&refs).map_err(LunarisError::from)
+            // O-01-E — public-API batch ceiling. Re-chunk user input into
+            // windows of MAX_PUBLIC_BATCH so the activation-tensor footprint
+            // is bounded regardless of caller batch size. Each chunk runs
+            // through the same `embed_blocking` synchronous path; we
+            // concatenate the per-chunk rows preserving input order. For
+            // batches ≤ MAX_PUBLIC_BATCH this is a single chunk = single
+            // forward pass = zero overhead vs the pre-O-01-E path.
+            let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
+            for chunk in owned.chunks(MAX_PUBLIC_BATCH) {
+                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+                let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
+                out.extend(rows);
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| {
@@ -256,5 +303,32 @@ mod tests {
             NativeEmbedderError::Config(_) => {}
             other => panic!("expected Config error, got: {other:?}"),
         }
+    }
+
+    /// O-01-E — `MAX_PUBLIC_BATCH` is the cross-backend activation-footprint
+    /// ceiling. Locking it to 8 is a public-API contract; bumping it requires
+    /// re-measuring Metal activation OOM on the smallest supported host
+    /// (HARDWARE-OPTIMIZATION-ROADMAP §57). A future change that lifts the
+    /// ceiling without updating this test is the canary.
+    #[test]
+    fn max_public_batch_is_eight() {
+        assert_eq!(MAX_PUBLIC_BATCH, 8);
+    }
+
+    /// `chunks(MAX_PUBLIC_BATCH)` over an input of N produces ceil(N/8)
+    /// chunks whose concatenation preserves order. The async `embed_batch`
+    /// relies on this property to keep output indices aligned with input
+    /// indices — verify the std-lib contract here so a future swap to a
+    /// custom chunker doesn't silently break ordering.
+    #[test]
+    fn chunking_preserves_order_and_size() {
+        let xs: Vec<i32> = (0..21).collect();
+        let chunks: Vec<&[i32]> = xs.chunks(MAX_PUBLIC_BATCH).collect();
+        assert_eq!(chunks.len(), 3); // ceil(21 / 8)
+        assert_eq!(chunks[0].len(), 8);
+        assert_eq!(chunks[1].len(), 8);
+        assert_eq!(chunks[2].len(), 5);
+        let flat: Vec<i32> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
+        assert_eq!(flat, xs);
     }
 }

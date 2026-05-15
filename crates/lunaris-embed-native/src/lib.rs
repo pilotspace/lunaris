@@ -58,8 +58,20 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+// O-01-D — CUDA-specific docs + diagnostic stub. Compiled only under
+// `--features cuda`; on Apple Silicon (this host) the module compiles only
+// when the CUDA toolchain is present.
+#[cfg(feature = "cuda")]
+pub mod cuda_notes;
+// O-01-C / O-01-D — Device-upgrade + warm-up helpers used by both the FP16
+// and quantized embedder construction paths.
+pub mod device_select;
 pub mod embedder;
 pub mod modernbert;
+// O-01-B — one-shot rayon thread-pool init at physical-core count.
+// Public because the umbrella crate may want to pre-init before the first
+// `NativeEmbedder::open()` (e.g., during process startup).
+pub mod rayon_pool;
 pub mod tokenizer;
 
 #[cfg(feature = "embedder-gguf")]

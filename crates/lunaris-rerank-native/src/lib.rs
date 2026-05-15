@@ -39,6 +39,12 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+// O-01-C / O-01-D — Device-upgrade + warm-up helpers.
+pub mod device_select;
+// O-01-B — physical-core rayon thread-pool init. Idempotent; calling either
+// `lunaris-embed-native` or this crate's `ensure_physical_core_pool` installs
+// the same global singleton.
+pub mod rayon_pool;
 pub mod reranker;
 pub mod tokenizer;
 pub mod xlmr_reranker;

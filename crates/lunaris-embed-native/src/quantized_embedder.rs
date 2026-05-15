@@ -102,6 +102,13 @@ impl NativeQuantizedEmbedder {
     /// and callers concerned about runtime stalls can `spawn_blocking`
     /// at their own boundary.
     pub fn open(opts: NativeQuantizedEmbedderOpts) -> Result<Self, NativeQuantizedEmbedderError> {
+        // O-01-B — physical-core rayon pool init.
+        crate::rayon_pool::ensure_physical_core_pool();
+
+        // O-01-C/D — Device upgrade.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
         let model = QuantizedModernBert::load(&opts.gguf_path, &cfg, &opts.device)?;
@@ -113,6 +120,9 @@ impl NativeQuantizedEmbedder {
             sha256 = %crate::GRANITE_R2_GGUF_Q4_SHA256,
             "quantized embedder loaded"
         );
+
+        // O-01-C — warm-up matmul.
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer }) })
     }
@@ -147,8 +157,16 @@ impl Embedder for NativeQuantizedEmbedder {
         let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
         let me = self.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-            me.embed_blocking(&refs).map_err(LunarisError::from)
+            // O-01-E — re-chunk to MAX_PUBLIC_BATCH (see
+            // `embedder::MAX_PUBLIC_BATCH` for rationale). Mirror of the
+            // FP16 path; same activation-footprint guarantee.
+            let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
+            for chunk in owned.chunks(crate::embedder::MAX_PUBLIC_BATCH) {
+                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+                let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
+                out.extend(rows);
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| {

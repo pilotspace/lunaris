@@ -42,6 +42,11 @@ async-trait         = { workspace = true }
 # finding #1. Pinned to major version 0 (workspace policy: no new transitive
 # vector/BM25 libs — this is unicode-only).
 unicode-normalization = "0"
+# O-01-B — `NativeEmbedder::open()` initializes the rayon thread pool at
+# physical-core count (not logical). Both are in the candle transitive
+# graph; we name them explicitly so this crate's BLAS init is self-contained.
+num_cpus            = { workspace = true }
+rayon               = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }
@@ -63,3 +68,38 @@ embedder-it  = []
 # When this flag is on, `candle-core`'s `quantized` module is the only
 # additional symbol surface — no new dependency lines required.
 embedder-gguf = []
+
+# ---------------------------------------------------------------------------
+# O-01 hardware-acceleration backend features (v0.4 milestone)
+#
+# Each feature wires the corresponding candle accelerator. The model code
+# (`modernbert.rs`, `embedder.rs`, `quantized_*.rs`) is `Device`-parameterized
+# (see `tmp/O-01-COMPLIANCE-AUDIT.md`); features only activate the candle
+# backend's compute path. Selection of `Device::new_metal(0)` / `new_cuda(0)`
+# happens at *construction time* via `NativeEmbedderOpts.device`, not via
+# `cfg` branches in model code.
+#
+# These flags are declared in O-01-A (audit landing) and wired by code in
+# O-01-B (CPU BLAS + physical-core rayon init), O-01-C (Metal warm-up +
+# default Device selection), and O-01-D (CUDA + FA2). Until those land, the
+# feature flags are valid Cargo passthroughs but no Lunaris logic depends on
+# them.
+# ---------------------------------------------------------------------------
+
+# Apple Accelerate framework (macOS CPU BLAS).
+cpu-accelerate = ["candle-core/accelerate", "candle-nn/accelerate"]
+
+# Intel MKL (Linux x86_64 CPU BLAS).
+cpu-mkl = ["candle-core/mkl", "candle-nn/mkl"]
+
+# Apple Silicon Metal GPU backend.
+metal = ["candle-core/metal", "candle-nn/metal"]
+
+# NVIDIA CUDA backend. **Untested on the O-01 author's host (macOS / Apple
+# Silicon).** Verified in O-03's self-hosted CUDA runner gate.
+cuda = ["candle-core/cuda", "candle-core/cudnn", "candle-nn/cuda"]
+
+# FlashAttention 2 kernels on CUDA. May not compose with ModernBERT's
+# alternating local/global attention; falls back to plain `cuda` if so.
+# **Untested on the O-01 author's host.**
+cuda-fa2 = ["cuda", "candle-transformers/flash-attn"]
