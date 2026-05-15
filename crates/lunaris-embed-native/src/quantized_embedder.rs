@@ -157,8 +157,16 @@ impl Embedder for NativeQuantizedEmbedder {
         let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
         let me = self.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-            me.embed_blocking(&refs).map_err(LunarisError::from)
+            // O-01-E — re-chunk to MAX_PUBLIC_BATCH (see
+            // `embedder::MAX_PUBLIC_BATCH` for rationale). Mirror of the
+            // FP16 path; same activation-footprint guarantee.
+            let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
+            for chunk in owned.chunks(crate::embedder::MAX_PUBLIC_BATCH) {
+                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+                let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
+                out.extend(rows);
+            }
+            Ok(out)
         })
         .await
         .map_err(|e| {
