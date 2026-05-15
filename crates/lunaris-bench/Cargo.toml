@@ -87,6 +87,13 @@ proptest           = { workspace = true }
 # AFTER `cargo bench` populates `target/criterion/`.
 default = []
 budget-it = []
+# N-04 D4 — release-binary-size CI gate. Off by default so plain
+# `cargo test --workspace` doesn't fail on dev boxes that have never
+# built `--release`. CI runs:
+#   cargo build --release -p lunaris-server
+#   cargo test -p lunaris-bench --features ci-perf-gates --test binary_size_gate
+# (scripts/check-binary-size.sh wraps both.)
+ci-perf-gates = []
 # Phase 24 / RFC 0006 §4 — verifier divergence capture binary forwards.
 # These match the lunaris-verify feature names; the binary's
 # required-features gate references them in [[bin]].required-features.
@@ -155,3 +162,13 @@ path = "src/bin/eval_05_helios_10k.rs"
 name = "verifier-divergence"
 path = "src/bin/verifier_divergence.rs"
 required-features = ["verify-small", "verify-large"]
+
+# N-04 D5 — `stage-models` HF Hub stager. Downloads the granite-r2 +
+# bge-reranker-v2-m3 safetensors into the operator's local cache; the
+# canonical GGUF SHA-256s are printed alongside so operators staging
+# quantized artifacts manually have a single source of truth.
+# `--dry-run` short-circuits before any FS or network call so CI can
+# verify the help text + repo names without egress.
+[[bin]]
+name = "stage-models"
+path = "src/bin/stage_models.rs"
