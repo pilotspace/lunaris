@@ -1,0 +1,50 @@
+[package]
+name = "lunaris-embed-mlx-spike"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+description = "O-02 throwaway spike: single ModernBERT-layer port to mlx-rs for Apple Silicon perf/drift evaluation. NOT a v0.4 deliverable."
+license = "Apache-2.0"
+
+[lib]
+name = "lunaris_embed_mlx_spike"
+path = "src/lib.rs"
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+# mlx-rs is the unofficial Apple-MLX Rust wrapper audited in O-02-A. The crate
+# carries `accelerate` + `metal` in its default-feature set; we keep those on
+# because Apple-Silicon is the only target this spike supports.
+[dependencies]
+mlx-rs = "0.25"
+half = "2"
+
+# candle-core / candle-nn give us the head-to-head reference. We keep this
+# spike's candle deps independent of the workspace's pinned 0.10 to avoid
+# accidental contamination if the workspace bumps later — but 0.10 matches
+# the production embedder so the comparison is apples-to-apples.
+candle-core = { version = "0.10", features = ["metal"] }
+candle-nn   = { version = "0.10", features = ["metal"] }
+
+thiserror = "2"
+rand      = "0.8"
+rand_chacha = "0.3"
+
+[dev-dependencies]
+approx    = "0.5"
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+[[bench]]
+name = "single_layer"
+harness = false
+
+# -----------------------------------------------------------------------------
+# Lints — keep the spike to the same standard as the rest of the workspace.
+# -----------------------------------------------------------------------------
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+unwrap_used = "warn"

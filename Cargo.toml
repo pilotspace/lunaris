@@ -52,6 +52,11 @@ members = [
   "crates/lunaris-rerank-native",
   "crates/lunaris-retrieve",
   "crates/lunaris-server",
+  # O-02 spike: throwaway Apple-Silicon-only crate evaluating `mlx-rs` as an
+  # alternate embedder kernel backend. `publish = false`; deleted after the
+  # GO/NO-GO decision regardless of outcome. See
+  # `docs/spike/O-02-mlx/DECISION.md` for the verdict.
+  "crates/lunaris-embed-mlx-spike",
   "xtask",
 ]
 
