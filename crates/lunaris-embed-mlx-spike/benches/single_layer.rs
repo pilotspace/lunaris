@@ -23,6 +23,14 @@ fn bench_layer(c: &mut Criterion) {
 
     // -------- candle-Metal --------
     let device = metal_or_cpu();
+    // Fail loud (and abort the bench) if Metal silently fell back to CPU —
+    // a candle-CPU run vs MLX-Metal would be a useless head-to-head. The
+    // bench is only valid when both backends sit on the same accelerator.
+    eprintln!("O2-D: candle device = {device:?}");
+    assert!(
+        !matches!(device, candle_core::Device::Cpu),
+        "candle Metal device unavailable — refusing to run head-to-head against MLX-Metal"
+    );
     let candle_layer =
         CandleLayer::new(h, &params, device.clone()).expect("candle CandleLayer::new");
     let candle_input = candle_core::Tensor::from_slice(
@@ -49,6 +57,20 @@ fn bench_layer(c: &mut Criterion) {
     });
 
     // -------- mlx-rs --------
+    // MLX defaults to the GPU device on Apple Silicon (see
+    // `mlx_rs::Device::set_default` docstring). We pin and report it explicitly
+    // so the head-to-head can't silently switch substrates between runs.
+    let mlx_default = mlx_rs::Device::default();
+    let mlx_kind = mlx_default
+        .get_type()
+        .map(|t| format!("{t:?}"))
+        .unwrap_or_else(|_| "unknown".into());
+    eprintln!("O2-D: mlx default device = {mlx_default:?} (type={mlx_kind})");
+    assert!(
+        mlx_kind.contains("Gpu"),
+        "MLX default device is not GPU — refusing to publish a misleading ratio"
+    );
+
     let mlx_layer = MlxLayer::new(h, &params).expect("MlxLayer::new");
     let mlx_input = mlx_rs::Array::from_slice(
         &input_vec,
