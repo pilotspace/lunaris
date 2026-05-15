@@ -203,8 +203,10 @@ memory:
     dir: /var/lib/helios/models/bge-reranker-v2-m3
     gguf_filename: bge-reranker-v2-m3-Q5_K_M-imatrix.gguf
 
-  # cpu | metal | cuda — must be compiled into the binary.
-  device: metal
+  # auto | cpu | metal | cuda — `auto` (default) uses Lunaris's built-in
+  # `select_device()` which auto-upgrades to CUDA → Metal based on compiled-in
+  # features and runtime init. Explicit values force the choice.
+  device: auto
 ```
 
 ### 6.1 Config Rust types
@@ -238,9 +240,22 @@ pub enum RerankerConfig {
     Off,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum DeviceConfig { Cpu, Metal, Cuda }
+pub enum DeviceConfig {
+    /// Pass `Device::Cpu` to Lunaris; `lunaris_embed_native::device_select`
+    /// will auto-upgrade to CUDA → Metal based on compiled-in features and
+    /// runtime init success. Logged at INFO.
+    #[default] Auto,
+    /// Force CPU. Note: today this maps to `Device::Cpu` and will still be
+    /// auto-upgraded by `select_device()`. Truly-CPU-only requires a Lunaris
+    /// patch (~20 LOC) to disable the upgrade path.
+    Cpu,
+    /// Force Metal. Bypasses auto-detect; fails fast if Metal isn't available.
+    Metal,
+    /// Force CUDA. Bypasses auto-detect; fails fast if CUDA isn't available.
+    Cuda,
+}
 
 impl MemoryConfig {
     pub fn validate(&self) -> Result<(), HeliosMemoryError> {
@@ -265,10 +280,13 @@ use lunaris_rerank::Reranker;
 pub async fn build_components(cfg: &MemoryConfig)
     -> Result<(Arc<dyn Embedder>, Arc<dyn Reranker>), HeliosMemoryError>
 {
+    // `Auto` and `Cpu` both pass Device::Cpu to Lunaris, which then runs
+    // `select_device()` (auto-upgrade to CUDA → Metal based on compiled-in
+    // features). `Metal`/`Cuda` bypass auto-detect — fail-fast if unavailable.
     let device = match cfg.device {
-        DeviceConfig::Cpu   => Device::Cpu,
-        DeviceConfig::Metal => Device::new_metal(0)?,
-        DeviceConfig::Cuda  => Device::new_cuda(0)?,
+        DeviceConfig::Auto | DeviceConfig::Cpu => Device::Cpu,
+        DeviceConfig::Metal                    => Device::new_metal(0)?,
+        DeviceConfig::Cuda                     => Device::new_cuda(0)?,
     };
 
     let embedder = build_embedder(&cfg.embedder, &device).await?;
