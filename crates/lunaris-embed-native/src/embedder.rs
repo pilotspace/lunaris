@@ -118,6 +118,12 @@ impl NativeEmbedder {
         // safe to call regardless — idempotent.
         crate::rayon_pool::ensure_physical_core_pool();
 
+        // O-01-C/D — upgrade `Device::Cpu` to Metal/CUDA when the matching
+        // feature is on and the GPU init succeeds. Caller-supplied non-Cpu
+        // devices are honored verbatim.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
 
@@ -148,6 +154,12 @@ impl NativeEmbedder {
             model = "granite-embedding-311m-multilingual-r2",
             "native embedder initialized"
         );
+
+        // O-01-C — pay GPU JIT / kernel-cache cost up front on the selected
+        // device so the first user query doesn't eat the spike. Best-effort
+        // (errors are logged + swallowed; the real forward pass will surface
+        // any persistent device issue with proper context).
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }

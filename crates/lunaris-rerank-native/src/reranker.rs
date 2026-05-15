@@ -108,6 +108,10 @@ impl NativeReranker {
         // embedder side's call (shared global). No-op on Metal/CUDA.
         crate::rayon_pool::ensure_physical_core_pool();
 
+        // O-01-C/D — Device upgrade.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = XlmRobertaRerankerConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = PairTokenizer::from_file(&opts.tokenizer_path, cfg.pad_token_id)?;
 
@@ -130,6 +134,9 @@ impl NativeReranker {
             model = "bge-reranker-v2-m3",
             "native reranker initialized"
         );
+
+        // O-01-C — warm-up matmul on the selected device.
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer, device: opts.device }) })
     }

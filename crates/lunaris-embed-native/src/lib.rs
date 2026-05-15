@@ -58,6 +58,9 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+// O-01-C / O-01-D — Device-upgrade + warm-up helpers used by both the FP16
+// and quantized embedder construction paths.
+pub mod device_select;
 pub mod embedder;
 pub mod modernbert;
 // O-01-B — one-shot rayon thread-pool init at physical-core count.

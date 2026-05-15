@@ -105,6 +105,10 @@ impl NativeQuantizedEmbedder {
         // O-01-B — physical-core rayon pool init.
         crate::rayon_pool::ensure_physical_core_pool();
 
+        // O-01-C/D — Device upgrade.
+        let mut opts = opts;
+        opts.device = crate::device_select::select_device(opts.device);
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
         let model = QuantizedModernBert::load(&opts.gguf_path, &cfg, &opts.device)?;
@@ -116,6 +120,9 @@ impl NativeQuantizedEmbedder {
             sha256 = %crate::GRANITE_R2_GGUF_Q4_SHA256,
             "quantized embedder loaded"
         );
+
+        // O-01-C — warm-up matmul.
+        crate::device_select::warmup_device(&opts.device);
 
         Ok(Self { inner: Arc::new(Inner { model, tokenizer }) })
     }
