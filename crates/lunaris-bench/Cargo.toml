@@ -62,6 +62,16 @@ dirs               = { workspace = true }
 # tracing dep already in [dependencies] above.
 tracing-subscriber = { workspace = true }
 
+# O-01-F — per-device perf bench dependencies. Optional so the default
+# `cargo bench` build doesn't pull candle weights resolution; activated by
+# the `per-device-bench` feature (or any of the backend pass-through
+# features `metal` / `cpu-accelerate` / `cpu-mkl` / `cuda` / `cuda-fa2`).
+lunaris-embed-native  = { workspace = true, optional = true }
+lunaris-rerank-native = { workspace = true, optional = true }
+# Candle types (Device, etc.) needed by the per-device bench when the
+# `per-device-bench` feature is on.
+candle-core           = { workspace = true, optional = true }
+
 # Plan 05-06 EVAL-04 Linux RSS sampling via procfs. cfg-gated per-OS so the
 # Windows + macOS targets don't pull procfs (which only compiles on Linux).
 # macOS uses `ps -o rss= -p <pid>` shell-out (no extra dep) per B-6 fix.
@@ -100,9 +110,36 @@ ci-perf-gates = []
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
 
+# ---------------------------------------------------------------------------
+# O-01-F — per-device perf benches.
+#
+# Each feature pass-throughs to `lunaris-embed-native` + `lunaris-rerank-native`
+# so `cargo bench --features metal` activates the Metal backend end-to-end
+# from the bench harness. The `per_device.rs` bench is `#[cfg(feature =
+# "per-device-bench")]`-gated so the default `cargo bench` workflow stays
+# unchanged.
+# ---------------------------------------------------------------------------
+per-device-bench = ["dep:lunaris-embed-native", "dep:lunaris-rerank-native", "dep:candle-core"]
+cpu-accelerate   = ["per-device-bench", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
+cpu-mkl          = ["per-device-bench", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
+metal            = ["per-device-bench", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
+cuda             = ["per-device-bench", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
+cuda-fa2         = ["cuda", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
+
 [[bench]]
 name = "ingest_hot_path"
 harness = false
+
+# O-01-F — per-device perf gates for the hardware-target matrix in
+# HARDWARE-OPTIMIZATION-ROADMAP §26-37. Gated on `per-device-bench` so the
+# default `cargo bench` workflow stays unchanged; activate via:
+#   cargo bench -p lunaris-bench --features metal          --bench per_device
+#   cargo bench -p lunaris-bench --features cpu-accelerate --bench per_device
+#   cargo bench -p lunaris-bench --features cuda           --bench per_device
+[[bench]]
+name = "per_device"
+harness = false
+required-features = ["per-device-bench"]
 
 [[bench]]
 name = "recall_hot_path"
