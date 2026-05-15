@@ -268,6 +268,249 @@ impl MemoryConfig {
 }
 ```
 
+### 6.2 Disabled-by-default — Helios boots with Noop, operator enables at runtime
+
+**Recommended posture for prod**: Helios starts with `NoopEmbedder` (768-d zero vectors) and `NoopReranker` (identity-rank). The handle is fully functional — `recall()` returns results, just useless ones — and the operator explicitly enables real models via config reload or CLI when ready.
+
+**Why disabled-by-default**:
+- Helios can boot without weights staged on the host (no fail-fast at startup).
+- ~1.6 GiB RSS savings on idle instances.
+- Air-gapped dev environments work out of the box.
+- Cost-conscious: only pay model load when memory is actually being used.
+- Operator explicitly opts in to the embedder cost — no surprise prod incidents from a missing weights file.
+
+**Trade-off**: recall results are garbage until enabled. Helios should refuse memory-dependent requests (or warn-log) when in noop mode. Health endpoint must reflect this state.
+
+#### Updated config types
+
+```rust
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum EmbedderConfig {
+    /// NoopEmbedder (768-d zeros). Default. Recall returns garbage results;
+    /// memory engine is "disabled" from a quality standpoint but functional.
+    #[default] Disabled,
+    Fp16   { dir: PathBuf },
+    Q4     { dir: PathBuf, gguf_filename: String },
+    Ollama { url: String, model: String, dim: usize },
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum RerankerConfig {
+    /// NoopReranker (identity rank). Default. Recall path still works; just
+    /// no rerank pass.
+    #[default] Off,
+    Fp32 { dir: PathBuf },
+    Q5   { dir: PathBuf, gguf_filename: String },
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            store_url: "redis://localhost:6379".to_string(),
+            embedder:  EmbedderConfig::default(),  // Disabled
+            reranker:  RerankerConfig::default(),  // Off
+            device:    DeviceConfig::default(),    // Auto
+        }
+    }
+}
+```
+
+#### Minimal helios.yaml (everything defaulted)
+
+```yaml
+memory:
+  store_url: "redis://moon:6379"
+  # embedder, reranker, device all default — noop embedder, noop reranker, auto device
+```
+
+Helios starts in seconds, no model weights needed, no fail-fast. Health endpoint reports `memory.embedder.mode = "disabled"`.
+
+#### Builder addition
+
+```rust
+async fn build_embedder(cfg: &EmbedderConfig, device: &Device)
+    -> Result<Arc<dyn Embedder>, HeliosMemoryError>
+{
+    use lunaris_core::{NoopEmbedder, NOOP_DEFAULT_DIM};
+    let cfg = cfg.clone();
+    let device = device.clone();
+    tokio::task::spawn_blocking(move || -> Result<Arc<dyn Embedder>, HeliosMemoryError> {
+        Ok(match cfg {
+            EmbedderConfig::Disabled => {
+                tracing::warn!(target: "helios::memory", "embedder DISABLED — recall results will be garbage until enabled");
+                Arc::new(NoopEmbedder::new(NOOP_DEFAULT_DIM))   // 768-d, matches granite-r2
+            },
+            EmbedderConfig::Fp16 { dir } => /* ... as before ... */,
+            EmbedderConfig::Q4   { dir, gguf_filename } => /* ... */,
+            EmbedderConfig::Ollama { url, model, dim } => /* ... */,
+        })
+    }).await?
+}
+
+async fn build_reranker(cfg: &RerankerConfig, device: &Device)
+    -> Result<Arc<dyn Reranker>, HeliosMemoryError>
+{
+    use lunaris_rerank::NoopReranker;
+    let cfg = cfg.clone();
+    let device = device.clone();
+    tokio::task::spawn_blocking(move || -> Result<Arc<dyn Reranker>, HeliosMemoryError> {
+        Ok(match cfg {
+            RerankerConfig::Off  => Arc::new(NoopReranker::default()),  // no warn — recall-only is supported
+            RerankerConfig::Fp32 { dir } => /* ... as before ... */,
+            RerankerConfig::Q5   { dir, gguf_filename } => /* ... */,
+        })
+    }).await?
+}
+```
+
+**Critical dim contract**: `NOOP_DEFAULT_DIM = 768` (from `lunaris_core::NOOP_DEFAULT_DIM`) which matches granite-r2's 768-d. This means flipping `Disabled → Fp16/Q4/Ollama-768d` at runtime via `try_with_embedder` **does not fail the dim guardrail**. If you ever default to a non-768-d noop, you'll be unable to enable a real embedder without a full re-open.
+
+### 6.3 Runtime enable guide — flipping from Disabled → real
+
+There are three ways to enable the embedder/reranker at runtime. Use whichever fits your operational posture.
+
+#### Method 1 — Edit `helios.yaml`, file-watcher picks it up
+
+```yaml
+# helios.yaml — operator edits in place
+memory:
+  store_url: "redis://moon:6379"
+  embedder:
+    mode: q4                                          # was: disabled
+    dir: /var/lib/helios/models/granite-r2
+    gguf_filename: granite-r2-311m-Q4_K_M.gguf
+  reranker:
+    mode: q5                                          # was: off
+    dir: /var/lib/helios/models/bge-reranker-v2-m3
+    gguf_filename: bge-reranker-v2-m3-Q5_K_M-imatrix.gguf
+```
+
+Save the file. The `notify-debouncer-mini` watcher (§10) picks it up within 500ms, validates the new config, builds the components off the hot path, and atomic-swaps. `tracing::info!` logs the reload outcome.
+
+#### Method 2 — `helios settings memory enable` CLI
+
+For ad-hoc enables without touching the config file (useful in incident response or one-off staging spins):
+
+```bash
+# Enable Q4 embedder
+helios settings memory enable embedder \
+  --mode q4 \
+  --dir /var/lib/helios/models/granite-r2 \
+  --gguf granite-r2-311m-Q4_K_M.gguf
+
+# Enable Q5 reranker
+helios settings memory enable reranker \
+  --mode q5 \
+  --dir /var/lib/helios/models/bge-reranker-v2-m3 \
+  --gguf bge-reranker-v2-m3-Q5_K_M-imatrix.gguf
+
+# Disable (go back to noop)
+helios settings memory disable embedder
+helios settings memory disable reranker
+```
+
+CLI handler:
+
+```rust
+// crates/helios-cli/src/bin/settings.rs (extended)
+#[derive(Subcommand)]
+enum MemoryCmd {
+    Reload,
+    Show,
+    Validate { path: PathBuf },
+    /// Enable embedder or reranker in the live config.
+    Enable {
+        component: Component,
+        #[arg(long)] mode: String,
+        #[arg(long)] dir:  Option<PathBuf>,
+        #[arg(long)] gguf: Option<String>,
+        #[arg(long)] url:  Option<String>,
+        #[arg(long)] model: Option<String>,
+        #[arg(long)] dim:   Option<usize>,
+    },
+    /// Disable component (revert to noop).
+    Disable { component: Component },
+}
+
+#[derive(clap::ValueEnum, Clone)]
+enum Component { Embedder, Reranker }
+```
+
+Daemon side: take current config, patch the relevant field, run the standard reload path. The CLI doesn't bypass validation.
+
+#### Method 3 — Programmatic API (Helios admin endpoints, internal services)
+
+```rust
+use helios_memory::{Memory, EmbedderConfig, RerankerConfig};
+use std::path::PathBuf;
+
+// In an admin HTTP handler:
+async fn enable_q4_embedder(memory: Arc<Memory>) -> Result<(), HeliosError> {
+    let mut new_cfg = (*memory.current_config()).clone();
+    new_cfg.embedder = EmbedderConfig::Q4 {
+        dir: PathBuf::from("/var/lib/helios/models/granite-r2"),
+        gguf_filename: "granite-r2-311m-Q4_K_M.gguf".to_string(),
+    };
+    reload::reload(&memory, new_cfg).await?;
+    Ok(())
+}
+```
+
+#### Reload-time behavior on first enable
+
+| Step | Time | Notes |
+|---|---|---|
+| Config validation | ~µs | File-exist + URL-parse + device-compiled-in |
+| Build new embedder (Q4, off hot path) | ~0.5-1.5 s | spawn_blocking; reader queries continue on noop handle |
+| Build new reranker (Q5, off hot path) | ~0.3-0.8 s | OnceCell construction; GGUF NOT mmap'd yet (N-04 D1 lazy) |
+| `try_with_embedder` dim check | ~ns | Noop 768d → real 768d → passes |
+| Atomic swap (`ArcSwap::store`) | ~ns | In-flight queries finish on noop handle (returning garbage results from the last 0.5-1.5s); new queries see real handle |
+| Background reranker warm-up | ~50-200 ms | Synthetic rerank call; mmaps the 446 MiB Q5 GGUF |
+
+**During the swap window** (between starting `build_embedder` and `ArcSwap::store`), readers still get noop results. That's fine for `Disabled → enabled` because they were already getting noop. For `Q4 → Fp16` or `Fp32 → Q5` swaps in a working memory engine, you might see ~1 second of stale-but-functional results. Almost never observable.
+
+#### Health endpoint integration
+
+Helios's health/readiness probe should reflect memory state:
+
+```json
+GET /healthz
+{
+  "memory": {
+    "embedder": { "mode": "disabled", "ready": false },
+    "reranker": { "mode": "off",      "ready": true },
+    "device":   "metal"
+  }
+}
+```
+
+When `embedder.mode = "disabled"`, return HTTP 503 from `/readyz` so traffic doesn't hit Helios until the operator has enabled it. `/livez` (process alive) stays 200.
+
+#### Auto-enable on weights-detected (optional)
+
+If you want Helios to auto-enable when the operator drops model weights into the configured cache dir, add a periodic check in the watcher loop:
+
+```rust
+async fn auto_enable_check(memory: &Memory) {
+    let cfg = memory.current_config();
+    if matches!(cfg.embedder, EmbedderConfig::Disabled) {
+        let canonical_q4 = PathBuf::from("/var/lib/helios/models/granite-r2/granite-r2-311m-Q4_K_M.gguf");
+        if canonical_q4.exists() {
+            let mut new_cfg = (*cfg).clone();
+            new_cfg.embedder = EmbedderConfig::Q4 {
+                dir: PathBuf::from("/var/lib/helios/models/granite-r2"),
+                gguf_filename: "granite-r2-311m-Q4_K_M.gguf".to_string(),
+            };
+            let _ = reload::reload(memory, new_cfg).await;
+        }
+    }
+}
+```
+
+Run every 30s in a background task. Opt-in (config flag `memory.auto_enable_on_weights = true`). Useful for k8s pod replacement where weights mount via PVC after pod start.
+
 ## 7. Component builder
 
 ```rust
