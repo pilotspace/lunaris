@@ -200,6 +200,18 @@ name = "verifier-divergence"
 path = "src/bin/verifier_divergence.rs"
 required-features = ["verify-small", "verify-large"]
 
+# O-03-A — perf-gate-check CI binary.
+#
+# Walks `target/criterion/**/change/estimates.json` after a
+# `cargo bench -- --baseline v0.4-O01` run and exits non-zero if any
+# bench's median timing regressed by more than the configured threshold
+# (default 5%, per HARDWARE-OPTIMIZATION-ROADMAP O-03). Used by
+# `.github/workflows/perf-gates.yml`; also unit-tested with synthetic
+# JSON fixtures so the harness is verifiable without staged weights.
+[[bin]]
+name = "perf-gate-check"
+path = "src/bin/perf_gate_check.rs"
+
 # N-04 D5 — `stage-models` HF Hub stager. Downloads the granite-r2 +
 # bge-reranker-v2-m3 safetensors into the operator's local cache; the
 # canonical GGUF SHA-256s are printed alongside so operators staging
