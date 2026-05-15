@@ -1442,6 +1442,14 @@ fn resolve_embed_dim() -> usize {
 ///    end-to-end even without the cross-encoder pass.
 async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
     // 1. Quantized GGUF — only when feature is on.
+    //
+    // N-04 D1 — DO NOT call `NativeQuantizedReranker::open` here. The Q5_K_M
+    // GGUF (446 MiB) mmaps into RSS the moment `open` runs, and the recall
+    // hot path may never actually invoke the rerank stage (RETRIEVE-06
+    // budget bust → skip). We pre-flight that the artifact paths exist (so
+    // a typo'd env var still falls through to FP32 immediately, not at
+    // first-rerank-time), then hand back a `LazyQuantizedReranker` which
+    // defers the mmap until the first `rerank()` call.
     #[cfg(feature = "reranker-gguf")]
     {
         if let Some(gguf_path) = std::env::var(RERANKER_GGUF_ENV_VAR).ok().filter(|s| !s.is_empty())
@@ -1453,26 +1461,31 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
                 config_path: dir.join("config.json"),
                 device: candle_core::Device::Cpu,
             };
-            match lunaris_rerank_native::NativeQuantizedReranker::open(opts) {
-                Ok(r) => {
-                    RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
-                        tracing::info!(
-                            target: "lunaris::handle",
-                            reranker_backend = "native-quantized",
-                            gguf = %gguf_path,
-                            "reranker_backend_resolved"
-                        );
-                    });
-                    return Ok(Arc::new(r) as Arc<dyn Reranker>);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
+            // Pre-flight: refuse the lazy path early if any required artifact
+            // is missing. This preserves the v0.4 N-03 fall-through-to-FP32
+            // behaviour on cache-miss while keeping the GGUF mmap deferred.
+            let preflight_ok = opts.gguf_path.exists()
+                && opts.tokenizer_path.exists()
+                && opts.config_path.exists();
+            if preflight_ok {
+                let lazy = LazyQuantizedReranker::new(opts);
+                RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
+                    tracing::info!(
+                        target: "lunaris::handle",
+                        reranker_backend = "native-quantized (lazy)",
                         gguf = %gguf_path,
-                        "LUNARIS_RERANKER_GGUF set but quantized reranker failed to open; \
-                         falling through to FP32"
+                        "reranker_backend_resolved (load deferred to first rerank())"
                     );
-                }
+                });
+                return Ok(Arc::new(lazy) as Arc<dyn Reranker>);
+            } else {
+                tracing::warn!(
+                    gguf = %gguf_path,
+                    tokenizer = %opts.tokenizer_path.display(),
+                    config = %opts.config_path.display(),
+                    "LUNARIS_RERANKER_GGUF set but one or more artifacts are missing on disk; \
+                     falling through to FP32"
+                );
             }
         }
     }
@@ -1647,6 +1660,93 @@ async fn default_verifier() -> Arc<dyn Verifier> {
 /// (`StorageError::Backend`) — NO silent fallback.
 fn default_consolidator() -> Result<Arc<dyn Consolidator>, LunarisError> {
     ConsolidatorPipelineHandle::backend_from_env()
+}
+
+// ── N-04 D1 — lazy quantized reranker ────────────────────────────────────────
+//
+// `NativeQuantizedReranker::open` mmaps the 446 MiB Q5_K_M-imatrix GGUF the
+// moment it is called. Eagerly calling it inside `resolve_reranker()`
+// inflates `Lunaris::open()` RSS by ~440 MiB even when the recall hot path
+// never reaches the rerank stage (e.g., budget-bust per RETRIEVE-06, or
+// callers that override the reranker before issuing recall).
+//
+// `LazyQuantizedReranker` defers the mmap until the first `rerank()` call
+// via `tokio::sync::OnceCell::get_or_try_init`. The trait `applies()`
+// answer stays `true` (config promises a real reranker — the
+// `rerank_applied` flag on `Hit` must reflect intent, not init state)
+// matching `NativeQuantizedReranker::applies` verbatim.
+//
+// On lazy-init failure the error is surfaced to the caller via
+// `LunarisError::Storage(Backend(_))` — the OnceCell is left empty so a
+// later call can retry (e.g., operator fixes a permissions issue between
+// rerank attempts). The init closure runs inside `spawn_blocking` so the
+// 446 MiB mmap + tensor parse doesn't stall the tokio runtime.
+#[cfg(feature = "reranker-gguf")]
+struct LazyQuantizedReranker {
+    opts: lunaris_rerank_native::NativeQuantizedRerankerOpts,
+    cell: tokio::sync::OnceCell<Arc<lunaris_rerank_native::NativeQuantizedReranker>>,
+}
+
+#[cfg(feature = "reranker-gguf")]
+impl LazyQuantizedReranker {
+    fn new(opts: lunaris_rerank_native::NativeQuantizedRerankerOpts) -> Self {
+        Self { opts, cell: tokio::sync::OnceCell::new() }
+    }
+
+    /// First-call init under `get_or_try_init`. Hand-rolls the `Result`
+    /// shape required by OnceCell instead of `match`-and-rewrap because
+    /// the error type leaving this fn MUST be `LunarisError` (OnceCell's
+    /// stored type is the success arm only).
+    async fn get_or_load(
+        &self,
+    ) -> Result<Arc<lunaris_rerank_native::NativeQuantizedReranker>, LunarisError> {
+        let opts = self.opts.clone();
+        self.cell
+            .get_or_try_init(|| async move {
+                tokio::task::spawn_blocking(move || {
+                    lunaris_rerank_native::NativeQuantizedReranker::open(opts)
+                })
+                .await
+                .map_err(|e| {
+                    LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
+                        "lazy reranker init join: {e}"
+                    )))
+                })?
+                .map(Arc::new)
+                .map_err(LunarisError::from)
+            })
+            .await
+            .cloned()
+    }
+}
+
+#[cfg(feature = "reranker-gguf")]
+impl std::fmt::Debug for LazyQuantizedReranker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LazyQuantizedReranker")
+            .field("gguf", &self.opts.gguf_path)
+            .field("loaded", &self.cell.initialized())
+            .finish()
+    }
+}
+
+#[cfg(feature = "reranker-gguf")]
+#[async_trait::async_trait]
+impl Reranker for LazyQuantizedReranker {
+    fn applies(&self) -> bool {
+        // Config promises a real reranker — answer eagerly so `Hit { rerank_applied }`
+        // doesn't lie on cold paths.
+        true
+    }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        docs: Vec<lunaris_rerank::RerankCandidate>,
+    ) -> Result<Vec<lunaris_rerank::RerankCandidate>, LunarisError> {
+        let inner = self.get_or_load().await?;
+        inner.rerank(query, docs).await
+    }
 }
 
 // ── v0.4 N-03 — unit tests for env-var resolution (cache-dir layout) ─────────
