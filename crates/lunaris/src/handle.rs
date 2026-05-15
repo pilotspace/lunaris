@@ -507,8 +507,52 @@ impl Lunaris {
     /// `pgvector` queries will reject the dimension mismatch at call time.
     /// Use [`Lunaris::open_with_embedder`] for the pre-index-creation path.
     pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        if self.embedder.dim() != embedder.dim() {
+            tracing::warn!(
+                target: "lunaris::handle",
+                store_dim = self.embedder.dim(),
+                new_dim = embedder.dim(),
+                "with_embedder: dim mismatch — silently swapping; vector index is sized for store_dim. \
+                 Use try_with_embedder() to refuse the swap, or open_with_embedder() for a fresh handle."
+            );
+        }
         self.embedder = embedder;
         self
+    }
+
+    /// N-04 D2 — fallible counterpart to [`Self::with_embedder`].
+    ///
+    /// Refuses the swap when `embedder.dim() != self.embedder.dim()`. The
+    /// handle's existing `embedder.dim()` is the dim Moon's `FT.CREATE` /
+    /// Postgres's `pgvector` column was sized for at `Lunaris::open*` time
+    /// (see [`Lunaris::open_with_embedder`] — the dim flows into
+    /// `MoonStorage::connect_with_dim`). Replacing it with a different-width
+    /// embedder produces garbage similarity scores until the index is
+    /// rebuilt, which is silent corruption masquerading as a working
+    /// recall path. This method exposes the check at the API boundary so
+    /// callers can either match the dim or migrate explicitly.
+    ///
+    /// Returns `Ok(Self)` on match, otherwise
+    /// `Err(LunarisError::Storage(StorageError::Backend(_)))` carrying
+    /// both dims in the message.
+    ///
+    /// The infallible [`Self::with_embedder`] is intentionally retained
+    /// (and emits a `tracing::warn!` on mismatch) for backwards-compat with
+    /// callers that have proven their backend tolerates the swap (e.g.,
+    /// `memory://` tests that never run a vector query).
+    pub fn try_with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Result<Self, LunarisError> {
+        let store_dim = self.embedder.dim();
+        let new_dim = embedder.dim();
+        if store_dim != new_dim {
+            return Err(LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
+                "embedder dim {new_dim} != store dim {store_dim}; drop and re-open with \
+                 matching config or migrate (no auto-resize — vectors at the storage \
+                 layer are sized for a specific dim, swapping would produce garbage \
+                 similarity scores)"
+            ))));
+        }
+        self.embedder = embedder;
+        Ok(self)
     }
 
     /// Escape hatch — replace the reranker on an existing handle.
