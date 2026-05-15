@@ -76,3 +76,16 @@ reranker-it  = []
 # `candle-core::quantized::*` to the symbol surface — no new dependency
 # lines required. Mirrors `lunaris-embed-native`'s `embedder-gguf`.
 reranker-gguf = []
+
+# ---------------------------------------------------------------------------
+# O-01 hardware-acceleration backend features (v0.4 milestone)
+# Mirrors `lunaris-embed-native`'s feature surface — see that crate's
+# Cargo.toml for the full rationale.
+# ---------------------------------------------------------------------------
+cpu-accelerate = ["candle-core/accelerate", "candle-nn/accelerate"]
+cpu-mkl        = ["candle-core/mkl", "candle-nn/mkl"]
+metal          = ["candle-core/metal", "candle-nn/metal"]
+# **Untested on the O-01 author's host (macOS / Apple Silicon).** Verified
+# in O-03's self-hosted CUDA runner gate.
+cuda           = ["candle-core/cuda", "candle-core/cudnn", "candle-nn/cuda"]
+cuda-fa2       = ["cuda", "candle-transformers/flash-attn"]
