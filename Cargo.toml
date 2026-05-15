@@ -177,6 +177,17 @@ tower-governor     = { package = "tower_governor", version = "0.8", default-feat
 # `governor::clock::QuantaInstant` in the GovernorLayer return type signature.
 governor           = "0.10"
 is-terminal        = "0.4"
+# O-01-B — physical-core rayon thread-pool sizing for the candle CPU backend.
+# `num_cpus::get_physical()` returns physical (non-hyperthreaded) core count;
+# rayon's default `get()` includes logical cores, which for BLAS-heavy
+# matmul workloads thrashes the L2 / L3 cache by 1.3–1.8× without a perf win
+# (see HARDWARE-OPTIMIZATION-ROADMAP §51 "rayon thread pool sized to physical
+# cores"). Both crates are already in the transitive graph via candle; we
+# promote them to workspace deps so embed-native / rerank-native can call
+# `ThreadPoolBuilder::new().num_threads(num_cpus::get_physical())` once at
+# `open()`.
+num_cpus           = "1"
+rayon              = "1"
 # Phase 14.2 — ephemeral per-handle LRU boost cache (ReflectOutput.boost rescoring).
 # `lru 0.12` is the standard LRU cache crate (hashbrown-backed, no_std-compatible).
 # Wrapped in `parking_lot::RwLock` for lock discipline.

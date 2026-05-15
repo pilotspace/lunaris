@@ -60,6 +60,10 @@
 pub mod config;
 pub mod embedder;
 pub mod modernbert;
+// O-01-B — one-shot rayon thread-pool init at physical-core count.
+// Public because the umbrella crate may want to pre-init before the first
+// `NativeEmbedder::open()` (e.g., during process startup).
+pub mod rayon_pool;
 pub mod tokenizer;
 
 #[cfg(feature = "embedder-gguf")]

@@ -104,6 +104,10 @@ impl NativeReranker {
     /// `tokio::task::spawn_blocking`; the load path itself is not async
     /// because error mapping stays straightforward this way.
     pub fn open(opts: NativeRerankerOpts) -> Result<Self, NativeRerankerError> {
+        // O-01-B — physical-core rayon pool init. Idempotent with the
+        // embedder side's call (shared global). No-op on Metal/CUDA.
+        crate::rayon_pool::ensure_physical_core_pool();
+
         let cfg = XlmRobertaRerankerConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = PairTokenizer::from_file(&opts.tokenizer_path, cfg.pad_token_id)?;
 

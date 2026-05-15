@@ -54,6 +54,10 @@ async-trait         = { workspace = true }
 # NFC-form input. Pinned to major version 0 (workspace policy: no new
 # transitive vector/BM25 libs — this is unicode-only).
 unicode-normalization = "0"
+# O-01-B — `NativeReranker::open()` initializes rayon at physical-core count.
+# Mirrors `lunaris-embed-native` rationale.
+num_cpus            = { workspace = true }
+rayon               = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }

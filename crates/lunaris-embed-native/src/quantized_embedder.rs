@@ -102,6 +102,9 @@ impl NativeQuantizedEmbedder {
     /// and callers concerned about runtime stalls can `spawn_blocking`
     /// at their own boundary.
     pub fn open(opts: NativeQuantizedEmbedderOpts) -> Result<Self, NativeQuantizedEmbedderError> {
+        // O-01-B — physical-core rayon pool init.
+        crate::rayon_pool::ensure_physical_core_pool();
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
         let model = QuantizedModernBert::load(&opts.gguf_path, &cfg, &opts.device)?;

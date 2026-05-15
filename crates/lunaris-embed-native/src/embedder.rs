@@ -112,6 +112,12 @@ impl NativeEmbedder {
     /// in `tokio::task::spawn_blocking`; we deliberately do NOT wrap inside
     /// `open` so error mapping stays straightforward.
     pub fn open(opts: NativeEmbedderOpts) -> Result<Self, NativeEmbedderError> {
+        // O-01-B — install rayon's global thread pool at physical-core count
+        // before any candle CPU op fires. No-op on `Device::Metal` /
+        // `Device::Cuda` (those backends schedule their own kernels), but
+        // safe to call regardless — idempotent.
+        crate::rayon_pool::ensure_physical_core_pool();
+
         let cfg = ModernBertConfig::try_from_json_path(&opts.config_path)?;
         let tokenizer = GraniteTokenizer::from_file(&opts.tokenizer_path, &cfg)?;
 

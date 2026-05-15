@@ -42,6 +42,11 @@ async-trait         = { workspace = true }
 # finding #1. Pinned to major version 0 (workspace policy: no new transitive
 # vector/BM25 libs — this is unicode-only).
 unicode-normalization = "0"
+# O-01-B — `NativeEmbedder::open()` initializes the rayon thread pool at
+# physical-core count (not logical). Both are in the candle transitive
+# graph; we name them explicitly so this crate's BLAS init is self-contained.
+num_cpus            = { workspace = true }
+rayon               = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }
