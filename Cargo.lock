@@ -2700,7 +2700,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lunaris-bench"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-codegen"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-conformance"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2788,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-consolidate"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2808,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-embed-native"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-embed-remote"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "lunaris-core",
@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-extract"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2904,7 +2904,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-ingest"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2923,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-llm"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "candle-core",
@@ -2944,7 +2944,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-memory"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-py"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-recipes"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3036,7 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-rerank"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "lunaris-core",
@@ -3049,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-rerank-native"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-retrieve"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-server"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-storage-embedded"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3140,12 +3140,13 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ulid",
  "url",
 ]
 
 [[package]]
 name = "lunaris-storage-moon"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3166,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-storage-postgres"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3186,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-ts"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3213,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-verify"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "blake3",

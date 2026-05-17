@@ -324,8 +324,10 @@ mod tests {
         // Looks like a prefix but no scope separator.
         assert!(parse_scope_from_key(b"lunaris:no-trailing-colon").is_none());
         // Trailing colon but no kind segment yet.
-        assert!(parse_scope_from_key(b"lunaris:scope:").map(|s| s.as_str().to_string())
-            == Some("scope".to_string()));
+        assert!(
+            parse_scope_from_key(b"lunaris:scope:").map(|s| s.as_str().to_string())
+                == Some("scope".to_string())
+        );
     }
 
     #[test]

@@ -46,11 +46,11 @@ use futures::stream::{self, BoxStream};
 use lunaris_core::bitemporal::BiTemporal;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::{Hlc, HlcClock};
+use lunaris_core::keyspace::parse_scope_from_key;
 use lunaris_core::scope::Scope;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::capabilities::StorageCapabilities;
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
-use lunaris_core::keyspace::parse_scope_from_key;
 use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, ScopePage, VectorHit, WriteOp,
 };
@@ -487,10 +487,8 @@ impl StoragePort for EmbeddedStorage {
         }
 
         // Apply prefix filter (case-sensitive, byte-prefix).
-        let mut filtered: Vec<String> = scopes
-            .into_iter()
-            .filter(|s| prefix.map_or(true, |p| s.starts_with(p)))
-            .collect();
+        let mut filtered: Vec<String> =
+            scopes.into_iter().filter(|s| prefix.is_none_or(|p| s.starts_with(p))).collect();
 
         // Apply cursor: skip everything <= cursor (resume strictly greater).
         if let Some(after) = cursor {

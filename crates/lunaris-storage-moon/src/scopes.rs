@@ -111,10 +111,8 @@ pub(crate) async fn list_scopes(
     // Apply prefix filter (Moon's MATCH is best-effort; re-apply in Rust to
     // catch any glob-misinterpretation edge cases AND to enforce strict
     // byte-prefix semantics).
-    let mut filtered: Vec<String> = all
-        .into_iter()
-        .filter(|s| prefix.map_or(true, |p| s.starts_with(p)))
-        .collect();
+    let mut filtered: Vec<String> =
+        all.into_iter().filter(|s| prefix.is_none_or(|p| s.starts_with(p))).collect();
 
     // Apply cursor: skip everything <= cursor (resume strictly greater).
     if let Some(after) = cursor {
@@ -142,7 +140,9 @@ pub(crate) async fn list_scopes(
     // documents the by-construction guarantee per CLAUDE.md no-unwrap rule.
     let scopes: Vec<Scope> = page
         .into_iter()
-        .map(|s| Scope::new(&s).expect("invariant: parse_scope_from_key yields Scope-valid strings"))
+        .map(|s| {
+            Scope::new(&s).expect("invariant: parse_scope_from_key yields Scope-valid strings")
+        })
         .collect();
 
     Ok(ScopePage { scopes, next_cursor })
