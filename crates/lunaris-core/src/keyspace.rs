@@ -140,6 +140,69 @@ pub fn community_prefix(scope: &Scope) -> Vec<u8> {
     format!("{}community:", scope_prefix(scope)).into_bytes()
 }
 
+// ---------------------------------------------------------------------------
+// Reverse parse: extract a scope from a `lunaris:{scope}:{kind}:{ulid}` key
+// ---------------------------------------------------------------------------
+
+/// Parse the `{scope}` segment out of a Lunaris KV key of the form
+/// `lunaris:{scope}:{kind}:{ulid}` (or any longer suffix).
+///
+/// Returns `Some(Scope)` if the key matches the canonical layout AND the
+/// extracted segment is a valid [`Scope`]. Returns `None` for any non-Lunaris
+/// key, malformed key, or scope segment that fails the `Scope::new` regex.
+///
+/// This is the inverse of [`scope_prefix`] + the primitive `*_key` helpers
+/// and is used by [`StoragePort::list_scopes`](crate::StoragePort::list_scopes)
+/// impls (Moon SCAN-parse, embedded SQLite key-scan) to recover the set of
+/// known scopes from raw keys.
+///
+/// The input is `&[u8]` (not `&str`) because Moon's SCAN cursor returns raw
+/// bytes — a malformed UTF-8 key short-circuits to `None` rather than
+/// panicking. This is the only safe entry point for untrusted-byte keys.
+///
+/// # Examples
+///
+/// ```
+/// use lunaris_core::{Scope, keyspace::parse_scope_from_key};
+/// let k = b"lunaris:acme.agent-1:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ";
+/// let s = parse_scope_from_key(k).expect("valid scope");
+/// assert_eq!(s.as_str(), "acme.agent-1");
+///
+/// // Non-Lunaris key: None.
+/// assert!(parse_scope_from_key(b"otherprefix:xx:yy").is_none());
+///
+/// // Trailing colon but no kind: still parses the scope (the parser only
+/// // requires a `:` after the scope segment so partial writes don't drop
+/// // valid scopes from `list_scopes`).
+/// assert_eq!(
+///     parse_scope_from_key(b"lunaris:acme.agent-1:")
+///         .map(|s| s.as_str().to_string()),
+///     Some("acme.agent-1".to_string()),
+/// );
+/// // No `:` after `lunaris:{scope}` at all: None.
+/// assert!(parse_scope_from_key(b"lunaris:acme.agent-1").is_none());
+///
+/// // Invalid UTF-8: None (never panics).
+/// assert!(parse_scope_from_key(&[0xff, 0xfe, 0xfd]).is_none());
+/// ```
+pub fn parse_scope_from_key(raw: &[u8]) -> Option<Scope> {
+    // Lunaris keys are ASCII-only by construction (scope regex bans non-ASCII,
+    // primitive kinds are lowercase ASCII, ULIDs are Crockford base32). Reject
+    // any non-UTF-8 input rather than try to recover.
+    let s = std::str::from_utf8(raw).ok()?;
+    let rest = s.strip_prefix("lunaris:")?;
+    // The scope segment is everything up to (but not including) the next `:`.
+    // The `:` MUST be present — a bare `lunaris:{scope}` with no trailing
+    // `:{kind}:…` is not a primitive key and is rejected so callers do not
+    // confuse "incomplete write" with "valid scope".
+    let colon = rest.find(':')?;
+    let scope_str = &rest[..colon];
+    // Defensive: re-validate via `Scope::new` so a malformed key (e.g. an
+    // empty scope segment from `lunaris::episode:…`) is rejected even though
+    // the byte layout matched.
+    Scope::new(scope_str).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +296,55 @@ mod tests {
         assert!(relation_key(&scope, id).starts_with(&relation_prefix(&scope)));
         assert!(fact_key(&scope, id).starts_with(&fact_prefix(&scope)));
         assert!(community_key(&scope, id).starts_with(&community_prefix(&scope)));
+    }
+
+    // ---- parse_scope_from_key (inverse of scope_prefix, used by list_scopes) ----
+
+    #[test]
+    fn parse_scope_roundtrips_every_primitive_kind() {
+        let scope = Scope::new("acme.agent-42").unwrap();
+        let id = Ulid::new();
+        for k in [
+            episode_key(&scope, id),
+            chunk_key(&scope, id),
+            entity_key(&scope, id),
+            relation_key(&scope, id),
+            fact_key(&scope, id),
+            community_key(&scope, id),
+        ] {
+            let parsed = parse_scope_from_key(&k).expect("valid Lunaris key must parse");
+            assert_eq!(parsed.as_str(), scope.as_str(), "key {k:?} parsed to wrong scope");
+        }
+    }
+
+    #[test]
+    fn parse_scope_rejects_non_lunaris_prefix() {
+        assert!(parse_scope_from_key(b"other:scope:kind:id").is_none());
+        assert!(parse_scope_from_key(b"").is_none());
+        // Looks like a prefix but no scope separator.
+        assert!(parse_scope_from_key(b"lunaris:no-trailing-colon").is_none());
+        // Trailing colon but no kind segment yet.
+        assert!(parse_scope_from_key(b"lunaris:scope:").map(|s| s.as_str().to_string())
+            == Some("scope".to_string()));
+    }
+
+    #[test]
+    fn parse_scope_rejects_empty_segment() {
+        // `lunaris::kind:id` — empty scope segment must not produce a Scope.
+        assert!(parse_scope_from_key(b"lunaris::episode:01HZZZ").is_none());
+    }
+
+    #[test]
+    fn parse_scope_rejects_invalid_utf8() {
+        // 0xFF is not valid UTF-8; must return None, never panic.
+        assert!(parse_scope_from_key(&[0xff, 0xfe, b':']).is_none());
+    }
+
+    #[test]
+    fn parse_scope_rejects_scope_with_invalid_chars() {
+        // Hand-craft a key where the scope segment fails Scope::new's regex
+        // (e.g. contains `/` which is disallowed). Must return None — the
+        // parser is the LAST defence and re-validates via Scope::new.
+        assert!(parse_scope_from_key(b"lunaris:bad/scope:episode:01HZZZ").is_none());
     }
 }
