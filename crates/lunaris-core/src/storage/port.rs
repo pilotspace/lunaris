@@ -197,9 +197,7 @@ pub trait StoragePort: Send + Sync + 'static {
         cursor: Option<&str>,
     ) -> Result<ScopePage, StorageError> {
         let _ = (prefix, limit, cursor);
-        Err(StorageError::NotSupported(
-            "list_scopes not implemented for this StoragePort backend",
-        ))
+        Err(StorageError::NotSupported("list_scopes not implemented for this StoragePort backend"))
     }
 
     /// Report capabilities so higher layers (retrievers, recipes, the conformance

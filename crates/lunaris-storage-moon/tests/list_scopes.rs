@@ -58,10 +58,7 @@ async fn list_scopes_returns_all_seeded_scopes_under_test_prefix() {
     let Some(storage) = maybe_connect().await else { return };
     let prefix = seed_three_scopes(&storage).await;
 
-    let page = storage
-        .list_scopes(Some(&prefix), 100, None)
-        .await
-        .expect("list_scopes");
+    let page = storage.list_scopes(Some(&prefix), 100, None).await.expect("list_scopes");
     let names: Vec<&str> = page.scopes.iter().map(|s| s.as_str()).collect();
     assert_eq!(names.len(), 3, "expected exactly 3 scopes under prefix {prefix}, got {names:?}");
     assert_eq!(names[0], format!("{prefix}-alpha"));
@@ -77,27 +74,20 @@ async fn list_scopes_pagination_cursor_continuity() {
     let prefix = seed_three_scopes(&storage).await;
 
     // Page 1 of size 1 under the test prefix.
-    let p1 = storage
-        .list_scopes(Some(&prefix), 1, None)
-        .await
-        .expect("page 1");
+    let p1 = storage.list_scopes(Some(&prefix), 1, None).await.expect("page 1");
     assert_eq!(p1.scopes.len(), 1);
     assert_eq!(p1.scopes[0].as_str(), format!("{prefix}-alpha"));
     assert!(p1.next_cursor.is_some(), "more available → cursor must be present");
 
     // Page 2 resumes via cursor.
-    let p2 = storage
-        .list_scopes(Some(&prefix), 1, p1.next_cursor.as_deref())
-        .await
-        .expect("page 2");
+    let p2 =
+        storage.list_scopes(Some(&prefix), 1, p1.next_cursor.as_deref()).await.expect("page 2");
     assert_eq!(p2.scopes.len(), 1);
     assert_eq!(p2.scopes[0].as_str(), format!("{prefix}-beta"));
 
     // Page 3 — final, cursor should clear.
-    let p3 = storage
-        .list_scopes(Some(&prefix), 1, p2.next_cursor.as_deref())
-        .await
-        .expect("page 3");
+    let p3 =
+        storage.list_scopes(Some(&prefix), 1, p2.next_cursor.as_deref()).await.expect("page 3");
     assert_eq!(p3.scopes.len(), 1);
     assert_eq!(p3.scopes[0].as_str(), format!("{prefix}-gamma"));
     assert!(p3.next_cursor.is_none(), "final page must clear cursor");
@@ -125,10 +115,7 @@ async fn list_scopes_dedupe_across_primitive_kinds() {
         .await
         .expect("seed");
 
-    let page = storage
-        .list_scopes(Some(&prefix), 100, None)
-        .await
-        .expect("list_scopes");
+    let page = storage.list_scopes(Some(&prefix), 100, None).await.expect("list_scopes");
     assert_eq!(page.scopes.len(), 1, "three keys, one scope; got {:?}", page.scopes);
     assert_eq!(page.scopes[0].as_str(), prefix);
 }

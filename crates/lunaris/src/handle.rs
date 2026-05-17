@@ -783,6 +783,52 @@ impl Lunaris {
     pub fn scoped(&self, scope: Scope) -> ScopedLunaris<'_> {
         ScopedLunaris { engine: self, scope }
     }
+
+    /// Cross-scope enumeration — pass-through to
+    /// [`StoragePort::list_scopes`](lunaris_core::StoragePort::list_scopes).
+    ///
+    /// Returns a paginated [`ScopePage`](lunaris_core::ScopePage) of scopes
+    /// known to the underlying backend, optionally filtered by `prefix`. The
+    /// cursor is opaque (Q-U1 lock) and MUST be passed back unchanged on
+    /// subsequent calls; `next_cursor == None` means enumeration is exhausted.
+    ///
+    /// ## Backend support
+    ///
+    /// - **Moon** + **embedded SQLite** — supported (lazy SCAN-parse derivation
+    ///   from the `lunaris:{scope}:…` keyspace).
+    /// - **Postgres** — returns `Err(StorageError::NotSupported(_))`. The
+    ///   primitive tables are RLS-protected with `FORCE ROW LEVEL SECURITY`
+    ///   (migration `20260510000005_scope_partitioning.sql`) and the
+    ///   application role cannot bypass it. Callers MUST handle `NotSupported`
+    ///   by either (a) supplying a known scope list from caller context, or
+    ///   (b) routing the enumeration through a Moon-fronted instance.
+    ///
+    /// This is the v0.3 surface introduced by the cross-scope enumeration
+    /// patch. The higher-level `list_atoms` / `get_atom_by_scope_lsn` from the
+    /// upstream brief are intentionally deferred — Lunaris exposes six
+    /// primitive kinds (episode/chunk/entity/relation/fact/community) rather
+    /// than a unified `Atom`, and introducing that abstraction is a separate
+    /// design pass.
+    ///
+    /// ## Example
+    ///
+    /// ```ignore
+    /// use lunaris::Lunaris;
+    /// let engine = Lunaris::open("memory://").await?;
+    /// let page = engine.list_scopes(None, 100, None).await?;
+    /// for scope in page.scopes {
+    ///     println!("known scope: {scope:?}");
+    /// }
+    /// # Ok::<(), lunaris::LunarisError>(())
+    /// ```
+    pub async fn list_scopes(
+        &self,
+        prefix: Option<&str>,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<lunaris_core::ScopePage, LunarisError> {
+        self.storage.list_scopes(prefix, limit, cursor).await.map_err(LunarisError::from)
+    }
 }
 
 /// Sentinel `KeywordPort` impl returned by [`Lunaris::with_parts`] when the
