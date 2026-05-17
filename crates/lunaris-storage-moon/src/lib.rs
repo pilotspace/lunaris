@@ -46,6 +46,7 @@ pub mod keyspace;
 pub mod keyword;
 pub mod kv;
 pub mod queue;
+pub mod scopes;
 pub mod vector;
 
 pub use client::MoonClient;
@@ -58,7 +59,7 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
     CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row, Scope,
-    StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
+    ScopePage, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
 
@@ -283,6 +284,18 @@ impl StoragePort for MoonStorage {
         partition: u16,
     ) -> Result<u64, StorageError> {
         crate::queue::queue_length(&self.client, scope, topic, partition).await
+    }
+
+    /// Cross-scope enumeration via `SCAN MATCH lunaris:*` + key parse.
+    /// Q-U2 lock — lazy SCAN-derived. See `crate::scopes` for the cursor
+    /// model and the Moon-SCAN-cursor vs scope-string-cursor tradeoff.
+    async fn list_scopes(
+        &self,
+        prefix: Option<&str>,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<ScopePage, StorageError> {
+        crate::scopes::list_scopes(&self.client, prefix, limit, cursor).await
     }
 
     fn capabilities(&self) -> StorageCapabilities {

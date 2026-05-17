@@ -203,6 +203,45 @@ impl StoragePort for PostgresStorage {
     ) -> Result<u64, StorageError> {
         crate::queue::queue_length(&self.client, scope, topic, partition).await
     }
+
+    /// `list_scopes` is **NotSupported** on the Postgres backend.
+    ///
+    /// Migration `20260510000005_scope_partitioning.sql` puts every primitive
+    /// table (`episodes`/`chunks`/`entities`/`relations`/`facts`/`communities`
+    /// + `lunaris_kv`) behind `FORCE ROW LEVEL SECURITY` with policy
+    /// `scope = current_setting('lunaris.scope', true)`. A cross-scope
+    /// `SELECT DISTINCT scope` query from the application role either:
+    ///
+    /// - returns zero rows (when the GUC is set to a single scope), OR
+    /// - requires `SET row_security = off`, which is a `BYPASSRLS` capability
+    ///   the production app role MUST NOT hold (per RFC 0001 §6).
+    ///
+    /// Surfacing the degradation via `NotSupported` is the contractual escape
+    /// hatch documented on the trait. Higher layers (e.g. Helios
+    /// `memories.search` cross-scope) detect this and fall back to a
+    /// caller-supplied scope list. Adding a privileged side-channel
+    /// (e.g. a meta-table populated by a SECURITY DEFINER trigger) is a
+    /// schema-level change tracked as future work; it is out of scope for
+    /// this read-side patch.
+    ///
+    /// **Do not** "fix" this by removing `FORCE` from the migrations or by
+    /// granting `BYPASSRLS` to the app role — both weaken the isolation
+    /// boundary that RFC 0001 §3.5 closed.
+    async fn list_scopes(
+        &self,
+        _prefix: Option<&str>,
+        _limit: usize,
+        _cursor: Option<&str>,
+    ) -> Result<lunaris_core::ScopePage, StorageError> {
+        Err(StorageError::NotSupported(
+            "list_scopes: Postgres backend enforces FORCE ROW LEVEL SECURITY \
+             per migration 20260510000005_scope_partitioning.sql; cross-scope \
+             enumeration would require BYPASSRLS which the app role MUST NOT hold. \
+             Callers should supply a known scope list or enumerate via a \
+             Moon/embedded backend.",
+        ))
+    }
+
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             bi_temporal_native: false, // emulated via valid_from/valid_to/sys_from/sys_to columns
