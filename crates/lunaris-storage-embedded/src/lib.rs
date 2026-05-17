@@ -50,8 +50,9 @@ use lunaris_core::scope::Scope;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::capabilities::StorageCapabilities;
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
+use lunaris_core::keyspace::parse_scope_from_key;
 use lunaris_core::storage::types::{
-    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, ScopePage, VectorHit, WriteOp,
 };
 use sqlx::Row as _;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -440,6 +441,92 @@ impl StoragePort for EmbeddedStorage {
         Err(StorageError::NotSupported("embedded backend: queue_depth not yet implemented"))
     }
 
+    /// Embedded backend `list_scopes`: scans the `lunaris_kv` table for live
+    /// rows whose key matches the `lunaris:{scope}:…` convention, parses out
+    /// the scope segment via [`parse_scope_from_key`], dedupes, sorts
+    /// ascending, and pages.
+    ///
+    /// ## Cursor format
+    /// The cursor is the last scope string emitted in the previous page,
+    /// stored verbatim. It is opaque to the caller (Q-U1 lock); callers
+    /// MUST pass it back unchanged. Resume position: the smallest scope
+    /// strictly greater than the cursor.
+    ///
+    /// ## Failure modes
+    /// - SQL failure → `StorageError::Backend`
+    /// - Malformed key in storage → silently skipped (a key that fails
+    ///   `parse_scope_from_key` cannot have been written via the Lunaris
+    ///   `atomic_write` path, but external KV puts may write anything;
+    ///   silently skipping is more forgiving than failing the page).
+    /// - `limit == 0` → returns an empty page with no cursor (no work,
+    ///   no contract violation; matches Postgres/Moon `LIMIT 0` semantics).
+    async fn list_scopes(
+        &self,
+        prefix: Option<&str>,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<ScopePage, StorageError> {
+        if limit == 0 {
+            return Ok(ScopePage::default());
+        }
+        // `lunaris_kv` rows track open versions via `sys_to IS NULL`. We only
+        // want currently-live keys — deleted scopes (tombstoned-by-absence
+        // via `close_open_kv`) MUST not appear in `list_scopes`.
+        let rows = sqlx::query("SELECT DISTINCT key FROM lunaris_kv WHERE sys_to IS NULL")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+
+        let mut scopes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for r in rows {
+            let k: Vec<u8> = r.try_get("key").map_err(backend)?;
+            let Some(scope) = parse_scope_from_key(&k) else {
+                continue; // non-Lunaris key; skip.
+            };
+            scopes.insert(scope.as_str().to_string());
+        }
+
+        // Apply prefix filter (case-sensitive, byte-prefix).
+        let mut filtered: Vec<String> = scopes
+            .into_iter()
+            .filter(|s| prefix.map_or(true, |p| s.starts_with(p)))
+            .collect();
+
+        // Apply cursor: skip everything <= cursor (resume strictly greater).
+        if let Some(after) = cursor {
+            match filtered.iter().position(|s| s.as_str() > after) {
+                Some(idx) => {
+                    filtered.drain(..idx);
+                }
+                None => {
+                    // Cursor points at or past the largest scope — nothing left.
+                    filtered.clear();
+                }
+            }
+        }
+
+        // Page.
+        let (page, next_cursor) = if filtered.len() > limit {
+            let page: Vec<_> = filtered.drain(..limit).collect();
+            let last = page.last().cloned();
+            (page, last)
+        } else {
+            (filtered, None)
+        };
+
+        // Convert validated strings back into Scope (round-trips through the
+        // regex; cannot fail because we got them from parse_scope_from_key
+        // which itself called Scope::new — defensive expect anyway).
+        let scopes: Vec<Scope> = page
+            .into_iter()
+            .map(|s| {
+                Scope::new(&s).expect("parse_scope_from_key produced a valid scope by construction")
+            })
+            .collect();
+
+        Ok(ScopePage { scopes, next_cursor })
+    }
+
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities {
             bi_temporal_native: true, // first-class MVCC columns, same as the emulated Postgres path
@@ -627,5 +714,151 @@ mod tests {
         assert!(!c.graph_native);
         assert!(!c.queue_native);
         assert!(!c.native_rrf);
+    }
+
+    // ----------------------------------------------------------------------
+    // list_scopes (Q-U1 lock: opaque cursor; Q-U2 lock: lazy SCAN-parse)
+    // ----------------------------------------------------------------------
+
+    /// Seed three distinct scopes via the canonical key format. Each scope
+    /// writes one episode key so `list_scopes` has something to dedupe.
+    async fn seed_three_scopes(s: &EmbeddedStorage) {
+        use lunaris_core::keyspace::episode_key;
+        use ulid::Ulid;
+        let id = Ulid::new();
+        for name in ["alpha", "beta.team", "gamma_42"] {
+            let scope = Scope::new(name).expect("valid scope");
+            let key = episode_key(&scope, id);
+            s.atomic_write(&scope, &[WriteOp::KvPut { key, value: b"x".to_vec() }])
+                .await
+                .expect("seed");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_scopes_returns_all_scopes_sorted_when_unpaged() {
+        let s = mem().await;
+        seed_three_scopes(&s).await;
+        let page = s.list_scopes(None, 100, None).await.expect("list");
+        let names: Vec<&str> = page.scopes.iter().map(|s| s.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "beta.team", "gamma_42"]);
+        assert!(page.next_cursor.is_none(), "single page must not return a cursor");
+    }
+
+    #[tokio::test]
+    async fn list_scopes_dedupes_when_one_scope_has_many_keys() {
+        // Write two keys under the same scope. `list_scopes` must yield it once.
+        use lunaris_core::keyspace::{chunk_key, episode_key};
+        use ulid::Ulid;
+        let s = mem().await;
+        let scope = Scope::new("only-scope").unwrap();
+        let id1 = Ulid::new();
+        let id2 = Ulid::new();
+        s.atomic_write(
+            &scope,
+            &[
+                WriteOp::KvPut { key: episode_key(&scope, id1), value: b"a".to_vec() },
+                WriteOp::KvPut { key: chunk_key(&scope, id2), value: b"b".to_vec() },
+            ],
+        )
+        .await
+        .expect("seed");
+        let page = s.list_scopes(None, 100, None).await.expect("list");
+        assert_eq!(page.scopes.len(), 1, "dedupe must collapse two keys into one scope");
+        assert_eq!(page.scopes[0].as_str(), "only-scope");
+    }
+
+    #[tokio::test]
+    async fn list_scopes_pagination_cursor_continuity() {
+        let s = mem().await;
+        seed_three_scopes(&s).await;
+        // Page 1: limit=1 → ["alpha"], cursor=Some("alpha")
+        let p1 = s.list_scopes(None, 1, None).await.expect("page 1");
+        assert_eq!(p1.scopes.len(), 1);
+        assert_eq!(p1.scopes[0].as_str(), "alpha");
+        assert_eq!(p1.next_cursor.as_deref(), Some("alpha"));
+
+        // Page 2: cursor="alpha" → ["beta.team"], cursor=Some("beta.team")
+        let p2 = s.list_scopes(None, 1, p1.next_cursor.as_deref()).await.expect("page 2");
+        assert_eq!(p2.scopes.len(), 1);
+        assert_eq!(p2.scopes[0].as_str(), "beta.team");
+        assert_eq!(p2.next_cursor.as_deref(), Some("beta.team"));
+
+        // Page 3: cursor="beta.team" → ["gamma_42"], cursor=None (last page).
+        let p3 = s.list_scopes(None, 1, p2.next_cursor.as_deref()).await.expect("page 3");
+        assert_eq!(p3.scopes.len(), 1);
+        assert_eq!(p3.scopes[0].as_str(), "gamma_42");
+        assert!(p3.next_cursor.is_none(), "final page must clear cursor");
+
+        // Idempotent past-the-end: explicitly passing the last scope as the
+        // cursor MUST return an empty page (cursor semantics: "resume strictly
+        // greater than this scope"). This is the safety check for callers
+        // that retry with a stale cursor — they must see zero rows, not a
+        // restart-from-beginning surprise.
+        let p_past = s.list_scopes(None, 1, Some("gamma_42")).await.expect("past-end");
+        assert!(p_past.scopes.is_empty(), "cursor past largest scope must return empty page");
+        assert!(p_past.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_scopes_prefix_filter() {
+        let s = mem().await;
+        seed_three_scopes(&s).await;
+        let page = s.list_scopes(Some("be"), 100, None).await.expect("filter");
+        assert_eq!(page.scopes.len(), 1);
+        assert_eq!(page.scopes[0].as_str(), "beta.team");
+
+        // Empty match.
+        let none = s.list_scopes(Some("zzz"), 100, None).await.expect("empty");
+        assert!(none.scopes.is_empty());
+        assert!(none.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_scopes_limit_zero_returns_empty() {
+        let s = mem().await;
+        seed_three_scopes(&s).await;
+        let page = s.list_scopes(None, 0, None).await.expect("zero");
+        assert!(page.scopes.is_empty());
+        assert!(page.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_scopes_skips_non_lunaris_keys() {
+        // External KvPut with a non-Lunaris key format MUST be ignored — not
+        // surfaced as a phantom scope.
+        let s = mem().await;
+        s.atomic_write(
+            &Scope::dev(),
+            &[WriteOp::KvPut { key: b"arbitrary-app-key".to_vec(), value: b"x".to_vec() }],
+        )
+        .await
+        .expect("seed");
+        let page = s.list_scopes(None, 100, None).await.expect("list");
+        assert!(
+            page.scopes.is_empty(),
+            "non-Lunaris keys must not surface as scopes; got {:?}",
+            page.scopes
+        );
+    }
+
+    #[tokio::test]
+    async fn list_scopes_omits_deleted_scopes() {
+        use lunaris_core::keyspace::episode_key;
+        use ulid::Ulid;
+        let s = mem().await;
+        let scope = Scope::new("ephemeral").unwrap();
+        let id = Ulid::new();
+        let key = episode_key(&scope, id);
+        s.atomic_write(&scope, &[WriteOp::KvPut { key: key.clone(), value: b"v".to_vec() }])
+            .await
+            .expect("put");
+        s.atomic_write(&scope, &[WriteOp::KvDelete { key }]).await.expect("delete");
+        let page = s.list_scopes(None, 100, None).await.expect("list");
+        assert!(
+            page.scopes.is_empty(),
+            "scope with no live keys must not appear in list_scopes; got {:?}",
+            page.scopes
+        );
     }
 }
