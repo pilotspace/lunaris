@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::bitemporal::BiTemporal;
 use crate::error::StorageError;
 use crate::hlc::Hlc;
+use crate::scope::Scope;
 
 // ----- Lsn -----
 
@@ -39,6 +40,27 @@ impl std::fmt::Display for Lsn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.wall_ms, self.counter)
     }
+}
+
+// ----- ScopePage -----
+
+/// One page of scope identifiers returned by
+/// [`StoragePort::list_scopes`](super::port::StoragePort::list_scopes).
+///
+/// `scopes` is ordered ascending by [`Scope`] string. `next_cursor` is `Some`
+/// when the underlying backend has more scopes to yield — callers pass the
+/// returned cursor back unchanged to fetch the next page. The cursor is an
+/// **opaque** UTF-8 string (Q-U1 lock 2026-05-17 — opaque base64 of the
+/// backend's native pagination handle); callers MUST NOT parse or mutate it.
+///
+/// `next_cursor == None` means the enumeration is exhausted; subsequent calls
+/// with a `None` cursor restart from the beginning.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopePage {
+    /// Scopes in this page, sorted ascending by [`Scope`] string.
+    pub scopes: Vec<Scope>,
+    /// Opaque continuation token; `Some` if more scopes remain.
+    pub next_cursor: Option<String>,
 }
 
 // ----- Key trait -----

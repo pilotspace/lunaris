@@ -101,6 +101,44 @@ async fn stub_returns_not_supported() {
     assert_eq!(cap.max_vector_dim, 768);
 }
 
+/// `list_scopes` is additive: backends that do not override the trait default
+/// must compile unchanged AND return `Err(StorageError::NotSupported(_))` so
+/// higher layers (e.g. Helios `memories.search`) can degrade to a
+/// caller-supplied scope list.
+#[tokio::test]
+async fn list_scopes_default_impl_returns_not_supported() {
+    let s: Arc<dyn StoragePort> = Arc::new(StubStorage);
+    let r = s.list_scopes(None, 10, None).await;
+    match r {
+        Err(StorageError::NotSupported(msg)) => {
+            assert!(
+                msg.contains("list_scopes"),
+                "NotSupported message should mention list_scopes, got: {msg}"
+            );
+        }
+        other => panic!("expected NotSupported, got {other:?}"),
+    }
+}
+
+/// `ScopePage` is part of the public surface; it must be `Default` (empty
+/// page is valid) and round-trip through serde so RPC + persistence layers
+/// can carry it.
+#[test]
+fn scope_page_default_and_serde_roundtrip() {
+    use lunaris_core::ScopePage;
+    let empty = ScopePage::default();
+    assert!(empty.scopes.is_empty());
+    assert!(empty.next_cursor.is_none());
+
+    let page = ScopePage {
+        scopes: vec![Scope::new("a").unwrap(), Scope::new("b").unwrap()],
+        next_cursor: Some("opaque-cursor".to_string()),
+    };
+    let s = serde_json::to_string(&page).expect("serialize ScopePage");
+    let back: ScopePage = serde_json::from_str(&s).expect("deserialize ScopePage");
+    assert_eq!(back, page);
+}
+
 #[test]
 fn write_op_variants_roundtrip() {
     let ops = vec![

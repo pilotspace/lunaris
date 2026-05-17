@@ -22,7 +22,9 @@ use crate::hlc::Hlc;
 use crate::scope::Scope;
 
 use super::capabilities::StorageCapabilities;
-use super::types::{CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp};
+use super::types::{
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, ScopePage, VectorHit, WriteOp,
+};
 
 /// The storage abstraction for Lunaris.
 ///
@@ -142,6 +144,62 @@ pub trait StoragePort: Send + Sync + 'static {
     ) -> Result<u64, StorageError> {
         let _ = scope;
         Err(StorageError::NotSupported("queue_depth not implemented for this StoragePort backend"))
+    }
+
+    /// Enumerate known scopes under an optional `prefix`, paginated.
+    ///
+    /// Returns a [`ScopePage`] whose `scopes` field is ordered ascending by
+    /// scope string. When `next_cursor` is `Some`, the caller passes it back
+    /// unchanged on the next call to advance pagination. `next_cursor == None`
+    /// means the enumeration is exhausted.
+    ///
+    /// `limit` is a *hint*: backends may return fewer than `limit` scopes per
+    /// page (e.g. Moon's `SCAN` returns batches whose size is driven by its
+    /// own COUNT parameter; the implementation parses scopes out of those
+    /// keys and dedupes per page). Backends MUST return at most `limit`
+    /// scopes when more are available — callers cannot rely on a single
+    /// call yielding everything.
+    ///
+    /// `cursor` is opaque to the caller (Q-U1 lock — backend-native cursor
+    /// wrapped in base64). It MUST be the exact bytes returned by the
+    /// previous call's `next_cursor`. Passing a corrupted cursor returns
+    /// `Err(StorageError::Backend(_))`.
+    ///
+    /// ## Degradation contract
+    ///
+    /// Backends without scope enumeration return
+    /// `Err(StorageError::NotSupported("list_scopes"))`. Higher layers
+    /// (e.g. Helios viewer surfaces, `memories.search` cross-scope queries)
+    /// degrade by accepting a caller-supplied scope list instead of
+    /// auto-discovering. This is the documented escape hatch — callers
+    /// MUST handle `NotSupported` and fall back to per-scope queries.
+    ///
+    /// **Postgres backend:** returns `NotSupported`. Per migration
+    /// `20260510000005_scope_partitioning.sql`, every primitive table is
+    /// `FORCE ROW LEVEL SECURITY`-protected with a policy
+    /// `scope = current_setting('lunaris.scope', true)`. A cross-scope
+    /// `SELECT DISTINCT scope` would either return zero rows (when the GUC
+    /// is set) or require `SET row_security = off`, which Lunaris' app
+    /// role does not hold. The contractual answer is to surface this
+    /// degradation rather than weaken the RLS boundary.
+    ///
+    /// **Moon backend:** implements via `SCAN MATCH lunaris:*` + parsing
+    /// the scope segment out of `lunaris:{scope}:{kind}:{ulid}` keys
+    /// (Q-U2 lock — lazy SCAN-parse; no explicit scope index).
+    ///
+    /// **Embedded (SQLite) backend:** implements by scanning the `lunaris_kv`
+    /// key column and parsing scopes out of the same `lunaris:{scope}:…`
+    /// keyspace convention.
+    async fn list_scopes(
+        &self,
+        prefix: Option<&str>,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> Result<ScopePage, StorageError> {
+        let _ = (prefix, limit, cursor);
+        Err(StorageError::NotSupported(
+            "list_scopes not implemented for this StoragePort backend",
+        ))
     }
 
     /// Report capabilities so higher layers (retrievers, recipes, the conformance
