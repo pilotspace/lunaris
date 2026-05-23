@@ -238,6 +238,7 @@ pub trait StoragePort: Send + Sync + 'static {
     /// Backends other than Moon return `Err(StorageError::NotSupported(...))` via this
     /// default. `Lunaris::invalidate_range` treats `NotSupported` the same as a missing
     /// index — WARN and continue (degraded mode).
+    #[allow(clippy::too_many_arguments)]
     async fn invalidate_range(
         &self,
         scope: &Scope,
