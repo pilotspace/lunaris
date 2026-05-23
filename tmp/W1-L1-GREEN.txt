@@ -1,0 +1,32 @@
+feat(lunaris-ingest): W1-L1 GREEN — schema_gate prevents L9 regression
+
+Implement validate_chunk_metadata + validate_chunk_text helpers; wire
+into pipeline.rs before every VectorUpsert push. Add anti-regression
+integration test that simulates a chunk-builder omission and proves
+the gate catches it before atomic_write.
+
+Closes the L9 invariant: every VectorUpsert chunk metadata MUST carry
+non-empty text. Without this, both Postgres BM25 (payload->>'text')
+and Moon BM25/HYBRID silently miss chunk recall.
+
+Implementation details:
+- schema_gate.rs: SchemaError enum (thiserror) with MissingField,
+  EmptyField, WrongType variants. validate_chunk_metadata does one
+  Value::get hash lookup + type check + is_empty — O(1), zero
+  allocations on the happy path. validate_chunk_text is a thin
+  &str helper for callers with the text already extracted.
+- pipeline.rs: inline metadata json!() block extracted to a let
+  binding, gate called as validate_chunk_metadata(&metadata)
+  .map_err(|e| LunarisError::Storage(StorageError::Backend(...)))?
+  before ops.push(WriteOp::VectorUpsert). Error conversion at
+  call site (orphan rule forbids From<SchemaError> for LunarisError
+  across crate boundary).
+- lib.rs: pub mod schema_gate + re-exports SchemaError,
+  validate_chunk_metadata, validate_chunk_text.
+- tests/anti_regression_l9.rs: 4 integration tests covering the
+  exact B4 regression shape (missing text), valid post-fix shape,
+  empty text, and null text.
+
+All 25 tests green. cargo clippy -D warnings clean.
+
+author: Tin Dang

@@ -26,6 +26,7 @@ use lunaris_core::{
 use serde_json::json;
 
 use crate::chunker::{ChunkDraft, chunk_markdown};
+use crate::schema_gate::validate_chunk_metadata;
 use crate::{chunk_key, episode_key};
 
 /// Number of chunks per `embed_batch` call. Per blueprint §4.1 ingest hot path.
@@ -88,25 +89,28 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
         })?;
         ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
         let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 3").clone();
+        // Validated by schema_gate::validate_chunk_metadata — see Gap 9 / L9.
+        // Both Postgres BM25 (`payload->>'text'` per migration 20260421_000004)
+        // and Moon BM25/HYBRID (`extract_content_for_index`) key on `"text"`;
+        // without it both backends silently return zero recall hits.
+        let metadata = json!({
+            "episode_id": chunk.episode_id.to_string(),
+            "heading_path": chunk.heading_path,
+            "offset": chunk.offset,
+            "text": chunk.text,
+            // Plan 15-01 Task 2 — episode.source flows into chunk
+            // metadata so atomic.rs can HSET it as a TAG field for
+            // server-side `@source:{value}` FT.SEARCH (PERF-MOON-01).
+            "source": &episode.source,
+        });
+        validate_chunk_metadata(&metadata).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}")))
+        })?;
         ops.push(WriteOp::VectorUpsert {
             index: CHUNK_VECTOR_INDEX.to_string(),
             id: chunk.id.to_bytes().to_vec(),
             embedding,
-            // Gap 9 fix (2026-04-21): include `text` so both Postgres BM25
-            // (`payload->>'text'` per migration 20260421_000004) AND Moon
-            // BM25/HYBRID (per `extract_content_for_index`) can score the
-            // chunk's content. Without this both backends silently miss
-            // chunk recall.
-            metadata: json!({
-                "episode_id": chunk.episode_id.to_string(),
-                "heading_path": chunk.heading_path,
-                "offset": chunk.offset,
-                "text": chunk.text,
-                // Plan 15-01 Task 2 — episode.source flows into chunk
-                // metadata so atomic.rs can HSET it as a TAG field for
-                // server-side `@source:{value}` FT.SEARCH (PERF-MOON-01).
-                "source": &episode.source,
-            }),
+            metadata,
         });
     }
 
