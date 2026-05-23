@@ -14,9 +14,11 @@
 
 pub mod chunker;
 pub mod pipeline;
+pub mod schema_gate;
 
 pub use chunker::{ChunkDraft, chunk_markdown, est_token_count};
 pub use pipeline::{INGEST_EMBED_BATCH_SIZE, ingest_episode};
+pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
 
 // Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved
 // from lunaris-storage-moon so the engine layer has no infra dependency for keys).
