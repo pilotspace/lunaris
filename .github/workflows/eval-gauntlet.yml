@@ -73,7 +73,7 @@ jobs:
           submodules: false
 
       - name: Init vendor/moon submodule
-        run: git submodule update --init --recursive vendor/moon
+        run: git submodule update --init vendor/moon
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94

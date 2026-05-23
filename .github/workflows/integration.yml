@@ -94,7 +94,9 @@ jobs:
           submodules: false
 
       - name: Init vendor/moon submodule
-        run: git submodule update --init --recursive vendor/moon
+        # Non-recursive: vendor/moon has its own nested .planning submodule
+        # (pilotspace/moon-docs, SSH-only) that we do NOT need for builds.
+        run: git submodule update --init vendor/moon
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

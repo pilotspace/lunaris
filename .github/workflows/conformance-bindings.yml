@@ -73,7 +73,7 @@ jobs:
         with:
           submodules: false
       - name: Init vendor/moon submodule
-        run: git submodule update --init --recursive vendor/moon
+        run: git submodule update --init vendor/moon
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -152,7 +152,7 @@ jobs:
         with:
           submodules: false
       - name: Init vendor/moon submodule
-        run: git submodule update --init --recursive vendor/moon
+        run: git submodule update --init vendor/moon
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
