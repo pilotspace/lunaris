@@ -88,10 +88,13 @@ jobs:
       LUNARIS_PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
 
     steps:
-      - name: Checkout (with submodules for .planning + vendor/moon)
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -430,10 +433,10 @@ jobs:
       PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
 
     steps:
-      - name: Checkout (with submodules for .planning fixture paths)
+      - name: Checkout (no submodules — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94

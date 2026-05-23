@@ -71,7 +71,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -148,7 +150,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

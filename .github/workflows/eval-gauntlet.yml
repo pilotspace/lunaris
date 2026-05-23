@@ -67,10 +67,13 @@ jobs:
       LUNARIS_EVAL_CACHE_DIR: ${{ runner.temp }}/lunaris-eval-cache
 
     steps:
-      - name: Checkout (with submodules for .planning + moon SDK)
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94

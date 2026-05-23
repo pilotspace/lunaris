@@ -30,10 +30,13 @@ jobs:
       LUNARIS_EXTRACT_MIN_AGREEMENT_RATIO: 0.95
 
     steps:
-      - name: Checkout
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94
@@ -63,10 +66,13 @@ jobs:
       LUNARIS_VERIFY_MIN_AGREEMENT_RATIO: 0.80
 
     steps:
-      - name: Checkout
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        run: git submodule update --init --recursive vendor/moon
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94
