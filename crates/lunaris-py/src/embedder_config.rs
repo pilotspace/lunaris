@@ -35,9 +35,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use lunaris_core::{Embedder, LunarisError, NOOP_DEFAULT_DIM, NoopEmbedder, StorageError};
-use lunaris_embed_native::{
-    GRANITE_R2_DIM, NativeEmbedder, NativeEmbedderOpts,
-};
+use lunaris_embed_native::{GRANITE_R2_DIM, NativeEmbedder, NativeEmbedderOpts};
 #[cfg(feature = "embedder-gguf")]
 use lunaris_embed_native::{NativeQuantizedEmbedder, NativeQuantizedEmbedderOpts};
 use pyo3::exceptions::PyValueError;
@@ -108,8 +106,7 @@ impl EmbedderConfig {
             config_path: dir.join("config.json"),
             device: candle_core::Device::Cpu,
         };
-        let e =
-            NativeQuantizedEmbedder::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
+        let e = NativeQuantizedEmbedder::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
         Ok(Self { inner: Arc::new(e), backend: "native-quantized", dim: GRANITE_R2_DIM })
     }
 

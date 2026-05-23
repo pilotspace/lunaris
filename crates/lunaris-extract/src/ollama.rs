@@ -82,11 +82,9 @@ impl OllamaExtractor {
     /// Construct a new Ollama-backed extractor. Builds an `OllamaBackend`
     /// with a 10s HTTP timeout and wraps it in a `LlmExtractor`.
     pub fn new(opts: OllamaExtractorOpts) -> Result<Self, LunarisError> {
-        let backend_opts = OllamaBackendOpts {
-            endpoint: opts.endpoint,
-            model: opts.model,
-        };
-        let backend = Arc::new(OllamaBackend::new(backend_opts)?) as Arc<dyn lunaris_llm::LlmBackend>;
+        let backend_opts = OllamaBackendOpts { endpoint: opts.endpoint, model: opts.model };
+        let backend =
+            Arc::new(OllamaBackend::new(backend_opts)?) as Arc<dyn lunaris_llm::LlmBackend>;
         let extractor_opts = LlmExtractorOpts {
             batch_timeout_ms: opts.batch_timeout_ms,
             // No per_chunk_timeout_ms in legacy OllamaExtractorOpts — use the

@@ -117,9 +117,7 @@ pub struct CandleGemma3_27B {
 
 impl std::fmt::Debug for CandleGemma3_27B {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CandleGemma3_27B")
-            .field("inner", &self.inner)
-            .finish()
+        f.debug_struct("CandleGemma3_27B").field("inner", &self.inner).finish()
     }
 }
 

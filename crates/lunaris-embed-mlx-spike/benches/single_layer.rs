@@ -33,12 +33,9 @@ fn bench_layer(c: &mut Criterion) {
     );
     let candle_layer =
         CandleLayer::new(h, &params, device.clone()).expect("candle CandleLayer::new");
-    let candle_input = candle_core::Tensor::from_slice(
-        &input_vec,
-        (h.batch, h.seq_len, h.hidden_size),
-        &device,
-    )
-    .expect("candle input tensor");
+    let candle_input =
+        candle_core::Tensor::from_slice(&input_vec, (h.batch, h.seq_len, h.hidden_size), &device)
+            .expect("candle input tensor");
     // Warm-up.
     for _ in 0..25 {
         let y = candle_layer.forward(&candle_input).expect("candle warmup");
@@ -61,10 +58,8 @@ fn bench_layer(c: &mut Criterion) {
     // `mlx_rs::Device::set_default` docstring). We pin and report it explicitly
     // so the head-to-head can't silently switch substrates between runs.
     let mlx_default = mlx_rs::Device::default();
-    let mlx_kind = mlx_default
-        .get_type()
-        .map(|t| format!("{t:?}"))
-        .unwrap_or_else(|_| "unknown".into());
+    let mlx_kind =
+        mlx_default.get_type().map(|t| format!("{t:?}")).unwrap_or_else(|_| "unknown".into());
     eprintln!("O2-D: mlx default device = {mlx_default:?} (type={mlx_kind})");
     assert!(
         mlx_kind.contains("Gpu"),

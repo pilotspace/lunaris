@@ -35,12 +35,9 @@ fn candle_vs_mlx_single_layer_mean_cosine() {
         let input = synthetic_input(h, seed);
 
         // candle forward + readback
-        let candle_in = candle_core::Tensor::from_slice(
-            &input,
-            (h.batch, h.seq_len, h.hidden_size),
-            &device,
-        )
-        .expect("candle input");
+        let candle_in =
+            candle_core::Tensor::from_slice(&input, (h.batch, h.seq_len, h.hidden_size), &device)
+                .expect("candle input");
         let candle_out = candle_layer.forward(&candle_in).expect("candle fwd");
         let candle_vec: Vec<Vec<Vec<f32>>> = candle_out.to_vec3::<f32>().expect("candle vec");
 

@@ -108,25 +108,13 @@ fn default_cache_dir() -> PathBuf {
 fn print_plan(cli: &Cli) {
     println!("stage-models — plan");
     println!("  cache_dir = {}", cli.cache_dir.display());
-    println!(
-        "  granite   = {GRANITE_REPO} → {}/{GRANITE_CACHE_SUBDIR}/",
-        cli.cache_dir.display()
-    );
-    println!(
-        "              files: {}",
-        SAFETENSORS_FILES.join(", ")
-    );
+    println!("  granite   = {GRANITE_REPO} → {}/{GRANITE_CACHE_SUBDIR}/", cli.cache_dir.display());
+    println!("              files: {}", SAFETENSORS_FILES.join(", "));
     println!(
         "              GGUF (manual): sha256:{GRANITE_GGUF_Q4_K_M_SHA256} ({GRANITE_GGUF_SIZE_MIB} MiB)"
     );
-    println!(
-        "  bge       = {BGE_REPO} → {}/{BGE_CACHE_SUBDIR}/",
-        cli.cache_dir.display()
-    );
-    println!(
-        "              files: {}",
-        SAFETENSORS_FILES.join(", ")
-    );
+    println!("  bge       = {BGE_REPO} → {}/{BGE_CACHE_SUBDIR}/", cli.cache_dir.display());
+    println!("              files: {}", SAFETENSORS_FILES.join(", "));
     println!(
         "              GGUF (manual): sha256:{BGE_GGUF_Q5_K_M_SHA256} ({BGE_GGUF_SIZE_MIB} MiB)"
     );
@@ -139,10 +127,7 @@ async fn stage_repo(api: &hf_hub::api::tokio::Api, repo: &str) -> anyhow::Result
         "main".to_string(),
     ));
     for file in SAFETENSORS_FILES {
-        let path = handle
-            .get(file)
-            .await
-            .with_context(|| format!("download {repo}/{file}"))?;
+        let path = handle.get(file).await.with_context(|| format!("download {repo}/{file}"))?;
         println!("  ✓ {repo}/{file} → {}", path.display());
     }
     Ok(())

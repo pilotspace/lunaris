@@ -81,12 +81,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// Seed a fact row with `bt.sys.1 = None` (live) at a given key.
-async fn seed_fact(
-    storage: &Arc<dyn StoragePort>,
-    scope: &Scope,
-    key: Vec<u8>,
-    ulid: Ulid,
-) {
+async fn seed_fact(storage: &Arc<dyn StoragePort>, scope: &Scope, key: Vec<u8>, ulid: Ulid) {
     let clock = HlcClock::new(0);
     let bt = BiTemporal::now(&clock);
     let payload = serde_json::json!({
@@ -137,10 +132,7 @@ async fn run_reflect_invalidate_test(storage: Arc<dyn StoragePort>, label: &str)
         "{label}: ulid_a bt.sys[1] must be non-null after invalidation; got bt={}",
         payload_a["bt"]
     );
-    assert!(
-        row_a.bt.sys.1.is_some(),
-        "{label}: row_a.bt.sys.1 must be Some after invalidation"
-    );
+    assert!(row_a.bt.sys.1.is_some(), "{label}: row_a.bt.sys.1 must be Some after invalidation");
 
     // Assert ulid_b is still live (bt.sys.1 null).
     let row_b = storage
@@ -154,10 +146,7 @@ async fn run_reflect_invalidate_test(storage: Arc<dyn StoragePort>, label: &str)
         "{label}: ulid_b bt.sys[1] must be null (still live); got bt={}",
         payload_b["bt"]
     );
-    assert!(
-        row_b.bt.sys.1.is_none(),
-        "{label}: row_b.bt.sys.1 must be None (still live)"
-    );
+    assert!(row_b.bt.sys.1.is_none(), "{label}: row_b.bt.sys.1 must be None (still live)");
 
     // Idempotency: second call for ulid_a returns empty (already stamped).
     let stamped_again = apply_reflect_invalidate(&storage, &scope, &clock, None, &[ulid_a])
@@ -195,11 +184,13 @@ async fn reflect_invalidate_moon() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn reflect_invalidate_postgres() -> anyhow::Result<()> {
-    let url =
-        match probe_backend("LUNARIS_TEST_POSTGRES_URL", std::env::var("LUNARIS_TEST_POSTGRES_URL").ok()) {
-            Some(u) => u,
-            None => return Ok(()), // SKIP
-        };
+    let url = match probe_backend(
+        "LUNARIS_TEST_POSTGRES_URL",
+        std::env::var("LUNARIS_TEST_POSTGRES_URL").ok(),
+    ) {
+        Some(u) => u,
+        None => return Ok(()), // SKIP
+    };
 
     let storage: Arc<dyn StoragePort> =
         Arc::new(lunaris_storage_postgres::PostgresStorage::connect(&url).await?);
@@ -223,8 +214,8 @@ use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris::Lunaris;
 use lunaris_core::{
-    CypherDialect, CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row,
-    StorageCapabilities, StorageError, StubEmbedder, VectorHit,
+    CypherDialect, CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, StorageCapabilities,
+    StorageError, StubEmbedder, VectorHit,
 };
 use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
 use parking_lot::Mutex;
@@ -248,28 +239,71 @@ impl StoragePort for CapturingStorage {
                         .ok()
                         .and_then(|v| serde_json::from_value(v["bt"].clone()).ok())
                         .unwrap_or(BiTemporal::at(Hlc::ZERO, Hlc::ZERO));
-                    rows.insert(key.clone(), Row { key: key.clone(), value: value.clone().into(), bt });
+                    rows.insert(
+                        key.clone(),
+                        Row { key: key.clone(), value: value.clone().into(), bt },
+                    );
                 }
             }
         }
         self.write_batches.lock().push(ops.to_vec());
         Ok(Lsn { wall_ms: 1, counter: self.write_batches.lock().len() as u32 })
     }
-    async fn read_as_of(&self, _s: &Scope, key: &[u8], _t: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        _s: &Scope,
+        key: &[u8],
+        _t: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
         Ok(self.rows.lock().get(key).cloned())
     }
-    async fn publish(&self, _s: &Scope, _t: &str, _p: u16, payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _t: &str,
+        _p: u16,
+        payload: Bytes,
+    ) -> Result<u64, StorageError> {
         self.publishes.lock().push(payload.to_vec());
         Ok(self.publishes.lock().len() as u64)
     }
     #[allow(clippy::too_many_arguments)]
-    async fn vector_search(&self, _s: &Scope, _i: &str, _q: &[f32], _k: usize, _f: Option<&Filter>, _t: Option<Hlc>, _r: bool) -> Result<Vec<VectorHit>, StorageError> { Ok(vec![]) }
-    async fn graph_traverse(&self, _s: &Scope, _q: &CypherQuery, _t: Option<Hlc>) -> Result<GraphResult, StorageError> { Ok(GraphResult::default()) }
-    async fn scan_range(&self, _s: &Scope, _p: &[u8], _t: Option<Hlc>) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+    async fn vector_search(
+        &self,
+        _s: &Scope,
+        _i: &str,
+        _q: &[f32],
+        _k: usize,
+        _f: Option<&Filter>,
+        _t: Option<Hlc>,
+        _r: bool,
+    ) -> Result<Vec<VectorHit>, StorageError> {
+        Ok(vec![])
+    }
+    async fn graph_traverse(
+        &self,
+        _s: &Scope,
+        _q: &CypherQuery,
+        _t: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
+        Ok(GraphResult::default())
+    }
+    async fn scan_range(
+        &self,
+        _s: &Scope,
+        _p: &[u8],
+        _t: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
         use futures::stream;
         Ok(Box::pin(stream::empty()))
     }
-    async fn subscribe(&self, _s: &Scope, _g: &str, _t: &str, _p: u16) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+    async fn subscribe(
+        &self,
+        _s: &Scope,
+        _g: &str,
+        _t: &str,
+        _p: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
         Err(StorageError::NotSupported("CapturingStorage::subscribe"))
     }
     fn capabilities(&self) -> StorageCapabilities {
@@ -294,7 +328,10 @@ struct StubReflectSupervisor {
 
 #[async_trait]
 impl ReflectSupervisor for StubReflectSupervisor {
-    async fn reflect(&self, _input: ReflectInput) -> Result<ReflectOutput, lunaris_core::LunarisError> {
+    async fn reflect(
+        &self,
+        _input: ReflectInput,
+    ) -> Result<ReflectOutput, lunaris_core::LunarisError> {
         Ok(self.output.clone())
     }
 }
@@ -318,22 +355,22 @@ async fn scoped_end_turn_applies_invalidate_in_memory() {
     let bt_live = BiTemporal::at(now, now);
     for (key, ulid) in [(&key_a, ulid_a), (&key_b, ulid_b)] {
         let payload = serde_json::json!({ "ulid": ulid.to_string(), "bt": serde_json::to_value(bt_live).unwrap() });
-        cs.rows.lock().insert(key.clone(), Row {
-            key: key.clone(),
-            value: serde_json::to_vec(&payload).unwrap().into(),
-            bt: bt_live,
-        });
+        cs.rows.lock().insert(
+            key.clone(),
+            Row {
+                key: key.clone(),
+                value: serde_json::to_vec(&payload).unwrap().into(),
+                bt: bt_live,
+            },
+        );
     }
 
     // Build a Lunaris handle with the capturing storage.
-    let handle = Lunaris::with_parts(storage, embedder, clock.clone())
-        .with_reflect_supervisor(Arc::new(StubReflectSupervisor {
-            output: ReflectOutput {
-                invalidate: vec![ulid_a],
-                boost: vec![],
-                pre_warm_query: None,
-            },
-        }));
+    let handle = Lunaris::with_parts(storage, embedder, clock.clone()).with_reflect_supervisor(
+        Arc::new(StubReflectSupervisor {
+            output: ReflectOutput { invalidate: vec![ulid_a], boost: vec![], pre_warm_query: None },
+        }),
+    );
 
     let scope = Scope::new("test-scope".to_string()).unwrap();
     let scoped = handle.scoped(scope.clone());

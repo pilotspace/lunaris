@@ -57,8 +57,8 @@ use lunaris_core::{Embedder, NoopEmbedder, Scope};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let moon_url = env::var("LUNARIS_DEMO_MOON_URL")
-        .unwrap_or_else(|_| "moon://localhost:6380".into());
+    let moon_url =
+        env::var("LUNARIS_DEMO_MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".into());
     let moon_port = parse_port(&moon_url).unwrap_or(6380);
 
     // Unique scope per run so re-runs don't see stale graph state from a

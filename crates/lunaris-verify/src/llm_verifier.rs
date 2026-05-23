@@ -247,7 +247,8 @@ mod tests {
         let flag = Arc::new(Mutex::new(false));
         let backend: Arc<dyn LlmBackend> =
             Arc::new(SchemaCapturingBackend { received_json_schema: flag.clone() });
-        let schema = serde_json::json!({"type": "object", "properties": {"winner_id": {"type": "string"}}});
+        let schema =
+            serde_json::json!({"type": "object", "properties": {"winner_id": {"type": "string"}}});
         let verifier = LlmVerifier::with_opts(
             backend,
             LlmVerifierOpts { schema: Some(schema), ..LlmVerifierOpts::default() },
@@ -284,10 +285,7 @@ mod tests {
         }
         let verifier = LlmVerifier::with_opts(
             Arc::new(ErrorBackend),
-            LlmVerifierOpts {
-                propagate_transport_errors: true,
-                ..LlmVerifierOpts::default()
-            },
+            LlmVerifierOpts { propagate_transport_errors: true, ..LlmVerifierOpts::default() },
         );
         let result = verifier.verify(fact_item()).await;
         assert!(result.is_err(), "transport error must propagate as Err for worker nack");

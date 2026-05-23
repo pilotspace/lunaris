@@ -74,8 +74,7 @@ impl EmbedderConfig {
             config_path: dir.join("config.json"),
             device: candle_core::Device::Cpu,
         };
-        let e =
-            NativeQuantizedEmbedder::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
+        let e = NativeQuantizedEmbedder::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
         Ok(Self { inner: Arc::new(e), declared_dim: GRANITE_R2_DIM as u32 })
     }
 

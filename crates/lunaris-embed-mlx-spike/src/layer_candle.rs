@@ -111,9 +111,8 @@ fn precompute_rope_cache(h: HParams, device: &Device) -> CandleResult<(Tensor, T
     let head_dim = h.hidden_size / h.num_heads;
     let theta = h.rope_theta;
     let half = head_dim / 2;
-    let inv_freq: Vec<f32> = (0..half)
-        .map(|i| 1.0_f32 / theta.powf(2.0 * (i as f32) / head_dim as f32))
-        .collect();
+    let inv_freq: Vec<f32> =
+        (0..half).map(|i| 1.0_f32 / theta.powf(2.0 * (i as f32) / head_dim as f32)).collect();
     let inv_freq = Tensor::from_vec(inv_freq, (half,), device)?;
     let t: Vec<f32> = (0..h.seq_len).map(|i| i as f32).collect();
     let t = Tensor::from_vec(t, (h.seq_len,), device)?;

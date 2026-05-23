@@ -131,8 +131,8 @@ async fn ingest_structured_rejects_mismatched_entity_embedding_dim() {
 
     // Supply an entity embedding of dim+1 to provoke the validation path.
     let valid_from = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).single().unwrap();
-    let payload = StructuredIngest::new(EpisodeBuilder::new("chat:t-2", "x"))
-        .with_entities(vec![EntityInput {
+    let payload = StructuredIngest::new(EpisodeBuilder::new("chat:t-2", "x")).with_entities(vec![
+        EntityInput {
             name: "BadEmbed".into(),
             entity_type: "Thing".into(),
             aliases: vec![],
@@ -140,7 +140,8 @@ async fn ingest_structured_rejects_mismatched_entity_embedding_dim() {
             valid_from,
             valid_to: None,
             embedding: Some(vec![0.0_f32; dim + 1]),
-        }]);
+        },
+    ]);
 
     let err = scoped.ingest_structured(payload).await.expect_err("dim mismatch must error");
     let msg = format!("{err}");

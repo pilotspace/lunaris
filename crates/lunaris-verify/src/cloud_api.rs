@@ -219,8 +219,7 @@ impl CloudApiVerifier {
             api_key: opts.api_key,
             max_retries: opts.max_retries,
         };
-        let backend: Arc<dyn lunaris_llm::LlmBackend> =
-            Arc::new(CloudBackend::new(backend_opts)?);
+        let backend: Arc<dyn lunaris_llm::LlmBackend> = Arc::new(CloudBackend::new(backend_opts)?);
 
         let verifier = LlmVerifier::with_opts(
             backend,
@@ -345,9 +344,9 @@ mod tests {
         use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
         use ulid::Ulid;
 
+        use crate::Verifier;
         use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
         use crate::types::VerifierBackend;
-        use crate::Verifier;
 
         struct TransientCloudBackend;
         #[async_trait]
@@ -408,10 +407,7 @@ mod tests {
             cause.contains("transient_after_retry"),
             "cause must have transient_after_retry prefix: {cause}"
         );
-        assert!(
-            cause.contains("HTTP 503"),
-            "cause must include upstream error detail: {cause}"
-        );
+        assert!(cause.contains("HTTP 503"), "cause must include upstream error detail: {cause}");
     }
 
     // ── R4 regression: decision_schema contains required arbitration fields ────
@@ -428,8 +424,7 @@ mod tests {
         assert!(props.contains_key("loser_id"), "schema must require loser_id");
         assert!(props.contains_key("reason"), "schema must require reason");
         let required = schema["required"].as_array().expect("schema must have required array");
-        let required_names: Vec<&str> =
-            required.iter().filter_map(|v| v.as_str()).collect();
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
         assert!(required_names.contains(&"winner_id"), "winner_id must be required");
         assert!(required_names.contains(&"loser_id"), "loser_id must be required");
         assert!(required_names.contains(&"reason"), "reason must be required");

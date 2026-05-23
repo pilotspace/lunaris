@@ -239,14 +239,7 @@ mod tests {
 
         assert_eq!(
             r.headers,
-            vec![
-                "id",
-                "name",
-                "type",
-                "path_length",
-                "edge_weight_product",
-                "source_entity_id",
-            ],
+            vec!["id", "name", "type", "path_length", "edge_weight_product", "source_entity_id",],
             "headers must passthrough verbatim — operator reads by name",
         );
         assert_eq!(r.rows.len(), 2, "two rows expected");

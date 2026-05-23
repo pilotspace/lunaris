@@ -291,21 +291,16 @@ mod tests {
 
     #[async_trait]
     impl StoragePort for TestStorage {
-        async fn atomic_write(
-            &self,
-            _scope: &Scope,
-            ops: &[WriteOp],
-        ) -> Result<Lsn, StorageError> {
+        async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
             // Apply ops to the in-memory map so read_as_of sees updated rows.
             {
                 let mut rows = self.rows.lock();
                 for op in ops {
                     if let WriteOp::KvPut { key, value } = op {
-                        let bt: BiTemporal =
-                            serde_json::from_slice::<serde_json::Value>(value)
-                                .ok()
-                                .and_then(|v| serde_json::from_value(v["bt"].clone()).ok())
-                                .unwrap_or(BiTemporal::at(Hlc::ZERO, Hlc::ZERO));
+                        let bt: BiTemporal = serde_json::from_slice::<serde_json::Value>(value)
+                            .ok()
+                            .and_then(|v| serde_json::from_value(v["bt"].clone()).ok())
+                            .unwrap_or(BiTemporal::at(Hlc::ZERO, Hlc::ZERO));
                         rows.insert(
                             key.clone(),
                             Row { key: key.clone(), value: value.clone().into(), bt },
@@ -390,7 +385,10 @@ mod tests {
         }
     }
 
-    fn make_fact_row(ulid: Ulid, already_invalid: bool) -> (Vec<u8>, BiTemporal, serde_json::Value) {
+    fn make_fact_row(
+        ulid: Ulid,
+        already_invalid: bool,
+    ) -> (Vec<u8>, BiTemporal, serde_json::Value) {
         let key = format!("fact:{ulid}").into_bytes();
         let bt = if already_invalid {
             let hlc = Hlc::ZERO;
@@ -422,8 +420,7 @@ mod tests {
         let storage: Arc<dyn StoragePort> = ts.clone();
         let clock = test_clock();
         let scope = dev_scope();
-        let result =
-            apply_reflect_invalidate(&storage, &scope, &clock, None, &[]).await.unwrap();
+        let result = apply_reflect_invalidate(&storage, &scope, &clock, None, &[]).await.unwrap();
         assert!(result.is_empty(), "empty input yields empty output");
         assert_eq!(ts.write_count(), 0, "no atomic_write for empty input");
     }
@@ -527,14 +524,12 @@ mod tests {
         ts.seed_row(key, bt, payload);
 
         // First call stamps the row.
-        let r1 =
-            apply_reflect_invalidate(&storage, &scope, &clock, None, &[ulid]).await.unwrap();
+        let r1 = apply_reflect_invalidate(&storage, &scope, &clock, None, &[ulid]).await.unwrap();
         assert_eq!(r1, vec![ulid]);
         assert_eq!(ts.write_count(), 1);
 
         // Second call: the row is now already-invalid (atomic_write updated the in-memory map).
-        let r2 =
-            apply_reflect_invalidate(&storage, &scope, &clock, None, &[ulid]).await.unwrap();
+        let r2 = apply_reflect_invalidate(&storage, &scope, &clock, None, &[ulid]).await.unwrap();
         assert!(r2.is_empty(), "idempotent: already-invalid row skipped on second call");
         assert_eq!(ts.write_count(), 1, "no second atomic_write");
     }

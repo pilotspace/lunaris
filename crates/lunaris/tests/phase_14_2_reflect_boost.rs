@@ -42,12 +42,12 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream};
 use lunaris::Lunaris;
+use lunaris_core::keyspace::{chunk_key, episode_key};
 use lunaris_core::{
     BiTemporal, Chunk, CypherDialect, CypherQuery, Episode, Filter, GraphResult, Hlc, HlcClock,
     Lsn, QueueMsg, Row, Scope, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
-use lunaris_core::keyspace::{chunk_key, episode_key};
-use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor, BOOST_DELTA};
+use lunaris_verify::{BOOST_DELTA, ReflectInput, ReflectOutput, ReflectSupervisor};
 use parking_lot::Mutex;
 use ulid::Ulid;
 
@@ -81,11 +81,7 @@ impl BoostTestStorage {
     fn seed(&self, key: Vec<u8>, value: Vec<u8>) {
         self.rows.lock().insert(
             key.clone(),
-            Row {
-                key,
-                value: Bytes::from(value),
-                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
-            },
+            Row { key, value: Bytes::from(value), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) },
         );
     }
 
@@ -105,7 +101,10 @@ impl StoragePort for BoostTestStorage {
                         .ok()
                         .and_then(|v| serde_json::from_value(v["bt"].clone()).ok())
                         .unwrap_or(BiTemporal::at(Hlc::ZERO, Hlc::ZERO));
-                    rows.insert(key.clone(), Row { key: key.clone(), value: value.clone().into(), bt });
+                    rows.insert(
+                        key.clone(),
+                        Row { key: key.clone(), value: value.clone().into(), bt },
+                    );
                 }
             }
         } // guard dropped before any .await
@@ -113,32 +112,65 @@ impl StoragePort for BoostTestStorage {
         Ok(Lsn { wall_ms: 1, counter: self.write_batches.lock().len() as u32 })
     }
 
-    async fn read_as_of(&self, _scope: &Scope, key: &[u8], _t: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        key: &[u8],
+        _t: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
         Ok(self.rows.lock().get(key).cloned())
     }
 
-    async fn publish(&self, _s: &Scope, _topic: &str, _p: u16, payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _topic: &str,
+        _p: u16,
+        payload: Bytes,
+    ) -> Result<u64, StorageError> {
         self.publishes.lock().push(payload.to_vec());
         Ok(self.publishes.lock().len() as u64)
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn vector_search(
-        &self, _scope: &Scope, _index: &str, _query: &[f32], _k: usize,
-        _filter: Option<&Filter>, _as_of: Option<Hlc>, _rerank: bool,
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &[f32],
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+        _rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
         Ok(self.fixed_hits.lock().clone())
     }
 
-    async fn graph_traverse(&self, _s: &Scope, _q: &CypherQuery, _t: Option<Hlc>) -> Result<GraphResult, StorageError> {
+    async fn graph_traverse(
+        &self,
+        _s: &Scope,
+        _q: &CypherQuery,
+        _t: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
         Ok(GraphResult::default())
     }
 
-    async fn scan_range(&self, _s: &Scope, _p: &[u8], _t: Option<Hlc>) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+    async fn scan_range(
+        &self,
+        _s: &Scope,
+        _p: &[u8],
+        _t: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
         Ok(Box::pin(stream::empty()))
     }
 
-    async fn subscribe(&self, _s: &Scope, _g: &str, _t: &str, _p: u16) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+    async fn subscribe(
+        &self,
+        _s: &Scope,
+        _g: &str,
+        _t: &str,
+        _p: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
         Err(StorageError::NotSupported("BoostTestStorage::subscribe"))
     }
 
@@ -167,7 +199,10 @@ struct StubReflectSupervisor {
 
 #[async_trait]
 impl ReflectSupervisor for StubReflectSupervisor {
-    async fn reflect(&self, _input: ReflectInput) -> Result<ReflectOutput, lunaris_core::LunarisError> {
+    async fn reflect(
+        &self,
+        _input: ReflectInput,
+    ) -> Result<ReflectOutput, lunaris_core::LunarisError> {
         Ok(self.output.clone())
     }
 }
@@ -221,14 +256,16 @@ fn seed_chunk(
 
 /// Build a `VectorHit` whose `id` is the raw 16-byte ULID bytes.
 fn vector_hit(id: Ulid, score: f32) -> VectorHit {
-    VectorHit { id: id.to_bytes().to_vec(), score, rerank_applied: false, metadata: serde_json::Value::Null }
+    VectorHit {
+        id: id.to_bytes().to_vec(),
+        score,
+        rerank_applied: false,
+        metadata: serde_json::Value::Null,
+    }
 }
 
 /// Build a `Lunaris` handle with `BoostTestStorage` and a `StubEmbedder`.
-fn make_handle(
-    storage: Arc<BoostTestStorage>,
-    reflect_output: ReflectOutput,
-) -> Lunaris {
+fn make_handle(storage: Arc<BoostTestStorage>, reflect_output: ReflectOutput) -> Lunaris {
     let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(lunaris_core::StubEmbedder::new(4));
     let clock = HlcClock::new(0);
     Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock)
@@ -273,10 +310,8 @@ async fn boost_rescore_promotes_chunk() {
     let scoped = handle.scoped(scope.clone());
 
     // Run recall BEFORE end_turn — B should be second.
-    let hits_before = scoped
-        .recall(lunaris_retrieve::Query::text("test"))
-        .await
-        .expect("recall before end_turn");
+    let hits_before =
+        scoped.recall(lunaris_retrieve::Query::text("test")).await.expect("recall before end_turn");
     assert_eq!(hits_before.len(), 3, "expected 3 hits before end_turn");
     assert_eq!(&hits_before[0].text, "chunk A", "A must be first before boost");
     assert_eq!(&hits_before[1].text, "chunk B", "B must be second before boost");
@@ -294,10 +329,8 @@ async fn boost_rescore_promotes_chunk() {
     assert_eq!(output.boost, vec![id_b], "ReflectOutput.boost must contain id_b");
 
     // Run recall AFTER end_turn — B should now be first.
-    let hits_after = scoped
-        .recall(lunaris_retrieve::Query::text("test"))
-        .await
-        .expect("recall after end_turn");
+    let hits_after =
+        scoped.recall(lunaris_retrieve::Query::text("test")).await.expect("recall after end_turn");
     assert_eq!(hits_after.len(), 3, "expected 3 hits after end_turn");
     assert_eq!(&hits_after[0].text, "chunk B", "B must be first after boost");
 
@@ -329,10 +362,8 @@ async fn boost_isolated_by_scope() {
     let ep_id = Ulid::new();
 
     // Both scopes see the same fixed vector hits: id_a=0.90, id_b=0.80.
-    let storage = Arc::new(BoostTestStorage::new(vec![
-        vector_hit(id_a, 0.90),
-        vector_hit(id_b, 0.80),
-    ]));
+    let storage =
+        Arc::new(BoostTestStorage::new(vec![vector_hit(id_a, 0.90), vector_hit(id_b, 0.80)]));
 
     let clock = HlcClock::new(0);
     // Seed chunk rows under BOTH scopes so hydrate succeeds for each.
@@ -362,10 +393,8 @@ async fn boost_isolated_by_scope() {
 
     // Recall under scope_b — must NOT see the boost; A still ranks first.
     let scoped_b = handle.scoped(scope_b.clone());
-    let hits_b = scoped_b
-        .recall(lunaris_retrieve::Query::text("test"))
-        .await
-        .expect("recall scope_b");
+    let hits_b =
+        scoped_b.recall(lunaris_retrieve::Query::text("test")).await.expect("recall scope_b");
     assert_eq!(hits_b.len(), 2, "scope_b recall must return 2 hits");
     assert_eq!(
         &hits_b[0].text, "chunk A",
@@ -450,15 +479,13 @@ async fn boost_combines_with_invalidate() {
 
     // Chunk Y and X
     let id_x_fact = Ulid::new(); // fact to be invalidated
-    let id_y = Ulid::new();      // chunk to be boosted
-    let id_z = Ulid::new();      // control chunk
+    let id_y = Ulid::new(); // chunk to be boosted
+    let id_z = Ulid::new(); // control chunk
     let ep_id = Ulid::new();
 
     // Vector hits: Z=0.90, Y=0.80. After boost Y should overtake Z.
-    let storage = Arc::new(BoostTestStorage::new(vec![
-        vector_hit(id_z, 0.90),
-        vector_hit(id_y, 0.80),
-    ]));
+    let storage =
+        Arc::new(BoostTestStorage::new(vec![vector_hit(id_z, 0.90), vector_hit(id_y, 0.80)]));
 
     // Seed chunk rows for Y and Z.
     seed_chunk(&storage, &scope, id_y, ep_id, "chunk Y", &clock);
@@ -477,11 +504,7 @@ async fn boost_combines_with_invalidate() {
     // Build handle with combined invalidate + boost output.
     let handle = make_handle(
         storage.clone(),
-        ReflectOutput {
-            invalidate: vec![id_x_fact],
-            boost: vec![id_y],
-            pre_warm_query: None,
-        },
+        ReflectOutput { invalidate: vec![id_x_fact], boost: vec![id_y], pre_warm_query: None },
     );
 
     let scoped = handle.scoped(scope.clone());
@@ -502,7 +525,8 @@ async fn boost_combines_with_invalidate() {
 
     // 14.1 assertion: exactly one atomic_write for the invalidation.
     assert_eq!(
-        storage.write_count(), 1,
+        storage.write_count(),
+        1,
         "D-11: exactly one atomic_write for the invalidate batch; got {}",
         storage.write_count()
     );
@@ -523,7 +547,8 @@ async fn boost_combines_with_invalidate() {
         .expect("recall after combined end_turn");
     assert_eq!(hits.len(), 2, "expected 2 hits");
     assert_eq!(
-        &hits[0].text, "chunk Y",
+        &hits[0].text,
+        "chunk Y",
         "14.2: Y must be first after boost; order: {:#?}",
         hits.iter().map(|h| (&h.text, h.score)).collect::<Vec<_>>()
     );

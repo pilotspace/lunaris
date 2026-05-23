@@ -7,10 +7,7 @@ use candle_core::{DType, Device, Tensor};
 
 pub fn select_device(requested: Device) -> Device {
     if !matches!(requested, Device::Cpu) {
-        tracing::debug!(
-            ?requested,
-            "device_select: caller-provided device honored verbatim"
-        );
+        tracing::debug!(?requested, "device_select: caller-provided device honored verbatim");
         return requested;
     }
 

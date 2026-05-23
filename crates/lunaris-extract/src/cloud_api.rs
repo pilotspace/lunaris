@@ -188,7 +188,12 @@ impl CloudApiExtractor {
             temperature: 0.0,
             timeout: Duration::from_millis(opts.batch_timeout_ms),
         };
-        Ok(Self { backend, provider: opts.provider, batch_timeout_ms: opts.batch_timeout_ms, gen_opts })
+        Ok(Self {
+            backend,
+            provider: opts.provider,
+            batch_timeout_ms: opts.batch_timeout_ms,
+            gen_opts,
+        })
     }
 
     /// Single chunk with D-21 sentinel-on-error. The `CloudBackend` already
@@ -203,11 +208,7 @@ impl CloudApiExtractor {
             chunk.heading_path.join(" / "),
             chunk.text
         );
-        match self
-            .backend
-            .generate(&prompt, SchemaConstraint::None, self.gen_opts)
-            .await
-        {
+        match self.backend.generate(&prompt, SchemaConstraint::None, self.gen_opts).await {
             Ok(text) => crate::llm_extractor::parse_extraction_json_pub(&text, chunk.chunk_id),
             Err(e) => {
                 tracing::warn!(

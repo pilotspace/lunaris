@@ -150,16 +150,12 @@ fn run(args: &Args) -> Result<usize> {
     let mut regressions = Vec::new();
     let mut checked = 0usize;
     for f in &change_files {
-        let delta = read_median_delta(f)
-            .with_context(|| format!("reading {}", f.display()))?;
+        let delta = read_median_delta(f).with_context(|| format!("reading {}", f.display()))?;
         checked += 1;
         let bench_label = pretty_label(f, &args.criterion_dir);
         if delta > args.threshold {
             println!("REGRESSION  {bench_label}  median {:+.2}%", delta * 100.0);
-            regressions.push(Regression {
-                path: f.clone(),
-                median_delta: delta,
-            });
+            regressions.push(Regression { path: f.clone(), median_delta: delta });
         } else if delta > 0.0 {
             println!("ok          {bench_label}  median {:+.2}%", delta * 100.0);
         } else {
@@ -175,7 +171,11 @@ fn run(args: &Args) -> Result<usize> {
     );
     if !regressions.is_empty() {
         eprintln!();
-        eprintln!("::error::perf-gate-check failed — {} bench(es) regressed > {:.1}%:", regressions.len(), args.threshold * 100.0);
+        eprintln!(
+            "::error::perf-gate-check failed — {} bench(es) regressed > {:.1}%:",
+            regressions.len(),
+            args.threshold * 100.0
+        );
         for r in &regressions {
             eprintln!("  - {}  median {:+.2}%", r.path.display(), r.median_delta * 100.0);
         }
@@ -215,8 +215,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 
 fn read_median_delta(path: &Path) -> Result<f64> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let parsed: ChangeEstimates = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let parsed: ChangeEstimates =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     Ok(parsed.median.point_estimate)
 }
 
@@ -228,11 +228,7 @@ fn pretty_label(file: &Path, root: &Path) -> String {
     if comps.len() >= 2 {
         comps.truncate(comps.len() - 2);
     }
-    comps
-        .iter()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+    comps.iter().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
 #[cfg(test)]
@@ -260,11 +256,7 @@ mod tests {
     fn green_when_all_under_threshold() {
         let tmp = tempdir();
         make_tree(&tmp, 0.03, -0.01); // +3% and -1% — both pass the 5% gate.
-        let args = Args {
-            criterion_dir: tmp.clone(),
-            threshold: 0.05,
-            require_comparison: true,
-        };
+        let args = Args { criterion_dir: tmp.clone(), threshold: 0.05, require_comparison: true };
         let n = run(&args).expect("ok");
         assert_eq!(n, 0, "expected zero regressions");
     }
@@ -273,11 +265,7 @@ mod tests {
     fn red_on_single_regression() {
         let tmp = tempdir();
         make_tree(&tmp, 0.03, 0.07); // +3% (pass) and +7% (FAIL the 5% gate).
-        let args = Args {
-            criterion_dir: tmp.clone(),
-            threshold: 0.05,
-            require_comparison: true,
-        };
+        let args = Args { criterion_dir: tmp.clone(), threshold: 0.05, require_comparison: true };
         let n = run(&args).expect("ok");
         assert_eq!(n, 1, "expected exactly one regression (bench_b)");
     }
@@ -286,11 +274,7 @@ mod tests {
     fn red_on_multiple_regressions() {
         let tmp = tempdir();
         make_tree(&tmp, 0.10, 0.20);
-        let args = Args {
-            criterion_dir: tmp.clone(),
-            threshold: 0.05,
-            require_comparison: true,
-        };
+        let args = Args { criterion_dir: tmp.clone(), threshold: 0.05, require_comparison: true };
         let n = run(&args).expect("ok");
         assert_eq!(n, 2);
     }
@@ -298,11 +282,7 @@ mod tests {
     #[test]
     fn missing_dir_is_operator_error() {
         let bogus = PathBuf::from("/nonexistent/criterion-output-xyz");
-        let args = Args {
-            criterion_dir: bogus,
-            threshold: 0.05,
-            require_comparison: false,
-        };
+        let args = Args { criterion_dir: bogus, threshold: 0.05, require_comparison: false };
         assert!(run(&args).is_err(), "expected operator error on missing dir");
     }
 
@@ -310,11 +290,7 @@ mod tests {
     fn no_change_files_is_pass_by_default() {
         let tmp = tempdir();
         // Empty tree — no change/estimates.json anywhere.
-        let args = Args {
-            criterion_dir: tmp.clone(),
-            threshold: 0.05,
-            require_comparison: false,
-        };
+        let args = Args { criterion_dir: tmp.clone(), threshold: 0.05, require_comparison: false };
         let n = run(&args).expect("ok");
         assert_eq!(n, 0);
     }
@@ -322,11 +298,7 @@ mod tests {
     #[test]
     fn no_change_files_is_error_when_required() {
         let tmp = tempdir();
-        let args = Args {
-            criterion_dir: tmp,
-            threshold: 0.05,
-            require_comparison: true,
-        };
+        let args = Args { criterion_dir: tmp, threshold: 0.05, require_comparison: true };
         assert!(run(&args).is_err());
     }
 
@@ -341,10 +313,8 @@ mod tests {
     /// Uses `std::env::temp_dir()` + a ULID-ish suffix; cleaned at test
     /// exit by relying on the OS's tmp sweeper (tests are idempotent).
     fn tempdir() -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let p = std::env::temp_dir().join(format!("lunaris-perf-gate-{nanos}-{:p}", &nanos));
         std::fs::create_dir_all(&p).unwrap();
         p

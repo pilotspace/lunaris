@@ -84,7 +84,7 @@ pub use reflect::{
     ReflectSupervisor,
 };
 pub use reflect_apply::{
-    apply_reflect_boost, apply_reflect_invalidate, boost_cache_capacity, BOOST_DELTA,
+    BOOST_DELTA, apply_reflect_boost, apply_reflect_invalidate, boost_cache_capacity,
 };
 pub use supervisor::{
     ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, VerifySupervisor, VerifySupervisorHandle,

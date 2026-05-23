@@ -280,9 +280,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
-                    boost_cache: Arc::new(parking_lot::RwLock::new(
-                        lru::LruCache::new(boost_cache_capacity()),
-                    )),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
+                        boost_cache_capacity(),
+                    ))),
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
@@ -320,9 +320,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
-                    boost_cache: Arc::new(parking_lot::RwLock::new(
-                        lru::LruCache::new(boost_cache_capacity()),
-                    )),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
+                        boost_cache_capacity(),
+                    ))),
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
@@ -355,9 +355,9 @@ impl Lunaris {
                     verify_pipeline,
                     consolidator_pipeline,
                     reflect_supervisor: Arc::new(NoopReflectSupervisor),
-                    boost_cache: Arc::new(parking_lot::RwLock::new(
-                        lru::LruCache::new(boost_cache_capacity()),
-                    )),
+                    boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
+                        boost_cache_capacity(),
+                    ))),
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
@@ -428,13 +428,11 @@ impl Lunaris {
             // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
             reflect_supervisor: Arc::new(NoopReflectSupervisor),
             // Phase 14.2 — ephemeral boost cache, capacity from env (default 10_000).
-            boost_cache: Arc::new(parking_lot::RwLock::new(
-                lru::LruCache::new(boost_cache_capacity()),
-            )),
+            boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
+                boost_cache_capacity(),
+            ))),
             // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
-            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
-                resolve_prewarm_concurrency(),
-            )),
+            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
         }
     }
 
@@ -483,13 +481,11 @@ impl Lunaris {
             // Phase 13 — default OFF per blueprint §5.1 default-OFF pattern.
             reflect_supervisor: Arc::new(NoopReflectSupervisor),
             // Phase 14.2 — ephemeral boost cache, capacity from env (default 10_000).
-            boost_cache: Arc::new(parking_lot::RwLock::new(
-                lru::LruCache::new(boost_cache_capacity()),
-            )),
+            boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
+                boost_cache_capacity(),
+            ))),
             // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
-            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
-                resolve_prewarm_concurrency(),
-            )),
+            warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
         }
     }
 
@@ -1061,12 +1057,7 @@ impl<'a> ScopedLunaris<'a> {
         // appears between the guard acquisition and its release, satisfying the
         // CLAUDE.md lock-across-await invariant.
         if !output.boost.is_empty() {
-            apply_reflect_boost(
-                &self.engine.boost_cache,
-                &self.scope,
-                &output.boost,
-                BOOST_DELTA,
-            );
+            apply_reflect_boost(&self.engine.boost_cache, &self.scope, &output.boost, BOOST_DELTA);
             tracing::debug!(
                 target: "lunaris::scoped",
                 turn_id = ?turn_id,
@@ -1344,10 +1335,8 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
         if let Some(url) =
             std::env::var(lunaris_embed_remote::OLLAMA_URL_ENV_VAR).ok().filter(|s| !s.is_empty())
         {
-            let opts = lunaris_embed_remote::OllamaEmbedderOpts {
-                endpoint: url,
-                ..Default::default()
-            };
+            let opts =
+                lunaris_embed_remote::OllamaEmbedderOpts { endpoint: url, ..Default::default() };
             let e = lunaris_embed_remote::OllamaEmbedder::new(opts)?;
             EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
                 tracing::info!(

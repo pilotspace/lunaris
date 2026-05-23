@@ -5,8 +5,8 @@
 //! numerical-equivalence test is comparing math, not random-init noise.
 //! That is why this module owns the `LayerParams` struct + the seeded RNG.
 
-use rand::distributions::{Distribution, Uniform};
 use rand::SeedableRng;
+use rand::distributions::{Distribution, Uniform};
 use rand_chacha::ChaCha20Rng;
 
 /// Granite-r2 hyperparameters mirrored from
@@ -64,9 +64,8 @@ impl LayerParams {
         // range and softmax doesn't saturate.
         let scale = 1.0_f32 / (h_dim as f32).sqrt();
         let dist = Uniform::new(-scale, scale);
-        let mut sample_n = |n: usize| -> Vec<f32> {
-            (0..n).map(|_| dist.sample(&mut rng)).collect()
-        };
+        let mut sample_n =
+            |n: usize| -> Vec<f32> { (0..n).map(|_| dist.sample(&mut rng)).collect() };
         let ones = |n: usize| vec![1.0_f32; n];
         Self {
             wqkv: sample_n(3 * h_dim * h_dim),

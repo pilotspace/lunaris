@@ -21,9 +21,7 @@ async fn try_with_embedder_accepts_matching_dim() {
         .expect("open_with_embedder must succeed");
 
     let swap: Arc<dyn Embedder> = Arc::new(NoopEmbedder::new(768));
-    let handle = handle
-        .try_with_embedder(swap)
-        .expect("matching dim must Ok");
+    let handle = handle.try_with_embedder(swap).expect("matching dim must Ok");
 
     assert_eq!(handle.embedder().dim(), 768);
 }
@@ -36,9 +34,7 @@ async fn try_with_embedder_rejects_mismatched_dim() {
         .expect("open_with_embedder must succeed");
 
     let bad_swap: Arc<dyn Embedder> = Arc::new(NoopEmbedder::new(512));
-    let err = handle
-        .try_with_embedder(bad_swap)
-        .expect_err("mismatched dim must Err");
+    let err = handle.try_with_embedder(bad_swap).expect_err("mismatched dim must Err");
 
     match err {
         LunarisError::Storage(StorageError::Backend(msg)) => {

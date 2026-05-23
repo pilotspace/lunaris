@@ -129,9 +129,7 @@ async fn llm_verifier_agrees_with_legacy_candle_27b_on_fixture() {
         min_ratio * 100.0,
     );
     for (i, (m, l_app, w_app)) in log.iter().enumerate() {
-        println!(
-            "  item {i}: agree={m}  legacy_applies={l_app}  wrapper_applies={w_app}"
-        );
+        println!("  item {i}: agree={m}  legacy_applies={l_app}  wrapper_applies={w_app}");
     }
 
     assert!(

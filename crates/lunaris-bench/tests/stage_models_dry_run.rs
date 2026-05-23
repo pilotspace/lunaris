@@ -19,8 +19,7 @@ use std::process::Command;
 
 const GRANITE_REPO: &str = "ibm-granite/granite-embedding-r2";
 const BGE_REPO: &str = "BAAI/bge-reranker-v2-m3";
-const GRANITE_GGUF_SHA: &str =
-    "0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276";
+const GRANITE_GGUF_SHA: &str = "0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276";
 const BGE_GGUF_SHA: &str = "6cdcc566200dba69553a89a9d59ff6d631e33969bc9367eff6914919f7722a1c";
 
 fn stage_models_binary() -> PathBuf {
@@ -54,24 +53,13 @@ fn dry_run_exits_zero_and_creates_nothing() {
     eprintln!("--- stage-models stdout ---\n{stdout}");
     eprintln!("--- stage-models stderr ---\n{stderr}");
 
-    assert!(
-        out.status.success(),
-        "stage-models --dry-run must exit 0, got {:?}",
-        out.status
-    );
-    assert!(
-        !cache.exists(),
-        "--dry-run must NOT create the cache dir at {}",
-        cache.display()
-    );
+    assert!(out.status.success(), "stage-models --dry-run must exit 0, got {:?}", out.status);
+    assert!(!cache.exists(), "--dry-run must NOT create the cache dir at {}", cache.display());
     assert!(
         stdout.contains(GRANITE_REPO),
         "stdout must name granite repo {GRANITE_REPO}; got:\n{stdout}"
     );
-    assert!(
-        stdout.contains(BGE_REPO),
-        "stdout must name bge repo {BGE_REPO}; got:\n{stdout}"
-    );
+    assert!(stdout.contains(BGE_REPO), "stdout must name bge repo {BGE_REPO}; got:\n{stdout}");
     assert!(
         stdout.contains(GRANITE_GGUF_SHA),
         "stdout must mention granite GGUF SHA {GRANITE_GGUF_SHA}; got:\n{stdout}"

@@ -92,8 +92,7 @@ pub struct RetrievalBuilder {
     /// delta to matching hits, and re-sorts. `None` = no boost pass (default,
     /// preserves pre-14.2 ordering for callers that construct a builder
     /// without going through `Lunaris::recall()`).
-    pub(crate) boost_cache:
-        Option<Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>>,
+    pub(crate) boost_cache: Option<Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>>,
 }
 
 impl RetrievalBuilder {
@@ -366,9 +365,7 @@ impl RetrievalBuilder {
                         }
                     }
                 }
-                hits.sort_by(|a, b| {
-                    b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
-                });
+                hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
             }
         }
 

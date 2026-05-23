@@ -39,7 +39,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use lunaris::Lunaris;
-use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StubEmbedder, StoragePort};
+use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StoragePort, StubEmbedder};
 use lunaris_storage_embedded::EmbeddedStorage;
 use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
 
@@ -96,11 +96,8 @@ async fn make_handle(
     supervisor: Arc<dyn ReflectSupervisor>,
     prewarm_capacity: usize,
 ) -> Lunaris {
-    let storage: Arc<dyn StoragePort> = Arc::new(
-        EmbeddedStorage::connect("memory://")
-            .await
-            .expect("in-memory storage"),
-    );
+    let storage: Arc<dyn StoragePort> =
+        Arc::new(EmbeddedStorage::connect("memory://").await.expect("in-memory storage"));
     let clock = HlcClock::new(0);
     Lunaris::with_parts(storage, embedder, clock)
         .with_reflect_supervisor(supervisor)
@@ -156,11 +153,7 @@ async fn prewarm_happy_path_spawns_warm_up() {
     let result = scoped.end_turn(make_input("happy path prewarm")).await;
     let elapsed = start.elapsed();
 
-    assert!(
-        result.is_ok(),
-        "end_turn must return Ok; got {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "end_turn must return Ok; got {:?}", result.err());
     assert_eq!(
         result.unwrap().pre_warm_query,
         Some("alice".to_string()),
@@ -192,10 +185,7 @@ async fn prewarm_happy_path_spawns_warm_up() {
 #[tokio::test]
 async fn prewarm_none_is_noop() {
     let supervisor = Arc::new(StubReflectSupervisor {
-        output: ReflectOutput {
-            pre_warm_query: None,
-            ..ReflectOutput::default()
-        },
+        output: ReflectOutput { pre_warm_query: None, ..ReflectOutput::default() },
     });
 
     let handle = make_stub_handle(supervisor, 4).await;

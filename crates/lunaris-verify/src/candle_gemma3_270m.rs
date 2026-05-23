@@ -111,9 +111,7 @@ pub struct CandleGemma3_270M {
 
 impl std::fmt::Debug for CandleGemma3_270M {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CandleGemma3_270M")
-            .field("inner", &self.inner)
-            .finish()
+        f.debug_struct("CandleGemma3_270M").field("inner", &self.inner).finish()
     }
 }
 

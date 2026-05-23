@@ -12,9 +12,9 @@ use napi_derive::napi;
 
 use lunaris_core::LunarisError;
 use lunaris_rerank::{NoopReranker, Reranker};
-use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
 #[cfg(feature = "reranker-gguf")]
 use lunaris_rerank_native::{NativeQuantizedReranker, NativeQuantizedRerankerOpts};
+use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
 
 use crate::errors::napi_err;
 
@@ -56,8 +56,7 @@ impl RerankerConfig {
             config_path: dir.join("config.json"),
             device: candle_core::Device::Cpu,
         };
-        let r =
-            NativeQuantizedReranker::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
+        let r = NativeQuantizedReranker::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
         Ok(Self { inner: Arc::new(r) })
     }
 

@@ -287,17 +287,16 @@ mod tests {
     #[tokio::test]
     async fn queued_error_propagates() {
         let fb = FauxBackend::new().with_error_msg("simulated timeout");
-        let err = fb
-            .generate("p", SchemaConstraint::None, GenOpts::default())
-            .await
-            .unwrap_err();
+        let err = fb.generate("p", SchemaConstraint::None, GenOpts::default()).await.unwrap_err();
         assert!(err.to_string().contains("simulated timeout"));
     }
 
     #[tokio::test]
     async fn captures_prompt_and_constraint_tag() {
         let fb = FauxBackend::new().with_response("ok");
-        let _ = fb.generate("hello world", SchemaConstraint::Gbnf("root ::= \"{}\""), GenOpts::default()).await;
+        let _ = fb
+            .generate("hello world", SchemaConstraint::Gbnf("root ::= \"{}\""), GenOpts::default())
+            .await;
         assert_eq!(fb.last_prompt().as_deref(), Some("hello world"));
         assert_eq!(fb.last_constraint_tag(), Some("gbnf"));
         assert_eq!(fb.call_count(), 1);
@@ -314,9 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn applies_and_model_id_configurable() {
-        let fb = FauxBackend::new()
-            .with_applies(false)
-            .with_model_id("faux://custom");
+        let fb = FauxBackend::new().with_applies(false).with_model_id("faux://custom");
         assert!(!fb.applies());
         assert_eq!(fb.model_id(), "faux://custom");
     }

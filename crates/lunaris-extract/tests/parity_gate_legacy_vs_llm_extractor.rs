@@ -119,9 +119,7 @@ async fn llm_extractor_agrees_with_legacy_candle_on_fixture() {
 
     let total = legacy_batch.by_chunk.len();
     let mut agree = 0usize;
-    for (i, (l, w)) in
-        legacy_batch.by_chunk.iter().zip(wrapper_batch.by_chunk.iter()).enumerate()
-    {
+    for (i, (l, w)) in legacy_batch.by_chunk.iter().zip(wrapper_batch.by_chunk.iter()).enumerate() {
         let l_ents: HashSet<(String, String)> =
             l.entities.iter().map(|e| (e.name.clone(), e.entity_type.clone())).collect();
         let w_ents: HashSet<(String, String)> =
@@ -175,10 +173,6 @@ fn fixture_chunks() -> Vec<ChunkInput> {
             heading_path: vec!["employment".into()],
             text: "Charlie joined Acme Corp as CTO in March 2025.".into(),
         },
-        ChunkInput {
-            chunk_id: Ulid::new(),
-            heading_path: vec!["empty".into()],
-            text: ".".into(),
-        },
+        ChunkInput { chunk_id: Ulid::new(), heading_path: vec!["empty".into()], text: ".".into() },
     ]
 }

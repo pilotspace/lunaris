@@ -97,9 +97,7 @@ pub struct OllamaVerifier {
 
 impl std::fmt::Debug for OllamaVerifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OllamaVerifier")
-            .field("inner", &self.inner)
-            .finish()
+        f.debug_struct("OllamaVerifier").field("inner", &self.inner).finish()
     }
 }
 
@@ -175,9 +173,9 @@ mod tests {
         use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
         use ulid::Ulid;
 
+        use crate::Verifier;
         use crate::llm_verifier::{LlmVerifier, LlmVerifierOpts};
         use crate::types::VerifierBackend;
-        use crate::Verifier;
 
         struct TransportErrorBackend;
         #[async_trait]
@@ -254,8 +252,7 @@ mod tests {
         assert!(props.contains_key("loser_id"), "schema must require loser_id");
         assert!(props.contains_key("reason"), "schema must require reason");
         let required = schema["required"].as_array().expect("schema must have required array");
-        let required_names: Vec<&str> =
-            required.iter().filter_map(|v| v.as_str()).collect();
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
         assert!(required_names.contains(&"winner_id"), "winner_id must be required");
         assert!(required_names.contains(&"loser_id"), "loser_id must be required");
         assert!(required_names.contains(&"reason"), "reason must be required");

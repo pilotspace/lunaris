@@ -55,7 +55,10 @@ fn release_binary_path() -> PathBuf {
 }
 
 #[test]
-#[cfg_attr(not(feature = "ci-perf-gates"), ignore = "run with --features ci-perf-gates after `cargo build --release -p lunaris-server`")]
+#[cfg_attr(
+    not(feature = "ci-perf-gates"),
+    ignore = "run with --features ci-perf-gates after `cargo build --release -p lunaris-server`"
+)]
 fn lunaris_server_release_binary_under_35_mib() {
     let bin = release_binary_path();
     let meta = std::fs::metadata(&bin).unwrap_or_else(|e| {
@@ -68,7 +71,10 @@ fn lunaris_server_release_binary_under_35_mib() {
     });
     let size = meta.len();
     let mib = size as f64 / (1024.0 * 1024.0);
-    eprintln!("lunaris-server release binary: {size} bytes ({mib:.2} MiB) — ceiling {} bytes (35 MiB)", CEILING_BYTES);
+    eprintln!(
+        "lunaris-server release binary: {size} bytes ({mib:.2} MiB) — ceiling {} bytes (35 MiB)",
+        CEILING_BYTES
+    );
     assert!(
         size <= CEILING_BYTES,
         "release binary at {} is {size} bytes ({mib:.2} MiB) — exceeds 35 MiB ceiling. \

@@ -375,8 +375,7 @@ mod tests {
     #[tokio::test]
     async fn batch_timeout_emits_empty_per_chunk_partials() {
         // 500 ms delay exceeds the 50 ms batch timeout → timeout path fires.
-        let backend: Arc<dyn LlmBackend> =
-            Arc::new(FauxBackend::new().with_delay_ms(500));
+        let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new().with_delay_ms(500));
         let extractor = LlmExtractor::with_opts(
             backend,
             LlmExtractorOpts {
@@ -403,10 +402,7 @@ mod tests {
         let cap = Arc::new(FauxBackend::new().with_model_id("faux://capturing"));
         let extractor = LlmExtractor::with_opts(
             cap.clone() as Arc<dyn LlmBackend>,
-            LlmExtractorOpts {
-                gbnf: Some("root ::= \"{}\""),
-                ..LlmExtractorOpts::default()
-            },
+            LlmExtractorOpts { gbnf: Some("root ::= \"{}\""), ..LlmExtractorOpts::default() },
         );
         let _ = extractor.extract(Ulid::new(), &[chunk("hi")]).await.unwrap();
         assert_eq!(cap.last_constraint_tag(), Some("gbnf"));

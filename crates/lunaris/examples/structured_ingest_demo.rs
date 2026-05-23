@@ -41,11 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(DB_PATH);
 
     let url = format!("sqlite://{DB_PATH}");
-    let handle = Lunaris::open_with_embedder(
-        &url,
-        Arc::new(NoopEmbedder::new(768)) as Arc<dyn Embedder>,
-    )
-    .await?;
+    let handle =
+        Lunaris::open_with_embedder(&url, Arc::new(NoopEmbedder::new(768)) as Arc<dyn Embedder>)
+            .await?;
     // Scope alphabet (v0.2.1+) is [A-Za-z0-9_\-.] — `:` is rejected.
     let scope = Scope::new("agent-demo-evidence")?;
     let scoped = handle.scoped(scope);

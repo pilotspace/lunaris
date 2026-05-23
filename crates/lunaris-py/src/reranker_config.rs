@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use lunaris_core::LunarisError;
 use lunaris_rerank::{NoopReranker, Reranker};
-use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
 #[cfg(feature = "reranker-gguf")]
 use lunaris_rerank_native::{NativeQuantizedReranker, NativeQuantizedRerankerOpts};
+use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -63,8 +63,7 @@ impl RerankerConfig {
             config_path: dir.join("config.json"),
             device: candle_core::Device::Cpu,
         };
-        let r =
-            NativeQuantizedReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
+        let r = NativeQuantizedReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
         Ok(Self { inner: Arc::new(r), backend: "native-quantized" })
     }
 
