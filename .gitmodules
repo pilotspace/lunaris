@@ -4,4 +4,4 @@
 	branch = main
 [submodule "vendor/moon"]
 	path = vendor/moon
-	url = git@github.com:pilotspace/moon.git
+	url = https://github.com/pilotspace/moon.git
