@@ -84,8 +84,80 @@ pub(crate) async fn invalidate_range(
     hlc_wall_lo_inclusive: i64,
     hlc_wall_hi_inclusive: i64,
 ) -> Result<u64, LunarisError> {
-    let _ = (storage, scope, node_id, hlc_wall_lo_inclusive, hlc_wall_hi_inclusive);
-    todo!("W2-L2 GREEN: implement parallel fan-out over KNOWN_COLLECTIONS")
+    // Short-circuit: empty or inverted range — no wire calls needed.
+    if hlc_wall_lo_inclusive > hlc_wall_hi_inclusive {
+        return Ok(0);
+    }
+
+    // Fan-out: issue FT.INVALIDATE_RANGE for each collection in parallel.
+    // We use `join_all` (not `try_join_all`) so a missing index on one
+    // collection does NOT abort the others — degraded mode continues.
+    let futs: Vec<_> = KNOWN_COLLECTIONS
+        .iter()
+        .map(|&kind| {
+            let storage = Arc::clone(storage);
+            let scope = scope.clone();
+            let node_id = node_id.to_owned();
+            async move {
+                let result = tokio::time::timeout(
+                    PER_INDEX_TIMEOUT,
+                    storage.invalidate_range(
+                        &scope,
+                        kind,
+                        HLC_NODE_ID_FIELD,
+                        &node_id,
+                        HLC_WALL_FIELD,
+                        hlc_wall_lo_inclusive,
+                        hlc_wall_hi_inclusive,
+                    ),
+                )
+                .await;
+
+                match result {
+                    // Timeout — warn and skip.
+                    Err(_elapsed) => {
+                        warn!(
+                            collection = kind,
+                            timeout_ms = PER_INDEX_TIMEOUT.as_millis(),
+                            "invalidate_range: per-index call timed out (degraded mode)"
+                        );
+                        0u64
+                    }
+                    // Backend error — check for degraded-mode cases.
+                    Ok(Err(e)) => {
+                        let msg = e.to_string();
+                        // WRONGTYPE = index does not exist on Moon.
+                        // NotSupported = backend (Postgres/Embedded) has no primitive.
+                        // Both are expected in degraded mode — warn and skip.
+                        if msg.contains("WRONGTYPE")
+                            || msg.contains("not supported")
+                            || msg.contains("NotSupported")
+                            || msg.contains("no such index")
+                        {
+                            warn!(
+                                collection = kind,
+                                error = %e,
+                                "invalidate_range: index missing or unsupported — skipping (degraded mode)"
+                            );
+                        } else {
+                            warn!(
+                                collection = kind,
+                                error = %e,
+                                "invalidate_range: backend error — skipping (degraded mode)"
+                            );
+                        }
+                        0u64
+                    }
+                    // Success — collect count.
+                    Ok(Ok(count)) => count,
+                }
+            }
+        })
+        .collect();
+
+    let counts = join_all(futs).await;
+    let total: u64 = counts.into_iter().sum();
+    Ok(total)
 }
 
 #[cfg(test)]

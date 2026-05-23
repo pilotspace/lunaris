@@ -42,6 +42,9 @@
 pub mod atomic;
 pub mod client;
 pub mod graph;
+// W2-L2 — FT.INVALIDATE_RANGE raw RESP escape hatch (UC-G3 force-push invalidation).
+// pub(crate): only called from `MoonStorage::invalidate_range` in this file.
+pub(crate) mod invalidate;
 pub mod keyspace;
 pub mod keyword;
 pub mod kv;
@@ -296,6 +299,56 @@ impl StoragePort for MoonStorage {
         cursor: Option<&str>,
     ) -> Result<ScopePage, StorageError> {
         crate::scopes::list_scopes(&self.client, prefix, limit, cursor).await
+    }
+
+    /// Bulk-invalidate FT index records via `FT.INVALIDATE_RANGE`.
+    ///
+    /// ## Wire shape
+    ///
+    /// ```text
+    /// FT.INVALIDATE_RANGE <index> <node_id_field> <node_id_value>
+    ///                     <hlc_wall_field> <hlc_wall_lo> <hlc_wall_hi>
+    /// ```
+    ///
+    /// Returns the integer count of deleted records as `u64`.
+    ///
+    /// ## Escape hatch
+    ///
+    /// `moon-client` v0.1.x does not expose a typed wrapper for
+    /// `FT.INVALIDATE_RANGE`. We reach the underlying
+    /// `redis::aio::MultiplexedConnection` via `MoonClient::inner_mut()` on a
+    /// local clone — the same documented pattern used by the HSCAN escape hatch
+    /// in `kv.rs` (the only other permitted raw-RESP site in this crate per
+    /// Phase 1.5 STORE-09 constraints).
+    ///
+    /// ## Error mapping
+    ///
+    /// - Moon `WRONGTYPE` (index does not exist) → `StorageError::Backend`
+    ///   containing `"WRONGTYPE"`. The `Lunaris::invalidate_range` fan-out
+    ///   treats this as warn-and-skip (degraded mode).
+    /// - Any other Moon error → `StorageError::Backend`.
+    #[allow(clippy::too_many_arguments)]
+    async fn invalidate_range(
+        &self,
+        scope: &Scope,
+        index: &str,
+        node_id_field: &str,
+        node_id_value: &str,
+        hlc_wall_field: &str,
+        hlc_wall_lo_inclusive: i64,
+        hlc_wall_hi_inclusive: i64,
+    ) -> Result<u64, StorageError> {
+        crate::invalidate::invalidate_range(
+            &self.client,
+            scope,
+            index,
+            node_id_field,
+            node_id_value,
+            hlc_wall_field,
+            hlc_wall_lo_inclusive,
+            hlc_wall_hi_inclusive,
+        )
+        .await
     }
 
     fn capabilities(&self) -> StorageCapabilities {
