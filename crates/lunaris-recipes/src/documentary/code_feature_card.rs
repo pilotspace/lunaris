@@ -226,10 +226,50 @@ impl CodeFeatureCard {
     /// (graceful degradation -- W1-L1 schema gate may not be applied yet).
     pub async fn recall(
         &self,
-        _query: &str,
-        _scope_str: &str,
+        query: &str,
+        scope_str: &str,
     ) -> Result<Vec<ScoredHit>, RecallError> {
-        todo!("W2-L1 GREEN: implement parallel fan-out + weighted RRF fusion")
+        let k = self.top_k * FANOUT;
+        let scope: Scope = Scope::new(scope_str)?;
+        let q = query.to_owned();
+        let rrf_k = self.rrf_k;
+
+        // Parallel fan-out.
+        let chunks_fut = {
+            let lunaris = Arc::clone(&self.lunaris);
+            let q = q.clone();
+            let scope = scope.clone();
+            async move { fetch_collection(&lunaris, &scope, "chunks", &q, k, rrf_k).await }
+        };
+        let symbols_fut = {
+            let lunaris = Arc::clone(&self.lunaris);
+            let q = q.clone();
+            let scope = scope.clone();
+            async move {
+                fetch_collection_lenient(&lunaris, &scope, "symbols", &q, k, rrf_k).await
+            }
+        };
+        let commits_fut = {
+            let lunaris = Arc::clone(&self.lunaris);
+            let q = q.clone();
+            let scope = scope.clone();
+            async move {
+                fetch_collection_lenient(&lunaris, &scope, "commits", &q, k, rrf_k).await
+            }
+        };
+
+        let (chunks_hits, symbols_hits, commits_hits) =
+            tokio::try_join!(chunks_fut, symbols_fut, commits_fut)
+                .map_err(RecallError::ChunksBranchFailed)?;
+
+        let per_collection: Vec<(&str, Vec<Hit>, f32)> = vec![
+            ("chunks", chunks_hits, self.weights.chunks),
+            ("symbols", symbols_hits, self.weights.symbols),
+            ("commits", commits_hits, self.weights.commits),
+        ];
+        let mut fused = fuse_weighted_per_collection(per_collection, self.rrf_k);
+        fused.truncate(self.top_k);
+        Ok(fused)
     }
 }
 
@@ -282,10 +322,58 @@ async fn fetch_collection_lenient(
 ///
 /// `per_collection` -- `(collection_name, hits_sorted_by_score_desc, weight)`.
 pub(crate) fn fuse_weighted_per_collection(
-    _per_collection: Vec<(&str, Vec<Hit>, f32)>,
-    _k: usize,
+    per_collection: Vec<(&str, Vec<Hit>, f32)>,
+    k: usize,
 ) -> Vec<ScoredHit> {
-    todo!("W2-L1 GREEN: implement weighted RRF fusion per collection")
+    use std::collections::HashMap;
+
+    if per_collection.iter().all(|(_, hits, _)| hits.is_empty()) {
+        return Vec::new();
+    }
+
+    let mut scores: HashMap<Vec<u8>, f32> = HashMap::new();
+    let mut provenance_map: HashMap<Vec<u8>, Vec<HitProvenance>> = HashMap::new();
+    let mut representative: HashMap<Vec<u8>, Hit> = HashMap::new();
+
+    for (collection, hits, weight) in &per_collection {
+        for (rank_0, hit) in hits.iter().enumerate() {
+            let rank = rank_0 + 1; // 1-indexed
+            let contribution =
+                if *weight == 0.0 { 0.0 } else { weight / (k as f32 + rank as f32) };
+
+            *scores.entry(hit.id.clone()).or_insert(0.0) += contribution;
+            provenance_map.entry(hit.id.clone()).or_default().push(HitProvenance {
+                collection: collection.to_string(),
+                rank,
+                contribution,
+            });
+            representative.entry(hit.id.clone()).or_insert_with(|| hit.clone());
+        }
+    }
+
+    for prov in provenance_map.values_mut() {
+        prov.sort_by(|a, b| {
+            b.contribution.partial_cmp(&a.contribution).unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    let mut out: Vec<ScoredHit> = scores
+        .into_iter()
+        .filter_map(|(id, score)| {
+            let hit = representative.remove(&id)?;
+            let prov = provenance_map.remove(&id).unwrap_or_default();
+            Some(ScoredHit { hit, score, provenance: prov })
+        })
+        .collect();
+
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.hit.id.cmp(&b.hit.id))
+    });
+
+    out
 }
 
 // -- Unit tests --------------------------------------------------------------
