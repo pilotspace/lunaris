@@ -825,6 +825,80 @@ impl Lunaris {
     ) -> Result<lunaris_core::ScopePage, LunarisError> {
         self.storage.list_scopes(prefix, limit, cursor).await.map_err(LunarisError::from)
     }
+
+    /// Bulk-invalidate FT index records authored by `node_id` within the HLC wall-clock
+    /// window `[hlc_wall_lo_inclusive, hlc_wall_hi_inclusive]` (both ends inclusive).
+    ///
+    /// Called by Helios when `helios-git` detects a force-push or rebase that abandons
+    /// commits. This evicts stale recall from the agent's memory so subsequent queries
+    /// do not surface facts from the abandoned branch.
+    ///
+    /// ## Fan-out
+    ///
+    /// The method issues `FT.INVALIDATE_RANGE` against each known Lunaris collection
+    /// (`chunks`, `entities`, `facts`, `communities`) in parallel via `join_all`.
+    /// Collections whose index is missing on Moon (`WRONGTYPE` response) or whose
+    /// backend does not support the primitive (`NotSupported`) are skipped with a
+    /// `WARN` log (degraded mode — the caller receives a partial count, not an error).
+    ///
+    /// ## HLC wall-clock semantics
+    ///
+    /// `hlc_wall_lo_inclusive` and `hlc_wall_hi_inclusive` are milliseconds since
+    /// the Unix epoch, matching Moon's `hlc_wall` NUMERIC field convention. Both
+    /// bounds are **inclusive** (Moon `[lo, hi]` closed interval). Callers with a
+    /// half-open Rust range `lo..hi` must pass `hi - 1` as the upper bound.
+    ///
+    /// ## Timeout
+    ///
+    /// Each per-index call is bounded to 250 ms (CONTEXT.md §5 IO failure surface).
+    /// There is no retry — this is a bulk admin operation; the caller decides retry
+    /// policy.
+    ///
+    /// ## Schema preconditions
+    ///
+    /// For the invalidation to match documents, the target FT indices must declare:
+    /// - `hlc_node_id` as a `TAG` field
+    /// - `hlc_wall` as a `NUMERIC` field
+    ///
+    /// Indices lacking these fields return 0 silently (Moon bitmap intersect returns
+    /// empty). This is expected for indices predating the `helios-git` schema additions;
+    /// see `.planning/W2-L2-INVALIDATE-RANGE-SUMMARY.md` for the full schema roadmap.
+    ///
+    /// ## Empty range
+    ///
+    /// If `hlc_wall_lo_inclusive > hlc_wall_hi_inclusive`, the method returns `Ok(0)`
+    /// immediately without issuing any wire calls.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Helios force-push detector hands us the abandoned HLC window:
+    /// use lunaris_core::Scope;
+    /// let scope = Scope::new("helios:my-worktree").unwrap();
+    /// let count = lunaris.invalidate_range(
+    ///     &scope,
+    ///     "helios-git@aabbcc",
+    ///     1_700_000_000_000,
+    ///     1_700_000_100_000,
+    /// ).await?;
+    /// tracing::info!(count, "invalidated stale recall");
+    /// ```
+    pub async fn invalidate_range(
+        &self,
+        scope: &Scope,
+        node_id: &str,
+        hlc_wall_lo_inclusive: i64,
+        hlc_wall_hi_inclusive: i64,
+    ) -> Result<u64, LunarisError> {
+        crate::invalidate::invalidate_range(
+            &self.storage,
+            scope,
+            node_id,
+            hlc_wall_lo_inclusive,
+            hlc_wall_hi_inclusive,
+        )
+        .await
+    }
 }
 
 /// Sentinel `KeywordPort` impl returned by [`Lunaris::with_parts`] when the

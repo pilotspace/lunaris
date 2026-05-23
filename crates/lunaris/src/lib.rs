@@ -36,6 +36,9 @@ pub mod forget;
 pub mod graph_pipeline;
 pub mod handle;
 pub mod ingest;
+// W2-L2 — bulk FT invalidation for Helios force-push recovery (UC-G3).
+// Internal fan-out logic; public surface is `Lunaris::invalidate_range`.
+pub(crate) mod invalidate;
 // Plan 05-05 OPS-08 — `lunaris::logging::init()` JSON-vs-pretty subscriber
 // selector helper. Production triggers per CONTEXT.md D-26: `LUNARIS_ENV=production`
 // OR `!std::io::stdout().is_terminal()`. Re-exported as `init_logging` below
