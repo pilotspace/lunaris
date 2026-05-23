@@ -200,6 +200,60 @@ pub trait StoragePort: Send + Sync + 'static {
         Err(StorageError::NotSupported("list_scopes not implemented for this StoragePort backend"))
     }
 
+    /// Bulk-invalidate FT index records for a given `node_id` within an HLC wall-clock
+    /// window `[hlc_wall_lo_inclusive, hlc_wall_hi_inclusive]`.
+    ///
+    /// Called by `Lunaris::invalidate_range` when Helios's `helios-git` detects a
+    /// force-push or rebase and needs to evict stale recall from the agent's memory.
+    ///
+    /// ## Wire shape (Moon backend)
+    ///
+    /// ```text
+    /// FT.INVALIDATE_RANGE <index> <node_id_field> <node_id_value>
+    ///                     <hlc_wall_field> <hlc_wall_lo> <hlc_wall_hi>
+    /// ```
+    ///
+    /// Returns the count of deleted records from that index. The Moon command returns
+    /// `WRONGTYPE` when the index does not exist — callers MUST treat `WRONGTYPE` as
+    /// a warn-and-skip (degraded mode), not a hard error.
+    ///
+    /// ## Closed-interval semantics
+    ///
+    /// Both `hlc_wall_lo_inclusive` and `hlc_wall_hi_inclusive` are **inclusive** bounds
+    /// (matching Moon's `[lo, hi]` wire contract). Callers using half-open ranges (`lo..hi`)
+    /// must subtract 1 from the exclusive upper bound before calling.
+    ///
+    /// ## Schema preconditions
+    ///
+    /// The target FT index must declare:
+    /// - `hlc_node_id` as a `TAG` field, and
+    /// - `hlc_wall` as a `NUMERIC` field.
+    ///
+    /// Without these schema fields, Moon's bitmap intersect returns empty and 0 is returned —
+    /// a silent no-op, not an error. This is documented and expected for indices that predate
+    /// the `helios-git` schema additions.
+    ///
+    /// ## Default (NotSupported)
+    ///
+    /// Backends other than Moon return `Err(StorageError::NotSupported(...))` via this
+    /// default. `Lunaris::invalidate_range` treats `NotSupported` the same as a missing
+    /// index — WARN and continue (degraded mode).
+    async fn invalidate_range(
+        &self,
+        scope: &Scope,
+        index: &str,
+        node_id_field: &str,
+        node_id_value: &str,
+        hlc_wall_field: &str,
+        hlc_wall_lo_inclusive: i64,
+        hlc_wall_hi_inclusive: i64,
+    ) -> Result<u64, StorageError> {
+        let _ = (scope, index, node_id_field, node_id_value, hlc_wall_field, hlc_wall_lo_inclusive, hlc_wall_hi_inclusive);
+        Err(StorageError::NotSupported(
+            "invalidate_range not implemented for this StoragePort backend",
+        ))
+    }
+
     /// Report capabilities so higher layers (retrievers, recipes, the conformance
     /// suite) can make degradation decisions per blueprint §6.
     fn capabilities(&self) -> StorageCapabilities;
