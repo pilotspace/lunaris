@@ -110,11 +110,7 @@ pub fn validate_chunk_metadata(metadata: &serde_json::Value) -> Result<(), Schem
 ///
 /// Returns [`SchemaError::EmptyField`] if `text` is an empty string.
 pub fn validate_chunk_text(text: &str) -> Result<(), SchemaError> {
-    if text.is_empty() {
-        Err(SchemaError::EmptyField { field: "text" })
-    } else {
-        Ok(())
-    }
+    if text.is_empty() { Err(SchemaError::EmptyField { field: "text" }) } else { Ok(()) }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -202,6 +198,9 @@ mod tests {
         // Policy: we reject bytes-empty only.  Whitespace-only is accepted
         // because the chunker never produces it and rejecting it would be
         // over-eager for any caller using intentional minimal whitespace.
-        assert!(validate_chunk_text("   ").is_ok(), "whitespace-only text is NOT rejected by policy");
+        assert!(
+            validate_chunk_text("   ").is_ok(),
+            "whitespace-only text is NOT rejected by policy"
+        );
     }
 }

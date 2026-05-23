@@ -32,8 +32,8 @@
 //!   pattern-matches on this string for degraded-mode warn-and-skip.
 //! - Any other Moon error → `StorageError::Backend` with the raw message.
 
-use lunaris_core::error::StorageError;
 use lunaris_core::Scope;
+use lunaris_core::error::StorageError;
 
 use crate::client::{MoonClient, redis_err};
 use crate::keyspace::ft_index_name;

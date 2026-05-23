@@ -249,7 +249,15 @@ pub trait StoragePort: Send + Sync + 'static {
         hlc_wall_lo_inclusive: i64,
         hlc_wall_hi_inclusive: i64,
     ) -> Result<u64, StorageError> {
-        let _ = (scope, index, node_id_field, node_id_value, hlc_wall_field, hlc_wall_lo_inclusive, hlc_wall_hi_inclusive);
+        let _ = (
+            scope,
+            index,
+            node_id_field,
+            node_id_value,
+            hlc_wall_field,
+            hlc_wall_lo_inclusive,
+            hlc_wall_hi_inclusive,
+        );
         Err(StorageError::NotSupported(
             "invalidate_range not implemented for this StoragePort backend",
         ))

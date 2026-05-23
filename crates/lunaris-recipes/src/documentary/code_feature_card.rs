@@ -245,17 +245,13 @@ impl CodeFeatureCard {
             let lunaris = Arc::clone(&self.lunaris);
             let q = q.clone();
             let scope = scope.clone();
-            async move {
-                fetch_collection_lenient(&lunaris, &scope, "symbols", &q, k, rrf_k).await
-            }
+            async move { fetch_collection_lenient(&lunaris, &scope, "symbols", &q, k, rrf_k).await }
         };
         let commits_fut = {
             let lunaris = Arc::clone(&self.lunaris);
             let q = q.clone();
             let scope = scope.clone();
-            async move {
-                fetch_collection_lenient(&lunaris, &scope, "commits", &q, k, rrf_k).await
-            }
+            async move { fetch_collection_lenient(&lunaris, &scope, "commits", &q, k, rrf_k).await }
         };
 
         let (chunks_hits, symbols_hits, commits_hits) =
@@ -284,10 +280,8 @@ async fn fetch_collection(
     k: usize,
     rrf_k: usize,
 ) -> Result<Vec<Hit>, LunarisError> {
-    let plan = Vector::new(collection, k)
-        .and(Keyword::bm25(collection, k))
-        .fuse_rrf(rrf_k as u32)
-        .top(k);
+    let plan =
+        Vector::new(collection, k).and(Keyword::bm25(collection, k)).fuse_rrf(rrf_k as u32).top(k);
     lunaris.recall().with_scope(scope.clone()).with_root(plan).execute(Query::text(query)).await
 }
 
@@ -338,8 +332,7 @@ pub(crate) fn fuse_weighted_per_collection(
     for (collection, hits, weight) in &per_collection {
         for (rank_0, hit) in hits.iter().enumerate() {
             let rank = rank_0 + 1; // 1-indexed
-            let contribution =
-                if *weight == 0.0 { 0.0 } else { weight / (k as f32 + rank as f32) };
+            let contribution = if *weight == 0.0 { 0.0 } else { weight / (k as f32 + rank as f32) };
 
             *scores.entry(hit.id.clone()).or_insert(0.0) += contribution;
             provenance_map.entry(hit.id.clone()).or_default().push(HitProvenance {
@@ -471,11 +464,8 @@ mod tests {
 
     #[test]
     fn empty_collection_does_not_panic() {
-        let per: Vec<(&str, Vec<Hit>, f32)> = vec![
-            ("chunks", vec![], 1.0),
-            ("symbols", vec![], 0.8),
-            ("commits", vec![], 0.3),
-        ];
+        let per: Vec<(&str, Vec<Hit>, f32)> =
+            vec![("chunks", vec![], 1.0), ("symbols", vec![], 0.8), ("commits", vec![], 0.3)];
         assert!(fuse_weighted_per_collection(per, 60).is_empty());
     }
 
@@ -553,9 +543,18 @@ mod tests {
         let delay = Duration::from_millis(100);
         let start = Instant::now();
 
-        let f1 = async { tokio::time::sleep(delay).await; 1_usize };
-        let f2 = async { tokio::time::sleep(delay).await; 2_usize };
-        let f3 = async { tokio::time::sleep(delay).await; 3_usize };
+        let f1 = async {
+            tokio::time::sleep(delay).await;
+            1_usize
+        };
+        let f2 = async {
+            tokio::time::sleep(delay).await;
+            2_usize
+        };
+        let f3 = async {
+            tokio::time::sleep(delay).await;
+            3_usize
+        };
 
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         let elapsed = start.elapsed();

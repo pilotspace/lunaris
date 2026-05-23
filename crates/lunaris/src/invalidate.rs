@@ -169,11 +169,10 @@ mod tests {
     use futures::stream::BoxStream;
     use lunaris_core::storage::capabilities::{CypherDialect, StorageCapabilities};
     use lunaris_core::{
-        CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageError, VectorHit,
-        WriteOp,
+        CypherQuery, Filter, GraphResult, Hlc, Lsn, QueueMsg, Row, StorageError, VectorHit, WriteOp,
     };
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::time::Instant;
 
     // ── Capabilities helper ───────────────────────────────────────────────────
@@ -255,13 +254,7 @@ mod tests {
         ) -> Result<Option<Row<Bytes>>, StorageError> {
             unimplemented!("stub")
         }
-        async fn publish(
-            &self,
-            _: &Scope,
-            _: &str,
-            _: u16,
-            _: Bytes,
-        ) -> Result<u64, StorageError> {
+        async fn publish(&self, _: &Scope, _: &str, _: u16, _: Bytes) -> Result<u64, StorageError> {
             unimplemented!("stub")
         }
         async fn subscribe(
@@ -350,13 +343,7 @@ mod tests {
         ) -> Result<Option<Row<Bytes>>, StorageError> {
             unimplemented!("stub")
         }
-        async fn publish(
-            &self,
-            _: &Scope,
-            _: &str,
-            _: u16,
-            _: Bytes,
-        ) -> Result<u64, StorageError> {
+        async fn publish(&self, _: &Scope, _: &str, _: u16, _: Bytes) -> Result<u64, StorageError> {
             unimplemented!("stub")
         }
         async fn subscribe(
@@ -437,13 +424,7 @@ mod tests {
         ) -> Result<Option<Row<Bytes>>, StorageError> {
             unimplemented!("stub")
         }
-        async fn publish(
-            &self,
-            _: &Scope,
-            _: &str,
-            _: u16,
-            _: Bytes,
-        ) -> Result<u64, StorageError> {
+        async fn publish(&self, _: &Scope, _: &str, _: u16, _: Bytes) -> Result<u64, StorageError> {
             unimplemented!("stub")
         }
         async fn subscribe(
@@ -611,11 +592,7 @@ mod tests {
             .expect("parallel fan-out should succeed");
         let elapsed = t0.elapsed();
 
-        assert_eq!(
-            total,
-            KNOWN_COLLECTIONS.len() as u64,
-            "all collections contribute 1 each"
-        );
+        assert_eq!(total, KNOWN_COLLECTIONS.len() as u64, "all collections contribute 1 each");
         // Parallel: 4 × 100ms calls complete in well under 300ms.
         // Sequential would take ≥ 400ms.
         assert!(

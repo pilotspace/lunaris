@@ -30,9 +30,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
-use lunaris_recipes::documentary::code_feature_card::{
-    CollectionWeights, QueryProfile, ScoredHit,
-};
+use lunaris_recipes::documentary::code_feature_card::{CollectionWeights, QueryProfile, ScoredHit};
 // Top-level re-export smoke test.
 use lunaris_recipes::{CodeFeatureCard, QueryProfile as TopQueryProfile};
 
@@ -146,19 +144,19 @@ mod live {
 
     #[tokio::test]
     async fn code_feature_card_chunks_only_smoke_moon() {
-        let Some(url) = probe_backend("code_feature_card_moon", std::env::var("LUNARIS_MOON_URL").ok())
+        let Some(url) =
+            probe_backend("code_feature_card_moon", std::env::var("LUNARIS_MOON_URL").ok())
         else {
             return;
         };
 
         // Open a Moon-backed Lunaris handle.
-        let lunaris = Arc::new(
-            lunaris::open::LunarisBuilder::moon(&url).build().await.expect("open moon"),
-        );
+        let lunaris =
+            Arc::new(lunaris::open::LunarisBuilder::moon(&url).build().await.expect("open moon"));
 
         // Seed two chunks: one code-like, one commit-like.
-        use lunaris_recipes::DocumentCorpus;
         use lunaris_core::Scope;
+        use lunaris_recipes::DocumentCorpus;
         let scope = Scope::new("cfc-smoke-test");
         let corpus = DocumentCorpus::new(Arc::clone(&lunaris), scope.clone(), "cfc:");
         corpus
@@ -170,10 +168,7 @@ mod live {
             .expect("ingest");
 
         let recipe = CodeFeatureCard::new(Arc::clone(&lunaris), QueryProfile::CodeQuestion);
-        let hits = recipe
-            .recall("parse_token", scope.as_str())
-            .await
-            .expect("recall CodeQuestion");
+        let hits = recipe.recall("parse_token", scope.as_str()).await.expect("recall CodeQuestion");
 
         // With chunks-only schema, we expect at least one hit from the chunks
         // collection (symbols and commits degrade to empty).
