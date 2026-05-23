@@ -49,6 +49,8 @@ ulid        = { workspace = true }
 # bounded drain of __lunaris_consolidate__. No new transitive deps (already
 # available via lunaris-consolidate + lunaris-core).
 futures     = { workspace = true }
+# W2-L1 — CodeFeatureCard uses tracing::warn! for lenient branch degradation.
+tracing     = { workspace = true }
 
 [dev-dependencies]
 anyhow              = { workspace = true }
