@@ -73,3 +73,9 @@ pub use temporal_query::{
 // here so `use lunaris_recipes::WorkingMemory;` keeps compiling for every
 // Phase 9/10/11 caller.
 pub use lunaris::WorkingMemory;
+
+// W2-L1 — multi-collection weighted-RRF recipe (decision B,
+// INTEGRATION-PLAN.md §3.2).
+pub use documentary::code_feature_card::{
+    CodeFeatureCard, CollectionWeights, HitProvenance, QueryProfile, RecallError, ScoredHit,
+};
