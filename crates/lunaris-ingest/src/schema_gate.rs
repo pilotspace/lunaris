@@ -87,7 +87,17 @@ pub enum SchemaError {
 /// O(1) — a single `Value::get` hash lookup + type tag check + `is_empty`
 /// on the existing `str` slice.  No allocations on the happy path.
 pub fn validate_chunk_metadata(metadata: &serde_json::Value) -> Result<(), SchemaError> {
-    todo!("W1-L1")
+    match metadata.get("text") {
+        None => Err(SchemaError::MissingField { field: "text" }),
+        Some(serde_json::Value::String(s)) => {
+            if s.is_empty() {
+                Err(SchemaError::EmptyField { field: "text" })
+            } else {
+                Ok(())
+            }
+        }
+        Some(_) => Err(SchemaError::WrongType { field: "text", expected: "non-null string" }),
+    }
 }
 
 /// Validate a chunk text value already extracted as a `&str`.
@@ -100,7 +110,11 @@ pub fn validate_chunk_metadata(metadata: &serde_json::Value) -> Result<(), Schem
 ///
 /// Returns [`SchemaError::EmptyField`] if `text` is an empty string.
 pub fn validate_chunk_text(text: &str) -> Result<(), SchemaError> {
-    todo!("W1-L1")
+    if text.is_empty() {
+        Err(SchemaError::EmptyField { field: "text" })
+    } else {
+        Ok(())
+    }
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
