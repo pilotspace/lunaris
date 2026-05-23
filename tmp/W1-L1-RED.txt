@@ -1,0 +1,20 @@
+test(lunaris-ingest): W1-L1 RED — generalized chunk-metadata schema gate
+
+Add failing tests for validate_chunk_metadata covering missing text,
+empty text, non-string text, null text. Module stubbed with todo!()
+so tests compile but fail.
+
+Generalizes the B4 inline hotfix at pipeline.rs:95-104 (commit 06063c95)
+into a reusable invariant. See feedback_helios_memories_chunk_text.md.
+
+New files:
+- crates/lunaris-ingest/src/schema_gate.rs — SchemaError enum (thiserror),
+  validate_chunk_metadata stub, validate_chunk_text stub, 9 unit tests.
+- crates/lunaris-ingest/tests/anti_regression_l9.rs — 4 integration tests
+  that assert the gate catches the B4 regression shape before atomic_write.
+- crates/lunaris-ingest/src/lib.rs — module declaration + re-exports added.
+
+All 8 new tests fail at runtime (todo! panic). 5 pre-existing tests remain
+green (INGEST-02..04 invariants unchanged).
+
+author: Tin Dang
