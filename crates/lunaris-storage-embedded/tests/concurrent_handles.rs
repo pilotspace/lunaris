@@ -9,9 +9,9 @@
 //!
 //! 2. `concurrent_writers_no_busy_under_wal` (behavioural GREEN):
 //!    Opens two `EmbeddedStorage` handles on the SAME sqlite file from two
-//!    tokio tasks, writes 100 episodes each concurrently, asserts:
-//!      (a) zero `SQLITE_BUSY` / backend errors
-//!      (b) all 200 episodes visible to a third reader
+//!    tokio tasks, writes 100 episodes each concurrently, asserts
+//!    (a) zero `SQLITE_BUSY` / backend errors and
+//!    (b) all 200 episodes visible to a third reader.
 //!
 //! ## Why WAL matters
 //!
@@ -53,10 +53,7 @@ async fn write_n_episodes(
         let id = Ulid::new();
         let key = episode_key(&scope, id);
         storage
-            .atomic_write(
-                &scope,
-                &[WriteOp::KvPut { key, value: b"episode-payload".to_vec() }],
-            )
+            .atomic_write(&scope, &[WriteOp::KvPut { key, value: b"episode-payload".to_vec() }])
             .await
             .map_err(|e| format!("atomic_write failed (SQLITE_BUSY?): {e}"))?;
     }
@@ -114,10 +111,7 @@ async fn memory_mode_connect_succeeds() {
 
     // The effective mode may be "memory" or "wal" depending on sqlite build;
     // what matters is that connect() did not return an error.
-    assert!(
-        !mode.is_empty(),
-        "PRAGMA journal_mode must return a non-empty string for memory://"
-    );
+    assert!(!mode.is_empty(), "PRAGMA journal_mode must return a non-empty string for memory://");
 }
 
 // ── Test 2: behavioural — two handles, 200 writes, zero BUSY ─────────────────
@@ -142,11 +136,10 @@ async fn concurrent_writers_no_busy_under_wal() {
 
     // Third independent reader — proves WAL makes writes visible cross-handle.
     let h3 = EmbeddedStorage::connect(&url).await.expect("connect h3");
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM lunaris_kv WHERE sys_to IS NULL")
-            .fetch_one(h3.pool())
-            .await
-            .expect("count query");
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM lunaris_kv WHERE sys_to IS NULL")
+        .fetch_one(h3.pool())
+        .await
+        .expect("count query");
 
     assert_eq!(count, 200, "expected 200 live episodes (100 from each writer); got {count}");
 }

@@ -55,7 +55,9 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, ScopePage, VectorHit, WriteOp,
 };
 use sqlx::Row as _;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 
 mod schema;
 
@@ -101,14 +103,15 @@ fn backend(e: sqlx::Error) -> StorageError {
 /// Apply the WAL PRAGMA bundle to `SqliteConnectOptions`.
 ///
 /// Every file-backed connection must have:
-/// - `journal_mode=WAL`      — multi-reader / single-writer with checkpoints;
-///                             enables concurrent `EmbeddedStorage` handles on
-///                             the same `~/.lunaris/<scope>.db` file (e.g. two
-///                             Claude Code editor windows) without SQLITE_BUSY.
-/// - `busy_timeout=5000`     — 5 s patience instead of the default 0 ms
-///                             immediate-SQLITE_BUSY return.
-/// - `synchronous=NORMAL`    — WAL-recommended setting; FULL is correct only
-///                             for the rollback-journal (DELETE) mode.
+///
+/// - `journal_mode=WAL` — multi-reader / single-writer with checkpoints;
+///   enables concurrent `EmbeddedStorage` handles on the same
+///   `~/.lunaris/<scope>.db` file (e.g. two Claude Code editor windows)
+///   without SQLITE_BUSY.
+/// - `busy_timeout=5000` — 5 s patience instead of the default 0 ms
+///   immediate-SQLITE_BUSY return.
+/// - `synchronous=NORMAL` — WAL-recommended setting; FULL is correct only
+///   for the rollback-journal (DELETE) mode.
 ///
 /// For `memory://` (in-memory databases) sqlite ignores `journal_mode=WAL`
 /// and returns `"memory"` as the effective mode — no error is raised and the
