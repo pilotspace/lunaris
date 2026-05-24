@@ -28,8 +28,7 @@ impl Lunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     #[napi]
     pub async fn ingest(&self, episode: serde_json::Value) -> napi::Result<String> {
-        let episode_owned: ::lunaris::Episode =
-            serde_json::from_value(episode.clone()).map_err(napi_err)?;
+        let episode_owned: ::lunaris::Episode = serde_json::from_value(episode.clone()).map_err(napi_err)?;
         let out = self.inner.ingest(episode_owned).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
@@ -44,8 +43,7 @@ impl Lunaris {
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     #[napi]
     pub async fn forget(&self, req: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req_owned: ::lunaris::forget::ForgetRequest =
-            serde_json::from_value(req.clone()).map_err(napi_err)?;
+        let req_owned: ::lunaris::forget::ForgetRequest = serde_json::from_value(req.clone()).map_err(napi_err)?;
         let out = self.inner.forget(req_owned).await.map_err(napi_err)?;
         Ok(serde_json::to_value(&out).map_err(napi_err)?)
     }
@@ -56,6 +54,7 @@ impl Lunaris {
         let out = self.inner.snapshot().await.map_err(napi_err)?;
         Ok(out.to_string())
     }
+
 }
 
 /// Vector-search DSL operator; root-level constructor for kNN retrieval.
@@ -73,6 +72,7 @@ impl Vector {
         let inner = ::lunaris::Vector::new(&index, k as usize);
         Self { inner: Arc::new(inner) }
     }
+
 }
 
 /// Keyword / BM25 DSL operator; root-level constructor for lexical retrieval.
@@ -90,6 +90,7 @@ impl Keyword {
         let inner = ::lunaris::Keyword::bm25(&index, k as usize);
         Self { inner: Arc::new(inner) }
     }
+
 }
 
 /// Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops.
@@ -104,12 +105,11 @@ impl Graph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[napi(factory)]
     pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self> {
-        let entity_ids_owned: Vec<::lunaris::EntityId> =
-            serde_json::from_value(serde_json::Value::Array(entity_ids.clone()))
-                .map_err(napi_err)?;
-        let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops as usize);
+        let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).map_err(napi_err)?;
+        let inner = ::lunaris::Graph::anchored(entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(), hops as usize);
         Ok(Self { inner: Arc::new(inner) })
     }
+
 }
 
 /// Chainable retrieval plan builder. Terminal .execute() runs the plan through the hydrate stage.
@@ -160,6 +160,7 @@ impl RetrievalBuilder {
         let _ = hlc;
         Err(napi::Error::from_reason("Plan 08-03 wires the body"))
     }
+
 }
 
 /// Runtime toggle for the graph-extraction pipeline (default OFF per blueprint §5.2). The toggle method is the canonical single-item entry in the binding surface.
@@ -174,13 +175,10 @@ impl GraphPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     #[napi]
     pub fn toggle(&self, on: bool) -> napi::Result<()> {
-        if on {
-            self.inner.enable();
-        } else {
-            self.inner.disable();
-        }
+        if on { self.inner.enable(); } else { self.inner.disable(); }
         Ok(())
     }
+
 }
 
 /// Runtime toggle for the ACT-R consolidator worker (default OFF per blueprint §5.1). Mirrors GraphPipelineHandle's single-item toggle surface.
@@ -195,13 +193,10 @@ impl ConsolidatorPipelineHandle {
     /// Flip the pipeline ON or OFF. Idempotent. Emits `tracing::info!` only on real state transitions (D-12).
     #[napi]
     pub fn toggle(&self, on: bool) -> napi::Result<()> {
-        if on {
-            self.inner.enable();
-        } else {
-            self.inner.disable();
-        }
+        if on { self.inner.enable(); } else { self.inner.disable(); }
         Ok(())
     }
+
 }
 
 /// Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair.
@@ -218,11 +213,7 @@ impl ChatAgentMemory {
     pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(
-            lunaris_owned,
-            scope_owned,
-            &user_id,
-        );
+        let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, scope_owned, &user_id);
         Self { inner: Arc::new(inner) }
     }
 
@@ -237,11 +228,9 @@ impl ChatAgentMemory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass.
@@ -258,11 +247,7 @@ impl MultiTurnConversation {
     pub fn new(lunaris: &Lunaris, user_id: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(
-            lunaris_owned,
-            scope_owned,
-            &user_id,
-        );
+        let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, scope_owned, &user_id);
         Self { inner: Arc::new(inner) }
     }
 
@@ -277,10 +262,7 @@ impl MultiTurnConversation {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
 
     /// Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation).
@@ -289,6 +271,7 @@ impl MultiTurnConversation {
         let out = self.inner.consolidate().await.map_err(napi_err)?;
         Ok(serde_json::to_value(&out).map_err(napi_err)?)
     }
+
 }
 
 /// Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`.
@@ -305,24 +288,14 @@ impl SlackArchive {
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner =
-            ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
+        let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
     /// Ingest one message into `channel` authored by `participant_id`.
     #[napi]
-    pub async fn ingest_channel(
-        &self,
-        channel: String,
-        participant_id: String,
-        message: String,
-    ) -> napi::Result<String> {
-        let out = self
-            .inner
-            .ingest_channel(&channel, &participant_id, &message)
-            .await
-            .map_err(napi_err)?;
+    pub async fn ingest_channel(&self, channel: String, participant_id: String, message: String) -> napi::Result<String> {
+        let out = self.inner.ingest_channel(&channel, &participant_id, &message).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
 
@@ -330,10 +303,7 @@ impl SlackArchive {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
 
     /// Narrow to one channel. Returns a SlackArchiveQuery.
@@ -349,6 +319,7 @@ impl SlackArchive {
         let out = self.inner.user(&id);
         Ok(SlackArchiveQuery { inner: Arc::new(out) })
     }
+
 }
 
 /// Narrowed query builder returned by SlackArchive::channel / SlackArchive::user.
@@ -371,11 +342,9 @@ impl SlackArchiveQuery {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Thread-scoped email wrapper with an opt-in graph-pipeline builder.
@@ -392,19 +361,13 @@ impl EmailThreading {
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner =
-            ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
+        let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
     /// Ingest one email into `root_id`'s thread, authored by `from`.
     #[napi]
-    pub async fn ingest(
-        &self,
-        root_id: String,
-        from: String,
-        body: String,
-    ) -> napi::Result<String> {
+    pub async fn ingest(&self, root_id: String, from: String, body: String) -> napi::Result<String> {
         let out = self.inner.ingest(&root_id, &from, &body).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
@@ -420,10 +383,7 @@ impl EmailThreading {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
 
     /// Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false).
@@ -432,6 +392,7 @@ impl EmailThreading {
         let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
         Ok(EmailThreading { inner: Arc::new(out) })
     }
+
 }
 
 /// Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder.
@@ -448,8 +409,7 @@ impl MeetingNotesMemory {
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner =
-            ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
+        let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
@@ -464,17 +424,13 @@ impl MeetingNotesMemory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
 
     /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
     #[napi]
     pub fn attendees(&self, attendees: serde_json::Value) -> napi::Result<MeetingNotesQuery> {
-        let attendees_owned: Vec<String> =
-            serde_json::from_value(attendees.clone()).map_err(napi_err)?;
+        let attendees_owned: Vec<String> = serde_json::from_value(attendees.clone()).map_err(napi_err)?;
         let out = self.inner.attendees(attendees_owned);
         Ok(MeetingNotesQuery { inner: Arc::new(out) })
     }
@@ -485,6 +441,7 @@ impl MeetingNotesMemory {
         let out = self.inner.as_ref().clone().with_graph_pipeline(enable);
         Ok(MeetingNotesMemory { inner: Arc::new(out) })
     }
+
 }
 
 /// Narrowed query builder returned by MeetingNotesMemory::attendees.
@@ -500,11 +457,9 @@ impl MeetingNotesQuery {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`.
@@ -521,33 +476,22 @@ impl DocumentKnowledgeBase {
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(
-            lunaris_owned,
-            scope_owned,
-            &source_prefix,
-        );
+        let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
     /// Ingest chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
-            serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
         let out = self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
-        let _ = out;
-        Ok(())
+        let _ = out; Ok(())
     }
 
     /// Add an equality filter on a metadata field.
     #[napi]
-    pub fn filter(
-        &self,
-        field: String,
-        value: serde_json::Value,
-    ) -> napi::Result<DocumentKnowledgeBase> {
-        let value_owned: serde_json::Value =
-            serde_json::from_value(value.clone()).map_err(napi_err)?;
+    pub fn filter(&self, field: String, value: serde_json::Value) -> napi::Result<DocumentKnowledgeBase> {
+        let value_owned: serde_json::Value = serde_json::from_value(value.clone()).map_err(napi_err)?;
         let out = self.inner.as_ref().clone().filter(&field, value_owned);
         Ok(DocumentKnowledgeBase { inner: Arc::new(out) })
     }
@@ -564,11 +508,9 @@ impl DocumentKnowledgeBase {
     pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let cloned = self.inner.as_ref().clone();
         let out = cloned.search(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Research-paper corpus wrapper with opt-in citation graph.
@@ -585,11 +527,7 @@ impl ResearchPaperCorpus {
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(
-            lunaris_owned,
-            scope_owned,
-            &source_prefix,
-        );
+        let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
@@ -603,11 +541,9 @@ impl ResearchPaperCorpus {
     /// Ingest chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
-            serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
         let out = self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
-        let _ = out;
-        Ok(())
+        let _ = out; Ok(())
     }
 
     /// Execute the RRF-fused recall.
@@ -615,11 +551,9 @@ impl ResearchPaperCorpus {
     pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let cloned = self.inner.as_ref().clone();
         let out = cloned.search(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies.
@@ -636,50 +570,27 @@ impl CodeRepoMemory {
     pub fn new(lunaris: &Lunaris, repo_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(
-            lunaris_owned,
-            scope_owned,
-            &repo_prefix,
-        );
+        let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, scope_owned, &repo_prefix);
         Self { inner: Arc::new(inner) }
     }
 
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
     #[napi]
-    pub async fn ingest_commit(
-        &self,
-        commit_sha: String,
-        committer_date_unix_ms: serde_json::Value,
-        chunks: serde_json::Value,
-    ) -> napi::Result<()> {
-        let committer_date_unix_ms_owned: i64 =
-            serde_json::from_value(committer_date_unix_ms.clone()).map_err(napi_err)?;
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
-            serde_json::from_value(chunks.clone()).map_err(napi_err)?;
-        let out = self
-            .inner
-            .ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned)
-            .await
-            .map_err(napi_err)?;
-        let _ = out;
-        Ok(())
+    pub async fn ingest_commit(&self, commit_sha: String, committer_date_unix_ms: serde_json::Value, chunks: serde_json::Value) -> napi::Result<()> {
+        let committer_date_unix_ms_owned: i64 = serde_json::from_value(committer_date_unix_ms.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let out = self.inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(napi_err)?;
+        let _ = out; Ok(())
     }
 
     /// Recall at point-in-time `as_of`.
     #[napi]
-    pub async fn recall(
-        &self,
-        query: String,
-        as_of: serde_json::Value,
-    ) -> napi::Result<Vec<serde_json::Value>> {
-        let as_of_owned: ::lunaris::Hlc =
-            serde_json::from_value(as_of.clone()).map_err(napi_err)?;
+    pub async fn recall(&self, query: String, as_of: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
+        let as_of_owned: ::lunaris::Hlc = serde_json::from_value(as_of.clone()).map_err(napi_err)?;
         let out = self.inner.recall(&query, as_of_owned).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>.
@@ -696,55 +607,35 @@ impl TimelineReconstruction {
     pub fn new(lunaris: &Lunaris, source_prefix: String) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(
-            lunaris_owned,
-            scope_owned,
-            &source_prefix,
-        );
+        let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, scope_owned, &source_prefix);
         Self { inner: Arc::new(inner) }
     }
 
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, events: serde_json::Value) -> napi::Result<()> {
-        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
-            serde_json::from_value(events.clone()).map_err(napi_err)?;
+        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(events.clone()).map_err(napi_err)?;
         let out = self.inner.ingest(events_owned).await.map_err(napi_err)?;
-        let _ = out;
-        Ok(())
+        let _ = out; Ok(())
     }
 
     /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
     #[napi]
-    pub async fn between(
-        &self,
-        query: String,
-        lo: serde_json::Value,
-        hi: serde_json::Value,
-    ) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn between(&self, query: String, lo: serde_json::Value, hi: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
         let lo_owned: ::lunaris::Hlc = serde_json::from_value(lo.clone()).map_err(napi_err)?;
         let hi_owned: ::lunaris::Hlc = serde_json::from_value(hi.clone()).map_err(napi_err)?;
         let out = self.inner.between(&query, lo_owned, hi_owned).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
 
     /// Recall the snapshot at `ts`.
     #[napi]
-    pub async fn as_of(
-        &self,
-        query: String,
-        ts: serde_json::Value,
-    ) -> napi::Result<Vec<serde_json::Value>> {
+    pub async fn as_of(&self, query: String, ts: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
         let ts_owned: ::lunaris::Hlc = serde_json::from_value(ts.clone()).map_err(napi_err)?;
         let out = self.inner.as_of(&query, ts_owned).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
 
 /// Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream.
@@ -761,8 +652,7 @@ impl CustomerSupportHistory {
     pub fn new(lunaris: &Lunaris) -> Self {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
         let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
-        let inner =
-            ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
+        let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
         Self { inner: Arc::new(inner) }
     }
 
@@ -777,24 +667,13 @@ impl CustomerSupportHistory {
     #[napi]
     pub async fn ingest_ticket(&self, ticket_id: String, body: String) -> napi::Result<()> {
         let out = self.inner.ingest_ticket(&ticket_id, &body).await.map_err(napi_err)?;
-        let _ = out;
-        Ok(())
+        let _ = out; Ok(())
     }
 
     /// Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id.
     #[napi]
-    pub async fn ingest_chat(
-        &self,
-        ticket_id: String,
-        turn_idx: u32,
-        participant: String,
-        msg: String,
-    ) -> napi::Result<String> {
-        let out = self
-            .inner
-            .ingest_chat(&ticket_id, turn_idx as usize, &participant, &msg)
-            .await
-            .map_err(napi_err)?;
+    pub async fn ingest_chat(&self, ticket_id: String, turn_idx: u32, participant: String, msg: String) -> napi::Result<String> {
+        let out = self.inner.ingest_chat(&ticket_id, turn_idx as usize, &participant, &msg).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
 
@@ -802,9 +681,8 @@ impl CustomerSupportHistory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out
-            .iter()
-            .map(|v| serde_json::to_value(v).map_err(napi_err))
-            .collect::<napi::Result<Vec<_>>>()?)
+        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
     }
+
 }
+

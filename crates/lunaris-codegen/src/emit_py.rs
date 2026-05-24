@@ -374,6 +374,23 @@ fn emit_py_method(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
+            // Wave A.1 T1 — `Graph::anchored` signature changed from
+            // `Vec<EntityId>` to `Vec<(EntityId, f32)>`. The SDK surface
+            // intentionally keeps `Vec<EntityId>` as the caller-facing
+            // type; the binding layer adapts by mapping each seed to the
+            // tuple form with a default weight of 1.0 (un-weighted
+            // semantics, identical to the previous `Vec<EntityId>` path).
+            let call_args = if type_name == "Graph" && m.name == "anchored" {
+                let seeds_owned = &owned_names[0];
+                let hops_owned = &owned_names[1];
+                format!(
+                    "{seeds}.into_iter().map(|e| (e, 1.0_f32)).collect(), {hops}",
+                    seeds = seeds_owned,
+                    hops = hops_owned
+                )
+            } else {
+                call_args
+            };
             writeln!(
                 out,
                 "        let inner = {crate_path}::{type_name}::{name}({call_args});",

@@ -118,7 +118,7 @@ impl PyGraph {
     #[staticmethod]
     fn anchored(entity_ids: &Bound<'_, PyAny>, hops: usize) -> PyResult<Self> {
         let entity_ids_owned: Vec<::lunaris::EntityId> = pythonize::depythonize(entity_ids).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("entity_ids: {e}")))?;
-        let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops);
+        let inner = ::lunaris::Graph::anchored(entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(), hops);
         Ok(Self { inner: Arc::new(inner) })
     }
 

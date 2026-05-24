@@ -106,7 +106,7 @@ impl Graph {
     #[napi(factory)]
     pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self> {
         let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).map_err(napi_err)?;
-        let inner = ::lunaris::Graph::anchored(entity_ids_owned, hops as usize);
+        let inner = ::lunaris::Graph::anchored(entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(), hops as usize);
         Ok(Self { inner: Arc::new(inner) })
     }
 
