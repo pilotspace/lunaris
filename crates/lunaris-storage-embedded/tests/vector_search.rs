@@ -238,8 +238,5 @@ async fn zero_vector_probe_returns_empty_not_panic() {
     let zero = vec![0.0_f32, 0.0, 0.0];
     let result = storage.vector_search(&scope, "chunks", &zero, 5, None, None, false).await;
     assert!(result.is_ok(), "zero-vector probe must return Ok, not Err: {:?}", result.err());
-    assert!(
-        result.unwrap().is_empty(),
-        "zero-vector probe (undefined cosine) must return 0 hits"
-    );
+    assert!(result.unwrap().is_empty(), "zero-vector probe (undefined cosine) must return 0 hits");
 }

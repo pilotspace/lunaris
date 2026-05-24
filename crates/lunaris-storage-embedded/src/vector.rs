@@ -38,8 +38,8 @@ use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::{Filter, VectorHit};
-use sqlx::{AssertSqlSafe, Row as _};
 use sqlx::sqlite::SqlitePool;
+use sqlx::{AssertSqlSafe, Row as _};
 
 use crate::hlc_key;
 
@@ -150,24 +150,22 @@ pub(crate) fn filter_to_sqlite(f: &Filter) -> String {
             let parts: Vec<String> = xs.iter().map(filter_to_sqlite).collect();
             format!("({})", parts.join(" OR "))
         }
-        Filter::ValidTimeRange { after, before } => {
-            // Bi-temporal range on the stored HLC `sys_from` column
-            // (TEXT, zero-padded sortable). This matches the AS_OF predicate
-            // used in `read_as_of` / `scan_range`.
-            let mut parts = Vec::new();
-            if let Some(a) = after {
-                parts.push(format!("sys_from >= '{}'", hlc_key(*a)));
-            }
-            if let Some(b) = before {
-                parts.push(format!("sys_from < '{}'", hlc_key(*b)));
-            }
-            if parts.is_empty() { "TRUE".to_string() } else { format!("({})", parts.join(" AND ")) }
+        Filter::ValidTimeRange { .. } => {
+            // `lunaris_vec` has no `valid_from` / `valid_to` columns — only
+            // `sys_from` / `sys_to` (system-time). Mapping valid-time semantics
+            // onto system-time would be silently incorrect, so we degrade to
+            // TRUE (return all rows in scope) and emit a warning. Callers that
+            // need valid-time filtering on vectors should use the AS_OF path
+            // via the `as_of` parameter instead.
+            tracing::warn!(
+                "Filter::ValidTimeRange is not supported on embedded vector_search \
+                 (lunaris_vec has no valid_from column) — degrading to TRUE"
+            );
+            "TRUE".to_string()
         }
         // `#[non_exhaustive]` — new variants degrade to TRUE + warn (mirrors Postgres).
         _ => {
-            tracing::warn!(
-                "unknown Filter variant in embedded vector path — degrading to TRUE"
-            );
+            tracing::warn!("unknown Filter variant in embedded vector path — degrading to TRUE");
             "TRUE".to_string()
         }
     }
@@ -220,9 +218,7 @@ pub(crate) async fn vector_search(
             let ts = hlc_key(t);
             // SAFETY: ts comes from hlc_key which produces only ASCII decimal
             // digits, dots, and no SQL-special characters — no injection surface.
-            where_parts.push(format!(
-                "sys_from <= '{ts}' AND (sys_to IS NULL OR '{ts}' < sys_to)"
-            ));
+            where_parts.push(format!("sys_from <= '{ts}' AND (sys_to IS NULL OR '{ts}' < sys_to)"));
         }
         None => {
             where_parts.push("sys_to IS NULL".to_string());
@@ -296,10 +292,8 @@ pub(crate) async fn vector_search(
         let metadata: serde_json::Value =
             serde_json::from_str(&meta_json).unwrap_or(serde_json::Value::Null);
 
-        let candidate = OrdHit {
-            score,
-            hit: VectorHit { id, score, rerank_applied: false, metadata },
-        };
+        let candidate =
+            OrdHit { score, hit: VectorHit { id, score, rerank_applied: false, metadata } };
 
         // Maintain a max-heap of size k.
         // We want LARGEST scores → use a min-heap trick: cap at k, pop the
@@ -333,10 +327,7 @@ mod tests {
 
     #[test]
     fn filter_eq_string_escapes_quotes() {
-        let f = Filter::Eq {
-            field: "source".into(),
-            value: serde_json::json!("alice's notes"),
-        };
+        let f = Filter::Eq { field: "source".into(), value: serde_json::json!("alice's notes") };
         let sql = filter_to_sqlite(&f);
         assert_eq!(sql, "json_extract(metadata, '$.source') = 'alice''s notes'");
     }

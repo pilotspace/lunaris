@@ -183,7 +183,7 @@ async fn close_open_kv(
 
 #[async_trait]
 impl StoragePort for EmbeddedStorage {
-    async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+    async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         // One HLC tick → one commit point → one transaction. All ops share the
         // commit stamp. Scope is carried inside the KV keys (the
         // `lunaris:{scope}:…` keyspace), mirroring the Postgres `lunaris_kv`
@@ -217,7 +217,7 @@ impl StoragePort for EmbeddedStorage {
                     // RFC 0001 Wave A.1 — scope-prefix the stored idx so
                     // `vector_search` can isolate rows at the SQL boundary
                     // (mirrors Moon's `ft_index_name(scope, kind)` convention).
-                    let scoped_idx = vector::scoped_idx(_scope, index);
+                    let scoped_idx = vector::scoped_idx(scope, index);
                     sqlx::query(
                         "UPDATE lunaris_vec SET sys_to = ?1 \
                          WHERE idx = ?2 AND id = ?3 AND sys_to IS NULL",
