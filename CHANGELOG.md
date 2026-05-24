@@ -42,21 +42,21 @@ and any other MCP-native agent can register Lunaris as a memory server.
   one writer and multiple concurrent readers without `SQLITE_BUSY` errors.
   Regression test at `crates/lunaris-storage-embedded/tests/concurrent_handles.rs`.
 
-### Known limitations (fast-follow)
+### Fixed in Wave A.1
 
-- **SQLite `vector_search` is not yet implemented**
-  (`crates/lunaris-storage-embedded/src/lib.rs:318` — brute-force cosine
-  pending). `memory.recall` in vector mode requires the Moon or Postgres
-  backend in Wave A. Two fast-follow items planned: (a) brute-force cosine in
-  the embedded backend, (b) graceful keyword fallback in `tools/recall.rs` for
-  SQLite-only deployments. Until then, `memory.recall` returns empty hits on
-  the SQLite backend.
-- **Pre-existing main breakage in `lunaris-py` / `lunaris-ts`** — generated
-  bindings have a `Graph::anchored` signature drift (`Vec<EntityId>` vs
-  `Vec<(EntityId, f32)>`). This is a pre-Wave-A bug tracked as a separate
-  phase; `cargo check --workspace` is red until codegen is regenerated.
-  Wave A's `lunaris-mcp` and `lunaris-storage-embedded` paths compile cleanly
-  in scoped builds (`-p lunaris-mcp`, `-p lunaris-storage-embedded`).
+- **SQLite `vector_search` brute-force cosine** (`5674c52`) — closes the
+  "Moon/Postgres required for vector recall" caveat. The SQLite backend now
+  supports `memory.recall` end-to-end. Brute-force cosine scales to ~10k
+  vectors per scope; HNSW (Moon) or pgvector (Postgres) is the right choice
+  for larger corpora.
+- **`lunaris-codegen` `Graph::anchored` emitter** (`adea496`, `22e8c40`) —
+  emits `Vec<(EntityId, f32)>` for weighted seeds; restores
+  `cargo check --workspace` green.
+
+### Known limitations
+
+None at Wave A.1 ship — see Wave B / C / D items in the roadmap comments
+inside `tmp/lunaris-mcp-wave-a1-dag.md`.
 
 ### Reversed
 

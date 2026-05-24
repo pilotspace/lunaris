@@ -12,11 +12,13 @@ Status: Wave A (stdio + SQLite default). Four tools live: `memory.ingest`,
 |-------------|---------|
 | Rust toolchain | 1.94+ |
 | Claude Code | latest |
-| Moon (optional) | for `memory.recall` vector search |
+| Moon or Postgres (optional) | HNSW-accelerated recall for >10k-vector corpora |
 
-`memory.recall` requires a Moon or Postgres backend for vector retrieval.
-The default SQLite path supports `memory.ingest`, `memory.forget`, and
-`memory.list_scopes` without any external process.
+`memory.recall` works on the default SQLite backend via brute-force cosine
+(Wave A.1). For corpora larger than ~10k vectors per scope, switch to Moon
+(HNSW) or Postgres (pgvector) for HNSW-class latency. The default SQLite
+path supports all four tools (`memory.ingest`, `memory.recall`,
+`memory.forget`, `memory.list_scopes`) without any external process.
 
 ---
 
@@ -101,7 +103,7 @@ Returns:
 
 The LSN is `"{wall_ms}:{counter}"` — monotonically increasing within the scope.
 
-### Step 5 — Recall (requires Moon or Postgres)
+### Step 5 — Recall
 
 ```
 memory.recall  query="ingest pipeline atomicity"  k=3
@@ -111,9 +113,9 @@ Returns up to `k` hits fused from semantic (vector) + keyword (BM25) search.
 Each hit includes `episode_id`, `source`, `content` (≤200 chars), `score`
 (0–1), and `ingested_at` (RFC-3339).
 
-> **SQLite note:** `memory.recall` is a no-op on the default SQLite backend
-> (vector index unavailable). Point `LUNARIS_MCP_STORAGE` at a Moon or
-> Postgres URL to enable vector retrieval. See
+> **SQLite note:** brute-force cosine scales comfortably to ~10k vectors per
+> scope (single-developer / single-project use). For larger corpora, switch to
+> Moon or Postgres via `LUNARIS_MCP_STORAGE`. See
 > [Common Configurations](#common-configurations).
 
 ---
@@ -148,10 +150,9 @@ Retrieve memories relevant to a query.
 
 Returns `{ "hits": [ { "episode_id", "source", "content", "score", "ingested_at" }, … ] }`.
 
-**Requires Moon or Postgres backend.** The first call stages the GGUF
-embedder (~150 MB) and reranker to `~/.lunaris/models/` — expect ~30 s on
-a cold start. Subsequent calls are fast. Set `LUNARIS_MCP_SKIP_STAGE=1` if
-models are pre-staged.
+The first call stages the GGUF embedder (~150 MB) and reranker to
+`~/.lunaris/models/` — expect ~30 s on a cold start. Subsequent calls are
+fast. Set `LUNARIS_MCP_SKIP_STAGE=1` if models are pre-staged.
 
 ---
 
@@ -205,7 +206,7 @@ Or in `.mcp.json`:
 }
 ```
 
-### Point at Moon for vector recall
+### Point at Moon for HNSW-accelerated recall
 
 ```json
 {
@@ -222,8 +223,10 @@ Or in `.mcp.json`:
 ```
 
 Moon runs on port 6380 by default (`../moon/target/release/moon --port 6380`).
-Sub-25 ms recall over millions of bi-temporal facts is only achievable on
-Moon (or Postgres) — SQLite has no vector index.
+Sub-25 ms recall over millions of bi-temporal facts is achievable on Moon
+(HNSW) or Postgres (pgvector). SQLite brute-force cosine handles up to ~10k
+vectors per scope; above that threshold, the Moon or Postgres backend is the
+right choice.
 
 ### Custom storage URL
 
@@ -303,9 +306,10 @@ terminal; any startup error (scope resolution failure, storage URL parse
 error) is printed to stderr. Fix the error, then restart Claude Code.
 
 **`memory.recall` returns empty hits**
-Either: (a) the backend is SQLite (vector index not available — point
-`LUNARIS_MCP_STORAGE` at Moon or Postgres), or (b) no episodes have been
-ingested into the current scope yet.
+No episodes have been ingested into the current scope yet. Run
+`memory.ingest` first, then retry. If you are on Moon or Postgres and still
+see empty hits, verify that `LUNARIS_MCP_STORAGE` points at the correct
+backend URL.
 
 **First `memory.recall` takes ~30 seconds**
 The GGUF embedder (~150 MB) and reranker are being staged to
@@ -340,8 +344,31 @@ With Wave A connected:
   bleed. The scope is bound at startup; no wire field can override it.
 - **`memory.forget`** — targeted deletion by source prefix or episode ID,
   with a non-empty-prefix guard to prevent accidental total-wipe.
-- **Sub-25 ms recall** — achievable with Moon backend over millions of
-  bi-temporal facts (SQLite has no vector index; that claim is Moon-only).
+- **Sub-25 ms recall** — achievable on Moon (HNSW) over millions of
+  bi-temporal facts and on Postgres (pgvector). SQLite brute-force cosine is
+  fast enough for ≤10k vectors per scope (single-developer / single-project).
+
+---
+
+## When to switch from SQLite to Moon / Postgres
+
+SQLite brute-force cosine is the right default for solo and small-team use:
+
+- **≤10k vectors per scope** — brute-force cosine is fast enough; no external
+  process required.
+- **>10k vectors per scope** — switch to Moon (HNSW) or Postgres (pgvector)
+  for HNSW-class latency and sub-25 ms recall at scale.
+
+To switch, set `LUNARIS_MCP_STORAGE` in your MCP config:
+
+```json
+"env": {
+  "LUNARIS_MCP_STORAGE": "redis://localhost:6380"
+}
+```
+
+Moon: `../moon/target/release/moon --port 6380`. Postgres: any `postgres://`
+connection string with the `pgvector` extension installed.
 
 ---
 
@@ -351,7 +378,6 @@ With Wave A connected:
 |---------|--------|
 | SSE transport + Bearer auth | Deferred (Option B) |
 | Multi-user server mode | Deferred |
-| `memory.recall` on SQLite | Not planned — Moon/Postgres only |
 | `npx`/`uvx` distribution | Deferred |
 | `record_decision` / `record_edit` tool aliases | Deferred |
 | `coding_session_memory` recipe rename | Deferred |
