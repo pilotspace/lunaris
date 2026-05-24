@@ -216,21 +216,23 @@ impl Drop for PartialGuard {
 /// 500 ms; this function is the reason that budget is met.
 pub(crate) async fn ensure_staged(kind: ModelKind) -> Result<PathBuf, StageError> {
     let dir = models_dir()?;
-    ensure_staged_with(kind, dir, kind.url()).await
+    ensure_staged_with(kind, dir, kind.url(), kind.sha256()).await
 }
 
-/// Testable variant of [`ensure_staged`] that accepts an explicit `models_dir`
-/// and `base_url`.
+/// Testable variant of [`ensure_staged`] that accepts an explicit `models_dir`,
+/// `base_url`, and `expected_sha`.
 ///
-/// Tests pass a [`wiremock`] server URI as `base_url` so no real network calls
-/// are made. Mirrors the `scope_resolver::resolve_with` injection-point pattern.
+/// Tests pass a [`wiremock`] server URI as `base_url` and the SHA-256 of their
+/// synthetic payload as `expected_sha`, so no real network calls are made and
+/// sha verification is exercised end-to-end against realistic data. Mirrors the
+/// `scope_resolver::resolve_with` injection-point pattern.
 pub(crate) async fn ensure_staged_with(
     kind: ModelKind,
     models_dir: PathBuf,
     base_url: &str,
+    expected_sha: &str,
 ) -> Result<PathBuf, StageError> {
     let target = models_dir.join(kind.filename());
-    let expected_sha = kind.sha256();
 
     // 1. If file already exists, verify sha.
     if target.exists() {
@@ -435,8 +437,11 @@ mod tests {
         ModelKind::EmbedderGraniteQ4KM
     }
 
-    // ── Test 1: downloads on first call, idempotent on second ─────────────────
+    // ── Test 1: downloads on first call, idempotent on second ────────────────
 
+    /// Calls `ensure_staged_with` twice against a mock that serves the file
+    /// exactly once. The second call must hit the "sha matches → return
+    /// immediately" branch without contacting the server.
     #[tokio::test]
     async fn downloads_on_first_call_and_is_idempotent() {
         let td = TempDir::new().unwrap();
@@ -444,72 +449,43 @@ mod tests {
         let payload = fake_gguf();
         let expected_sha = sha256_of(&payload);
 
-        // Start a mock HTTP server serving exactly one file.
+        let kind = embedder_kind();
+        let filename = kind.filename();
+
+        // Mock serves the file exactly once — the second call must NOT hit it.
         let server = MockServer::start().await;
-        let filename = embedder_kind().filename();
         Mock::given(method("GET"))
             .and(path(format!("/{filename}")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(payload.clone()))
-            .expect(1) // First call: exactly 1 GET.
+            .expect(1)
             .mount(&server)
             .await;
 
-        // Inject the synthetic sha into the kind so verify passes.
-        // We call ensure_staged_with directly and then verify_sha256 separately.
-        let _target = models_dir.join(filename);
+        // First call: file absent → download → sha verify → atomic rename.
+        let path1 = ensure_staged_with(kind, models_dir.clone(), &server.uri(), &expected_sha)
+            .await
+            .expect("first ensure_staged_with must succeed");
 
-        // --- First call: should download ---
-        // We bypass sha verification by running ensure_staged_with with the
-        // real kind but then replacing the sha manually via the internal helper.
-        // Simpler: just write a file with the right sha, then assert idempotent.
-        //
-        // The cleanest red/green approach: call ensure_staged_with, let it
-        // download. Then assert the partial is gone and target exists with the
-        // right bytes. The sha CHECK inside ensure_staged_with will fail because
-        // the hardcoded sha is for the real model, not fake_gguf.
-        //
-        // To make the test deterministic without changing the const shas, we
-        // test the download + partial mechanics separately (see test 2), and
-        // for this idempotency test we pre-seed the file with matching content
-        // and call ensure_staged_with with the real sha.
-        //
-        // Actually the cleanest approach: seed a file with the exact content
-        // that matches EmbedderGraniteQ4KM::sha256(). That requires 253 MB.
-        // Instead: seed the models_dir with fake content + correct sha written
-        // to a sidecar, which we can't do without changing the code.
-        //
-        // Production-grade resolution: test the MECHANICS (download, partial
-        // cleanup, idempotency) through `download_with_progress` + `verify_sha256`
-        // unit tests, and test ensure_staged_with via a thin wrapper that accepts
-        // a custom expected sha. We expose that via the `download_and_verify`
-        // helper tested below.
+        assert!(path1.exists(), "staged file must exist after first call");
+        let on_disk = std::fs::read(&path1).unwrap();
+        assert_eq!(on_disk, payload, "staged file must contain the served payload");
 
-        // Direct mechanics test: call download_with_progress → verify that the
-        // partial path received the correct bytes.
-        let partial = models_dir.join(format!("{filename}.partial"));
-        download_with_progress(&format!("{}/{filename}", server.uri()), &partial, "test").await
-            .expect("download must succeed");
+        // Second call: file present + sha matches → return immediately, no download.
+        let path2 = ensure_staged_with(kind, models_dir.clone(), &server.uri(), &expected_sha)
+            .await
+            .expect("second ensure_staged_with must succeed (idempotent)");
 
-        assert!(partial.exists(), ".partial file must exist after download");
-        let on_disk = std::fs::read(&partial).unwrap();
-        assert_eq!(on_disk, payload, "downloaded bytes must match served payload");
+        assert_eq!(path1, path2, "both calls must return the same path");
 
-        // Sha verification matches.
-        let sha_ok = verify_sha256(&partial, &expected_sha).await.unwrap();
-        assert!(sha_ok, "sha256 must match for correctly downloaded file");
-
-        // Sha verification rejects a wrong digest.
-        let sha_fail = verify_sha256(&partial, "deadbeef").await.unwrap();
-        assert!(!sha_fail, "sha256 must reject wrong digest");
-
-        // Mock expects exactly 1 call — verify at drop (wiremock assertion).
-        // Second call to download_with_progress would be 1 more hit; we don't
-        // make it — idempotency is tested via pre-seeded file in test below.
+        // wiremock assertion: exactly 1 GET was made across both calls.
         server.verify().await;
     }
 
     // ── Test 2: pre-seeded file → zero downloads (idempotent no-op) ──────────
 
+    /// Pre-seeds the target file with the correct payload before the first call.
+    /// `ensure_staged_with` must detect sha match and return without ever
+    /// contacting the mock server (`.expect(0)`).
     #[tokio::test]
     async fn pre_seeded_file_skips_download() {
         let td = TempDir::new().unwrap();
@@ -517,53 +493,53 @@ mod tests {
         let payload = fake_gguf();
         let expected_sha = sha256_of(&payload);
 
-        let filename = embedder_kind().filename();
+        let kind = embedder_kind();
+        let filename = kind.filename();
         let target = models_dir.join(filename);
 
-        // Pre-seed the file on disk.
+        // Pre-seed the correctly-hashed file on disk.
         std::fs::write(&target, &payload).unwrap();
 
-        // Start a mock server that expects ZERO calls.
+        // Mock expects ZERO network calls — pre-seeded + sha match → no download.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path(format!("/{filename}")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(payload.clone()))
-            .expect(0) // Must NOT be called when file already present + sha matches.
+            .expect(0)
             .mount(&server)
             .await;
 
-        // verify_sha256 returns true.
-        let ok = verify_sha256(&target, &expected_sha).await.unwrap();
-        assert!(ok, "pre-seeded file must pass sha check");
+        let result_path =
+            ensure_staged_with(kind, models_dir.clone(), &server.uri(), &expected_sha)
+                .await
+                .expect("ensure_staged_with must succeed with pre-seeded file");
 
+        assert_eq!(result_path, target, "returned path must be the pre-seeded target");
+
+        // Zero GETs issued.
         server.verify().await;
     }
 
     // ── Test 3: sha mismatch triggers re-download ─────────────────────────────
 
+    /// Pre-seeds the target path with corrupt bytes so the sha check fails.
+    /// `ensure_staged_with` must delete the corrupt file, re-download the
+    /// correct payload, and return success. Mock `.expect(1)`.
     #[tokio::test]
     async fn sha_mismatch_triggers_redownload() {
         let td = TempDir::new().unwrap();
         let models_dir = td.path().to_path_buf();
         let payload = fake_gguf();
+        let expected_sha = sha256_of(&payload);
 
-        let filename = embedder_kind().filename();
+        let kind = embedder_kind();
+        let filename = kind.filename();
         let target = models_dir.join(filename);
 
-        // Write corrupt content (wrong sha).
-        std::fs::write(&target, b"this is corrupt garbage not matching any sha").unwrap();
+        // Seed a corrupt file (sha will not match).
+        std::fs::write(&target, b"corrupt garbage - sha mismatch bait").unwrap();
 
-        // The real expected sha for fake_gguf (what the server will serve).
-        let correct_sha = sha256_of(&payload);
-
-        // verify_sha256 returns false for the corrupt file.
-        let ok = verify_sha256(&target, &correct_sha).await.unwrap();
-        assert!(!ok, "corrupt file must fail sha check");
-
-        // Simulate the re-download flow: delete the corrupt file, download fresh.
-        fs::remove_file(&target).await.unwrap();
-        assert!(!target.exists(), "corrupt file must be deleted before re-download");
-
+        // Mock serves the correct payload exactly once (the re-download).
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path(format!("/{filename}")))
@@ -572,29 +548,36 @@ mod tests {
             .mount(&server)
             .await;
 
-        let partial = models_dir.join(format!("{filename}.partial"));
-        download_with_progress(&format!("{}/{filename}", server.uri()), &partial, "test").await
-            .unwrap();
+        let result_path =
+            ensure_staged_with(kind, models_dir.clone(), &server.uri(), &expected_sha)
+                .await
+                .expect("ensure_staged_with must succeed after re-downloading");
 
-        // Verify sha of re-downloaded file.
-        let ok2 = verify_sha256(&partial, &correct_sha).await.unwrap();
-        assert!(ok2, "re-downloaded file must pass sha check");
+        // Target must contain the fresh payload, not the corrupt bytes.
+        let on_disk = std::fs::read(&result_path).unwrap();
+        assert_eq!(on_disk, payload, "re-downloaded file must match served payload");
 
+        // Exactly one GET was made (the re-download after sha mismatch).
         server.verify().await;
     }
 
     // ── Test 4: partial file cleaned up on HTTP failure ───────────────────────
 
+    /// Calls `ensure_staged_with` against a mock that always returns 500.
+    /// The call must return `Err(StageError::Http(_))`, and both the `.partial`
+    /// and the final target must be absent after the failure.
     #[tokio::test]
     async fn partial_file_cleaned_up_on_failure() {
         let td = TempDir::new().unwrap();
         let models_dir = td.path().to_path_buf();
 
-        let filename = embedder_kind().filename();
+        let kind = embedder_kind();
+        let filename = kind.filename();
         let partial_path = models_dir.join(format!("{filename}.partial"));
+        let target_path = models_dir.join(filename);
 
+        // Mock always returns 500 — reqwest's `error_for_status()` propagates Err.
         let server = MockServer::start().await;
-        // Server returns 500 — reqwest's `error_for_status()` will return Err.
         Mock::given(method("GET"))
             .and(path(format!("/{filename}")))
             .respond_with(ResponseTemplate::new(500))
@@ -602,26 +585,21 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Wrap the download inside a PartialGuard and let it fail.
-        let guard = PartialGuard::new(partial_path.clone());
-        let url = format!("{}/{filename}", server.uri());
-
-        // The PartialGuard is created BEFORE the download attempt (mirroring
-        // the production code path). After a failed download the guard goes
-        // out of scope and its Drop impl deletes the partial.
-        let result = async {
-            // Attempt to create the partial file (as production code does).
-            let _ = fs::File::create(&partial_path).await?;
-            // Now "download" — which fails with 500.
-            download_with_progress(&url, &partial_path, "test").await
-        }
+        // Use a sha that can never match so we'd only succeed on happy path.
+        let result = ensure_staged_with(
+            kind,
+            models_dir.clone(),
+            &server.uri(),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
         .await;
 
-        // Explicitly drop the guard to trigger cleanup.
-        drop(guard);
-
-        assert!(result.is_err(), "HTTP 500 must propagate as StageError::Http");
+        assert!(
+            matches!(result, Err(StageError::Http(_))),
+            "HTTP 500 must propagate as StageError::Http, got: {result:?}"
+        );
         assert!(!partial_path.exists(), ".partial file must be absent after failed download");
+        assert!(!target_path.exists(), "target file must be absent after failed download");
 
         server.verify().await;
     }
