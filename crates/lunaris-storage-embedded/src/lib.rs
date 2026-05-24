@@ -55,7 +55,7 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row as LRow, ScopePage, VectorHit, WriteOp,
 };
 use sqlx::Row as _;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
 
 mod schema;
 
@@ -98,12 +98,39 @@ fn backend(e: sqlx::Error) -> StorageError {
     StorageError::Backend(format!("embedded(sqlite): {e}"))
 }
 
+/// Apply the WAL PRAGMA bundle to `SqliteConnectOptions`.
+///
+/// Every file-backed connection must have:
+/// - `journal_mode=WAL`      — multi-reader / single-writer with checkpoints;
+///                             enables concurrent `EmbeddedStorage` handles on
+///                             the same `~/.lunaris/<scope>.db` file (e.g. two
+///                             Claude Code editor windows) without SQLITE_BUSY.
+/// - `busy_timeout=5000`     — 5 s patience instead of the default 0 ms
+///                             immediate-SQLITE_BUSY return.
+/// - `synchronous=NORMAL`    — WAL-recommended setting; FULL is correct only
+///                             for the rollback-journal (DELETE) mode.
+///
+/// For `memory://` (in-memory databases) sqlite ignores `journal_mode=WAL`
+/// and returns `"memory"` as the effective mode — no error is raised and the
+/// other PRAGMAs apply normally.  We apply the same options unconditionally
+/// rather than branching; the no-op behaviour on in-memory DBs is documented
+/// by sqlite and intentional.
+fn wal_pragmas(opts: SqliteConnectOptions) -> SqliteConnectOptions {
+    use std::time::Duration;
+    opts.journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(5))
+        .synchronous(SqliteSynchronous::Normal)
+}
+
 /// Parse a Lunaris embedded-backend URL into `(SqliteConnectOptions, pin_single)`.
 fn parse_url(url: &str) -> Result<(SqliteConnectOptions, bool), StorageError> {
     if url == "memory://" || url.starts_with("memory://") {
         // `?cache=shared` is unnecessary because we pin a single connection.
+        // WAL is a no-op on in-memory DBs (sqlite reports "memory" as the
+        // effective journal mode) but applying wal_pragmas unconditionally
+        // keeps the code path identical and avoids a silent divergence.
         let opts = SqliteConnectOptions::from_str("sqlite::memory:").map_err(backend)?;
-        return Ok((opts, true));
+        return Ok((wal_pragmas(opts), true));
     }
     if let Some(rest) = url.strip_prefix("sqlite:") {
         // Accept `sqlite:///abs`, `sqlite://rel`, and bare `sqlite:rel`.
@@ -114,7 +141,7 @@ fn parse_url(url: &str) -> Result<(SqliteConnectOptions, bool), StorageError> {
             )));
         }
         let opts = SqliteConnectOptions::new().filename(path).create_if_missing(true);
-        return Ok((opts, false));
+        return Ok((wal_pragmas(opts), false));
     }
     Err(StorageError::UnsupportedScheme(format!(
         "embedded: {url:?} is not a `memory://` or `sqlite:` URL"

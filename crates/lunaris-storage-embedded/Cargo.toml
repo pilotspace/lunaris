@@ -33,6 +33,7 @@ url          = { workspace = true }
 [dev-dependencies]
 tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
 ulid         = { workspace = true }
+tempfile     = "3"
 
 [features]
 default = []
