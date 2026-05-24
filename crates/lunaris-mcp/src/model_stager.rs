@@ -36,10 +36,7 @@ use futures_util::StreamExt as _;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
-use tokio::{
-    fs,
-    io::AsyncWriteExt as _,
-};
+use tokio::{fs, io::AsyncWriteExt as _};
 
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
@@ -69,9 +66,7 @@ impl ModelKind {
     /// regardless of which mirror is used.
     pub(crate) fn filename(self) -> &'static str {
         match self {
-            Self::EmbedderGraniteQ4KM => {
-                "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
-            }
+            Self::EmbedderGraniteQ4KM => "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf",
             Self::RerankerBgeV2M3Q5KM => "bge-reranker-v2-m3.Q5_K_M.gguf",
         }
     }
@@ -152,11 +147,7 @@ pub(crate) enum StageError {
         "sha256 mismatch for {filename}: expected {expected}, got {got}; \
          partial file deleted — re-run to retry download"
     )]
-    ShaMismatch {
-        filename: String,
-        expected: String,
-        got: String,
-    },
+    ShaMismatch { filename: String, expected: String, got: String },
 }
 
 // ── RAII partial-file guard ───────────────────────────────────────────────────
@@ -424,15 +415,11 @@ mod tests {
         format!("{:x}", h.finalize())
     }
 
-    /// A `ModelKind` with its sha256 patched to match a synthetic payload.
+    /// Returns [`ModelKind::EmbedderGraniteQ4KM`] as the default kind for tests.
     ///
-    /// We cannot change the const value in `ModelKind::sha256()`, so instead
-    /// we test `ensure_staged_with` directly, passing the synthetic sha as the
-    /// "expected" value by writing a tiny wrapper that asserts AFTER the call.
-    ///
-    /// Strategy: override the expected sha inside the test by calling the
-    /// internal `verify_sha256` directly — tests just check the file exists
-    /// and has the right content; sha verification is its own dedicated test.
+    /// Tests pass `sha256_of(&fake_gguf())` as `expected_sha` to
+    /// [`ensure_staged_with`], so the production SHA constant in
+    /// [`ModelKind::sha256`] is never consulted during test runs.
     fn embedder_kind() -> ModelKind {
         ModelKind::EmbedderGraniteQ4KM
     }
