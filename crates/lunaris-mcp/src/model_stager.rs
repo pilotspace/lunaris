@@ -289,8 +289,29 @@ pub(crate) async fn ensure_staged_with(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Resolve `~/.lunaris/models/` from `dirs::home_dir()`.
+/// Resolve the GGUF models directory.
+///
+/// Resolution order:
+///
+/// 1. `LUNARIS_MCP_MODELS_DIR` env var — used by integration tests to redirect
+///    staging away from `~/.lunaris/models/` so tests are hermetic and don't
+///    accidentally download or read real GGUF files. When set, this value is
+///    returned as-is (the caller is responsible for creating the directory).
+/// 2. `~/.lunaris/models/` — the production default resolved via
+///    [`dirs::home_dir`]. Returns [`StageError::NoHome`] if `$HOME` is unset.
+///
+/// # Test isolation
+///
+/// Set `LUNARIS_MCP_MODELS_DIR` to a per-test temp directory to prevent
+/// cross-test contamination. The Wave 3.2 cold-start gate relies on this to
+/// assert that no `*.gguf` appears under the controlled models directory after
+/// `tools/list` — proving the lazy embedder invariant holds.
 fn models_dir() -> Result<PathBuf, StageError> {
+    if let Ok(dir) = std::env::var("LUNARIS_MCP_MODELS_DIR") {
+        if !dir.is_empty() {
+            return Ok(PathBuf::from(dir));
+        }
+    }
     let home = dirs::home_dir().ok_or(StageError::NoHome)?;
     Ok(home.join(".lunaris").join("models"))
 }
