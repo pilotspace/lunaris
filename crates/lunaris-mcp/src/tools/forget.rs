@@ -87,11 +87,7 @@ pub(crate) async fn handle(
     // rows_deleted is always 0 here. Sum both to be defensive.
     let removed = receipt.rows_written + receipt.rows_deleted;
 
-    tracing::debug!(
-        scope   = state.scope.as_str(),
-        removed = removed,
-        "memory.forget committed",
-    );
+    tracing::debug!(scope = state.scope.as_str(), removed = removed, "memory.forget committed",);
 
     Ok(ForgetResponse { removed })
 }
@@ -169,10 +165,7 @@ mod tests {
         let params =
             ForgetParams { target: ForgetTarget { source_prefix: None, episode_id: None } };
         let err = handle(&state, params).await.unwrap_err();
-        assert!(
-            matches!(err, ToolError::InvalidInput(_)),
-            "expected InvalidInput, got {err:?}"
-        );
+        assert!(matches!(err, ToolError::InvalidInput(_)), "expected InvalidInput, got {err:?}");
         // Message must be informative.
         if let ToolError::InvalidInput(msg) = err {
             assert!(
@@ -213,7 +206,10 @@ mod tests {
             "expected InvalidInput for bad ULID, got {err:?}"
         );
         if let ToolError::InvalidInput(msg) = err {
-            assert!(msg.contains("ULID") || msg.contains("ulid"), "message should mention ULID: {msg}");
+            assert!(
+                msg.contains("ULID") || msg.contains("ulid"),
+                "message should mention ULID: {msg}"
+            );
         }
     }
 
@@ -221,10 +217,7 @@ mod tests {
     async fn empty_source_prefix_returns_invalid_input() {
         let state = make_state().await;
         let params = ForgetParams {
-            target: ForgetTarget {
-                source_prefix: Some(String::new()),
-                episode_id: None,
-            },
+            target: ForgetTarget { source_prefix: Some(String::new()), episode_id: None },
         };
         let err = handle(&state, params).await.unwrap_err();
         assert!(
@@ -292,14 +285,10 @@ mod tests {
             .unwrap();
 
         let params = ForgetParams {
-            target: ForgetTarget {
-                source_prefix: None,
-                episode_id: Some(known_ulid.to_string()),
-            },
+            target: ForgetTarget { source_prefix: None, episode_id: Some(known_ulid.to_string()) },
         };
         // ForgetTarget::Id path — exercises the ULID parse → engine dispatch.
-        let resp =
-            handle(&state, params).await.expect("episode_id dispatch must not error");
+        let resp = handle(&state, params).await.expect("episode_id dispatch must not error");
         let _ = resp.removed; // type-check: must be u64
     }
 }

@@ -2,6 +2,73 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.4.0-wave-a — lunaris-mcp publish (2026-05-24)
+
+External-agent integration surface. Wave A delivers `lunaris-mcp`, a
+binary crate that speaks MCP over stdio so Claude Code, OpenAI Codex,
+and any other MCP-native agent can register Lunaris as a memory server.
+
+### Added
+
+- **`lunaris-mcp` binary crate** — `cargo install lunaris-mcp` then add to
+  your editor's MCP config. Four tools: `memory.ingest`, `memory.recall`,
+  `memory.forget`, `memory.list_scopes`. Stdio transport, no auth
+  (process-bound). See `docs/integration/claude-code.md` (5-step walkthrough)
+  and `docs/integration/codex.md` (Codex CLI parity guide).
+- **Lazy GGUF model stager** — Q4_K_M embedder + Q5_K_M reranker download to
+  `~/.lunaris/models/` on first vector recall (stderr progress bar, sha256
+  verify, idempotent). `tools/list` responds in <500 ms (CI gate at
+  `crates/lunaris-mcp/tests/cold_start.rs`). No model files downloaded until
+  `memory.recall` is first called.
+- **Scope resolver** — derives a stable `lunaris_core::Scope` from
+  `git remote.origin.url + branch` (blake3 hash → `"git_<hex16>"`), with
+  canonical-cwd fallback (`"cwd_<hex16>"`). Persisted at
+  `~/.lunaris/scopes.json`; users may rename scopes manually. CLI
+  `--scope` / `LUNARIS_MCP_SCOPE` overrides the derivation.
+- **INGEST-04 invariant gate for the MCP entry point** —
+  `crates/lunaris-mcp/tests/atomic_write_gate.rs` enforces that
+  `memory.ingest` goes through `ScopedLunaris::ingest`, never a direct
+  `atomic_write`. Mirrors the existing `lunaris-ingest` grep gate.
+- **Integration docs** — `docs/integration/claude-code.md`,
+  `docs/integration/codex.md`, decision record
+  `docs/decisions/2026-05-24-claude-code-mcp-reversal.md`.
+
+### Changed
+
+- **`lunaris-storage-embedded` WAL + busy_timeout** — every SQLite connection
+  now opens with `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`,
+  `PRAGMA synchronous=NORMAL`. Two Claude Code windows (or Codex windows) on
+  the same repo share the same `~/.lunaris/<scope>.db` safely — WAL allows
+  one writer and multiple concurrent readers without `SQLITE_BUSY` errors.
+  Regression test at `crates/lunaris-storage-embedded/tests/concurrent_handles.rs`.
+
+### Known limitations (fast-follow)
+
+- **SQLite `vector_search` is not yet implemented**
+  (`crates/lunaris-storage-embedded/src/lib.rs:318` — brute-force cosine
+  pending). `memory.recall` in vector mode requires the Moon or Postgres
+  backend in Wave A. Two fast-follow items planned: (a) brute-force cosine in
+  the embedded backend, (b) graceful keyword fallback in `tools/recall.rs` for
+  SQLite-only deployments. Until then, `memory.recall` returns empty hits on
+  the SQLite backend.
+- **Pre-existing main breakage in `lunaris-py` / `lunaris-ts`** — generated
+  bindings have a `Graph::anchored` signature drift (`Vec<EntityId>` vs
+  `Vec<(EntityId, f32)>`). This is a pre-Wave-A bug tracked as a separate
+  phase; `cargo check --workspace` is red until codegen is regenerated.
+  Wave A's `lunaris-mcp` and `lunaris-storage-embedded` paths compile cleanly
+  in scoped builds (`-p lunaris-mcp`, `-p lunaris-storage-embedded`).
+
+### Reversed
+
+- The "Claude Code FS adapter shape (CAS, mtime, prefix_scan_meta_only)
+  inside Lunaris" out-of-scope row referenced from `docs/helios-integration.md:13`
+  is reversed. Wave A ships an MCP-shaped surface (`memory.ingest`,
+  `memory.recall`, `memory.forget`, `memory.list_scopes`), not an
+  FS-tool-shaped one. Filesystem semantics remain a Helios-side concern.
+  See `docs/decisions/2026-05-24-claude-code-mcp-reversal.md`.
+
+---
+
 ## v0.3.0 — unreleased — Scope enumeration + recipe surface (W1/W2 wave)
 
 Additive minor bump (per the workspace lock's spirit at the actual

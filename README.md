@@ -124,6 +124,7 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 |---|---|
 | **v0.2.1** | Shipped — multi-agent partitioning, full v0.2 release-gate close-out |
 | **v0.3.0** | In progress on `main` — `Lunaris::list_scopes`, W1/W2 wave (schema_gate, code_feature_card recipe, FT.INVALIDATE_RANGE fan-out), vendor/moon bump to Moon main (version_token + FT.INVALIDATE_RANGE) |
+| **v0.4.0-wave-a** | Shipped — `lunaris-mcp` binary for Claude Code / Codex (stdio MCP, sqlite default, lazy GGUF). See [`docs/integration/claude-code.md`](docs/integration/claude-code.md) and [`docs/integration/codex.md`](docs/integration/codex.md). |
 | **v0.3 Self-hosted** | Planning — Docker/Helm, SLOs, design partners |
 | **v0.4 Ecosystem** | Future — LangGraph/CrewAI/Letta adapters |
 

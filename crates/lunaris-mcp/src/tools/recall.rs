@@ -98,17 +98,16 @@ fn skip_stage_for_tests() {
 /// - `LUNARIS_MCP_SKIP_STAGE` env var is set (CI / operator override), OR
 /// - `SKIP_STAGE` atomic is `true` (test seam — no `unsafe` needed).
 async fn maybe_ensure_staged() -> Result<(), ToolError> {
-    if SKIP_STAGE.load(Ordering::Relaxed)
-        || std::env::var_os("LUNARIS_MCP_SKIP_STAGE").is_some()
-    {
+    if SKIP_STAGE.load(Ordering::Relaxed) || std::env::var_os("LUNARIS_MCP_SKIP_STAGE").is_some() {
         return Ok(());
     }
     STAGE_LOG_ONCE.get_or_init(|| {
         eprintln!("lunaris-mcp: staging models — first run only");
     });
-    ensure_staged(ModelKind::EmbedderGraniteQ4KM).await.map(|_| ()).map_err(|e: StageError| {
-        ToolError::InvalidInput(format!("model staging failed: {e}"))
-    })
+    ensure_staged(ModelKind::EmbedderGraniteQ4KM)
+        .await
+        .map(|_| ())
+        .map_err(|e: StageError| ToolError::InvalidInput(format!("model staging failed: {e}")))
 }
 
 // ── Hlc helpers ──────────────────────────────────────────────────────────────
@@ -122,9 +121,7 @@ fn parse_rfc3339_to_hlc(s: &str) -> Result<Hlc, ToolError> {
 }
 
 fn hlc_to_rfc3339(hlc: &Hlc) -> String {
-    DateTime::from_timestamp_millis(hlc.wall_ms as i64)
-        .unwrap_or_default()
-        .to_rfc3339()
+    DateTime::from_timestamp_millis(hlc.wall_ms as i64).unwrap_or_default().to_rfc3339()
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -189,8 +186,8 @@ pub(crate) async fn handle(
 
     tracing::debug!(
         scope = state.scope.as_str(),
-        k     = k,
-        hits  = recall_hits.len(),
+        k = k,
+        hits = recall_hits.len(),
         "memory.recall executed",
     );
 
@@ -264,30 +261,19 @@ mod tests {
         let scoped = state.lunaris.scoped(state.scope.clone());
 
         // Ingest fact A, capture wall time between the two ingests.
-        scoped
-            .ingest(EpisodeBuilder::new("bt/src", "the sky is blue"))
-            .await
-            .unwrap();
+        scoped.ingest(EpisodeBuilder::new("bt/src", "the sky is blue")).await.unwrap();
 
         // t1.5 is after A but before B — use current time as the as_of anchor.
         let t_between = chrono::Utc::now().to_rfc3339();
         // Small sleep so B's HLC wall_ms is strictly after t_between.
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
-        scoped
-            .ingest(EpisodeBuilder::new("bt/src", "the sky is green"))
-            .await
-            .unwrap();
+        scoped.ingest(EpisodeBuilder::new("bt/src", "the sky is green")).await.unwrap();
 
         // Recall with as_of = t_between: B was not ingested yet at that point.
         let resp = handle(
             &state,
-            RecallParams {
-                query: "sky".into(),
-                k: 5,
-                filters: None,
-                as_of: Some(t_between),
-            },
+            RecallParams { query: "sky".into(), k: 5, filters: None, as_of: Some(t_between) },
         )
         .await
         .unwrap();
@@ -310,18 +296,9 @@ mod tests {
         let state = fresh_state("test-recall-filter").await;
         let scoped = state.lunaris.scoped(state.scope.clone());
 
-        scoped
-            .ingest(EpisodeBuilder::new("notes/a", "note alpha content"))
-            .await
-            .unwrap();
-        scoped
-            .ingest(EpisodeBuilder::new("notes/b", "note beta content"))
-            .await
-            .unwrap();
-        scoped
-            .ingest(EpisodeBuilder::new("other/c", "other content entirely"))
-            .await
-            .unwrap();
+        scoped.ingest(EpisodeBuilder::new("notes/a", "note alpha content")).await.unwrap();
+        scoped.ingest(EpisodeBuilder::new("notes/b", "note beta content")).await.unwrap();
+        scoped.ingest(EpisodeBuilder::new("other/c", "other content entirely")).await.unwrap();
 
         let resp = handle(
             &state,
