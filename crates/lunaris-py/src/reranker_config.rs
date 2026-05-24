@@ -71,7 +71,7 @@ impl RerankerConfig {
     #[pyo3(signature = (_gguf_path=None, _model_dir=None))]
     #[cfg(not(feature = "reranker-gguf"))]
     #[allow(unused_variables)]
-    fn native_quantized(_gguf_path: PathBuf, _model_dir: Option<PathBuf>) -> PyResult<Self> {
+    fn native_quantized(_gguf_path: Option<PathBuf>, _model_dir: Option<PathBuf>) -> PyResult<Self> {
         Err(PyValueError::new_err(
             "RerankerConfig.native_quantized() requires the lunaris-py wheel to be built \
              with the `reranker-gguf` feature.",
