@@ -101,9 +101,7 @@ async fn main() -> anyhow::Result<()> {
 fn init_tracing(filter: &str) {
     use tracing_subscriber::{EnvFilter, fmt};
     let _ = fmt()
-        .with_env_filter(
-            EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+        .with_env_filter(EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info")))
         // NEVER write to stdout — it is the MCP JSON-RPC transport.
         .with_writer(std::io::stderr)
         .with_ansi(false)

@@ -125,11 +125,7 @@ pub(crate) fn resolve_with(
     let scope_str = if let Some(entry) = store.scopes.get(&derivation_key) {
         entry.name.clone()
     } else {
-        let entry = ScopeEntry {
-            name: candidate_name.clone(),
-            created_at: rfc3339_now(),
-            source,
-        };
+        let entry = ScopeEntry { name: candidate_name.clone(), created_at: rfc3339_now(), source };
         store.scopes.insert(derivation_key.clone(), entry);
         save_store(scopes_path, &store)?;
         candidate_name
@@ -255,10 +251,7 @@ fn save_store(path: &Path, store: &ScopesFile) -> Result<(), ScopeResolveError> 
 /// Format: `YYYY-MM-DDTHH:MM:SSZ` (UTC, no sub-second precision).
 fn rfc3339_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     // Compute UTC fields from the Unix epoch manually.
     let s = secs % 60;
     let m = (secs / 60) % 60;
@@ -282,7 +275,8 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
 
     let year = y400 * 400 + y100 * 100 + y4 * 4 + y1 + 1970;
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days: [u64; 12] =
+        [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
     let mut month = 1u64;
     for &md in &month_days {
@@ -319,10 +313,7 @@ mod tests {
         run(&["config", "user.email", "test@example.com"], dir);
         run(&["config", "user.name", "test"], dir);
         run(&["commit", "--allow-empty", "-m", "init"], dir);
-        run(
-            &["remote", "add", "origin", "https://github.com/example/repo.git"],
-            dir,
-        );
+        run(&["remote", "add", "origin", "https://github.com/example/repo.git"], dir);
     }
 
     // ── Test 1: override wins ─────────────────────────────────────────────────
@@ -331,8 +322,8 @@ mod tests {
     fn override_wins_over_derivation() {
         let td = TempDir::new().unwrap();
         let scopes_path = td.path().join("scopes.json");
-        let scope = resolve_with(Some("my-scope"), td.path(), &scopes_path)
-            .expect("override must succeed");
+        let scope =
+            resolve_with(Some("my-scope"), td.path(), &scopes_path).expect("override must succeed");
         assert_eq!(scope.as_str(), "my-scope");
     }
 
@@ -344,8 +335,8 @@ mod tests {
         let scopes_path = td.path().join("scopes.json");
         init_git_repo(td.path());
 
-        let scope1 = resolve_with(None, td.path(), &scopes_path)
-            .expect("git-backed scope must resolve");
+        let scope1 =
+            resolve_with(None, td.path(), &scopes_path).expect("git-backed scope must resolve");
 
         // Satisfies Scope alphabet.
         let s = scope1.as_str();
@@ -357,8 +348,8 @@ mod tests {
         assert!(!s.is_empty() && s.len() <= 128, "scope must be 1..=128 chars");
 
         // Repeating the call returns the identical scope.
-        let scope2 = resolve_with(None, td.path(), &scopes_path)
-            .expect("second resolve must succeed");
+        let scope2 =
+            resolve_with(None, td.path(), &scopes_path).expect("second resolve must succeed");
         assert_eq!(scope1, scope2, "scope must be stable across calls");
 
         // Derived name starts with "git_"
@@ -372,8 +363,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let scopes_path = td.path().join("scopes.json");
         // No git init — bare temp dir.
-        let scope = resolve_with(None, td.path(), &scopes_path)
-            .expect("cwd fallback must succeed");
+        let scope = resolve_with(None, td.path(), &scopes_path).expect("cwd fallback must succeed");
         let s = scope.as_str();
 
         // Satisfies Scope alphabet.
@@ -385,19 +375,16 @@ mod tests {
         assert!(s.starts_with("cwd_"), "cwd-derived scope must start with cwd_, got {:?}", s);
 
         // Same dir → same scope.
-        let scope2 = resolve_with(None, td.path(), &scopes_path)
-            .expect("second cwd resolve must succeed");
+        let scope2 =
+            resolve_with(None, td.path(), &scopes_path).expect("second cwd resolve must succeed");
         assert_eq!(scope, scope2, "same dir must produce same scope");
 
         // Sibling dir → different scope.
         let td2 = TempDir::new().unwrap();
         let scopes_path2 = td2.path().join("scopes.json");
-        let scope3 = resolve_with(None, td2.path(), &scopes_path2)
-            .expect("sibling dir must resolve");
-        assert_ne!(
-            scope, scope3,
-            "distinct dirs must produce distinct scopes"
-        );
+        let scope3 =
+            resolve_with(None, td2.path(), &scopes_path2).expect("sibling dir must resolve");
+        assert_ne!(scope, scope3, "distinct dirs must produce distinct scopes");
     }
 
     // ── Test 4: persistence + rename ─────────────────────────────────────────
@@ -408,8 +395,8 @@ mod tests {
         let scopes_path = td.path().join("scopes.json");
 
         // First call — creates the entry.
-        let original = resolve_with(None, td.path(), &scopes_path)
-            .expect("initial resolve must succeed");
+        let original =
+            resolve_with(None, td.path(), &scopes_path).expect("initial resolve must succeed");
 
         // Read the store and rename the entry's `name`.
         let raw = std::fs::read_to_string(&scopes_path).expect("scopes.json must exist");
@@ -421,8 +408,8 @@ mod tests {
         std::fs::write(&scopes_path, updated).unwrap();
 
         // Second call — should return the renamed scope.
-        let after_rename = resolve_with(None, td.path(), &scopes_path)
-            .expect("post-rename resolve must succeed");
+        let after_rename =
+            resolve_with(None, td.path(), &scopes_path).expect("post-rename resolve must succeed");
         assert_eq!(
             after_rename.as_str(),
             "renamed-scope",
@@ -463,10 +450,7 @@ mod tests {
     fn blake3_hex64_produces_64_lowercase_hex_chars() {
         let h = blake3_hex64("test-input");
         assert_eq!(h.len(), 64, "blake3 hex must be 64 chars");
-        assert!(
-            h.chars().all(|c| c.is_ascii_hexdigit()),
-            "blake3 hex must be hexadecimal"
-        );
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "blake3 hex must be hexadecimal");
     }
 
     // ── Extra: rfc3339_now produces a plausible timestamp ────────────────────
