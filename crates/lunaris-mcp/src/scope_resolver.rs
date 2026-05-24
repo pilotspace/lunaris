@@ -80,6 +80,35 @@ struct ScopeEntry {
     source: String,
 }
 
+// ── Public read-only helpers for list_scopes ─────────────────────────────────
+
+/// One scope entry as returned by [`load_scopes_from`].
+///
+/// Mirrors the private [`ScopeEntry`] struct but is `pub(crate)` so
+/// `list_scopes::handle` can consume it without duplicating the JSON schema.
+#[derive(Debug, Clone)]
+pub(crate) struct ScopeRecord {
+    pub name: String,
+    pub created_at: String,
+    pub source: String,
+}
+
+/// Load and return all scope entries from `path` as a flat `Vec<ScopeRecord>`.
+///
+/// - Missing file → empty `Vec` (fresh install, not an error).
+/// - Corrupt JSON → `ScopeResolveError::Parse`.
+///
+/// The caller is responsible for any sorting or filtering. Entries are returned
+/// in BTreeMap key order (blake3 hex, not meaningful to end-users).
+pub(crate) fn load_scopes_from(path: &Path) -> Result<Vec<ScopeRecord>, ScopeResolveError> {
+    let store = load_store(path)?;
+    Ok(store
+        .scopes
+        .into_values()
+        .map(|e| ScopeRecord { name: e.name, created_at: e.created_at, source: e.source })
+        .collect())
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Derive or restore the [`Scope`] for the current session.
@@ -208,7 +237,10 @@ fn blake3_hex64(input: &str) -> String {
 ///
 /// Checks `LUNARIS_SCOPES_FILE` env first (for operator / integration-test
 /// override), then defaults to `~/.lunaris/scopes.json`.
-fn scopes_file_path() -> Result<PathBuf, ScopeResolveError> {
+///
+/// Exposed as `pub(crate)` so `list_scopes::handle` can load the same
+/// registry without duplicating resolution logic.
+pub(crate) fn scopes_file_path() -> Result<PathBuf, ScopeResolveError> {
     if let Ok(path) = std::env::var("LUNARIS_SCOPES_FILE") {
         return Ok(PathBuf::from(path));
     }

@@ -49,6 +49,9 @@ dirs   = { workspace = true }
 # Wave 2.A — t_ref parsing in memory.ingest handler (RFC-3339 → DateTime<Utc>)
 chrono = { workspace = true }
 
+# Wave 2.C — ULID parsing in memory.forget episode_id path
+ulid = { workspace = true }
+
 # Wave 2.A — JSON Schema generation for rmcp #[tool] parameter types.
 # Must be a direct dependency (proc-macro derives resolve by crate name, not
 # by rmcp::schemars re-export). Version pinned to match rmcp 1.7's schemars dep.
