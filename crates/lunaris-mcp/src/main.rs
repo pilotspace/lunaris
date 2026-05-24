@@ -15,6 +15,8 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+mod scope_resolver;
+
 use clap::Parser;
 use rmcp::{
     ServerHandler, ServiceExt,
