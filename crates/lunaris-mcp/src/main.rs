@@ -16,6 +16,10 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 
 mod scope_resolver;
+// Lazy GGUF model stager — Wave 1.B.
+// NEVER called at server start: first call comes from the memory.recall handler
+// (Wave 2.B). Cold-start budget gate (Wave 3.2) asserts tools/list < 500 ms.
+mod model_stager;
 
 use clap::Parser;
 use rmcp::{

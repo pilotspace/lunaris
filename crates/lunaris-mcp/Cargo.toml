@@ -46,6 +46,18 @@ anyhow      = { workspace = true }
 blake3 = { workspace = true }
 dirs   = { workspace = true }
 
+# Wave 1.B — lazy GGUF model stager (indicatif progress on stderr, reqwest streaming)
+# reqwest: workspace 0.13 (rustls+json already there); we add "stream" for
+# bytes_stream() needed by the chunked download path.
+reqwest      = { workspace = true, features = ["stream"] }
+sha2         = { workspace = true }
+futures-util = "0.3"
+# indicatif 0.17 — progress bars on stderr; NOT in workspace (only lunaris-mcp
+# needs it). ProgressDrawTarget::stderr() is the invariant — never stdout().
+indicatif    = "0.17"
+
 [dev-dependencies]
 # placeholder — Wave 2/3 integration tests add real deps
 tempfile = "3"
+# Wave 1.B — mock HTTP server for model stager tests (no real network in CI)
+wiremock = "0.6"
