@@ -55,8 +55,9 @@ and any other MCP-native agent can register Lunaris as a memory server.
 
 ### Known limitations
 
-None at Wave A.1 ship — see Wave B / C / D items in the roadmap comments
-inside `tmp/lunaris-mcp-wave-a1-dag.md`.
+None at Wave A.1 ship. Wave B / C / D items: SSE transport + Bearer auth,
+`coding_session_memory` recipe, `npx`/`uvx` distribution, multi-user server
+mode — see the Reversed and Deferred sections in the integration guides.
 
 ### Reversed
 
