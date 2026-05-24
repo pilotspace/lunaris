@@ -1,0 +1,361 @@
+# Claude Code Integration
+
+Status: Wave A (stdio + SQLite default). Four tools live: `memory.ingest`,
+`memory.recall`, `memory.forget`, `memory.list_scopes`. See
+[Deferred to Wave B/C](#deferred-to-wave-bc) for what isn't shipped yet.
+
+---
+
+## Prerequisites
+
+| Requirement | Version |
+|-------------|---------|
+| Rust toolchain | 1.94+ |
+| Claude Code | latest |
+| Moon (optional) | for `memory.recall` vector search |
+
+`memory.recall` requires a Moon or Postgres backend for vector retrieval.
+The default SQLite path supports `memory.ingest`, `memory.forget`, and
+`memory.list_scopes` without any external process.
+
+---
+
+## Installation
+
+```sh
+cargo install lunaris-mcp
+```
+
+The binary lands at `~/.cargo/bin/lunaris-mcp`. Verify:
+
+```sh
+lunaris-mcp --help
+```
+
+---
+
+## 5-Step Walkthrough
+
+### Step 1 — Register the server (project scope, VCS-shared)
+
+```sh
+claude mcp add --transport stdio lunaris -- lunaris-mcp
+```
+
+This writes to the project-local config (`.mcp.json` in the repo root if you
+run Claude Code from a git repo, or `~/.claude.json` under the project key
+otherwise). The server name is `lunaris`.
+
+To share the server definition with your team via version control, use the
+project scope explicitly:
+
+```sh
+claude mcp add --scope project --transport stdio lunaris -- lunaris-mcp
+```
+
+This creates (or updates) `.mcp.json` at the repo root:
+
+```json
+{
+  "mcpServers": {
+    "lunaris": {
+      "command": "lunaris-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### Step 2 — Verify the server is listed
+
+```sh
+claude mcp list
+```
+
+Expected output includes a `lunaris` entry with `stdio` transport.
+
+### Step 3 — Start Claude Code in the repo
+
+```sh
+claude
+```
+
+The `lunaris-mcp` process starts as a child of Claude Code. Scope is derived
+automatically from `git remote.origin.url` + current branch (blake3 →
+`"git_<hex16>"`). If no git remote is detected, scope falls back to the
+canonical cwd (blake3 → `"cwd_<hex16>"`).
+
+### Step 4 — Ingest your first observation
+
+Inside a Claude Code session:
+
+```
+memory.ingest  source="src:notes/architecture"  content="The ingest pipeline writes one atomic_write per episode. Adding a second call is a bug."
+```
+
+Returns:
+
+```json
+{ "lsn": "1748083200000:1" }
+```
+
+The LSN is `"{wall_ms}:{counter}"` — monotonically increasing within the scope.
+
+### Step 5 — Recall (requires Moon or Postgres)
+
+```
+memory.recall  query="ingest pipeline atomicity"  k=3
+```
+
+Returns up to `k` hits fused from semantic (vector) + keyword (BM25) search.
+Each hit includes `episode_id`, `source`, `content` (≤200 chars), `score`
+(0–1), and `ingested_at` (RFC-3339).
+
+> **SQLite note:** `memory.recall` is a no-op on the default SQLite backend
+> (vector index unavailable). Point `LUNARIS_MCP_STORAGE` at a Moon or
+> Postgres URL to enable vector retrieval. See
+> [Common Configurations](#common-configurations).
+
+---
+
+## Tool Reference
+
+### `memory.ingest`
+
+Store an observation into the current scope.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source` | string | yes | Namespace / path for the episode (`src:notes/`, `helios:fs/…`, etc.) |
+| `content` | string | yes | Text of the observation |
+| `t_ref` | string | no | RFC-3339 reference timestamp (defaults to wall clock) |
+| `metadata` | object | no | Arbitrary JSON key-value pairs |
+
+Returns `{ "lsn": "<wall_ms>:<counter>" }`.
+
+---
+
+### `memory.recall`
+
+Retrieve memories relevant to a query.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | yes | Natural-language query |
+| `k` | integer | no | Max hits to return (default 5) |
+| `filters.source_prefix` | string | no | Restrict to episodes whose source starts with this prefix |
+| `as_of` | string | no | RFC-3339 timestamp — snapshot the store at this point in time |
+
+Returns `{ "hits": [ { "episode_id", "source", "content", "score", "ingested_at" }, … ] }`.
+
+**Requires Moon or Postgres backend.** The first call stages the GGUF
+embedder (~150 MB) and reranker to `~/.lunaris/models/` — expect ~30 s on
+a cold start. Subsequent calls are fast. Set `LUNARIS_MCP_SKIP_STAGE=1` if
+models are pre-staged.
+
+---
+
+### `memory.forget`
+
+Delete memories. Exactly one of `target.source_prefix` or `target.episode_id`
+must be set.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `target.source_prefix` | string | Delete all episodes whose source starts with this prefix (must be non-empty) |
+| `target.episode_id` | string | Delete the single episode identified by this ULID |
+
+Returns `{ "removed": <u64> }`.
+
+---
+
+### `memory.list_scopes`
+
+Enumerate all known scopes.
+
+No input parameters.
+
+Returns `{ "scopes": [ { "name", "created_at", "source" }, … ] }` sorted by
+`created_at` ascending. Reads `~/.lunaris/scopes.json` only — never scans
+`.db` files.
+
+---
+
+## Common Configurations
+
+### Override scope explicitly
+
+```sh
+LUNARIS_MCP_SCOPE=my-project lunaris-mcp
+```
+
+Or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "lunaris": {
+      "command": "lunaris-mcp",
+      "args": [],
+      "env": {
+        "LUNARIS_MCP_SCOPE": "my-project"
+      }
+    }
+  }
+}
+```
+
+### Point at Moon for vector recall
+
+```json
+{
+  "mcpServers": {
+    "lunaris": {
+      "command": "lunaris-mcp",
+      "args": [],
+      "env": {
+        "LUNARIS_MCP_STORAGE": "redis://localhost:6380"
+      }
+    }
+  }
+}
+```
+
+Moon runs on port 6380 by default (`../moon/target/release/moon --port 6380`).
+Sub-25 ms recall over millions of bi-temporal facts is only achievable on
+Moon (or Postgres) — SQLite has no vector index.
+
+### Custom storage URL
+
+```sh
+LUNARIS_MCP_STORAGE=sqlite:////data/lunaris/workspace.db lunaris-mcp
+```
+
+### Adjust log verbosity
+
+```sh
+LUNARIS_MCP_LOG=debug lunaris-mcp
+```
+
+Logs go to **stderr only**. stdout is the MCP JSON-RPC transport; writing
+anything there corrupts the framing and causes Claude Code to silently
+disconnect.
+
+### Pre-staged GGUF models
+
+```sh
+LUNARIS_MCP_SKIP_STAGE=1 lunaris-mcp
+```
+
+Bypasses the lazy stager on the first `memory.recall` call. Use this if
+models are already present under `~/.lunaris/models/`.
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
+| `LUNARIS_MCP_STORAGE` | `sqlite:///<HOME>/.lunaris/<scope>.db` | Storage backend URL |
+| `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
+| `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
+
+---
+
+## Scope Derivation
+
+Scope is resolved once at server startup and cannot be changed by wire
+payloads (enforced by `#[serde(deny_unknown_fields)]` on all DTOs):
+
+1. `--scope` flag / `LUNARIS_MCP_SCOPE` env var (highest priority)
+2. `git remote.origin.url` + current branch → blake3 → `"git_<hex16>"`
+3. Canonical cwd → blake3 → `"cwd_<hex16>"`
+
+The resolved scope is persisted to `~/.lunaris/scopes.json`. To rename a
+scope (e.g., `"git_3f9a…"` → `"my-project"`):
+
+1. Edit the `name` field in `~/.lunaris/scopes.json`.
+2. Restart `lunaris-mcp` (Claude Code restart restarts the child process).
+
+---
+
+## Multi-Window Concurrency
+
+The default SQLite backend uses WAL mode with `busy_timeout`. Two Claude Code
+windows in the same repo share the same `.db` file safely — WAL allows one
+writer and multiple concurrent readers without blocking.
+
+For Moon, standard Redis connection pooling applies; concurrent writers are
+naturally serialized by Moon's single-threaded command loop.
+
+---
+
+## Troubleshooting
+
+**`lunaris-mcp: command not found`**
+`~/.cargo/bin` is not in `PATH`. Add `export PATH="$HOME/.cargo/bin:$PATH"` to
+your shell profile and restart the terminal. Then re-run `claude mcp add`.
+
+**Claude Code connects but tools don't appear in the tool list**
+The MCP initialize handshake failed. Run `lunaris-mcp` directly in a
+terminal; any startup error (scope resolution failure, storage URL parse
+error) is printed to stderr. Fix the error, then restart Claude Code.
+
+**`memory.recall` returns empty hits**
+Either: (a) the backend is SQLite (vector index not available — point
+`LUNARIS_MCP_STORAGE` at Moon or Postgres), or (b) no episodes have been
+ingested into the current scope yet.
+
+**First `memory.recall` takes ~30 seconds**
+The GGUF embedder (~150 MB) and reranker are being staged to
+`~/.lunaris/models/` on first use. This is a one-time cost per host. Set
+`LUNARIS_MCP_SKIP_STAGE=1` if models are pre-staged via another mechanism.
+
+**stdout corruption / Claude Code silently disconnects**
+Something is writing to stdout. Check shell profile files (`.bashrc`,
+`.zshrc`) for `echo` or `print` statements that run at shell startup — they
+will corrupt the MCP framing. The `LUNARIS_MCP_LOG` directive controls
+`lunaris-mcp`'s own output; application logs always go to stderr.
+
+**Wrong scope — episodes not appearing**
+Run `memory.list_scopes` to see all known scopes and their derivation sources.
+If the server resolved a different scope than expected, either set
+`LUNARIS_MCP_SCOPE` explicitly or rename the scope entry in
+`~/.lunaris/scopes.json` and restart.
+
+---
+
+## What You Just Got
+
+With Wave A connected:
+
+- **Persistent, scoped memory** across Claude Code sessions for the repo.
+  Every `memory.ingest` write survives process restart — stored in
+  `~/.lunaris/<scope>.db` (SQLite) or Moon/Postgres.
+- **Bi-temporal storage** — every episode carries a valid-time and
+  transaction-time. `memory.recall` with `as_of` lets you snapshot the store
+  as it existed at any past timestamp.
+- **Scope isolation (RFC 0001)** — per-repo memory with zero cross-project
+  bleed. The scope is bound at startup; no wire field can override it.
+- **`memory.forget`** — targeted deletion by source prefix or episode ID,
+  with a non-empty-prefix guard to prevent accidental total-wipe.
+- **Sub-25 ms recall** — achievable with Moon backend over millions of
+  bi-temporal facts (SQLite has no vector index; that claim is Moon-only).
+
+---
+
+## Deferred to Wave B/C
+
+| Feature | Status |
+|---------|--------|
+| SSE transport + Bearer auth | Deferred (Option B) |
+| Multi-user server mode | Deferred |
+| `memory.recall` on SQLite | Not planned — Moon/Postgres only |
+| `npx`/`uvx` distribution | Deferred |
+| `record_decision` / `record_edit` tool aliases | Deferred |
+| `coding_session_memory` recipe rename | Deferred |
+
+The stdio transport (Wave A) is the supported path. Option C (MCP as a
+feature flag on `lunaris-server`) was evaluated and rejected — see
+`docs/decisions/2026-05-24-claude-code-mcp-reversal.md`.
