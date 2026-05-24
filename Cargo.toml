@@ -52,6 +52,10 @@ members = [
   "crates/lunaris-rerank-native",
   "crates/lunaris-retrieve",
   "crates/lunaris-server",
+  # Wave A — MCP server binary exposing Lunaris memory to Claude Code / Codex
+  # via the official rmcp 1.7 stdio transport. Zero tools at Wave 0; tool
+  # handlers (memory.ingest, .recall, .forget, .list_scopes) land in Wave 2.
+  "crates/lunaris-mcp",
   # O-02 spike: throwaway Apple-Silicon-only crate evaluating `mlx-rs` as an
   # alternate embedder kernel backend. `publish = false`; deleted after the
   # GO/NO-GO decision regardless of outcome. See

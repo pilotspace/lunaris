@@ -1,0 +1,51 @@
+[package]
+name             = "lunaris-mcp"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish          = false
+
+description = "Lunaris memory engine — MCP server for Claude Code, Codex, and other MCP-native agents"
+readme      = "README.md"
+keywords    = ["mcp", "agent", "memory", "claude-code", "codex"]
+categories  = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "lunaris-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# MCP SDK — stdio transport only; default features (base64, macros, server)
+# retained so Wave 2 #[tool_router]/#[tool_handler] macros work without churn.
+# transport-io adds tokio::io::{stdin,stdout} + codec framing needed for stdio.
+rmcp = { version = "1.7", features = ["transport-io"] }
+
+# Lunaris engine — Q4_K_M GGUF embedder+reranker; lazy download to ~/.lunaris/models/.
+# default-features = false on the workspace entry; we add only what we need here.
+lunaris      = { workspace = true, features = ["embedder-gguf", "reranker-gguf"] }
+lunaris-core = { workspace = true }
+
+# CLI + observability
+clap               = { workspace = true, features = ["derive", "env"] }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Async runtime — workspace pulls tokio with "full" already
+tokio = { workspace = true }
+
+# Serde + errors
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+
+# Scope derivation (Wave 1.A) — blake3 + dirs already in workspace
+blake3 = { workspace = true }
+dirs   = { workspace = true }
+
+[dev-dependencies]
+# placeholder — Wave 2/3 integration tests add real deps
+tempfile = "3"
