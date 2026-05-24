@@ -60,6 +60,7 @@ use sqlx::sqlite::{
 };
 
 mod schema;
+mod vector;
 
 /// SQLite-backed embedded storage handle. Cheap to clone (`Arc`-shared pool).
 #[derive(Clone)]
@@ -213,12 +214,16 @@ impl StoragePort for EmbeddedStorage {
                     close_open_kv(&mut tx, key, &hk).await?;
                 }
                 WriteOp::VectorUpsert { index, id, embedding, metadata } => {
+                    // RFC 0001 Wave A.1 — scope-prefix the stored idx so
+                    // `vector_search` can isolate rows at the SQL boundary
+                    // (mirrors Moon's `ft_index_name(scope, kind)` convention).
+                    let scoped_idx = vector::scoped_idx(_scope, index);
                     sqlx::query(
                         "UPDATE lunaris_vec SET sys_to = ?1 \
                          WHERE idx = ?2 AND id = ?3 AND sys_to IS NULL",
                     )
                     .bind(&hk)
-                    .bind(index)
+                    .bind(&scoped_idx)
                     .bind(id)
                     .execute(&mut *tx)
                     .await
@@ -228,7 +233,7 @@ impl StoragePort for EmbeddedStorage {
                          (idx, id, embedding, metadata, sys_from, sys_to) \
                          VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
                     )
-                    .bind(index)
+                    .bind(&scoped_idx)
                     .bind(id)
                     .bind(serde_json::to_string(embedding)?)
                     .bind(serde_json::to_string(metadata)?)
@@ -306,17 +311,15 @@ impl StoragePort for EmbeddedStorage {
     #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,
-        _scope: &Scope,
-        _index: &str,
-        _query: &[f32],
-        _k: usize,
-        _filter: Option<&Filter>,
-        _as_of: Option<Hlc>,
-        _rerank: bool,
+        scope: &Scope,
+        index: &str,
+        query: &[f32],
+        k: usize,
+        filter: Option<&Filter>,
+        as_of: Option<Hlc>,
+        rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        Err(StorageError::NotSupported(
-            "embedded backend: vector_search not yet implemented (brute-force cosine pending)",
-        ))
+        vector::vector_search(&self.pool, scope, index, query, k, filter, as_of, rerank).await
     }
 
     async fn graph_traverse(
@@ -709,7 +712,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vector_upsert_is_persisted_even_though_search_is_unsupported() {
+    async fn vector_upsert_is_persisted_and_searchable() {
         let s = mem().await;
         s.atomic_write(
             &Scope::dev(),
@@ -729,10 +732,15 @@ mod tests {
             .expect("count");
         assert_eq!(n, 1);
 
-        assert!(matches!(
-            s.vector_search(&Scope::dev(), "chunks", &[0.1, 0.2, 0.3], 1, None, None, false).await,
-            Err(StorageError::NotSupported(_))
-        ));
+        // Wave A.1 T2: vector_search is now implemented — brute-force cosine.
+        // The upserted embedding [0.1, 0.2, 0.3] with identical probe gives
+        // cosine = 1.0 (exact match).
+        let hits = s
+            .vector_search(&Scope::dev(), "chunks", &[0.1, 0.2, 0.3], 1, None, None, false)
+            .await
+            .expect("vector_search must succeed");
+        assert_eq!(hits.len(), 1, "must find the upserted vector");
+        assert!((hits[0].score - 1.0).abs() < 1e-5, "exact-match cosine must be ~1.0");
     }
 
     #[tokio::test]
