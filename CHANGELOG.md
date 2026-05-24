@@ -2,6 +2,104 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.3.0 — unreleased — Scope enumeration + recipe surface (W1/W2 wave)
+
+Additive minor bump (per the workspace lock's spirit at the actual
+baseline). The wave lands the `Lunaris::list_scopes` public surface,
+the first two recipe slots in the W1/W2 roadmap, an FT-backed
+`invalidate_range` fan-out, and the vendor/moon bump that pulls Moon
+`version_token` (#97) + `FT.INVALIDATE_RANGE` (#98) into the binary
+consumed by CI.
+
+### Added
+
+- **`Lunaris::list_scopes(prefix, limit, cursor) -> ScopePage`** —
+  high-level pass-through to `StoragePort::list_scopes` with
+  per-backend support matrix documented on the method. Embedded
+  (SQLite) and Moon backends enumerate live scopes via key-parse +
+  dedupe; Postgres returns `StorageError::NotSupported` by design
+  because cross-scope enumeration would require `BYPASSRLS` which
+  the production app role MUST NOT hold (RFC 0001 §6). Helios falls
+  back to a caller-supplied scope list when it sees `NotSupported`.
+- **`lunaris_core::keyspace::parse_scope_from_key`** — reverse of
+  `scope_prefix`, used by both backend `list_scopes` impls.
+- **`StoragePort::list_scopes` + `ScopePage`** — trait method with
+  `NotSupported` default + paged result type (opaque scope-string
+  cursor, Q-U1 lock). Resume is strictly-greater-than the last
+  emitted scope; re-passing the terminal cursor returns an empty
+  page (idempotent past-the-end).
+- **`lunaris-storage-moon::scopes`** — `SCAN MATCH lunaris:{prefix}*`
+  with per-batch dedupe into a `BTreeSet`. Lazy SCAN-derived (Q-U2
+  lock) — promotion to an eager `set:scopes` SADD index is deferred
+  until SCAN proves slow at scale.
+- **W1-L1 `lunaris-ingest::schema_gate`** — generalized
+  chunk-metadata schema gate that prevents the L9 regression class
+  (extractor-introduced unknown keys silently pruned). Red-then-green
+  TDD pair (`286971a` red, `a37fd93` green).
+- **W2-L1 `lunaris-recipes::documentary::code_feature_card`** — first
+  recipe slot: weighted vector + keyword + graph fan-in tuned for
+  "what does this feature do" prompts, with deterministic ranking.
+  Red-then-green TDD pair (`32dcca5` red, `aac4b55` green).
+- **W2-L2 `lunaris::invalidate_range`** — bi-temporal range invalidate
+  over the Moon `FT.INVALIDATE_RANGE` primitive (Moon #98). Single
+  storage call, closed `[lo, hi]` interval, 6 positional args matching
+  the Moon wire contract. Red-then-green TDD pair (`8310305` red,
+  `cd8c26c` green).
+
+### Changed
+
+- **`[workspace.package].version`** — `0.2.1 → 0.3.0`. All 23
+  internal workspace dep entries bumped in lockstep per the
+  workspace comment that mandates sync.
+- **`vendor/moon` submodule** — `b24b4d0 → b7a443f` (50 commits;
+  Moon main HEAD). Pulls in Moon #97 (`version_token` AtomicU64 +
+  FT.INFO/VINFO/GRAPH.INFO exposure) and Moon #98
+  (`FT.INVALIDATE_RANGE` delete-by-TAG∩NUMERIC-range, 6 positional
+  args, closed `[lo,hi]`). Moon is binary-consumed by Lunaris
+  (`cargo build --release --manifest-path vendor/moon/Cargo.toml
+  --bin moon` per 14-02 Option B), so the SHA bump does not affect
+  Lunaris Rust compilation — it changes only the binary CI runs
+  against.
+- **`prefix.map_or(true, …) → prefix.is_none_or(…)`** in both
+  `list_scopes` backend impls (clippy::unnecessary_map_or).
+
+### CI / build
+
+- **All workflows skip the `.planning` submodule.** The
+  `.planning/` git submodule points at the private cross-repo
+  `pilotspace/lunaris-docs`. The default GHA `GITHUB_TOKEN` is
+  repo-scoped and cannot clone other repos in the org, so
+  `actions/checkout@v4` with `submodules: recursive` fails at the
+  `.planning` clone, blocking the workflow before any test code
+  runs. Four workflows (`integration.yml`, `conformance-bindings.yml`,
+  `eval-gauntlet.yml`, `llm-gates.yml`; 6 checkout sites) replace
+  `submodules: recursive` with `submodules: false` plus an explicit
+  `git submodule update --init vendor/moon` step. `vendor/moon` is
+  the public-via-HTTPS submodule that auths via the standard
+  `GITHUB_TOKEN`. `ci.yml`'s `submodule-tag-parity` job still uses
+  `.planning` intentionally and is gated to release-tag pushes —
+  left untouched.
+- **`vendor/moon` init is non-recursive.** `vendor/moon/.planning`
+  → `pilotspace/moon-docs` is SSH-only and unreachable from CI
+  runners. The init step uses `git submodule update --init
+  vendor/moon` (no `--recursive`).
+- **Post-merge fmt sweep** — `cargo fmt --all` across 6 .rs files
+  that the rebase-merge of #6/#7/#8 introduced without fmt
+  (`crates/lunaris-core/src/storage/port.rs`,
+  `crates/lunaris-ingest/src/schema_gate.rs`,
+  `crates/lunaris-recipes/src/documentary/code_feature_card.rs`,
+  `crates/lunaris-recipes/tests/code_feature_card_recipe.rs`,
+  `crates/lunaris-storage-moon/src/invalidate.rs`,
+  `crates/lunaris/src/invalidate.rs`).
+
+### Compatibility
+
+- No on-the-wire breaks vs. v0.2.1. The list_scopes addition is
+  additive (new method + default `NotSupported` impl on the trait).
+- Postgres operators relying on cross-scope enumeration must
+  detect `StorageError::NotSupported` from `list_scopes` and fall
+  back to a caller-supplied scope list.
+
 ## v0.2.1 — 2026-05-11 — Scope alphabet hardening (RC-2 closure)
 
 Patch release that closes RC-2 from the v0.2.0 release-gate review: the

@@ -123,7 +123,7 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 | Milestone | Status |
 |---|---|
 | **v0.2.1** | Shipped — multi-agent partitioning, full v0.2 release-gate close-out |
-| **v0.2.x OSS** | In progress — laptop-floor verifier (RFC 0006), 10-min quickstart, PyPI/npm publish |
+| **v0.3.0** | In progress on `main` — `Lunaris::list_scopes`, W1/W2 wave (schema_gate, code_feature_card recipe, FT.INVALIDATE_RANGE fan-out), vendor/moon bump to Moon main (version_token + FT.INVALIDATE_RANGE) |
 | **v0.3 Self-hosted** | Planning — Docker/Helm, SLOs, design partners |
 | **v0.4 Ecosystem** | Future — LangGraph/CrewAI/Letta adapters |
 
