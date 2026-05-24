@@ -3010,6 +3010,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "chrono",
  "clap",
  "dirs",
  "futures-util",
@@ -3018,6 +3019,7 @@ dependencies = [
  "lunaris-memory",
  "reqwest 0.13.2",
  "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

@@ -1,10 +1,9 @@
 //! `lunaris-mcp` — MCP server exposing Lunaris memory to Claude Code / Codex.
 //!
-//! Wave 0 scaffold: an rmcp stdio server with **zero tools registered**.
-//! Wave 2 adds `memory.ingest`, `memory.recall`, `memory.forget`,
-//! `memory.list_scopes`. Wave 1 adds scope resolution + lazy model staging.
+//! Wave 2.A: four tools registered — `memory.ingest` (implemented),
+//! `memory.recall`, `memory.forget`, `memory.list_scopes` (Wave 2.B/C stubs).
 //!
-//! Transport: stdio only (MCP over JSON-RPC framed by Content-Length headers).
+//! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
 //!
 //! # CRITICAL: logs go to stderr
@@ -20,13 +19,28 @@ mod scope_resolver;
 // NEVER called at server start: first call comes from the memory.recall handler
 // (Wave 2.B). Cold-start budget gate (Wave 3.2) asserts tools/list < 500 ms.
 mod model_stager;
+mod state;
+mod tools;
 
 use clap::Parser;
 use rmcp::{
     ServerHandler, ServiceExt,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    tool, tool_handler, tool_router,
     transport::stdio,
 };
+
+use crate::state::AppState;
+use crate::tools::{
+    forget::{ForgetParams, ForgetResponse},
+    ingest::{IngestParams, IngestResponse},
+    list_scopes::{ListScopesParams, ListScopesResponse},
+    recall::{RecallParams, RecallResponse},
+};
+
+// Alias for the JSON wrapper so tool method signatures stay concise.
+use rmcp::handler::server::wrapper::Json;
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -38,12 +52,10 @@ use rmcp::{
 )]
 struct Cli {
     /// Scope override (default: derived from git remote + branch, or cwd hash).
-    /// Wave 1.A implements the full resolver; Wave 0 ignores this field.
     #[arg(long, env = "LUNARIS_MCP_SCOPE")]
     scope: Option<String>,
 
-    /// Storage URL (default: sqlite:///~/.lunaris/<scope>.db).
-    /// Wave 2 wires this to `Lunaris::open`; Wave 0 ignores it.
+    /// Storage URL (default: sqlite:///<HOME>/.lunaris/<scope>.db).
     #[arg(long, env = "LUNARIS_MCP_STORAGE")]
     storage: Option<String>,
 
@@ -55,29 +67,109 @@ struct Cli {
 
 // ── Server handler ────────────────────────────────────────────────────────────
 
-/// Wave 0 MCP server — zero tools registered.
+/// Lunaris MCP server — four memory tools registered.
 ///
-/// Responds to `initialize` (returns server capabilities + metadata) and
-/// `tools/list` (returns an empty list). Wave 2 registers the four memory
-/// tools via `#[tool_router]` / `#[tool_handler]`.
+/// `state` is `Clone`-able because `AppState` wraps `Arc<Lunaris>`. The
+/// `ToolRouter` is constructed once at startup via `Self::lunaris_tool_router()`
+/// and stored alongside state so `#[tool_handler]` can dispatch calls.
 #[derive(Clone)]
-struct LunarisMcpServer;
+struct LunarisMcpServer {
+    state: AppState,
+    tool_router: ToolRouter<Self>,
+}
 
+impl LunarisMcpServer {
+    fn new(state: AppState) -> Self {
+        Self { state, tool_router: Self::lunaris_tool_router() }
+    }
+}
+
+// ── Tool registration ─────────────────────────────────────────────────────────
+//
+// `#[tool_router]` generates `Self::lunaris_tool_router() -> ToolRouter<Self>`
+// from the annotated methods. `#[tool_handler(router = self.tool_router)]` on
+// the `impl ServerHandler` block wires `call_tool` + `list_tools` dispatch
+// to that router, while leaving `get_info` free for our custom implementation.
+
+#[tool_router(router = lunaris_tool_router)]
+impl LunarisMcpServer {
+    /// Ingest an observation into agent memory.
+    ///
+    /// Stores the observation as an episode scoped to this server's active
+    /// scope. Returns the log-sequence number of the committed write.
+    #[tool(
+        name = "memory.ingest",
+        description = "Ingest an observation (message, document, tool result) into agent memory. \
+                       Returns the LSN of the committed write."
+    )]
+    async fn ingest(
+        &self,
+        Parameters(params): Parameters<IngestParams>,
+    ) -> Result<Json<IngestResponse>, rmcp::ErrorData> {
+        tools::ingest::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+    }
+
+    /// Recall memories relevant to a query.
+    ///
+    /// Fuses semantic (vector) and keyword (BM25) search via Reciprocal Rank
+    /// Fusion. Wave 2.B implements the full retrieval path.
+    #[tool(
+        name = "memory.recall",
+        description = "Recall memories relevant to a natural-language query using \
+                       semantic + keyword search. Wave 2.B stub — not yet implemented."
+    )]
+    async fn recall(
+        &self,
+        Parameters(params): Parameters<RecallParams>,
+    ) -> Result<Json<RecallResponse>, rmcp::ErrorData> {
+        tools::recall::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+    }
+
+    /// Forget memories by source prefix or episode ID.
+    ///
+    /// Wave 2.C implements the full deletion path.
+    #[tool(
+        name = "memory.forget",
+        description = "Delete memories by source prefix or episode ID. \
+                       Wave 2.C stub — not yet implemented."
+    )]
+    async fn forget(
+        &self,
+        Parameters(params): Parameters<ForgetParams>,
+    ) -> Result<Json<ForgetResponse>, rmcp::ErrorData> {
+        tools::forget::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+    }
+
+    /// List all known memory scopes.
+    ///
+    /// Wave 2.C implements the full scope enumeration path.
+    #[tool(
+        name = "memory.list_scopes",
+        description = "List all known memory scopes with creation timestamps. \
+                       Wave 2.C stub — not yet implemented."
+    )]
+    async fn list_scopes(
+        &self,
+        Parameters(params): Parameters<ListScopesParams>,
+    ) -> Result<Json<ListScopesResponse>, rmcp::ErrorData> {
+        tools::list_scopes::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for LunarisMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
-            ServerCapabilities::builder()
-                // Tools capability declared now; Wave 2 populates it.
-                .enable_tools()
-                .build(),
-        )
-        .with_server_info(Implementation::from_build_env())
-        .with_protocol_version(ProtocolVersion::V_2024_11_05)
-        .with_instructions(
-            "Lunaris memory engine — ingest, recall, forget, and list memory scopes. \
-             Wave 0 scaffold: tool handlers land in Wave 2."
-                .to_string(),
-        )
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::from_build_env())
+            .with_protocol_version(ProtocolVersion::V_2024_11_05)
+            .with_instructions(
+                "Lunaris memory engine — ingest, recall, forget, and list memory scopes. \
+             Scope is bound at server startup; wave 2.A implements memory.ingest."
+                    .to_string(),
+            )
     }
 }
 
@@ -92,10 +184,10 @@ async fn main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         scope   = ?cli.scope,
         storage = ?cli.storage,
-        "lunaris-mcp starting (Wave 0 scaffold — zero tools)",
+        "lunaris-mcp starting (Wave 2.A)",
     );
 
-    run_server().await
+    run_server(&cli).await
 }
 
 /// Initialise `tracing_subscriber` with the given filter.
@@ -112,16 +204,19 @@ fn init_tracing(filter: &str) {
         .try_init();
 }
 
-/// Start the rmcp stdio server.
+/// Bootstrap `AppState` and start the rmcp stdio server.
 ///
 /// `stdio()` hooks `tokio::io::stdin()` / `tokio::io::stdout()` through the
 /// MCP Content-Length framing codec. `.serve()` performs the MCP `initialize`
 /// handshake; `.waiting()` drives the event loop until stdin EOF or SIGTERM.
-///
-/// Wave 2 will pass a constructed `Lunaris` handle into `LunarisMcpServer`
-/// so tool handlers can call `Lunaris::ingest` / `retrieve` / `forget`.
-async fn run_server() -> anyhow::Result<()> {
-    let service = LunarisMcpServer
+async fn run_server(cli: &Cli) -> anyhow::Result<()> {
+    let state = AppState::bootstrap(cli.scope.as_deref(), cli.storage.as_deref())
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap failed: {e}"))?;
+
+    tracing::info!(scope = state.scope.as_str(), "lunaris-mcp ready");
+
+    let service = LunarisMcpServer::new(state)
         .serve(stdio())
         .await
         .inspect_err(|e| tracing::error!(err = ?e, "MCP initialize handshake failed"))?;

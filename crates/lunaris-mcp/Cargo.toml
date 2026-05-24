@@ -46,6 +46,14 @@ anyhow      = { workspace = true }
 blake3 = { workspace = true }
 dirs   = { workspace = true }
 
+# Wave 2.A — t_ref parsing in memory.ingest handler (RFC-3339 → DateTime<Utc>)
+chrono = { workspace = true }
+
+# Wave 2.A — JSON Schema generation for rmcp #[tool] parameter types.
+# Must be a direct dependency (proc-macro derives resolve by crate name, not
+# by rmcp::schemars re-export). Version pinned to match rmcp 1.7's schemars dep.
+schemars = { version = "1.0", features = ["chrono04"] }
+
 # Wave 1.B — lazy GGUF model stager (indicatif progress on stderr, reqwest streaming)
 # reqwest: workspace 0.13 (rustls+json already there); we add "stream" for
 # bytes_stream() needed by the chunked download path.
@@ -61,3 +69,7 @@ indicatif    = "0.17"
 tempfile = "3"
 # Wave 1.B — mock HTTP server for model stager tests (no real network in CI)
 wiremock = "0.6"
+# Wave 2.A — binary-spawn integration tests need tokio process + time features
+tokio = { workspace = true, features = ["process", "time", "io-util"] }
+# Wave 2.A — JSON-RPC message framing in integration tests
+serde_json = { workspace = true }
