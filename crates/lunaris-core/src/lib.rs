@@ -18,6 +18,8 @@ pub mod keyspace;
 pub mod primitives;
 // RFC 0001 — Scope newtype + ScopeError for multi-agent partition isolation.
 pub mod scope;
+// Phase 23-01 — Scope derivation shared between lunaris-mcp and lunaris-hook.
+pub mod scope_resolver;
 pub mod storage;
 
 pub use bitemporal::BiTemporal;
