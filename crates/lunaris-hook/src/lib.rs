@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+pub mod dedupe;
 pub mod envelope;
 pub mod filter;
 pub mod ingest;
@@ -15,7 +16,7 @@ pub mod scrub;
 
 use std::sync::Arc;
 
-use lunaris::Lunaris;
+use lunaris::{IngestKind, Lunaris};
 use lunaris_core::{Lsn, Scope};
 
 /// Errors returned by [`run`].
@@ -50,32 +51,119 @@ impl HookError {
 
 /// Process one hook envelope.
 ///
+/// Full 8-step HOOK-05 pipeline (B1/B2 corrected order):
+///
+/// 1. Parse stdin bytes as `serde_json::Value`.
+/// 2. Parse typed `HookEvent` from the `Value` (short-circuit Unknown → `Ok(None)`).
+/// 3. Apply `FilterPolicy` — path/kind/size verdict (HOOK-03). Deny → `Err(Filtered)`.
+/// 4. Extract kind-specific content string (`extract_content_string`).
+/// 5. Truncate content if >128 KiB (`FilterPolicy::truncate_payload`).
+/// 6. Scrub the truncated content for secrets (HOOK-04).
+/// 7. Build `EpisodeBuilder` from SCRUBBED content (`build_episode_from_scrubbed`).
+///    Splice scrubbed content back into the `Value` clone for canonical hashing.
+/// 8. Compute `dedupe_key` via `canonical_json` + `derive_dedupe_key`.
+///    Call `ingest_idempotent` — returns `(Lsn, IngestKind)`. Duplicate → same Lsn.
+///
 /// Returns:
-/// - `Ok(Some(lsn))` — Episode written, caller exits 0.
+/// - `Ok(Some(lsn))` — Episode written (Fresh) or duplicate (prior Lsn), caller exits 0.
 /// - `Ok(None)` — Unknown event kind, no Episode written, caller exits 0.
 /// - `Err(HookError::Parse)` — Malformed JSON or missing field, caller exits 64.
 /// - `Err(HookError::Ingest)` — Storage rejected the write, caller exits 65.
-///
-/// Exit 66 is reserved for Phase 24 filter-rejected events (not used here).
+/// - `Err(HookError::Filtered)` — Event rejected by filter policy, caller exits 66.
 pub async fn run(
     stdin_bytes: &[u8],
     scope: Scope,
     lunaris: Arc<Lunaris>,
 ) -> Result<Option<Lsn>, HookError> {
-    let event = envelope::parse(stdin_bytes)?;
+    // Step 1: Parse raw bytes into a serde_json::Value.
+    // We keep the Value alongside the typed event so canonical_json can hash it.
+    let event_value: serde_json::Value = serde_json::from_slice(stdin_bytes)
+        .map_err(|e| envelope::ParseError::InvalidJson(e.to_string()))?;
 
-    match &event {
-        envelope::HookEvent::Unknown(kind) => {
-            tracing::info!(kind = %kind, "unknown hook event kind — no-op (exit 0)");
-            return Ok(None);
-        }
-        _ => {}
+    // Step 2: Parse typed HookEvent from the Value.
+    let event = envelope::parse_value(&event_value)?;
+
+    // Unknown kinds are no-ops — exit 0 without writing anything.
+    if let envelope::HookEvent::Unknown(ref kind) = event {
+        tracing::info!(kind = %kind, "unknown hook event kind — no-op (exit 0)");
+        return Ok(None);
     }
 
-    let builder = ingest::build_episode(&event)
-        .expect("non-Unknown event must produce an EpisodeBuilder");
+    // Step 3: Apply FilterPolicy — path/kind verdict (HOOK-03).
+    let policy = filter::FilterPolicy::from_env()
+        .map_err(|e| HookError::Filtered(e.to_string()))?;
+    if policy.apply(&event) == filter::FilterVerdict::Deny {
+        tracing::debug!(
+            scope = scope.as_str(),
+            "event rejected by filter policy — exit 66",
+        );
+        return Err(HookError::Filtered("event rejected by filter policy".into()));
+    }
+
+    // Step 4: Extract kind-specific content string from the envelope Value.
+    // This is the raw (un-scrubbed) content field: tool_input JSON for PreToolUse,
+    // tool_response JSON for PostToolUse, empty string for Stop/SessionStart.
+    let raw_content = envelope::extract_content_string(&event_value);
+
+    // Step 5: Truncate raw content if it exceeds 128 KiB.
+    // Truncation runs on the raw string so head/tail coverage is maximised.
+    let truncated = filter::FilterPolicy::truncate_payload(&raw_content);
+    let truncated_bytes = truncated.truncated_bytes;
+
+    // Step 6: Scrub the truncated content for secrets (HOOK-04).
+    // Scrubbing runs on the TRUNCATED string — secrets in the elided middle are
+    // not a concern because the elision marker replaces them.
+    let scrub_engine = scrub::ScrubEngine::from_default_policy();
+    let mut scrubbed_content = truncated.content;
+    scrub_engine.apply(&mut scrubbed_content);
+
+    // Step 7: Build EpisodeBuilder from SCRUBBED content.
+    // This is the scrubbed builder — no un-scrubbed bytes reach storage.
+    let builder = ingest::build_episode_from_scrubbed(
+        &event_value,
+        &scrubbed_content,
+        truncated_bytes,
+    )
+    .map_err(|e| HookError::Ingest(lunaris_core::LunarisError::Validate(
+        lunaris_core::ValidateError::Contradiction(e.to_string()),
+    )))?;
+
+    // Step 8: Compute dedupe key from canonical JSON of the post-scrub envelope,
+    // then call ingest_idempotent (HOOK-05).
+    //
+    // Splice the scrubbed content back into a clone of the envelope Value so
+    // canonical_json hashes the post-scrub form. This ensures two replays that
+    // both redact the same secret produce the same dedupe key.
+    let canonical_bytes = {
+        let mut canonical_value = event_value.clone();
+        envelope::splice_content_string(&mut canonical_value, &scrubbed_content);
+        dedupe::canonical_json(&canonical_value)
+    };
+
+    let event_id = envelope::extract_event_id(&event).unwrap_or_else(|| {
+        dedupe::derive_event_id(
+            envelope::extract_session_id(&event),
+            envelope::extract_kind_str(&event),
+            envelope::extract_transcript_path(&event),
+            envelope::extract_timestamp_str(&event),
+        )
+    });
+
+    let dedupe_key = dedupe::derive_dedupe_key(scope.as_str(), &event_id, &canonical_bytes);
 
     let scoped = lunaris.scoped(scope);
-    let lsn = scoped.ingest(builder).await.map_err(HookError::Ingest)?;
+    let (lsn, kind) = scoped
+        .ingest_idempotent(builder, &dedupe_key)
+        .await
+        .map_err(HookError::Ingest)?;
+
+    if matches!(kind, IngestKind::Duplicate(_)) {
+        tracing::debug!(
+            dedupe_key = %dedupe_key,
+            lsn = %lsn,
+            "duplicate hook event — returning prior LSN (HOOK-05)",
+        );
+    }
+
     Ok(Some(lsn))
 }

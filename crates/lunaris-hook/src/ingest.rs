@@ -10,6 +10,16 @@ use serde_json::{Map, Value};
 
 use crate::envelope::{HookEvent, extract_timestamp};
 
+// ── HOOK-05: error type ───────────────────────────────────────────────────────
+
+/// Errors from [`build_episode_from_scrubbed`].
+#[derive(Debug, thiserror::Error)]
+pub enum IngestError {
+    /// The event kind cannot produce an episode (only `Unknown` triggers this).
+    #[error("cannot build episode from unknown hook event kind: {0}")]
+    UnknownEventKind(String),
+}
+
 /// Build an [`EpisodeBuilder`] from a parsed hook event.
 ///
 /// Returns `None` for [`HookEvent::Unknown`] — callers exit 0 without
@@ -109,4 +119,170 @@ fn build_meta(
     }
     m.insert("hook_event_name".into(), Value::String(hook_event_name.to_owned()));
     m
+}
+
+// ── HOOK-05: scrub-aware builder ──────────────────────────────────────────────
+
+/// Build an [`EpisodeBuilder`] from a pre-scrubbed content string (HOOK-05).
+///
+/// Unlike [`build_episode`], which reads the content directly from the
+/// parsed `HookEvent`, this function accepts a `scrubbed_content` string
+/// that has already been through truncation and secret scrubbing. The
+/// `event_value` is used only for metadata fields (session_id, kind,
+/// cwd, transcript_path, event_id, timestamp) — its raw content fields
+/// are intentionally ignored to ensure no un-scrubbed bytes reach storage.
+///
+/// Records `truncated_bytes` in the episode metadata under the key
+/// `"truncated_bytes"` (value 0 means no truncation occurred).
+///
+/// Returns `Err(IngestError::UnknownEventKind)` if the envelope's
+/// `hook_event_name` is absent or unrecognised — callers should have
+/// already short-circuited on Unknown kinds before reaching this function.
+///
+/// INGEST-04 invariant: this function MUST NOT call `atomic_write`.
+pub fn build_episode_from_scrubbed(
+    event_value: &serde_json::Value,
+    scrubbed_content: &str,
+    truncated_bytes: u64,
+) -> Result<EpisodeBuilder, IngestError> {
+    let kind = event_value
+        .get("hook_event_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Derive the source tag and extract metadata fields from the raw value.
+    let (source, session_id, tool_name, event_id, cwd, transcript_path) = match kind {
+        "PreToolUse" => {
+            let session_id = event_value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let tool_name = event_value
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let event_id = event_value
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let cwd = event_value
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let transcript_path = event_value
+                .get("transcript_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            ("claude-code:pre_tool_use".to_string(), session_id, tool_name, event_id, cwd, transcript_path)
+        }
+        "PostToolUse" => {
+            let session_id = event_value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let tool_name = event_value
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let event_id = event_value
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let cwd = event_value
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let transcript_path = event_value
+                .get("transcript_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            ("claude-code:post_tool_use".to_string(), session_id, tool_name, event_id, cwd, transcript_path)
+        }
+        "Stop" => {
+            let session_id = event_value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let cwd = event_value
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let event_id = event_value
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let transcript_path = event_value
+                .get("transcript_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            ("claude-code:stop".to_string(), session_id, None, event_id, cwd, transcript_path)
+        }
+        "SessionStart" => {
+            let session_id = event_value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let cwd = event_value
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let event_id = event_value
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            let transcript_path = event_value
+                .get("transcript_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned());
+            ("claude-code:session_start".to_string(), session_id, None, event_id, cwd, transcript_path)
+        }
+        other => {
+            return Err(IngestError::UnknownEventKind(other.to_owned()));
+        }
+    };
+
+    // Build metadata map (mirrors build_meta, plus truncated_bytes).
+    let mut meta = Map::new();
+    meta.insert("session_id".into(), Value::String(session_id));
+    if let Some(tn) = tool_name {
+        meta.insert("tool_name".into(), Value::String(tn));
+    }
+    if let Some(eid) = event_id {
+        meta.insert("event_id".into(), Value::String(eid));
+    }
+    meta.insert("cwd".into(), Value::String(cwd));
+    if let Some(tp) = transcript_path {
+        meta.insert("transcript_path".into(), Value::String(tp));
+    }
+    meta.insert("hook_event_name".into(), Value::String(kind.to_owned()));
+    if truncated_bytes > 0 {
+        meta.insert(
+            "truncated_bytes".into(),
+            Value::Number(serde_json::Number::from(truncated_bytes)),
+        );
+    }
+
+    // Parse timestamp from the raw value (reuse the same RFC-3339 logic as extract_timestamp).
+    let t_ref = event_value
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(Utc::now);
+
+    let content = scrubbed_content.to_owned();
+    let mut builder = EpisodeBuilder::new(source, content);
+    builder = builder.t_ref(t_ref);
+    if !meta.is_empty() {
+        builder = builder.metadata(meta);
+    }
+    Ok(builder)
 }
