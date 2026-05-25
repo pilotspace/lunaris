@@ -47,6 +47,9 @@ dirs   = { workspace = true }
 # t_ref parsing
 chrono = { workspace = true }
 
+# HOOK-03 — path glob deny list for FilterPolicy
+globset = { workspace = true }
+
 [dev-dependencies]
 tempfile     = "3"
 tokio        = { workspace = true, features = ["process", "time", "io-util"] }

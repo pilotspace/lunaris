@@ -7,6 +7,7 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 
 pub mod envelope;
+pub mod filter;
 pub mod ingest;
 pub mod scope;
 
@@ -28,6 +29,10 @@ pub enum HookError {
     /// Storage substrate rejected the write (exit 65).
     #[error("ingest error: {0}")]
     Ingest(#[from] lunaris_core::LunarisError),
+
+    /// Event rejected by filter policy — exit 66 (no Episode written, not an error).
+    #[error("event filtered by policy: {0}")]
+    Filtered(String),
 }
 
 impl HookError {
@@ -36,6 +41,7 @@ impl HookError {
         match self {
             HookError::Parse(_) => 64,
             HookError::Ingest(_) => 65,
+            HookError::Filtered(_) => 66,
         }
     }
 }

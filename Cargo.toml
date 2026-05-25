@@ -269,6 +269,9 @@ napi-build          = "2"
 # inline with no heap alloc; Clone is O(1). Used in lunaris-core::scope and
 # propagated to every primitive + StoragePort method.
 smol_str            = { version = "0.3", features = ["serde"] }
+# Phase 24 Plan 24-01 — HOOK-03 layered event-filter policy (path glob deny list).
+# `globset` provides compiled GlobSet matching used by FilterPolicy in lunaris-hook.
+globset             = "0.4"
 
 [profile.dev]
 opt-level = 0
