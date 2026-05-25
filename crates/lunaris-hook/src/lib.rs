@@ -9,7 +9,9 @@
 pub mod envelope;
 pub mod filter;
 pub mod ingest;
+pub mod policy;
 pub mod scope;
+pub mod scrub;
 
 use std::sync::Arc;
 

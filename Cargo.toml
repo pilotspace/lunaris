@@ -236,6 +236,10 @@ quote          = "1"
 proc-macro2    = "1"
 prettyplease   = "0.2"
 toml           = "0.8"
+# Phase 24 Plan 24-02 — secret scrubber (HOOK-04). Linear-time built-in patterns
+# (ENV_KEY, AWS_KEY, GH_TOKEN, SSH_KEY, JWT) + optional TOML overlay. No ReDoS risk
+# from built-ins; user-supplied patterns gated by 256-char length limit.
+regex          = "1"
 insta          = { version = "1", features = ["json"] }
 similar        = "2"
 # Phase 8 Plan 08-02 — PyO3 0.26 Python bindings (lunaris-py crate).

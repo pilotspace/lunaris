@@ -7,7 +7,6 @@
 //! Also tests TOML overlay (custom patterns add on top, built-ins always run)
 //! and TOML parse-failure fallback (warn log, no panic, built-ins continue).
 
-use lunaris_hook::policy::HookPolicy;
 use lunaris_hook::scrub::ScrubEngine;
 
 // ── built-in tests ──────────────────────────────────────────────────────────
