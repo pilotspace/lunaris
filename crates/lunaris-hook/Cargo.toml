@@ -58,8 +58,11 @@ regex = { workspace = true }
 toml  = { workspace = true }
 
 [dev-dependencies]
-tempfile     = "3"
-tokio        = { workspace = true, features = ["process", "time", "io-util"] }
-serde_json   = { workspace = true }
-lunaris-core = { workspace = true }
-parking_lot  = { workspace = true }
+tempfile                 = "3"
+tokio                    = { workspace = true, features = ["process", "time", "io-util"] }
+serde_json               = { workspace = true }
+lunaris-core             = { workspace = true }
+parking_lot              = { workspace = true }
+# HOOK-05 idempotency integration test
+lunaris-storage-embedded = { workspace = true }
+sqlx                     = { workspace = true }
