@@ -3,10 +3,24 @@
 //! Reads one hook envelope from stdin (to EOF), writes one Episode via
 //! ScopedLunaris::ingest, exits with a sysexits.h-style code:
 //!   0  = success (Episode written) OR unknown event kind (forward-compat no-op)
+//!        OR emergency-drop (ingest stalled beyond timeout budget)
 //!   64 = parse error
 //!   65 = ingest error
-//!   66 = Phase 24 reserved (filter-rejected; NOT used in Phase 23)
+//!   66 = filter-rejected (path/kind/size policy denied the event)
 //!   73 = internal error (scope derivation, storage open)
+//!
+//! # Emergency-drop (HOOK-06)
+//!
+//! The ingest call is wrapped in `tokio::time::timeout(LUNARIS_HOOK_DROP_AFTER_MS)`.
+//! If storage stalls beyond the budget, the hook emits a single-line JSON warning
+//! to stderr and exits 0. This guarantees the hook never blocks Claude Code
+//! indefinitely under storage-degradation conditions.
+//!
+//! Env var:
+//!   LUNARIS_HOOK_DROP_AFTER_MS  – timeout in ms (default 100, clamped 10–10000)
+//!
+//! Emergency-drop warning format (single JSON line to stderr):
+//!   {"level":"warn","event":"emergency_drop","reason":"ingest_timeout_<N>ms","scope":"...","kind":"..."}
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
@@ -58,6 +72,18 @@ async fn async_main() -> i32 {
         return 64;
     }
 
+    // Extract the event kind string BEFORE the timeout block. This is a cheap
+    // JSON value parse — we need the kind for the emergency_drop warning JSON
+    // even if the full typed parse inside `run()` would have failed.
+    let kind_str = serde_json::from_slice::<serde_json::Value>(&stdin_bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("hook_event_name")
+                .and_then(|k| k.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
     // Derive cwd for scope resolution.
     let cwd = match std::env::current_dir() {
         Ok(p) => p,
@@ -96,18 +122,55 @@ async fn async_main() -> i32 {
         }
     };
 
-    match lunaris_hook::run(&stdin_bytes, scope, lunaris).await {
-        Ok(Some(lsn)) => {
+    // Read LUNARIS_HOOK_DROP_AFTER_MS (default 100ms, clamped 10–10000).
+    // This is the ingest timeout budget — if storage stalls beyond this, the
+    // hook emits a warning and exits 0 (emergency-drop, HOOK-06).
+    let drop_ms = std::env::var("LUNARIS_HOOK_DROP_AFTER_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(100)
+        .clamp(10, 10_000);
+    let drop_timeout = tokio::time::Duration::from_millis(drop_ms);
+
+    // Capture scope string before moving into the async block.
+    let scope_str = scope.as_str().to_owned();
+
+    // Wrap the ingest call in tokio::time::timeout (emergency-drop, HOOK-06).
+    //
+    // IMPORTANT: The stall is INSIDE the async block so it counts against the
+    // timeout budget. LUNARIS_TEST_STALL_MS is a test-only injection point;
+    // it is undocumented in user-facing docs and has no effect in production
+    // (env var is absent in normal operation).
+    let result = tokio::time::timeout(drop_timeout, async {
+        // Test-only stall injection: LUNARIS_TEST_STALL_MS env var.
+        // NOT production behavior — used only by the emergency_drop test to
+        // deterministically trip the timeout at a known threshold.
+        // The sleep is a tokio::time::sleep so tokio::time::timeout can cancel
+        // it at the .await point.
+        #[cfg(debug_assertions)]
+        if let Ok(stall_str) = std::env::var("LUNARIS_TEST_STALL_MS") {
+            if let Ok(stall_ms) = stall_str.parse::<u64>() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(stall_ms)).await;
+            }
+        }
+
+        lunaris_hook::run(&stdin_bytes, scope, lunaris).await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(Some(lsn))) => {
             tracing::debug!(lsn = %lsn, "episode written");
             0
         }
-        Ok(None) => {
+        Ok(Ok(None)) => {
             // Unknown event kind — intentional no-op (B2 fix: exit 0, not 66).
-            // Exit 66 is reserved for Phase 24 filter-rejected events.
+            // Exit 66 is reserved for filter-rejected events.
             tracing::info!("unknown event kind — no-op, exiting 0");
             0
         }
-        Err(e) => {
+        Ok(Err(e)) => {
+            // Ingest error within timeout — normal error path (exit 64/65/66).
             let log_json = std::env::var("LUNARIS_HOOK_LOG_JSON").is_ok_and(|v| v == "1");
             if log_json {
                 let err_json = serde_json::json!({
@@ -119,6 +182,22 @@ async fn async_main() -> i32 {
                 eprintln!("lunaris-hook error: {e}");
             }
             e.exit_code()
+        }
+        Err(_timeout) => {
+            // Emergency drop: ingest stalled beyond the budget.
+            // Exit 0 to not block the Claude Code tool call.
+            // Emit a single-line JSON warning so operators can detect storage degradation.
+            // T-24-04-01: scope name and kind are visible in this line — operators
+            // MUST NOT route hook stderr to external sinks without sanitization.
+            let warn_json = serde_json::json!({
+                "level": "warn",
+                "event": "emergency_drop",
+                "reason": format!("ingest_timeout_{}ms", drop_ms),
+                "scope": scope_str,
+                "kind": kind_str,
+            });
+            eprintln!("{}", serde_json::to_string(&warn_json).unwrap_or_default());
+            0
         }
     }
 }

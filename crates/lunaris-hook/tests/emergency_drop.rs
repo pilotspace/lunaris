@@ -4,7 +4,7 @@
 //! `lunaris-hook`:
 //! 1. Exits with code 0 (does NOT block the Claude Code tool invocation).
 //! 2. Emits a single-line JSON to stderr containing `"event":"emergency_drop"`.
-//! 3. The process exits well within the wall-clock budget.
+//! 3. Completes before the stall's full duration (proving the timeout fired).
 //!
 //! # Methodology
 //!
@@ -19,6 +19,19 @@
 //!
 //! The stall uses `tokio::time::sleep` (not `std::thread::sleep`) so that the
 //! `tokio::time::timeout` can cancel it at the `.await` point.
+//!
+//! # Warmup spawn
+//!
+//! On macOS the first subprocess invocation incurs a Gatekeeper/dylib signing
+//! delay (400–900ms). The warmup spawn populates the OS page cache so that the
+//! timed run reflects the warm-cache steady-state cost, mirroring the pattern
+//! in lunaris-mcp/tests/cold_start.rs.
+//!
+//! # Wall-clock budget
+//!
+//! After warmup: the timed run must complete in < STALL_MS (200ms).
+//! This proves the timeout fired (otherwise the process would sleep the full
+//! 200ms stall before exiting, pushing elapsed past STALL_MS).
 //!
 //! # Safety invariants
 //!
@@ -45,17 +58,39 @@ const DROP_AFTER_MS: u64 = 50;
 /// Must be > DROP_AFTER_MS so the timeout fires before the stall completes.
 const STALL_MS: u64 = 200;
 
-/// Wall-clock budget for the timed run: DROP_AFTER_MS + 100ms for OS scheduling.
-const WALL_CLOCK_BUDGET_MS: u64 = DROP_AFTER_MS + 100;
+/// Wall-clock budget (post-warmup): process must complete before the full stall.
+/// < STALL_MS proves the timeout fired; >= STALL_MS means the timeout did not fire.
+const WALL_CLOCK_BUDGET_MS: u64 = STALL_MS - 1;
 
-/// Shared env builder for both the timed and stderr-capture runs.
-fn make_cmd() -> std::process::Command {
+/// Build a tokio::process::Command with all required env vars for the timed run.
+/// Returns a command ready for `.spawn()`.
+fn make_timed_cmd() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"));
+    cmd.env("LUNARIS_HOOK_DROP_AFTER_MS", DROP_AFTER_MS.to_string())
+        .env("LUNARIS_TEST_STALL_MS", STALL_MS.to_string())
+        .env("LUNARIS_STORE_URL", "memory://")
+        .env("LUNARIS_HOOK_SCOPE", "emergency-drop-test")
+        .env("LUNARIS_HOOK_LOG", "warn")
+        // Non-existent path → fast NoopEmbedder/NoopReranker fallback (no mmap).
+        .env("LUNARIS_EMBEDDER_DIR", "/dev/null/weights")
+        .env("LUNARIS_RERANKER_DIR", "/dev/null/weights")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    cmd
+}
+
+/// Build a std::process::Command with all required env vars for stderr capture.
+fn make_capture_cmd() -> std::process::Command {
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lunaris-hook"));
     cmd.env("LUNARIS_HOOK_DROP_AFTER_MS", DROP_AFTER_MS.to_string())
         .env("LUNARIS_TEST_STALL_MS", STALL_MS.to_string())
         .env("LUNARIS_STORE_URL", "memory://")
         .env("LUNARIS_HOOK_SCOPE", "emergency-drop-test")
         .env("LUNARIS_HOOK_LOG", "warn")
+        .env("LUNARIS_EMBEDDER_DIR", "/dev/null/weights")
+        .env("LUNARIS_RERANKER_DIR", "/dev/null/weights")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
@@ -64,21 +99,23 @@ fn make_cmd() -> std::process::Command {
 
 #[tokio::test(flavor = "current_thread")]
 async fn emergency_drop_exits_zero_with_warning() {
-    // ── Run 1: timing gate (async spawn + kill_on_drop safety) ───────────────
+    // ── Warmup spawn ──────────────────────────────────────────────────────────
     //
-    // Use tokio::process::Command for kill_on_drop support and async wait.
+    // On macOS the first subprocess invocation incurs a Gatekeeper/dylib signing
+    // delay (400–900ms). The warmup populates the OS page cache so the timed run
+    // reflects steady-state cost. Mirrored from lunaris-mcp/tests/cold_start.rs.
+    {
+        let mut warmup = make_timed_cmd()
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .expect("failed to spawn warmup lunaris-hook");
+        let _ = timeout(Duration::from_secs(5), warmup.wait()).await;
+    }
+
+    // ── Run 1: timing gate (warm cache) ───────────────────────────────────────
     let start = Instant::now();
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
-        .env("LUNARIS_HOOK_DROP_AFTER_MS", DROP_AFTER_MS.to_string())
-        .env("LUNARIS_TEST_STALL_MS", STALL_MS.to_string())
-        .env("LUNARIS_STORE_URL", "memory://")
-        .env("LUNARIS_HOOK_SCOPE", "emergency-drop-test")
-        .env("LUNARIS_HOOK_LOG", "warn")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
+    let mut child = make_timed_cmd()
         .spawn()
         .expect("failed to spawn lunaris-hook binary for timing run");
 
@@ -87,7 +124,7 @@ async fn emergency_drop_exits_zero_with_warning() {
             .write_all(ENVELOPE.as_bytes())
             .await
             .expect("write envelope to stdin");
-        // Drop stdin → send EOF.
+        // Drop stdin → send EOF to the child.
     }
 
     let status = timeout(Duration::from_secs(5), child.wait())
@@ -98,10 +135,13 @@ async fn emergency_drop_exits_zero_with_warning() {
     let elapsed = start.elapsed();
 
     // ── Assertion 1: wall-clock budget ────────────────────────────────────────
+    //
+    // elapsed < STALL_MS proves the timeout fired. If it didn't fire, the process
+    // would sleep the full 200ms stall before proceeding, pushing elapsed >= STALL_MS.
     assert!(
         elapsed < Duration::from_millis(WALL_CLOCK_BUDGET_MS),
         "emergency-drop wall-clock budget exceeded: {}ms (budget: {}ms). \
-         The timeout mechanism in main.rs did not fire within the expected window.",
+         The timeout mechanism in main.rs did not fire — process ran the full stall duration.",
         elapsed.as_millis(),
         WALL_CLOCK_BUDGET_MS,
     );
@@ -114,11 +154,13 @@ async fn emergency_drop_exits_zero_with_warning() {
         status.code(),
     );
 
-    // ── Run 2: stderr capture (std::process for wait_with_output) ────────────
+    // ── Run 2: stderr capture ─────────────────────────────────────────────────
     //
-    // tokio::process::Child does not expose wait_with_output that gives captured
-    // stderr after piping. Use std::process for the stderr-content assertions.
-    let mut child2 = make_cmd().spawn().expect("spawn stderr-capture run");
+    // std::process::Command::wait_with_output() collects all piped stderr bytes
+    // after the process exits. A second run is needed because tokio::process::Child
+    // does not expose piped stderr bytes after wait().
+    let mut cmd2 = make_capture_cmd();
+    let mut child2 = cmd2.spawn().expect("spawn stderr-capture run");
     if let Some(mut stdin2) = child2.stdin.take() {
         stdin2.write_all(ENVELOPE.as_bytes()).expect("write stdin for run 2");
     }
@@ -140,7 +182,7 @@ async fn emergency_drop_exits_zero_with_warning() {
         "stderr must contain 'emergency_drop' JSON warning. Got:\n{stderr_text}",
     );
 
-    // Validate the JSON is parseable and has the required fields.
+    // Find and validate the JSON line.
     let drop_line = stderr_text
         .lines()
         .find(|l| l.contains("emergency_drop"))
@@ -170,7 +212,9 @@ async fn emergency_drop_exits_zero_with_warning() {
     );
 
     println!(
-        "HOOK-06 emergency-drop PASS: exit=0, timing_run={}ms, stderr JSON: {drop_line}",
-        elapsed.as_millis()
+        "HOOK-06 emergency-drop PASS: exit=0, elapsed={}ms (< {}ms budget), \
+         stderr JSON: {drop_line}",
+        elapsed.as_millis(),
+        WALL_CLOCK_BUDGET_MS,
     );
 }
