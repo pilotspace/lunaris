@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 use lunaris_core::scope_resolver::{
-    InMemoryScopeStore, ScopeResolveError, ScopeStore, blake3_hex64, resolve_with,
+    InMemoryScopeStore, ScopeStore, blake3_hex64, resolve_with,
 };
 
 fn init_git_repo(dir: &Path) {
