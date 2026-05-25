@@ -38,6 +38,7 @@ use crate::tools::{
     list_scopes::{ListScopesParams, ListScopesResponse},
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
+    record_edit::{RecordEditParams, RecordEditResponse},
 };
 
 // Alias for the JSON wrapper so tool method signatures stay concise.
@@ -177,6 +178,29 @@ impl LunarisMcpServer {
         Parameters(params): Parameters<RecordDecisionParams>,
     ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
         tools::record_decision::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
+
+    /// Record a file edit into agent memory.
+    ///
+    /// Writes an Episode with `source = "edit:<scope>"` and metadata
+    /// `{"kind": "edit", "path": "<value>"}`. The `path` field in metadata
+    /// enables future `memory.recall` filter-by-path queries.
+    /// Accepts optional `dedupe_key` for replay-safe idempotency (HOOK-05).
+    #[tool(
+        name = "memory.record_edit",
+        description = "Record a file edit into agent memory. \
+                       Writes an Episode with source='edit:<scope>'. \
+                       The path field is stored in metadata for future path-filter recalls. \
+                       Accepts optional dedupe_key for replay-safe idempotency."
+    )]
+    async fn record_edit(
+        &self,
+        Parameters(params): Parameters<RecordEditParams>,
+    ) -> Result<Json<RecordEditResponse>, rmcp::ErrorData> {
+        tools::record_edit::handle(&self.state, params)
             .await
             .map(Json)
             .map_err(rmcp::ErrorData::from)

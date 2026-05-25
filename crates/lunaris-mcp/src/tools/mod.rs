@@ -13,12 +13,14 @@
 //! | `memory.forget`           | 2.C  | stub (NotImpl)   |
 //! | `memory.list_scopes`      | 2.C  | stub (NotImpl)   |
 //! | `memory.record_decision`  | 25   | implemented      |
+//! | `memory.record_edit`      | 25   | implemented      |
 
 pub(crate) mod forget;
 pub(crate) mod ingest;
 pub(crate) mod list_scopes;
 pub(crate) mod recall;
 pub(crate) mod record_decision;
+pub(crate) mod record_edit;
 
 // ── Shared error type ─────────────────────────────────────────────────────────
 

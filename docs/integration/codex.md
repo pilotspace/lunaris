@@ -275,6 +275,53 @@ connection string with the `pgvector` extension installed.
 
 ---
 
+## Capture surfaces
+
+`lunaris-mcp` exposes three capture tools. Use the structured aliases when you
+have intent-typed data; fall back to `memory.ingest` for raw observations.
+
+### `memory.ingest` (general)
+
+Write any observation as an Episode.
+
+```json
+{"name": "memory.ingest", "arguments": {
+  "source": "codex/task-planner",
+  "content": "Decided to use SQLite for zero-dependency onboarding."
+}}
+```
+
+### `memory.record_decision` (architectural decisions)
+
+Write a structured decision episode with `source = "decision:<scope>"`.
+
+```json
+{"name": "memory.record_decision", "arguments": {
+  "decision": "Use SQLite as the default Lunaris backend",
+  "rationale": "Zero external dependencies for onboarding.",
+  "alternatives": ["Postgres", "Moon"],
+  "tags": ["arch", "storage"],
+  "dedupe_key": "decision-sqlite-default-2026-05"
+}}
+```
+
+Recall decisions later: `memory.recall` with query `"SQLite backend decision"`.
+
+### `memory.record_edit` (file edits)
+
+Write a structured edit episode with `source = "edit:<scope>"`. The `path`
+field is stored in metadata — future `memory.recall` queries can filter by path.
+
+```json
+{"name": "memory.record_edit", "arguments": {
+  "path": "crates/lunaris-mcp/src/tools/ingest.rs",
+  "after": "pub(crate) struct IngestParams { ... }",
+  "intent": "add dedupe_key field for HOOK-05 idempotency"
+}}
+```
+
+---
+
 ## Deferred to Wave B/C
 
 | Feature | Status |
@@ -282,7 +329,7 @@ connection string with the `pgvector` extension installed.
 | SSE transport + Bearer auth | Deferred (Option B) |
 | Multi-user server mode | Deferred |
 | `npx`/`uvx` distribution | Deferred |
-| `record_decision` / `record_edit` tool aliases | Deferred |
+| `record_decision` / `record_edit` tool aliases | Implemented (v0.5 Wave C, 2026-05-25) |
 | Codex hook parity (`lunaris-hook`) | Deferred — [ADR 2026-05-25](../decisions/2026-05-25-codex-hook-deferral.md) |
 
 The stdio transport (Wave A) is the supported path. See
