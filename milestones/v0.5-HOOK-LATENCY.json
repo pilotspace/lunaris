@@ -1,0 +1,26 @@
+{
+  "run_date": "2026-05-25",
+  "platform": "Darwin 24.6.0 arm64 (Apple M-series)",
+  "build_profile": "debug",
+  "backend": "memory://",
+  "runtime": "tokio current_thread",
+  "embedder": "NoopEmbedder (dim=768, no GGUF loaded)",
+  "envelope_count": 1000,
+  "warmup_count": 10,
+  "measured_count": 990,
+  "p50_ms": 4.699,
+  "p99_ms": 5.290,
+  "gate": "PASS",
+  "budgets": {
+    "p50_limit_ms": 50,
+    "p99_limit_ms": 150
+  },
+  "headroom": {
+    "p50_headroom_x": 10.6,
+    "p99_headroom_x": 28.4
+  },
+  "fixture": "crates/lunaris-hook/tests/fixtures/replay_1000.json",
+  "fixture_lines": 1000,
+  "test": "cargo test -p lunaris-hook --test cold_start",
+  "note": "Debug build on Apple silicon. Release build expected to be 2-5x faster."
+}
