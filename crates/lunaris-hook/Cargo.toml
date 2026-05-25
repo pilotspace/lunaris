@@ -44,6 +44,9 @@ tracing-subscriber = { workspace = true }
 blake3 = { workspace = true }
 dirs   = { workspace = true }
 
+# HOOK-05 — hex encoding of blake3 dedupe keys
+hex = { workspace = true }
+
 # t_ref parsing
 chrono = { workspace = true }
 
