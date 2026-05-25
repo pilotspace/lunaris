@@ -572,7 +572,7 @@ v0.1.1 ships three layers. Pick the lowest one that meets your need — thinner 
 
 1. **`lunaris.recall()` / `lunaris.ingest()`** (Sections 2–4) — the DSL. Full flexibility.
 2. **Primitives** in `lunaris_recipes::{MessageStream, DocumentCorpus, TemporalQuery, WorkingMemory}` — composable building blocks. ≤ 30 LOC public surface each.
-3. **Named recipes** — 10 thin vertical wrappers (5 conversational + 5 documentary) each ≤ 30 LOC, each forwarding to at most 2 primitive calls. Plus `HeliosScratchpad` — the v0 Helios-harness tool-surface recipe, now a delegate over `WorkingMemory`.
+3. **Named recipes** — 10 thin vertical wrappers (5 conversational + 5 documentary) each ≤ 30 LOC, each forwarding to at most 2 primitive calls. Plus `CodingSessionMemory` — the v0 coding-agent tool-surface recipe, now a delegate over `WorkingMemory`.
 
 All three layers sit on the same `StoragePort`; Moon + Postgres work identically at every layer. The public recipe surface is codegen'd to PyO3 + napi-rs from a single annotated-Rust source (`lunaris-codegen` — see Section 1), so every Rust method below has a byte-stable `snake_case` Python counterpart and `camelCase` TypeScript counterpart.
 
@@ -585,21 +585,21 @@ All three layers sit on the same `StoragePort`; Moon + Postgres work identically
    (recency-weighted        (RRF-fused RAG)       (typestate time-      (scratchpad +
     messages)                                      travel DSL)           consolidate)
            ▲                      ▲                      ▲                      ▲
-  conversational/*         documentary/*          documentary/*         recipes::HeliosScratchpad
+  conversational/*         documentary/*          documentary/*         recipes::CodingSessionMemory
   (5 wrappers)             (5 wrappers)           (2 of them)
 ```
 
-### 9.1 `HeliosScratchpad` — the Helios tool-surface recipe
+### 9.1 `CodingSessionMemory` — the Helios tool-surface recipe
 
-The v0 Helios harness consumes Lunaris through this one recipe. In v0.1.1 the file was rewritten to hold a `WorkingMemory` internally and delegate every method — the public API is byte-stable versus v0.1.0 (the `helios_scratchpad_public_surface_under_50_loc` test gates every commit).
+The v0 Helios harness consumes Lunaris through this one recipe. In v0.1.1 the file was rewritten to hold a `WorkingMemory` internally and delegate every method — the public API is byte-stable versus v0.1.0 (the `coding_session_memory_public_surface_under_50_loc` test gates every commit).
 
 ```rust
 use std::sync::Arc;
 
-use lunaris::{HeliosScratchpad, Hlc};
+use lunaris::{CodingSessionMemory, Hlc};
 
 let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
-let pad     = HeliosScratchpad::new(lunaris.clone(), "session-42");
+let pad     = CodingSessionMemory::new(lunaris.clone(), "session-42");
 
 // write(path, content) — ingest with source = "helios:fs/session-42/<path>".
 pad.write("README.md", "# Hello\nWorld").await?;
@@ -625,13 +625,15 @@ let ts = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
 let old_body = pad.as_of(ts).read("README.md").await?;
 ```
 
-Eight methods on `HeliosScratchpad` + one on `AsOfScratchpad`. Source: `crates/lunaris/src/recipes/helios_scratchpad.rs` (≤ 50 LOC cap enforced by test).
+Eight methods on `CodingSessionMemory` + one on `AsOfScratchpad`. Source: `crates/lunaris/src/recipes/coding_session_memory.rs` (≤ 50 LOC cap enforced by test).
 
 **v0.1.1 addition — scoped consolidation.** In v0.1.1 the Consolidator pipeline can be turned on for the `"helios:fs/"` scope alone via `lunaris.consolidator_pipeline().enable_for_scope("helios:fs/")`. "Important notes" in the scratchpad get ACT-R-promoted to `Fact` primitives (helios-rfc §5.3) without enabling Consolidator across all tenants. Prefix match is exact — no regex, no glob. The 50/50 isolation test (`helios:fs/…` vs `other:…`) asserts zero `ConsolidatorPromotion` `AuditEvent`s for non-matching sources.
 
+> **v0.5 note:** `HeliosScratchpad` is still available as a `#[deprecated]` type alias for `CodingSessionMemory`. It compiles with a warning and will be removed in v0.7. Migration: replace `lunaris::HeliosScratchpad` with `lunaris::CodingSessionMemory`.
+
 ### 9.2 Primitives
 
-All four live in `lunaris-recipes` (re-exports `WorkingMemory` from `lunaris::primitives::working_memory` to avoid a dep cycle with `HeliosScratchpad`).
+All four live in `lunaris-recipes` (re-exports `WorkingMemory` from `lunaris::primitives::working_memory` to avoid a dep cycle with `CodingSessionMemory`).
 
 #### `MessageStream` — recency-weighted message recall
 
@@ -984,6 +986,6 @@ let _       = lunaris.forget(target.hard().with_token(token)).await?;
   - `ingest_smoke.rs` — the `with_parts` + `StubEmbedder` ingest pattern (Section 2 anchor).
   - `recall_smoke.rs` — the BM25 + vector recall pattern (Section 3 anchor).
   - `graph_pipeline_smoke.rs` — the `LUNARIS_GRAPH_ENABLED` round-trip (Section 4 anchor).
-  - `helios_scratchpad_smoke.rs` — dual-backend recipe smoke test (Section 9 anchor).
+  - `coding_session_memory_smoke.rs` — dual-backend recipe smoke test (Section 9 anchor).
 - **Operational envelope:** `.planning/architect/blueprint.md` for the full latency/throughput targets; `docs/protocol/conformance.md` for the cross-backend conformance contract.
 - **Benchmarks:** `cargo xtask bench` drives the Plan 02-04 + 03-04 budget harness. Live numbers land per the 03-HUMAN-UAT and 05-HUMAN-UAT runbooks in `.planning/phases/`.

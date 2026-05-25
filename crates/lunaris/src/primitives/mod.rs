@@ -1,5 +1,5 @@
 //! Phase 10/11/12 Option-A relocation — primitives that must live in the
-//! umbrella `lunaris` crate because Phase 12 `HeliosScratchpad` (also in
+//! umbrella `lunaris` crate because Phase 12 `CodingSessionMemory` (also in
 //! `lunaris`) composes over them. Previously these lived in
 //! `lunaris-recipes`, but `lunaris-recipes → lunaris` dependency direction
 //! made the reverse import impossible. Moving them down (crate-wise) breaks

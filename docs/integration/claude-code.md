@@ -427,7 +427,7 @@ connection string with the `pgvector` extension installed.
 | Multi-user server mode | Deferred |
 | `npx`/`uvx` distribution | Deferred |
 | `record_decision` / `record_edit` tool aliases | Implemented (v0.5 Wave C, 2026-05-25) |
-| `coding_session_memory` recipe rename | Deferred |
+| `coding_session_memory` recipe rename | Implemented (v0.5 Wave C, 2026-05-25) |
 
 The stdio transport (Wave A) is the supported path. Option C (MCP as a
 feature flag on `lunaris-server`) was evaluated and rejected — see

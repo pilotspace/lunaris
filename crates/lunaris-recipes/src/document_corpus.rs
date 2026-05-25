@@ -28,7 +28,7 @@
 //! Public symbols: `new`, `ingest`, `filter`, `top`, `search`. Five
 //! `pub fn` / `pub async fn` declarations — the LOC-guard test at the
 //! bottom of this file counts them and caps at 6 (matches Phase 5
-//! `helios_scratchpad_public_surface_under_50_loc` template).
+//! `coding_session_memory_public_surface_under_50_loc` template).
 //!
 //! ## Plan-vs-code corrections applied (Rule 1 deviations, see 09-02-SUMMARY.md)
 //!
@@ -131,7 +131,7 @@ impl DocumentCorpus {
     /// calls AND together at [`search`](Self::search) time. NEVER build
     /// SQL `WHERE` strings — [`Filter::Eq`] from `lunaris-core` is
     /// canonical (v0.1.0 Plan 01 invariant; matches MessageStream + the
-    /// HeliosScratchpad recipe verbatim).
+    /// CodingSessionMemory recipe verbatim).
     pub fn filter(mut self, field: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
         self.filters.push(Filter::Eq { field: field.into(), value: value.into() });
         self
@@ -190,7 +190,7 @@ mod tests {
     /// PRIM-02 ≤ 30 LOC public-surface contract. Counts `pub fn` +
     /// `pub async fn` declarations in the production portion of the file
     /// (everything BEFORE the first `#[cfg(test)]` marker). Mirrors the
-    /// Phase 5 `helios_scratchpad_public_surface_under_50_loc` template
+    /// Phase 5 `coding_session_memory_public_surface_under_50_loc` template
     /// and Plan 09-01's `message_stream_public_surface_under_30_loc`
     /// verbatim.
     #[test]
