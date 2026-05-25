@@ -266,4 +266,41 @@ pub trait StoragePort: Send + Sync + 'static {
     /// Report capabilities so higher layers (retrievers, recipes, the conformance
     /// suite) can make degradation decisions per blueprint §6.
     fn capabilities(&self) -> StorageCapabilities;
+
+    // ── HOOK-05: idempotency helpers (default = no-op for Moon/Postgres) ──
+
+    /// Idempotency read: look up a previously-committed dedupe key.
+    ///
+    /// Default implementation returns `Ok(None)` (no dedupe — always fresh ingest).
+    /// `EmbeddedStorage` overrides with a real SQLite lookup.
+    /// Moon and Postgres use the default no-op (v0.5 scope: SQLite-only idempotency).
+    ///
+    /// The lookup is READ-ONLY. INGEST-04 is preserved — this method never calls
+    /// `atomic_write`. (W6 fix: trait method replaces any `as_any()` downcast approach.)
+    async fn lookup_by_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+    ) -> Result<Option<Lsn>, StorageError> {
+        let _ = (scope, dedupe_key);
+        Ok(None)
+    }
+
+    /// Idempotency write: record a dedupe key after a successful `atomic_write`.
+    ///
+    /// Default implementation is a no-op.
+    /// `EmbeddedStorage` overrides with a real SQLite `INSERT OR IGNORE`.
+    ///
+    /// This is a BEST-EFFORT post-`atomic_write` write (T-24-03-06): if the process
+    /// is killed between the `atomic_write` commit and this call, replay will produce
+    /// a duplicate Episode. Mitigation deferred to v0.6.
+    async fn insert_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+        lsn: Lsn,
+    ) -> Result<(), StorageError> {
+        let _ = (scope, dedupe_key, lsn);
+        Ok(())
+    }
 }

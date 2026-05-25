@@ -53,6 +53,17 @@ const DDL: &[&str] = &[
         sys_to     TEXT,
         PRIMARY KEY (graph, src, dst, rel, sys_from)
     )",
+    // HOOK-05: idempotency sidecar table.
+    // `lsn` stored as two INTEGER columns for exact round-trip (no FromStr needed).
+    // `INSERT OR IGNORE` means duplicate dedupe keys are silently no-ops (T-24-03-06 race-safe).
+    "CREATE TABLE IF NOT EXISTS lunaris_dedupe (
+        scope      TEXT    NOT NULL,
+        dedupe_key TEXT    NOT NULL,
+        lsn_wall   INTEGER NOT NULL,
+        lsn_ctr    INTEGER NOT NULL,
+        created_at TEXT    NOT NULL,
+        PRIMARY KEY (scope, dedupe_key)
+    )",
 ];
 
 /// Create every table/index if absent.

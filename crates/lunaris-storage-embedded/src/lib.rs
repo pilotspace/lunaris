@@ -570,6 +570,66 @@ impl StoragePort for EmbeddedStorage {
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
         }
     }
+
+    // ── HOOK-05: idempotency trait overrides ─────────────────────────────────
+
+    /// SQLite-backed dedupe lookup by (scope, dedupe_key) composite PK.
+    ///
+    /// Returns `Ok(Some(lsn))` if the key was previously committed, `Ok(None)` otherwise.
+    /// The `lunaris_dedupe` table uses two INTEGER columns (`lsn_wall`, `lsn_ctr`) to
+    /// avoid a `FromStr` round-trip through the `{wall_ms}:{counter}` display format.
+    async fn lookup_by_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+    ) -> Result<Option<Lsn>, StorageError> {
+        let row = sqlx::query(
+            "SELECT lsn_wall, lsn_ctr FROM lunaris_dedupe \
+             WHERE scope = ? AND dedupe_key = ?",
+        )
+        .bind(scope.as_str())
+        .bind(dedupe_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend)?;
+
+        match row {
+            None => Ok(None),
+            Some(r) => {
+                let wall_ms: i64 = r.try_get("lsn_wall").map_err(backend)?;
+                let counter: i64 = r.try_get("lsn_ctr").map_err(backend)?;
+                Ok(Some(Lsn { wall_ms: wall_ms as u64, counter: counter as u32 }))
+            }
+        }
+    }
+
+    /// SQLite-backed dedupe INSERT OR IGNORE after a successful `atomic_write`.
+    ///
+    /// `INSERT OR IGNORE` means that if the key already exists (e.g. two concurrent
+    /// hook processes), the second insert is silently dropped — safe because the
+    /// composite PK (scope, dedupe_key) is unique.
+    async fn insert_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+        lsn: Lsn,
+    ) -> Result<(), StorageError> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT OR IGNORE INTO lunaris_dedupe \
+             (scope, dedupe_key, lsn_wall, lsn_ctr, created_at) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(scope.as_str())
+        .bind(dedupe_key)
+        .bind(lsn.wall_ms as i64)
+        .bind(lsn.counter as i64)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(backend)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
