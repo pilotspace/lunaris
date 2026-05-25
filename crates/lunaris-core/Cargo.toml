@@ -30,8 +30,11 @@ tokio          = { workspace = true }
 futures        = { workspace = true }
 tracing        = { workspace = true }
 smol_str       = { workspace = true }
+blake3         = { workspace = true }
+dirs           = { workspace = true }
 
 [dev-dependencies]
 rand           = { workspace = true }
 proptest       = { workspace = true }
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile       = "3"
