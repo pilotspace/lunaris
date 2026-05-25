@@ -9,7 +9,7 @@
 //! - 10 warmup iterations (timings discarded) to warm SQLite page cache and
 //!   compiled-regex caches (scrubber and filter policy).
 //! - 990 measured iterations, each independently timed via `std::time::Instant`.
-//! - p50 = sorted_timings[494], p99 = sorted_timings[979].
+//! - Sort timings ascending; p50 = sorted[494], p99 = sorted[979].
 //! - Assertion: both must be ≤ their budget. On breach: explicit panic with
 //!   the measured values so CI log shows actionable numbers.
 //!
@@ -65,16 +65,6 @@ async fn build_lunaris_in_memory() -> Lunaris {
     let storage_arc: Arc<dyn lunaris_core::StoragePort> = Arc::new(storage);
     let clock = HlcClock::new(0);
     Lunaris::with_parts(storage_arc, embedder, clock)
-}
-
-/// Compute p50 and p99 from a sorted slice of `Duration`s.
-///
-/// `samples` MUST be sorted ascending before calling. Panics if `samples` is empty.
-fn percentile(sorted_samples: &[Duration], pct: f64) -> Duration {
-    assert!(!sorted_samples.is_empty(), "no timing samples to compute percentile");
-    let idx = ((sorted_samples.len() as f64) * pct / 100.0) as usize;
-    let idx = idx.min(sorted_samples.len() - 1);
-    sorted_samples[idx]
 }
 
 /// Scope used for the latency gate — fixed string avoids git repo I/O.
@@ -134,20 +124,14 @@ async fn hook_pipeline_meets_latency_budget() {
     // ── Compute p50 / p99 ─────────────────────────────────────────────────────
     timings.sort_unstable();
 
-    // p50 = index 494 (0-based) of 990 sorted samples.
-    // p99 = index 979 (0-based) of 990 sorted samples.
+    // p50 = index 494 (0-based) of 990 sorted samples  (floor(990 * 0.50) - 1).
+    // p99 = index 979 (0-based) of 990 sorted samples  (floor(990 * 0.99) - 1).
     let p50 = timings[494];
     let p99 = timings[979];
 
-    // Also compute via the generic helper for readability checks.
-    let p50_check = percentile(&timings, 50.0);
-    let p99_check = percentile(&timings, 99.0);
-    debug_assert_eq!(p50, p50_check);
-    debug_assert_eq!(p99, p99_check);
-
     // Print evidence for CI log / operator review.
     println!(
-        "HOOK-06 latency gate:\n  p50 = {:.2}ms (budget: 50ms)\n  p99 = {:.2}ms (budget: 150ms)",
+        "HOOK-06 latency gate:\n  p50 = {:.3}ms (budget: ≤50ms)\n  p99 = {:.3}ms (budget: ≤150ms)",
         p50.as_secs_f64() * 1000.0,
         p99.as_secs_f64() * 1000.0,
     );
@@ -155,16 +139,20 @@ async fn hook_pipeline_meets_latency_budget() {
     // ── Budget assertions ─────────────────────────────────────────────────────
     assert!(
         p50 <= Duration::from_millis(50),
-        "HOOK-06 budget violation: p50 = {:.2}ms (limit 50ms). \
+        "HOOK-06 budget violation: p50 = {:.3}ms (limit 50ms). \
          Investigate filter/scrub/dedupe path for regressions.",
         p50.as_secs_f64() * 1000.0,
     );
     assert!(
         p99 <= Duration::from_millis(150),
-        "HOOK-06 budget violation: p99 = {:.2}ms (limit 150ms). \
+        "HOOK-06 budget violation: p99 = {:.3}ms (limit 150ms). \
          Investigate storage write path or regex compilation for regressions.",
         p99.as_secs_f64() * 1000.0,
     );
 
-    println!("HOOK-06 PASS: p50={:.2}ms p99={:.2}ms", p50.as_millis(), p99.as_millis());
+    println!(
+        "HOOK-06 PASS: p50={:.3}ms p99={:.3}ms",
+        p50.as_secs_f64() * 1000.0,
+        p99.as_secs_f64() * 1000.0,
+    );
 }
