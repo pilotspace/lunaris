@@ -1,4 +1,4 @@
-//! Phase 12 Plan 12-01 HELIOS-03 — `HeliosScratchpad` v2 delegates to the
+//! Phase 12 Plan 12-01 HELIOS-03 — `CodingSessionMemory` v2 delegates to the
 //! Phase 9 `WorkingMemory` primitive. Still `≤ 50 LOC public-API surface` per
 //! HELIOS-01 (unchanged contract — public symbols enumerated below).
 //!
@@ -18,22 +18,22 @@
 //!
 //! Public symbols on this module are exactly nine:
 //!
-//! 1. [`HeliosScratchpad::new`]
-//! 2. [`HeliosScratchpad::write`]
-//! 3. [`HeliosScratchpad::read`]
-//! 4. [`HeliosScratchpad::edit`]
-//! 5. [`HeliosScratchpad::grep`]
-//! 6. [`HeliosScratchpad::ls`]
-//! 7. [`HeliosScratchpad::forget`]
-//! 8. [`HeliosScratchpad::as_of`]
+//! 1. [`CodingSessionMemory::new`]
+//! 2. [`CodingSessionMemory::write`]
+//! 3. [`CodingSessionMemory::read`]
+//! 4. [`CodingSessionMemory::edit`]
+//! 5. [`CodingSessionMemory::grep`]
+//! 6. [`CodingSessionMemory::ls`]
+//! 7. [`CodingSessionMemory::forget`]
+//! 8. [`CodingSessionMemory::as_of`]
 //! 9. [`AsOfScratchpad::read`]
 //!
-//! The unit test `helios_scratchpad_public_surface_under_50_loc` enforces this
+//! The unit test `coding_session_memory_public_surface_under_50_loc` enforces this
 //! ceiling by counting `pub fn` + `pub async fn` declarations in this file.
 //!
 //! ## MVCC retention via Plan 04-04 (D-15)
 //!
-//! [`HeliosScratchpad::edit`] is intentionally a plain [`HeliosScratchpad::write`]
+//! [`CodingSessionMemory::edit`] is intentionally a plain [`CodingSessionMemory::write`]
 //! of the new content. The prior version's `bt.sys[1]` is set automatically by
 //! the existing MVCC supersede path in the storage layer. NO new mutation code
 //! lives here.
@@ -66,19 +66,19 @@ use crate::primitives::WorkingMemory;
 const HELIOS_PREFIX: &str = "helios:fs/";
 
 /// Default `top` the recall path uses when reconstructing a single file via
-/// [`HeliosScratchpad::read`]. 8 chunks ≈ 4000 tokens at the Plan 02-01 chunker
+/// [`CodingSessionMemory::read`]. 8 chunks ≈ 4000 tokens at the Plan 02-01 chunker
 /// default (500 tokens / chunk).
 const READ_TOP: usize = 8;
 
 /// **≤50 LOC public surface** (HELIOS-01 contract). Eight methods on
-/// `HeliosScratchpad` + [`AsOfScratchpad::read`] = 9 public symbols total.
+/// `CodingSessionMemory` + [`AsOfScratchpad::read`] = 9 public symbols total.
 ///
 /// v2 — delegates to [`WorkingMemory`] per HELIOS-03 / CONTEXT.md D-01.
 ///
 /// `Clone` is cheap — all fields are `Arc` / `String` / `WorkingMemory`
 /// (which is itself `Arc<Lunaris>` + `String`).
 #[derive(Clone)]
-pub struct HeliosScratchpad {
+pub struct CodingSessionMemory {
     lunaris: Arc<Lunaris>,
     /// RFC 0001 partition key. Threaded into the inner [`WorkingMemory`] and
     /// into every direct `StoragePort` call (e.g., `ls`'s `scan_range`).
@@ -90,7 +90,7 @@ pub struct HeliosScratchpad {
     wm: WorkingMemory,
 }
 
-impl HeliosScratchpad {
+impl CodingSessionMemory {
     /// Construct a new scratchpad bound to `scope` (RFC 0001 partition key)
     /// and `session_id`. The session prefix becomes
     /// `helios:fs/<session_id>/` — every write/read/edit/grep/ls operation
@@ -119,7 +119,7 @@ impl HeliosScratchpad {
         match self.wm.read(path).await? {
             Some(serde_json::Value::String(s)) => Ok(Some(s)),
             Some(_) => Err(LunarisError::Storage(StorageError::Backend(
-                "helios_scratchpad_read_unexpected_json_shape".into(),
+                "coding_session_memory_read_unexpected_json_shape".into(),
             ))),
             None => {
                 // Fall back to the multi-chunk reconstruction path used by
@@ -207,7 +207,7 @@ impl HeliosScratchpad {
     /// requiring hard delete go through the umbrella
     /// [`Lunaris::confirm_hard_forget`] two-step rail (D-21).
     pub async fn forget(&self) -> Result<ForgetReceipt, LunarisError> {
-        // P0 #1 Wave 2: HeliosScratchpad still routes through the deprecated
+        // P0 #1 Wave 2: CodingSessionMemory still routes through the deprecated
         // bare `Lunaris::forget` path because the recipe does not yet carry
         // an explicit `Scope` field. Wave 2 recipe-ctor migration adds that
         // (tracked in docs/v0.3-known-debt.md alongside the WorkingMemory
@@ -226,18 +226,24 @@ impl HeliosScratchpad {
     }
 }
 
-/// Borrowed time-travel view returned by [`HeliosScratchpad::as_of`].
+/// Deprecated alias for [`CodingSessionMemory`].
+///
+/// Use `CodingSessionMemory` instead. `HeliosScratchpad` will be removed in v0.7.
+#[deprecated(since = "0.5.0", note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7")]
+pub type HeliosScratchpad = CodingSessionMemory;
+
+/// Borrowed time-travel view returned by [`CodingSessionMemory::as_of`].
 ///
 /// Held as a borrow (not a clone) so the time-travel query cannot outlive the
 /// scratchpad — keeps the surface small (no `Clone` / `Send` requirement at the
 /// AsOf layer; the scratchpad already provides those).
 pub struct AsOfScratchpad<'a> {
-    inner: &'a HeliosScratchpad,
+    inner: &'a CodingSessionMemory,
     ts: Hlc,
 }
 
 impl AsOfScratchpad<'_> {
-    /// Time-travel read. Same shape as [`HeliosScratchpad::read`] but seeds the
+    /// Time-travel read. Same shape as [`CodingSessionMemory::read`] but seeds the
     /// retrieval `as_of` with this view's fixed timestamp.
     pub async fn read(&self, path: &str) -> Result<Option<String>, LunarisError> {
         let source = format!("{}{}", self.inner.session_prefix, path);
@@ -250,7 +256,7 @@ impl AsOfScratchpad<'_> {
 // ---------------------------------------------------------------------------
 
 /// Shared implementation backing [`AsOfScratchpad::read`] and the multi-chunk
-/// fallback inside [`HeliosScratchpad::read`]. Runs the recall, filters by
+/// fallback inside [`CodingSessionMemory::read`]. Runs the recall, filters by
 /// exact source equality via [`Filter::StartsWith`] (NEVER a SQL wildcard
 /// fragment — T-12-01-01), and concatenates `Hit::text` into a single body.
 async fn read_at(
@@ -293,21 +299,21 @@ mod tests {
     /// file (everything BEFORE the `#[cfg(test)]` marker — the test module's
     /// literal-string mentions of `"pub fn"` are excluded by truncating at
     /// that boundary). The cap is **9** symbols total: 8 methods on
-    /// [`HeliosScratchpad`] + 1 on [`AsOfScratchpad`]. Adjust ONLY alongside
+    /// [`CodingSessionMemory`] + 1 on [`AsOfScratchpad`]. Adjust ONLY alongside
     /// an HELIOS-* requirement update.
     #[test]
-    fn helios_scratchpad_public_surface_under_50_loc() {
-        let src = include_str!("./helios_scratchpad.rs");
+    fn coding_session_memory_public_surface_under_50_loc() {
+        let src = include_str!("./coding_session_memory.rs");
         let production = src.split("#[cfg(test)]").next().unwrap_or(src);
         let pub_fns = production.matches("    pub fn ").count()
             + production.matches("    pub async fn ").count();
         assert!(
             pub_fns <= 9,
-            "HELIOS-01 ≤50-LOC contract: HeliosScratchpad+AsOfScratchpad have {pub_fns} pub fns; cap is 9 (8 methods on HeliosScratchpad + AsOfScratchpad::read)"
+            "HELIOS-01 ≤50-LOC contract: CodingSessionMemory+AsOfScratchpad have {pub_fns} pub fns; cap is 9 (8 methods on CodingSessionMemory + AsOfScratchpad::read)"
         );
         assert!(
             pub_fns >= 9,
-            "HELIOS-01 contract: expected exactly 9 public methods (8 on HeliosScratchpad + AsOfScratchpad::read); got {pub_fns} — did the public surface shrink?"
+            "HELIOS-01 contract: expected exactly 9 public methods (8 on CodingSessionMemory + AsOfScratchpad::read); got {pub_fns} — did the public surface shrink?"
         );
     }
 
@@ -336,15 +342,15 @@ mod tests {
     /// across the whole file, and the guard never self-trips on its own doc
     /// comments.
     #[test]
-    fn helios_scratchpad_contains_no_sql_wildcard_fragment() {
-        let src = include_str!("./helios_scratchpad.rs");
+    fn coding_session_memory_contains_no_sql_wildcard_fragment() {
+        let src = include_str!("./coding_session_memory.rs");
         let production = src.split("#[cfg(test)]").next().unwrap_or(src);
         // Build the banned uppercase SQL keyword out of chars so the literal
         // does not appear verbatim in this file.
         let banned: String = ['L', 'I', 'K', 'E'].iter().collect();
         assert!(
             !production.contains(&banned),
-            "T-12-01-01: SQL wildcard fragment found in production portion of helios_scratchpad.rs — use Filter::StartsWith instead"
+            "T-12-01-01: SQL wildcard fragment found in production portion of coding_session_memory.rs — use Filter::StartsWith instead"
         );
     }
 }

@@ -10,7 +10,7 @@
 //! ## Relocation note (Phase 12 Option A)
 //!
 //! This type moved from `lunaris-recipes::working_memory` into
-//! `lunaris::primitives::working_memory` so that Phase 12 `HeliosScratchpad`
+//! `lunaris::primitives::working_memory` so that Phase 12 `CodingSessionMemory`
 //! (which lives in the `lunaris` crate) can compose over it without
 //! introducing a `lunaris → lunaris-recipes` dependency cycle. The
 //! `lunaris-recipes` crate re-exports this type verbatim — every Phase 9 /
@@ -47,7 +47,7 @@ const DRAIN_CAP: usize = 1024;
 const PULL_TIMEOUT_MS: u64 = 50;
 
 /// Default `top_k` the `read` / `grep` recall paths use. Chosen to match
-/// Plan 09-01 MessageStream's `DEFAULT_TOP_K` + HeliosScratchpad's `READ_TOP`
+/// Plan 09-01 MessageStream's `DEFAULT_TOP_K` + CodingSessionMemory's `READ_TOP`
 /// (both 8) so conversational wrappers that compose WorkingMemory with
 /// MessageStream / scratchpad primitives inherit the same breadth.
 const DEFAULT_TOP_K: usize = 8;

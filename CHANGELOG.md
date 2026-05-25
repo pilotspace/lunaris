@@ -2,6 +2,38 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.5 Wave C — MCP polish: record_decision / record_edit aliases + CodingSessionMemory rename (2026-05-25)
+
+### Added
+
+- **`memory.record_decision` MCP tool** — structured alias over `memory.ingest` for
+  capturing architectural and scoping decisions. Input: `{ decision, rationale,
+  alternatives?, tags?, dedupe_key? }`. Writes Episode with
+  `source = "decision:<scope>"` and metadata `{"kind": "decision", "tag_count": N}`.
+  Documented in `docs/integration/claude-code.md` and `docs/integration/codex.md`.
+
+- **`memory.record_edit` MCP tool** — structured alias for capturing file edits.
+  Input: `{ path, before?, after, intent?, dedupe_key? }`. Writes Episode with
+  `source = "edit:<scope>"` and metadata `{"kind": "edit", "path": "<value>"}` —
+  enabling future `memory.recall` filter-by-path queries.
+
+### Changed
+
+- **`HeliosScratchpad` renamed to `CodingSessionMemory`** (MCP-03). The
+  `crates/lunaris/src/recipes/helios_scratchpad.rs` file is renamed to
+  `coding_session_memory.rs`; the `pub struct HeliosScratchpad` type is renamed
+  to `pub struct CodingSessionMemory`. This broadens the recipe's audience from
+  Helios specifically to any coding agent (Claude Code, Codex, etc.) that needs
+  a filesystem-shaped session memory surface.
+
+### Deprecated
+
+- **`HeliosScratchpad`** — now a `pub type HeliosScratchpad = CodingSessionMemory`
+  alias with `#[deprecated(since = "0.5.0")]`. v0.4 consumers continue to compile;
+  they will receive a `deprecated` compiler warning. The alias will be **removed in
+  v0.7**. Migration: replace `lunaris::HeliosScratchpad` with
+  `lunaris::CodingSessionMemory` at every call site.
+
 ## v0.5 Wave B — `lunaris-hook` scaffold + Codex parity decision (2026-05-25)
 
 First `lunaris-hook` binary release: proactive capture of Claude Code lifecycle

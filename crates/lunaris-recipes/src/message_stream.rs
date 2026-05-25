@@ -46,7 +46,7 @@ use ulid::Ulid;
 
 /// Default `top_k` the [`MessageStream::recall`] path uses when the caller does
 /// not override via [`MessageStream::with_top_k`]. Chosen to match the Phase 5
-/// `HeliosScratchpad::read` default (8) so conversational wrappers in Phase 10
+/// `CodingSessionMemory::read` default (8) so conversational wrappers in Phase 10
 /// inherit the same breadth.
 const DEFAULT_TOP_K: usize = 8;
 
@@ -118,7 +118,7 @@ impl MessageStream {
             t_ref: None,
             // Server stamps `bt` at ingest time via the chunker's
             // `BiTemporal::now(clock)` per Plan 02-01 — matches the
-            // helios_scratchpad.rs:103 convention.
+            // coding_session_memory.rs:103 convention.
             bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
             metadata,
         };
@@ -192,7 +192,7 @@ mod tests {
     /// PRIM-01 ≤ 30 LOC public-surface contract. Counts `pub fn` + `pub async fn`
     /// declarations in the production portion of the source file (everything
     /// BEFORE the first `#[cfg(test)]` marker). Mirrors the Phase 5
-    /// `helios_scratchpad_public_surface_under_50_loc` template verbatim.
+    /// `coding_session_memory_public_surface_under_50_loc` template verbatim.
     #[test]
     fn message_stream_public_surface_under_30_loc() {
         let src = include_str!("./message_stream.rs");
