@@ -927,6 +927,22 @@ impl KeywordPort for NoKeywordSupport {
     }
 }
 
+// ── HOOK-05: idempotency ──────────────────────────────────────────────────────
+
+/// Outcome of [`ScopedLunaris::ingest_idempotent`] (HOOK-05).
+///
+/// `Fresh` means a new episode was written; `Duplicate` means the dedupe key
+/// was already present and the prior LSN is returned without a second
+/// `atomic_write`. INGEST-04 is preserved: `Duplicate` does NOT call
+/// `atomic_write` at all; `Fresh` calls it exactly once via [`ScopedLunaris::ingest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngestKind {
+    /// New episode was written; the enclosed `Lsn` is its committed LSN.
+    Fresh,
+    /// Episode already present; the enclosed `Lsn` is the prior committed LSN.
+    Duplicate(lunaris_core::Lsn),
+}
+
 /// RFC 0001 Wave 1D — scope-bound view over a [`Lunaris`] handle.
 ///
 /// Constructed via [`Lunaris::scoped`]. All operations issued through this
@@ -966,6 +982,76 @@ impl<'a> ScopedLunaris<'a> {
     pub async fn ingest(&self, builder: EpisodeBuilder) -> Result<Lsn, LunarisError> {
         let episode = builder.into_episode(self.scope.clone(), &self.engine.clock);
         self.engine.ingest(episode).await
+    }
+
+    /// Idempotent ingest (HOOK-05): if `dedupe_key` has been seen before within
+    /// this scope, return the prior `Lsn` without a second `atomic_write`.
+    ///
+    /// ## INGEST-04 invariant preserved
+    ///
+    /// The dedupe key lookup is READ-ONLY (`StoragePort::lookup_by_dedupe_key`).
+    /// Only on [`IngestKind::Fresh`] does the existing single `atomic_write`
+    /// (inside [`Self::ingest`]) run. No new `atomic_write` call site is introduced.
+    ///
+    /// ## Trait-method approach (W6 fix)
+    ///
+    /// Uses `StoragePort::lookup_by_dedupe_key` / `insert_dedupe_key` trait methods
+    /// directly — no `as_any()` downcast. Moon and Postgres return `Ok(None)` from
+    /// the trait default, causing a safe fall-through to unconditional Fresh ingest
+    /// on those backends (documented v0.5 scope boundary: SQLite-only idempotency).
+    ///
+    /// ## Post-commit race window (T-24-03-06)
+    ///
+    /// `insert_dedupe_key` runs AFTER the `atomic_write` commit. If the process is
+    /// killed in the window between those two operations, replay produces a duplicate
+    /// Episode. Mitigation deferred to v0.6. The `insert_dedupe_key` failure is
+    /// non-fatal (logged at WARN level).
+    pub async fn ingest_idempotent(
+        &self,
+        builder: EpisodeBuilder,
+        dedupe_key: &str,
+    ) -> Result<(Lsn, IngestKind), LunarisError> {
+        // Attempt read-only lookup via StoragePort trait method.
+        // EmbeddedStorage returns the real hit; Moon/Postgres return Ok(None).
+        match self.engine.storage.lookup_by_dedupe_key(&self.scope, dedupe_key).await {
+            Ok(Some(prior_lsn)) => {
+                tracing::debug!(
+                    dedupe_key,
+                    prior_lsn = %prior_lsn,
+                    scope = self.scope.as_str(),
+                    "duplicate dedupe key — returning prior LSN without ingest",
+                );
+                return Ok((prior_lsn, IngestKind::Duplicate(prior_lsn)));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    dedupe_key,
+                    "dedupe key lookup failed — proceeding as fresh ingest",
+                );
+            }
+        }
+
+        // Fresh path: ingest (single atomic_write inside self.ingest), then
+        // record the dedupe key in the sidecar table (best-effort, non-fatal).
+        let lsn = self.ingest(builder).await?;
+
+        if let Err(e) = self
+            .engine
+            .storage
+            .insert_dedupe_key(&self.scope, dedupe_key, lsn)
+            .await
+        {
+            tracing::warn!(
+                err = %e,
+                dedupe_key,
+                lsn = %lsn,
+                "dedupe key insert failed — continuing (non-fatal, T-24-03-06 race window)",
+            );
+        }
+
+        Ok((lsn, IngestKind::Fresh))
     }
 
     /// Phase 23 — agent-supplied structured ingest under the bound scope.

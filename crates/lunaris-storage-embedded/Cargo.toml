@@ -21,6 +21,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 lunaris-core = { workspace = true }
 async-trait  = { workspace = true }
 bytes        = { workspace = true }
+chrono       = { workspace = true }
 futures      = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }

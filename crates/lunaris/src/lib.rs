@@ -71,7 +71,7 @@ pub use consolidator_pipeline::{
 pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
-pub use handle::{Lunaris, ScopedLunaris};
+pub use handle::{IngestKind, Lunaris, ScopedLunaris};
 // Phase 23 — agent-facing structured-ingest public surface.
 pub use structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`
