@@ -283,6 +283,7 @@ connection string with the `pgvector` extension installed.
 | Multi-user server mode | Deferred |
 | `npx`/`uvx` distribution | Deferred |
 | `record_decision` / `record_edit` tool aliases | Deferred |
+| Codex hook parity (`lunaris-hook`) | Deferred — [ADR 2026-05-25](../decisions/2026-05-25-codex-hook-deferral.md) |
 
 The stdio transport (Wave A) is the supported path. See
 `docs/decisions/2026-05-24-claude-code-mcp-reversal.md` for the Option C

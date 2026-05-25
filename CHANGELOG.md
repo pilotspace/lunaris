@@ -2,6 +2,37 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.5 Wave B — `lunaris-hook` scaffold + Codex parity decision (2026-05-25)
+
+First `lunaris-hook` binary release: proactive capture of Claude Code lifecycle
+events into Lunaris memory via stdin envelope → `ScopedLunaris::ingest` → exit.
+
+### Added
+
+- **`lunaris-hook` binary crate** — reads one Claude Code hook envelope from
+  stdin, derives scope from `cwd + git remote` (same algorithm as
+  `lunaris-mcp`), writes one Episode, exits 0 on success or non-zero with
+  a structured error. Four event kinds: `PreToolUse`, `PostToolUse`, `Stop`,
+  `SessionStart`. Unknown kinds exit 0 (forward-compat no-op; exit 66
+  reserved for Phase 24 filter-rejected events). See
+  `docs/integration/hooks.md`.
+- **`lunaris-core::scope_resolver`** — scope derivation lifted from
+  `lunaris-mcp` into `lunaris-core` via `ScopeStore` trait. Both
+  `lunaris-mcp` and `lunaris-hook` produce bit-identical scopes for the
+  same repo without copy-paste drift. Each binary owns its own
+  `JsonScopesFileStore` impl pointing at `~/.lunaris/scopes.json`.
+- **Hook integration guide** — `docs/integration/hooks.md` with event kind
+  table, exit codes, environment variables, and Phase 24 deferred items.
+- **HOOK-07 ADR** — `docs/decisions/2026-05-25-codex-hook-deferral.md`
+  documents the primary-source finding (no public Codex hook API as of
+  2026-05-25) and defers Codex parity to a future follow-up phase.
+
+### Scope of `lunaris-hook` v0.5
+
+Phase 24 ships filter policy, secret scrubber, dedupe key, and the cold-start
+latency gate (p50 ≤ 50ms). Phase 23's hook binary intentionally omits these
+to keep the scaffold atomic and the envelope schema settled.
+
 ## v0.4.0-wave-a — lunaris-mcp publish (2026-05-24)
 
 External-agent integration surface. Wave A delivers `lunaris-mcp`, a
