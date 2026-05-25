@@ -56,6 +56,11 @@ members = [
   # via the official rmcp 1.7 stdio transport. Zero tools at Wave 0; tool
   # handlers (memory.ingest, .recall, .forget, .list_scopes) land in Wave 2.
   "crates/lunaris-mcp",
+  # v0.5 Wave B — hook adapter binary that captures Claude Code lifecycle events
+  # into Lunaris memory. Reads a single hook envelope from stdin, derives scope
+  # from cwd+git remote (same algorithm as lunaris-mcp), writes one Episode via
+  # ScopedLunaris::ingest, exits 0 on success or non-zero with structured stderr.
+  "crates/lunaris-hook",
   # O-02 spike: throwaway Apple-Silicon-only crate evaluating `mlx-rs` as an
   # alternate embedder kernel backend. `publish = false`; deleted after the
   # GO/NO-GO decision regardless of outcome. See

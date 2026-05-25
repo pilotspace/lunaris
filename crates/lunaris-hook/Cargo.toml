@@ -1,0 +1,54 @@
+[package]
+name             = "lunaris-hook"
+version          = "0.5.0-alpha.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish          = true
+
+description = "Lunaris hook adapter — proactive capture of Claude Code lifecycle events into agent memory"
+readme      = "README.md"
+keywords    = ["hook", "claude-code", "agent", "memory", "lunaris"]
+categories  = ["command-line-utilities"]
+
+[[bin]]
+name = "lunaris-hook"
+path = "src/main.rs"
+
+[dependencies]
+# Lunaris engine — NO embedder-gguf or reranker-gguf features.
+# The hook hot-path is content-only; embedding is deferred to first recall
+# (HOOK-06 latency budget: p50 <= 50ms).
+lunaris      = { workspace = true }
+lunaris-core = { workspace = true }
+
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Async runtime — current-thread only (CONTEXT.md decision; matches ScopedLunaris::ingest signature)
+tokio = { workspace = true }
+
+# Serde + errors
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+anyhow     = { workspace = true }
+
+# Observability — logs to stderr only (NEVER stdout)
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Scope derivation (shared with lunaris-mcp via lunaris-core::scope_resolver)
+blake3 = { workspace = true }
+dirs   = { workspace = true }
+
+# t_ref parsing
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile   = "3"
+tokio      = { workspace = true, features = ["process", "time", "io-util"] }
+serde_json = { workspace = true }
+lunaris-core = { workspace = true }
