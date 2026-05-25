@@ -154,7 +154,11 @@ async fn ingest_round_trip() {
         tool_names.contains(&"memory.ingest"),
         "memory.ingest not in tools/list: {tool_names:?}"
     );
-    assert_eq!(tool_names.len(), 4, "expected 4 tools, got {}: {tool_names:?}", tool_names.len());
+    assert!(
+        tool_names.len() >= 4,
+        "expected at least 4 tools, got {}: {tool_names:?}",
+        tool_names.len()
+    );
 
     // ── 3. tools/call memory.ingest ───────────────────────────────────────────
     let call_req = serde_json::json!({

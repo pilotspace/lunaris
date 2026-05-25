@@ -37,6 +37,7 @@ use crate::tools::{
     ingest::{IngestParams, IngestResponse},
     list_scopes::{ListScopesParams, ListScopesResponse},
     recall::{RecallParams, RecallResponse},
+    record_decision::{RecordDecisionParams, RecordDecisionResponse},
 };
 
 // Alias for the JSON wrapper so tool method signatures stay concise.
@@ -67,7 +68,7 @@ struct Cli {
 
 // ── Server handler ────────────────────────────────────────────────────────────
 
-/// Lunaris MCP server — four memory tools registered.
+/// Lunaris MCP server — five memory tools registered.
 ///
 /// `state` is `Clone`-able because `AppState` wraps `Arc<Lunaris>`. The
 /// `ToolRouter` is constructed once at startup via `Self::lunaris_tool_router()`
@@ -157,6 +158,29 @@ impl LunarisMcpServer {
             .map(Json)
             .map_err(rmcp::ErrorData::from)
     }
+
+    /// Record an architectural or scoping decision into agent memory.
+    ///
+    /// Writes an Episode with `source = "decision:<scope>"` and typed metadata
+    /// (`kind = "decision"`, `tag_count = N`). The content is a JSON serialisation
+    /// of the structured payload (decision, rationale, alternatives, tags).
+    /// Accepts an optional `dedupe_key` for replay-safe idempotency (HOOK-05 path).
+    #[tool(
+        name = "memory.record_decision",
+        description = "Record an architectural or scoping decision into agent memory. \
+                       Writes an Episode with source='decision:<scope>' and metadata \
+                       kind='decision'. Accepts optional dedupe_key for replay-safe \
+                       idempotency."
+    )]
+    async fn record_decision(
+        &self,
+        Parameters(params): Parameters<RecordDecisionParams>,
+    ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
+        tools::record_decision::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -166,8 +190,9 @@ impl ServerHandler for LunarisMcpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Lunaris memory engine — ingest, recall, forget, and list memory scopes. \
-             Scope is bound at server startup; wave 2.A implements memory.ingest."
+                "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
+             and record decisions. Scope is bound at server startup; wave 2.A \
+             implements memory.ingest; Phase 25 adds memory.record_decision."
                     .to_string(),
             )
     }
@@ -184,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         scope   = ?cli.scope,
         storage = ?cli.storage,
-        "lunaris-mcp starting (Wave 2.A)",
+        "lunaris-mcp starting (Wave 2.A + Phase 25)",
     );
 
     run_server(&cli).await
