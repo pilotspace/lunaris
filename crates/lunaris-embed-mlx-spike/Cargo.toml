@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.94"
 publish = false
 description = "O-02 throwaway spike: single ModernBERT-layer port to mlx-rs for Apple Silicon perf/drift evaluation. NOT a v0.4 deliverable."
-license = "Apache-2.0"
+license = "Apache-2.0 OR MIT"
 
 [lib]
 name = "lunaris_embed_mlx_spike"
