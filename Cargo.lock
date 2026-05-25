@@ -3003,11 +3003,13 @@ dependencies = [
  "lunaris-core",
  "lunaris-memory",
  "parking_lot",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]
