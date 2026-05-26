@@ -1,0 +1,7 @@
+test/
+*.sh
+src/
+.gitignore
+*.gguf
+*.bin
+models/

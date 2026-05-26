@@ -1,0 +1,8 @@
+{
+  "_comment": "sha256 values are populated by release CI (mcp-prebuild.yml upload-binary-release 'Populate manifest.json' step) and shipped inside the published npm tarball. The repo-committed values are INTENTIONALLY placeholders — the npm registry artifact is the trust anchor. A 'placeholder' value causes postinstall.js to abort immediately so local npm install from source fails loudly.",
+  "lunaris-mcp-x86_64-unknown-linux-gnu.tar.gz":  "placeholder",
+  "lunaris-mcp-aarch64-unknown-linux-gnu.tar.gz": "placeholder",
+  "lunaris-mcp-x86_64-apple-darwin.tar.gz":       "placeholder",
+  "lunaris-mcp-aarch64-apple-darwin.tar.gz":      "placeholder",
+  "lunaris-mcp-x86_64-pc-windows-msvc.tar.gz":    "placeholder"
+}
