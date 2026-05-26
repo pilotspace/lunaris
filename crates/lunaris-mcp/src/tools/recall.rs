@@ -230,8 +230,14 @@ mod tests {
         AppState { lunaris: Arc::new(lunaris), scope }
     }
 
+    /// Wave A.1: brute-force cosine `vector_search` ships in the embedded
+    /// backend. Ingest an episode, recall it by overlapping text — must return
+    /// at least one hit with a non-empty episode ID.
+    ///
+    /// Previously ignored with "embedded backend lacks vector_search" — that
+    /// annotation was stale since commit `5674c52` (Wave A.1 T2). Re-enabled
+    /// 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
-    #[ignore = "embedded backend lacks vector_search; run with LUNARIS_STORAGE_URL=redis://localhost:6380 cargo test -p lunaris-mcp -- --ignored"]
     async fn ingest_then_recall_round_trip() {
         let state = fresh_state("test-recall-rt").await;
         let scoped = state.lunaris.scoped(state.scope.clone());
@@ -254,8 +260,12 @@ mod tests {
         assert!(!top.ingested_at.is_empty());
     }
 
+    /// Wave A.1: bi-temporal as_of snapshot. Ingest A, capture wall time, ingest
+    /// B, then recall with as_of = t_between. Must not surface B.
+    ///
+    /// Previously ignored with stale "embedded backend lacks vector_search".
+    /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
-    #[ignore = "embedded backend lacks vector_search; run with LUNARIS_STORAGE_URL=redis://localhost:6380 cargo test -p lunaris-mcp -- --ignored"]
     async fn as_of_time_travel_proves_bi_temporal() {
         let state = fresh_state("test-recall-bt").await;
         let scoped = state.lunaris.scoped(state.scope.clone());
@@ -290,8 +300,11 @@ mod tests {
         }
     }
 
+    /// Wave A.1: source-prefix filter excludes episodes from non-matching sources.
+    ///
+    /// Previously ignored with stale "embedded backend lacks vector_search".
+    /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
-    #[ignore = "embedded backend lacks vector_search; run with LUNARIS_STORAGE_URL=redis://localhost:6380 cargo test -p lunaris-mcp -- --ignored"]
     async fn source_prefix_filter_excludes_others() {
         let state = fresh_state("test-recall-filter").await;
         let scoped = state.lunaris.scoped(state.scope.clone());
