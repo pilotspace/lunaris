@@ -371,7 +371,7 @@ field is stored in metadata — future `memory.recall` queries can filter by pat
 |---------|--------|
 | SSE transport + Bearer auth | Deferred (Option B) |
 | Multi-user server mode | Deferred |
-| `npx`/`uvx` distribution | Deferred |
+| `npx`/`uvx` distribution | Implemented (v0.5 Wave D, 2026-05-26) |
 | `record_decision` / `record_edit` tool aliases | Implemented (v0.5 Wave C, 2026-05-25) |
 | Codex hook parity (`lunaris-hook`) | Deferred — [ADR 2026-05-25](../decisions/2026-05-25-codex-hook-deferral.md) |
 

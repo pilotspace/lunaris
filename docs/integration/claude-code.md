@@ -491,7 +491,7 @@ connection string with the `pgvector` extension installed.
 |---------|--------|
 | SSE transport + Bearer auth | Deferred (Option B) |
 | Multi-user server mode | Deferred |
-| `npx`/`uvx` distribution | Deferred |
+| `npx`/`uvx` distribution | Implemented (v0.5 Wave D, 2026-05-26) |
 | `record_decision` / `record_edit` tool aliases | Implemented (v0.5 Wave C, 2026-05-25) |
 | `coding_session_memory` recipe rename | Implemented (v0.5 Wave C, 2026-05-25) |
 
