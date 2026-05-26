@@ -44,15 +44,31 @@ pip install lunaris-mcp
 lunaris-mcp --help
 ```
 
-> **Note:** `uvx lunaris-mcp` (coming soon — Phase 26 Plan 2). The PyPI package
-> `lunaris-mcp` is in active development; subscribe to
-> [GitHub releases](https://github.com/lunaris-dev/lunaris/releases) for availability.
+To configure as a persistent Claude Code MCP server using uvx:
+
+```json
+{
+  "mcpServers": {
+    "lunaris": {
+      "command": "uvx",
+      "args": ["lunaris-mcp"]
+    }
+  }
+}
+```
+
+Or using the Claude Code CLI:
+
+```bash
+claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
+```
 
 Both paths download a prebuilt binary for your platform on first run.
 Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`.
 
-**Air-gap / offline environments:** Set `LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp` to bypass
-the postinstall download and point directly at a pre-staged binary.
+**Air-gap / offline environments (npm path):** Set `LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp` to bypass
+the postinstall download and point directly at a pre-staged binary. For the pip/uvx path, use
+`cargo install lunaris-mcp` to build from source instead.
 
 ---
 

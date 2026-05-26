@@ -1,0 +1,44 @@
+[build-system]
+requires      = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name            = "lunaris-mcp"
+version         = "0.3.0"
+description     = "Lunaris MCP server — no Rust toolchain required. Prebuilt native binary, all platforms."
+requires-python = ">=3.11"
+readme          = "README.md"
+license         = { text = "Apache-2.0 OR MIT" }
+authors         = [{ name = "Lunaris Authors" }]
+keywords        = ["mcp", "lunaris", "memory", "agent", "claude-code"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: Apache Software License",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.scripts]
+# Entry point: uvx / pip install / python -m lunaris_mcp all resolve to this.
+# __main__:main does os.execv to the native binary in lunaris_mcp/bin/.
+"lunaris-mcp" = "lunaris_mcp.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/lunaris-dev/lunaris"
+
+[tool.hatch.build.targets.wheel]
+# lunaris_mcp source lives under python/; hatchling discovers it there.
+packages = ["python/lunaris_mcp"]
+# CRITICAL: hatchling in VCS mode respects .gitignore and would silently
+# exclude the prebuilt binary staged by CI. The artifacts table is
+# hatchling's documented escape hatch for build-time-only files.
+artifacts = [
+  "python/lunaris_mcp/bin/lunaris-mcp",
+  "python/lunaris_mcp/bin/lunaris-mcp.exe",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

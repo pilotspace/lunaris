@@ -2,7 +2,7 @@
 
 All notable changes to Lunaris are documented here.
 
-## v0.5 Wave D — npx + uvx distribution: DIST-01 npm package (2026-05-26)
+## v0.5 Wave D — npx + uvx distribution: DIST-01 npm package + DIST-02 PyPI package (2026-05-26)
 
 ### Added
 
@@ -14,6 +14,14 @@ All notable changes to Lunaris are documented here.
   subsequent invocations exec the binary directly. `LUNARIS_MCP_BIN_PATH` env var
   provides an air-gap bypass. `docs/integration/claude-code.md` gains a "Quick Start
   (no Rust)" section.
+
+- **`lunaris-mcp` PyPI package** (DIST-02) — `uvx lunaris-mcp` installs and runs
+  `lunaris-mcp` without a Rust toolchain. Per-platform wheels (`manylinux_2_28_x86_64`,
+  `manylinux_2_28_aarch64`, `macosx_12_0_x86_64`, `macosx_12_0_arm64`, `win_amd64`)
+  each carry the prebuilt binary in `lunaris_mcp/bin/`. `uvx` resolves the correct
+  wheel by platform tag. `pip install lunaris-mcp` also supported. PyPI trust anchor:
+  TLS + per-file hash verification (PEP 427). Canonical registry: `pypi.org`.
+  `docs/integration/codex.md` gains `uvx lunaris-mcp` as the primary no-Rust path.
 
 ## v0.5 Wave C — MCP polish: record_decision / record_edit aliases + CodingSessionMemory rename (2026-05-25)
 

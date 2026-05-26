@@ -71,22 +71,40 @@ tmp=$(mktemp)
 jq --arg v "$VER" '.version = $v' "$mcppkgjson" > "$tmp"
 mv "$tmp" "$mcppkgjson"
 
+echo "-> Bumping crates/lunaris-mcp-py/pyproject.toml [project].version to $VER"
+py_mcp_pyproject="crates/lunaris-mcp-py/pyproject.toml"
+py_mcp_line=$(grep -n '^version = ' "$py_mcp_pyproject" | head -1 | cut -d: -f1)
+if [[ -z "$py_mcp_line" ]]; then
+  echo "ERROR: could not find version line in $py_mcp_pyproject" >&2
+  exit 4
+fi
+sed -i.bak "${py_mcp_line}s/version = \".*\"/version = \"$VER\"/" "$py_mcp_pyproject"
+rm -f "$py_mcp_pyproject.bak"
+
+echo "-> Bumping crates/lunaris-mcp-py/python/lunaris_mcp/__init__.py __version__ to $VER"
+py_mcp_init="crates/lunaris-mcp-py/python/lunaris_mcp/__init__.py"
+sed -i.bak "s/__version__ = \".*\"/__version__ = \"$VER\"/" "$py_mcp_init"
+rm -f "$py_mcp_init.bak"
+
 echo "-> Version parity assertion"
 # Rust source-of-truth: root Cargo.toml [workspace.package].version.
 rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
 py_ver=$(grep '^version = ' "$pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 ts_ver=$(jq -r '.version' "$pkgjson")
 npm_mcp_ver=$(jq -r '.version' "$mcppkgjson")
+py_mcp_ver=$(grep '^version = ' "$py_mcp_pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
 echo "  Rust (workspace.package): $rust_ver"
 echo "  Python (pyproject):       $py_ver"
 echo "  TypeScript (package):     $ts_ver"
 echo "  npm @lunaris/mcp:         $npm_mcp_ver"
+echo "  lunaris-mcp-py (pyproject): $py_mcp_ver"
 
-if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" || "$npm_mcp_ver" != "$VER" ]]; then
+if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" || \
+      "$npm_mcp_ver" != "$VER" || "$py_mcp_ver" != "$VER" ]]; then
   echo "ERROR: version parity broken" >&2
   exit 5
 fi
 
-echo "OK: all four surfaces at $VER"
+echo "OK: all five surfaces at $VER"
 echo "Next: cargo build --workspace --all-targets --all-features; then follow 13-03-HUMAN-UAT.md"
