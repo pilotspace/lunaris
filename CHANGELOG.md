@@ -2,6 +2,19 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.5 Wave D — npx + uvx distribution: DIST-01 npm package (2026-05-26)
+
+### Added
+
+- **`@lunaris/mcp` npm package** (DIST-01) — `npx @lunaris/mcp` installs and runs
+  `lunaris-mcp` without a Rust toolchain. Postinstall downloads the platform-native
+  binary from the GitHub Release (5 platforms: `linux-x64`, `linux-arm64`,
+  `darwin-x64`, `darwin-arm64`, `win32-x64`) and verifies sha256 against
+  `manifest.json` before extracting via `tar(1)`. Binary is cached in the npm package;
+  subsequent invocations exec the binary directly. `LUNARIS_MCP_BIN_PATH` env var
+  provides an air-gap bypass. `docs/integration/claude-code.md` gains a "Quick Start
+  (no Rust)" section.
+
 ## v0.5 Wave C — MCP polish: record_decision / record_edit aliases + CodingSessionMemory rename (2026-05-25)
 
 ### Added

@@ -10,6 +10,45 @@ the Codex-specific differences.
 
 ---
 
+## Quick Start (no Rust)
+
+No Rust toolchain required. Choose either path:
+
+### Via npm / npx
+
+```bash
+npx @lunaris/mcp --help
+```
+
+To register as a persistent Codex MCP server, add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.lunaris]
+command = "npx"
+args    = ["-y", "@lunaris/mcp"]
+```
+
+### Via uv / uvx
+
+```bash
+uvx lunaris-mcp --help
+# Or install permanently:
+pip install lunaris-mcp
+lunaris-mcp --help
+```
+
+> **Note:** `uvx lunaris-mcp` (coming soon — Phase 26 Plan 2). The PyPI package
+> `lunaris-mcp` is in active development; subscribe to
+> [GitHub releases](https://github.com/lunaris-dev/lunaris/releases) for availability.
+
+Both paths download a prebuilt binary for your platform on first run.
+Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`.
+
+**Air-gap / offline environments:** Set `LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp` to bypass
+the postinstall download and point directly at a pre-staged binary.
+
+---
+
 ## Prerequisites
 
 | Requirement | Version |

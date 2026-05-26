@@ -1,0 +1,162 @@
+name: mcp-prebuild
+
+# Builds the lunaris-mcp native binary for all 5 target triples.
+# Produces lunaris-mcp-<target>.tar.gz artifacts per platform.
+# Tag-gated job: populates manifest.json sha256 hashes, uploads tarballs to GitHub Release,
+# then publishes @lunaris/mcp to npm (Strategy B — no commit-back, no force-push).
+# A separate build-wheel job (added by Phase 26 Plan 26-02) wraps the
+# prebuilt binary in platform-tagged Python wheels.
+#
+# Triggers mirror ts-prebuild.yml / python-prebuild.yml:
+#   - pull_request touching crates/lunaris-mcp/** or workflow file
+#   - push to main on the same paths
+#   - push with v* tag (triggers upload-binary-release)
+#   - workflow_dispatch for preview builds
+#
+# fail-fast: false — per Phase 8 risk-register row 2. A failing arch
+# demotes to "source install supported" rather than blocking the release.
+#
+# All run: steps use static strings / CI-controlled matrix values only.
+# No untrusted user input (PR body / commit message) flows into commands.
+
+on:
+  pull_request:
+    paths:
+      - "crates/lunaris-mcp/**"
+      - "crates/lunaris-mcp-npm/**"
+      - "crates/lunaris-mcp-py/**"
+      - ".github/workflows/mcp-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-mcp/**"
+      - "crates/lunaris-mcp-npm/**"
+      - "crates/lunaris-mcp-py/**"
+      - ".github/workflows/mcp-prebuild.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required for softprops/action-gh-release on tag push
+
+jobs:
+  build-binary:
+    name: binary ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mcp-${{ matrix.target }}
+      - name: Install cross-compilation toolchain (aarch64 Linux)
+        if: matrix.cross == true && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build lunaris-mcp release binary
+        run: cargo build --release -p lunaris-mcp --target ${{ matrix.target }}
+      - name: Package binary into tarball
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+        run: |
+          OUTDIR="target/${MATRIX_TARGET}/release"
+          if [[ "${IS_WINDOWS}" == "true" ]]; then
+            BINARY="${OUTDIR}/lunaris-mcp.exe"
+          else
+            BINARY="${OUTDIR}/lunaris-mcp"
+          fi
+          TARBALL="lunaris-mcp-${MATRIX_TARGET}.tar.gz"
+          tar czf "${TARBALL}" -C "${OUTDIR}" "$(basename "${BINARY}")"
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunaris-mcp-${{ matrix.target }}
+          path: lunaris-mcp-${{ matrix.target }}.tar.gz
+          retention-days: 30
+
+  upload-binary-release:
+    name: attach binary tarballs to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-binary
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lunaris-mcp-*
+          path: release-assets
+          merge-multiple: true
+      - name: Populate manifest.json with real sha256 hashes
+        run: |
+          cd release-assets
+          {
+            echo "{"
+            first=true
+            for f in *.tar.gz; do
+              if [ "$first" = "true" ]; then first=false; else echo ","; fi
+              hash=$(sha256sum "$f" | awk '{print $1}')
+              printf '  "%s": "%s"' "$f" "$hash"
+            done
+            echo
+            echo "}"
+          } > "${GITHUB_WORKSPACE}/crates/lunaris-mcp-npm/manifest.json"
+          cat "${GITHUB_WORKSPACE}/crates/lunaris-mcp-npm/manifest.json"
+
+      - name: Upload binary tarballs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.tar.gz
+          fail_on_unmatched_files: true
+
+      - name: Publish @lunaris/mcp to npm
+        # Strategy B (default, safer): publish from CI with populated manifest.json.
+        # No commit-back, no force-push to the release tag.
+        # The manifest.json that ships in the published npm tarball contains the real
+        # sha256 hashes; the repo's committed manifest.json stays as placeholders
+        # (the source of truth for the tag is the npm registry artifact, not the repo tree).
+        #
+        # Strategy A (NOT recommended): commit manifest.json back to main then force-push
+        # the release tag to include the hash commit. This breaks downstream consumers that
+        # pin to v<version> because the tag moves to a new commit. Only consider Strategy A
+        # if your npm-publish path is unavailable AND your org has a release-tag governance
+        # policy that explicitly permits force-pushes. To switch, remove this step and add
+        # a "Commit manifest.json back to main and re-tag" step instead.
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: crates/lunaris-mcp-npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # The version field in package.json is already correct per the release commit.
+          # The manifest.json on disk now has real hashes (previous step).
+          npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
+          npm publish --access public

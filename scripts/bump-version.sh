@@ -9,14 +9,15 @@
 #      (cargo-edit plugin; run `cargo install cargo-edit` if missing).
 #   2. crates/lunaris-py/pyproject.toml [project].version (line-scoped sed).
 #   3. crates/lunaris-ts/package.json .version (jq).
+#   4. crates/lunaris-mcp-npm/package.json .version (jq).
 #
-# After editing, asserts all three surfaces match the requested semver.
+# After editing, asserts all four surfaces match the requested semver.
 # Exits non-zero on any parity mismatch.
 #
-# Parity read-back: the Rust source-of-truth is crates/lunaris/Cargo.toml
-# (the umbrella crate wrapped by both the Python and TypeScript host crates).
-# This repo does NOT carry a [workspace.package].version field — per-crate
-# [package].version is the canonical shape. Plan 13-03 deviation Rule 1.
+# Version source-of-truth: root Cargo.toml [workspace.package].version.
+# Extract: grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1
+# Phase 26 Plan 26-01: added crates/lunaris-mcp-npm/package.json surface.
+# Phase 26 Plan 26-02 will add crates/lunaris-mcp-py/pyproject.toml surface.
 
 set -euo pipefail
 
@@ -64,20 +65,28 @@ tmp=$(mktemp)
 jq --arg v "$VER" '.version = $v' "$pkgjson" > "$tmp"
 mv "$tmp" "$pkgjson"
 
+echo "-> Bumping crates/lunaris-mcp-npm/package.json .version to $VER"
+mcppkgjson="crates/lunaris-mcp-npm/package.json"
+tmp=$(mktemp)
+jq --arg v "$VER" '.version = $v' "$mcppkgjson" > "$tmp"
+mv "$tmp" "$mcppkgjson"
+
 echo "-> Version parity assertion"
-# Rust source-of-truth: umbrella crate (the one py+ts wrap).
-rust_ver=$(grep '^version' crates/lunaris/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+# Rust source-of-truth: root Cargo.toml [workspace.package].version.
+rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
 py_ver=$(grep '^version = ' "$pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 ts_ver=$(jq -r '.version' "$pkgjson")
+npm_mcp_ver=$(jq -r '.version' "$mcppkgjson")
 
-echo "  Rust (crates/lunaris): $rust_ver"
-echo "  Python (pyproject):    $py_ver"
-echo "  TypeScript (package):  $ts_ver"
+echo "  Rust (workspace.package): $rust_ver"
+echo "  Python (pyproject):       $py_ver"
+echo "  TypeScript (package):     $ts_ver"
+echo "  npm @lunaris/mcp:         $npm_mcp_ver"
 
-if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" ]]; then
+if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" || "$npm_mcp_ver" != "$VER" ]]; then
   echo "ERROR: version parity broken" >&2
   exit 5
 fi
 
-echo "OK: all three surfaces at $VER"
+echo "OK: all four surfaces at $VER"
 echo "Next: cargo build --workspace --all-targets --all-features; then follow 13-03-HUMAN-UAT.md"
