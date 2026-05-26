@@ -160,3 +160,81 @@ jobs:
           # The manifest.json on disk now has real hashes (previous step).
           npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
           npm publish --access public
+
+  build-wheel:
+    name: wheel ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    needs: build-binary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            plat_tag: manylinux_2_28_x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            plat_tag: manylinux_2_28_aarch64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            plat_tag: macosx_12_0_x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            plat_tag: macosx_12_0_arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            plat_tag: win_amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install wheel tooling
+        run: pip install hatchling build wheel maturin
+      - name: Download binary artifact for this target
+        uses: actions/download-artifact@v4
+        with:
+          name: lunaris-mcp-${{ matrix.target }}
+          path: binary-artifact
+      - name: Stage binary into wheel source tree
+        shell: bash
+        env:
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p crates/lunaris-mcp-py/python/lunaris_mcp/bin
+          tar xzf "binary-artifact/lunaris-mcp-${MATRIX_TARGET}.tar.gz" \
+            -C crates/lunaris-mcp-py/python/lunaris_mcp/bin
+          if [[ "${IS_WINDOWS}" != "true" ]]; then
+            chmod +x crates/lunaris-mcp-py/python/lunaris_mcp/bin/lunaris-mcp
+          fi
+      - name: Build platform-tagged wheel
+        shell: bash
+        env:
+          PLAT_TAG: ${{ matrix.plat_tag }}
+        working-directory: crates/lunaris-mcp-py
+        run: |
+          python -m build --wheel --outdir dist
+          # Apply the correct platform tag (hatchling produces a generic tag;
+          # retagging makes pip / uv resolve the right wheel per platform).
+          python -m wheel tags \
+            --platform-tag "${PLAT_TAG}" \
+            --remove \
+            dist/*.whl
+      - name: Run wheel structure test
+        shell: bash
+        working-directory: crates/lunaris-mcp-py
+        run: |
+          pip install dist/*.whl --force-reinstall --quiet
+          python -m pytest tests/test_wheel_structure.py -v
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunaris-mcp-wheel-${{ matrix.target }}
+          path: crates/lunaris-mcp-py/dist/*.whl
+          retention-days: 30
+      - name: Upload wheel to PyPI (tag-gated)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.MATURIN_PYPI_TOKEN }}
+        run: maturin upload --non-interactive crates/lunaris-mcp-py/dist/*.whl

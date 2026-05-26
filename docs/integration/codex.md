@@ -28,7 +28,7 @@ command = "npx"
 args    = ["-y", "@lunaris/mcp"]
 ```
 
-### Via uv / uvx
+### Via uv / uvx (recommended for Python users)
 
 ```bash
 uvx lunaris-mcp --help
@@ -37,9 +37,13 @@ pip install lunaris-mcp
 lunaris-mcp --help
 ```
 
-> **Note:** `uvx lunaris-mcp` (coming soon — Phase 26 Plan 2). The PyPI package
-> `lunaris-mcp` is in active development; subscribe to
-> [GitHub releases](https://github.com/lunaris-dev/lunaris/releases) for availability.
+To register as a persistent Codex MCP server using uvx, add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.lunaris]
+command = "uvx"
+args    = ["lunaris-mcp"]
+```
 
 Both paths download a prebuilt binary for your platform on first run.
 Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`.
