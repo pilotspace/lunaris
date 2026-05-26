@@ -55,9 +55,7 @@ where
                 // Skip pure Parse Error responses from rmcp (no `id` field,
                 // error code -32700) — these are informational and not our response.
                 let is_parse_err = v.get("id").is_none()
-                    && v.get("error")
-                        .and_then(|e| e.get("code"))
-                        .and_then(|c| c.as_i64())
+                    && v.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64())
                         == Some(-32700);
                 if is_parse_err {
                     continue;
@@ -90,6 +88,10 @@ async fn record_edit_smoke() {
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-record-edit")
         .env("LUNARIS_MCP_STORAGE", &storage)
+        // Skip embedder health probe — ingest-only test, no recall exercised.
+        // Without this, bootstrap rejects NoopEmbedder and the server exits
+        // before responding (mcp-recall-empty-hits fix; see state.rs).
+        .env("LUNARIS_MCP_SKIP_EMBEDDER_PROBE", "1")
         .env("LUNARIS_MCP_LOG", "error")
         .env("NO_COLOR", "1")
         .stdin(std::process::Stdio::piped())
