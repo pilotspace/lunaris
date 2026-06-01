@@ -23,6 +23,7 @@
 
 pub mod fixtures;
 pub mod protocol;
+pub mod raptor;
 pub mod storage;
 
 // Phase 12 Plan 12-04 — chaos / fsck helpers shared with the Helios
