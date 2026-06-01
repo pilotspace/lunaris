@@ -22,10 +22,8 @@ async fn invalid_json_exits_64() {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"{not valid json}").await.unwrap();
     drop(stdin);
-    let status = timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("timeout")
-        .expect("wait");
+    let status =
+        timeout(Duration::from_secs(10), child.wait()).await.expect("timeout").expect("wait");
     assert_eq!(status.code(), Some(64), "Invalid JSON must exit 64");
 }
 
@@ -47,9 +45,7 @@ async fn missing_hook_event_name_exits_64() {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(br#"{"session_id": "s1"}"#).await.unwrap();
     drop(stdin);
-    let status = timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("timeout")
-        .expect("wait");
+    let status =
+        timeout(Duration::from_secs(10), child.wait()).await.expect("timeout").expect("wait");
     assert_eq!(status.code(), Some(64), "Missing hook_event_name must exit 64");
 }

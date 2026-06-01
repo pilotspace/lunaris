@@ -55,10 +55,7 @@ static BUILTIN_RAW: &[(&str, &str)] = &[
     // SSH_KEY: OpenSSH / PEM private key block headers.
     (r"-----BEGIN [A-Z ]+ PRIVATE KEY-----", "<REDACTED:SSH_KEY>"),
     // JWT: three Base64URL segments separated by dots, starting with eyJ (JSON header).
-    (
-        r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+",
-        "<REDACTED:JWT>",
-    ),
+    (r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "<REDACTED:JWT>"),
 ];
 
 /// A compiled scrubber engine.
@@ -88,9 +85,7 @@ impl ScrubEngine {
 
     /// Construct an engine with built-ins only.
     pub fn new() -> Self {
-        Self {
-            rules: Self::builtin_rules(),
-        }
+        Self { rules: Self::builtin_rules() }
     }
 
     /// Construct an engine with built-ins **plus** custom patterns from a

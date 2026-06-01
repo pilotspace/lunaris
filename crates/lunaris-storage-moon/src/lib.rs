@@ -76,6 +76,7 @@ use crate::keyspace::{ft_index_name, graph_key};
 #[derive(Debug, Clone)]
 pub struct MoonStorage {
     pub(crate) client: MoonClient,
+    queue_native: bool,
     /// Set of scopes whose FT indices + graph key have been created on Moon.
     /// `parking_lot::Mutex` (not `std::sync::Mutex`) per CLAUDE.md lock discipline.
     /// The lock is NEVER held across an `.await` — it is taken, the bool is checked,
@@ -105,10 +106,9 @@ impl MoonStorage {
     /// 768-d index in place; the mismatch surfaces only on the first vector
     /// write. Drop the stale index first (`FT.DROPINDEX <name>`).
     pub async fn connect_with_dim(url: &str, dim: usize) -> Result<Self, StorageError> {
-        Ok(Self {
-            client: MoonClient::connect_with_dim(url, dim).await?,
-            initialized_scopes: Arc::new(Mutex::new(HashSet::new())),
-        })
+        let client = MoonClient::connect_with_dim(url, dim).await?;
+        let queue_native = crate::queue::supports_native_queue(&client).await?;
+        Ok(Self { client, queue_native, initialized_scopes: Arc::new(Mutex::new(HashSet::new())) })
     }
 
     /// Borrow the underlying client (used by integration tests).
@@ -368,7 +368,7 @@ impl StoragePort for MoonStorage {
             bi_temporal_native: false,
             graph_native: true,
             rerank_native: true,
-            queue_native: true,
+            queue_native: self.queue_native,
             // Moon's FT.CREATE has no dimension cap — report the dimension the
             // adapter actually created its indices at (default 768d matching
             // EmbeddingGemma-300M; `connect_with_dim` / `Lunaris::open` size it

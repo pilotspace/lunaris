@@ -197,6 +197,10 @@ async fn publish_consolidate_event(
     source: &str,
     scope: &lunaris_core::Scope,
 ) {
+    if !storage.capabilities().queue_native {
+        tracing::debug!("consolidate queue unavailable; skipping consolidate-queue publish");
+        return;
+    }
     let envelope = json!({
         "kind": "ingest_committed",
         "episode_id": episode_id.to_string(),
@@ -522,6 +526,10 @@ async fn publish_needs_review(
     scope: &lunaris_core::Scope,
     items: &[NeedsReviewItem],
 ) {
+    if !storage.capabilities().queue_native {
+        tracing::debug!("verify queue unavailable; skipping verify-queue publish");
+        return;
+    }
     for item in items {
         let envelope = needs_review_envelope(item);
         let payload = match serde_json::to_vec(&envelope) {

@@ -94,11 +94,7 @@ pub fn derive_event_id(
 /// unambiguous field separation without encoding overhead.
 ///
 /// Returns a 64-character lowercase hex string (full 256-bit blake3 output).
-pub fn derive_dedupe_key(
-    scope: &str,
-    event_id: &str,
-    canonical_json_bytes: &[u8],
-) -> String {
+pub fn derive_dedupe_key(scope: &str, event_id: &str, canonical_json_bytes: &[u8]) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(scope.as_bytes());
     hasher.update(&[0x1F]); // ASCII Unit Separator

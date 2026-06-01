@@ -3002,7 +3002,9 @@ dependencies = [
  "globset",
  "hex",
  "lunaris-core",
+ "lunaris-ingest",
  "lunaris-memory",
+ "lunaris-retrieve",
  "lunaris-storage-embedded",
  "parking_lot",
  "regex",
@@ -3015,6 +3017,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]
@@ -3070,6 +3073,7 @@ dependencies = [
  "indicatif",
  "lunaris-core",
  "lunaris-memory",
+ "lunaris-retrieve",
  "reqwest 0.13.2",
  "rmcp",
  "schemars",

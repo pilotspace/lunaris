@@ -16,15 +16,10 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 
 /// Built-in path deny glob patterns.
 /// These ALWAYS run; user overrides cannot remove them.
-const BUILTIN_PATH_DENY: &[&str] = &[
-    "**/.env",
-    "**/*.pem",
-    "**/id_rsa*",
-    "**/.git/**",
-];
+const BUILTIN_PATH_DENY: &[&str] = &["**/.env", "**/*.pem", "**/id_rsa*", "**/.git/**"];
 
 /// Tool kinds captured by default.
-const DEFAULT_ALLOW_KINDS: &[&str] = &["Edit", "Write", "Bash"];
+const DEFAULT_ALLOW_KINDS: &[&str] = &["Read", "Edit", "MultiEdit", "Write", "Bash"];
 
 /// Maximum payload size before truncation (128 KiB).
 const MAX_PAYLOAD_BYTES: usize = 128 * 1024;
@@ -135,13 +130,9 @@ impl FilterPolicy {
             return TruncatedPayload { content: content.to_owned(), truncated_bytes: 0 };
         }
 
-        let head = std::str::from_utf8(&bytes[..TRUNCATION_HEAD])
-            .unwrap_or_default()
-            .to_owned();
+        let head = std::str::from_utf8(&bytes[..TRUNCATION_HEAD]).unwrap_or_default().to_owned();
         let tail_start = bytes.len().saturating_sub(TRUNCATION_TAIL);
-        let tail = std::str::from_utf8(&bytes[tail_start..])
-            .unwrap_or_default()
-            .to_owned();
+        let tail = std::str::from_utf8(&bytes[tail_start..]).unwrap_or_default().to_owned();
         let elided = (bytes.len() - TRUNCATION_HEAD - TRUNCATION_TAIL) as u64;
 
         TruncatedPayload {
@@ -161,8 +152,7 @@ pub enum FilterError {
 fn build_globset<S: AsRef<str>>(patterns: &[S]) -> Result<GlobSet, FilterError> {
     let mut builder = GlobSetBuilder::new();
     for p in patterns {
-        let glob = Glob::new(p.as_ref())
-            .map_err(|e| FilterError::InvalidGlob(e.to_string()))?;
+        let glob = Glob::new(p.as_ref()).map_err(|e| FilterError::InvalidGlob(e.to_string()))?;
         builder.add(glob);
     }
     builder.build().map_err(|e| FilterError::InvalidGlob(e.to_string()))

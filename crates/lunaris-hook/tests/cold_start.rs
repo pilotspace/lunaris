@@ -93,12 +93,7 @@ async fn hook_pipeline_meets_latency_budget() {
 
     // Parse fixture lines.
     let lines: Vec<&str> = FIXTURE.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(
-        lines.len(),
-        1000,
-        "fixture must have exactly 1000 lines, got {}",
-        lines.len()
-    );
+    assert_eq!(lines.len(), 1000, "fixture must have exactly 1000 lines, got {}", lines.len());
 
     // ── Warmup: first 10 envelopes ────────────────────────────────────────────
     //

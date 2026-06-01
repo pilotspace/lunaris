@@ -30,9 +30,7 @@ async fn post_tool_use_exits_0() {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(POST_TOOL_USE_JSON.as_bytes()).await.unwrap();
     drop(stdin);
-    let status = timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("timeout")
-        .expect("wait");
+    let status =
+        timeout(Duration::from_secs(10), child.wait()).await.expect("timeout").expect("wait");
     assert_eq!(status.code(), Some(0), "PostToolUse must exit 0");
 }

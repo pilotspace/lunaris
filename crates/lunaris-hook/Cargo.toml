@@ -17,12 +17,18 @@ categories  = ["command-line-utilities"]
 name = "lunaris-hook"
 path = "src/main.rs"
 
+[[bin]]
+name = "lunaris-contextd"
+path = "src/contextd.rs"
+
 [dependencies]
 # Lunaris engine — NO embedder-gguf or reranker-gguf features.
 # The hook hot-path is content-only; embedding is deferred to first recall
 # (HOOK-06 latency budget: p50 <= 50ms).
-lunaris      = { workspace = true }
+lunaris      = { workspace = true, features = ["embedder-gguf", "reranker-gguf"] }
 lunaris-core = { workspace = true }
+lunaris-ingest = { workspace = true }
+lunaris-retrieve = { workspace = true }
 
 # CLI
 clap = { workspace = true, features = ["derive", "env"] }
@@ -49,6 +55,7 @@ hex = { workspace = true }
 
 # t_ref parsing
 chrono = { workspace = true }
+ulid   = { workspace = true }
 
 # HOOK-03 — path glob deny list for FilterPolicy
 globset = { workspace = true }

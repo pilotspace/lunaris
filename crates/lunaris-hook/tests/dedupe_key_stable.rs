@@ -87,7 +87,8 @@ fn canonical_json_nested_map_sort() {
     outer_unsorted.insert("w".to_string(), serde_json::json!(1));
 
     let canonical_bytes = canonical_json(&serde_json::Value::Object(outer_unsorted));
-    let canonical_str = std::str::from_utf8(&canonical_bytes).expect("canonical JSON must be valid UTF-8");
+    let canonical_str =
+        std::str::from_utf8(&canonical_bytes).expect("canonical JSON must be valid UTF-8");
 
     // Outer: "w" must appear before "x" in the serialized form
     let w_pos = canonical_str.find("\"w\"").expect("key w must be present");

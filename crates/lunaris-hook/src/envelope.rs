@@ -43,8 +43,8 @@ pub enum HookEvent {
 /// `hook_event_name` field. Returns `Ok(HookEvent::Unknown(...))` for
 /// unrecognised event kinds (forward compatibility).
 pub fn parse(bytes: &[u8]) -> Result<HookEvent, ParseError> {
-    let v: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|e| ParseError::InvalidJson(e.to_string()))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| ParseError::InvalidJson(e.to_string()))?;
 
     let kind = v
         .get("hook_event_name")
@@ -166,9 +166,7 @@ pub fn extract_timestamp(event: &HookEvent) -> Option<DateTime<Utc>> {
         HookEvent::SessionStart(p) => p.timestamp.as_deref(),
         HookEvent::Unknown(_) => None,
     }?;
-    DateTime::parse_from_rfc3339(ts_str)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(ts_str).ok().map(|dt| dt.with_timezone(&Utc))
 }
 
 // ── HOOK-05: helpers needed by `run()` for the dedupe pipeline ────────────────
@@ -223,10 +221,7 @@ pub fn parse_value(value: &serde_json::Value) -> Result<HookEvent, ParseError> {
 /// The field is serialised back to a compact JSON string so that the scrubber
 /// and dedupe pipeline operate on a flat string rather than a nested `Value`.
 pub fn extract_content_string(event_value: &serde_json::Value) -> String {
-    let kind = event_value
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let kind = event_value.get("hook_event_name").and_then(|v| v.as_str()).unwrap_or("");
 
     match kind {
         "PreToolUse" => event_value
@@ -250,11 +245,7 @@ pub fn extract_content_string(event_value: &serde_json::Value) -> String {
 /// For `PostToolUse`: replaces `tool_response` similarly.
 /// For other kinds: no-op (no content field to splice).
 pub fn splice_content_string(event_value: &mut serde_json::Value, content: &str) {
-    let kind = event_value
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_owned();
+    let kind = event_value.get("hook_event_name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
 
     // Try to parse the scrubbed content back as JSON; fall back to a bare string value.
     let content_value: serde_json::Value = serde_json::from_str(content)

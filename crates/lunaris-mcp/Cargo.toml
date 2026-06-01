@@ -27,6 +27,7 @@ rmcp = { version = "1.7", features = ["transport-io"] }
 # default-features = false on the workspace entry; we add only what we need here.
 lunaris      = { workspace = true, features = ["embedder-gguf", "reranker-gguf"] }
 lunaris-core = { workspace = true }
+lunaris-retrieve = { workspace = true }
 
 # CLI + observability
 clap               = { workspace = true, features = ["derive", "env"] }

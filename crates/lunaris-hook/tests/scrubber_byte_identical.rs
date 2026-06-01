@@ -91,11 +91,7 @@ fn test7_jwt_token() {
             .to_string();
     let engine = ScrubEngine::new();
     engine.apply(&mut content);
-    assert!(
-        content.contains("<REDACTED:JWT>"),
-        "expected JWT redaction, got: {:?}",
-        content
-    );
+    assert!(content.contains("<REDACTED:JWT>"), "expected JWT redaction, got: {:?}", content);
 }
 
 #[test]
@@ -110,32 +106,14 @@ fn test8_byte_identical_across_two_runs() {
     let mut second = fixture.to_string();
     engine.apply(&mut second);
 
-    assert_eq!(
-        first, second,
-        "scrubber output must be byte-identical across two independent runs"
-    );
+    assert_eq!(first, second, "scrubber output must be byte-identical across two independent runs");
 
     // Also assert all 5 kinds are redacted in the fixture output.
-    assert!(
-        first.contains("<REDACTED:ENV_KEY>"),
-        "fixture missing ENV_KEY redaction"
-    );
-    assert!(
-        first.contains("<REDACTED:AWS_KEY>"),
-        "fixture missing AWS_KEY redaction"
-    );
-    assert!(
-        first.contains("<REDACTED:GH_TOKEN>"),
-        "fixture missing GH_TOKEN redaction"
-    );
-    assert!(
-        first.contains("<REDACTED:SSH_KEY>"),
-        "fixture missing SSH_KEY redaction"
-    );
-    assert!(
-        first.contains("<REDACTED:JWT>"),
-        "fixture missing JWT redaction"
-    );
+    assert!(first.contains("<REDACTED:ENV_KEY>"), "fixture missing ENV_KEY redaction");
+    assert!(first.contains("<REDACTED:AWS_KEY>"), "fixture missing AWS_KEY redaction");
+    assert!(first.contains("<REDACTED:GH_TOKEN>"), "fixture missing GH_TOKEN redaction");
+    assert!(first.contains("<REDACTED:SSH_KEY>"), "fixture missing SSH_KEY redaction");
+    assert!(first.contains("<REDACTED:JWT>"), "fixture missing JWT redaction");
 }
 
 // ── TOML overlay tests ───────────────────────────────────────────────────────
@@ -186,10 +164,7 @@ fn test10_no_toml_still_redacts_builtins() {
         ("AKIAIOSFODNN7EXAMPLE", "AWS_KEY"),
         ("ghp_16C7e42F292c6912E7710c838347Ae178B4a", "GH_TOKEN"),
         ("-----BEGIN EC PRIVATE KEY-----", "SSH_KEY"),
-        (
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.abc123def456ghi",
-            "JWT",
-        ),
+        ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.abc123def456ghi", "JWT"),
     ];
 
     for (secret, kind) in cases {
