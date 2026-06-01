@@ -96,7 +96,9 @@ impl SizeComplianceMetric {
             return 1.0;
         }
         let diff = (draft.tokens as i64 - ctx.target_tokens as i64).unsigned_abs() as f32;
-        (1.0 - diff / ctx.target_tokens as f32).max(0.0).min(1.0)
+        #[allow(clippy::manual_clamp)]
+        let score = (1.0 - diff / ctx.target_tokens as f32).max(0.0).min(1.0);
+        score
     }
 }
 

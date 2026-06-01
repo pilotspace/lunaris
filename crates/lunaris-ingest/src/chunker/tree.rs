@@ -180,12 +180,9 @@ fn insert_node(roots: &mut Vec<TocNode>, node: TocNode, _level: u8) {
         return;
     }
     // Try to insert as child of the last root (recursively).
-    if let Some(last) = roots.last_mut() {
-        if node.level > last.level {
-            // Belongs under the last root.
-            insert_node(&mut last.children, node, _level);
-            return;
-        }
+    if roots.last_mut().is_some_and(|last| node.level > last.level) {
+        insert_node(&mut roots.last_mut().unwrap().children, node, _level);
+        return;
     }
     // Level is <= last root level: push as new root sibling.
     roots.push(node);

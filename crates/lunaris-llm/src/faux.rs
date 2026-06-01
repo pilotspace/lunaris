@@ -248,8 +248,7 @@ impl LlmBackend for FauxBackend {
         }
 
         // Pop from queue; default to Ok("") when drained.
-        let response = self.queue.lock().pop_front().unwrap_or_else(|| Ok(String::new()));
-        response
+        self.queue.lock().pop_front().unwrap_or_else(|| Ok(String::new()))
     }
 
     fn model_id(&self) -> &str {

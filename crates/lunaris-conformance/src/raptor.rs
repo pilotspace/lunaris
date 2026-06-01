@@ -30,8 +30,7 @@ use std::sync::Arc;
 
 use futures::StreamExt as _;
 use lunaris_core::{
-    Episode, HlcClock, Scope, StubEmbedder, StoragePort,
-    keyspace::community_prefix,
+    Episode, HlcClock, Scope, StoragePort, StubEmbedder, keyspace::community_prefix,
     primitives::Community,
 };
 use lunaris_ingest::ingest_episode;
@@ -95,29 +94,26 @@ async fn scan_communities(
 /// node-ID set (BTreeSet of distinct Ulids), not raw row count. The scan_range
 /// `as_of=None` returns the latest value per key, so duplicate ingests produce
 /// the same key set.
-pub async fn run_raptor_idempotency_suite(
-    storage: Arc<dyn StoragePort>,
-) -> anyhow::Result<()> {
+pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyhow::Result<()> {
     let clock = HlcClock::new(0);
     let embedder = StubEmbedder::new(768);
     let scope = Scope::dev();
 
     // First ingest.
     let ep1 = raptor_episode(&clock);
-    ingest_episode(&*storage, &embedder, &clock, ep1).await
+    ingest_episode(&*storage, &embedder, &clock, ep1)
+        .await
         .map_err(|e| anyhow::anyhow!("first ingest failed: {e}"))?;
 
     let communities_1 = scan_communities(&storage, &scope).await?;
     let ids_1: BTreeSet<Ulid> = communities_1.iter().map(|c| c.id).collect();
 
-    anyhow::ensure!(
-        !ids_1.is_empty(),
-        "first ingest must produce at least one Community; got 0"
-    );
+    anyhow::ensure!(!ids_1.is_empty(), "first ingest must produce at least one Community; got 0");
 
     // Second ingest (same document, same scope+source → deterministic IDs).
     let ep2 = raptor_episode(&clock);
-    ingest_episode(&*storage, &embedder, &clock, ep2).await
+    ingest_episode(&*storage, &embedder, &clock, ep2)
+        .await
         .map_err(|e| anyhow::anyhow!("second ingest failed: {e}"))?;
 
     let communities_2 = scan_communities(&storage, &scope).await?;
@@ -166,11 +162,13 @@ pub async fn run_raptor_parity_suite(
 
     // Ingest independently on each backend.
     let ep_a = raptor_episode(&clock);
-    ingest_episode(&*storage_a, &embedder, &clock, ep_a).await
+    ingest_episode(&*storage_a, &embedder, &clock, ep_a)
+        .await
         .map_err(|e| anyhow::anyhow!("storage_a ingest failed: {e}"))?;
 
     let ep_b = raptor_episode(&clock);
-    ingest_episode(&*storage_b, &embedder, &clock, ep_b).await
+    ingest_episode(&*storage_b, &embedder, &clock, ep_b)
+        .await
         .map_err(|e| anyhow::anyhow!("storage_b ingest failed: {e}"))?;
 
     let mut communities_a = scan_communities(&storage_a, &scope).await?;

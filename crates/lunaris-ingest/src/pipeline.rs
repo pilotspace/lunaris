@@ -35,7 +35,7 @@ use crate::chunker::{
     chunk_texts_for_community, run_bakeoff,
 };
 use crate::schema_gate::validate_chunk_metadata;
-use crate::summarizer::{ExtractiveSummarizer, SummaryInput, Summarizer as _};
+use crate::summarizer::{ExtractiveSummarizer, Summarizer as _, SummaryInput};
 use crate::{chunk_key, episode_key};
 
 /// Number of chunks per `embed_batch` call. Per blueprint §4.1 ingest hot path.
@@ -210,8 +210,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
 
     // Assemble all WriteOps into the single batch.
     // Capacity: doctree + episode + 2×chunk + 1×community per community.
-    let mut ops: Vec<WriteOp> =
-        Vec::with_capacity(2 + 2 * wired_chunks.len() + communities.len());
+    let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * wired_chunks.len() + communities.len());
 
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
 
@@ -358,6 +357,7 @@ async fn embed_with_fallback(
 ///
 /// `target_tokens` and `overlap_tokens` govern the bake-off's internal generators;
 /// they default to 500/100 when `bakeoff_config` is `None`.
+#[allow(clippy::too_many_arguments)]
 pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     storage: &S,
     embedder: &dyn Embedder,

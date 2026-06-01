@@ -91,11 +91,8 @@ impl ExtractiveSummarizer {
                 let is_boundary = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
                 if is_boundary {
                     // Return up to and including the punctuation.
-                    let byte_end: usize = trimmed
-                        .char_indices()
-                        .nth(i + 1)
-                        .map(|(b, _)| b)
-                        .unwrap_or(trimmed.len());
+                    let byte_end: usize =
+                        trimmed.char_indices().nth(i + 1).map(|(b, _)| b).unwrap_or(trimmed.len());
                     return &trimmed[..byte_end];
                 }
             }

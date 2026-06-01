@@ -3,7 +3,7 @@
 //! RED phase: all tests fail because `Summarizer`, `ExtractiveSummarizer`,
 //! and `SummaryInput` do not yet exist in lunaris-ingest.
 
-use lunaris_ingest::{ExtractiveSummarizer, SummaryInput, Summarizer};
+use lunaris_ingest::{ExtractiveSummarizer, Summarizer, SummaryInput};
 use ulid::Ulid;
 
 // ---------------------------------------------------------------------------
@@ -17,7 +17,10 @@ async fn extractive_basic() {
     let inputs = vec![
         SummaryInput {
             node_id: Ulid::new(),
-            child_texts: vec!["Hello world. More text here.".into(), "Second child sentence.".into()],
+            child_texts: vec![
+                "Hello world. More text here.".into(),
+                "Second child sentence.".into(),
+            ],
         },
         SummaryInput {
             node_id: Ulid::new(),
@@ -77,7 +80,7 @@ async fn extractive_empty_child_list_fallback() {
 mod llm_faux {
     use std::sync::Arc;
 
-    use lunaris_ingest::{LlmSummarizer, SummaryInput, Summarizer};
+    use lunaris_ingest::{LlmSummarizer, Summarizer, SummaryInput};
     use lunaris_llm::faux::FauxBackend;
     use ulid::Ulid;
 
@@ -86,10 +89,8 @@ mod llm_faux {
     async fn llm_faux_returns_queued_response() {
         let backend = Arc::new(FauxBackend::new().with_response("Generated summary."));
         let summarizer = LlmSummarizer::new(backend);
-        let input = SummaryInput {
-            node_id: Ulid::new(),
-            child_texts: vec!["Some text here.".into()],
-        };
+        let input =
+            SummaryInput { node_id: Ulid::new(), child_texts: vec!["Some text here.".into()] };
         let summaries = summarizer.summarize(&[input]).await;
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0], "Generated summary.");
@@ -98,13 +99,10 @@ mod llm_faux {
     /// On LlmBackend error, LlmSummarizer falls back to extractive — output non-empty.
     #[tokio::test]
     async fn llm_faux_falls_back_to_extractive_on_error() {
-        let backend =
-            Arc::new(FauxBackend::new().with_error_msg("simulated LLM failure"));
+        let backend = Arc::new(FauxBackend::new().with_error_msg("simulated LLM failure"));
         let summarizer = LlmSummarizer::new(backend);
-        let input = SummaryInput {
-            node_id: Ulid::new(),
-            child_texts: vec!["Fallback text here.".into()],
-        };
+        let input =
+            SummaryInput { node_id: Ulid::new(), child_texts: vec!["Fallback text here.".into()] };
         let summaries = summarizer.summarize(&[input]).await;
         assert_eq!(summaries.len(), 1);
         assert!(

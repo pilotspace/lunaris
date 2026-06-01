@@ -240,11 +240,9 @@ fn split_sentences(paragraph_text: &str, base_offset: usize) -> Vec<TextUnit> {
 
             if c == '.' {
                 // Decimal guard: digit immediately after dot is not a sentence end.
-                if let Some(&next_ch) = after_terminal.first() {
-                    if next_ch.is_ascii_digit() {
-                        i += 1;
-                        continue;
-                    }
+                if after_terminal.first().is_some_and(|ch| ch.is_ascii_digit()) {
+                    i += 1;
+                    continue;
                 }
 
                 // Abbreviation guard: if the token before the dot is a known
@@ -344,13 +342,11 @@ fn is_abbreviation(token: &str) -> bool {
     // Single uppercase letter initial: "A.", "B.", etc.
     // Check original case so "J" (uppercase) is detected correctly.
     let mut word_iter = token.unicode_words();
-    if let Some(_word) = word_iter.next() {
-        if word_iter.next().is_none() {
-            // single-word token
-            let chars: Vec<char> = token.chars().collect();
-            if chars.len() == 1 && chars[0].is_uppercase() {
-                return true;
-            }
+    if word_iter.next().is_some() && word_iter.next().is_none() {
+        // single-word token
+        let chars: Vec<char> = token.chars().collect();
+        if chars.len() == 1 && chars[0].is_uppercase() {
+            return true;
         }
     }
     // Known abbreviations are stored lowercase — compare case-insensitively.

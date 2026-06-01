@@ -287,7 +287,7 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     days -= y1 * 365;
 
     let year = y400 * 400 + y100 * 100 + y4 * 4 + y1 + 1970;
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let month_days: [u64; 12] =
         [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
