@@ -222,14 +222,22 @@ async fn episode_and_chunks_appear_in_single_batch() {
             |op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(8).any(|w| w == b":doctree")),
         )
         .count();
+    let n_community_kvput = batch
+        .iter()
+        .filter(
+            |op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(10).any(|w| w == b":community")),
+        )
+        .count();
     assert_eq!(n_episode_kvput, 1, "exactly one Episode KvPut");
     assert_eq!(n_doctree_kvput, 1, "exactly one DocTree KvPut (STRUCT-02)");
     assert!((4..=8).contains(&n_chunk_kvput), "4–8 chunk KvPuts; got {n_chunk_kvput}");
     assert_eq!(n_chunk_kvput, n_vec_upsert, "every chunk gets a VectorUpsert");
+    // Phase 29: Community KvPuts are now added to the batch (one per heading section).
+    // Total: 1 DocTree + 1 Episode + 2 per chunk + 1 per community.
     assert_eq!(
         batch.len(),
-        2 + 2 * n_chunk_kvput,
-        "total ops = 1 DocTree + 1 Episode + 2 per chunk; got {}",
+        2 + 2 * n_chunk_kvput + n_community_kvput,
+        "total ops = 1 DocTree + 1 Episode + 2 per chunk + 1 per community; got {}",
         batch.len()
     );
     // Every VectorUpsert carries a 768-d embedding (StubEmbedder dim).

@@ -25,15 +25,17 @@ use std::sync::Arc;
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
-    keyspace::doctree_key,
+    keyspace::{community_key, doctree_key},
 };
 use serde_json::json;
 
 use crate::chunker::{
-    BakoffConfig, ChunkDraft, TokenCounter, build_doctree, chunk_markdown_with_headings,
-    chunk_markdown_with_headings_with_counter, run_bakeoff,
+    BakoffConfig, ChunkDraft, TokenCounter, build_doctree, build_raptor_tree,
+    chunk_markdown_with_headings, chunk_markdown_with_headings_with_counter,
+    chunk_texts_for_community, run_bakeoff,
 };
 use crate::schema_gate::validate_chunk_metadata;
+use crate::summarizer::{ExtractiveSummarizer, SummaryInput, Summarizer as _};
 use crate::{chunk_key, episode_key};
 
 /// Number of chunks per `embed_batch` call. Per blueprint §4.1 ingest hot path.
@@ -168,7 +170,49 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         LunarisError::Storage(StorageError::Backend(format!("doctree serialize: {e}")))
     })?;
 
-    let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * chunks.len());
+    // Phase 29 TREE-01/STORE-01: build the RAPTOR community tree.
+    // build_raptor_tree wires Chunk.parent_id; use wired_chunks for all
+    // downstream serialisation so parent_id is persisted correctly.
+    let (mut communities, wired_chunks) =
+        build_raptor_tree(&doctree, &chunks, &episode.scope, &episode.source, clock_ref());
+
+    // Phase 29 TREE-02: summarise each community bottom-up (deepest level first).
+    // ExtractiveSummarizer is the default: no LLM required, always succeeds.
+    let summarizer = ExtractiveSummarizer::new();
+    // Sort communities deepest-first so children are summarised before parents.
+    let mut indexed: Vec<(usize, &lunaris_core::primitives::Community)> =
+        communities.iter().enumerate().collect();
+    indexed.sort_by(|a, b| b.1.level.cmp(&a.1.level));
+    let ordered_indices: Vec<usize> = indexed.iter().map(|(i, _)| *i).collect();
+
+    // Build SummaryInputs in bottom-up order.
+    let inputs: Vec<SummaryInput> = ordered_indices
+        .iter()
+        .map(|&i| {
+            let c = &communities[i];
+            SummaryInput {
+                node_id: c.id,
+                child_texts: chunk_texts_for_community(c.id, &communities, &wired_chunks),
+            }
+        })
+        .collect();
+    let summaries = summarizer.summarize(&inputs).await;
+
+    // Assign summaries back to communities (in the same bottom-up order).
+    for (order_pos, &community_idx) in ordered_indices.iter().enumerate() {
+        communities[community_idx].summary = summaries[order_pos].clone();
+        // D4: summary_embedding deferred to Phase 30.
+        debug_assert!(
+            communities[community_idx].summary_embedding.is_none(),
+            "D4: summary_embedding must remain None in Phase 29"
+        );
+    }
+
+    // Assemble all WriteOps into the single batch.
+    // Capacity: doctree + episode + 2×chunk + 1×community per community.
+    let mut ops: Vec<WriteOp> =
+        Vec::with_capacity(2 + 2 * wired_chunks.len() + communities.len());
+
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
 
     let episode_value = serde_json::to_vec(episode).map_err(|e| {
@@ -176,7 +220,8 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     })?;
     ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
 
-    for chunk in &chunks {
+    // Chunks: use wired_chunks so parent_id is serialised (TREE-01 wiring).
+    for chunk in &wired_chunks {
         let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
         })?;
@@ -201,9 +246,41 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         });
     }
 
+    // Communities: KvPut only — no VectorUpsert (D4: summary embeddings are Phase 30).
+    for community in &communities {
+        let community_value = serde_json::to_vec(community).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("community serialize: {e}")))
+        })?;
+        ops.push(WriteOp::KvPut {
+            key: community_key(&episode.scope, community.id),
+            value: community_value,
+        });
+        // TODO(phase-future): push WriteOp::GraphEdge for parent-child edges (D7 deferred).
+        // The tree is fully navigable via Community.parent / Community.members + Chunk.parent_id
+        // without graph edges. Deferring avoids shipping an untested branch
+        // (graph-OFF/SQLite never exercises it — same trap as Phase-28 graph-ON RC).
+    }
+
     // INGEST-04: the single atomic write for this episode (see module-level invariant).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(lsn)
+}
+
+/// Returns a zero-epoch [`HlcClock`] reference for internal use within
+/// `assemble_and_write`.
+///
+/// `Community::new` requires a clock for its `BiTemporal::now` stamp.
+/// The clock is not threaded through `assemble_and_write`'s current signature
+/// (to preserve public API stability per Plan 03 constraints). A zero-epoch
+/// HLC is sufficient because the Community's `bt` field is only used for
+/// MVCC snapshot reads, and the write HLC comes from `storage.atomic_write`'s
+/// return value (the LSN). This is equivalent to how `Chunk` BT stamps work
+/// in the current pipeline.
+#[inline]
+fn clock_ref() -> &'static HlcClock {
+    use std::sync::{Arc, OnceLock};
+    static CLOCK: OnceLock<Arc<HlcClock>> = OnceLock::new();
+    CLOCK.get_or_init(|| HlcClock::new(0)).as_ref()
 }
 
 /// Embed `drafts` in batches of [`INGEST_EMBED_BATCH_SIZE`]. On batch failure,
