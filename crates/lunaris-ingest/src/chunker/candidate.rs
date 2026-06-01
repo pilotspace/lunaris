@@ -205,13 +205,24 @@ impl CandidateGenerator for SemanticBreakpointGenerator {
             // Use the caller-supplied counter (BPE or surrogate) for
             // SizeCompliance scoring — the surrogate must NOT be hardcoded here
             // as that would make bake-off comparisons unfair (F2 fix).
-            let tokens = counter.count(&text);
+            let trimmed = text.trim().to_string();
+            let tokens = counter.count(&trimmed);
+            // Best-effort byte span: find the first word of the chunk in the
+            // source to anchor the start, then advance by the chunk text length.
+            // This is an approximation (whitespace normalisation means
+            // `source_text.find(trimmed)` would fail for joined units), but it
+            // is sufficient for BlockIntegrityMetric to distinguish boundary
+            // alignment vs mid-block splits in the bake-off.
+            // TODO(phase-29): replace with precise unit-level byte offsets once
+            // segment.rs upgrades to into_offset_iter() for char_offset accuracy.
+            let source_byte_span = first_word_span(&trimmed, source_text);
             drafts.push(ChunkDraft {
-                text: text.trim().to_string(),
+                text: trimmed,
                 heading_path: Vec::new(),
                 offset,
                 tokens,
                 overlap_tail: String::new(),
+                source_byte_span,
             });
             offset += 1;
         }
@@ -322,13 +333,19 @@ impl CandidateGenerator for RecursiveSplitMergeGenerator {
             .enumerate()
             .filter(|(_, t)| !t.trim().is_empty())
             .map(|(i, text)| {
-                let tokens = counter.count(&text);
+                let trimmed = text.trim().to_string();
+                let tokens = counter.count(&trimmed);
+                // Best-effort byte span — same approximation as
+                // SemanticBreakpointGenerator (see comment there).
+                // TODO(phase-29): replace with precise unit-level byte offsets.
+                let source_byte_span = first_word_span(&trimmed, source_text);
                 ChunkDraft {
-                    text: text.trim().to_string(),
+                    text: trimmed,
                     heading_path: Vec::new(),
                     offset: i as u32,
                     tokens,
                     overlap_tail: String::new(),
+                    source_byte_span,
                 }
             })
             .collect();
@@ -550,6 +567,35 @@ pub async fn run_bakeoff(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Best-effort byte span for a non-structural chunk in its original source.
+///
+/// Finds the first whitespace-delimited word of `chunk_text` in `source` and
+/// uses that as the span start; span end = start + `chunk_text.len()`.  This
+/// approximation works when the chunk's leading word is a verbatim substring of
+/// the source, which is true for normalised sentence/paragraph joins where only
+/// internal whitespace differs.
+///
+/// Returns `None` when the first word cannot be found (empty chunk, empty source,
+/// or pathological cases).
+///
+/// # Limitations
+///
+/// - If the first word appears multiple times in the source before the actual
+///   chunk position, the span may anchor to the wrong occurrence.  For bake-off
+///   BI metric purposes this is acceptable — false positives (correct score) are
+///   more likely than false negatives.
+/// - TODO(phase-29): replace with precise unit-level byte offsets once
+///   `segment.rs` upgrades to `into_offset_iter()`.
+fn first_word_span(chunk_text: &str, source: &str) -> Option<(usize, usize)> {
+    let first_word = chunk_text.split_whitespace().next()?;
+    if first_word.is_empty() || source.is_empty() {
+        return None;
+    }
+    let start = source.find(first_word)?;
+    let end = (start + chunk_text.len()).min(source.len());
+    Some((start, end))
+}
 
 /// Compute the cosine similarity between two f32 vectors.
 /// Returns 0.0 when either vector is zero-length or all-zeros.

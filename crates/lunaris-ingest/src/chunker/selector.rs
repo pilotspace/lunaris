@@ -116,6 +116,7 @@ mod tests {
                 offset: i as u32,
                 tokens: tok,
                 overlap_tail: String::new(),
+                source_byte_span: None,
             })
             .collect();
         // Use orthogonal unit vectors for embeddings so ICC/DCC are deterministic

@@ -101,13 +101,31 @@ impl BlockIntegrityMetric {
         if ctx.source_text.is_empty() || draft.text.is_empty() {
             return 1.0;
         }
-        // Find where the draft text occurs in the source.
-        let chunk_end =
-            ctx.source_text.find(draft.text.as_str()).map(|start| start + draft.text.len());
 
-        let Some(chunk_end_byte) = chunk_end else {
-            // Cannot locate chunk in source — neutral score.
-            return 0.75;
+        // Resolve the chunk's end byte in the source.
+        //
+        // Priority 1: `source_byte_span` — set by non-structural generators
+        // (SemanticBreakpoint, RecursiveSplitMerge) whose chunk text is a
+        // normalised join of units and is NOT a verbatim substring of the
+        // source.  Using `str::find` on joined text always fails, producing a
+        // constant 0.75 neutral score that biases the selector toward structural
+        // candidates (F3 fix).
+        //
+        // Priority 2: `str::find` — reliable for structural chunks which ARE
+        // verbatim substrings of the source.
+        //
+        // Priority 3: neutral 0.75 — when neither path can locate the chunk.
+        let chunk_end_byte: usize = if let Some((_, span_end)) = draft.source_byte_span {
+            // Clamp to source length to guard against off-by-one from callers.
+            span_end.min(ctx.source_text.len())
+        } else {
+            match ctx.source_text.find(draft.text.as_str()) {
+                Some(start) => start + draft.text.len(),
+                None => {
+                    // Cannot locate chunk in source — neutral score.
+                    return 0.75;
+                }
+            }
         };
 
         // Walk the markdown event stream and collect paragraph/block end offsets.
@@ -293,6 +311,19 @@ mod tests {
             offset: 0,
             tokens,
             overlap_tail: String::new(),
+            source_byte_span: None,
+        }
+    }
+
+    /// Build a draft with an explicit source byte span for BI tests.
+    fn make_draft_with_span(text: &str, tokens: u32, span: (usize, usize)) -> ChunkDraft {
+        ChunkDraft {
+            text: text.to_string(),
+            heading_path: Vec::new(),
+            offset: 0,
+            tokens,
+            overlap_tail: String::new(),
+            source_byte_span: Some(span),
         }
     }
 
@@ -501,5 +532,84 @@ mod tests {
     #[test]
     fn word_boundary_starts_exact_match() {
         assert!(word_boundary_starts("Al", "Al"));
+    }
+
+    // ── F3: BlockIntegrity must vary for non-structural candidates ────────────
+    //
+    // The key property to test: when chunk text is NOT a verbatim substring of
+    // the source (as happens for joined-unit generators), `str::find` returns
+    // None → currently always 0.75. With `source_byte_span` set, BI must use
+    // the span's end byte against the block-boundary set — yielding 1.0 or 0.5
+    // depending on alignment, NOT a constant 0.75.
+
+    /// RED (F3-a): non-verbatim chunk text WITH source_byte_span ending at block
+    /// boundary → BI must score 1.0, not the 0.75 fallback.
+    #[test]
+    fn f3_bi_non_verbatim_span_at_block_boundary_scores_1() {
+        // Markdown with a clear paragraph boundary.
+        // pulldown_cmark emits Paragraph End at the byte after the last char of
+        // the paragraph text (before the blank line). For "First paragraph text."
+        // that is byte 21.
+        let md = "First paragraph text.\n\nSecond paragraph.";
+        let para_end_byte = "First paragraph text.".len(); // 21
+
+        // This text is NOT a verbatim substring (extra space → str::find fails).
+        // source_byte_span end == para_end_byte — aligned with the paragraph end.
+        let non_verbatim = "First paragraph  text."; // double space — not in source
+        assert!(
+            md.find(non_verbatim).is_none(),
+            "pre-condition: non-verbatim text must not be findable in source via str::find"
+        );
+        let draft = make_draft_with_span(non_verbatim, 10, (0, para_end_byte));
+        let c = no_entity_ctx(500, md);
+        let s = BlockIntegrityMetric::score(&draft, &c);
+        // Before fix: str::find("First paragraph  text.") → None → 0.75
+        // After fix:  source_byte_span end=21 → block boundary hit → 1.0
+        assert!(
+            s >= 0.9,
+            "non-verbatim chunk with span at block boundary must score BI>=0.9, got {s} \
+             (0.75 means the span was not used — still falling back to str::find)"
+        );
+    }
+
+    /// RED (F3-b): non-verbatim chunk text WITH source_byte_span ending mid-block
+    /// → BI must score 0.5, not the 0.75 fallback.
+    #[test]
+    fn f3_bi_non_verbatim_span_mid_block_scores_half() {
+        let md = "First paragraph text.\n\nSecond paragraph.";
+        // End at byte 10 — clearly mid-paragraph (no block boundary near there).
+        let mid_byte = 10usize;
+
+        let non_verbatim = "First para  graph"; // double space — not in source
+        assert!(
+            md.find(non_verbatim).is_none(),
+            "pre-condition: non-verbatim text must not be findable via str::find"
+        );
+        let draft = make_draft_with_span(non_verbatim, 3, (0, mid_byte));
+        let c = no_entity_ctx(500, md);
+        let s = BlockIntegrityMetric::score(&draft, &c);
+        // Before fix: str::find → None → 0.75
+        // After fix:  span end=10 → not near any block boundary → 0.5
+        assert!(
+            (s - 0.5).abs() < 0.01,
+            "non-verbatim chunk with mid-block span must score BI=0.5, got {s} \
+             (0.75 means still falling back to str::find neutral)"
+        );
+    }
+
+    /// Without source_byte_span and text NOT a verbatim substring, score is 0.75
+    /// (existing fallback — do NOT regress this).
+    #[test]
+    fn f3_bi_no_span_non_verbatim_returns_neutral_fallback() {
+        let md = "# Heading\n\nFirst paragraph here with some extra words.";
+        // Simulated joined-units text that is NOT a verbatim substring of md.
+        let draft = make_draft("First paragraph here with some extra words JOINED", 10);
+        let c = no_entity_ctx(500, md);
+        let s = BlockIntegrityMetric::score(&draft, &c);
+        // str::find fails → neutral 0.75 fallback (existing behaviour, must not regress).
+        assert!(
+            (s - 0.75).abs() < 0.01,
+            "non-verbatim text without span must fall back to 0.75, got {s}"
+        );
     }
 }
