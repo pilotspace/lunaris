@@ -52,6 +52,9 @@ use lunaris_core::{Chunk, HlcClock, Scope};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ulid::Ulid;
 
+// Lazy static surrogate used by the default pipeline paths.
+static SURROGATE: SurrogateTokenCounter = SurrogateTokenCounter;
+
 /// One pre-embedding chunk produced by [`chunk_markdown`].
 ///
 /// Convert to a Phase 1 [`Chunk`] via [`ChunkDraft::into_chunk`] (which assigns
@@ -92,10 +95,12 @@ impl ChunkDraft {
 }
 
 /// v0 BPE surrogate: `ceil(words * 1.3)`. See module-level rationale.
+///
+/// Retained as a free function for callers that do not need the full
+/// [`TokenCounter`] trait dispatch (e.g. bench fixtures, the `segment` module).
 #[inline]
 pub fn est_token_count(s: &str) -> u32 {
-    let words = s.split_whitespace().count();
-    (words as f32 * 1.3).ceil() as u32
+    SurrogateTokenCounter.count(s)
 }
 
 /// Produce the trailing `n` whitespace-delimited words of `s`, joined by single
@@ -132,12 +137,35 @@ fn tail_n_tokens(s: &str, n: usize) -> String {
 ///   the overlap (no infinite loop guarantee: the post-emit reset still
 ///   shrinks the working text monotonically per chunk).
 pub fn chunk_markdown(text: &str, target_tokens: usize, overlap_tokens: usize) -> Vec<ChunkDraft> {
+    chunk_markdown_with_counter(text, target_tokens, overlap_tokens, &SURROGATE)
+}
+
+/// Chunk a markdown document using a caller-supplied [`TokenCounter`].
+///
+/// This is the canonical "new path" wired to a real BPE tokenizer when
+/// `make_token_counter(Some(path))` returns a [`BpeTokenCounter`]. The default
+/// pipeline convenience functions ([`chunk_markdown`], [`chunk_markdown_with_headings`])
+/// delegate here with [`SurrogateTokenCounter`] so their output is byte-identical
+/// to the v0 baseline (preserving INGEST-04 / bench fixture stability).
+///
+/// # Parameters
+/// - `text`: raw markdown source
+/// - `target_tokens`: emit a chunk when accumulated token count crosses this threshold
+/// - `overlap_tokens`: number of trailing words carried over to the next chunk
+/// - `counter`: any [`TokenCounter`] impl — e.g. `&SurrogateTokenCounter` or
+///   `&BpeTokenCounter`
+pub fn chunk_markdown_with_counter(
+    text: &str,
+    target_tokens: usize,
+    overlap_tokens: usize,
+    counter: &dyn TokenCounter,
+) -> Vec<ChunkDraft> {
     if text.trim().is_empty() {
         return Vec::new();
     }
 
     let parser = Parser::new_ext(text, Options::all());
-    let mut state = ChunkerState::new(target_tokens, overlap_tokens);
+    let mut state = ChunkerState::new(target_tokens, overlap_tokens, counter);
 
     for event in parser {
         state.process(event);
@@ -165,7 +193,7 @@ pub fn chunk_markdown_with_headings(
     }
 
     let parser = Parser::new_ext(text, Options::all()).into_offset_iter();
-    let mut state = ChunkerState::new(target_tokens, overlap_tokens);
+    let mut state = ChunkerState::new(target_tokens, overlap_tokens, &SURROGATE);
     // Track open heading byte-range start for span capture.
     let mut heading_byte_start: Option<usize> = None;
 
@@ -199,7 +227,7 @@ pub fn chunk_markdown_with_headings(
 }
 
 /// Internal walker state.
-struct ChunkerState {
+struct ChunkerState<'c> {
     target_tokens: usize,
     overlap_tokens: usize,
     /// Stack of (level, text) for the currently open heading lineage.
@@ -216,10 +244,12 @@ struct ChunkerState {
     /// Captured heading records for DocTree construction (STRUCT-02).
     /// Populated only when using [`chunk_markdown_with_headings`].
     heading_records: Vec<HeadingRecord>,
+    /// Token counter used to decide when to emit a chunk.
+    counter: &'c dyn TokenCounter,
 }
 
-impl ChunkerState {
-    fn new(target_tokens: usize, overlap_tokens: usize) -> Self {
+impl<'c> ChunkerState<'c> {
+    fn new(target_tokens: usize, overlap_tokens: usize, counter: &'c dyn TokenCounter) -> Self {
         Self {
             target_tokens,
             overlap_tokens,
@@ -229,6 +259,7 @@ impl ChunkerState {
             offset: 0,
             chunks: Vec::new(),
             heading_records: Vec::new(),
+            counter,
         }
     }
 
@@ -307,7 +338,7 @@ impl ChunkerState {
     }
 
     fn maybe_emit(&mut self) {
-        if est_token_count(&self.current_text) as usize >= self.target_tokens {
+        if self.counter.count(&self.current_text) as usize >= self.target_tokens {
             self.emit_chunk();
         }
     }
@@ -317,7 +348,7 @@ impl ChunkerState {
         if text.is_empty() {
             return;
         }
-        let tokens = est_token_count(&text);
+        let tokens = self.counter.count(&text);
         let overlap_tail = tail_n_tokens(&text, self.overlap_tokens);
         let heading_path: Vec<String> = self
             .heading_stack
@@ -362,7 +393,7 @@ impl ChunkerState {
         if text.is_empty() {
             return;
         }
-        let tokens = est_token_count(&text);
+        let tokens = self.counter.count(&text);
         let overlap_tail = tail_n_tokens(&text, self.overlap_tokens);
         let heading_path: Vec<String> = self
             .heading_stack
@@ -402,6 +433,11 @@ fn heading_level_to_u8(level: HeadingLevel) -> u8 {
 mod tests {
     use super::*;
 
+    fn fixture_tokenizer_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/test_tokenizer.json")
+    }
+
     #[test]
     fn est_token_count_of_blank_input_is_zero() {
         assert_eq!(est_token_count(""), 0);
@@ -427,5 +463,64 @@ mod tests {
         assert_eq!(tail_n_tokens(s, 0), "");
         assert_eq!(tail_n_tokens(s, 2), "gamma delta");
         assert_eq!(tail_n_tokens(s, 99), "alpha beta gamma delta");
+    }
+
+    /// Prove that `chunk_markdown_with_counter` uses the real BPE counter, not
+    /// the surrogate. The committed fixture tokenizer has 0 merges (pure byte
+    /// fallback): "hello world" → 11 byte-level tokens vs surrogate's 3.
+    ///
+    /// This test runs unconditionally via the committed GPT-2-format fixture.
+    #[test]
+    fn bpe_path_produces_different_token_count_than_surrogate() {
+        let path = fixture_tokenizer_path();
+        let bpe = BpeTokenCounter::try_new(&path).expect("fixture tokenizer must load");
+        let surrogate = SurrogateTokenCounter;
+
+        let text = "hello world";
+        let bpe_count = bpe.count(text);
+        let surrogate_count = surrogate.count(text);
+
+        // The fixture has 0 merges → byte-level tokens (11 for "hello world").
+        // The surrogate gives ceil(2 * 1.3) = 3.
+        // These must differ — proving the BPE path is a distinct code path.
+        assert_ne!(
+            bpe_count, surrogate_count,
+            "BPE (fixture, 0 merges) must produce a different count than surrogate \
+             (bpe={bpe_count}, surrogate={surrogate_count})"
+        );
+        // Fixture has 0 merges → one token per byte of "hello world" = 11.
+        assert_eq!(bpe_count, 11, "fixture with 0 merges must produce one token per byte");
+        // Surrogate: 2 words * 1.3 = 2.6 → ceil = 3.
+        assert_eq!(surrogate_count, 3, "surrogate must give ceil(2*1.3)=3 for 'hello world'");
+
+        // Now prove chunk_markdown_with_counter uses the supplied counter, not est_token_count.
+        // Use a very low target (5 tokens) so BPE triggers a split on short text
+        // while the surrogate (count=3) would NOT trigger a split.
+        let md = "hello world foo bar baz";
+        let surrogate_chunks = chunk_markdown_with_counter(md, 5, 0, &surrogate);
+        let bpe_chunks = chunk_markdown_with_counter(md, 5, 0, &bpe);
+
+        // BPE counts bytes; "hello world foo bar baz" has 23 bytes/chars → many tokens.
+        // Surrogate: 5 words * 1.3 = 6.5 → ceil = 7 (> 5 threshold, so 1+ chunks).
+        // Both paths must produce at least 1 chunk.
+        assert!(!bpe_chunks.is_empty(), "BPE path must produce chunks");
+        assert!(!surrogate_chunks.is_empty(), "surrogate path must produce chunks");
+
+        // The BPE chunks must have token counts that match what the BPE counter gives.
+        for chunk in &bpe_chunks {
+            let expected = bpe.count(&chunk.text);
+            assert_eq!(
+                chunk.tokens, expected,
+                "chunk.tokens must reflect BPE counter (text={:?})", chunk.text
+            );
+        }
+        // The surrogate chunks must have token counts matching the surrogate.
+        for chunk in &surrogate_chunks {
+            let expected = surrogate.count(&chunk.text);
+            assert_eq!(
+                chunk.tokens, expected,
+                "chunk.tokens must reflect surrogate counter (text={:?})", chunk.text
+            );
+        }
     }
 }
