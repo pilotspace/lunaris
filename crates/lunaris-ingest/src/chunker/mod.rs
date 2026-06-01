@@ -40,8 +40,10 @@
 //! expect 4–8 chunks. The fixture in `tests/fixtures/12kb_doc.md` is hand-tuned
 //! to land squarely in that range.
 
+pub mod segment;
 pub mod token;
 
+pub use segment::{SegmentMode, TextUnit, UnitKind, segment_units};
 pub use token::{BpeTokenCounter, SurrogateTokenCounter, TokenCounter, make_token_counter};
 
 use lunaris_core::{Chunk, HlcClock, Scope};

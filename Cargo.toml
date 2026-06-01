@@ -274,6 +274,10 @@ smol_str            = { version = "0.3", features = ["serde"] }
 # Phase 24 Plan 24-01 — HOOK-03 layered event-filter policy (path glob deny list).
 # `globset` provides compiled GlobSet matching used by FilterPolicy in lunaris-hook.
 globset             = "0.4"
+# Phase 27 STRUCT-01 — pure-Rust unit segmenter (paragraph + sentence).
+# unicode-segmentation provides UAX#29 word boundaries for abbreviation
+# guard logic in the sentence splitter.
+unicode-segmentation = "1"
 
 [profile.dev]
 opt-level = 0
