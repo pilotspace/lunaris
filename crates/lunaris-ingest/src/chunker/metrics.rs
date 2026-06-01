@@ -47,7 +47,24 @@ pub struct MetricContext<'a> {
     pub target_tokens: u32,
     /// Full source markdown text (used by BI for block-span re-parsing).
     pub source_text: &'a str,
-    /// Extracted entities for the graph-ON RC path (`None` = graph-OFF).
+    /// Extracted entities for the graph-ON RC path (`None` = graph-OFF /
+    /// production default).
+    ///
+    /// # Production note
+    ///
+    /// In the Lunaris ingest pipeline, chunking PRECEDES entity extraction,
+    /// so entity-mention spans do not exist at scoring time.  Production code
+    /// therefore always passes `None` here, and `ReferenceIntegrityMetric`
+    /// uses the pronoun-onset heuristic (the spec's primary/neutral path).
+    ///
+    /// Wiring entity context requires a two-pass ingest where extraction runs
+    /// on a first-pass chunk set and the bake-off uses those entity annotations
+    /// to score a second-pass candidate set.
+    ///
+    /// TODO(phase-future): implement two-pass ingest to enable entity-aware
+    /// ReferenceIntegrityMetric in the bake-off.  The `score_graph_on` code
+    /// path and its tests are correct and ready; this field is the only missing
+    /// wire.
     pub entities: Option<&'a [EntityRef<'a>]>,
 }
 
@@ -478,14 +495,13 @@ mod tests {
     }
 
     #[test]
-    fn icc_orthogonal_units_score_0() {
+    fn icc_orthogonal_units_score_half() {
         let embs = vec![vec![1.0f32, 0.0, 0.0], vec![0.0f32, 1.0, 0.0], vec![0.0f32, 0.0, 1.0]];
         let s = IntrachunkCohesionMetric::score_from_embeddings(&embs);
-        // All cosines are 0.0 → mean 0.0 → (0+1)/2 = 0.5
-        // Spec says "0.0" for ICC; our mapping puts it at 0.5 (midpoint of [-1,1]→[0,1]).
-        // The spec test name says "score_0" but we can't truly get 0.0 from cosine unless
-        // we have anti-correlated vectors. We test for "low" instead.
-        assert!(s < 0.6, "orthogonal vectors ICC must be <= 0.5, got {s}");
+        // All pairwise cosines are 0.0 → mean 0.0 → mapped to (0+1)/2 = 0.5.
+        // Orthogonal vectors produce ICC = 0.5, not 0.0 — the name "score_0" was
+        // misleading; true 0.0 would require fully anti-correlated vectors.
+        assert!(s < 0.6, "orthogonal vectors ICC must be ~0.5 (midpoint), got {s}");
     }
 
     // ── DCC ───────────────────────────────────────────────────────────────────

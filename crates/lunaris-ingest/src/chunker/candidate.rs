@@ -549,6 +549,11 @@ pub async fn run_bakeoff(
     }
 
     // Step 5: score candidates and select winner
+    // TODO(phase-future): pass entity annotations here once two-pass ingest is
+    // implemented (extraction must precede bake-off scoring for entity-aware RC).
+    // For now, production always passes None — chunking precedes extraction so
+    // entity spans are unavailable at bake-off time. See MetricContext::entities
+    // doc comment for the full rationale.
     let metric_ctx =
         MetricContext { target_tokens: gen_ctx.target_tokens as u32, source_text, entities: None };
 

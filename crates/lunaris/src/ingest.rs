@@ -332,6 +332,11 @@ async fn ingest_episode_graph_on(
             overlap_tokens,
         )
         .await?;
+        // TODO(phase-29): winner.heading_records is discarded here — the
+        // graph-ON path does not persist a DocTree from the bake-off winner.
+        // To fix, the graph-ON path needs its own `assemble_and_write`-style
+        // helper that accepts heading_records and builds the DocTree WriteOp,
+        // mirroring the graph-OFF path in `lunaris_ingest::pipeline::assemble_and_write`.
         let mut out: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
         for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
             let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
