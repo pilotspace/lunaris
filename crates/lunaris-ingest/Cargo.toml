@@ -37,8 +37,20 @@ tokenizers     = { workspace = true }
 unicode-segmentation = { workspace = true }
 blake3         = { workspace = true }
 
+# Phase 29 Plan 02: LLM summariser (optional — gated behind llm-summarizer feature).
+[dependencies.lunaris-llm]
+workspace = true
+optional = true
+
+[features]
+# llm-summarizer: enables LlmSummarizer wrapping Arc<dyn LlmBackend>.
+# Default build does NOT require LLM weights.
+llm-summarizer = ["lunaris-llm"]
+
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
 parking_lot    = { workspace = true }
 futures        = { workspace = true }
 lunaris-storage-embedded = { workspace = true }
+# FauxBackend for llm-summarizer feature tests.
+lunaris-llm    = { workspace = true, features = ["faux"] }

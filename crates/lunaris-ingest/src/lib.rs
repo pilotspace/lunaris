@@ -15,6 +15,7 @@
 pub mod chunker;
 pub mod pipeline;
 pub mod schema_gate;
+pub mod summarizer;
 
 pub use chunker::{
     BakoffConfig, BpeTokenCounter, CandidateGenerator, ChunkDraft, ChunkSelector, DocTree,
@@ -31,6 +32,9 @@ pub use pipeline::{
     ingest_episode_with_counter,
 };
 pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
+pub use summarizer::{ExtractiveSummarizer, SummaryInput, Summarizer};
+#[cfg(feature = "llm-summarizer")]
+pub use summarizer::LlmSummarizer;
 
 // Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved
 // from lunaris-storage-moon so the engine layer has no infra dependency for keys).
