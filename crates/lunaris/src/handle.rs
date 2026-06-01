@@ -31,7 +31,7 @@ use std::sync::{Arc, OnceLock};
 
 use lunaris_consolidate::Consolidator;
 use lunaris_core::{Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort};
-use lunaris_ingest::{TokenCounter, make_token_counter};
+use lunaris_ingest::{BakoffConfig, TokenCounter, make_token_counter};
 use ulid::Ulid;
 
 use crate::episode_builder::EpisodeBuilder;
@@ -126,6 +126,17 @@ pub struct Lunaris {
     /// Passed to `ingest_episode_with_counter` so production chunking uses
     /// real BPE token counts rather than the v0 heuristic.
     pub(crate) token_counter: Arc<dyn TokenCounter + Send + Sync>,
+    /// Phase 28 — adaptive meta-framework bake-off config.
+    ///
+    /// When `Some`, [`Lunaris::ingest`] routes through
+    /// [`lunaris_ingest::ingest_episode_with_bakeoff`] which runs the multi-generator
+    /// bake-off and persists the winning candidate. The winner's scoring embeddings
+    /// are reused directly (SINGLE-PASS — no re-embed). When `None` (default),
+    /// the standard [`lunaris_ingest::ingest_episode_with_counter`] path is used.
+    ///
+    /// Install via [`Self::with_bakeoff`]. `Arc` allows cheap clone of the handle
+    /// without copying the config on every ingest call.
+    pub(crate) bakeoff_config: Option<Arc<BakoffConfig>>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -303,6 +314,7 @@ impl Lunaris {
                         resolve_prewarm_concurrency(),
                     )),
                     token_counter: token_counter.clone(),
+                    bakeoff_config: None,
                 })
             }
             "postgres" | "postgresql" => {
@@ -344,6 +356,7 @@ impl Lunaris {
                         resolve_prewarm_concurrency(),
                     )),
                     token_counter: token_counter.clone(),
+                    bakeoff_config: None,
                 })
             }
             // Onboarding overhaul (phase 1): the zero-dependency embedded
@@ -380,6 +393,7 @@ impl Lunaris {
                         resolve_prewarm_concurrency(),
                     )),
                     token_counter: token_counter.clone(),
+                    bakeoff_config: None,
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -454,6 +468,8 @@ impl Lunaris {
             warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
             // Test seam: no model artifact available; use the surrogate counter.
             token_counter: make_token_counter(None),
+            // Phase 28: bakeoff OFF by default in test seam; install via with_bakeoff.
+            bakeoff_config: None,
         }
     }
 
@@ -509,6 +525,8 @@ impl Lunaris {
             warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
             // Test seam: no model artifact available; use the surrogate counter.
             token_counter: make_token_counter(None),
+            // Phase 28: bakeoff OFF by default in test seam; install via with_bakeoff.
+            bakeoff_config: None,
         }
     }
 
@@ -536,6 +554,28 @@ impl Lunaris {
             );
         }
         self.embedder = embedder;
+        self
+    }
+
+    /// Phase 28 — install an adaptive meta-framework bake-off config.
+    ///
+    /// When installed, every subsequent [`Lunaris::ingest`] call routes through
+    /// [`lunaris_ingest::ingest_episode_with_bakeoff`], which runs the
+    /// multi-generator bake-off and persists the winning candidate. The winner's
+    /// scoring embeddings are reused directly (SINGLE-PASS — no re-embed).
+    ///
+    /// Pass `None` (or call this with `Arc::new(BakoffConfig::default())`) to
+    /// restore the standard counter-based ingest path. The `Arc` wrapper lets
+    /// the config be shared cheaply across `Lunaris::clone()` calls.
+    ///
+    /// ## INGEST-04 invariant
+    ///
+    /// Installing a bakeoff config does NOT add a second `atomic_write` call.
+    /// Both the standard path and the bakeoff path funnel through
+    /// `assemble_and_write` in `lunaris_ingest::pipeline`, which holds the
+    /// single executable `storage.atomic_write` call site.
+    pub fn with_bakeoff(mut self, config: Arc<BakoffConfig>) -> Self {
+        self.bakeoff_config = Some(config);
         self
     }
 
