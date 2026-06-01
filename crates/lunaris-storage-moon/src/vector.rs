@@ -77,15 +77,15 @@ pub(crate) async fn vector_search(
     parse_ft_search(reply, rerank, &per_scope_index)
 }
 
-/// Decode a Moon FT.SEARCH result key from `{ft_index}:{hex32}` to raw 16-byte ULID.
+/// Decode a Moon FT.SEARCH result key from `{ft_index}:{hex}` to raw id bytes.
 ///
 /// RFC 0001 Wave 1C: `ft_index` is now the per-scope index name
 /// (`lunaris_{scope}_{kind}_idx`) rather than the bare `kind` name. The decode
 /// contract is identical — strip the `<ft_index>:` prefix and hex-decode the
-/// remainder to a 16-byte ULID. Any key that doesn't match the shape is dropped.
+/// remainder. Any key that doesn't match the shape is dropped.
 ///
-/// This preserves the existing FT.SEARCH key-decode contract (memory feedback:
-/// "Moon FT.SEARCH key decode") — only the prefix length changes.
+/// Production chunk ids are ULID bytes, but `StoragePort::vector_search`
+/// accepts arbitrary `Vec<u8>` ids and conformance exercises that contract.
 fn decode_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
     let prefix_len = ft_index.len() + 1; // +1 for the ':' separator
     if key.len() < prefix_len
@@ -94,7 +94,7 @@ fn decode_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
     {
         return None;
     }
-    hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
+    hex::decode(&key[prefix_len..]).ok()
 }
 
 // Removed `pack_hlc` (Gap 8 / live-measurement 2026-04-21): the
@@ -375,6 +375,14 @@ mod tests {
         let scope_b = lunaris_core::Scope::new("other.agent-2").unwrap();
         let ft_idx_b = ft_index_name(&scope_b, "chunks");
         assert_eq!(decode_key(key.as_bytes(), &ft_idx_b), None);
+    }
+
+    #[test]
+    fn decode_key_accepts_non_ulid_ids() {
+        let ft_idx = test_ft_index("_dev_", "chunks");
+        let id = b"chunk-conformance-000";
+        let key = format!("{ft_idx}:{}", hex::encode(id));
+        assert_eq!(decode_key(key.as_bytes(), &ft_idx), Some(id.to_vec()));
     }
 
     #[test]

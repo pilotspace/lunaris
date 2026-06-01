@@ -62,9 +62,12 @@
 use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::{Lsn, WriteOp};
+use std::sync::Mutex;
 
 use crate::client::{MoonClient, moon_err};
 use crate::keyspace::{ft_index_name, graph_key};
+
+static LAST_RETURNED_LSN: Mutex<Lsn> = Mutex::new(Lsn::ZERO);
 
 pub(crate) async fn atomic_write(
     c: &MoonClient,
@@ -87,11 +90,38 @@ pub(crate) async fn atomic_write(
     //    don't get a packed-LSN back through the typed API; fall back to a wall-clock
     //    LSN so callers always see a non-zero, monotonically-derivable Lsn.
     typed.txn_commit().await.map_err(moon_err)?;
-    let now_ms = std::time::SystemTime::now()
+    let wall_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    Ok(Lsn { wall_ms: now_ms, counter: 0 })
+    Ok(next_returned_lsn(wall_ms))
+}
+
+fn next_returned_lsn(now_ms: u64) -> Lsn {
+    let mut guard = LAST_RETURNED_LSN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let next = if now_ms > guard.wall_ms {
+        Lsn { wall_ms: now_ms, counter: 0 }
+    } else if guard.counter < u32::MAX {
+        Lsn { wall_ms: guard.wall_ms, counter: guard.counter + 1 }
+    } else {
+        Lsn { wall_ms: guard.wall_ms.saturating_add(1), counter: 0 }
+    };
+    *guard = next;
+    next
+}
+
+#[cfg(test)]
+mod lsn_tests {
+    use super::*;
+
+    #[test]
+    fn returned_lsn_increments_counter_within_same_millisecond() {
+        let first = next_returned_lsn(9_000_000_000_000);
+        let second = next_returned_lsn(first.wall_ms);
+        assert!(second > first);
+        assert_eq!(second.wall_ms, first.wall_ms);
+        assert_eq!(second.counter, first.counter + 1);
+    }
 }
 
 async fn run_ops(

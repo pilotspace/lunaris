@@ -4,10 +4,9 @@
 //! allowed in `lunaris-storage-moon/src/`) then typed `client.hget(<key>, "v")`
 //! per match.
 //!
-//! RFC 0001 Wave 1C: `scan_range` prepends `scope_prefix(scope)` to the caller-
-//! supplied prefix so SCAN MATCH only iterates keys belonging to this scope.
-//! `read_as_of` receives the fully-scoped key from the caller (the caller uses
-//! `keyspace::episode_key(scope, id)` etc.) — no additional prefix is needed here.
+//! `scan_range` and `read_as_of` receive fully-shaped keys/prefixes from the
+//! caller. Higher layers that need scope isolation pass `keyspace::*_prefix(scope)`;
+//! raw conformance and utility callers can scan their own arbitrary prefixes.
 //!
 //! Phase 1.5 retrofit (STORE-09): all RESP commands here go through the typed
 //! `moon-client` SDK except for the single documented HSCAN call below.
@@ -33,7 +32,6 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::Row;
 
 use crate::client::{MoonClient, moon_err, redis_err};
-use crate::keyspace::scope_prefix;
 
 pub(crate) async fn read_as_of(
     c: &MoonClient,
@@ -78,7 +76,7 @@ fn zero_bt() -> BiTemporal {
 
 pub(crate) async fn scan_range<'a>(
     c: &'a MoonClient,
-    scope: &Scope,
+    _scope: &Scope,
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
@@ -87,21 +85,10 @@ pub(crate) async fn scan_range<'a>(
     // AS_OF deferred per `read_as_of` rationale above — return current state.
     let _ = as_of;
 
-    // RFC 0001 Wave 1C: prepend the scope prefix so SCAN MATCH is bounded to
-    // this scope's keyspace. `scope_prefix(scope)` returns `lunaris:{scope}:`,
-    // and the caller's `prefix` is a primitive kind prefix like `episode:`.
-    // Together they form `lunaris:{scope}:episode:*` which restricts iteration
-    // to exactly this scope's episodes.
-    let scoped_prefix = {
-        let sp = scope_prefix(scope);
-        let mut full = sp.into_bytes();
-        full.extend_from_slice(prefix);
-        full
-    };
-
-    // Build `<scoped_prefix>*` MATCH pattern.
+    // Build `<prefix>*` MATCH pattern. The StoragePort contract takes the
+    // prefix literally; scope-aware callers pass an already scoped prefix.
     let pattern = {
-        let mut p = scoped_prefix.clone();
+        let mut p = prefix.to_vec();
         p.push(b'*');
         String::from_utf8_lossy(&p).into_owned()
     };
@@ -163,14 +150,15 @@ mod tests {
         assert_eq!(bt.sys.0.counter, bt2.sys.0.counter);
     }
 
-    /// RFC 0001 Wave 1C — scan_range MATCH pattern must be scoped.
+    /// scan_range MATCH pattern uses the caller prefix literally. Scope-aware
+    /// callers should pass an already scoped prefix.
     #[test]
-    fn scan_range_pattern_is_scope_prefixed() {
+    fn scan_range_pattern_accepts_scoped_prefixes() {
         let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
-        let sp = scope_prefix(&scope);
+        let sp = lunaris_core::keyspace::episode_prefix(&scope);
         // The MATCH pattern must start with the scope prefix.
         assert!(
-            format!("{sp}episode:*").starts_with("lunaris:acme.agent-1:"),
+            String::from_utf8_lossy(&sp).starts_with("lunaris:acme.agent-1:episode:"),
             "scope_prefix must produce lunaris:{{scope}}: prefix"
         );
     }

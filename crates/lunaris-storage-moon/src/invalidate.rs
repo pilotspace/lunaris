@@ -83,8 +83,6 @@ pub(crate) async fn invalidate_range(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Structural guard: the escape hatch MUST use `redis::cmd("FT.INVALIDATE_RANGE")`.
     /// If someone swaps this for a typed call in the future, this test stays green
     /// only if the typed call issues the same command name on the wire.
