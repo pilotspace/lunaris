@@ -15,6 +15,7 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
+use lunaris_core::storage::keyword::KeywordPort;
 use lunaris_core::{CypherQuery, Episode, HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
 use std::time::Duration;
@@ -193,5 +194,81 @@ async fn graph_query_valid_at_round_trip_via_moon() {
     assert!(
         result.rows.iter().any(|row| row.first().and_then(|v| v.as_str()) == Some(id_hex.as_str())),
         "seeded graph node must be visible through VALID_AT query: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn vector_search_as_of_round_trip_via_moon() {
+    let storage = MoonStorage::connect(&moon_url())
+        .await
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
+
+    let id = ulid::Ulid::new().to_bytes().to_vec();
+    let marker = format!("moon-it-vector-asof-{}", ulid::Ulid::new());
+    let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.0005).collect();
+    storage
+        .atomic_write(
+            &Scope::dev(),
+            &[WriteOp::VectorUpsert {
+                index: "chunks".into(),
+                id: id.clone(),
+                embedding: embedding.clone(),
+                metadata: serde_json::json!({
+                    "text": marker,
+                    "source": "moon-it",
+                    "valid_time_ms": HlcClock::new(0).tick().wall_ms,
+                }),
+            }],
+        )
+        .await
+        .expect("seed vector chunk");
+
+    let as_of = HlcClock::new(0).tick();
+    let hits = storage
+        .vector_search(&Scope::dev(), "chunks", &embedding, 5, None, Some(as_of), false)
+        .await
+        .expect("FT.SEARCH KNN AS_OF must succeed through Moon");
+
+    assert!(
+        hits.iter().any(|h| h.id == id),
+        "seeded vector chunk must be visible through FT.SEARCH AS_OF: {hits:?}"
+    );
+}
+
+#[tokio::test]
+async fn keyword_search_as_of_round_trip_via_moon() {
+    let storage = MoonStorage::connect(&moon_url())
+        .await
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
+
+    let id = ulid::Ulid::new().to_bytes().to_vec();
+    let marker = format!("moon-it-keyword-asof-{}", ulid::Ulid::new());
+    let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.0007).collect();
+    storage
+        .atomic_write(
+            &Scope::dev(),
+            &[WriteOp::VectorUpsert {
+                index: "chunks".into(),
+                id: id.clone(),
+                embedding,
+                metadata: serde_json::json!({
+                    "text": marker,
+                    "source": "moon-it",
+                    "valid_time_ms": HlcClock::new(0).tick().wall_ms,
+                }),
+            }],
+        )
+        .await
+        .expect("seed keyword chunk");
+
+    let as_of = HlcClock::new(0).tick();
+    let hits = storage
+        .keyword_search(&Scope::dev(), "chunks", &marker, 5, None, Some(as_of))
+        .await
+        .expect("FT.SEARCH BM25 AS_OF must succeed through Moon");
+
+    assert!(
+        hits.iter().any(|h| h.id == id),
+        "seeded keyword chunk must be visible through FT.SEARCH AS_OF: {hits:?}"
     );
 }

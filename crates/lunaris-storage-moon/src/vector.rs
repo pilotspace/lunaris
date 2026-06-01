@@ -1,5 +1,4 @@
-//! `vector_search` — typed `client.vector().search_raw(...)` wrapped with
-//! `client.temporal().snapshot_at_packed(packed_hlc)` for AS_OF queries.
+//! `vector_search` — Moon `FT.SEARCH` KNN over per-scope vector indices.
 //!
 //! RFC 0001 Wave 1C: the FT index consulted is the per-scope index
 //! `ft_index_name(scope, index)` (e.g. `lunaris_acme:agent-1_chunks_idx`).
@@ -8,12 +7,10 @@
 //!
 //! ## AS_OF semantics
 //!
-//! When `as_of = Some(t)`, we issue `client.temporal().snapshot_at_packed(packed_hlc)`
-//! on the same connection BEFORE `FT.SEARCH` so the search reads the snapshot. After
-//! the search we call `client.temporal().release_snapshot()` to release the pin back
-//! to live mode. The `MultiplexedConnection` may multiplex this connection across
-//! other tasks, so failure to release would pin a stale view for them — `release` runs
-//! after the search even on FT.SEARCH errors (best effort).
+//! When `as_of = Some(t)`, Lunaris emits Moon's native
+//! `FT.SEARCH ... AS_OF <t.wall_ms>` clause on the same search command. We do not
+//! pre-pin the connection with `TEMPORAL.SNAPSHOT_AT`; Moon's FT parser owns the
+//! temporal lookup for vector/keyword search.
 //!
 //! ## Filter algebra
 //!
@@ -27,7 +24,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{Filter, VectorHit};
 
-use crate::client::{MoonClient, moon_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::ft_index_name;
 
 #[allow(clippy::too_many_arguments)]
@@ -41,16 +38,6 @@ pub(crate) async fn vector_search(
     as_of: Option<Hlc>,
     rerank: bool,
 ) -> Result<Vec<VectorHit>, StorageError> {
-    let typed = c.typed();
-
-    // AS_OF deferred — Moon SDK `search_raw` does not yet expose an `as_of`
-    // parameter; the SDK's `search_opts` does (`FT.SEARCH … AS_OF <ts>` clause)
-    // but lacks the custom filter expression that Lunaris uses. Until either
-    // SDK helper accepts both, AS_OF queries return current state. Phase 1.5
-    // pre-pinned via `snapshot_at_packed(ts)` — that command takes 0 args
-    // server-side and was rejected. Tracked as B-task for STORE-07.
-    let _ = as_of;
-
     // RFC 0001 Wave 1C: route to the per-scope FT index.
     let per_scope_index = ft_index_name(scope, index);
 
@@ -69,12 +56,38 @@ pub(crate) async fn vector_search(
     // here so the filter algebra still works. Live-measurement gap fix
     // 2026-04-21.
     let knn_query = format!("({filter_expr})=>[KNN {k} @vec $query]");
-    let reply = typed
-        .vector()
-        .search_raw(&per_scope_index, &knn_query, &qbytes, k, rerank)
-        .await
-        .map_err(moon_err)?;
+    let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
     parse_ft_search(reply, rerank, &per_scope_index)
+}
+
+async fn search_raw(
+    c: &MoonClient,
+    index: &str,
+    query: &str,
+    query_bytes: &[u8],
+    k: usize,
+    rerank: bool,
+    as_of: Option<Hlc>,
+) -> Result<redis::Value, StorageError> {
+    if as_of.is_none() {
+        let typed = c.typed();
+        return typed
+            .vector()
+            .search_raw(index, query, query_bytes, k, rerank)
+            .await
+            .map_err(moon_err);
+    }
+
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    let rerank_arg = if rerank { "RERANK" } else { "NORERANK" };
+    let mut cmd = redis::cmd("FT.SEARCH");
+    cmd.arg(index).arg(query).arg("PARAMS").arg(2).arg("query").arg(query_bytes).arg(rerank_arg);
+    if let Some(ts) = as_of {
+        cmd.arg("AS_OF").arg(ts.wall_ms as i64);
+    }
+    cmd.arg("LIMIT").arg(0).arg(k);
+    cmd.query_async(raw_conn).await.map_err(redis_err)
 }
 
 /// Decode a Moon FT.SEARCH result key from `{ft_index}:{hex}` to raw id bytes.
@@ -212,13 +225,13 @@ fn parse_ft_search(
                     _ => continue,
                 };
                 match (key.as_str(), val) {
-                    ("__score", redis::Value::BulkString(b)) => {
+                    ("__score" | "__vec_score" | "vec_score", redis::Value::BulkString(b)) => {
                         score = std::str::from_utf8(&b)
                             .ok()
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0.0);
                     }
-                    ("__metadata", redis::Value::BulkString(b)) => {
+                    ("__metadata" | "meta", redis::Value::BulkString(b)) => {
                         metadata = serde_json::from_slice(&b).unwrap_or(serde_json::Value::Null);
                     }
                     _ => {}

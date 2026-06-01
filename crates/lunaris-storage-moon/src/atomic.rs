@@ -90,6 +90,11 @@ pub(crate) async fn atomic_write(
     //    don't get a packed-LSN back through the typed API; fall back to a wall-clock
     //    LSN so callers always see a non-zero, monotonically-derivable Lsn.
     typed.txn_commit().await.map_err(moon_err)?;
+    // Moon's `FT.SEARCH ... AS_OF <timestamp>` needs a snapshot registry entry
+    // at or before the requested timestamp. Register one after each successful
+    // commit so a caller can write, issue a normal HLC tick, and recall through
+    // vector/keyword AS_OF without having to know Moon's temporal plumbing.
+    typed.temporal().snapshot_at().await.map_err(moon_err)?;
     let wall_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
