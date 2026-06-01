@@ -37,6 +37,52 @@ impl Embedder for StubEmbedder {
     }
 }
 
+/// Always-failing [`Embedder`] for use in unit tests that must verify error
+/// propagation.  Every `embed_batch` call returns
+/// `LunarisError::Storage(StorageError::Backend(...))`.
+///
+/// Use `wrong_row_count: true` to simulate a wrong-row-count return instead
+/// of a hard `Err`.
+#[derive(Debug, Clone)]
+pub struct FailingEmbedder {
+    dim: usize,
+    /// When `true`, returns `Ok` with `inputs.len() + 1` vectors instead of
+    /// `Err` — exercises the row-count mismatch arm.
+    pub wrong_row_count: bool,
+}
+
+impl FailingEmbedder {
+    /// Construct an embedder that always errors.
+    #[must_use]
+    pub fn new(dim: usize) -> Self {
+        Self { dim, wrong_row_count: false }
+    }
+
+    /// Construct an embedder that returns the wrong row count.
+    #[must_use]
+    pub fn wrong_count(dim: usize) -> Self {
+        Self { dim, wrong_row_count: true }
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for FailingEmbedder {
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        if self.wrong_row_count {
+            // Return one extra row — contract violation; callers must not zero-fill.
+            Ok((0..inputs.len() + 1).map(|_| vec![0.0f32; self.dim]).collect())
+        } else {
+            Err(crate::error::LunarisError::Storage(crate::error::StorageError::Backend(
+                "FailingEmbedder: injected failure".into(),
+            )))
+        }
+    }
+}
+
 /// Default dim for [`NoopEmbedder`] when no override is supplied. Matches the
 /// historical EmbeddingGemma 300M / granite-r2 output width (768) so an
 /// operator who flips to the noop backend doesn't have to re-create their

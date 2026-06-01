@@ -309,6 +309,8 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     // run_bakeoff embeds unit texts once and each candidate's chunk texts once.
     // After this returns the winner's embeddings are in `winner.embeddings`.
     // The storage step MUST NOT call embed_batch again (SINGLE-PASS invariant).
+    // Propagate Err: embedder failure in the bake-off path is a hard infra
+    // failure (silent zero-fill would corrupt vector storage — see F1 fix).
     let winner = run_bakeoff(
         &episode.content,
         heading_records,
@@ -318,7 +320,7 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
         target_tokens,
         overlap_tokens,
     )
-    .await;
+    .await?;
 
     // Step 3: assemble Chunks from winner drafts + pre-computed embeddings.
     // SINGLE-PASS: no embed_batch call here — embeddings come from the bake-off.

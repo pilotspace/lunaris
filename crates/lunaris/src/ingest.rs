@@ -320,6 +320,8 @@ async fn ingest_episode_graph_on(
         // run_bakeoff embeds unit texts once, scores all candidates, selects winner.
         // winner.embeddings are the chunk vectors from the scoring pass — reuse them.
         // SINGLE-PASS: do NOT call embed_with_fallback after this.
+        // Propagate Err: embedder failure in the bake-off path is a hard infra
+        // failure (silent zero-fill would corrupt vector storage — see F1 fix).
         let winner = run_bakeoff(
             &episode.content,
             heading_records,
@@ -329,7 +331,7 @@ async fn ingest_episode_graph_on(
             target_tokens,
             overlap_tokens,
         )
-        .await;
+        .await?;
         let mut out: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
         for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
             let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
