@@ -315,7 +315,7 @@ The `LunarisError` enum is defined in `crates/lunaris-core/src/error.rs`; the HT
 An implementation is conformant if and only if:
 
 ```bash
-MOON_URL=moon://localhost:6390 \
+MOON_URL=moon://localhost:6380 \
   cargo test -p lunaris-conformance \
     --test run_protocol_lunaris_server -- --nocapture
 ```

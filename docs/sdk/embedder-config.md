@@ -58,7 +58,7 @@ async def main():
         execution="coreml",            # or "cpu" / "cuda"
         show_download_progress=False,
     )
-    handle = await lunaris.open("moon://127.0.0.1:6379", embedder=cfg)
+    handle = await lunaris.open("moon://127.0.0.1:6380", embedder=cfg)
     # ... ingest / recall as usual
 
 asyncio.run(main())
@@ -74,7 +74,7 @@ const cfg = EmbedderConfig.fastembed({
   execution: "coreml",            // or "cpu" / "cuda"
   showDownloadProgress: false,
 });
-const handle = (await Lunaris.open("moon://127.0.0.1:6379")).withEmbedder(cfg);
+const handle = (await Lunaris.open("moon://127.0.0.1:6380")).withEmbedder(cfg);
 // ... ingest / recall as usual
 ```
 
@@ -143,7 +143,7 @@ async def main():
         special_tokens_map_bytes=None,
         config_bytes=None,
     )
-    handle = await lunaris.open("moon://127.0.0.1:6379", embedder=cfg)
+    handle = await lunaris.open("moon://127.0.0.1:6380", embedder=cfg)
 
 asyncio.run(main())
 ```
@@ -168,7 +168,7 @@ const cfg = EmbedderConfig.fromOnnxBytes({
   specialTokensMapBytes: undefined,
   configBytes: undefined,
 });
-const handle = (await Lunaris.open("moon://127.0.0.1:6379")).withEmbedder(cfg);
+const handle = (await Lunaris.open("moon://127.0.0.1:6380")).withEmbedder(cfg);
 ```
 
 The BYO factories wrap the resolved embedder in `DimValidatingEmbedder`,

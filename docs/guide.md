@@ -82,7 +82,7 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // High-level handle — this is what application code uses.
-    let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6380").await?);
     println!("{lunaris:?}");
     Ok(())
 }
@@ -128,7 +128,7 @@ use lunaris_core::StubEmbedder;
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // Production form — pulls the real storage + candle embedder from the URL:
-    //   let lunaris = Lunaris::open("moon://localhost:6379").await?;
+    //   let lunaris = Lunaris::open("moon://localhost:6380").await?;
     //
     // Test form — matches tests/ingest_smoke.rs:91-108. Replace `my_storage()`
     // with any Arc<dyn StoragePort> (an in-memory recording fixture in tests,
@@ -433,7 +433,7 @@ cat > /tmp/lunaris-tokens.json <<'EOF'
 EOF
 
 cargo run -p lunaris-server -- \
-  --storage moon://localhost:6379 \
+  --storage moon://localhost:6380 \
   --bind 0.0.0.0:8080 \
   --tokens-file /tmp/lunaris-tokens.json
 ```
@@ -524,7 +524,7 @@ use std::sync::Arc;
 
 use lunaris::{NoopConsolidator, NoopExtractor, NoopReranker, NoopVerifier};
 
-let lunaris = lunaris::Lunaris::open("moon://localhost:6379")
+let lunaris = lunaris::Lunaris::open("moon://localhost:6380")
     .await?
     // Swap embedder — e.g., candle → Ollama when the per-batch budget busts.
     // (handle.rs:18-20 explains the motivating latency case.)
@@ -598,7 +598,7 @@ use std::sync::Arc;
 
 use lunaris::{CodingSessionMemory, Hlc};
 
-let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6379").await?);
+let lunaris = Arc::new(lunaris::Lunaris::open("moon://localhost:6380").await?);
 let pad     = CodingSessionMemory::new(lunaris.clone(), "session-42");
 
 // write(path, content) — ingest with source = "helios:fs/session-42/<path>".

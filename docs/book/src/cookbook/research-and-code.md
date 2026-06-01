@@ -42,7 +42,7 @@ use lunaris_recipes::documentary::ResearchPaperCorpus;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // Opt in to the citation graph before ingest. Default is OFF.
     let papers = ResearchPaperCorpus::new(lunaris.clone(), "papers:")

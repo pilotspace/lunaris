@@ -59,7 +59,7 @@ use lunaris_recipes::conversational::SlackArchive;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let archive = SlackArchive::new(lunaris.clone());
 
     // Bulk-ingest a workspace export, message by message.
@@ -159,7 +159,7 @@ use lunaris_recipes::conversational::MeetingNotesMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let notes = MeetingNotesMemory::new(lunaris.clone());
 
     notes.note("2025-05-12 / Roadmap", "Decided to ship the 90-day retention cap in v2.").await?;

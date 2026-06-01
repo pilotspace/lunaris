@@ -897,21 +897,21 @@ mod tests {
 
     #[test]
     fn url_hash_is_stable_and_truncated_to_16() {
-        let h = hash_url("moon://localhost:6390");
+        let h = hash_url("moon://localhost:6380");
         assert_eq!(h.len(), 16);
         // Re-hashing the same URL gives the same prefix.
-        assert_eq!(h, hash_url("moon://localhost:6390"));
+        assert_eq!(h, hash_url("moon://localhost:6380"));
         // Different URL → different hash (with overwhelming probability).
         assert_ne!(h, hash_url("postgres://lunaris@localhost/lunaris"));
     }
 
     #[test]
     fn fingerprint_path_includes_count_and_hash() {
-        let p = fingerprint_path_for("moon://localhost:6390", 1_000_000);
+        let p = fingerprint_path_for("moon://localhost:6380", 1_000_000);
         let s = p.to_string_lossy();
         assert!(s.contains("lunaris-bench"));
         assert!(s.contains("1000000"));
-        assert!(s.contains(&hash_url("moon://localhost:6390")));
+        assert!(s.contains(&hash_url("moon://localhost:6380")));
     }
 
     #[test]
@@ -919,7 +919,7 @@ mod tests {
         // Plan 03-04: graph-on fingerprint MUST differ from no-graph
         // fingerprint for the same (url, count) — otherwise switching density
         // would silently re-use a no-graph corpus on disk (T-03-04-04).
-        let url = "moon://localhost:6390";
+        let url = "moon://localhost:6380";
         let no_graph = fingerprint_path(url, 100, None);
         let graph_on = fingerprint_path(url, 100, Some(GraphDensity::default()));
         assert_ne!(no_graph, graph_on, "graph-on fingerprint must differ from no-graph");
@@ -1021,7 +1021,7 @@ mod tests {
         // fingerprint may land in `target/lunaris-bench/` here — the
         // RecordingStorage assertions below don't depend on that.
 
-        let url = format!("moon://test-{}-graph-on:6390", std::process::id());
+        let url = format!("moon://test-{}-graph-on:6380", std::process::id());
         build_corpus_with_options(
             &handle,
             CorpusGenOpts { fact_count: 2, seed: 7, graph_density: Some(GraphDensity::default()) },
@@ -1113,12 +1113,12 @@ mod tests {
 
     #[test]
     fn parse_host_port_handles_url_and_bare_authority() {
-        assert_eq!(parse_host_port("moon://localhost:6390").as_deref(), Some("localhost:6390"));
+        assert_eq!(parse_host_port("moon://localhost:6380").as_deref(), Some("localhost:6380"));
         assert_eq!(
             parse_host_port("postgres://lunaris:lunaris@localhost:5432/lunaris").as_deref(),
             Some("localhost:5432")
         );
-        assert_eq!(parse_host_port("localhost:6390").as_deref(), Some("localhost:6390"));
+        assert_eq!(parse_host_port("localhost:6380").as_deref(), Some("localhost:6380"));
         assert_eq!(parse_host_port("not a url").as_deref(), None);
         assert_eq!(parse_host_port("moon://localhost").as_deref(), None, "missing port → None");
     }

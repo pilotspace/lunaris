@@ -574,6 +574,6 @@ mod tests {
     #[test]
     fn redact_url_strips_userinfo() {
         assert_eq!(redact_url("postgres://user:pw@host:5432/db"), "postgres://***@host:5432/db");
-        assert_eq!(redact_url("moon://host:6390"), "moon://host:6390");
+        assert_eq!(redact_url("moon://host:6380"), "moon://host:6380");
     }
 }

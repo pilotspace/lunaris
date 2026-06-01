@@ -57,7 +57,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 }
 ```
 
-Swap the URL for `moon://localhost:6379` and the code is byte-for-byte
+Swap the URL for `moon://localhost:6380` and the code is byte-for-byte
 identical — that is the parity contract.
 
 ## Resuming a session

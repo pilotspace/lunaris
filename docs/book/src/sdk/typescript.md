@@ -38,7 +38,7 @@ npm install lunaris --build-from-source
 import { open, RetrievalBuilder } from "lunaris";
 
 async function main() {
-  const handle = await open("moon://127.0.0.1:6379");
+  const handle = await open("moon://127.0.0.1:6380");
 
   const lsn = await handle.ingest({
     id: "01JABCDEFGHJKMNPQRSTVWXYZ0", // 26-char Crockford-base32 ULID
@@ -159,7 +159,7 @@ import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
 
 const emb = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed", execution: "coreml" });
 const rer = RerankerConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed-reranker" });
-const handle = (await Lunaris.open("moon://127.0.0.1:6379")).withEmbedder(emb).withReranker(rer);
+const handle = (await Lunaris.open("moon://127.0.0.1:6380")).withEmbedder(emb).withReranker(rer);
 
 // Latency floor — disable the cross-encoder rescoring pass:
 const fallback = (await Lunaris.open(url)).withEmbedder(emb).withReranker(RerankerConfig.noop());

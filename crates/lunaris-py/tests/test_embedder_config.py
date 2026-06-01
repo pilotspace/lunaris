@@ -144,7 +144,7 @@ async def test_lunaris_open_with_embedder_kwarg(moon_backend_url: str) -> None:
     """Smoke that `Lunaris.open(url, embedder=cfg)` round-trips.
 
     Requires:
-    - Live Moon at `LUNARIS_TEST_MOON_URL` (or default `moon://127.0.0.1:6379`)
+    - Live Moon at `LUNARIS_TEST_MOON_URL` (or default `moon://127.0.0.1:6380`)
     - Populated fastembed cache at `LUNARIS_FASTEMBED_CACHE_DIR`
 
     The handle gets a fastembed embedder applied; we ingest one episode and

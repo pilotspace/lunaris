@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```text
-//! MOON_URL=moon://localhost:6390 \
+//! MOON_URL=moon://localhost:6380 \
 //!   cargo test -p lunaris-conformance --test run_storage_moon
 //! ```
 //!

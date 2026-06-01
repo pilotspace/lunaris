@@ -23,7 +23,7 @@
 //! 50).
 //!
 //! ```bash
-//! MOON_URL=moon://localhost:6390 PG_URL=postgres://lunaris@localhost/lunaris \
+//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris@localhost/lunaris \
 //!   LUNARIS_CHAOS_HELIOS_ITERS=50 \
 //!   cargo test -p lunaris --test chaos_helios_sigkill \
 //!   chaos_sigkill_helios_flow_zero_orphans -- --ignored --nocapture
@@ -475,7 +475,7 @@ fn evidence_path_uses_stable_naming() {
 fn redact_url_strips_postgres_userinfo() {
     assert_eq!(redact_url("postgres://user:password@host:5432/db"), "postgres://host:5432/db");
     assert_eq!(redact_url("postgresql://user:password@host:5432/db"), "postgresql://host:5432/db");
-    assert_eq!(redact_url("moon://localhost:6390"), "moon://localhost:6390");
+    assert_eq!(redact_url("moon://localhost:6380"), "moon://localhost:6380");
 }
 
 #[test]

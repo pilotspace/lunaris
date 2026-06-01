@@ -107,12 +107,12 @@ mod tests {
         let cfg = Config::try_parse_from([
             "lunaris-server",
             "--storage",
-            "moon://localhost:6390",
+            "moon://localhost:6380",
             "--tokens-file",
             "/tmp/tokens.json",
         ])
         .expect("parse");
-        assert_eq!(cfg.storage, "moon://localhost:6390");
+        assert_eq!(cfg.storage, "moon://localhost:6380");
         assert_eq!(cfg.bind, "0.0.0.0:8080");
         assert_eq!(cfg.rate_per_second, 60);
         assert_eq!(cfg.rate_burst, 120);

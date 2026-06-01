@@ -13,7 +13,7 @@ import { createConnection } from "node:net";
 
 const lunaris = await import("../index.mjs");
 
-const DEFAULT_MOON_URL = "moon://127.0.0.1:6379";
+const DEFAULT_MOON_URL = "moon://127.0.0.1:6380";
 
 function resolveMoonUrl(): string {
   return process.env.LUNARIS_TEST_MOON_URL ?? DEFAULT_MOON_URL;

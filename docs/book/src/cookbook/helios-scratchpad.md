@@ -87,7 +87,7 @@ use lunaris::{HeliosScratchpad, Lunaris};
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // One handle per process — share via Arc. URL scheme picks the backend.
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // Session prefix becomes "helios:fs/session-42/".
     let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
@@ -129,7 +129,7 @@ use lunaris::{HeliosScratchpad, Hlc, Lunaris};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = HeliosScratchpad::new(lunaris.clone(), "session-42");
 
     // t1: agent writes the first draft.

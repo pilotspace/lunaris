@@ -159,7 +159,7 @@ scripts/setup-lunaris-agents.py --agent codex --runner local --hooks off
 Use a different Moon instance:
 
 ```sh
-scripts/setup-lunaris-agents.py --agent codex --runner local --moon-url moon://127.0.0.1:6390
+scripts/setup-lunaris-agents.py --agent codex --runner local --moon-url moon://192.168.1.10:6380
 ```
 
 Use SQLite instead of Moon:

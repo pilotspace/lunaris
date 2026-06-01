@@ -4,7 +4,7 @@
 # evidence envelope under `milestones/v0.1.1-sdk-real/`.
 #
 # Usage:
-#   LUNARIS_TEST_MOON_URL=moon://host:6379 \
+#   LUNARIS_TEST_MOON_URL=moon://host:6380 \
 #   [LUNARIS_TEST_POSTGRES_URL=postgres://user:pw@host/db] \
 #   scripts/sdk-real-evidence.sh
 #
@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${REPO_ROOT}/milestones/v0.1.1-sdk-real"
 mkdir -p "${OUT_DIR}"
 
-MOON_URL="${LUNARIS_TEST_MOON_URL:-moon://127.0.0.1:6379}"
+MOON_URL="${LUNARIS_TEST_MOON_URL:-moon://127.0.0.1:6380}"
 PG_URL="${LUNARIS_TEST_POSTGRES_URL:-}"
 
 export LUNARIS_TEST_MOON_URL="${MOON_URL}"

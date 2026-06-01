@@ -44,7 +44,7 @@ use lunaris_recipes::documentary::TimelineReconstruction;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let timeline = TimelineReconstruction::new(lunaris.clone(), "timeline:events/");
 
     // Ingest dated events. Stamp the event's valid time into metadata so

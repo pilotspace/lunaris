@@ -14,7 +14,7 @@
 //!
 //! ```bash
 //! # First populate Criterion data (live backends required):
-//! MOON_URL=moon://localhost:6390 PG_URL=postgres://lunaris:lunaris@localhost/lunaris \
+//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris:lunaris@localhost/lunaris \
 //!   cargo bench -p lunaris-bench
 //!
 //! # Then enforce the budget (passes/fails based on the data on disk):

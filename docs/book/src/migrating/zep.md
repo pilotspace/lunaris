@@ -72,7 +72,7 @@ client.memory.add_memory(session_id="alice-session-1", memory=memory)
 ```python
 import lunaris
 
-mem = lunaris.Lunaris.open("moon://localhost:6390")
+mem = lunaris.Lunaris.open("moon://localhost:6380")
 scope = lunaris.Scope("alice-session-1")
 mem.scoped(scope).ingest(
     lunaris.EpisodeBuilder("chat:session-1/turn-1",

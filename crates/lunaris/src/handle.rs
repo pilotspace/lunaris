@@ -209,7 +209,7 @@ impl Lunaris {
     ///   use lunaris::Lunaris;
     ///   use lunaris_core::NoopEmbedder;
     ///   let handle = Lunaris::open_with_embedder(
-    ///       "moon://localhost:6390",
+    ///       "moon://localhost:6380",
     ///       Arc::new(NoopEmbedder::new(1536)),
     ///   ).await?;
     ///   ```

@@ -97,7 +97,7 @@ use lunaris::{CodingSessionMemory, Lunaris};
 async fn main() -> Result<(), lunaris::LunarisError> {
     // One handle per process — share it via Arc. `Lunaris::open` picks the
     // backend by URL scheme (`crates/lunaris/src/handle.rs:148-206`).
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // Session prefix = "helios:fs/session-42/" (coding_session_memory.rs:95).
     let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
@@ -393,7 +393,7 @@ use lunaris::{CodingSessionMemory, Hlc, Lunaris};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
 
     // t1: agent writes the first draft.
@@ -456,7 +456,7 @@ use lunaris::{ForgetTarget, CodingSessionMemory, Lunaris, ScopeSpec};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
 
     // --- SOFT path ----------------------------------------------------------
@@ -541,7 +541,7 @@ use lunaris::{EntityId, Graph, CodingSessionMemory, Lunaris, Query, Vector};
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // (1) Turn the graph pipeline on BEFORE ingest. Default is OFF per
     //     blueprint §5.2 — `handle.graph_pipeline().is_enabled()` returns
@@ -620,7 +620,7 @@ use lunaris_retrieve::Hit;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
     let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
 
     // `pad.grep` already lowers to `recall_with_degraded_check().execute(...)`

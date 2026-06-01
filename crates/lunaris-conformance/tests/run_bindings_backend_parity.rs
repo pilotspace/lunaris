@@ -18,7 +18,7 @@
 //!
 //! Run with:
 //! ```text
-//! LUNARIS_MOON_URL=moon://localhost:6390 \
+//! LUNARIS_MOON_URL=moon://localhost:6380 \
 //!   LUNARIS_POSTGRES_URL=postgres://postgres:lunaris@localhost:5432/lunaris \
 //!   cargo test -p lunaris-conformance --features bindings-it \
 //!     --test run_bindings_backend_parity -- --nocapture

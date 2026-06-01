@@ -24,7 +24,7 @@ The Plan 04-03 chaos / crash-recovery property test (`tests/crash_recovery.rs`) 
 
 ```bash
 # Moon
-MOON_URL=moon://localhost:6390 \
+MOON_URL=moon://localhost:6380 \
   cargo test -p lunaris-conformance --test run_storage_moon -- --nocapture
 
 # Postgres
@@ -32,7 +32,7 @@ PG_URL=postgres://postgres:lunaris@localhost/lunaris \
   cargo test -p lunaris-conformance --test run_storage_postgres -- --nocapture
 
 # AS_OF parity (requires BOTH)
-MOON_URL=moon://localhost:6390 \
+MOON_URL=moon://localhost:6380 \
 PG_URL=postgres://postgres:lunaris@localhost/lunaris \
   cargo test -p lunaris-conformance --test run_as_of_parity -- --nocapture
 ```
@@ -46,7 +46,7 @@ When env vars are unset → SKIPS cleanly (exit 0). When the TCP probe fails →
 cargo build -p lunaris-server  # → target/debug/lunaris-server
 
 # 2. Run the suite (picks MOON_URL first, falls back to PG_URL).
-MOON_URL=moon://localhost:6390 \
+MOON_URL=moon://localhost:6380 \
   cargo test -p lunaris-conformance \
     --test run_protocol_lunaris_server -- --nocapture
 ```
@@ -56,7 +56,7 @@ The runner spawns `lunaris-server --bind 127.0.0.1:0 --rate-burst 10 --rate-per-
 ### Chaos / crash-recovery (Unix only, gated)
 
 ```bash
-MOON_URL=moon://localhost:6390 \
+MOON_URL=moon://localhost:6380 \
 PG_URL=postgres://postgres:lunaris@localhost/lunaris \
   cargo test -p lunaris-conformance \
     --features chaos-it --test crash_recovery -- --nocapture
@@ -125,7 +125,7 @@ A conformant implementation:
 
 | Variable                     | Purpose                                                   | Required for                                  |
 |------------------------------|-----------------------------------------------------------|-----------------------------------------------|
-| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6390`)  | storage suite (Moon), AS_OF parity, protocol  |
+| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6380`)  | storage suite (Moon), AS_OF parity, protocol  |
 | `PG_URL`                     | Postgres backend connect URL                              | storage suite (Postgres), AS_OF parity, protocol |
 | `CARGO_TARGET_DIR`           | Override target dir for binary discovery                  | protocol suite when out-of-tree builds used   |
 | `CARGO_BIN_EXE_lunaris-server` | Pre-resolved binary path (forward-compat)               | protocol suite (rare; harness falls back)     |

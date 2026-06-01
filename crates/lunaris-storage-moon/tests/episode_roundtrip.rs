@@ -7,7 +7,7 @@
 //! cargo test -p lunaris-storage-moon --features moon-it --test episode_roundtrip
 //! ```
 //!
-//! Expects Moon at `MOON_URL` env var (default `moon://localhost:6390`).
+//! Expects Moon at `MOON_URL` env var (default `moon://localhost:6380`).
 //!
 //! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
 
@@ -18,14 +18,14 @@ use lunaris_core::{Episode, HlcClock, Scope, StorageError, StoragePort, WriteOp}
 use lunaris_storage_moon::{MoonStorage, keyspace};
 
 fn moon_url() -> String {
-    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6390".into())
+    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".into())
 }
 
 #[tokio::test]
 async fn episode_atomic_write_then_read_back() {
     let s = MoonStorage::connect(&moon_url())
         .await
-        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "notes.md", "Alice joined Acme on 2024-04-01.", &clock);

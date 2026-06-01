@@ -16,7 +16,7 @@ covers operating the binary.
 ```bash
 cargo build -p lunaris-server          # → target/debug/lunaris-server
 
-LUNARIS_STORAGE=moon://localhost:6390 \
+LUNARIS_STORAGE=moon://localhost:6380 \
 LUNARIS_TOKENS_FILE=/etc/lunaris/tokens.json \
   target/debug/lunaris-server --bind 127.0.0.1:8080
 ```

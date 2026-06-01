@@ -2,7 +2,7 @@
 //!
 //! Run with:
 //! ```text
-//! MOON_URL=moon://localhost:6390 \
+//! MOON_URL=moon://localhost:6380 \
 //! PG_URL=postgres://postgres:lunaris@localhost/lunaris \
 //!   cargo test -p lunaris-conformance --test run_as_of_parity
 //! ```

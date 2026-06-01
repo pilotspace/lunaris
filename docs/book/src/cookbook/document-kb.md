@@ -81,7 +81,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 }
 ```
 
-Swap the URL for `moon://localhost:6379` — same code, same result set
+Swap the URL for `moon://localhost:6380` — same code, same result set
 (parity contract).
 
 ## Notes

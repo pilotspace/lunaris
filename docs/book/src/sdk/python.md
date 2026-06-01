@@ -41,7 +41,7 @@ import ulid
 
 
 async def main():
-    handle = await lunaris.open("moon://127.0.0.1:6379")
+    handle = await lunaris.open("moon://127.0.0.1:6380")
 
     lsn = await handle.ingest({
         "id": str(ulid.ULID()),
@@ -188,7 +188,7 @@ from lunaris import EmbedderConfig, RerankerConfig
 
 emb = EmbedderConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed", execution="coreml")
 rer = RerankerConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed-reranker")
-handle = await lunaris.open("moon://127.0.0.1:6379", embedder=emb, reranker=rer)
+handle = await lunaris.open("moon://127.0.0.1:6380", embedder=emb, reranker=rer)
 
 # Latency floor — disable the cross-encoder rescoring pass:
 handle = await lunaris.open(url, embedder=emb, reranker=RerankerConfig.noop())

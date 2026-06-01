@@ -194,7 +194,7 @@ endpoint.
 | Variable | Example | Used by |
 |---|---|---|
 | `PG_URL` | `postgres://lunaris@localhost/lunaris` | `#[cfg(feature = "pg-it")]` tests |
-| `MOON_URL` | `moon://localhost:6390` | `#[cfg(feature = "moon-it")]` tests |
+| `MOON_URL` | `moon://localhost:6380` | `#[cfg(feature = "moon-it")]` tests |
 
 ---
 
