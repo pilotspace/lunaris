@@ -260,6 +260,8 @@ async fn integration_winner_chunks_differ_from_structural_baseline() {
         weights,
         max_candidates: 3,
         generators: vec![Box::new(RecursiveSplitMergeGenerator)],
+        target_tokens: 500,
+        overlap_tokens: 100,
     };
     let counter = surrogate_counter();
 
@@ -323,6 +325,8 @@ async fn single_pass_embed_count_equals_zero_extra_for_winner() {
         weights,
         max_candidates: 2,
         generators: vec![Box::new(RecursiveSplitMergeGenerator)],
+        target_tokens: 500,
+        overlap_tokens: 100,
     };
     let counter = surrogate_counter();
 
@@ -405,6 +409,8 @@ async fn bakeoff_selects_non_structural_winner_at_small_target() {
         weights,
         max_candidates: 3,
         generators: vec![Box::new(RecursiveSplitMergeGenerator)],
+        target_tokens: 500,
+        overlap_tokens: 100,
     };
 
     let (_, structural_heading_records) =

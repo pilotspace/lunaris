@@ -371,6 +371,11 @@ pub struct BakoffConfig {
     /// Generators to run. The bake-off always includes [`StructuralGenerator`];
     /// any generator here that errors is silently dropped.
     pub generators: Vec<Box<dyn CandidateGenerator + Send + Sync>>,
+    /// Target chunk size in tokens. Passed to every generator and the SC metric.
+    /// Default: 500 (mirrors `DEFAULT_TARGET_TOKENS` in `lunaris-ingest::pipeline`).
+    pub target_tokens: usize,
+    /// Overlap in tokens between consecutive chunks. Default: 100.
+    pub overlap_tokens: usize,
 }
 
 impl std::fmt::Debug for BakoffConfig {

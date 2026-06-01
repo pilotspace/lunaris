@@ -26,7 +26,7 @@ use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate
 // publicly re-exported at the lunaris_ingest:: top level.
 use lunaris_ingest::{
     ChunkDraft, TokenCounter, chunk_key, chunk_markdown_with_counter, episode_key,
-    ingest_episode_with_counter,
+    ingest_episode_with_bakeoff,
 };
 use serde_json::json;
 // Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
@@ -111,22 +111,42 @@ impl Lunaris {
         // the future). No lock involved — Arc::clone is cheap.
         let token_counter = self.token_counter.clone();
         async move {
+            // Phase 28: snapshot bakeoff config before the async move so we
+            // hold an owned Arc rather than a borrow of self.
+            let bakeoff_config = self.bakeoff_config.clone();
+
             let lsn = if !self.graph_pipeline.is_enabled() {
-                // Graph OFF — Phase 2 fast path with BPE token counter.
-                // INGEST-04 single atomic_write call lives inside
-                // `ingest_episode_with_counter`.
-                ingest_episode_with_counter(
+                // Graph OFF — bakeoff path (Phase 28) or Phase 2 fast path.
+                // INGEST-04: the single atomic_write call lives in
+                // `assemble_and_write` inside lunaris_ingest::pipeline; both
+                // ingest_episode_with_bakeoff and ingest_episode_with_counter
+                // funnel through that helper.
+                // Phase 28: if bakeoff_config is Some, use its target_tokens /
+                // overlap_tokens so callers can tune chunk granularity via the
+                // config rather than a separate parameter. Falls back to
+                // DEFAULT_TARGET_TOKENS / DEFAULT_OVERLAP_TOKENS when None
+                // (ingest_episode_with_bakeoff handles the None case internally
+                // by delegating to ingest_episode_with_counter).
+                let (target_tokens, overlap_tokens) = bakeoff_config
+                    .as_deref()
+                    .map(|c| (c.target_tokens, c.overlap_tokens))
+                    .unwrap_or((DEFAULT_TARGET_TOKENS, DEFAULT_OVERLAP_TOKENS));
+                ingest_episode_with_bakeoff(
                     self.storage.as_ref(),
                     self.embedder.as_ref(),
                     &self.clock,
                     episode,
                     token_counter.clone(),
+                    bakeoff_config,
+                    target_tokens,
+                    overlap_tokens,
                 )
                 .await?
             } else {
                 // Graph ON — extended fan-out with BPE token counter.
                 // INGEST-04 single atomic_write call lives in
                 // `ingest_episode_graph_on`.
+                // Phase 28 TODO: thread bakeoff into graph-ON path (T-28-07).
                 ingest_episode_graph_on(
                     self.storage.as_ref(),
                     self.embedder.as_ref(),
