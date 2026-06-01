@@ -1,0 +1,640 @@
+//! Candidate generator trait + four generator implementations (META-01).
+//!
+//! ## Architecture
+//!
+//! The bake-off runs [`MAX_BAKEOFF_CANDIDATES`] candidate chunk lists through
+//! [`run_bakeoff`], which:
+//! 1. Collects up to `max_candidates` `Vec<ChunkDraft>` from the generators,
+//!    dropping any that `Err` (logged via `tracing::warn!`).
+//! 2. Ensures the structural generator is always present (the fallback floor).
+//! 3. Embeds every candidate's chunk texts in ONE batch each → stores them in
+//!    [`ScoredCandidate::embeddings`] so the selector **and** the ingest pipeline
+//!    both use the SAME vectors (SINGLE-PASS invariant).
+//! 4. Hands all candidates to the selector (metrics + weighted argmax).
+//! 5. Returns the winner as a [`ScoredCandidate`].
+//!
+//! ## SINGLE-PASS invariant
+//!
+//! [`ScoredCandidate::embeddings`] carries the chunk-level embeddings produced
+//! during scoring.  The storage layer MUST use them directly — it must NOT call
+//! `embed_batch` on the winner again.  See the `// SINGLE-PASS:` comment on the
+//! struct field.
+//!
+//! ## Object-safety
+//!
+//! [`CandidateGenerator`] is intentionally **sync** (no `async fn`) so it is
+//! dyn-compatible without `#[async_trait]` boxing on MSRV 1.94.  Generators that
+//! need to embed (e.g. [`SemanticBreakpointGenerator`]) receive pre-computed unit
+//! embeddings from `run_bakeoff`; they do NOT call the embedder themselves.
+
+use lunaris_core::{Embedder, LunarisError};
+
+use crate::chunker::segment::SegmentMode;
+use crate::chunker::{
+    ChunkDraft, HeadingRecord, SurrogateTokenCounter, TokenCounter,
+    chunk_markdown_with_headings_with_counter, segment_units,
+};
+
+// ---------------------------------------------------------------------------
+// Core types
+// ---------------------------------------------------------------------------
+
+/// One candidate chunk list produced by a [`CandidateGenerator`], together
+/// with the chunk-level embeddings that were computed during metric scoring.
+///
+/// # SINGLE-PASS
+///
+/// The `embeddings` field carries the embeddings produced during the scoring
+/// pass.  The storage/ingest layer **MUST NOT** call `embed_batch` on the
+/// winner again — it should reuse `embeddings` directly.
+///
+/// <!-- SINGLE-PASS: embeddings reused from scoring pass, do NOT call embed_batch on winner again -->
+#[derive(Debug, Clone)]
+pub struct ScoredCandidate {
+    /// Chunk drafts produced by the winning generator.
+    pub drafts: Vec<ChunkDraft>,
+    /// Chunk-level embeddings in the same order as `drafts`.
+    ///
+    /// SINGLE-PASS: embeddings reused from scoring pass, do NOT call
+    /// embed_batch on winner again.
+    pub embeddings: Vec<Vec<f32>>,
+    /// Heading records from the **structural** parse (used for DocTree, not
+    /// tied to which candidate wins).
+    pub heading_records: Vec<HeadingRecord>,
+}
+
+/// Context passed to every [`CandidateGenerator`] and metric.
+#[derive(Clone)]
+pub struct GeneratorContext {
+    /// Target chunk size in tokens.
+    pub target_tokens: usize,
+    /// Token overlap between adjacent chunks.
+    pub overlap_tokens: usize,
+    /// Pre-computed unit embeddings for the source text.
+    ///
+    /// Produced once in `run_bakeoff` by embedding all `TextUnit`s.  Generators
+    /// that need semantic similarity (e.g. [`SemanticBreakpointGenerator`])
+    /// consume these rather than calling the embedder themselves.
+    pub unit_embeddings: Vec<Vec<f32>>,
+}
+
+/// A generator that produces one candidate chunk list from a source document.
+///
+/// # Object safety
+///
+/// The trait is **sync** (no `async fn`) to be dyn-compatible on MSRV 1.94.
+/// Generators that need embeddings receive them via [`GeneratorContext`].
+///
+/// # Error handling
+///
+/// Returning `Err(e)` causes the bake-off to **drop this generator** (logged
+/// via `tracing::warn!`) without aborting ingest.  The structural generator
+/// MUST never return `Err` — it is the guaranteed fallback floor.
+pub trait CandidateGenerator: Send + Sync {
+    /// Generate a candidate chunk list for `source_text`.
+    ///
+    /// Returns `Err` only for truly unrecoverable generator failures; returning
+    /// `Err` causes the bake-off to silently skip this candidate.
+    fn generate(
+        &self,
+        source_text: &str,
+        ctx: &GeneratorContext,
+        counter: &dyn TokenCounter,
+    ) -> Result<Vec<ChunkDraft>, LunarisError>;
+
+    /// Human-readable name used in tracing spans and warning messages.
+    fn name(&self) -> &'static str;
+}
+
+// ---------------------------------------------------------------------------
+// StructuralGenerator — the always-present fallback (wraps the existing chunker)
+// ---------------------------------------------------------------------------
+
+/// Wraps [`chunk_markdown_with_headings_with_counter`] as a [`CandidateGenerator`].
+///
+/// This generator is the **guaranteed floor**: it never returns `Err`, and the
+/// bake-off ensures it is always included regardless of errors from other generators.
+#[derive(Debug, Clone, Default)]
+pub struct StructuralGenerator;
+
+impl CandidateGenerator for StructuralGenerator {
+    fn generate(
+        &self,
+        source_text: &str,
+        ctx: &GeneratorContext,
+        counter: &dyn TokenCounter,
+    ) -> Result<Vec<ChunkDraft>, LunarisError> {
+        let (drafts, _heading_records) = chunk_markdown_with_headings_with_counter(
+            source_text,
+            ctx.target_tokens,
+            ctx.overlap_tokens,
+            counter,
+        );
+        Ok(drafts)
+    }
+
+    fn name(&self) -> &'static str {
+        "structural"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SemanticBreakpointGenerator — split at cosine local-minima of unit embeddings
+// ---------------------------------------------------------------------------
+
+/// Splits the source into chunks by finding local minima in the cosine
+/// similarity between adjacent unit embeddings.
+///
+/// A boundary is placed between unit[i] and unit[i+1] when
+/// `cosine(unit[i], unit[i+1]) < threshold`, indicating a semantic shift.
+#[derive(Debug, Clone)]
+pub struct SemanticBreakpointGenerator {
+    /// Cosine similarity threshold below which a boundary is placed.
+    pub threshold: f32,
+}
+
+impl Default for SemanticBreakpointGenerator {
+    fn default() -> Self {
+        Self { threshold: 0.5 }
+    }
+}
+
+impl CandidateGenerator for SemanticBreakpointGenerator {
+    fn generate(
+        &self,
+        source_text: &str,
+        ctx: &GeneratorContext,
+        _counter: &dyn TokenCounter,
+    ) -> Result<Vec<ChunkDraft>, LunarisError> {
+        let units = segment_units(source_text, SegmentMode::Sentence);
+        if units.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Place boundaries where adjacent cosine < threshold (local minimum)
+        let mut boundaries: Vec<usize> = Vec::new(); // unit indices starting a new chunk
+        boundaries.push(0);
+
+        let embs = &ctx.unit_embeddings;
+        if embs.len() >= units.len() {
+            for i in 0..units.len().saturating_sub(1) {
+                let sim = cosine_f32(&embs[i], &embs[i + 1]);
+                if sim < self.threshold {
+                    boundaries.push(i + 1);
+                }
+            }
+        }
+        // Always end after last unit
+        boundaries.push(units.len());
+
+        let mut drafts = Vec::new();
+        let mut offset: u32 = 0;
+        for window in boundaries.windows(2) {
+            let start = window[0];
+            let end = window[1];
+            if start >= end {
+                continue;
+            }
+            let text =
+                units[start..end].iter().map(|u| u.text.as_str()).collect::<Vec<_>>().join(" ");
+            if text.trim().is_empty() {
+                continue;
+            }
+            let counter = SurrogateTokenCounter;
+            let tokens = counter.count(&text);
+            drafts.push(ChunkDraft {
+                text: text.trim().to_string(),
+                heading_path: Vec::new(),
+                offset,
+                tokens,
+                overlap_tail: String::new(),
+            });
+            offset += 1;
+        }
+        Ok(drafts)
+    }
+
+    fn name(&self) -> &'static str {
+        "semantic-breakpoint"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SizeVariantGenerator — structural at a scaled target
+// ---------------------------------------------------------------------------
+
+/// Wraps the structural generator with a scaled `target_tokens`.
+///
+/// A multiplier > 1.0 produces coarser (fewer, larger) chunks.
+/// A multiplier < 1.0 produces finer (more, smaller) chunks.
+#[derive(Debug, Clone)]
+pub struct SizeVariantGenerator {
+    /// Scale factor applied to `target_tokens`.
+    pub multiplier: f32,
+}
+
+impl Default for SizeVariantGenerator {
+    fn default() -> Self {
+        Self { multiplier: 2.0 }
+    }
+}
+
+impl CandidateGenerator for SizeVariantGenerator {
+    fn generate(
+        &self,
+        source_text: &str,
+        ctx: &GeneratorContext,
+        counter: &dyn TokenCounter,
+    ) -> Result<Vec<ChunkDraft>, LunarisError> {
+        let scaled_target = ((ctx.target_tokens as f32 * self.multiplier) as usize).max(1);
+        let (drafts, _) = chunk_markdown_with_headings_with_counter(
+            source_text,
+            scaled_target,
+            ctx.overlap_tokens,
+            counter,
+        );
+        Ok(drafts)
+    }
+
+    fn name(&self) -> &'static str {
+        "size-variant"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RecursiveSplitMergeGenerator
+// ---------------------------------------------------------------------------
+
+/// Recursively splits units that exceed `target_tokens` and merges consecutive
+/// undersized units to approach the target.
+#[derive(Debug, Clone, Default)]
+pub struct RecursiveSplitMergeGenerator;
+
+impl CandidateGenerator for RecursiveSplitMergeGenerator {
+    fn generate(
+        &self,
+        source_text: &str,
+        ctx: &GeneratorContext,
+        counter: &dyn TokenCounter,
+    ) -> Result<Vec<ChunkDraft>, LunarisError> {
+        let units = segment_units(source_text, SegmentMode::Sentence);
+        if units.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Phase 1: split oversized units by bisection
+        let mut pieces: Vec<String> = Vec::new();
+        for unit in &units {
+            let tok = counter.count(&unit.text) as usize;
+            if tok > ctx.target_tokens {
+                split_into_pieces(&unit.text, ctx.target_tokens, counter, &mut pieces);
+            } else {
+                pieces.push(unit.text.clone());
+            }
+        }
+
+        // Phase 2: merge undersized consecutive pieces toward target
+        let mut merged: Vec<String> = Vec::new();
+        let mut acc = String::new();
+        for piece in pieces {
+            if acc.is_empty() {
+                acc = piece;
+            } else {
+                let candidate = format!("{acc} {piece}");
+                if counter.count(&candidate) as usize <= ctx.target_tokens {
+                    acc = candidate;
+                } else {
+                    merged.push(acc);
+                    acc = piece;
+                }
+            }
+        }
+        if !acc.trim().is_empty() {
+            merged.push(acc);
+        }
+
+        let drafts: Vec<ChunkDraft> = merged
+            .into_iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .map(|(i, text)| {
+                let tokens = counter.count(&text);
+                ChunkDraft {
+                    text: text.trim().to_string(),
+                    heading_path: Vec::new(),
+                    offset: i as u32,
+                    tokens,
+                    overlap_tail: String::new(),
+                }
+            })
+            .collect();
+        Ok(drafts)
+    }
+
+    fn name(&self) -> &'static str {
+        "recursive-split-merge"
+    }
+}
+
+fn split_into_pieces(text: &str, target: usize, counter: &dyn TokenCounter, out: &mut Vec<String>) {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return;
+    }
+    let mid = words.len() / 2;
+    let left = words[..mid].join(" ");
+    let right = words[mid..].join(" ");
+    if counter.count(&left) as usize > target && mid > 1 {
+        split_into_pieces(&left, target, counter, out);
+    } else if !left.trim().is_empty() {
+        out.push(left);
+    }
+    if counter.count(&right) as usize > target && (words.len() - mid) > 1 {
+        split_into_pieces(&right, target, counter, out);
+    } else if !right.trim().is_empty() {
+        out.push(right);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bakeoff configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for the adaptive meta-framework bake-off.
+pub struct BakoffConfig {
+    /// Selector weights (default: SC=0.15/ICC=0.30/DCC=0.20/BI=0.20/RC=0.15).
+    pub weights: crate::chunker::selector::SelectorWeights,
+    /// Maximum number of candidates to evaluate (default 3).
+    pub max_candidates: usize,
+    /// Generators to run. The bake-off always includes [`StructuralGenerator`];
+    /// any generator here that errors is silently dropped.
+    pub generators: Vec<Box<dyn CandidateGenerator + Send + Sync>>,
+}
+
+impl std::fmt::Debug for BakoffConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BakoffConfig")
+            .field("max_candidates", &self.max_candidates)
+            .field("generator_count", &self.generators.len())
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// run_bakeoff
+// ---------------------------------------------------------------------------
+
+/// Run the bake-off: generate candidates → embed once → score → select winner.
+///
+/// # Resilience
+///
+/// Generators that return `Err` are dropped with `tracing::warn!`.  The
+/// structural generator is always present as the fallback floor.
+///
+/// # SINGLE-PASS
+///
+/// For each candidate, `embed_batch` is called **once** on all chunk texts.
+/// The resulting vectors are stored in [`ScoredCandidate::embeddings`] and
+/// reused by both the metrics and the storage layer — the winner is never
+/// re-embedded.
+pub async fn run_bakeoff(
+    source_text: &str,
+    structural_heading_records: Vec<HeadingRecord>,
+    config: &BakoffConfig,
+    embedder: &dyn Embedder,
+    counter: &dyn TokenCounter,
+) -> ScoredCandidate {
+    use crate::chunker::metrics::MetricContext;
+    use crate::chunker::selector::ChunkSelector;
+
+    // Step 1: embed unit texts once for generators that need semantic context
+    let units = segment_units(source_text, SegmentMode::Sentence);
+    let unit_texts: Vec<&str> = units.iter().map(|u| u.text.as_str()).collect();
+    let unit_embeddings = match embedder.embed_batch(&unit_texts).await {
+        Ok(v) if v.len() == unit_texts.len() => v,
+        Ok(_) | Err(_) => {
+            tracing::warn!(
+                "unit embed_batch failed or returned wrong count; using empty unit embeddings"
+            );
+            vec![vec![0.0f32; embedder.dim()]; unit_texts.len()]
+        }
+    };
+
+    let gen_ctx = GeneratorContext {
+        target_tokens: crate::chunker::candidate::DEFAULT_TARGET_TOKENS,
+        overlap_tokens: crate::chunker::candidate::DEFAULT_OVERLAP_TOKENS,
+        unit_embeddings,
+    };
+
+    // Step 2: collect structural candidate first (the fallback floor, never drops)
+    let structural_gen = StructuralGenerator;
+    let structural_drafts = structural_gen
+        .generate(source_text, &gen_ctx, counter)
+        .expect("StructuralGenerator must never fail");
+
+    // Step 3: collect up to max_candidates - 1 additional candidates
+    let extra_cap = config.max_candidates.saturating_sub(1);
+    let mut all_drafts: Vec<Vec<ChunkDraft>> = Vec::with_capacity(config.max_candidates);
+    all_drafts.push(structural_drafts);
+
+    for generator in config.generators.iter().take(extra_cap) {
+        match generator.generate(source_text, &gen_ctx, counter) {
+            Ok(drafts) if !drafts.is_empty() => all_drafts.push(drafts),
+            Ok(_) => {
+                tracing::warn!(
+                    generator = generator.name(),
+                    "generator produced no chunks; dropping"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    generator = generator.name(),
+                    err = %e,
+                    "generator errored; dropping from bake-off"
+                );
+            }
+        }
+    }
+
+    // Step 4: embed chunk texts once per candidate (SINGLE-PASS)
+    // ICC/DCC/storage all use these vectors; no re-embedding after this point.
+    let mut scored: Vec<crate::chunker::metrics::CandidateWithEmbeddings> =
+        Vec::with_capacity(all_drafts.len());
+
+    for drafts in all_drafts {
+        let chunk_texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
+        let chunk_embs = match embedder.embed_batch(&chunk_texts).await {
+            Ok(v) if v.len() == chunk_texts.len() => v,
+            Ok(_) | Err(_) => {
+                tracing::warn!("chunk embed_batch failed for candidate; using zero embeddings");
+                vec![vec![0.0f32; embedder.dim()]; chunk_texts.len()]
+            }
+        };
+        scored.push(crate::chunker::metrics::CandidateWithEmbeddings {
+            drafts,
+            chunk_embeddings: chunk_embs,
+        });
+    }
+
+    // Step 5: score candidates and select winner
+    let metric_ctx =
+        MetricContext { target_tokens: gen_ctx.target_tokens as u32, source_text, entities: None };
+
+    let winner_idx = ChunkSelector::select_with_embeddings(&scored, &metric_ctx, &config.weights);
+    let winner = scored.swap_remove(winner_idx);
+
+    ScoredCandidate {
+        drafts: winner.drafts,
+        embeddings: winner.chunk_embeddings,
+        heading_records: structural_heading_records,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Constants re-exported for use in run_bakeoff
+// ---------------------------------------------------------------------------
+
+pub(crate) const DEFAULT_TARGET_TOKENS: usize = 500;
+pub(crate) const DEFAULT_OVERLAP_TOKENS: usize = 100;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Compute the cosine similarity between two f32 vectors.
+/// Returns 0.0 when either vector is zero-length or all-zeros.
+pub fn cosine_f32(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na < 1e-12 || nb < 1e-12 {
+        return 0.0;
+    }
+    (dot / (na * nb)).clamp(-1.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
+// Tests (T-28-01 red → green)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lunaris_core::StubEmbedder;
+
+    // ── Trait object safety ──────────────────────────────────────────────────
+
+    /// Compile-time check: `Box<dyn CandidateGenerator>` is constructible.
+    #[test]
+    fn candidate_generator_trait_is_object_safe() {
+        struct NoopGen;
+        impl CandidateGenerator for NoopGen {
+            fn generate(
+                &self,
+                _src: &str,
+                _ctx: &GeneratorContext,
+                _counter: &dyn TokenCounter,
+            ) -> Result<Vec<ChunkDraft>, LunarisError> {
+                Ok(Vec::new())
+            }
+            fn name(&self) -> &'static str {
+                "noop"
+            }
+        }
+        let _: Box<dyn CandidateGenerator> = Box::new(NoopGen);
+    }
+
+    // ── StructuralGenerator never drops ─────────────────────────────────────
+
+    fn stub_ctx(unit_embeddings: Vec<Vec<f32>>) -> GeneratorContext {
+        GeneratorContext { target_tokens: 500, overlap_tokens: 100, unit_embeddings }
+    }
+
+    fn surrogate() -> SurrogateTokenCounter {
+        SurrogateTokenCounter
+    }
+
+    #[test]
+    fn structural_generator_never_drops_on_empty() {
+        let sgen = StructuralGenerator;
+        let ctx = stub_ctx(Vec::new());
+        let result = sgen.generate("", &ctx, &surrogate());
+        assert!(result.is_ok(), "structural must not Err on empty input");
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn structural_generator_never_drops_on_heading_only() {
+        let sgen = StructuralGenerator;
+        let ctx = stub_ctx(Vec::new());
+        let result = sgen.generate("# Just a heading\n\n## Sub heading", &ctx, &surrogate());
+        assert!(result.is_ok(), "structural must not Err on heading-only input");
+    }
+
+    #[test]
+    fn structural_generator_never_drops_on_oversized_block() {
+        let sgen = StructuralGenerator;
+        let ctx = stub_ctx(Vec::new());
+        // Generate a very large block (10 000 words) — should still succeed
+        let big_text = "word ".repeat(10_000);
+        let result = sgen.generate(&big_text, &ctx, &surrogate());
+        assert!(result.is_ok(), "structural must not Err on oversized block");
+        assert!(!result.unwrap().is_empty(), "oversized block must produce at least 1 chunk");
+    }
+
+    #[test]
+    fn structural_generator_never_drops_on_valid_markdown() {
+        let sgen = StructuralGenerator;
+        let ctx = stub_ctx(Vec::new());
+        let md = "# Title\n\nFirst paragraph text here.\n\n## Section\n\nMore text.";
+        let result = sgen.generate(md, &ctx, &surrogate());
+        assert!(result.is_ok());
+        assert!(!result.unwrap().is_empty());
+    }
+
+    // ── ScoredCandidate carries embeddings ──────────────────────────────────
+
+    #[test]
+    fn scored_candidate_holds_embeddings() {
+        let sc = ScoredCandidate {
+            drafts: Vec::new(),
+            embeddings: vec![vec![1.0, 0.0]],
+            heading_records: Vec::new(),
+        };
+        assert_eq!(sc.embeddings.len(), 1);
+    }
+
+    // ── cosine_f32 sanity ────────────────────────────────────────────────────
+
+    #[test]
+    fn cosine_identical_vectors_is_one() {
+        let v = vec![1.0f32, 0.0, 0.0];
+        assert!((cosine_f32(&v, &v) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_orthogonal_vectors_is_zero() {
+        let a = vec![1.0f32, 0.0];
+        let b = vec![0.0f32, 1.0];
+        assert!(cosine_f32(&a, &b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_empty_input_is_zero() {
+        assert_eq!(cosine_f32(&[], &[1.0]), 0.0);
+        assert_eq!(cosine_f32(&[], &[]), 0.0);
+    }
+
+    // ── StubEmbedder returns distinct vectors for distinct inputs ───────────
+
+    #[tokio::test]
+    async fn stub_embedder_is_deterministic() {
+        let emb = StubEmbedder::new(4);
+        let a = emb.embed_batch(&["hello"]).await.unwrap();
+        let b = emb.embed_batch(&["hello"]).await.unwrap();
+        assert_eq!(a, b);
+    }
+}
