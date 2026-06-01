@@ -226,6 +226,62 @@ pub fn chunk_markdown_with_headings(
     (state.into_chunks(), records)
 }
 
+/// Chunk a markdown document using a caller-supplied [`TokenCounter`] and
+/// simultaneously extract [`HeadingRecord`]s for [`DocTree`] construction.
+///
+/// This is the canonical production path used by `ingest_episode_with_counter`:
+/// it uses a real BPE counter when one is available (via `make_token_counter`),
+/// falling back to [`SurrogateTokenCounter`] when no tokenizer file is
+/// configured.
+///
+/// Uses `pulldown_cmark::Parser::into_offset_iter()` so heading byte spans
+/// are available; converts to character offsets for [`HeadingRecord::char_span`].
+///
+/// Returns `(Vec<ChunkDraft>, Vec<HeadingRecord>)`.
+pub fn chunk_markdown_with_headings_with_counter(
+    text: &str,
+    target_tokens: usize,
+    overlap_tokens: usize,
+    counter: &dyn TokenCounter,
+) -> (Vec<ChunkDraft>, Vec<HeadingRecord>) {
+    if text.trim().is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let parser = Parser::new_ext(text, Options::all()).into_offset_iter();
+    let mut state = ChunkerState::new(target_tokens, overlap_tokens, counter);
+    // Track open heading byte-range start for span capture.
+    let mut heading_byte_start: Option<usize> = None;
+
+    for (event, byte_range) in parser {
+        match &event {
+            Event::Start(Tag::Heading { .. }) => {
+                heading_byte_start = Some(byte_range.start);
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(start_byte) = heading_byte_start.take() {
+                    // Convert byte offsets to char offsets.
+                    let start_char = text[..start_byte].chars().count();
+                    let end_char = text[..byte_range.end].chars().count();
+                    // The last entry pushed to heading_stack is the one we just closed.
+                    if let Some((lvl, title)) = state.heading_stack.last() {
+                        state.heading_records.push(HeadingRecord {
+                            level: *lvl,
+                            title: title.clone(),
+                            char_span: (start_char, end_char),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        state.process(event);
+    }
+    state.flush_final();
+    let records = state.heading_records.clone();
+    (state.into_chunks(), records)
+}
+
 /// Internal walker state.
 struct ChunkerState<'c> {
     target_tokens: usize,

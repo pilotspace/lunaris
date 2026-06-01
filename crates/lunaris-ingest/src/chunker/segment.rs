@@ -121,6 +121,24 @@ fn extract_paragraphs(text: &str) -> Vec<TextUnit> {
     let mut current_text = String::new();
     // char_offset tracks position relative to the original text by consuming
     // the pulldown_cmark events' text contributions.
+    //
+    // TODO(phase-29): char_offset drifts when headings precede paragraphs
+    // because this event-counting approach increments only for Text/Code/break
+    // events and skips the characters consumed by heading syntax (e.g. "# ",
+    // "## ", surrounding newlines). For a document like:
+    //   "# Heading\n\nFirst paragraph."
+    // the heading text "Heading" contributes 7 to char_offset, but the "#"
+    // prefix (1 char), space (1), and newlines (2) are never counted, so
+    // `current_offset` for "First paragraph." ends up at 7 instead of 11.
+    //
+    // Root cause: `Parser::new_ext` discards byte-span metadata. Fix: switch
+    // `extract_paragraphs` to `Parser::new_ext(text, opts).into_offset_iter()`
+    // and capture the `Paragraph` `Start` byte-range, converting to char offset
+    // via `text[..start_byte].chars().count()` — the same approach used in
+    // `chunk_markdown_with_headings_with_counter`. This is deferred to Phase 29
+    // because it requires restructuring the event loop and the heading-only /
+    // flat-text fallback paths need re-testing. Until then, `char_offset` is
+    // documented as approximate (see field docs on `TextUnit`).
     let mut char_offset: usize = 0;
     let mut current_offset: usize = 0;
 

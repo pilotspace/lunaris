@@ -19,7 +19,7 @@ use lunaris_core::{
     QueueMsg, Row, Scope, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit,
     WriteOp,
 };
-use lunaris_ingest::ingest_episode;
+use lunaris_ingest::{BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter};
 use parking_lot::Mutex;
 
 // --------------------------- RecordingStorage ---------------------------
@@ -262,6 +262,81 @@ async fn embed_fallback_on_batch_error() {
     for op in &batch {
         if let WriteOp::VectorUpsert { embedding, .. } = op {
             assert_eq!(embedding.len(), 768, "fallback embeddings must be 768-d");
+        }
+    }
+}
+
+/// Finding 1 guard — production ingest path uses BPE counter, not hardcoded surrogate.
+///
+/// Ingest the same content via `ingest_episode_with_counter` using the committed
+/// test fixture tokenizer (0-merge byte-level BPE). The fixture gives ~1 token
+/// per byte (e.g. "hello world" → 11 tokens), which is very different from the
+/// surrogate's `words×1.3` heuristic (2 words → 3). We decode the chunk KvPut
+/// values from the recorded batch and assert that `chunk.tokens` matches what
+/// the BPE counter — NOT the surrogate — would produce.
+///
+/// This test proves `ingest_episode_with_counter` threads the supplied counter
+/// all the way through to the chunk token fields stored in the WriteOp batch.
+#[tokio::test]
+async fn ingest_episode_with_counter_uses_bpe_not_surrogate() {
+    let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/test_tokenizer.json");
+    let bpe = std::sync::Arc::new(
+        BpeTokenCounter::try_new(&fixture_path).expect("fixture tokenizer must load"),
+    );
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = small_episode(&clock);
+
+    ingest_episode_with_counter(&*storage, &*embedder, &clock, ep, bpe.clone())
+        .await
+        .expect("ingest with BPE counter must succeed");
+
+    assert_eq!(storage.batch_count(), 1, "INGEST-04: exactly one atomic_write call");
+
+    let batch = storage.first_batch();
+    let chunk_kvputs: Vec<&[u8]> = batch
+        .iter()
+        .filter_map(|op| {
+            if let WriteOp::KvPut { key, value } = op {
+                if key.windows(6).any(|w| w == b":chunk") {
+                    return Some(value.as_slice());
+                }
+            }
+            None
+        })
+        .collect();
+
+    assert!(!chunk_kvputs.is_empty(), "must have at least one chunk KvPut");
+
+    for raw in chunk_kvputs {
+        let chunk: serde_json::Value =
+            serde_json::from_slice(raw).expect("chunk KvPut must be valid JSON");
+        let stored_tokens = chunk["tokens"].as_u64().expect("chunk.tokens must be a u64") as u32;
+        let text = chunk["text"].as_str().expect("chunk.text must be a string");
+
+        // BPE count from the fixture counter.
+        let bpe_count = bpe.count(text);
+        // Surrogate count (words × 1.3).
+        let surrogate_count = (text.split_whitespace().count() as f32 * 1.3).ceil() as u32;
+
+        assert_eq!(
+            stored_tokens, bpe_count,
+            "chunk.tokens must equal BPE count (text={text:?}, \
+             bpe={bpe_count}, surrogate={surrogate_count})"
+        );
+        // Belt-and-suspenders: BPE and surrogate must differ for this fixture
+        // (0-merge byte-level gives ~chars/bytes; surrogate gives words×1.3).
+        // If they happen to be equal for a very short chunk, the equality above
+        // is still the meaningful assertion.
+        if text.len() > 20 {
+            assert_ne!(
+                bpe_count, surrogate_count,
+                "For text longer than 20 chars, BPE (0-merge fixture) and surrogate \
+                 must differ (text={text:?})"
+            );
         }
     }
 }

@@ -31,6 +31,7 @@ use std::sync::{Arc, OnceLock};
 
 use lunaris_consolidate::Consolidator;
 use lunaris_core::{Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort};
+use lunaris_ingest::{TokenCounter, make_token_counter};
 use ulid::Ulid;
 
 use crate::episode_builder::EpisodeBuilder;
@@ -113,6 +114,18 @@ pub struct Lunaris {
     /// exhausted when `end_turn` fires, the warm-up is silently skipped (logged
     /// at `DEBUG`) — `end_turn` never blocks on the semaphore.
     pub(crate) warm_up_semaphore: Arc<tokio::sync::Semaphore>,
+    /// BPE token counter for the ingest chunker (CHUNK-01 / Finding 1 fix).
+    ///
+    /// Loaded from the embedder model directory (`embedder_dir()/tokenizer.json`)
+    /// at `open` time via `make_token_counter`. Falls back to
+    /// `SurrogateTokenCounter` (words×1.3) when the file is absent or
+    /// malformed — `tracing::warn!` is emitted in that case. The `with_parts`
+    /// and `with_parts_keyword` test seams always use the surrogate so tests
+    /// have no model-artifact dependency.
+    ///
+    /// Passed to `ingest_episode_with_counter` so production chunking uses
+    /// real BPE token counts rather than the v0 heuristic.
+    pub(crate) token_counter: Arc<dyn TokenCounter + Send + Sync>,
 }
 
 impl std::fmt::Debug for Lunaris {
@@ -222,6 +235,9 @@ impl Lunaris {
     ) -> Result<Self, LunarisError> {
         let scheme = url.split("://").next().unwrap_or("");
         let clock = HlcClock::new(0);
+        // Build the BPE token counter from the embedder's tokenizer.json.
+        // Falls back to SurrogateTokenCounter (tracing::warn!) when absent.
+        let token_counter = make_token_counter(Some(&embedder_dir().join("tokenizer.json")));
         let reranker = resolve_reranker().await?;
         // Plan 03-03: Construct the graph pipeline handle. Initial state
         // comes from `LUNARIS_GRAPH_ENABLED=1|0` env var (D-10); default OFF
@@ -286,6 +302,7 @@ impl Lunaris {
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
+                    token_counter: token_counter.clone(),
                 })
             }
             "postgres" | "postgresql" => {
@@ -326,6 +343,7 @@ impl Lunaris {
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
+                    token_counter: token_counter.clone(),
                 })
             }
             // Onboarding overhaul (phase 1): the zero-dependency embedded
@@ -361,6 +379,7 @@ impl Lunaris {
                     warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
                         resolve_prewarm_concurrency(),
                     )),
+                    token_counter: token_counter.clone(),
                 })
             }
             other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
@@ -433,6 +452,8 @@ impl Lunaris {
             ))),
             // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
             warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
+            // Test seam: no model artifact available; use the surrogate counter.
+            token_counter: make_token_counter(None),
         }
     }
 
@@ -486,6 +507,8 @@ impl Lunaris {
             ))),
             // Phase 14.3 — semaphore for bounded fire-and-forget warm-up spawns.
             warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(resolve_prewarm_concurrency())),
+            // Test seam: no model artifact available; use the surrogate counter.
+            token_counter: make_token_counter(None),
         }
     }
 
