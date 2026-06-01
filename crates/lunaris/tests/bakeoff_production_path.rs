@@ -293,13 +293,115 @@ async fn bakeoff_single_pass_via_lunaris_ingest() {
     handle.ingest(ep).await.expect("ingest must succeed");
 
     // N_candidates = 2 (structural + RSM).
-    // Scoring: 1 unit-embed call + 2 candidate chunk-embed calls = 3 max.
+    // Scoring: 1 unit-embed call + 2 candidate chunk-embed calls = 3 total.
     // SINGLE-PASS: 0 extra calls for the winner after selection.
-    // Allow generous upper bound of 4 to accommodate per-chunk fallback batching.
+    // Upper bound is exactly 3; ≤3 discriminates against the re-embed regression
+    // (which would produce 4 calls).
     let calls = counting.calls();
     assert!(
-        calls <= 4,
-        "SINGLE-PASS violated: expected ≤4 embed_batch calls, got {calls}. \
+        calls <= 3,
+        "SINGLE-PASS violated: expected ≤3 embed_batch calls, got {calls}. \
+         The winner is being re-embedded after bakeoff selection."
+    );
+}
+
+/// **GRAPH-ON WIRING TEST**: drives `Lunaris::ingest` with graph-ON enabled
+/// AND a `BakoffConfig` installed, proving the graph-ON branch also applies
+/// the bakeoff rather than falling through to the structural-only default.
+///
+/// Asserts:
+/// 1. Exactly ONE `atomic_write` call is issued (INGEST-04).
+/// 2. Chunks were persisted (non-empty).
+/// 3. The bakeoff produces MORE chunks than structural-at-500 baseline
+///    (same discriminating fixture as the graph-OFF wiring test).
+#[tokio::test]
+async fn bakeoff_production_path_via_lunaris_ingest_graph_on() {
+    let content = fixture_content();
+
+    // ── Baseline: structural chunks at default 500-token target ──────────────
+    let counter = SurrogateTokenCounter;
+    let structural_baseline: Vec<String> =
+        chunk_markdown_with_counter(&content, 500, 100, &counter)
+            .into_iter()
+            .map(|d| d.text)
+            .collect();
+    assert_eq!(
+        structural_baseline.len(),
+        1,
+        "fixture assumption broken: structural-at-500 should give 1 chunk, got {}",
+        structural_baseline.len()
+    );
+
+    // ── Production path: Lunaris::ingest with graph-ON + bakeoff config ──────
+    let clock = HlcClock::new(0);
+    let recording: Arc<RecordingStorage> = Arc::new(RecordingStorage::default());
+    let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
+
+    let storage_dyn: Arc<dyn StoragePort> = recording.clone();
+    let handle = Lunaris::with_parts(storage_dyn, embedder, clock.clone())
+        .with_bakeoff(Arc::new(bakeoff_cfg()));
+
+    // Enable graph-ON: with_parts pre-installs NoopExtractor (applies()==false
+    // → no LLM extraction, no entity/relation WriteOps, but the chunk path runs).
+    handle.graph_pipeline().enable();
+    assert!(handle.graph_pipeline().is_enabled(), "graph must be ON for this test");
+
+    let scope = Scope::dev();
+    let ep = Episode::new(scope, "graph_on_bakeoff.md", content, &clock);
+    let lsn = handle.ingest(ep).await.expect("ingest must succeed with graph-ON + bakeoff");
+
+    assert!(lsn.wall_ms > 0 || lsn.counter > 0, "expected non-zero LSN, got {lsn:?}");
+
+    // INGEST-04: exactly ONE atomic_write call (even with graph-ON).
+    let batch_count = recording.batches.lock().len();
+    assert_eq!(
+        batch_count, 1,
+        "INGEST-04 violated (graph-ON): expected 1 atomic_write, got {batch_count}"
+    );
+
+    // Chunks were persisted.
+    let persisted = recording.chunk_texts();
+    assert!(!persisted.is_empty(), "no chunk texts persisted (graph-ON bakeoff path)");
+
+    // RSM at target=20 produces more chunks than structural-at-500.
+    assert!(
+        persisted.len() > structural_baseline.len(),
+        "graph-ON bakeoff path persisted {} chunk(s), same as or fewer than structural-at-500 \
+         ({} chunk(s)); bakeoff config not being applied through graph-ON path",
+        persisted.len(),
+        structural_baseline.len()
+    );
+}
+
+/// SINGLE-PASS proof for the graph-ON path.
+///
+/// With graph-ON + NoopExtractor (applies()==false), the chunk/embed steps
+/// still run — only the LLM extraction is skipped. The bakeoff's embed calls
+/// must therefore be bounded the same way as graph-OFF:
+///   1 unit-embed + 2 candidate chunk-embeds = 3 max. No winner re-embed.
+#[tokio::test]
+async fn bakeoff_single_pass_via_lunaris_ingest_graph_on() {
+    let clock = HlcClock::new(0);
+    let recording: Arc<RecordingStorage> = Arc::new(RecordingStorage::default());
+    let counting = Arc::new(CountingEmbedder::new(768));
+    let embedder_dyn: Arc<dyn lunaris_core::Embedder> = counting.clone();
+
+    let storage_dyn: Arc<dyn StoragePort> = recording.clone();
+    let handle = Lunaris::with_parts(storage_dyn, embedder_dyn, clock.clone())
+        .with_bakeoff(Arc::new(bakeoff_cfg()));
+
+    handle.graph_pipeline().enable();
+
+    let scope = Scope::dev();
+    let ep = Episode::new(scope, "graph_on_single_pass.md", fixture_content(), &clock);
+    handle.ingest(ep).await.expect("ingest must succeed");
+
+    // Same bound as graph-OFF: 1 unit-embed + 2 candidate embeds = 3.
+    // A winner re-embed on the graph-ON path would produce 4.
+    let calls = counting.calls();
+    assert!(
+        calls <= 3,
+        "SINGLE-PASS violated (graph-ON): expected ≤3 embed_batch calls, got {calls}. \
          The winner is being re-embedded after bakeoff selection."
     );
 }
