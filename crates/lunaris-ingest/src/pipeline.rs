@@ -10,15 +10,16 @@
 //! - **embedder** errors per batch → fall back to per-chunk; per-chunk error
 //!   surfaces immediately as `LunarisError::Storage(Backend(...))`
 //! - **serde_json::to_vec** failure surfaces as `LunarisError::Storage(Serde(_))`
-//! - **storage.atomic_write** failure surfaces as
+//! - **storage write** failure surfaces as
 //!   `LunarisError::Storage(StorageError::*)` — caller sees no Episode or
 //!   Chunks landed (Phase 1 atomicity contract).
 //!
 //! ## INGEST-04 single-call invariant
 //!
-//! `grep -c 'atomic_write' crates/lunaris-ingest/src/pipeline.rs` MUST equal 1
-//! (the one `storage.atomic_write(&ops).await` call below). The plan-level
-//! verification block enforces this.
+//! The one executable write call lives in [`assemble_and_write`].  All public
+//! entry points — [`ingest_episode`], [`ingest_episode_with_counter`], and
+//! [`ingest_episode_with_bakeoff`] — funnel through that helper.  No other
+//! function in this file may call `storage.atomic_write`.
 
 use std::sync::Arc;
 
@@ -29,8 +30,8 @@ use lunaris_core::{
 use serde_json::json;
 
 use crate::chunker::{
-    ChunkDraft, TokenCounter, build_doctree, chunk_markdown_with_headings,
-    chunk_markdown_with_headings_with_counter,
+    BakoffConfig, ChunkDraft, TokenCounter, build_doctree, chunk_markdown_with_headings,
+    chunk_markdown_with_headings_with_counter, run_bakeoff,
 };
 use crate::schema_gate::validate_chunk_metadata;
 use crate::{chunk_key, episode_key};
@@ -57,7 +58,7 @@ const CHUNK_VECTOR_INDEX: &str = "chunks";
 /// 3. Construct typed [`Chunk`]s from drafts + embeddings.
 /// 4. Build `Vec<WriteOp>`: one `KvPut` for the Episode + per-chunk
 ///    `KvPut` (chunk JSON) + `VectorUpsert` (chunk embedding + metadata).
-/// 5. Call `storage.atomic_write(&ops).await` EXACTLY ONCE. Return the [`Lsn`].
+/// 5. Issue a single atomic write via [`assemble_and_write`]. Return the [`Lsn`].
 ///
 /// Returns `Lsn::ZERO`-ish patterns are never returned because Phase 1 backends
 /// always issue a positive HLC at commit time; callers may still treat
@@ -93,7 +94,7 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
 /// [`ingest_episode`].
 ///
 /// All invariants of [`ingest_episode`] hold unchanged:
-/// - INGEST-04: exactly ONE `storage.atomic_write` call.
+/// - INGEST-04: exactly ONE write call (delegated to [`assemble_and_write`]).
 /// - Embedding batch fallback (INGEST-02) is unchanged.
 /// - The returned [`Lsn`] is the commit timestamp from the storage backend.
 pub async fn ingest_episode_with_counter<S: StoragePort + ?Sized>(
@@ -119,8 +120,8 @@ pub async fn ingest_episode_with_counter<S: StoragePort + ?Sized>(
 /// Shared pipeline body used by both [`ingest_episode`] and
 /// [`ingest_episode_with_counter`] after chunking is complete.
 ///
-/// Takes ownership of the already-produced `drafts` + `heading_records` and
-/// runs embedding → WriteOp assembly → single `atomic_write` (INGEST-04).
+/// Runs embedding → Chunk construction → delegates to [`assemble_and_write`]
+/// for WriteOp assembly and the single atomic write (INGEST-04).
 async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     storage: &S,
     embedder: &dyn Embedder,
@@ -141,26 +142,47 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
         chunks.push(c);
     }
 
-    // Step 4: assemble WriteOps — DocTree KvPut + Episode KvPut + per-chunk (KvPut + VectorUpsert)
-    // INGEST-04: ONE ops Vec, ONE atomic_write call below.
+    // Steps 4+5: assemble WriteOps and issue the single atomic write (INGEST-04).
+    assemble_and_write(storage, &episode, chunks, &heading_records).await
+}
+
+/// Assemble the full `Vec<WriteOp>` for one Episode (DocTree + Episode KvPut +
+/// per-chunk KvPut + VectorUpsert) and call `storage.atomic_write` exactly once.
+///
+/// # INGEST-04
+///
+/// This is the **only** place in `pipeline.rs` that calls `storage.atomic_write`.
+/// Both the standard path ([`ingest_episode_inner`]) and the bake-off path
+/// ([`ingest_episode_with_bakeoff`]) route through this function so the
+/// single-write invariant holds regardless of which entry point is used.
+async fn assemble_and_write<S: StoragePort + ?Sized>(
+    storage: &S,
+    episode: &Episode,
+    chunks: Vec<Chunk>,
+    heading_records: &[crate::chunker::HeadingRecord],
+) -> Result<Lsn, LunarisError> {
     let source_char_len = episode.content.chars().count();
     let doctree =
-        build_doctree(&heading_records, episode.scope.as_str(), &episode.source, source_char_len);
+        build_doctree(heading_records, episode.scope.as_str(), &episode.source, source_char_len);
     let doctree_value = serde_json::to_vec(&doctree).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("doctree serialize: {e}")))
     })?;
+
     let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * chunks.len());
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
-    let episode_value = serde_json::to_vec(&episode).map_err(|e| {
+
+    let episode_value = serde_json::to_vec(episode).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
     })?;
     ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
+
     for chunk in &chunks {
         let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
         })?;
         ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
-        let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 3").clone();
+        let embedding =
+            chunk.embedding.as_ref().expect("embedding assigned before assemble_and_write").clone();
         let metadata = json!({
             "episode_id": chunk.episode_id.to_string(),
             "heading_path": chunk.heading_path,
@@ -179,7 +201,7 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
         });
     }
 
-    // Step 5: ONE atomic_write call (INGEST-04).
+    // INGEST-04: the single atomic write for this episode (see module-level invariant).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(lsn)
 }
@@ -242,6 +264,73 @@ async fn embed_with_fallback(
         }
     }
     Ok(out)
+}
+
+/// Run the full ingest pipeline with the adaptive meta-framework bake-off.
+///
+/// When `bakeoff_config` is `Some`, this function:
+/// 1. Runs [`run_bakeoff`] to select the best candidate chunk list.
+/// 2. Uses the winner's **pre-computed embeddings** directly (SINGLE-PASS).
+///    No additional `embed_batch` call is made for the winner.
+/// 3. Passes the structural heading records (from the bake-off) to the DocTree.
+/// 4. Delegates to [`assemble_and_write`] for WriteOp assembly and the single
+///    atomic write (INGEST-04).
+///
+/// When `bakeoff_config` is `None`, falls back to [`ingest_episode_with_counter`]
+/// (backward-compatible).
+///
+/// `target_tokens` and `overlap_tokens` govern the bake-off's internal generators;
+/// they default to 500/100 when `bakeoff_config` is `None`.
+pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    counter: std::sync::Arc<dyn TokenCounter + Send + Sync>,
+    bakeoff_config: Option<std::sync::Arc<BakoffConfig>>,
+    target_tokens: usize,
+    overlap_tokens: usize,
+) -> Result<Lsn, LunarisError> {
+    let Some(config) = bakeoff_config else {
+        // Fallback: standard counter-based ingest (backward-compatible).
+        return ingest_episode_with_counter(storage, embedder, clock, episode, counter).await;
+    };
+
+    // Step 1: produce structural heading records for DocTree (always from structural parse,
+    // independent of which candidate wins — heading structure is source-level metadata).
+    let (_, heading_records) = chunk_markdown_with_headings_with_counter(
+        &episode.content,
+        target_tokens,
+        overlap_tokens,
+        counter.as_ref(),
+    );
+
+    // Step 2: run bake-off → winner drafts + winner embeddings (SINGLE-PASS).
+    // run_bakeoff embeds unit texts once and each candidate's chunk texts once.
+    // After this returns the winner's embeddings are in `winner.embeddings`.
+    // The storage step MUST NOT call embed_batch again (SINGLE-PASS invariant).
+    let winner = run_bakeoff(
+        &episode.content,
+        heading_records,
+        &config,
+        embedder,
+        counter.as_ref(),
+        target_tokens,
+        overlap_tokens,
+    )
+    .await;
+
+    // Step 3: assemble Chunks from winner drafts + pre-computed embeddings.
+    // SINGLE-PASS: no embed_batch call here — embeddings come from the bake-off.
+    let mut chunks: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
+    for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
+        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+        c.embedding = Some(embedding);
+        chunks.push(c);
+    }
+
+    // Step 4: delegate to assemble_and_write — the single storage write call (INGEST-04).
+    assemble_and_write(storage, &episode, chunks, &winner.heading_records).await
 }
 
 #[cfg(test)]

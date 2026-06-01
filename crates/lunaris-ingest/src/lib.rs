@@ -17,12 +17,18 @@ pub mod pipeline;
 pub mod schema_gate;
 
 pub use chunker::{
-    BpeTokenCounter, ChunkDraft, DocTree, HeadingRecord, SegmentMode, SurrogateTokenCounter,
-    TextUnit, TocNode, TocNodeId, TokenCounter, UnitKind, build_doctree, chunk_markdown,
-    chunk_markdown_with_counter, chunk_markdown_with_headings,
-    chunk_markdown_with_headings_with_counter, est_token_count, make_token_counter, segment_units,
+    BakoffConfig, BpeTokenCounter, CandidateGenerator, ChunkDraft, ChunkSelector, DocTree,
+    EntityRef, GeneratorContext, HeadingRecord, MetricContext, RecursiveSplitMergeGenerator,
+    ScoredCandidate, SegmentMode, SelectorWeights, SemanticBreakpointGenerator,
+    SizeVariantGenerator, StructuralGenerator, SurrogateTokenCounter, TextUnit, TocNode, TocNodeId,
+    TokenCounter, UnitKind, build_doctree, chunk_markdown, chunk_markdown_with_counter,
+    chunk_markdown_with_headings, chunk_markdown_with_headings_with_counter, est_token_count,
+    make_token_counter, run_bakeoff, segment_units,
 };
-pub use pipeline::{INGEST_EMBED_BATCH_SIZE, ingest_episode, ingest_episode_with_counter};
+pub use pipeline::{
+    INGEST_EMBED_BATCH_SIZE, ingest_episode, ingest_episode_with_bakeoff,
+    ingest_episode_with_counter,
+};
 pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
 
 // Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved

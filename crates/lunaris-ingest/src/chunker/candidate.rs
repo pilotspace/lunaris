@@ -61,6 +61,8 @@ pub struct ScoredCandidate {
     /// Heading records from the **structural** parse (used for DocTree, not
     /// tied to which candidate wins).
     pub heading_records: Vec<HeadingRecord>,
+    /// Name of the winning generator (from [`CandidateGenerator::name`]).
+    pub winner_name: String,
 }
 
 /// Context passed to every [`CandidateGenerator`] and metric.
@@ -386,6 +388,12 @@ impl std::fmt::Debug for BakoffConfig {
 
 /// Run the bake-off: generate candidates → embed once → score → select winner.
 ///
+/// # Parameters
+///
+/// - `target_tokens` / `overlap_tokens`: govern every generator and the SC
+///   metric.  Pass the same values used by the calling ingest pipeline so that
+///   the winning candidate is scored against the correct target size.
+///
 /// # Resilience
 ///
 /// Generators that return `Err` are dropped with `tracing::warn!`.  The
@@ -403,6 +411,8 @@ pub async fn run_bakeoff(
     config: &BakoffConfig,
     embedder: &dyn Embedder,
     counter: &dyn TokenCounter,
+    target_tokens: usize,
+    overlap_tokens: usize,
 ) -> ScoredCandidate {
     use crate::chunker::metrics::MetricContext;
     use crate::chunker::selector::ChunkSelector;
@@ -420,11 +430,7 @@ pub async fn run_bakeoff(
         }
     };
 
-    let gen_ctx = GeneratorContext {
-        target_tokens: crate::chunker::candidate::DEFAULT_TARGET_TOKENS,
-        overlap_tokens: crate::chunker::candidate::DEFAULT_OVERLAP_TOKENS,
-        unit_embeddings,
-    };
+    let gen_ctx = GeneratorContext { target_tokens, overlap_tokens, unit_embeddings };
 
     // Step 2: collect structural candidate first (the fallback floor, never drops)
     let structural_gen = StructuralGenerator;
@@ -432,14 +438,16 @@ pub async fn run_bakeoff(
         .generate(source_text, &gen_ctx, counter)
         .expect("StructuralGenerator must never fail");
 
-    // Step 3: collect up to max_candidates - 1 additional candidates
+    // Step 3: collect up to max_candidates - 1 additional candidates.
+    // Track (generator_name, drafts) so we can surface the winner's name.
     let extra_cap = config.max_candidates.saturating_sub(1);
-    let mut all_drafts: Vec<Vec<ChunkDraft>> = Vec::with_capacity(config.max_candidates);
-    all_drafts.push(structural_drafts);
+    let mut all_named: Vec<(&'static str, Vec<ChunkDraft>)> =
+        Vec::with_capacity(config.max_candidates);
+    all_named.push((structural_gen.name(), structural_drafts));
 
     for generator in config.generators.iter().take(extra_cap) {
         match generator.generate(source_text, &gen_ctx, counter) {
-            Ok(drafts) if !drafts.is_empty() => all_drafts.push(drafts),
+            Ok(drafts) if !drafts.is_empty() => all_named.push((generator.name(), drafts)),
             Ok(_) => {
                 tracing::warn!(
                     generator = generator.name(),
@@ -458,10 +466,11 @@ pub async fn run_bakeoff(
 
     // Step 4: embed chunk texts once per candidate (SINGLE-PASS)
     // ICC/DCC/storage all use these vectors; no re-embedding after this point.
+    let mut names: Vec<&'static str> = Vec::with_capacity(all_named.len());
     let mut scored: Vec<crate::chunker::metrics::CandidateWithEmbeddings> =
-        Vec::with_capacity(all_drafts.len());
+        Vec::with_capacity(all_named.len());
 
-    for drafts in all_drafts {
+    for (name, drafts) in all_named {
         let chunk_texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
         let chunk_embs = match embedder.embed_batch(&chunk_texts).await {
             Ok(v) if v.len() == chunk_texts.len() => v,
@@ -470,6 +479,7 @@ pub async fn run_bakeoff(
                 vec![vec![0.0f32; embedder.dim()]; chunk_texts.len()]
             }
         };
+        names.push(name);
         scored.push(crate::chunker::metrics::CandidateWithEmbeddings {
             drafts,
             chunk_embeddings: chunk_embs,
@@ -481,21 +491,16 @@ pub async fn run_bakeoff(
         MetricContext { target_tokens: gen_ctx.target_tokens as u32, source_text, entities: None };
 
     let winner_idx = ChunkSelector::select_with_embeddings(&scored, &metric_ctx, &config.weights);
+    let winner_name = names[winner_idx].to_string();
     let winner = scored.swap_remove(winner_idx);
 
     ScoredCandidate {
         drafts: winner.drafts,
         embeddings: winner.chunk_embeddings,
         heading_records: structural_heading_records,
+        winner_name,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Constants re-exported for use in run_bakeoff
-// ---------------------------------------------------------------------------
-
-pub(crate) const DEFAULT_TARGET_TOKENS: usize = 500;
-pub(crate) const DEFAULT_OVERLAP_TOKENS: usize = 100;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -603,6 +608,7 @@ mod tests {
             drafts: Vec::new(),
             embeddings: vec![vec![1.0, 0.0]],
             heading_records: Vec::new(),
+            winner_name: "structural".to_string(),
         };
         assert_eq!(sc.embeddings.len(), 1);
     }
