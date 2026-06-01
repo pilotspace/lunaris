@@ -22,10 +22,11 @@
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
+    keyspace::doctree_key,
 };
 use serde_json::json;
 
-use crate::chunker::{ChunkDraft, chunk_markdown};
+use crate::chunker::{ChunkDraft, build_doctree, chunk_markdown_with_headings};
 use crate::schema_gate::validate_chunk_metadata;
 use crate::{chunk_key, episode_key};
 
@@ -62,8 +63,12 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
     clock: &HlcClock,
     episode: Episode,
 ) -> Result<Lsn, LunarisError> {
-    // Step 1: chunk
-    let drafts = chunk_markdown(&episode.content, DEFAULT_TARGET_TOKENS, DEFAULT_OVERLAP_TOKENS);
+    // Step 1: chunk + capture heading records for DocTree construction (STRUCT-02).
+    let (drafts, heading_records) = chunk_markdown_with_headings(
+        &episode.content,
+        DEFAULT_TARGET_TOKENS,
+        DEFAULT_OVERLAP_TOKENS,
+    );
 
     // Step 2: embed in batches of 32 with per-chunk fallback
     let embeddings = embed_with_fallback(embedder, &drafts).await?;
@@ -77,8 +82,17 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
         chunks.push(c);
     }
 
-    // Step 4: assemble WriteOps — Episode KvPut + per-chunk (KvPut + VectorUpsert)
-    let mut ops: Vec<WriteOp> = Vec::with_capacity(1 + 2 * chunks.len());
+    // Step 4: assemble WriteOps — DocTree KvPut + Episode KvPut + per-chunk (KvPut + VectorUpsert)
+    // INGEST-04: ONE ops Vec, ONE atomic_write call below.
+    let source_char_len = episode.content.chars().count();
+    let doctree =
+        build_doctree(&heading_records, episode.scope.as_str(), &episode.source, source_char_len);
+    let doctree_value = serde_json::to_vec(&doctree).map_err(|e| {
+        LunarisError::Storage(StorageError::Backend(format!("doctree serialize: {e}")))
+    })?;
+    let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * chunks.len());
+    // DocTree KvPut first (STRUCT-02 — persisted atomically with Episode + Chunks).
+    ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
     let episode_value = serde_json::to_vec(&episode).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
     })?;

@@ -100,6 +100,15 @@ pub fn community_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     format!("{}community:{id}", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for a document tree: `lunaris:{scope}:doctree:{ulid}`
+///
+/// One DocTree is persisted per Episode, keyed by the Episode's Ulid.
+/// Phase 27 STRUCT-02.
+#[inline]
+pub fn doctree_key(scope: &Scope, id: Ulid) -> Vec<u8> {
+    format!("{}doctree:{id}", scope_prefix(scope)).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Scoped primitive scan-prefix helpers
 // ---------------------------------------------------------------------------
@@ -138,6 +147,12 @@ pub fn fact_prefix(scope: &Scope) -> Vec<u8> {
 #[inline]
 pub fn community_prefix(scope: &Scope) -> Vec<u8> {
     format!("{}community:", scope_prefix(scope)).into_bytes()
+}
+
+/// Scan prefix for document trees under `scope`: `lunaris:{scope}:doctree:`
+#[inline]
+pub fn doctree_prefix(scope: &Scope) -> Vec<u8> {
+    format!("{}doctree:", scope_prefix(scope)).into_bytes()
 }
 
 // ---------------------------------------------------------------------------

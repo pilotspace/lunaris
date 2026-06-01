@@ -216,13 +216,20 @@ async fn episode_and_chunks_appear_in_single_batch() {
         .iter()
         .filter(|op| matches!(op, WriteOp::VectorUpsert { index, .. } if index == "chunks"))
         .count();
+    let n_doctree_kvput = batch
+        .iter()
+        .filter(
+            |op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(8).any(|w| w == b":doctree")),
+        )
+        .count();
     assert_eq!(n_episode_kvput, 1, "exactly one Episode KvPut");
+    assert_eq!(n_doctree_kvput, 1, "exactly one DocTree KvPut (STRUCT-02)");
     assert!((4..=8).contains(&n_chunk_kvput), "4–8 chunk KvPuts; got {n_chunk_kvput}");
     assert_eq!(n_chunk_kvput, n_vec_upsert, "every chunk gets a VectorUpsert");
     assert_eq!(
         batch.len(),
-        1 + 2 * n_chunk_kvput,
-        "total ops = 1 Episode + 2 per chunk; got {}",
+        2 + 2 * n_chunk_kvput,
+        "total ops = 1 DocTree + 1 Episode + 2 per chunk; got {}",
         batch.len()
     );
     // Every VectorUpsert carries a 768-d embedding (StubEmbedder dim).

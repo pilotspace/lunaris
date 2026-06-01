@@ -17,12 +17,15 @@ pub mod pipeline;
 pub mod schema_gate;
 
 pub use chunker::{
-    BpeTokenCounter, ChunkDraft, SegmentMode, SurrogateTokenCounter, TextUnit, TokenCounter,
-    UnitKind, chunk_markdown, est_token_count, make_token_counter, segment_units,
+    BpeTokenCounter, ChunkDraft, DocTree, HeadingRecord, SegmentMode, SurrogateTokenCounter,
+    TextUnit, TocNode, TocNodeId, TokenCounter, UnitKind, build_doctree, chunk_markdown,
+    chunk_markdown_with_headings, est_token_count, make_token_counter, segment_units,
 };
 pub use pipeline::{INGEST_EMBED_BATCH_SIZE, ingest_episode};
 pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
 
 // Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved
 // from lunaris-storage-moon so the engine layer has no infra dependency for keys).
-pub use lunaris_core::keyspace::{chunk_key, chunk_prefix, episode_key, episode_prefix};
+pub use lunaris_core::keyspace::{
+    chunk_key, chunk_prefix, doctree_key, doctree_prefix, episode_key, episode_prefix,
+};

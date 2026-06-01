@@ -42,9 +42,11 @@
 
 pub mod segment;
 pub mod token;
+pub mod tree;
 
 pub use segment::{SegmentMode, TextUnit, UnitKind, segment_units};
 pub use token::{BpeTokenCounter, SurrogateTokenCounter, TokenCounter, make_token_counter};
+pub use tree::{DocTree, HeadingRecord, TocNode, TocNodeId, build_doctree};
 
 use lunaris_core::{Chunk, HlcClock, Scope};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -144,6 +146,58 @@ pub fn chunk_markdown(text: &str, target_tokens: usize, overlap_tokens: usize) -
     state.into_chunks()
 }
 
+/// Chunk a markdown document and simultaneously extract [`HeadingRecord`]s for
+/// [`DocTree`] construction.
+///
+/// Uses `pulldown_cmark::Parser::into_offset_iter()` so heading byte spans
+/// are available; converts to character offsets for [`HeadingRecord::char_span`].
+///
+/// Returns `(Vec<ChunkDraft>, Vec<HeadingRecord>)`. The chunks are identical to
+/// those produced by `chunk_markdown`; the heading records are used by the
+/// ingest pipeline to build and persist the [`DocTree`].
+pub fn chunk_markdown_with_headings(
+    text: &str,
+    target_tokens: usize,
+    overlap_tokens: usize,
+) -> (Vec<ChunkDraft>, Vec<HeadingRecord>) {
+    if text.trim().is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let parser = Parser::new_ext(text, Options::all()).into_offset_iter();
+    let mut state = ChunkerState::new(target_tokens, overlap_tokens);
+    // Track open heading byte-range start for span capture.
+    let mut heading_byte_start: Option<usize> = None;
+
+    for (event, byte_range) in parser {
+        match &event {
+            Event::Start(Tag::Heading { .. }) => {
+                heading_byte_start = Some(byte_range.start);
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(start_byte) = heading_byte_start.take() {
+                    // Convert byte offsets to char offsets.
+                    let start_char = text[..start_byte].chars().count();
+                    let end_char = text[..byte_range.end].chars().count();
+                    // The last entry pushed to heading_stack is the one we just closed.
+                    if let Some((lvl, title)) = state.heading_stack.last() {
+                        state.heading_records.push(HeadingRecord {
+                            level: *lvl,
+                            title: title.clone(),
+                            char_span: (start_char, end_char),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        state.process(event);
+    }
+    state.flush_final();
+    let records = state.heading_records.clone();
+    (state.into_chunks(), records)
+}
+
 /// Internal walker state.
 struct ChunkerState {
     target_tokens: usize,
@@ -159,6 +213,9 @@ struct ChunkerState {
     offset: u32,
     /// Output buffer.
     chunks: Vec<ChunkDraft>,
+    /// Captured heading records for DocTree construction (STRUCT-02).
+    /// Populated only when using [`chunk_markdown_with_headings`].
+    heading_records: Vec<HeadingRecord>,
 }
 
 impl ChunkerState {
@@ -171,6 +228,7 @@ impl ChunkerState {
             current_text: String::new(),
             offset: 0,
             chunks: Vec::new(),
+            heading_records: Vec::new(),
         }
     }
 
