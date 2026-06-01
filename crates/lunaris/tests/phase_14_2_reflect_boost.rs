@@ -240,6 +240,7 @@ fn seed_chunk(
         overlap_tail: String::new(),
         embedding: Some(stub_embedding()),
         bt: BiTemporal::now(clock),
+        parent_id: None,
     };
     let chunk_bytes = serde_json::to_vec(&chunk).expect("chunk serializes");
     storage.seed(chunk_key(scope, chunk_id), chunk_bytes);
