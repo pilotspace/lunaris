@@ -72,20 +72,30 @@ pub(crate) struct JsonScopesFileStore {
 impl ScopeStore for JsonScopesFileStore {
     fn read(&self) -> Result<BTreeMap<String, ScopeRecord>, ScopeResolveError> {
         let store = load_store_from(&self.path)?;
-        Ok(store.scopes.into_iter().map(|(k, e)| (k, ScopeRecord {
-            name: e.name,
-            created_at: e.created_at,
-            source: e.source,
-        })).collect())
+        Ok(store
+            .scopes
+            .into_iter()
+            .map(|(k, e)| {
+                (k, ScopeRecord { name: e.name, created_at: e.created_at, source: e.source })
+            })
+            .collect())
     }
 
     fn write(&self, scopes: &BTreeMap<String, ScopeRecord>) -> Result<(), ScopeResolveError> {
         let file = ScopesFile {
-            scopes: scopes.iter().map(|(k, r)| (k.clone(), ScopeEntry {
-                name: r.name.clone(),
-                created_at: r.created_at.clone(),
-                source: r.source.clone(),
-            })).collect(),
+            scopes: scopes
+                .iter()
+                .map(|(k, r)| {
+                    (
+                        k.clone(),
+                        ScopeEntry {
+                            name: r.name.clone(),
+                            created_at: r.created_at.clone(),
+                            source: r.source.clone(),
+                        },
+                    )
+                })
+                .collect(),
         };
         save_store_to(&self.path, &file)
     }

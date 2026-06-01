@@ -10,9 +10,7 @@ fn ingest_handler_does_not_call_atomic_write_directly() {
 
     let code_only: String = src
         .lines()
-        .map(|line| {
-            if let Some(idx) = line.find("//") { &line[..idx] } else { line }
-        })
+        .map(|line| if let Some(idx) = line.find("//") { &line[..idx] } else { line })
         .collect::<Vec<_>>()
         .join("\n");
 

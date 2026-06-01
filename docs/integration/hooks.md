@@ -1,10 +1,14 @@
-# Claude Code Hooks Integration
+# Hooks Integration
 
-`lunaris-hook` is a lightweight binary that captures Claude Code lifecycle events
-into Lunaris agent memory. Each time Claude Code fires a hook (PreToolUse,
-PostToolUse, Stop, or SessionStart), it pipes a JSON envelope to `lunaris-hook`
-stdin. The hook filters, scrubs, dedupes, and ingests the event as one Episode —
-in the same scope and storage file used by your `lunaris-mcp` server.
+`lunaris-hook` is a lightweight binary that captures agent lifecycle events into
+Lunaris memory. Claude Code can call it directly. Codex uses
+`scripts/lunaris-codex-hook-adapter.py` to normalize Codex hook envelopes into
+the same capture path.
+
+For Codex, Lunaris also provides `lunaris-contextd`, a warm local sidecar used
+for proactive memory injection before prompts and after useful tool calls. The
+sidecar keeps model resources loaded once, so hook subprocesses do not reload
+or rehash GGUF files on every recall.
 
 ---
 
@@ -16,6 +20,9 @@ cargo install lunaris-hook
 
 # From source:
 cargo install --path crates/lunaris-hook
+
+# Or from the workspace, when developing locally:
+cargo build --release -p lunaris-hook
 ```
 
 > **Future:** `npx lunaris-hook` packaging is planned for Phase 26 (no Rust
@@ -53,6 +60,149 @@ and MCP-captured episodes.
 
 ---
 
+## Codex configuration
+
+Codex has two hook layers:
+
+1. async capture, which should never block the model flow;
+2. synchronous context injection, which returns a Codex `context` fragment.
+
+Use the setup script for normal installation:
+
+```sh
+scripts/setup-lunaris-agents.py --agent codex --runner local
+```
+
+The setup script defaults hook/context storage to Moon by writing
+`LUNARIS_STORE_URL=moon://127.0.0.1:6380`. It also writes
+`LUNARIS_GRAPH_ENABLED=1` for Moon-backed installs, which lets graph-enabled
+ingests populate Moon's graph store for later graph retrieval. Use
+`--moon-url moon://host:port` to point at another Moon instance, or
+`--storage-backend sqlite` to opt back into per-scope SQLite.
+
+Packaged MCP runner modes are also supported once the PyPI/npm packages are
+published:
+
+```sh
+scripts/setup-lunaris-agents.py --agent codex --runner uvx
+scripts/setup-lunaris-agents.py --agent codex --runner npx
+```
+
+Or build the hook binaries and configure Codex manually:
+
+```sh
+cargo build --release -p lunaris-hook
+```
+
+```toml
+[hooks]
+user_prompt_submit = [
+  { matcher = "", hooks = [
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode capture", timeout = 2, async = true, statusMessage = "Lunaris memory capture" },
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode inject", timeout = 2, async = false, statusMessage = "Lunaris memory recall" },
+  ] },
+]
+
+post_tool_use = [
+  { matcher = "", hooks = [
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode capture", timeout = 2, async = true, statusMessage = "Lunaris memory capture" },
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode post-tool", timeout = 2, async = false, statusMessage = "Lunaris post-tool memory recall" },
+  ] },
+]
+
+stop = [
+  { matcher = "", hooks = [
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode capture", timeout = 2, async = true, statusMessage = "Lunaris memory capture" },
+    { type = "command", command = "/path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode feedback", timeout = 2, async = true, statusMessage = "Lunaris memory feedback" },
+  ] },
+]
+```
+
+Use `--mode capture` for `session_start`, `pre_tool_use`, `pre_compact`,
+`post_compact`, `subagent_start`, and `subagent_stop`.
+
+Full Codex setup is documented in [`docs/integration/codex.md`](codex.md).
+
+### Codex hook modes
+
+| Mode | Intended events | Behavior |
+|------|-----------------|----------|
+| `capture` | all lifecycle events | normalize Codex JSON and forward to `lunaris-hook` |
+| `inject` | `user_prompt_submit` | recall relevant memories and emit a Codex `context` entry |
+| `post-tool` | `post_tool_use` | capture compact tool result, recall related memories, emit smaller `context` |
+| `feedback` | `stop` | record turn feedback and injected memory ids when available |
+| `auto` | manual testing | capture plus injection based on event kind |
+
+The context output shape is:
+
+```json
+[{"kind":"context","text":"<lunaris_memory_context phase=\"prompt\">...</lunaris_memory_context>"}]
+```
+
+Do not print diagnostics to stdout from hook commands. Stdout is reserved for
+Codex hook output.
+
+---
+
+## Codex context injection flow
+
+```text
+user_prompt_submit
+  |
+  | async
+  v
+lunaris-hook capture --------------------------+
+                                               |
+  | sync                                       v
+  v                                    ~/.lunaris/<scope>.db
+lunaris-contextd recall
+  |
+  v
+Codex receives HookOutputEntry(kind="context")
+```
+
+After tool calls:
+
+```text
+post_tool_use
+  |
+  | async capture
+  v
+lunaris-hook
+
+post_tool_use
+  |
+  | sync sidecar request
+  v
+lunaris-contextd
+  |-- capture compact tool result
+  |-- recall related memories
+  `-- return smaller context block
+```
+
+Injected blocks are intentionally small:
+
+```text
+<lunaris_memory_context phase="prompt">
+Retrieved memories for this prompt. Use only when relevant.
+
+- [source=decision:repo score=0.84 id=01...] Relevant prior decision...
+</lunaris_memory_context>
+```
+
+```text
+<lunaris_memory_context phase="post_tool" tool="Read">
+Tool result may relate to these memories.
+
+- [source=edit:repo score=0.71 id=01...] Prior edit in this file...
+</lunaris_memory_context>
+```
+
+`codex:memory_injection` episodes are written as traces but excluded from
+future injection recall to avoid self-reinforcing context loops.
+
+---
+
 ## Scope derivation
 
 `lunaris-hook` derives the active scope the same way `lunaris-mcp` does:
@@ -79,6 +229,10 @@ queries surface both.
 
 Unknown event kinds exit 0 intentionally. This ensures forward compatibility
 when Anthropic adds new hook event types to Claude Code.
+
+Codex events are normalized by the adapter into the same four compatibility
+envelopes. The original Codex payload is stored under `codex_payload` inside
+the normalized tool input or response.
 
 ---
 
@@ -107,7 +261,13 @@ Note: `LUNARIS_HOOK_INCLUDE` cannot override built-in deny patterns — security
 
 ### Stage 2: Event kind filter
 
-By default, all four known event kinds are captured. To restrict:
+For tool events, these tool names are captured by default:
+
+```text
+Read, Edit, MultiEdit, Write, Bash
+```
+
+To restrict event kinds:
 
 ```bash
 # Only capture PreToolUse and PostToolUse:
@@ -283,7 +443,8 @@ future invocations for the session.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LUNARIS_HOOK_SCOPE` | *(derived)* | Override scope name directly |
-| `LUNARIS_STORE_URL` | `sqlite://~/.lunaris/<scope>.db` | Storage URL (shared with `lunaris-mcp`) |
+| `LUNARIS_STORE_URL` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage URL (shared with `lunaris-mcp`) |
+| `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_HOOK_LOG` | `warn` | Log filter directive (RUST_LOG syntax) |
 | `LUNARIS_HOOK_LOG_JSON` | *(unset)* | Set to `1` for structured JSON stderr on errors |
 | `LUNARIS_SCOPES_FILE` | `~/.lunaris/scopes.json` | Scopes registry path |
@@ -293,6 +454,24 @@ future invocations for the session.
 | `LUNARIS_HOOK_KINDS` | *(all)* | Comma-separated event kinds to capture |
 | `LUNARIS_EMBEDDER_DIR` | *(system cache)* | Override model weights directory |
 | `LUNARIS_RERANKER_DIR` | *(system cache)* | Override reranker weights directory |
+| `LUNARIS_CONTEXTD_SOCKET` | `~/.lunaris/codex-contextd.sock` | Unix socket for Codex context sidecar |
+| `LUNARIS_CONTEXTD_AUTOSTART` | `1` | Adapter autostarts sidecar when socket is absent |
+| `LUNARIS_CONTEXT_CAPTURE_FAST` | `1` | Route Codex pre/post tool capture through warm `lunaris-contextd` instead of spawning `lunaris-hook` |
+| `LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS` | `120` | Best-effort sidecar capture wait budget |
+| `LUNARIS_CONTEXT_ENABLED` | `1` | Set to `0` to disable context injection |
+| `LUNARIS_CONTEXT_TIMEOUT_MS` | `300` | Prompt injection wait budget |
+| `LUNARIS_CONTEXT_POST_TOOL_TIMEOUT_MS` | `300` | Post-tool injection wait budget |
+| `LUNARIS_CONTEXT_MAX_HITS` | `5` prompt, `3` post-tool | Shared injection hit cap |
+| `LUNARIS_CONTEXT_MAX_CHARS` | `1600` prompt, `900` post-tool | Shared injection char cap |
+| `LUNARIS_CONTEXT_MIN_SCORE` | `0.55` prompt, `0.60` post-tool | Shared injection score threshold |
+| `LUNARIS_CONTEXT_POST_TOOL_MAX_HITS` | `3` | Optional post-tool hit cap override |
+| `LUNARIS_CONTEXT_POST_TOOL_MAX_CHARS` | `900` | Optional post-tool char cap override |
+| `LUNARIS_CONTEXT_POST_TOOL_MIN_SCORE` | `0.60` | Optional post-tool score threshold override |
+| `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | Maximum cached query embeddings kept by `lunaris-contextd` |
+
+The older `LUNARIS_CODEX_CONTEXT_*` and `LUNARIS_CODEX_POST_TOOL_*` names are
+still accepted as compatibility aliases, but new Codex and Claude Code
+installations should use the shared `LUNARIS_CONTEXT_*` names.
 
 ---
 
@@ -346,12 +525,53 @@ The gate is not expected to fail on any modern macOS or Linux x86-64 host — if
 it does, investigate whether a regex or SQLite write is taking an unexpected path
 (e.g., accidental GGUF load via a transitive dependency).
 
-### Can I capture `Read` events?
+### Can I capture read/edit tool calls?
 
-By default, `Read` is not a Claude Code hook event kind — Claude Code only
-fires hooks for `PreToolUse`, `PostToolUse`, `Stop`, and `SessionStart`. If
-Anthropic adds a `Read` event kind in a future release, `lunaris-hook` will
-capture it automatically (unknown kinds exit 0 today).
+Yes. `Read`, `Edit`, `MultiEdit`, `Write`, and `Bash` tool calls pass the
+default tool-name filter. They are still subject to the path deny list and
+secret scrubber.
+
+For Codex, keep `LUNARIS_CONTEXT_CAPTURE_FAST=1` unless you are debugging the
+legacy capture path. Fast capture sends pre/post tool events to
+`lunaris-contextd`, which enqueues the memory write and returns before the
+heavier embedding/storage work completes. On a warm local sidecar this keeps
+capture latency around tens of milliseconds instead of paying a full hook
+process plus model/storage path on every tool call.
+
+### Codex memory injection returns no context
+
+Check these in order:
+
+```sh
+codex doctor
+test -x /path/to/lunaris/target/release/lunaris-contextd
+test -S "$HOME/.lunaris/codex-contextd.sock" || echo "sidecar will autostart"
+```
+
+Then run a synthetic context hook:
+
+```sh
+printf '%s' '{"hook_event_name":"user_prompt_submit","session_id":"smoke","cwd":"'"$PWD"'","prompt":"recall prior Lunaris decision"}' \
+  | /path/to/lunaris/scripts/lunaris-codex-hook-adapter.py --mode inject
+```
+
+No output is valid when there are no hits above the score threshold. Lower
+`LUNARIS_CONTEXT_MIN_SCORE` temporarily to confirm the pipeline.
+
+### Codex feels delayed after each prompt or tool call
+
+The synchronous injection hooks wait for `lunaris-contextd` up to the configured
+timeout. Hot cached recalls should be below 100 ms on a healthy local Moon
+store, but the first recall for a new query still computes a local embedding.
+Lower the budgets if responsiveness matters more than memory injection:
+
+```sh
+export LUNARIS_CONTEXT_TIMEOUT_MS=150
+export LUNARIS_CONTEXT_POST_TOOL_TIMEOUT_MS=150
+```
+
+Set `LUNARIS_CONTEXT_ENABLED=0` to disable injection while keeping MCP
+tools and async capture available.
 
 ---
 

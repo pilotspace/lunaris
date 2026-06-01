@@ -45,9 +45,7 @@ fn main() {
     // If not, round up to the next multiple of 4.
     if count % 4 != 0 {
         let rounded = ((count / 4) + 1) * 4;
-        eprintln!(
-            "gen_replay_fixture: count {count} not divisible by 4; rounding up to {rounded}"
-        );
+        eprintln!("gen_replay_fixture: count {count} not divisible by 4; rounding up to {rounded}");
         count = rounded;
     }
 
@@ -55,9 +53,7 @@ fn main() {
     // Parameters from Knuth MMIX: multiplier 6364136223846793005, addend 1442695040888963407.
     let mut lcg = seed;
     let mut next_lcg = move || -> u64 {
-        lcg = lcg
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
+        lcg = lcg.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
         lcg
     };
 

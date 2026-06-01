@@ -115,15 +115,11 @@ async fn emergency_drop_exits_zero_with_warning() {
     // ── Run 1: timing gate (warm cache) ───────────────────────────────────────
     let start = Instant::now();
 
-    let mut child = make_timed_cmd()
-        .spawn()
-        .expect("failed to spawn lunaris-hook binary for timing run");
+    let mut child =
+        make_timed_cmd().spawn().expect("failed to spawn lunaris-hook binary for timing run");
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(ENVELOPE.as_bytes())
-            .await
-            .expect("write envelope to stdin");
+        stdin.write_all(ENVELOPE.as_bytes()).await.expect("write envelope to stdin");
         // Drop stdin → send EOF to the child.
     }
 

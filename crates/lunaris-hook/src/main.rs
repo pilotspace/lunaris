@@ -25,10 +25,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
-use std::sync::Arc;
-
 use clap::Parser;
-use lunaris::Lunaris;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -60,10 +57,7 @@ async fn async_main() -> i32 {
     // Cap at 4 MiB to prevent oversized-stdin DoS (T-23-02-01 mitigation).
     let mut stdin_bytes = Vec::new();
     use std::io::Read;
-    if let Err(e) = std::io::stdin()
-        .take(4 * 1024 * 1024)
-        .read_to_end(&mut stdin_bytes)
-    {
+    if let Err(e) = std::io::stdin().take(4 * 1024 * 1024).read_to_end(&mut stdin_bytes) {
         let err_json = serde_json::json!({
             "error": "stdin_read_failed",
             "message": e.to_string(),
@@ -77,18 +71,15 @@ async fn async_main() -> i32 {
     // even if the full typed parse inside `run()` would have failed.
     let kind_str = serde_json::from_slice::<serde_json::Value>(&stdin_bytes)
         .ok()
-        .and_then(|v| {
-            v.get("hook_event_name")
-                .and_then(|k| k.as_str())
-                .map(String::from)
-        })
+        .and_then(|v| v.get("hook_event_name").and_then(|k| k.as_str()).map(String::from))
         .unwrap_or_else(|| "unknown".to_string());
 
     // Derive cwd for scope resolution.
     let cwd = match std::env::current_dir() {
         Ok(p) => p,
         Err(e) => {
-            let err_json = serde_json::json!({"error": "cwd_unavailable", "message": e.to_string()});
+            let err_json =
+                serde_json::json!({"error": "cwd_unavailable", "message": e.to_string()});
             eprintln!("{}", serde_json::to_string(&err_json).unwrap_or_default());
             return 73;
         }
@@ -98,7 +89,8 @@ async fn async_main() -> i32 {
     let scope = match lunaris_hook::scope::resolve(&cwd) {
         Ok(s) => s,
         Err(e) => {
-            let err_json = serde_json::json!({"error": "scope_resolution_failed", "message": e.to_string()});
+            let err_json =
+                serde_json::json!({"error": "scope_resolution_failed", "message": e.to_string()});
             eprintln!("{}", serde_json::to_string(&err_json).unwrap_or_default());
             return 73;
         }
@@ -107,16 +99,18 @@ async fn async_main() -> i32 {
     let storage_url = match lunaris_hook::scope::resolve_storage_url(&scope) {
         Ok(u) => u,
         Err(e) => {
-            let err_json = serde_json::json!({"error": "storage_url_failed", "message": e.to_string()});
+            let err_json =
+                serde_json::json!({"error": "storage_url_failed", "message": e.to_string()});
             eprintln!("{}", serde_json::to_string(&err_json).unwrap_or_default());
             return 73;
         }
     };
 
-    let lunaris = match Lunaris::open(&storage_url).await {
-        Ok(l) => Arc::new(l),
+    let storage = match lunaris::open(&storage_url).await {
+        Ok(s) => s,
         Err(e) => {
-            let err_json = serde_json::json!({"error": "lunaris_open_failed", "message": e.to_string()});
+            let err_json =
+                serde_json::json!({"error": "lunaris_open_failed", "message": e.to_string()});
             eprintln!("{}", serde_json::to_string(&err_json).unwrap_or_default());
             return 65;
         }
@@ -154,7 +148,7 @@ async fn async_main() -> i32 {
             }
         }
 
-        lunaris_hook::run(&stdin_bytes, scope, lunaris).await
+        lunaris_hook::run_with_storage(&stdin_bytes, scope, storage).await
     })
     .await;
 

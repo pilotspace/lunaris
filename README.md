@@ -118,13 +118,34 @@ lunaris.scoped(scope_a).ingest(builder.clone()).await?;
 lunaris.scoped(scope_b).ingest(builder).await?;
 ```
 
+## Agent Setup
+
+Install Lunaris into Codex and Claude Code with MCP plus hooks:
+
+```sh
+# Verified local checkout setup.
+scripts/setup-lunaris-agents.py --agent both --runner local
+
+# Packaged MCP runner modes, once the PyPI/npm packages are published.
+scripts/setup-lunaris-agents.py --agent both --runner uvx
+scripts/setup-lunaris-agents.py --agent both --runner npx
+```
+
+Agent setup defaults storage to Moon at `moon://127.0.0.1:6380` and writes the
+same backend into `LUNARIS_MCP_STORAGE` and hook-side `LUNARIS_STORE_URL`. It
+also enables `LUNARIS_GRAPH_ENABLED=1` for Moon-backed graph ingest/search. Keep
+Moon running on that URL, override with `--moon-url`, or use
+`--storage-backend sqlite` for per-scope SQLite.
+
+Use `--dry-run` to preview config changes and `--hooks off` for MCP-only setup.
+
 ## Status
 
 | Milestone | Status |
 |---|---|
 | **v0.2.1** | Shipped — multi-agent partitioning, full v0.2 release-gate close-out |
 | **v0.3.0** | In progress on `main` — `Lunaris::list_scopes`, W1/W2 wave (schema_gate, code_feature_card recipe, FT.INVALIDATE_RANGE fan-out), vendor/moon bump to Moon main (version_token + FT.INVALIDATE_RANGE) |
-| **v0.4.0-wave-a** | Shipped — `lunaris-mcp` binary for Claude Code / Codex (stdio MCP, sqlite default, lazy GGUF). See [`docs/integration/claude-code.md`](docs/integration/claude-code.md) and [`docs/integration/codex.md`](docs/integration/codex.md). |
+| **v0.4.0-wave-a** | Shipped — `lunaris-mcp` binary for Claude Code / Codex (stdio MCP, Moon-first agent setup with SQLite fallback, lazy GGUF) plus Codex hook capture/context injection via `lunaris-hook` + `lunaris-contextd`. See [`docs/integration/claude-code.md`](docs/integration/claude-code.md), [`docs/integration/codex.md`](docs/integration/codex.md), and [`docs/integration/hooks.md`](docs/integration/hooks.md). |
 | **v0.3 Self-hosted** | Planning — Docker/Helm, SLOs, design partners |
 | **v0.4 Ecosystem** | Future — LangGraph/CrewAI/Letta adapters |
 

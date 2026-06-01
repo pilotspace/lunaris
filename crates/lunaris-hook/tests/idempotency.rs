@@ -91,18 +91,18 @@ async fn same_envelope_twice_returns_identical_lsn() {
 
     // Assertion 2: lunaris_dedupe table has exactly one row for this scope+key pair.
     // We can't easily get the dedupe_key here, so count ALL rows for the scope.
-    let dedupe_count: i64 = sqlx::query(
-        "SELECT COUNT(*) AS cnt FROM lunaris_dedupe WHERE scope = ?",
-    )
-    .bind(scope.as_str())
-    .fetch_one(storage.pool())
-    .await
-    .expect("SELECT COUNT from lunaris_dedupe must succeed")
-    .try_get("cnt")
-    .expect("cnt column must be present");
+    let dedupe_count: i64 =
+        sqlx::query("SELECT COUNT(*) AS cnt FROM lunaris_dedupe WHERE scope = ?")
+            .bind(scope.as_str())
+            .fetch_one(storage.pool())
+            .await
+            .expect("SELECT COUNT from lunaris_dedupe must succeed")
+            .try_get("cnt")
+            .expect("cnt column must be present");
 
     assert_eq!(
-        dedupe_count, 1,
+        dedupe_count,
+        1,
         "HOOK-05: lunaris_dedupe must have exactly one row after two identical runs (scope={})",
         scope.as_str()
     );

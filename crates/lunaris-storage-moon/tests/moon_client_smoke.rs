@@ -14,8 +14,10 @@
 #![cfg(feature = "moon-it")]
 
 use bytes::Bytes;
+use futures::StreamExt;
 use lunaris_core::{Episode, HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
+use std::time::Duration;
 
 fn moon_url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6390".into())
@@ -78,6 +80,33 @@ async fn capabilities_reports_native_rrf() {
 }
 
 #[tokio::test]
+async fn queue_publish_subscribe_round_trip_via_moon_mq() {
+    let storage = MoonStorage::connect(&moon_url()).await.expect("connect to Moon");
+    assert!(storage.capabilities().queue_native);
+
+    let topic = format!("moon-it-queue-{}", ulid::Ulid::new());
+    let payload = Bytes::from_static(b"moon-mq-round-trip");
+    let mut stream = storage
+        .subscribe(&Scope::dev(), "moon-it-consumer", &topic, 0)
+        .await
+        .expect("subscribe to Moon MQ");
+
+    let offset = storage
+        .publish(&Scope::dev(), &topic, 0, payload.clone())
+        .await
+        .expect("publish to Moon MQ");
+    assert!(offset > 0, "Moon MQ stream id should map to a non-zero offset");
+
+    let msg = tokio::time::timeout(Duration::from_secs(3), stream.next())
+        .await
+        .expect("Moon MQ payload should arrive within timeout")
+        .expect("Moon MQ stream should yield")
+        .expect("Moon MQ message should be ok");
+    assert_eq!(msg.payload, payload);
+    assert_eq!(msg.partition, 0);
+}
+
+#[tokio::test]
 async fn hybrid_search_round_trip_after_ensure_indexes() {
     use lunaris_core::WriteOp;
 
@@ -106,11 +135,11 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
         .await
         .expect("seed VectorUpsert via Gap-9 content schema");
 
-    let mut typed = storage.client().typed();
+    let typed = storage.client().typed();
     let mut text = typed.text();
-    let weights: [f64; 3] = [0.5, 0.5, 0.0];
+    let weights: [f64; 2] = [0.5, 0.5];
     let hits = text
-        .hybrid_search("facts", predicate, &embedding, "vec", None, 5, weights)
+        .hybrid_search("facts", predicate, &embedding, "vec", 5, weights)
         .await
         .expect("hybrid_search must succeed once @content is in the schema (Gap 9 closure)");
 

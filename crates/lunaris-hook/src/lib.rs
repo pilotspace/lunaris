@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+pub mod context;
 pub mod dedupe;
 pub mod envelope;
 pub mod filter;
@@ -17,7 +18,7 @@ pub mod scrub;
 use std::sync::Arc;
 
 use lunaris::{IngestKind, Lunaris};
-use lunaris_core::{Lsn, Scope};
+use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort};
 
 /// Errors returned by [`run`].
 ///
@@ -90,13 +91,10 @@ pub async fn run(
     }
 
     // Step 3: Apply FilterPolicy — path/kind verdict (HOOK-03).
-    let policy = filter::FilterPolicy::from_env()
-        .map_err(|e| HookError::Filtered(e.to_string()))?;
+    let policy =
+        filter::FilterPolicy::from_env().map_err(|e| HookError::Filtered(e.to_string()))?;
     if policy.apply(&event) == filter::FilterVerdict::Deny {
-        tracing::debug!(
-            scope = scope.as_str(),
-            "event rejected by filter policy — exit 66",
-        );
+        tracing::debug!(scope = scope.as_str(), "event rejected by filter policy — exit 66",);
         return Err(HookError::Filtered("event rejected by filter policy".into()));
     }
 
@@ -119,14 +117,13 @@ pub async fn run(
 
     // Step 7: Build EpisodeBuilder from SCRUBBED content.
     // This is the scrubbed builder — no un-scrubbed bytes reach storage.
-    let builder = ingest::build_episode_from_scrubbed(
-        &event_value,
-        &scrubbed_content,
-        truncated_bytes,
-    )
-    .map_err(|e| HookError::Ingest(lunaris_core::LunarisError::Validate(
-        lunaris_core::ValidateError::Contradiction(e.to_string()),
-    )))?;
+    let builder =
+        ingest::build_episode_from_scrubbed(&event_value, &scrubbed_content, truncated_bytes)
+            .map_err(|e| {
+                HookError::Ingest(lunaris_core::LunarisError::Validate(
+                    lunaris_core::ValidateError::Contradiction(e.to_string()),
+                ))
+            })?;
 
     // Step 8: Compute dedupe key from canonical JSON of the post-scrub envelope,
     // then call ingest_idempotent (HOOK-05).
@@ -152,16 +149,103 @@ pub async fn run(
     let dedupe_key = dedupe::derive_dedupe_key(scope.as_str(), &event_id, &canonical_bytes);
 
     let scoped = lunaris.scoped(scope);
-    let (lsn, kind) = scoped
-        .ingest_idempotent(builder, &dedupe_key)
-        .await
-        .map_err(HookError::Ingest)?;
+    let (lsn, kind) =
+        scoped.ingest_idempotent(builder, &dedupe_key).await.map_err(HookError::Ingest)?;
 
     if matches!(kind, IngestKind::Duplicate(_)) {
         tracing::debug!(
             dedupe_key = %dedupe_key,
             lsn = %lsn,
             "duplicate hook event — returning prior LSN (HOOK-05)",
+        );
+    }
+
+    Ok(Some(lsn))
+}
+
+/// Process one hook envelope using raw storage instead of the full Lunaris
+/// handle. The hook hot path only writes episodes, so this avoids constructing
+/// native embedders/rerankers on every hook process invocation.
+pub async fn run_with_storage(
+    stdin_bytes: &[u8],
+    scope: Scope,
+    storage: Arc<dyn StoragePort>,
+) -> Result<Option<Lsn>, HookError> {
+    let event_value: serde_json::Value = serde_json::from_slice(stdin_bytes)
+        .map_err(|e| envelope::ParseError::InvalidJson(e.to_string()))?;
+
+    let event = envelope::parse_value(&event_value)?;
+    if let envelope::HookEvent::Unknown(ref kind) = event {
+        tracing::info!(kind = %kind, "unknown hook event kind — no-op (exit 0)");
+        return Ok(None);
+    }
+
+    let policy =
+        filter::FilterPolicy::from_env().map_err(|e| HookError::Filtered(e.to_string()))?;
+    if policy.apply(&event) == filter::FilterVerdict::Deny {
+        tracing::debug!(scope = scope.as_str(), "event rejected by filter policy — exit 66",);
+        return Err(HookError::Filtered("event rejected by filter policy".into()));
+    }
+
+    let raw_content = envelope::extract_content_string(&event_value);
+    let truncated = filter::FilterPolicy::truncate_payload(&raw_content);
+    let truncated_bytes = truncated.truncated_bytes;
+
+    let scrub_engine = scrub::ScrubEngine::from_default_policy();
+    let mut scrubbed_content = truncated.content;
+    scrub_engine.apply(&mut scrubbed_content);
+
+    let parts =
+        ingest::build_episode_parts_from_scrubbed(&event_value, &scrubbed_content, truncated_bytes)
+            .map_err(|e| {
+                HookError::Ingest(lunaris_core::LunarisError::Validate(
+                    lunaris_core::ValidateError::Contradiction(e.to_string()),
+                ))
+            })?;
+
+    let canonical_bytes = {
+        let mut canonical_value = event_value.clone();
+        envelope::splice_content_string(&mut canonical_value, &scrubbed_content);
+        dedupe::canonical_json(&canonical_value)
+    };
+
+    let event_id = envelope::extract_event_id(&event).unwrap_or_else(|| {
+        dedupe::derive_event_id(
+            envelope::extract_session_id(&event),
+            envelope::extract_kind_str(&event),
+            envelope::extract_transcript_path(&event),
+            envelope::extract_timestamp_str(&event),
+        )
+    });
+    let dedupe_key = dedupe::derive_dedupe_key(scope.as_str(), &event_id, &canonical_bytes);
+
+    match storage.lookup_by_dedupe_key(&scope, &dedupe_key).await {
+        Ok(Some(prior_lsn)) => return Ok(Some(prior_lsn)),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(
+                err = %e,
+                dedupe_key,
+                "dedupe key lookup failed — proceeding as fresh ingest",
+            );
+        }
+    }
+
+    let clock = HlcClock::new(0);
+    let mut episode = Episode::new(scope.clone(), parts.source, parts.content, &clock);
+    episode.t_ref = Some(parts.t_ref);
+    episode.metadata = parts.metadata;
+
+    let embedder = NoopEmbedder::default();
+    let lsn = lunaris_ingest::ingest_episode(storage.as_ref(), &embedder, &clock, episode)
+        .await
+        .map_err(HookError::Ingest)?;
+
+    if let Err(e) = storage.insert_dedupe_key(&scope, &dedupe_key, lsn).await {
+        tracing::warn!(
+            err = %e,
+            dedupe_key,
+            "dedupe key insert failed after hook ingest commit",
         );
     }
 

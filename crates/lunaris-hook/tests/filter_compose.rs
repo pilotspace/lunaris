@@ -81,12 +81,12 @@ fn test4_path_deny_git_dir() {
 
 // ── kind filter layer ──────────────────────────────────────────────────────
 
-/// Test 5: PreToolUse with tool_name="Read" is denied by default kind filter.
+/// Test 5: PreToolUse with tool_name="Read" passes default kind filter.
 #[test]
-fn test5_kind_read_default_deny() {
+fn test5_kind_read_default_allow() {
     let policy = FilterPolicy::from_env().expect("policy");
     let event = pre_tool_use_no_path("Read");
-    assert_eq!(policy.apply(&event), FilterVerdict::Deny);
+    assert_eq!(policy.apply(&event), FilterVerdict::Allow);
 }
 
 /// Test 6: PreToolUse with tool_name="Edit" passes default kind filter.
@@ -126,10 +126,7 @@ fn test8_content_truncation_large_payload() {
     let result: TruncatedPayload = FilterPolicy::truncate_payload(&content);
 
     assert!(result.truncated_bytes > 0, "truncated_bytes must be > 0 for large payload");
-    assert!(
-        result.content.contains("…elided…"),
-        "truncated content must contain elision marker"
-    );
+    assert!(result.content.contains("…elided…"), "truncated content must contain elision marker");
     // Head: 64 KiB; tail: 32 KiB; elided: 200 KiB - 64 KiB - 32 KiB = 104 KiB.
     assert_eq!(
         result.truncated_bytes,

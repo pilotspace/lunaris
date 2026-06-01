@@ -1,23 +1,19 @@
-//! `publish` (`client.mq().push_partitioned(...)`) and `subscribe`
-//! (`client.mq().pop_partitioned(...)` polling stream).
+//! `publish` and `subscribe` for Moon's `MQ` command family.
 //!
 //! RFC 0001 Wave 1C: MQ topic names are scoped via `mq_topic(scope, name)` —
 //! `lunaris:{scope}:{name}`. A hot scope's queue cannot starve a cold scope's
 //! queue because each scope has its own MQ topic (RFC 0001 §3.7).
 //!
-//! Phase 1.5 retrofit (STORE-09): typed `moon-client::MqClient` calls replace the
-//! previous hand-rolled raw RESP `MQ.PUSH` / `MQ.POP` invocations. Lunaris's
-//! partitioned `(topic, partition)` queue model is now exposed as typed
-//! `push_partitioned` / `pop_partitioned` helpers in moon-client upstream.
+//! Moon's current wire surface is `MQ <subcommand> ...`, not dotted commands.
+//! Keep the RESP calls local to this module until the Rust SDK's partitioned
+//! helpers are updated to the same contract.
 //!
 //! ## subscribe shape
 //!
-//! Returns a `BoxStream<'static, Result<QueueMsg, StorageError>>`. Each tick blocks on
-//! `client.mq().pop_partitioned(group, topic, partition, 250)` (250 ms long-poll). On
-//! `Value::Nil` reply (poll window expired with no message) the stream sleeps 50 ms and
-//! continues polling — silently filtered out (no Nil yields). On reply with a message,
-//! yields `Ok(QueueMsg)`. On RESP error, yields `Err(StorageError::Backend(_))` and
-//! continues — callers may decide whether to drop the stream.
+//! Returns a `BoxStream<'static, Result<QueueMsg, StorageError>>`. Each tick
+//! polls `MQ POP <topic> COUNT 1`. Empty arrays sleep and continue. On a
+//! message, this adapter extracts the `payload` field and ACKs the stream
+//! entry before yielding `QueueMsg`; `StoragePort` has no separate ack hook.
 //!
 //! Phase 1 caps idle CPU at ~3 polls / sec (T-01-03-03 mitigation). Phase 4
 //! `VERIFY-06` adds backpressure.
@@ -30,8 +26,22 @@ use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::QueueMsg;
 
-use crate::client::{MoonClient, moon_err, redis_err};
+use crate::client::{MoonClient, redis_err};
 use crate::keyspace::mq_topic;
+
+pub(crate) async fn supports_native_queue(c: &MoonClient) -> Result<bool, StorageError> {
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    let probe: Result<i64, redis::RedisError> =
+        redis::cmd("MQ").arg("DLQLEN").arg("__lunaris_queue_probe__").query_async(raw_conn).await;
+    match probe {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("unknown command") { Ok(false) } else { Err(redis_err(err)) }
+        }
+    }
+}
 
 pub(crate) async fn publish(
     c: &MoonClient,
@@ -40,39 +50,46 @@ pub(crate) async fn publish(
     partition: u16,
     payload: Bytes,
 ) -> Result<u64, StorageError> {
-    let typed = c.typed();
     // RFC 0001 Wave 1C: route to per-scope MQ topic.
     let scoped_topic = mq_topic(scope, topic);
-    typed.mq().push_partitioned(&scoped_topic, partition, payload.as_ref()).await.map_err(moon_err)
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    redis::cmd("MQ")
+        .arg("CREATE")
+        .arg(scoped_topic.as_str())
+        .query_async::<()>(raw_conn)
+        .await
+        .map_err(redis_err)?;
+    let entry_id: String = redis::cmd("MQ")
+        .arg("PUSH")
+        .arg(scoped_topic.as_str())
+        .arg("partition")
+        .arg(partition)
+        .arg("payload")
+        .arg(payload.as_ref())
+        .query_async(raw_conn)
+        .await
+        .map_err(redis_err)?;
+    Ok(stream_id_to_offset(&entry_id))
 }
 
 /// Plan 04 D-12 — pending (un-ACKed) message count for `(scope, topic, partition)`.
 ///
-/// ## Path 2 (raw `redis::cmd("MQ.LENGTH")`)
-///
-/// moon-client v0.1.x does not yet expose a typed `MqClient::length`
-/// helper, so we use the SAME raw `redis::cmd` escape hatch documented in
-/// `kv.rs::scan_range` (which uses HSCAN for the same reason). When
-/// moon-client adds a typed wrapper, swap this for the typed call. This is
-/// the SECOND raw RESP cmd invocation in `lunaris-storage-moon/src/` and is
-/// covered by the same Phase 1.5 retrofit (STORE-09) constraint comment.
-///
-/// RFC 0001 Wave 1C: MQ.LENGTH is issued against the per-scope topic.
-///
-/// Returns 0 when MQ.LENGTH replies a negative number (defensive cast — a
-/// well-behaved Moon server returns a non-negative i64 here).
+/// RFC 0001 Wave 1C: queue health is read through Moon's available `MQ`
+/// surface. Current Moon exposes `MQ DLQLEN` but not `XLEN` on the same server
+/// profile, so this returns dead-letter depth as the best native signal.
 pub(crate) async fn queue_length(
     c: &MoonClient,
     scope: &Scope,
     topic: &str,
-    partition: u16,
+    _partition: u16,
 ) -> Result<u64, StorageError> {
     let mut typed = c.typed();
     let raw_conn = typed.inner_mut();
     let scoped_topic = mq_topic(scope, topic);
-    let n: i64 = redis::cmd("MQ.LENGTH")
+    let n: i64 = redis::cmd("MQ")
+        .arg("DLQLEN")
         .arg(scoped_topic.as_str())
-        .arg(partition)
         .query_async(raw_conn)
         .await
         .map_err(redis_err)?;
@@ -82,7 +99,6 @@ pub(crate) async fn queue_length(
 /// Internal state threaded through the unfold stream.
 struct PollState {
     client: MoonClient,
-    group: String,
     /// Fully-scoped topic name: `lunaris:{scope}:{name}`.
     topic: String,
     partition: u16,
@@ -92,7 +108,7 @@ struct PollState {
 pub(crate) async fn subscribe(
     client: MoonClient,
     scope: &Scope,
-    group: &str,
+    _group: &str,
     topic: &str,
     partition: u16,
 ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
@@ -101,44 +117,40 @@ pub(crate) async fn subscribe(
     // into the `'static` stream).
     let scoped_topic = mq_topic(scope, topic);
 
-    let state = PollState {
-        client,
-        group: group.to_string(),
-        topic: scoped_topic,
-        partition,
-        last_offset: 0,
-    };
+    let state = PollState { client, topic: scoped_topic, partition, last_offset: 0 };
 
     // We wrap each polling tick in a stream::unfold; idle ticks (Nil reply) sleep then
     // recurse so the consumer never sees an empty / phantom message.
     let stream = stream::unfold(state, |mut s| async move {
         loop {
-            let typed = s.client.typed();
-            let pop = typed
-                .mq()
-                .pop_partitioned(s.group.as_str(), s.topic.as_str(), s.partition, 250)
+            let mut typed = s.client.typed();
+            let raw_conn = typed.inner_mut();
+            let pop: Result<redis::Value, redis::RedisError> = redis::cmd("MQ")
+                .arg("POP")
+                .arg(s.topic.as_str())
+                .arg("COUNT")
+                .arg(1)
+                .query_async(raw_conn)
                 .await;
             match pop {
                 Err(e) => {
                     // Surface the error to the consumer; keep the stream alive so
                     // transient broker glitches don't drop the subscription.
-                    return Some((Err(moon_err(e)), s));
-                }
-                Ok(redis::Value::Nil) => {
-                    // No message in this poll window. 50ms backoff then continue.
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+                    return Some((Err(redis_err(e)), s));
                 }
                 Ok(redis::Value::Array(a)) => {
-                    let mut it = a.into_iter();
-                    let offset = match it.next() {
-                        Some(redis::Value::Int(n)) => n as u64,
-                        _ => s.last_offset.saturating_add(1),
+                    let Some((entry_id, payload)) = parse_mq_pop(a) else {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        continue;
                     };
-                    let payload = match it.next() {
-                        Some(redis::Value::BulkString(b)) => Bytes::from(b),
-                        _ => Bytes::new(),
-                    };
+                    let _ = redis::cmd("MQ")
+                        .arg("ACK")
+                        .arg(s.topic.as_str())
+                        .arg(entry_id.as_str())
+                        .query_async::<i64>(raw_conn)
+                        .await;
+                    let offset =
+                        stream_id_to_offset(&entry_id).max(s.last_offset.saturating_add(1));
                     s.last_offset = offset;
                     let msg = QueueMsg {
                         topic: s.topic.clone(),
@@ -150,7 +162,7 @@ pub(crate) async fn subscribe(
                 }
                 Ok(other) => {
                     return Some((
-                        Err(StorageError::Backend(format!("MQ.POP unexpected reply: {other:?}"))),
+                        Err(StorageError::Backend(format!("MQ POP unexpected reply: {other:?}"))),
                         s,
                     ));
                 }
@@ -159,6 +171,60 @@ pub(crate) async fn subscribe(
     });
 
     Ok(stream.boxed())
+}
+
+fn stream_id_to_offset(entry_id: &str) -> u64 {
+    let Some((ms, seq)) = entry_id.split_once('-') else {
+        return 0;
+    };
+    let ms = ms.parse::<u64>().unwrap_or(0);
+    let seq = seq.parse::<u64>().unwrap_or(0);
+    ms.saturating_mul(1_000_000).saturating_add(seq)
+}
+
+fn parse_mq_pop(entries: Vec<redis::Value>) -> Option<(String, Bytes)> {
+    let first = entries.into_iter().next()?;
+    let redis::Value::Array(mut entry) = first else {
+        return None;
+    };
+    if entry.len() != 2 {
+        return None;
+    }
+    let fields = entry.pop()?;
+    let id = value_to_string(entry.pop()?)?;
+    let payload = field_value(&fields, b"payload").unwrap_or_default();
+    Some((id, payload))
+}
+
+fn value_to_string(value: redis::Value) -> Option<String> {
+    match value {
+        redis::Value::BulkString(bytes) => String::from_utf8(bytes).ok(),
+        redis::Value::SimpleString(s) => Some(s),
+        _ => None,
+    }
+}
+
+fn field_value(value: &redis::Value, field: &[u8]) -> Option<Bytes> {
+    let redis::Value::Array(items) = value else {
+        return None;
+    };
+    for pair in items.chunks(2) {
+        let [key, val] = pair else {
+            continue;
+        };
+        if value_bytes(key).is_some_and(|key| key == field) {
+            return value_bytes(val).map(Bytes::from);
+        }
+    }
+    None
+}
+
+fn value_bytes(value: &redis::Value) -> Option<Vec<u8>> {
+    match value {
+        redis::Value::BulkString(bytes) => Some(bytes.clone()),
+        redis::Value::SimpleString(s) => Some(s.as_bytes().to_vec()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

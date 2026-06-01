@@ -1,5 +1,11 @@
 # ADR: Codex Hook Parity Deferral (HOOK-07 path b)
 
+> Superseded on 2026-05-28 by the local Codex hook integration documented in
+> [`docs/integration/codex.md`](../integration/codex.md) and
+> [`docs/integration/hooks.md`](../integration/hooks.md). This ADR remains as
+> historical context for why Codex hook support was originally deferred when no
+> public hook contract was available.
+
 **Date:** 2026-05-25
 **Status:** Accepted
 **Requirement:** HOOK-07

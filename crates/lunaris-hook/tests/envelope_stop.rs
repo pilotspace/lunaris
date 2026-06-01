@@ -27,9 +27,7 @@ async fn stop_exits_0() {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(STOP_JSON.as_bytes()).await.unwrap();
     drop(stdin);
-    let status = timeout(Duration::from_secs(10), child.wait())
-        .await
-        .expect("timeout")
-        .expect("wait");
+    let status =
+        timeout(Duration::from_secs(10), child.wait()).await.expect("timeout").expect("wait");
     assert_eq!(status.code(), Some(0), "Stop must exit 0");
 }

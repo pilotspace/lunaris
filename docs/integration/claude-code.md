@@ -1,14 +1,66 @@
 # Claude Code Integration
 
-Status: Wave A (stdio + SQLite default). Four tools live: `memory.ingest`,
-`memory.recall`, `memory.forget`, `memory.list_scopes`. See
-[Deferred to Wave B/C](#deferred-to-wave-bc) for what isn't shipped yet.
+Status: stdio MCP plus lifecycle hooks and context injection. Agent setup
+defaults to Moon-backed storage with a SQLite fallback. Tools live:
+`memory.ingest`, `memory.recall`, `memory.forget`, `memory.list_scopes`,
+`memory.record_decision`, and `memory.record_edit`.
 
 ---
 
 ## Quick Start (no Rust)
 
 No Rust toolchain required. Choose either path:
+
+### One-command setup
+
+From a Lunaris checkout:
+
+```sh
+# Verified local checkout setup.
+scripts/setup-lunaris-agents.py --agent claude --runner local
+
+# Packaged MCP runner modes, once the PyPI/npm packages are published.
+scripts/setup-lunaris-agents.py --agent claude --runner uvx
+scripts/setup-lunaris-agents.py --agent claude --runner npx
+
+# Preview without writing ~/.claude/settings.json.
+scripts/setup-lunaris-agents.py --agent claude --runner local --dry-run
+```
+
+The script writes `mcpServers.lunaris`, installs the same Lunaris feature set
+used by Codex where Claude Code supports it, and creates
+`~/.claude/settings.json.bak` before writing. Use `--hooks off` for MCP-only
+setup.
+
+Installed Claude Code hooks:
+
+| Event | Lunaris behavior |
+|-------|------------------|
+| `SessionStart` | capture session boundary |
+| `UserPromptSubmit` / `UserPromptExpansion` | capture prompt text and inject recalled memory through `additionalContext` |
+| `PreToolUse` | fast tool-call capture through `lunaris-contextd` |
+| `PostToolUse` | fast tool-result capture and inject related memory through `additionalContext` |
+| `PreCompact` / `PostCompact` | capture compaction boundary |
+| `SubagentStart` / `SubagentStop` | capture subagent boundary; post-subagent recall on stop |
+| `Stop` | capture boundary and write turn feedback |
+
+Prompt and post-tool context injection use Claude Code's
+`hookSpecificOutput.additionalContext` field. Capture paths use the same
+`lunaris-codex-hook-adapter.py` sidecar protocol as Codex so `lunaris-contextd`
+keeps model and storage handles warm.
+
+By default the script points Claude Code at Moon:
+
+```json
+{
+  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+  "LUNARIS_STORE_URL": "moon://127.0.0.1:6380",
+  "LUNARIS_GRAPH_ENABLED": "1"
+}
+```
+
+Keep Moon running at that URL, pass `--moon-url moon://host:port`, or choose
+`--storage-backend sqlite` for per-scope SQLite.
 
 ### Via npm / npx
 
@@ -272,7 +324,7 @@ Or in `.mcp.json`:
 }
 ```
 
-### Point at Moon for HNSW-accelerated recall
+### Point at Moon for semantic, hybrid, and graph recall
 
 ```json
 {
@@ -281,7 +333,8 @@ Or in `.mcp.json`:
       "command": "lunaris-mcp",
       "args": [],
       "env": {
-        "LUNARIS_MCP_STORAGE": "redis://localhost:6380"
+        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+        "LUNARIS_GRAPH_ENABLED": "1"
       }
     }
   }
@@ -289,7 +342,8 @@ Or in `.mcp.json`:
 ```
 
 Moon runs on port 6380 by default (`../moon/target/release/moon --port 6380`).
-Sub-25 ms recall over millions of bi-temporal facts is achievable on Moon
+Moon provides native vector search, BM25/hybrid fusion, graph traversal,
+queues, and bi-temporal reads.
 (HNSW) or Postgres (pgvector). SQLite brute-force cosine handles up to ~10k
 vectors per scope; above that threshold, the Moon or Postgres backend is the
 right choice.
@@ -326,7 +380,8 @@ models are already present under `~/.lunaris/models/`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | `sqlite:///<HOME>/.lunaris/<scope>.db` | Storage backend URL |
+| `LUNARIS_MCP_STORAGE` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage backend URL |
+| `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
 
@@ -472,11 +527,12 @@ SQLite brute-force cosine is the right default for solo and small-team use:
 - **>10k vectors per scope** — switch to Moon (HNSW) or Postgres (pgvector)
   for HNSW-class latency and sub-25 ms recall at scale.
 
-To switch, set `LUNARIS_MCP_STORAGE` in your MCP config:
+To use Moon manually, set `LUNARIS_MCP_STORAGE` in your MCP config:
 
 ```json
 "env": {
-  "LUNARIS_MCP_STORAGE": "redis://localhost:6380"
+  "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380",
+  "LUNARIS_GRAPH_ENABLED": "1"
 }
 ```
 
@@ -491,7 +547,7 @@ connection string with the `pgvector` extension installed.
 |---------|--------|
 | SSE transport + Bearer auth | Deferred (Option B) |
 | Multi-user server mode | Deferred |
-| `npx`/`uvx` distribution | Implemented (v0.5 Wave D, 2026-05-26) |
+| `npx`/`uvx` distribution | Package manifests implemented; publish/release required before registry install |
 | `record_decision` / `record_edit` tool aliases | Implemented (v0.5 Wave C, 2026-05-25) |
 | `coding_session_memory` recipe rename | Implemented (v0.5 Wave C, 2026-05-25) |
 

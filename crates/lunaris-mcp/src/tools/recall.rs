@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use chrono::DateTime;
 use lunaris::Query;
 use lunaris_core::{Hlc, storage::types::Filter};
+use lunaris_retrieve::Vector;
 use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 
 use crate::model_stager::{ModelKind, StageError, ensure_staged};
 use crate::state::AppState;
@@ -79,6 +81,14 @@ pub(crate) struct RecallResponse {
 /// Printed at most once per process on the first model download.
 static STAGE_LOG_ONCE: OnceLock<()> = OnceLock::new();
 
+/// Successful model staging verification is process-stable.
+///
+/// `ensure_staged` hashes the full GGUF when the file already exists. That is
+/// the right integrity check before first use, but doing it on every recall
+/// burns one CPU core for seconds on a 253 MB model. Cache only successful
+/// verification; transient failures are retried on the next recall.
+static STAGED_MODEL: OnceCell<()> = OnceCell::const_new();
+
 /// Test seam: when `true`, `maybe_ensure_staged` skips the real GGUF download.
 ///
 /// Set by `#[cfg(test)]` helpers via `skip_stage_for_tests()`. Production code
@@ -101,13 +111,17 @@ async fn maybe_ensure_staged() -> Result<(), ToolError> {
     if SKIP_STAGE.load(Ordering::Relaxed) || std::env::var_os("LUNARIS_MCP_SKIP_STAGE").is_some() {
         return Ok(());
     }
-    STAGE_LOG_ONCE.get_or_init(|| {
-        eprintln!("lunaris-mcp: staging models — first run only");
-    });
-    ensure_staged(ModelKind::EmbedderGraniteQ4KM)
+    STAGED_MODEL
+        .get_or_try_init(|| async {
+            STAGE_LOG_ONCE.get_or_init(|| {
+                eprintln!("lunaris-mcp: staging models — first run only");
+            });
+            ensure_staged(ModelKind::EmbedderGraniteQ4KM).await.map(|_| ()).map_err(
+                |e: StageError| ToolError::InvalidInput(format!("model staging failed: {e}")),
+            )
+        })
         .await
         .map(|_| ())
-        .map_err(|e: StageError| ToolError::InvalidInput(format!("model staging failed: {e}")))
 }
 
 // ── Hlc helpers ──────────────────────────────────────────────────────────────
@@ -138,8 +152,8 @@ pub(crate) async fn handle(
     state: &AppState,
     params: RecallParams,
 ) -> Result<RecallResponse, ToolError> {
-    // Lazy model stager — first recall pays the download cost. Subsequent
-    // calls hit the sha-verified fast path in ensure_staged (<1 ms).
+    // Lazy model stager — first recall pays download or sha verification cost.
+    // Subsequent recalls skip this process-stable check.
     maybe_ensure_staged().await?;
 
     // Empty query → empty hits (not an error).
@@ -150,11 +164,22 @@ pub(crate) async fn handle(
     // Treat k=0 as default_k so callers can omit the field via `k: 0`.
     let k = if params.k == 0 { default_k() } else { params.k };
 
-    // Build the query.
+    // Build the query. Source lives on the parent Episode after hydration, so
+    // source_prefix is enforced after recall instead of relying on vector
+    // metadata that may be backend/version dependent.
     let mut q = Query::text(&params.query);
-    q.k = k;
+    let source_prefix = params
+        .filters
+        .as_ref()
+        .and_then(|filters| filters.source_prefix.as_ref())
+        .filter(|prefix| !prefix.is_empty())
+        .cloned();
+    let candidate_k =
+        if source_prefix.is_some() { k.saturating_mul(8).max(32) } else { k }.clamp(1, 100);
+    q.k = candidate_k;
 
-    // Optional source-prefix filter.
+    // Optional source-prefix filter. Keep it on the query as a best-effort
+    // backend hint, but do not trust it as the only enforcement layer.
     if let Some(filters) = &params.filters {
         if let Some(prefix) = &filters.source_prefix {
             if !prefix.is_empty() {
@@ -171,11 +196,20 @@ pub(crate) async fn handle(
 
     // Execute — ScopedLunaris::recall threads the bound scope through.
     let scoped = state.lunaris.scoped(state.scope.clone());
-    let hits = scoped.recall(q).await.map_err(ToolError::LunarisEngine)?;
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", candidate_k))
+        .execute(q)
+        .await
+        .map_err(ToolError::LunarisEngine)?;
 
     // Map hits to wire DTO with explicit type so the collector infers correctly.
     let recall_hits: Vec<RecallHit> = hits
         .into_iter()
+        .filter(|h| {
+            source_prefix.as_ref().map(|prefix| h.source.starts_with(prefix)).unwrap_or(true)
+        })
+        .take(k)
         .map(|h| {
             let episode_id = ulid_bytes_to_string(&h.id);
             let content: String = h.text.chars().take(200).collect();
@@ -187,6 +221,7 @@ pub(crate) async fn handle(
     tracing::debug!(
         scope = state.scope.as_str(),
         k = k,
+        candidate_k = candidate_k,
         hits = recall_hits.len(),
         "memory.recall executed",
     );
@@ -338,6 +373,25 @@ mod tests {
             resp.hits.iter().all(|h| !h.source.starts_with("other/")),
             "other/c must be excluded by source_prefix filter"
         );
+    }
+
+    #[tokio::test]
+    async fn recall_enforces_k_after_hydration() {
+        let state = fresh_state("test-recall-k-cap").await;
+        let scoped = state.lunaris.scoped(state.scope.clone());
+
+        scoped.ingest(EpisodeBuilder::new("cap/a", "shared marker alpha")).await.unwrap();
+        scoped.ingest(EpisodeBuilder::new("cap/b", "shared marker beta")).await.unwrap();
+        scoped.ingest(EpisodeBuilder::new("cap/c", "shared marker gamma")).await.unwrap();
+
+        let resp = handle(
+            &state,
+            RecallParams { query: "shared marker".into(), k: 1, filters: None, as_of: None },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.hits.len(), 1, "memory.recall must cap returned hits to k");
     }
 
     #[test]

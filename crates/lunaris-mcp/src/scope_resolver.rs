@@ -14,15 +14,14 @@
 //! other; they share the on-disk file by convention.
 
 pub(crate) use lunaris_core::scope_resolver::{
-    ScopeRecord,
-    ScopeResolveError,
-    ScopeStore,
-    blake3_hex64,
-    scopes_file_path,
+    ScopeRecord, ScopeResolveError, ScopeStore, blake3_hex64, scopes_file_path,
 };
 
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
 use lunaris_core::Scope;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 // ── Internal ScopesFile JSON format (owned by lunaris-mcp) ───────────────────
 //
@@ -72,20 +71,30 @@ pub(crate) struct JsonScopesFileStore {
 impl ScopeStore for JsonScopesFileStore {
     fn read(&self) -> Result<BTreeMap<String, ScopeRecord>, ScopeResolveError> {
         let store = load_store(&self.path)?;
-        Ok(store.scopes.into_iter().map(|(k, e)| (k, ScopeRecord {
-            name: e.name,
-            created_at: e.created_at,
-            source: e.source,
-        })).collect())
+        Ok(store
+            .scopes
+            .into_iter()
+            .map(|(k, e)| {
+                (k, ScopeRecord { name: e.name, created_at: e.created_at, source: e.source })
+            })
+            .collect())
     }
 
     fn write(&self, scopes: &BTreeMap<String, ScopeRecord>) -> Result<(), ScopeResolveError> {
         let file = ScopesFile {
-            scopes: scopes.iter().map(|(k, r)| (k.clone(), ScopeEntry {
-                name: r.name.clone(),
-                created_at: r.created_at.clone(),
-                source: r.source.clone(),
-            })).collect(),
+            scopes: scopes
+                .iter()
+                .map(|(k, r)| {
+                    (
+                        k.clone(),
+                        ScopeEntry {
+                            name: r.name.clone(),
+                            created_at: r.created_at.clone(),
+                            source: r.source.clone(),
+                        },
+                    )
+                })
+                .collect(),
         };
         save_store(&self.path, &file)
     }
@@ -95,8 +104,7 @@ impl ScopeStore for JsonScopesFileStore {
 
 /// Resolve the scope for the current process using the default scopes file.
 pub(crate) fn resolve(override_: Option<&str>) -> Result<Scope, ScopeResolveError> {
-    let cwd = std::env::current_dir()
-        .map_err(ScopeResolveError::Io)?;
+    let cwd = std::env::current_dir().map_err(ScopeResolveError::Io)?;
     let path = scopes_file_path()?;
     let store = JsonScopesFileStore { path };
     lunaris_core::scope_resolver::resolve_with(&cwd, &store, override_)
@@ -122,17 +130,11 @@ pub(crate) fn resolve_with_path(
 ///
 /// - Missing file → empty `Vec` (fresh install, not an error).
 /// - Corrupt JSON → `ScopeResolveError::Parse`.
-pub(crate) fn load_scopes_from(
-    path: &Path,
-) -> Result<Vec<ScopeRecord>, ScopeResolveError> {
+pub(crate) fn load_scopes_from(path: &Path) -> Result<Vec<ScopeRecord>, ScopeResolveError> {
     let store = load_store(path)?;
     Ok(store
         .scopes
         .into_values()
-        .map(|e| ScopeRecord {
-            name: e.name,
-            created_at: e.created_at,
-            source: e.source,
-        })
+        .map(|e| ScopeRecord { name: e.name, created_at: e.created_at, source: e.source })
         .collect())
 }

@@ -10,6 +10,14 @@ use serde_json::{Map, Value};
 
 use crate::envelope::{HookEvent, extract_timestamp};
 
+#[derive(Debug)]
+pub struct BuiltEpisodeParts {
+    pub source: String,
+    pub content: String,
+    pub t_ref: chrono::DateTime<chrono::Utc>,
+    pub metadata: Map<String, Value>,
+}
+
 // ── HOOK-05: error type ───────────────────────────────────────────────────────
 
 /// Errors from [`build_episode_from_scrubbed`].
@@ -28,10 +36,8 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
     let (source, content, meta) = match event {
         HookEvent::PreToolUse(p) => {
             let source = "claude-code:pre_tool_use".to_string();
-            let content = format!(
-                "tool_input: {}",
-                serde_json::to_string(&p.tool_input).unwrap_or_default()
-            );
+            let content =
+                format!("tool_input: {}", serde_json::to_string(&p.tool_input).unwrap_or_default());
             let meta = build_meta(
                 &p.session_id,
                 Some(&p.tool_name),
@@ -145,104 +151,88 @@ pub fn build_episode_from_scrubbed(
     scrubbed_content: &str,
     truncated_bytes: u64,
 ) -> Result<EpisodeBuilder, IngestError> {
-    let kind = event_value
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let parts = build_episode_parts_from_scrubbed(event_value, scrubbed_content, truncated_bytes)?;
+    let mut builder = EpisodeBuilder::new(parts.source, parts.content);
+    builder = builder.t_ref(parts.t_ref);
+    if !parts.metadata.is_empty() {
+        builder = builder.metadata(parts.metadata);
+    }
+    Ok(builder)
+}
+
+pub fn build_episode_parts_from_scrubbed(
+    event_value: &serde_json::Value,
+    scrubbed_content: &str,
+    truncated_bytes: u64,
+) -> Result<BuiltEpisodeParts, IngestError> {
+    let kind = event_value.get("hook_event_name").and_then(|v| v.as_str()).unwrap_or("");
 
     // Derive the source tag and extract metadata fields from the raw value.
     let (source, session_id, tool_name, event_id, cwd, transcript_path) = match kind {
         "PreToolUse" => {
-            let session_id = event_value
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let tool_name = event_value
-                .get("tool_name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let event_id = event_value
-                .get("event_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let cwd = event_value
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let transcript_path = event_value
-                .get("transcript_path")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            ("claude-code:pre_tool_use".to_string(), session_id, tool_name, event_id, cwd, transcript_path)
+            let session_id =
+                event_value.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let tool_name =
+                event_value.get("tool_name").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let event_id =
+                event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let cwd = event_value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let transcript_path =
+                event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            (
+                "claude-code:pre_tool_use".to_string(),
+                session_id,
+                tool_name,
+                event_id,
+                cwd,
+                transcript_path,
+            )
         }
         "PostToolUse" => {
-            let session_id = event_value
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let tool_name = event_value
-                .get("tool_name")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let event_id = event_value
-                .get("event_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let cwd = event_value
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let transcript_path = event_value
-                .get("transcript_path")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            ("claude-code:post_tool_use".to_string(), session_id, tool_name, event_id, cwd, transcript_path)
+            let session_id =
+                event_value.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let tool_name =
+                event_value.get("tool_name").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let event_id =
+                event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let cwd = event_value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let transcript_path =
+                event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            (
+                "claude-code:post_tool_use".to_string(),
+                session_id,
+                tool_name,
+                event_id,
+                cwd,
+                transcript_path,
+            )
         }
         "Stop" => {
-            let session_id = event_value
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let cwd = event_value
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let event_id = event_value
-                .get("event_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let transcript_path = event_value
-                .get("transcript_path")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
+            let session_id =
+                event_value.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let cwd = event_value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let event_id =
+                event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let transcript_path =
+                event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
             ("claude-code:stop".to_string(), session_id, None, event_id, cwd, transcript_path)
         }
         "SessionStart" => {
-            let session_id = event_value
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let cwd = event_value
-                .get("cwd")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let event_id = event_value
-                .get("event_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            let transcript_path = event_value
-                .get("transcript_path")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned());
-            ("claude-code:session_start".to_string(), session_id, None, event_id, cwd, transcript_path)
+            let session_id =
+                event_value.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let cwd = event_value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let event_id =
+                event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let transcript_path =
+                event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            (
+                "claude-code:session_start".to_string(),
+                session_id,
+                None,
+                event_id,
+                cwd,
+                transcript_path,
+            )
         }
         other => {
             return Err(IngestError::UnknownEventKind(other.to_owned()));
@@ -278,11 +268,5 @@ pub fn build_episode_from_scrubbed(
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .unwrap_or_else(Utc::now);
 
-    let content = scrubbed_content.to_owned();
-    let mut builder = EpisodeBuilder::new(source, content);
-    builder = builder.t_ref(t_ref);
-    if !meta.is_empty() {
-        builder = builder.metadata(meta);
-    }
-    Ok(builder)
+    Ok(BuiltEpisodeParts { source, content: scrubbed_content.to_owned(), t_ref, metadata: meta })
 }
