@@ -1,5 +1,11 @@
 //! Markdown-aware chunker — INGEST-01.
 //!
+//! Submodules:
+//! - [`token`]: [`TokenCounter`] trait, [`BpeTokenCounter`], [`SurrogateTokenCounter`],
+//!   and [`make_token_counter`] factory (CHUNK-01).
+//! - [`segment`]: [`segment_units`] — paragraph + sentence unit segmenter (STRUCT-01).
+//! - [`tree`]: [`DocTree`] / [`TocNode`] build and keyspace helpers (STRUCT-02).
+//!
 //! ## Algorithm
 //!
 //! 1. Walk a [`pulldown_cmark::Parser`] event stream with all CommonMark
@@ -33,6 +39,10 @@
 //! For a 12 KB markdown doc (~3000 estimated tokens) at `target=500 overlap=100`,
 //! expect 4–8 chunks. The fixture in `tests/fixtures/12kb_doc.md` is hand-tuned
 //! to land squarely in that range.
+
+pub mod token;
+
+pub use token::{BpeTokenCounter, SurrogateTokenCounter, TokenCounter, make_token_counter};
 
 use lunaris_core::{Chunk, HlcClock, Scope};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
