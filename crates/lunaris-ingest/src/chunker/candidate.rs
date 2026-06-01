@@ -27,7 +27,7 @@
 //! need to embed (e.g. [`SemanticBreakpointGenerator`]) receive pre-computed unit
 //! embeddings from `run_bakeoff`; they do NOT call the embedder themselves.
 
-use lunaris_core::{Embedder, LunarisError};
+use lunaris_core::{Embedder, LunarisError, StorageError};
 
 use crate::chunker::segment::SegmentMode;
 use crate::chunker::{
@@ -410,6 +410,18 @@ impl std::fmt::Debug for BakoffConfig {
 /// The resulting vectors are stored in [`ScoredCandidate::embeddings`] and
 /// reused by both the metrics and the storage layer — the winner is never
 /// re-embedded.
+/// Run the bake-off: generate candidates → embed once → score → select winner.
+///
+/// # Errors
+///
+/// Returns `Err` when the embedder fails or returns the wrong row count.
+/// This is a hard infrastructure failure — the bake-off cannot score or store
+/// chunks without valid embeddings. Fail loud rather than silently storing
+/// all-zero vectors that would make episodes invisible to vector recall.
+///
+/// Graceful degradation / budget-governor fallback is Phase 31 GOV-01;
+/// it is NOT implemented here. The bake-off is opt-in; an embedder failure
+/// in the bake-off path is a real infrastructure failure that must surface.
 pub async fn run_bakeoff(
     source_text: &str,
     structural_heading_records: Vec<HeadingRecord>,
@@ -418,20 +430,30 @@ pub async fn run_bakeoff(
     counter: &dyn TokenCounter,
     target_tokens: usize,
     overlap_tokens: usize,
-) -> ScoredCandidate {
+) -> Result<ScoredCandidate, LunarisError> {
     use crate::chunker::metrics::MetricContext;
     use crate::chunker::selector::ChunkSelector;
 
-    // Step 1: embed unit texts once for generators that need semantic context
+    // Step 1: embed unit texts once for generators that need semantic context.
+    // Fail loud: a wrong count or error here corrupts the semantic-breakpoint
+    // generator's similarity computations. Do NOT zero-fill.
     let units = segment_units(source_text, SegmentMode::Sentence);
     let unit_texts: Vec<&str> = units.iter().map(|u| u.text.as_str()).collect();
     let unit_embeddings = match embedder.embed_batch(&unit_texts).await {
         Ok(v) if v.len() == unit_texts.len() => v,
-        Ok(_) | Err(_) => {
-            tracing::warn!(
-                "unit embed_batch failed or returned wrong count; using empty unit embeddings"
-            );
-            vec![vec![0.0f32; embedder.dim()]; unit_texts.len()]
+        Ok(got) => {
+            return Err(LunarisError::Storage(StorageError::Backend(format!(
+                "run_bakeoff: unit embed_batch returned {} rows, expected {}; \
+                 refusing to zero-fill (would corrupt vector storage)",
+                got.len(),
+                unit_texts.len()
+            ))));
+        }
+        Err(e) => {
+            return Err(LunarisError::Storage(StorageError::Backend(format!(
+                "run_bakeoff: unit embed_batch failed: {e}; \
+                 refusing to zero-fill (would corrupt vector storage)"
+            ))));
         }
     };
 
@@ -477,11 +499,27 @@ pub async fn run_bakeoff(
 
     for (name, drafts) in all_named {
         let chunk_texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
+        // Fail loud: do NOT zero-fill on embed_batch failure or wrong row count.
+        // Silently storing all-zero vectors would make the episode invisible to
+        // vector recall with only a warn log — a silent storage corruption.
+        // Phase 31 GOV-01 will add graceful degradation; until then, fail hard.
         let chunk_embs = match embedder.embed_batch(&chunk_texts).await {
             Ok(v) if v.len() == chunk_texts.len() => v,
-            Ok(_) | Err(_) => {
-                tracing::warn!("chunk embed_batch failed for candidate; using zero embeddings");
-                vec![vec![0.0f32; embedder.dim()]; chunk_texts.len()]
+            Ok(got) => {
+                return Err(LunarisError::Storage(StorageError::Backend(format!(
+                    "run_bakeoff: chunk embed_batch for candidate '{}' returned {} rows, \
+                     expected {}; refusing to zero-fill (would corrupt vector storage)",
+                    name,
+                    got.len(),
+                    chunk_texts.len()
+                ))));
+            }
+            Err(e) => {
+                return Err(LunarisError::Storage(StorageError::Backend(format!(
+                    "run_bakeoff: chunk embed_batch for candidate '{}' failed: {e}; \
+                     refusing to zero-fill (would corrupt vector storage)",
+                    name
+                ))));
             }
         };
         names.push(name);
@@ -499,12 +537,12 @@ pub async fn run_bakeoff(
     let winner_name = names[winner_idx].to_string();
     let winner = scored.swap_remove(winner_idx);
 
-    ScoredCandidate {
+    Ok(ScoredCandidate {
         drafts: winner.drafts,
         embeddings: winner.chunk_embeddings,
         heading_records: structural_heading_records,
         winner_name,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -647,5 +685,72 @@ mod tests {
         let a = emb.embed_batch(&["hello"]).await.unwrap();
         let b = emb.embed_batch(&["hello"]).await.unwrap();
         assert_eq!(a, b);
+    }
+
+    // ── F1: embed_batch failure must propagate as Err, never zero-fill ───────
+
+    /// RED test (F1-a): when embed_batch errors during the chunk-embed pass,
+    /// run_bakeoff must return Err — NOT silently store all-zero vectors.
+    #[tokio::test]
+    async fn f1_chunk_embed_failure_propagates_err() {
+        use crate::chunker::selector::SelectorWeights;
+        use crate::chunker::{
+            BakoffConfig, SurrogateTokenCounter, chunk_markdown_with_headings_with_counter,
+            run_bakeoff,
+        };
+        use lunaris_core::FailingEmbedder;
+
+        let embedder = FailingEmbedder::new(4);
+        let counter = SurrogateTokenCounter;
+        let doc = "First paragraph.\n\nSecond paragraph with more words.";
+        let (_, heading_records) =
+            chunk_markdown_with_headings_with_counter(doc, 500, 100, &counter);
+
+        let config = BakoffConfig {
+            weights: SelectorWeights::default(),
+            max_candidates: 1,
+            generators: vec![],
+            target_tokens: 500,
+            overlap_tokens: 100,
+        };
+
+        let result =
+            run_bakeoff(doc, heading_records, &config, &embedder, &counter, 500, 100).await;
+        assert!(result.is_err(), "embed_batch failure must propagate as Err, not produce a winner");
+        // Extra guard: ensure no all-zero vector could have been silently produced.
+        // (If result is Ok, that would be the corruption — already caught above.)
+    }
+
+    /// RED test (F1-b): when embed_batch returns wrong row count during the
+    /// chunk-embed pass, run_bakeoff must return Err.
+    #[tokio::test]
+    async fn f1_chunk_embed_wrong_row_count_propagates_err() {
+        use crate::chunker::selector::SelectorWeights;
+        use crate::chunker::{
+            BakoffConfig, SurrogateTokenCounter, chunk_markdown_with_headings_with_counter,
+            run_bakeoff,
+        };
+        use lunaris_core::FailingEmbedder;
+
+        let embedder = FailingEmbedder::wrong_count(4);
+        let counter = SurrogateTokenCounter;
+        let doc = "First paragraph.\n\nSecond paragraph with more words.";
+        let (_, heading_records) =
+            chunk_markdown_with_headings_with_counter(doc, 500, 100, &counter);
+
+        let config = BakoffConfig {
+            weights: SelectorWeights::default(),
+            max_candidates: 1,
+            generators: vec![],
+            target_tokens: 500,
+            overlap_tokens: 100,
+        };
+
+        let result =
+            run_bakeoff(doc, heading_records, &config, &embedder, &counter, 500, 100).await;
+        assert!(
+            result.is_err(),
+            "wrong row count must propagate as Err, not produce a winner with zero-fill vectors"
+        );
     }
 }

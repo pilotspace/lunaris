@@ -425,7 +425,8 @@ async fn bakeoff_selects_non_structural_winner_at_small_target() {
         20, // very small target — RSM wins on SC
         100,
     )
-    .await;
+    .await
+    .expect("StubEmbedder must not fail in bakeoff");
 
     assert_eq!(
         winner.winner_name, "recursive-split-merge",
