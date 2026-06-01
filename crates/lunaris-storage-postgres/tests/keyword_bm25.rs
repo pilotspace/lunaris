@@ -58,6 +58,7 @@ async fn keyword_search_returns_normalized_bm25_hits() {
             overlap_tail: String::new(),
             embedding: Some(vec![0.0_f32; 768]),
             bt: BiTemporal::now(&clock),
+            parent_id: None,
         };
         let chunk_value = serde_json::to_vec(&chunk).unwrap();
         // KvPut isn't needed for BM25 (text_tsv is generated from chunks.payload->>'text').

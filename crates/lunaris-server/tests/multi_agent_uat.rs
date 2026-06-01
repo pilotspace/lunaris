@@ -300,6 +300,7 @@ fn make_chunk_and_episode(
         overlap_tail: String::new(),
         embedding: None,
         bt,
+        parent_id: None,
     };
     let episode = Episode {
         id: ep_id,
