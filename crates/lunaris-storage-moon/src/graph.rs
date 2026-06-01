@@ -1,5 +1,5 @@
-//! `graph_traverse` — typed `client.graph().query_with_params(...)` (or `query_raw`)
-//! wrapped with `client.temporal().snapshot_at_packed(...)` for AS_OF queries.
+//! `graph_traverse` — typed `client.graph().query_with_params(...)` / `query_raw`
+//! for latest reads, and raw `GRAPH.QUERY ... VALID_AT <ms>` for AS_OF reads.
 //!
 //! TODO(v0.4): emit optional `path_length` + `edge_weight_product` columns to
 //! feed `Graph::anchored`'s scoring formula
@@ -39,7 +39,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::types::{CypherQuery, GraphResult};
 
-use crate::client::{MoonClient, moon_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::graph_key;
 
 pub(crate) async fn graph_traverse(
@@ -50,28 +50,41 @@ pub(crate) async fn graph_traverse(
 ) -> Result<GraphResult, StorageError> {
     let typed = c.typed();
 
-    // AS_OF deferred — Moon's `GRAPH.QUERY ... VALID_AT <ts>` clause is
-    // documented but the SDK's `query_with_params` / `query_raw` do not
-    // accept it as a parameter. Phase 1.5's `snapshot_at_packed(ts)`
-    // pre-pin sent invalid args server-side. Until the SDK exposes a
-    // VALID_AT helper (or we cmd-build inline), VALID_AT queries return
-    // current state. Tracked as B-task for STORE-07.
-    let _ = as_of;
-
     // RFC 0001 Wave 1C: route to per-scope graph key.
     let scope_graph = graph_key(scope);
 
-    let result = if !query.params.is_empty() {
+    let result: Result<redis::Value, StorageError> = if let Some(ts) = as_of {
+        query_raw_valid_at(c, scope_graph.as_str(), query, ts).await
+    } else if !query.params.is_empty() {
         let params_json = serde_json::to_string(&query.params)?;
         typed
             .graph()
             .query_with_params(scope_graph.as_str(), query.cypher.as_str(), &params_json)
             .await
+            .map_err(moon_err)
     } else {
-        typed.graph().query_raw(scope_graph.as_str(), query.cypher.as_str()).await
+        typed.graph().query_raw(scope_graph.as_str(), query.cypher.as_str()).await.map_err(moon_err)
     };
 
-    parse_graph_reply(result.map_err(moon_err)?)
+    parse_graph_reply(result?)
+}
+
+async fn query_raw_valid_at(
+    c: &MoonClient,
+    graph: &str,
+    query: &CypherQuery,
+    as_of: Hlc,
+) -> Result<redis::Value, StorageError> {
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    let mut cmd = redis::cmd("GRAPH.QUERY");
+    cmd.arg(graph).arg(query.cypher.as_str());
+    if !query.params.is_empty() {
+        let params_json = serde_json::to_string(&query.params)?;
+        cmd.arg("--params").arg(params_json);
+    }
+    cmd.arg("VALID_AT").arg(as_of.wall_ms as i64);
+    cmd.query_async(raw_conn).await.map_err(redis_err)
 }
 
 fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {
