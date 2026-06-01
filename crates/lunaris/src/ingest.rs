@@ -24,7 +24,10 @@ use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines
 // 18 + 25): chunk_markdown / chunk_key / episode_key / ChunkDraft are all
 // publicly re-exported at the lunaris_ingest:: top level.
-use lunaris_ingest::{ChunkDraft, chunk_key, chunk_markdown, episode_key};
+use lunaris_ingest::{
+    ChunkDraft, TokenCounter, chunk_key, chunk_markdown_with_counter, episode_key,
+    ingest_episode_with_counter,
+};
 use serde_json::json;
 // Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
 // `lunaris.ingest` info_span so per-call `correlation_id` field-recording
@@ -103,26 +106,34 @@ impl Lunaris {
             episode_id = %episode_id,
             graph_enabled = self.graph_pipeline.is_enabled(),
         );
+        // Snapshot the token_counter Arc before the async move so the closure
+        // captures an owned Arc rather than a borrow of self (which moves into
+        // the future). No lock involved — Arc::clone is cheap.
+        let token_counter = self.token_counter.clone();
         async move {
             let lsn = if !self.graph_pipeline.is_enabled() {
-                // Graph OFF — Phase 2 fast path, verbatim. INGEST-04 single
-                // atomic_write call lives inside `lunaris_ingest::ingest_episode`.
-                lunaris_ingest::ingest_episode(
+                // Graph OFF — Phase 2 fast path with BPE token counter.
+                // INGEST-04 single atomic_write call lives inside
+                // `ingest_episode_with_counter`.
+                ingest_episode_with_counter(
                     self.storage.as_ref(),
                     self.embedder.as_ref(),
                     &self.clock,
                     episode,
+                    token_counter.clone(),
                 )
                 .await?
             } else {
-                // Graph ON — extended fan-out. INGEST-04 single atomic_write call
-                // lives in `ingest_episode_graph_on` below.
+                // Graph ON — extended fan-out with BPE token counter.
+                // INGEST-04 single atomic_write call lives in
+                // `ingest_episode_graph_on`.
                 ingest_episode_graph_on(
                     self.storage.as_ref(),
                     self.embedder.as_ref(),
                     &self.graph_pipeline,
                     &self.clock,
                     episode,
+                    token_counter,
                 )
                 .await?
             };
@@ -260,9 +271,15 @@ async fn ingest_episode_graph_on(
     graph_pipeline: &Arc<GraphPipelineHandle>,
     clock: &HlcClock,
     episode: Episode,
+    counter: std::sync::Arc<dyn TokenCounter + Send + Sync>,
 ) -> Result<Lsn, LunarisError> {
-    // Step 1: chunk
-    let drafts = chunk_markdown(&episode.content, DEFAULT_TARGET_TOKENS, DEFAULT_OVERLAP_TOKENS);
+    // Step 1: chunk using the caller-supplied BPE counter (or surrogate fallback).
+    let drafts = chunk_markdown_with_counter(
+        &episode.content,
+        DEFAULT_TARGET_TOKENS,
+        DEFAULT_OVERLAP_TOKENS,
+        counter.as_ref(),
+    );
 
     // Step 2: embed batch with per-chunk fallback
     let embeddings = embed_with_fallback(embedder, &drafts).await?;

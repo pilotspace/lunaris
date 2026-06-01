@@ -20,13 +20,18 @@
 //! (the one `storage.atomic_write(&ops).await` call below). The plan-level
 //! verification block enforces this.
 
+use std::sync::Arc;
+
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
     keyspace::doctree_key,
 };
 use serde_json::json;
 
-use crate::chunker::{ChunkDraft, build_doctree, chunk_markdown_with_headings};
+use crate::chunker::{
+    ChunkDraft, TokenCounter, build_doctree, chunk_markdown_with_headings,
+    chunk_markdown_with_headings_with_counter,
+};
 use crate::schema_gate::validate_chunk_metadata;
 use crate::{chunk_key, episode_key};
 
@@ -64,12 +69,66 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
     episode: Episode,
 ) -> Result<Lsn, LunarisError> {
     // Step 1: chunk + capture heading records for DocTree construction (STRUCT-02).
+    // Uses the v0 surrogate counter for back-compatibility with existing callers.
+    // Production code should prefer `ingest_episode_with_counter` with a real BPE
+    // counter obtained via `make_token_counter(Some(tokenizer_path))`.
     let (drafts, heading_records) = chunk_markdown_with_headings(
         &episode.content,
         DEFAULT_TARGET_TOKENS,
         DEFAULT_OVERLAP_TOKENS,
     );
+    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+}
 
+/// Run the full ingest pipeline for a single Episode using a caller-supplied
+/// [`TokenCounter`].
+///
+/// This is the canonical production path. When the calling layer has loaded a
+/// BPE tokenizer (via [`crate::chunker::make_token_counter`]), it passes the
+/// resulting `Arc<dyn TokenCounter + Send + Sync>` here so that chunking uses
+/// real BPE token counts instead of the v0 `words×1.3` surrogate.
+///
+/// The surrogate fallback is preserved: callers that pass
+/// `Arc::new(SurrogateTokenCounter)` get byte-identical behaviour to
+/// [`ingest_episode`].
+///
+/// All invariants of [`ingest_episode`] hold unchanged:
+/// - INGEST-04: exactly ONE `storage.atomic_write` call.
+/// - Embedding batch fallback (INGEST-02) is unchanged.
+/// - The returned [`Lsn`] is the commit timestamp from the storage backend.
+pub async fn ingest_episode_with_counter<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    counter: Arc<dyn TokenCounter + Send + Sync>,
+) -> Result<Lsn, LunarisError> {
+    // Step 1: chunk + capture heading records for DocTree construction (STRUCT-02).
+    // Uses the caller-supplied counter — BPE when available, surrogate fallback.
+    let (drafts, heading_records) = chunk_markdown_with_headings_with_counter(
+        &episode.content,
+        DEFAULT_TARGET_TOKENS,
+        DEFAULT_OVERLAP_TOKENS,
+        counter.as_ref(),
+    );
+
+    // Steps 2-5 are identical to ingest_episode; delegate to the shared helper.
+    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+}
+
+/// Shared pipeline body used by both [`ingest_episode`] and
+/// [`ingest_episode_with_counter`] after chunking is complete.
+///
+/// Takes ownership of the already-produced `drafts` + `heading_records` and
+/// runs embedding → WriteOp assembly → single `atomic_write` (INGEST-04).
+async fn ingest_episode_inner<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    drafts: Vec<ChunkDraft>,
+    heading_records: Vec<crate::chunker::HeadingRecord>,
+) -> Result<Lsn, LunarisError> {
     // Step 2: embed in batches of 32 with per-chunk fallback
     let embeddings = embed_with_fallback(embedder, &drafts).await?;
     debug_assert_eq!(embeddings.len(), drafts.len());
@@ -91,7 +150,6 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
         LunarisError::Storage(StorageError::Backend(format!("doctree serialize: {e}")))
     })?;
     let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * chunks.len());
-    // DocTree KvPut first (STRUCT-02 — persisted atomically with Episode + Chunks).
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
     let episode_value = serde_json::to_vec(&episode).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
@@ -103,18 +161,11 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
         })?;
         ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
         let embedding = chunk.embedding.as_ref().expect("embedding assigned in step 3").clone();
-        // Validated by schema_gate::validate_chunk_metadata — see Gap 9 / L9.
-        // Both Postgres BM25 (`payload->>'text'` per migration 20260421_000004)
-        // and Moon BM25/HYBRID (`extract_content_for_index`) key on `"text"`;
-        // without it both backends silently return zero recall hits.
         let metadata = json!({
             "episode_id": chunk.episode_id.to_string(),
             "heading_path": chunk.heading_path,
             "offset": chunk.offset,
             "text": chunk.text,
-            // Plan 15-01 Task 2 — episode.source flows into chunk
-            // metadata so atomic.rs can HSET it as a TAG field for
-            // server-side `@source:{value}` FT.SEARCH (PERF-MOON-01).
             "source": &episode.source,
         });
         validate_chunk_metadata(&metadata).map_err(|e| {
@@ -128,9 +179,7 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
         });
     }
 
-    // Step 5: ONE atomic_write call (INGEST-04). Anything that goes wrong is
-    // all-or-nothing thanks to the Phase 1 StoragePort contract.
-    // RFC 0001: pass episode scope as the partition key.
+    // Step 5: ONE atomic_write call (INGEST-04).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(lsn)
 }
