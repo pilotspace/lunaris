@@ -229,7 +229,10 @@ impl CodingSessionMemory {
 /// Deprecated alias for [`CodingSessionMemory`].
 ///
 /// Use `CodingSessionMemory` instead. `HeliosScratchpad` will be removed in v0.7.
-#[deprecated(since = "0.5.0", note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7")]
+#[deprecated(
+    since = "0.5.0",
+    note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7"
+)]
 pub type HeliosScratchpad = CodingSessionMemory;
 
 /// Borrowed time-travel view returned by [`CodingSessionMemory::as_of`].

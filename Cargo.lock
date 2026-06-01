@@ -3040,18 +3040,22 @@ name = "lunaris-ingest"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "blake3",
  "bytes",
  "chrono",
  "futures",
  "lunaris-core",
+ "lunaris-storage-embedded",
  "parking_lot",
  "pulldown-cmark",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tracing",
  "ulid",
+ "unicode-segmentation",
 ]
 
 [[package]]

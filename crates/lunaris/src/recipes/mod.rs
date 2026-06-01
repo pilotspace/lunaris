@@ -16,5 +16,8 @@ pub use coding_session_memory::{AsOfScratchpad, CodingSessionMemory};
 ///
 /// v0.4 consumers importing `lunaris::HeliosScratchpad` continue to compile;
 /// they receive a `#[deprecated]` warning. Remove in v0.7.
-#[deprecated(since = "0.5.0", note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7")]
+#[deprecated(
+    since = "0.5.0",
+    note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7"
+)]
 pub use coding_session_memory::HeliosScratchpad;

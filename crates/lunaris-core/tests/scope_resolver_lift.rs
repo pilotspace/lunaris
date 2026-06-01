@@ -7,20 +7,15 @@
 //! - Stability tests pass the SAME store instance for both calls
 //! - No file I/O in these unit tests
 
+use lunaris_core::scope_resolver::{InMemoryScopeStore, ScopeStore, blake3_hex64, resolve_with};
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
-use lunaris_core::scope_resolver::{
-    InMemoryScopeStore, ScopeStore, blake3_hex64, resolve_with,
-};
 
 fn init_git_repo(dir: &Path) {
     fn run(args: &[&str], cwd: &Path) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .status()
-            .expect("git must be on PATH");
+        let status =
+            Command::new("git").args(args).current_dir(cwd).status().expect("git must be on PATH");
         assert!(status.success(), "git {:?} failed", args);
     }
     run(&["init", "-b", "feat/x"], dir);
@@ -34,8 +29,7 @@ fn init_git_repo(dir: &Path) {
 fn resolve_with_override_wins() {
     let td = TempDir::new().unwrap();
     let store = InMemoryScopeStore::new();
-    let scope = resolve_with(td.path(), &store, Some("my-scope"))
-        .expect("override must succeed");
+    let scope = resolve_with(td.path(), &store, Some("my-scope")).expect("override must succeed");
     assert_eq!(scope.as_str(), "my-scope");
 }
 
@@ -43,8 +37,7 @@ fn resolve_with_override_wins() {
 fn resolve_with_cwd_fallback() {
     let td = TempDir::new().unwrap();
     let store = InMemoryScopeStore::new();
-    let scope = resolve_with(td.path(), &store, None)
-        .expect("cwd fallback must succeed");
+    let scope = resolve_with(td.path(), &store, None).expect("cwd fallback must succeed");
     assert!(
         scope.as_str().starts_with("cwd_"),
         "bare dir must produce cwd_ scope, got {:?}",
