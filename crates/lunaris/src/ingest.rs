@@ -25,8 +25,9 @@ use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate
 // 18 + 25): chunk_markdown / chunk_key / episode_key / ChunkDraft are all
 // publicly re-exported at the lunaris_ingest:: top level.
 use lunaris_ingest::{
-    ChunkDraft, TokenCounter, chunk_key, chunk_markdown_with_counter, episode_key,
-    ingest_episode_with_bakeoff,
+    BakoffConfig, ChunkDraft, HeadingRecord, TokenCounter, chunk_key, chunk_markdown_with_counter,
+    chunk_markdown_with_headings_with_counter, episode_key, ingest_episode_with_bakeoff,
+    run_bakeoff,
 };
 use serde_json::json;
 // Plan 05-05 OPS-05 — `Instrument::instrument` wraps the per-call body in the
@@ -146,7 +147,8 @@ impl Lunaris {
                 // Graph ON — extended fan-out with BPE token counter.
                 // INGEST-04 single atomic_write call lives in
                 // `ingest_episode_graph_on`.
-                // Phase 28 TODO: thread bakeoff into graph-ON path (T-28-07).
+                // Phase 28 T-28-07: thread bakeoff into graph-ON path.
+                // bakeoff_config is None → existing path unchanged.
                 ingest_episode_graph_on(
                     self.storage.as_ref(),
                     self.embedder.as_ref(),
@@ -154,6 +156,7 @@ impl Lunaris {
                     &self.clock,
                     episode,
                     token_counter,
+                    bakeoff_config,
                 )
                 .await?
             };
@@ -292,26 +295,67 @@ async fn ingest_episode_graph_on(
     clock: &HlcClock,
     episode: Episode,
     counter: std::sync::Arc<dyn TokenCounter + Send + Sync>,
+    bakeoff_config: Option<Arc<BakoffConfig>>,
 ) -> Result<Lsn, LunarisError> {
-    // Step 1: chunk using the caller-supplied BPE counter (or surrogate fallback).
-    let drafts = chunk_markdown_with_counter(
-        &episode.content,
-        DEFAULT_TARGET_TOKENS,
-        DEFAULT_OVERLAP_TOKENS,
-        counter.as_ref(),
-    );
-
-    // Step 2: embed batch with per-chunk fallback
-    let embeddings = embed_with_fallback(embedder, &drafts).await?;
-    debug_assert_eq!(embeddings.len(), drafts.len());
-
-    // Build typed Chunks
-    let mut chunks: Vec<Chunk> = Vec::with_capacity(drafts.len());
-    for (draft, embedding) in drafts.into_iter().zip(embeddings.into_iter()) {
-        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
-        c.embedding = Some(embedding);
-        chunks.push(c);
-    }
+    // Step 1 + 2: chunk + embed.
+    //
+    // When bakeoff_config is Some: run the adaptive bake-off to select the
+    // best chunking strategy. The winner's drafts + embeddings are reused
+    // directly — no re-embed after selection (SINGLE-PASS invariant).
+    //
+    // When bakeoff_config is None: existing chunk_markdown_with_counter +
+    // embed_with_fallback path, unchanged from pre-Phase-28 behavior.
+    let chunks: Vec<Chunk> = if let Some(ref cfg) = bakeoff_config {
+        let target_tokens = cfg.target_tokens;
+        let overlap_tokens = cfg.overlap_tokens;
+        // chunk_markdown_with_headings_with_counter returns (drafts, heading_records).
+        // We need heading_records to pass into run_bakeoff's structural_heading_records param.
+        let (_structural_drafts, heading_records): (Vec<ChunkDraft>, Vec<HeadingRecord>) =
+            chunk_markdown_with_headings_with_counter(
+                &episode.content,
+                target_tokens,
+                overlap_tokens,
+                counter.as_ref(),
+            );
+        // run_bakeoff embeds unit texts once, scores all candidates, selects winner.
+        // winner.embeddings are the chunk vectors from the scoring pass — reuse them.
+        // SINGLE-PASS: do NOT call embed_with_fallback after this.
+        let winner = run_bakeoff(
+            &episode.content,
+            heading_records,
+            cfg,
+            embedder,
+            counter.as_ref(),
+            target_tokens,
+            overlap_tokens,
+        )
+        .await;
+        let mut out: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
+        for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
+            let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+            c.embedding = Some(embedding);
+            out.push(c);
+        }
+        out
+    } else {
+        // Existing path: chunk using the caller-supplied BPE counter.
+        let drafts = chunk_markdown_with_counter(
+            &episode.content,
+            DEFAULT_TARGET_TOKENS,
+            DEFAULT_OVERLAP_TOKENS,
+            counter.as_ref(),
+        );
+        // Embed batch with per-chunk fallback.
+        let embeddings = embed_with_fallback(embedder, &drafts).await?;
+        debug_assert_eq!(embeddings.len(), drafts.len());
+        let mut out: Vec<Chunk> = Vec::with_capacity(drafts.len());
+        for (draft, embedding) in drafts.into_iter().zip(embeddings.into_iter()) {
+            let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+            c.embedding = Some(embedding);
+            out.push(c);
+        }
+        out
+    };
 
     // Step 3: Snapshot extractor (CLAUDE.md "never hold lock across await")
     // T-03-03-01 — captured ONCE before any await; a mid-flight set_extractor
