@@ -1,4 +1,4 @@
-//! `keyword_search` — Moon BM25 via the typed `moon-client` `text().search()`.
+//! `keyword_search` — Moon BM25 via `FT.SEARCH`.
 //!
 //! RFC 0001 Wave 1C: the FT index consulted is the per-scope index
 //! `ft_index_name(scope, index)` so keyword searches are scoped-isolated.
@@ -19,10 +19,10 @@
 //!
 //! ## AS_OF semantics
 //!
-//! When `as_of = Some(t)` we issue `client.temporal().snapshot_at_packed(packed)`
-//! on the same multiplexed connection BEFORE the `FT.SEARCH` so the search reads
-//! the snapshot. After the search we always run `release_snapshot()` (best
-//! effort, even on FT.SEARCH error) — same pattern as `vector::vector_search`.
+//! When `as_of = Some(t)`, Lunaris emits Moon's native
+//! `FT.SEARCH ... AS_OF <t.wall_ms>` clause on the search command. We do not
+//! pre-pin the connection with `TEMPORAL.SNAPSHOT_AT`; Moon's FT parser owns the
+//! temporal lookup for keyword search.
 //!
 //! ## Filter algebra
 //!
@@ -47,8 +47,15 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::keyword::{KeywordHit, min_max_normalize};
 use lunaris_core::storage::types::Filter;
 
-use crate::client::{MoonClient, moon_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::ft_index_name;
+
+#[derive(Debug)]
+struct TextSearchHit {
+    key: String,
+    score: f64,
+    fields: std::collections::HashMap<String, String>,
+}
 
 pub(crate) async fn keyword_search(
     c: &MoonClient,
@@ -70,14 +77,6 @@ pub(crate) async fn keyword_search(
         }
     }
 
-    let typed = c.typed();
-
-    // AS_OF deferred — see vector.rs / graph.rs / kv.rs rationale: the SDK
-    // helper this module calls (`text.search`) does not accept an AS_OF
-    // clause, and Phase 1.5's `snapshot_at_packed(ts)` pre-pin sent invalid
-    // args server-side. Tracked as B-task for STORE-07.
-    let _ = as_of;
-
     // RFC 0001 Wave 1C: route to per-scope FT index.
     let per_scope_index = ft_index_name(scope, index);
 
@@ -88,9 +87,7 @@ pub(crate) async fn keyword_search(
     };
 
     // Moon's FT.SEARCH default scorer is BM25 (per RediSearch behavior).
-    // The typed SDK returns Vec<TextSearchHit> with `key`, `score`, `fields`.
-    let mut text = typed.text();
-    let hits = text.search(&per_scope_index, &composite, k, None).await.map_err(moon_err)?;
+    let hits = search_text(c, &per_scope_index, &composite, k, as_of).await?;
 
     // Stage raw scores so we can min-max normalize per the KeywordPort contract.
     let mut staged: Vec<(Vec<u8>, serde_json::Value, f32)> = Vec::with_capacity(hits.len());
@@ -107,6 +104,7 @@ pub(crate) async fn keyword_search(
         let metadata = h
             .fields
             .get("__metadata")
+            .or_else(|| h.fields.get("meta"))
             .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
             .unwrap_or(serde_json::Value::Null);
         staged.push((id_bytes, metadata, h.score as f32));
@@ -120,6 +118,88 @@ pub(crate) async fn keyword_search(
         .zip(normalized)
         .map(|((id, metadata, raw), score)| KeywordHit { id, score, raw_score: raw, metadata })
         .collect())
+}
+
+async fn search_text(
+    c: &MoonClient,
+    index: &str,
+    query: &str,
+    k: usize,
+    as_of: Option<Hlc>,
+) -> Result<Vec<TextSearchHit>, StorageError> {
+    if as_of.is_none() {
+        let typed = c.typed();
+        let mut text = typed.text();
+        return text
+            .search(index, query, k, None)
+            .await
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|h| TextSearchHit { key: h.key, score: h.score, fields: h.fields })
+                    .collect()
+            })
+            .map_err(moon_err);
+    }
+
+    let mut typed = c.typed();
+    let raw_conn = typed.inner_mut();
+    let mut cmd = redis::cmd("FT.SEARCH");
+    cmd.arg(index).arg(query);
+    if let Some(ts) = as_of {
+        cmd.arg("AS_OF").arg(ts.wall_ms as i64);
+    }
+    cmd.arg("LIMIT").arg(0).arg(k);
+
+    let raw = cmd.query_async(raw_conn).await.map_err(redis_err)?;
+    Ok(parse_text_search_hits(raw))
+}
+
+fn parse_text_search_hits(raw: redis::Value) -> Vec<TextSearchHit> {
+    let arr = match raw {
+        redis::Value::Array(a) => a,
+        _ => return vec![],
+    };
+    let mut hits = Vec::new();
+    let mut iter = arr.into_iter();
+    let _count = iter.next();
+
+    while let (Some(key), Some(fields)) = (iter.next(), iter.next()) {
+        let key = value_to_string(key);
+        let mut score = 0.0_f64;
+        let mut parsed_fields = std::collections::HashMap::new();
+
+        if let redis::Value::Array(kv) = fields {
+            let mut it = kv.into_iter();
+            while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                let field = value_to_string(k);
+                let value = value_to_string(v);
+                match field.as_str() {
+                    "__vec_score" | "vec_score" | "__score" | "score" => {
+                        score = value.parse().unwrap_or(0.0);
+                    }
+                    _ => {
+                        parsed_fields.insert(field, value);
+                    }
+                }
+            }
+        }
+
+        hits.push(TextSearchHit { key, score, fields: parsed_fields });
+    }
+
+    hits
+}
+
+fn value_to_string(value: redis::Value) -> String {
+    match value {
+        redis::Value::BulkString(b) => String::from_utf8_lossy(&b).into_owned(),
+        redis::Value::SimpleString(s) => s,
+        redis::Value::Int(i) => i.to_string(),
+        redis::Value::Double(f) => f.to_string(),
+        redis::Value::Boolean(b) => b.to_string(),
+        redis::Value::Nil => String::new(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// Render a [`Filter`] tree as a Moon FT query expression.
