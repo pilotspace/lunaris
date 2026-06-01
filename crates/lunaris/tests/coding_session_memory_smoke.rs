@@ -50,7 +50,8 @@ async fn helios_chat_10k_turns_dual_backend() -> anyhow::Result<()> {
         eprintln!("\n=== chat 10k turns: {url_env} ({url}) ===");
         let lunaris = Arc::new(Lunaris::open(&url).await?);
         let session_id = format!("smoke-chat-{}", ulid::Ulid::new());
-        let pad = CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+        let pad =
+            CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
         // Default TURNS=200 keeps dev-box runs short. Set
         // LUNARIS_HELIOS_SMOKE_TURNS=10000 for the documented full target.
@@ -116,7 +117,8 @@ async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
         eprintln!("\n=== doc rag md: {url_env} ({url}) ===");
         let lunaris = Arc::new(Lunaris::open(&url).await?);
         let session_id = format!("smoke-rag-{}", ulid::Ulid::new());
-        let pad = CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+        let pad =
+            CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
         // Default DOCS=1000 keeps dev-box runs short. Set
         // LUNARIS_HELIOS_SMOKE_DOCS=50000 for the documented full target.
@@ -328,7 +330,8 @@ async fn coding_session_memory_v2_delegation_round_trip() -> anyhow::Result<()> 
         eprintln!("\n=== v2 delegation round-trip: {url_env} ({url}) ===");
         let lunaris = Arc::new(Lunaris::open(&url).await?);
         let session_id = format!("smoke-v2-rt-{}", ulid::Ulid::new());
-        let pad = CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+        let pad =
+            CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
         pad.write("note.md", "hello v2").await?;
         let round_trip = pad.read("note.md").await?;

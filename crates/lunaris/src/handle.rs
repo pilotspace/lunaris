@@ -1037,12 +1037,7 @@ impl<'a> ScopedLunaris<'a> {
         // record the dedupe key in the sidecar table (best-effort, non-fatal).
         let lsn = self.ingest(builder).await?;
 
-        if let Err(e) = self
-            .engine
-            .storage
-            .insert_dedupe_key(&self.scope, dedupe_key, lsn)
-            .await
-        {
+        if let Err(e) = self.engine.storage.insert_dedupe_key(&self.scope, dedupe_key, lsn).await {
             tracing::warn!(
                 err = %e,
                 dedupe_key,
