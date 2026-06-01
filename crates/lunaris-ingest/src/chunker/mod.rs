@@ -82,6 +82,30 @@ pub struct ChunkDraft {
     /// The trailing `overlap_tokens` words of `text` — kept on the draft so the
     /// retriever can reconstruct the overlap region when displaying highlights.
     pub overlap_tail: String,
+    /// Approximate byte span `(start, end)` of this chunk in the original source.
+    ///
+    /// Populated by generators that can carry unit-level byte positions through
+    /// (e.g. [`SemanticBreakpointGenerator`], [`RecursiveSplitMergeGenerator`]).
+    /// Used by [`crate::chunker::metrics::BlockIntegrityMetric`] to check whether
+    /// chunk boundaries align with CommonMark block boundaries without relying on
+    /// `str::find`, which fails when the chunk text is a normalised join of units
+    /// (whitespace differences, markup stripped) rather than a verbatim substring.
+    ///
+    /// `None` means "unknown" — the metric falls back to `str::find` (which works
+    /// reliably for structural chunks that ARE verbatim substrings of the source).
+    ///
+    /// # Approximation caveat
+    ///
+    /// Non-structural generators currently estimate this span from the first word
+    /// of the chunk text located in the source via `str::find`. This is a best-
+    /// effort approximation: it is sufficient for the BI metric to distinguish
+    /// "ends at block boundary" vs "ends mid-block" in tests, but is NOT a
+    /// precise byte-level provenance map.
+    ///
+    /// TODO(phase-29): switch to unit-level byte offsets once `segment.rs`
+    /// `extract_paragraphs` is upgraded to `into_offset_iter()` so
+    /// `TextUnit::char_offset` is reliable for heading-preceded paragraphs.
+    pub source_byte_span: Option<(usize, usize)>,
 }
 
 impl ChunkDraft {
@@ -431,6 +455,9 @@ impl<'c> ChunkerState<'c> {
             offset: self.offset,
             tokens,
             overlap_tail: overlap_tail.clone(),
+            // Structural chunks are verbatim substrings of the source; BI metric
+            // can locate them via str::find. No byte span needed here.
+            source_byte_span: None,
         });
         self.offset += 1;
         // Carry overlap_tail forward as the seed of the next chunk's text.
@@ -476,6 +503,9 @@ impl<'c> ChunkerState<'c> {
             offset: self.offset,
             tokens,
             overlap_tail,
+            // Structural chunks are verbatim substrings of the source; BI metric
+            // can locate them via str::find. No byte span needed here.
+            source_byte_span: None,
         });
         self.offset += 1;
         self.current_text.clear();
