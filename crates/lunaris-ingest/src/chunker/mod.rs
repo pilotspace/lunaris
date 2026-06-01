@@ -511,7 +511,8 @@ mod tests {
             let expected = bpe.count(&chunk.text);
             assert_eq!(
                 chunk.tokens, expected,
-                "chunk.tokens must reflect BPE counter (text={:?})", chunk.text
+                "chunk.tokens must reflect BPE counter (text={:?})",
+                chunk.text
             );
         }
         // The surrogate chunks must have token counts matching the surrogate.
@@ -519,7 +520,8 @@ mod tests {
             let expected = surrogate.count(&chunk.text);
             assert_eq!(
                 chunk.tokens, expected,
-                "chunk.tokens must reflect surrogate counter (text={:?})", chunk.text
+                "chunk.tokens must reflect surrogate counter (text={:?})",
+                chunk.text
             );
         }
     }

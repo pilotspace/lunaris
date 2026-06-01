@@ -112,6 +112,12 @@ fn extract_paragraphs(text: &str) -> Vec<TextUnit> {
     // Track whether we are inside a paragraph or list-item block.
     let mut in_para = false;
     let mut in_heading = false;
+    // True once we encounter any markdown block event (heading, paragraph,
+    // item, code block, etc.). Used to distinguish "genuinely unstructured
+    // plain text" from "structured document with no paragraph content"
+    // (e.g. heading-only) so the flat-text fallback does not fire for the
+    // latter — Finding 3 fix.
+    let mut saw_block = false;
     let mut current_text = String::new();
     // char_offset tracks position relative to the original text by consuming
     // the pulldown_cmark events' text contributions.
@@ -121,6 +127,7 @@ fn extract_paragraphs(text: &str) -> Vec<TextUnit> {
     for event in parser {
         match event {
             Event::Start(Tag::Paragraph) | Event::Start(Tag::Item) => {
+                saw_block = true;
                 in_para = true;
                 current_text.clear();
                 current_offset = char_offset;
@@ -140,6 +147,7 @@ fn extract_paragraphs(text: &str) -> Vec<TextUnit> {
                 }
             }
             Event::Start(Tag::Heading { .. }) => {
+                saw_block = true;
                 in_heading = true;
             }
             Event::End(TagEnd::Heading(_)) => {
@@ -173,8 +181,12 @@ fn extract_paragraphs(text: &str) -> Vec<TextUnit> {
         }
     }
 
-    // Flat text with no block structure: emit the whole text as one paragraph.
-    if units.is_empty() && !text.trim().is_empty() {
+    // Flat text with no CommonMark block structure: emit the whole text as
+    // one paragraph. The `!saw_block` guard prevents firing for documents
+    // that have block structure (headings, code fences, etc.) but happen to
+    // contain no paragraph content — e.g. a heading-only document must yield
+    // zero paragraph units, not the raw markdown source as a paragraph.
+    if units.is_empty() && !saw_block && !text.trim().is_empty() {
         let trimmed = text.trim().to_string();
         units.push(TextUnit { text: trimmed, kind: UnitKind::Paragraph, char_offset: 0 });
     }
@@ -284,7 +296,9 @@ fn split_sentences(paragraph_text: &str, base_offset: usize) -> Vec<TextUnit> {
 }
 
 /// Collect the word token immediately before position `dot_pos` in `chars`.
-/// Strips any leading/trailing whitespace. Returns lowercase.
+/// Strips any leading/trailing whitespace. Returns the token in **original
+/// case** so that the single-uppercase-letter initial guard in
+/// [`is_abbreviation`] can inspect the true casing.
 fn collect_token_before(chars: &[char], dot_pos: usize) -> String {
     // Walk backwards from dot_pos-1 to find the word boundary.
     if dot_pos == 0 {
@@ -299,16 +313,18 @@ fn collect_token_before(chars: &[char], dot_pos: usize) -> String {
     while start > 0 && chars[start - 1].is_alphabetic() {
         start -= 1;
     }
-    chars[start..end].iter().collect::<String>().to_lowercase()
+    // Return original case — callers that need lowercase do so explicitly.
+    chars[start..end].iter().collect::<String>()
 }
 
-/// Returns true if `token` is a known abbreviation or a single uppercase letter
-/// (initial, e.g. "J" in "J. Smith").
+/// Returns true if `token` (original case) is a known abbreviation or a
+/// single uppercase letter (initial, e.g. "J" in "J. Smith").
 fn is_abbreviation(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
     // Single uppercase letter initial: "A.", "B.", etc.
+    // Check original case so "J" (uppercase) is detected correctly.
     let mut word_iter = token.unicode_words();
     if let Some(_word) = word_iter.next() {
         if word_iter.next().is_none() {
@@ -319,7 +335,8 @@ fn is_abbreviation(token: &str) -> bool {
             }
         }
     }
-    KNOWN_ABBREVS.contains(&token)
+    // Known abbreviations are stored lowercase — compare case-insensitively.
+    KNOWN_ABBREVS.contains(&token.to_lowercase().as_str())
 }
 
 /// Merge fragments shorter than [`MIN_SENTENCE_CHARS`] into their neighbours.
@@ -454,5 +471,44 @@ mod tests {
         assert!(segment_units("", SegmentMode::Paragraph).is_empty());
         assert!(segment_units("   \n\n  ", SegmentMode::Paragraph).is_empty());
         assert!(segment_units("", SegmentMode::Sentence).is_empty());
+    }
+
+    /// Finding 2 guard: mid-sentence uppercase initial (e.g. "J. Smith") must
+    /// NOT trigger a sentence split. The original-case token is needed for the
+    /// single-uppercase-letter check; `collect_token_before` returned a
+    /// lowercased string, making `chars[0].is_uppercase()` permanently false.
+    #[test]
+    fn mid_sentence_initial_not_split() {
+        let md = "The author is named J. Smith and he wrote many books about history.";
+        let units = segment_units(md, SegmentMode::Sentence);
+        // "J." is a single uppercase initial — must NOT split. The whole prose
+        // is one sentence (no terminal after "Smith" that merges cleanly), so
+        // we expect ONE unit containing both "J." and "Smith".
+        let all_text = units.iter().map(|u| u.text.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(
+            all_text.contains("J. Smith"),
+            "initial 'J.' must not split; got units: {:?}",
+            units
+        );
+        assert_eq!(
+            units.len(),
+            1,
+            "mid-sentence initial must not split the sentence; got {:?}",
+            units
+        );
+    }
+
+    /// Finding 3 guard: a heading-only document must yield ZERO paragraph units.
+    /// The flat-text fallback must only fire for genuinely unstructured plain
+    /// text, not for documents that consist solely of headings.
+    #[test]
+    fn heading_only_doc_yields_no_paragraph_units() {
+        let md = "# Only heading\n";
+        let units = segment_units(md, SegmentMode::Paragraph);
+        assert!(
+            units.is_empty(),
+            "heading-only document must yield zero paragraph units; got: {:?}",
+            units
+        );
     }
 }
