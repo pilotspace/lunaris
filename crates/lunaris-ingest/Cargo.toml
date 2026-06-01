@@ -33,6 +33,7 @@ ulid           = { workspace = true }
 chrono         = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }
+tokenizers     = { workspace = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
