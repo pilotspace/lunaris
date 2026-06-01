@@ -39,5 +39,6 @@ pub use summarizer::LlmSummarizer;
 // Wave 2.5B: re-export the primitive KV key helpers from lunaris-core (moved
 // from lunaris-storage-moon so the engine layer has no infra dependency for keys).
 pub use lunaris_core::keyspace::{
-    chunk_key, chunk_prefix, doctree_key, doctree_prefix, episode_key, episode_prefix,
+    chunk_key, chunk_prefix, community_key, community_prefix, doctree_key, doctree_prefix,
+    episode_key, episode_prefix,
 };
