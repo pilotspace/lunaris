@@ -57,10 +57,10 @@ pub use metrics::{
     BlockIntegrityMetric, CandidateWithEmbeddings, ContextualCoherenceMetric, EntityRef,
     IntrachunkCohesionMetric, MetricContext, ReferenceIntegrityMetric, SizeComplianceMetric,
 };
+pub use raptor::{build_raptor_tree, chunk_texts_for_community, raptor_community_id};
 pub use segment::{SegmentMode, TextUnit, UnitKind, segment_units};
 pub use selector::{ChunkSelector, SelectorWeights};
 pub use token::{BpeTokenCounter, SurrogateTokenCounter, TokenCounter, make_token_counter};
-pub use raptor::{build_raptor_tree, chunk_texts_for_community, raptor_community_id};
 pub use tree::{DocTree, HeadingRecord, TocNode, TocNodeId, build_doctree};
 
 use lunaris_core::{Chunk, HlcClock, Scope};

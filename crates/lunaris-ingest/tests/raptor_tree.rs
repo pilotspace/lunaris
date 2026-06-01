@@ -4,10 +4,7 @@
 //! do not yet exist.
 
 use lunaris_core::{HlcClock, Scope};
-use lunaris_ingest::{
-    DocTree, TocNode, TocNodeId,
-    build_raptor_tree, raptor_community_id,
-};
+use lunaris_ingest::{DocTree, TocNode, TocNodeId, build_raptor_tree, raptor_community_id};
 
 /// Build a three-level DocTree (H1 > H2 > H3) for use in Fixture 1.
 ///
@@ -89,8 +86,14 @@ async fn fixture_1_multi_level_headings() {
     let doctree = three_level_doctree(scope.as_str(), source);
 
     // One leaf under H3, one leaf under H2, one leaf under H1.
-    let leaf_h3 = make_chunk(&scope, vec!["Intro".into(), "Background".into(), "Details".into()], "Details text", &clock);
-    let leaf_h2 = make_chunk(&scope, vec!["Intro".into(), "Background".into()], "Background text", &clock);
+    let leaf_h3 = make_chunk(
+        &scope,
+        vec!["Intro".into(), "Background".into(), "Details".into()],
+        "Details text",
+        &clock,
+    );
+    let leaf_h2 =
+        make_chunk(&scope, vec!["Intro".into(), "Background".into()], "Background text", &clock);
     let leaf_h1 = make_chunk(&scope, vec!["Intro".into()], "Intro text", &clock);
     let chunks = vec![leaf_h1.clone(), leaf_h2.clone(), leaf_h3.clone()];
 

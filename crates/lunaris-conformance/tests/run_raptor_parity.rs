@@ -31,17 +31,11 @@ use lunaris_storage_moon::MoonStorage;
 // ---------------------------------------------------------------------------
 
 async fn sqlite_storage() -> Arc<dyn StoragePort> {
-    Arc::new(
-        EmbeddedStorage::connect("memory://")
-            .await
-            .expect("EmbeddedStorage must connect"),
-    )
+    Arc::new(EmbeddedStorage::connect("memory://").await.expect("EmbeddedStorage must connect"))
 }
 
 async fn moon_storage(url: &str) -> Arc<dyn StoragePort> {
-    Arc::new(
-        MoonStorage::connect(url).await.expect("MoonStorage must connect"),
-    )
+    Arc::new(MoonStorage::connect(url).await.expect("MoonStorage must connect"))
 }
 
 // ---------------------------------------------------------------------------

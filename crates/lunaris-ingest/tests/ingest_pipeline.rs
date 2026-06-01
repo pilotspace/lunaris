@@ -308,10 +308,10 @@ async fn ingest_episode_with_counter_uses_bpe_not_surrogate() {
     let chunk_kvputs: Vec<&[u8]> = batch
         .iter()
         .filter_map(|op| {
-            if let WriteOp::KvPut { key, value } = op {
-                if key.windows(6).any(|w| w == b":chunk") {
-                    return Some(value.as_slice());
-                }
+            if let WriteOp::KvPut { key, value } = op
+                && key.windows(6).any(|w| w == b":chunk")
+            {
+                return Some(value.as_slice());
             }
             None
         })

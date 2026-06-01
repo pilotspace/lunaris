@@ -4,8 +4,8 @@
 //! Phase 12a duplication-delete: the load / HTTP / parse code that previously
 //! lived here has been collapsed into the shared [`lunaris_llm::OllamaBackend`]
 //! + [`crate::llm_extractor::LlmExtractor`] stack. The public API surface
-//! (`OllamaExtractor`, `OllamaExtractorOpts`, the `Extractor` impl) is
-//! byte-identical to v0.2 so downstream callers are unaffected.
+//!   (`OllamaExtractor`, `OllamaExtractorOpts`, the `Extractor` impl) is
+//!   byte-identical to v0.2 so downstream callers are unaffected.
 //!
 //! ## Constraint handling (preserved from v0.2)
 //!

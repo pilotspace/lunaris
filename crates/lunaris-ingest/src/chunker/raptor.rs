@@ -57,9 +57,8 @@ pub fn raptor_community_id(
     hasher.update(b"::");
     hasher.update(level.to_string().as_bytes());
     let h = hasher.finalize();
-    let bytes: [u8; 16] = h.as_bytes()[..16]
-        .try_into()
-        .expect("blake3 produces 32 bytes; first 16 always fit");
+    let bytes: [u8; 16] =
+        h.as_bytes()[..16].try_into().expect("blake3 produces 32 bytes; first 16 always fit");
     Ulid::from_bytes(bytes)
 }
 
@@ -109,11 +108,8 @@ pub fn build_raptor_tree(
         .collect();
 
     // Step 3: build a lookup from community_id → position in `communities`.
-    let id_to_idx: std::collections::HashMap<Ulid, usize> = communities
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.id, i))
-        .collect();
+    let id_to_idx: std::collections::HashMap<Ulid, usize> =
+        communities.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
 
     // Step 4: assign each leaf chunk to its enclosing community.
     let mut wired_chunks: Vec<Chunk> = chunks.to_vec();
@@ -128,18 +124,15 @@ pub fn build_raptor_tree(
 
     // 5a. Direct sub-community children.
     for fn_ in &flat_nodes {
-        if let Some(parent_id) = fn_.parent_community_id {
-            if let Some(&parent_idx) = id_to_idx.get(&parent_id) {
-                communities[parent_idx].members.push(fn_.community_id);
-            }
+        if let Some(parent_idx) = fn_.parent_community_id.and_then(|id| id_to_idx.get(&id).copied())
+        {
+            communities[parent_idx].members.push(fn_.community_id);
         }
     }
     // 5b. Leaf chunks.
     for chunk in &wired_chunks {
-        if let Some(parent_id) = chunk.parent_id {
-            if let Some(&parent_idx) = id_to_idx.get(&parent_id) {
-                communities[parent_idx].members.push(chunk.id);
-            }
+        if let Some(parent_idx) = chunk.parent_id.and_then(|id| id_to_idx.get(&id).copied()) {
+            communities[parent_idx].members.push(chunk.id);
         }
     }
 
@@ -238,10 +231,11 @@ fn assign_leaf(
     source: &str,
 ) -> Option<Ulid> {
     // Structural path: heading_path non-empty → walk by title chain.
-    if !chunk.heading_path.is_empty() {
-        if let Some(id) = find_by_title_path(&chunk.heading_path, flat_nodes) {
-            return Some(id);
-        }
+    if let Some(id) = (!chunk.heading_path.is_empty())
+        .then(|| find_by_title_path(&chunk.heading_path, flat_nodes))
+        .flatten()
+    {
+        return Some(id);
     }
 
     // Byte-containment fallback: source_byte_span is on ChunkDraft, not Chunk.
@@ -291,7 +285,10 @@ fn find_by_byte_containment(byte_offset: usize, flat_nodes: &[FlatNode]) -> Opti
 
 /// Collect the set of all community IDs that are descendants of `root_id`
 /// (including `root_id` itself).
-fn collect_descendant_ids(root_id: Ulid, communities: &[Community]) -> std::collections::HashSet<Ulid> {
+fn collect_descendant_ids(
+    root_id: Ulid,
+    communities: &[Community],
+) -> std::collections::HashSet<Ulid> {
     let mut result = std::collections::HashSet::new();
     let mut stack = vec![root_id];
     while let Some(current) = stack.pop() {
