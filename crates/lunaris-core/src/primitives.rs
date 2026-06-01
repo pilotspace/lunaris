@@ -71,6 +71,17 @@ pub struct Chunk {
     pub overlap_tail: String,
     #[serde(default)]
     pub embedding: Option<Vec<f32>>,
+    /// Optional link to the nearest parent [`TocNode`] in the document tree.
+    ///
+    /// `None` in Phase 27 (field + migration + serde-compat delivered here;
+    /// full parent wiring — setting a non-None value — lands in Phase 29).
+    /// Pre-existing rows serialised without this field deserialise to `None`
+    /// via `#[serde(default)]` (STRUCT-03 serde back-compat contract).
+    ///
+    /// Moon backend: field travels in the existing JSONB KvPut payload — no DDL.
+    /// Postgres backend: `chunks.parent_id BYTEA NULL` (migration 20260601000008).
+    #[serde(default)]
+    pub parent_id: Option<Ulid>,
     pub bt: BiTemporal,
 }
 
@@ -97,6 +108,7 @@ impl Chunk {
             heading_path,
             overlap_tail: String::new(),
             embedding: None,
+            parent_id: None,
             bt: BiTemporal::now(clock),
         }
     }
@@ -271,5 +283,84 @@ impl Community {
             summary_embedding: None,
             bt: BiTemporal::now(clock),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// STRUCT-03 tests — Chunk.parent_id serde back-compat + construction
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hlc::HlcClock;
+    use crate::scope::Scope;
+
+    fn dev_scope() -> Scope {
+        Scope::dev()
+    }
+
+    fn test_clock() -> std::sync::Arc<HlcClock> {
+        HlcClock::new(0)
+    }
+
+    #[test]
+    fn chunk_deserializes_without_parent_id() {
+        // Prove serde back-compat: a JSON row serialized without "parent_id"
+        // (pre-Phase 27 row) must deserialize successfully with parent_id=None.
+        // Strategy: serialize a real Chunk, remove "parent_id" from the JSON
+        // object, then deserialize — format-agnostic, no hardcoded BiTemporal layout.
+        let clock = test_clock();
+        let chunk = Chunk::new(dev_scope(), ulid::Ulid::new(), "hello world", 2, 0, vec![], &clock);
+        let mut map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&serde_json::to_string(&chunk).unwrap()).unwrap();
+        // Simulate a pre-Phase-27 row by dropping the parent_id field entirely.
+        map.remove("parent_id");
+        let stripped = serde_json::to_string(&map).unwrap();
+        let back: Chunk = serde_json::from_str(&stripped)
+            .expect("back-compat: must deserialize without parent_id");
+        assert!(chunk.parent_id.is_none(), "parent_id must be None for pre-existing rows");
+        assert_eq!(back.text, chunk.text);
+    }
+
+    #[test]
+    fn chunk_deserializes_with_parent_id() {
+        // Prove that a row WITH parent_id set deserializes correctly.
+        let clock = test_clock();
+        let mut chunk =
+            Chunk::new(dev_scope(), ulid::Ulid::new(), "hello world", 2, 0, vec![], &clock);
+        let parent = ulid::Ulid::new();
+        chunk.parent_id = Some(parent);
+        let json = serde_json::to_string(&chunk).unwrap();
+        let back: Chunk = serde_json::from_str(&json).expect("must deserialize with parent_id");
+        assert_eq!(back.parent_id, Some(parent), "parent_id must be Some when present in JSON");
+    }
+
+    #[test]
+    fn chunk_new_has_none_parent_id() {
+        let clock = test_clock();
+        let chunk = Chunk::new(dev_scope(), ulid::Ulid::new(), "test text", 3, 0, vec![], &clock);
+        assert!(chunk.parent_id.is_none(), "Chunk::new must produce parent_id = None");
+    }
+
+    #[test]
+    fn chunk_with_parent_id_roundtrips_serde() {
+        let clock = test_clock();
+        let mut chunk = Chunk::new(
+            dev_scope(),
+            ulid::Ulid::new(),
+            "test text",
+            3,
+            0,
+            vec!["Section 1".to_string()],
+            &clock,
+        );
+        let parent = ulid::Ulid::new();
+        chunk.parent_id = Some(parent);
+
+        let json = serde_json::to_string(&chunk).expect("serialize");
+        let back: Chunk = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.parent_id, Some(parent));
+        assert_eq!(back.text, chunk.text);
     }
 }
