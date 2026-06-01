@@ -14,6 +14,7 @@ authors.workspace      = true
 # here so `cargo build -p lunaris-conformance` does not break between plans).
 lunaris = { workspace = true }
 lunaris-core = { workspace = true }
+lunaris-ingest = { workspace = true }             # Phase 29 Plan 04 — raptor conformance suites
 lunaris-storage-moon = { workspace = true }       # Plan 05-02
 lunaris-storage-postgres = { workspace = true }   # Plan 05-02
 lunaris-storage-embedded = { workspace = true }   # onboarding overhaul (phase 1)
