@@ -24,7 +24,10 @@ use lunaris::*;
 async fn moon_url_returns_handle_with_moon_capabilities() {
     let h = lunaris::open("moon://localhost:6380").await.expect("moon URL should parse");
     let cap = h.capabilities();
-    assert!(cap.bi_temporal_native, "Moon should report bi_temporal_native=true");
+    assert!(
+        !cap.bi_temporal_native,
+        "Moon HGET does not support KV AS_OF; graph/FT temporal surfaces are separate"
+    );
     assert!(cap.graph_native);
     assert!(cap.rerank_native, "Moon should report rerank_native=true");
     assert!(cap.queue_native);

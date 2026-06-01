@@ -15,7 +15,7 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use lunaris_core::{Episode, HlcClock, Scope, StoragePort, WriteOp};
+use lunaris_core::{CypherQuery, Episode, HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
 use std::time::Duration;
 
@@ -148,5 +148,50 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
         hits.iter().any(|h| h.key.as_bytes().ends_with(&id) || h.key.contains(&hex::encode(&id))),
         "seeded fact must appear in HYBRID hits — got {} hits, none matching marker",
         hits.len()
+    );
+}
+
+#[tokio::test]
+async fn graph_query_valid_at_round_trip_via_moon() {
+    let storage = MoonStorage::connect(&moon_url())
+        .await
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
+
+    let id = ulid::Ulid::new().to_bytes().to_vec();
+    let id_hex = hex::encode(&id);
+    storage
+        .atomic_write(
+            &Scope::dev(),
+            &[WriteOp::GraphNode {
+                graph: "ignored-by-moon-scope-routing".into(),
+                id,
+                label: "Person".into(),
+                props: serde_json::json!({
+                    "id_hex": id_hex,
+                    "name": "Moon ValidAt",
+                    "type": "Person",
+                }),
+            }],
+        )
+        .await
+        .expect("seed graph node");
+
+    let as_of = HlcClock::new(0).tick();
+    let q = CypherQuery {
+        graph: "ignored-by-moon-scope-routing".into(),
+        cypher: format!(
+            "MATCH (n) WHERE n.id_hex='{id_hex}' RETURN n.id_hex AS id, n.name AS name, n.type AS type"
+        ),
+        params: serde_json::Map::new(),
+    };
+
+    let result = storage
+        .graph_traverse(&Scope::dev(), &q, Some(as_of))
+        .await
+        .expect("GRAPH.QUERY VALID_AT must succeed through Moon");
+    assert_eq!(result.headers, vec!["id", "name", "type"]);
+    assert!(
+        result.rows.iter().any(|row| row.first().and_then(|v| v.as_str()) == Some(id_hex.as_str())),
+        "seeded graph node must be visible through VALID_AT query: {result:?}"
     );
 }

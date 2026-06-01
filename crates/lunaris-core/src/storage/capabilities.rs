@@ -51,7 +51,12 @@ pub enum CypherDialect {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageCapabilities {
-    /// `true` for Moon (`TEMPORAL.SNAPSHOT_AT`); emulated via columns on Postgres.
+    /// `true` only when KV reads support historical `AS_OF` natively.
+    ///
+    /// Moon supports temporal graph and FT surfaces, but its hash/KV `HGET`
+    /// path currently returns latest state for Lunaris KV rows. Postgres
+    /// stores bi-temporal columns but the Lunaris Postgres adapter still
+    /// treats that as an emulated storage contract.
     pub bi_temporal_native: bool,
     /// `true` for Moon (CSR + Cypher) and Postgres (AGE extension).
     pub graph_native: bool,

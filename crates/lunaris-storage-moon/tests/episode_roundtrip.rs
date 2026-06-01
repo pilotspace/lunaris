@@ -50,13 +50,14 @@ async fn episode_atomic_write_then_read_back() {
     assert_eq!(row.value, Bytes::from(value), "value roundtrip — bytes must be identical");
 }
 
-/// Capabilities are independent of any live Moon state — but if we connect we should
-/// always see the Moon native-everything profile.
+/// Capabilities are independent of any live Moon state — but if we connect we
+/// should see the Moon native profile for graph, queue, and RRF. KV AS_OF is
+/// not native because Moon HGET currently returns latest state.
 #[tokio::test]
 async fn capabilities_reports_moon_native_profile() {
     let s = MoonStorage::connect(&moon_url()).await.expect("connect to Moon");
     let cap = s.capabilities();
-    assert!(cap.bi_temporal_native);
+    assert!(!cap.bi_temporal_native);
     assert!(cap.graph_native);
     assert!(cap.rerank_native);
     assert!(cap.queue_native);
