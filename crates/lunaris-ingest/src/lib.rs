@@ -21,9 +21,10 @@ pub use chunker::{
     EntityRef, GeneratorContext, HeadingRecord, MetricContext, RecursiveSplitMergeGenerator,
     ScoredCandidate, SegmentMode, SelectorWeights, SemanticBreakpointGenerator,
     SizeVariantGenerator, StructuralGenerator, SurrogateTokenCounter, TextUnit, TocNode, TocNodeId,
-    TokenCounter, UnitKind, build_doctree, chunk_markdown, chunk_markdown_with_counter,
-    chunk_markdown_with_headings, chunk_markdown_with_headings_with_counter, est_token_count,
-    make_token_counter, run_bakeoff, segment_units,
+    TokenCounter, UnitKind, build_doctree, build_raptor_tree, chunk_markdown,
+    chunk_markdown_with_counter, chunk_markdown_with_headings,
+    chunk_markdown_with_headings_with_counter, chunk_texts_for_community, est_token_count,
+    make_token_counter, raptor_community_id, run_bakeoff, segment_units,
 };
 pub use pipeline::{
     INGEST_EMBED_BATCH_SIZE, ingest_episode, ingest_episode_with_bakeoff,
