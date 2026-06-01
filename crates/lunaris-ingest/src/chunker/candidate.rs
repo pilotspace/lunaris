@@ -31,8 +31,8 @@ use lunaris_core::{Embedder, LunarisError, StorageError};
 
 use crate::chunker::segment::SegmentMode;
 use crate::chunker::{
-    ChunkDraft, HeadingRecord, SurrogateTokenCounter, TokenCounter,
-    chunk_markdown_with_headings_with_counter, segment_units,
+    ChunkDraft, HeadingRecord, TokenCounter, chunk_markdown_with_headings_with_counter,
+    segment_units,
 };
 
 // ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ impl CandidateGenerator for SemanticBreakpointGenerator {
         &self,
         source_text: &str,
         ctx: &GeneratorContext,
-        _counter: &dyn TokenCounter,
+        counter: &dyn TokenCounter,
     ) -> Result<Vec<ChunkDraft>, LunarisError> {
         let units = segment_units(source_text, SegmentMode::Sentence);
         if units.is_empty() {
@@ -202,7 +202,9 @@ impl CandidateGenerator for SemanticBreakpointGenerator {
             if text.trim().is_empty() {
                 continue;
             }
-            let counter = SurrogateTokenCounter;
+            // Use the caller-supplied counter (BPE or surrogate) for
+            // SizeCompliance scoring — the surrogate must NOT be hardcoded here
+            // as that would make bake-off comparisons unfair (F2 fix).
             let tokens = counter.count(&text);
             drafts.push(ChunkDraft {
                 text: text.trim().to_string(),
@@ -571,6 +573,7 @@ pub fn cosine_f32(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunker::SurrogateTokenCounter;
     use lunaris_core::StubEmbedder;
 
     // ── Trait object safety ──────────────────────────────────────────────────
@@ -752,5 +755,49 @@ mod tests {
             result.is_err(),
             "wrong row count must propagate as Err, not produce a winner with zero-fill vectors"
         );
+    }
+
+    // ── F2: SemanticBreakpointGenerator must use the injected TokenCounter ────
+
+    /// A counter whose output differs systematically from `SurrogateTokenCounter`:
+    /// always returns `tokens = 1` regardless of text length.  If
+    /// `SemanticBreakpointGenerator` still uses the internal
+    /// `SurrogateTokenCounter`, the token counts on produced `ChunkDraft`s will
+    /// reflect the surrogate (word-count × 1.3) instead of 1.
+    struct ConstOneCounter;
+    impl crate::chunker::TokenCounter for ConstOneCounter {
+        fn count(&self, _text: &str) -> u32 {
+            1
+        }
+    }
+
+    /// RED test (F2): `SemanticBreakpointGenerator` must honour the counter
+    /// passed in via the trait parameter. With `ConstOneCounter`, every produced
+    /// draft must have `tokens == 1`. If the generator hardcodes
+    /// `SurrogateTokenCounter`, the token counts will differ.
+    #[test]
+    fn f2_semantic_breakpoint_uses_injected_counter() {
+        let sbgen = SemanticBreakpointGenerator::default();
+        // Provide non-trivial unit embeddings so the generator produces at
+        // least one chunk — all-zeros would give sim=0 < 0.5 everywhere and
+        // might collapse to empty.
+        let unit_embeddings =
+            vec![vec![1.0f32, 0.0, 0.0], vec![1.0f32, 0.0, 0.0], vec![1.0f32, 0.0, 0.0]];
+        let ctx = GeneratorContext { target_tokens: 500, overlap_tokens: 0, unit_embeddings };
+        let text = "Alpha beta gamma delta epsilon. Zeta eta theta. Iota kappa lambda.";
+        let counter = ConstOneCounter;
+        let drafts = sbgen.generate(text, &ctx, &counter).unwrap();
+        assert!(
+            !drafts.is_empty(),
+            "SemanticBreakpointGenerator must produce at least one chunk on non-empty input"
+        );
+        for draft in &drafts {
+            assert_eq!(
+                draft.tokens, 1,
+                "SemanticBreakpointGenerator must use the injected counter (ConstOneCounter \
+                 returns 1 for every text); got tokens={} for chunk {:?}",
+                draft.tokens, draft.text
+            );
+        }
     }
 }
