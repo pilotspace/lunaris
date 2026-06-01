@@ -3,7 +3,7 @@
 //! RED phase: all tests fail because `raptor_community_id` and `build_raptor_tree`
 //! do not yet exist.
 
-use lunaris_core::{HlcClock, Scope, primitives::Community};
+use lunaris_core::{HlcClock, Scope};
 use lunaris_ingest::{
     DocTree, TocNode, TocNodeId,
     build_raptor_tree, raptor_community_id,

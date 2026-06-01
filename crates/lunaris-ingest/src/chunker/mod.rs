@@ -42,6 +42,7 @@
 
 pub mod candidate;
 pub mod metrics;
+pub mod raptor;
 pub mod segment;
 pub mod selector;
 pub mod token;
@@ -59,6 +60,7 @@ pub use metrics::{
 pub use segment::{SegmentMode, TextUnit, UnitKind, segment_units};
 pub use selector::{ChunkSelector, SelectorWeights};
 pub use token::{BpeTokenCounter, SurrogateTokenCounter, TokenCounter, make_token_counter};
+pub use raptor::{build_raptor_tree, chunk_texts_for_community, raptor_community_id};
 pub use tree::{DocTree, HeadingRecord, TocNode, TocNodeId, build_doctree};
 
 use lunaris_core::{Chunk, HlcClock, Scope};
