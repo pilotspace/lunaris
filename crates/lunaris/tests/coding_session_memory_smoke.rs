@@ -14,7 +14,7 @@
 //! Both `#[ignore]`-gated by default. Run via:
 //!
 //! ```bash
-//! MOON_URL=moon://localhost:6390 PG_URL=postgres://lunaris@localhost/lunaris \
+//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris@localhost/lunaris \
 //!   cargo test -p lunaris --test coding_session_memory_smoke -- --ignored --nocapture
 //! ```
 //!

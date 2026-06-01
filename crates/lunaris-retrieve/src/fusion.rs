@@ -110,7 +110,7 @@ pub fn inspect_branches(inner: &dyn Retriever) -> Option<FusedBranchHint> {
 /// Run the Moon-native hybrid search path.
 ///
 /// Calls `MoonStorage::client().typed().text().hybrid_search(index, q_text,
-/// q_vec, "vec", k, [bm25_w, vec_w])` — one round trip. Returns hits tagged
+/// q_vec, "vec", None, k, [bm25_w, vec_w, sparse_w])` — one round trip. Returns hits tagged
 /// `SourceOp::Fused` with min-max normalized scores.
 ///
 /// Reads the concrete `Arc<MoonStorage>` from `ctx.moon_storage`. The
@@ -135,9 +135,9 @@ pub async fn fuse_via_moon_native(
 
     let typed = moon.client().typed();
     let mut text = typed.text();
-    // Resolve per-branch weights for the moondb 0.1.1 two-way fusion API
-    // (BM25 + dense). The SDK signature is `hybrid_search(..., k,
-    // [w_bm25, w_dense])`, so we map:
+    // Resolve per-branch weights for Moon's RRF API (BM25 + dense, optional sparse).
+    // The current SDK signature is `hybrid_search(..., sparse_field, k,
+    // [w_bm25, w_dense, w_sparse])`, so we map:
     //   SourceOp::Keyword -> w_bm25
     //   SourceOp::Vector  -> w_dense
     // When the caller passes an empty weights map (default
@@ -146,18 +146,15 @@ pub async fn fuse_via_moon_native(
     // observe NO behaviour change. Any explicit weight present in the map
     // overrides the 0.5 default; missing branches stay at 0.5.
     //
-    // The earlier three-way `[bm25, dense, sparse]` shape with
-    // `sparse_field: None` was on a local Moon SDK that is not yet on
-    // crates.io; v0.2.1 ships against the published moondb 0.1.1 surface.
-    // When moondb publishes a release exposing the three-way
-    // `hybrid_search` signature, this call site lifts back to the wider
-    // form.
-    let weights: [f64; 2] = if branch_weights.is_empty() {
-        [0.5_f64, 0.5_f64]
+    // We pass `sparse_field: None` because Lunaris' default Moon indices expose
+    // TEXT `content` + VECTOR `vec`; Moon performs the two-way fallback and
+    // ignores `weights[2]`.
+    let weights: [f64; 3] = if branch_weights.is_empty() {
+        [0.5_f64, 0.5_f64, 0.0_f64]
     } else {
         let w_bm25 = branch_weights.get(&SourceOp::Keyword).copied().unwrap_or(0.5_f32) as f64;
         let w_dense = branch_weights.get(&SourceOp::Vector).copied().unwrap_or(0.5_f32) as f64;
-        [w_bm25, w_dense]
+        [w_bm25, w_dense, 0.0_f64]
     };
     let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
     // RFC 0001 Wave 1C parity fix: the write path routes to the per-scope FT
@@ -170,7 +167,7 @@ pub async fn fuse_via_moon_native(
     // for the same reason. Live-measurement gap, 2026-05-12.
     let per_scope_index = format!("lunaris_{}_{}_idx", ctx.scope.as_str(), hint.index);
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", k, weights)
+        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", None, k, weights)
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(

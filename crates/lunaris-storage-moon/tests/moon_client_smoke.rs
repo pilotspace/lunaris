@@ -20,14 +20,14 @@ use lunaris_storage_moon::{MoonStorage, keyspace};
 use std::time::Duration;
 
 fn moon_url() -> String {
-    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6390".into())
+    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".into())
 }
 
 #[tokio::test]
 async fn round_trip_via_moon_client() {
     let storage = MoonStorage::connect(&moon_url())
         .await
-        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
 
     let clock = HlcClock::new(0);
     let ep = Episode::new(Scope::dev(), "smoke://retrofit", "hello moon-client", &clock);
@@ -112,7 +112,7 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
 
     let storage = MoonStorage::connect(&moon_url())
         .await
-        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6390");
+        .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
 
     let id = ulid::Ulid::new().to_bytes().to_vec();
     let predicate = "moon-it-smoke-hybrid-marker";
@@ -137,9 +137,10 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
 
     let typed = storage.client().typed();
     let mut text = typed.text();
-    let weights: [f64; 2] = [0.5, 0.5];
+    let weights: [f64; 3] = [0.5, 0.5, 0.0];
+    let index_name = keyspace::ft_index_name(&Scope::dev(), "facts");
     let hits = text
-        .hybrid_search("facts", predicate, &embedding, "vec", 5, weights)
+        .hybrid_search(&index_name, predicate, &embedding, "vec", None, 5, weights)
         .await
         .expect("hybrid_search must succeed once @content is in the schema (Gap 9 closure)");
 

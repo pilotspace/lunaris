@@ -22,7 +22,7 @@
 //! ## Backend selection
 //!
 //! Each backend opts in via an env var:
-//! - `MOON_URL=moon://localhost:6390` → registers the `*/moon` benches.
+//! - `MOON_URL=moon://localhost:6380` → registers the `*/moon` benches.
 //! - `PG_URL=postgres://lunaris:lunaris@localhost/lunaris` → registers the
 //!   `*/postgres` benches.
 //!

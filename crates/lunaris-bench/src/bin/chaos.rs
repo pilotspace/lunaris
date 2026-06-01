@@ -93,7 +93,7 @@ async fn run_phase4_legacy(args: &[String]) -> ExitCode {
         eprintln!("       chaos --profile helios        (Phase 12 HELIOS-06)");
         eprintln!();
         eprintln!("examples:");
-        eprintln!("  chaos moon://localhost:6390 --corpus 10000");
+        eprintln!("  chaos moon://localhost:6380 --corpus 10000");
         eprintln!("  chaos postgres://localhost/lunaris_chaos --corpus 10000");
         return ExitCode::from(2);
     }

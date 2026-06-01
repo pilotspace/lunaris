@@ -45,7 +45,7 @@ use lunaris_recipes::conversational::MultiTurnConversation;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("moon://localhost:6379").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // (Optional) install a consolidator — without one, consolidate() is a
     // no-op that returns an empty report. The default pipeline is OFF.

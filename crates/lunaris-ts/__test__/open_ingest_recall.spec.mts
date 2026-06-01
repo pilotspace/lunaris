@@ -2,7 +2,7 @@
 //
 // These tests exercise the full 5-method Rust surface behind the Lunaris
 // handle. They REQUIRE a reachable Moon backend (LUNARIS_TEST_MOON_URL
-// env var; default moon://127.0.0.1:6379) and are skipped when no backend
+// env var; default moon://127.0.0.1:6380) and are skipped when no backend
 // is available — so the suite still passes on a fresh clone without a
 // dev box.
 //
@@ -17,7 +17,7 @@ import net from "node:net";
 // abi_pin suite has a chance to report the real reason.
 const lunaris = await import("../index.mjs");
 
-const DEFAULT_MOON_URL = "moon://127.0.0.1:6379";
+const DEFAULT_MOON_URL = "moon://127.0.0.1:6380";
 
 function resolveMoonUrl(): string {
   return process.env.LUNARIS_TEST_MOON_URL ?? DEFAULT_MOON_URL;

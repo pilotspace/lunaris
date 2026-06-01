@@ -30,7 +30,7 @@ import asyncio
 import lunaris
 
 async def main():
-    handle = await lunaris.open("moon://127.0.0.1:6379")
+    handle = await lunaris.open("moon://127.0.0.1:6380")
     lsn = await handle.ingest({
         "id": "01JABCDEFGHJKMNPQRSTVWXYZ0",
         "source": "py-example",
@@ -63,7 +63,7 @@ from lunaris import EmbedderConfig, RerankerConfig
 async def main():
     cfg = EmbedderConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed")
     handle = await lunaris.open(
-        "moon://127.0.0.1:6379",
+        "moon://127.0.0.1:6380",
         embedder=cfg,
         reranker=RerankerConfig.noop(),   # disable cross-encoder rerank
     )

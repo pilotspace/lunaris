@@ -12,8 +12,8 @@
 //! `moon://host:port[?ws=workspace]`
 //!
 //! Examples:
-//!   * `moon://localhost:6390`               → host=localhost, port=6390, no workspace
-//!   * `moon://moon.example.com:6390?ws=hot` → host=moon.example.com, port=6390, ws=hot
+//!   * `moon://localhost:6380`               → host=localhost, port=6380, no workspace
+//!   * `moon://moon.example.com:6380?ws=hot` → host=moon.example.com, port=6380, ws=hot
 //!
 //! The `moon://` scheme is the Lunaris-public face; internally we translate to
 //! `redis://host:port` because Moon speaks the Redis wire protocol. The URL parser
@@ -28,7 +28,7 @@ use lunaris_core::error::StorageError;
 use moon::{MoonClient as TypedClient, MoonError};
 
 /// Default Moon RESP port (matches Moon's `bin/moond` default).
-pub const DEFAULT_MOON_PORT: u16 = 6390;
+pub const DEFAULT_MOON_PORT: u16 = 6380;
 
 /// Default FT vector-index dimension used by the bare [`MoonClient::connect`] /
 /// [`MoonStorage::connect`](crate::MoonStorage::connect) constructors. Matches
@@ -337,7 +337,7 @@ mod tests {
     /// `moon://` URL so the scheme check passes and we reach the dim guard.)
     #[tokio::test]
     async fn connect_with_dim_rejects_zero_dim() {
-        let r = MoonClient::connect_with_dim("moon://localhost:6390", 0).await;
+        let r = MoonClient::connect_with_dim("moon://localhost:6380", 0).await;
         match r {
             Err(StorageError::Backend(msg)) => {
                 assert!(msg.contains("vector dim must be > 0"), "unexpected msg: {msg}");

@@ -11,7 +11,7 @@ local LLM, and unlocks the `Graph::anchored` [retrieval operator](./retrieval-ds
 ```rust
 use lunaris::Lunaris;
 
-let lunaris = Lunaris::open("moon://localhost:6379").await?;
+let lunaris = Lunaris::open("moon://localhost:6380").await?;
 
 // Runtime toggle — idempotent.
 lunaris.graph_pipeline().enable();

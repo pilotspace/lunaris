@@ -8,7 +8,7 @@ that has Moon listening.
 
 Environment variables:
 
-- `LUNARIS_TEST_MOON_URL` — override the default `moon://127.0.0.1:6379`.
+- `LUNARIS_TEST_MOON_URL` — override the default `moon://127.0.0.1:6380`.
 - `LUNARIS_TEST_POSTGRES_URL` — optional Postgres test target.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Optional
 
 import pytest
 
-DEFAULT_MOON_URL = "moon://127.0.0.1:6379"
+DEFAULT_MOON_URL = "moon://127.0.0.1:6380"
 
 
 def _host_port_reachable(host: str, port: int, timeout_s: float = 0.4) -> bool:

@@ -42,7 +42,7 @@
 //!    not an env var NAME, so the test never touches process env).
 //! 2. URL parses to a `host:port` authority.
 //! 3. `host_port.to_socket_addrs()` resolves (W-3 fix: handles hostname-form
-//!    addresses like `localhost:6390` — inline `host_port.parse::<SocketAddr>()`
+//!    addresses like `localhost:6380` — inline `host_port.parse::<SocketAddr>()`
 //!    rejects hostnames).
 //! 4. 1-second TCP probe to the resolved socket addr succeeds.
 //!
@@ -97,7 +97,7 @@ mod chaos {
     ///
     /// **W-3 fix:** use [`std::net::ToSocketAddrs`] (resolves both hostnames
     /// and literal IPs) instead of inline `host_port.parse::<SocketAddr>()`
-    /// (literal IPs only — `localhost:6390` would be rejected).
+    /// (literal IPs only — `localhost:6380` would be rejected).
     ///
     /// **W-7 fix:** takes `Option<String>` (the env value) instead of an
     /// env var NAME — removes any process-env-mutation foot-gun in tests
@@ -121,9 +121,9 @@ mod chaos {
 
         // W-3 fix: ToSocketAddrs resolves hostnames + literal IPs. The
         // inline `host_port.parse::<SocketAddr>()` path would reject
-        // "localhost:6390" because `SocketAddr::from_str` only accepts
-        // literal IP addresses — fine for `127.0.0.1:6390`, NOT for
-        // `localhost:6390` which is the canonical dev-box form.
+        // "localhost:6380" because `SocketAddr::from_str` only accepts
+        // literal IP addresses — fine for `127.0.0.1:6380`, NOT for
+        // `localhost:6380` which is the canonical dev-box form.
         let timeout = Duration::from_secs(1);
         let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
             Some(a) => a,
@@ -378,8 +378,8 @@ mod chaos {
     }
 
     /// W-3 unit assertion: the host:port extraction itself accepts both
-    /// hostname-form (`localhost:6390`) and literal-IP-form
-    /// (`127.0.0.1:6390`) addresses. We can't TCP-probe in a unit test
+    /// hostname-form (`localhost:6380`) and literal-IP-form
+    /// (`127.0.0.1:6380`) addresses. We can't TCP-probe in a unit test
     /// without a live backend, so we just assert the parse step doesn't
     /// reject the hostname form (W-3 regression guard).
     #[test]

@@ -19,7 +19,7 @@ reference hardware.
 docker compose -f examples/quickstart-rs/docker-compose.yml up -d
 
 # 2. Point the benches at them.
-export MOON_URL=moon://localhost:6390
+export MOON_URL=moon://localhost:6380
 export PG_URL=postgres://lunaris:lunaris@localhost:5432/lunaris
 
 # 3. Capture a baseline.

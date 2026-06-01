@@ -28,7 +28,7 @@ For the full user-facing install + quickstart guide covering both TypeScript and
 import { open, Vector, Keyword } from "lunaris";
 
 async function main() {
-  const handle = await open("moon://127.0.0.1:6379");
+  const handle = await open("moon://127.0.0.1:6380");
   const lsn = await handle.ingest({
     id: "01JABCDEFGHJKMNPQRSTVWXYZ0",
     source: "ts-example",
@@ -60,7 +60,7 @@ default remains in place for callers that don't chain.
 import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
 
 const cfg = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed" });
-const handle = (await Lunaris.open("moon://127.0.0.1:6379"))
+const handle = (await Lunaris.open("moon://127.0.0.1:6380"))
   .withEmbedder(cfg)
   .withReranker(RerankerConfig.noop());   // disable cross-encoder rerank
 // ... ingest / recall as usual

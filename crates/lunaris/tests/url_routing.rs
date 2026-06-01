@@ -22,7 +22,7 @@ use lunaris::*;
 #[cfg(feature = "moon-it")]
 #[tokio::test]
 async fn moon_url_returns_handle_with_moon_capabilities() {
-    let h = lunaris::open("moon://localhost:6390").await.expect("moon URL should parse");
+    let h = lunaris::open("moon://localhost:6380").await.expect("moon URL should parse");
     let cap = h.capabilities();
     assert!(cap.bi_temporal_native, "Moon should report bi_temporal_native=true");
     assert!(cap.graph_native);

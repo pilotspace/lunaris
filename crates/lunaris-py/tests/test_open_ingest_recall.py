@@ -2,7 +2,7 @@
 
 These tests exercise the full 5-method Rust surface behind the Lunaris
 handle. They REQUIRE a reachable Moon backend (`LUNARIS_TEST_MOON_URL` env
-var; default `moon://127.0.0.1:6379`) and `pytest.skip` when none is
+var; default `moon://127.0.0.1:6380`) and `pytest.skip` when none is
 available — so the suite still passes on a fresh clone without a dev box.
 
 Offline behaviours (URL-parse error mapping to `lunaris.LunarisError`) are

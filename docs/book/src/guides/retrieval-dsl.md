@@ -20,7 +20,7 @@ hits from that scope's partition come back. Its default root operator is
 ```rust
 use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
 
-let lunaris = Lunaris::open("moon://localhost:6379").await?;
+let lunaris = Lunaris::open("moon://localhost:6380").await?;
 let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);
 
 let hits = scoped

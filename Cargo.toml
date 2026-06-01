@@ -132,13 +132,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot    = "0.12"
 # storage backends (used by Plan 03 / 04 — declared here so versions stay aligned)
 redis          = { version = "0.32", features = ["aio", "tokio-comp", "connection-manager"] }
-# moon — typed Rust SDK for Moon, from crates.io as `moondb` (version-pinned,
-# so the workspace stays crates.io-publishable). Brings `redis 1.1` transitively
-# via its own [dependencies] block. Phase 1.5 retrofit (STORE-09) replaces
-# `lunaris-storage-moon`'s direct `redis 0.32` dep with this. Upstream rename:
-# previously published as `moon-client`; Lunaris keeps the local alias `moon`
-# so internal use sites keep their stable `use moon::` form.
-moon           = { version = "0.1.1", package = "moondb" }
+# moon — typed Rust SDK for Moon, vendored with the Moon submodule so Lunaris
+# stays wire-compatible with the rebuilt local Moon binary (MQ + HYBRID RRF).
+# Upstream package name is `moondb`; Lunaris keeps the local alias `moon` so
+# internal use sites keep their stable `use moon::` form.
+moon           = { path = "vendor/moon/sdk/rust", package = "moondb" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "sqlite", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt

@@ -19,7 +19,7 @@ const FIXTURE_TEXTS: &[&str] = &[
 ];
 
 fn url() -> Option<String> {
-    std::env::var("MOON_URL").ok().or_else(|| Some("moon://localhost:6390".to_string()))
+    std::env::var("MOON_URL").ok().or_else(|| Some("moon://localhost:6380".to_string()))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

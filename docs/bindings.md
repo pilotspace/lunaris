@@ -85,7 +85,7 @@ import ulid
 
 
 async def main():
-    handle = await lunaris.open("moon://127.0.0.1:6379")
+    handle = await lunaris.open("moon://127.0.0.1:6380")
 
     lsn = await handle.ingest({
         "id": str(ulid.ULID()),
@@ -122,7 +122,7 @@ asyncio.run(main())
 import { open, RetrievalBuilder } from "lunaris";
 
 async function main() {
-  const handle = await open("moon://127.0.0.1:6379");
+  const handle = await open("moon://127.0.0.1:6380");
 
   const lsn = await handle.ingest({
     id: "01JABCDEFGHJKMNPQRSTVWXYZ0", // 26-char Crockford-base32 ULID
@@ -148,7 +148,7 @@ async function main() {
 main();
 ```
 
-Both examples target a running Moon backend at `moon://127.0.0.1:6379`.
+Both examples target a running Moon backend at `moon://127.0.0.1:6380`.
 Swap in `postgres://postgres:pass@localhost/lunaris` to run against
 Postgres instead — Lunaris routes both URL schemes through the same
 `StoragePort` trait.
@@ -204,7 +204,7 @@ const handle = await open(url, {
 
 | Scheme       | Backend          | Example                                         |
 | ------------ | ---------------- | ----------------------------------------------- |
-| `moon://`    | Moon (RediSearch)| `moon://127.0.0.1:6379`                         |
+| `moon://`    | Moon (RediSearch)| `moon://127.0.0.1:6380`                         |
 | `postgres://`| PostgreSQL       | `postgres://user:pass@localhost:5432/lunaris`   |
 
 Both backends support the full Lunaris surface. Moon is faster on hot

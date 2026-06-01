@@ -70,7 +70,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 }
 ```
 
-Swap the URL for `moon://localhost:6379` — the parity test asserts both
+Swap the URL for `moon://localhost:6380` — the parity test asserts both
 backends return the same set and that source prefixes are preserved.
 
 ## Notes

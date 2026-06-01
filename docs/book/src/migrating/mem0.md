@@ -49,7 +49,7 @@ m.add(
 ```python
 import lunaris
 
-mem = lunaris.Lunaris.open("moon://localhost:6390")
+mem = lunaris.Lunaris.open("moon://localhost:6380")
 scope = lunaris.Scope("user.alice")
 mem.scoped(scope).ingest(
     lunaris.EpisodeBuilder("chat:session-1/turn-1",

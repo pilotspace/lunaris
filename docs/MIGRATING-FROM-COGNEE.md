@@ -74,7 +74,7 @@ await cognee.cognify(["bio"])  # runs the default Tasks pipeline:
 ```python
 import lunaris
 
-mem = lunaris.Lunaris.open("moon://localhost:6390")
+mem = lunaris.Lunaris.open("moon://localhost:6380")
 scope = lunaris.Scope("bio")
 mem.scoped(scope).ingest(
     lunaris.EpisodeBuilder("chat:session-1/turn-1",
@@ -167,7 +167,7 @@ class MyExtractor(lunaris.Extractor):
         # ... domain-specific logic
         return lunaris.ExtractionResult(entities=[...], relations=[...])
 
-mem = lunaris.Lunaris.open("moon://localhost:6390").with_extractor(MyExtractor())
+mem = lunaris.Lunaris.open("moon://localhost:6380").with_extractor(MyExtractor())
 ```
 
 If you have N custom Tasks composing into a pipeline, Cognee's

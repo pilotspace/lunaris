@@ -151,7 +151,7 @@ cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
 ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
-# Enable to run the integration tests that require a live Moon instance at moon://localhost:6390
+# Enable to run the integration tests that require a live Moon instance at moon://localhost:6380
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris
 pg-it   = ["lunaris-storage-postgres/pg-it"]

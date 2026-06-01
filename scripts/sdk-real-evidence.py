@@ -24,7 +24,7 @@ import time
 import traceback
 from pathlib import Path
 
-MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6379")
+MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6380")
 OUT_DIR = Path(os.environ.get("LUNARIS_SDK_EVIDENCE_DIR", "milestones/v0.1.1-sdk-real"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
