@@ -351,9 +351,11 @@ Codex hooks capture tool activity automatically:
 
 `Read`, `Edit`, `MultiEdit`, `Write`, and `Bash` are captured by default.
 When `LUNARIS_CONTEXT_CAPTURE_FAST=1`, Codex pre/post tool capture is sent to
-the warm sidecar and the sidecar enqueues the memory write before returning.
-This keeps hook latency low while the heavier embedding and storage work
-continues in the background. Secret-bearing paths such as `.env`, PEM files,
+the warm sidecar and the sidecar acknowledges before doing any full semantic
+recall work. Capture writes use the same embed-free `NoopEmbedder` path as
+`lunaris-hook`, so tool capture does not run GGUF inference; the content remains
+available to Moon's keyword/BM25 surface immediately, while semantic recall uses
+the normal query embedder path. Secret-bearing paths such as `.env`, PEM files,
 SSH keys, and `.git/**` remain denied by the built-in policy.
 
 ### Performance defaults
@@ -376,14 +378,17 @@ The adapter still accepts the older `LUNARIS_CODEX_CONTEXT_*` and
 `LUNARIS_CODEX_POST_TOOL_*` variables as compatibility aliases. Prefer the
 shared `LUNARIS_CONTEXT_*` names for both Codex and Claude Code.
 
-Measured local smoke on Apple Silicon with Moon storage and the quantized
-Granite embedder:
+Measured local smoke on Apple Silicon with release binaries, Moon storage, and
+the quantized Granite embedder:
 
 | Path | Typical hot timing |
 |------|--------------------|
-| fast pre-tool capture | 57-68 ms |
-| cached prompt/post-tool injection through adapter | 68-86 ms |
-| direct warm `lunaris-contextd` recall | 17-19 ms |
+| standalone `lunaris-hook` capture | p50 4.83 ms, p99 5.55 ms |
+| synchronous `lunaris-contextd` capture write | p50 0.42 ms, p99 0.70 ms |
+| MCP `memory.status` Moon/MQ probe | 0.4-0.5 ms |
+| MCP cached/repeated `memory.ingest` storage path | p50 0.6 ms |
+| MCP unique `memory.ingest` with fresh GGUF embedding | p50 136 ms |
+| MCP hot `memory.recall` after cache warmup | p50 2.0-2.1 ms |
 
 The first prompt for a new query can still take a few hundred milliseconds
 because the local query embedding is computed once before being cached. Keep the

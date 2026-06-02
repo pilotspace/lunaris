@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use lunaris::{EpisodeBuilder, Lunaris, Query};
-use lunaris_core::{Lsn, Scope};
+use lunaris::{Lunaris, Query};
+use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort};
 use lunaris_retrieve::{RawHit, SourceOp, hydrate};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -118,6 +118,7 @@ impl ContextResponse {
 #[derive(Clone)]
 pub struct ContextService {
     handles: Arc<Mutex<HashMap<String, Arc<Lunaris>>>>,
+    storages: Arc<Mutex<HashMap<String, Arc<dyn StoragePort>>>>,
     query_embeddings: Arc<Mutex<HashMap<String, Vec<f32>>>>,
 }
 
@@ -125,6 +126,7 @@ impl ContextService {
     pub fn new() -> Self {
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
+            storages: Arc::new(Mutex::new(HashMap::new())),
             query_embeddings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -270,6 +272,18 @@ impl ContextService {
         let handle = Arc::new(Lunaris::open(&storage_url).await?);
         let mut handles = self.handles.lock().await;
         Ok(handles.entry(key).or_insert(handle).clone())
+    }
+
+    async fn storage_for_scope(&self, scope: &Scope) -> anyhow::Result<Arc<dyn StoragePort>> {
+        let key = scope.as_str().to_owned();
+        if let Some(existing) = self.storages.lock().await.get(&key).cloned() {
+            return Ok(existing);
+        }
+
+        let storage_url = crate::scope::resolve_storage_url(scope)?;
+        let storage = lunaris::open(&storage_url).await?;
+        let mut storages = self.storages.lock().await;
+        Ok(storages.entry(key).or_insert(storage).clone())
     }
 
     async fn recall_and_trace(
@@ -542,7 +556,6 @@ impl ContextService {
         tool: Option<String>,
         payload: Value,
     ) -> anyhow::Result<ContextResponse> {
-        let handle = self.handle_for_scope(scope).await?;
         let content = summarize_json_payload(&payload, 4000);
         let mut meta = Map::new();
         if let Some(session_id) = session_id {
@@ -552,10 +565,7 @@ impl ContextService {
             meta.insert("tool_name".into(), Value::String(tool));
         }
         meta.insert("capture_kind".into(), Value::String(source.to_owned()));
-        let lsn = handle
-            .scoped(scope.clone())
-            .ingest(EpisodeBuilder::new(source, content).metadata(meta))
-            .await?;
+        let lsn = self.capture_lightweight(scope, source, content, meta).await?;
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
@@ -585,7 +595,6 @@ impl ContextService {
         injected_memory_ids: Vec<String>,
         outcome: Option<String>,
     ) -> anyhow::Result<ContextResponse> {
-        let handle = self.handle_for_scope(scope).await?;
         let content = format!(
             "turn feedback\ninjected_memory_ids: {}\noutcome: {}",
             injected_memory_ids.join(","),
@@ -599,10 +608,7 @@ impl ContextService {
             "injected_memory_ids".into(),
             Value::Array(injected_memory_ids.into_iter().map(Value::String).collect()),
         );
-        let lsn = handle
-            .scoped(scope.clone())
-            .ingest(EpisodeBuilder::new("codex:turn_feedback", content).metadata(meta))
-            .await?;
+        let lsn = self.capture_lightweight(scope, "codex:turn_feedback", content, meta).await?;
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
@@ -614,7 +620,6 @@ impl ContextService {
         session_id: Option<&str>,
         memory_ids: Vec<String>,
     ) -> anyhow::Result<()> {
-        let handle = self.handle_for_scope(scope).await?;
         let mut meta = Map::new();
         meta.insert("injection_id".into(), Value::String(injection_id.to_owned()));
         meta.insert("phase".into(), Value::String(phase.to_owned()));
@@ -629,11 +634,23 @@ impl ContextService {
             "memory injection {injection_id}\nphase: {phase}\nmemory_ids: {}",
             memory_ids.join(",")
         );
-        handle
-            .scoped(scope.clone())
-            .ingest(EpisodeBuilder::new("codex:memory_injection", content).metadata(meta))
-            .await?;
+        self.capture_lightweight(scope, "codex:memory_injection", content, meta).await?;
         Ok(())
+    }
+
+    async fn capture_lightweight(
+        &self,
+        scope: &Scope,
+        source: &str,
+        content: String,
+        metadata: Map<String, Value>,
+    ) -> anyhow::Result<Lsn> {
+        let storage = self.storage_for_scope(scope).await?;
+        let clock = HlcClock::new(0);
+        let mut episode = Episode::new(scope.clone(), source.to_owned(), content, &clock);
+        episode.metadata = metadata;
+        let embedder = NoopEmbedder::default();
+        Ok(lunaris_ingest::ingest_episode(storage.as_ref(), &embedder, &clock, episode).await?)
     }
 
     fn spawn_trace_injection(
