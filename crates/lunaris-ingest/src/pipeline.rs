@@ -145,7 +145,7 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     }
 
     // Steps 4+5: assemble WriteOps and issue the single atomic write (INGEST-04).
-    assemble_and_write(storage, &episode, chunks, &heading_records).await
+    assemble_and_write(storage, &episode, chunks, &heading_records, clock).await
 }
 
 /// Assemble the full `Vec<WriteOp>` for one Episode (DocTree + Episode KvPut +
@@ -157,11 +157,19 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
 /// Both the standard path ([`ingest_episode_inner`]) and the bake-off path
 /// ([`ingest_episode_with_bakeoff`]) route through this function so the
 /// single-write invariant holds regardless of which entry point is used.
+///
+/// # Clock threading
+///
+/// `clock` must be the same `HlcClock` instance used to stamp `Episode.bt` and
+/// `Chunk.bt`. Threading it here ensures `Community.bt` is stamped by the same
+/// clock — critical for `read_as_of(T)` correctness where all three primitive
+/// types must be visible at the same logical time T.
 async fn assemble_and_write<S: StoragePort + ?Sized>(
     storage: &S,
     episode: &Episode,
     chunks: Vec<Chunk>,
     heading_records: &[crate::chunker::HeadingRecord],
+    clock: &HlcClock,
 ) -> Result<Lsn, LunarisError> {
     let source_char_len = episode.content.chars().count();
     let doctree =
@@ -174,7 +182,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     // build_raptor_tree wires Chunk.parent_id; use wired_chunks for all
     // downstream serialisation so parent_id is persisted correctly.
     let (mut communities, wired_chunks) =
-        build_raptor_tree(&doctree, &chunks, &episode.scope, &episode.source, clock_ref());
+        build_raptor_tree(&doctree, &chunks, &episode.scope, &episode.source, clock);
 
     // Phase 29 TREE-02: summarise each community bottom-up (deepest level first).
     // ExtractiveSummarizer is the default: no LLM required, always succeeds.
@@ -263,23 +271,6 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     // INGEST-04: the single atomic write for this episode (see module-level invariant).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(lsn)
-}
-
-/// Returns a zero-epoch [`HlcClock`] reference for internal use within
-/// `assemble_and_write`.
-///
-/// `Community::new` requires a clock for its `BiTemporal::now` stamp.
-/// The clock is not threaded through `assemble_and_write`'s current signature
-/// (to preserve public API stability per Plan 03 constraints). A zero-epoch
-/// HLC is sufficient because the Community's `bt` field is only used for
-/// MVCC snapshot reads, and the write HLC comes from `storage.atomic_write`'s
-/// return value (the LSN). This is equivalent to how `Chunk` BT stamps work
-/// in the current pipeline.
-#[inline]
-fn clock_ref() -> &'static HlcClock {
-    use std::sync::{Arc, OnceLock};
-    static CLOCK: OnceLock<Arc<HlcClock>> = OnceLock::new();
-    CLOCK.get_or_init(|| HlcClock::new(0)).as_ref()
 }
 
 /// Embed `drafts` in batches of [`INGEST_EMBED_BATCH_SIZE`]. On batch failure,
@@ -409,7 +400,7 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     }
 
     // Step 4: delegate to assemble_and_write — the single storage write call (INGEST-04).
-    assemble_and_write(storage, &episode, chunks, &winner.heading_records).await
+    assemble_and_write(storage, &episode, chunks, &winner.heading_records, clock).await
 }
 
 #[cfg(test)]

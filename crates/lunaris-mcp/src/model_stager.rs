@@ -55,6 +55,7 @@ pub(crate) enum ModelKind {
     /// Mirrored from `gpustack/bge-reranker-v2-m3-GGUF` (11k downloads;
     /// highest-quality community conversion). LFS sha256 verified via HF API
     /// on 2026-05-24.
+    #[allow(dead_code)]
     RerankerBgeV2M3Q5KM,
 }
 

@@ -14,7 +14,7 @@
 //! other; they share the on-disk file by convention.
 
 pub(crate) use lunaris_core::scope_resolver::{
-    ScopeRecord, ScopeResolveError, ScopeStore, blake3_hex64, scopes_file_path,
+    ScopeRecord, ScopeResolveError, ScopeStore, scopes_file_path,
 };
 
 use lunaris_core::Scope;
@@ -111,6 +111,7 @@ pub(crate) fn resolve(override_: Option<&str>) -> Result<Scope, ScopeResolveErro
 }
 
 /// Testable variant — accepts explicit cwd + scopes_path for test isolation.
+#[cfg(test)]
 pub(crate) fn resolve_with_path(
     override_: Option<&str>,
     cwd: &Path,
