@@ -3,7 +3,8 @@
 Status: stdio MCP plus Codex hooks. Lunaris can be used in Codex as:
 
 - an MCP memory server (`memory.ingest`, `memory.recall`, `memory.forget`,
-  `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`);
+  `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
+  `memory.status`);
 - an async capture hook for prompts, tool calls, compaction, session starts,
   subagents, and stops;
 - a proactive context injector before user prompts and after useful tool calls;
@@ -127,7 +128,7 @@ From a Lunaris checkout:
 scripts/setup-lunaris-agents.py --agent codex --runner local
 
 # Also build the vendored Moon server with its default feature set
-# (MQ compiled in; graph + text-index default) for moon://127.0.0.1:6380.
+# (mq + graph + text-index default) for moon://127.0.0.1:6380.
 scripts/setup-lunaris-agents.py --agent codex --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
@@ -143,8 +144,7 @@ The script:
 - writes `[mcp_servers.lunaris]` using either the local `target/release/lunaris-mcp`
   binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @lunaris/mcp`;
 - optionally builds the vendored Moon release binary with `--build-moon`;
-  Moon compiles MQ unconditionally, and its default features enable graph and
-  text-index support;
+  Moon's default feature set enables `mq`, graph, and text-index support;
 - defaults storage to Moon at `moon://127.0.0.1:6380`, writing
   `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL` for hooks/contextd;
 - enables `LUNARIS_GRAPH_ENABLED=1` when the effective storage URL is
@@ -551,6 +551,7 @@ Summary:
 | `memory.list_scopes` | _(none)_ | `{ scopes[] }` |
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
+| `memory.status` | _(none)_ | backend capabilities plus MQ queue depth probes |
 
 ---
 
@@ -679,6 +680,21 @@ field is stored in metadata — future `memory.recall` queries can filter by pat
   "intent": "add dedupe_key field for HOOK-05 idempotency"
 }}
 ```
+
+### `memory.status` (backend + MQ health)
+
+Report the bound scope, backend capability profile, and MQ-backed queue probes
+for `__lunaris_verify__` and `__lunaris_consolidate__`.
+
+```json
+{"name": "memory.status", "arguments": {}}
+```
+
+The response includes `queue_native`, `graph_native`, `rerank_native`,
+`native_rrf`, `max_vector_dim`, `max_scopes_recommended`, `cypher_dialect`, and
+queue depth probes. On Moon storage, `queue_native: true` confirms MCP
+ingest/recall health checks are using Moon's MQ command family through Lunaris
+storage.
 
 ---
 

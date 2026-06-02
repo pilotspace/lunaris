@@ -14,6 +14,7 @@
 //! | `memory.list_scopes`      | 2.C  | implemented      |
 //! | `memory.record_decision`  | 25   | implemented      |
 //! | `memory.record_edit`      | 25   | implemented      |
+//! | `memory.status`           | 26   | implemented      |
 
 pub(crate) mod forget;
 pub(crate) mod ingest;
@@ -21,6 +22,7 @@ pub(crate) mod list_scopes;
 pub(crate) mod recall;
 pub(crate) mod record_decision;
 pub(crate) mod record_edit;
+pub(crate) mod status;
 
 // ── Shared error type ─────────────────────────────────────────────────────────
 

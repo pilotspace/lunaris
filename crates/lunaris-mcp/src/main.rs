@@ -1,7 +1,8 @@
 //! `lunaris-mcp` — MCP server exposing Lunaris memory to Claude Code / Codex.
 //!
 //! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
-//! `memory.list_scopes`, `memory.record_decision`, and `memory.record_edit`.
+//! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`, and
+//! `memory.status`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -39,6 +40,7 @@ use crate::tools::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    status::{StatusParams, StatusResponse},
 };
 
 // Alias for the JSON wrapper so tool method signatures stay concise.
@@ -69,7 +71,7 @@ struct Cli {
 
 // ── Server handler ────────────────────────────────────────────────────────────
 
-/// Lunaris MCP server — five memory tools registered.
+/// Lunaris MCP server — memory tools registered.
 ///
 /// `state` is `Clone`-able because `AppState` wraps `Arc<Lunaris>`. The
 /// `ToolRouter` is constructed once at startup via `Self::lunaris_tool_router()`
@@ -201,6 +203,19 @@ impl LunarisMcpServer {
             .map(Json)
             .map_err(rmcp::ErrorData::from)
     }
+
+    /// Report backend capabilities and queue health for the bound scope.
+    #[tool(
+        name = "memory.status",
+        description = "Report Lunaris backend capabilities and MQ-backed queue health \
+                       for the active memory scope."
+    )]
+    async fn status(
+        &self,
+        Parameters(params): Parameters<StatusParams>,
+    ) -> Result<Json<StatusResponse>, rmcp::ErrorData> {
+        tools::status::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -211,7 +226,7 @@ impl ServerHandler for LunarisMcpServer {
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
                 "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
-             record decisions, and record edits. Scope is bound at server startup."
+             record decisions, record edits, and inspect backend status. Scope is bound at server startup."
                     .to_string(),
             )
     }

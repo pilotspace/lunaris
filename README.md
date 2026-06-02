@@ -126,7 +126,7 @@ Install Lunaris into Codex and Claude Code with MCP plus hooks:
 # Verified local checkout setup.
 scripts/setup-lunaris-agents.py --agent both --runner local
 
-# Also build the bundled Moon server (MQ compiled in; graph + text-index default).
+# Also build the bundled Moon server (mq + graph + text-index default).
 scripts/setup-lunaris-agents.py --agent both --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
@@ -142,6 +142,8 @@ Moon running on that URL, override with `--moon-url`, or use
 
 Repeated prompts and recall queries use an exact-text embedding LRU cache
 (`LUNARIS_EMBED_CACHE_CAPACITY`, default `2048`; set `0` to disable).
+Use `memory.status` from MCP to verify Moon capabilities and MQ-backed
+`__lunaris_verify__` / `__lunaris_consolidate__` queue health.
 
 Use `--dry-run` to preview config changes and `--hooks off` for MCP-only setup.
 

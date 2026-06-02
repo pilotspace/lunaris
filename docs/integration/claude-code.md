@@ -3,7 +3,7 @@
 Status: stdio MCP plus lifecycle hooks and context injection. Agent setup
 defaults to Moon-backed storage with a SQLite fallback. Tools live:
 `memory.ingest`, `memory.recall`, `memory.forget`, `memory.list_scopes`,
-`memory.record_decision`, and `memory.record_edit`.
+`memory.record_decision`, `memory.record_edit`, and `memory.status`.
 
 ---
 
@@ -20,7 +20,7 @@ From a Lunaris checkout:
 scripts/setup-lunaris-agents.py --agent claude --runner local
 
 # Also build the vendored Moon server with its default feature set
-# (MQ compiled in; graph + text-index default) for moon://127.0.0.1:6380.
+# (mq + graph + text-index default) for moon://127.0.0.1:6380.
 scripts/setup-lunaris-agents.py --agent claude --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
@@ -35,8 +35,7 @@ The script writes `mcpServers.lunaris`, installs the same Lunaris feature set
 used by Codex where Claude Code supports it, and creates
 `~/.claude/settings.json.bak` before writing. Use `--hooks off` for MCP-only
 setup. Add `--build-moon` to compile the vendored Moon release binary. Moon
-compiles MQ unconditionally, and its default features enable graph and
-text-index support.
+default feature set enables `mq`, graph, and text-index support.
 
 Installed Claude Code hooks:
 
@@ -466,6 +465,21 @@ field is stored in metadata — future `memory.recall` queries can filter by pat
   "intent": "add dedupe_key field for HOOK-05 idempotency"
 }}
 ```
+
+### `memory.status` (backend + MQ health)
+
+Report the bound scope, backend capability profile, and MQ-backed queue probes
+for `__lunaris_verify__` and `__lunaris_consolidate__`.
+
+```json
+{"name": "memory.status", "arguments": {}}
+```
+
+The response includes `queue_native`, `graph_native`, `rerank_native`,
+`native_rrf`, `max_vector_dim`, `max_scopes_recommended`, `cypher_dialect`, and
+queue depth probes. On Moon storage, `queue_native: true` confirms MCP
+ingest/recall health checks are using Moon's MQ command family through Lunaris
+storage.
 
 ---
 
