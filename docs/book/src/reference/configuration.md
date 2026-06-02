@@ -116,6 +116,7 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 
 | Variable | Default | Controls |
 |---|---|---|
+| `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding LRU entries per `Lunaris` handle. Set `0` to disable. |
 | `LUNARIS_FASTEMBED_CACHE_DIR` | `~/.cache/lunaris/models/fastembed/` | Where the ONNX weights are downloaded / cached |
 | `LUNARIS_FASTEMBED_EXECUTION` | `cpu` | `cpu` \| `cuda` \| `coreml` execution provider |
 | `LUNARIS_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for the `ollama` embedder |

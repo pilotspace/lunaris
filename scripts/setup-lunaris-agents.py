@@ -126,8 +126,8 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "Build the vendored Moon server in release mode. MQ, graph, and text-index "
-            "are compiled in by Moon's default feature set."
+            "Build the vendored Moon server in release mode. MQ is compiled in; "
+            "Moon's default feature set also enables graph and text-index."
         ),
     )
     parser.add_argument(
