@@ -2,8 +2,8 @@
 """Lunaris-via-MCP stdio benchmark.
 
 Spawns the lunaris-mcp binary, completes the JSON-RPC initialize handshake,
-then measures cold + warm latencies for tools/list, memory.ingest, and
-memory.recall. Reports p50 / p95 / p99 per operation.
+then measures cold + warm latencies for tools/list, memory.status,
+memory.ingest, and memory.recall. Reports p50 / p95 / p99 per operation.
 
 Usage:
     python3 scripts/bench-mcp-stdio.py [--n-ingest 100] [--n-recall 100]
@@ -38,6 +38,10 @@ def percentile(values: list[float], p: float) -> float:
     if f == c:
         return s[f]
     return s[f] + (s[c] - s[f]) * (k - f)
+
+
+def tool_json(result: dict) -> dict:
+    return json.loads(result["content"][0]["text"])
 
 
 class McpClient:
@@ -292,6 +296,24 @@ def main() -> int:
         print(f"  mean {statistics.mean(ingest_lat):7.1f} ms")
         print()
 
+        # === memory.status ===
+        t0 = time.perf_counter()
+        status_result = client.call("tools/call", {"name": "memory.status", "arguments": {}})
+        status_ms = (time.perf_counter() - t0) * 1000
+        status = tool_json(status_result)
+        queue_summary = ", ".join(
+            f"{q.get('topic')}={'ok' if q.get('available') else 'unavailable'}"
+            f":{q.get('depth') if q.get('depth') is not None else q.get('error')}"
+            for q in status.get("queues", [])
+        )
+        print("memory.status")
+        print(f"  latency       {status_ms:7.1f} ms")
+        print(f"  queue_native  {status.get('queue_native')}")
+        print(f"  graph_native  {status.get('graph_native')}")
+        print(f"  native_rrf    {status.get('native_rrf')}")
+        print(f"  queues        {queue_summary}")
+        print()
+
         # === memory.recall ===
         recall_lat: list[float] = []
         queries = [
@@ -315,7 +337,7 @@ def main() -> int:
             if i >= args.warmup_recall:
                 recall_lat.append(elapsed_ms)
                 try:
-                    content = json.loads(result["content"][0]["text"])
+                    content = tool_json(result)
                     hit_counts.append(len(content.get("hits", [])))
                 except Exception:
                     hit_counts.append(-1)
