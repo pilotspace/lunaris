@@ -23,14 +23,21 @@
 //!
 //! ## Invariant
 //!
-//! `Lunaris` does NOT cache any per-call state. Every call constructs a fresh
-//! borrow of the three Arcs, so the same handle is safe to use from multiple
-//! tokio tasks concurrently.
+//! `Lunaris` does NOT cache mutable per-call retrieval state. Every call
+//! constructs a fresh borrow of the shared Arcs, so the same handle is safe to
+//! use from multiple tokio tasks concurrently. The production constructor wraps
+//! the embedder in a small exact-text LRU cache so repeated agent prompts and
+//! repeated chunk text do not re-run model inference.
 
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use lunaris_consolidate::Consolidator;
-use lunaris_core::{Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StoragePort};
+use lunaris_core::{
+    Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StorageError, StoragePort,
+};
 use lunaris_ingest::{BakoffConfig, TokenCounter, make_token_counter};
 use ulid::Ulid;
 
@@ -139,6 +146,93 @@ pub struct Lunaris {
     pub(crate) bakeoff_config: Option<Arc<BakoffConfig>>,
 }
 
+struct CachedEmbedder {
+    inner: Arc<dyn Embedder>,
+    cache: parking_lot::RwLock<lru::LruCache<String, Vec<f32>>>,
+    hits: AtomicUsize,
+    misses: AtomicUsize,
+}
+
+impl CachedEmbedder {
+    fn new(inner: Arc<dyn Embedder>, capacity: NonZeroUsize) -> Self {
+        Self {
+            inner,
+            cache: parking_lot::RwLock::new(lru::LruCache::new(capacity)),
+            hits: AtomicUsize::new(0),
+            misses: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl std::fmt::Debug for CachedEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedEmbedder")
+            .field("dim", &self.inner.dim())
+            .field("cache_len", &self.cache.read().len())
+            .field("hits", &self.hits.load(Ordering::Relaxed))
+            .field("misses", &self.misses.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for CachedEmbedder {
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        let mut out: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
+        let mut missing: HashMap<String, Vec<usize>> = HashMap::new();
+
+        {
+            let cache = self.cache.read();
+            for (idx, input) in inputs.iter().enumerate() {
+                if let Some(cached) = cache.peek(*input) {
+                    out[idx] = Some(cached.clone());
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    missing.entry((*input).to_string()).or_default().push(idx);
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            let keys: Vec<String> = missing.keys().cloned().collect();
+            let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+            let embedded = self.inner.embed_batch(&refs).await?;
+            if embedded.len() != keys.len() {
+                return Err(LunarisError::Storage(StorageError::Backend(format!(
+                    "cached embedder inner returned {} rows for {} inputs",
+                    embedded.len(),
+                    keys.len()
+                ))));
+            }
+
+            let mut cache = self.cache.write();
+            for (key, embedding) in keys.into_iter().zip(embedded.into_iter()) {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                cache.put(key.clone(), embedding.clone());
+                if let Some(indices) = missing.remove(&key) {
+                    for idx in indices {
+                        out[idx] = Some(embedding.clone());
+                    }
+                }
+            }
+        }
+
+        out.into_iter()
+            .map(|row| {
+                row.ok_or_else(|| {
+                    LunarisError::Storage(StorageError::Backend(
+                        "cached embedder failed to fill an output row".into(),
+                    ))
+                })
+            })
+            .collect()
+    }
+}
+
 impl std::fmt::Debug for Lunaris {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Lunaris")
@@ -244,6 +338,7 @@ impl Lunaris {
         url: &str,
         embedder: Arc<dyn Embedder>,
     ) -> Result<Self, LunarisError> {
+        let embedder = maybe_cached_embedder(embedder);
         let scheme = url.split("://").next().unwrap_or("");
         let clock = HlcClock::new(0);
         // Build the BPE token counter from the embedder's tokenizer.json.
@@ -553,7 +648,7 @@ impl Lunaris {
                  Use try_with_embedder() to refuse the swap, or open_with_embedder() for a fresh handle."
             );
         }
-        self.embedder = embedder;
+        self.embedder = maybe_cached_embedder(embedder);
         self
     }
 
@@ -610,7 +705,7 @@ impl Lunaris {
                  similarity scores)"
             ))));
         }
-        self.embedder = embedder;
+        self.embedder = maybe_cached_embedder(embedder);
         Ok(self)
     }
 
@@ -1449,6 +1544,15 @@ pub const PREWARM_CONCURRENCY_ENV_VAR: &str = "LUNARIS_PREWARM_CONCURRENCY";
 /// Default semaphore capacity for speculative warm-up recalls.
 const PREWARM_CONCURRENCY_DEFAULT: usize = 4;
 
+/// Env var that controls the exact-text embedding cache capacity.
+///
+/// Set to `0` to disable the cache. The default is intentionally modest:
+/// enough for repeated agent prompts, context-injection recalls, and common
+/// chunk text, but bounded so long-running agents do not grow without limit.
+pub const EMBED_CACHE_CAPACITY_ENV_VAR: &str = "LUNARIS_EMBED_CACHE_CAPACITY";
+
+const EMBED_CACHE_CAPACITY_DEFAULT: usize = 2048;
+
 /// Resolve the warm-up semaphore capacity from [`PREWARM_CONCURRENCY_ENV_VAR`].
 ///
 /// Non-numeric, `0`, and unset values all return `PREWARM_CONCURRENCY_DEFAULT`
@@ -1490,6 +1594,34 @@ fn resolve_prewarm_concurrency() -> usize {
         );
     });
     capacity
+}
+
+fn embed_cache_capacity() -> Option<NonZeroUsize> {
+    let capacity = match std::env::var(EMBED_CACHE_CAPACITY_ENV_VAR).ok().as_deref() {
+        None | Some("") => EMBED_CACHE_CAPACITY_DEFAULT,
+        Some("0") => return None,
+        Some(raw) => match raw.trim().parse::<usize>() {
+            Ok(0) => return None,
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    env = EMBED_CACHE_CAPACITY_ENV_VAR,
+                    value = raw,
+                    default = EMBED_CACHE_CAPACITY_DEFAULT,
+                    "LUNARIS_EMBED_CACHE_CAPACITY is not a valid non-negative integer; using default"
+                );
+                EMBED_CACHE_CAPACITY_DEFAULT
+            }
+        },
+    };
+    NonZeroUsize::new(capacity)
+}
+
+fn maybe_cached_embedder(embedder: Arc<dyn Embedder>) -> Arc<dyn Embedder> {
+    match embed_cache_capacity() {
+        Some(capacity) => Arc::new(CachedEmbedder::new(embedder, capacity)) as Arc<dyn Embedder>,
+        None => embedder,
+    }
 }
 
 static EMBEDDER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
@@ -2012,6 +2144,24 @@ impl Reranker for LazyQuantizedReranker {
 #[cfg(test)]
 mod backend_resolution_tests {
     use super::*;
+    use lunaris_core::StubEmbedder;
+
+    struct CountingEmbedder {
+        inner: StubEmbedder,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for CountingEmbedder {
+        fn dim(&self) -> usize {
+            self.inner.dim()
+        }
+
+        async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.inner.embed_batch(inputs).await
+        }
+    }
 
     #[test]
     fn default_model_dir_layout_is_canonical() {
@@ -2039,6 +2189,27 @@ mod backend_resolution_tests {
         assert_eq!(EMBEDDER_GGUF_ENV_VAR, "LUNARIS_EMBEDDER_GGUF");
         assert_eq!(RERANKER_GGUF_ENV_VAR, "LUNARIS_RERANKER_GGUF");
         assert_eq!(EMBED_DIM_ENV_VAR, "LUNARIS_EMBED_DIM");
+    }
+
+    #[tokio::test]
+    async fn cached_embedder_dedupes_batch_and_reuses_later_hits() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner = Arc::new(CountingEmbedder { inner: StubEmbedder::new(8), calls: calls.clone() })
+            as Arc<dyn Embedder>;
+        let cached = CachedEmbedder::new(inner, NonZeroUsize::new(8).unwrap());
+
+        let first = cached.embed_batch(&["alpha", "alpha", "beta"]).await.unwrap();
+        assert_eq!(first.len(), 3);
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "first batch should dedupe misses");
+        assert_eq!(first[0], first[1]);
+
+        let second = cached.embed_batch(&["beta", "alpha"]).await.unwrap();
+        assert_eq!(second.len(), 2);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "second batch should be served entirely from cache"
+        );
     }
 }
 

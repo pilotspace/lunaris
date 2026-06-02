@@ -127,7 +127,7 @@ From a Lunaris checkout:
 scripts/setup-lunaris-agents.py --agent codex --runner local
 
 # Also build the vendored Moon server with its default feature set
-# (MQ + graph + text-index) for the default moon://127.0.0.1:6380 storage path.
+# (MQ compiled in; graph + text-index default) for moon://127.0.0.1:6380.
 scripts/setup-lunaris-agents.py --agent codex --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
@@ -143,7 +143,8 @@ The script:
 - writes `[mcp_servers.lunaris]` using either the local `target/release/lunaris-mcp`
   binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @lunaris/mcp`;
 - optionally builds the vendored Moon release binary with `--build-moon`;
-  Moon's default build includes MQ, graph, and text-index support;
+  Moon compiles MQ unconditionally, and its default features enable graph and
+  text-index support;
 - defaults storage to Moon at `moon://127.0.0.1:6380`, writing
   `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL` for hooks/contextd;
 - enables `LUNARIS_GRAPH_ENABLED=1` when the effective storage URL is
@@ -530,6 +531,7 @@ LUNARIS_MCP_SKIP_STAGE = "1"
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
 | `LUNARIS_MCP_STORAGE` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage backend URL |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
+| `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
 
