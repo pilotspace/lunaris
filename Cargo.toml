@@ -68,6 +68,11 @@ members = [
   "crates/lunaris-embed-mlx-spike",
   "xtask",
 ]
+exclude = [
+  # Vendored server package built independently by setup/dev flows; Lunaris
+  # depends only on its Rust SDK via `vendor/moon/sdk/rust`.
+  "vendor/moon",
+]
 
 [workspace.package]
 version      = "0.3.0"

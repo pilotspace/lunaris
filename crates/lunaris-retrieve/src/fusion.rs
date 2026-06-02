@@ -214,11 +214,7 @@ pub async fn fuse_via_moon_native(
         .filter_map(|(h, score)| {
             let raw_key = h.key.into_bytes();
             let id = decode_moon_vector_key(&raw_key, &per_scope_index)?;
-            let metadata = h
-                .fields
-                .get("__metadata")
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                .unwrap_or(serde_json::Value::Null);
+            let metadata = parse_moon_metadata(&h.fields);
             Some(RawHit {
                 id,
                 score,
@@ -229,6 +225,20 @@ pub async fn fuse_via_moon_native(
             })
         })
         .collect())
+}
+
+/// Parse metadata from Moon text search hits.
+///
+/// Current Moon atomic writes store Lunaris metadata under `meta`; older
+/// adapters also accepted `__metadata`. Keep both spellings here so the
+/// Moon-native hybrid path has metadata parity with vector and keyword
+/// adapters.
+fn parse_moon_metadata(fields: &HashMap<String, String>) -> serde_json::Value {
+    fields
+        .get("__metadata")
+        .or_else(|| fields.get("meta"))
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Strip `<index>:` prefix and hex-decode the rest to 16-byte ULID. Mirrors
@@ -376,6 +386,42 @@ mod tests {
     fn compose_query_with_filter_none_returns_text() {
         let result = compose_query_with_filter("hello", &None);
         assert_eq!(result, "hello");
+    }
+
+    // ── Moon metadata parsing tests ──
+
+    #[test]
+    fn parse_moon_metadata_reads_current_meta_field() {
+        let fields = HashMap::from([("meta".to_string(), r#"{"source":"notes.md"}"#.to_string())]);
+
+        assert_eq!(parse_moon_metadata(&fields), serde_json::json!({"source":"notes.md"}));
+    }
+
+    #[test]
+    fn parse_moon_metadata_reads_legacy_metadata_field() {
+        let fields =
+            HashMap::from([("__metadata".to_string(), r#"{"source":"legacy.md"}"#.to_string())]);
+
+        assert_eq!(parse_moon_metadata(&fields), serde_json::json!({"source":"legacy.md"}));
+    }
+
+    #[test]
+    fn parse_moon_metadata_prefers_legacy_metadata_field_when_both_exist() {
+        let fields = HashMap::from([
+            ("__metadata".to_string(), r#"{"source":"legacy.md"}"#.to_string()),
+            ("meta".to_string(), r#"{"source":"current.md"}"#.to_string()),
+        ]);
+
+        assert_eq!(parse_moon_metadata(&fields), serde_json::json!({"source":"legacy.md"}));
+    }
+
+    #[test]
+    fn parse_moon_metadata_returns_null_for_missing_or_invalid_json() {
+        let missing = HashMap::new();
+        let invalid = HashMap::from([("meta".to_string(), "not-json".to_string())]);
+
+        assert_eq!(parse_moon_metadata(&missing), serde_json::Value::Null);
+        assert_eq!(parse_moon_metadata(&invalid), serde_json::Value::Null);
     }
 
     // ── inspect_branches tests ──
