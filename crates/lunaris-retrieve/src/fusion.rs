@@ -91,19 +91,28 @@ pub fn inspect_branches(inner: &dyn Retriever) -> Option<FusedBranchHint> {
     }
 
     let left_v = and.left.as_any().downcast_ref::<Vector>();
+    let right_v = and.right.as_any().downcast_ref::<Vector>();
+    let left_k = and.left.as_any().downcast_ref::<Keyword>();
     let right_k = and.right.as_any().downcast_ref::<Keyword>();
-    match (left_v, right_k) {
-        (Some(v), Some(k)) if v.index == k.index => Some(FusedBranchHint {
+
+    let vector_keyword = match (left_v, right_k, left_k, right_v) {
+        (Some(v), Some(k), _, _) => Some((v, k)),
+        (_, _, Some(k), Some(v)) => Some((v, k)),
+        _ => None,
+    };
+
+    match vector_keyword {
+        Some((v, k)) if v.index == k.index => Some(FusedBranchHint {
             kind: FusedKind::VectorKeywordSameIndex,
             index: v.index.clone(),
             k: v.k.max(k.k),
         }),
-        (Some(v), Some(k)) => Some(FusedBranchHint {
+        Some((v, k)) => Some(FusedBranchHint {
             kind: FusedKind::Other,
             index: v.index.clone(),
             k: v.k.max(k.k),
         }),
-        _ => Some(FusedBranchHint { kind: FusedKind::Other, index: String::new(), k: 0 }),
+        None => Some(FusedBranchHint { kind: FusedKind::Other, index: String::new(), k: 0 }),
     }
 }
 
@@ -382,12 +391,33 @@ mod tests {
     }
 
     #[test]
+    fn inspect_recognizes_keyword_plus_vector_same_index() {
+        let k = Keyword::bm25("chunks", 12);
+        let v = Vector::new("chunks", 30);
+        let and = AndRetriever::new(Box::new(k), Box::new(v));
+        let hint = inspect_branches(&and).expect("must detect");
+        assert_eq!(hint.kind, FusedKind::VectorKeywordSameIndex);
+        assert_eq!(hint.index, "chunks");
+        assert_eq!(hint.k, 30);
+    }
+
+    #[test]
     fn inspect_recognizes_different_index_as_other() {
         let v = Vector::new("chunks", 30);
         let k = Keyword::bm25("entities", 30);
         let and = AndRetriever::new(Box::new(v), Box::new(k));
         let hint = inspect_branches(&and).expect("AND visible");
         assert_eq!(hint.kind, FusedKind::Other);
+    }
+
+    #[test]
+    fn inspect_recognizes_reversed_different_index_as_other() {
+        let k = Keyword::bm25("entities", 30);
+        let v = Vector::new("chunks", 30);
+        let and = AndRetriever::new(Box::new(k), Box::new(v));
+        let hint = inspect_branches(&and).expect("AND visible");
+        assert_eq!(hint.kind, FusedKind::Other);
+        assert_eq!(hint.index, "chunks");
     }
 
     #[test]
