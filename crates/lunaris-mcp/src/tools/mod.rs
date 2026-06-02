@@ -9,9 +9,9 @@
 //! | Tool                      | Wave | Status           |
 //! |---------------------------|------|------------------|
 //! | `memory.ingest`           | 2.A  | implemented      |
-//! | `memory.recall`           | 2.B  | stub (NotImpl)   |
-//! | `memory.forget`           | 2.C  | stub (NotImpl)   |
-//! | `memory.list_scopes`      | 2.C  | stub (NotImpl)   |
+//! | `memory.recall`           | 2.B  | implemented      |
+//! | `memory.forget`           | 2.C  | implemented      |
+//! | `memory.list_scopes`      | 2.C  | implemented      |
 //! | `memory.record_decision`  | 25   | implemented      |
 //! | `memory.record_edit`      | 25   | implemented      |
 
@@ -29,9 +29,9 @@ use thiserror::Error;
 
 /// Tool-layer error, converted to [`rmcp::ErrorData`] at the `#[tool]` boundary.
 ///
-/// `LunarisEngine` maps storage/ingest failures. `NotImplemented` is used for
-/// Wave 2.B/2.C stubs. `InvalidInput` surfaces field-validation errors that
-/// `serde` cannot catch (e.g. unparseable RFC-3339 strings).
+/// `LunarisEngine` maps storage/ingest failures. `InvalidInput` surfaces
+/// field-validation errors that `serde` cannot catch (e.g. unparseable
+/// RFC-3339 strings).
 #[derive(Debug, Error)]
 pub(crate) enum ToolError {
     #[error("lunaris engine: {0}")]
@@ -39,9 +39,6 @@ pub(crate) enum ToolError {
 
     #[error("invalid input: {0}")]
     InvalidInput(String),
-
-    #[error("not yet implemented in this wave")]
-    NotImplemented,
 }
 
 impl From<ToolError> for ErrorData {
@@ -49,7 +46,6 @@ impl From<ToolError> for ErrorData {
         match e {
             ToolError::LunarisEngine(inner) => ErrorData::internal_error(inner.to_string(), None),
             ToolError::InvalidInput(msg) => ErrorData::invalid_params(msg, None),
-            ToolError::NotImplemented => ErrorData::internal_error("not yet implemented", None),
         }
     }
 }

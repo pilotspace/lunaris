@@ -7,8 +7,22 @@
 //!   community ID; `Community.members` = direct-child community IDs + leaf chunk IDs.
 //! - **Leaf → section assignment** via the structural path (D2):
 //!   - If `chunk.heading_path` is non-empty, walk the DocTree by that title chain.
-//!   - If `heading_path` is empty (bake-off non-structural chunks), fall back to
-//!     byte-containment using `chunk.source_byte_span`.
+//!
+//! ## Byte-containment — NOT IMPLEMENTED (Phase 29 known limitation)
+//!
+//! D2 specifies a byte-containment fallback for non-structural bake-off winners
+//! (chunks with empty `heading_path`). That path is **not wired** in Phase 29:
+//! `source_byte_span` lives on `ChunkDraft` and is dropped after `into_chunk()`,
+//! so it is unavailable here.
+//!
+//! **Current behaviour for empty-`heading_path` chunks** (e.g. `SemanticBreakpointGenerator`
+//! winners from `ingest_episode_with_bakeoff`): they fall through to the ultimate fallback
+//! and are assigned to `doctree.roots[0]`, regardless of the actual document section they
+//! came from. This collapses multi-level tree topology for non-structural winners.
+//!
+//! Deferral rationale: propagating `source_byte_span` onto `Chunk` requires a core primitive
+//! schema change plus a units reconciliation (`source_byte_span` is bytes; `TocNode.char_span`
+//! is chars). Deferred to a future phase. See `TODO(phase-future)` in [`assign_leaf`].
 //!
 //! ## INGEST-04 compliance
 //!
@@ -76,9 +90,10 @@ pub fn raptor_community_id(
 /// # Leaf assignment (D2)
 /// - **Structural path** (default): `chunk.heading_path` non-empty → walk the DocTree
 ///   by title chain to find the deepest matching TocNode.
-/// - **Byte-containment fallback**: `heading_path` empty and `source_byte_span` present
-///   → find the TocNode whose `char_span` contains the leaf's start offset.
-/// - **Ultimate fallback**: assign to the shallowest root (level=0 or first root).
+/// - **Ultimate fallback**: `heading_path` empty → assign to `doctree.roots[0]`.
+///
+/// Note: byte-containment for non-structural bake-off winners is **not implemented**
+/// in Phase 29. See [`assign_leaf`] and the module-level doc for the deferral rationale.
 pub fn build_raptor_tree(
     doctree: &DocTree,
     chunks: &[Chunk],
@@ -222,6 +237,21 @@ fn collect_nodes(
 
 /// Assign a leaf chunk to its nearest enclosing community.
 ///
+/// # Assignment paths
+///
+/// 1. **Structural path** (default): `chunk.heading_path` non-empty → walk the DocTree
+///    by that title chain to the deepest matching [`TocNode`].
+/// 2. **Ultimate fallback**: `heading_path` empty → assign to `doctree.roots[0]`.
+///
+/// # Known limitation — byte-containment NOT implemented
+///
+/// D2 specifies a byte-containment path for non-structural bake-off winners
+/// (`heading_path` empty, `source_byte_span` present). This path is **not wired**:
+/// `source_byte_span` is dropped after `ChunkDraft::into_chunk()` and is unavailable
+/// on [`Chunk`] at this call site. Non-structural winners therefore collapse to
+/// `roots[0]`, destroying multi-level topology. See the module-level doc and
+/// `TODO(phase-future)` below for the deferral rationale.
+///
 /// Returns `Some(community_id)` or `None` if the DocTree is empty.
 fn assign_leaf(
     chunk: &Chunk,
@@ -285,6 +315,7 @@ fn find_by_byte_containment(byte_offset: usize, flat_nodes: &[FlatNode]) -> Opti
 
 /// Collect the set of all community IDs that are descendants of `root_id`
 /// (including `root_id` itself).
+#[cfg_attr(not(test), allow(dead_code))]
 fn collect_descendant_ids(
     root_id: Ulid,
     communities: &[Community],
@@ -301,4 +332,139 @@ fn collect_descendant_ids(
         }
     }
     result
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lunaris_core::{HlcClock, Scope};
+
+    use crate::chunker::tree::{DocTree, TocNode, TocNodeId};
+
+    const SCOPE: &str = "_dev_";
+    const SOURCE: &str = "test.md";
+
+    fn test_clock() -> std::sync::Arc<HlcClock> {
+        HlcClock::new(0)
+    }
+
+    fn dev_scope() -> Scope {
+        Scope::dev()
+    }
+
+    /// Build a minimal chunk with the given heading_path (no embedding, parent_id unset).
+    fn make_chunk(
+        scope: Scope,
+        episode_id: ulid::Ulid,
+        heading_path: Vec<String>,
+    ) -> lunaris_core::Chunk {
+        let clock = test_clock();
+        let mut c =
+            lunaris_core::Chunk::new(scope, episode_id, "dummy text", 2, 0, heading_path, &clock);
+        c.embedding = Some(vec![0.0f32; 4]);
+        c
+    }
+
+    /// Build a DocTree with two H1 roots, the second having one H2 child.
+    ///
+    /// ```text
+    /// H1 "Overview"      (roots[0])
+    /// H1 "Details"       (roots[1])
+    ///   H2 "Sub-details" (child of roots[1])
+    /// ```
+    fn two_root_doctree() -> DocTree {
+        let h1_overview = TocNode::new(
+            1,
+            "Overview".to_string(),
+            (0, 100),
+            TocNodeId::from_fields(SCOPE, SOURCE, 1, "Overview"),
+        );
+        let h2_sub = TocNode::new(
+            2,
+            "Sub-details".to_string(),
+            (150, 250),
+            TocNodeId::from_fields(SCOPE, SOURCE, 2, "Sub-details"),
+        );
+        let mut h1_details = TocNode::new(
+            1,
+            "Details".to_string(),
+            (100, 300),
+            TocNodeId::from_fields(SCOPE, SOURCE, 1, "Details"),
+        );
+        h1_details.children.push(h2_sub);
+        DocTree { roots: vec![h1_overview, h1_details] }
+    }
+
+    /// Discriminating test for the known Phase 29 limitation (Warning 1):
+    ///
+    /// A chunk with empty `heading_path` (e.g. produced by `SemanticBreakpointGenerator`
+    /// winning the bake-off) is assigned to `doctree.roots[0]`, NOT to the section
+    /// whose byte span contains the chunk. This is the documented "ultimate fallback"
+    /// behavior — byte-containment is NOT implemented in Phase 29.
+    ///
+    /// This test encodes the known-limited behavior so any future change (e.g. wiring
+    /// byte-containment) will require explicitly updating this assertion.
+    #[test]
+    fn empty_heading_path_chunk_lands_on_roots_zero() {
+        let scope = dev_scope();
+        let episode_id = ulid::Ulid::new();
+        let clock = test_clock();
+        let doctree = two_root_doctree();
+
+        // Chunk with NO heading_path — simulates a SemanticBreakpointGenerator winner.
+        let chunk = make_chunk(scope.clone(), episode_id, vec![]);
+
+        let (_, wired_chunks) = build_raptor_tree(&doctree, &[chunk], &scope, SOURCE, &clock);
+
+        assert_eq!(wired_chunks.len(), 1);
+        let wired = &wired_chunks[0];
+
+        // The chunk MUST land on roots[0] (the "Overview" H1), NOT on roots[1]
+        // or any of its children — byte-containment is not implemented.
+        let root0 = &doctree.roots[0];
+        let expected_parent = raptor_community_id(SCOPE, SOURCE, root0.char_span, root0.level);
+
+        assert_eq!(
+            wired.parent_id,
+            Some(expected_parent),
+            "Phase 29 known limitation: empty heading_path chunk must land on roots[0] \
+             (byte-containment NOT implemented). \
+             If this fails, byte-containment has been wired — update this test."
+        );
+    }
+
+    /// Structural path: a chunk with a populated heading_path lands on the matching section.
+    #[test]
+    fn structural_heading_path_chunk_lands_on_correct_section() {
+        let scope = dev_scope();
+        let episode_id = ulid::Ulid::new();
+        let clock = test_clock();
+        let doctree = two_root_doctree();
+
+        // Chunk whose heading_path walks to "Details" > "Sub-details".
+        let chunk = make_chunk(
+            scope.clone(),
+            episode_id,
+            vec!["Details".to_string(), "Sub-details".to_string()],
+        );
+
+        let (_, wired_chunks) = build_raptor_tree(&doctree, &[chunk], &scope, SOURCE, &clock);
+
+        assert_eq!(wired_chunks.len(), 1);
+        let wired = &wired_chunks[0];
+
+        // Must land on H2 "Sub-details", not on roots[0] or roots[1].
+        let h2_sub = &doctree.roots[1].children[0];
+        let expected_parent = raptor_community_id(SCOPE, SOURCE, h2_sub.char_span, h2_sub.level);
+
+        assert_eq!(
+            wired.parent_id,
+            Some(expected_parent),
+            "structural path must place the chunk in the deepest matching TocNode"
+        );
+    }
 }

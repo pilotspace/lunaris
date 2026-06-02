@@ -1,7 +1,7 @@
 //! `lunaris-mcp` — MCP server exposing Lunaris memory to Claude Code / Codex.
 //!
-//! Wave 2.A: four tools registered — `memory.ingest` (implemented),
-//! `memory.recall`, `memory.forget`, `memory.list_scopes` (Wave 2.B/C stubs).
+//! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
+//! `memory.list_scopes`, `memory.record_decision`, and `memory.record_edit`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -118,7 +118,7 @@ impl LunarisMcpServer {
     #[tool(
         name = "memory.recall",
         description = "Recall memories relevant to a natural-language query using \
-                       semantic + keyword search. Wave 2.B stub — not yet implemented."
+                       semantic retrieval with optional source-prefix and as_of filters."
     )]
     async fn recall(
         &self,
@@ -130,11 +130,7 @@ impl LunarisMcpServer {
     /// Forget memories by source prefix or episode ID.
     ///
     /// Wave 2.C implements the full deletion path.
-    #[tool(
-        name = "memory.forget",
-        description = "Delete memories by source prefix or episode ID. \
-                       Wave 2.C stub — not yet implemented."
-    )]
+    #[tool(name = "memory.forget", description = "Delete memories by source prefix or episode ID.")]
     async fn forget(
         &self,
         Parameters(params): Parameters<ForgetParams>,
@@ -147,8 +143,7 @@ impl LunarisMcpServer {
     /// Wave 2.C implements the full scope enumeration path.
     #[tool(
         name = "memory.list_scopes",
-        description = "List all known memory scopes with creation timestamps. \
-                       Wave 2.C stub — not yet implemented."
+        description = "List all known memory scopes with creation timestamps."
     )]
     async fn list_scopes(
         &self,
@@ -215,8 +210,7 @@ impl ServerHandler for LunarisMcpServer {
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
                 "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
-             and record decisions. Scope is bound at server startup; wave 2.A \
-             implements memory.ingest; Phase 25 adds memory.record_decision."
+             record decisions, and record edits. Scope is bound at server startup."
                     .to_string(),
             )
     }
@@ -233,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         scope   = ?cli.scope,
         storage = ?cli.storage,
-        "lunaris-mcp starting (Wave 2.A + Phase 25)",
+        "lunaris-mcp starting",
     );
 
     run_server(&cli).await

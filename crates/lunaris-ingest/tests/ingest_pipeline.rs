@@ -274,6 +274,50 @@ async fn embed_fallback_on_batch_error() {
     }
 }
 
+/// Warning-2 guard — Community.bt must come from the caller's clock, not a static instance.
+///
+/// Creates a clock with a distinctive `node_id=42` that cannot be produced by `clock_ref()`
+/// (which always uses `node_id=0`). After ingest, all KvPut community bytes are deserialized
+/// and their `bt.valid.0.node_id` is asserted equal to 42. This fails when `assemble_and_write`
+/// uses `clock_ref()` and passes when it threads the caller clock through.
+#[tokio::test]
+async fn community_bt_comes_from_caller_clock() {
+    use lunaris_core::primitives::Community;
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    // node_id=42 is a distinctive sentinel — clock_ref() uses node_id=0 and can never emit 42.
+    let clock = HlcClock::new(42);
+    let ep = small_episode(&clock);
+
+    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+
+    let batch = storage.first_batch();
+    let community_bytes: Vec<&[u8]> = batch
+        .iter()
+        .filter_map(|op| {
+            if let WriteOp::KvPut { key, value } = op
+                && key.windows(10).any(|w| w == b":community")
+            {
+                return Some(value.as_slice());
+            }
+            None
+        })
+        .collect();
+
+    assert!(!community_bytes.is_empty(), "must have at least one Community KvPut");
+
+    for raw in community_bytes {
+        let community: Community =
+            serde_json::from_slice(raw).expect("community KvPut must be valid JSON");
+        assert_eq!(
+            community.bt.valid.0.node_id, 42,
+            "Community.bt must come from the caller clock (node_id=42), \
+             not the static clock_ref() (node_id=0)"
+        );
+    }
+}
+
 /// Finding 1 guard — production ingest path uses BPE counter, not hardcoded surrogate.
 ///
 /// Ingest the same content via `ingest_episode_with_counter` using the committed
