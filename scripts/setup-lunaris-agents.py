@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "scripts" / "lunaris-codex-hook-adapter.py"
 HOOK_BIN = ROOT / "target" / "release" / "lunaris-hook"
 CONTEXTD_BIN = ROOT / "target" / "release" / "lunaris-contextd"
+MOON_MANIFEST = ROOT / "vendor" / "moon" / "Cargo.toml"
+MOON_BIN = ROOT / "vendor" / "moon" / "target" / "release" / "moon"
 DEFAULT_GGUF = Path.home() / ".lunaris" / "models" / "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
 DEFAULT_MOON_URL = "moon://127.0.0.1:6380"
 
@@ -120,6 +122,20 @@ def main() -> int:
         help="Enable Moon-oriented graph ingest/search env knobs when using moon:// storage.",
     )
     parser.add_argument(
+        "--build-moon",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Build the vendored Moon server in release mode. MQ, graph, and text-index "
+            "are compiled in by Moon's default feature set."
+        ),
+    )
+    parser.add_argument(
+        "--moon-bin",
+        default=str(MOON_BIN),
+        help="Expected Moon server binary path after --build-moon.",
+    )
+    parser.add_argument(
         "--scope",
         default=None,
         help="Optional fixed Lunaris scope name.",
@@ -131,6 +147,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.build_moon:
+        ensure_moon_prereqs(args)
     if args.hooks == "on":
         ensure_hook_prereqs(args)
 
@@ -150,7 +168,21 @@ def main() -> int:
         print("- Hooks: enabled where supported")
     else:
         print("- Hooks: skipped")
+    if args.build_moon:
+        print(f"- Moon: built at {args.moon_bin}")
     return 0
+
+
+def ensure_moon_prereqs(args: argparse.Namespace) -> None:
+    if not MOON_MANIFEST.exists():
+        raise SystemExit(f"Vendored Moon manifest not found: {MOON_MANIFEST}")
+    run(
+        ["cargo", "build", "--manifest-path", str(MOON_MANIFEST), "--release"],
+        cwd=ROOT,
+        dry_run=args.dry_run,
+    )
+    if not args.dry_run and not Path(args.moon_bin).exists():
+        raise SystemExit(f"Moon binary is missing after build: {args.moon_bin}")
 
 
 def ensure_hook_prereqs(args: argparse.Namespace) -> None:
