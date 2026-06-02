@@ -181,6 +181,12 @@ def main() -> int:
     ap.add_argument("--warmup-ingest", type=int, default=3, help="memory.ingest calls excluded from reported stats.")
     ap.add_argument("--warmup-recall", type=int, default=5, help="memory.recall calls excluded from reported stats.")
     ap.add_argument(
+        "--ingest-content-mode",
+        choices=("unique", "repeat"),
+        default="unique",
+        help="Use unique content per ingest, or repeat one content string to expose embed-cache/storage cost.",
+    )
+    ap.add_argument(
         "--start-moon",
         action="store_true",
         help="Start the vendored Moon server on a temporary port and benchmark against it.",
@@ -233,6 +239,7 @@ def main() -> int:
     if args.start_moon:
         print(f"moon:    {args.moon_binary}")
     print(f"ingest:  {args.n_ingest} ops")
+    print(f"content: {args.ingest_content_mode}")
     print(f"recall:  {args.n_recall} ops")
     print(f"warmup:  ingest={args.warmup_ingest}, recall={args.warmup_recall}")
     print(f"stage:   {'skipped' if args.skip_stage else 'enabled'}")
@@ -273,6 +280,16 @@ def main() -> int:
         ingest_lat: list[float] = []
         ingest_total = args.warmup_ingest + args.n_ingest
         for i in range(ingest_total):
+            if args.ingest_content_mode == "repeat":
+                content = (
+                    "Lunaris benchmark repeated sample: measuring memory.ingest storage, "
+                    "MQ, and assembly cost when embedding is served from cache."
+                )
+            else:
+                content = (
+                    f"Lunaris benchmark sample {i}: measuring memory.ingest p50/p95/p99 "
+                    "over stdio JSON-RPC."
+                )
             t0 = time.perf_counter()
             client.call(
                 "tools/call",
@@ -280,7 +297,7 @@ def main() -> int:
                     "name": "memory.ingest",
                     "arguments": {
                         "source": f"bench/ingest-{i}",
-                        "content": f"Lunaris benchmark sample {i}: measuring memory.ingest p50/p95/p99 over stdio JSON-RPC.",
+                        "content": content,
                     },
                 },
             )
