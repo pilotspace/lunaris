@@ -112,6 +112,7 @@ pub(crate) fn resolve(override_: Option<&str>) -> Result<Scope, ScopeResolveErro
 
 /// Testable variant — accepts explicit cwd + scopes_path for test isolation.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn resolve_with_path(
     override_: Option<&str>,
     cwd: &Path,

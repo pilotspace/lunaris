@@ -118,7 +118,8 @@ impl LunarisMcpServer {
     #[tool(
         name = "memory.recall",
         description = "Recall memories relevant to a natural-language query using \
-                       semantic retrieval with optional source-prefix and as_of filters."
+                       hybrid semantic + BM25 retrieval with optional source-prefix and \
+                       as_of filters."
     )]
     async fn recall(
         &self,

@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::DateTime;
 use lunaris::Query;
-use lunaris_core::{Hlc, storage::types::Filter};
-use lunaris_retrieve::Vector;
+use lunaris_core::{Hlc, LunarisError, StorageError, storage::types::Filter};
+use lunaris_retrieve::{Keyword, Vector};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
@@ -146,7 +146,11 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 ///    per process; stderr-only progress bar; bypassed in tests).
 /// 2. Build `Query::text(query)` with optional `k`, `Filter::StartsWith`, and
 ///    `as_of` bi-temporal snapshot.
-/// 3. Delegate to `ScopedLunaris::recall(query)` — scope-partitioned.
+/// 3. Execute the canonical hybrid plan:
+///    `Vector(chunks) AND Keyword::bm25(chunks) -> fuse_rrf(60)`.
+///    Moon handles this as native HYBRID search when the backend supports it;
+///    other keyword-capable backends use client-side RRF. Backends without a
+///    keyword surface fall back narrowly to vector-only recall.
 /// 4. Map each `Hit` to `RecallHit` (content truncated at 200 chars).
 pub(crate) async fn handle(
     state: &AppState,
@@ -196,12 +200,26 @@ pub(crate) async fn handle(
 
     // Execute — ScopedLunaris::recall threads the bound scope through.
     let scoped = state.lunaris.scoped(state.scope.clone());
-    let hits = scoped
-        .dsl()
-        .with_root(Vector::new("chunks", candidate_k))
-        .execute(q)
-        .await
-        .map_err(ToolError::LunarisEngine)?;
+    let root = Vector::new("chunks", candidate_k)
+        .and(Keyword::bm25("chunks", candidate_k))
+        .fuse_rrf(60)
+        .top(candidate_k);
+    let hits = match scoped.dsl().with_root(root).execute(q.clone()).await {
+        Ok(hits) => hits,
+        Err(err) if is_keyword_not_supported(&err) => {
+            tracing::debug!(
+                scope = state.scope.as_str(),
+                "memory.recall keyword branch unsupported; falling back to vector-only"
+            );
+            scoped
+                .dsl()
+                .with_root(Vector::new("chunks", candidate_k))
+                .execute(q)
+                .await
+                .map_err(ToolError::LunarisEngine)?
+        }
+        Err(err) => return Err(ToolError::LunarisEngine(err)),
+    };
 
     // Map hits to wire DTO with explicit type so the collector infers correctly.
     let recall_hits: Vec<RecallHit> = hits
@@ -227,6 +245,14 @@ pub(crate) async fn handle(
     );
 
     Ok(RecallResponse { hits: recall_hits })
+}
+
+fn is_keyword_not_supported(err: &LunarisError) -> bool {
+    matches!(
+        err,
+        LunarisError::Storage(StorageError::NotSupported(msg))
+            if msg.contains("keyword_search") || msg.contains("keyword")
+    )
 }
 
 /// Convert a 16-byte ULID to its canonical 26-char string representation.
@@ -392,6 +418,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(resp.hits.len(), 1, "memory.recall must cap returned hits to k");
+    }
+
+    #[test]
+    fn recall_handler_uses_hybrid_vector_keyword_rrf_plan() {
+        let src = include_str!("recall.rs");
+        assert!(
+            src.contains("Vector::new(\"chunks\", candidate_k)")
+                && src.contains("Keyword::bm25(\"chunks\", candidate_k)")
+                && src.contains(".fuse_rrf(60)"),
+            "memory.recall must use the canonical hybrid Vector+BM25 RRF plan"
+        );
     }
 
     #[test]
