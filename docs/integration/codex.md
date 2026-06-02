@@ -126,6 +126,10 @@ From a Lunaris checkout:
 # Verified local checkout setup.
 scripts/setup-lunaris-agents.py --agent codex --runner local
 
+# Also build the vendored Moon server with its default feature set
+# (MQ + graph + text-index) for the default moon://127.0.0.1:6380 storage path.
+scripts/setup-lunaris-agents.py --agent codex --runner local --build-moon
+
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
 scripts/setup-lunaris-agents.py --agent codex --runner uvx
 scripts/setup-lunaris-agents.py --agent codex --runner npx
@@ -138,6 +142,8 @@ The script:
 
 - writes `[mcp_servers.lunaris]` using either the local `target/release/lunaris-mcp`
   binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @lunaris/mcp`;
+- optionally builds the vendored Moon release binary with `--build-moon`;
+  Moon's default build includes MQ, graph, and text-index support;
 - defaults storage to Moon at `moon://127.0.0.1:6380`, writing
   `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL` for hooks/contextd;
 - enables `LUNARIS_GRAPH_ENABLED=1` when the effective storage URL is

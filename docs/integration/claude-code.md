@@ -19,6 +19,10 @@ From a Lunaris checkout:
 # Verified local checkout setup.
 scripts/setup-lunaris-agents.py --agent claude --runner local
 
+# Also build the vendored Moon server with its default feature set
+# (MQ + graph + text-index) for the default moon://127.0.0.1:6380 storage path.
+scripts/setup-lunaris-agents.py --agent claude --runner local --build-moon
+
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
 scripts/setup-lunaris-agents.py --agent claude --runner uvx
 scripts/setup-lunaris-agents.py --agent claude --runner npx
@@ -30,7 +34,8 @@ scripts/setup-lunaris-agents.py --agent claude --runner local --dry-run
 The script writes `mcpServers.lunaris`, installs the same Lunaris feature set
 used by Codex where Claude Code supports it, and creates
 `~/.claude/settings.json.bak` before writing. Use `--hooks off` for MCP-only
-setup.
+setup. Add `--build-moon` to compile the vendored Moon release binary; Moon's
+default feature set includes MQ, graph, and text-index support.
 
 Installed Claude Code hooks:
 
