@@ -28,8 +28,9 @@ pub use chunker::{
     make_token_counter, raptor_community_id, run_bakeoff, segment_units,
 };
 pub use pipeline::{
-    INGEST_EMBED_BATCH_SIZE, ingest_episode, ingest_episode_with_bakeoff,
-    ingest_episode_with_counter,
+    INGEST_EMBED_BATCH_SIZE, IngestReceipt, ingest_episode, ingest_episode_with_bakeoff,
+    ingest_episode_with_counter, ingest_episode_with_counter_and_receipt,
+    ingest_episode_with_receipt,
 };
 pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
 #[cfg(feature = "llm-summarizer")]

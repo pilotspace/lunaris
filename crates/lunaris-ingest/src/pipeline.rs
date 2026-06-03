@@ -51,6 +51,23 @@ const DEFAULT_OVERLAP_TOKENS: usize = 100;
 /// `PostgresStorage::atomic_write` and `MoonStorage::atomic_write`.
 const CHUNK_VECTOR_INDEX: &str = "chunks";
 
+/// Vector index name the community summary embeddings land in (Phase-30 B1).
+const COMMUNITY_VECTOR_INDEX: &str = "communities";
+
+/// Commit receipt for callers that need to follow up on the persisted episode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IngestReceipt {
+    pub lsn: Lsn,
+    pub episode_id: ulid::Ulid,
+    pub chunk_ids: Vec<ulid::Ulid>,
+}
+
+#[derive(Clone, Debug)]
+struct AssembleReceipt {
+    lsn: Lsn,
+    chunk_ids: Vec<ulid::Ulid>,
+}
+
 /// Run the full ingest pipeline for a single Episode.
 ///
 /// Steps:
@@ -71,6 +88,16 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
     clock: &HlcClock,
     episode: Episode,
 ) -> Result<Lsn, LunarisError> {
+    Ok(ingest_episode_with_receipt(storage, embedder, clock, episode).await?.lsn)
+}
+
+/// Run [`ingest_episode`] and return the committed episode/chunk identifiers.
+pub async fn ingest_episode_with_receipt<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+) -> Result<IngestReceipt, LunarisError> {
     // Step 1: chunk + capture heading records for DocTree construction (STRUCT-02).
     // Uses the v0 surrogate counter for back-compatibility with existing callers.
     // Production code should prefer `ingest_episode_with_counter` with a real BPE
@@ -106,6 +133,19 @@ pub async fn ingest_episode_with_counter<S: StoragePort + ?Sized>(
     episode: Episode,
     counter: Arc<dyn TokenCounter + Send + Sync>,
 ) -> Result<Lsn, LunarisError> {
+    Ok(ingest_episode_with_counter_and_receipt(storage, embedder, clock, episode, counter)
+        .await?
+        .lsn)
+}
+
+/// Run [`ingest_episode_with_counter`] and return committed identifiers.
+pub async fn ingest_episode_with_counter_and_receipt<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    counter: Arc<dyn TokenCounter + Send + Sync>,
+) -> Result<IngestReceipt, LunarisError> {
     // Step 1: chunk + capture heading records for DocTree construction (STRUCT-02).
     // Uses the caller-supplied counter — BPE when available, surrogate fallback.
     let (drafts, heading_records) = chunk_markdown_with_headings_with_counter(
@@ -131,7 +171,8 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     episode: Episode,
     drafts: Vec<ChunkDraft>,
     heading_records: Vec<crate::chunker::HeadingRecord>,
-) -> Result<Lsn, LunarisError> {
+) -> Result<IngestReceipt, LunarisError> {
+    let episode_id = episode.id;
     // Step 2: embed in batches of 32 with per-chunk fallback
     let embeddings = embed_with_fallback(embedder, &drafts).await?;
     debug_assert_eq!(embeddings.len(), drafts.len());
@@ -145,11 +186,14 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     }
 
     // Steps 4+5: assemble WriteOps and issue the single atomic write (INGEST-04).
-    assemble_and_write(storage, &episode, chunks, &heading_records, clock).await
+    let receipt =
+        assemble_and_write(storage, embedder, &episode, chunks, &heading_records, clock).await?;
+    Ok(IngestReceipt { lsn: receipt.lsn, episode_id, chunk_ids: receipt.chunk_ids })
 }
 
 /// Assemble the full `Vec<WriteOp>` for one Episode (DocTree + Episode KvPut +
-/// per-chunk KvPut + VectorUpsert) and call `storage.atomic_write` exactly once.
+/// per-chunk KvPut + VectorUpsert + community KvPut + community VectorUpsert)
+/// and call `storage.atomic_write` exactly once.
 ///
 /// # INGEST-04
 ///
@@ -164,13 +208,21 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
 /// `Chunk.bt`. Threading it here ensures `Community.bt` is stamped by the same
 /// clock — critical for `read_as_of(T)` correctness where all three primitive
 /// types must be visible at the same logical time T.
+///
+/// # Embedder threading (Phase-30 B1)
+///
+/// `embedder` is the same instance already used to embed chunks. Community
+/// summaries are embedded in one `embed_batch` call (with per-item fallback
+/// mirroring INGEST-02) — single-pass: reuse the pipeline embedder, never
+/// construct a new one.
 async fn assemble_and_write<S: StoragePort + ?Sized>(
     storage: &S,
+    embedder: &dyn Embedder,
     episode: &Episode,
     chunks: Vec<Chunk>,
     heading_records: &[crate::chunker::HeadingRecord],
     clock: &HlcClock,
-) -> Result<Lsn, LunarisError> {
+) -> Result<AssembleReceipt, LunarisError> {
     let source_char_len = episode.content.chars().count();
     let doctree =
         build_doctree(heading_records, episode.scope.as_str(), &episode.source, source_char_len);
@@ -209,16 +261,54 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     // Assign summaries back to communities (in the same bottom-up order).
     for (order_pos, &community_idx) in ordered_indices.iter().enumerate() {
         communities[community_idx].summary = summaries[order_pos].clone();
-        // D4: summary_embedding deferred to Phase 30.
-        debug_assert!(
-            communities[community_idx].summary_embedding.is_none(),
-            "D4: summary_embedding must remain None in Phase 29"
-        );
     }
 
+    // Phase-30 B1: embed all community summaries (single-pass, reuse pipeline embedder).
+    // One batch call for all summaries; on failure, degrade to per-item (INGEST-02 parity).
+    // Bottom-up order is preserved via `ordered_indices`.
+    {
+        let summary_texts: Vec<&str> =
+            ordered_indices.iter().map(|&i| communities[i].summary.as_str()).collect();
+
+        let summary_embeddings: Vec<Vec<f32>> = match embedder.embed_batch(&summary_texts).await {
+            Ok(rows) if rows.len() == summary_texts.len() => rows,
+            Ok(rows) => {
+                // Wrong-sized batch from the embedder — degrade to per-item.
+                tracing::warn!(
+                    expected = summary_texts.len(),
+                    got = rows.len(),
+                    "community summary embed_batch returned wrong row count; \
+                     falling back to per-item"
+                );
+                embed_summaries_per_item(embedder, &summary_texts).await?
+            }
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    n = summary_texts.len(),
+                    "community summary embed_batch failed; falling back to per-item"
+                );
+                embed_summaries_per_item(embedder, &summary_texts).await?
+            }
+        };
+
+        for (order_pos, &community_idx) in ordered_indices.iter().enumerate() {
+            communities[community_idx].summary_embedding =
+                Some(summary_embeddings[order_pos].clone());
+        }
+    }
+
+    // Invariant: every community must now carry a populated summary_embedding.
+    debug_assert!(
+        communities.iter().all(|c| c.summary_embedding.is_some()),
+        "Phase-30 B1: every Community must have summary_embedding after embed"
+    );
+
     // Assemble all WriteOps into the single batch.
-    // Capacity: doctree + episode + 2×chunk + 1×community per community.
-    let mut ops: Vec<WriteOp> = Vec::with_capacity(2 + 2 * wired_chunks.len() + communities.len());
+    // Capacity: doctree + episode + 2×chunk + 2×community (KvPut + VectorUpsert).
+    let mut ops: Vec<WriteOp> =
+        Vec::with_capacity(2 + 2 * wired_chunks.len() + 2 * communities.len());
+    let chunk_ids: Vec<ulid::Ulid> = wired_chunks.iter().map(|chunk| chunk.id).collect();
 
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
 
@@ -253,8 +343,10 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         });
     }
 
-    // Communities: KvPut only — no VectorUpsert (D4: summary embeddings are Phase 30).
+    // Communities: KvPut (KV hydration) + VectorUpsert (Phase-30 B1: communities index).
+    // Both ops are added to the SAME single WriteOp vector — INGEST-04 is preserved.
     for community in &communities {
+        // KvPut: persist the full Community struct (now with summary_embedding populated).
         let community_value = serde_json::to_vec(community).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("community serialize: {e}")))
         })?;
@@ -262,6 +354,27 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
             key: community_key(&episode.scope, community.id),
             value: community_value,
         });
+
+        // VectorUpsert: write summary embedding into the `communities` FT vector index.
+        // `extract_content_for_index("communities", ..)` in atomic.rs reads
+        // `metadata["summary"]` for BM25 content — the field MUST be present here.
+        let embedding = community
+            .summary_embedding
+            .as_ref()
+            .expect("summary_embedding assigned in Phase-30 B1 block above")
+            .clone();
+        let metadata = json!({
+            "summary": community.summary,
+            "level": community.level,
+            "parent": community.parent.map(|p| p.to_string()),
+        });
+        ops.push(WriteOp::VectorUpsert {
+            index: COMMUNITY_VECTOR_INDEX.to_string(),
+            id: community.id.to_bytes().to_vec(),
+            embedding,
+            metadata,
+        });
+
         // TODO(phase-future): push WriteOp::GraphEdge for parent-child edges (D7 deferred).
         // The tree is fully navigable via Community.parent / Community.members + Chunk.parent_id
         // without graph edges. Deferring avoids shipping an untested branch
@@ -270,7 +383,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
 
     // INGEST-04: the single atomic write for this episode (see module-level invariant).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
-    Ok(lsn)
+    Ok(AssembleReceipt { lsn, chunk_ids })
 }
 
 /// Embed `drafts` in batches of [`INGEST_EMBED_BATCH_SIZE`]. On batch failure,
@@ -333,15 +446,42 @@ async fn embed_with_fallback(
     Ok(out)
 }
 
+/// Fallback: embed community summary texts one-at-a-time when the batch call fails.
+///
+/// Mirrors the per-chunk fallback in [`embed_with_fallback`] (INGEST-02 parity).
+/// Single-input per-item calls are tried individually; the first per-item error
+/// surfaces to the caller immediately.
+async fn embed_summaries_per_item(
+    embedder: &dyn Embedder,
+    texts: &[&str],
+) -> Result<Vec<Vec<f32>>, LunarisError> {
+    let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+    for text in texts {
+        let single = embedder.embed_batch(&[text]).await?;
+        match single.into_iter().next() {
+            Some(v) => out.push(v),
+            None => {
+                return Err(LunarisError::Storage(StorageError::Backend(
+                    "community summary embed_batch returned 0 rows for single input".into(),
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Run the full ingest pipeline with the adaptive meta-framework bake-off.
 ///
 /// When `bakeoff_config` is `Some`, this function:
 /// 1. Runs [`run_bakeoff`] to select the best candidate chunk list.
 /// 2. Uses the winner's **pre-computed embeddings** directly (SINGLE-PASS).
-///    No additional `embed_batch` call is made for the winner.
+///    No additional `embed_batch` call is made for the winner's chunks.
 /// 3. Passes the structural heading records (from the bake-off) to the DocTree.
 /// 4. Delegates to [`assemble_and_write`] for WriteOp assembly and the single
-///    atomic write (INGEST-04).
+///    atomic write (INGEST-04). Note: `assemble_and_write` makes one additional
+///    `embed_batch` call for community summaries (Phase-30 B1) — this is not a
+///    SINGLE-PASS violation because community summary texts are new, not re-embeddings
+///    of the winner's chunk texts.
 ///
 /// When `bakeoff_config` is `None`, falls back to [`ingest_episode_with_counter`]
 /// (backward-compatible).
@@ -376,7 +516,9 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     // Step 2: run bake-off → winner drafts + winner embeddings (SINGLE-PASS).
     // run_bakeoff embeds unit texts once and each candidate's chunk texts once.
     // After this returns the winner's embeddings are in `winner.embeddings`.
-    // The storage step MUST NOT call embed_batch again (SINGLE-PASS invariant).
+    // The storage step MUST NOT call embed_batch again for the winner's chunks
+    // (SINGLE-PASS invariant). Community summaries are a different text set and
+    // are embedded inside assemble_and_write (Phase-30 B1).
     // Propagate Err: embedder failure in the bake-off path is a hard infra
     // failure (silent zero-fill would corrupt vector storage — see F1 fix).
     let winner = run_bakeoff(
@@ -400,7 +542,9 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     }
 
     // Step 4: delegate to assemble_and_write — the single storage write call (INGEST-04).
-    assemble_and_write(storage, &episode, chunks, &winner.heading_records, clock).await
+    Ok(assemble_and_write(storage, embedder, &episode, chunks, &winner.heading_records, clock)
+        .await?
+        .lsn)
 }
 
 #[cfg(test)]
