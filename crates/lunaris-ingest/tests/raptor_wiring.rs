@@ -93,11 +93,19 @@ async fn fixture_3a_h1_community_summary_non_empty() {
         );
     }
 
-    // D4 guardrail: no community has summary_embedding set.
+    // Phase-30 B1: every persisted community must have summary_embedding populated.
+    // (Replaces the Phase-29 D4 guard that asserted summary_embedding=None.)
     for c in &communities {
-        assert!(
-            c.summary_embedding.is_none(),
-            "Community (id={}, level={}) must have summary_embedding=None (D4)",
+        let emb = c.summary_embedding.as_ref().unwrap_or_else(|| {
+            panic!(
+                "Community (id={}, level={}) must have summary_embedding=Some after Phase-30 B1",
+                c.id, c.level
+            )
+        });
+        assert_eq!(
+            emb.len(),
+            768,
+            "Community (id={}, level={}) summary_embedding must be 768-d",
             c.id,
             c.level
         );

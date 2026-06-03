@@ -356,20 +356,28 @@ async fn single_pass_embed_count_equals_zero_extra_for_winner() {
     //   1 call per candidate (structural + RSM = 2) for chunk embeddings
     // = 3 calls inside run_bakeoff
     //
-    // After run_bakeoff, the pipeline MUST NOT call embed_batch again for the winner.
-    // We test this by asserting that the storage path uses the winner's pre-computed
-    // embeddings and makes no additional embed_batch calls beyond the bakeoff itself.
+    // Phase-30 B1 adds exactly 1 more embed_batch call inside assemble_and_write for
+    // community summary embedding. This is NOT a SINGLE-PASS violation: community
+    // summary texts are genuinely new (not re-embeddings of the winner's chunk texts).
+    // The SINGLE-PASS invariant is: no re-embed of the winner's chunk texts after
+    // run_bakeoff. Community summaries are produced by ExtractiveSummarizer after the
+    // bakeoff, so they are a separate, smaller batch.
     //
-    // Concretely: calls inside run_bakeoff = 1 (units) + N_candidates.
-    // Calls for storage = 0 (SINGLE-PASS).
-    // So total calls <= 1 + N_candidates.
+    // Concretely:
+    //   calls inside run_bakeoff = 1 (units) + N_candidates
+    //   calls for community summaries = 1 (Phase-30 B1, assemble_and_write)
+    //   calls for storage (winner chunk re-embed) = 0 (SINGLE-PASS preserved)
+    // So total calls <= 1 + N_candidates + 1.
     let n_candidates = 2usize; // structural + RSM
-    let max_expected_calls = 1 + n_candidates; // unit embed + one per candidate
+    // +1 for the Phase-30 B1 community summary embed_batch in assemble_and_write.
+    let max_expected_calls = 1 + n_candidates + 1;
 
     assert!(
         calls_total <= max_expected_calls,
-        "SINGLE-PASS: total embed_batch calls ({calls_total}) must be <= bakeoff-only \
-         ({max_expected_calls}). Extra calls indicate the winner was re-embedded for storage."
+        "SINGLE-PASS: total embed_batch calls ({calls_total}) must be <= \
+         bakeoff ({}) + community-summary-embed (1) = {max_expected_calls}. \
+         Extra calls indicate the winner's chunks were re-embedded for storage.",
+        1 + n_candidates
     );
 }
 

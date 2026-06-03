@@ -19,7 +19,11 @@ use lunaris_core::{
     QueueMsg, Row, Scope, StorageCapabilities, StorageError, StoragePort, StubEmbedder, VectorHit,
     WriteOp,
 };
-use lunaris_ingest::{BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter};
+use lunaris_ingest::{
+    BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter,
+    ingest_episode_with_receipt,
+};
+use lunaris_storage_embedded::EmbeddedStorage;
 use parking_lot::Mutex;
 
 // --------------------------- RecordingStorage ---------------------------
@@ -189,6 +193,23 @@ async fn single_atomic_write_call() {
 }
 
 #[tokio::test]
+async fn ingest_receipt_reports_episode_and_chunk_ids() {
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = small_episode(&clock);
+    let episode_id = ep.id;
+
+    let receipt =
+        ingest_episode_with_receipt(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+
+    assert_eq!(receipt.lsn, Lsn { wall_ms: 1, counter: 0 });
+    assert_eq!(receipt.episode_id, episode_id);
+    assert!(!receipt.chunk_ids.is_empty(), "receipt should include committed chunk ids");
+    assert_eq!(storage.batch_count(), 1, "receipt path must preserve INGEST-04");
+}
+
+#[tokio::test]
 async fn episode_and_chunks_appear_in_single_batch() {
     let storage = Arc::new(RecordingStorage::default());
     let embedder = Arc::new(StubEmbedder::new(768));
@@ -228,25 +249,45 @@ async fn episode_and_chunks_appear_in_single_batch() {
             |op| matches!(op, WriteOp::KvPut { key, .. } if key.windows(10).any(|w| w == b":community")),
         )
         .count();
+    let n_community_vec_upsert = batch
+        .iter()
+        .filter(|op| matches!(op, WriteOp::VectorUpsert { index, .. } if index == "communities"))
+        .count();
     assert_eq!(n_episode_kvput, 1, "exactly one Episode KvPut");
     assert_eq!(n_doctree_kvput, 1, "exactly one DocTree KvPut (STRUCT-02)");
     assert!((4..=8).contains(&n_chunk_kvput), "4–8 chunk KvPuts; got {n_chunk_kvput}");
     assert_eq!(n_chunk_kvput, n_vec_upsert, "every chunk gets a VectorUpsert");
-    // Phase 29: Community KvPuts are now added to the batch (one per heading section).
-    // Total: 1 DocTree + 1 Episode + 2 per chunk + 1 per community.
+    // Phase-30 B1: every community now gets both a KvPut AND a VectorUpsert.
+    assert_eq!(
+        n_community_kvput, n_community_vec_upsert,
+        "Phase-30 B1: every community must have both a KvPut and a VectorUpsert"
+    );
+    // Phase-30 B1: Total: 1 DocTree + 1 Episode + 2 per chunk + 2 per community.
     assert_eq!(
         batch.len(),
-        2 + 2 * n_chunk_kvput + n_community_kvput,
-        "total ops = 1 DocTree + 1 Episode + 2 per chunk + 1 per community; got {}",
+        2 + 2 * n_chunk_kvput + 2 * n_community_kvput,
+        "total ops = 1 DocTree + 1 Episode + 2 per chunk + 2 per community; got {}",
         batch.len()
     );
     // Every VectorUpsert carries a 768-d embedding (StubEmbedder dim).
+    // Chunk VectorUpserts have episode_id/heading_path/offset metadata;
+    // community VectorUpserts have summary/level/parent — scope assertions by index.
     for op in &batch {
-        if let WriteOp::VectorUpsert { embedding, metadata, .. } = op {
-            assert_eq!(embedding.len(), 768);
-            assert!(metadata.get("episode_id").is_some(), "metadata.episode_id required");
-            assert!(metadata.get("heading_path").is_some(), "metadata.heading_path required");
-            assert!(metadata.get("offset").is_some(), "metadata.offset required");
+        if let WriteOp::VectorUpsert { index, embedding, metadata, .. } = op {
+            assert_eq!(embedding.len(), 768, "all VectorUpserts must be 768-d");
+            if index == "chunks" {
+                assert!(metadata.get("episode_id").is_some(), "chunk metadata.episode_id required");
+                assert!(
+                    metadata.get("heading_path").is_some(),
+                    "chunk metadata.heading_path required"
+                );
+                assert!(metadata.get("offset").is_some(), "chunk metadata.offset required");
+            } else if index == "communities" {
+                assert!(
+                    metadata.get("summary").is_some(),
+                    "community metadata.summary required for BM25"
+                );
+            }
         }
     }
 }
@@ -314,6 +355,126 @@ async fn community_bt_comes_from_caller_clock() {
             community.bt.valid.0.node_id, 42,
             "Community.bt must come from the caller clock (node_id=42), \
              not the static clock_ref() (node_id=0)"
+        );
+    }
+}
+
+/// B1 / Phase-30 D4 — community summary_embedding must be populated at ingest.
+///
+/// This test FAILS before the Phase-30 implementation because `Community.summary_embedding`
+/// is always `None` (guarded by a `debug_assert!` in `assemble_and_write`). It passes after
+/// the implementation embeds community summaries at ingest and writes them as `VectorUpsert`
+/// ops into the `communities` index.
+///
+/// Two assertions:
+/// 1. Every community `KvPut` in the batch deserializes to a `Community` whose
+///    `summary_embedding` is `Some` with exactly 768 dimensions.
+/// 2. At least one `VectorUpsert { index: "communities", .. }` with a 768-d embedding
+///    appears in the batch — proving the `communities` FT index is populated.
+#[tokio::test]
+async fn community_summary_embedding_populated_at_ingest() {
+    use lunaris_core::primitives::Community;
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = twelve_kb_episode(&clock);
+
+    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+
+    let batch = storage.first_batch();
+
+    // 1. Every community KvPut must have summary_embedding = Some with dim 768.
+    let community_kvputs: Vec<&[u8]> = batch
+        .iter()
+        .filter_map(|op| {
+            if let WriteOp::KvPut { key, value } = op
+                && key.windows(10).any(|w| w == b":community")
+            {
+                Some(value.as_slice())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(!community_kvputs.is_empty(), "must have at least one community KvPut");
+    for raw in &community_kvputs {
+        let c: Community = serde_json::from_slice(raw).expect("community KvPut is valid JSON");
+        let emb = c
+            .summary_embedding
+            .as_ref()
+            .expect("B1/D4: Community.summary_embedding must be Some after Phase-30 ingest");
+        assert_eq!(emb.len(), 768, "summary_embedding must be 768-d (granite dim)");
+    }
+
+    // 2. At least one VectorUpsert for the communities index with correct dim.
+    let community_vec_upserts: Vec<&Vec<f32>> = batch
+        .iter()
+        .filter_map(|op| {
+            if let WriteOp::VectorUpsert { index, embedding, .. } = op
+                && index == "communities"
+            {
+                Some(embedding)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        !community_vec_upserts.is_empty(),
+        "B1/D4: at least one VectorUpsert for the communities index must appear in the batch"
+    );
+    for emb in &community_vec_upserts {
+        assert_eq!(emb.len(), 768, "community VectorUpsert must be 768-d");
+    }
+}
+
+/// B1 / Phase-30 D4 — discriminating test: production ingest path → communities index
+/// returns the community on a vector query (embedded backend, self-contained).
+///
+/// This is the DISCRIMINATING integration test: it proves the REAL production ingest
+/// path populates the `communities` vector index (not just a unit test of an isolated
+/// component). Uses `EmbeddedStorage` (SQLite in-memory) which implements `vector_search`
+/// with brute-force cosine — no external dependencies needed.
+#[tokio::test]
+async fn community_vector_index_searchable_after_ingest() {
+    let storage: Arc<EmbeddedStorage> =
+        Arc::new(EmbeddedStorage::connect("memory://").await.expect("embedded storage must open"));
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    // Use a multi-section doc to guarantee at least one Community is produced.
+    let ep = twelve_kb_episode(&clock);
+    let scope = ep.scope.clone();
+
+    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+
+    // StubEmbedder produces a fixed non-zero vector. Use a non-zero probe so cosine
+    // similarity is well-defined and the brute-force scan can return hits.
+    let probe: Vec<f32> = vec![1.0_f32; 768];
+    let hits = StoragePort::vector_search(
+        storage.as_ref(),
+        &scope,
+        "communities",
+        &probe,
+        10,
+        None,
+        None,
+        false,
+    )
+    .await
+    .expect("communities vector_search must succeed");
+
+    assert!(
+        !hits.is_empty(),
+        "B1/D4: communities index must return at least one hit after ingest; got 0 — \
+         summary_embedding is not being written to the communities FT index"
+    );
+
+    // Each hit metadata must carry a "summary" field (used by BM25 content extraction).
+    for hit in &hits {
+        assert!(
+            hit.metadata.get("summary").is_some(),
+            "community VectorUpsert metadata must include 'summary' for BM25 content extraction"
         );
     }
 }
