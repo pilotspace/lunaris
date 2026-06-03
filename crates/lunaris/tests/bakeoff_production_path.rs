@@ -272,10 +272,11 @@ async fn bakeoff_production_path_via_lunaris_ingest() {
 }
 
 /// SINGLE-PASS proof via `Lunaris::ingest`: the total `embed_batch` calls
-/// after a full bakeoff ingest must be bounded by `1 + N_candidates`.
+/// after a full bakeoff ingest must be bounded by `1 + N_candidates + 1`.
 ///
 /// Structural (baseline) + RSM (1 extra generator) = 2 candidates.
-/// Unit embed (1 call) + 2 candidate chunk embeds = 3 max calls.
+/// Unit embed (1 call) + 2 candidate chunk embeds + 1 community summary embed = 4 max calls.
+/// The +1 community embed is Phase-30 B1: new text (summary), not a re-embed of winner chunks.
 /// No additional call is made to re-embed the winner for storage (SINGLE-PASS).
 #[tokio::test]
 async fn bakeoff_single_pass_via_lunaris_ingest() {
@@ -294,13 +295,13 @@ async fn bakeoff_single_pass_via_lunaris_ingest() {
 
     // N_candidates = 2 (structural + RSM).
     // Scoring: 1 unit-embed call + 2 candidate chunk-embed calls = 3 total.
-    // SINGLE-PASS: 0 extra calls for the winner after selection.
-    // Upper bound is exactly 3; ≤3 discriminates against the re-embed regression
-    // (which would produce 4 calls).
+    // Phase-30 B1: +1 call for community summary embed (new text, not winner re-embed).
+    // SINGLE-PASS: 0 extra calls for the winner after selection; total bound is 4.
+    // ≤4 still discriminates against a winner re-embed regression (which would produce ≥5).
     let calls = counting.calls();
     assert!(
-        calls <= 3,
-        "SINGLE-PASS violated: expected ≤3 embed_batch calls, got {calls}. \
+        calls <= 4,
+        "SINGLE-PASS violated: expected ≤4 embed_batch calls, got {calls}. \
          The winner is being re-embedded after bakeoff selection."
     );
 }
@@ -378,7 +379,8 @@ async fn bakeoff_production_path_via_lunaris_ingest_graph_on() {
 /// With graph-ON + NoopExtractor (applies()==false), the chunk/embed steps
 /// still run — only the LLM extraction is skipped. The bakeoff's embed calls
 /// must therefore be bounded the same way as graph-OFF:
-///   1 unit-embed + 2 candidate chunk-embeds = 3 max. No winner re-embed.
+///   1 unit-embed + 2 candidate chunk-embeds + 1 community summary embed = 4 max.
+/// The +1 is Phase-30 B1 (new text, not a winner re-embed). No winner re-embed.
 #[tokio::test]
 async fn bakeoff_single_pass_via_lunaris_ingest_graph_on() {
     let clock = HlcClock::new(0);
@@ -396,12 +398,13 @@ async fn bakeoff_single_pass_via_lunaris_ingest_graph_on() {
     let ep = Episode::new(scope, "graph_on_single_pass.md", fixture_content(), &clock);
     handle.ingest(ep).await.expect("ingest must succeed");
 
-    // Same bound as graph-OFF: 1 unit-embed + 2 candidate embeds = 3.
-    // A winner re-embed on the graph-ON path would produce 4.
+    // Same bound as graph-OFF: 1 unit-embed + 2 candidate embeds + 1 community summary = 4.
+    // Phase-30 B1 adds the community summary embed (new text, not winner re-embed).
+    // A winner re-embed on the graph-ON path would produce ≥5.
     let calls = counting.calls();
     assert!(
-        calls <= 3,
-        "SINGLE-PASS violated (graph-ON): expected ≤3 embed_batch calls, got {calls}. \
+        calls <= 4,
+        "SINGLE-PASS violated (graph-ON): expected ≤4 embed_batch calls, got {calls}. \
          The winner is being re-embedded after bakeoff selection."
     );
 }

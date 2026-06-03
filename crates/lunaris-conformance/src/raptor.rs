@@ -149,7 +149,7 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 /// - `id`, `level`, `parent` — exact equality (all deterministic).
 /// - `members` — community-typed members exact equality; leaf member count equality.
 /// - `summary` — non-empty on both.
-/// - `summary_embedding` — `None` on both (D4 guardrail).
+/// - `summary_embedding` — `Some(768-d)` on both (Phase-30 B1: populated at ingest).
 ///
 /// Used for both SQLite self-parity (unconditional) and Moon vs SQLite (UAT-gated).
 pub async fn run_raptor_parity_suite(
@@ -249,16 +249,31 @@ pub async fn run_raptor_parity_suite(
             b.id
         );
 
-        // D4 guardrail: summary_embedding == None on both.
+        // Phase-30 B1: summary_embedding must be Some(768-d) on both.
+        // (Replaces the Phase-29 D4 guardrail that asserted None.)
+        let emb_a = a.summary_embedding.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "parity: community {} summary_embedding is None on storage_a (Phase-30 B1 requires Some)",
+                a.id
+            )
+        })?;
+        let emb_b = b.summary_embedding.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "parity: community {} summary_embedding is None on storage_b (Phase-30 B1 requires Some)",
+                b.id
+            )
+        })?;
         anyhow::ensure!(
-            a.summary_embedding.is_none(),
-            "D4 violation: community {} summary_embedding is Some on storage_a",
-            a.id
+            emb_a.len() == 768,
+            "parity: community {} summary_embedding has wrong dim {} on storage_a (expected 768)",
+            a.id,
+            emb_a.len()
         );
         anyhow::ensure!(
-            b.summary_embedding.is_none(),
-            "D4 violation: community {} summary_embedding is Some on storage_b",
-            b.id
+            emb_b.len() == 768,
+            "parity: community {} summary_embedding has wrong dim {} on storage_b (expected 768)",
+            b.id,
+            emb_b.len()
         );
     }
 
