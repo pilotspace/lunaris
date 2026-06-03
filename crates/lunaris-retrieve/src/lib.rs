@@ -58,6 +58,7 @@ pub use operators::recency::{
     ACT_R_MIN_AGE_SECONDS, ActR, Exp, RecencyConfig, RecencyScorer, TimeSource, rescore_recency,
 };
 pub use operators::rerank::{DEFAULT_RERANK_TOP_IN, RerankRetriever, rerank};
+pub use operators::tree::Tree;
 pub use operators::vector::Vector;
 pub use operators::{QueryContext, Retriever};
 pub use planner::{Plan, plan_query};

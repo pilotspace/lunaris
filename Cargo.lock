@@ -3236,6 +3236,7 @@ dependencies = [
  "lru",
  "lunaris-core",
  "lunaris-extract",
+ "lunaris-ingest",
  "lunaris-rerank",
  "lunaris-storage-moon",
  "moondb",

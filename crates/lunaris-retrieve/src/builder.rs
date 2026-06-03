@@ -92,6 +92,7 @@ pub struct RetrievalBuilder {
     /// delta to matching hits, and re-sorts. `None` = no boost pass (default,
     /// preserves pre-14.2 ordering for callers that construct a builder
     /// without going through `Lunaris::recall()`).
+    #[allow(clippy::type_complexity)]
     pub(crate) boost_cache: Option<Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>>,
 }
 
@@ -225,6 +226,29 @@ impl RetrievalBuilder {
             Box::new(fallback),
         );
         Self { root: Box::new(new_root), ..self }
+    }
+
+    /// N5/B2: Replace the root with a RAPTOR [`crate::operators::tree::Tree`]
+    /// operator targeting the `communities` vector index with `k` top summary
+    /// nodes and the given BFS descent `depth` (clamped to
+    /// [`crate::operators::tree::MAX_TREE_DEPTH`]).
+    ///
+    /// The operator vector-searches community summaries, then descends
+    /// `Community.members` links to collect leaf-chunk IDs. Downstream
+    /// `hydrate()` resolves them into full `Hit`s. Whole-document and
+    /// multi-hop questions that flat chunk retrieval misses at small `k`
+    /// benefit from this path.
+    ///
+    /// ```ignore
+    /// let hits = lunaris.recall()
+    ///     .tree("communities", 5, 1)
+    ///     .execute(Query::text("What are the main themes?"))
+    ///     .await?;
+    /// ```
+    pub fn tree(mut self, index: impl Into<String>, k: usize, depth: usize) -> Self {
+        let root = crate::operators::tree::Tree::new(index, k).with_depth(depth);
+        self.root = Box::new(root);
+        self
     }
 
     /// P0 #3 Wave 1: opt into post-hydrate recency rescoring.

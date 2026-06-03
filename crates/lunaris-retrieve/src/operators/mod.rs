@@ -8,6 +8,7 @@ pub mod keyword;
 pub mod modifiers;
 pub mod recency;
 pub mod rerank;
+pub mod tree;
 pub mod vector;
 
 use std::any::Any;
