@@ -300,8 +300,7 @@ async fn tree_retrieval_beats_flat_on_whole_document_query() {
         keyword.clone(),
     );
     let depth1_op = Tree::new("communities", 1).with_depth(1);
-    let depth1_raw =
-        depth1_op.retrieve(&depth1_ctx).await.expect("depth=1 probe must not error");
+    let depth1_raw = depth1_op.retrieve(&depth1_ctx).await.expect("depth=1 probe must not error");
     eprintln!("Tree retrieval (community k=1, depth=1): {} hits", depth1_raw.len());
     assert_eq!(
         depth1_raw.len(),
