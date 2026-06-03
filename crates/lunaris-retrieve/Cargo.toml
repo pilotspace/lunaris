@@ -62,6 +62,14 @@ lru                  = { workspace = true }
 tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
 parking_lot          = { workspace = true }
 async-trait          = { workspace = true }
+# N5/B2 tree_recall integration test: ingest a real document so the communities
+# index is populated, then assert tree retrieval returns more chunks than flat.
+lunaris-ingest       = { workspace = true }
+lunaris-storage-moon = { workspace = true }
+bytes                = { workspace = true }
+futures              = { workspace = true }
+serde_json           = { workspace = true }
+ulid                 = { workspace = true }
 
 [features]
 default = []
