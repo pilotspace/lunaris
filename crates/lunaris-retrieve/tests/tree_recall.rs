@@ -277,10 +277,48 @@ async fn tree_retrieval_beats_flat_on_whole_document_query() {
         "flat hits must all be tagged SourceOp::Vector"
     );
 
+    // ------------------------------------------------------------------ depth=1 probe (discriminator)
+    //
+    // The RAPTOR topology for this document is:
+    //   H1 root community → members = [H2_A_community, H2_B_community]  (sub-communities)
+    //   H2_A community    → members = [chunk_A1, ...]                   (leaf chunks)
+    //   H2_B community    → members = [chunk_B1, ...]                   (leaf chunks)
+    //
+    // At depth=1: BFS processes H1's members. Each member is a sub-community.
+    // The condition `is_community && depth+1 < self.depth` = `true && 0+1 < 1` = false,
+    // so sub-communities are NOT enqueued; no leaf chunks are emitted → 0 hits.
+    //
+    // This probe proves that the BFS descent at depth=2 is NOT dead code:
+    // depth=1 returns 0, depth=2 returns ≥2. Without depth=2 the operator is useless
+    // on this document topology.
+    let depth1_query = Query { text: query_text.into(), k: 1, filter: None, as_of: None };
+    let depth1_ctx = QueryContext::new(
+        depth1_query,
+        scope.clone(),
+        embedder.clone(),
+        storage.clone() as Arc<dyn StoragePort>,
+        keyword.clone(),
+    );
+    let depth1_op = Tree::new("communities", 1).with_depth(1);
+    let depth1_raw =
+        depth1_op.retrieve(&depth1_ctx).await.expect("depth=1 probe must not error");
+    eprintln!("Tree retrieval (community k=1, depth=1): {} hits", depth1_raw.len());
+    assert_eq!(
+        depth1_raw.len(),
+        0,
+        "depth=1 must return 0 leaf chunks because H1's direct members are H2 sub-communities, \
+         not leaf chunks; the BFS skips sub-communities at the depth budget boundary. \
+         Got {} hits — this would indicate RAPTOR built a flat topology (chunks directly \
+         under H1 root) rather than the expected H1→H2→chunk hierarchy.",
+        depth1_raw.len()
+    );
+    eprintln!("PASS depth=1 probe: 0 hits confirms H1.members are sub-communities, not chunks");
+
     // ------------------------------------------------------------------ tree retrieval (community k=1)
-    // Tree retrieval at community k=1: find the 1 nearest community summary,
-    // then descend to ALL its leaf chunks. Because the community aggregates
-    // multiple chunks, we expect more than 1 hit.
+    // Tree retrieval at community k=1, depth=2: find the nearest community, descend
+    // through H2 sub-communities to collect ALL leaf chunks across both sections.
+    // Because the root community aggregates two H2 sections, and each H2 has ≥1 chunk,
+    // depth=2 returns ≥2 chunks — more than flat (k=1) which returns exactly 1.
     let tree_query = Query { text: query_text.into(), k: 1, filter: None, as_of: None };
     let tree_ctx = QueryContext::new(
         tree_query,
