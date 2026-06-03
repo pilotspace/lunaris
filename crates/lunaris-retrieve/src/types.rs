@@ -27,6 +27,12 @@ pub enum SourceOp {
     /// contributions stay isolated. Per-hit score = `1.0 / (1 + bfs_rank)` for
     /// rank-stability across hops (rank 0 → 1.0, rank 1 → 0.5, …).
     Graph,
+    /// N5/B2 (RAPTOR tree retrieval): leaf-chunk hits descended from a matched
+    /// community summary node. The operator searches the `"communities"` vector
+    /// index, then walks `Community.members` to collect leaf-chunk IDs. Score
+    /// is inherited from the parent community's cosine similarity. Hydration
+    /// resolves chunk text normally — the id bytes are chunk ULIDs.
+    Tree,
 }
 
 /// One pre-hydration retrieval hit. Operators flow these around between
