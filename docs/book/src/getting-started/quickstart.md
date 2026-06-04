@@ -104,19 +104,30 @@ async fn main() -> Result<()> {
         .context("ingest")?;
     println!("ingested at lsn={lsn:?} under scope `quickstart`");
 
-    // 5. Recall it. ScopedLunaris::dsl() returns a RetrievalBuilder
-    //    pre-seeded with this scope; .with_root sets the operator tree,
-    //    .execute runs the plan once and returns Vec<Hit>.
+    // 5a. Recall — the one-shot form. ScopedLunaris::recall(query) runs the
+    //     default plan (Vector over `chunks`, no fusion/rerank) and returns
+    //     Vec<Hit> directly. Least ceremony for a plain semantic lookup.
     let hits = scoped
-        .dsl()
-        .with_root(Vector::new("chunks", 30).top(5))
-        .execute(Query::text("who loves chocolate"))
+        .recall(Query::text("who loves chocolate"))
         .await
         .context("recall")?;
     println!("recalled {} hit(s)", hits.len());
     for h in &hits {
         println!("  hit id={:?} score={:.3}", h.id, h.score);
     }
+
+    // 5b. Recall — the composable form. ScopedLunaris::dsl() returns a
+    //     RetrievalBuilder pre-seeded with this scope; .with_root sets the
+    //     operator tree, .execute runs the plan once and returns Vec<Hit>.
+    //     Reach for this when you want hybrid fusion, graph/tree, as_of,
+    //     or rerank. (Here: cap the same default Vector plan at top-5.)
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30).top(5))
+        .execute(Query::text("who loves chocolate"))
+        .await
+        .context("recall (dsl)")?;
+    println!("recalled {} hit(s) via the DSL", hits.len());
 
     // 6. Forget — soft delete (MVCC: stamps bt.sys_to; prior as_of
     //    reads still see it). A dry-run preview never writes.

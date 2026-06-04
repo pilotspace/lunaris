@@ -4,7 +4,7 @@ Status: alpha tracking v0.1.1 (Rust crate `lunaris`, `pip install lunaris`, `npm
 
 ## What is Lunaris?
 
-Lunaris is a multi-language agent memory engine — Rust-first, with PyO3 + napi-rs bindings generated from the same source of truth. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval DSL that fuses vector search, BM25 keyword lookup, and graph traversal, with a cross-encoder rerank pass on top.
+Lunaris is a multi-language agent memory engine — Rust-first, with PyO3 + napi-rs bindings generated from the same source of truth. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval **DSL** — a *Domain-Specific Language*, i.e. a small purpose-built query API where you chain operators into a plan rather than glue together raw calls — that fuses vector search, BM25 keyword lookup, graph traversal, and RAPTOR hierarchical tree retrieval, with a cross-encoder rerank pass on top.
 
 Two backends ship Day-0: **Moon** (Redis-compatible with `FT.*` native vector + BM25 + RRF) and **Postgres** (via `pgvector` + `AGE` + `pgmq`). Everything you call on `Lunaris` works identically against either — the URL scheme decides.
 
@@ -168,7 +168,7 @@ You want hits back without writing your own retriever.
 
 ### When to use it
 
-Every read beyond a single-key fetch. The DSL composes four operators — `Vector`, `Keyword`, `Graph`, and fusion/rerank/modifier wrappers — and executes the plan in one pass. The canonical shape lives at `crates/lunaris/src/recall.rs:46-72`; the canonical test is `crates/lunaris/tests/recall_smoke.rs:200-217`.
+Every read beyond a single-key fetch. The DSL composes five operators — `Vector`, `Keyword`, `Graph`, `Tree` (RAPTOR hierarchical), and fusion/rerank/modifier wrappers — and executes the plan in one pass. The canonical shape lives at `crates/lunaris/src/recall.rs:46-72`; the canonical test is `crates/lunaris/tests/recall_smoke.rs:200-217`.
 
 ### Code
 
@@ -940,7 +940,7 @@ let hits = lunaris.recall()
     .await?;
 ```
 
-The second-most-common cause is asking for an index that wasn't written — the chunker fills `chunks`, the extractor fills `entities` and `facts`, nothing fills `communities` until the consolidator's Leiden run lands (v1).
+The second-most-common cause is asking for an index that wasn't written — the chunker fills `chunks`, the extractor fills `entities` and `facts`, and RAPTOR fills `communities` with embedded summary nodes at ingest — queryable via the `Tree` operator (the consolidator's Leiden run also contributes community nodes).
 
 ### Every hit has `degraded=true`
 

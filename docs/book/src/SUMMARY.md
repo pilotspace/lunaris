@@ -21,6 +21,7 @@
 # Cookbook
 
 - [Overview](./cookbook/index.md)
+- [Querying Three Ways (Zero-Deps)](./cookbook/querying-three-ways.md)
 - [Chat Agent Memory](./cookbook/chat-agent.md)
 - [Multi-Turn Conversation](./cookbook/multi-turn.md)
 - [Slack / Email / Meeting Notes](./cookbook/conversational-channels.md)

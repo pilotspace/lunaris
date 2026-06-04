@@ -18,7 +18,7 @@ glob-import the prelude:
 ```rust
 use lunaris::prelude::*;
 // → Lunaris, ScopedLunaris, Scope, EpisodeBuilder, Query, Hit,
-//   Vector, Keyword, Graph, RetrievalBuilder, ForgetTarget, ScopeSpec,
+//   Vector, Keyword, Graph, Tree, RetrievalBuilder, ForgetTarget, ScopeSpec,
 //   LunarisError, Embedder, HlcClock,
 //   Reranker/NoopReranker, Extractor/NoopExtractor,
 //   Verifier/NoopVerifier, Consolidator/NoopConsolidator
@@ -36,7 +36,7 @@ types, `init_logging`, the pipeline handles, etc.
 | `lunaris` | Umbrella: `Lunaris` / `ScopedLunaris` handles, `open()` URL dispatcher, the ingest hot path, re-exports, `prelude` |
 | `lunaris-core` | Shared primitives (`Episode`/`Chunk`/`Entity`/`Fact`/`Relation`/`Community`), `StoragePort` trait, HLC clock, `Scope` newtype, `keyspace`, error taxonomy, circuit breaker |
 | `lunaris-ingest` | Markdown chunker + batched embedder driver + the single `atomic_write` |
-| `lunaris-retrieve` | The retrieval DSL (`Vector`/`Keyword`/`Graph`, combinators, RRF fusion, rerank, fallback), `tower::Service`-shaped |
+| `lunaris-retrieve` | The retrieval DSL (`Vector`/`Keyword`/`Graph`/`Tree`, combinators, RRF fusion, rerank, fallback), `tower::Service`-shaped |
 | `lunaris-extract` | Entity/relation/fact extractor (candle / Ollama / cloud-API) + validator |
 | `lunaris-consolidate` | ACT-R consolidator (Anderson 1996; Leiden communities) — opt-in |
 | `lunaris-verify` | Slow-path arbitration verifier + MVCC supersede writer — opt-in |

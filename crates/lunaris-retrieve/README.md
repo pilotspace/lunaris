@@ -1,9 +1,9 @@
 # lunaris-retrieve
 
-Composable retrieval DSL (vector, keyword, graph) for the [Lunaris](https://github.com/lunaris-dev/lunaris) agent
+Composable retrieval DSL (vector, keyword, graph, RAPTOR tree) for the [Lunaris](https://github.com/lunaris-dev/lunaris) agent
 memory engine.
 
-This crate is the fused retrieval DSL — Vector + Keyword + Graph operators with RRF fusion, cross-encoder reranking, and tower middleware for caching/timeout/retry.
+This crate is the fused retrieval DSL — Vector + Keyword + Graph + Tree (RAPTOR hierarchical) operators with RRF fusion, cross-encoder reranking, and tower middleware for caching/timeout/retry.
 
 ## Use
 

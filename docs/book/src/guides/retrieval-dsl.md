@@ -1,5 +1,10 @@
 # The Retrieval DSL
 
+> **DSL** = *Domain-Specific Language* — here, a small composable **query API**
+> (operators you chain into a *plan*), not a separate language you write or
+> parse. Prefer `ScopedLunaris::recall(query)` for a one-shot default query;
+> reach for the DSL builder below when you need to compose operators.
+
 **Reach for this chapter for every read beyond a single-key fetch.** The DSL
 composes a small set of operators — `Vector`, `Keyword`, `Graph`, plus
 fusion / rerank / modifier wrappers — into a *plan*, then executes it in one
@@ -9,6 +14,67 @@ rate-limit / retry / timeout / tracing middleware drops in for free.
 
 All names below are re-exported at the `lunaris::` top level — never reach
 into `lunaris_retrieve::`.
+
+## Two ways to query
+
+There are **two query forms over the same engine**. Both run on the same
+storage / embedder / scope; the only difference is how much of the plan you
+spell out.
+
+**Form A — `scoped.recall(query)` (one-shot).** A single `.await` that returns
+`Vec<Hit>` directly. It runs the **default plan**: a `Vector` search over the
+`chunks` index — **no keyword fusion, no graph, no rerank**. Reach for it when a
+plain semantic lookup is all you need.
+
+```rust
+use lunaris::{Lunaris, Query, Scope};
+
+let lunaris = Lunaris::open("moon://localhost:6380").await?;
+let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);
+
+// One call, Vec<Hit> back. Default plan = Vector over `chunks`.
+let hits = scoped.recall(Query::text("who loves chocolate")).await?;
+```
+
+**Form B — `scoped.dsl()…execute(query)` (composable).** Returns a
+`RetrievalBuilder` you customise (`.with_root(...)`, `.filter(...)`, `.as_of(...)`,
+`.rerank(...)`) before the single `.execute(query).await`. Reach for it the
+moment you want hybrid fusion, the graph or tree operators, time-travel, or
+reranking.
+
+```rust
+use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
+
+let hits = scoped
+    .dsl()
+    .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
+    .execute(Query::text("who loves chocolate"))
+    .await?;
+```
+
+They are **the same machinery**: `recall(query)` is exactly `dsl()` with the
+default root left in place, then `.execute(query)` — verify it in
+`crates/lunaris/src/handle.rs` (`recall` at the `ScopedLunaris` impl delegates to
+`engine.recall().with_scope(scope).execute(query)`; `dsl()` returns the same
+pre-seeded builder). So there is nothing `recall()` can do that `dsl()` cannot —
+`recall()` is the convenience name for the common default.
+
+| You want… | Use | Returns |
+|---|---|---|
+| A plain semantic lookup, least ceremony | `scoped.recall(query)` | `Vec<Hit>` |
+| Hybrid (vector + BM25) fusion | `scoped.dsl().with_root(Vector…​.and(Keyword…​).fuse_rrf(k))` | builder → `Vec<Hit>` |
+| Graph expansion / RAPTOR `Tree` descent | `scoped.dsl().with_root(Graph…​ / Tree…​)` | builder → `Vec<Hit>` |
+| Time-travel (`as_of`), filters, rerank | `scoped.dsl().as_of(…)/.filter(…)/.rerank(…)` | builder → `Vec<Hit>` |
+
+**See it run.** [Querying Three Ways](../cookbook/querying-three-ways.md) runs
+all three forms — direct recall, DSL fusion, and the `Tree` operator — against
+zero-deps SQLite (`memory://`) over one ingested document.
+
+> Mind the three `recall` names. **`ScopedLunaris::recall(query)`** (above)
+> returns `Vec<Hit>` and is the canonical one-shot. **`ScopedLunaris::dsl()`**
+> returns the builder. The bare **`Lunaris::recall()`** (no scope) is a
+> *legacy* path that returns a builder seeded with `Scope::dev()` and warns on
+> every call — see the note under [Seeding a builder](#seeding-a-builder).
 
 ## Seeding a builder
 
@@ -47,9 +113,11 @@ future-boxing.
 
 Top-`k` chunks by vector (cosine) similarity. `index` is one of the four
 whitelisted names: `chunks | entities | facts | communities`. The chunker
-fills `chunks`; the extractor fills `entities` and `facts`; nothing fills
-`communities` until the [consolidator](./consolidate-verify.md)'s Leiden run
-lands. (`crates/lunaris-retrieve/src/operators/vector.rs`)
+fills `chunks`; the extractor fills `entities` and `facts`. RAPTOR's
+ingest-time tree now fills `communities` with embedded **summary** nodes — query
+them directly here, or via the **`Tree`** operator (below) for hierarchical
+descent. (The [consolidator](./consolidate-verify.md)'s Leiden run also
+contributes community nodes.) (`crates/lunaris-retrieve/src/operators/vector.rs`)
 
 ### `Keyword::bm25(index, k)`
 
@@ -73,6 +141,63 @@ Per-hit score is `1.0 / (1 + bfs_rank)`. `.with_k(n)` caps the candidate set
 (default `DEFAULT_GRAPH_K = 30`); `.with_graph(name)` overrides the graph key
 (default `lunaris_graph`). Requires the graph pipeline and an extractor — see
 [The Graph Pipeline](./graph.md). (`crates/lunaris-retrieve/src/operators/graph.rs`)
+
+### `Tree::new(index, k)` — RAPTOR hierarchical retrieval
+
+Climbs the RAPTOR community tree instead of searching flat chunks. It
+vector-searches the `communities` index for the `k` nearest **summary** nodes,
+then descends `Community.members` breadth-first to collect the leaf chunks
+beneath them. Because a summary node *semantically aggregates* its chunks, this
+surfaces whole-document and multi-hop answers whose constituent chunks fall
+outside a flat search's top-`k` budget.
+
+```rust
+use lunaris::{Query, Tree};
+
+// operator form — pass to .with_root() or compose with .and()/.fuse_rrf()
+scoped.dsl()
+    .with_root(Tree::new("communities", 5))
+    .execute(Query::text("What are the main themes across both reports?"))
+    .await?;
+
+// builder shortcut — .tree(index, k, depth) replaces the root in one call
+scoped.dsl()
+    .tree("communities", 5, 1)
+    .execute(Query::text("What are the main themes across both reports?"))
+    .await?;
+```
+
+- **`k`** — number of top community summary nodes to seed from (clamped to `MAX_K`).
+- **`depth`** — BFS descent levels. `1` (default, `DEFAULT_TREE_DEPTH`) collects
+  the seed communities' direct members; `2` also expands sub-communities one
+  level deeper, and so on. Clamped to `[1, MAX_TREE_DEPTH]` where
+  `MAX_TREE_DEPTH = 4`. **Only the first level issues a vector search** — deeper
+  levels read community KV rows only, so cost scales with depth × fan-out, not
+  index size.
+- Composes like any operator: `.and()` / `.or()` / `.then()` / `.fuse_rrf()` /
+  `.top()`. Fuse it with a flat `Vector` branch to get pinpoint chunks **and**
+  tree-aggregated coverage in one plan:
+
+```rust
+use lunaris::{Query, Tree, Vector};
+scoped.dsl().with_root(
+    Vector::new("chunks", 30)
+        .and(Tree::new("communities", 5))
+        .fuse_rrf(60)
+        .top(10),
+).execute(Query::text("Summarize the incident and its root cause")).await?;
+```
+
+> **Prerequisite:** the `communities` index must be populated. RAPTOR fills it at
+> ingest (community `summary_embedding`, since the 2026-06-04 change). If `.tree()`
+> comes back empty, the scope hasn't ingested a document large enough to build a
+> tree yet — see [Ingesting Observations](./ingest.md).
+
+> **What's proven today:** `.tree()` is verified *wired and traversed* — on a
+> whole-document query it returns the full leaf set where flat top-`k` returns a
+> single chunk. Relevance-vs-flat ranking with a production embedder is **not yet
+> benchmarked**; treat `.tree()` as a coverage / recall lever, fused with
+> `Vector` for precision. (`crates/lunaris-retrieve/src/operators/tree.rs`)
 
 ### Combinators — `.and()` / `.or()` / `.then()`
 
@@ -226,8 +351,9 @@ works. Note `RetrievalService` itself has no scope context (it uses
 ## Gotchas
 
 - **Empty hits are usually a filter problem.** Over-tight `filter_str`, or an
-  index that nothing wrote to (`communities` until v1). Drop the filter and
-  re-run.
+  index that nothing wrote to. (`communities` is now populated at ingest by
+  RAPTOR — if it's empty, this scope hasn't ingested a document big enough to
+  build a tree.) Drop the filter and re-run.
 - **`filter_str` parse errors are builder-time, not execute-time.** Catch them
   with `?` where you build the chain.
 - **`execute_raw`** returns un-hydrated `RawHit`s — for bench harnesses that
