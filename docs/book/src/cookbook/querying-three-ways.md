@@ -27,8 +27,8 @@ vector-and-tree operators the embedded backend already serves.
 | Form | Call | Runs on `memory://`? | Use it when… |
 |---|---|---|---|
 | One-shot | `scoped.recall(query)` | ✅ | a plain semantic lookup is enough |
-| DSL fusion | `scoped.dsl().with_root(Vector…​.and(Tree…​).fuse_rrf(k))…​.execute()` | ✅ | you want to blend flat chunks with hierarchical context |
-| Tree | `scoped.dsl().with_root(Tree::new("communities", k).with_depth(2))…​` | ✅ | a whole-document question whose answer spans many chunks |
+| DSL fusion | `scoped.dsl().with_root(Vector….and(Tree…).fuse_rrf(k))….execute()` | ✅ | you want to blend flat chunks with hierarchical context |
+| Tree | `scoped.dsl().with_root(Tree::new("communities", k).with_depth(2))…` | ✅ | a whole-document question whose answer spans many chunks |
 
 All three are the **same engine**: `recall(query)` is just `dsl()` with the
 default root left in place. See [Two ways to
@@ -195,7 +195,7 @@ let hits = scoped
 ```
 
 This needs a **server backend** (`moon://…` or `postgres://…`): the embedded
-SQLite backend returns `keyword_search not yet implemented (FTS5 BM25 pending)`
+SQLite backend returns `embedded backend: keyword_search not yet implemented (FTS5 BM25 pending)`
 (`crates/lunaris-storage-embedded/src/lib.rs`). Everything else on this page is
 unchanged — only the `Keyword` branch requires the server-side FT index. For a
 batteries-included hybrid-RAG wrapper over a server backend, reach for
