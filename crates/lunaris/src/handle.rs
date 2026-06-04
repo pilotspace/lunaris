@@ -1229,12 +1229,13 @@ impl<'a> ScopedLunaris<'a> {
 
     /// Recall hits under the bound scope.
     ///
-    /// Returns a [`lunaris_retrieve::RetrievalBuilder`] pre-seeded with the
-    /// engine's storage / embedder / keyword Arcs AND this wrapper's scope,
-    /// ready for the caller to customise and `.execute()`. Wave 2.5C: the
-    /// scope is now threaded through the entire retrieval path — Vector,
-    /// Graph, Keyword operators, and hydrate all use `self.scope` so only
-    /// hits from this scope's partition are returned.
+    /// Runs the **default plan** (a `Vector` search over the `chunks` index —
+    /// no keyword fusion, no rerank), executes it, and returns the hydrated
+    /// `Vec<Hit>`. This is the one-shot convenience form; for a custom plan
+    /// (hybrid fusion, graph / tree, `as_of`, rerank) use [`Self::dsl`].
+    /// Wave 2.5C: the scope is threaded through the entire retrieval path —
+    /// Vector, Graph, Keyword operators, and hydrate all use `self.scope` so
+    /// only hits from this scope's partition are returned.
     pub async fn recall(
         &self,
         query: lunaris_retrieve::Query,

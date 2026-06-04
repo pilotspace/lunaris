@@ -55,9 +55,11 @@ detail.
   fan-out behind a two-step confirmation token), and emits one audit
   event.
 - **`recall`** is read-only: a `RetrievalBuilder` composes `Vector`,
-  `Keyword`, and `Graph` operators (plus fusion / rerank / fallback
-  wrappers) into a plan, executes it once, and returns `Vec<Hit>`. No
-  LLM is on this path — that's the sub-25 ms moat.
+  `Keyword`, `Graph`, and `Tree` (RAPTOR hierarchical) operators (plus
+  fusion / rerank / fallback wrappers) into a plan, executes it once, and
+  returns `Vec<Hit>`. The one-shot `ScopedLunaris::recall(query)` is the
+  same builder with its default root left in place. No LLM is on this
+  path — that's the sub-25 ms moat.
 
 ## The primitives
 

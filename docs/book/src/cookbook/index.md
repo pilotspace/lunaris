@@ -4,6 +4,12 @@
 retrieval plans — pick the named recipe that matches your data shape and you
 get a ≤ 30-LOC, parity-tested API instead.**
 
+> **Want the raw query surface instead of a recipe wrapper?**
+> [Querying Three Ways](./querying-three-ways.md) shows direct `recall`, DSL
+> fusion, and the `Tree` operator running zero-deps on SQLite (`memory://`) —
+> no server. The recipe wrappers below are server-backed (their BM25 arm needs
+> Moon or Postgres).
+
 Lunaris ships a small library of *recipe types* in the `lunaris-recipes`
 crate (plus `HeliosScratchpad` in the umbrella `lunaris` crate). They are
 layered:
