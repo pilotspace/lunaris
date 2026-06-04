@@ -133,10 +133,14 @@ pub use lunaris_verify::{OllamaVerifier, OllamaVerifierOpts};
 // Plan 03-02 added `Graph` to the retrieve crate; the umbrella crate forwards
 // it here so callers `use lunaris::{Graph, EntityId}` for the canonical
 // blueprint §8 compose example.
+//
+// N5/B2 added the RAPTOR `Tree` operator; forwarded here so callers
+// `use lunaris::{Tree, Vector}` and never reach into `lunaris_retrieve::`
+// (the retrieval-DSL guide's standing contract).
 pub use lunaris_retrieve::{
     DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, DegradedFallbackRetriever, Graph, Hit, Keyword,
     LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS, Plan, Query, RawHit, RerankRetriever, RetrievalBuilder,
-    RetrievalService, SourceOp, Vector, degraded_fallback, filter_str, plan_query, rerank,
+    RetrievalService, SourceOp, Tree, Vector, degraded_fallback, filter_str, plan_query, rerank,
 };
 
 // Reranker trait + helpers re-exported from lunaris-rerank so callers
@@ -189,7 +193,7 @@ pub mod prelude {
     pub use crate::forget::{ForgetTarget, ScopeSpec};
 
     // Retrieval DSL.
-    pub use lunaris_retrieve::{Graph, Hit, Keyword, Query, RetrievalBuilder, Vector};
+    pub use lunaris_retrieve::{Graph, Hit, Keyword, Query, RetrievalBuilder, Tree, Vector};
 
     // Umbrella error type.
     pub use lunaris_core::error::LunarisError;
