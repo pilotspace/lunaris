@@ -1,0 +1,33 @@
+Create a calm, light, hand-drawn style comparison infographic on a pure white (#FAFAFA) background: thin medium-charcoal ink lines (#4a4a48), generous whitespace, softly rounded corners, balanced and fair — both sides equal visual weight.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "FOUR SYSTEMS vs ONE SUBSTRATE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "what Moon collapses"
+
+LAYOUT — split view with a thin hand-drawn vertical divider line down the center; a small "vs" inside a loose pencil circle at the divider midpoint.
+
+LEFT SIDE, header "THE USUAL STACK" (pale rose whisper tint #faf0f0 behind the area):
+  Four separate small boxes arranged loosely, each with a tiny line-icon:
+    "vector DB" · "graph DB" · "SQL DB" · "queue"
+  Many thin dashed lines crisscrossing between the four boxes, slightly tangled.
+  Pencil-line annotation arrow to the tangle: "app code keeps them in sync"
+  Pencil-line annotation below: "no shared transaction"
+  Small gray margin note: "4 systems to deploy, monitor, back up"
+
+RIGHT SIDE, header "LUNARIS ON MOON" (soft sage whisper tint #eef5ee behind the area):
+  One single rounded box, drawn slightly larger (HERO ELEMENT), containing four tiny line-icons in a 2x2 arrangement labeled:
+    "vectors" · "keywords" · "graph" · "queue"
+  Around the box, one loose pencil circle with the label "one transaction"
+  Pencil-line annotation arrow: "all four lanes commit together"
+  Small gray margin note: "1 process to operate"
+
+BOTTOM ROW (warm sand whisper tint #f5f0e8), two small metric cards side by side:
+  card 1: "recall p50 10.3 ms — contract < 25 ms"
+  card 2: "crash window between stores: zero"
+
+BALANCE NOTE: small light-gray print text at bottom margin: "trade-off: Moon is one more thing to run — SQLite mode needs nothing"
+
+ANNOTATION STYLE: all annotations connect with thin, light pencil-gray leader lines ending in small dots — gentle, sketchy, thin.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.

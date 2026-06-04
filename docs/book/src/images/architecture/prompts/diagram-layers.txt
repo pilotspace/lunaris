@@ -1,0 +1,35 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a thoughtful architect's whiteboard sketch: thin soft-charcoal ink lines (#3d3d3a), generous whitespace, softly rounded corners.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat architect block lettering / clean humanist sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below. Text large enough to read easily.
+
+TITLE at top center: "LUNARIS" in medium charcoal print lettering.
+Subtitle below in lighter gray (#8a8a85): "agent memory engine — layered design"
+
+LAYOUT — four horizontal tiers stacked top to bottom, separated by whitespace (no heavy borders):
+
+TIER 1 (top, morning peach whisper tint #faf3ee): label "AGENTS & SDKs"
+  Four small simple line-icons in a row with labels: "Python" · "TypeScript" · "HTTP" · "MCP"
+  Pencil-line annotation arrow pointing at this tier: "your agent talks here"
+
+TIER 2 (upper middle, cream lilac whisper tint #f3f0f8): label "ENGINE"
+  Two small flow groups side by side:
+  left: "ingest → extract → consolidate"
+  right: "recall DSL: vector + keyword + graph"
+  Pencil-line annotation arrow: "models run local, in-process"
+
+TIER 3 (lower middle, warm sand whisper tint #f5f0e8): label "CONTRACTS"
+  Single thin box: "storage ports · scopes · bi-temporal time"
+  Pencil-line annotation arrow: "swap backends — same trait"
+
+TIER 4 (bottom, cloud blue whisper tint #eef3f9): label "SUBSTRATE"
+  HERO ELEMENT, drawn slightly larger: a database cylinder labeled "MOON" containing four tiny icons in a row labeled: "vectors" · "keywords" · "graph" · "queue"
+  To its right, two smaller cylinders: "Postgres" and "SQLite"
+  Pencil-line annotation arrow to MOON: "one engine, one transaction"
+
+CONNECTIONS: one thin vertical arrow between each tier, top to bottom, small open arrowheads. Between ENGINE and SUBSTRATE, the arrow carries a small label: "one atomic commit".
+
+KEY METRIC: bottom-right, a loose pencil circle around the text "recall p50 ≈ 10 ms" with a tiny annotation "contract: < 25 ms".
+
+ANNOTATION STYLE: all annotations connect with thin, light pencil-gray leader lines (like pencil strokes) ending in small dots — gentle, sketchy, thin.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor-like tints behind each tier. Maximum whitespace, everything breathes.

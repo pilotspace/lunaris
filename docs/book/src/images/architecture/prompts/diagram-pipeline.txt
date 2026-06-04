@@ -1,0 +1,28 @@
+Create a calm, light, hand-drawn style data pipeline diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "MEMORY IN, ANSWERS OUT" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "the Lunaris data path"
+
+LAYOUT — two horizontal flows, one above the other:
+
+UPPER FLOW, labeled "INGEST" at its left edge (cloud blue whisper tint #eef3f9 behind the row), flowing left to right as small rounded boxes connected by thin arrows:
+  "observation" → "chunk" → "embed" → "extract" → HERO BOX
+  The HERO BOX is slightly larger, with a loose teal pencil circle around it: "ONE ATOMIC WRITE"
+  From the hero box, one arrow continues right into a database cylinder labeled "MOON".
+  Pencil-line annotation arrow to the hero box: "vectors + keywords + graph + audit — all or nothing"
+  Pencil-line annotation arrow to "embed": "local model, no API call"
+
+LOWER FLOW, labeled "RECALL" at its right edge (soft sage whisper tint #eef5ee behind the row), flowing right to left as small rounded boxes:
+  starting from the same "MOON" cylinder on the right:
+  three thin parallel lanes leave the cylinder, labeled "vector", "keyword", "graph"
+  the three lanes merge into a box: "fuse (RRF)" → "rerank" → "answer"
+  Pencil-line annotation arrow at the three lanes: "one query, three search modes"
+  Pencil-line annotation arrow near "answer", with a loose pencil circle: "p50 ≈ 10 ms"
+
+TIME-TRAVEL NOTE: below the MOON cylinder, small gray print text: "as-of T: ask what the agent believed at time T" with a tiny clock line-icon.
+
+CONNECTIONS: main flow arrows are thin solid lines with small open arrowheads. Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
