@@ -6,9 +6,9 @@
 > reach for the DSL builder below when you need to compose operators.
 
 **Reach for this chapter for every read beyond a single-key fetch.** The DSL
-composes a small set of operators — `Vector`, `Keyword`, `Graph`, plus
-fusion / rerank / modifier wrappers — into a *plan*, then executes it in one
-pass and returns `Vec<Hit>`. It is declarative ("feel like Keras, not like a
+composes a small set of operators — `Vector`, `Keyword`, `Graph`, `Tree`
+(RAPTOR hierarchical), plus fusion / rerank / modifier wrappers — into a
+*plan*, then executes it in one pass and returns `Vec<Hit>`. It is declarative ("feel like Keras, not like a
 query language", blueprint §8) and `tower::Service`-shaped at the edge so
 rate-limit / retry / timeout / tracing middleware drops in for free.
 
@@ -43,8 +43,9 @@ moment you want hybrid fusion, the graph or tree operators, time-travel, or
 reranking.
 
 ```rust
-use lunaris::{Keyword, Lunaris, Query, Scope, Vector};
+use lunaris::{Keyword, Query, Vector};
 
+// `scoped` is the handle from Form A above.
 let hits = scoped
     .dsl()
     .with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))
@@ -62,8 +63,8 @@ pre-seeded builder). So there is nothing `recall()` can do that `dsl()` cannot �
 | You want… | Use | Returns |
 |---|---|---|
 | A plain semantic lookup, least ceremony | `scoped.recall(query)` | `Vec<Hit>` |
-| Hybrid (vector + BM25) fusion | `scoped.dsl().with_root(Vector…​.and(Keyword…​).fuse_rrf(k))` | builder → `Vec<Hit>` |
-| Graph expansion / RAPTOR `Tree` descent | `scoped.dsl().with_root(Graph…​ / Tree…​)` | builder → `Vec<Hit>` |
+| Hybrid (vector + BM25) fusion | `scoped.dsl().with_root(Vector….and(Keyword…).fuse_rrf(k))` | builder → `Vec<Hit>` |
+| Graph expansion / RAPTOR `Tree` descent | `scoped.dsl().with_root(Graph… / Tree…)` | builder → `Vec<Hit>` |
 | Time-travel (`as_of`), filters, rerank | `scoped.dsl().as_of(…)/.filter(…)/.rerank(…)` | builder → `Vec<Hit>` |
 
 **See it run.** [Querying Three Ways](../cookbook/querying-three-ways.md) runs
@@ -73,8 +74,9 @@ zero-deps SQLite (`memory://`) over one ingested document.
 > Mind the three `recall` names. **`ScopedLunaris::recall(query)`** (above)
 > returns `Vec<Hit>` and is the canonical one-shot. **`ScopedLunaris::dsl()`**
 > returns the builder. The bare **`Lunaris::recall()`** (no scope) is a
-> *legacy* path that returns a builder seeded with `Scope::dev()` and warns on
-> every call — see the note under [Seeding a builder](#seeding-a-builder).
+> *legacy* path that returns a `RetrievalBuilder` (not `Vec<Hit>`) seeded with
+> `Scope::dev()` and warns on every call — see the note under [Seeding a
+> builder](#seeding-a-builder).
 
 ## Seeding a builder
 

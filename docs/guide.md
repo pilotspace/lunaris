@@ -168,7 +168,7 @@ You want hits back without writing your own retriever.
 
 ### When to use it
 
-Every read beyond a single-key fetch. The DSL composes five operators — `Vector`, `Keyword`, `Graph`, `Tree` (RAPTOR hierarchical), and fusion/rerank/modifier wrappers — and executes the plan in one pass. The canonical shape lives at `crates/lunaris/src/recall.rs:46-72`; the canonical test is `crates/lunaris/tests/recall_smoke.rs:200-217`.
+Every read beyond a single-key fetch. The DSL composes four leaf operators — `Vector`, `Keyword`, `Graph`, `Tree` (RAPTOR hierarchical) — plus fusion/rerank/modifier wrappers, and executes the plan in one pass. The canonical shape lives at `crates/lunaris/src/recall.rs:46-72`; the canonical test is `crates/lunaris/tests/recall_smoke.rs:200-217`.
 
 ### Code
 

@@ -1233,9 +1233,10 @@ impl<'a> ScopedLunaris<'a> {
     /// no keyword fusion, no rerank), executes it, and returns the hydrated
     /// `Vec<Hit>`. This is the one-shot convenience form; for a custom plan
     /// (hybrid fusion, graph / tree, `as_of`, rerank) use [`Self::dsl`].
-    /// Wave 2.5C: the scope is threaded through the entire retrieval path —
-    /// Vector, Graph, Keyword operators, and hydrate all use `self.scope` so
-    /// only hits from this scope's partition are returned.
+    /// Wave 2.5C: the scope is applied to the `Vector` search and to hydrate,
+    /// so only hits from this scope's partition are returned. (The same scope
+    /// threading covers `Graph` / `Keyword` and any other operators you attach
+    /// via [`Self::dsl`].)
     pub async fn recall(
         &self,
         query: lunaris_retrieve::Query,
