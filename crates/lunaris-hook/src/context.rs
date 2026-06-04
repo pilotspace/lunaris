@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
+use crate::embed_promotion::{self, EmbedPromotionConfig};
 use crate::scrub::ScrubEngine;
 
 pub const DEFAULT_PROMPT_MAX_HITS: usize = 5;
@@ -119,6 +120,7 @@ impl ContextResponse {
 pub struct ContextService {
     handles: Arc<Mutex<HashMap<String, Arc<Lunaris>>>>,
     storages: Arc<Mutex<HashMap<String, Arc<dyn StoragePort>>>>,
+    embed_workers: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     query_embeddings: Arc<Mutex<HashMap<String, Vec<f32>>>>,
 }
 
@@ -127,6 +129,7 @@ impl ContextService {
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             storages: Arc::new(Mutex::new(HashMap::new())),
+            embed_workers: Arc::new(Mutex::new(HashMap::new())),
             query_embeddings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -650,7 +653,64 @@ impl ContextService {
         let mut episode = Episode::new(scope.clone(), source.to_owned(), content, &clock);
         episode.metadata = metadata;
         let embedder = NoopEmbedder::default();
-        Ok(lunaris_ingest::ingest_episode(storage.as_ref(), &embedder, &clock, episode).await?)
+        let receipt = lunaris_ingest::ingest_episode_with_receipt(
+            storage.as_ref(),
+            &embedder,
+            &clock,
+            episode,
+        )
+        .await?;
+        let config = EmbedPromotionConfig::from_env();
+        match embed_promotion::publish_capture_receipt(
+            storage.as_ref(),
+            scope,
+            source,
+            &receipt,
+            &config,
+        )
+        .await
+        {
+            Ok(Some(offset)) => {
+                tracing::debug!(offset, "lunaris embed promotion event published");
+                self.ensure_embed_worker(scope, config).await;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::debug!(err = %err, "lunaris embed promotion publish failed");
+            }
+        }
+        Ok(receipt.lsn)
+    }
+
+    async fn ensure_embed_worker(&self, scope: &Scope, config: EmbedPromotionConfig) {
+        if !config.enabled || !config.worker_enabled {
+            return;
+        }
+
+        let key = scope.as_str().to_owned();
+        let mut workers = self.embed_workers.lock().await;
+        if let Some(existing) = workers.get(&key) {
+            if !existing.is_finished() {
+                return;
+            }
+        }
+
+        let service = self.clone();
+        let scope = scope.clone();
+        let worker_key = key.clone();
+        let handle = tokio::spawn(async move {
+            match service.handle_for_scope(&scope).await {
+                Ok(handle) => {
+                    if let Err(err) = embed_promotion::run_worker(handle, scope, config).await {
+                        tracing::debug!(err = %err, "lunaris embed promotion worker stopped");
+                    }
+                }
+                Err(err) => {
+                    tracing::debug!(err = %err, "lunaris embed promotion worker open failed");
+                }
+            }
+        });
+        workers.insert(worker_key, handle);
     }
 
     fn spawn_trace_injection(

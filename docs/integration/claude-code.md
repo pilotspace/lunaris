@@ -52,7 +52,9 @@ Installed Claude Code hooks:
 Prompt and post-tool context injection use Claude Code's
 `hookSpecificOutput.additionalContext` field. Capture paths use the same
 `lunaris-codex-hook-adapter.py` sidecar protocol as Codex so `lunaris-contextd`
-keeps model and storage handles warm.
+keeps model and storage handles warm. On Moon, captured tool chunks are also
+published to the `__lunaris_embed__` queue and promoted to semantic vectors by a
+background contextd worker, so hooks return before local embedding work runs.
 
 By default the script points Claude Code at Moon:
 
@@ -388,6 +390,12 @@ models are already present under `~/.lunaris/models/`.
 | `LUNARIS_MCP_STORAGE` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage backend URL |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
+| `LUNARIS_CONTEXT_MAX_HITS` | `5` prompt, `3` post-tool | Shared Codex/Claude Code context injection hit cap |
+| `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | Maximum cached query embeddings kept by `lunaris-contextd` |
+| `LUNARIS_EMBED_PROMOTION_ENABLED` | `1` | Publish sidecar capture chunks to Moon MQ for async semantic vector promotion |
+| `LUNARIS_EMBED_PROMOTION_WORKER` | `1` | Run one contextd embed-promotion worker per active scope |
+| `LUNARIS_EMBED_BATCH_SIZE` | `16` | Max chunks embedded per promotion batch |
+| `LUNARIS_EMBED_BATCH_WAIT_MS` | `25` | Queue coalescing wait before a partial promotion batch runs |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
 

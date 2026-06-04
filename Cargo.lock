@@ -2997,9 +2997,11 @@ version = "0.5.0-alpha.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "bytes",
  "chrono",
  "clap",
  "dirs",
+ "futures",
  "globset",
  "hex",
  "lunaris-core",

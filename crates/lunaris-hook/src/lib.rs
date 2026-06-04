@@ -8,6 +8,7 @@
 
 pub mod context;
 pub mod dedupe;
+pub(crate) mod embed_promotion;
 pub mod envelope;
 pub mod filter;
 pub mod ingest;

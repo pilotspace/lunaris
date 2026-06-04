@@ -342,6 +342,11 @@ def hook_env(args: argparse.Namespace) -> dict[str, str]:
         env["LUNARIS_STORE_URL"] = storage_url
     if moon_features_enabled(args, storage_url):
         env["LUNARIS_GRAPH_ENABLED"] = "1"
+        env["LUNARIS_EMBED_PROMOTION_ENABLED"] = "1"
+        env["LUNARIS_EMBED_PROMOTION_WORKER"] = "1"
+        env["LUNARIS_EMBED_BATCH_SIZE"] = "16"
+        env["LUNARIS_EMBED_BATCH_WAIT_MS"] = "25"
+        env["LUNARIS_CONTEXT_CAPTURE_FAST"] = "1"
     if DEFAULT_GGUF.exists():
         env["LUNARIS_EMBEDDER_GGUF"] = str(DEFAULT_GGUF)
     return env

@@ -387,7 +387,9 @@ in:
 
 These budgets are enforced by `crates/lunaris-hook/tests/cold_start.rs` over
 1000 deterministic envelopes. **No GGUF model weights are loaded** at capture
-time — embedding is deferred to first recall (lazy GGUF stager pattern).
+time. For Codex/Claude Code sidecar capture, Moon-backed installs publish
+captured chunk IDs to `__lunaris_embed__` and a background contextd worker
+batches semantic vector promotion outside the hook response path.
 
 Measured on M-series macOS (debug build, 2026-05-25):
 - p50 = 4.7ms, p99 = 5.3ms — well within budget.
@@ -468,6 +470,10 @@ future invocations for the session.
 | `LUNARIS_CONTEXT_POST_TOOL_MAX_CHARS` | `900` | Optional post-tool char cap override |
 | `LUNARIS_CONTEXT_POST_TOOL_MIN_SCORE` | `0.60` | Optional post-tool score threshold override |
 | `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | Maximum cached query embeddings kept by `lunaris-contextd` |
+| `LUNARIS_EMBED_PROMOTION_ENABLED` | `1` | Publish sidecar capture chunks to Moon MQ for async semantic vector promotion |
+| `LUNARIS_EMBED_PROMOTION_WORKER` | `1` | Run one contextd embed-promotion worker per active scope |
+| `LUNARIS_EMBED_BATCH_SIZE` | `16` | Max chunks embedded per promotion batch |
+| `LUNARIS_EMBED_BATCH_WAIT_MS` | `25` | Queue coalescing wait before a partial promotion batch runs |
 
 The older `LUNARIS_CODEX_CONTEXT_*` and `LUNARIS_CODEX_POST_TOOL_*` names are
 still accepted as compatibility aliases, but new Codex and Claude Code
@@ -534,8 +540,8 @@ secret scrubber.
 For Codex, keep `LUNARIS_CONTEXT_CAPTURE_FAST=1` unless you are debugging the
 legacy capture path. Fast capture sends pre/post tool events to
 `lunaris-contextd`, which enqueues the memory write and returns before the
-heavier embedding/storage work completes. On a warm local sidecar this keeps
-capture latency around tens of milliseconds instead of paying a full hook
+heavier semantic promotion work completes. On a warm local sidecar this keeps
+capture latency in the low-millisecond range instead of paying a full hook
 process plus model/storage path on every tool call.
 
 ### Codex memory injection returns no context

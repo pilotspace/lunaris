@@ -8,6 +8,7 @@ use crate::{state::AppState, tools::ToolError};
 
 const VERIFY_QUEUE_TOPIC: &str = "__lunaris_verify__";
 const CONSOLIDATE_QUEUE_TOPIC: &str = "__lunaris_consolidate__";
+const EMBED_QUEUE_TOPIC: &str = "__lunaris_embed__";
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct StatusParams {}
@@ -41,11 +42,18 @@ pub(crate) async fn handle(
     let caps = storage.capabilities();
     let queues = if caps.queue_native {
         vec![
+            queue_status(storage.as_ref(), &state.scope, EMBED_QUEUE_TOPIC).await,
             queue_status(storage.as_ref(), &state.scope, VERIFY_QUEUE_TOPIC).await,
             queue_status(storage.as_ref(), &state.scope, CONSOLIDATE_QUEUE_TOPIC).await,
         ]
     } else {
         vec![
+            QueueStatus {
+                topic: EMBED_QUEUE_TOPIC.to_string(),
+                available: false,
+                depth: None,
+                error: Some("backend does not advertise native queue support".to_string()),
+            },
             QueueStatus {
                 topic: VERIFY_QUEUE_TOPIC.to_string(),
                 available: false,
@@ -120,7 +128,7 @@ mod tests {
         let response = handle(&state, StatusParams {}).await.unwrap();
 
         assert!(!response.queue_native);
-        assert_eq!(response.queues.len(), 2);
+        assert_eq!(response.queues.len(), 3);
         assert!(response.queues.iter().all(|queue| !queue.available));
     }
 }

@@ -354,9 +354,11 @@ When `LUNARIS_CONTEXT_CAPTURE_FAST=1`, Codex pre/post tool capture is sent to
 the warm sidecar and the sidecar acknowledges before doing any full semantic
 recall work. Capture writes use the same embed-free `NoopEmbedder` path as
 `lunaris-hook`, so tool capture does not run GGUF inference; the content remains
-available to Moon's keyword/BM25 surface immediately, while semantic recall uses
-the normal query embedder path. Secret-bearing paths such as `.env`, PEM files,
-SSH keys, and `.git/**` remain denied by the built-in policy.
+available to Moon's keyword/BM25 surface immediately. On Moon, contextd also
+publishes a `__lunaris_embed__` MQ event and a background worker batches real
+vector upserts, so semantic recall catches up without blocking the tool hook.
+Secret-bearing paths such as `.env`, PEM files, SSH keys, and `.git/**` remain
+denied by the built-in policy.
 
 ### Performance defaults
 
@@ -373,6 +375,10 @@ SSH keys, and `.git/**` remain denied by the built-in policy.
 | `LUNARIS_CONTEXT_POST_TOOL_MAX_CHARS` | `900` | optional post-tool context size cap override |
 | `LUNARIS_CONTEXT_POST_TOOL_MIN_SCORE` | `0.60` | optional post-tool score threshold override |
 | `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | maximum cached query embeddings kept by `lunaris-contextd` |
+| `LUNARIS_EMBED_PROMOTION_ENABLED` | `1` | publish contextd capture chunks to Moon MQ for async semantic vector promotion |
+| `LUNARIS_EMBED_PROMOTION_WORKER` | `1` | run one background embed-promotion worker per active scope |
+| `LUNARIS_EMBED_BATCH_SIZE` | `16` | max chunks embedded per promotion batch |
+| `LUNARIS_EMBED_BATCH_WAIT_MS` | `25` | queue coalescing wait before a partial promotion batch runs |
 
 The adapter still accepts the older `LUNARIS_CODEX_CONTEXT_*` and
 `LUNARIS_CODEX_POST_TOOL_*` variables as compatibility aliases. Prefer the
@@ -383,12 +389,12 @@ the quantized Granite embedder:
 
 | Path | Typical hot timing |
 |------|--------------------|
-| standalone `lunaris-hook` capture | p50 4.83 ms, p99 5.55 ms |
-| synchronous `lunaris-contextd` capture write | p50 0.42 ms, p99 0.70 ms |
-| MCP `memory.status` Moon/MQ probe | 0.4-0.5 ms |
+| standalone `lunaris-hook` capture | p50 5.09 ms, p99 29.51 ms |
+| `lunaris-contextd` capture write + MQ promotion publish | p50 0.37 ms, p99 5.72 ms |
+| MCP `memory.status` Moon/MQ probe | 1.1 ms |
 | MCP cached/repeated `memory.ingest` storage path | p50 0.6 ms |
-| MCP unique `memory.ingest` with fresh GGUF embedding | p50 136 ms |
-| MCP hot `memory.recall` after cache warmup | p50 2.0-2.1 ms |
+| MCP unique `memory.ingest` with fresh GGUF embedding | p50 1007 ms |
+| MCP hot `memory.recall` after cache warmup | p50 4.3 ms |
 
 The first prompt for a new query can still take a few hundred milliseconds
 because the local query embedding is computed once before being cached. Keep the
