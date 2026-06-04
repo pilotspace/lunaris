@@ -5,6 +5,7 @@
 # Getting Started
 
 - [Why Lunaris](./getting-started/why-lunaris.md)
+- [Architecture at a Glance](./getting-started/architecture.md)
 - [Installation](./getting-started/installation.md)
 - [10-Minute Quickstart](./getting-started/quickstart.md)
 - [Core Concepts](./getting-started/concepts.md)
