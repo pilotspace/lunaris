@@ -64,6 +64,73 @@ and optionally reranked by a cross-encoder
 (bge-reranker-v2-m3). `.as_of(ts)` pushes the temporal cut down into the
 substrate query itself, not a post-filter in application code.
 
+## How a memory is structured
+
+One ingested episode fans out into a small constellation of rows, all
+minted under the canonical keyspace
+`lunaris:{scope}:{kind}:{ulid}` (`lunaris_core::keyspace`) and all
+committed by the same `atomic_write`:
+
+```text
+Episode  lunaris:{scope}:episode:{ulid}     source, raw content, metadata, bt
+  └─ Chunk(s)  lunaris:{scope}:chunk:{ulid} text + heading_path + episode_id
+       ├─ vector        768-d embedding — same HSET document
+       ├─ BM25 payload  tokenized text — same FT index as the vector
+       └─ bt stamp      [sys_from, sys_to) × [valid_from, valid_to)
+  └─ (opt-in graph) Entity / Relation / Fact rows + GraphNode/GraphEdge
+       in the per-scope named graph
+  └─ Audit row + one __lunaris_consolidate__ queue message
+```
+
+Three structural decisions carry the recall story:
+
+- **The chunk is the retrieval unit, the episode is the provenance
+  unit.** Vector and BM25 hits return chunk ULIDs; hydration walks
+  `chunk → episode_id → episode` to give every hit its source.
+- **One document, two indices' worth of duty.** On Moon the chunk's
+  embedding, its BM25-tokenized text, its `TAG` filter fields, and its
+  bi-temporal stamp live in a single `HSET` document indexed by ONE
+  per-scope `FT` index (`lunaris_{scope}_{kind}_idx`). There is no
+  "sync the vector DB with the text index" job because there is
+  nothing to sync.
+- **Every row is bi-temporal.** The `bt` field records system time
+  (when Lunaris learned it) and valid time (when it was true in the
+  world) as two half-open intervals. `forget` and supersession close
+  intervals rather than destroy rows — which is why `.as_of(ts)` can
+  answer "what did the agent believe last Tuesday?"
+
+## Where the milliseconds go — anatomy of a recall
+
+The sub-25 ms contract is not one trick; it is the absence of four
+round trips. A `vector.and(keyword).fuse_rrf(60)` recall spends its
+budget like this:
+
+| Stage | What happens | Why it's fast |
+|---|---|---|
+| 1. Query embed | granite-embedding-311m runs **in-process** on candle (CPU) | No HTTP hop to an embedding server. This is the single biggest win — see the 86 ms lesson below |
+| 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side (`RrfFusion::Moon`) | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
+| 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command (PERF-MOON-01) | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
+| 3. Hydrate | Each hit's chunk row via `read_as_of`; parent episodes batch-fetched once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Point reads on a KV store that already has the rows hot; since-deleted chunks are skipped, not errored |
+| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only pay it when you ask for it |
+
+**The 86 ms lesson.** The same 10k-document SQuAD harness
+(`scripts/bench-squad-kb.py`) measured **p50 86 ms** when query
+embedding went through an out-of-process Ollama HTTP server, and
+**p50 10.3 ms / p99 20.8 ms** on the strict-replay path that removes
+that hop (`scripts/ollama-replay-server.py` +
+`scripts/precompute-embeds.py`). The engine's own search + hydrate
+path was ~10 ms all along; the network hop to the embedder was ~75 ms
+of pure overhead. That measurement is why v0.4 (N-03) moved embedding
+in-process on candle as the default — the deployment now matches the
+configuration the contract was proven on.
+
+**Why a fan-out stack can't follow:** vector DB + text search + graph
+DB + broker means (a) one network round trip *per lane* plus app-side
+fusion, (b) no shared `TAG`/temporal pushdown — you over-fetch then
+post-filter, and (c) no common snapshot, so the lanes can disagree
+about what exists. Lunaris-on-Moon spends its entire budget inside one
+process and one index.
+
 ## The Moon advantage map
 
 Moon is our internal Redis-compatible substrate. The reason it's the

@@ -14,6 +14,7 @@
 
 - [Ingesting Observations](./guides/ingest.md)
 - [The Retrieval DSL](./guides/retrieval-dsl.md)
+- [How Recall Works (structure & latency)](./guides/recall-anatomy.md)
 - [Forgetting (GDPR / audit)](./guides/forget.md)
 - [The Graph Pipeline (opt-in)](./guides/graph.md)
 - [Consolidation & Verification (opt-in)](./guides/consolidate-verify.md)
