@@ -119,7 +119,9 @@ fn sample_rss() -> Option<u64> {
     let proc = procfs::process::Process::myself().ok()?;
     let stat = proc.stat().ok()?;
     let page_size = procfs::page_size();
-    Some((stat.rss as u64) * page_size)
+    // `stat.rss` is already u64 in the pinned procfs — no cast
+    // (clippy::unnecessary_cast under the Linux cfg).
+    Some(stat.rss * page_size)
 }
 
 /// macOS RSS sampler — shells out to `ps -o rss= -p <pid>` (returns RSS in
