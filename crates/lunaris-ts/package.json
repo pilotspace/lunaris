@@ -1,6 +1,6 @@
 {
   "name": "lunaris",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "description": "Lunaris — agent memory engine (TypeScript bindings, napi-rs 3.x).",
   "main": "index.js",
   "types": "index.d.ts",
