@@ -74,7 +74,14 @@ jobs:
             target: x86_64-pc-windows-msvc
             manylinux: "off"
     steps:
+      # vendor/moon only — the moondb path dep (vendor/moon/sdk/rust) is
+      # required for cargo to resolve the workspace graph. .planning is
+      # private (cross-repo auth) and must NOT be pulled here.
       - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
