@@ -49,7 +49,7 @@ cargo add lunaris-memory --rename lunaris
 pip install lunaris
 
 # TypeScript
-npm i lunaris
+npm i @pilotspace/lunaris
 ```
 
 v0.4 ships candle-native `granite-embedding-311m-multilingual-r2` (embedder,

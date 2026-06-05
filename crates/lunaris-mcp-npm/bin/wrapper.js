@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // wrapper.js — spawns the native lunaris-mcp binary with inherited stdio.
-// This is the "bin" entry point for `npx @lunaris/mcp` and `lunaris-mcp` CLI.
+// This is the "bin" entry point for `npx @pilotspace/lunaris-mcp` and `lunaris-mcp` CLI.
 // Trust: the binary path is either operator-set (LUNARIS_MCP_BIN_PATH) or
 // resolved from this package's own bin/ directory (populated by postinstall.js).
 import { spawn } from 'node:child_process';
@@ -17,7 +17,7 @@ const binaryPath = process.env.LUNARIS_MCP_BIN_PATH || join(PKG_DIR, 'bin', BINA
 
 if (!existsSync(binaryPath)) {
   console.error(`[lunaris-mcp] Binary not found at ${binaryPath}`);
-  console.error('Run: npm install @lunaris/mcp  (postinstall will download the binary)');
+  console.error('Run: npm install @pilotspace/lunaris-mcp  (postinstall will download the binary)');
   console.error('Or set LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp');
   process.exit(1);
 }

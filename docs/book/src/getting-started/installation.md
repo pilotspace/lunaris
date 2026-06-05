@@ -181,10 +181,10 @@ mirrors the Rust handle: `await lunaris.open(url)` →
 > build. `lunaris-py` is a `cdylib` and is excluded from
 > `cargo test --workspace`.
 
-## TypeScript — `npm i lunaris`
+## TypeScript — `npm i @pilotspace/lunaris`
 
 ```bash
-npm i lunaris
+npm i @pilotspace/lunaris
 ```
 
 napi-rs 3.x, Node 20+ ABI. Prebuilt `.node` binaries ship in the

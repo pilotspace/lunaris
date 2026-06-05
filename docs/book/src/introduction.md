@@ -5,7 +5,7 @@ atomicity and a graph that's opt-in.**
 
 Lunaris is a production-grade **agent-memory engine** written in pure Rust,
 with first-class **Python** (`pip install lunaris`) and **TypeScript**
-(`npm i lunaris`) SDKs generated from the same source of truth.
+(`npm i @pilotspace/lunaris`) SDKs generated from the same source of truth.
 
 You feed it raw observations — chat turns, documents, tool outputs — as
 `Episode`s. It chunks, embeds, and (optionally) extracts entities, relations,

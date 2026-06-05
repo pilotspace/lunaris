@@ -53,7 +53,7 @@ next tag; this is the Moon-exploit enhancement batch on top of v0.6.)
 
 ### Added
 
-- **`@lunaris/mcp` npm package** (DIST-01) — `npx @lunaris/mcp` installs and runs
+- **`@pilotspace/lunaris-mcp` npm package** (DIST-01) — `npx @pilotspace/lunaris-mcp` installs and runs
   `lunaris-mcp` without a Rust toolchain. Postinstall downloads the platform-native
   binary from the GitHub Release (5 platforms: `linux-x64`, `linux-arm64`,
   `darwin-x64`, `darwin-arm64`, `win32-x64`) and verifies sha256 against

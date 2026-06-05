@@ -1,6 +1,6 @@
 # TypeScript SDK
 
-**`npm install lunaris` gives you the same memory engine as the Rust crate,
+**`npm install @pilotspace/lunaris` gives you the same memory engine as the Rust crate,
 behind a napi-rs 3.x binding generated from the same annotated surface** — so
 `open / ingest / recall / forget / snapshot` and the composable retrieve DSL
 behave identically across all three SDKs. `cargo run -p lunaris-codegen --
@@ -11,7 +11,7 @@ behave identically across all three SDKs. `cargo run -p lunaris-codegen --
 ## Install
 
 ```bash
-npm install lunaris
+npm install @pilotspace/lunaris
 ```
 
 Prebuilt `.node` binaries ship for 5 targets (BIND-TS-05): `linux-x64`,
@@ -29,13 +29,13 @@ later.**
 No matching binary? Source install (needs Rust 1.94+ and `@napi-rs/cli`):
 
 ```bash
-npm install lunaris --build-from-source
+npm install @pilotspace/lunaris --build-from-source
 ```
 
 ## Quickstart
 
 ```typescript
-import { open, RetrievalBuilder } from "lunaris";
+import { open, RetrievalBuilder } from "@pilotspace/lunaris";
 
 async function main() {
   const handle = await open("moon://127.0.0.1:6380");
@@ -82,7 +82,7 @@ ergonomics — `Scope`, `EpisodeBuilder`, `ScopedLunaris`, and `lunarisScoped`
 are all exported:
 
 ```typescript
-import { Scope, EpisodeBuilder, lunarisScoped } from "lunaris";
+import { Scope, EpisodeBuilder, lunarisScoped } from "@pilotspace/lunaris";
 
 const scoped = lunarisScoped(handle, Scope.new("acme.agent-1"));   // ScopedLunaris
 const lsn = await scoped.ingest(
@@ -104,7 +104,7 @@ and the `filter(pred)` / `filterStr(s)` split match the JS idiom. A terminal
 `.execute()` collapses the plan into a single FFI call:
 
 ```typescript
-import { Keyword } from "lunaris";
+import { Keyword } from "@pilotspace/lunaris";
 
 const hits = await handle
   .recall()                              // seeds a builder with default root Vector("chunks", 30)
@@ -155,7 +155,7 @@ Override the env-driven default from code via `EmbedderConfig` /
 extension on the `Lunaris` class (camelCase opts bags):
 
 ```typescript
-import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
+import { Lunaris, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 const emb = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed", execution: "coreml" });
 const rer = RerankerConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed-reranker" });

@@ -43,7 +43,7 @@ Or using npx:
   "mcpServers": {
     "lunaris": {
       "command": "npx",
-      "args": ["-y", "@lunaris/mcp"]
+      "args": ["-y", "@pilotspace/lunaris-mcp"]
     }
   }
 }

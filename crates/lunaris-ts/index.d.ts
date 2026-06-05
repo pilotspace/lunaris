@@ -70,42 +70,37 @@ export declare class EmailThreading {
 
 /**
  * Opaque container around a resolved [`lunaris_core::Embedder`]. Constructed
- * via one of the four `#[napi(factory)]` methods; consumed by
+ * via one of the `#[napi(factory)]` methods; consumed by
  * [`crate::Lunaris::withEmbedder`].
- *
- * The inner `Arc<dyn Embedder>` is intentionally `pub(crate)` so only the
- * host crate's `with_embedder` napi extension can read it — TS callers
- * see an opaque token.
  */
 export declare class EmbedderConfig {
   /**
-   * Build an [`EmbedderConfig`] from the fastembed EmbeddingGemma300M
-   * preset. All opts are optional.
+   * Zero-vector embedder — metadata-only ingest / BYO vector / unit-test
+   * path. Default dim matches granite-r2 (768).
    */
-  static fastembed(opts?: FastembedConfigOpts | undefined | null): EmbedderConfig
+  static noop(dim?: number | undefined | null): EmbedderConfig
   /**
-   * Bring-your-own ONNX model via in-memory bytes (e.g., fetched from S3).
-   * `dim` MUST match the ONNX model's output shape; a mismatch surfaces
-   * on the first `embed_batch` call.
+   * FP16 candle `NativeEmbedder` backed by
+   * `ibm-granite/granite-embedding-311m-multilingual-r2` (768-d).
+   *
+   * `modelDir` defaults to
+   * `~/Library/Caches/lunaris/models/granite-embedding-311m-multilingual-r2/`
+   * on macOS (resolves via `dirs::cache_dir()` on other platforms).
    */
-  static fromOnnxBytes(opts: FromOnnxBytesOpts): EmbedderConfig
+  static native(opts?: NativeConfigOpts | undefined | null): EmbedderConfig
   /**
-   * Bring-your-own ONNX model from disk. Reads the bytes via
-   * `std::fs::read` (operator-trusted paths only) and delegates to the
-   * same constructor as `fromOnnxBytes`.
+   * Q4_K_M GGUF `NativeQuantizedEmbedder` — requires the napi cdylib
+   * to be built with the `embedder-gguf` feature.
    */
-  static fromOnnxPath(opts: FromOnnxPathOpts): EmbedderConfig
+  static nativeQuantized(opts: NativeQuantizedConfigOpts): EmbedderConfig
   /**
-   * Build an [`EmbedderConfig`] backed by Ollama's `/api/embed` HTTP API.
-   * Defaults: `endpoint=http://localhost:11434`, `model=embeddinggemma`,
-   * `dim=768`. The constructor only builds a `reqwest::Client` — it does
-   * not contact Ollama until the first `embed_batch`.
+   * Stub raising `InvalidArg` when the cdylib was built without
+   * `embedder-gguf`. Surfaces a clear error instead of `undefined`.
    */
-  static ollama(opts?: OllamaConfigOpts | undefined | null): EmbedderConfig
+  static nativeQuantized(opts: NativeQuantizedConfigOpts): EmbedderConfig
   /**
    * Output dimensionality declared by the operator at config time.
-   * For preset paths this matches the model constant; for BYO this is
-   * what the caller passed (and what [`DimValidatingEmbedder`] enforces).
+   * For native paths this is `GRANITE_R2_DIM = 768`.
    */
   get declaredDim(): number
 }
@@ -232,21 +227,22 @@ export declare class MultiTurnConversation {
 
 /**
  * Opaque container around a resolved [`lunaris_rerank::Reranker`]. Constructed
- * via one of the `#[napi(factory)]` methods; consumed by
+ * via the `#[napi(factory)]` methods; consumed by
  * [`crate::Lunaris::withReranker`].
  */
 export declare class RerankerConfig {
   /**
-   * Build a [`RerankerConfig`] backed by the fastembed BGE-Reranker-v2-m3
-   * cross-encoder preset. All opts are optional.
+   * FP32 candle `NativeReranker` backed by `BAAI/bge-reranker-v2-m3`.
+   * `modelDir` defaults to `<cache>/lunaris/models/bge-reranker-v2-m3/`.
    */
-  static fastembed(opts?: FastembedRerankerConfigOpts | undefined | null): RerankerConfig
+  static native(opts?: NativeRerankerConfigOpts | undefined | null): RerankerConfig
   /**
-   * RETRIEVE-06 fallback — passes candidates through with their original
-   * scores. Used when (a) the per-batch rerank budget is too tight on the
-   * deployment hardware, or (b) the operator wants the BM25/vector fusion
-   * score directly with no cross-encoder rescoring.
+   * Q4_K_M GGUF `NativeQuantizedReranker` — requires the napi cdylib built
+   * with `reranker-gguf`.
    */
+  static nativeQuantized(opts: NativeQuantizedRerankerConfigOpts): RerankerConfig
+  static nativeQuantized(opts: NativeQuantizedRerankerConfigOpts): RerankerConfig
+  /** RETRIEVE-06 fallback — passes candidates through with original scores. */
   static noop(): RerankerConfig
 }
 
@@ -394,48 +390,11 @@ export declare class Vector {
   static new(index: string, k: number): Vector
 }
 
-/**
- * Returns an array of objects mirroring `FixtureCorpus::episodes()`.
- *
- * `seed` and `count` MUST match `lunaris_conformance::fixtures::SEED` /
- * `EPISODE_COUNT` — we accept them as args so drivers can assert the
- * constants at the FFI boundary, but the underlying `FixtureCorpus::new()`
- * always uses the canonical Rust constants. Drift surfaces as a hard
- * napi::Error with the canonical Rust value in the message so operators
- * know which side of the FFI needs updating.
- *
- * `seed` is a `BigInt` because TypeScript's `number` loses precision
- * above 2^53; the `0xCAFE_F00D` seed is representable as `number` but
- * the API intentionally uses `BigInt` to future-proof against a larger
- * seed.
- */
-export declare function conformanceFixtureEpisodes(seed: bigint, count: number): any
-
 export declare function consolidatorPipelineDisable(handle: ConsolidatorPipelineHandle): void
 
 export declare function consolidatorPipelineEnable(handle: ConsolidatorPipelineHandle): void
 
 export declare function consolidatorPipelineIsEnabled(handle: ConsolidatorPipelineHandle): boolean
-
-/**
- * Plan 21-03 — cross-SDK embedder parity probe. Returns raw f32 vectors
- * from the wrapped `Arc<dyn Embedder>` inside an `EmbedderConfig`.
- * Feature-gated; release npm builds strip it.
- */
-export declare function embedderConfigEmbedBatch(cfg: EmbedderConfig, inputs: Array<string>): Promise<Array<Array<number>>>
-
-export interface FastembedConfigOpts {
-  cacheDir?: string
-  /** `"cpu"` | `"coreml"` | `"cuda"` — case-insensitive. Default `cpu`. */
-  execution?: string
-  showDownloadProgress?: boolean
-}
-
-export interface FastembedRerankerConfigOpts {
-  cacheDir?: string
-  execution?: string
-  showDownloadProgress?: boolean
-}
 
 /**
  * Pure decision helper mirroring the Rust-side initial-state-from-env
@@ -479,29 +438,6 @@ export declare function fromEnv(): Array<boolean>
  */
 export declare function fromEnvValue(graphVal?: string | undefined | null, consolidatorVal?: string | undefined | null): Array<boolean>
 
-export interface FromOnnxBytesOpts {
-  onnxBytes: Buffer
-  tokenizerBytes: Buffer
-  dim: number
-  /** `"mean"` | `"cls"`. Default `mean`. */
-  pooling?: string
-  tokenizerConfigBytes?: Buffer
-  specialTokensMapBytes?: Buffer
-  configBytes?: Buffer
-  execution?: string
-}
-
-export interface FromOnnxPathOpts {
-  onnxPath: string
-  tokenizerPath: string
-  dim: number
-  pooling?: string
-  tokenizerConfigPath?: string
-  specialTokensMapPath?: string
-  configPath?: string
-  execution?: string
-}
-
 /** Return a `ConsolidatorPipelineHandle` wrapping the inner Rust handle. */
 export declare function getConsolidatorPipeline(handle: Lunaris): ConsolidatorPipelineHandle
 
@@ -530,10 +466,36 @@ export declare function graphPipelineIsEnabled(handle: GraphPipelineHandle): boo
  */
 export declare function lunarisScoped(handle: Lunaris, scope: Scope): ScopedLunaris
 
-export interface OllamaConfigOpts {
-  endpoint?: string
-  model?: string
-  dim?: number
+export interface NativeConfigOpts {
+  /**
+   * Override for the granite-r2 model directory. Default:
+   * `<cache>/lunaris/models/granite-embedding-311m-multilingual-r2/`.
+   */
+  modelDir?: string
+}
+
+export interface NativeQuantizedConfigOpts {
+  /** Path to the Q4_K_M GGUF artifact. */
+  ggufPath: string
+  /**
+   * Override for the model directory holding `tokenizer.json` +
+   * `config.json`. Default: same as `EmbedderConfig.native()`.
+   */
+  modelDir?: string
+}
+
+export interface NativeQuantizedRerankerConfigOpts {
+  /** Path to the Q4_K_M GGUF artifact. */
+  ggufPath: string
+  modelDir?: string
+}
+
+export interface NativeRerankerConfigOpts {
+  /**
+   * Override for the bge-reranker model directory. Default:
+   * `<cache>/lunaris/models/bge-reranker-v2-m3/`.
+   */
+  modelDir?: string
 }
 
 /**
@@ -557,20 +519,3 @@ export declare function openHandle(url: string): Promise<Lunaris>
  * objects which napi-rs 3.x converts to a `Promise<Array<object>>` in TS.
  */
 export declare function recallSimpleExecute(handle: Lunaris, plan: any): Promise<any>
-
-/**
- * Additional free `#[napi]` function that takes the `Lunaris` handle by
- * reference and dumps every row under the given prefix.
- *
- * Returns `Array<[Buffer, Buffer]>` — one 2-element array per KV row.
- * napi-rs 3.x maps `Vec<Vec<Buffer>>` to exactly that shape at the TS
- * layer.
- *
- * Plan 08-04's driver dumps every row under the fixture-corpus write
- * prefixes from Moon and Postgres separately, then asserts the two
- * dumps are structurally-equal against a committed golden reference.
- * Exposed as a free function rather than a method on `Lunaris` because
- * a second `#[napi] impl Lunaris` block would introduce duplicate-symbol
- * risk with the generated `impl` in `generated.rs`.
- */
-export declare function scanKvPrefix(handle: Lunaris, prefix: Buffer): Promise<Array<Array<Buffer>>>

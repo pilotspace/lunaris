@@ -3,7 +3,7 @@
 Customize the embedder and reranker Lunaris uses for ingest + recall — without
 touching environment variables — via the `EmbedderConfig` and `RerankerConfig`
 SDK types. This guide covers both the Python (`pip install lunaris`) and
-TypeScript (`npm i lunaris`) SDKs in lockstep; every code sample appears in
+TypeScript (`npm i @pilotspace/lunaris`) SDKs in lockstep; every code sample appears in
 both languages.
 
 ## Overview
@@ -67,7 +67,7 @@ asyncio.run(main())
 **TypeScript**
 
 ```typescript
-import { Lunaris, EmbedderConfig } from "lunaris";
+import { Lunaris, EmbedderConfig } from "@pilotspace/lunaris";
 
 const cfg = EmbedderConfig.fastembed({
   cacheDir: "/var/cache/lunaris/fastembed",
@@ -152,7 +152,7 @@ asyncio.run(main())
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { Lunaris, EmbedderConfig } from "lunaris";
+import { Lunaris, EmbedderConfig } from "@pilotspace/lunaris";
 
 const onnxBytes = await readFile("/models/my-bert.onnx");
 const tokBytes = await readFile("/models/my-bert.tokenizer.json");
@@ -242,7 +242,7 @@ handle = await lunaris.open(url, embedder=emb, reranker=RerankerConfig.noop())
 **TypeScript**
 
 ```typescript
-import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
+import { Lunaris, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 const emb = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed" });
 const rer = RerankerConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed-reranker" });

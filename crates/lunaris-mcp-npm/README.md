@@ -1,14 +1,14 @@
-# @lunaris/mcp
+# @pilotspace/lunaris-mcp
 
 Lunaris MCP server — no Rust toolchain required.
 
 Downloads a prebuilt native binary for your platform on `npm install` and
-forwards `npx @lunaris/mcp` to that binary with inherited stdio.
+forwards `npx @pilotspace/lunaris-mcp` to that binary with inherited stdio.
 
 ## Quick Start
 
 ```bash
-npx @lunaris/mcp --help
+npx @pilotspace/lunaris-mcp --help
 ```
 
 Or register as a persistent Claude Code MCP server:
@@ -18,7 +18,7 @@ Or register as a persistent Claude Code MCP server:
   "mcpServers": {
     "lunaris": {
       "command": "npx",
-      "args": ["-y", "@lunaris/mcp"]
+      "args": ["-y", "@pilotspace/lunaris-mcp"]
     }
   }
 }
@@ -27,7 +27,7 @@ Or register as a persistent Claude Code MCP server:
 Via the Claude Code CLI:
 
 ```bash
-claude mcp add --transport stdio lunaris -- npx -y @lunaris/mcp
+claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
 ```
 
 ## Supported Platforms
@@ -49,7 +49,7 @@ Set `LUNARIS_MCP_BIN_PATH` to point at a pre-staged binary. The postinstall
 script and wrapper both respect this override — no download occurs.
 
 ```bash
-LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp npx @lunaris/mcp --help
+LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp npx @pilotspace/lunaris-mcp --help
 ```
 
 **Security note:** The `LUNARIS_MCP_BIN_PATH` escape hatch is an operator
@@ -63,7 +63,7 @@ for the full threat model.
 **Windows:** `tar.exe` is required. Windows 10 Build 1803+ (released April 2018)
 ships it by default. Older systems must either upgrade, or download the binary
 manually from [GitHub Releases](https://github.com/pilotspace/lunaris/releases)
-and set `LUNARIS_MCP_BIN_PATH` before invoking `npx @lunaris/mcp`.
+and set `LUNARIS_MCP_BIN_PATH` before invoking `npx @pilotspace/lunaris-mcp`.
 
 ## SHA-256 Integrity Verification
 

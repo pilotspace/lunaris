@@ -25,7 +25,7 @@ For the full user-facing install + quickstart guide covering both TypeScript and
 ## Example
 
 ```typescript
-import { open, Vector, Keyword } from "lunaris";
+import { open, Vector, Keyword } from "@pilotspace/lunaris";
 
 async function main() {
   const handle = await open("moon://127.0.0.1:6380");
@@ -57,7 +57,7 @@ the chainable `withEmbedder` / `withReranker` extension; the env-driven
 default remains in place for callers that don't chain.
 
 ```typescript
-import { Lunaris, EmbedderConfig, RerankerConfig } from "lunaris";
+import { Lunaris, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 const cfg = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed" });
 const handle = (await Lunaris.open("moon://127.0.0.1:6380"))
@@ -72,7 +72,7 @@ bytes, and BYO ONNX path — with troubleshooting and the FFI-cliff limits.
 
 ## Surface parity
 
-The TypeScript class / method surface is generated from `crates/lunaris-codegen/annotations/surface.toml` (Plan 08-01). The parity-check CI job fails any PR that drifts the committed snapshot from the regenerated output — `npm i lunaris` never lags the Rust crate.
+The TypeScript class / method surface is generated from `crates/lunaris-codegen/annotations/surface.toml` (Plan 08-01). The parity-check CI job fails any PR that drifts the committed snapshot from the regenerated output — `npm i @pilotspace/lunaris` never lags the Rust crate.
 
 ## Three-surface pipeline toggles
 

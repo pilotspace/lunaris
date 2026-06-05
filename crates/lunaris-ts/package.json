@@ -1,5 +1,5 @@
 {
-  "name": "lunaris",
+  "name": "@pilotspace/lunaris",
   "version": "0.3.0",
   "description": "Lunaris — agent memory engine (TypeScript bindings, napi-rs 3.x).",
   "main": "index.js",
@@ -48,11 +48,11 @@
     "README.md"
   ],
   "optionalDependencies": {
-    "lunaris-linux-x64-gnu": "0.3.0",
-    "lunaris-linux-arm64-gnu": "0.3.0",
-    "lunaris-darwin-x64": "0.3.0",
-    "lunaris-darwin-arm64": "0.3.0",
-    "lunaris-win32-x64-msvc": "0.3.0"
+    "@pilotspace/lunaris-linux-x64-gnu": "0.3.0",
+    "@pilotspace/lunaris-linux-arm64-gnu": "0.3.0",
+    "@pilotspace/lunaris-darwin-x64": "0.3.0",
+    "@pilotspace/lunaris-darwin-arm64": "0.3.0",
+    "@pilotspace/lunaris-win32-x64-msvc": "0.3.0"
   },
   "scripts": {
     "build": "napi build --platform --release",

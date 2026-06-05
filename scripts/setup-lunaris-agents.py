@@ -202,7 +202,7 @@ def mcp_command(args: argparse.Namespace) -> dict[str, Any]:
         return {"command": "uvx", "args": ["lunaris-mcp"]}
     if args.runner == "npx":
         require_command("npx")
-        return {"command": "npx", "args": ["-y", "@lunaris/mcp"]}
+        return {"command": "npx", "args": ["-y", "@pilotspace/lunaris-mcp"]}
     path = Path(args.local_mcp)
     if args.build_hooks and not path.exists():
         run(["cargo", "build", "--release", "-p", "lunaris-mcp"], cwd=ROOT, dry_run=args.dry_run)

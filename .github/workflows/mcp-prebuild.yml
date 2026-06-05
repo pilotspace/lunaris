@@ -3,7 +3,7 @@ name: mcp-prebuild
 # Builds the lunaris-mcp native binary for all 5 target triples.
 # Produces lunaris-mcp-<target>.tar.gz artifacts per platform.
 # Tag-gated job: populates manifest.json sha256 hashes, uploads tarballs to GitHub Release,
-# then publishes @lunaris/mcp to npm (Strategy B — no commit-back, no force-push).
+# then publishes @pilotspace/lunaris-mcp to npm (Strategy B — no commit-back, no force-push).
 # A separate build-wheel job (added by Phase 26 Plan 26-02) wraps the
 # prebuilt binary in platform-tagged Python wheels.
 #
@@ -159,7 +159,7 @@ jobs:
           files: release-assets/*.tar.gz
           fail_on_unmatched_files: true
 
-      - name: Publish @lunaris/mcp to npm
+      - name: Publish @pilotspace/lunaris-mcp to npm
         # Strategy B (default, safer): publish from CI with populated manifest.json.
         # No commit-back, no force-push to the release tag.
         # The manifest.json that ships in the published npm tarball contains the real

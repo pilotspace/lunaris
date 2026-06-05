@@ -4,7 +4,7 @@
 // quickstart.py against the same Postgres backend. Demonstrates the
 // v0.2.x public TypeScript surface:
 //
-//     import * as lunaris from "lunaris";
+//     import * as lunaris from "@pilotspace/lunaris";
 //     const handle  = await lunaris.open("postgres://...");
 //     const lsn     = await handle.ingest(episode);
 //     const hits    = await handle.recall().execute();
@@ -20,7 +20,7 @@
 // 6. node --experimental-vm-modules quickstart.mts
 //    (or: npx tsx quickstart.mts)
 
-import * as lunaris from "lunaris";
+import * as lunaris from "@pilotspace/lunaris";
 
 function buildEpisode(scope: string, content: string): object {
   // Mirror the serde shape of lunaris_core::primitives::Episode.

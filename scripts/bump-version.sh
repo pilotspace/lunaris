@@ -97,7 +97,7 @@ py_mcp_ver=$(grep '^version = ' "$py_mcp_pyproject" | head -1 | sed 's/.*"\(.*\)
 echo "  Rust (workspace.package): $rust_ver"
 echo "  Python (pyproject):       $py_ver"
 echo "  TypeScript (package):     $ts_ver"
-echo "  npm @lunaris/mcp:         $npm_mcp_ver"
+echo "  npm @pilotspace/lunaris-mcp:         $npm_mcp_ver"
 echo "  lunaris-mcp-py (pyproject): $py_mcp_ver"
 
 if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" || \

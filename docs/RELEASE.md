@@ -137,7 +137,7 @@ After all artifacts are public:
 
 - `cargo install lunaris --locked` from a fresh clone of `examples/quickstart-rs/`
 - `pip install lunaris==0.2.1 && python examples/quickstart-py/quickstart.py`
-- `npm install lunaris@0.2.1 && cd examples/quickstart-ts && npm start`
+- `npm install @pilotspace/lunaris@0.2.1 && cd examples/quickstart-ts && npm start`
 
 Each must reach "ingested episode at lsn=..." on a clean machine.
 

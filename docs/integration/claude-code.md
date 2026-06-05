@@ -72,7 +72,7 @@ Keep Moon running at that URL, pass `--moon-url moon://host:port`, or choose
 ### Via npm / npx
 
 ```bash
-npx @lunaris/mcp --help
+npx @pilotspace/lunaris-mcp --help
 ```
 
 To register as a persistent Claude Code MCP server:
@@ -82,7 +82,7 @@ To register as a persistent Claude Code MCP server:
   "mcpServers": {
     "lunaris": {
       "command": "npx",
-      "args": ["-y", "@lunaris/mcp"]
+      "args": ["-y", "@pilotspace/lunaris-mcp"]
     }
   }
 }
@@ -91,7 +91,7 @@ To register as a persistent Claude Code MCP server:
 Or using the Claude Code CLI:
 
 ```bash
-claude mcp add --transport stdio lunaris -- npx -y @lunaris/mcp
+claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
 ```
 
 ### Via uv / uvx

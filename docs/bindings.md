@@ -8,7 +8,7 @@ surface.toml`):
 | ---------- | ----------------------------- | ------------------- | --------------- |
 | Rust       | `lunaris` crate               | cargo               | Rust 1.94 MSRV  |
 | Python     | `pip install lunaris`         | PyO3 0.26 + maturin | Python 3.11+    |
-| TypeScript | `npm install lunaris`         | napi-rs 3.x         | Node 20+        |
+| TypeScript | `npm install @pilotspace/lunaris`         | napi-rs 3.x         | Node 20+        |
 
 All three expose the same high-level handle surface:
 `open / ingest / recall / forget / snapshot` — and the same composable
@@ -49,7 +49,7 @@ installs take 2–5 minutes depending on the host.
 ### TypeScript
 
 ```bash
-npm install lunaris
+npm install @pilotspace/lunaris
 ```
 
 Prebuilt `.node` binaries ship for **5 targets** (BIND-TS-05):
@@ -69,7 +69,7 @@ that ship NAPI 7 fail with a readable reason rather than a cryptic
 If your platform is missing a prebuilt binary, install from source:
 
 ```bash
-npm install lunaris --build-from-source
+npm install @pilotspace/lunaris --build-from-source
 ```
 
 This requires Rust 1.94+ and the `@napi-rs/cli` toolchain.
@@ -119,7 +119,7 @@ asyncio.run(main())
 ### TypeScript
 
 ```typescript
-import { open, RetrievalBuilder } from "lunaris";
+import { open, RetrievalBuilder } from "@pilotspace/lunaris";
 
 async function main() {
   const handle = await open("moon://127.0.0.1:6380");
@@ -245,7 +245,7 @@ fresh machine the cache is empty. Either:
 
 Correct. Those helpers live behind the `bindings-it` Cargo feature and
 are ONLY used by `crates/lunaris-conformance`'s per-driver backend-
-parity tests. Production `pip install lunaris` / `npm install lunaris`
+parity tests. Production `pip install lunaris` / `npm install @pilotspace/lunaris`
 wheels are built WITHOUT the feature so the surface stays minimal.
 
 ## Parity with the Rust crate

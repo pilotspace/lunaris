@@ -24,7 +24,7 @@ No Rust toolchain required. Choose either path:
 ### Via npm / npx
 
 ```bash
-npx @lunaris/mcp --help
+npx @pilotspace/lunaris-mcp --help
 ```
 
 To register as a persistent Codex MCP server, add to `~/.codex/config.toml`:
@@ -32,7 +32,7 @@ To register as a persistent Codex MCP server, add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.lunaris]
 command = "npx"
-args    = ["-y", "@lunaris/mcp"]
+args    = ["-y", "@pilotspace/lunaris-mcp"]
 ```
 
 ### Via uv / uvx (recommended for Python users)
@@ -142,7 +142,7 @@ scripts/setup-lunaris-agents.py --agent codex --runner local --dry-run
 The script:
 
 - writes `[mcp_servers.lunaris]` using either the local `target/release/lunaris-mcp`
-  binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @lunaris/mcp`;
+  binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @pilotspace/lunaris-mcp`;
 - optionally builds the vendored Moon release binary with `--build-moon`;
   Moon's default feature set enables `mq`, graph, and text-index support;
 - defaults storage to Moon at `moon://127.0.0.1:6380`, writing

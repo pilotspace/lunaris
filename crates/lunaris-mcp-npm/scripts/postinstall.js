@@ -113,7 +113,7 @@ if (url.startsWith('file://')) {
     }
 
     function fetchUrl(targetUrl) {
-      https.get(targetUrl, { headers: { 'User-Agent': `@lunaris/mcp@${version}` } }, (res) => {
+      https.get(targetUrl, { headers: { 'User-Agent': `@pilotspace/lunaris-mcp@${version}` } }, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           // Follow exactly one redirect (GitHub Releases -> CDN); all HTTPS.
           fetchUrl(res.headers.location);
@@ -152,7 +152,7 @@ tarProc.on('error', (err) => {
     console.error(`
 [lunaris-mcp postinstall] ERROR: 'tar' is not available.
   - On Windows: Windows 10 Build 1803+ ships tar.exe by default. Upgrade if older.
-  - Workaround: install the binary manually, then set LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp before running 'npx @lunaris/mcp'.
+  - Workaround: install the binary manually, then set LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp before running 'npx @pilotspace/lunaris-mcp'.
   - GitHub Releases: https://github.com/pilotspace/lunaris/releases/tag/v${version}
 `);
     process.exit(1);

@@ -8,7 +8,7 @@
     "start": "tsx quickstart.mts"
   },
   "dependencies": {
-    "lunaris": "^0.2.1"
+    "@pilotspace/lunaris": "^0.3.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

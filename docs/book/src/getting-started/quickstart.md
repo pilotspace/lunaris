@@ -230,12 +230,12 @@ Run: `python quickstart.py` (or `maturin develop --release` from
 `crates/lunaris-py/` first if you're on a repo checkout). See the
 [Python SDK chapter](../sdk/python.md).
 
-### TypeScript (`npm i lunaris`)
+### TypeScript (`npm i @pilotspace/lunaris`)
 
 Same story — dict-shaped episode today, typed surface in v0.3.
 
 ```typescript
-import * as lunaris from "lunaris";
+import * as lunaris from "@pilotspace/lunaris";
 
 function buildEpisode(scope: string, content: string): object {
   const ts = Date.now();

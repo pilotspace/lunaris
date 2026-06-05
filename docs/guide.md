@@ -1,6 +1,6 @@
 # Lunaris User Guide
 
-Status: alpha tracking v0.1.1 (Rust crate `lunaris`, `pip install lunaris`, `npm i lunaris`). Complements `docs/protocol/memoryprotocol-0.1.md` (HTTP wire spec). If a claim here disagrees with the Rust source, the source wins — every symbol below has a `path:line` cross-reference.
+Status: alpha tracking v0.1.1 (Rust crate `lunaris`, `pip install lunaris`, `npm i @pilotspace/lunaris`). Complements `docs/protocol/memoryprotocol-0.1.md` (HTTP wire spec). If a claim here disagrees with the Rust source, the source wins — every symbol below has a `path:line` cross-reference.
 
 ## What is Lunaris?
 
