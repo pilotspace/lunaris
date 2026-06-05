@@ -85,11 +85,15 @@ async fn bytea_like_byterange_scan() -> anyhow::Result<()> {
     for i in 0..SEED_ROW_COUNT {
         let key = format!("{prefix_stem}{i:05}").into_bytes();
         let value = format!("v{i}").into_bytes();
+        // `scope` became NOT NULL (no default) in migration
+        // 20260510000005_scope_partitioning (RFC 0001); the fixture must
+        // supply it like every production KvPut does. Literal satisfies the
+        // `lunaris_kv_scope_check` alphabet constraint.
         sqlx::query(
             "INSERT INTO lunaris_kv \
-               (key, value, bt, valid_from, sys_from, valid_from_hlc, sys_from_hlc) \
+               (scope, key, value, bt, valid_from, sys_from, valid_from_hlc, sys_from_hlc) \
              VALUES \
-               ($1, $2, '{}'::jsonb, NOW(), NOW(), 0, 0) \
+               ('regression-bytea-scan', $1, $2, '{}'::jsonb, NOW(), NOW(), 0, 0) \
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
         .bind(&key)
