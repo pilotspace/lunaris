@@ -245,6 +245,12 @@ jobs:
             --remove \
             dist/*.whl
       - name: Run wheel structure test
+        # Skipped for the cross-built aarch64 wheel: pip on the x86_64
+        # runner refuses to install a manylinux_*_aarch64 wheel ("not a
+        # supported wheel on this platform"), by design. The four native
+        # legs cover the structure test; the aarch64 wheel shares the same
+        # build path and differs only in the staged binary + platform tag.
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         shell: bash
         working-directory: crates/lunaris-mcp-py
         run: |
