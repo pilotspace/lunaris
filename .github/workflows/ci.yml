@@ -30,7 +30,15 @@ jobs:
       # does not own. Scope to workspace members only.
       - run: cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sed 's/^/-p /' | xargs cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --all-targets
+      # lunaris-py / lunaris-ts are EXCLUDED: pyo3 ships with the
+      # `extension-module` feature (workspace pin), which suppresses
+      # libpython linkage — their `cargo test` harness binaries therefore
+      # cannot link on any platform. Same for napi cdylib tests outside a
+      # Node host. Their compile health is covered by the dedicated
+      # `cargo check -p lunaris-py -p lunaris-ts` step below; their
+      # runtime coverage is owned by python-prebuild.yml (maturin+pytest)
+      # and ts-prebuild.yml (napi+vitest).
+      - run: cargo test --workspace --all-targets --exclude lunaris-py --exclude lunaris-ts
       - run: cargo doc --workspace --no-deps
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
       # features on every PR. Production wheels / .node binaries are
@@ -162,24 +170,25 @@ jobs:
           fi
 
       # Plan 13-03 RELEASE-04 — version parity gate. Asserts the Rust
-      # umbrella crate (crates/lunaris/Cargo.toml), the Python host
-      # (crates/lunaris-py/pyproject.toml [project].version), and the
-      # TypeScript host (crates/lunaris-ts/package.json .version) all
-      # agree. Blocks Info #5 drift (mismatched SDK versions confusing
+      # umbrella crate, the Python host (crates/lunaris-py/pyproject.toml
+      # [project].version), and the TypeScript host
+      # (crates/lunaris-ts/package.json .version) all agree. Blocks
+      # Info #5 drift (mismatched SDK versions confusing
       # `pip install lunaris==X` vs `npm install lunaris@X` users).
       #
-      # Rust source-of-truth: crates/lunaris/Cargo.toml. This repo has
-      # no [workspace.package].version field — per-crate versions are
-      # canonical. See Plan 13-03 SUMMARY "Deviations" for the full
-      # rationale. The umbrella crate is what both host crates wrap,
-      # so it is the correct comparison point.
+      # Rust source-of-truth: the resolved version of the `lunaris-memory`
+      # umbrella crate via `cargo metadata` — crates now inherit
+      # `version.workspace = true` from `[workspace.package]`, so grepping
+      # the crate manifest yields the inheritance marker, not a number.
+      # The pyproject grep tolerates aligned assignment spacing
+      # (`version         = "..."`).
       #
       # Security: static literal strings only; no untrusted input.
       - name: version_parity_rust_python_typescript
         run: |
           set -e
-          rust_ver=$(grep '^version' crates/lunaris/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          py_ver=$(grep '^version = ' crates/lunaris-py/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          rust_ver=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | select(.name == "lunaris-memory") | .version')
+          py_ver=$(grep -m1 -E '^version\s*=' crates/lunaris-py/pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
           ts_ver=$(jq -r '.version' crates/lunaris-ts/package.json)
           echo "Rust (crates/lunaris): $rust_ver"
           echo "Python (pyproject):    $py_ver"
