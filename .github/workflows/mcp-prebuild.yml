@@ -266,4 +266,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.MATURIN_PYPI_TOKEN }}
-        run: maturin upload --non-interactive crates/lunaris-mcp-py/dist/*.whl
+        # --skip-existing: lunaris-mcp 0.3.0 wheels are already live on PyPI
+        # from the first tag run; a retag / re-run must not 400 on the
+        # duplicate upload.
+        run: maturin upload --non-interactive --skip-existing crates/lunaris-mcp-py/dist/*.whl

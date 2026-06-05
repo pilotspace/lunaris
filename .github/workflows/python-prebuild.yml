@@ -131,3 +131,15 @@ jobs:
           # row should not block the release; release notes document
           # "source install supported" for any demoted target.
           fail_on_unmatched_files: false
+      # Tag-gated PyPI publish of the `lunaris` SDK wheels. `--skip-existing`
+      # makes the step idempotent so a release re-run (or a retag) never
+      # 400s on an already-uploaded file.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Upload wheels to PyPI
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.MATURIN_PYPI_TOKEN }}
+        run: |
+          pip install --quiet maturin
+          maturin upload --non-interactive --skip-existing dist/*.whl
