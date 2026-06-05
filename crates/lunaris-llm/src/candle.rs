@@ -195,7 +195,7 @@ impl LlmBackend for CandleBackend {
 
         // Honour opts.timeout — match the per-batch budget the extract
         // pipeline (D-02) already enforces today.
-        let result = match tokio::time::timeout(opts.timeout, fut).await {
+        match tokio::time::timeout(opts.timeout, fut).await {
             Ok(join_res) => join_res.map_err(|e| {
                 LunarisError::Storage(StorageError::Backend(format!("{model_name} join: {e}")))
             })?,
@@ -203,8 +203,7 @@ impl LlmBackend for CandleBackend {
                 "{model_name} timeout after {:?}",
                 opts.timeout
             )))),
-        };
-        result
+        }
     }
 
     fn model_id(&self) -> &str {
