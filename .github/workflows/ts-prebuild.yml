@@ -91,6 +91,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
+          # rust-toolchain.toml (channel "1.94") overrides the toolchain the
+          # dtolnay action installed targets into (exact "1.94.1" — a
+          # DIFFERENT rustup toolchain dir), so the cross std landed in the
+          # wrong toolchain and cargo failed with E0463 "can't find crate
+          # for `core`". Add the target to the ACTIVE (override-resolved)
+          # toolchain.
+          rustup target add aarch64-unknown-linux-gnu
+          # No .cargo/config.toml in-repo: point cargo and cc-rs at the
+          # cross linker / compiler / archiver for C deps (e.g. aws-lc-sys).
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+          } >> "$GITHUB_ENV"
       - name: Build .node via napi
         run: npx napi build --platform --release --target ${{ matrix.target }}
         working-directory: crates/lunaris-ts
