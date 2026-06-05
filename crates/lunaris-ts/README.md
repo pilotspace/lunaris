@@ -1,6 +1,6 @@
 # lunaris
 
-napi-rs 3.x TypeScript bindings for the [Lunaris](https://github.com/lunaris-dev/lunaris) agent memory engine.
+napi-rs 3.x TypeScript bindings for the [Lunaris](https://github.com/pilotspace/lunaris) agent memory engine.
 
 ## Installation
 

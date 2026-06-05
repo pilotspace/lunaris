@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/lunaris-dev/lunaris"
+Repository = "https://github.com/pilotspace/lunaris"
 
 [project.optional-dependencies]
 dev = [

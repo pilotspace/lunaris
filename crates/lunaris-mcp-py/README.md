@@ -94,6 +94,6 @@ Then use the `lunaris-mcp` binary directly.
 
 ## Full integration guide
 
-See [docs/integration/claude-code.md](https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/claude-code.md)
-and [docs/integration/codex.md](https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/codex.md)
+See [docs/integration/claude-code.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md)
+and [docs/integration/codex.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/codex.md)
 for complete configuration examples, environment variables, and troubleshooting.

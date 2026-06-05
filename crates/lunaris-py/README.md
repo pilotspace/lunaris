@@ -1,6 +1,6 @@
 # lunaris
 
-PyO3 0.26 Python bindings for the [Lunaris](https://github.com/lunaris-dev/lunaris) agent memory engine.
+PyO3 0.26 Python bindings for the [Lunaris](https://github.com/pilotspace/lunaris) agent memory engine.
 
 ## Installation
 

@@ -41,7 +41,7 @@ claude mcp add --transport stdio lunaris -- npx -y @lunaris/mcp
 | Windows  | x64         | `x86_64-pc-windows-msvc` |
 
 Unsupported platforms: install the Rust toolchain and run `cargo install lunaris-mcp`.
-See [docs/integration/claude-code.md](https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/claude-code.md).
+See [docs/integration/claude-code.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md).
 
 ## Air-gap / Offline Environments
 
@@ -62,7 +62,7 @@ for the full threat model.
 
 **Windows:** `tar.exe` is required. Windows 10 Build 1803+ (released April 2018)
 ships it by default. Older systems must either upgrade, or download the binary
-manually from [GitHub Releases](https://github.com/lunaris-dev/lunaris/releases)
+manually from [GitHub Releases](https://github.com/pilotspace/lunaris/releases)
 and set `LUNARIS_MCP_BIN_PATH` before invoking `npx @lunaris/mcp`.
 
 ## SHA-256 Integrity Verification
@@ -75,7 +75,7 @@ does not match — indicating a tampered or corrupted artifact.
 
 ## Full Documentation
 
-See [docs/integration/claude-code.md](https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/claude-code.md)
+See [docs/integration/claude-code.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md)
 for the complete integration guide including environment variables, storage
 backends, and all four MCP tools.
 

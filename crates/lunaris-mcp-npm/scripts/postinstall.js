@@ -48,7 +48,7 @@ const tarball = PLATFORM_MAP[key];
 if (!tarball) {
   console.error(`[lunaris-mcp] Unsupported platform: ${key}`);
   console.error('Install the Rust toolchain and run: cargo install lunaris-mcp');
-  console.error('See: https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/claude-code.md');
+  console.error('See: https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md');
   process.exit(1);
 }
 
@@ -65,7 +65,7 @@ if (!expectedHash || expectedHash === 'placeholder') {
   process.exit(1);
 }
 
-const ORG = 'lunaris-dev';
+const ORG = 'pilotspace';
 const REPO = 'lunaris';
 // Env-var override for tarball URL (test harness only; production: GitHub Releases HTTPS URL)
 const url = process.env.LUNARIS_MCP_TARBALL_URL
@@ -153,7 +153,7 @@ tarProc.on('error', (err) => {
 [lunaris-mcp postinstall] ERROR: 'tar' is not available.
   - On Windows: Windows 10 Build 1803+ ships tar.exe by default. Upgrade if older.
   - Workaround: install the binary manually, then set LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp before running 'npx @lunaris/mcp'.
-  - GitHub Releases: https://github.com/lunaris-dev/lunaris/releases/tag/v${version}
+  - GitHub Releases: https://github.com/pilotspace/lunaris/releases/tag/v${version}
 `);
     process.exit(1);
   }
