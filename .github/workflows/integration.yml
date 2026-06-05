@@ -435,10 +435,17 @@ jobs:
       PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
 
     steps:
-      - name: Checkout (no submodules — .planning skipped, cross-repo auth)
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
         uses: actions/checkout@v4
         with:
           submodules: false
+
+      - name: Init vendor/moon submodule
+        # Non-recursive — mirrors the positive-path `integration` job. The
+        # moondb path dep (vendor/moon/sdk/rust) is required for cargo to
+        # resolve the workspace graph even though this job never talks to
+        # Moon.
+        run: git submodule update --init vendor/moon
 
       - name: Install Rust 1.94 toolchain
         uses: dtolnay/rust-toolchain@1.94
