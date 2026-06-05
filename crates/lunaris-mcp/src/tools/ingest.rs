@@ -97,10 +97,10 @@ pub(crate) async fn handle(
     if let Some(t) = t_ref {
         builder = builder.t_ref(t);
     }
-    if let Some(meta) = params.metadata {
-        if !meta.is_empty() {
-            builder = builder.metadata(meta);
-        }
+    if let Some(meta) = params.metadata
+        && !meta.is_empty()
+    {
+        builder = builder.metadata(meta);
     }
 
     // Re-derive ScopedLunaris per call — never store it in AppState.

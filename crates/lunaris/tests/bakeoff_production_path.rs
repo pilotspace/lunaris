@@ -45,12 +45,11 @@ impl RecordingStorage {
         let mut texts = Vec::new();
         for batch in guard.iter() {
             for op in batch {
-                if let WriteOp::KvPut { value, .. } = op {
-                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(value) {
-                        if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
-                            texts.push(t.to_string());
-                        }
-                    }
+                if let WriteOp::KvPut { value, .. } = op
+                    && let Ok(v) = serde_json::from_slice::<serde_json::Value>(value)
+                    && let Some(t) = v.get("text").and_then(|x| x.as_str())
+                {
+                    texts.push(t.to_string());
                 }
             }
         }

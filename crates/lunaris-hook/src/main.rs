@@ -142,10 +142,10 @@ async fn async_main() -> i32 {
         // The sleep is a tokio::time::sleep so tokio::time::timeout can cancel
         // it at the .await point.
         #[cfg(debug_assertions)]
-        if let Ok(stall_str) = std::env::var("LUNARIS_TEST_STALL_MS") {
-            if let Ok(stall_ms) = stall_str.parse::<u64>() {
-                tokio::time::sleep(tokio::time::Duration::from_millis(stall_ms)).await;
-            }
+        if let Ok(stall_str) = std::env::var("LUNARIS_TEST_STALL_MS")
+            && let Ok(stall_ms) = stall_str.parse::<u64>()
+        {
+            tokio::time::sleep(tokio::time::Duration::from_millis(stall_ms)).await;
         }
 
         lunaris_hook::run_with_storage(&stdin_bytes, scope, storage).await

@@ -226,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_sqlite(args: &[&str]) -> std::io::Result<()> {
     let status = Command::new("sqlite3").args(args).status()?;
     if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "sqlite3 exited non-zero"));
+        return Err(std::io::Error::other("sqlite3 exited non-zero"));
     }
     Ok(())
 }

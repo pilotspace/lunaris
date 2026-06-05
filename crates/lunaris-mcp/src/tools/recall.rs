@@ -184,13 +184,11 @@ pub(crate) async fn handle(
 
     // Optional source-prefix filter. Keep it on the query as a best-effort
     // backend hint, but do not trust it as the only enforcement layer.
-    if let Some(filters) = &params.filters {
-        if let Some(prefix) = &filters.source_prefix {
-            if !prefix.is_empty() {
-                q.filter =
-                    Some(Filter::StartsWith { field: "source".into(), prefix: prefix.clone() });
-            }
-        }
+    if let Some(filters) = &params.filters
+        && let Some(prefix) = &filters.source_prefix
+        && !prefix.is_empty()
+    {
+        q.filter = Some(Filter::StartsWith { field: "source".into(), prefix: prefix.clone() });
     }
 
     // Optional bi-temporal as_of.

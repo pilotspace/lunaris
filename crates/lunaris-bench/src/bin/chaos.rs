@@ -201,7 +201,7 @@ async fn run_helios_profile() -> ExitCode {
 
     // Construct HeliosScratchpad.
     let pad =
-        lunaris::HeliosScratchpad::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
+        lunaris::CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), &session_id);
 
     // If the kill-site covers a Consolidator race, enable scope-ON.
     // Idempotent + safe on repeat calls.

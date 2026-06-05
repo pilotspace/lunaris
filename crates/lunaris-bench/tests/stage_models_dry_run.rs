@@ -7,8 +7,8 @@
 //! 2. The cache dir was NOT created (a dry run touches no filesystem).
 //! 3. Stdout names both model repositories
 //!    (`ibm-granite/granite-embedding-r2` +
-//!     `BAAI/bge-reranker-v2-m3`) and the canonical GGUF SHA-256s
-//!     listed in the N-04 brief.
+//!    `BAAI/bge-reranker-v2-m3`) and the canonical GGUF SHA-256s
+//!    listed in the N-04 brief.
 //!
 //! The test does NOT exercise the live HF Hub download path — that
 //! requires network egress and is covered by the staged-artifact

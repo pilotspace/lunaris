@@ -135,6 +135,20 @@ impl Embedder for NoopEmbedder {
     }
 }
 
+fn det_vec(s: &str, dim: usize) -> Vec<f32> {
+    // Deterministic: seed a tiny LCG by hashing the input; emit `dim` floats in [-1, 1].
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    let mut state = h.finish().max(1);
+    (0..dim)
+        .map(|_| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
+            v * 2.0 - 1.0
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod noop_tests {
     use super::*;
@@ -172,18 +186,4 @@ mod noop_tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].is_empty());
     }
-}
-
-fn det_vec(s: &str, dim: usize) -> Vec<f32> {
-    // Deterministic: seed a tiny LCG by hashing the input; emit `dim` floats in [-1, 1].
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    let mut state = h.finish().max(1);
-    (0..dim)
-        .map(|_| {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            let v = ((state >> 33) as u32) as f32 / u32::MAX as f32;
-            v * 2.0 - 1.0
-        })
-        .collect()
 }
