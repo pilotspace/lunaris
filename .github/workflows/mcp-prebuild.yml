@@ -211,7 +211,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install wheel tooling
-        run: pip install hatchling build wheel maturin
+        # pytest: the "Run wheel structure test" step below invokes
+        # `python -m pytest` on the installed wheel.
+        run: pip install hatchling build wheel maturin pytest
       - name: Download binary artifact for this target
         uses: actions/download-artifact@v4
         with:
