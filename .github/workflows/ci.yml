@@ -7,7 +7,14 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # vendor/moon only — .planning is private (cross-repo auth) and must
+      # NOT be pulled here. The moondb path dep (vendor/moon/sdk/rust) is
+      # required for cargo to resolve the workspace graph at all.
       - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
       - uses: dtolnay/rust-toolchain@1.94
         with:
           components: rustfmt, clippy
@@ -228,7 +235,13 @@ jobs:
     name: parity-check
     runs-on: ubuntu-latest
     steps:
+      # vendor/moon only — see the `check` job note. cargo run needs the
+      # moondb path dep present to resolve the workspace graph.
       - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
       - uses: dtolnay/rust-toolchain@1.94
       - uses: Swatinem/rust-cache@v2
       - name: Regenerate bindings into snapshots/
