@@ -115,7 +115,11 @@ impl StoragePort for RecordingStorage {
             bi_temporal_native: false,
             graph_native: false,
             rerank_native: false,
-            queue_native: false,
+            // This fixture records publishes and
+            // `scoped_ingest_propagates_scope_to_publish` asserts on them —
+            // it must advertise a native queue or
+            // `publish_consolidate_event` skips publishing entirely.
+            queue_native: true,
             max_vector_dim: 768,
             native_rrf: false,
             max_scopes_recommended: 0,

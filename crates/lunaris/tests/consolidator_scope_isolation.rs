@@ -261,7 +261,12 @@ impl StoragePort for InProcessBroker {
             bi_temporal_native: false,
             graph_native: false,
             rerank_native: false,
-            queue_native: false,
+            // The broker implements a REAL publish->subscribe round trip
+            // (mpsc channels above) and the isolation assertions count
+            // worker promotions driven by those events. It must advertise
+            // a native queue, or `publish_consolidate_event` takes the
+            // capability-gated skip path and every promotion count reads 0.
+            queue_native: true,
             max_vector_dim: 768,
             native_rrf: false,
             max_scopes_recommended: 0,

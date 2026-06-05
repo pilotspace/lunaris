@@ -237,7 +237,12 @@ impl StoragePort for RecordingStorageWithKeyword {
             bi_temporal_native: false,
             graph_native: false,
             rerank_native: false,
-            queue_native: false,
+            // This fixture records publishes and
+            // `validator_needs_review_publishes_verify_message` asserts on
+            // the `__lunaris_verify__` topic — it must advertise a native
+            // queue or the capability-gated publish paths in
+            // `lunaris::ingest` skip publishing entirely.
+            queue_native: true,
             max_vector_dim: 768,
             native_rrf: false,
             max_scopes_recommended: 0,
