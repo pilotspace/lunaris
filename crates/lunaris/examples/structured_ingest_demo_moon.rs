@@ -229,7 +229,7 @@ fn moon_graph_query(port: u16, graph: &str, cypher: &str) -> std::io::Result<()>
         .args(["-p", &port.to_string(), "GRAPH.QUERY", graph, cypher])
         .status()?;
     if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "redis-cli exited non-zero"));
+        return Err(std::io::Error::other("redis-cli exited non-zero"));
     }
     Ok(())
 }

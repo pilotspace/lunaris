@@ -43,7 +43,7 @@ fn main() {
 
     // Validate: count must be divisible by 4 for even kind distribution.
     // If not, round up to the next multiple of 4.
-    if count % 4 != 0 {
+    if !count.is_multiple_of(4) {
         let rounded = ((count / 4) + 1) * 4;
         eprintln!("gen_replay_fixture: count {count} not divisible by 4; rounding up to {rounded}");
         count = rounded;
@@ -128,7 +128,9 @@ fn main() {
                     "timestamp": ts,
                 })
             }
-            "SessionStart" | _ => {
+            // "SessionStart" and anything unrecognised fall through to a SessionStart
+            // payload — the replay fixture only needs a syntactically valid event.
+            _ => {
                 serde_json::json!({
                     "hook_event_name": "SessionStart",
                     "session_id": session_id,

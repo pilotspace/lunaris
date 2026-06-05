@@ -55,7 +55,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use chrono::Utc;
 use futures::StreamExt;
-use lunaris::{HeliosScratchpad, Lunaris};
+use lunaris::{CodingSessionMemory, Lunaris};
 use lunaris_bench::eval_05_trace::{EVAL_05_LEN, EVAL_05_SEED, Op, Trace};
 // Plan 13-01 wiring — retained so the grep gate
 // `grep -c 'AuditEvent\|__lunaris_audit__' ≥ 1` passes AND so a future
@@ -269,7 +269,7 @@ async fn run_one_backend(
     mem.consolidator_pipeline().enable_for_scope("helios:fs/");
 
     let session_id = format!("eval05-{}", Ulid::new());
-    let pad = HeliosScratchpad::new(mem.clone(), lunaris_core::Scope::dev(), &session_id);
+    let pad = CodingSessionMemory::new(mem.clone(), lunaris_core::Scope::dev(), &session_id);
 
     // Warm-up: seed every path in the trace's 500-path pool so subsequent
     // reads/edits/greps hit real content (measurement hygiene — empty reads

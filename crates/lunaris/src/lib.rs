@@ -94,6 +94,10 @@ pub use lunaris_storage_postgres::bootstrap::{BootstrapReport, bootstrap_app_rol
 // CodingSessionMemory (renamed from HeliosScratchpad in v0.5) + its borrowed
 // AsOfScratchpad time-travel view; the other 9 recipes (RECIPE-V1-01..11) ship in v1.
 /// Deprecated alias for [`CodingSessionMemory`]. Remove in v0.7.
+// allow(deprecated): re-exporting the deprecated alias is the whole point —
+// without the allow, the defining crate trips its own deprecation lint and
+// `clippy -D warnings` fails. Downstream importers still get the warning.
+#[allow(deprecated)]
 #[deprecated(
     since = "0.5.0",
     note = "use CodingSessionMemory; HeliosScratchpad will be removed in v0.7"

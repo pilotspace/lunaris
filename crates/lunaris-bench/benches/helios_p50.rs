@@ -51,7 +51,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use lunaris::{HeliosScratchpad, Lunaris};
+use lunaris::{CodingSessionMemory, Lunaris};
 use lunaris_bench::tcp_reachable;
 use lunaris_core::StubEmbedder;
 use rand::{Rng, SeedableRng};
@@ -165,7 +165,7 @@ fn helios_p50_bench(c: &mut Criterion) {
         };
 
         let session_id = format!("bench-{}", Ulid::new());
-        let pad = HeliosScratchpad::new(handle.clone(), lunaris_core::Scope::dev(), &session_id);
+        let pad = CodingSessionMemory::new(handle.clone(), lunaris_core::Scope::dev(), &session_id);
 
         // Warm-up: seed WARMUP_NOTES notes so every op type has real content
         // to touch. Any write failure here means the backend is functionally
@@ -238,7 +238,7 @@ fn helios_p50_bench(c: &mut Criterion) {
 
 /// Seed [`WARMUP_NOTES`] notes under the pad's session prefix with a known
 /// body containing the grep keyword `"lorem"`.
-async fn seed_warmup(pad: &HeliosScratchpad) -> Result<WarmupSet, lunaris::LunarisError> {
+async fn seed_warmup(pad: &CodingSessionMemory) -> Result<WarmupSet, lunaris::LunarisError> {
     let mut paths = Vec::with_capacity(WARMUP_NOTES);
     for i in 0..WARMUP_NOTES {
         let p = format!("warmup-{i:04}.md");

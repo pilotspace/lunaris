@@ -19,8 +19,8 @@
 //!   b. The non-stamped ulid's payload has `bt["sys"][1]` null (still live).
 //!   c. `apply_reflect_invalidate` returns exactly the one stamped ulid.
 //!   d. `apply_reflect_invalidate` issued exactly ONE `atomic_write` (D-11).
-//!      (Verified indirectly: calling it a second time for the same ulid
-//!      returns empty — idempotency guard proves the first write went through.)
+//!   (Verified indirectly: calling it a second time for the same ulid
+//!   returns empty — idempotency guard proves the first write went through.)
 //! - Asserts that a second call for the already-invalidated ulid returns
 //!   empty (idempotency guard).
 //!
@@ -372,7 +372,7 @@ async fn scoped_end_turn_applies_invalidate_in_memory() {
         }),
     );
 
-    let scope = Scope::new("test-scope".to_string()).unwrap();
+    let scope = Scope::new("test-scope").unwrap();
     let scoped = handle.scoped(scope.clone());
 
     // Before end_turn: exactly 0 atomic_writes (the rows were inserted directly).
@@ -432,7 +432,7 @@ async fn scoped_end_turn_noop_supervisor_no_write() {
 
     let handle = Lunaris::with_parts(storage, embedder, clock);
     // Default supervisor is NoopReflectSupervisor → empty output → no write.
-    let scope = Scope::new("test-noop".to_string()).unwrap();
+    let scope = Scope::new("test-noop").unwrap();
     let scoped = handle.scoped(scope);
     let output = scoped
         .end_turn(ReflectInput {

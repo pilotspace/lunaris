@@ -289,6 +289,7 @@ impl ContextService {
         Ok(storages.entry(key).or_insert(storage).clone())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn recall_and_trace(
         &self,
         scope: &Scope,
@@ -689,10 +690,10 @@ impl ContextService {
 
         let key = scope.as_str().to_owned();
         let mut workers = self.embed_workers.lock().await;
-        if let Some(existing) = workers.get(&key) {
-            if !existing.is_finished() {
-                return;
-            }
+        if let Some(existing) = workers.get(&key)
+            && !existing.is_finished()
+        {
+            return;
         }
 
         let service = self.clone();
@@ -748,10 +749,10 @@ struct ToolContext {
 }
 
 fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<Scope> {
-    if let Some(scope) = explicit {
-        if !scope.is_empty() {
-            return Ok(Scope::new(scope)?);
-        }
+    if let Some(scope) = explicit
+        && !scope.is_empty()
+    {
+        return Ok(Scope::new(scope)?);
     }
     let cwd_buf = match cwd {
         Some(cwd) => cwd.to_path_buf(),
@@ -784,12 +785,12 @@ fn render_context(
                 out.push('"');
             }
             out.push_str(">\nTool result may relate to these memories.\n\n");
-            if let Some(paths) = &ctx.paths {
-                if !paths.is_empty() {
-                    out.push_str("paths: ");
-                    out.push_str(&paths.join(", "));
-                    out.push_str("\n\n");
-                }
+            if let Some(paths) = &ctx.paths
+                && !paths.is_empty()
+            {
+                out.push_str("paths: ");
+                out.push_str(&paths.join(", "));
+                out.push_str("\n\n");
             }
         }
         _ => {
@@ -820,10 +821,7 @@ fn curate_context_memories(candidates: Vec<ContextMemory>, max_hits: usize) -> V
             if excluded_context_source(&memory.source) {
                 return None;
             }
-            let Some(summary) = summarize_memory_for_context(&memory.source, &memory.snippet)
-            else {
-                return None;
-            };
+            let summary = summarize_memory_for_context(&memory.source, &memory.snippet)?;
             memory.snippet = trim_to_chars(&summary, 260);
             Some((source_priority(&memory.source), memory))
         })
@@ -939,24 +937,24 @@ fn summarize_memory_json(source: &str, value: &Value) -> Option<String> {
     if object.contains_key("codex_payload") {
         return summarize_codex_payload(source, object.get("codex_payload")?);
     }
-    if let Some(tool_input) = object.get("tool_input") {
-        if let Some(summary) = summarize_memory_json(source, tool_input) {
-            return Some(summary);
-        }
+    if let Some(tool_input) = object.get("tool_input")
+        && let Some(summary) = summarize_memory_json(source, tool_input)
+    {
+        return Some(summary);
     }
-    if let Some(tool_response) = object.get("tool_response") {
-        if let Some(summary) = summarize_memory_json(source, tool_response) {
-            return Some(summary);
-        }
+    if let Some(tool_response) = object.get("tool_response")
+        && let Some(summary) = summarize_memory_json(source, tool_response)
+    {
+        return Some(summary);
     }
 
-    if source.starts_with("decision:") {
-        if let Some(decision) = string_field(object, &["decision"]) {
-            let rationale = string_field(object, &["rationale"])
-                .map(|value| format!("; rationale: {}", trim_to_chars(value, 120)))
-                .unwrap_or_default();
-            return Some(format!("decision: {decision}{rationale}"));
-        }
+    if source.starts_with("decision:")
+        && let Some(decision) = string_field(object, &["decision"])
+    {
+        let rationale = string_field(object, &["rationale"])
+            .map(|value| format!("; rationale: {}", trim_to_chars(value, 120)))
+            .unwrap_or_default();
+        return Some(format!("decision: {decision}{rationale}"));
     }
 
     if source.starts_with("edit:") {

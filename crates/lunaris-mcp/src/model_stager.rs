@@ -308,10 +308,10 @@ pub(crate) async fn ensure_staged_with(
 /// assert that no `*.gguf` appears under the controlled models directory after
 /// `tools/list` — proving the lazy embedder invariant holds.
 fn models_dir() -> Result<PathBuf, StageError> {
-    if let Ok(dir) = std::env::var("LUNARIS_MCP_MODELS_DIR") {
-        if !dir.is_empty() {
-            return Ok(PathBuf::from(dir));
-        }
+    if let Ok(dir) = std::env::var("LUNARIS_MCP_MODELS_DIR")
+        && !dir.is_empty()
+    {
+        return Ok(PathBuf::from(dir));
     }
     let home = dirs::home_dir().ok_or(StageError::NoHome)?;
     Ok(home.join(".lunaris").join("models"))
