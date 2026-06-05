@@ -125,6 +125,17 @@ async fn bytea_like_byterange_scan() -> anyhow::Result<()> {
         u
     };
 
+    // Run the EXPLAIN inside a transaction with `SET LOCAL enable_seqscan =
+    // off`. On a fresh CI database lunaris_kv holds ONLY the 128 seeded
+    // rows, so the planner rationally picks Seq Scan (total cost < 5) no
+    // matter how correct the query shape is — the original test relied on
+    // a table pre-populated by earlier workloads. Disabling seqscan keeps
+    // the oracle discriminating: the fixed byte-range query CAN switch to
+    // the lunaris_kv_pkey Index Scan, while a regressed bytea-LIKE query
+    // has no index path and still surfaces as Seq Scan (the penalty makes
+    // it a plan of last resort, not an impossibility).
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
     let plan_rows: Vec<(serde_json::Value,)> = sqlx::query_as(
         "EXPLAIN (FORMAT JSON) \
          SELECT key, value FROM lunaris_kv \
@@ -132,8 +143,9 @@ async fn bytea_like_byterange_scan() -> anyhow::Result<()> {
     )
     .bind(prefix)
     .bind(&upper)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.rollback().await?;
     assert_eq!(plan_rows.len(), 1, "EXPLAIN returned {} rows", plan_rows.len());
     let plan_json = &plan_rows[0].0;
     let plan_str = plan_json.to_string();
