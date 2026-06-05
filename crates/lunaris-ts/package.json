@@ -47,6 +47,13 @@
     "index.d.ts",
     "README.md"
   ],
+  "optionalDependencies": {
+    "lunaris-linux-x64-gnu": "0.3.0",
+    "lunaris-linux-arm64-gnu": "0.3.0",
+    "lunaris-darwin-x64": "0.3.0",
+    "lunaris-darwin-arm64": "0.3.0",
+    "lunaris-win32-x64-msvc": "0.3.0"
+  },
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
