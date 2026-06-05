@@ -19,7 +19,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
+      # NOT `cargo fmt --all`: --all also formats path deps OUTSIDE the
+      # workspace members (documented cargo behavior), so the vendored
+      # moondb SDK (vendor/moon/sdk/rust, excluded in [workspace] but
+      # reachable as a path dep) would fail the check with diffs Lunaris
+      # does not own. Scope to workspace members only.
+      - run: cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sed 's/^/-p /' | xargs cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
       - run: cargo doc --workspace --no-deps

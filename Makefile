@@ -128,8 +128,10 @@ docs-serve:
 docs-rust:
 	cargo doc --workspace --no-deps
 
+# NOT `cargo fmt --all`: --all also formats path deps outside the workspace
+# members (vendor/moon/sdk/rust), failing on diffs Lunaris does not own.
 ci-local:
-	cargo fmt --all -- --check
+	cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sed 's/^/-p /' | xargs cargo fmt --check
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace --all-targets
 	cargo check -p lunaris-verify --no-default-features
