@@ -20,6 +20,12 @@ const RUST_HEADER: &str = "\
 // Phase 8 Plan 08-01 (BIND-GEN-01..03). napi-rs 3.x wrapper surface emitted
 // from `crates/lunaris-codegen/annotations/surface.toml`. Regenerate with
 // `cargo run -p lunaris-codegen -- --emit ts`.
+
+// allow(deprecated): generated bindings mirror the annotated Rust surface
+// verbatim, including methods the Rust layer has deprecated for native
+// callers (e.g. engine-level `Lunaris::forget`). SDK-facing deprecation
+// messaging is handled in the Python/TS layer, not by rustc lints here.
+#![allow(deprecated)]
 ";
 
 const DTS_HEADER: &str = "\
@@ -155,12 +161,23 @@ fn emit_ts_method_rust(
             .unwrap();
             let owned_names = emit_ts_owned_bindings(out, &m.params);
             let call_args = ts_call_args_from_owned(&m.params, &owned_names);
-            writeln!(
-                out,
-                "        let out = self.inner.{name}({call_args}).await.map_err(napi_err)?;",
-                name = m.name
-            )
-            .unwrap();
+            // Unit returns skip the `let out =` binding entirely —
+            // clippy::let_unit_value rejects binding a `()` expression.
+            if matches!(m.returns.ty, IrTyRef::Unit) {
+                writeln!(
+                    out,
+                    "        self.inner.{name}({call_args}).await.map_err(napi_err)?;",
+                    name = m.name
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        let out = self.inner.{name}({call_args}).await.map_err(napi_err)?;",
+                    name = m.name
+                )
+                .unwrap();
+            }
             writeln!(out, "        {ret}", ret = ts_return_expr_rust(&m.returns.ty)).unwrap();
             writeln!(out, "    }}").unwrap();
         }
@@ -288,13 +305,25 @@ fn emit_ts_method_rust(
                 // Load-bearing for MeetingNotesMemory::attendees(Vec<String>).
                 let owned_names = emit_ts_owned_bindings(out, &m.params);
                 let call_args = ts_call_args_from_owned(&m.params, &owned_names);
-                writeln!(
-                    out,
-                    "        let out = self.inner.{name}({call_args});",
-                    name = m.name,
-                    call_args = call_args
-                )
-                .unwrap();
+                // Unit returns skip the `let out =` binding entirely —
+                // clippy::let_unit_value rejects binding a `()` expression.
+                if matches!(m.returns.ty, IrTyRef::Unit) {
+                    writeln!(
+                        out,
+                        "        self.inner.{name}({call_args});",
+                        name = m.name,
+                        call_args = call_args
+                    )
+                    .unwrap();
+                } else {
+                    writeln!(
+                        out,
+                        "        let out = self.inner.{name}({call_args});",
+                        name = m.name,
+                        call_args = call_args
+                    )
+                    .unwrap();
+                }
                 writeln!(out, "        {ret}", ret = ts_sync_return_expr_rust(&m.returns.ty))
                     .unwrap();
             }
@@ -384,10 +413,13 @@ fn emit_ts_method_rust(
             writeln!(out, "        let cloned = self.inner.as_ref().clone();").unwrap();
             let owned_names = emit_ts_owned_bindings(out, &m.params);
             let call_args = ts_call_args_from_owned(&m.params, &owned_names);
+            // Unit returns skip the `let out =` binding entirely —
+            // clippy::let_unit_value rejects binding a `()` expression.
+            let bind = if matches!(m.returns.ty, IrTyRef::Unit) { "" } else { "let out = " };
             if m.returns.fallible {
                 writeln!(
                     out,
-                    "        let out = cloned.{name}({call_args}).await.map_err(napi_err)?;",
+                    "        {bind}cloned.{name}({call_args}).await.map_err(napi_err)?;",
                     name = m.name,
                     call_args = call_args
                 )
@@ -395,7 +427,7 @@ fn emit_ts_method_rust(
             } else {
                 writeln!(
                     out,
-                    "        let out = cloned.{name}({call_args}).await;",
+                    "        {bind}cloned.{name}({call_args}).await;",
                     name = m.name,
                     call_args = call_args
                 )
@@ -762,27 +794,28 @@ fn ts_sync_return_ty_rust(ty: &IrTyRef) -> String {
 
 fn ts_return_expr_rust(ty: &IrTyRef) -> String {
     match ty {
-        IrTyRef::Unit => "let _ = out; Ok(())".into(),
+        IrTyRef::Unit => "Ok(())".into(),
         IrTyRef::Named { name } if name == "Lsn" => "Ok(out.to_string())".into(),
         // Async methods returning a Named serde-derivable value (ForgetReceipt)
         // serialise to JSON. The napi-rs side accepts serde_json::Value but the
         // .d.ts sees the TS class name — mirror of emit_py.rs behaviour.
-        IrTyRef::Named { .. } => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
+        // (No `Ok(...?)` wrapper — clippy::needless_question_mark.)
+        IrTyRef::Named { .. } => "serde_json::to_value(&out).map_err(napi_err)".into(),
         // Plan 11-02b Rule 1 — `Vec<T>` async returns. The signature spells
         // `Vec<serde_json::Value>` (see ts_async_return_ty_rust fallback), so
         // each element must be serialised individually instead of wrapping
         // the whole Vec in a single `serde_json::to_value`.
         IrTyRef::Vec { .. } => {
-            "Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)"
+            "out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()"
                 .into()
         }
-        _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
+        _ => "serde_json::to_value(&out).map_err(napi_err)".into(),
     }
 }
 
 fn ts_sync_return_expr_rust(ty: &IrTyRef) -> String {
     match ty {
-        IrTyRef::Unit => "let _ = out; Ok(())".into(),
+        IrTyRef::Unit => "Ok(())".into(),
         // Plan 08-03 Rule 1 fix: sync `&self -> Named` returns wrap the
         // inner Rust value in the matching napi class rather than serialising
         // it. `Lunaris::recall() -> RetrievalBuilder` is the load-bearing
@@ -796,7 +829,7 @@ fn ts_sync_return_expr_rust(ty: &IrTyRef) -> String {
         // owned return into the host class. `Self` is the current impl's
         // class name, not a serialisable value.
         IrTyRef::RefSelf => "Ok(Self { inner: Arc::new(out) })".into(),
-        _ => "Ok(serde_json::to_value(&out).map_err(napi_err)?)".into(),
+        _ => "serde_json::to_value(&out).map_err(napi_err)".into(),
     }
 }
 

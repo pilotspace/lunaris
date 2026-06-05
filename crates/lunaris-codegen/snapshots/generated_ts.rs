@@ -4,6 +4,12 @@
 // from `crates/lunaris-codegen/annotations/surface.toml`. Regenerate with
 // `cargo run -p lunaris-codegen -- --emit ts`.
 
+// allow(deprecated): generated bindings mirror the annotated Rust surface
+// verbatim, including methods the Rust layer has deprecated for native
+// callers (e.g. engine-level `Lunaris::forget`). SDK-facing deprecation
+// messaging is handled in the Python/TS layer, not by rustc lints here.
+#![allow(deprecated)]
+
 use napi_derive::napi;
 use std::sync::Arc;
 
@@ -45,7 +51,7 @@ impl Lunaris {
     pub async fn forget(&self, req: serde_json::Value) -> napi::Result<serde_json::Value> {
         let req_owned: ::lunaris::forget::ForgetRequest = serde_json::from_value(req.clone()).map_err(napi_err)?;
         let out = self.inner.forget(req_owned).await.map_err(napi_err)?;
-        Ok(serde_json::to_value(&out).map_err(napi_err)?)
+        serde_json::to_value(&out).map_err(napi_err)
     }
 
     /// Returns the current monotonic LSN — a cheap consistent snapshot marker. Implemented as no-op atomic_write(&[]).
@@ -228,7 +234,7 @@ impl ChatAgentMemory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -262,14 +268,14 @@ impl MultiTurnConversation {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
     /// Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation).
     #[napi]
     pub async fn consolidate(&self) -> napi::Result<serde_json::Value> {
         let out = self.inner.consolidate().await.map_err(napi_err)?;
-        Ok(serde_json::to_value(&out).map_err(napi_err)?)
+        serde_json::to_value(&out).map_err(napi_err)
     }
 
 }
@@ -303,7 +309,7 @@ impl SlackArchive {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
     /// Narrow to one channel. Returns a SlackArchiveQuery.
@@ -342,7 +348,7 @@ impl SlackArchiveQuery {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -383,7 +389,7 @@ impl EmailThreading {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
     /// Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false).
@@ -424,7 +430,7 @@ impl MeetingNotesMemory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
     /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
@@ -457,7 +463,7 @@ impl MeetingNotesQuery {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -484,8 +490,8 @@ impl DocumentKnowledgeBase {
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
         let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
-        let out = self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
-        let _ = out; Ok(())
+        self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
+        Ok(())
     }
 
     /// Add an equality filter on a metadata field.
@@ -508,7 +514,7 @@ impl DocumentKnowledgeBase {
     pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let cloned = self.inner.as_ref().clone();
         let out = cloned.search(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -542,8 +548,8 @@ impl ResearchPaperCorpus {
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
         let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
-        let out = self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
-        let _ = out; Ok(())
+        self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
+        Ok(())
     }
 
     /// Execute the RRF-fused recall.
@@ -551,7 +557,7 @@ impl ResearchPaperCorpus {
     pub async fn search(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let cloned = self.inner.as_ref().clone();
         let out = cloned.search(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -579,8 +585,8 @@ impl CodeRepoMemory {
     pub async fn ingest_commit(&self, commit_sha: String, committer_date_unix_ms: serde_json::Value, chunks: serde_json::Value) -> napi::Result<()> {
         let committer_date_unix_ms_owned: i64 = serde_json::from_value(committer_date_unix_ms.clone()).map_err(napi_err)?;
         let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
-        let out = self.inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(napi_err)?;
-        let _ = out; Ok(())
+        self.inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(napi_err)?;
+        Ok(())
     }
 
     /// Recall at point-in-time `as_of`.
@@ -588,7 +594,7 @@ impl CodeRepoMemory {
     pub async fn recall(&self, query: String, as_of: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
         let as_of_owned: ::lunaris::Hlc = serde_json::from_value(as_of.clone()).map_err(napi_err)?;
         let out = self.inner.recall(&query, as_of_owned).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -615,8 +621,8 @@ impl TimelineReconstruction {
     #[napi]
     pub async fn ingest(&self, events: serde_json::Value) -> napi::Result<()> {
         let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(events.clone()).map_err(napi_err)?;
-        let out = self.inner.ingest(events_owned).await.map_err(napi_err)?;
-        let _ = out; Ok(())
+        self.inner.ingest(events_owned).await.map_err(napi_err)?;
+        Ok(())
     }
 
     /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
@@ -625,7 +631,7 @@ impl TimelineReconstruction {
         let lo_owned: ::lunaris::Hlc = serde_json::from_value(lo.clone()).map_err(napi_err)?;
         let hi_owned: ::lunaris::Hlc = serde_json::from_value(hi.clone()).map_err(napi_err)?;
         let out = self.inner.between(&query, lo_owned, hi_owned).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
     /// Recall the snapshot at `ts`.
@@ -633,7 +639,7 @@ impl TimelineReconstruction {
     pub async fn as_of(&self, query: String, ts: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
         let ts_owned: ::lunaris::Hlc = serde_json::from_value(ts.clone()).map_err(napi_err)?;
         let out = self.inner.as_of(&query, ts_owned).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
@@ -666,8 +672,8 @@ impl CustomerSupportHistory {
     /// Ingest one ticket body. `ticket_id` is stamped into metadata.
     #[napi]
     pub async fn ingest_ticket(&self, ticket_id: String, body: String) -> napi::Result<()> {
-        let out = self.inner.ingest_ticket(&ticket_id, &body).await.map_err(napi_err)?;
-        let _ = out; Ok(())
+        self.inner.ingest_ticket(&ticket_id, &body).await.map_err(napi_err)?;
+        Ok(())
     }
 
     /// Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id.
@@ -681,7 +687,7 @@ impl CustomerSupportHistory {
     #[napi]
     pub async fn recall(&self, query: String) -> napi::Result<Vec<serde_json::Value>> {
         let out = self.inner.recall(&query).await.map_err(napi_err)?;
-        Ok(out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()?)
+        out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
 
 }
