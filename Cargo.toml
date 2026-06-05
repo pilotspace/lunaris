@@ -216,7 +216,9 @@ rayon              = "1"
 # Phase 14.2 — ephemeral per-handle LRU boost cache (ReflectOutput.boost rescoring).
 # `lru 0.12` is the standard LRU cache crate (hashbrown-backed, no_std-compatible).
 # Wrapped in `parking_lot::RwLock` for lock discipline.
-lru                = "0.12"
+# 0.18: RUSTSEC-2026-0002 (IterMut unsoundness in <=0.16.2) — cargo-deny
+# advisories gate. Lunaris never calls IterMut, but stay on patched releases.
+lru                = "0.18"
 # Phase 5 Plan 05-05 OPS-06 — Prometheus text-format metrics exporter mounted
 # at GET /metrics on lunaris-server. Pinned to the latest stable per CLAUDE.md
 # "Latest libraries policy"; default-features=false drops the procfs/protobuf
