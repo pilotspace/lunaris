@@ -68,6 +68,14 @@ mod conformance;
 // @generated include — Plan 08-01 emits wrapper structs + a
 // `pub(crate) fn register_generated` helper. Plan 08-02's host `#[pymodule]`
 // below calls that helper.
+//
+// allow(deprecated): the bindings mirror the annotated Rust surface
+// verbatim, including methods the Rust layer has deprecated for native
+// callers (e.g. engine-level `Lunaris::forget`). SDK-facing deprecation
+// messaging is handled in the Python layer, not by rustc lints here. The
+// attribute sits on this wrapper (not inside generated.rs) because
+// `include!` content cannot carry inner attributes.
+#[allow(deprecated)]
 mod generated {
     // The generated file uses `py_err` as an unqualified identifier; bring
     // it into the nested module's namespace so the generated `.map_err(py_err)`

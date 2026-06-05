@@ -9,6 +9,11 @@
 // every async boundary. The parity-check CI job
 // (`.github/workflows/ci.yml::parity-check`) fails the PR on any drift from
 // this snapshot.
+//
+// NOTE: no `#![allow(deprecated)]` here — the host crate consumes this file
+// via `include!` inside `mod generated { ... }` (lunaris-py/src/lib.rs),
+// where inner attributes are illegal. The allow lives as an OUTER attribute
+// on that wrapper module instead.
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
