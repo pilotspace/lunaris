@@ -43,6 +43,11 @@ fn code_feature_card_re_export_compiles() {
     // but does exercise the type alias / re-export chain at compile time.
     let _: fn(QueryProfile) -> bool = |p| matches!(p, QueryProfile::CodeQuestion);
     let _: fn(TopQueryProfile) -> bool = |p| matches!(p, TopQueryProfile::CodeQuestion);
+    // Name the remaining imports so they are genuinely exercised (and the
+    // imports don't trip `-D unused-imports` while claiming to smoke-test
+    // the re-export chain).
+    let _ = std::any::type_name::<CodeFeatureCard>();
+    let _ = std::any::type_name::<ScoredHit>();
 }
 
 #[test]
