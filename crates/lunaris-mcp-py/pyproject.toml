@@ -27,7 +27,7 @@ classifiers = [
 "lunaris-mcp" = "lunaris_mcp.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/lunaris-dev/lunaris"
+Repository = "https://github.com/pilotspace/lunaris"
 
 [tool.hatch.build.targets.wheel]
 # lunaris_mcp source lives under python/; hatchling discovers it there.

@@ -5,7 +5,7 @@ and adds a thin Python-side ergonomic layer (`open` wrapper that walks the
 config-dict toggle surface; `.graph_pipeline` / `.consolidator_pipeline`
 property accessors on the `Lunaris` handle).
 
-See https://github.com/lunaris-dev/lunaris + Phase 8 Plan 08-02.
+See https://github.com/pilotspace/lunaris + Phase 8 Plan 08-02.
 """
 from __future__ import annotations
 

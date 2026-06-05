@@ -1,6 +1,6 @@
 # lunaris-mcp
 
-MCP server for [Lunaris](https://github.com/lunaris-dev/lunaris) — the
+MCP server for [Lunaris](https://github.com/pilotspace/lunaris) — the
 production-grade agent memory engine.
 
 `lunaris-mcp` exposes Lunaris memory to Claude Code, OpenAI Codex, and any

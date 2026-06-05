@@ -28,7 +28,7 @@ def main() -> None:  # pragma: no cover
             f"[lunaris-mcp] Binary not found at {binary}\n"
             "The wheel may not have been built with the binary included.\n"
             "Fallback: install the Rust toolchain and run: cargo install lunaris-mcp\n"
-            "See: https://github.com/lunaris-dev/lunaris/blob/main/docs/integration/claude-code.md",
+            "See: https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md",
             file=sys.stderr,
         )
         sys.exit(1)
