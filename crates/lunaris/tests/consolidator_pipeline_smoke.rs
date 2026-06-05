@@ -170,7 +170,12 @@ impl StoragePort for RecordingStorageWithKeyword {
             bi_temporal_native: false,
             graph_native: false,
             rerank_native: false,
-            queue_native: false,
+            // This fixture RECORDS publishes and the D-16 assertions count
+            // them — it must advertise a native queue, or
+            // `publish_consolidate_event` takes the capability-gated skip
+            // path (`queue_native == false` → no publish) and every
+            // publish-count assertion reads 0.
+            queue_native: true,
             max_vector_dim: 768,
             native_rrf: false,
             max_scopes_recommended: 0,
