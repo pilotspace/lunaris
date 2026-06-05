@@ -83,6 +83,16 @@ default = []
 # constants.
 bindings-it = ["dep:lunaris-conformance"]
 
+# Q4_K_M / Q5_K_M GGUF backends (`EmbedderConfig.native_quantized` /
+# `RerankerConfig.native_quantized`). Forwarded to the native crates at
+# wheel-build time:
+#   maturin build --features embedder-gguf,reranker-gguf
+# The `#[cfg(feature = "...-gguf")]` gates in embedder_config.rs /
+# reranker_config.rs were dead (check-cfg "unexpected cfg condition value")
+# until these declarations.
+embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
+reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
+
 # Phase 21 Plan 21-01 — pass-through ORT execution-provider features. When
 # enabled the `EmbedderConfig`/`RerankerConfig` parsers accept `"coreml"` /
 # `"cuda"` and forward to the matching lunaris-embed + lunaris-rerank feature.
