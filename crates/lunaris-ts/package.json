@@ -64,6 +64,6 @@
     "@napi-rs/cli": "^3.6.0",
     "@types/node": "^20.11.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.0"
   }
 }
