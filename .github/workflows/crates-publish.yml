@@ -1,0 +1,128 @@
+name: crates-publish
+
+# Publishes moondb + the 15 publishable lunaris crates to crates.io in
+# dependency order. Tag-gated (v*) like the npm/PyPI publish jobs, plus
+# workflow_dispatch so an initial/repair publish can run from main without
+# re-tagging (a tag run executes the workflow file AT the tag's commit, so
+# the first publish after this file lands must be dispatched).
+#
+# Idempotent by design: every crate is skipped when its exact version is
+# already on crates.io, so a re-run (or retag) resumes where a previous run
+# stopped instead of failing on "crate version already exists". A mid-list
+# failure aborts the run (set -euo pipefail) — later crates depend on
+# earlier ones, so warn-and-continue would only cascade noise; fix and
+# re-run to resume.
+#
+# Publish order is the dev-dep-aware topological order: versioned
+# dev-dependencies (all workspace-inherited ones carry ^X.Y.Z) are KEPT in
+# the published manifest and crates.io rejects deps that do not exist yet.
+# Path-only dev-deps (lunaris-bench, lunaris-conformance — req "*") are
+# stripped by cargo at publish and need no ordering. Derivation script:
+# scripts/topo_order.py.
+#
+# moondb publishes first, from the vendored submodule source
+# (vendor/moon/sdk/rust — NOT a workspace member; cargo uses its standalone
+# manifest + lockfile). The verify build of every lunaris crate then
+# resolves its deps from crates.io — including the just-published ones;
+# cargo ≥1.66 blocks after each upload until the crate is visible in the
+# sparse index, so sequential publishes are race-free. Keeping verify ON is
+# deliberate: it builds each packaged crate against the PUBLISHED deps, the
+# exact failure mode that blocked 0.3.0 (vendored moondb API ≠ published
+# moondb 0.1.1 API).
+#
+# All run: steps use static strings / CI-controlled values only. No
+# untrusted user input (PR body / commit message) flows into commands.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crates-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish moondb + lunaris crates to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      # vendor/moon only — the moondb path dep (vendor/moon/sdk/rust) is
+      # required for cargo to resolve the workspace graph. .planning is
+      # private (cross-repo auth) and must NOT be pulled here.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: crates-publish
+
+      - name: Guard — workspace moon pin matches vendored moondb version
+        # The workspace dep `moon = { path = ..., version = "X" }` is what
+        # cargo writes into every published lunaris manifest. If it drifts
+        # from the version vendor/moon/sdk/rust actually declares (and that
+        # this job publishes), crates.io consumers resolve a moondb whose
+        # API may not match — the exact 0.2.1-era skew this job exists to
+        # prevent. Fail fast instead.
+        run: |
+          set -euo pipefail
+          PINNED=$(grep -E '^moon\s*=' Cargo.toml | sed -E 's/.*version = "([^"]+)".*/\1/')
+          VENDORED=$(grep -E '^version = ' vendor/moon/sdk/rust/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          echo "workspace moon pin: ${PINNED} / vendored moondb: ${VENDORED}"
+          if [ "${PINNED}" != "${VENDORED}" ]; then
+            echo "::error::workspace Cargo.toml pins moondb ${PINNED} but vendor/moon/sdk/rust declares ${VENDORED}"
+            exit 1
+          fi
+
+      - name: Publish moondb + lunaris crates (topological order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # crates.io requires a User-Agent on API calls.
+          is_published() {
+            curl -fsS -A "lunaris-release-ci (github.com/pilotspace/lunaris)" \
+              "https://crates.io/api/v1/crates/$1/$2" > /dev/null 2>&1
+          }
+
+          MOONDB_VER=$(grep -E '^version = ' vendor/moon/sdk/rust/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+          if is_published moondb "${MOONDB_VER}"; then
+            echo "moondb ${MOONDB_VER} already on crates.io — skipping"
+          else
+            echo "::group::publish moondb ${MOONDB_VER}"
+            cargo publish --manifest-path vendor/moon/sdk/rust/Cargo.toml
+            echo "::endgroup::"
+          fi
+
+          LUNARIS_VER=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "lunaris-memory") | .version')
+          echo "lunaris workspace version: ${LUNARIS_VER}"
+
+          # Dev-dep-aware topological order — see header comment.
+          CRATES="lunaris-core lunaris-storage-moon lunaris-storage-postgres \
+            lunaris-storage-embedded lunaris-llm lunaris-embed-native \
+            lunaris-embed-remote lunaris-rerank lunaris-extract \
+            lunaris-ingest lunaris-rerank-native lunaris-verify \
+            lunaris-consolidate lunaris-retrieve lunaris-memory"
+
+          for crate in ${CRATES}; do
+            if is_published "${crate}" "${LUNARIS_VER}"; then
+              echo "${crate} ${LUNARIS_VER} already on crates.io — skipping"
+              continue
+            fi
+            echo "::group::publish ${crate} ${LUNARIS_VER}"
+            cargo publish -p "${crate}"
+            echo "::endgroup::"
+          done
+
+          echo "All crates published at lunaris ${LUNARIS_VER} / moondb ${MOONDB_VER}."
