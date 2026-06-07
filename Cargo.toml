@@ -149,7 +149,16 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 # stays wire-compatible with the rebuilt local Moon binary (MQ + HYBRID RRF).
 # Upstream package name is `moondb`; Lunaris keeps the local alias `moon` so
 # internal use sites keep their stable `use moon::` form.
-moon           = { path = "vendor/moon/sdk/rust", package = "moondb" }
+# `version` is REQUIRED for `cargo publish` of the moondb-dependent crates —
+# cargo strips the path at publish and pins the crates.io `moondb` release.
+# This version MUST equal what vendor/moon/sdk/rust/Cargo.toml declares
+# (crates-publish.yml fails fast otherwise): local builds always use the
+# `path`, so a drifted pin compiles fine here but ships crates that cannot
+# build against the moondb users actually resolve. v0.3.0 hit exactly this —
+# the vendored SDK had the 3-way hybrid_search, crates.io moondb 0.1.1 only
+# the 2-way; moondb 0.2.0 closed the gap. When the vendored SDK API changes,
+# cut a new moondb release in the moon repo and bump submodule + pin together.
+moon           = { path = "vendor/moon/sdk/rust", version = "0.2.0", package = "moondb" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "sqlite", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
