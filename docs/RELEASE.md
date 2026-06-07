@@ -24,21 +24,23 @@ git push origin v0.2.1
 # 3. CI runs and stays green on the tag (semver-checks vs v0.2.0,
 #    cargo publish --dry-run on lunaris-core)
 
-# 4. Publish the 8 unblocked crates to crates.io in topological order.
-#    The 3 moondb-blocked crates (storage-moon, retrieve, lunaris
-#    umbrella) wait until moondb itself publishes — see §3.
-cd crates/lunaris-core         && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-storage-postgres && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-embed            && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-rerank           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-extract          && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-verify           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-consolidate      && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-cd ../lunaris-ingest           && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-# BLOCKED until moondb is on crates.io:
-# cd ../lunaris-storage-moon   && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-# cd ../lunaris-retrieve       && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-# cd ../lunaris                && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+# 4. crates.io publish runs in CI: .github/workflows/crates-publish.yml
+#    triggers on the v* tag (workflow_dispatch for an initial/repair run —
+#    a tag run executes the workflow file AT the tag's commit). It
+#    publishes moondb from vendor/moon/sdk/rust first, then the 15
+#    publishable crates in dev-dep-aware topological order (derivation:
+#    scripts/topo_order.py — versioned dev-deps are KEPT in published
+#    manifests, so they order the publish too). Idempotent: re-runs skip
+#    versions already on crates.io. Requires the CARGO_REGISTRY_TOKEN
+#    repo secret with publish rights to lunaris-* AND moondb.
+#
+#    GUARD: the workspace `moon = { ..., version = "X" }` pin must equal
+#    the version vendor/moon/sdk/rust declares — the job fails fast
+#    otherwise. If the vendored moondb API drifted since the last moondb
+#    release, cut a new moondb version in the moon repo FIRST (bump
+#    sdk/rust/Cargo.toml on moon main, push, bump the submodule + pin
+#    here). v0.3.0 was blocked exactly this way: vendored moondb had the
+#    3-way hybrid_search, crates.io moondb 0.1.1 only the 2-way.
 
 # 5. Publish Python wheels
 cd ../lunaris-py
@@ -104,9 +106,9 @@ The v0.2.x publishable set:
 | `lunaris-verify` | **publish=true** | Verifier (incl. RFC 0006 270M scaffold). |
 | `lunaris-consolidate` | **publish=true** | ACT-R consolidator. |
 | `lunaris-ingest` | **publish=true** | Ingest pipeline. |
-| `lunaris-storage-moon` | BLOCKED | Depends on `moondb` (path-only, sibling repo). Publish `moondb` to crates.io FIRST, then flip. |
-| `lunaris-retrieve` | BLOCKED | Transitively depends on `lunaris-storage-moon`. Unblocks once that one publishes. |
-| `lunaris` | BLOCKED | Umbrella crate — transitively depends on `lunaris-storage-moon`. |
+| `lunaris-storage-moon` | **publish=true** | Depends on `moondb` (vendored submodule). The crates.io `moondb` must carry the API the vendored copy exposes — see the §TL;DR step-4 guard. |
+| `lunaris-retrieve` | **publish=true** | Calls `moondb` `hybrid_search` directly; same moondb-parity requirement as storage-moon. |
+| `lunaris` | **publish=true** | Umbrella crate (`lunaris-memory` on crates.io) — publishes LAST. |
 | `lunaris-bench` | internal | Benches; not published. |
 | `lunaris-conformance` | internal | Cross-backend test harness. |
 | `lunaris-codegen` | internal | Build-time codegen. |
@@ -117,8 +119,17 @@ The v0.2.x publishable set:
 | `xtask` | internal | Build automation. |
 
 Order matters — every crate must publish AFTER its dependencies are
-indexed by crates.io (eventual consistency ~minutes). The "TL;DR" above
-publishes in topological order.
+indexed by crates.io. Two non-obvious rules, both encoded in
+`.github/workflows/crates-publish.yml`:
+
+- **Versioned dev-deps count.** Workspace-inherited dev-dependencies
+  carry `^X.Y.Z` and are kept in the published manifest; crates.io
+  rejects a publish whose dev-dep version doesn't exist yet (e.g.
+  `lunaris-ingest` dev-depends on `lunaris-storage-embedded`, which must
+  therefore publish first). Path-only dev-deps (`lunaris-bench`,
+  `lunaris-conformance`) are stripped by cargo and don't order anything.
+- **`cargo publish` waits for the index** (≥1.66), so sequential
+  publishes in `scripts/topo_order.py`'s order are race-free.
 
 ## 4. Multi-platform wheels + .node binaries
 
