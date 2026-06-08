@@ -70,6 +70,10 @@ impl Drop for EmbeddedMoonGuard {
 }
 
 #[cfg(feature = "embedded-moon")]
+// shutdown() and is_cancelled() are called from tests and from Arc<EmbeddedMoonGuard>
+// held in AppState. The `_embedded_moon` field prefix suppresses the field-unused
+// lint but clippy still flags the methods — allow dead_code here.
+#[allow(dead_code)]
 impl EmbeddedMoonGuard {
     /// Fire cancellation and await the `run_embedded` task with a 3 second hard
     /// timeout.
@@ -192,17 +196,25 @@ pub(crate) async fn launch_embedded_moon(
         // listener drops here, freeing the port
     };
 
-    // Step 2: build ServerConfig via Default — only override what differs.
-    // appendonly="yes" is already the default (durability on).
-    // admin_port=0 is already the default (no admin HTTP server).
-    // shards=1 is already the default.
-    // Non-empty dir overrides resolve_dir auto-resolution (we want explicit).
-    let config = moon_server::config::ServerConfig {
-        bind: "127.0.0.1".to_string(),
-        port,
-        dir: data_dir.to_string(),
-        ..moon_server::config::ServerConfig::default()
-    };
+    // Step 2: build ServerConfig via parse_from([]) to get all clap arg defaults,
+    // then override only what we need.
+    //
+    // CRITICAL: ServerConfig::default() (Rust Default trait) gives databases=0 and
+    // shards=0 because #[derive(Default)] uses Rust's numeric default (0), NOT the
+    // clap #[arg(default_value_t)] values. Only ServerConfig::parse_from([]) gives
+    // the clap-specified defaults (databases=16, shards=1, appendonly="yes", etc.).
+    //
+    // With databases=0: Shard::with_initial_keyspace_hint creates 0 databases per
+    // shard → ShardDatabases::db_count=0 → timers::run_active_expiry panics on
+    // write_db(shard_id, 0) ("db_index 0 out of bounds (0)").
+    //
+    // With shards=0: run_embedded auto-detects CPU cores (all_parallelism), spawning
+    // many shard threads instead of 1 — unnecessary overhead for an embedded instance.
+    use clap::Parser;
+    let mut config = moon_server::config::ServerConfig::parse_from::<[&str; 0], &str>([]);
+    config.bind = "127.0.0.1".to_string();
+    config.port = port;
+    config.dir = data_dir.to_string();
 
     // Step 3: spawn run_embedded on the current tokio runtime.
     let token = moon_server::runtime::cancel::CancellationToken::new();
@@ -211,7 +223,16 @@ pub(crate) async fn launch_embedded_moon(
         token.clone(),
     ));
 
-    // Step 4: readiness poll — TCP connect with bounded retries + exponential backoff.
+    // Step 4: readiness poll — RESP PING probe with bounded retries + exponential backoff.
+    //
+    // IMPORTANT: TCP accept does NOT prove RESP is being served (Moon's own tests confirm
+    // this — txn_kv_wiring.rs::connect_redis_with_retry). The shard accept loop and RESP
+    // handler can lag the TCP bind by a small window, during which commands would race the
+    // shard startup and hit uninitialized shard databases (db_index out of bounds).
+    //
+    // We therefore probe with a raw RESP inline PING: send "*1\r\n$4\r\nPING\r\n"
+    // and expect "+PONG\r\n" back. Only when we receive PONG is the shard ready.
+    //
     // Hard limit: 5 seconds total. Interval: 50ms → 100ms → 200ms (capped at 200ms).
     // NEVER hold a lock across .await.
     let addr = format!("127.0.0.1:{port}");
@@ -221,13 +242,19 @@ pub(crate) async fn launch_embedded_moon(
         if tokio::time::Instant::now() >= deadline {
             break false;
         }
-        match tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            tokio::net::TcpStream::connect(&addr),
-        )
-        .await
-        {
-            Ok(Ok(_)) => break true,
+        // Try to connect AND send a PING within 200ms.
+        let probe_result = tokio::time::timeout(std::time::Duration::from_millis(200), async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+            // RESP inline PING: "*1\r\n$4\r\nPING\r\n"
+            stream.write_all(b"*1\r\n$4\r\nPING\r\n").await?;
+            let mut buf = [0u8; 7]; // "+PONG\r\n"
+            stream.read_exact(&mut buf).await?;
+            Ok::<bool, std::io::Error>(buf.starts_with(b"+PONG"))
+        })
+        .await;
+        match probe_result {
+            Ok(Ok(true)) => break true,
             _ => {
                 tokio::time::sleep(interval).await;
                 interval = (interval * 2).min(std::time::Duration::from_millis(200));

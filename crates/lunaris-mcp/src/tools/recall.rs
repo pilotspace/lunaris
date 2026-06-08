@@ -226,7 +226,12 @@ mod tests {
         let embedder = Arc::new(StubEmbedder::new(768));
         let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
         let scope = Scope::new(scope_name).unwrap();
-        AppState { lunaris: Arc::new(lunaris), scope }
+        AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        }
     }
 
     /// Wave A.1: brute-force cosine `vector_search` ships in the embedded

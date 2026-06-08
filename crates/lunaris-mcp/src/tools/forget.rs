@@ -154,7 +154,12 @@ mod tests {
         // until Wave 1D) actually finds the episodes we ingest.
         // CLAUDE.md: Scope::dev() is a migration crutch permitted in tests.
         let scope = Scope::dev();
-        AppState { lunaris: Arc::new(lunaris), scope }
+        AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        }
     }
 
     // ── Validation-only tests (no storage round-trip) ─────────────────────────

@@ -99,6 +99,13 @@ pub(crate) struct AppState {
     pub(crate) lunaris: Arc<Lunaris>,
     /// Scope bound at server startup — all memory operations partition by this.
     pub(crate) scope: Scope,
+    /// Owned embedded Moon guard — keeps the in-process Moon alive for the
+    /// server's lifetime. `None` when the `embedded-moon` feature is OFF, when
+    /// a `--storage` override was supplied, or when Moon bring-up failed and the
+    /// circuit-breaker fell back to SQLite. `Arc<>` restores `Clone` on
+    /// `AppState` (the inner `Mutex<Option<JoinHandle>>` is not `Clone`).
+    #[cfg(feature = "embedded-moon")]
+    pub(crate) _embedded_moon: Option<Arc<crate::embedded_moon::EmbeddedMoonGuard>>,
 }
 
 impl AppState {
@@ -128,7 +135,35 @@ impl AppState {
         storage_override: Option<&str>,
     ) -> Result<Self, BootstrapError> {
         let scope = crate::scope_resolver::resolve(scope_override)?;
+
+        // Derive storage URL — and optionally launch embedded Moon.
+        // When the embedded-moon feature is ON and no --storage override is
+        // given, decide_storage_with_launcher starts run_embedded in-process
+        // and returns the moon://127.0.0.1:<port> URL. On launch failure the
+        // circuit-breaker emits tracing::warn and falls back to SQLite.
+        #[cfg(feature = "embedded-moon")]
+        let (storage_url, embedded_guard) = {
+            let data_dir = "./.lunaris-moon".to_owned();
+            crate::embedded_moon::decide_storage_with_launcher(
+                storage_override,
+                &scope,
+                move || {
+                    // Clone into the async block so the future owns `data_dir`
+                    // and does not borrow from the closure environment.
+                    let dir = data_dir.clone();
+                    async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
+                },
+            )
+            .await
+        };
+        // Map Option<EmbeddedMoonGuard> → Option<Arc<EmbeddedMoonGuard>>.
+        #[cfg(feature = "embedded-moon")]
+        let embedded_guard = embedded_guard.map(Arc::new);
+
+        // When embedded-moon is OFF, use the existing sync helper unchanged.
+        #[cfg(not(feature = "embedded-moon"))]
         let storage_url = resolve_storage_url(storage_override, &scope)?;
+
         tracing::info!(
             scope   = scope.as_str(),
             storage = %storage_url,
@@ -150,7 +185,12 @@ impl AppState {
             );
         }
 
-        Ok(Self { lunaris: Arc::new(lunaris), scope })
+        Ok(Self {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: embedded_guard,
+        })
     }
 }
 
@@ -188,6 +228,10 @@ pub(crate) async fn probe_embedder_health(
 /// Priority:
 /// 1. Caller-supplied `override_` (passed through verbatim).
 /// 2. `sqlite:///<HOME>/.lunaris/<scope>.db` — created if absent.
+///
+/// Used only when the `embedded-moon` feature is OFF. When the feature is ON,
+/// `decide_storage_with_launcher` handles both the Moon and SQLite fallback paths.
+#[cfg(not(feature = "embedded-moon"))]
 fn resolve_storage_url(override_: Option<&str>, scope: &Scope) -> Result<String, BootstrapError> {
     if let Some(url) = override_ {
         return Ok(url.to_owned());
@@ -253,5 +297,72 @@ mod tests {
             matches!(result, Err(BootstrapError::NoEmbedderWeights)),
             "probe_embedder_health must reject dim=0 noop; got: {result:?}"
         );
+    }
+
+    // ── GREEN tests for embedded-moon DI seam (T2) ────────────────────────────
+
+    /// GREEN: decide_storage_with_launcher happy path + storage URL assertion.
+    ///
+    /// Calls the DI seam with the real launcher, asserts moon:// URL and that
+    /// the handle cell is None after shutdown (task was taken+awaited).
+    #[cfg(feature = "embedded-moon")]
+    #[tokio::test]
+    async fn decide_storage_real_launcher_wires_moon_url() {
+        use lunaris_core::Scope;
+        let scope = Scope::new("test-vuz-wiring").unwrap();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap().to_owned();
+        let (url, guard) = crate::embedded_moon::decide_storage_with_launcher(
+            None,
+            &scope,
+            move || {
+                let dir = data_dir.clone();
+                async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
+            },
+        )
+        .await;
+        assert!(
+            url.starts_with("moon://"),
+            "decide_storage with real launcher must return moon:// URL, got: {url}"
+        );
+        assert!(guard.is_some(), "real launcher must produce a guard");
+        if let Some(g) = guard {
+            g.shutdown().await;
+            assert!(
+                g.handle.lock().is_none(),
+                "handle cell must be None after shutdown"
+            );
+        }
+    }
+
+    /// GREEN: --storage override bypasses embedded Moon entirely.
+    #[cfg(feature = "embedded-moon")]
+    #[tokio::test]
+    async fn decide_storage_override_skips_embedded_moon() {
+        use lunaris_core::Scope;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let scope = Scope::new("test-vuz-optout-state").unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let c = called.clone();
+        let (url, guard) = crate::embedded_moon::decide_storage_with_launcher(
+            Some("sqlite:///override.db"),
+            &scope,
+            move || {
+                c.store(true, Ordering::Relaxed);
+                async move {
+                    Err(crate::embedded_moon::EmbeddedMoonError::Timeout {
+                        port: 0,
+                        data_dir: "unused".into(),
+                    })
+                }
+            },
+        )
+        .await;
+        assert_eq!(url, "sqlite:///override.db");
+        assert!(guard.is_none(), "--storage override must produce no guard");
+        assert!(!called.load(Ordering::Relaxed), "launcher must NOT be called");
     }
 }
