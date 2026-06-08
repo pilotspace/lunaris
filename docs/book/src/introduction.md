@@ -53,6 +53,31 @@ let hits = scoped
     .await?;
 ```
 
+## Use it from your agent (MCP)
+
+Don't want to write SDK code? Lunaris ships an **MCP server** so coding agents
+— [Claude Code](./mcp/claude-code.md), [Codex](./mcp/codex.md), or any MCP
+client — get persistent, scope-isolated memory over stdio. Install the binary
+and register it:
+
+```sh
+cargo install lunaris-mcp     # or, no Rust toolchain: npx -y @pilotspace/lunaris-mcp · uvx lunaris-mcp
+claude mcp add --transport stdio lunaris -- lunaris-mcp
+```
+
+The agent then calls seven `memory.*` tools — `ingest`, `recall`, `forget`,
+`list_scopes`, `record_decision`, `record_edit`, and `status`:
+
+```text
+memory.ingest  source="src:notes"  content="The ingest pipeline writes one atomic_write per episode."
+memory.recall  query="ingest atomicity"  k=3
+```
+
+Scope is derived per-repo from the git remote; the default SQLite backend needs
+no external process and `memory.recall` works out of the box (vector-only —
+Moon or Postgres add BM25 + hybrid fusion). See **[MCP Server](./mcp/index.md)**
+for the full guide.
+
 ## The three moats
 
 Three properties define what Lunaris **is**. Every commit is reviewed against
@@ -86,6 +111,8 @@ different tool when…" criteria.
 - **[Operations](./operations/server.md)** — running the HTTP server,
   choosing a backend, durability & recovery.
 - **[SDKs](./sdk/python.md)** — Python and TypeScript surface notes.
+- **[Integrations (MCP)](./mcp/index.md)** — the MCP server and its Claude
+  Code / Codex integration guides.
 - **[Migrating From](./migrating/mem0.md)** — Mem0 / Zep / Cognee mapping
   tables.
 - **[Protocol](./protocol/memoryprotocol-0.1.md)** — the MemoryProtocol 0.1
