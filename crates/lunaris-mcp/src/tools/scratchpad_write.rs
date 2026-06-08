@@ -121,7 +121,11 @@ mod tests {
         let state = fresh_state("test-sw-colon").await;
         let result = handle(
             &state,
-            ScratchpadWriteParams { key: "k".into(), value: json!(1), namespace: Some("bad:ns".into()) },
+            ScratchpadWriteParams {
+                key: "k".into(),
+                value: json!(1),
+                namespace: Some("bad:ns".into()),
+            },
         )
         .await;
         assert!(
@@ -135,7 +139,11 @@ mod tests {
         let state = fresh_state("test-sw-empty").await;
         let result = handle(
             &state,
-            ScratchpadWriteParams { key: "k".into(), value: json!(1), namespace: Some(String::new()) },
+            ScratchpadWriteParams {
+                key: "k".into(),
+                value: json!(1),
+                namespace: Some(String::new()),
+            },
         )
         .await;
         assert!(
