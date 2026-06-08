@@ -51,9 +51,15 @@ asyncio.run(main())
 
 ## Custom embedder + reranker
 
-Pick a preset or bring your own ONNX model. The `EmbedderConfig` and
-`RerankerConfig` factories swap the backend at handle-construction time;
-the env-driven default remains in place for callers that don't pass one.
+The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
+runs **in-process** via candle, and auto-downloads to
+`~/.cache/lunaris/models/` on first use — **no Ollama, no ONNX Runtime, no
+external service required.** An air-gapped Ollama HTTP embedder remains
+available as an operator escape hatch behind `--features embed-remote`.
+
+The `EmbedderConfig` and `RerankerConfig` factories swap the backend at
+handle-construction time; the env-driven default remains in place for callers
+that don't pass one.
 
 ```python
 import asyncio
@@ -61,11 +67,10 @@ import lunaris
 from lunaris import EmbedderConfig, RerankerConfig
 
 async def main():
-    cfg = EmbedderConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed")
-    handle = await lunaris.open(
+    mem = await lunaris.open(
         "moon://127.0.0.1:6380",
-        embedder=cfg,
-        reranker=RerankerConfig.noop(),   # disable cross-encoder rerank
+        embedder=EmbedderConfig.native(),     # granite-r2, in-process, auto-downloads to ~/.cache/lunaris/models/
+        reranker=RerankerConfig.native(),     # bge-reranker-v2-m3 cross-encoder
     )
     # ... ingest / recall as usual
 
@@ -73,8 +78,8 @@ asyncio.run(main())
 ```
 
 See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
-the full customization guide — preset fastembed, preset Ollama, BYO ONNX
-bytes, and BYO ONNX path — with troubleshooting and the FFI-cliff limits.
+the full customization guide — native in-process, quantized GGUF, and the
+operator Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
 
 ## Surface parity
 

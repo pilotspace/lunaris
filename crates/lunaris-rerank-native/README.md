@@ -102,5 +102,5 @@ score so downstream RRF / score thresholding sees a calibrated `[0, 1]` value
 in the same band as cosine similarity from the embedder. The new crate also
 adds the NFC-normalize pre-pass that the v0.3 path was missing.
 
-The N-03 cutover (separate spawn) flips downstream callers to `NativeReranker`
-and deletes the old candle/fastembed reranker paths.
+The N-03 cutover (2026-05-14) flipped downstream callers to `NativeReranker`
+and deleted the old candle/fastembed reranker paths.

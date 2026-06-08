@@ -5,8 +5,8 @@ Pure-Rust native [ModernBERT][modernbert] embedder for
 built on `candle-core` / `candle-nn` / `candle-transformers`.
 
 This is the v0.4 milestone embedder — purpose-built for a single
-model so we can replace the fastembed/candle-gemma/ollama trio
-in `lunaris-embed` with one well-understood backend.
+model. It replaces the retired fastembed/candle-gemma/ollama trio
+(deleted in N-03) as the sole default backend.
 
 ## What this crate does
 
@@ -150,7 +150,7 @@ path, with a non-vacuity guard on cross-prompt cosine < 0.97.
 Even after both FP16 and Q4 land here, the following stay in follow-ups:
 
 - Reranker port (`granite-reranker` or `bge-reranker-base`)
-- Deletion of fastembed / candle-gemma / ollama from `lunaris-embed`
+- Metal / CUDA quantized paths (the hardware-optimization milestone)
 - Lunaris handle wiring (`Lunaris::open(...).with_native_embedder(...)`)
 - Metal / CUDA paths (the hardware-optimization milestone)
 

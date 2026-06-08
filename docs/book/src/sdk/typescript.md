@@ -150,42 +150,41 @@ See [Consolidation & Verification](../guides/consolidate-verify.md) and
 
 ## Embedder / reranker config
 
-Override the env-driven default from code via `EmbedderConfig` /
-`RerankerConfig`, surfaced as a chainable `withEmbedder` / `withReranker`
-extension on the `Lunaris` class (camelCase opts bags):
+Override the default from code via `EmbedderConfig` / `RerankerConfig`,
+surfaced as a chainable `withEmbedder` / `withReranker` extension on the
+`Lunaris` class (camelCase opts bags):
 
 ```typescript
-import { Lunaris, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
+import { open, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
-const emb = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed", execution: "coreml" });
-const rer = RerankerConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed-reranker" });
-const handle = (await Lunaris.open("moon://127.0.0.1:6380")).withEmbedder(emb).withReranker(rer);
-
-// Latency floor — disable the cross-encoder rescoring pass:
-const fallback = (await Lunaris.open(url)).withEmbedder(emb).withReranker(RerankerConfig.noop());
+// `withEmbedder` / `withReranker` are chainable and return a NEW handle.
+const mem = (await open("memory://demo"))
+  .withEmbedder(EmbedderConfig.native())   // granite-r2, in-process
+  .withReranker(RerankerConfig.native());  // bge-reranker-v2-m3
 ```
 
-Factories (mirroring the Python surface, camelCase fields):
-`EmbedderConfig.fastembed({ cacheDir, execution, showDownloadProgress })`,
-`EmbedderConfig.ollama({ endpoint, model, dim })`,
-`EmbedderConfig.fromOnnxBytes({ onnxBytes, tokenizerBytes, dim, pooling, execution })`,
-`EmbedderConfig.fromOnnxPath({ onnxPath, tokenizerPath, dim, pooling, execution })`.
-`RerankerConfig` ships `fastembed(...)` + `noop()` today.
+Factories (camelCase, mirroring the Python surface):
+
+| Factory | Use when |
+|---|---|
+| `EmbedderConfig.native(opts?)` where `opts = { modelDir?: string }` | Default — granite-embedding-311m-multilingual-r2 (768-d), in-process candle, auto-downloads to `~/.cache/lunaris/models/`. |
+| `EmbedderConfig.nativeQuantized(opts)` where `opts = { ggufPath: string, modelDir?: string }` | Q4_K_M GGUF (~240 MiB) for RSS-constrained hosts; requires `--features embedder-gguf`. |
+| `EmbedderConfig.noop(dim?)` | Deterministic zero-vector — tests / offline use only. |
+| `RerankerConfig.native(opts?)` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (FP32, sigmoid ∈ [0,1]), in-process. |
+| `RerankerConfig.nativeQuantized(opts)` | Q5_K_M-imatrix GGUF; requires `--features reranker-gguf`. |
+| `RerankerConfig.noop()` | Skip the cross-encoder rescoring pass — lowest latency floor. |
 
 Notes:
 
-- The fastembed presets fetch weights from HF Hub on first use — point
-  `cacheDir` (or `LUNARIS_FASTEMBED_CACHE_DIR`) at a writable path with
-  ~1 GB free; one-time per host.
-- BYO ONNX models **must** match the declared `dim` — the SDK wraps them in
-  `DimValidatingEmbedder`, which raises a `LunarisError` on the first batch
-  if they don't, rather than corrupting your vector index.
-- The TS parser **warns and falls back to CPU** on an unknown / unavailable
-  `execution` value (Python errors instead) — accelerator features
-  (`fastembed-coreml` / `-cuda`) still need a build with that feature.
+- Weights auto-download on first use to `~/.cache/lunaris/models/` — point
+  `modelDir` (or `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR`) at a
+  writable path with ~1 GB free; one-time per host.
+- An air-gapped Ollama HTTP embedder remains available as an operator escape
+  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`).
 - **FFI cliff:** you cannot implement the Rust `Embedder` / `Reranker` trait
   from TypeScript — per-call FFI callbacks would be too slow for the hot
-  path. Roll-your-own backends are Rust-crate-only.
+  path. Roll-your-own backends are Rust-crate-only; contribute a constructor
+  to `lunaris-embed-native` or `lunaris-embed-remote`.
 
 ## Async discipline
 
@@ -208,11 +207,13 @@ take no locks themselves. Practical notes:
 
 - **`undefined symbol: napi_get_value_*` at load time** — your Node runtime
   is older than NAPI 8 (Node 18 or lower). Upgrade to Node 20 LTS+.
-- **`fastembed: failed to fetch model …`** — first-call download is hitting
-  the network; pre-populate `cacheDir`, ensure write access + ~1 GB free,
-  confirm outbound HTTPS to `huggingface.co`.
-- **`embedding-gemma weights missing …`** — the in-process embedder needs
-  weights; download them or use the Ollama embedder.
+- **"weights download failed / connection refused"** — first-call download is
+  hitting the network; pre-populate `modelDir` (or `LUNARIS_EMBEDDER_DIR`),
+  ensure write access + ~1 GB free, confirm outbound HTTPS to `huggingface.co`.
+- **"granite-embedding weights missing …"** — the in-process native embedder
+  needs weights; pre-download them with `huggingface-cli download
+  ibm-granite/granite-embedding-311m-multilingual-r2` or point `modelDir` at
+  an existing local copy.
 
 ## See also
 

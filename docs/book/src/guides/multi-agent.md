@@ -228,7 +228,7 @@ runs end-to-end against a live Moon backend. It builds the handle by hand
 `MoonStorage` as both the storage and the BM25 keyword port, and a
 deterministic `StubEmbedder::new(768)`) so it needs **no external services and
 no model download** — swap the stub for `Lunaris::open("moon://…")` (the
-`fastembed` default) and the same code recalls semantically.
+native granite-r2 default) and the same code recalls semantically.
 
 **Handle construction (what the example actually does — no model download):**
 
@@ -242,7 +242,7 @@ let keyword: Arc<dyn KeywordPort>  = moon.clone();              // MoonStorage I
 let embedder: Arc<dyn Embedder>    = Arc::new(StubEmbedder::new(768));   // 768d == Moon's `chunks` FT index
 let lunaris = Lunaris::with_parts_keyword(storage, keyword, embedder, HlcClock::new(0));
 // Production: `let lunaris = Lunaris::open("moon://localhost:6380").await?;` instead — the
-// `fastembed` default downloads EmbeddingGemma-300M ONNX weights once and recalls semantically.
+// native granite-r2 default downloads granite-embedding-311m-multilingual-r2 weights once and recalls semantically.
 ```
 
 **Agent-a vs agent-b — the scoped handle is the wall:**

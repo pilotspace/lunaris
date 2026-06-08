@@ -50,7 +50,7 @@ env). Source: `crates/lunaris-server/src/config.rs`.
 | `--shutdown-grace-secs` / `LUNARIS_SHUTDOWN_GRACE_SECS` | `30` | Graceful-shutdown drain window |
 | `--metrics-disabled` | *(off)* | Remove the `/metrics` endpoint (no env var) |
 
-The same `LUNARIS_EMBEDDER_BACKEND` / `LUNARIS_GRAPH_ENABLED` / verifier /
+The same `LUNARIS_EMBEDDER_DIR` / `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_GRAPH_ENABLED` / verifier /
 consolidator env vars that `Lunaris::open` reads also apply here — see
 [Configuration Reference §2](../reference/configuration.md#2-environment-variables).
 
@@ -137,9 +137,9 @@ size), not with traffic. `Content-Type` is the standard
   (default 30 s) before exiting. Set your orchestrator's termination grace
   period at least that high.
 - **HTTP-only image.** A `cargo build --no-default-features -p lunaris`
-  build links neither the ONNX nor the candle stack — useful when the server
-  only talks to a remote embedder (Ollama / cloud-API) and you want a small
-  image. Pick the embedder via `LUNARIS_EMBEDDER_BACKEND`.
+  build links neither the native embedder nor the reranker stack — useful when
+  the server uses the Ollama HTTP escape hatch (`--features embed-remote`,
+  `LUNARIS_EMBEDDER_OLLAMA_URL`) and you want a small image.
 - **TLS / OAuth.** v0 is plain HTTP with opaque bearer tokens; terminate TLS
   and do OAuth2/OIDC issuance at a reverse proxy. Managed-cloud JWT issuance
   is a v1 gate (`DEPLOY-V1-01`).

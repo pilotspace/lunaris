@@ -69,11 +69,14 @@ lunaris = "0.0.1"
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Features (see `crates/lunaris/Cargo.toml:57-77`):
+Features (see the `[features]` section of `crates/lunaris/Cargo.toml`):
 
-- `candle` (default) — real EmbeddingGemma 300M embedder, bge-reranker-v2-m3 cross-encoder, Gemma-3 4B extractor, Gemma-3 27B verifier. All load from `~/.cache/lunaris/models/`.
-- `ollama` — HTTP-backed embedder + extractor + verifier pointing at `http://localhost:11434`.
+- `default = []` — nothing extra. The embedder (`granite-embedding-311m-multilingual-r2`, 768-d) and reranker (`bge-reranker-v2-m3` cross-encoder) are **always compiled** as a permanent native runtime dep — there is no feature toggle and no env-var backend swap. Weights load from `~/.cache/lunaris/models/`.
+- `candle` — real Gemma-3 4B extractor + Gemma-3 27B verifier (the slow-path LLM tiers; the embedder / reranker do **not** depend on this flag).
+- `ollama` — HTTP-backed extractor + verifier pointing at `http://localhost:11434`.
 - `cloud-api` — Anthropic / OpenAI / Gemini backends for the extractor + verifier.
+- `embed-remote` — air-gap escape hatch: route the embedder through an existing Ollama instance via `LUNARIS_EMBEDDER_OLLAMA_URL` (operator-only, not the supported path).
+- `embedder-gguf` / `reranker-gguf` — Q4_K_M / Q5_K_M quantized native variants (`LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`).
 - `moon-it`, `pg-it` — gate live-backend integration tests.
 
 ```rust
@@ -99,8 +102,8 @@ URL schemes are matched at `crates/lunaris/src/open.rs:20-30` and `crates/lunari
 
 ### Gotchas
 
-- **Weights cache**: the default embedder is `CandleEmbeddingGemma` loaded from `~/.cache/lunaris/models/embedding-gemma-300m/` (`crates/lunaris/src/handle.rs:108-112`). Missing weights surface as `"embedding-gemma weights missing at PATH — run huggingface-cli ..."`. Either pre-download (see section 10) or swap to a different embedder with `with_embedder(...)` before first use.
-- **Feature combinations**: building with neither `candle` nor `ollama` makes `Lunaris::open` return `StorageError::NotSupported` from `default_embedder` (`crates/lunaris/src/handle.rs:487-492`). In that configuration you must construct via `Lunaris::with_parts(...)`.
+- **Weights cache**: the default embedder is `NativeEmbedder` (`granite-embedding-311m-multilingual-r2`, 768-d) loaded from `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/` (`resolve_embedder()` in `crates/lunaris/src/handle.rs`; override the directory with `LUNARIS_EMBEDDER_DIR`). On a cache miss `open` does **not** fail — it logs a `WARN` banner and falls back to a zero-vector `NoopEmbedder`, so the rest of the open path completes but **vector recall returns empty rows** until weights are staged. Either pre-download (see section 10) or swap to a different embedder with `with_embedder(...)` before first use.
+- **Embedder / reranker need no feature flag**: they are always compiled (a permanent native runtime dep). The `candle` / `ollama` / `cloud-api` features only select the **extractor + verifier** LLM backends — see [the v0.4 native-default migration note](migration/0.3-to-0.4-native-default.md).
 - **Typos in the URL**: `mon://...` or `redis://...` yield `UnsupportedScheme`, not a connection error. Double-check the scheme when the error mentions a string you did not type.
 
 ---
@@ -526,9 +529,9 @@ use lunaris::{NoopConsolidator, NoopExtractor, NoopReranker, NoopVerifier};
 
 let lunaris = lunaris::Lunaris::open("moon://localhost:6380")
     .await?
-    // Swap embedder — e.g., candle → Ollama when the per-batch budget busts.
-    // (handle.rs:18-20 explains the motivating latency case.)
-    .with_embedder(Arc::new(lunaris_embed::OllamaEmbedder::new(Default::default())?))
+    // Swap embedder — e.g., native granite-r2 → Ollama when the per-batch budget busts.
+    // (handle.rs explains the motivating latency case; requires --features embed-remote.)
+    .with_embedder(Arc::new(lunaris_embed_remote::OllamaEmbedder::new(Default::default())?))
     // Swap reranker — pin NoopReranker in tests for determinism.
     .with_reranker(Arc::new(NoopReranker))
     // Swap extractor — NoopExtractor when graph is off and you don't want the
@@ -904,20 +907,23 @@ Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, chunks)`,
 
 ## 10. Troubleshooting
 
-### `embedding-gemma weights missing at PATH — run huggingface-cli ...`
+### `granite-r2 weights unavailable ... falling back to NoopEmbedder` (vector recall returns empty)
 
-Download the weights, or swap the embedder:
+This is a `WARN`, not a hard error — `open` succeeds with a zero-vector
+`NoopEmbedder` and recall returns empty rows until weights are staged.
+Download the weights (or point `LUNARIS_EMBEDDER_DIR` at an existing copy),
+or swap the embedder:
 
 ```bash
-python -m huggingface_hub download google/embeddinggemma-300m \
-  --local-dir ~/.cache/lunaris/models/embedding-gemma-300m
+huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2 \
+  --local-dir ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2
 ```
 
-Or:
+Or (air-gap escape hatch, requires `--features embed-remote`):
 
 ```rust
 let lunaris = lunaris::Lunaris::open(url).await?
-    .with_embedder(Arc::new(lunaris_embed::OllamaEmbedder::new(Default::default())?));
+    .with_embedder(Arc::new(lunaris_embed_remote::OllamaEmbedder::new(Default::default())?));
 ```
 
 ### `bge-reranker-v2-m3 unavailable; using NoopReranker`
