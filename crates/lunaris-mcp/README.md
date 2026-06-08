@@ -37,12 +37,14 @@ args    = []
 - [Codex integration guide](../../docs/integration/codex.md)
 - [Decision record: Option A (stdio) adopted](../../docs/decisions/2026-05-24-claude-code-mcp-reversal.md)
 
-## Known limitations (Wave A)
+## Storage backends
 
-`memory.recall` in vector mode requires a Moon or Postgres backend. The
-default SQLite backend supports `memory.ingest`, `memory.forget`, and
-`memory.list_scopes` fully. SQLite vector search (brute-force cosine) is a
-planned fast-follow.
+The default SQLite backend supports every tool, including `memory.recall`:
+it runs **vector-only** brute-force cosine (implemented in
+`lunaris-storage-embedded`). BM25 keyword fusion and hybrid recall require a
+keyword-capable backend — point `LUNARIS_MCP_STORAGE` at Moon
+(`moon://127.0.0.1:6380`) or Postgres, which also gives HNSW-class latency
+above ~10k vectors per scope.
 
 ## License
 
