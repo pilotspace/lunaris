@@ -77,11 +77,17 @@ indicatif    = "0.17"
 # NOT in `default = [...]` — must be opted in explicitly.
 moon_server = { path = "../../vendor/moon", package = "moon", default-features = false, features = ["runtime-tokio", "graph", "text-index"], optional = true }
 
+# parking_lot::Mutex used by EmbeddedMoonGuard (embedded-moon feature).
+# Workspace version (0.12) — must be a direct dep since lunaris-mcp links it
+# explicitly in embedded_moon.rs.  Optional so the default (no-feature) binary
+# doesn't pull it in.
+parking_lot = { workspace = true, optional = true }
+
 [features]
 # embedded-moon: bundle an in-process Moon server inside lunaris-mcp.
 # Requires cmake/clang (aws-lc-rs) and a C compiler (mlua vendored Lua).
 # Gated so CI builds without C toolchain still pass under the default feature set.
-embedded-moon = ["dep:moon_server"]
+embedded-moon = ["dep:moon_server", "dep:parking_lot"]
 
 [dev-dependencies]
 # placeholder — Wave 2/3 integration tests add real deps
