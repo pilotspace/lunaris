@@ -52,7 +52,11 @@
    The site ships a single theme; remove the paintbrush so dark is unreachable.
    ------------------------------------------------------------------------- */
 
+/* mdBook ≤0.4 used #theme-toggle; 0.5.x renames it #mdbook-theme-toggle.
+   Hide both the button and the popup list so dark is unreachable. */
 #theme-toggle,
+#mdbook-theme-toggle,
+#mdbook-theme-list,
 .theme-popup {
     display: none !important;
 }
@@ -430,3 +434,261 @@ input:focus-visible,
     outline-offset: 2px;
     border-radius: 4px;
 }
+
+
+/* ===========================================================================
+   11. GitBook-style layout overlay
+   ---------------------------------------------------------------------------
+   A docs-site aesthetic (Unsloth/GitBook reference): a landing hero + feature
+   card grid (raw HTML in introduction.md), a polished sticky menu bar, a
+   right-hand "On this page" TOC and a multi-column footer (both injected by
+   theme/gitbook.js). Everything is additive: with JS off, the page is plain
+   mdBook; the hero/cards are static HTML that still render.
+
+   Tokens (light only):
+     --lx-muted   #5a6679  secondary text
+     --lx-card-bg #FFFFFF  card surface (one step brighter than the paper bg)
+   ======================================================================== */
+
+:root {
+    --lx-muted: #5a6679;
+    --lx-card-bg: #FFFFFF;
+    --lx-radius: 12px;
+}
+
+/* --- Menu bar: logo glyph + frosted sticky surface (0.5.x ids) ---------- */
+.menu-title { font-weight: 700; }
+#mdbook-menu-bar .menu-title::before {
+    content: "🌙";
+    margin-inline-end: 0.45rem;
+}
+.light #mdbook-menu-bar.menu-bar {
+    background: rgba(252, 252, 250, 0.82);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--table-border-color);
+}
+
+/* --- Landing hero ------------------------------------------------------- */
+.lx-hero {
+    margin: 0.4rem 0 2.2rem;
+}
+.lx-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--links);
+    margin: 0 0 0.55rem;
+}
+.lx-hero h1,
+.lx-hero-title {
+    font-size: 2.7rem;
+    line-height: 1.08;
+    letter-spacing: -0.022em;
+    margin: 0 0 0.65rem;
+    border-bottom: none;       /* override the global h1/h2 underline */
+    padding-bottom: 0;
+}
+.lx-hero-sub {
+    font-size: 1.16rem;
+    color: var(--lx-muted);
+    max-width: 52ch;
+    margin: 0 0 1.5rem;
+    line-height: 1.55;
+}
+.lx-cta {
+    display: flex;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+}
+.lx-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.64rem 1.2rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.96rem;
+    text-decoration: none !important;
+    transition: transform 0.08s ease, box-shadow 0.18s ease, background 0.15s ease;
+}
+.lx-btn-primary {
+    background: var(--links);
+    color: #ffffff !important;
+    box-shadow: 0 2px 10px rgba(30, 92, 153, 0.25);
+}
+.lx-btn-primary:hover {
+    background: #17497d;
+    transform: translateY(-1px);
+}
+.lx-btn-ghost {
+    background: transparent;
+    color: var(--fg) !important;
+    border: 1px solid var(--table-border-color);
+}
+.lx-btn-ghost:hover {
+    background: var(--theme-hover);
+    border-color: #cfd7e6;
+}
+
+/* --- Feature card grid -------------------------------------------------- */
+.lx-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+    margin: 1.6rem 0 2.6rem;
+}
+.lx-card {
+    display: block;
+    padding: 1.15rem 1.2rem;
+    border: 1px solid var(--table-border-color);
+    border-radius: var(--lx-radius);
+    background: var(--lx-card-bg);
+    text-decoration: none !important;
+    color: var(--fg) !important;
+    transition: transform 0.1s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.lx-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 26px rgba(20, 30, 50, 0.09);
+    border-color: #cfd7e6;
+}
+.lx-card-icon {
+    font-size: 1.55rem;
+    line-height: 1;
+    display: block;
+    margin-bottom: 0.55rem;
+}
+.lx-card-title {
+    font-weight: 650;
+    font-size: 1.02rem;
+    margin: 0 0 0.3rem;
+}
+.lx-card-desc {
+    font-size: 0.87rem;
+    color: var(--lx-muted);
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* --- Right-hand "On this page" TOC (injected by gitbook.js) ------------- */
+.lx-toc { display: none; }
+
+@media (min-width: 1400px) {
+    /* reserve a right gutter so the centered <main> shifts left and the
+       fixed TOC never overlaps the prose */
+    #mdbook-content.content { padding-right: 17rem; }
+
+    .lx-toc {
+        display: block;
+        position: fixed;
+        top: 5.4rem;
+        right: 1.8rem;
+        width: 14.4rem;
+        max-height: calc(100vh - 7rem);
+        overflow-y: auto;
+        padding-left: 0.9rem;
+        border-left: 1px solid var(--table-border-color);
+    }
+}
+.lx-toc-title {
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--lx-muted);
+    margin: 0 0 0.7rem;
+}
+.lx-toc ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.lx-toc li { margin: 0; }
+.lx-toc a {
+    display: block;
+    padding: 0.18rem 0;
+    font-size: 0.84rem;
+    line-height: 1.4;
+    color: var(--lx-muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    padding-left: 0.7rem;
+    margin-left: -0.9rem;
+}
+.lx-toc a:hover { color: var(--fg); }
+.lx-toc a.lx-h3 { padding-left: 1.5rem; font-size: 0.8rem; }
+.lx-toc a.active {
+    color: var(--links);
+    border-left-color: var(--links);
+    font-weight: 600;
+}
+.lx-helpful {
+    margin-top: 1.3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--table-border-color);
+    font-size: 0.78rem;
+    color: var(--lx-muted);
+}
+.lx-helpful-row { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+.lx-helpful button {
+    cursor: pointer;
+    border: 1px solid var(--table-border-color);
+    background: var(--lx-card-bg);
+    border-radius: 7px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.9rem;
+    line-height: 1;
+}
+.lx-helpful button:hover { background: var(--theme-hover); }
+
+/* --- Page pager (mdBook prev/next) → card style ------------------------- */
+.nav-chapters,
+.mobile-nav-chapters {
+    border: 1px solid var(--table-border-color);
+    border-radius: var(--lx-radius);
+    background: var(--lx-card-bg);
+}
+
+/* --- Footer (injected by gitbook.js) ----------------------------------- */
+.lx-footer {
+    margin-top: 3.5rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--table-border-color);
+    color: var(--lx-muted);
+    font-size: 0.88rem;
+}
+.lx-footer-cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1.5rem 2rem;
+    margin-bottom: 1.8rem;
+}
+.lx-footer-col h4 {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg);
+    margin: 0 0 0.7rem;
+}
+.lx-footer-col a {
+    display: block;
+    padding: 0.18rem 0;
+    color: var(--lx-muted);
+    text-decoration: none;
+    font-size: 0.86rem;
+}
+.lx-footer-col a:hover { color: var(--links); }
+.lx-footer-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--table-border-color);
+    font-size: 0.82rem;
+}
+.lx-footer-brand { font-weight: 650; color: var(--fg); }
+.lx-footer-brand::before { content: "🌙 "; }
