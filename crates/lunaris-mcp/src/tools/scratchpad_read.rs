@@ -89,7 +89,12 @@ mod tests {
         let embedder = Arc::new(StubEmbedder::new(768));
         let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
         let scope = Scope::new(scope_name).unwrap();
-        AppState { lunaris: Arc::new(lunaris), scope }
+        AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        }
     }
 
     /// Discriminating test: write then read — proves vector-only fallback works on
