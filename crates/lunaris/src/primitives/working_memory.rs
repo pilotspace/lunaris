@@ -121,8 +121,18 @@ impl WorkingMemory {
     ) -> Result<Vec<(String, serde_json::Value)>, LunarisError> {
         let filter = Filter::StartsWith { field: "source".into(), prefix: self.scope_key(pattern) };
         let hits = self.find(pattern, filter).await?;
+        // A value large enough to chunk-split yields multiple hits sharing one
+        // parent `episode_id` (and `source`). Recover each DISTINCT episode
+        // exactly once, in rank order, so grep returns one entry per key rather
+        // than one per chunk — and never re-reads the same Episode KV row.
+        // Without this, a single large value crowds the whole `top_k` window
+        // with identical entries and can starve out distinct sibling keys.
+        let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
         let mut out = Vec::with_capacity(hits.len());
         for h in hits {
+            if !seen.insert(h.episode_id.clone()) {
+                continue;
+            }
             if let Some(v) = self.recover_value(&h.episode_id).await? {
                 out.push((h.source, v));
             }

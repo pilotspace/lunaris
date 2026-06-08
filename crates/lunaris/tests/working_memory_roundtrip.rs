@@ -86,3 +86,34 @@ async fn grep_recovers_verbatim_values_and_respects_sub_prefix() {
         "grep must only return keys under the queried sub-prefix; got {got:?}"
     );
 }
+
+/// A single scratchpad value large enough to chunk-split MUST grep to exactly
+/// ONE entry — one per key, not one per chunk.
+///
+/// `write` stores the value as a single-line `serde_json::to_string`, but the
+/// chunker walks that paragraph word-by-word and emits a chunk once accumulated
+/// tokens cross `target_tokens = 500` (the surrogate counter is
+/// `ceil(words * 1.3)`, so ≥ ~385 whitespace words spill into a second chunk).
+/// Every resulting chunk shares the parent Episode's `episode_id`. Without
+/// dedup, `grep` recovers the identical value once per chunk and emits N
+/// duplicate `(source, value)` pairs — which also crowd the `top_k` window and
+/// can drop distinct sibling keys. This pins one-entry-per-key.
+#[tokio::test]
+async fn grep_dedups_a_chunk_split_value_to_one_entry() {
+    let wm = working_memory("wm-rt-grep-split").await;
+
+    // ~800 whitespace-separated words → > 500 surrogate tokens → ≥ 2 chunks.
+    let big = (0..800).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+    let value = json!({ "notes": big });
+    wm.write("big-note", value.clone()).await.unwrap();
+
+    let got = wm.grep("big-note").await.unwrap();
+    assert_eq!(
+        got.len(),
+        1,
+        "a chunk-split value must yield exactly one grep entry (per key, not per chunk); got {} entries",
+        got.len()
+    );
+    assert_eq!(got[0].0, "scratchpad/big-note");
+    assert_eq!(got[0].1, value, "the single entry must carry the verbatim value");
+}
