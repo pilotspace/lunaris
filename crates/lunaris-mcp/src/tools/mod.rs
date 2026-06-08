@@ -22,6 +22,7 @@ pub(crate) mod list_scopes;
 pub(crate) mod recall;
 pub(crate) mod record_decision;
 pub(crate) mod record_edit;
+pub(crate) mod staging;
 pub(crate) mod status;
 
 // ── Shared error type ─────────────────────────────────────────────────────────
