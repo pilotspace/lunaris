@@ -79,6 +79,16 @@ pub struct RawHit {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
     pub id: Vec<u8>,
+    /// 16-byte ULID of the parent Episode this chunk was extracted from
+    /// (`chunk.episode_id`), populated during [`crate::hydrate::hydrate`].
+    ///
+    /// In-process provenance channel ONLY: `#[serde(skip)]` keeps it off the
+    /// wire and out of SDK responses (no payload bloat). Exact-key callers
+    /// such as `WorkingMemory::read` use it to recover the VERBATIM Episode
+    /// `content` instead of the lossy, smart-punctuation-rewritten chunk
+    /// `text`. Empty for hits produced outside the main hydration path.
+    #[serde(skip)]
+    pub episode_id: Vec<u8>,
     pub score: f32,
     /// Chunk text body — from the chunk's KV row.
     pub text: String,

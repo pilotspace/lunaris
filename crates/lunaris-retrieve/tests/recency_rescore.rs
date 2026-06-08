@@ -13,6 +13,7 @@ use lunaris_retrieve::{ActR, Exp, Hit, RecencyConfig, SourceOp, TimeSource, resc
 fn mk_hit(id: u8, score: f32, valid_from_ms: u64) -> Hit {
     Hit {
         id: vec![id],
+        episode_id: Vec::new(),
         score,
         text: String::new(),
         source: String::new(),
