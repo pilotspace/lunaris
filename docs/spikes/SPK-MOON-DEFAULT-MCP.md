@@ -355,10 +355,15 @@ actually buildable. It is. Verified facts (these refine F1–F8):
   default-features = false, features = ["runtime-tokio", "graph", "text-index"] }`
   (`graph` for `GRAPH.CREATE`, `text-index` for the `FT.CREATE` Lunaris's
   `ensure_indexes` needs — F7).
-- **Publishability is moot.** lunaris-mcp is `publish = false` (workspace default)
-  and ships as a prebuilt binary via the phase-26 npx/uvx tarballs — it is never
-  `cargo publish`ed, so a path dep on the unpublished server crate blocks nothing.
-  Nothing else depends on lunaris-mcp (leaf binary), so the dep is contained.
+- **Publishability is moot — but note the manifest correction.** lunaris-mcp's
+  Cargo.toml carried an *explicit* `publish = true`, NOT the workspace default —
+  however it is **not** in `scripts/topo_order.py`'s crates.io `PUBLISH` set (15
+  library crates only) and ships solely as a prebuilt binary via the phase-26
+  npx/uvx tarballs + `mcp-prebuild.yml` (npm `@pilotspace/lunaris-mcp` + PyPI
+  wheel). The optional path-dep on the unpublished server crate would break a
+  future `cargo publish`, so the P-B implementation (quick 260608-vuz) flipped it
+  to `publish = false` — safe, because lunaris-mcp was never on crates.io. Nothing
+  else depends on lunaris-mcp (leaf binary), so the dep is contained.
 - **Real residual costs (land on CI, not users, since the binary is prebuilt):**
   `runtime-tokio` force-pulls `aws-lc-rs` (cmake/clang crypto build) even though
   `run_embedded` skips TLS; `mlua` (vendored Lua, needs a C compiler) is
