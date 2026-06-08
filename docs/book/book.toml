@@ -14,7 +14,7 @@ preferred-dark-theme = "light"
 git-repository-url = "https://github.com/pilotspace/lunaris"
 edit-url-template = "https://github.com/pilotspace/lunaris/edit/main/docs/book/{path}"
 additional-css = ["theme/custom.css"]
-additional-js = ["theme/force-light.js"]
+additional-js = ["theme/force-light.js", "theme/gitbook.js"]
 
 [output.html.search]
 enable = true

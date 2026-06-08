@@ -1,7 +1,21 @@
-# Lunaris
+<div class="lx-hero">
+  <p class="lx-eyebrow">Agent Memory Engine</p>
+  <h1 class="lx-hero-title">🌙 Lunaris</h1>
+  <p class="lx-hero-sub">Sub-25 ms recall over millions of bi-temporal facts, with provable atomicity and a graph that's opt-in.</p>
+  <div class="lx-cta">
+    <a class="lx-btn lx-btn-primary" href="getting-started/quickstart.html">Get started</a>
+    <a class="lx-btn lx-btn-ghost" href="https://github.com/pilotspace/lunaris">Our GitHub</a>
+  </div>
+</div>
 
-**Sub-25 ms recall over millions of bi-temporal facts, with provable
-atomicity and a graph that's opt-in.**
+<div class="lx-cards">
+  <a class="lx-card" href="getting-started/quickstart.html"><span class="lx-card-icon">🚀</span><span class="lx-card-title">10-Minute Quickstart</span><span class="lx-card-desc">Zero to recall in ten minutes — no external services required.</span></a>
+  <a class="lx-card" href="getting-started/why-lunaris.html"><span class="lx-card-icon">🧭</span><span class="lx-card-title">Why Lunaris</span><span class="lx-card-desc">The three moats, and the honest "use something else when…" criteria.</span></a>
+  <a class="lx-card" href="getting-started/architecture.html"><span class="lx-card-icon">🏛️</span><span class="lx-card-title">Architecture</span><span class="lx-card-desc">How sub-25 ms recall and one-atomic-write ingest fit together.</span></a>
+  <a class="lx-card" href="guides/retrieval-dsl.html"><span class="lx-card-icon">🧩</span><span class="lx-card-title">Retrieval DSL</span><span class="lx-card-desc">Vector + BM25 + graph + rerank composed as one typed expression.</span></a>
+  <a class="lx-card" href="mcp/index.html"><span class="lx-card-icon">🔌</span><span class="lx-card-title">MCP Server</span><span class="lx-card-desc">Plug Lunaris memory into Claude Code, Codex, and any MCP agent.</span></a>
+  <a class="lx-card" href="cookbook/index.html"><span class="lx-card-icon">📚</span><span class="lx-card-title">Cookbook</span><span class="lx-card-desc">Copy-pasteable recipes: chat agents, docs, Slack archives, timelines.</span></a>
+</div>
 
 Lunaris is a production-grade **agent-memory engine** written in pure Rust,
 with first-class **Python** (`pip install lunaris`) and **TypeScript**
