@@ -92,14 +92,16 @@ body {
     line-height: 1.25;
 }
 
-.content h1 { font-size: 2rem; margin-top: 1.6em; }
+/* mdBook sets `html { font-size: 62.5% }` (1rem = 10px), so heading sizes are
+   in `em` — relative to the 16px body — not `rem`, which would render ~⅗ size. */
+.content h1 { font-size: 2em; margin-top: 1.6em; }
 .content h2 {
-    font-size: 1.5rem;
+    font-size: 1.5em;
     margin-top: 2.2em;
     padding-bottom: 0.3em;
     border-bottom: 1px solid var(--table-border-color);
 }
-.content h3 { font-size: 1.2rem; margin-top: 1.8em; }
+.content h3 { font-size: 1.2em; margin-top: 1.8em; }
 
 .content p,
 .content li {
@@ -469,47 +471,50 @@ input:focus-visible,
     border-bottom: 1px solid var(--table-border-color);
 }
 
+/* Type below is sized in `em` (relative to the 16px body), NOT `rem` — see the
+   62.5% root-font note in §1. Structural offsets (TOC gutter) stay in px. */
+
 /* --- Landing hero ------------------------------------------------------- */
 .lx-hero {
-    margin: 0.4rem 0 2.2rem;
+    margin: 0.5em 0 2.4em;
 }
 .lx-eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.13em;
-    font-size: 0.74rem;
+    font-size: 0.8em;
     font-weight: 700;
     color: var(--links);
-    margin: 0 0 0.55rem;
+    margin: 0 0 0.7em;
 }
 .lx-hero h1,
 .lx-hero-title {
-    font-size: 2.7rem;
+    font-size: 2.7em;
     line-height: 1.08;
     letter-spacing: -0.022em;
-    margin: 0 0 0.65rem;
+    margin: 0 0 0.4em;
     border-bottom: none;       /* override the global h1/h2 underline */
     padding-bottom: 0;
 }
 .lx-hero-sub {
-    font-size: 1.16rem;
+    font-size: 1.2em;
     color: var(--lx-muted);
-    max-width: 52ch;
-    margin: 0 0 1.5rem;
+    max-width: 46ch;
+    margin: 0 0 1.5em;
     line-height: 1.55;
 }
 .lx-cta {
     display: flex;
-    gap: 0.7rem;
+    gap: 0.7em;
     flex-wrap: wrap;
 }
 .lx-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.64rem 1.2rem;
+    gap: 0.4em;
+    padding: 0.7em 1.3em;
     border-radius: 10px;
     font-weight: 600;
-    font-size: 0.96rem;
+    font-size: 1em;
     text-decoration: none !important;
     transition: transform 0.08s ease, box-shadow 0.18s ease, background 0.15s ease;
 }
@@ -535,13 +540,13 @@ input:focus-visible,
 /* --- Feature card grid -------------------------------------------------- */
 .lx-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 1rem;
-    margin: 1.6rem 0 2.6rem;
+    grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+    gap: 1em;
+    margin: 1.8em 0 2.8em;
 }
 .lx-card {
     display: block;
-    padding: 1.15rem 1.2rem;
+    padding: 1.25em 1.3em;
     border: 1px solid var(--table-border-color);
     border-radius: var(--lx-radius);
     background: var(--lx-card-bg);
@@ -555,18 +560,21 @@ input:focus-visible,
     border-color: #cfd7e6;
 }
 .lx-card-icon {
-    font-size: 1.55rem;
+    font-size: 1.8em;
     line-height: 1;
     display: block;
-    margin-bottom: 0.55rem;
+    margin-bottom: 0.5em;
 }
 .lx-card-title {
+    display: block;          /* spans are inline by default — force the stack */
     font-weight: 650;
-    font-size: 1.02rem;
-    margin: 0 0 0.3rem;
+    font-size: 1.08em;
+    margin: 0 0 0.35em;
+    color: var(--fg);
 }
 .lx-card-desc {
-    font-size: 0.87rem;
+    display: block;
+    font-size: 0.92em;
     color: var(--lx-muted);
     margin: 0;
     line-height: 1.5;
@@ -576,29 +584,32 @@ input:focus-visible,
 .lx-toc { display: none; }
 
 @media (min-width: 1400px) {
-    /* reserve a right gutter so the centered <main> shifts left and the
-       fixed TOC never overlaps the prose */
-    #mdbook-content.content { padding-right: 17rem; }
+    /* reserve a right gutter (px, not rem) so the centered <main> shifts left
+       and the fixed TOC never overlaps the prose */
+    #mdbook-content.content { padding-right: 220px; }
 
     .lx-toc {
         display: block;
         position: fixed;
-        top: 5.4rem;
-        right: 1.8rem;
-        width: 14.4rem;
-        max-height: calc(100vh - 7rem);
+        top: 84px;
+        right: 22px;
+        width: 188px;
+        box-sizing: border-box;
+        max-height: calc(100vh - 110px);
         overflow-y: auto;
-        padding-left: 0.9rem;
+        overflow-wrap: anywhere;
+        padding-left: 14px;
         border-left: 1px solid var(--table-border-color);
+        z-index: 1;
     }
 }
 .lx-toc-title {
     text-transform: uppercase;
     letter-spacing: 0.09em;
-    font-size: 0.7rem;
+    font-size: 0.72em;
     font-weight: 700;
     color: var(--lx-muted);
-    margin: 0 0 0.7rem;
+    margin: 0 0 0.8em;
 }
 .lx-toc ul {
     list-style: none;
@@ -608,37 +619,36 @@ input:focus-visible,
 .lx-toc li { margin: 0; }
 .lx-toc a {
     display: block;
-    padding: 0.18rem 0;
-    font-size: 0.84rem;
+    padding: 0.25em 0 0.25em 0.7em;
+    margin-left: -14px;
+    font-size: 0.86em;
     line-height: 1.4;
     color: var(--lx-muted);
     text-decoration: none;
     border-left: 2px solid transparent;
-    padding-left: 0.7rem;
-    margin-left: -0.9rem;
 }
 .lx-toc a:hover { color: var(--fg); }
-.lx-toc a.lx-h3 { padding-left: 1.5rem; font-size: 0.8rem; }
+.lx-toc a.lx-h3 { padding-left: 1.6em; font-size: 0.82em; }
 .lx-toc a.active {
     color: var(--links);
     border-left-color: var(--links);
     font-weight: 600;
 }
 .lx-helpful {
-    margin-top: 1.3rem;
-    padding-top: 1rem;
+    margin-top: 1.4em;
+    padding-top: 1em;
     border-top: 1px solid var(--table-border-color);
-    font-size: 0.78rem;
+    font-size: 0.82em;
     color: var(--lx-muted);
 }
-.lx-helpful-row { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+.lx-helpful-row { display: flex; gap: 0.4em; margin-top: 0.5em; }
 .lx-helpful button {
     cursor: pointer;
     border: 1px solid var(--table-border-color);
     background: var(--lx-card-bg);
     border-radius: 7px;
-    padding: 0.2rem 0.5rem;
-    font-size: 0.9rem;
+    padding: 0.25em 0.55em;
+    font-size: 1em;
     line-height: 1;
 }
 .lx-helpful button:hover { background: var(--theme-hover); }
@@ -653,31 +663,31 @@ input:focus-visible,
 
 /* --- Footer (injected by gitbook.js) ----------------------------------- */
 .lx-footer {
-    margin-top: 3.5rem;
-    padding-top: 2rem;
+    margin-top: 3.5em;
+    padding-top: 2em;
     border-top: 1px solid var(--table-border-color);
     color: var(--lx-muted);
-    font-size: 0.88rem;
+    font-size: 0.95em;
 }
 .lx-footer-cols {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1.5rem 2rem;
-    margin-bottom: 1.8rem;
+    gap: 1.5em 2em;
+    margin-bottom: 1.8em;
 }
 .lx-footer-col h4 {
-    font-size: 0.74rem;
+    font-size: 0.78em;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--fg);
-    margin: 0 0 0.7rem;
+    margin: 0 0 0.8em;
 }
 .lx-footer-col a {
     display: block;
-    padding: 0.18rem 0;
+    padding: 0.22em 0;
     color: var(--lx-muted);
     text-decoration: none;
-    font-size: 0.86rem;
+    font-size: 0.92em;
 }
 .lx-footer-col a:hover { color: var(--links); }
 .lx-footer-bar {
@@ -685,10 +695,10 @@ input:focus-visible,
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.8rem;
-    padding-top: 1.2rem;
+    gap: 0.8em;
+    padding-top: 1.2em;
     border-top: 1px solid var(--table-border-color);
-    font-size: 0.82rem;
+    font-size: 0.88em;
 }
 .lx-footer-brand { font-weight: 650; color: var(--fg); }
 .lx-footer-brand::before { content: "🌙 "; }
