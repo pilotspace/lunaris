@@ -1,25 +1,25 @@
 # Lunaris release runbook
 
-How to cut a Lunaris release. Steps assume v0.2.1 going out; future
+How to cut a Lunaris release. Steps assume v0.3.0 going out; future
 patch / minor releases follow the same flow with the version bumped.
 
-Audience: release captain on the `v0.2.x` line. Most steps are
+Audience: release captain on the `v0.3.x` line. Most steps are
 verifiable by checking the artifact's output; the human gate is the
 "GO / NO-GO" review at step 6.
 
-## TL;DR for v0.2.1
+## TL;DR for v0.3.0
 
 ```bash
 # 0. Branch is green
-git checkout v0.2.1 && git pull
+git checkout v0.3.0 && git pull
 make ci-local                                # fmt + clippy + test + verify-small/large
 
 # 1. Workspace version is the one CHANGELOG documents
-grep '^version' Cargo.toml | head -1         # must be 0.2.1
+grep '^version' Cargo.toml | head -1         # must be 0.3.0
 
 # 2. Tag + push
-git tag -a v0.2.1 -m "v0.2.1 — RC-2 scope alphabet tighten + v0.2 close-out"
-git push origin v0.2.1
+git tag -a v0.3.0 -m "v0.3.0 — MCP server + npx/uvx packaging + proactive capture"
+git push origin v0.3.0
 
 # 3. CI runs and stays green on the tag (semver-checks vs v0.2.0,
 #    cargo publish --dry-run on lunaris-core)
@@ -69,7 +69,7 @@ Before tagging:
 - [ ] No `0.X.Y-dev` versions anywhere.
 - [ ] The README "Status" table reflects this release.
 - [ ] LICENSE file present at the repo root.
-- [ ] The `v0.2.1` branch is rebased on `main` (or `main` is fast-
+- [ ] The `v0.3.0` branch is rebased on `main` (or `main` is fast-
       forward-able to it) — release tags live on `main` or a
       release branch, never on a feature branch.
 
@@ -94,14 +94,16 @@ The workspace's `publish = false` default means crates opt IN explicitly
 by setting `publish = true` (or removing the `publish.workspace = true`
 inherit, since the workspace says false).
 
-The v0.2.x publishable set:
+The v0.3.0 publishable set:
 
 | Crate | Status | Notes |
 |---|---|---|
 | `lunaris-core` | **publish=true** | Core types — must publish first (every other crate depends on it). |
 | `lunaris-storage-postgres` | **publish=true** | OSS-default backend. `lunaris-storage-moon` is an OPTIONAL dep behind the `moon-it` feature. |
-| `lunaris-embed` | **publish=true** | Embedders (candle, ollama). |
-| `lunaris-rerank` | **publish=true** | Cross-encoder reranker. |
+| `lunaris-embed-native` | **publish=true** (cargo default — no `publish` key) | Native granite-r2 embedder (candle FP16; `embedder-gguf` adds the Q4_K_M GGUF variant). |
+| `lunaris-embed-remote` | **publish=true** (cargo default — no `publish` key) | Ollama HTTP escape-hatch embedder; optional dep behind the umbrella `embed-remote` feature. |
+| `lunaris-rerank` | **publish=true** | Reranker trait + `NoopReranker` seam (the cross-encoder impl lives in `lunaris-rerank-native`). |
+| `lunaris-rerank-native` | **publish=true** (cargo default — no `publish` key) | Native bge-reranker-v2-m3 cross-encoder (candle FP32; `reranker-gguf` adds the Q5_K_M GGUF variant). |
 | `lunaris-extract` | **publish=true** | Extractor (candle, ollama, cloud-api). |
 | `lunaris-verify` | **publish=true** | Verifier (incl. RFC 0006 270M scaffold). |
 | `lunaris-consolidate` | **publish=true** | ACT-R consolidator. |
@@ -138,7 +140,7 @@ cp311 / cp312 across linux-x86_64, linux-aarch64, macos-universal2,
 windows-x86_64. TypeScript `.node` binaries target the matching set
 via `napi prepublish`.
 
-Both flows trigger automatically on the tag push (`v0.2.*`). The
+Both flows trigger automatically on the tag push (`v0.3.*`). The
 `maturin publish` and `npm publish` commands above are the local-fallback
 recipe if CI doesn't run.
 
@@ -146,9 +148,9 @@ recipe if CI doesn't run.
 
 After all artifacts are public:
 
-- `cargo install lunaris --locked` from a fresh clone of `examples/quickstart-rs/`
-- `pip install lunaris==0.2.1 && python examples/quickstart-py/quickstart.py`
-- `npm install @pilotspace/lunaris@0.2.1 && cd examples/quickstart-ts && npm start`
+- `cargo add lunaris-memory@0.3.0` into a fresh `cargo new` project, then `cargo build --locked` — verifies the published umbrella crate. (The bare `lunaris` name on crates.io is an unrelated project; and `examples/quickstart-rs` uses a workspace **path** dep, so building it in-tree does **not** exercise the published crate.)
+- `pip install lunaris==0.3.0 && python examples/quickstart-py/quickstart.py`
+- `npm install @pilotspace/lunaris@0.3.0 && cd examples/quickstart-ts && npm start`
 
 Each must reach "ingested episode at lsn=..." on a clean machine.
 
@@ -160,14 +162,14 @@ permit `yank` and `deprecate` respectively.
 
 If a breaking bug ships:
 
-1. `cargo yank --version 0.2.1 <crate>` for every published crate in the set.
+1. `cargo yank --version 0.3.0 <crate>` for every published crate in the set.
 2. `pip-yank` equivalent: open a PyPI ticket (no CLI for yank by default;
    use the project page Web UI).
-3. `npm deprecate lunaris@0.2.1 "see issue #XYZ"`.
-4. Ship `0.2.2` with the fix and a follow-up CHANGELOG entry referencing
+3. `npm deprecate @pilotspace/lunaris@0.3.0 "see issue #XYZ"`.
+4. Ship `0.3.1` with the fix and a follow-up CHANGELOG entry referencing
    the yank.
 
-The repo's `v0.2.1` tag stays — the audit trail is more important than
+The repo's `v0.3.0` tag stays — the audit trail is more important than
 the published artifact disappearing.
 
 ## Open questions

@@ -17,10 +17,12 @@ publish     = false
 # without inheriting workspace dev-deps or features).
 
 [dependencies]
-# `ollama` is the smallest external-dep build that gives a real
-# default embedder + extractor + verifier path. Users who prefer the
-# in-process candle path can swap to `default-features = false,
-# features = ["candle"]` — pre-downloads ~5 GB of Gemma 3 4B weights.
+# `ollama` gives the smallest-external-dep path for the Ollama EXTRACTOR
+# + VERIFIER (OllamaExtractor + Ollama verify tier). The embedder and
+# reranker are always in-process native (granite-embedding-311m-multilingual-r2
+# + bge-reranker-v2-m3) — no Ollama needed for embedding. Users who prefer
+# the in-process candle EXTRACTOR can swap to `features = ["candle"]`
+# — pre-downloads ~5 GB of Gemma 3 4B extractor weights.
 # Published on crates.io as `lunaris-memory` (the bare `lunaris` name is
 # owned by an unrelated project); the import path is still `use lunaris::…`.
 lunaris = { package = "lunaris-memory", path = "../../crates/lunaris", default-features = false, features = ["ollama"] }

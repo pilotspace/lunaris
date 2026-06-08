@@ -92,26 +92,22 @@ at `moon://host:port`. Moon provides native `FT.SEARCH` (vector + BM25),
 index into one round trip. No Moon repo? Stick with Postgres; every
 `Lunaris` call works identically against either backend.
 
-### Embedder: default needs no Ollama
+### Embedder: in-process native, no external service required
 
-The default embedder backend is **`fastembed`** (ONNX EmbeddingGemma-300M)
-— it auto-downloads weights to `~/.cache/lunaris/models/fastembed/` on
-first use and runs in-process. **No Ollama required.**
+The default embedder is
+**granite-embedding-311m-multilingual-r2** (768-d), runs **in-process** via
+candle, and auto-downloads to `~/.cache/lunaris/models/` on first use — **no
+Ollama, no ONNX Runtime, no external service required.** An air-gapped Ollama
+HTTP embedder remains available as an operator escape hatch behind
+`--features embed-remote`.
 
-Two optional alternatives:
+Override the model directory with `LUNARIS_EMBEDDER_DIR=<path>`. For
+RSS-constrained hosts, activate the Q4_K_M GGUF variant via
+`--features embedder-gguf` and set `LUNARIS_EMBEDDER_GGUF=<path/to/granite-r2.Q4_K_M.gguf>`.
+Operators running an air-gapped Ollama for embedding (not the supported path)
+can set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` alongside `--features embed-remote`.
 
-- **Ollama** (`LUNARIS_EMBEDDER_BACKEND=ollama`, requires the `ollama`
-  Cargo feature) — points at `http://localhost:11434`. Some quickstart
-  runbooks use `ollama pull nomic-embed-text` for a tiny model; this is
-  optional, not the default.
-- **candle** (`LUNARIS_EMBEDDER_BACKEND=candle`, requires the `candle`
-  feature) — fully in-process Gemma-300M, air-gapped; loads weights from
-  `~/.cache/lunaris/models/embedding-gemma-300m/` (the `LUNARIS_EMBED_GEMMA_PATH`
-  env var points it at a different directory).
-
-Backend *availability* is fixed at build time by Cargo features;
-`LUNARIS_*_BACKEND` only chooses among what was compiled in. Asking for
-`candle` in a `fastembed`-only build is a startup error. See the
+See the
 [Configuration Reference](../reference/configuration.md#1-cargo-feature-flags)
 for the full feature matrix.
 
@@ -136,18 +132,24 @@ cargo add tokio --features macros,rt-multi-thread
 Feature flags on the `lunaris` umbrella crate (full table in the
 [Configuration Reference](../reference/configuration.md#1-cargo-feature-flags)):
 
+> **Note.** The native granite-r2 embedder and bge-reranker-v2-m3 reranker
+> are **always compiled** — no feature gate is needed. The flags below only
+> gate optional backends for the extractor, verifier, and escape-hatch paths.
+
 | Feature | Default | Effect |
 |---|:--:|---|
-| `fastembed` | ✅ | ONNX `fastembed` embedder + reranker backends (auto-downloads weights) |
-| `candle` | ✅ | In-process `candle` embedder, reranker, extractor, verifier backends |
-| `ollama` | | Ollama HTTP extractor / verifier / embedder backends |
+| `embedder-gguf` | | Q4_K_M GGUF quantized native embedder; activated by `LUNARIS_EMBEDDER_GGUF` |
+| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized native reranker; activated by `LUNARIS_RERANKER_GGUF` |
+| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only, not the supported path) |
+| `candle` | | In-process candle **extractor** (Gemma-3 4B) + **verifier** (Gemma-3 27B) LLM backends |
+| `ollama` | | Ollama HTTP **extractor** + **verifier** backends (NOT the embedder) |
 | `cloud-api` | | Cloud-API extractor / verifier backends (pulls `reqwest`) |
 | `verify-small` | | In-process candle Gemma-3-270M verifier — the laptop-floor build (~600 MB disk / ~1 GB RAM, RFC 0006) |
+| `verify-large` | | In-process candle Gemma-3-27B verifier (explicit alias per RFC 0006) |
 
-`default = ["fastembed", "candle"]`. A `cargo build --no-default-features`
-build links neither stack — useful for the HTTP-only server image, but
-then you must construct the handle via `Lunaris::with_parts(...)` instead
-of `Lunaris::open(url)`.
+`default = []` — the native embedder + reranker are unconditional; no
+feature is required for the core recall path. The extractor and verifier
+pipelines are opt-in at build time.
 
 Smoke test — no services needed:
 

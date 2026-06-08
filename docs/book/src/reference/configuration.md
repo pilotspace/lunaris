@@ -22,36 +22,46 @@ off"* — the safe production floor. Turn things on deliberately.
 
 ### `lunaris` (umbrella crate)
 
+> **Note.** The native granite-r2 embedder and bge-reranker-v2-m3 reranker
+> are **always compiled** into the umbrella — no feature gate, no env-var
+> backend swap. The flags below only gate optional extractor / verifier LLM
+> backends and escape-hatch paths.
+
 | Feature | Default | Effect |
 |---|:--:|---|
-| `fastembed` | ✅ | Compile the ONNX `fastembed` embedder + reranker backends |
-| `candle` | ✅ | Compile the in-process `candle` embedder, reranker, extractor, and verifier backends |
-| `ollama` | | Compile the Ollama HTTP embedder / extractor / verifier backends |
-| `cloud-api` | | Compile the cloud-API extractor / verifier backends (pulls `reqwest`) |
+| `embedder-gguf` | | Q4_K_M GGUF quantized native embedder; activated by `LUNARIS_EMBEDDER_GGUF` |
+| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized native reranker; activated by `LUNARIS_RERANKER_GGUF` |
+| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only); activated by `LUNARIS_EMBEDDER_OLLAMA_URL` |
+| `candle` | | In-process candle **extractor** (Gemma-3 4B) + **verifier** (Gemma-3 27B) LLM backends |
+| `ollama` | | Ollama HTTP **extractor** + **verifier** backends (NOT the embedder) |
+| `cloud-api` | | Cloud-API extractor / verifier backends (pulls `reqwest`) |
 | `verify-small` | | Forward `lunaris-verify/verify-small` — the candle Gemma-3 270M laptop-floor verifier (RFC 0006) |
 | `verify-large` | | Forward `lunaris-verify/verify-large` — the candle Gemma-3 27B verifier (alias of `candle` on the verify crate) |
-| `candle-only` | | Air-gapped build: forwards the `candle` backend to embed/rerank/extract/verify with **zero** `fastembed`/`ort`/`hf-hub` in the dep tree — operator-facing air-gap signalling |
 
-`default = ["fastembed", "candle"]` — both local backends are available; the
-runtime picks one via `LUNARIS_EMBEDDER_BACKEND` etc. A
-`cargo build --no-default-features` build links neither the ONNX nor the
-candle stack — useful for the HTTP-only server image. (The umbrella also
-forwards `moon-it` / `pg-it` integration features to the storage crates.)
+`default = []` — the native embedder + reranker are unconditional; no feature
+is required for the core recall path. The extractor and verifier pipelines are
+opt-in at build time. (The umbrella also forwards `moon-it` / `pg-it`
+integration features to the storage crates.)
 
-### `lunaris-embed`
+### `lunaris-embed-native`
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `fastembed` | ✅ | ONNX EmbeddingGemma-300M; auto-downloads weights |
-| `candle` | | In-process candle Gemma-300M (air-gapped) |
-| `ollama` | | Ollama HTTP embedder |
+| `embedder-gguf` | | Q4_K_M GGUF quantized variant (`NativeQuantizedEmbedder`) |
+| `embedder-it` | | Gates real-weights integration tests |
 
-### `lunaris-rerank`
+Hardware-acceleration variants (all off by default): `cpu-accelerate`,
+`cpu-mkl`, `metal`, `cuda`, `cuda-fa2`.
+
+### `lunaris-rerank-native`
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `fastembed` | ✅ | ONNX cross-encoder (BGE-Reranker-v2-m3) |
-| `candle` | | In-process candle cross-encoder |
+| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized variant (`NativeQuantizedReranker`) |
+| `reranker-it` | | Gates real-weights integration tests |
+
+Hardware-acceleration variants (all off by default): `cpu-accelerate`,
+`cpu-mkl`, `metal`, `cuda`, `cuda-fa2`.
 
 `NoopReranker` is always available (no feature gate) — selectable at runtime
 for the latency-floor path.
@@ -100,35 +110,32 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 
 | Variable | Values | Default | Controls |
 |---|---|---|---|
-| `LUNARIS_EMBEDDER_BACKEND` | `fastembed` \| `candle` \| `ollama` | `fastembed` | Which embedder the default handle uses |
-| `LUNARIS_RERANKER_BACKEND` | `fastembed` \| `candle` \| `noop` | `fastembed` | Which reranker; `noop` skips the rerank pass |
 | `LUNARIS_VERIFIER_BACKEND` | `270m`\|`small` \| `27b`\|`large` \| `noop` | `270m` | Which verifier model (RFC 0006); `270m`/`small` needs the `verify-small` feature, `27b`/`large` needs `verify-large` (or `candle`). The effective verifier is still `NoopVerifier` until the matching feature is built **and** the model weights are staged — a cache miss or missing feature logs a `tracing::warn!` and falls back to `NoopVerifier` (the verifier worker stays disabled). |
 | `LUNARIS_CONSOLIDATOR_BACKEND` | `actr` \| `noop` | `actr` | ACT-R consolidator vs no-op |
 | `LUNARIS_GRAPH_ENABLED` | bool | off | Entity / community graph extraction pipeline |
 | `LUNARIS_VERIFY_ENABLED` | bool | off | Slow-path arbitration verifier pipeline |
 | `LUNARIS_CONSOLIDATE_ENABLED` | bool | off | Consolidation pipeline |
 
-> Backend *availability* is gated by Cargo features; these vars only choose
-> among what was compiled in. Asking for `candle` in a `fastembed`-only build
-> is a startup error.
+> The native granite-r2 embedder and bge-reranker-v2-m3 reranker are selected
+> unconditionally — there is no `LUNARIS_EMBEDDER_BACKEND` or
+> `LUNARIS_RERANKER_BACKEND` variable. Use the env vars below to change the
+> model directory, activate a GGUF quantized variant, or (operators only)
+> redirect the embedder to a remote Ollama endpoint.
 
-### Embedder backend details
+### Embedder and reranker details
 
 | Variable | Default | Controls |
 |---|---|---|
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding LRU entries per `Lunaris` handle. Set `0` to disable. |
-| `LUNARIS_FASTEMBED_CACHE_DIR` | `~/.cache/lunaris/models/fastembed/` | Where the ONNX weights are downloaded / cached |
-| `LUNARIS_FASTEMBED_EXECUTION` | `cpu` | `cpu` \| `cuda` \| `coreml` execution provider |
-| `LUNARIS_OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint for the `ollama` embedder |
-| `LUNARIS_OLLAMA_MODEL` | `embeddinggemma:300m` | Ollama model tag for the `ollama` embedder |
-| `OLLAMA_URL` | `http://localhost:11434` | Endpoint also honoured by the Ollama extractor / verifier backends |
+| `LUNARIS_EMBEDDER_DIR` | `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/` | Directory holding native granite-r2 model artifacts |
+| `LUNARIS_RERANKER_DIR` | `~/.cache/lunaris/models/bge-reranker-v2-m3/` | Directory holding native bge-reranker-v2-m3 model artifacts |
+| `LUNARIS_EMBEDDER_GGUF` | — | Path to a Q4_K_M GGUF file; activates `NativeQuantizedEmbedder` (requires `--features embedder-gguf`) |
+| `LUNARIS_RERANKER_GGUF` | — | Path to a Q5_K_M-imatrix GGUF file; activates `NativeQuantizedReranker` (requires `--features reranker-gguf`) |
+| `LUNARIS_EMBEDDER_OLLAMA_URL` | — | **Operator escape hatch only.** Routes the embedder to a remote Ollama HTTP endpoint; requires `--features embed-remote`. Not the supported path. |
+| `LUNARIS_OLLAMA_MODEL` | `embeddinggemma:300m` | Ollama model tag for the `embed-remote` escape-hatch embedder |
+| `OLLAMA_URL` | `http://localhost:11434` | Endpoint honoured by the Ollama extractor / verifier backends |
 | `OLLAMA_EXTRACT_MODEL` | `gemma3:4b` | Model tag for the Ollama extractor backend |
 | `OLLAMA_VERIFY_MODEL` | `gemma3:27b` | Model tag for the Ollama verifier backend |
-
-> The in-process candle Gemma-300M embedder loads its weights from
-> `~/.cache/lunaris/models/embedding-gemma-300m/` — there is no `LUNARIS_*`
-> override for that path (the `EmbedderConfig` SDK factories are the
-> programmatic escape hatch; see [Python SDK](../sdk/python.md)).
 
 ### Verifier / extractor cloud-API
 

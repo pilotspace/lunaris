@@ -19,11 +19,12 @@ Prebuilt wheels ship for 5 targets (BIND-PY-05): `linux-x86_64`
 `macosx-arm64`, `win-amd64`. They use the `abi3-py311` stable ABI, so **one
 wheel per target covers Python 3.11, 3.12, and 3.13**.
 
-The bundled wheels are built with `default-features = false, features =
-["ollama"]` — so `lunaris.open(...)` works without a local weights cache as
-long as Ollama is reachable at first embed call. To use the in-process
-fastembed/candle embedder instead, supply an `EmbedderConfig` (below) or
-build from source.
+The bundled wheels are built with the native granite embedder included — the
+default embedder is **granite-embedding-311m-multilingual-r2** (768-d), runs
+**in-process** via candle, and auto-downloads to `~/.cache/lunaris/models/` on
+first use — **no Ollama, no ONNX Runtime, no external service required.** An
+air-gapped Ollama HTTP embedder remains available as an operator escape hatch
+behind `--features embed-remote`.
 
 No matching wheel? Source install (needs Rust 1.94+ and a maturin toolchain;
 2–5 min):
@@ -172,48 +173,48 @@ See [Consolidation & Verification](../guides/consolidate-verify.md) and
 
 ## Embedder / reranker config
 
-Override the env-driven default embedder/reranker from code via
-`EmbedderConfig` / `RerankerConfig` (opaque handles wrapping a resolved
-`Arc<dyn Embedder>`). Four `EmbedderConfig` factories:
+Override the default embedder/reranker from code via `EmbedderConfig` /
+`RerankerConfig` (opaque handles wrapping a resolved `Arc<dyn Embedder>`).
+
+```python
+import lunaris
+from lunaris import EmbedderConfig, RerankerConfig
+
+# `open` is async — call it inside an async function or `asyncio.run(...)`.
+mem = await lunaris.open(
+    "memory://demo",
+    embedder=EmbedderConfig.native(),     # granite-r2, in-process, auto-downloads to ~/.cache/lunaris/models/
+    reranker=RerankerConfig.native(),     # bge-reranker-v2-m3 cross-encoder
+)
+```
+
+`EmbedderConfig` factories:
 
 | Factory | Use when |
 |---|---|
-| `EmbedderConfig.fastembed(cache_dir=…, execution="cpu"\|"coreml"\|"cuda", show_download_progress=False)` | The common case — ONNX EmbeddingGemma-300M (768-d), auto-downloaded (~600 MB, one-time per host). |
-| `EmbedderConfig.ollama(endpoint="http://localhost:11434", model="embeddinggemma:300m", dim=768)` | A local Ollama server already running the model — no in-process ONNX load. |
-| `EmbedderConfig.from_onnx_bytes(onnx_bytes=…, tokenizer_bytes=…, dim=…, pooling="mean"\|"cls", execution=…)` | BYO ONNX model already in memory (S3, secret store, …). |
-| `EmbedderConfig.from_onnx_path(onnx_path=…, tokenizer_path=…, dim=…, pooling=…, execution=…)` | BYO ONNX model on disk (mounted model volume). |
+| `EmbedderConfig.native(model_dir=None)` | Default — granite-embedding-311m-multilingual-r2 (768-d), in-process candle, auto-downloads to `~/.cache/lunaris/models/`. |
+| `EmbedderConfig.native_quantized(gguf_path, model_dir=None)` | Q4_K_M GGUF (~240 MiB) for RSS-constrained hosts; requires `--features embedder-gguf`. |
+| `EmbedderConfig.noop(dim=768)` | Deterministic zero-vector — tests / offline use only. |
 
-```python
-from lunaris import EmbedderConfig, RerankerConfig
+`RerankerConfig` factories:
 
-emb = EmbedderConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed", execution="coreml")
-rer = RerankerConfig.fastembed(cache_dir="/var/cache/lunaris/fastembed-reranker")
-handle = await lunaris.open("moon://127.0.0.1:6380", embedder=emb, reranker=rer)
+| Factory | Use when |
+|---|---|
+| `RerankerConfig.native(model_dir=None)` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (FP32, sigmoid ∈ [0,1]), in-process. |
+| `RerankerConfig.native_quantized(gguf_path, model_dir=None)` | Q5_K_M-imatrix GGUF; requires `--features reranker-gguf`. |
+| `RerankerConfig.noop()` | Skip the cross-encoder rescoring pass — lowest latency floor. |
 
-# Latency floor — disable the cross-encoder rescoring pass:
-handle = await lunaris.open(url, embedder=emb, reranker=RerankerConfig.noop())
-```
-
-`RerankerConfig` ships `fastembed()` (BGE-Reranker-v2-m3) and `noop()` today;
-BYO ONNX for the reranker is deferred (the Rust wrapper doesn't plumb it yet).
 Notes:
 
-- The fastembed presets fetch weights from HF Hub on first use — point
-  `cache_dir` (or `LUNARIS_FASTEMBED_CACHE_DIR`) at a writable path with
-  ~1 GB free; the download is one-time per host.
-- BYO ONNX models **must** match the declared `dim` — the SDK wraps them in
-  `DimValidatingEmbedder`, which raises a `LunarisError` ("declared dim X does
-  not match observed dim Y …") on the first batch if they don't, rather than
-  silently corrupting your vector index.
-- `execution="coreml"` / `"cuda"` need the wheel built with
-  `lunaris-embed/fastembed-coreml` / `-cuda`; without it Python raises
-  `ValueError` at config time. Python rejects unknown `execution` values
-  strictly (a REPL-friendly failure mode).
+- Weights auto-download on first use to `~/.cache/lunaris/models/` — point
+  `model_dir` (or `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR`) at a
+  writable path with ~1 GB free; the download is one-time per host.
+- An air-gapped Ollama HTTP embedder remains available as an operator escape
+  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`).
 - **FFI cliff:** you cannot implement the Rust `Embedder` / `Reranker` trait
   from Python — per-call FFI callbacks would be too slow for the hot path.
-  Roll-your-own backends are a Rust-crate-only escape hatch; if your backend
-  doesn't fit the preset / Ollama / BYO-ONNX shape, contribute a constructor
-  to `lunaris-embed`.
+  Roll-your-own backends are a Rust-crate-only escape hatch; contribute a
+  constructor to `lunaris-embed-native` or `lunaris-embed-remote`.
 
 ## GIL / async notes
 
@@ -240,14 +241,16 @@ across awaits (CLAUDE.md mandate; brace-balanced scan test in
   (`python -c "import sysconfig; print(sysconfig.get_platform())"`); if it
   isn't one of the 5 above, do a source install
   (`pip install lunaris --no-binary lunaris`, needs Rust 1.94+).
-- **"embedding-gemma weights missing at …"** — the in-process candle/fastembed
-  embedder needs weights. Either download them
-  (`huggingface-cli download google/embeddinggemma-300m --local-dir
-  ~/.cache/lunaris/models/embedding-gemma-300m/`) or use the Ollama embedder
-  (the default for the bundled wheel — Ollama just has to be reachable).
-- **`fastembed: failed to fetch model …`** — first-call download is hitting
-  the network; pre-populate `cache_dir`, ensure write access + ~1 GB free,
-  confirm outbound HTTPS to `huggingface.co`.
+- **"granite-embedding weights missing at …"** — the in-process native
+  embedder needs weights. Either pre-download them
+  (`huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2
+  --local-dir ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`)
+  or point `LUNARIS_EMBEDDER_DIR` at an existing local copy. As an operator
+  escape hatch, build with `--features embed-remote` and set
+  `LUNARIS_EMBEDDER_OLLAMA_URL`.
+- **"weights download failed / connection refused"** — first-call download is
+  hitting the network; pre-populate the model dir, ensure write access + ~1 GB
+  free, confirm outbound HTTPS to `huggingface.co`.
 - **`conformance_fixture_episodes` not exported** — correct; that helper
   lives behind the `bindings-it` Cargo feature, used only by the per-driver
   parity tests. Production wheels ship without it.

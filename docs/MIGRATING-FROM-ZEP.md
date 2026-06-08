@@ -27,7 +27,7 @@ already running Zep can evaluate the switch with concrete code.
 | **Tenancy**                                | `user_id` / `session_id` strings on the API | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + Postgres RLS-enforced |
 | **Atomicity**                              | Per-store best-effort; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
 | **Graph queries**                          | Cypher via Neo4j                             | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored` operator |
-| **Embedder coupling**                     | OpenAI default                                | Pluggable — candle (local 768d EmbeddingGemma), Ollama, cloud-API |
+| **Embedder coupling**                     | OpenAI default                                | In-process native granite-r2 (local, 768-d) by default; Ollama HTTP escape hatch (`--features embed-remote`) for air-gapped/remote deployments |
 | **Memory consolidation**                  | "MemGPT-style" salience-weighted episodic   | ACT-R base-level activation + Leiden community detection (RFC blueprint §5.1) |
 | **License**                                | Apache 2.0                                   | Apache 2.0                                             |
 

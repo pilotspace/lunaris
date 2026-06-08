@@ -40,7 +40,8 @@ types, `init_logging`, the pipeline handles, etc.
 | `lunaris-extract` | Entity/relation/fact extractor (candle / Ollama / cloud-API) + validator |
 | `lunaris-consolidate` | ACT-R consolidator (Anderson 1996; Leiden communities) — opt-in |
 | `lunaris-verify` | Slow-path arbitration verifier + MVCC supersede writer — opt-in |
-| `lunaris-embed` | `Embedder` impls (fastembed / candle / Ollama) |
+| `lunaris-embed-native` | `Embedder` impl — in-process candle (granite-r2 FP16, bge-reranker FP32) |
+| `lunaris-embed-remote` | `Embedder` impl — Ollama HTTP escape hatch (`--features embed-remote`) |
 | `lunaris-rerank` | Cross-encoder reranker (BGE-Reranker-v2-m3) + `NoopReranker` |
 | `lunaris-storage-moon` | `StoragePort` on a Redis-compatible substrate (native `FT.*`, `GRAPH.QUERY`, MQ, RRF) |
 | `lunaris-storage-postgres` | `StoragePort` on Postgres + pgvector + Apache AGE + pgmq (RLS-enforced isolation) |

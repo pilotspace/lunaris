@@ -232,14 +232,18 @@ Your Node runtime is older than NAPI 8 (Node 18 or lower). Upgrade to
 Node 20 LTS or later. `abi_pin.spec.mts` catches this at test startup
 with a readable reason.
 
-### "embedding-gemma weights missing at /Users/…/Library/Caches/lunaris/…"
+### Vector recall returns empty / `granite-r2 weights unavailable` WARN at first open
 
-The default `Lunaris::open` path constructs a Candle `EmbeddingGemma`
-embedder from `~/.cache/lunaris/models/embedding-gemma-300m/`. On a
-fresh machine the cache is empty. Either:
+The default `Lunaris::open` path constructs a native Candle embedder
+(`ibm-granite/granite-embedding-311m-multilingual-r2`, 768-d) from
+`~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`. On a
+fresh machine the cache is empty — `open` does **not** fail; it logs a
+`WARN` banner and falls back to a zero-vector `NoopEmbedder` so the rest
+of the open path completes, but **vector recall returns empty rows** until
+weights are staged. To get a real embedder:
 
-1. Download the weights: `huggingface-cli download google/embeddinggemma-300m --local-dir ~/.cache/lunaris/models/embedding-gemma-300m/`
-2. Use the Ollama embedder: the bundled Python + TS wheels are built with `default-features = false, features = ["ollama"]` precisely so `Lunaris::open` works without a weights cache; Ollama itself must be reachable at first embed call.
+1. Download the weights: `huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2 --local-dir ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/` (or point `LUNARIS_EMBEDDER_DIR` at an existing copy).
+2. Air-gapped / no local weights: build with `--features embed-remote` and set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` to route the embedder through an existing Ollama instance (operator escape hatch, not the supported path). Note the `ollama` feature on the published wheels gates the **extractor + verifier**, not the embedder.
 
 ### Production package does not expose `conformance_fixture_episodes` / `scanKvPrefix`
 

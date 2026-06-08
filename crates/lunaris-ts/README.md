@@ -51,24 +51,30 @@ main();
 
 ## Custom embedder + reranker
 
-Pick a preset or bring your own ONNX model. The `EmbedderConfig` and
-`RerankerConfig` factories swap the backend on a freshly-opened handle via
-the chainable `withEmbedder` / `withReranker` extension; the env-driven
-default remains in place for callers that don't chain.
+The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
+runs **in-process** via candle, and auto-downloads to
+`~/.cache/lunaris/models/` on first use — **no Ollama, no ONNX Runtime, no
+external service required.** An air-gapped Ollama HTTP embedder remains
+available as an operator escape hatch behind `--features embed-remote`.
+
+The `EmbedderConfig` and `RerankerConfig` factories swap the backend on a
+freshly-opened handle via the chainable `withEmbedder` / `withReranker`
+extension; the env-driven default remains in place for callers that don't
+chain.
 
 ```typescript
-import { Lunaris, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
+import { open, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
-const cfg = EmbedderConfig.fastembed({ cacheDir: "/var/cache/lunaris/fastembed" });
-const handle = (await Lunaris.open("moon://127.0.0.1:6380"))
-  .withEmbedder(cfg)
-  .withReranker(RerankerConfig.noop());   // disable cross-encoder rerank
+// `withEmbedder` / `withReranker` are chainable and return a NEW handle.
+const mem = (await open("moon://127.0.0.1:6380"))
+  .withEmbedder(EmbedderConfig.native())   // granite-r2, in-process
+  .withReranker(RerankerConfig.native());  // bge-reranker-v2-m3
 // ... ingest / recall as usual
 ```
 
 See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
-the full customization guide — preset fastembed, preset Ollama, BYO ONNX
-bytes, and BYO ONNX path — with troubleshooting and the FFI-cliff limits.
+the full customization guide — native in-process, quantized GGUF, and the
+operator Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
 
 ## Surface parity
 

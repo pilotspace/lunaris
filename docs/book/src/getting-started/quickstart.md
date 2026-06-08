@@ -4,8 +4,9 @@
 Postgres backend in under ten minutes — Rust is canonical, with Python
 and TypeScript mirrors side by side.** This targets the v0.2.x OSS
 milestone: Postgres + pgvector as the backend, no Moon required. (The
-`lunaris` crate's default embedder is in-process `fastembed`, but the
-shipped `examples/quickstart-rs` crate opts into the `ollama` build —
+default embedder is in-process native granite-r2 — no Ollama needed for
+embedding. The shipped `examples/quickstart-rs` crate opts into the
+`ollama` build to enable the Ollama **extractor + verifier** path —
 see step 2.)
 
 > **API note.** This chapter uses the retrieval surface that exists in
@@ -48,21 +49,24 @@ sqlx migrate run --source ../../crates/lunaris-storage-postgres/migrations \
 export LUNARIS_PG_URL="postgres://lunaris:lunaris@localhost:5432/lunaris"
 ```
 
-In your own project the default embedder is `fastembed` (ONNX
-EmbeddingGemma-300M, auto-downloads weights, in-process) — **no Ollama
-needed**. The shipped `examples/quickstart-rs` crate, however, pins
-`features = ["ollama"]` in its `Cargo.toml` (smallest external-dep build
-that exercises a real embedder + extractor + verifier path), so for this
-walkthrough start Ollama and pull a tiny model first:
+The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
+runs **in-process** via candle, and auto-downloads to
+`~/.cache/lunaris/models/` on first use — **no Ollama needed for embedding**.
+
+The shipped `examples/quickstart-rs` crate pins `features = ["ollama"]`
+in its `Cargo.toml` to enable the Ollama **extractor + verifier** path
+(the smallest external-dep build that exercises a real extraction + verification
+flow). The embedder and reranker remain native in-process regardless. So for
+this walkthrough, start Ollama and pull the extractor model:
 
 ```bash
 ollama serve &
-ollama pull nomic-embed-text
+ollama pull gemma3:4b
 ```
 
-Prefer the in-process path? Edit `examples/quickstart-rs/Cargo.toml` to
-`default-features = false, features = ["candle"]` (pre-downloads ~5 GB of
-Gemma 3 weights) — then no Ollama is needed.
+Prefer an all-in-process path? Edit `examples/quickstart-rs/Cargo.toml` to
+`features = ["candle"]` (pre-downloads ~5 GB of Gemma 3 4B extractor weights)
+— then no Ollama is needed at all.
 
 ## 3–6. Open a handle, ingest, recall, forget
 

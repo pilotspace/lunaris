@@ -15,7 +15,7 @@ URL scheme: `moon://host:port` or `postgres://user:pass@host/db`.
 | RRF fusion | **Native** (in-substrate) | **Client-side** (Lunaris fuses in process) |
 | Graph traversal | Native `GRAPH.QUERY` | Apache AGE Cypher |
 | Pipeline queue | Native Streams | `pgmq` |
-| Embedding dim (adapter) | **Embedder-sized** — the Moon adapter creates its vector index at the configured embedder's dimension (default **768-d**, EmbeddingGemma-300M; `Lunaris::open` passes `embedder.dim()` through, and `MoonStorage::connect_with_dim` lets you set it directly). No upper cap. | up to ~**1536-d** (pgvector practical ceiling) |
+| Embedding dim (adapter) | **Embedder-sized** — the Moon adapter creates its vector index at the configured embedder's dimension (default **768-d**, granite-embedding-311m-multilingual-r2; `Lunaris::open` passes `embedder.dim()` through, and `MoonStorage::connect_with_dim` lets you set it directly). No upper cap. | up to ~**1536-d** (pgvector practical ceiling) |
 | Bi-temporal `as_of` | Native bi-temporal index | `tstzrange &&` |
 | Tenant isolation | Per-scope keyspace prefix `lunaris:{scope}:` + per-scope FT/GRAPH/MQ | Postgres **RLS** (`SET LOCAL lunaris.scope`) |
 | Scope soft cap | ~512 scopes/node (`max_scopes_recommended`) | n/a (RLS scales with rows) |
@@ -32,7 +32,7 @@ backends return identical hits + ordering for the same input.
 > indices at the **configured embedder's dimension**: `Lunaris::open(url)`
 > reads `embedder.dim()` and calls `MoonStorage::connect_with_dim(url, dim)`,
 > so a 1536-d embedder (OpenAI `text-embedding-3`) works against Moon out of
-> the box. The default is **768-d** (EmbeddingGemma-300M); `max_vector_dim` in
+> the box. The default is **768-d** (granite-embedding-311m-multilingual-r2); `max_vector_dim` in
 > `StorageCapabilities` then reports whatever dimension the index was actually
 > created at. Operator footgun: Moon's `FT.CREATE` is idempotent and does
 > **not** resize an existing index — if a Moon instance already holds a 768-d
@@ -50,7 +50,7 @@ backends return identical hits + ordering for the same input.
   is measured on.
 - You already run (or are willing to run) Moon as infra.
 - The Moon adapter sizes its FT vector index to your embedder — the default
-  768-d (EmbeddingGemma-300M) is the common case, but a wider embedder works
+  768-d (granite-embedding-311m-multilingual-r2) is the common case, but a wider embedder works
   on Moon too (`Lunaris::open` passes `embedder.dim()` through). See the note
   above for the "existing index won't auto-resize" footgun.
 - You don't need more than ~512 scopes per node.

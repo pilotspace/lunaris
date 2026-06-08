@@ -51,9 +51,10 @@ which reads the graph-pipeline toggle **once** at the top and picks a branch
    single-input embeds; a per-chunk failure surfaces immediately as
    `LunarisError::Storage(Backend(_))`
    (`crates/lunaris-ingest/src/pipeline.rs:120-178`). The default embedder is
-   the fastembed ONNX EmbeddingGemma-300M (`LUNARIS_EMBEDDER_BACKEND=fastembed`,
-   auto-downloads on first call); see
-   [Configuration → Embedder](../reference/configuration.md#embedder-backend-details).
+   **granite-embedding-311m-multilingual-r2** (768-d), running in-process via
+   candle — no external service required; weights auto-download to
+   `~/.cache/lunaris/models/` on first call. See
+   [Configuration → Embedder](../reference/configuration.md#embedder-and-reranker-details).
 3. **Assemble one `Vec<WriteOp>`** — one `KvPut` for the episode, plus per
    chunk a `KvPut` (chunk JSON) and a `VectorUpsert` (768-d embedding +
    `{episode_id, heading_path, offset, text, source}` metadata). The `text`
@@ -111,16 +112,14 @@ A toggle change *during* an in-flight ingest takes effect on the **next** call
 - **Bare `Lunaris::ingest(Episode)` still exists** but the scoped path is the
   one to use. The HTTP server already routes every `POST /v1/ingest` through
   `ScopedLunaris::ingest` keyed on the JWT `tenant` claim.
-- **Weights cache.** The default embedder (`fastembed`) auto-downloads its
-  ONNX weights to `~/.cache/lunaris/models/fastembed/` on first call — no
-  manual step. If you switch to the candle backend
-  (`LUNARIS_EMBEDDER_BACKEND=candle`), it loads from
-  `~/.cache/lunaris/models/embedding-gemma-300m/` and missing weights surface
-  as a `Backend` error of the form `embedding-gemma weights missing at PATH`
-  with a suggested `huggingface-cli download google/embeddinggemma-300m`
-  command. Either pre-download, or
-  `lunaris.with_embedder(Arc::new(lunaris_embed::OllamaEmbedder::new(Default::default())?))`
-  before first use.
+- **Weights cache.** The default embedder (native granite-r2) auto-downloads
+  its weights to `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`
+  on first call — no manual step. Missing weights surface as a `Backend` error
+  of the form `granite-embedding weights missing at PATH` with a suggested
+  `huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2`
+  command. Point `LUNARIS_EMBEDDER_DIR` at an existing local copy to skip the
+  download, or build with `--features embed-remote` and set
+  `LUNARIS_EMBEDDER_OLLAMA_URL` to use the Ollama HTTP escape hatch.
 - **Embedding dimension.** The Moon adapter creates its vector index at the
   configured embedder's dimension (default 768-d; `Lunaris::open` passes
   `embedder.dim()`, or use `MoonStorage::connect_with_dim` directly), so a
