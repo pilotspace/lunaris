@@ -5,19 +5,15 @@
 //! - `Query::text(query).k` + optional `Filter::StartsWith` + optional `as_of`.
 //! - Maps `Vec<Hit>` → `Vec<RecallHit>` with ≤ 200-char content snippet.
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use chrono::DateTime;
 use lunaris::Query;
-use lunaris_core::{Hlc, LunarisError, StorageError, storage::types::Filter};
+use lunaris_core::{Hlc, storage::types::Filter};
 use lunaris_retrieve::{Keyword, Vector};
 use serde::{Deserialize, Serialize};
-use tokio::sync::OnceCell;
 
-use crate::model_stager::{ModelKind, StageError, ensure_staged};
 use crate::state::AppState;
 use crate::tools::ToolError;
+use crate::tools::staging::{is_keyword_not_supported, maybe_ensure_staged};
 
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
@@ -74,54 +70,6 @@ pub(crate) struct RecallHit {
 pub(crate) struct RecallResponse {
     /// Ordered list of recalled memories (highest score first).
     pub hits: Vec<RecallHit>,
-}
-
-// ── Lazy stager ───────────────────────────────────────────────────────────────
-
-/// Printed at most once per process on the first model download.
-static STAGE_LOG_ONCE: OnceLock<()> = OnceLock::new();
-
-/// Successful model staging verification is process-stable.
-///
-/// `ensure_staged` hashes the full GGUF when the file already exists. That is
-/// the right integrity check before first use, but doing it on every recall
-/// burns one CPU core for seconds on a 253 MB model. Cache only successful
-/// verification; transient failures are retried on the next recall.
-static STAGED_MODEL: OnceCell<()> = OnceCell::const_new();
-
-/// Test seam: when `true`, `maybe_ensure_staged` skips the real GGUF download.
-///
-/// Set by `#[cfg(test)]` helpers via `skip_stage_for_tests()`. Production code
-/// never sets this — the value starts `false` and only flips inside the test
-/// binary. This avoids `unsafe { std::env::set_var }` under `forbid(unsafe_code)`.
-static SKIP_STAGE: AtomicBool = AtomicBool::new(false);
-
-/// Enable the staging bypass in the current process (test-only call site).
-#[cfg(test)]
-fn skip_stage_for_tests() {
-    SKIP_STAGE.store(true, Ordering::Relaxed);
-}
-
-/// Ensure the embedder GGUF is staged — called lazily from the first recall.
-///
-/// Bypassed when:
-/// - `LUNARIS_MCP_SKIP_STAGE` env var is set (CI / operator override), OR
-/// - `SKIP_STAGE` atomic is `true` (test seam — no `unsafe` needed).
-async fn maybe_ensure_staged() -> Result<(), ToolError> {
-    if SKIP_STAGE.load(Ordering::Relaxed) || std::env::var_os("LUNARIS_MCP_SKIP_STAGE").is_some() {
-        return Ok(());
-    }
-    STAGED_MODEL
-        .get_or_try_init(|| async {
-            STAGE_LOG_ONCE.get_or_init(|| {
-                eprintln!("lunaris-mcp: staging models — first run only");
-            });
-            ensure_staged(ModelKind::EmbedderGraniteQ4KM).await.map(|_| ()).map_err(
-                |e: StageError| ToolError::InvalidInput(format!("model staging failed: {e}")),
-            )
-        })
-        .await
-        .map(|_| ())
 }
 
 // ── Hlc helpers ──────────────────────────────────────────────────────────────
@@ -245,14 +193,6 @@ pub(crate) async fn handle(
     Ok(RecallResponse { hits: recall_hits })
 }
 
-fn is_keyword_not_supported(err: &LunarisError) -> bool {
-    matches!(
-        err,
-        LunarisError::Storage(StorageError::NotSupported(msg))
-            if msg.contains("keyword_search") || msg.contains("keyword")
-    )
-}
-
 /// Convert a 16-byte ULID to its canonical 26-char string representation.
 /// Falls back to an empty string for malformed byte slices (should never happen
 /// in practice — storage always writes 16-byte ULID ids).
@@ -282,7 +222,7 @@ mod tests {
     /// rather than the zero-vector NoopEmbedder which returns nothing.
     async fn fresh_state(scope_name: &str) -> AppState {
         // Bypass the 253 MB HF download in tests — StubEmbedder provides recall.
-        skip_stage_for_tests();
+        crate::tools::staging::skip_stage_for_tests();
         let embedder = Arc::new(StubEmbedder::new(768));
         let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
         let scope = Scope::new(scope_name).unwrap();
