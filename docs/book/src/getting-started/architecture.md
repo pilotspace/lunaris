@@ -68,7 +68,15 @@ DB for records, and a queue for background work. Four systems, four
 failure domains, four consistency boundaries — and *no transaction that
 spans them*.
 
-Moon collapses the stack. It is one process that natively speaks:
+Moon collapses the stack into one process. The payoff isn't abstract —
+it shows up feature by feature. Each Lunaris capability you actually use
+maps onto something Moon does *natively*, so the engine never
+reimplements a vector index, a BM25 scorer, a graph engine, or a
+transaction log on top of a dumb key-value store:
+
+![What Moon does natively, feature by feature](../images/architecture/moon-feature-superpower.png)
+
+The same story as a lookup table — the command family behind each row:
 
 | Capability | Moon command family | What Lunaris does with it |
 |---|---|---|
@@ -84,6 +92,23 @@ Moon collapses the stack. It is one process that natively speaks:
 One substrate, one transaction boundary, one operational surface. That
 is the design bet — and the measured sub-25 ms recall is what the bet
 pays out.
+
+### How that lands against other tools
+
+Most agent-memory engines do the same job; what differs is the
+*guarantees*. Because Lunaris pushes vectors, keywords, the graph, the
+queue, and a transaction boundary into a single substrate, several rows
+below are a ✓ for Lunaris where the fan-out tools can only manage a
+partial or an ✗:
+
+![Lunaris vs Mem0 / Zep / Cognee, feature by feature](../images/architecture/lunaris-vs-rivals.png)
+
+Every cell above is taken straight from the [full comparison table in
+**Why Lunaris**](./why-lunaris.md), which carries the nuance each mark
+compresses — plus the honest "use a different tool when…" criteria. The
+short version: Lunaris trades a hosted-SaaS option and Python-native
+simplicity for a latency contract and an atomicity guarantee the
+fan-out tools structurally can't make.
 
 **Honest footnote:** plain key-value point reads on Moon are not
 natively temporal (the engine applies the temporal cut itself), and

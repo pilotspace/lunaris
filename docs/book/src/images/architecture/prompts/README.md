@@ -1,6 +1,6 @@
 # Architecture diagram prompts
 
-The three marketing diagrams in `../` are AI-generated (Gemini
+The five marketing diagrams in `../` are AI-generated (Gemini
 `gemini-3-pro-image-preview`, 16:9, 2K) in the "calm whiteboard" style
 with two deliberate overrides: clean **print lettering** (not
 handwriting) and **pencil-line annotation arrows**.
@@ -20,6 +20,8 @@ python3 nanobanana_rest.py \
 | `diagram-layers.txt` | `lunaris-layers.png` | The four-tier layered design |
 | `diagram-pipeline.txt` | `lunaris-pipeline.png` | Ingest → atomic write → Moon → recall fusion |
 | `diagram-stack.txt` | `moon-vs-stack.png` | Four-system stack vs one Moon substrate |
+| `diagram-feature-superpower.txt` | `moon-feature-superpower.png` | Feature → Moon native command → reader benefit |
+| `diagram-compare-rivals.txt` | `lunaris-vs-rivals.png` | Lunaris vs Mem0 / Zep / Cognee scorecard (cells from the why-lunaris table) |
 
 Keep prompts sparse: image models garble dense technical text. Numbers
 quoted in the prompts (recall p50 10.3 ms, contract < 25 ms) must stay

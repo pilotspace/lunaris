@@ -180,6 +180,37 @@ substrate*.
 Full tour with diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 and the book's [Architecture at a Glance](docs/book/src/getting-started/architecture.md).
 
+## Why Moon — the substrate advantage
+
+The conventional agent-memory stack is three databases and a broker: a
+vector DB, a graph DB, a relational store, and a queue — four failure
+domains with no transaction spanning them. Moon collapses all four lanes
+into one process, so each Lunaris feature maps onto something the
+substrate does *natively* instead of a layer bolted on top:
+
+![What Moon does natively, feature by feature](https://raw.githubusercontent.com/pilotspace/lunaris/main/docs/book/src/images/architecture/moon-feature-superpower.png)
+
+- **Atomic memory** — `TXN.BEGIN` / `TXN.COMMIT` commit every lane at once; no half-written memory.
+- **Hybrid recall** — `FT.SEARCH` + native RRF fuse vector + keyword in one round trip.
+- **Time-travel** — `AS_OF` / `VALID_AT` make "what did the agent know at T?" a query, not a rebuild.
+- **Opt-in graph** — per-scope `GRAPH.QUERY` (Cypher): relationships without running Neo4j.
+- **GDPR forget** — `FT.INVALIDATE_RANGE` erases a whole time range, no scan-and-delete loop.
+- **Background work** — a native queue + pub/sub run consolidation without an external broker.
+
+Same job as Mem0, Zep, and Cognee — different *guarantees*. The single
+substrate is why several rows below are a ✓ for Lunaris where the
+fan-out tools manage only a partial or an ✗:
+
+![Lunaris vs Mem0 / Zep / Cognee, feature by feature](https://raw.githubusercontent.com/pilotspace/lunaris/main/docs/book/src/images/architecture/lunaris-vs-rivals.png)
+
+Every cell is sourced from the comparison table in
+[**Why Lunaris**](docs/book/src/getting-started/why-lunaris.md); the full
+advantage map — each claim anchored to a code path — lives in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). One honest caveat: plain
+key-value point reads aren't natively temporal and index schemas are
+fixed at creation, so the architecture page lists every limit beside
+every win.
+
 ## Multi-agent isolation
 
 Every Lunaris operation is partitioned by `Scope` — a validated newtype

@@ -139,6 +139,8 @@ flagship backend is that each `StoragePort` method maps onto a Moon
 BM25 scorer, a graph engine, or a transaction log on top of a dumb KV
 store. (Source for each mapping: `crates/lunaris-storage-moon/src/`.)
 
+![What Moon does natively, feature by feature](book/src/images/architecture/moon-feature-superpower.png)
+
 | Lunaris needs | Moon native answer | What it buys you |
 |---|---|---|
 | All-or-nothing ingest commit | `TXN.BEGIN` … `TXN.COMMIT` server-side transaction spanning KV, vector, BM25, graph, audit, queue writes (`atomic.rs`) | The atomicity contract fan-out architectures can't make. One crash window: zero |
