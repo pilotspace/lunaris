@@ -11,8 +11,8 @@ observations in; structured, bi-temporal facts out. Backed by **Moon**
 
 ![Lunaris layered architecture](https://raw.githubusercontent.com/pilotspace/lunaris/main/docs/book/src/images/architecture/lunaris-layers.png)
 
-> **Documentation:** the full guide lives in the **[Lunaris Book](docs/book/)**
-> (`mdbook serve docs/book` locally, or the published site at lunaris.dev once
+> **Documentation:** the full guide lives in the **[Lunaris Book](https://pilotspace.github.io/lunaris/)** or
+> (`mdbook serve docs/book` locally .
 > live). **First time here?** [`docs/POSITIONING.md`](docs/POSITIONING.md) is
 > the one-page pitch + honest "use a different tool when…" criteria.
 > **How it works:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the
