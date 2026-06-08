@@ -81,8 +81,3 @@ different tool when…" criteria.
 > source, the source wins. Many pages carry `path:line` cross-references back
 > into the crates; the generated [API reference](./reference/api.md) is built
 > from `cargo doc` on every release.
-
-> **Note on links.** The repository URL `github.com/lunaris-dev/lunaris` and
-> the domain `lunaris.dev` used throughout this book and the README are
-> **placeholders** pending the final OSS home — substitute the real values at
-> publish time.

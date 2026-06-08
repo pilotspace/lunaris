@@ -40,7 +40,7 @@ A few more differentiators, with proof:
 | Differentiator | What it gets you | Proof source |
 |---|---|---|
 | **Composable retrieval DSL** | `Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5)` is one typed expression. Hybrid search isn't a feature flag; it's an operator combinator. | `crates/lunaris-retrieve/src/builder.rs` |
-| **Type-enforced multi-tenancy** | `Scope::new(s)?` validates against `[A-Za-z0-9_\-.]{1,128}`; the wire can't smuggle a different scope past `ScopedLunaris`. Postgres RLS enforces it again at the database boundary. | `crates/lunaris-core/src/scope.rs` ([RFC 0001](https://github.com/lunaris-dev/lunaris/blob/main/docs/rfcs/0001-scope-newtype.md)) |
+| **Type-enforced multi-tenancy** | `Scope::new(s)?` validates against `[A-Za-z0-9_\-.]{1,128}`; the wire can't smuggle a different scope past `ScopedLunaris`. Postgres RLS enforces it again at the database boundary. | `crates/lunaris-core/src/scope.rs` ([RFC 0001](https://github.com/pilotspace/lunaris/blob/main/docs/rfcs/0001-scope-newtype.md)) |
 | **Opt-in graph** | `Graph::anchored(entity_ids, hops)` is an operator. Off by default — your dev box doesn't load a graph extractor until you call `lunaris.graph_pipeline().enable()`. | `crates/lunaris-retrieve/src/operators/graph.rs` |
 | **Pluggable verifier with a laptop floor** | RFC 0006's 27B → 270M flip: the `verify-small` build runs a *real* slow-path verifier in ~600 MB disk / ~1 GB RAM. With stock features and no weights staged the effective verifier is `NoopVerifier` (a `tracing::warn!` says so) — opt in deliberately. | `crates/lunaris-verify/src/candle_gemma3_270m.rs` |
 | **One substrate, not three** | Moon *or* Postgres holds the vector index, the graph, the keyword index, and the queue. No vector DB + graph DB + relational DB to operate. | [Choosing a Backend](../operations/backends.md) |
@@ -132,9 +132,5 @@ on $incumbent if…" criteria:
 - **Understand the model** → [Core Concepts](./concepts.md).
 - **Evaluate against your corpus** → read the moat table above + the
   migration chapter for your current tool, then run
-  [`examples/quickstart-py/`](https://github.com/lunaris-dev/lunaris/tree/main/examples/quickstart-py)
+  [`examples/quickstart-py/`](https://github.com/pilotspace/lunaris/tree/main/examples/quickstart-py)
   against your real data.
-
-> **Note on links.** The repository URL `github.com/lunaris-dev/lunaris`
-> and the domain `lunaris.dev` are **placeholders** pending the final OSS
-> home — substitute the real values at publish time.

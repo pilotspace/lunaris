@@ -1,40 +1,27 @@
 /* =============================================================================
-   Lunaris — documentation theme overlay
+   Lunaris — documentation theme overlay (light-only "Lunaris Day")
    =============================================================================
 
    DESIGN RATIONALE
    ----------------
    Lunaris is an agent-memory engine; its sibling substrate is "Moon". The brand
-   reads celestial/lunar: a calm night sky, moonlit silver-blue light, precision,
-   restraint. The reference points are tokio.rs, the Rust Book, and Linear's docs
-   — polished infrastructure documentation, not a marketing splash. Senior
-   engineers live in these pages; legibility, fast scanning, and great code-block
-   contrast win over decoration.
+   reads celestial/lunar: precision, restraint, calm. The reference points are
+   tokio.rs, the Rust Book, and Linear's docs — polished infrastructure
+   documentation, not a marketing splash. Senior engineers live in these pages;
+   legibility, fast scanning, and great code-block contrast win over decoration.
 
-   This file is a thin overlay on mdBook's built-in "navy" theme (chosen as the
-   base because it is already a deep blue night palette — closer to "Lunaris
-   Night" than ayu's amber or coal's neutral grey). We re-tune navy into
-   "Lunaris Night" and give the "light" theme a matching "Lunaris Day" treatment
-   (warm paper, deep navy ink) so the light mode is not left broken.
+   The published site is LIGHT-ONLY. book.toml pins both `default-theme` and
+   `preferred-dark-theme` to "light", and this file hides the theme switcher
+   (§0) so the dark palette is never reachable. This overlay re-tunes mdBook's
+   built-in "light" theme into "Lunaris Day": warm paper, deep navy ink.
 
-   PALETTE — Lunaris Night (dark, default)
-     Background      #0C111B   deep space navy (slightly bluer/darker than navy)
-     Surface/sidebar #11192A   raised panel
-     Body text       #C9D2E3   moonlight silver — ~9.5:1 on bg (WCAG AAA)
-     Headings        #E8EDF7   bright moonlight
-     Accent (links)  #7FB6E8   moonbeam blue — ~6.5:1 on bg (WCAG AA large+small)
-     Accent strong   #A9C9F0   hover / active
-     Inline code     #8FD0C4   pale teal (echoes Moon's "FT.*" tooling green)
-     Table header    #1B2940   quiet indigo, no harsh fill
-     Zebra row       #0F1626
-
-   PALETTE — Lunaris Day (light)
+   PALETTE — Lunaris Day
      Background      #FCFCFA   warm off-white "paper"
      Surface/sidebar #F4F5F2   raised panel
-     Body text       #1B2433   deep navy ink — ~13:1 on bg
+     Body text       #1B2433   deep navy ink — ~13:1 on bg (WCAG AAA)
      Accent (links)  #1E5C99   deep moonbeam — ~5.6:1 on bg (WCAG AA)
      Inline code     #0C5A4E   teal, darkened for contrast on paper
-     Table header    #ECEEF1
+     Table header    #ECEEF1   quiet band, no harsh fill
 
    TYPE
      System font stack only (no CDN fonts — offline builds must work). The body
@@ -44,21 +31,31 @@
      mdBook's default and is already in the right band, so it is left alone.
 
    WHAT CHANGED & WHY
-     - Re-coloured "navy" + "light" CSS custom properties under their theme-class
-       selectors (mdBook scopes them on <html>, so :root would lose to specificity).
+     - Re-coloured the "light" CSS custom properties under the .light theme-class
+       selector (mdBook scopes them on <html>, so :root would lose to specificity).
      - Tables: more padding, lighter borders, a calm header band instead of the
-       stock heavy grey, subtle zebra striping, rounded outer corners. The old
-       tables were cramped.
-     - Code blocks: darker, slightly bluer panel; a hairline border; the Highlight.js
-       Rust palette retuned to a cool "moonlit" set so code matches the chrome.
+       stock heavy grey, subtle zebra striping, rounded outer corners.
+     - Code blocks: a faint paper panel with a hairline border; the Highlight.js
+       palette retuned to a quiet ink set so code matches the chrome.
      - Links: underline-on-hover only (less noise in dense prose), accent-coloured.
      - Sidebar: tighter type, accent left-rail on the active item, calmer hover.
      - Respects prefers-reduced-motion; does not touch the search popup internals,
        mobile breakpoints, or the content max-width.
 
-   Accessibility: all body/heading/link pairs verified ≥ 4.5:1 (AA) on both themes;
-   most are AAA. Decorative-only colour is avoided.
+   Accessibility: all body/heading/link pairs verified ≥ 4.5:1 (AA); most are AAA.
+   Decorative-only colour is avoided.
    ========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   0. Light-only — hide the theme switcher
+   The site ships a single theme; remove the paintbrush so dark is unreachable.
+   ------------------------------------------------------------------------- */
+
+#theme-toggle,
+.theme-popup {
+    display: none !important;
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -113,95 +110,8 @@ body {
 
 
 /* ---------------------------------------------------------------------------
-   2. Lunaris Night  (overlay on the built-in "navy" theme)
+   2. Lunaris Day  (overlay on the built-in "light" theme)
    mdBook puts the theme class on <html>; we must match it (not :root).
-   ------------------------------------------------------------------------- */
-
-.navy {
-    --bg: #0C111B;
-    --fg: #C9D2E3;
-
-    --sidebar-bg: #0E1421;
-    --sidebar-fg: #B7C2D6;
-    --sidebar-non-existant: #4A5570;
-    --sidebar-active: #7FB6E8;
-    --sidebar-spacer: #1A2336;
-
-    --scrollbar: #3A4763;
-
-    --icons: #6B7791;
-    --icons-hover: #C9D2E3;
-
-    --links: #7FB6E8;
-
-    --inline-code-color: #8FD0C4;
-
-    --theme-popup-bg: #11192A;
-    --theme-popup-border: #2A3754;
-    --theme-hover: #182238;
-
-    --quote-bg: #121C2E;
-    --quote-border: #2A3754;
-
-    --warning-border: #E0A23C;
-
-    --table-border-color: #1E2A40;
-    --table-header-bg: #1B2940;
-    --table-alternate-bg: #0F1626;
-
-    --searchbar-border-color: #2A3754;
-    --searchbar-bg: #11192A;
-    --searchbar-fg: #E8EDF7;
-    --searchbar-shadow-color: #060912;
-    --searchresults-header-fg: #8A95AD;
-    --searchresults-border-color: #243150;
-    --searchresults-li-bg: #11192A;
-    --search-mark-bg: #2F557F;
-
-    --color-scheme: dark;
-
-    --copy-button-filter: invert(48%) sepia(11%) saturate(640%) hue-rotate(190deg) brightness(92%) contrast(88%);
-    --copy-button-filter-hover: invert(72%) sepia(28%) saturate(620%) hue-rotate(178deg) brightness(98%) contrast(92%);
-
-    --footnote-highlight: #2F557F;
-    --overlay-bg: rgba(8, 12, 20, 0.55);
-
-    --blockquote-note-color: #7FB6E8;
-    --blockquote-tip-color: #5BC9A8;
-    --blockquote-important-color: #B79CE8;
-    --blockquote-warning-color: #E0A23C;
-    --blockquote-caution-color: #E36A6A;
-
-    --sidebar-header-border-color: #2A3754;
-}
-
-/* Bright moonlight headings on the dark theme */
-.navy .content h1,
-.navy .content h2,
-.navy .content h3,
-.navy .content h4 {
-    color: #E8EDF7;
-}
-
-/* SSR / no-JS first paint should match the dark default */
-@media (prefers-color-scheme: dark) {
-    html:not(.js) {
-        --bg: #0C111B;
-        --fg: #C9D2E3;
-        --sidebar-bg: #0E1421;
-        --sidebar-fg: #B7C2D6;
-        --links: #7FB6E8;
-        --inline-code-color: #8FD0C4;
-        --table-border-color: #1E2A40;
-        --table-header-bg: #1B2940;
-        --table-alternate-bg: #0F1626;
-        --color-scheme: dark;
-    }
-}
-
-
-/* ---------------------------------------------------------------------------
-   3. Lunaris Day  (overlay on the built-in "light" theme)
    ------------------------------------------------------------------------- */
 
 .light {
@@ -269,15 +179,23 @@ body {
     color: #131A26;
 }
 
-html:not(.js):not(.dark) {
-    /* light SSR fallback — keep the warm paper bg */
+/* SSR / no-JS first paint stays on warm paper, regardless of OS dark mode */
+html:not(.js) {
     --bg: #FCFCFA;
     --fg: #1B2433;
+    --sidebar-bg: #F4F5F2;
+    --sidebar-fg: #2B3445;
+    --links: #1E5C99;
+    --inline-code-color: #0C5A4E;
+    --table-border-color: #E4E6E3;
+    --table-header-bg: #ECEEF1;
+    --table-alternate-bg: #F7F8F6;
+    --color-scheme: light;
 }
 
 
 /* ---------------------------------------------------------------------------
-   4. Links
+   3. Links
    ------------------------------------------------------------------------- */
 
 .content a:link,
@@ -294,7 +212,7 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   5. Tables — roomier, calmer, rounded
+   4. Tables — roomier, calmer, rounded
    ------------------------------------------------------------------------- */
 
 .content table {
@@ -347,7 +265,7 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   6. Code blocks & inline code
+   5. Code blocks & inline code
    ------------------------------------------------------------------------- */
 
 .content code {
@@ -358,9 +276,6 @@ html:not(.js):not(.dark) {
 .content :not(pre) > code {
     padding: 0.12em 0.34em;
     border-radius: 4px;
-}
-.navy .content :not(pre) > code {
-    background: rgba(143, 208, 196, 0.10);
 }
 .light .content :not(pre) > code {
     background: rgba(12, 90, 78, 0.07);
@@ -376,13 +291,6 @@ html:not(.js):not(.dark) {
     display: block;
     padding: 1em 1.15em;
 }
-.navy .content pre {
-    background: #0A0F1A;
-    border: 1px solid #1B2940;
-}
-.navy .content pre > code {
-    background: #0A0F1A;
-}
 .light .content pre {
     background: #F6F7F4;
     border: 1px solid #E4E6E3;
@@ -393,50 +301,11 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   7. Highlight.js token palette — "moonlit" (dark) / quiet ink (light)
-   The built-in themes ship a Rust-flavoured highlight.css; retune the tokens
+   6. Highlight.js token palette — quiet ink on paper
+   The built-in theme ships a Rust-flavoured highlight.css; retune the tokens
    so code matches the Lunaris chrome instead of the stock orange-on-beige.
    ------------------------------------------------------------------------- */
 
-/* --- dark (Lunaris Night) --- */
-.navy .hljs                { color: #C9D2E3; }
-.navy .hljs-comment,
-.navy .hljs-quote          { color: #5E6B82; font-style: italic; }
-.navy .hljs-keyword,
-.navy .hljs-selector-tag,
-.navy .hljs-meta-keyword,
-.navy .hljs-doctag,
-.navy .hljs-section,
-.navy .hljs-name,
-.navy .hljs-type           { color: #88B8EE; }
-.navy .hljs-string,
-.navy .hljs-regexp,
-.navy .hljs-addition,
-.navy .hljs-attribute,
-.navy .hljs-meta-string    { color: #8FD0C4; }
-.navy .hljs-number,
-.navy .hljs-literal,
-.navy .hljs-symbol,
-.navy .hljs-bullet,
-.navy .hljs-link           { color: #C9A6E8; }
-.navy .hljs-title,
-.navy .hljs-built_in,
-.navy .hljs-title.function_,
-.navy .hljs-function .hljs-title { color: #E0C98C; }
-.navy .hljs-attr,
-.navy .hljs-variable,
-.navy .hljs-template-variable,
-.navy .hljs-class .hljs-title,
-.navy .hljs-selector-attr,
-.navy .hljs-selector-pseudo,
-.navy .hljs-template-tag   { color: #C9D2E3; }
-.navy .hljs-deletion       { color: #E36A6A; }
-.navy .hljs-meta           { color: #7FB6E8; }
-.navy .hljs-emphasis       { font-style: italic; }
-.navy .hljs-strong         { font-weight: 700; }
-.navy .boring              { opacity: 0.55; }
-
-/* --- light (Lunaris Day) --- */
 .light .hljs                { color: #1B2433; }
 .light .hljs-comment,
 .light .hljs-quote          { color: #6B7382; font-style: italic; }
@@ -476,7 +345,7 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   8. Sidebar polish
+   7. Sidebar polish
    ------------------------------------------------------------------------- */
 
 .sidebar .sidebar-scrollbox {
@@ -514,7 +383,7 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   9. Blockquotes / callouts
+   8. Blockquotes / callouts
    ------------------------------------------------------------------------- */
 
 .content blockquote {
@@ -525,20 +394,20 @@ html:not(.js):not(.dark) {
 
 
 /* ---------------------------------------------------------------------------
-   10. Top menu bar — match the surface, lose the harsh divider
+   9. Top menu bar — match the surface, lose the harsh divider
    ------------------------------------------------------------------------- */
 
 .menu-bar {
     border-bottom: 1px solid var(--table-border-color);
 }
-.navy #menu-bar.menu-bar,
-.navy .menu-bar > #menu-bar-sticky {
+.light #menu-bar.menu-bar,
+.light .menu-bar > #menu-bar-sticky {
     background: var(--sidebar-bg);
 }
 
 
 /* ---------------------------------------------------------------------------
-   11. Motion / accessibility
+   10. Motion / accessibility
    ------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {

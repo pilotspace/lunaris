@@ -21,7 +21,7 @@ see step 2.)
 ## 0. Get the code
 
 ```bash
-git clone https://github.com/lunaris-dev/lunaris && cd lunaris
+git clone https://github.com/pilotspace/lunaris && cd lunaris
 ```
 
 ## 1. Bring up Postgres
@@ -298,6 +298,3 @@ docker compose down -v   # -v wipes the pg data volume
   fusion / rerank / fallback combinator.
 - [Ingesting Observations](../guides/ingest.md) — chunking, embedding,
   the graph pipeline.
-
-> **Note on links.** `github.com/lunaris-dev/lunaris` and `lunaris.dev`
-> are placeholders pending the final OSS home.

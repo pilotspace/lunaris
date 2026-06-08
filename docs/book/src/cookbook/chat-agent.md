@@ -113,7 +113,7 @@ store, and constructing the wrapper is just a name binding.
   tenant wall. For RLS-grade per-agent isolation (separate agent platforms,
   the HTTP `tenant` claim, the low-level `lunaris.scoped(scope)` handle), see
   [Multi-Agent & Scope → Multi-agent patterns](../guides/multi-agent.md#multi-agent-patterns)
-  and the runnable [`examples/multi-agent-rs/`](https://github.com/lunaris-dev/lunaris/tree/main/examples/multi-agent-rs).
+  and the runnable [`examples/multi-agent-rs/`](https://github.com/pilotspace/lunaris/tree/main/examples/multi-agent-rs).
 - **Embedder / backend tuning** lives in the
   [Configuration Reference](../reference/configuration.md) — the recipe adds
   no knobs of its own beyond `MessageStream::with_top_k` on the underlying

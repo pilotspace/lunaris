@@ -41,9 +41,9 @@ optionally **Apache AGE** for the graph operators. A stock managed Postgres
 that has pgvector + pgmq works out of the box; the repo also ships a
 ready-built image that bundles all three:
 
-- **[`scripts/pg-lunaris/`](https://github.com/lunaris-dev/lunaris/tree/main/scripts/pg-lunaris)**
+- **[`scripts/pg-lunaris/`](https://github.com/pilotspace/lunaris/tree/main/scripts/pg-lunaris)**
   — `Dockerfile` building `postgres:16` + `pgvector` + AGE + pgmq.
-- **[`examples/quickstart-rs/docker-compose.yml`](https://github.com/lunaris-dev/lunaris/blob/main/examples/quickstart-rs/docker-compose.yml)**
+- **[`examples/quickstart-rs/docker-compose.yml`](https://github.com/pilotspace/lunaris/blob/main/examples/quickstart-rs/docker-compose.yml)**
   — wraps that image with a healthcheck and a data volume on
   `localhost:5432`. The Python and TS quickstarts reuse it via
   `docker compose -f ../quickstart-rs/docker-compose.yml up -d`.
@@ -85,7 +85,7 @@ handles up to ~1536-d).
 
 ### Storage: Moon (the high-performance substrate)
 
-If you run [Moon](https://github.com/lunaris-dev/lunaris), point Lunaris
+If you run [Moon](https://github.com/pilotspace/lunaris), point Lunaris
 at `moon://host:port`. Moon provides native `FT.SEARCH` (vector + BM25),
 `GRAPH.QUERY`, a message queue, and **native RRF fusion** — the
 `fuse_rrf` operator collapses a (Vector + Keyword) pair on the same
@@ -120,7 +120,7 @@ still named `lunaris`, so you import it as `use lunaris::…`. Rename it in
 
 ```toml
 [dependencies]
-lunaris = { package = "lunaris-memory", version = "0.2" }
+lunaris = { package = "lunaris-memory", version = "0.3" }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -257,6 +257,3 @@ the server migrate over the admin connection on start.
   the atomic write.
 - [Configuration Reference](../reference/configuration.md) — every
   feature flag and `LUNARIS_*` variable.
-
-> **Note on links.** `github.com/lunaris-dev/lunaris` and `lunaris.dev`
-> are placeholders pending the final OSS home.
