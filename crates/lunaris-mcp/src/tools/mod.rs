@@ -15,6 +15,9 @@
 //! | `memory.record_decision`  | 25   | implemented      |
 //! | `memory.record_edit`      | 25   | implemented      |
 //! | `memory.status`           | 26   | implemented      |
+//! | `memory.scratchpad_write` | qqb  | implemented      |
+//! | `memory.scratchpad_read`  | qqb  | implemented      |
+//! | `memory.scratchpad_grep`  | qqb  | implemented      |
 
 pub(crate) mod forget;
 pub(crate) mod ingest;
@@ -22,6 +25,8 @@ pub(crate) mod list_scopes;
 pub(crate) mod recall;
 pub(crate) mod record_decision;
 pub(crate) mod record_edit;
+pub(crate) mod scratchpad_grep;
+pub(crate) mod scratchpad_read;
 pub(crate) mod scratchpad_write;
 pub(crate) mod staging;
 pub(crate) mod status;

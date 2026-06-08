@@ -1,8 +1,9 @@
 //! `lunaris-mcp` — MCP server exposing Lunaris memory to Claude Code / Codex.
 //!
 //! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
-//! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`, and
-//! `memory.status`.
+//! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
+//! `memory.status`, `memory.scratchpad_write`, `memory.scratchpad_read`, and
+//! `memory.scratchpad_grep`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -40,6 +41,9 @@ use crate::tools::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
+    scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
+    scratchpad_write::{ScratchpadWriteParams, ScratchpadWriteResponse},
     status::{StatusParams, StatusResponse},
 };
 
@@ -216,6 +220,69 @@ impl LunarisMcpServer {
     ) -> Result<Json<StatusResponse>, rmcp::ErrorData> {
         tools::status::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
     }
+
+    /// Write a key-value pair to the agent scratchpad.
+    ///
+    /// Keys are namespaced under `{namespace}{key}` on the Episode `source` field.
+    /// The `namespace` defaults to "scratchpad/" and is NOT a security boundary —
+    /// scope isolation is bound at server startup.
+    #[tool(
+        name = "memory.scratchpad_write",
+        description = "Write a key-value pair to the agent scratchpad. Returns the LSN \
+                       of the committed write. Namespace defaults to 'scratchpad/' and \
+                       shapes the source-key prefix (not a security boundary — scope is \
+                       bound at startup). ':' is rejected in namespace."
+    )]
+    async fn scratchpad_write(
+        &self,
+        Parameters(params): Parameters<ScratchpadWriteParams>,
+    ) -> Result<Json<ScratchpadWriteResponse>, rmcp::ErrorData> {
+        tools::scratchpad_write::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
+
+    /// Read a single key from the agent scratchpad.
+    ///
+    /// Returns the verbatim stored value (recovered from the Episode `content`,
+    /// not the chunked text). Write-then-read is read-your-writes consistent on
+    /// every backend — Moon indexes synchronously inline in HSET, and the sqlite
+    /// default enforces the `source` filter at the SQL boundary.
+    #[tool(
+        name = "memory.scratchpad_read",
+        description = "Read a single key from the agent scratchpad. Returns {found, value?}, \
+                       where value is the verbatim stored JSON. Namespace defaults to \
+                       'scratchpad/'. Write-then-read is read-your-writes consistent on \
+                       both the Moon and sqlite backends."
+    )]
+    async fn scratchpad_read(
+        &self,
+        Parameters(params): Parameters<ScratchpadReadParams>,
+    ) -> Result<Json<ScratchpadReadResponse>, rmcp::ErrorData> {
+        tools::scratchpad_read::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
+
+    /// Grep scratchpad entries by key prefix pattern.
+    #[tool(
+        name = "memory.scratchpad_grep",
+        description = "Return all scratchpad entries whose full source key starts with \
+                       '{namespace}{pattern}'. Each entry carries the full source key \
+                       (namespace + key) and the verbatim stored value. Namespace \
+                       defaults to 'scratchpad/'."
+    )]
+    async fn scratchpad_grep(
+        &self,
+        Parameters(params): Parameters<ScratchpadGrepParams>,
+    ) -> Result<Json<ScratchpadGrepResponse>, rmcp::ErrorData> {
+        tools::scratchpad_grep::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -226,7 +293,9 @@ impl ServerHandler for LunarisMcpServer {
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
                 "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
-             record decisions, record edits, and inspect backend status. Scope is bound at server startup."
+             record decisions, record edits, inspect backend status, and scratchpad CRUD \
+             (scratchpad_write / scratchpad_read / scratchpad_grep for keyed working memory). \
+             Scope is bound at server startup. Scratchpad namespace defaults to 'scratchpad/'."
                     .to_string(),
             )
     }
