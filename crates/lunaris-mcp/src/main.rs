@@ -22,6 +22,9 @@ mod scope_resolver;
 // (Wave 2.B). Cold-start budget gate (Wave 3.2) asserts tools/list < 500 ms.
 mod model_stager;
 mod state;
+// In-process Moon server lifecycle — all items cfg(feature="embedded-moon").
+// Compiled to nothing on the default (no feature) build.
+mod embedded_moon;
 mod tools;
 
 use clap::Parser;
