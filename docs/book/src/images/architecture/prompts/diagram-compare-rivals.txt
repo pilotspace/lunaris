@@ -1,0 +1,44 @@
+Create a calm, light, hand-drawn comparison scorecard on a pure white (#FAFAFA) background: thin medium-charcoal ink lines (#4a4a48), generous whitespace, softly rounded corners. Balanced and fair, but with ONE clearly highlighted hero column.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled EXACTLY as written below.
+
+TITLE at top center: "AGENT-MEMORY ENGINES, SIDE BY SIDE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "same job, different guarantees"
+
+LAYOUT — a clean scorecard grid: a tall left column of row labels, then four product columns. Thin hand-drawn horizontal rule lines between the rows, very light vertical guide lines between the columns. Lots of breathing room; nothing crowded.
+
+COLUMN HEADERS, left to right, in charcoal print lettering:
+  (left cell: blank) · "LUNARIS" · "MEM0" · "ZEP" · "COGNEE"
+The "LUNARIS" column sits inside a soft sage whisper tint (#eef5ee) running top to bottom — the HERO column, drawn slightly stronger. The other three columns are on plain white.
+
+ROW LABELS down the left side (charcoal print lettering, short):
+  "Sub-25ms recall"
+  "Atomic write"
+  "Bi-temporal"
+  "One substrate"
+  "Typed query DSL"
+  "Opt-in graph"
+
+CELL MARKS — draw each cell's mark EXACTLY as specified. Use three simple hand-drawn marks: CHECK = a small tidy check mark; HALF = a small circle with its LEFT half lightly shaded; CROSS = a small light x. Some cells hold a short lowercase word instead of a mark.
+
+  Row "Sub-25ms recall":   LUNARIS = CHECK ;  MEM0 = HALF ;          ZEP = HALF ;           COGNEE = HALF
+  Row "Atomic write":      LUNARIS = CHECK ;  MEM0 = CROSS ;         ZEP = CROSS ;          COGNEE = HALF
+  Row "Bi-temporal":       LUNARIS = CHECK ;  MEM0 = CROSS ;         ZEP = CHECK ;          COGNEE = HALF
+  Row "One substrate":     LUNARIS = CHECK ;  MEM0 = CROSS ;         ZEP = CROSS ;          COGNEE = HALF
+  Row "Typed query DSL":   LUNARIS = CHECK ;  MEM0 = CROSS ;         ZEP = CROSS ;          COGNEE = word "pipeline"
+  Row "Opt-in graph":      LUNARIS = CHECK ;  MEM0 = word "n/a" ;    ZEP = word "always-on" ; COGNEE = word "pipeline"
+
+The LUNARIS column is therefore a clean vertical run of six CHECK marks — visually the strongest column on the board.
+
+LEGEND (bottom-left, inside a small warm sand whisper tint #f5f0e8 box, print lettering):
+  "check = native / enforced"
+  "half = partial / best-effort"
+  "x = no"
+
+ANNOTATION: one thin pencil-line leader arrow (light gray, ending in a small dot) pointing at the LUNARIS column, with a print-lettering note: "one engine, every guarantee"
+
+Small gray margin note bottom-right (print lettering, lighter #8a8a85): "source: Lunaris docs — why-lunaris comparison table"
+
+ANNOTATION STYLE: the single annotation connects with a thin, light pencil-gray leader line ending in a small dot — gentle, sketchy, thin.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.

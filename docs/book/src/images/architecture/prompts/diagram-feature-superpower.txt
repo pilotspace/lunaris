@@ -1,0 +1,31 @@
+Create a calm, light, hand-drawn three-column feature board on a pure white (#FAFAFA) background: thin medium-charcoal ink lines (#4a4a48), generous whitespace, softly rounded corners.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled EXACTLY as written below, including the UPPERCASE command names with their dots and slashes.
+
+TITLE at top center: "ONE SUBSTRATE, EVERY SUPERPOWER" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "what Moon does natively — so Lunaris never reimplements it"
+
+LAYOUT — three columns left to right, six aligned rows. Between column 1 and column 2, and between column 2 and column 3, draw a thin hand-drawn arrow with a small open arrow head, so each row reads as a left-to-right flow: feature -> command -> benefit. Light horizontal guide lines separate the six rows. Generous spacing; nothing crowded.
+
+COLUMN HEADERS in charcoal print lettering:
+  Left column   header: "LUNARIS FEATURE"      (morning peach whisper tint #faf3ee behind this column)
+  Middle column header: "MOON NATIVE COMMAND"  (soft sage whisper tint #eef5ee — the HERO column, drawn slightly stronger)
+  Right column  header: "WHAT YOU GET"         (warm sand whisper tint #f5f0e8 behind this column)
+
+ROWS — each row is: left label -> middle command -> right benefit. Print lettering, exact text:
+  1. "Atomic memory"    ->  "TXN.BEGIN / TXN.COMMIT"  ->  "all lanes commit together — no half-written memory"
+  2. "Hybrid recall"    ->  "FT.SEARCH + native RRF"  ->  "vector + keyword fused in one round trip"
+  3. "Time-travel"      ->  "AS_OF / VALID_AT"        ->  "what the agent knew at time T — a query, not a rebuild"
+  4. "Opt-in graph"     ->  "GRAPH.QUERY (Cypher)"    ->  "relationships without running Neo4j"
+  5. "GDPR forget"      ->  "FT.INVALIDATE_RANGE"     ->  "erase a whole time range — no scan-and-delete loop"
+  6. "Background work"  ->  "queue + pub/sub"         ->  "consolidation without an external broker"
+
+Each middle-column command sits in a small rounded box with a tiny line-icon doodle beside it (a two-ellipse database, a magnifier, a small clock, a node-and-edge pair, an eraser, a small envelope) — minimal 1-2 stroke icons, never filled.
+
+ANNOTATION: one thin pencil-line leader arrow (light gray, ending in a small dot) pointing at the middle (MOON) column, with a print-lettering note: "one engine owns every index"
+
+BOTTOM strip (cloud blue whisper tint #eef3f9): a single small card in print lettering reading: "no sidecar vector DB · no graph DB · no broker — one process, one transaction"
+
+ANNOTATION STYLE: the single leader arrow is thin, light pencil-gray, ending in a small dot — gentle, sketchy, thin.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
