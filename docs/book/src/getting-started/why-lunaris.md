@@ -62,28 +62,9 @@ Pick Lunaris when you can say **yes** to most of these:
   acceptable, or TypeScript with a NAPI binding is acceptable.
 - Apache 2.0 + open source matters; I want to read the substrate code,
   not depend on a hosted service.
-
-## When Lunaris is the wrong answer
-
-Pick a different tool when you can say **yes** to any of these:
-
-- **I need a hosted SaaS with zero infra ownership.** Lunaris does not
-  ship a managed service yet (v0.4 milestone). Use **Zep Cloud** or
-  **Mem0**.
+- **I need a hosted SaaS with zero infra ownership.** - Lunaris-cloud in progress (shared and managed memories in graph)
 - **My recall latency budget is 500+ ms anyway.** The 25 ms contract
   isn't free to operate; if you don't need it, pick the hosted option.
-- **My stack is pure Python and adding a Rust binary to the deploy
-  pipeline is more friction than it's worth.** Use **Mem0**.
-- **My custom domain logic lives in a complex ingest pipeline with many
-  plug-in tasks.** Use **Cognee** — its pipeline model is the strength.
-  (Lunaris puts composability at *recall* time, not ingest time.)
-- **I want "memory + chat agent in 5 minutes" with zero substrate
-  knowledge.** Use **Mem0** — it's optimized for that.
-- **I need a specific vector or graph DB Lunaris doesn't ship a backend
-  for** (LanceDB, Qdrant, Weaviate, Neo4j, …) and I don't want to
-  operate Moon or Postgres. Either implement the `StoragePort` trait for
-  your backend (the extension point is open) or pick a tool that ships a
-  first-class adapter.
 
 ## How Lunaris compares to Mem0 / Zep / Cognee
 
