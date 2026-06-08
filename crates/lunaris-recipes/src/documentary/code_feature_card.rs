@@ -379,6 +379,7 @@ mod tests {
     fn make_hit(id: &[u8], score: f32, source: &str) -> Hit {
         Hit {
             id: id.to_vec(),
+            episode_id: Vec::new(),
             score,
             text: format!("content for {source}"),
             source: source.to_string(),

@@ -105,6 +105,11 @@ pub async fn hydrate(
         .into_iter()
         .map(|(raw, chunk)| Hit {
             id: raw.id,
+            // In-process provenance: lets exact-key callers (e.g.
+            // WorkingMemory::read) recover the verbatim Episode `content`
+            // rather than the lossy chunk `text`. `#[serde(skip)]` keeps it
+            // off the wire — see `Hit::episode_id`.
+            episode_id: chunk.episode_id.to_bytes().to_vec(),
             score: raw.score,
             text: chunk.text,
             source: episode_sources.get(&chunk.episode_id).cloned().unwrap_or_default(),

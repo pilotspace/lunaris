@@ -28,9 +28,11 @@ use futures::StreamExt;
 use lunaris_consolidate::{
     CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, ConsolidateEvent, ConsolidationReport,
 };
+use lunaris_core::keyspace::episode_key;
 use lunaris_core::storage::types::{Filter, Lsn};
-use lunaris_core::{Episode, LunarisError, Scope, StoragePort};
-use lunaris_retrieve::{Keyword, Query, Vector};
+use lunaris_core::{Episode, HlcClock, LunarisError, Scope, StorageError, StoragePort};
+use lunaris_retrieve::{Hit, Keyword, Query, Vector};
+use ulid::Ulid;
 
 use crate::{AuditEvent, Lunaris, publish_audit_event};
 
@@ -94,50 +96,113 @@ impl WorkingMemory {
     }
 
     /// Read the value for `k` scoped under `scope_prefix`, if present.
+    ///
+    /// Recovers the VERBATIM value from the parent Episode `content`, NOT from
+    /// the lossy chunk `text` (the markdown chunker's smart-punctuation pass
+    /// rewrites quotes / dashes and corrupts JSON values — see
+    /// [`Self::recover_value`]).
     pub async fn read(&self, k: &str) -> Result<Option<serde_json::Value>, LunarisError> {
-        let source = self.scope_key(k);
-        let filter =
-            Filter::Eq { field: "source".into(), value: serde_json::Value::String(source) };
-        let plan = Vector::new("chunks", DEFAULT_TOP_K * FANOUT)
-            .and(Keyword::bm25("chunks", DEFAULT_TOP_K * FANOUT))
-            .fuse_rrf(RRF_K)
-            .top(DEFAULT_TOP_K);
-        let hits =
-            self.lunaris.recall().with_root(plan).filter(filter).execute(Query::text(k)).await?;
-        match hits.into_iter().next() {
-            Some(h) => Ok(Some(
-                serde_json::from_str(&h.text)
-                    .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?,
-            )),
+        let filter = Filter::Eq {
+            field: "source".into(),
+            value: serde_json::Value::String(self.scope_key(k)),
+        };
+        match self.find(k, filter).await?.into_iter().next() {
+            Some(h) => self.recover_value(&h.episode_id).await,
             None => Ok(None),
         }
     }
 
     /// Return all `(source, value)` pairs whose `source` starts with
-    /// `{scope_prefix}{pattern}`.
+    /// `{scope_prefix}{pattern}`. Values are recovered verbatim from the
+    /// parent Episode `content` (see [`Self::recover_value`]).
     pub async fn grep(
         &self,
         pattern: &str,
     ) -> Result<Vec<(String, serde_json::Value)>, LunarisError> {
         let filter = Filter::StartsWith { field: "source".into(), prefix: self.scope_key(pattern) };
-        let plan = Vector::new("chunks", DEFAULT_TOP_K * FANOUT)
+        let hits = self.find(pattern, filter).await?;
+        let mut out = Vec::with_capacity(hits.len());
+        for h in hits {
+            if let Some(v) = self.recover_value(&h.episode_id).await? {
+                out.push((h.source, v));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Locate scratchpad hits via the fused Vector+Keyword(BM25) plan, falling
+    /// back to vector-only when the backend's `keyword_search` is
+    /// `NotSupported` (the embedded / sqlite backend — the `lunaris-mcp`
+    /// default — has no FTS5 BM25 yet). This is the SINGLE find path: callers
+    /// MUST NOT re-implement a second fallback (the `Filter` is enforced at the
+    /// SQL boundary on the vector branch, so exact-key / prefix scoping holds).
+    async fn find(&self, query: &str, filter: Filter) -> Result<Vec<Hit>, LunarisError> {
+        let fused = Vector::new("chunks", DEFAULT_TOP_K * FANOUT)
             .and(Keyword::bm25("chunks", DEFAULT_TOP_K * FANOUT))
             .fuse_rrf(RRF_K)
             .top(DEFAULT_TOP_K);
-        let hits = self
+        // Thread the bound scope (RFC 0001) — `Lunaris::recall()` alone seeds
+        // `Scope::dev()`, which would read a different partition than `write`
+        // ingested into. `with_scope` is the canonical scoped-recall entry.
+        match self
             .lunaris
             .recall()
-            .with_root(plan)
-            .filter(filter)
-            .execute(Query::text(pattern))
-            .await?;
-        let mut out = Vec::with_capacity(hits.len());
-        for h in hits {
-            let v: serde_json::Value = serde_json::from_str(&h.text)
-                .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-            out.push((h.source, v));
+            .with_scope(self.scope.clone())
+            .with_root(fused)
+            .filter(filter.clone())
+            .execute(Query::text(query))
+            .await
+        {
+            Ok(hits) => Ok(hits),
+            Err(err) if is_keyword_not_supported(&err) => {
+                self.lunaris
+                    .recall()
+                    .with_scope(self.scope.clone())
+                    .with_root(Vector::new("chunks", DEFAULT_TOP_K * FANOUT))
+                    .filter(filter)
+                    .execute(Query::text(query))
+                    .await
+            }
+            Err(err) => Err(err),
         }
-        Ok(out)
+    }
+
+    /// Recover the verbatim stored value from a hit's parent Episode `content`.
+    ///
+    /// `WorkingMemory::write` stores the value as `serde_json::to_string(&v)`
+    /// on the Episode `content` field. The chunk `text` carried on a [`Hit`] is
+    /// a smart-punctuation-rewritten projection of that content (the markdown
+    /// chunker runs `pulldown_cmark` with `ENABLE_SMART_PUNCTUATION`), so
+    /// deserialising the value from `Hit::text` corrupts any JSON object /
+    /// array. We read the Episode KV row directly and parse its `content`,
+    /// which is never chunked — lossless on every backend.
+    ///
+    /// `episode_id` is the 16-byte parent-episode ULID carried on each hydrated
+    /// hit. An empty / malformed id (hit produced outside the main hydration
+    /// path) yields `None` rather than an error.
+    async fn recover_value(
+        &self,
+        episode_id: &[u8],
+    ) -> Result<Option<serde_json::Value>, LunarisError> {
+        let bytes: [u8; 16] = match episode_id.try_into() {
+            Ok(b) => b,
+            Err(_) => return Ok(None),
+        };
+        let key = episode_key(&self.scope, Ulid::from_bytes(bytes));
+        // Live snapshot — mirrors `lunaris_retrieve::hydrate`'s `as_of = None`
+        // idiom (read the latest visible version without perturbing the engine
+        // clock).
+        let snapshot = HlcClock::new(0).tick();
+        match self.lunaris.storage().read_as_of(&self.scope, &key, snapshot).await? {
+            Some(row) => {
+                let episode: Episode = serde_json::from_slice(&row.value)
+                    .map_err(|e| LunarisError::from(StorageError::from(e)))?;
+                let value = serde_json::from_str(&episode.content)
+                    .map_err(|e| LunarisError::from(StorageError::from(e)))?;
+                Ok(Some(value))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Phase 9.1 Plan 01 Task 3 — run one consolidation pass scoped to
@@ -174,6 +239,18 @@ impl WorkingMemory {
     fn scope_key(&self, k: &str) -> String {
         format!("{}{}", self.scope_prefix, k)
     }
+}
+
+/// `true` when `err` is the embedded/sqlite backend reporting that
+/// `keyword_search` (FTS5 BM25) is `NotSupported`. Drives [`WorkingMemory::find`]'s
+/// vector-only fallback. Mirrors `lunaris_mcp::tools::staging::is_keyword_not_supported`
+/// — duplicated (not shared) because `lunaris` cannot depend on `lunaris-mcp`.
+fn is_keyword_not_supported(err: &LunarisError) -> bool {
+    matches!(
+        err,
+        LunarisError::Storage(StorageError::NotSupported(msg))
+            if msg.contains("keyword_search") || msg.contains("keyword")
+    )
 }
 
 /// Phase 9.1 Plan 01 Task 3 — drain up to [`DRAIN_CAP`] recent
