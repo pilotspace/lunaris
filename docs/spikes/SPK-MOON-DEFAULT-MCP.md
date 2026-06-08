@@ -327,6 +327,61 @@ Implementation seam: `crates/lunaris-mcp/src/state.rs::resolve_storage_url`
   fallback makes it safe.)
 - **Windows** — Moon-default degrades to SQLite there (F8); document it.
 
+## Addendum (2026-06-08) — Path B selected; in-process feasibility VERIFIED
+
+The user **chose Path B (in-process `run_embedded`)** over the subprocess
+recommendation — accepting the dependency/runtime trade for single-binary
+distribution. Before any code, the manifests were read to confirm Path B is
+actually buildable. It is. Verified facts (these refine F1–F8):
+
+- **Lib target + reachable entry.** `vendor/moon/Cargo.toml` has no `[lib]`
+  override but `vendor/moon/src/lib.rs` exists with `pub mod server` (line 62),
+  so the root `moon` crate produces a library that re-exposes
+  `server::embedded::run_embedded` (gated `runtime-tokio`).
+- **No allocator conflict.** The `#[global_allocator]` (mimalloc / jemalloc) is
+  declared **only in `vendor/moon/src/main.rs`** (lines 24–30), not in any lib
+  module. Linking the server *library* imposes no global allocator on
+  lunaris-mcp — the one potential hard compile blocker is absent.
+- **F3 CONFIRMED (not contradicted).** The workspace `moon` dependency is the
+  *SDK*, not the server: root `Cargo.toml:161`
+  `moon = { path = "vendor/moon/sdk/rust", version = "0.2.0", package = "moondb" }`
+  (the lightweight `moondb` crate — deps: redis/tokio/thiserror/bytes/tracing).
+  `vendor/moon` (the server) is **`exclude`d from the workspace**
+  (`Cargo.toml:66–69`). So Path B is a genuine **new** heavy dependency, exactly
+  as F3 stated. Every `use moon::` in the lunaris tree is the `moondb` alias.
+- **Dependency shape for lunaris-mcp:** a path dep on the excluded crate, aliased
+  to avoid colliding with the `moondb`→`moon` alias, e.g.
+  `moon_server = { path = "../../vendor/moon", package = "moon",
+  default-features = false, features = ["runtime-tokio", "graph", "text-index"] }`
+  (`graph` for `GRAPH.CREATE`, `text-index` for the `FT.CREATE` Lunaris's
+  `ensure_indexes` needs — F7).
+- **Publishability is moot.** lunaris-mcp is `publish = false` (workspace default)
+  and ships as a prebuilt binary via the phase-26 npx/uvx tarballs — it is never
+  `cargo publish`ed, so a path dep on the unpublished server crate blocks nothing.
+  Nothing else depends on lunaris-mcp (leaf binary), so the dep is contained.
+- **Real residual costs (land on CI, not users, since the binary is prebuilt):**
+  `runtime-tokio` force-pulls `aws-lc-rs` (cmake/clang crypto build) even though
+  `run_embedded` skips TLS; `mlua` (vendored Lua, needs a C compiler) is
+  non-optional; `text-index`/`graph` add fst/stemmers/logos. Build time +
+  C-toolchain grow materially. And F4's SHA coupling is now real for lunaris-mcp:
+  a `vendor/moon` bump that breaks the *server* build breaks lunaris-mcp's build.
+- **F8 CORRECTION (Windows).** `vendor/moon/Cargo.toml:91–93` documents
+  *"Windows: Tokio is default (IOCP, work-stealing fallback)"* — Moon claims
+  Windows support via the tokio runtime (the io-uring/nix/libc deps are
+  unix/linux-`cfg`-gated). So Path B may actually **build on Windows** (unverified
+  — no Windows release tarball ships today, F5 lists only macos/linux-tokio). The
+  spike's "in-process splits the build matrix / Windows unsupported" argument
+  against B is **weaker than stated**; this softens the anti-B case and is
+  consistent with the user's choice.
+
+**Verdict:** Path B is feasible with no hard blockers. Implementation seam is
+still `resolve_storage_url`; the supervisor module becomes an in-process
+`EmbeddedMoon` launcher (build `ServerConfig` → `tokio::spawn(run_embedded)` →
+await loopback readiness → `Lunaris::open` = FT.CREATE probe → `CancellationToken`
+on shutdown). The required-before-exposure TDD checklist above still applies
+(swap "subprocess spawned" for "run_embedded task spawned"; "graceful fallback"
+and "incompatible binary" become "feature-disabled fallback to SQLite").
+
 ## Related files
 
 | File | Role |
