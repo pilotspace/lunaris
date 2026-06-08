@@ -50,6 +50,12 @@
 - [Python](./sdk/python.md)
 - [TypeScript](./sdk/typescript.md)
 
+# Integrations (MCP)
+
+- [MCP Server](./mcp/index.md)
+- [Claude Code](./mcp/claude-code.md)
+- [Codex CLI](./mcp/codex.md)
+
 # Migrating From
 
 - [Mem0](./migrating/mem0.md)

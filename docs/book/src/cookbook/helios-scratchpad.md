@@ -7,7 +7,7 @@ session-scoped namespace — backed by Lunaris's bi-temporal MVCC store, with
 
 `HeliosScratchpad` is exported by the umbrella `lunaris` crate (not
 `lunaris-recipes`) — `use lunaris::{HeliosScratchpad, Lunaris, Hlc};`. It
-was built for [Helios](https://github.com/lunaris-dev/lunaris), Lunaris's
+was built for [Helios](https://github.com/pilotspace/lunaris), Lunaris's
 first downstream consumer, which replaces deepagents' ephemeral `dict`-backed
 mock filesystem with a real bi-temporal store. It is a convenience over the
 [`WorkingMemory`](./index.md#workingmemory--scope-prefixed-scratchpad)
@@ -16,7 +16,7 @@ primitive — Lunaris doesn't know Helios exists; the recipe is not a coupling.
 > This chapter is the public-facing recipe summary. For the full
 > integration story — multi-session servers, GDPR purge, graph-aware entity
 > recall, degraded-state handling, dual-backend portability, and a
-> production checklist — see [`docs/helios-integration.md`](https://github.com/lunaris-dev/lunaris/blob/main/docs/helios-integration.md).
+> production checklist — see [`docs/helios-integration.md`](https://github.com/pilotspace/lunaris/blob/main/docs/helios-integration.md).
 
 ## The frozen 9-method surface
 
@@ -178,4 +178,4 @@ async fn main() -> Result<(), lunaris::LunarisError> {
   [Choosing a Backend](../operations/backends.md).
 - **For everything beyond the basics** — multi-session servers, hard
   delete, graph-aware entity recall, degraded-state handling, the
-  production checklist — read [`docs/helios-integration.md`](https://github.com/lunaris-dev/lunaris/blob/main/docs/helios-integration.md).
+  production checklist — read [`docs/helios-integration.md`](https://github.com/pilotspace/lunaris/blob/main/docs/helios-integration.md).

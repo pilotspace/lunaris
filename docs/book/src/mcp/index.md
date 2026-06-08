@@ -1,0 +1,133 @@
+# MCP Server
+
+`lunaris-mcp` exposes Lunaris memory to any [Model Context Protocol][mcp]
+(MCP) agent — Claude Code, OpenAI Codex, and anything else that speaks MCP —
+over the **stdio** transport. The agent gets persistent, scope-isolated
+memory it can write to and recall from across sessions, with the same
+bi-temporal storage and atomicity guarantees as the rest of Lunaris.
+
+> **MCP ≠ MemoryProtocol 0.1.** This page is about the *agent-facing MCP
+> server* (a stdio JSON-RPC tool surface). The
+> [MemoryProtocol](../protocol/memoryprotocol-0.1.md) chapter is a separate
+> HTTP/SSE wire protocol for the Lunaris HTTP server. They solve different
+> problems and are not interchangeable.
+
+[mcp]: https://modelcontextprotocol.io
+
+## Install
+
+No Rust toolchain is required for the `npx` / `uvx` paths — both download a
+prebuilt binary for your platform on first run.
+
+```sh
+# Rust (builds from source → ~/.cargo/bin/lunaris-mcp)
+cargo install lunaris-mcp
+
+# Node (no Rust toolchain)
+npx -y @pilotspace/lunaris-mcp --help
+
+# Python (no Rust toolchain)
+uvx lunaris-mcp --help
+```
+
+Supported prebuilt platforms: `linux-x64`, `linux-arm64`, `darwin-x64`,
+`darwin-arm64`, `win32-x64`. On any other platform, `cargo install
+lunaris-mcp` builds from source.
+
+> **Registry availability.** The `npx`/`uvx` packages
+> (`@pilotspace/lunaris-mcp`, `lunaris-mcp`) are published as part of the
+> npx/uvx distribution wave; until your registry shows them, `cargo install
+> lunaris-mcp` is the always-available path. The npm/PyPI wrappers honour
+> `LUNARIS_MCP_BIN_PATH` for air-gapped hosts.
+
+## Tool surface
+
+Seven tools are registered (all implemented):
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `memory.ingest` | `source`, `content`, optional `t_ref`, `metadata` | `{ lsn }` |
+| `memory.recall` | `query`, optional `k`, `filters`, `as_of` | `{ hits[] }` |
+| `memory.forget` | `target.source_prefix` **XOR** `target.episode_id` | `{ removed }` |
+| `memory.list_scopes` | _(none)_ | `{ scopes[] }` |
+| `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
+| `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
+| `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes |
+
+`memory.ingest` is the general capture path. `memory.record_decision` and
+`memory.record_edit` are structured aliases that write intent-typed episodes
+(`source = "decision:<scope>"` / `"edit:<scope>"`) with optional `dedupe_key`
+idempotency. `memory.status` reports the bound scope and backend capabilities
+(`queue_native`, `graph_native`, `rerank_native`, `native_rrf`,
+`max_vector_dim`, `cypher_dialect`, …).
+
+The wire DTOs are identical across MCP clients, and every request DTO carries
+`#[serde(deny_unknown_fields)]` — no wire field can override the bound scope.
+
+## Scope is bound at startup
+
+`lunaris-mcp` resolves one scope when it starts and never changes it from wire
+payloads. Resolution order:
+
+1. `--scope` flag / `LUNARIS_MCP_SCOPE` env var (highest priority).
+2. `git remote.origin.url` + current branch → blake3 → `"git_<hex16>"`.
+3. Canonical cwd → blake3 → `"cwd_<hex16>"`.
+
+The resolved scope is persisted to `~/.lunaris/scopes.json`. To rename it,
+edit the `name` field there and restart the host agent (which restarts the
+`lunaris-mcp` child). See [Multi-Agent & Scope](../guides/multi-agent.md) for
+the scope model.
+
+## Storage backends
+
+| Backend | When | Recall |
+|---------|------|--------|
+| **SQLite** (default) | solo / single-project, zero external process | brute-force cosine, comfortable to ~10k vectors per scope |
+| **Moon** | shared or large corpora | native HNSW vector + BM25/hybrid fusion + graph + queues + bi-temporal reads |
+| **Postgres** | portability proof | `pgvector` HNSW |
+
+The default SQLite path supports all seven tools without any external
+process — `memory.recall` runs **vector-only** brute-force cosine there.
+BM25 keyword fusion and hybrid recall require a keyword-capable backend;
+point `LUNARIS_MCP_STORAGE` at Moon (`moon://127.0.0.1:6380`) or Postgres for
+that and for sub-25 ms recall above ~10k vectors per scope.
+
+> The first `memory.recall` stages the GGUF embedder (~150 MB) and reranker
+> to `~/.lunaris/models/` — expect ~30 s on a cold start, fast thereafter.
+> Set `LUNARIS_MCP_SKIP_STAGE=1` if models are pre-staged.
+
+## Key environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
+| `LUNARIS_MCP_STORAGE` | per-scope SQLite | Storage backend URL (`moon://…`, `sqlite:///…`, `postgres://…`) |
+| `LUNARIS_GRAPH_ENABLED` | off | Enable the graph extraction/write path (Moon graph recall) |
+| `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive (logs to **stderr only**) |
+| `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
+| `LUNARIS_MCP_BIN_PATH` | unset | (`npx`/`uvx` wrappers) point at a pre-staged binary for air-gapped hosts |
+
+> **stdout is the JSON-RPC transport.** `lunaris-mcp` writes logs to stderr
+> only. Anything printed to stdout (e.g. an `echo` in your shell profile)
+> corrupts the MCP framing and silently disconnects the host agent.
+
+## Per-agent guides
+
+- [Claude Code](./claude-code.md) — `claude mcp add`, project-scoped
+  `.mcp.json`, and the optional lifecycle hooks + context injection.
+- [Codex CLI](./codex.md) — `~/.codex/config.toml`, plus hooks and the
+  `lunaris-contextd` warm sidecar.
+
+The exhaustive guides — full hook tables, `lunaris-contextd` internals, and
+measured timings — live in the repo:
+[`docs/integration/claude-code.md`](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md)
+and
+[`docs/integration/codex.md`](https://github.com/pilotspace/lunaris/blob/main/docs/integration/codex.md).
+
+## Status
+
+The **stdio** transport is the supported path (Wave A). SSE transport with
+Bearer auth and multi-user server mode are deferred to a later OIDC
+milestone; running MCP as a feature flag on `lunaris-server` was evaluated and
+rejected — see the
+[decision record](https://github.com/pilotspace/lunaris/blob/main/docs/decisions/2026-05-24-claude-code-mcp-reversal.md).

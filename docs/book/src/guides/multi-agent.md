@@ -341,7 +341,7 @@ multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemor
 > episodes under one scope all show up in a single recall, and the source
 > prefix is preserved on `Hit.source`; (4) the data survives dropping and
 > re-opening the handle (Moon is durable; there is no explicit load step). Run
-> it yourself: [`examples/multi-agent-rs/`](https://github.com/lunaris-dev/lunaris/tree/main/examples/multi-agent-rs).
+> it yourself: [`examples/multi-agent-rs/`](https://github.com/pilotspace/lunaris/tree/main/examples/multi-agent-rs).
 
 ## Gotchas
 

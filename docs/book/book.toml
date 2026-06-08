@@ -6,11 +6,15 @@ language = "en"
 src = "src"
 
 [output.html]
-default-theme = "navy"
-preferred-dark-theme = "navy"
-git-repository-url = "https://github.com/lunaris-dev/lunaris"
-edit-url-template = "https://github.com/lunaris-dev/lunaris/edit/main/docs/book/{path}"
+# Light-only site ("Lunaris Day"). Both the first-paint default and the
+# OS-dark fallback resolve to "light"; the theme switcher is hidden in
+# theme/custom.css so the dark ("Lunaris Night") palette is never reachable.
+default-theme = "light"
+preferred-dark-theme = "light"
+git-repository-url = "https://github.com/pilotspace/lunaris"
+edit-url-template = "https://github.com/pilotspace/lunaris/edit/main/docs/book/{path}"
 additional-css = ["theme/custom.css"]
+additional-js = ["theme/force-light.js"]
 
 [output.html.search]
 enable = true
