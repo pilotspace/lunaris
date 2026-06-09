@@ -122,13 +122,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let state =
-            AppState {
-                lunaris: Arc::new(lunaris),
-                scope: Scope::new("mcp-status-test").unwrap(),
-                #[cfg(feature = "embedded-moon")]
-                _embedded_moon: None,
-            };
+        let state = AppState {
+            lunaris: Arc::new(lunaris),
+            scope: Scope::new("mcp-status-test").unwrap(),
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        };
 
         let response = handle(&state, StatusParams {}).await.unwrap();
 

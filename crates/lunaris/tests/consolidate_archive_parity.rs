@@ -15,9 +15,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_consolidate::{ActRConsolidator, ConsolidateEvent, Consolidator};
-use lunaris_core::{
-    CypherDialect, QueueMsg, StorageCapabilities, StorageError, StoragePort,
-};
+use lunaris_core::{CypherDialect, QueueMsg, StorageCapabilities, StorageError, StoragePort};
 use ulid::Ulid;
 
 // ── NullStorage fixture ───────────────────────────────────────────────────────

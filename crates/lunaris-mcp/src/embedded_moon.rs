@@ -63,7 +63,9 @@ impl Drop for EmbeddedMoonGuard {
             self.token.cancel();
         }
         // get_mut() returns &mut Option<JoinHandle> directly — no lock acquisition.
-        if let Some(h) = self.handle.get_mut().take() as Option<tokio::task::JoinHandle<anyhow::Result<()>>> {
+        if let Some(h) =
+            self.handle.get_mut().take() as Option<tokio::task::JoinHandle<anyhow::Result<()>>>
+        {
             h.abort();
         }
     }
@@ -107,9 +109,7 @@ impl EmbeddedMoonGuard {
 pub(crate) enum EmbeddedMoonError {
     #[error("port allocation failed: {0}")]
     PortAlloc(#[from] std::io::Error),
-    #[error(
-        "embedded Moon did not accept connections on :{port} within 5s (dir={data_dir:?})"
-    )]
+    #[error("embedded Moon did not accept connections on :{port} within 5s (dir={data_dir:?})")]
     Timeout { port: u16, data_dir: String },
 }
 
@@ -218,10 +218,7 @@ pub(crate) async fn launch_embedded_moon(
 
     // Step 3: spawn run_embedded on the current tokio runtime.
     let token = moon_server::runtime::cancel::CancellationToken::new();
-    let handle = tokio::spawn(moon_server::server::embedded::run_embedded(
-        config,
-        token.clone(),
-    ));
+    let handle = tokio::spawn(moon_server::server::embedded::run_embedded(config, token.clone()));
 
     // Step 4: readiness poll — RESP PING probe with bounded retries + exponential backoff.
     //
@@ -265,18 +262,11 @@ pub(crate) async fn launch_embedded_moon(
     if !ready {
         token.cancel();
         handle.abort();
-        return Err(EmbeddedMoonError::Timeout {
-            port,
-            data_dir: data_dir.to_string(),
-        });
+        return Err(EmbeddedMoonError::Timeout { port, data_dir: data_dir.to_string() });
     }
 
     tracing::info!(port, data_dir, "embedded Moon ready on loopback");
-    Ok(EmbeddedMoonGuard {
-        token,
-        handle: parking_lot::Mutex::new(Some(handle)),
-        port,
-    })
+    Ok(EmbeddedMoonGuard { token, handle: parking_lot::Mutex::new(Some(handle)), port })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -346,21 +336,11 @@ mod tests {
     async fn decide_storage_launcher_failure_falls_back_to_sqlite() {
         use lunaris_core::Scope;
         let scope = Scope::new("test-vuz-fallback").unwrap();
-        let (url, guard) = decide_storage_with_launcher(
-            None,
-            &scope,
-            || async move {
-                Err(EmbeddedMoonError::Timeout {
-                    port: 0,
-                    data_dir: "simulated".into(),
-                })
-            },
-        )
+        let (url, guard) = decide_storage_with_launcher(None, &scope, || async move {
+            Err(EmbeddedMoonError::Timeout { port: 0, data_dir: "simulated".into() })
+        })
         .await;
-        assert!(
-            url.starts_with("sqlite://"),
-            "fallback URL must be sqlite://, got: {url}"
-        );
+        assert!(url.starts_with("sqlite://"), "fallback URL must be sqlite://, got: {url}");
         assert!(guard.is_none(), "failed launch must produce no guard");
     }
 
@@ -371,20 +351,13 @@ mod tests {
         let scope = Scope::new("test-vuz-happypath").unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap().to_owned();
-        let (url, guard) = decide_storage_with_launcher(
-            None,
-            &scope,
-            move || {
-                // Clone into the async block so it doesn't borrow from the closure env.
-                let dir = data_dir.clone();
-                async move { launch_embedded_moon(&dir).await }
-            },
-        )
+        let (url, guard) = decide_storage_with_launcher(None, &scope, move || {
+            // Clone into the async block so it doesn't borrow from the closure env.
+            let dir = data_dir.clone();
+            async move { launch_embedded_moon(&dir).await }
+        })
         .await;
-        assert!(
-            url.starts_with("moon://"),
-            "real launcher must produce moon:// URL, got: {url}"
-        );
+        assert!(url.starts_with("moon://"), "real launcher must produce moon:// URL, got: {url}");
         assert!(guard.is_some(), "real launcher must produce a guard");
         if let Some(g) = guard {
             g.shutdown().await;
