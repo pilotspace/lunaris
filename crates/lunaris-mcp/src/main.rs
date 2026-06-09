@@ -347,6 +347,12 @@ async fn run_server(cli: &Cli) -> anyhow::Result<()> {
 
     tracing::info!(scope = state.scope.as_str(), "lunaris-mcp ready");
 
+    // Capture the embedded-Moon guard before `state` is moved into
+    // LunarisMcpServer::new. Arc::clone bumps the refcount cheaply; the
+    // original guard inside `state` stays alive until the state move.
+    #[cfg(feature = "embedded-moon")]
+    let moon_guard = state._embedded_moon.clone();
+
     let service = LunarisMcpServer::new(state)
         .serve(stdio())
         .await
@@ -354,10 +360,21 @@ async fn run_server(cli: &Cli) -> anyhow::Result<()> {
 
     tracing::info!("MCP initialize handshake complete; entering request loop");
 
-    service
-        .waiting()
-        .await
-        .inspect_err(|e| tracing::error!(err = ?e, "MCP server exited with error"))?;
+    let wait_result = service.waiting().await;
+
+    // Graceful embedded-Moon shutdown: flush AOF before the process exits.
+    // Called on BOTH Ok (clean EOF/SIGTERM) and Err (MCP loop error) paths so
+    // Moon's AOF is flushed in all cases. Drop alone aborts Moon synchronously
+    // and can cut the flush mid-write.
+    // Do NOT add a separate tokio::signal::ctrl_c select here —
+    // .waiting() already handles SIGTERM.
+    #[cfg(feature = "embedded-moon")]
+    if let Some(guard) = moon_guard {
+        tracing::info!("shutting down embedded Moon (AOF flush)");
+        guard.shutdown().await;
+    }
+
+    wait_result.inspect_err(|e| tracing::error!(err = ?e, "MCP server exited with error"))?;
 
     tracing::info!("lunaris-mcp shut down cleanly");
     Ok(())
