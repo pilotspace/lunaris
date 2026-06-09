@@ -109,7 +109,8 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    /// Build `AppState` from CLI arguments.
+    /// Build `AppState` from CLI arguments. Delegates to [`bootstrap_inner`] with
+    /// `skip_probe = false`.
     ///
     /// Steps:
     /// 1. Resolve the active scope via [`crate::scope_resolver::resolve`].
@@ -133,6 +134,24 @@ impl AppState {
     pub(crate) async fn bootstrap(
         scope_override: Option<&str>,
         storage_override: Option<&str>,
+    ) -> Result<Self, BootstrapError> {
+        Self::bootstrap_inner(scope_override, storage_override, false).await
+    }
+
+    /// Internal bootstrap with an explicit `skip_probe` flag.
+    ///
+    /// Step 4 (embedder health probe) is skipped when `skip_probe` is `true` OR
+    /// when `LUNARIS_MCP_SKIP_EMBEDDER_PROBE` is set. The combined condition is:
+    /// `skip_probe || env.is_some()`.
+    ///
+    /// `skip_probe` exists for tests that drive the REAL resolution path (Moon
+    /// launch, guard wiring) without requiring real model weights. The operator env
+    /// var continues to work for benchmark harnesses. Do NOT set `skip_probe = true`
+    /// in production code.
+    pub(crate) async fn bootstrap_inner(
+        scope_override: Option<&str>,
+        storage_override: Option<&str>,
+        skip_probe: bool,
     ) -> Result<Self, BootstrapError> {
         let scope = crate::scope_resolver::resolve(scope_override)?;
 
@@ -172,14 +191,16 @@ impl AppState {
         let lunaris = Lunaris::open(&storage_url).await?;
 
         // Step 4: guard against the silent NoopEmbedder fallback.
-        // Bypassed when LUNARIS_MCP_SKIP_EMBEDDER_PROBE is set so that
-        // latency benchmarks and test harnesses that only use ingest can start
-        // without real model weights.
-        if std::env::var_os(SKIP_EMBEDDER_PROBE_ENV_VAR).is_none() {
+        // Bypassed when skip_probe is true OR when LUNARIS_MCP_SKIP_EMBEDDER_PROBE
+        // is set — so that latency benchmarks, test harnesses that only use ingest,
+        // and discriminating bootstrap tests can start without real model weights.
+        let skip = skip_probe || std::env::var_os(SKIP_EMBEDDER_PROBE_ENV_VAR).is_some();
+        if !skip {
             probe_embedder_health(&lunaris.embedder()).await?;
         } else {
             tracing::warn!(
                 env = SKIP_EMBEDDER_PROBE_ENV_VAR,
+                skip_probe,
                 "embedder health probe skipped — memory.recall may return empty hits \
                  if the embedder is NoopEmbedder"
             );
@@ -297,6 +318,73 @@ mod tests {
             matches!(result, Err(BootstrapError::NoEmbedderWeights)),
             "probe_embedder_health must reject dim=0 noop; got: {result:?}"
         );
+    }
+
+    // ── Discriminating bootstrap test (T1) ───────────────────────────────────
+
+    /// Discriminating bootstrap test: driving the REAL production resolution path
+    /// (AppState::bootstrap_inner) with --features embedded-moon MUST store an
+    /// EmbeddedMoonGuard in _embedded_moon — proving the #[cfg(feature)] branch
+    /// launched Moon, not the SQLite circuit-breaker fallback.
+    ///
+    /// If the cfg dispatch is ever broken (guard dropped early, branch wrong, guard
+    /// not stored), _embedded_moon is None and this assertion fires — catching the
+    /// built≠wired failure mode before npx/uvx distribution flips embedded-moon on.
+    #[cfg(feature = "embedded-moon")]
+    #[tokio::test]
+    async fn bootstrap_launches_moon_not_sqlite_fallback() {
+        use crate::tools::scratchpad_read::{ScratchpadReadParams, handle as read_handle};
+        use crate::tools::scratchpad_write::{ScratchpadWriteParams, handle as write_handle};
+
+        // best-effort cleanup: remove any stale .lunaris-moon from a previous run
+        let _ = std::fs::remove_dir_all("./.lunaris-moon");
+
+        let state = AppState::bootstrap_inner(None, None, true)
+            .await
+            .expect("bootstrap_inner(skip_probe=true) must succeed with --features embedded-moon");
+
+        // THE discriminating assertion: guard must be stored (Moon was launched, not SQLite fallback)
+        assert!(
+            state._embedded_moon.is_some(),
+            "feature=embedded-moon + no --storage override MUST launch embedded Moon and store \
+             the guard; _embedded_moon is None, meaning the SQLite circuit-breaker silently took over"
+        );
+
+        // Round-trip through the production-constructed state to prove the path is live
+        let write_resp = write_handle(
+            &state,
+            ScratchpadWriteParams {
+                key: "bootstrap-wired".into(),
+                value: serde_json::json!("ok"),
+                namespace: None,
+            },
+        )
+        .await
+        .expect("scratchpad_write on bootstrap-produced state must succeed");
+        assert!(
+            !write_resp.lsn.is_empty(),
+            "write response lsn must be non-empty"
+        );
+
+        let read_resp = read_handle(
+            &state,
+            ScratchpadReadParams {
+                key: "bootstrap-wired".into(),
+                namespace: None,
+            },
+        )
+        .await
+        .expect("scratchpad_read on bootstrap-produced state must succeed");
+        assert!(read_resp.found, "key written via bootstrap state must be found on read");
+        assert_eq!(
+            read_resp.value,
+            Some(serde_json::json!("ok")),
+            "read value must match written value"
+        );
+
+        // cleanup
+        drop(state);
+        let _ = std::fs::remove_dir_all("./.lunaris-moon");
     }
 
     // ── GREEN tests for embedded-moon DI seam (T2) ────────────────────────────
