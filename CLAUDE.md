@@ -117,7 +117,7 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   (`consolidate/supervisor.rs`, `verify/supervisor.rs`,
   `lunaris/consolidator_pipeline.rs`, `verify_pipeline.rs`) follow this
   pattern; new code MUST too.
-- **MCP-04 — every `#[tool]` response schema root MUST be `type:"object"`.**
+- **MCP tool-schema root — every `#[tool]` response schema root MUST be `type:"object"`.**
   rmcp 1.7 validates each tool's generated `outputSchema` when it builds the
   tool router and ABORTS server startup (exit 101) if any `Json<T>` response
   type's schema root is not an object — a `#[serde(tag = …)]` enum yields a
