@@ -38,26 +38,54 @@ pub(crate) struct ScratchpadConsolidateParams {
 }
 
 /// Result of `memory.scratchpad_consolidate`.
+///
+/// FLAT STRUCT, **not** a `#[serde(tag = ...)]` enum: the generated MCP
+/// `outputSchema` must have a root `type: "object"`, but a tagged enum's schema
+/// root is `oneOf` (no `type`), which rmcp 1.7 rejects — aborting server startup
+/// for ALL builds. See `tests::response_outputschema_root_is_object`. The
+/// `status` field carries the outcome discriminator; `message` is present only
+/// for non-`ok` statuses (wire shape for `ok` is unchanged from the old enum:
+/// `{status:"ok",promotions,archives}`).
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(tag = "status")]
-pub(crate) enum ScratchpadConsolidateResponse {
-    /// Consolidation ran and produced a report.
-    #[serde(rename = "ok")]
-    Ok {
-        /// Number of facts promoted (activation above threshold).
-        promotions: usize,
-        /// Number of facts archived (activation below threshold).
-        archives: usize,
-    },
-    /// Backend does not support native queues (sqlite / memory://).
-    #[serde(rename = "unsupported_backend")]
-    UnsupportedBackend { message: String },
-    /// Background consolidation worker is live — would race on __mq_consumers.
-    #[serde(rename = "worker_conflict")]
-    WorkerConflict { message: String },
-    /// Drain exceeded the hard wall-clock timeout.
-    #[serde(rename = "timeout")]
-    Timeout { message: String },
+pub(crate) struct ScratchpadConsolidateResponse {
+    /// Outcome discriminator: "ok" | "unsupported_backend" | "worker_conflict" | "timeout".
+    pub status: String,
+    /// Facts promoted (activation above threshold). 0 unless `status == "ok"`.
+    pub promotions: usize,
+    /// Facts archived (activation below threshold). 0 unless `status == "ok"`.
+    pub archives: usize,
+    /// Human-readable detail for non-`ok` statuses; omitted when `status == "ok"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl ScratchpadConsolidateResponse {
+    /// `status: "ok"` — consolidation ran and produced a report.
+    fn ok(promotions: usize, archives: usize) -> Self {
+        Self { status: "ok".into(), promotions, archives, message: None }
+    }
+    /// `status: "unsupported_backend"` — backend has no native queue (guard 1).
+    fn unsupported_backend(message: impl Into<String>) -> Self {
+        Self {
+            status: "unsupported_backend".into(),
+            promotions: 0,
+            archives: 0,
+            message: Some(message.into()),
+        }
+    }
+    /// `status: "worker_conflict"` — background worker is live (guard 2).
+    fn worker_conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: "worker_conflict".into(),
+            promotions: 0,
+            archives: 0,
+            message: Some(message.into()),
+        }
+    }
+    /// `status: "timeout"` — drain exceeded the hard wall-clock cap (guard 3).
+    fn timeout(message: impl Into<String>) -> Self {
+        Self { status: "timeout".into(), promotions: 0, archives: 0, message: Some(message.into()) }
+    }
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -77,25 +105,23 @@ pub(crate) async fn handle_inner(
 ) -> Result<ScratchpadConsolidateResponse, ToolError> {
     // Guard 1: queue_native gate (circuit-breaker — fail fast on non-Moon backends)
     if !state.lunaris.storage().capabilities().queue_native {
-        return Ok(ScratchpadConsolidateResponse::UnsupportedBackend {
-            message: "consolidate requires a native-queue backend (Moon); \
-                      current backend has no durable queue (queue_native=false). \
-                      Start lunaris-mcp with the embedded-moon feature or point \
-                      --storage to a moon:// URL."
-                .to_string(),
-        });
+        return Ok(ScratchpadConsolidateResponse::unsupported_backend(
+            "consolidate requires a native-queue backend (Moon); \
+             current backend has no durable queue (queue_native=false). \
+             Start lunaris-mcp with the embedded-moon feature or point \
+             --storage to a moon:// URL.",
+        ));
     }
 
     // Guard 2: background worker refusal (prevents double-consume on __mq_consumers)
     if state.lunaris.consolidator_pipeline().is_enabled() {
-        return Ok(ScratchpadConsolidateResponse::WorkerConflict {
-            message: "background consolidation worker is live — calling \
-                      memory.scratchpad_consolidate now would race on the single \
-                      __mq_consumers consumer group and silently lose events. \
-                      Disable the worker (LUNARIS_CONSOLIDATOR=0) before using \
-                      this tool."
-                .to_string(),
-        });
+        return Ok(ScratchpadConsolidateResponse::worker_conflict(
+            "background consolidation worker is live — calling \
+             memory.scratchpad_consolidate now would race on the single \
+             __mq_consumers consumer group and silently lose events. \
+             Disable the worker (LUNARIS_CONSOLIDATOR=0) before using \
+             this tool.",
+        ));
     }
 
     let namespace = crate::tools::staging::resolve_namespace(params.namespace)?;
@@ -103,18 +129,15 @@ pub(crate) async fn handle_inner(
 
     // Guard 3: hard timeout (bounds the ~51s worst-case DRAIN_CAP × PULL_TIMEOUT_MS drain)
     match timeout(timeout_dur, wm.consolidate()).await {
-        Err(_elapsed) => Ok(ScratchpadConsolidateResponse::Timeout {
-            message: format!(
-                "consolidate drain exceeded {}s hard timeout; partial progress may \
-                 have occurred — retry to continue draining remaining events.",
-                timeout_dur.as_secs()
-            ),
-        }),
+        Err(_elapsed) => Ok(ScratchpadConsolidateResponse::timeout(format!(
+            "consolidate drain exceeded {}s hard timeout; partial progress may \
+             have occurred — retry to continue draining remaining events.",
+            timeout_dur.as_secs()
+        ))),
         Ok(Err(e)) => Err(ToolError::LunarisEngine(e)),
-        Ok(Ok(report)) => Ok(ScratchpadConsolidateResponse::Ok {
-            promotions: report.promotions.len(),
-            archives: report.archives.len(),
-        }),
+        Ok(Ok(report)) => {
+            Ok(ScratchpadConsolidateResponse::ok(report.promotions.len(), report.archives.len()))
+        }
     }
 }
 
@@ -158,6 +181,27 @@ mod tests {
         AppState::bootstrap_inner(Some(scope_name), None, true, Some(data_dir)).await.unwrap()
     }
 
+    // ── Schema-validity regression ────────────────────────────────────────────
+
+    /// REGRESSION (codex dogfood, 2026-06-09): the response type's generated MCP
+    /// `outputSchema` MUST have a root `type: "object"`. rmcp 1.7 validates this
+    /// when building the tool router and ABORTS server startup otherwise — which a
+    /// `#[serde(tag = "status")]` enum triggered (its schema root is `oneOf` with
+    /// no `type`), making `lunaris-mcp` un-launchable for ALL builds despite green
+    /// unit tests (they call `handle()` directly and never build the rmcp router).
+    /// This test reproduces rmcp's validation at the schema level — RED on the
+    /// tagged enum, GREEN on the flat struct.
+    #[test]
+    fn response_outputschema_root_is_object() {
+        let schema = schemars::schema_for!(ScratchpadConsolidateResponse);
+        let v = serde_json::to_value(&schema).expect("schema serializes to JSON");
+        assert_eq!(
+            v.get("type").and_then(|t| t.as_str()),
+            Some("object"),
+            "MCP outputSchema root must be type:object — rmcp 1.7 aborts startup otherwise; got: {v}"
+        );
+    }
+
     // ── Guard tests ───────────────────────────────────────────────────────────
 
     /// Guard 1: memory:// backend (queue_native=false) → UnsupportedBackend.
@@ -166,9 +210,9 @@ mod tests {
     async fn guard_queue_native_false_returns_unsupported_backend() {
         let state = fresh_state_memory("test-cons-gate").await;
         let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
-        assert!(
-            matches!(resp, ScratchpadConsolidateResponse::UnsupportedBackend { .. }),
-            "memory:// must return UnsupportedBackend; got: {resp:?}"
+        assert_eq!(
+            resp.status, "unsupported_backend",
+            "memory:// must return unsupported_backend; got: {resp:?}"
         );
     }
 
@@ -182,9 +226,9 @@ mod tests {
         // Force-enable the pipeline — makes is_enabled() == true, spawns worker.
         state.lunaris.consolidator_pipeline().enable();
         let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
-        assert!(
-            matches!(resp, ScratchpadConsolidateResponse::WorkerConflict { .. }),
-            "enabled pipeline must return WorkerConflict; got: {resp:?}"
+        assert_eq!(
+            resp.status, "worker_conflict",
+            "enabled pipeline must return worker_conflict; got: {resp:?}"
         );
     }
 
@@ -228,10 +272,7 @@ mod tests {
         .await
         .unwrap();
         let elapsed = start.elapsed();
-        assert!(
-            matches!(resp, ScratchpadConsolidateResponse::Timeout { .. }),
-            "1ms timeout must fire; got: {resp:?}"
-        );
+        assert_eq!(resp.status, "timeout", "1ms timeout must fire; got: {resp:?}");
         assert!(
             elapsed < std::time::Duration::from_secs(6),
             "wall-clock must be < 6s; got: {elapsed:?}"
@@ -275,10 +316,8 @@ mod tests {
 
         let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
 
-        let (promotions, archives) = match resp {
-            ScratchpadConsolidateResponse::Ok { promotions, archives } => (promotions, archives),
-            other => panic!("expected Ok; got: {other:?}"),
-        };
+        assert_eq!(resp.status, "ok", "expected ok status; got: {resp:?}");
+        let (promotions, archives) = (resp.promotions, resp.archives);
         assert!(
             promotions + archives > 0,
             "seeding under real scope must produce non-empty report (scope-dev fix check); \
@@ -300,15 +339,13 @@ mod tests {
                 msg = audit_stream.next() => {
                     match msg {
                         Some(Ok(m)) => {
-                            if let Ok(ae) = serde_json::from_slice::<lunaris_core::audit::AuditEvent>(&m.payload) {
-                                match ae {
-                                    lunaris_core::audit::AuditEvent::ConsolidatorArchive { .. } |
-                                    lunaris_core::audit::AuditEvent::ConsolidatorPromotion { .. } => {
-                                        found_audit = true;
-                                        break;
-                                    }
-                                    _ => {}
-                                }
+                            if let Ok(
+                                lunaris_core::audit::AuditEvent::ConsolidatorArchive { .. }
+                                | lunaris_core::audit::AuditEvent::ConsolidatorPromotion { .. },
+                            ) = serde_json::from_slice::<lunaris_core::audit::AuditEvent>(&m.payload)
+                            {
+                                found_audit = true;
+                                break;
                             }
                         }
                         _ => break,
