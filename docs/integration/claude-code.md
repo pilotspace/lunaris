@@ -1,9 +1,14 @@
 # Claude Code Integration
 
-Status: stdio MCP plus lifecycle hooks and context injection. Agent setup
-defaults to Moon-backed storage with a SQLite fallback. Tools live:
-`memory.ingest`, `memory.recall`, `memory.forget`, `memory.list_scopes`,
-`memory.record_decision`, `memory.record_edit`, and `memory.status`.
+Status: stdio MCP plus lifecycle hooks and context injection. A plain
+`npx`/`uvx`/`cargo install` MCP install defaults to per-scope SQLite; the
+`setup-lunaris-agents.py` agent setup defaults to Moon-backed storage (its
+hooks need Moon's queues), with a SQLite opt-out. Eleven tools live — seven
+durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
+`memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
+`memory.status`) plus four working-memory scratchpad tools
+(`memory.scratchpad_write`, `memory.scratchpad_read`, `memory.scratchpad_grep`,
+`memory.scratchpad_consolidate`).
 
 ---
 
@@ -489,6 +494,22 @@ The response includes `queue_native`, `graph_native`, `rerank_native`,
 queue depth probes. On Moon storage, `queue_native: true` confirms MCP
 ingest/recall health checks are using Moon's MQ command family through Lunaris
 storage.
+
+### Working memory (`memory.scratchpad_*`)
+
+Four scratchpad tools provide transient, key-addressed working memory under a
+`scratchpad/` namespace — drafts, plans, and in-progress state, kept separate
+from the durable episode log:
+
+- `memory.scratchpad_write` — `{ key, value, namespace? }` → `{ lsn }`
+- `memory.scratchpad_read` — `{ key, namespace? }` → `{ found, value }`
+- `memory.scratchpad_grep` — `{ pattern, namespace? }` → `{ entries[] }`
+- `memory.scratchpad_consolidate` — `{ namespace? }` → `{ status, promotions, archives }`
+
+`memory.scratchpad_consolidate` drains the scratchpad queue and promotes/archives
+notes by activation. It needs a native-queue backend (Moon or Postgres) and
+returns `{ status: "unsupported_backend" }` on SQLite. See the
+[MCP tool reference](../book/src/mcp/index.md#tool-surface) for the full surface.
 
 ---
 

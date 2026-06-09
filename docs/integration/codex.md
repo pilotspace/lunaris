@@ -2,9 +2,12 @@
 
 Status: stdio MCP plus Codex hooks. Lunaris can be used in Codex as:
 
-- an MCP memory server (`memory.ingest`, `memory.recall`, `memory.forget`,
-  `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-  `memory.status`);
+- an MCP memory server — eleven `memory.*` tools: seven durable-memory tools
+  (`memory.ingest`, `memory.recall`, `memory.forget`, `memory.list_scopes`,
+  `memory.record_decision`, `memory.record_edit`, `memory.status`) plus four
+  working-memory scratchpad tools (`memory.scratchpad_write`,
+  `memory.scratchpad_read`, `memory.scratchpad_grep`,
+  `memory.scratchpad_consolidate`);
 - an async capture hook for prompts, tool calls, compaction, session starts,
   subagents, and stops;
 - a proactive context injector before user prompts and after useful tool calls;
@@ -564,6 +567,10 @@ Summary:
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.status` | _(none)_ | backend capabilities plus MQ queue depth probes |
+| `memory.scratchpad_write` | `key`, `value`, optional `namespace` | `{ lsn }` |
+| `memory.scratchpad_read` | `key`, optional `namespace` | `{ found, value }` |
+| `memory.scratchpad_grep` | `pattern`, optional `namespace` | `{ entries[] }` |
+| `memory.scratchpad_consolidate` | optional `namespace` | `{ status, promotions, archives }` (needs Moon/Postgres) |
 
 ---
 
@@ -623,8 +630,9 @@ Run `memory.list_scopes` to inspect the scope registry, then set
 
 ## Moon vs SQLite / Postgres
 
-Agent setup defaults to Moon. SQLite brute-force cosine remains useful for solo
-offline use:
+The `setup-lunaris-agents.py` agent setup defaults to Moon (its lifecycle
+hooks need Moon's queues); a plain `npx`/`uvx` MCP install defaults to SQLite.
+SQLite brute-force cosine remains the right choice for solo offline use:
 
 - **≤10k vectors per scope** — brute-force cosine is fast enough; no external
   process required.
@@ -707,6 +715,22 @@ The response includes `queue_native`, `graph_native`, `rerank_native`,
 queue depth probes. On Moon storage, `queue_native: true` confirms MCP
 ingest/recall health checks are using Moon's MQ command family through Lunaris
 storage.
+
+### `memory.scratchpad_*` (working memory)
+
+Four scratchpad tools provide transient, key-addressed working memory under a
+`scratchpad/` namespace — drafts, plans, and in-progress state, kept separate
+from the durable episode log:
+
+- `memory.scratchpad_write` — `{ key, value, namespace? }` → `{ lsn }`
+- `memory.scratchpad_read` — `{ key, namespace? }` → `{ found, value }`
+- `memory.scratchpad_grep` — `{ pattern, namespace? }` → `{ entries[] }`
+- `memory.scratchpad_consolidate` — `{ namespace? }` → `{ status, promotions, archives }`
+
+`memory.scratchpad_consolidate` drains the scratchpad queue and promotes/archives
+notes by activation. It needs a native-queue backend (Moon or Postgres) and
+returns `{ status: "unsupported_backend" }` on SQLite. See the
+[MCP tool reference](../book/src/mcp/index.md#tool-surface) for the full surface.
 
 ---
 
