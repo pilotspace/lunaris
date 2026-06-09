@@ -34,7 +34,7 @@ use lunaris_core::{Episode, HlcClock, LunarisError, Scope, StorageError, Storage
 use lunaris_retrieve::{Hit, Keyword, Query, Vector};
 use ulid::Ulid;
 
-use crate::{AuditEvent, Lunaris, publish_audit_event};
+use crate::Lunaris;
 
 /// Phase 9.1 Plan 01 Task 3 — maximum events drained per
 /// [`WorkingMemory::consolidate`] call. Bounds T-09-1-01-04 DoS surface:
@@ -220,7 +220,7 @@ impl WorkingMemory {
     pub async fn consolidate(&self) -> Result<ConsolidationReport, LunarisError> {
         let storage: Arc<dyn StoragePort> = self.lunaris.storage();
 
-        let events = drain_consolidate_events(&storage).await?;
+        let events = drain_consolidate_events(&storage, &self.scope).await?;
 
         let pipeline = self.lunaris.consolidator_pipeline();
         let consolidator = match pipeline.snapshot_consolidator() {
@@ -234,14 +234,10 @@ impl WorkingMemory {
             .consolidate_scoped(storage.clone(), &events, Some(&self.scope_prefix))
             .await?;
 
-        for promo in &report.promotions {
-            let event = AuditEvent::ConsolidatorPromotion {
-                episode_id: promo.episode_id,
-                fact_id: crate::audit::FactIdData(promo.fact_id.0),
-                activation_score: promo.activation_score,
-            };
-            let _ = publish_audit_event(&storage, event).await;
-        }
+        // T1b fix (260609-dvi): emit BOTH promotion AND archive audit events.
+        // Replaces the promotion-only loop with publish_per_event_audits, which
+        // matches the background worker's emit behavior (D-22 verbatim).
+        lunaris_consolidate::publish_per_event_audits(&storage, &report).await;
 
         Ok(report)
     }
@@ -265,16 +261,17 @@ fn is_keyword_not_supported(err: &LunarisError) -> bool {
 
 /// Phase 9.1 Plan 01 Task 3 — drain up to [`DRAIN_CAP`] recent
 /// [`ConsolidateEvent`]s from [`CONSOLIDATE_TOPIC`].
+///
+/// T1a fix (260609-dvi): subscribes under the caller's real `scope` rather than
+/// `Scope::dev()`. Events published under the server scope are now correctly consumed.
 async fn drain_consolidate_events(
     storage: &Arc<dyn StoragePort>,
+    scope: &Scope,
 ) -> Result<Vec<ConsolidateEvent>, LunarisError> {
     let pull_timeout = Duration::from_millis(PULL_TIMEOUT_MS);
 
-    // RFC 0001 Wave 0: use Scope::dev() until per-scope queue routing (Wave 3F).
-    // scope-dev-allowed: inside-deprecated-wrapper — Wave 3F per-scope queue routing
-    // tracked in RFC 0001 §3.7 / docs/v0.3-known-debt.md.
     let mut stream = storage
-        .subscribe(&lunaris_core::Scope::dev(), CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
+        .subscribe(scope, CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, 0)
         .await
         .map_err(LunarisError::Storage)?;
 

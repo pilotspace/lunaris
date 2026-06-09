@@ -109,7 +109,9 @@ pub use verify_pipeline::{ENABLED_ENV_VAR as VERIFY_ENABLED_ENV_VAR, VerifierPip
 // Plan 04 — verifier + consolidator trait surface re-exports so callers
 // `use lunaris::{Verifier, Consolidator, NoopVerifier, NoopConsolidator}`
 // without reaching into the per-crate paths.
-pub use lunaris_consolidate::{Consolidator, NoopConsolidator};
+// T1d (260609-dvi): ActRConsolidator re-exported so lunaris-mcp needs no
+// direct dep on lunaris-consolidate.
+pub use lunaris_consolidate::{ActRConsolidator, Consolidator, NoopConsolidator};
 pub use lunaris_verify::{
     NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend,
     VerifyDecision,
