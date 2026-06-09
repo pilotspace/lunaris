@@ -117,6 +117,27 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   (`consolidate/supervisor.rs`, `verify/supervisor.rs`,
   `lunaris/consolidator_pipeline.rs`, `verify_pipeline.rs`) follow this
   pattern; new code MUST too.
+- **MCP-04 — every `#[tool]` response schema root MUST be `type:"object"`.**
+  rmcp 1.7 validates each tool's generated `outputSchema` when it builds the
+  tool router and ABORTS server startup (exit 101) if any `Json<T>` response
+  type's schema root is not an object — a `#[serde(tag = …)]` enum yields a
+  root `oneOf` (no `type`) and made `lunaris-mcp` un-launchable for ALL builds
+  until fix `89b9181`. MCP response DTOs MUST be flat structs (carry the
+  outcome discriminator as a `status` field, never an enum tag). The unit
+  tests call `handle()`/`handle_inner()` directly and never construct the
+  router, so they CANNOT catch this — the guard is
+  `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
+  which spawns the real binary, drives `initialize` → `tools/list`, and
+  asserts all 11 tools register. New MCP tools MUST keep that roster green.
+- **embedded-moon — opt-in, never in `default`.** `lunaris-mcp`'s
+  `embedded-moon` feature (`crates/lunaris-mcp/Cargo.toml`) pulls in the Moon
+  server crate to auto-launch an in-process Moon when no `LUNARIS_MCP_STORAGE`
+  override is set. It MUST stay out of every default feature set so
+  `cargo test --workspace` / CI-clippy stay light (must NOT compile the moon
+  server). `grep -n 'embedded-moon' crates/lunaris-mcp/Cargo.toml` must never
+  show it inside `default = [...]`. The published `npx`/`uvx`/`cargo install`
+  binaries do NOT enable it, so the **shipped MCP storage default is SQLite** —
+  do not document Moon as the shipped default.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
