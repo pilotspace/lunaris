@@ -155,9 +155,7 @@ mod tests {
         // Constructs AppState via the PRODUCTION bootstrap path (bootstrap_inner),
         // so set_consolidator is called and ActR is installed — same wiring as production.
         // skip_probe=true avoids requiring real GGUF weights in CI.
-        AppState::bootstrap_inner(Some(scope_name), None, true, Some(data_dir))
-            .await
-            .unwrap()
+        AppState::bootstrap_inner(Some(scope_name), None, true, Some(data_dir)).await.unwrap()
     }
 
     // ── Guard tests ───────────────────────────────────────────────────────────
@@ -167,9 +165,7 @@ mod tests {
     #[tokio::test]
     async fn guard_queue_native_false_returns_unsupported_backend() {
         let state = fresh_state_memory("test-cons-gate").await;
-        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None })
-            .await
-            .unwrap();
+        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
         assert!(
             matches!(resp, ScratchpadConsolidateResponse::UnsupportedBackend { .. }),
             "memory:// must return UnsupportedBackend; got: {resp:?}"
@@ -185,9 +181,7 @@ mod tests {
         let state = fresh_state_moon("test-cons-bgworker", _tmpdir.path().to_str().unwrap()).await;
         // Force-enable the pipeline — makes is_enabled() == true, spawns worker.
         state.lunaris.consolidator_pipeline().enable();
-        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None })
-            .await
-            .unwrap();
+        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
         assert!(
             matches!(resp, ScratchpadConsolidateResponse::WorkerConflict { .. }),
             "enabled pipeline must return WorkerConflict; got: {resp:?}"
@@ -206,7 +200,7 @@ mod tests {
     #[cfg(feature = "embedded-moon")]
     #[tokio::test]
     async fn guard_timeout_fires_within_wall_clock_bound() {
-        use lunaris_consolidate::{ConsolidateEvent, CONSOLIDATE_TOPIC};
+        use lunaris_consolidate::{CONSOLIDATE_TOPIC, ConsolidateEvent};
         use ulid::Ulid;
 
         let _tmpdir = tempfile::tempdir().unwrap(); // must outlive state
@@ -223,10 +217,7 @@ mod tests {
             source: "scratchpad/timeout-probe".into(),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage
-            .publish(&state.scope, CONSOLIDATE_TOPIC, 0, payload.into())
-            .await
-            .unwrap();
+        storage.publish(&state.scope, CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
 
         let start = std::time::Instant::now();
         let resp = handle_inner(
@@ -261,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn seed_aged_event_produces_non_empty_report() {
         use futures::StreamExt;
-        use lunaris_consolidate::{ConsolidateEvent, CONSOLIDATE_TOPIC};
+        use lunaris_consolidate::{CONSOLIDATE_TOPIC, ConsolidateEvent};
         use lunaris_core::audit::AUDIT_TOPIC;
         use ulid::Ulid;
 
@@ -280,14 +271,9 @@ mod tests {
             source: "scratchpad/test".into(),
         };
         let payload = serde_json::to_vec(&ev).unwrap();
-        storage
-            .publish(&state.scope, CONSOLIDATE_TOPIC, 0, payload.into())
-            .await
-            .unwrap();
+        storage.publish(&state.scope, CONSOLIDATE_TOPIC, 0, payload.into()).await.unwrap();
 
-        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None })
-            .await
-            .unwrap();
+        let resp = handle(&state, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
 
         let (promotions, archives) = match resp {
             ScratchpadConsolidateResponse::Ok { promotions, archives } => (promotions, archives),
@@ -303,10 +289,8 @@ mod tests {
         // under Scope::dev() (Wave-1E known debt — lunaris_core::audit::Publisher
         // impl hardcodes Scope::dev()). Subscribe to AUDIT_TOPIC under Scope::dev()
         // to verify at least one audit was emitted.
-        let mut audit_stream = storage
-            .subscribe(&Scope::dev(), "audit-drain-test", AUDIT_TOPIC, 0)
-            .await
-            .unwrap();
+        let mut audit_stream =
+            storage.subscribe(&Scope::dev(), "audit-drain-test", AUDIT_TOPIC, 0).await.unwrap();
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(2));
         tokio::pin!(deadline);
         let mut found_audit = false;

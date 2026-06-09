@@ -198,9 +198,11 @@ impl AppState {
         // background worker is spawned — memory.scratchpad_consolidate is the SOLE
         // consumer. Force-installs regardless of LUNARIS_CONSOLIDATOR_BACKEND env var
         // so the MCP binary always has a real scoring consolidator available on demand.
-        lunaris.consolidator_pipeline().set_consolidator(
-            Arc::new(lunaris::ActRConsolidator::default()) as Arc<dyn lunaris::Consolidator>
-        );
+        lunaris
+            .consolidator_pipeline()
+            .set_consolidator(
+                Arc::new(lunaris::ActRConsolidator::default()) as Arc<dyn lunaris::Consolidator>
+            );
 
         // Step 4: guard against the silent NoopEmbedder fallback.
         // Bypassed when skip_probe is true OR when LUNARIS_MCP_SKIP_EMBEDDER_PROBE
@@ -373,17 +375,11 @@ mod tests {
         )
         .await
         .expect("scratchpad_write on bootstrap-produced state must succeed");
-        assert!(
-            !write_resp.lsn.is_empty(),
-            "write response lsn must be non-empty"
-        );
+        assert!(!write_resp.lsn.is_empty(), "write response lsn must be non-empty");
 
         let read_resp = read_handle(
             &state,
-            ScratchpadReadParams {
-                key: "bootstrap-wired".into(),
-                namespace: None,
-            },
+            ScratchpadReadParams { key: "bootstrap-wired".into(), namespace: None },
         )
         .await
         .expect("scratchpad_read on bootstrap-produced state must succeed");
@@ -412,15 +408,12 @@ mod tests {
         let scope = Scope::new("test-vuz-wiring").unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap().to_owned();
-        let (url, guard) = crate::embedded_moon::decide_storage_with_launcher(
-            None,
-            &scope,
-            move || {
+        let (url, guard) =
+            crate::embedded_moon::decide_storage_with_launcher(None, &scope, move || {
                 let dir = data_dir.clone();
                 async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
-            },
-        )
-        .await;
+            })
+            .await;
         assert!(
             url.starts_with("moon://"),
             "decide_storage with real launcher must return moon:// URL, got: {url}"
@@ -428,10 +421,7 @@ mod tests {
         assert!(guard.is_some(), "real launcher must produce a guard");
         if let Some(g) = guard {
             g.shutdown().await;
-            assert!(
-                g.handle.lock().is_none(),
-                "handle cell must be None after shutdown"
-            );
+            assert!(g.handle.lock().is_none(), "handle cell must be None after shutdown");
         }
     }
 
@@ -441,8 +431,8 @@ mod tests {
     async fn decide_storage_override_skips_embedded_moon() {
         use lunaris_core::Scope;
         use std::sync::{
-            atomic::{AtomicBool, Ordering},
             Arc,
+            atomic::{AtomicBool, Ordering},
         };
         let scope = Scope::new("test-vuz-optout-state").unwrap();
         let called = Arc::new(AtomicBool::new(false));
