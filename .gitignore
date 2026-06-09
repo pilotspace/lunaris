@@ -88,3 +88,9 @@ milestones/v0.1.1-bench/cache/
 
 # mdBook build output
 /docs/book/book/
+
+# embedded-moon data dir (--features embedded-moon)
+# Matches the dir written by the production binary (repo root) AND by
+# cargo tests with --features embedded-moon (CWD = crates/lunaris-mcp/).
+# No leading slash — intentional, matches at any directory depth.
+.lunaris-moon/
