@@ -295,7 +295,7 @@ pub(crate) async fn flush(
 /// `report.communities_rebuilt` is logged via `tracing::info!` only — there
 /// is no `AuditEvent::ConsolidatorRebuild` variant in v0 (deferred per the
 /// plan's threat model + D-22 audit shape).
-pub(crate) async fn publish_per_event_audits(
+pub async fn publish_per_event_audits(
     storage: &Arc<dyn StoragePort>,
     report: &ConsolidationReport,
 ) {
@@ -328,7 +328,7 @@ pub(crate) fn promotion_event(p: &PromotionEvent) -> lunaris_core::audit::AuditE
 
 /// Build the per-archive typed audit event. See `promotion_event` for the
 /// refactor context.
-pub(crate) fn archive_event(a: &ArchiveEvent) -> lunaris_core::audit::AuditEvent {
+pub fn archive_event(a: &ArchiveEvent) -> lunaris_core::audit::AuditEvent {
     lunaris_core::audit::AuditEvent::ConsolidatorArchive {
         fact_id: lunaris_core::audit::FactIdData(a.fact_id.0),
         final_activation: a.final_activation,

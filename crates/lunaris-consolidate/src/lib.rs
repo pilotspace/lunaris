@@ -68,6 +68,7 @@ pub use types::{
 };
 #[allow(deprecated)]
 pub use worker::{CONSOLIDATE_CONSUMER_GROUP, CONSOLIDATE_TOPIC, run_consolidate_worker};
+pub use worker::{archive_event, publish_per_event_audits};
 
 /// Object-safe async consolidator.
 ///
