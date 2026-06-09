@@ -135,7 +135,7 @@ impl AppState {
         scope_override: Option<&str>,
         storage_override: Option<&str>,
     ) -> Result<Self, BootstrapError> {
-        Self::bootstrap_inner(scope_override, storage_override, false).await
+        Self::bootstrap_inner(scope_override, storage_override, false, None).await
     }
 
     /// Internal bootstrap with an explicit `skip_probe` flag.
@@ -152,6 +152,10 @@ impl AppState {
         scope_override: Option<&str>,
         storage_override: Option<&str>,
         skip_probe: bool,
+        // Used only by the #[cfg(feature = "embedded-moon")] block below.
+        // Suppressed on non-embedded-moon builds where only the cfg(not) branch runs.
+        #[cfg_attr(not(feature = "embedded-moon"), allow(unused_variables))]
+        data_dir_override: Option<&str>,
     ) -> Result<Self, BootstrapError> {
         let scope = crate::scope_resolver::resolve(scope_override)?;
 
@@ -162,7 +166,7 @@ impl AppState {
         // circuit-breaker emits tracing::warn and falls back to SQLite.
         #[cfg(feature = "embedded-moon")]
         let (storage_url, embedded_guard) = {
-            let data_dir = "./.lunaris-moon".to_owned();
+            let data_dir = data_dir_override.unwrap_or("./.lunaris-moon").to_owned();
             crate::embedded_moon::decide_storage_with_launcher(
                 storage_override,
                 &scope,
@@ -189,6 +193,14 @@ impl AppState {
             "opening lunaris engine",
         );
         let lunaris = Lunaris::open(&storage_url).await?;
+
+        // P-C (260609-dvi): install ActR consolidator; pipeline stays DISABLED so no
+        // background worker is spawned — memory.scratchpad_consolidate is the SOLE
+        // consumer. Force-installs regardless of LUNARIS_CONSOLIDATOR_BACKEND env var
+        // so the MCP binary always has a real scoring consolidator available on demand.
+        lunaris.consolidator_pipeline().set_consolidator(
+            Arc::new(lunaris::ActRConsolidator::default()) as Arc<dyn lunaris::Consolidator>
+        );
 
         // Step 4: guard against the silent NoopEmbedder fallback.
         // Bypassed when skip_probe is true OR when LUNARIS_MCP_SKIP_EMBEDDER_PROBE
@@ -339,7 +351,7 @@ mod tests {
         // best-effort cleanup: remove any stale .lunaris-moon from a previous run
         let _ = std::fs::remove_dir_all("./.lunaris-moon");
 
-        let state = AppState::bootstrap_inner(None, None, true)
+        let state = AppState::bootstrap_inner(None, None, true, None)
             .await
             .expect("bootstrap_inner(skip_probe=true) must succeed with --features embedded-moon");
 

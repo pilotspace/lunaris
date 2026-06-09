@@ -2,8 +2,8 @@
 //!
 //! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
 //! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-//! `memory.status`, `memory.scratchpad_write`, `memory.scratchpad_read`, and
-//! `memory.scratchpad_grep`.
+//! `memory.status`, `memory.scratchpad_write`, `memory.scratchpad_read`,
+//! `memory.scratchpad_grep`, and `memory.scratchpad_consolidate`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -44,6 +44,7 @@ use crate::tools::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
     scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
     scratchpad_write::{ScratchpadWriteParams, ScratchpadWriteResponse},
@@ -286,6 +287,29 @@ impl LunarisMcpServer {
             .map(Json)
             .map_err(rmcp::ErrorData::from)
     }
+
+    /// On-demand ACT-R consolidation drain for the scratchpad.
+    ///
+    /// Requires a Moon backend (queue_native=true). Returns promotions and archives
+    /// counts from the ConsolidationReport. Guards: fails if the background
+    /// consolidation worker is live (WorkerConflict), backend has no native queue
+    /// (UnsupportedBackend), or drain exceeds 5s hard timeout (Timeout).
+    #[tool(
+        name = "memory.scratchpad_consolidate",
+        description = "On-demand ACT-R consolidation drain. Requires Moon backend \
+            (queue_native). Returns {promotions, archives} count. Guards: fails if \
+            background worker is live (WorkerConflict), backend has no native queue \
+            (UnsupportedBackend), or drain exceeds 5s hard timeout (Timeout)."
+    )]
+    async fn scratchpad_consolidate(
+        &self,
+        Parameters(params): Parameters<ScratchpadConsolidateParams>,
+    ) -> Result<Json<ScratchpadConsolidateResponse>, rmcp::ErrorData> {
+        tools::scratchpad_consolidate::handle(&self.state, params)
+            .await
+            .map(Json)
+            .map_err(rmcp::ErrorData::from)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -297,7 +321,8 @@ impl ServerHandler for LunarisMcpServer {
             .with_instructions(
                 "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
              record decisions, record edits, inspect backend status, and scratchpad CRUD \
-             (scratchpad_write / scratchpad_read / scratchpad_grep for keyed working memory). \
+             (scratchpad_write / scratchpad_read / scratchpad_grep for keyed working memory; \
+             scratchpad_consolidate for on-demand ACT-R drain — Moon backend only). \
              Scope is bound at server startup. Scratchpad namespace defaults to 'scratchpad/'."
                     .to_string(),
             )
