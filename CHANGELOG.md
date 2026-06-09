@@ -2,6 +2,54 @@
 
 All notable changes to Lunaris are documented here.
 
+## Unreleased — MCP working memory + embedded Moon (2026-06-09)
+
+Merged the `feat/mcp-scratchpad-tools` milestone (PR #19): a working-memory
+scratchpad surface for the MCP server, an opt-in in-process Moon, and a
+guarded on-demand consolidate tool. (Version label provisional — finalize at
+the next tag.)
+
+### Added
+
+- **Four `memory.scratchpad_*` MCP tools** (`lunaris-mcp`) — key-addressed
+  working memory under a `scratchpad/` namespace, separate from the durable
+  episode log. `scratchpad_write` / `scratchpad_read` are KV put/get,
+  `scratchpad_grep` lists entries by key-prefix, and `scratchpad_consolidate`
+  drains the scratchpad queue and promotes/archives notes by ActR activation.
+  The MCP server now registers **eleven** tools (seven durable + four
+  scratchpad).
+
+- **`memory.scratchpad_consolidate` — guarded on-demand consolidation**
+  (`lunaris-mcp`) — reuses `WorkingMemory::consolidate()` behind three guards:
+  it requires a native-queue backend (returns `{ status: "unsupported_backend" }`
+  on SQLite/memory), refuses to run while a background consolidation worker is
+  live (`{ status: "worker_conflict" }`), and bounds one drain to a 5 s
+  wall-clock cap (`{ status: "timeout" }`).
+
+- **`--features embedded-moon` (opt-in)** (`lunaris-mcp`) — when built with the
+  feature AND no `LUNARIS_MCP_STORAGE` override is set, `lunaris-mcp`
+  auto-launches an in-process Moon (`moon::server::embedded::run_embedded`,
+  rooted at `./.lunaris-moon`) and uses it; on bring-up failure it falls back
+  to the SQLite default. The feature is **off by default** and is NOT compiled
+  into the published `npx` / `uvx` / `cargo install` binaries, so the shipped
+  MCP storage default remains SQLite.
+
+- **`server_boot.rs` integration test** (`lunaris-mcp`) — spawns the real
+  binary, drives the `initialize` → `tools/list` handshake over stdio, and
+  asserts all eleven tools register. Closes the built-vs-wired gap one level
+  above the handler logic (the unit tests never construct the rmcp tool
+  router, so a green unit suite did not prove the server can start).
+
+### Fixed
+
+- **`lunaris-mcp` could not start (any build).** `ScratchpadConsolidateResponse`
+  was a `#[serde(tag = "status")]` enum, whose generated MCP `outputSchema`
+  root is `oneOf` (no `type`). rmcp 1.7 validates each tool's `outputSchema`
+  when building the tool router and aborts startup (exit 101) on a non-object
+  root — so the server was un-launchable. Fixed by making the response a flat
+  struct (root `type: "object"`); guarded by a `schema_for!` root-is-object
+  regression test and the new `server_boot.rs` boot test. (`89b9181`)
+
 ## Unreleased — RAPTOR tree retrieval wired into recall (2026-06-04)
 
 Completes the RAPTOR retrieval path. The hierarchical community tree that

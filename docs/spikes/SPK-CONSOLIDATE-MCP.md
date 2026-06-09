@@ -1,6 +1,9 @@
 # SPK-CONSOLIDATE-MCP — On-Demand MCP Consolidate Tool
 
-**Status:** INVALIDATED (Moon-direct design; see Section 1) / RESOLVED via collapsed design (see Section 2)
+**Status:** SHIPPED (2026-06-09) — P-C `memory.scratchpad_consolidate` merged
+via the collapsed design (reuses `WorkingMemory::consolidate()` + 3 guards; see
+Section 2). The original Moon-direct design is INVALIDATED (see Section 1). See
+CHANGELOG (2026-06-09).
 **Quick task:** 260609-dvi (P-C guarded consolidate MVP — collapsed design)
 **Owns the design for:** milestone phase P-C — Guarded consolidate MVP
 **Date:** 2026-06-09 (original: 2026-06-08)

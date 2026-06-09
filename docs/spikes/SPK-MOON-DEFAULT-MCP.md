@@ -1,6 +1,10 @@
 # SPK-MOON-DEFAULT-MCP — Moon as the lunaris-mcp Default Storage
 
-**Status:** SPIKE COMPLETE — one decision pending user confirm (see "The decision" below)
+**Status:** IMPLEMENTED (feature-gated, 2026-06-09) — P-B shipped Moon
+auto-launch behind the opt-in `--features embedded-moon` (default-off). The
+published-binary default stays **SQLite**, not Moon-as-default as originally
+proposed below; the cargo feature is the rollout flag. See
+`crates/lunaris-mcp/src/embedded_moon.rs` + CHANGELOG (2026-06-09).
 **Branch:** `feat/mcp-scratchpad-tools`
 **Owns the design for:** milestone phase P-B — Moon as MCP default, auto-launched
 **Date:** 2026-06-08
