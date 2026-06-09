@@ -42,7 +42,8 @@ lunaris-mcp` builds from source.
 
 ## Tool surface
 
-Seven tools are registered (all implemented):
+Eleven tools are registered (all implemented) — seven durable-memory tools
+plus four working-memory (scratchpad) tools:
 
 | Tool | Input | Returns |
 |------|-------|---------|
@@ -53,6 +54,10 @@ Seven tools are registered (all implemented):
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes |
+| `memory.scratchpad_write` | `key`, `value`, optional `namespace` | `{ lsn }` |
+| `memory.scratchpad_read` | `key`, optional `namespace` | `{ found, value }` |
+| `memory.scratchpad_grep` | `pattern`, optional `namespace` | `{ entries[] }` |
+| `memory.scratchpad_consolidate` | optional `namespace` | `{ status, promotions, archives }` |
 
 `memory.ingest` is the general capture path. `memory.record_decision` and
 `memory.record_edit` are structured aliases that write intent-typed episodes
@@ -60,6 +65,15 @@ Seven tools are registered (all implemented):
 idempotency. `memory.status` reports the bound scope and backend capabilities
 (`queue_native`, `graph_native`, `rerank_native`, `native_rrf`,
 `max_vector_dim`, `cypher_dialect`, …).
+
+The four `memory.scratchpad_*` tools are working memory — transient,
+key-addressed notes (drafts, plans, in-progress state) under a `scratchpad/`
+namespace, separate from the durable episode log. `scratchpad_write`/`read`
+are key-value put/get, `scratchpad_grep` lists entries by key-prefix, and
+`scratchpad_consolidate` drains the scratchpad queue and promotes/archives
+notes by activation. **`scratchpad_consolidate` needs a native-queue backend
+(Moon or Postgres)** — on SQLite it returns `{ status: "unsupported_backend" }`
+(see [Storage backends](#storage-backends)).
 
 The wire DTOs are identical across MCP clients, and every request DTO carries
 `#[serde(deny_unknown_fields)]` — no wire field can override the bound scope.
@@ -86,11 +100,22 @@ the scope model.
 | **Moon** | shared or large corpora | native HNSW vector + BM25/hybrid fusion + graph + queues + bi-temporal reads |
 | **Postgres** | portability proof | `pgvector` HNSW |
 
-The default SQLite path supports all seven tools without any external
+The default SQLite path supports ten of the eleven tools without any external
 process — `memory.recall` runs **vector-only** brute-force cosine there.
-BM25 keyword fusion and hybrid recall require a keyword-capable backend;
-point `LUNARIS_MCP_STORAGE` at Moon (`moon://127.0.0.1:6380`) or Postgres for
-that and for sub-25 ms recall above ~10k vectors per scope.
+`memory.scratchpad_consolidate` is the one exception: it needs a native-queue
+backend (Moon or Postgres) and returns `{ status: "unsupported_backend" }` on
+SQLite. BM25 keyword fusion and hybrid recall also require a keyword-capable
+backend; point `LUNARIS_MCP_STORAGE` at Moon (`moon://127.0.0.1:6380`) or
+Postgres for those and for sub-25 ms recall above ~10k vectors per scope.
+
+> **Auto-launched Moon (opt-in build).** A source build with
+> `cargo build -p lunaris-mcp --features embedded-moon` makes `lunaris-mcp`
+> launch an in-process Moon (rooted at `./.lunaris-moon`) when no
+> `LUNARIS_MCP_STORAGE` override is set, then use it automatically — no
+> separate Moon process to run. The feature is **off by default** and is
+> **not** compiled into the published `npx`/`uvx`/`cargo install` binaries, so
+> the shipped default stays SQLite. An explicit `--storage`/`LUNARIS_MCP_STORAGE`
+> still wins; a failed Moon bring-up falls back to SQLite.
 
 > The first `memory.recall` stages the GGUF embedder (~150 MB) and reranker
 > to `~/.lunaris/models/` — expect ~30 s on a cold start, fast thereafter.

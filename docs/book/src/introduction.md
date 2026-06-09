@@ -65,8 +65,11 @@ cargo install lunaris-mcp     # or, no Rust toolchain: npx -y @pilotspace/lunari
 claude mcp add --transport stdio lunaris -- lunaris-mcp
 ```
 
-The agent then calls seven `memory.*` tools — `ingest`, `recall`, `forget`,
-`list_scopes`, `record_decision`, `record_edit`, and `status`:
+The agent then calls eleven `memory.*` tools — seven durable-memory tools
+(`ingest`, `recall`, `forget`, `list_scopes`, `record_decision`,
+`record_edit`, `status`) plus four working-memory scratchpad tools
+(`scratchpad_write`, `scratchpad_read`, `scratchpad_grep`,
+`scratchpad_consolidate`):
 
 ```text
 memory.ingest  source="src:notes"  content="The ingest pipeline writes one atomic_write per episode."

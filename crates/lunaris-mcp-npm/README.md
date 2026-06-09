@@ -77,7 +77,7 @@ does not match — indicating a tampered or corrupted artifact.
 
 See [docs/integration/claude-code.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md)
 for the complete integration guide including environment variables, storage
-backends, and all four MCP tools.
+backends, and all eleven MCP tools.
 
 ## License
 

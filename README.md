@@ -30,9 +30,12 @@ observations in; structured, bi-temporal facts out. Backed by **Moon**
 
 ## 1. Give your AI agent memory (MCP)
 
-The MCP server gives any MCP-capable agent seven memory tools:
-`memory.ingest`, `memory.recall`, `memory.forget`, `memory.list_scopes`,
-`memory.record_decision`, `memory.record_edit`, `memory.status`.
+The MCP server gives any MCP-capable agent eleven memory tools — seven
+durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
+`memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
+`memory.status`) plus four working-memory scratchpad tools
+(`memory.scratchpad_write`, `memory.scratchpad_read`,
+`memory.scratchpad_grep`, `memory.scratchpad_consolidate`).
 Both install paths download a prebuilt native binary on first run —
 no Rust toolchain required (`linux-x64/arm64`, `darwin-x64/arm64`,
 `win32-x64`).
@@ -62,10 +65,15 @@ context injection, Codex included):
 scripts/setup-lunaris-agents.py --agent both --runner npx   # or: uvx | local
 ```
 
-Storage defaults to Moon at `moon://127.0.0.1:6380` with a per-scope
-SQLite fallback (`--storage-backend sqlite`) — recall works out of the
-box on SQLite via brute-force cosine; switch to Moon or Postgres for
-HNSW-class latency beyond ~10k vectors per scope. First ingest stages
+A plain `npx`/`uvx`/`cargo install lunaris-mcp` install defaults to a
+zero-config **per-scope SQLite** store — recall works out of the box via
+brute-force cosine, no external process. Point `LUNARIS_MCP_STORAGE` at
+Moon (`moon://127.0.0.1:6380`) or Postgres for HNSW-class latency beyond
+~10k vectors per scope. The `setup-lunaris-agents.py` repo path instead
+defaults its agent config to Moon (the lifecycle hooks use Moon's queues
+for background embedding; pass `--storage-backend sqlite` to opt out). A
+source build with `--features embedded-moon` auto-launches an in-process
+Moon — an opt-in, not the published-binary default. First ingest stages
 the embedder weights once (lazy GGUF download).
 
 Full guides: [`docs/integration/claude-code.md`](docs/integration/claude-code.md) ·
@@ -83,6 +91,10 @@ memory deliberately:
   `memory.ingest`; record code decisions with `memory.record_decision`
   and notable edits with `memory.record_edit`.
 - Before answering questions about prior work, query `memory.recall`.
+- Use `memory.scratchpad_write`/`scratchpad_read`/`scratchpad_grep` for
+  transient working notes within a task (drafts, plans, in-progress state);
+  promote the durable ones with `memory.scratchpad_consolidate` (needs a
+  Moon/Postgres backend).
 - Memory is partitioned by scope — never mix scopes; list with
   `memory.list_scopes`. Use `memory.forget` when asked to delete.
 - Check backend health with `memory.status` if recall returns nothing.

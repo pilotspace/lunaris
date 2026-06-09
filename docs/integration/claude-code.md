@@ -142,8 +142,9 @@ the postinstall download and point directly at a pre-staged binary. For the pip/
 `memory.recall` works on the default SQLite backend via brute-force cosine
 (Wave A.1). For corpora larger than ~10k vectors per scope, switch to Moon
 (HNSW) or Postgres (pgvector) for HNSW-class latency. The default SQLite
-path supports all four tools (`memory.ingest`, `memory.recall`,
-`memory.forget`, `memory.list_scopes`) without any external process.
+path supports ten of the eleven tools without any external process; only
+`memory.scratchpad_consolidate` needs a native-queue backend (Moon or
+Postgres) and returns `{ status: "unsupported_backend" }` on SQLite.
 
 ---
 

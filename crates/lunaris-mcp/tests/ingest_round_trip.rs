@@ -4,7 +4,9 @@
 //! stdio transport (newline-delimited JSON-RPC as used by rmcp's AsyncRwTransport),
 //! and asserts:
 //!   1. `initialize` handshake succeeds.
-//!   2. `tools/list` returns exactly four tools including `memory.ingest`.
+//!   2. `tools/list` returns the registered tools including `memory.ingest`
+//!      (asserts `>= 4` as a liveness floor; the full 11-tool roster is
+//!      pinned by `server_boot.rs::server_boots_and_lists_all_tools`).
 //!   3. `tools/call` for `memory.ingest` returns a non-empty `lsn` field.
 //!
 //! Uses a temp-dir SQLite DB so the test is hermetic and leaves no state behind.

@@ -2,7 +2,7 @@
 
 Connect Lunaris to [Claude Code](https://claude.com/claude-code) as a
 stdio MCP server. Once registered, the agent can call
-[the seven `memory.*` tools](./index.md#tool-surface) to persist and recall
+[the eleven `memory.*` tools](./index.md#tool-surface) to persist and recall
 scope-isolated memory across sessions.
 
 ## Register the server

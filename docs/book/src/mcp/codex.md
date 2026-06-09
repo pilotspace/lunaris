@@ -2,7 +2,7 @@
 
 Connect Lunaris to the [Codex CLI](https://github.com/openai/codex) as a
 stdio MCP server. The tool surface is identical to Claude Code —
-[the same seven `memory.*` tools](./index.md#tool-surface), the same wire
+[the same eleven `memory.*` tools](./index.md#tool-surface), the same wire
 DTOs — only the configuration file differs.
 
 ## Configure the server
