@@ -111,8 +111,11 @@ impl LunarisMcpServer {
     /// scope. Returns the log-sequence number of the committed write.
     #[tool(
         name = "memory.ingest",
-        description = "Ingest an observation (message, document, tool result) into agent memory. \
-                       Returns the LSN of the committed write."
+        description = "Store an observation (message, document, tool result) as a durable episode \
+                       in agent memory. Returns the LSN of the committed write. Use for facts, \
+                       summaries, and any content that must survive beyond the current session. \
+                       Writes are fast — no embedder load on ingest. \
+                       Tip: for structured provenance use memory.record_decision or memory.record_edit instead."
     )]
     async fn ingest(
         &self,
@@ -127,9 +130,13 @@ impl LunarisMcpServer {
     /// Fusion. Wave 2.B implements the full retrieval path.
     #[tool(
         name = "memory.recall",
-        description = "Recall memories relevant to a natural-language query using \
-                       hybrid semantic + BM25 retrieval with optional source-prefix and \
-                       as_of filters."
+        description = "Hybrid semantic + BM25 recall over durable memory. Returns up to k hits \
+                       (default k=5) as 200-char content preview snippets — NOT full episode text. \
+                       Each hit includes episode_id, source, content (truncated), score, and ingested_at. \
+                       IMPORTANT: first call in a session triggers GGUF embedder load (slow); subsequent calls are fast. \
+                       Progressive-disclosure strategy: start with k=5 (cheap preview pass); if no useful hit found, \
+                       widen: raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or set as_of \
+                       for a bi-temporal point-in-time snapshot. SQLite backend falls back to vector-only (no BM25)."
     )]
     async fn recall(
         &self,
@@ -141,7 +148,12 @@ impl LunarisMcpServer {
     /// Forget memories by source prefix or episode ID.
     ///
     /// Wave 2.C implements the full deletion path.
-    #[tool(name = "memory.forget", description = "Delete memories by source prefix or episode ID.")]
+    #[tool(
+        name = "memory.forget",
+        description = "Delete durable memory episodes by source prefix or episode ID. \
+                       Use source_prefix to bulk-delete (e.g. 'edit:' removes all edit-provenance records). \
+                       Use episode_id for surgical removal of a single episode. Irreversible."
+    )]
     async fn forget(
         &self,
         Parameters(params): Parameters<ForgetParams>,
@@ -154,7 +166,8 @@ impl LunarisMcpServer {
     /// Wave 2.C implements the full scope enumeration path.
     #[tool(
         name = "memory.list_scopes",
-        description = "List all known memory scopes with creation timestamps."
+        description = "List all known memory scopes with creation timestamps. Diagnostic tool — use \
+                       to confirm the active scope or enumerate multi-scope deployments. Not for content retrieval."
     )]
     async fn list_scopes(
         &self,
@@ -174,10 +187,11 @@ impl LunarisMcpServer {
     /// Accepts an optional `dedupe_key` for replay-safe idempotency (HOOK-05 path).
     #[tool(
         name = "memory.record_decision",
-        description = "Record an architectural or scoping decision into agent memory. \
-                       Writes an Episode with source='decision:<scope>' and metadata \
-                       kind='decision'. Accepts optional dedupe_key for replay-safe \
-                       idempotency."
+        description = "Record an architectural or scoping decision as a durable, structured episode \
+                       with source='decision:<scope>'. The source prefix enables targeted retrieval: pass \
+                       filters.source_prefix='decision:' to memory.recall to surface only decision records. \
+                       Accepts optional dedupe_key for replay-safe idempotency (hook pipeline integration). \
+                       Stores content as JSON with decision, rationale, alternatives, and tags fields."
     )]
     async fn record_decision(
         &self,
@@ -197,9 +211,10 @@ impl LunarisMcpServer {
     /// Accepts optional `dedupe_key` for replay-safe idempotency (HOOK-05).
     #[tool(
         name = "memory.record_edit",
-        description = "Record a file edit into agent memory. \
-                       Writes an Episode with source='edit:<scope>'. \
-                       The path field is stored in metadata for future path-filter recalls. \
+        description = "Record a file edit as a durable episode with source='edit:<scope>' and metadata path field. \
+                       The source prefix enables targeted retrieval: pass filters.source_prefix='edit:' to \
+                       memory.recall to surface only edit records. The path metadata field enables future \
+                       path-filter queries (filters.source_prefix='edit:' combined with k widen). \
                        Accepts optional dedupe_key for replay-safe idempotency."
     )]
     async fn record_edit(
@@ -215,8 +230,10 @@ impl LunarisMcpServer {
     /// Report backend capabilities and queue health for the bound scope.
     #[tool(
         name = "memory.status",
-        description = "Report Lunaris backend capabilities and MQ-backed queue health \
-                       for the active memory scope."
+        description = "Report backend capabilities (queue_native, graph_native, vector_native) and MQ queue health \
+                       for the active scope. Diagnostic tool — use to verify the backend before calling \
+                       memory.scratchpad_consolidate (requires queue_native=true) or to confirm vector support \
+                       before a semantic recall pass."
     )]
     async fn status(
         &self,
@@ -232,10 +249,11 @@ impl LunarisMcpServer {
     /// scope isolation is bound at server startup.
     #[tool(
         name = "memory.scratchpad_write",
-        description = "Write a key-value pair to the agent scratchpad. Returns the LSN \
-                       of the committed write. Namespace defaults to 'scratchpad/' and \
-                       shapes the source-key prefix (not a security boundary — scope is \
-                       bound at startup). ':' is rejected in namespace."
+        description = "Write a key-value pair to the ephemeral agent scratchpad. Returns the LSN of the write. \
+                       Fast — no embedder load. Keys are namespaced: full source key = '{namespace}{key}' \
+                       (namespace defaults to 'scratchpad/'). ':' is rejected in namespace. \
+                       Scratchpad is NOT semantically indexed — use memory.ingest for durable, queryable memory. \
+                       Write-then-read is read-your-writes consistent on all backends."
     )]
     async fn scratchpad_write(
         &self,
@@ -255,10 +273,10 @@ impl LunarisMcpServer {
     /// default enforces the `source` filter at the SQL boundary.
     #[tool(
         name = "memory.scratchpad_read",
-        description = "Read a single key from the agent scratchpad. Returns {found, value?}, \
-                       where value is the verbatim stored JSON. Namespace defaults to \
-                       'scratchpad/'. Write-then-read is read-your-writes consistent on \
-                       both the Moon and sqlite backends."
+        description = "Exact key lookup on the agent scratchpad. Returns {found, value?} where value is the \
+                       FULL verbatim stored JSON — not a 200-char snippet. No model load. \
+                       Use as the FIRST retrieval tier when you know the exact key (cheaper than memory.recall). \
+                       Namespace defaults to 'scratchpad/'. Read-your-writes consistent on all backends."
     )]
     async fn scratchpad_read(
         &self,
@@ -273,10 +291,10 @@ impl LunarisMcpServer {
     /// Grep scratchpad entries by key prefix pattern.
     #[tool(
         name = "memory.scratchpad_grep",
-        description = "Return all scratchpad entries whose full source key starts with \
-                       '{namespace}{pattern}'. Each entry carries the full source key \
-                       (namespace + key) and the verbatim stored value. Namespace \
-                       defaults to 'scratchpad/'."
+        description = "Prefix listing over the agent scratchpad. Returns all entries whose source key starts with \
+                       '{namespace}{pattern}', each with the full verbatim stored value. No model load. \
+                       Use as the FIRST retrieval tier when you know a key prefix but not the exact key. \
+                       Namespace defaults to 'scratchpad/'. Cheaper than memory.recall; returns full values not previews."
     )]
     async fn scratchpad_grep(
         &self,
@@ -296,10 +314,11 @@ impl LunarisMcpServer {
     /// (UnsupportedBackend), or drain exceeds 5s hard timeout (Timeout).
     #[tool(
         name = "memory.scratchpad_consolidate",
-        description = "On-demand ACT-R consolidation drain. Requires Moon backend \
-            (queue_native). Returns {promotions, archives} count. Guards: fails if \
-            background worker is live (WorkerConflict), backend has no native queue \
-            (UnsupportedBackend), or drain exceeds 5s hard timeout (Timeout)."
+        description = "On-demand ACT-R consolidation drain. Moves promoted scratchpad items to durable memory and \
+                       archives low-activation items. Returns {promotions, archives} counts. \
+                       Requires Moon backend (queue_native=true — check memory.status first). \
+                       Guards: fails with WorkerConflict if background consolidation worker is live, \
+                       UnsupportedBackend if backend lacks a native queue, or Timeout if drain exceeds 5s."
     )]
     async fn scratchpad_consolidate(
         &self,
@@ -319,11 +338,30 @@ impl ServerHandler for LunarisMcpServer {
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Lunaris memory engine — ingest, recall, forget, list memory scopes, \
-             record decisions, record edits, inspect backend status, and scratchpad CRUD \
-             (scratchpad_write / scratchpad_read / scratchpad_grep for keyed working memory; \
-             scratchpad_consolidate for on-demand ACT-R drain — Moon backend only). \
-             Scope is bound at server startup. Scratchpad namespace defaults to 'scratchpad/'."
+                "Lunaris progressive-disclosure memory — use tools in this order to minimize latency and model load:\n\
+                 \n\
+                 RETRIEVE (cheapest first):\n\
+                 1. memory.scratchpad_read / memory.scratchpad_grep — exact or prefix key lookup; returns full verbatim \
+                 values; no model load; always try this first for known keys.\n\
+                 2. memory.recall k=5 (default) — semantic + BM25 hybrid preview pass; first call triggers GGUF \
+                 embedder load (slow); returns 200-char content snippets with episode_id and score. If the snippet \
+                 is sufficient, stop here.\n\
+                 3. Widen recall — raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or \
+                 pass as_of for a point-in-time snapshot. Use this tier only when the k=5 pass returns no useful hit.\n\
+                 \n\
+                 STORE (choose by lifetime):\n\
+                 - memory.ingest — durable observations, documents, tool results.\n\
+                 - memory.record_decision / memory.record_edit — structured provenance; source prefix enables \
+                 targeted recall later (filters.source_prefix='decision:' recalls only decisions).\n\
+                 - memory.scratchpad_write — ephemeral working state (key-value); fast; not semantically indexed.\n\
+                 \n\
+                 DIAGNOSTICS (not for content retrieval):\n\
+                 - memory.status — backend capabilities and queue health.\n\
+                 - memory.list_scopes — enumerate known scopes.\n\
+                 - memory.scratchpad_consolidate — on-demand ACT-R drain; Moon backend only.\n\
+                 \n\
+                 Note: recall returns 200-char preview snippets — not full episode content. There is no \
+                 fetch-full-episode tool; widen k or use scratchpad_read for full verbatim values."
                     .to_string(),
             )
     }
