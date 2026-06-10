@@ -10,6 +10,8 @@ for proactive memory injection before prompts and after useful tool calls. The
 sidecar keeps model resources loaded once, so hook subprocesses do not reload
 or rehash GGUF files on every recall.
 
+![Lunaris hook flow — capture pipeline and contextd inject loop](../book/src/images/architecture/lunaris-hook-flow.png)
+
 ---
 
 ## Installation
