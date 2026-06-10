@@ -1,0 +1,29 @@
+Create a calm, light, hand-drawn style process flow diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "LUNARIS HOOK FLOW" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "capture agent events, inject memory back"
+
+LAYOUT — two horizontal flows, one above the other, meeting a shared database cylinder on the right:
+
+UPPER FLOW, labeled "CAPTURE" at its left edge (cloud blue whisper tint #eef3f9 behind the row), flowing left to right as small rounded boxes connected by thin arrows:
+  "agent events" → "lunaris-hook" → "filter" → "scrub secrets" → "dedupe" → "ingest"
+  Under "agent events", tiny print list: "PreToolUse · PostToolUse · Stop · SessionStart"
+  The "lunaris-hook" box has a loose teal pencil circle around it.
+  Pencil-line annotation arrow to "lunaris-hook": "short-lived, p50 ≈ 5 ms, no model load"
+  Pencil-line annotation arrow to "dedupe": "blake3 key — replay safe"
+  From "ingest", one arrow continues right into a database cylinder labeled "~/.lunaris scope db".
+
+LOWER FLOW, labeled "INJECT" at its left edge (soft sage whisper tint #eef5ee behind the row), flowing right to left, starting from the same cylinder:
+  cylinder → "lunaris-contextd" → "embed + search" → "curate by source" → "agent context"
+  Pencil-line annotation arrow to "lunaris-contextd": "warm daemon — embedder stays loaded"
+  Pencil-line annotation arrow to "curate by source": "decisions and edits surface first"
+
+Pencil-line annotation arrow to the cylinder, with a loose teal pencil circle: "same store and scope as the MCP tools"
+
+BOTTOM NOTE in small gray print: "Claude Code recalls via MCP — Codex gets context injected"
+
+CONNECTIONS: main flow arrows are thin solid lines with small open arrowheads. Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.

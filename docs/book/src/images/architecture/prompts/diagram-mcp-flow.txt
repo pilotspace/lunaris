@@ -1,0 +1,28 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "LUNARIS VIA MCP" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "progressive-disclosure memory for AI agents"
+
+LAYOUT — vertical three-tier stack with generous whitespace:
+
+TIER 1 at top (cloud blue whisper tint #eef3f9): one rounded box "AI CLIENT" with smaller text inside, exactly these three words: "Claude Code & Codex".
+One thin arrow down to tier 2, labeled "stdio JSON-RPC".
+Pencil-line annotation arrow to this arrow: "server instructions teach the retrieval ladder"
+
+TIER 2 in the middle: three columns of small rounded boxes under three print labels:
+  Column "RETRIEVE" (teal label): "scratchpad_read", "scratchpad_grep", "recall", "status"
+  Column "STORE": "ingest", "record_decision", "record_edit", "scratchpad_write"
+  Column "MANAGE": "forget", "list_scopes", "scratchpad_consolidate"
+The RETRIEVE column is the hero: loose teal pencil circle around it.
+Pencil-line annotation arrow to RETRIEVE, numbered list in small print: "1 exact key  2 recall k=5 preview  3 widen k + filters"
+Pencil-line annotation arrow to STORE: "durable vs ephemeral — choose per lifetime"
+
+TIER 3 at bottom: three small boxes connected left to right by thin arrows: "ingest pipeline" → "recall DSL (RRF)" → "working memory".
+Below them one database cylinder labeled "SQLite / Moon" with a thin arrow down from the engine boxes.
+Pencil-line annotation arrow to the cylinder: "same store as lunaris-hook"
+
+Thin solid arrows connect tier 1 → tier 2 → tier 3 with small open arrowheads. Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
