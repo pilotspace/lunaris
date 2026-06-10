@@ -1,0 +1,29 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "SHARED SCRATCHPAD" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "working memory for agent teams"
+
+LAYOUT — three rows, top to bottom, with generous whitespace:
+
+TOP ROW: three small rounded boxes side by side: "planner agent", "executor agent", "reviewer agent".
+Above them, tiny gray print: "any MCP client — Claude Code & Codex".
+Thin solid arrows from each agent box down to the middle blackboard. The arrows are double-headed (read and write).
+
+MIDDLE ROW: one wide rounded rectangle (cloud blue whisper tint #eef3f9) labeled "SCOPE BLACKBOARD" in print letters at its top edge. Inside, three lines of small print text, left aligned, like ledger entries:
+  "scratchpad/plan = step list"
+  "scratchpad/executor/status = step 2 of 3"
+  "scratchpad/review/notes = two findings"
+Pencil-line annotation arrow to the entries: "namespaces partition by agent"
+Pencil-line annotation arrow to the blackboard edge, with a loose teal pencil circle: "write then read is instant — read-your-writes"
+
+BOTTOM ROW: from the blackboard one thin arrow down-right into a small rounded box "consolidate (ACT-R)" (soft sage whisper tint #eef5ee), then one arrow right into a database cylinder labeled "durable memory".
+Pencil-line annotation arrow to the consolidate box: "hot items promoted, stale items archived"
+A second thin arrow from the blackboard straight down into the same cylinder area is NOT drawn — only the consolidate path reaches the cylinder.
+
+BOTTOM NOTE in small gray print: "same repo means same scope means same blackboard — across runtimes"
+
+CONNECTIONS: main flow arrows are thin solid lines with small open arrowheads. Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
