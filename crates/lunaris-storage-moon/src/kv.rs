@@ -1,8 +1,8 @@
-//! `read_as_of` — `client.temporal().snapshot_at_packed(...)` then typed
-//! `client.hget(<key>, "v")` + `client.hget(<key>, "bt")`.
+//! `read_as_of` — one `HMGET` call fetching both the `v` and `bt` fields in a
+//! single round trip (plan 260610-f91: replaces the prior two serial HGETs).
 //! `scan_range` — documented HSCAN escape hatch (the only raw RESP `cmd` site
-//! allowed in `lunaris-storage-moon/src/`) then typed `client.hget(<key>, "v")`
-//! per match.
+//! allowed in `lunaris-storage-moon/src/`) then concurrent HGET fan-out via
+//! `futures::stream::buffered` (plan 260610-f91).
 //!
 //! `scan_range` and `read_as_of` receive fully-shaped keys/prefixes from the
 //! caller. Higher layers that need scope isolation pass `keyspace::*_prefix(scope)`;
@@ -52,9 +52,13 @@ pub(crate) async fn read_as_of(
     // `as_of == latest`). Bench + ingest hot path never query historical
     // KV, so this is sufficient for live measurement. Tracked as B-task
     // for AS_OF parity (STORE-07).
-    let value: Option<Vec<u8>> = typed.hget::<_, _, Vec<u8>>(key, "v").await.map_err(moon_err)?;
-    let bt_bytes: Option<Vec<u8>> =
-        typed.hget::<_, _, Vec<u8>>(key, "bt").await.map_err(moon_err)?;
+    //
+    // Plan 260610-f91: collapse the two serial HGETs into one HMGET so both
+    // fields are fetched in a single RESP round trip.
+    let mut fields = typed.hmget::<_, _, Vec<u8>>(key, &["v", "bt"]).await.map_err(moon_err)?;
+    // fields[0] = "v", fields[1] = "bt" (RESP order matches field slice order).
+    let bt_bytes = fields.pop().flatten(); // index 1
+    let value = fields.pop().flatten(); // index 0
 
     match value {
         None => Ok(None),
@@ -80,7 +84,7 @@ pub(crate) async fn scan_range<'a>(
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-    let mut typed = c.typed();
+    let typed = c.typed();
 
     // AS_OF deferred per `read_as_of` rationale above — return current state.
     let _ = as_of;
@@ -109,6 +113,11 @@ pub(crate) async fn scan_range<'a>(
     // Iterate SCAN cursor; for each key, HGET its `v` field. Phase 1 buffers the full
     // result into a Vec then returns a stream — Phase 2 replaces this with a true
     // cursor-driven async stream when we add backpressure.
+    //
+    // Plan 260610-f91: fan out the per-key HGETs within each SCAN batch concurrently
+    // using buffered(SCAN_CONCURRENCY). Each cloned TypedClient handle shares the
+    // underlying MultiplexedConnection — concurrent calls pipeline naturally via RESP.
+    const SCAN_CONCURRENCY: usize = 32;
     let mut cursor: u64 = 0;
     let mut all_pairs: Vec<Result<(Bytes, Bytes), StorageError>> = Vec::new();
     loop {
@@ -121,13 +130,26 @@ pub(crate) async fn scan_range<'a>(
             .query_async(raw_conn)
             .await
             .map_err(redis_err)?;
-        for k in batch {
-            match typed.hget::<_, _, Vec<u8>>(k.as_slice(), "v").await {
-                Ok(Some(v)) => all_pairs.push(Ok((Bytes::from(k), Bytes::from(v)))),
-                Ok(None) => {} // key matched but had no `v` field — skip silently
-                Err(e) => all_pairs.push(Err(moon_err(e))),
-            }
-        }
+
+        // Concurrent HGET fan-out for this SCAN batch (bounded at SCAN_CONCURRENCY).
+        // typed.clone() produces a new TypedClient handle that shares the mux connection.
+        let batch_results: Vec<Result<(Bytes, Bytes), StorageError>> = stream::iter(batch)
+            .map(|k| {
+                let mut t = typed.clone();
+                async move {
+                    match t.hget::<_, _, Vec<u8>>(k.as_slice(), "v").await {
+                        Ok(Some(v)) => Some(Ok((Bytes::from(k), Bytes::from(v)))),
+                        Ok(None) => None, // key matched but had no `v` field — skip silently
+                        Err(e) => Some(Err(moon_err(e))),
+                    }
+                }
+            })
+            .buffered(SCAN_CONCURRENCY)
+            .filter_map(|opt| async move { opt })
+            .collect()
+            .await;
+        all_pairs.extend(batch_results);
+
         if next == 0 {
             break;
         }
