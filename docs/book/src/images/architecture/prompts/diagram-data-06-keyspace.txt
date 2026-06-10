@@ -1,0 +1,38 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 06 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "KEYSPACE ANATOMY" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 6 of 8 — canonical key format"
+
+LAYOUT: one central decomposed-key diagram plus a scope alphabet note.
+
+CENTER — a long rounded box labeled "canonical KV key" (soft cloud-blue tint #eef3f9).
+Inside the box, divide it into 4 colored segments side by side (very light tints, just barely distinguishable):
+  Segment 1: "lunaris:"  (charcoal — constant prefix)
+  Segment 2: "{scope}"  (teal — partition)
+  Segment 3: ":{kind}:"  (warm stone — object type)
+  Segment 4: "{ulid}"  (charcoal — unique id)
+Under each segment, a short pencil-leader line to a small annotation:
+  Segment 1: "constant"
+  Segment 2: "tenant partition — [A-Za-z0-9_-.]{1,128}"
+  Segment 3: "episode | chunk | entity | relation | fact | community"
+  Segment 4: "ULID — sortable, 128-bit"
+
+A thin horizontal line below the key box. Under it, two examples in small monospace print:
+  "lunaris:acme.bot:chunk:01HWXYZ..."
+  "lunaris:acme.bot:episode:01HWXYZ..."
+
+SCOPE RULE NOTE (small dashed box, soft sage tint #eef5ee, bottom-right):
+  "':' rejected by Scope::new"
+  "scope cannot alias across keys"
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): ULID must be U-L-I-D (four capital letters U L I D, not Ulid or ulid or UIID).

@@ -1,0 +1,33 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 02 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "CHUNKING + DOCTREE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 2 of 8 — BPE tokens, overlap, heading path"
+
+LAYOUT: two zones, left and right.
+
+LEFT — labeled "Chunk struct": a large rounded rectangle (soft sage tint #eef5ee).
+Inside, show a two-column grid of small field boxes (4 left, 4 right):
+  Left column: "id : ULID"  "scope : Scope"  "episode_id : ULID"  "text : str"
+  Right column: "tokens : u32"  "offset : usize"  "heading_path : Vec<str>"  "overlap_tail : str"
+  Below the grid, three full-width field boxes: "embedding : Vec<f32>  (768-d)"  "parent_id : Option<ULID>"  "bt : BiTemporal"
+  Pencil annotation on "tokens": "BPE counter — target 500 / overlap 100"
+  Pencil annotation on "heading_path": "breadcrumb from doc root"
+  Pencil annotation on "parent_id": "→ RAPTOR parent node (step 3)"
+
+RIGHT — labeled "DocTree": a small node-edge tree drawn with circles and thin lines.
+Show 3 levels: one root circle at top (labeled "doc"), two branch circles (labeled "h2"), three leaf circles (labeled "chunk").
+Pencil annotation: "built from heading records"
+
+A thin arrow from the DocTree leaf nodes pointing left into the Chunk "parent_id" field.
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): ULID must be U-L-I-D, BiTemporal must be B-i-T-e-m-p-o-r-a-l, heading_path must be h-e-a-d-i-n-g-underscore-p-a-t-h, episode_id must be e-p-i-s-o-d-e-underscore-i-d, overlap_tail must be o-v-e-r-l-a-p-underscore-t-a-i-l, RAPTOR must be R-A-P-T-O-R.

@@ -9,6 +9,7 @@
 - [Installation](./getting-started/installation.md)
 - [10-Minute Quickstart](./getting-started/quickstart.md)
 - [Core Concepts](./getting-started/concepts.md)
+- [Data Structures: A Visual Tour](./getting-started/data-structures.md)
 
 # Guides
 

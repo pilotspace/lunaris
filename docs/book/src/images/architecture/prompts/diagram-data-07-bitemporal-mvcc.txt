@@ -1,0 +1,36 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 07 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "BI-TEMPORAL MVCC" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 7 of 8 — valid-time vs system-time"
+
+LAYOUT: a two-axis timeline grid with version slots.
+
+TWO-AXIS GRID: horizontal axis labeled "valid_time  (what the agent believed)" with a thin right arrow; vertical axis labeled "sys_time  (when it was recorded)" with a thin upward arrow.
+
+In the grid, show 3 rounded rectangular "version slots" at different positions:
+  Slot 1 (lower-left area): light background — "v1  content='A'" with a small ULID label
+  Slot 2 (middle): light background — "v2  content='B'"
+  Slot 3 (upper-right area, teal left-accent border): "v3  content='C'  (current)"
+
+Thin diagonal dashed grid lines in the background (very faint, #d0d0cc).
+
+A pencil annotation arrow pointing at Slot 2: "correction at sys_time=T2 for past valid_time"
+A pencil annotation at the right edge: "read_as_of(T)  →  version visible at T"
+
+MVCC label in small caps near top-right of the grid: "MVCC"
+Pencil annotation below MVCC: "each write is a new row — old versions kept"
+
+BOTTOM — one small box: "BiTemporal { valid: Interval, sys: Interval }" with a teal accent border.
+Pencil annotation: "carried by every primitive"
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): BiTemporal must be B-i-T-e-m-p-o-r-a-l (capital B, lowercase i, capital T — camelCase), MVCC must be M-V-C-C (four capital letters), ULID must be U-L-I-D.
