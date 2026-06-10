@@ -24,6 +24,7 @@ python3 nanobanana_rest.py \
 | `diagram-compare-rivals.txt` | `lunaris-vs-rivals.png` | Lunaris vs Mem0 / Zep / Cognee scorecard (cells from the why-lunaris table) |
 | `diagram-mcp-flow.txt` | `lunaris-mcp-flow.png` | AI client → MCP tools (RETRIEVE/STORE/MANAGE) → engine → store, with the progressive-disclosure retrieval ladder |
 | `diagram-hook-flow.txt` | `lunaris-hook-flow.png` | lunaris-hook capture pipeline + lunaris-contextd inject loop over the shared scope store |
+| `diagram-scratchpad-agents.txt` | `lunaris-scratchpad-agents.png` | Multi-agent shared scratchpad: scope blackboard, per-agent namespaces, ACT-R consolidation into durable memory |
 
 Keep prompts sparse: image models garble dense technical text. Numbers
 quoted in the prompts (recall p50 10.3 ms, contract < 25 ms) must stay
