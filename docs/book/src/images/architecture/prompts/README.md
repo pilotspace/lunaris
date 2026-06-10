@@ -25,6 +25,7 @@ python3 nanobanana_rest.py \
 | `diagram-mcp-flow.txt` | `lunaris-mcp-flow.png` | AI client → MCP tools (RETRIEVE/STORE/MANAGE) → engine → store, with the progressive-disclosure retrieval ladder |
 | `diagram-hook-flow.txt` | `lunaris-hook-flow.png` | lunaris-hook capture pipeline + lunaris-contextd inject loop over the shared scope store |
 | `diagram-scratchpad-agents.txt` | `lunaris-scratchpad-agents.png` | Multi-agent shared scratchpad: scope blackboard, per-agent namespaces, ACT-R consolidation into durable memory |
+| `diagram-resume-ladder.txt` | `lunaris-resume-ladder.png` | Agent resumes mid-session: 3-tier progressive-disclosure retrieval ladder (scratchpad → recall k=5 → widen + bi-temporal store) |
 
 Keep prompts sparse: image models garble dense technical text. Numbers
 quoted in the prompts (recall p50 10.3 ms, contract < 25 ms) must stay
