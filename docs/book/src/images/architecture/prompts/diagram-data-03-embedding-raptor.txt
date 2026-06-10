@@ -1,0 +1,37 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 03 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "EMBEDDING + RAPTOR TREE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 3 of 8 — granite 768-d vectors + community summaries"
+
+LAYOUT: left half shows the embedder flow; right half shows the RAPTOR tree.
+
+LEFT — TOP: a thin rounded box labeled "Embedder" (soft cloud-blue tint).
+Text inside: "granite-embedding-311m  768-d  batches of 32"
+An arrow flowing down into:
+
+LEFT — MIDDLE: a small field box labeled "Chunk  (embedding populated)" showing only "embedding : Vec<f32>  [768 floats]" highlighted with a teal accent left-border.
+A thin arrow from this box flowing right into the RAPTOR zone.
+
+RIGHT — labeled "RAPTOR Tree": a node-edge tree with 3 levels.
+Top node circle labeled "Community  level 2" with smaller text "summary_embedding : Vec<f32>".
+Two mid-level circles labeled "Community  level 1".
+Three bottom circles labeled "Chunk (leaf)".
+Node-to-node edges thin solid lines.
+Pencil annotation on the tree: "bottom-up extractive summaries"
+Pencil annotation on "summary_embedding": "single-pass embedded"
+
+Inside each Community circle, tiny stacked field text:
+  "id  scope  level  parent  members  summary  summary_embedding  bt"
+  (very small — just readable, not a box — printed as a column of field names)
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): ULID must be U-L-I-D, BiTemporal must be B-i-T-e-m-p-o-r-a-l, RAPTOR must be R-A-P-T-O-R, summary_embedding must be s-u-m-m-a-r-y-underscore-e-m-b-e-d-d-i-n-g.

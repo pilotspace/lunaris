@@ -1,0 +1,34 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 05 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "ONE ATOMIC WRITE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 5 of 8 — INGEST-04 invariant"
+
+LAYOUT: vertical stack. Top: a fan-in of WriteOp items. Bottom: a single storage cylinder.
+
+TOP — labeled "Vec<WriteOp>" (single teal-accent rounded container).
+Inside the container, show 5 stacked items (small boxes, slightly offset to imply a stack):
+  "KvPut  (DocTree nodes)"
+  "KvPut  (Episode)"
+  "KvPut + VectorUpsert  (per Chunk → 'chunks' index)"
+  "KvPut + VectorUpsert  (per Community → 'communities' index)"
+  "GraphEdge  (if graph-on)"
+Pencil annotation alongside: "ONE Vec — all ops batched together"
+
+A thin-bordered funnel shape (NOT filled solid — just the outline) below the Vec box, converging to a single arrow pointing down.
+
+The single arrow is labeled with a small hand-drawn circle containing "!" and the text: "storage.atomic_write(ops)"
+Pencil annotation beside the arrow: "INGEST-04: exactly ONE call per ingest"
+
+BOTTOM — a database cylinder labeled "Moon / Postgres / SQLite".
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): atomic_write must be spelled a-t-o-m-i-c-underscore-w-r-i-t-e with an underscore (not atomicwrite or atomic-write), ULID must be U-L-I-D, BiTemporal must be B-i-T-e-m-p-o-r-a-l, RAPTOR must be R-A-P-T-O-R, BM25 must be B-M-2-5.

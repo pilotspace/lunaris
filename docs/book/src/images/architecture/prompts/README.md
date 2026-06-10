@@ -26,6 +26,14 @@ python3 nanobanana_rest.py \
 | `diagram-hook-flow.txt` | `lunaris-hook-flow.png` | lunaris-hook capture pipeline + lunaris-contextd inject loop over the shared scope store |
 | `diagram-scratchpad-agents.txt` | `lunaris-scratchpad-agents.png` | Multi-agent shared scratchpad: scope blackboard, per-agent namespaces, ACT-R consolidation into durable memory |
 | `diagram-resume-ladder.txt` | `lunaris-resume-ladder.png` | Agent resumes mid-session: 3-tier progressive-disclosure retrieval ladder (scratchpad → recall k=5 → widen + bi-temporal store) |
+| `diagram-data-01-observation-episode.txt` | `lunaris-data-01-observation-episode.png` | Episode envelope: id, scope, source, content, t_ref, bt |
+| `diagram-data-02-chunking-doctree.txt` | `lunaris-data-02-chunking-doctree.png` | Chunk fields + DocTree node-edge structure |
+| `diagram-data-03-embedding-raptor.txt` | `lunaris-data-03-embedding-raptor.png` | granite 768-d embedding + RAPTOR Community tree |
+| `diagram-data-04-graph-primitives.txt` | `lunaris-data-04-graph-primitives.png` | Entity, Relation, Fact (opt-in / structured ingest) |
+| `diagram-data-05-atomic-persist.txt` | `lunaris-data-05-atomic-persist.png` | ONE Vec<WriteOp> → one atomic_write (INGEST-04) |
+| `diagram-data-06-keyspace.txt` | `lunaris-data-06-keyspace.png` | Canonical key format lunaris:{scope}:{kind}:{ulid} |
+| `diagram-data-07-bitemporal-mvcc.txt` | `lunaris-data-07-bitemporal-mvcc.png` | valid-time vs system-time MVCC grid + read_as_of |
+| `diagram-data-08-indexes.txt` | `lunaris-data-08-indexes.png` | Vector FT / BM25 / graph edges → RRF fusion |
 
 Keep prompts sparse: image models garble dense technical text. Numbers
 quoted in the prompts (recall p50 10.3 ms, contract < 25 ms) must stay

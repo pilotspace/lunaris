@@ -1,0 +1,44 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+SERIES NUMERAL: a hand-drawn circle at the top-left containing the printed numeral 08 in bold charcoal — this is a REQUIRED VISIBLE TEXT ELEMENT.
+
+GEOMETRIC PRIMITIVES ONLY: use rectangular boxes for structs/fields, stacked horizontal planes for collections, cylinders for databases, node-circle-and-edge for graphs. No freehand blobs. All corners softly rounded.
+
+TITLE at top center: "INDEXES OVER THE STORE" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "step 8 of 8 — how queries find data"
+
+LAYOUT: a central storage cylinder at the left, and three index lanes fanning out to the right.
+
+LEFT — database cylinder labeled "Moon / Postgres / SQLite" with the three kinds of data as small stacked labels inside: "episodes  chunks  entities  facts  communities".
+
+THREE LANES (thin arrows from the cylinder rightward):
+
+Lane 1 (top, teal accent): arrow labeled "Vector FT"
+  At the arrow's end, a small rounded box:
+    "FT index: 'chunks'"
+    "FT index: 'communities'"
+    tiny print: "768-d cosine similarity"
+  Pencil annotation: "Moon FT.*  native — no separate HNSW"
+
+Lane 2 (middle): arrow labeled "BM25 keyword"
+  At the arrow's end, a small rounded box:
+    "FT index: 'chunks'  (keyword mode)"
+    tiny print: "term frequency scoring"
+  Pencil annotation: "BM25 — not a separate library"
+
+Lane 3 (bottom): arrow labeled "Graph edges"
+  At the arrow's end, a small node-edge diagram: two circles (Entity A, Entity B) connected by a labeled edge (rel_type).
+  Pencil annotation: "opt-in — stored as graph edges"
+
+At the far right, a vertical RRF merge box (teal accent, rounded):
+  "fuse  (RRF k=60)"
+  tiny print: "Vector + BM25 + Graph"
+  thin arrows from all 3 lanes converging into this box.
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes.
+CRITICAL spelling (zero tolerance — regenerate if wrong): BM25 must be B-M-2-5 (letter B, letter M, digit 2, digit 5 — not BM2S or BM52 or BM25 misspelled), ULID must be U-L-I-D, BiTemporal must be B-i-T-e-m-p-o-r-a-l.
