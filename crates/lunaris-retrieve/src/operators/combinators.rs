@@ -168,11 +168,21 @@ impl Retriever for ThenRetriever {
             None => id_filter,
         };
 
-        // We need a fresh ctx with the new filter. Build one quickly: the
-        // OnceCell embedding cache would be reset, so we just clone the
-        // user query and add the filter, building a new QueryContext.
+        // Build a fresh ctx with the narrowed filter.
+        // Plan 260610-f91 (D-04): seed the narrowed OnceCell from the parent
+        // context if the parent already computed its embedding. This avoids a
+        // redundant embedder forward pass when both legs embed the same query
+        // text (e.g., then(Vector, Vector)). The query TEXT is unchanged by
+        // `then` — only the filter changes — so reuse is semantically exact.
+        // set() returns Err(value) only if the cell is already initialized,
+        // which is impossible here (brand-new cell). The discard is intentional.
         let mut narrowed_query = ctx.query.clone();
         narrowed_query.filter = Some(new_filter);
+
+        let narrowed_embedding = tokio::sync::OnceCell::new();
+        if let Some(existing) = ctx.query_embedding.get().cloned() {
+            let _ = narrowed_embedding.set(existing);
+        }
 
         let narrowed_ctx = QueryContext {
             query: narrowed_query,
@@ -180,11 +190,7 @@ impl Retriever for ThenRetriever {
             embedder: ctx.embedder.clone(),
             storage: ctx.storage.clone(),
             keyword: ctx.keyword.clone(),
-            // Re-init the OnceCell — we can't share the cell across contexts
-            // (different `&self` borrows). The cost is one extra embedder
-            // call when `then(Vector, Vector)` runs back-to-back; acceptable
-            // in v0 because `then(Vector, Vector)` is rare in practice.
-            query_embedding: tokio::sync::OnceCell::new(),
+            query_embedding: narrowed_embedding,
             moon_storage: ctx.moon_storage.clone(),
         };
 
