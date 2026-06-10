@@ -1,0 +1,37 @@
+Create a calm, light, hand-drawn style architecture diagram on a pure white (#FAFAFA) background, like a clean engineering notebook sketch: thin cool-charcoal ink lines (#404045), generous whitespace, softly rounded corners. Accent color: muted teal (#5a9a8a), used sparingly.
+
+IMPORTANT TYPOGRAPHY RULE: All text uses CLEAN, HIGHLY LEGIBLE PRINT LETTERING — neat block lettering / clean sans-serif look. NOT cursive, NOT messy handwriting. Every word spelled exactly as written below.
+
+TITLE at top center: "RESUME MID-SESSION" in charcoal print lettering.
+Subtitle in lighter gray (#8a8a85): "agent memory retrieval — cheapest first"
+
+LAYOUT — vertical three-tier stack labeled TIER 1, TIER 2, TIER 3, generous whitespace:
+
+TIER 1 at top (cloud blue whisper tint #eef3f9): one rounded box "AGENT RESUMES" with smaller print inside "new session, same scope".
+Pencil-line annotation arrow pointing right: "scope is server-bound partition key"
+
+TIER 2 in the middle — three rows inside a soft rounded rectangle, labeled "RETRIEVAL LADDER":
+  Row A (teal left-accent line): small box "scratchpad_read / scratchpad_grep"
+    with tiny print below: "exact/prefix key — verbatim JSON — no model load"
+    Pencil annotation: "where was I? working state first"
+  Row B: small box "memory.recall  k = 5"
+    with tiny print below: "hybrid: Vector AND BM25 → RRF(k=60) → 200-char snippets + score"
+    Pencil annotation: "lazy GGUF load on first call; vector-only fallback if BM25 unsupported"
+  Row C: small box "widen"
+    with tiny print below: "raise k   filters.source_prefix ('decision:' 'edit:')   as_of snapshot"
+    Pencil annotation: "bi-temporal point-in-time view"
+  Thin vertical arrow on left edge of TIER 2 pointing downward, labeled "miss? go deeper"
+
+TIER 3 at bottom: one database cylinder labeled "Moon / Postgres / SQLite"
+  with smaller print below the cylinder: "bi-temporal MVCC store"
+  Thin arrows from TIER 2 down into the cylinder.
+
+SIDE NOTE (right margin, small box with dashed border, soft sage tint #eef5ee):
+  "scratchpad_consolidate (ACT-R)"
+  tiny print: "hot scratchpad entries → durable episodes → recallable in Tier 2"
+  A thin dashed arrow from the scratchpad row (Row A) to this note.
+
+CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
+Annotation leader lines are thin, light pencil-gray strokes ending in small dots.
+
+AVOID: no solid fills, no heavy color blocks, no bold strokes, no drop shadows, no gradients, no dark background, no emoji, no clipart, no computer-perfect ruler lines, no cursive handwriting. Colors only as 15% opacity watercolor tints. Generous margins, everything breathes. CRITICAL spelling: "BM25" must be spelled B-M-2-5, not BM2S or BM52 or any other variant.

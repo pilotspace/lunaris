@@ -82,6 +82,8 @@ The wire DTOs are identical across MCP clients, and every request DTO carries
 
 ## Progressive disclosure — the retrieval ladder
 
+![Lunaris — resume mid-session retrieval ladder](../images/architecture/lunaris-resume-ladder.png)
+
 The server `instructions` (returned at MCP `initialize`) and every tool
 description teach connecting agents to retrieve cheapest-first:
 
