@@ -10,14 +10,15 @@ LAYOUT — vertical three-tier stack labeled AGENT, LADDER, STORE, generous whit
 AGENT at top (cloud blue whisper tint #eef3f9): one rounded box "AGENT RESUMES" with smaller print inside "new session, same scope".
 Pencil-line annotation arrow pointing right: "scope is server-bound partition key"
 
-LADDER in the middle — three rows inside a soft rounded rectangle, labeled "RETRIEVAL LADDER":
-  Row 1 (teal left-accent line): small box "scratchpad_read / scratchpad_grep"
+LADDER in the middle — three rows inside a soft rounded rectangle, labeled "RETRIEVAL LADDER".
+EACH ROW MUST VISIBLY SHOW its step numeral: a small hand-drawn circle at the row's left edge containing the printed numeral — circle with "1" on Row 1, circle with "2" on Row 2, circle with "3" on Row 3. These three numerals are required visible text elements.
+  Row 1 (teal left-accent line, circled numeral "1"): small box "scratchpad_read / scratchpad_grep"
     with tiny print below: "exact/prefix key — verbatim JSON — no model load"
     Pencil annotation: "where was I? working state first"
-  Row 2: small box "memory.recall  k = 5"
+  Row 2 (circled numeral "2"): small box "memory.recall  k = 5"
     with tiny print below: "hybrid: Vector AND BM25 → RRF(k=60) → 200-char snippets + score"
     Pencil annotation: "lazy GGUF load on first call; vector-only fallback if BM25 unsupported"
-  Row 3: small box "widen"
+  Row 3 (circled numeral "3"): small box "widen"
     with tiny print below: "raise k   filters.source_prefix ('decision:' 'edit:')   as_of snapshot"
     Pencil annotation: "bi-temporal point-in-time view"
   Thin vertical arrow on left edge of LADDER pointing downward, labeled "miss? go deeper"
