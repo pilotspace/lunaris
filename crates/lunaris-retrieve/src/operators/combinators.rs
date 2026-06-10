@@ -138,6 +138,12 @@ impl ThenRetriever {
     }
 }
 
+/// Builder-friendly factory: `then(first, second)`. Mirrors the `rerank(upstream, reranker)`
+/// shape from `operators/rerank.rs` so callers can use function-style composition.
+pub fn then(first: Box<dyn Retriever>, second: Box<dyn Retriever>) -> ThenRetriever {
+    ThenRetriever::new(first, second)
+}
+
 #[async_trait]
 impl Retriever for ThenRetriever {
     async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {

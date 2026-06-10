@@ -46,7 +46,7 @@ pub mod types;
 
 pub use builder::RetrievalBuilder;
 pub use hydrate::{hydrate, partial_hydrate_text};
-pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever};
+pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever, then};
 pub use operators::degraded::{DegradedFallbackRetriever, degraded_fallback};
 pub use operators::fuse::FuseRrfRetriever;
 pub use operators::graph::{
