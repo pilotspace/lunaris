@@ -2,6 +2,42 @@
 
 All notable changes to Lunaris are documented here.
 
+## Unreleased — recall-path round-trip collapse (2026-06-10)
+
+Quick task `260610-f91`: removed the serialized storage round trips from the
+recall hot path with Moon as the default backend. Measured A/B at k=30 (MCP
+stdio, live Moon): recall p50 12 → 6.0 ms, p99 97.3 → 6.2 ms — the tail no
+longer scales with k. Methodology: `docs/benchmarks/v0.6-recall-fanout-ab.md`.
+
+### Performance
+
+- **`read_as_of` is one round trip** (`lunaris-storage-moon`): the two serial
+  `HGET`s (`v`, then `bt`) collapsed into a single `HMGET key v bt`. Every KV
+  read on the Moon backend — hydration, scratchpad, recovery — pays half the
+  round trips.
+- **Concurrent hydration fan-out** (`lunaris-retrieve`): `hydrate()` and
+  `partial_hydrate_text()` (the rerank candidate feed) now issue their
+  per-hit reads via an ordered `buffered(32)` stream instead of one awaited
+  read per hit; episode lookups fan out with `buffer_unordered(32)`.
+  Concurrent requests pipeline over the shared multiplexed Moon connection,
+  so a recall-with-rerank pays a handful of batches instead of ~120
+  sequential round trips. Hit order is preserved; guarded by
+  Barrier-deadlock concurrency tests (`tests/hydrate_concurrent.rs`).
+- **`scan_range` per-batch fan-out** (`lunaris-storage-moon`): the per-key
+  `HGET`s within each `SCAN` batch run concurrently (bounded 32), preserving
+  batch order — speeds up working-memory list/grep paths.
+- **`ThenRetriever` reuses the query embedding**: the narrowed second-leg
+  context is seeded from the parent's computed embedding instead of re-running
+  the embedder forward pass (the query text is unchanged by `.then(...)`;
+  only the filter narrows).
+
+### Fixed
+
+- **Episode-read errors propagate from concurrent hydration**: the fan-out
+  rewrite initially swallowed storage errors in the episode pass (silently
+  degrading `Hit::source` to `""`); restored the pre-fan-out `?` contract and
+  pinned it with `hydrate_propagates_episode_read_errors`.
+
 ## Unreleased — MCP working memory + embedded Moon (2026-06-09)
 
 Merged the `feat/mcp-scratchpad-tools` milestone (PR #19): a working-memory
