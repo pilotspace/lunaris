@@ -109,25 +109,27 @@ pub async fn hydrate(
     };
 
     // Episode pass: order irrelevant (builds a HashMap), use buffer_unordered.
-    // Plan 260610-f91: concurrent fan-out for episode lookups.
+    // Plan 260610-f91: concurrent fan-out for episode lookups. Storage errors
+    // PROPAGATE (matching the pre-fan-out `.await?` contract); only missing
+    // rows and deserialize failures are skipped.
     let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
-    let ep_results: Vec<Option<(Ulid, String)>> = stream::iter(unique_ep)
+    let ep_results: Vec<Result<Option<(Ulid, String)>, LunarisError>> = stream::iter(unique_ep)
         .map(|ep_id| {
             let scope = scope.clone();
             async move {
                 let key = episode_lookup_key(&scope, ep_id);
-                if let Ok(Some(row)) = storage.read_as_of(&scope, &key, snapshot).await
+                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
                     && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
                 {
-                    return Some((ep_id, ep.source));
+                    return Ok(Some((ep_id, ep.source)));
                 }
-                None
+                Ok(None)
             }
         })
         .buffer_unordered(HYDRATE_CONCURRENCY)
         .collect()
         .await;
-    for entry in ep_results.into_iter().flatten() {
+    for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
         episode_sources.insert(entry.0, entry.1);
     }
 

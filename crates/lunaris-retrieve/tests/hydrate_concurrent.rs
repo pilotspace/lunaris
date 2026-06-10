@@ -33,11 +33,25 @@ use ulid::Ulid;
 struct BarrierStorage {
     barrier: Arc<Barrier>,
     chunks: HashMap<Vec<u8>, Vec<u8>>,
+    /// When true, any read_as_of against an episode key (`:episode:` in the
+    /// key) returns `Err(StorageError::Backend)`. Guards the error-propagation
+    /// contract: a failing episode lookup must fail the whole hydrate call,
+    /// not silently degrade to an empty `source`.
+    fail_episode_reads: bool,
 }
 
 impl BarrierStorage {
     fn new(concurrent_count: usize, chunks: HashMap<Vec<u8>, Vec<u8>>) -> Self {
-        Self { barrier: Arc::new(Barrier::new(concurrent_count)), chunks }
+        Self {
+            barrier: Arc::new(Barrier::new(concurrent_count)),
+            chunks,
+            fail_episode_reads: false,
+        }
+    }
+
+    fn with_failing_episode_reads(mut self) -> Self {
+        self.fail_episode_reads = true;
+        self
     }
 }
 
@@ -50,6 +64,9 @@ impl StoragePort for BarrierStorage {
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
         self.barrier.wait().await; // Blocks until `concurrent_count` callers arrive
+        if self.fail_episode_reads && key.windows(9).any(|w| w == b":episode:") {
+            return Err(StorageError::Backend("episode read failed (injected)".into()));
+        }
         if let Some(v) = self.chunks.get(key).cloned() {
             return Ok(Some(Row {
                 key: key.to_vec(),
@@ -222,7 +239,8 @@ async fn hydrate_preserves_hit_order() {
     let mut id_order = Vec::new();
     for i in 0..3usize {
         let ep_id = Ulid::new();
-        let chunk = Chunk::new(scope.clone(), ep_id, &format!("text {i}"), 4, 0, vec![], &clock);
+        let chunk =
+            Chunk::new(scope.clone(), ep_id, format!("text {i}").as_str(), 4, 0, vec![], &clock);
         let id_bytes = chunk.id.to_bytes().to_vec();
         let key = lunaris_core::keyspace::chunk_key(&scope, chunk.id);
         chunks.insert(key, serde_json::to_vec(&chunk).unwrap());
@@ -248,4 +266,23 @@ async fn hydrate_preserves_hit_order() {
     for (i, hit) in out.iter().enumerate() {
         assert_eq!(hit.id, id_order[i], "hit order must be preserved at index {i}");
     }
+}
+
+/// A storage error during the episode pass must FAIL the hydrate call —
+/// pre-fan-out behavior (`.await?` in the serial loop) propagated episode
+/// read errors, and the concurrent version must preserve that contract
+/// rather than silently degrading `source` to "".
+#[tokio::test]
+async fn hydrate_propagates_episode_read_errors() {
+    let scope = Scope::dev();
+    let mut chunks = HashMap::new();
+    let (id_bytes, key, val) = make_chunk_bytes(&scope);
+    chunks.insert(key, val);
+    let storage = Arc::new(BarrierStorage::new(1, chunks).with_failing_episode_reads());
+
+    let result = hydrate(storage.as_ref(), &scope, vec![raw_hit(id_bytes)], None, false).await;
+    assert!(
+        result.is_err(),
+        "episode read errors must propagate out of hydrate(), not be swallowed"
+    );
 }
