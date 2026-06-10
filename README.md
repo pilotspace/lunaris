@@ -176,7 +176,7 @@ against them; any feature that weakens any of the three is rejected.
 
 | Moat | What it means | Where enforced |
 |---|---|---|
-| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured strict-replay: p50 10.3 ms / p99 20.8 ms ([methodology](docs/benchmarks/v0.2.x/README.md)). | `cargo bench --bench recall_hot_path` |
+| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured strict-replay: p50 10.3 ms / p99 20.8 ms ([methodology](docs/benchmarks/v0.2.x/README.md)); k=30 hydration tail p50 6.0 ms / p99 6.2 ms after the concurrent-hydration fan-out ([A/B](docs/benchmarks/v0.6-recall-fanout-ab.md)). | `cargo bench --bench recall_hot_path` |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, graph, audit, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
 | **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 

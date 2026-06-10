@@ -110,7 +110,7 @@ budget like this:
 | 1. Query embed | granite-embedding-311m runs **in-process** on candle (CPU) | No HTTP hop to an embedding server. This is the single biggest win — see the 86 ms lesson below |
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side (`RrfFusion::Moon`) | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command (PERF-MOON-01) | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
-| 3. Hydrate | Each hit's chunk row via `read_as_of`; parent episodes batch-fetched once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Point reads on a KV store that already has the rows hot; since-deleted chunks are skipped, not errored |
+| 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered `buffered(32)` fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
 | 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only pay it when you ask for it |
 
 **The 86 ms lesson.** The same 10k-document SQuAD harness
@@ -168,6 +168,7 @@ offer at any price.
 | Claim | Measured | Contract | Proof |
 |---|---|---|---|
 | Sub-25 ms recall | **p50 10.3 ms / p99 20.8 ms** (strict replay, 10k-doc corpus, live Moon) | p50 < 25 ms | [`docs/benchmarks/v0.2.x/README.md`](benchmarks/v0.2.x/README.md) |
+| Flat tail at k=30 | **p50 6.0 ms / p99 6.2 ms** (was p50 12 / p99 97.3 before the hydration fan-out, MCP stdio, live Moon) | p99 inside the p50 contract | [`docs/benchmarks/v0.6-recall-fanout-ab.md`](benchmarks/v0.6-recall-fanout-ab.md) |
 | One atomic write per ingest | exactly 1 `atomic_write` call site | INGEST-04 | `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
 | Backend parity | Moon + Postgres + SQLite pass the same suite | conformance | `crates/lunaris-conformance` |
 
@@ -175,8 +176,9 @@ offer at any price.
 
 The advantage map is real, but it is not "bi-temporal everywhere":
 
-- **Plain KV reads are not temporal on Moon.** `HGET` ignores `AS_OF`;
-  only `FT.SEARCH AS_OF` and `GRAPH.QUERY VALID_AT` are temporal.
+- **Plain KV reads are not temporal on Moon.** Hash reads (`HMGET`)
+  ignore `AS_OF`; only `FT.SEARCH AS_OF` and `GRAPH.QUERY VALID_AT`
+  are temporal.
   Lunaris stores an explicit `bt` field on KV rows and the engine
   applies the temporal cut for `read_as_of` (`kv.rs`,
   `capabilities()` reports `bi_temporal_native: false`).

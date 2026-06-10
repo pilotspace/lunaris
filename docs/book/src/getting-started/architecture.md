@@ -56,7 +56,9 @@ reciprocal-rank fusion, optionally reranked by a cross-encoder, and
 returns in **p50 ≈ 10 ms** against a 10k-document corpus on commodity
 hardware ([benchmark methodology](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.2.x/README.md)
 — the published contract is p50 < 25 ms; measured strict-replay is
-p50 10.3 ms / p99 20.8 ms).
+p50 10.3 ms / p99 20.8 ms). Since the 2026-06-10 concurrent-hydration
+fan-out the tail is flat even at k=30 — p50 6.0 ms / p99 6.2 ms
+([A/B methodology](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.6-recall-fanout-ab.md)).
 
 ## 3. Why Moon makes this possible
 

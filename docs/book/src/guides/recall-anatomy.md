@@ -58,7 +58,7 @@ round trips**. Here is how a typical
 | 1. Query embed | granite-embedding-311m runs **in-process** on candle (CPU) | No HTTP hop to an embedding server — the single biggest win (see the 86 ms lesson) |
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
-| 3. Hydrate | Each hit's chunk row read via `read_as_of`; parent episodes batch-fetched once per unique `episode_id` | Point reads on rows the store already has hot; since-deleted chunks are skipped, not errored |
+| 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
 | 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only paid when you ask for it |
 
 ### The 86 ms lesson
@@ -77,6 +77,16 @@ network hop to the embedder was ~75 ms of pure overhead. That
 measurement is why v0.4 moved embedding **in-process on candle as the
 default** — the shipped configuration is the configuration the
 contract was proven on.
+
+### The 97 ms tail lesson
+
+Hydration used to await one storage read per hit, serially — at k=30
+that chain of round trips amplified every scheduler hiccup into the
+tail. The 2026-06-10 fan-out change (one `HMGET` per row, all rows
+concurrently over the multiplexed connection) flattened a measured
+**p50 12 ms / p99 97.3 ms** at k=30 into **p50 6.0 ms / p99 6.2 ms** —
+the tail now sits inside the p50 contract. Methodology and the full
+A/B table: `docs/benchmarks/v0.6-recall-fanout-ab.md`.
 
 ### Why a fan-out stack can't follow
 
