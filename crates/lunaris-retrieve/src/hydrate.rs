@@ -15,14 +15,24 @@
 //!
 //! Note: `as_of = None` falls back to `HlcClock::now()` for the lookup so we
 //! always read the live row.
+//!
+//! ## Plan 260610-f91: concurrent fan-out
+//!
+//! All serial `for raw in hits { read_as_of(...).await? }` loops are replaced
+//! with `futures::stream::iter(...).buffered(HYDRATE_CONCURRENCY)` (chunk pass
+//! and partial_hydrate_text, order-preserving) and `buffer_unordered` (episode
+//! pass, order irrelevant — it builds a HashMap). HYDRATE_CONCURRENCY=32.
 
 use std::collections::HashMap;
 
+use futures::stream::{self, StreamExt};
 use lunaris_core::keyspace::{chunk_key, episode_key};
 use lunaris_core::{Chunk, Episode, Hlc, HlcClock, LunarisError, Scope, StoragePort};
 use ulid::Ulid;
 
 use crate::types::{Hit, RawHit};
+
+const HYDRATE_CONCURRENCY: usize = 32;
 
 /// Build the chunk lookup key from the raw hit's id bytes.
 ///
@@ -59,27 +69,35 @@ pub async fn hydrate(
     let live_clock = HlcClock::new(0);
     let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
 
-    // First pass: pull chunk rows using the caller-supplied scope.
-    let mut chunks: Vec<(RawHit, Chunk)> = Vec::with_capacity(hits.len());
-    for raw in hits {
-        let key = match chunk_lookup_key(scope, &raw.id) {
-            Some(k) => k,
-            None => continue, // bytes don't decode to a ulid — skip
-        };
-        match storage.read_as_of(scope, &key, snapshot).await? {
-            Some(row) => {
-                let chunk: Chunk = match serde_json::from_slice(&row.value) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                chunks.push((raw, chunk));
-            }
-            None => {
-                // Chunk no longer exists at this snapshot — skip
-                continue;
-            }
-        }
-    }
+    // First pass: pull chunk rows concurrently using the caller-supplied scope.
+    // Plan 260610-f91: replace serial for loop with buffered(HYDRATE_CONCURRENCY)
+    // to fan out all read_as_of calls in parallel (order-preserving).
+    let chunks: Vec<(RawHit, Chunk)> = {
+        let results: Vec<Result<Option<(RawHit, Chunk)>, LunarisError>> = stream::iter(hits)
+            .map(|raw| {
+                let scope = scope.clone();
+                async move {
+                    let key = match chunk_lookup_key(&scope, &raw.id) {
+                        Some(k) => k,
+                        None => return Ok(None), // bytes don't decode to a ulid — skip
+                    };
+                    match storage.read_as_of(&scope, &key, snapshot).await? {
+                        Some(row) => {
+                            let chunk: Chunk = match serde_json::from_slice(&row.value) {
+                                Ok(c) => c,
+                                Err(_) => return Ok(None),
+                            };
+                            Ok(Some((raw, chunk)))
+                        }
+                        None => Ok(None), // chunk no longer exists at this snapshot — skip
+                    }
+                }
+            })
+            .buffered(HYDRATE_CONCURRENCY)
+            .collect()
+            .await;
+        results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect()
+    };
 
     // Second pass: batch episode lookups by unique episode_id.
     let unique_ep: Vec<Ulid> = {
@@ -90,14 +108,27 @@ pub async fn hydrate(
         s.into_iter().collect()
     };
 
+    // Episode pass: order irrelevant (builds a HashMap), use buffer_unordered.
+    // Plan 260610-f91: concurrent fan-out for episode lookups.
     let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
-    for ep_id in unique_ep {
-        let key = episode_lookup_key(scope, ep_id);
-        if let Some(row) = storage.read_as_of(scope, &key, snapshot).await?
-            && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
-        {
-            episode_sources.insert(ep_id, ep.source);
-        }
+    let ep_results: Vec<Option<(Ulid, String)>> = stream::iter(unique_ep)
+        .map(|ep_id| {
+            let scope = scope.clone();
+            async move {
+                let key = episode_lookup_key(&scope, ep_id);
+                if let Ok(Some(row)) = storage.read_as_of(&scope, &key, snapshot).await
+                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                {
+                    return Some((ep_id, ep.source));
+                }
+                None
+            }
+        })
+        .buffer_unordered(HYDRATE_CONCURRENCY)
+        .collect()
+        .await;
+    for entry in ep_results.into_iter().flatten() {
+        episode_sources.insert(entry.0, entry.1);
     }
 
     // Third pass: project to Hits.
@@ -153,25 +184,38 @@ pub async fn partial_hydrate_text(
     let live_clock = HlcClock::new(0);
     let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
 
-    let mut by_id: HashMap<Vec<u8>, String> = HashMap::with_capacity(hits.len());
-    for raw in hits {
-        let key = match chunk_lookup_key(scope, &raw.id) {
-            Some(k) => k,
-            None => continue,
-        };
-        match storage.read_as_of(scope, &key, snapshot).await? {
-            Some(row) => {
-                if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
-                    by_id.insert(raw.id.clone(), chunk.text);
+    // Plan 260610-f91: replace serial for loop with concurrent buffered fan-out.
+    // Clone each hit's id upfront so the async block owns all its data
+    // (avoids the higher-ranked lifetime bound on &RawHit closures).
+    let owned: Vec<(Vec<u8>, Vec<u8>)> = hits
+        .iter()
+        .filter_map(|raw| chunk_lookup_key(scope, &raw.id).map(|key| (raw.id.clone(), key)))
+        .collect();
+
+    let pairs: Vec<(Vec<u8>, String)> = {
+        #[allow(clippy::type_complexity)]
+        let results: Vec<Result<Option<(Vec<u8>, String)>, LunarisError>> = stream::iter(owned)
+            .map(|(id, key)| {
+                let scope = scope.clone();
+                async move {
+                    match storage.read_as_of(&scope, &key, snapshot).await? {
+                        Some(row) => {
+                            if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
+                                Ok(Some((id, chunk.text)))
+                            } else {
+                                Ok(None)
+                            }
+                        }
+                        None => Ok(None), // chunk no longer exists — skip
+                    }
                 }
-            }
-            None => {
-                // Chunk no longer exists at this snapshot — skip
-                continue;
-            }
-        }
-    }
-    Ok(by_id)
+            })
+            .buffered(HYDRATE_CONCURRENCY)
+            .collect()
+            .await;
+        results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect()
+    };
+    Ok(pairs.into_iter().collect())
 }
 
 #[cfg(test)]
