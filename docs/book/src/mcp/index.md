@@ -14,6 +14,8 @@ bi-temporal storage and atomicity guarantees as the rest of Lunaris.
 
 [mcp]: https://modelcontextprotocol.io
 
+![Lunaris via MCP — progressive-disclosure tool flow](../images/architecture/lunaris-mcp-flow.png)
+
 ## Install
 
 No Rust toolchain is required for the `npx` / `uvx` paths — both download a
@@ -77,6 +79,26 @@ notes by activation. **`scratchpad_consolidate` needs a native-queue backend
 
 The wire DTOs are identical across MCP clients, and every request DTO carries
 `#[serde(deny_unknown_fields)]` — no wire field can override the bound scope.
+
+## Progressive disclosure — the retrieval ladder
+
+The server `instructions` (returned at MCP `initialize`) and every tool
+description teach connecting agents to retrieve cheapest-first:
+
+1. **`scratchpad_read` / `scratchpad_grep`** — exact or prefix key lookup;
+   returns full verbatim values; no model load. Always first for known keys.
+2. **`memory.recall` with the default `k = 5`** — hybrid semantic + BM25
+   preview pass. Hits are **200-character snippets** (with `episode_id`,
+   `source`, `score`), not full episode text, and the first call in a process
+   stages/loads the GGUF embedder.
+3. **Widen only on a miss** — raise `k`, add `filters.source_prefix`
+   (`decision:`, `edit:`, `claude-code:`), or pass `as_of` for a bi-temporal
+   point-in-time view.
+
+There is intentionally **no fetch-full-episode tool**: widen `k` for more
+context, or keep full-fidelity values in the scratchpad where reads are
+verbatim. `memory.status` / `memory.list_scopes` are diagnostics, not
+retrieval.
 
 ## Scope is bound at startup
 

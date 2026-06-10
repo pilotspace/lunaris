@@ -343,6 +343,28 @@ multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemor
 > re-opening the handle (Moon is durable; there is no explicit load step). Run
 > it yourself: [`examples/multi-agent-rs/`](https://github.com/pilotspace/lunaris/tree/main/examples/multi-agent-rs).
 
+## Shared scratchpad across agents
+
+Within one scope, the four `memory.scratchpad_*` MCP tools act as a shared
+blackboard for agent teams:
+
+![Multi-agent shared scratchpad](../images/architecture/lunaris-scratchpad-agents.png)
+
+- **Scope is the hard boundary** — every agent that resolves the same scope
+  (same git remote + branch, or the same explicit override) reads and writes
+  the same store, even across runtimes (Claude Code and Codex side by side).
+- **Namespaces partition by agent** — the full key is `{namespace}{key}`
+  (default namespace `scratchpad/`, `/` allowed), so teams carve per-agent
+  areas like `scratchpad/executor/status`. This is an organizational prefix,
+  *not* a security boundary; teammates are supposed to read each other's
+  entries (`scratchpad_grep` on a prefix).
+- **Handoffs are immediate** — write-then-read is read-your-writes consistent
+  on every backend, and scratchpad writes never load the embedder.
+- **`scratchpad_consolidate` promotes the team's hot items** — the ACT-R
+  drain moves high-activation entries into durable memory (where semantic
+  `recall` finds them later) and archives stale working state. Requires a
+  native-queue backend.
+
 ## Gotchas
 
 - **No hierarchical scopes** in v0.2 — flat strings only. `org/team/agent`
