@@ -162,4 +162,36 @@ mod tests {
             "scope_prefix must produce lunaris:{{scope}}: prefix"
         );
     }
+
+    /// Plan 260610-f91: structural guard — read_as_of must use a single HMGET
+    /// round trip instead of two serial HGET calls.
+    #[test]
+    fn read_as_of_uses_hmget_not_two_hgets() {
+        let src = include_str!("kv.rs");
+        // After refactoring, "hmget" must appear.
+        assert!(src.contains("hmget"), "read_as_of MUST use hmget (single round trip)");
+        // The two-HGET pattern: typed.hget(key, "v") and typed.hget(key, "bt") must be gone.
+        assert!(
+            !src.contains("hget::<_, _, Vec<u8>>(key, \"v\")"),
+            "read_as_of must NOT use typed.hget for field \"v\" (use hmget instead)"
+        );
+        assert!(
+            !src.contains("hget::<_, _, Vec<u8>>(key, \"bt\")"),
+            "read_as_of must NOT use typed.hget for field \"bt\" (use hmget instead)"
+        );
+    }
+
+    /// Plan 260610-f91: structural guard — scan_range must use buffered() for
+    /// concurrent per-batch HGET fan-out. We split on `#[cfg(test)]` so the
+    /// check only inspects implementation code, not this test module.
+    #[test]
+    fn scan_range_uses_concurrent_fan_out() {
+        let src = include_str!("kv.rs");
+        // Only look at the implementation (before the test module).
+        let impl_src = src.split("#[cfg(test)]").next().unwrap_or("");
+        assert!(
+            impl_src.contains("buffered(SCAN_CONCURRENCY)"),
+            "scan_range MUST use buffered(SCAN_CONCURRENCY) for concurrent HGET fan-out"
+        );
+    }
 }
