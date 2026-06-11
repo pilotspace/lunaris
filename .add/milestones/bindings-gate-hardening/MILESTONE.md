@@ -28,6 +28,7 @@ Out: fixing the live-PG `cypher(cstring)` conformance failure (live-PG parity st
 - ~~pg-lunaris-bindings-service~~ SUPERSEDED at freeze (2026-06-11): Tin Dang redirected to Moon-only (PG+SQLite deprecate-first, delete next minor) — the postgres row gets REMOVED in the upcoming moon-only milestone, not repaired; task detached
 - [ ] moon-it-required-gate    depends-on: none                 — MOON_IT_REQUIRED=1 turns connect_or_skip into hard failure in CI; distinguish unreachable (skip) from reachable-but-incompatible (always fail)
 - [ ] shard-count-guard        depends-on: none                 — MoonClient connect-time probe: fail fast (or loud warn) when the server runs shards>1, citing docs/design/scope-hashtag-txn-rfc.md
+- [ ] open-call-latency        depends-on: none                 — SPLIT from ts-specs-v04-refresh build (2026-06-11): every `lunaris.open()` burns ~0.8s pure CPU (wall 807ms/cpu 797ms, warm, empty model cache, success AND parse-failure paths) — root-cause (suspect: per-open construction of something heavy in the v0.6-era pipeline) and restore a fast open; the gil-discipline test's absolute bound died on this and was converted to a ratio assertion in the parent task
 
 ## Exit criteria (observable; map each to the task that delivers it)
 - [ ] conformance-bindings: feature-build smoke + per-driver parity (moon) green on a main push; all 3 instances past the maturin step  (← ci-bindings-venv-fix)
