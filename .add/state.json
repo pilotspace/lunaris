@@ -84,13 +84,13 @@
       "title": "Moon v0.3.0 Exploitation Wave",
       "goal": "Lunaris recall and ops measurably exploit Moon v0.3.0 features without breaking the sub-25ms / atomicity contract",
       "stage": "mvp",
-      "status": "active",
+      "status": "done",
       "created": "2026-06-11T03:15:17+00:00",
-      "updated": "2026-06-11T03:15:17+00:00"
+      "updated": "2026-06-11T08:45:37+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T08:44:21+00:00",
+  "updated": "2026-06-11T08:45:37+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
