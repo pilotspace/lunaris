@@ -74,6 +74,11 @@ pub fn parse(bytes: &[u8]) -> Result<HookEvent, ParseError> {
                 .map_err(|e| ParseError::InvalidFields(kind.clone(), e.to_string()))?;
             Ok(HookEvent::SessionStart(p))
         }
+        "SessionEnd" => {
+            let p: SessionEndPayload = serde_json::from_value(v)
+                .map_err(|e| ParseError::InvalidFields(kind.clone(), e.to_string()))?;
+            Ok(HookEvent::SessionEnd(p))
+        }
         other => Ok(HookEvent::Unknown(other.to_owned())),
     }
 }
@@ -228,6 +233,11 @@ pub fn parse_value(value: &serde_json::Value) -> Result<HookEvent, ParseError> {
             let p: SessionStartPayload = serde_json::from_value(value.clone())
                 .map_err(|e| ParseError::InvalidFields(kind.clone(), e.to_string()))?;
             Ok(HookEvent::SessionStart(p))
+        }
+        "SessionEnd" => {
+            let p: SessionEndPayload = serde_json::from_value(value.clone())
+                .map_err(|e| ParseError::InvalidFields(kind.clone(), e.to_string()))?;
+            Ok(HookEvent::SessionEnd(p))
         }
         other => Ok(HookEvent::Unknown(other.to_owned())),
     }

@@ -250,6 +250,24 @@ pub fn build_episode_parts_from_scrubbed(
                 transcript_path,
             )
         }
+        "SessionEnd" => {
+            let session_id =
+                event_value.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            // cwd is optional on SessionEnd (may fire outside a workspace).
+            let cwd = event_value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let event_id =
+                event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            let transcript_path =
+                event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
+            (
+                "claude-code:session_end".to_string(),
+                session_id,
+                None,
+                event_id,
+                cwd,
+                transcript_path,
+            )
+        }
         other => {
             return Err(IngestError::UnknownEventKind(other.to_owned()));
         }
@@ -269,6 +287,11 @@ pub fn build_episode_parts_from_scrubbed(
         meta.insert("transcript_path".into(), Value::String(tp));
     }
     meta.insert("hook_event_name".into(), Value::String(kind.to_owned()));
+    if kind == "SessionEnd"
+        && let Some(reason) = event_value.get("reason").and_then(|v| v.as_str())
+    {
+        meta.insert("reason".into(), Value::String(reason.to_owned()));
+    }
     if truncated_bytes > 0 {
         meta.insert(
             "truncated_bytes".into(),

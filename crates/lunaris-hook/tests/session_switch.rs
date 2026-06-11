@@ -4,7 +4,7 @@
 //! tier spawns the real binary twice and asserts the stderr switch line.
 //! Red evidence: the marker module ships as stubs until the build phase.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -156,7 +156,7 @@ const START_B: &str = r#"{
   "cwd": "/tmp/test-hook-repo"
 }"#;
 
-async fn run_hook(envelope: &str, scopes: &PathBuf, sessions: &PathBuf) -> std::process::Output {
+async fn run_hook(envelope: &str, scopes: &Path, sessions: &Path) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
         .env("LUNARIS_STORE_URL", "memory://")
         .env("LUNARIS_HOOK_SCOPE", "session-switch-e2e")
