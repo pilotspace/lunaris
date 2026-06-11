@@ -154,7 +154,7 @@ impl WorkingMemory {
         // Thread the bound scope (RFC 0001) — `Lunaris::recall()` alone seeds
         // `Scope::dev()`, which would read a different partition than `write`
         // ingested into. `with_scope` is the canonical scoped-recall entry.
-        match self
+        let hits = match self
             .lunaris
             .recall()
             .with_scope(self.scope.clone())
@@ -163,18 +163,25 @@ impl WorkingMemory {
             .execute(Query::text(query))
             .await
         {
-            Ok(hits) => Ok(hits),
+            Ok(hits) => hits,
             Err(err) if is_keyword_not_supported(&err) => {
                 self.lunaris
                     .recall()
                     .with_scope(self.scope.clone())
                     .with_root(Vector::new("chunks", DEFAULT_TOP_K * FANOUT))
-                    .filter(filter)
+                    .filter(filter.clone())
                     .execute(Query::text(query))
-                    .await
+                    .await?
             }
-            Err(err) => Err(err),
-        }
+            Err(err) => return Err(err),
+        };
+        // Post-enforce the source filter: on Moon's native HYBRID path the
+        // pushed-down filter constrains only the BM25 branch — the dense KNN
+        // branch ignores it, so non-matching sources can leak through RRF
+        // fusion (the `memory.recall` tool self-protects the same way for its
+        // `source_prefix`). Defense-in-depth: keep the push-down for ranking
+        // quality, enforce correctness here on the hydrated `source`.
+        Ok(hits.into_iter().filter(|h| source_filter_matches(&filter, &h.source)).collect())
     }
 
     /// Recover the verbatim stored value from a hit's parent Episode `content`.
@@ -242,6 +249,35 @@ impl WorkingMemory {
         Ok(report)
     }
 
+    /// Whole-scope variant of [`Self::consolidate`]: drains and consolidates
+    /// ALL pending events for the scope, ignoring `self.scope_prefix`.
+    ///
+    /// The drain is scope-wide either way; `consolidate_scoped(Some(prefix))`
+    /// then FILTERS the drained events and the non-matching ones are already
+    /// consumed from the queue — dropped, not re-queued. Callers that cannot
+    /// tolerate that loss (e.g. the MCP session-handover, which runs
+    /// implicitly and must not eat other namespaces' pending events) use this
+    /// variant; it consolidates exactly what the background worker would.
+    pub async fn consolidate_unfiltered(&self) -> Result<ConsolidationReport, LunarisError> {
+        let storage: Arc<dyn StoragePort> = self.lunaris.storage();
+
+        let events = drain_consolidate_events(&storage, &self.scope).await?;
+
+        let pipeline = self.lunaris.consolidator_pipeline();
+        let consolidator = match pipeline.snapshot_consolidator() {
+            Some(c) => c,
+            None => {
+                return Ok(ConsolidationReport::default());
+            }
+        };
+
+        let report = consolidator.consolidate_scoped(storage.clone(), &events, None).await?;
+
+        lunaris_consolidate::publish_per_event_audits(&storage, &report).await;
+
+        Ok(report)
+    }
+
     fn scope_key(&self, k: &str) -> String {
         format!("{}{}", self.scope_prefix, k)
     }
@@ -257,6 +293,21 @@ fn is_keyword_not_supported(err: &LunarisError) -> bool {
         LunarisError::Storage(StorageError::NotSupported(msg))
             if msg.contains("keyword_search") || msg.contains("keyword")
     )
+}
+
+/// `true` when a hit's hydrated `source` satisfies the `source` predicate of
+/// `filter`. Non-`source` predicates (and unknown variants) pass — they were
+/// already enforced by the backend push-down; this guard exists because Moon's
+/// native HYBRID path applies the pushed-down filter to the BM25 branch only,
+/// letting dense-KNN hits with foreign sources leak through RRF fusion.
+fn source_filter_matches(filter: &Filter, source: &str) -> bool {
+    match filter {
+        Filter::Eq { field, value } if field == "source" => value.as_str() == Some(source),
+        Filter::StartsWith { field, prefix } if field == "source" => source.starts_with(prefix),
+        Filter::And(xs) => xs.iter().all(|f| source_filter_matches(f, source)),
+        Filter::Or(xs) => xs.iter().any(|f| source_filter_matches(f, source)),
+        _ => true,
+    }
 }
 
 /// Phase 9.1 Plan 01 Task 3 — drain up to [`DRAIN_CAP`] recent
@@ -331,6 +382,28 @@ mod tests {
             }
             other => panic!("expected StartsWith variant; got {other:?}"),
         }
+    }
+
+    /// Moon HYBRID filter-bypass guard: dense-KNN hits whose source does not
+    /// satisfy the pushed-down `source` filter must be rejected post-recall.
+    #[test]
+    fn source_filter_rejects_foreign_sources() {
+        let eq = Filter::Eq {
+            field: "source".into(),
+            value: serde_json::Value::String("scratchpad/sess-b/plan".into()),
+        };
+        assert!(source_filter_matches(&eq, "scratchpad/sess-b/plan"));
+        assert!(!source_filter_matches(&eq, "scratchpad/sess-a/plan"), "Eq must reject leaks");
+        assert!(!source_filter_matches(&eq, "scratchpad/sess-a/blocker"));
+
+        let sw = Filter::StartsWith { field: "source".into(), prefix: "scratchpad/sess-b/".into() };
+        assert!(source_filter_matches(&sw, "scratchpad/sess-b/anything"));
+        assert!(!source_filter_matches(&sw, "scratchpad/sess-a/plan"), "prefix must reject leaks");
+
+        // Non-source predicates pass through (already enforced by the backend).
+        let other =
+            Filter::Eq { field: "kind".into(), value: serde_json::Value::String("x".into()) };
+        assert!(source_filter_matches(&other, "scratchpad/sess-a/plan"));
     }
 
     #[test]

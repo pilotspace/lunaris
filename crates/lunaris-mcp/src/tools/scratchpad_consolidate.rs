@@ -21,6 +21,57 @@ use crate::tools::ToolError;
 /// Bounds the ~51s worst-case (DRAIN_CAP=1024 × PULL_TIMEOUT_MS=50ms).
 const CONSOLIDATE_TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Session-handover consolidate (scratchpad-handover task): the same three
+/// guards as the tool handler, around the WHOLE-SCOPE drain
+/// (`consolidate_unfiltered` — a prefix filter would drop drained events
+/// belonging to other namespaces, see task consolidate-prefix-drop).
+///
+/// Warn-and-continue by design: handover failures and guard refusals must
+/// NEVER error the tool call that triggered them — the old pad carries
+/// forward and the handover is retried at the next observed switch.
+pub(crate) async fn run_handover_consolidate(state: &AppState) {
+    // Guard 1: queue_native gate.
+    if !state.lunaris.storage().capabilities().queue_native {
+        tracing::warn!(
+            scope = state.scope.as_str(),
+            "session handover: backend has no native queue — skipping consolidate, \
+             previous pad carries forward",
+        );
+        return;
+    }
+    // Guard 2: background worker refusal (single __mq_consumers group).
+    if state.lunaris.consolidator_pipeline().is_enabled() {
+        tracing::warn!(
+            scope = state.scope.as_str(),
+            "session handover: background consolidation worker is live — skipping \
+             consolidate to avoid double-consume, previous pad carries forward",
+        );
+        return;
+    }
+    // The namespace on this WorkingMemory is irrelevant to the unfiltered
+    // drain; pass the legacy default for the audit trail.
+    let wm =
+        WorkingMemory::new(state.lunaris.clone(), state.scope.clone(), "scratchpad/".to_owned());
+    // Guard 3: hard timeout.
+    match timeout(CONSOLIDATE_TOOL_TIMEOUT, wm.consolidate_unfiltered()).await {
+        Err(_elapsed) => tracing::warn!(
+            scope = state.scope.as_str(),
+            "session handover: consolidate exceeded the hard timeout — partial \
+             progress possible, retrying at the next switch",
+        ),
+        Ok(Err(e)) => tracing::warn!(
+            scope = state.scope.as_str(), err = %e,
+            "session handover: consolidate failed — previous pad carries forward",
+        ),
+        Ok(Ok(report)) => tracing::info!(
+            scope = state.scope.as_str(),
+            promotions = report.promotions.len(),
+            archives = report.archives.len(),
+            "session handover: previous session's pending events consolidated",
+        ),
+    }
+}
+
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
 /// Input parameters for `memory.scratchpad_consolidate`.

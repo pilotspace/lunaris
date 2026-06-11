@@ -124,9 +124,17 @@ pub(crate) async fn resolve_namespace_session_aware(
     state: &crate::state::AppState,
     ns: Option<String>,
 ) -> Result<String, ToolError> {
-    // RED stub: no marker read, no rotation, no handover.
-    let _ = state;
-    resolve_namespace(ns)
+    if let Some(s) = ns {
+        validate_namespace(&s)?;
+        return Ok(s);
+    }
+    let path = crate::session_pad::sessions_file_path();
+    let scope = state.scope.as_str();
+    if crate::session_pad::take_pending_handover_at(&path, scope) {
+        crate::tools::scratchpad_consolidate::run_handover_consolidate(state).await;
+    }
+    let active = crate::session_pad::active_session_at(&path, scope);
+    Ok(crate::session_pad::default_namespace(active.as_deref()))
 }
 
 // ── Keyword NotSupported helper ───────────────────────────────────────────────
