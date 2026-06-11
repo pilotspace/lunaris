@@ -183,13 +183,20 @@ jobs:
       - name: Build lunaris-py WITH bindings-it
         run: maturin develop --release --features bindings-it
         working-directory: crates/lunaris-py
-      - name: Python parity test (skip path)
-        run: pytest crates/lunaris-py/tests/test_backend_parity.py -v
+      # Full suite (not just backend_parity): before 2026-06-11 no workflow
+      # anywhere ran these files, so the v0.4 API cutover left them rotting
+      # invisibly. Backend-gated tests skip without env URLs; the native
+      # factories read local files only, so the suite is offline-safe.
+      # Static strings only; no untrusted input.
+      - name: Python full suite (offline / skip path)
+        run: pytest crates/lunaris-py/tests/ -v
       - name: npm install + napi build lunaris-ts WITH bindings-it
         run: |
           npm ci --no-audit --no-fund
           npx napi build --platform --release --features bindings-it
         working-directory: crates/lunaris-ts
-      - name: TypeScript parity test (skip path)
-        run: npx vitest run --config vitest.config.mts __test__/backend_parity.spec.mts
+      # Full vitest suite for the same reason as the Python step above.
+      # Static strings only; no untrusted input.
+      - name: TypeScript full suite (offline / skip path)
+        run: npm test
         working-directory: crates/lunaris-ts
