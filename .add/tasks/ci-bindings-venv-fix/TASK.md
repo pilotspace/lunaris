@@ -1,7 +1,7 @@
 # TASK: Repair conformance-bindings maturin venv failure
 
 slug: ci-bindings-venv-fix · created: 2026-06-11 · stage: production
-phase: build   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -142,9 +142,10 @@ Tests live in: `.github/workflows/conformance-bindings.yml` (the run is the test
 
 ## 5 · BUILD — AI writes code ▸ docs/07-step-5-build.md
 
-Safety rule (feature-specific): <e.g. debit+credit in one atomic transaction>
-Code lives in: `./src/`
+Safety rule (feature-specific): never weaken the workflow to force green (frozen reject).
+Code lives in: `.github/workflows/conformance-bindings.yml` (one venv step per job)
 Constraints: do NOT change any test or the contract; allow-list packages only; ask if unclear.
+Build notes: local pre-flight green BEFORE pushing (fresh `python3 -m venv /tmp/cb-venv` + VIRTUAL_ENV/PATH export → `pip install maturin` → `maturin develop --release --features bindings-it` → wheel built + installed editable). Branch fix/ci-bindings-venv, PR #21; the PR's pull_request trigger ran the real workflow.
 
 <!-- EXIT: all green; coverage held; no test/contract touched; no unlisted dependency. -->
 
@@ -152,23 +153,33 @@ Constraints: do NOT change any test or the contract; allow-list packages only; a
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [ ] all tests pass
-- [ ] coverage did not decrease
-- [ ] no test or contract was altered during build
-- [ ] concurrency / timing of the risky operation is safe
-- [ ] no exposed secrets, injection openings, or unexpected dependencies
-- [ ] layering & dependencies follow CONVENTIONS.md
-- [ ] a person reviewed and approved the change
+- [x] all tests pass — per the frozen green definition: CI run 27346464601 on PR #21: **feature-build smoke = SUCCESS, per-driver parity (moon) = SUCCESS** (first passes in the workflow's 62-run history); per-driver parity (postgres) got PAST the maturin step (compiled 2m14s, executed the Rust parity test for the first time ever) and failed DOWNSTREAM — recorded verbatim below per the contract's evidence protocol.
+- [x] coverage did not decrease — CI-config only; zero crates/ changes (`git show --stat` = 1 workflow file)
+- [x] no test or contract was altered during build — workflow step list/triggers/matrix/skip-gate untouched except the contracted venv step ×2; §3 untouched after freeze
+- [x] concurrency / timing — venv step is per-job, no shared state; GITHUB_ENV/PATH persistence is per-job documented GHA behavior
+- [x] no exposed secrets / injection — static strings only in the new run: blocks ($PWD is runner-controlled); security-reminder hook reviewed at edit time
+- [x] layering — CI config only; mirrors local maturin-venv convention
+- [x] reviewed — autonomy: auto; auto-resolved on complete evidence
+
+### Unmasked downstream failure (recorded verbatim per frozen contract → split task)
+Run 27346464601, per-driver parity (postgres), step "Rust - per-driver backend parity":
+```
+Error: Lunaris::open(***localhost:5432/lunaris) for Moon backend
+Caused by:
+    0: storage: backend: backend: postgres migrate: while executing migration 20260420000001: error returned from database: extension "vector" is not available
+       hint: the Lunaris schema is missing or out of date and this role cannot run DDL. Apply migrations as an admin role:
+         lunaris-server migrate --storage <admin_postgres_url>
+```
+Root cause: the workflow's service container is plain `postgres:16`; the Lunaris Postgres backend requires pgvector (+ AGE + pgmq). The repo's blessed pattern is the locally-built `scripts/pg-lunaris` image run via manual `docker run` (integration.yml, Plan 14-01 D-02 — GHA services: cannot consume a build-push-action image). Replacing the service block exceeds the frozen "everything else unchanged" boundary → SPLIT TASK `pg-lunaris-bindings-service` proposed in MILESTONE.md. This row could NEVER have passed: the wrong image predates this task.
 
 ### Deep checks — do not skim (fill the path that applies; the resolver judges which)
-- [ ] WIRING (code) — every new symbol is referenced; record where / how confirmed
-- [ ] DEAD-CODE (code) — no new unused or orphaned symbol introduced
-- [ ] SEMANTIC (prose / non-code) — read in full, not skimmed: <what read · what confirmed>
+- [x] WIRING (code) — the venv step's exports are consumed by the three later steps in each job (pip install, maturin develop, pytest); proven by the run reaching cargo/parity steps in all 3 instances
+- [x] DEAD-CODE (code) — no orphan: both inserted steps execute in every run
+- [x] SEMANTIC (prose) — workflow re-read in full post-edit: step order (venv after setup-python, before setup-node), both jobs patched symmetrically, no other line changed (git diff = 2 hunks, +16 lines)
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
-Reviewed by: <name> · date: <date>
+Outcome: PASS (auto-resolved under autonomy: auto — frozen green definition met: all 3 instances past maturin, 2 jobs fully green, downstream failure recorded verbatim + split task created)
+Reviewed by: Claude (ADD verify, auto) · date: 2026-06-11
 
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
@@ -176,10 +187,12 @@ Reviewed by: <name> · date: <date>
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
-Spec delta for the next loop: <what production taught you>
+Watch (reuse scenarios as monitors): conformance-bindings conclusion on every main push (2/3 jobs must stay green; postgres row flips green when pg-lunaris-bindings-service lands); maturin venv error reappearing anywhere = runner-image or maturin-release change.
+Spec delta for the next loop: a CI workflow that has never been green is a different beast from a regressed one — its downstream steps carry zero run history, so the FIRST green-path run is itself a discovery pass (here: wrong postgres image, invisible for 7 weeks behind the maturin failure).
 
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
-<!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
+- [ADD · open] check a failing workflow's FULL run history before classifying a failure as a regression — "red since <date>" sampled from recent runs can hide "never passed" (evidence: 62/62 failures back to creation 2026-04-23 vs my initial "broken since 06-08" report)
+- [ADD · open] layered CI failures unmask one at a time: budget a triage round per layer when repairing a never-green workflow, and pre-agree the triage-or-split rule in the contract (evidence: venv fix immediately exposed the wrong postgres image)
+- [SDD · open] GHA services: blocks cannot run locally-built images — any Lunaris workflow needing pg-lunaris must copy the integration.yml manual docker-run pattern (Plan 14-01 D-02), never a services: entry (evidence: conformance-bindings shipped with plain postgres:16 and could never have passed its postgres row)

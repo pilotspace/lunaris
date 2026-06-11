@@ -9,7 +9,7 @@ stage: production · status: active · created: 2026-06-11
 > written just-in-time. Update this doc whenever a task reveals a milestone gap.
 
 ## Scope
-In:  conformance-bindings workflow repair (maturin venv) · lunaris-ts stale-spec refresh to the v0.4 native API + v0.2.1 scope alphabet · MOON_IT_REQUIRED env that hard-fails graceful skips in CI (unreachable vs incompatible distinguished) · connect-time shard-count guard in lunaris-storage-moon (fail fast on shards>1, citing the TXN-pin RFC)
+In (Moon-shaped after the 2026-06-11 moon-only redirect):  conformance-bindings workflow repair (maturin venv) · lunaris-ts stale-spec refresh to the v0.4 native API + v0.2.1 scope alphabet · MOON_IT_REQUIRED env that hard-fails graceful skips in CI (unreachable vs incompatible distinguished) · connect-time shard-count guard in lunaris-storage-moon (fail fast on shards>1, citing the TXN-pin RFC)
 Out: fixing the live-PG `cypher(cstring)` conformance failure (live-PG parity stays deferred to HUMAN-UAT per standing decision) · perf-gates repair · the 10k×1k like-for-like bench rerun · Moon-repo TXN BEGIN PIN implementation · dim_configurable within-suite race fix (own task, later) · any new SDK surface
 
 ## Shared decisions & glossary deltas   (living — every task must honor these)
@@ -25,11 +25,13 @@ Out: fixing the live-PG `cypher(cstring)` conformance failure (live-PG parity st
 ## Tasks (breadth-first decomposition; detail lives in each TASK.md)
 - [ ] ci-bindings-venv-fix     depends-on: none                 — repair the maturin "Couldn't find a virtualenv" failure in conformance-bindings (red on main since 2026-06-08); all three jobs green
 - [ ] ts-specs-v04-refresh     depends-on: ci-bindings-venv-fix — refresh lunaris-ts __test__ specs to the v0.4 native embedder API + v0.2.1 scope alphabet (7 stale failures on main) AND wire the FULL `npm test` suite into conformance-bindings (discovered at task-1 specify: no workflow runs any vitest spec except backend_parity — the stale specs are invisible to CI)
+- ~~pg-lunaris-bindings-service~~ SUPERSEDED at freeze (2026-06-11): Tin Dang redirected to Moon-only (PG+SQLite deprecate-first, delete next minor) — the postgres row gets REMOVED in the upcoming moon-only milestone, not repaired; task detached
 - [ ] moon-it-required-gate    depends-on: none                 — MOON_IT_REQUIRED=1 turns connect_or_skip into hard failure in CI; distinguish unreachable (skip) from reachable-but-incompatible (always fail)
 - [ ] shard-count-guard        depends-on: none                 — MoonClient connect-time probe: fail fast (or loud warn) when the server runs shards>1, citing docs/design/scope-hashtag-txn-rfc.md
 
 ## Exit criteria (observable; map each to the task that delivers it)
-- [ ] conformance-bindings workflow (feature-build smoke + per-driver parity ×2) is green on a main push        (← ci-bindings-venv-fix)
+- [ ] conformance-bindings: feature-build smoke + per-driver parity (moon) green on a main push; all 3 instances past the maturin step  (← ci-bindings-venv-fix)
+- [x] conformance-bindings postgres row: resolution moved to the moon-only milestone (row removal with the backend deprecation) — criterion closed as superseded, decided by Tin Dang 2026-06-11
 - [ ] `npm test` in crates/lunaris-ts passes 0-fail locally AND in the repaired CI job                          (← ts-specs-v04-refresh)
 - [ ] A CI run with MOON_IT_REQUIRED=1 fails loudly when Moon is absent, and moon-it suites stop false-passing  (← moon-it-required-gate)
 - [ ] Connecting lunaris-storage-moon to a --shards 4 Moon fails (or warns, per frozen contract) at connect time with an RFC-citing message; --shards 1 unaffected  (← shard-count-guard)

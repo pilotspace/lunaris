@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "ci-bindings-venv-fix",
+  "active_task": "ts-specs-v04-refresh",
   "active_milestone": "bindings-gate-hardening",
   "tasks": {
     "mq-typed-client": {
@@ -80,12 +80,12 @@
     },
     "ci-bindings-venv-fix": {
       "title": "Repair conformance-bindings maturin venv failure",
-      "phase": "build",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "bindings-gate-hardening",
       "depends_on": [],
       "created": "2026-06-11T11:33:46+00:00",
-      "updated": "2026-06-11T12:20:30+00:00",
+      "updated": "2026-06-11T12:42:33+00:00",
       "flag_verified": true
     },
     "ts-specs-v04-refresh": {
@@ -116,6 +116,17 @@
       "depends_on": [],
       "created": "2026-06-11T11:33:46+00:00",
       "updated": "2026-06-11T11:33:46+00:00"
+    },
+    "pg-lunaris-bindings-service": {
+      "title": "pg-lunaris image for conformance-bindings postgres row",
+      "phase": "contract",
+      "gate": "none",
+      "milestone": null,
+      "depends_on": [
+        "ci-bindings-venv-fix"
+      ],
+      "created": "2026-06-11T12:42:33+00:00",
+      "updated": "2026-06-11T13:34:18+00:00"
     }
   },
   "milestones": {
@@ -137,7 +148,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T12:20:30+00:00",
+  "updated": "2026-06-11T13:34:18+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
