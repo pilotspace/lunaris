@@ -246,7 +246,7 @@ async fn anchored_with_decay_threads_through() {
 
     let calls = rec.decayed_calls.lock().clone();
     assert!(
-        calls.iter().any(|c| *c == Some(3.0)),
+        calls.contains(&Some(3.0)),
         "graph_traverse_decayed must be called with λ=3.0; recorded: {calls:?}"
     );
 }
