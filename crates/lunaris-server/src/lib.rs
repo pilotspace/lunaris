@@ -58,6 +58,8 @@
 
 pub mod config;
 pub mod dto;
+// hotkeys-observability — 10s HOTKEYS poller feeding lunaris_hotkey_samples.
+pub mod hotkeys_poller;
 // Plan 05-05 OPS-06 — Prometheus metrics registry + GET /metrics text-format
 // handler + 10s queue-depth poller (background tokio task).
 pub mod metrics;

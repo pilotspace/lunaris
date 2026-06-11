@@ -48,6 +48,8 @@ pub(crate) mod invalidate;
 pub mod keyspace;
 pub mod keyword;
 pub mod kv;
+// hotkeys-observability — HOTKEYS raw RESP path (typed SDK has no wrapper).
+pub(crate) mod hotkeys;
 // ft-navigate-recall — FT.NAVIGATE raw RESP path (typed SDK lacks a DECAY slot).
 pub(crate) mod navigate;
 pub mod queue;
@@ -258,6 +260,10 @@ impl StoragePort for MoonStorage {
         spec: &NavigateSpec,
     ) -> Result<Vec<NavigateHit>, StorageError> {
         crate::navigate::vector_navigate(&self.client, scope, index, query, k, spec).await
+    }
+
+    async fn hot_keys(&self, count: usize) -> Result<Vec<lunaris_core::HotKey>, StorageError> {
+        crate::hotkeys::hot_keys(&self.client, count).await
     }
 
     async fn scan_range(

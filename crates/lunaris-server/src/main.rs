@@ -82,6 +82,12 @@ async fn main() -> ExitCode {
         shutdown.notify(),
     );
 
+    // hotkeys-observability — same lifecycle as the queue-depth poller: 10s
+    // ticks feeding `lunaris_hotkey_samples`; unsupported backends warn once
+    // and the gauge stays empty.
+    let _hotkeys_poller =
+        lunaris_server::hotkeys_poller::spawn_hotkeys_poller(lunaris.storage(), shutdown.notify());
+
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown.wait().await;

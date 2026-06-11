@@ -13,6 +13,12 @@
 //! | `lunaris_consolidator_queue_depth`  | gauge     | `topic`                             |
 //! | `lunaris_error_total`               | counter   | `kind`                              |
 //! | `lunaris_eval_score`                | gauge     | `harness`                           |
+//! | `lunaris_hotkey_samples`            | gauge     | `scope`, `kind`                     |
+//!
+//! The tenth metric (`lunaris_hotkey_samples`, hotkeys-observability task)
+//! extends the D-25 table: `scope` is bounded by the live tenant set (same
+//! class as `tenant`); its `kind` is a CLOSED static set ≤ 13 enforced by
+//! `hotkeys_poller::classify_hot_key`.
 //!
 //! ## Cardinality cap (T-05-05-02 mitigation)
 //!
@@ -59,6 +65,12 @@ pub struct Metrics {
     /// /metrics text format already lists the series at zero; Plan 05-06's
     /// lunaris-evals binary populates concrete values from eval-results.json.
     pub eval_score: GaugeVec,
+    /// hotkeys-observability (10th metric) — sampled hot-key pressure per
+    /// (scope, kind), fed by `hotkeys_poller`. Label cardinality: `scope` =
+    /// live tenant set (same bound as `tenant`); `kind` is a CLOSED static
+    /// set ≤ 13 (see `hotkeys_poller::classify_hot_key`). Raw key names
+    /// NEVER appear — unparseable keys are dropped before labeling.
+    pub hotkey_samples: IntGaugeVec,
 }
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
@@ -121,6 +133,14 @@ pub fn metrics() -> &'static Metrics {
             &["harness"]
         )
         .expect("register lunaris_eval_score"),
+        hotkey_samples: register_int_gauge_vec!(
+            "lunaris_hotkey_samples",
+            "Sampled hot-key pressure per scope+kind (Moon HOTKEYS: 1-in-64 sampling, \
+             multiply by 64 for approx command count; SpaceSaving top-128 ranking, \
+             cumulative since Moon start — read as a pressure RANKING, not a rate)",
+            &["scope", "kind"]
+        )
+        .expect("register lunaris_hotkey_samples"),
     })
 }
 
