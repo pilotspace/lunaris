@@ -90,14 +90,14 @@
     },
     "ts-specs-v04-refresh": {
       "title": "Refresh lunaris-ts specs to v0.4 native API",
-      "phase": "build",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "bindings-gate-hardening",
       "depends_on": [
         "ci-bindings-venv-fix"
       ],
       "created": "2026-06-11T11:33:46+00:00",
-      "updated": "2026-06-11T13:52:41+00:00",
+      "updated": "2026-06-11T16:30:54+00:00",
       "flag_verified": true
     },
     "moon-it-required-gate": {
@@ -140,12 +140,13 @@
     },
     "session-switch-detect": {
       "title": "SessionEnd envelope + durable last-active-session marker + switch detection in lunaris-hook",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "hook-session-scratchpad",
       "depends_on": [],
       "created": "2026-06-11T16:01:45+00:00",
-      "updated": "2026-06-11T16:10:52+00:00"
+      "updated": "2026-06-11T16:37:12+00:00",
+      "flag_verified": true
     },
     "scratchpad-handover": {
       "title": "Guarded consolidate of previous session's pad + per-session namespace rotation",
@@ -197,7 +198,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T16:10:52+00:00",
+  "updated": "2026-06-11T16:37:12+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

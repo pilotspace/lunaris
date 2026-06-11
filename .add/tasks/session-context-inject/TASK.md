@@ -1,7 +1,7 @@
-# TASK: Refresh lunaris-ts specs to v0.4 native API
+# TASK: SessionStart additionalContext: distilled handover summary
 
-slug: ts-specs-v04-refresh · created: 2026-06-11 · stage: production
-phase: done   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+slug: session-context-inject · created: 2026-06-11 · stage: production
+phase: specify   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -106,22 +106,23 @@ Constraints: do NOT change any test or the contract; allow-list packages only; a
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [x] all tests pass — local: TS 60 passed/2 skipped, PY full dir 34 passed/23 skipped (HF_HUB_OFFLINE=1); CI: conformance-bindings memory-smoke GREEN on PR #22 running the FULL suites (first time ever)
-- [x] coverage did not decrease — TS embedder spec 9 -> 11 tests; PY scope/embedder files grew (new `:`-rejection + deleted-API-absence tests); every deleted test has an in-file replacement
-- [x] no test or contract was altered during build — one CONTRACTED adjustment: gil-discipline became two-regime (absolute fast / ratio slow) after PR #22's first CI run proved the fast regime (~0.2ms/call on ubuntu) makes a ratio non-discriminating; intent strengthened, never weakened; recorded in the build log + commit 96107f7
-- [x] concurrency / timing — gil test now self-calibrates per regime; no timing assumptions left that depend on host speed
-- [x] no exposed secrets / injection / new deps — CI steps are static strings (`npm test`, literal pytest path); zero dependency changes
-- [x] layering — zero binding/Rust source changes (reject-guard held); specs track the addon
-- [x] reviewed: full PR #22 diff reviewed file-by-file before merge; merged --admin --rebase by standing owner preference
+- [ ] all tests pass
+- [ ] coverage did not decrease
+- [ ] no test or contract was altered during build
+- [ ] concurrency / timing of the risky operation is safe
+- [ ] no exposed secrets, injection openings, or unexpected dependencies
+- [ ] layering & dependencies follow CONVENTIONS.md
+- [ ] a person reviewed and approved the change
 
 ### Deep checks — do not skim (fill the path that applies; the resolver judges which)
-- [x] WIRING (code) — the new CI steps RUN the new specs: memory-smoke log on PR #22 shows the full vitest suite (9 files) + full pytest dir (12 files) executing — the rot-invisibility gap is closed end-to-end
-- [x] DEAD-CODE (code) — no new symbols (test-only changes); deleted-API references removed everywhere (grep fastembed/ollama/fromOnnx in __test__/ + tests/ -> only absence-assertions remain)
-- [x] SEMANTIC (prose) — workflow comments re-read post-edit; per-driver-parity job verified byte-identical via PR diff
+- [ ] WIRING (code) — every new symbol is referenced; record where / how confirmed
+- [ ] DEAD-CODE (code) — no new unused or orphaned symbol introduced
+- [ ] SEMANTIC (prose / non-code) — read in full, not skimmed: <what read · what confirmed>
 
 ### GATE RECORD
-Outcome: PASS  (auto-resolved under autonomy:auto — evidence complete: local green both suites, CI green on the wired job, coverage grew, zero source drift)
-Reviewed by: AI (auto-gate) + Tin Dang merge approval via "review then merge all" · date: 2026-06-11
+Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
+If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
+Reviewed by: <name> · date: <date>
 
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
@@ -129,10 +130,10 @@ Reviewed by: AI (auto-gate) + Tin Dang merge approval via "review then merge all
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): conformance-bindings memory-smoke on every bindings-touching PR — it now runs the FULL suites, so any future API cutover that forgets the SDK specs turns red immediately.
-Spec delta for the next loop: open-call-latency task carries the unmasked ~0.8s-per-open finding (darwin/py3.14 local only; CI fast).
+Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
+Spec delta for the next loop: <what production taught you>
 
 ### Competency deltas
-- [TDD · open] timing assertions must name their regime: an absolute bound and a ratio bound discriminate in OPPOSITE speed regimes — pick per measured serialized estimate, not per hope (evidence: gil test failed CI at ratio 1.01 in the fast regime after the local slow regime motivated the ratio form)
-- [TDD · open] absence-of-API tests must assert via typeof/hasattr, never via error-message regex — a TypeError message can satisfy a throw-pattern by accident (evidence: fromOnnxPath false-passes /onnx|read/i for 7 weeks)
-- [ADD · open] when a task unmasks a latent finding in an untouched file, the triage fork is: stale-premise part fixed in-scope (test tracked dead assumption) + behavior part split (open-call-latency) — recorded verbatim both times (evidence: §5 build log)
+What did this loop teach the foundation? One line each, tagged by competency
+(`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
+<!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
