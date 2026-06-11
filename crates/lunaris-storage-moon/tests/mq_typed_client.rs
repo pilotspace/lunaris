@@ -9,6 +9,7 @@
 //! - `mq_wire_format_is_body` — today publish writes `partition`+`payload`.
 //! - `legacy_entry_missing_body_yields_empty_payload` — today subscribe reads
 //!   the `payload` field, so a legacy entry round-trips its bytes.
+//!
 //! `mq_publish_txn_probe` is an EVIDENCE test: both server outcomes pass; the
 //! printed verdict feeds TASK.md §7 OBSERVE.
 
