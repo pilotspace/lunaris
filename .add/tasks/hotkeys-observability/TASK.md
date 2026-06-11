@@ -210,6 +210,6 @@ Spec delta for the next loop: Moon could expose a `HOTKEYS RESET`/windowed varia
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
-- [SDD · open] Moon key-shape knowledge (FT doc / graph key grammar) now lives in THREE places: lunaris-storage-moon::keyspace (mint), lunaris-server::classify_hot_key (parse), docs — a shared reverse-parser in lunaris-core (next to parse_scope_from_key) would single-source it (evidence: classify_hot_key reimplements ft_index_name's shape backwards)
-- [TDD · open] sampling-based live tests need a deterministic traffic→expectation ratio — pipelining exactly 4096 GETs gave sampled_count=64 == 4096/64, turning a probabilistic assert into an exact one (evidence: hotkeys_live + redis-cli cross-check)
-- [UDD · open] cumulative-sketch gauges read as rates by default — HELP text must carry semantics ("ranking, not rate") because operators will alert on it without reading docs (evidence: ⚠ flag #1, mitigated in HELP)
+- [SDD · folded] Moon key-shape knowledge (FT doc / graph key grammar) now lives in THREE places: lunaris-storage-moon::keyspace (mint), lunaris-server::classify_hot_key (parse), docs — a shared reverse-parser in lunaris-core (next to parse_scope_from_key) would single-source it (evidence: classify_hot_key reimplements ft_index_name's shape backwards)
+- [TDD · folded] sampling-based live tests need a deterministic traffic→expectation ratio — pipelining exactly 4096 GETs gave sampled_count=64 == 4096/64, turning a probabilistic assert into an exact one (evidence: hotkeys_live + redis-cli cross-check)
+- [UDD · folded] cumulative-sketch gauges read as rates by default — HELP text must carry semantics ("ranking, not rate") because operators will alert on it without reading docs (evidence: ⚠ flag #1, mitigated in HELP)

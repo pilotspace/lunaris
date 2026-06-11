@@ -13,3 +13,20 @@ Locks: `parking_lot` only; NEVER hold a guard across `.await`
 File size: no `.rs` file over 1500 lines; split read/write at 1000
 Commits: `<type>(<scope>): summary` + body + `author: Tin Dang` footer; message written to `tmp/<name>.txt`, committed via `git commit -F`; atomic per task
 Submodule discipline: never pin a vendor/moon commit not pushed to pilotspace/moon; `.planning` commits land in its own repo first, then gitlink bump
+
+## Folded conventions — moon-v030-exploit retrospective (2026-06-11, foundation v2)
+
+Testing (TDD):
+- moon-it suite isolation: each integration-test binary gets its own server (fresh `--dir`) or its own ULID-scoped FT indices; never share one live Moon across suites that create global indices (dim_configurable has both cross-suite pollution AND a within-suite race).
+- Graceful-skip hardening: `connect_or_skip` must distinguish "unreachable" (skip) from "reachable but incompatible" (fail); CI sets `MOON_IT_REQUIRED=1` to turn connect-skips into hard failures (false-pass struck twice).
+- Default fixture style for storage-visible features: the production-path discriminator — seed ONLY through `atomic_write`, assert the feature observable end-to-end.
+- Additive port evolution: "additive trait default method + `StorageCapabilities` flag" is the proven recipe (queue_depth, decay, navigate, hot_keys); the compiler-checked literal sweep over ~40 sites is acceptable cost.
+- Sampling-based live tests engineer an exact traffic→expectation ratio (4096 pipelined GETs ÷ 64 sampling = exactly 64) instead of probabilistic asserts.
+- Contracts below an SDK boundary name observable PROPERTIES (stream stays alive), not exact error strings — adapter layers absorb failure modes.
+- Recall/quantization evals MUST state corpus realism: synthetic random vectors invert tier rankings (tq4 0.405 synthetic vs ~0.89 real).
+- Corpus floors are validated against the SPLIT, not the dataset (SQuAD validation = 2,067 unique contexts < a 3k floor).
+
+Build/harness (ADD):
+- Probe-before-freeze: a one-shot live probe against the real server converts freeze ⚠ flags into ground facts before red tests exist (paid off 3×: ADDNODE prop coercion, GRAPH.SETPROP docs-drift, QUANTIZATION arity).
+- Probe scripts launch their OWN servers in tempdirs — immune to the SO_REUSEPORT stale-listener trap; for doc-spikes the probe script IS the executable test (exit 0 = evidence matrix reproduces).
+- Long-running benches: the log file with periodic progress markers is the single source of truth; `ps`-grep false-negatives on column truncation.
