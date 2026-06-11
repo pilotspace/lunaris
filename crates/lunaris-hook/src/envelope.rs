@@ -32,7 +32,8 @@ pub enum HookEvent {
     PostToolUse(PostToolUsePayload),
     Stop(StopPayload),
     SessionStart(SessionStartPayload),
-    /// Any hook_event_name not in the four known values.
+    SessionEnd(SessionEndPayload),
+    /// Any hook_event_name not in the five known values.
     /// The raw kind string is preserved for the info-log line.
     Unknown(String),
 }
@@ -156,6 +157,28 @@ pub struct SessionStartPayload {
     pub timestamp: Option<String>,
 }
 
+/// SessionEnd payload. Typed from Claude Code docs, not a captured envelope
+/// (the freeze's least-sure flag) — every field except the discriminator and
+/// `session_id` is serde-defaulted so a shape mismatch degrades to a partial
+/// payload, never a parse failure. `cwd` is optional here (unlike the other
+/// payloads): an end event may fire outside a workspace context.
+#[derive(Debug, Deserialize)]
+pub struct SessionEndPayload {
+    pub hook_event_name: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Claude Code end reason: clear / logout / prompt_input_exit / other.
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+}
+
 /// Extract the `timestamp` field from any known event variant, if present.
 /// Returns `None` for Unknown events or when timestamp is absent.
 pub fn extract_timestamp(event: &HookEvent) -> Option<DateTime<Utc>> {
@@ -164,6 +187,7 @@ pub fn extract_timestamp(event: &HookEvent) -> Option<DateTime<Utc>> {
         HookEvent::PostToolUse(p) => p.timestamp.as_deref(),
         HookEvent::Stop(p) => p.timestamp.as_deref(),
         HookEvent::SessionStart(p) => p.timestamp.as_deref(),
+        HookEvent::SessionEnd(p) => p.timestamp.as_deref(),
         HookEvent::Unknown(_) => None,
     }?;
     DateTime::parse_from_rfc3339(ts_str).ok().map(|dt| dt.with_timezone(&Utc))
@@ -273,6 +297,7 @@ pub fn extract_event_id(event: &HookEvent) -> Option<String> {
         HookEvent::PostToolUse(p) => p.event_id.clone(),
         HookEvent::Stop(p) => p.event_id.clone(),
         HookEvent::SessionStart(p) => p.event_id.clone(),
+        HookEvent::SessionEnd(p) => p.event_id.clone(),
         HookEvent::Unknown(_) => None,
     }
 }
@@ -286,6 +311,7 @@ pub fn extract_session_id(event: &HookEvent) -> &str {
         HookEvent::PostToolUse(p) => &p.session_id,
         HookEvent::Stop(p) => &p.session_id,
         HookEvent::SessionStart(p) => &p.session_id,
+        HookEvent::SessionEnd(p) => &p.session_id,
         HookEvent::Unknown(_) => "",
     }
 }
@@ -297,6 +323,7 @@ pub fn extract_kind_str(event: &HookEvent) -> &str {
         HookEvent::PostToolUse(p) => &p.hook_event_name,
         HookEvent::Stop(p) => &p.hook_event_name,
         HookEvent::SessionStart(p) => &p.hook_event_name,
+        HookEvent::SessionEnd(p) => &p.hook_event_name,
         HookEvent::Unknown(s) => s.as_str(),
     }
 }
@@ -308,6 +335,7 @@ pub fn extract_transcript_path(event: &HookEvent) -> Option<&str> {
         HookEvent::PostToolUse(p) => p.transcript_path.as_deref(),
         HookEvent::Stop(p) => p.transcript_path.as_deref(),
         HookEvent::SessionStart(p) => p.transcript_path.as_deref(),
+        HookEvent::SessionEnd(p) => p.transcript_path.as_deref(),
         HookEvent::Unknown(_) => None,
     }
 }
@@ -320,6 +348,7 @@ pub fn extract_timestamp_str(event: &HookEvent) -> Option<&str> {
         HookEvent::PostToolUse(p) => p.timestamp.as_deref(),
         HookEvent::Stop(p) => p.timestamp.as_deref(),
         HookEvent::SessionStart(p) => p.timestamp.as_deref(),
+        HookEvent::SessionEnd(p) => p.timestamp.as_deref(),
         HookEvent::Unknown(_) => None,
     }
 }

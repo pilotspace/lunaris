@@ -91,6 +91,22 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
             );
             (source, content, meta)
         }
+        HookEvent::SessionEnd(p) => {
+            let source = "claude-code:session_end".to_string();
+            let content = "session_end event".to_string();
+            let mut meta = build_meta(
+                &p.session_id,
+                None,
+                p.event_id.as_deref(),
+                p.cwd.as_deref().unwrap_or(""),
+                p.transcript_path.as_deref(),
+                &p.hook_event_name,
+            );
+            if let Some(reason) = &p.reason {
+                meta.insert("reason".into(), Value::String(reason.clone()));
+            }
+            (source, content, meta)
+        }
         HookEvent::Unknown(_) => return None,
     };
 

@@ -15,6 +15,7 @@ pub mod ingest;
 pub mod policy;
 pub mod scope;
 pub mod scrub;
+pub mod session_marker;
 
 use std::sync::Arc;
 
