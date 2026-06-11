@@ -44,15 +44,23 @@ async function moonReachable(url: string): Promise<boolean> {
 
 describe("Scope — offline validation", () => {
   test("valid scope constructs without error", () => {
-    const s = lunaris.Scope.new("acme:agent-42");
-    expect(s.asStr()).toBe("acme:agent-42");
-    expect(s.toString()).toBe("acme:agent-42");
+    const s = lunaris.Scope.new("acme.agent-42");
+    expect(s.asStr()).toBe("acme.agent-42");
+    expect(s.toString()).toBe("acme.agent-42");
   });
 
   test("equality: same string produces same asStr", () => {
-    const a = lunaris.Scope.new("agent:alpha");
-    const b = lunaris.Scope.new("agent:alpha");
+    const a = lunaris.Scope.new("agent.alpha");
+    const b = lunaris.Scope.new("agent.alpha");
     expect(a.asStr()).toBe(b.asStr());
+  });
+
+  test("rejects colon (KV-aliasing defense, v0.2.1 alphabet)", () => {
+    // `:` is the delimiter of the lunaris:{scope}:{kind}:{ulid} KV format.
+    // Scope::new rejects it at the type level so no scope string can
+    // byte-alias another scope's keyspace. A spec asserting `:` valid is
+    // asserting a security regression.
+    expect(() => lunaris.Scope.new("acme:agent-42")).toThrow(/Scope/);
   });
 
   test("rejects empty string", () => {
@@ -76,8 +84,8 @@ describe("Scope — offline validation", () => {
     expect(() => lunaris.Scope.new("has/slash")).toThrow(/Scope/);
   });
 
-  test("accepts all valid char classes: A-Za-z0-9_-:.", () => {
-    expect(() => lunaris.Scope.new("A0._:-")).not.toThrow();
+  test("accepts all valid char classes: A-Za-z0-9_-.", () => {
+    expect(() => lunaris.Scope.new("A0._-")).not.toThrow();
   });
 });
 
@@ -130,7 +138,7 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
 
     try {
       const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent:alpha");
+      const scope = lunaris.Scope.new("agent.alpha");
       const builder = new lunaris.EpisodeBuilder(
         "ts-test/scope",
         "the quick brown fox jumps over the lazy dog",
@@ -151,7 +159,7 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
 
     try {
       const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent:alpha");
+      const scope = lunaris.Scope.new("agent.alpha");
       const builder = new lunaris.EpisodeBuilder("ts-test/meta", "some content")
         .tRef("2026-01-01T00:00:00Z")
         .metadata({ source_type: "unit-test" });
@@ -171,8 +179,8 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
       const handle = await lunaris.open(url);
       const unique = `lunaris-wave3g-ts-isolation-${Date.now()}`;
 
-      const scopeA = lunaris.Scope.new("wave3g:scope-a");
-      const scopeB = lunaris.Scope.new("wave3g:scope-b");
+      const scopeA = lunaris.Scope.new("wave3g.scope-a");
+      const scopeB = lunaris.Scope.new("wave3g.scope-b");
 
       // Ingest under scope_a.
       const builder = new lunaris.EpisodeBuilder("ts-test/isolation", unique);
@@ -198,9 +206,9 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
 
     try {
       const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent:alpha");
+      const scope = lunaris.Scope.new("agent.alpha");
       const scoped = handle.scoped(scope);
-      expect(scoped.scope.asStr()).toBe("agent:alpha");
+      expect(scoped.scope.asStr()).toBe("agent.alpha");
     } catch (err) {
       if ((err as Error).message?.startsWith("STORAGE:")) return;
       throw err;
@@ -213,7 +221,7 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
 
     try {
       const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent:alpha");
+      const scope = lunaris.Scope.new("agent.alpha");
       const builder = handle.scoped(scope).dsl();
       expect(builder).toBeDefined();
     } catch (err) {

@@ -21,22 +21,34 @@ import lunaris
 
 def test_scope_valid_construction() -> None:
     """Valid scope strings must construct without error."""
-    s = lunaris.Scope("agent:alpha")
-    assert s.as_str() == "agent:alpha"
-    assert str(s) == "agent:alpha"
+    s = lunaris.Scope("agent.alpha")
+    assert s.as_str() == "agent.alpha"
+    assert str(s) == "agent.alpha"
 
 
 def test_scope_repr() -> None:
-    s = lunaris.Scope("acme:agent-42")
-    assert "acme:agent-42" in repr(s)
+    s = lunaris.Scope("acme.agent-42")
+    assert "acme.agent-42" in repr(s)
 
 
 def test_scope_equality() -> None:
-    a = lunaris.Scope("agent:alpha")
-    b = lunaris.Scope("agent:alpha")
-    c = lunaris.Scope("agent:beta")
+    a = lunaris.Scope("agent.alpha")
+    b = lunaris.Scope("agent.alpha")
+    c = lunaris.Scope("agent.beta")
     assert a == b
     assert a != c
+
+
+def test_scope_rejects_colon() -> None:
+    """`:` must be rejected (KV-aliasing defense, v0.2.1 alphabet).
+
+    `:` is the delimiter of the lunaris:{scope}:{kind}:{ulid} KV format.
+    `Scope::new` rejects it at the type level so no scope string can
+    byte-alias another scope's keyspace. A spec asserting `:` valid is
+    asserting a security regression.
+    """
+    with pytest.raises(ValueError, match="[Ss]cope"):
+        lunaris.Scope("acme:agent-42")
 
 
 def test_scope_rejects_empty() -> None:
@@ -67,8 +79,8 @@ def test_scope_rejects_slash() -> None:
 
 
 def test_scope_allows_all_valid_chars() -> None:
-    """All characters in [A-Za-z0-9_\\-:.] must be accepted."""
-    lunaris.Scope("A0._:-")
+    """All characters in [A-Za-z0-9_\\-.] must be accepted."""
+    lunaris.Scope("A0._-")
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +126,7 @@ def test_episode_builder_chaining() -> None:
 async def test_scoped_ingest_returns_lsn(moon_backend_url: str) -> None:
     """engine.scoped(scope).ingest(builder) must return an LSN string."""
     handle = await lunaris.open(moon_backend_url)
-    scope = lunaris.Scope("agent:alpha")
+    scope = lunaris.Scope("agent.alpha")
     builder = lunaris.EpisodeBuilder(
         "py-test/scope",
         "the quick brown fox jumps over the lazy dog",
@@ -129,7 +141,7 @@ async def test_scoped_ingest_returns_lsn(moon_backend_url: str) -> None:
 async def test_scoped_ingest_with_metadata(moon_backend_url: str) -> None:
     """Metadata and t_ref fields must be accepted without error."""
     handle = await lunaris.open(moon_backend_url)
-    scope = lunaris.Scope("agent:alpha")
+    scope = lunaris.Scope("agent.alpha")
     builder = (
         lunaris.EpisodeBuilder("py-test/meta", "some content")
         .t_ref("2026-01-01T00:00:00Z")
@@ -155,8 +167,8 @@ async def test_cross_scope_isolation(moon_backend_url: str) -> None:
     handle = await lunaris.open(moon_backend_url)
     unique = f"lunaris-wave3g-isolation-{time.time_ns()}"
 
-    scope_a = lunaris.Scope("wave3g:scope-a")
-    scope_b = lunaris.Scope("wave3g:scope-b")
+    scope_a = lunaris.Scope("wave3g.scope-a")
+    scope_b = lunaris.Scope("wave3g.scope-b")
 
     # Ingest under scope_a.
     builder = lunaris.EpisodeBuilder("py-test/isolation", unique)
@@ -180,16 +192,16 @@ async def test_cross_scope_isolation(moon_backend_url: str) -> None:
 async def test_scoped_lunaris_scope_getter(moon_backend_url: str) -> None:
     """scoped.scope must return the bound Scope object."""
     handle = await lunaris.open(moon_backend_url)
-    scope = lunaris.Scope("agent:alpha")
+    scope = lunaris.Scope("agent.alpha")
     scoped = handle.scoped(scope)
-    assert scoped.scope.as_str() == "agent:alpha"
+    assert scoped.scope.as_str() == "agent.alpha"
 
 
 @pytest.mark.asyncio
 async def test_scoped_dsl_returns_retrieval_builder(moon_backend_url: str) -> None:
     """scoped.dsl() must return a RetrievalBuilder (not None, not raise)."""
     handle = await lunaris.open(moon_backend_url)
-    scope = lunaris.Scope("agent:alpha")
+    scope = lunaris.Scope("agent.alpha")
     scoped = handle.scoped(scope)
     builder = scoped.dsl()
     assert builder is not None
