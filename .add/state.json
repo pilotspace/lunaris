@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "bench-rerun-v030",
-  "active_milestone": "moon-v030-exploit",
+  "active_task": "ci-bindings-venv-fix",
+  "active_milestone": "bindings-gate-hardening",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -77,6 +77,45 @@
       "created": "2026-06-11T03:19:35+00:00",
       "updated": "2026-06-11T08:12:27+00:00",
       "flag_verified": true
+    },
+    "ci-bindings-venv-fix": {
+      "title": "Repair conformance-bindings maturin venv failure",
+      "phase": "build",
+      "gate": "none",
+      "milestone": "bindings-gate-hardening",
+      "depends_on": [],
+      "created": "2026-06-11T11:33:46+00:00",
+      "updated": "2026-06-11T12:20:30+00:00",
+      "flag_verified": true
+    },
+    "ts-specs-v04-refresh": {
+      "title": "Refresh lunaris-ts specs to v0.4 native API",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": "bindings-gate-hardening",
+      "depends_on": [
+        "ci-bindings-venv-fix"
+      ],
+      "created": "2026-06-11T11:33:46+00:00",
+      "updated": "2026-06-11T11:33:46+00:00"
+    },
+    "moon-it-required-gate": {
+      "title": "MOON_IT_REQUIRED hard-fail gate for moon-it suites",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": "bindings-gate-hardening",
+      "depends_on": [],
+      "created": "2026-06-11T11:33:46+00:00",
+      "updated": "2026-06-11T11:33:46+00:00"
+    },
+    "shard-count-guard": {
+      "title": "Connect-time shard-count guard in lunaris-storage-moon",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": "bindings-gate-hardening",
+      "depends_on": [],
+      "created": "2026-06-11T11:33:46+00:00",
+      "updated": "2026-06-11T11:33:46+00:00"
     }
   },
   "milestones": {
@@ -87,10 +126,18 @@
       "status": "done",
       "created": "2026-06-11T03:15:17+00:00",
       "updated": "2026-06-11T08:45:37+00:00"
+    },
+    "bindings-gate-hardening": {
+      "title": "Bindings & Gate Hardening",
+      "goal": "",
+      "stage": "mvp",
+      "status": "active",
+      "created": "2026-06-11T11:33:02+00:00",
+      "updated": "2026-06-11T11:33:02+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T08:45:37+00:00",
+  "updated": "2026-06-11T12:20:30+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
