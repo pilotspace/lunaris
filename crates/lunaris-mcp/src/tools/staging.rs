@@ -94,7 +94,7 @@ pub(crate) fn validate_namespace(ns: &str) -> Result<(), ToolError> {
 
 /// Resolve the namespace from an optional wire value, validate it, and return it.
 /// Returns "scratchpad/" if `None`. Returns `Err` if the supplied value fails validation.
-// Used by scratchpad_write, scratchpad_read, scratchpad_grep (added in T2/T3).
+// Used by scratchpad_consolidate (explicit-namespace tool semantics).
 #[allow(dead_code)]
 pub(crate) fn resolve_namespace(ns: Option<String>) -> Result<String, ToolError> {
     match ns {
@@ -104,6 +104,29 @@ pub(crate) fn resolve_namespace(ns: Option<String>) -> Result<String, ToolError>
             Ok(s)
         }
     }
+}
+
+/// Session-aware namespace resolution (scratchpad-handover task) — used by
+/// scratchpad_write / scratchpad_read / scratchpad_grep.
+///
+/// An EXPLICIT namespace wins verbatim (validated, byte-identical to
+/// [`resolve_namespace`] semantics — the session logic never touches it).
+/// With `None`, the default follows the sessions.json marker that
+/// lunaris-hook maintains: `scratchpad/{active_session_id}/` when a marker
+/// names an active session for this scope, `scratchpad/` otherwise
+/// (back-compat when the hook is not installed).
+///
+/// When the active session CHANGED since this process last served a pad
+/// (or on the first call after a restart with a marker present), the
+/// previous session's pending events are first consolidated via the guarded
+/// whole-scope drain — warn-and-continue, never an error on this call.
+pub(crate) async fn resolve_namespace_session_aware(
+    state: &crate::state::AppState,
+    ns: Option<String>,
+) -> Result<String, ToolError> {
+    // RED stub: no marker read, no rotation, no handover.
+    let _ = state;
+    resolve_namespace(ns)
 }
 
 // ── Keyword NotSupported helper ───────────────────────────────────────────────

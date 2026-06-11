@@ -425,4 +425,143 @@ mod tests {
         let guard_arc = Arc::new(guard);
         guard_arc.shutdown().await;
     }
+
+    // scratchpad-handover integration (the discriminating wire-proof):
+    // session A writes under its pad -> marker flips to B -> B's first read
+    // (a) serves the new per-session pad (empty), (b) triggers the guarded
+    // whole-scope handover consolidate (proven by the explicit consolidate
+    // afterwards draining ZERO events), and (c) leaves A's pad readable
+    // under its explicit namespace (nothing destroyed).
+    #[tokio::test]
+    async fn embedded_moon_session_handover_rotates_and_drains() {
+        use lunaris::Lunaris;
+        use lunaris_core::{Scope, StubEmbedder};
+
+        crate::tools::staging::skip_stage_for_tests();
+        let _seam = crate::session_pad::lock_test_seam().await;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let guard = launch_embedded_moon(tmpdir.path().to_str().unwrap())
+            .await
+            .expect("embedded Moon must start");
+        let url = format!("moon://127.0.0.1:{}", guard.port);
+
+        let embedder = Arc::new(StubEmbedder::new(768));
+        let lunaris = Lunaris::open_with_embedder(&url, embedder)
+            .await
+            .expect("Lunaris::open must succeed with live Moon");
+        // Same wiring as production bootstrap: ActR installed, pipeline
+        // disabled (guard 2 passes; the handover is the sole consumer).
+        lunaris
+            .consolidator_pipeline()
+            .set_consolidator(
+                Arc::new(lunaris::ActRConsolidator::default()) as Arc<dyn lunaris::Consolidator>
+            );
+
+        let scope_name = "test-handover-rotation";
+        let scope = Scope::new(scope_name).unwrap();
+        let app_state = crate::state::AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        };
+
+        // Session A active.
+        let marker = tmpdir.path().join("sessions.json");
+        let write_marker = |session: &str| {
+            let body = serde_json::json!({
+                scope_name: { "active_session_id": session, "ended": false,
+                               "updated_at": "2026-06-11T00:00:00Z" }
+            });
+            std::fs::write(&marker, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
+        };
+        write_marker("sess-ha-a");
+        crate::session_pad::set_sessions_file_for_tests(Some(marker.clone()));
+
+        // A writes two keys under its (default) pad — two consolidate events enqueued.
+        for (k, v) in [("plan", "ship the handover"), ("blocker", "none")] {
+            crate::tools::scratchpad_write::handle(
+                &app_state,
+                crate::tools::scratchpad_write::ScratchpadWriteParams {
+                    key: k.into(),
+                    value: serde_json::json!(v),
+                    namespace: None,
+                },
+            )
+            .await
+            .expect("session-A write must succeed");
+        }
+
+        // Switch: marker flips to session B.
+        write_marker("sess-ha-b");
+
+        // B's first default read: new pad must be EMPTY (rotation) and the
+        // handover consolidate fires inside the call (whole-scope drain).
+        let read_resp = crate::tools::scratchpad_read::handle(
+            &app_state,
+            crate::tools::scratchpad_read::ScratchpadReadParams {
+                key: "plan".into(),
+                namespace: None,
+            },
+        )
+        .await
+        .expect("session-B read must succeed even while handover runs");
+        assert!(
+            !read_resp.found,
+            "session B's fresh pad must not see session A's keys (got {:?})",
+            read_resp.value
+        );
+
+        // Drain proof: the explicit consolidate now finds NOTHING — the
+        // handover already consumed A's pending events. (Without the
+        // handover this drains the two enqueued events instead.)
+        let consolidate_resp = crate::tools::scratchpad_consolidate::handle(
+            &app_state,
+            crate::tools::scratchpad_consolidate::ScratchpadConsolidateParams { namespace: None },
+        )
+        .await
+        .expect("explicit consolidate must succeed");
+        assert_eq!(consolidate_resp.status, "ok");
+        assert_eq!(
+            consolidate_resp.promotions + consolidate_resp.archives,
+            0,
+            "handover must have drained session A's events before B's pad was served"
+        );
+
+        // Contracted: A's facts surface in long-term recall after handover.
+        let recall_resp = crate::tools::recall::handle(
+            &app_state,
+            crate::tools::recall::RecallParams {
+                query: "ship the handover".into(),
+                k: 5,
+                filters: Some(crate::tools::recall::RecallFilters {
+                    source_prefix: Some("scratchpad/sess-ha-a/".into()),
+                }),
+                as_of: None,
+            },
+        )
+        .await
+        .expect("recall over session A's pad must succeed");
+        assert!(
+            !recall_resp.hits.is_empty(),
+            "memory.recall must surface session A's facts after the handover"
+        );
+
+        // Nothing destroyed: A's pad stays readable under its explicit namespace.
+        let a_read = crate::tools::scratchpad_read::handle(
+            &app_state,
+            crate::tools::scratchpad_read::ScratchpadReadParams {
+                key: "plan".into(),
+                namespace: Some("scratchpad/sess-ha-a/".into()),
+            },
+        )
+        .await
+        .expect("explicit session-A read must succeed");
+        assert!(a_read.found, "session A's pad must remain intact after handover");
+
+        crate::session_pad::set_sessions_file_for_tests(None);
+        let guard_arc = Arc::new(guard);
+        guard_arc.shutdown().await;
+    }
 }

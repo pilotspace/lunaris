@@ -25,6 +25,9 @@ mod state;
 // In-process Moon server lifecycle — all items cfg(feature="embedded-moon").
 // Compiled to nothing on the default (no feature) build.
 mod embedded_moon;
+// Per-session scratchpad resolution + handover tracking — reads the
+// sessions.json marker lunaris-hook maintains (scratchpad-handover task).
+mod session_pad;
 mod tools;
 
 use clap::Parser;
