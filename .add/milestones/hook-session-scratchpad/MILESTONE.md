@@ -28,6 +28,7 @@ Out: any new consolidation/extraction model or engine path · MCP transport chan
 - [ ] session-switch-detect   depends-on: none                  — SessionEnd envelope variant + durable last-active-session marker + switch detection in lunaris-hook; emits a typed SwitchObserved outcome the next tasks consume
 - [ ] scratchpad-handover     depends-on: session-switch-detect — on switch: guarded consolidate of the previous session's pad, then bind/rotate the per-session namespace (hook + MCP shared convention); failure carries forward, never blocks
 - [ ] session-context-inject  depends-on: scratchpad-handover   — SessionStart returns additionalContext: distilled summary of the consolidated facts + carry-over notes (contextd-assisted where warm)
+- [ ] consolidate-prefix-drop depends-on: none                  — SPLIT from scratchpad-handover (2026-06-11): consolidate_scoped(Some(prefix)) drops drained non-matching events (lib.rs:121-128) — silent loss for other namespaces on every namespaced memory.scratchpad_consolidate; handover sidesteps via whole-scope drains, this task owns the real fix
 
 ## Exit criteria (observable; map each to the task that delivers it)
 - [ ] Killing a session and starting a new one yields a SwitchObserved with the correct old/new session_ids, even without a SessionEnd event   (← session-switch-detect)

@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "session-switch-detect",
+  "active_task": "scratchpad-handover",
   "active_milestone": "hook-session-scratchpad",
   "tasks": {
     "mq-typed-client": {
@@ -150,14 +150,15 @@
     },
     "scratchpad-handover": {
       "title": "Guarded consolidate of previous session's pad + per-session namespace rotation",
-      "phase": "specify",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "hook-session-scratchpad",
       "depends_on": [
         "session-switch-detect"
       ],
       "created": "2026-06-11T16:01:45+00:00",
-      "updated": "2026-06-11T16:01:45+00:00"
+      "updated": "2026-06-11T18:13:33+00:00",
+      "flag_verified": true
     },
     "session-context-inject": {
       "title": "SessionStart additionalContext: distilled handover summary",
@@ -169,6 +170,24 @@
       ],
       "created": "2026-06-11T16:01:45+00:00",
       "updated": "2026-06-11T16:01:45+00:00"
+    },
+    "consolidate-prefix-drop": {
+      "title": "P-C latent: WorkingMemory::consolidate with a namespace prefix drops drained non-matching events",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [],
+      "created": "2026-06-11T16:41:32+00:00",
+      "updated": "2026-06-11T16:41:32+00:00"
+    },
+    "moon-hybrid-filter-bypass": {
+      "title": "Moon hybrid path: pushed-down filter constrains BM25 branch only \u2014 dense KNN leaks through RRF",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [],
+      "created": "2026-06-11T18:13:45+00:00",
+      "updated": "2026-06-11T18:13:45+00:00"
     }
   },
   "milestones": {
@@ -198,7 +217,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T16:37:12+00:00",
+  "updated": "2026-06-11T18:13:45+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
