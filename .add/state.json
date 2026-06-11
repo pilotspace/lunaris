@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "scope-hashtag-spike",
+  "active_task": "bench-rerun-v030",
   "active_milestone": "moon-v030-exploit",
   "tasks": {
     "mq-typed-client": {
@@ -58,14 +58,14 @@
     },
     "bench-rerun-v030": {
       "title": "Benchmark re-run on Moon v0.3.0 + 3-place number sync",
-      "phase": "build",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "moon-v030-exploit",
       "depends_on": [
         "ft-navigate-recall"
       ],
       "created": "2026-06-11T03:19:35+00:00",
-      "updated": "2026-06-11T07:03:15+00:00",
+      "updated": "2026-06-11T08:44:21+00:00",
       "flag_verified": true
     },
     "scope-hashtag-spike": {
@@ -90,7 +90,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T08:12:27+00:00",
+  "updated": "2026-06-11T08:44:21+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
