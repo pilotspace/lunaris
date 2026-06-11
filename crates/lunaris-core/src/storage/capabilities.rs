@@ -99,6 +99,17 @@ pub struct StorageCapabilities {
     ///
     /// See [`CypherDialect`] for the full tier matrix.
     pub cypher_dialect: CypherDialect,
+    /// `true` when the backend's graph executor supports native recency-decay
+    /// traversal — i.e., Moon's `GRAPH.QUERY ... --decay <λ> [--time-weight <w>]`
+    /// read-path clause (effective edge cost `|weight| + λ·w·age_seconds`).
+    ///
+    /// Callers gate `StoragePort::graph_traverse_decayed(decay: Some(_))` on
+    /// this flag; the default trait impl returns `NotSupported`. `true` for
+    /// Moon (v0.3.0+); `false` for Postgres (AGE has no decay clause) and
+    /// embedded. `#[serde(default)]` keeps pre-v0.7 serialized capability
+    /// payloads parseable (missing field → `false`).
+    #[serde(default)]
+    pub graph_decay_native: bool,
 }
 
 #[cfg(test)]

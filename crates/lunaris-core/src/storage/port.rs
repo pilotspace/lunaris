@@ -23,7 +23,7 @@ use crate::scope::Scope;
 
 use super::capabilities::StorageCapabilities;
 use super::types::{
-    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, ScopePage, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, Lsn, QueueMsg, Row, ScopePage, VectorHit, WriteOp,
 };
 
 /// The storage abstraction for Lunaris.
@@ -68,6 +68,36 @@ pub trait StoragePort: Send + Sync + 'static {
         query: &CypherQuery,
         as_of: Option<Hlc>,
     ) -> Result<GraphResult, StorageError>;
+
+    /// Graph traversal with optional recency decay (ADD task
+    /// `graph-decay-recency`, contract v1).
+    ///
+    /// **Additive trait method** (mirrors the `queue_depth` precedent):
+    /// - `decay == None` delegates byte-for-byte to [`Self::graph_traverse`],
+    ///   so every existing backend/mock keeps its exact behavior unchanged.
+    /// - `decay == Some(_)` on the default impl returns
+    ///   `Err(StorageError::NotSupported("graph_decay_unsupported…"))` —
+    ///   callers gate on `capabilities().graph_decay_native` first.
+    ///
+    /// The Moon backend overrides this to append `--decay <λ>`
+    /// (and `--time-weight <w>` when set) to `GRAPH.QUERY`, composing with
+    /// `--params` and `VALID_AT` in a single command. Effective edge cost on
+    /// Moon's read path becomes `|weight| + λ·w·age_seconds`; Moon rejects the
+    /// flag on write Cypher server-side (surfaced as `StorageError::Backend`).
+    async fn graph_traverse_decayed(
+        &self,
+        scope: &Scope,
+        query: &CypherQuery,
+        as_of: Option<Hlc>,
+        decay: Option<&GraphDecay>,
+    ) -> Result<GraphResult, StorageError> {
+        match decay {
+            None => self.graph_traverse(scope, query, as_of).await,
+            Some(_) => Err(StorageError::NotSupported(
+                "graph_decay_unsupported: backend has no native decay traversal",
+            )),
+        }
+    }
 
     /// KV scan by prefix with optional bi-temporal snapshot.
     ///

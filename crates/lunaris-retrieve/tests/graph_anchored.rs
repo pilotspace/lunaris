@@ -188,6 +188,7 @@ impl StoragePort for RecordingStorage {
             // Wave 4 amendment: read from the configurable field so
             // dispatch-tier tests can swap Legacy / PathMetrics / Full.
             cypher_dialect: *self.dialect.lock(),
+            graph_decay_native: false,
         }
     }
 }

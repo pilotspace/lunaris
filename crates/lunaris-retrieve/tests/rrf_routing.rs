@@ -121,6 +121,7 @@ impl StoragePort for PretendNativeMoon {
             native_rrf: true,
             max_scopes_recommended: 0,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            graph_decay_native: false,
         }
     }
 }

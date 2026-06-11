@@ -37,7 +37,7 @@
 use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
 use lunaris_core::hlc::Hlc;
-use lunaris_core::storage::types::{CypherQuery, GraphResult};
+use lunaris_core::storage::types::{CypherQuery, GraphDecay, GraphResult};
 
 use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::graph_key;
@@ -75,6 +75,36 @@ async fn query_raw_valid_at(
     query: &CypherQuery,
     as_of: Hlc,
 ) -> Result<redis::Value, StorageError> {
+    query_raw_with_clauses(c, graph, query, Some(as_of), None).await
+}
+
+/// ADD task `graph-decay-recency` (contract v1): recency-decay traversal via
+/// Moon's `GRAPH.QUERY ... --decay <λ> [--time-weight <w>]` read-path clause.
+/// Composes with `--params` and `VALID_AT` on a single command line. Moon
+/// rejects the flag on write Cypher server-side — that surfaces here as a
+/// `StorageError::Backend` passthrough (Lunaris does not pre-parse Cypher).
+pub(crate) async fn graph_traverse_decayed(
+    c: &MoonClient,
+    scope: &Scope,
+    query: &CypherQuery,
+    as_of: Option<Hlc>,
+    decay: &GraphDecay,
+) -> Result<GraphResult, StorageError> {
+    let scope_graph = graph_key(scope);
+    let result = query_raw_with_clauses(c, scope_graph.as_str(), query, as_of, Some(decay)).await;
+    parse_graph_reply(result?)
+}
+
+/// Shared raw-RESP `GRAPH.QUERY` builder. Clause order mirrors Moon's read
+/// path: `<graph> "<cypher>" [--params <json>] [--decay <λ> [--time-weight <w>]]
+/// [VALID_AT <ms>]`.
+async fn query_raw_with_clauses(
+    c: &MoonClient,
+    graph: &str,
+    query: &CypherQuery,
+    as_of: Option<Hlc>,
+    decay: Option<&GraphDecay>,
+) -> Result<redis::Value, StorageError> {
     let mut typed = c.typed();
     let raw_conn = typed.inner_mut();
     let mut cmd = redis::cmd("GRAPH.QUERY");
@@ -83,7 +113,15 @@ async fn query_raw_valid_at(
         let params_json = serde_json::to_string(&query.params)?;
         cmd.arg("--params").arg(params_json);
     }
-    cmd.arg("VALID_AT").arg(as_of.wall_ms as i64);
+    if let Some(d) = decay {
+        cmd.arg("--decay").arg(d.lambda());
+        if let Some(w) = d.time_weight() {
+            cmd.arg("--time-weight").arg(w);
+        }
+    }
+    if let Some(ts) = as_of {
+        cmd.arg("VALID_AT").arg(ts.wall_ms as i64);
+    }
     cmd.query_async(raw_conn).await.map_err(redis_err)
 }
 

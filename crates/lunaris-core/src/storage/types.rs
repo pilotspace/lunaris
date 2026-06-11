@@ -157,6 +157,52 @@ pub struct CypherQuery {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Recency-decay parameters for graph traversal (ADD task `graph-decay-recency`,
+/// contract v1). Maps to Moon's `GRAPH.QUERY ... --decay <λ> [--time-weight <w>]`
+/// read-path clause: effective edge cost = `|weight| + λ·w·age_seconds`.
+///
+/// Fields are PRIVATE — validity by construction. `new` rejects non-finite or
+/// negative λ; `with_time_weight` rejects non-finite or non-positive w, so a
+/// time weight without a decay rate is unrepresentable.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GraphDecay {
+    lambda: f64,
+    time_weight: Option<f64>,
+}
+
+impl GraphDecay {
+    /// Construct with a decay rate λ. Accepts finite λ ≥ 0 only (λ = 0 is
+    /// valid and decay-neutral, matching Moon's server-side validation).
+    pub fn new(lambda: f64) -> Result<Self, StorageError> {
+        if !lambda.is_finite() || lambda < 0.0 {
+            return Err(StorageError::Backend(format!(
+                "graph_decay_invalid_lambda: must be finite and >= 0, got {lambda}"
+            )));
+        }
+        Ok(Self { lambda, time_weight: None })
+    }
+
+    /// Set the time-weight multiplier `w`. Accepts finite w > 0 only.
+    pub fn with_time_weight(self, w: f64) -> Result<Self, StorageError> {
+        if !w.is_finite() || w <= 0.0 {
+            return Err(StorageError::Backend(format!(
+                "graph_decay_invalid_time_weight: must be finite and > 0, got {w}"
+            )));
+        }
+        Ok(Self { time_weight: Some(w), ..self })
+    }
+
+    /// The decay rate λ (finite, ≥ 0).
+    pub fn lambda(&self) -> f64 {
+        self.lambda
+    }
+
+    /// The time-weight multiplier, if set (finite, > 0).
+    pub fn time_weight(&self) -> Option<f64> {
+        self.time_weight
+    }
+}
+
 /// Dynamic header-keyed result table returned by `StoragePort::graph_traverse`.
 ///
 /// `headers` carries column names in row order; `rows` are row-major with
