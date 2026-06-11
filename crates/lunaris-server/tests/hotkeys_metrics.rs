@@ -23,10 +23,13 @@ use lunaris_server::hotkeys_poller::{classify_hot_key, poll_once};
 // classification — §2 "maps every Lunaris key shape and drops the rest"
 // ---------------------------------------------------------------------------
 
+/// (raw key, expected (scope, kind) — None = dropped).
+type ClassifyCase = (&'static [u8], Option<(&'static str, &'static str)>);
+
 #[test]
 fn classify_maps_lunaris_shapes_and_drops_the_rest() {
     // KV canonical keys → primitive kind.
-    let cases: &[(&[u8], Option<(&str, &str)>)] = &[
+    let cases: &[ClassifyCase] = &[
         (b"lunaris:acme.a1:fact:01HZZZZZZZZZZZZZZZZZZZZZZZ", Some(("acme.a1", "fact"))),
         (b"lunaris:acme.a1:episode:01HZZZZZZZZZZZZZZZZZZZZZZZ", Some(("acme.a1", "episode"))),
         (b"lunaris:acme.a1:chunk:01H", Some(("acme.a1", "chunk"))),
@@ -160,7 +163,7 @@ fn gauge_value(scope: &str, kind: &str) -> Option<i64> {
             let s = labels.iter().find(|l| l.name() == "scope").map(|l| l.value());
             let k = labels.iter().find(|l| l.name() == "kind").map(|l| l.value());
             if s == Some(scope) && k == Some(kind) {
-                return Some(m.get_gauge().value() as i64);
+                return Some(m.get_gauge().get_value() as i64);
             }
         }
     }

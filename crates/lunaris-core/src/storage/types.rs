@@ -283,6 +283,20 @@ pub struct NavigateHit {
     pub final_score: f32,
 }
 
+/// One entry from a backend's hot-key sketch (`StoragePort::hot_keys`).
+///
+/// `key` is the RAW backend key (e.g. a Moon `lunaris:{scope}:{kind}:{ulid}`
+/// KV key or an FT doc HASH key) — consumers MUST treat it as untrusted
+/// bytes and classify/validate before surfacing it anywhere (lunaris-server
+/// never exposes raw keys; it aggregates into bounded (scope, kind) labels).
+/// `sampled_count` is the backend's sampled estimate — on Moon, 1-in-64
+/// sampling means multiplying by 64 approximates the true command count.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotKey {
+    pub key: Vec<u8>,
+    pub sampled_count: u64,
+}
+
 /// Dynamic header-keyed result table returned by `StoragePort::graph_traverse`.
 ///
 /// `headers` carries column names in row order; `rows` are row-major with

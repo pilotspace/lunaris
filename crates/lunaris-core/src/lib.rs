@@ -34,7 +34,7 @@ pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
 // `lunaris_core::Scope` / `lunaris::Scope` without path qualification.
 pub use scope::{Scope, ScopeError};
 pub use storage::{
-    CypherDialect, CypherQuery, Filter, GraphDecay, GraphResult, Key, KeywordHit, KeywordPort, Lsn,
-    NavigateHit, NavigateSpec, QueueMsg, Row, RrfFusion, ScopePage, StorageCapabilities,
-    StoragePort, VectorHit, WriteOp,
+    CypherDialect, CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Key, KeywordHit,
+    KeywordPort, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row, RrfFusion, ScopePage,
+    StorageCapabilities, StoragePort, VectorHit, WriteOp,
 };

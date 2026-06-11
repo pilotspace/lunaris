@@ -23,8 +23,8 @@ use crate::scope::Scope;
 
 use super::capabilities::StorageCapabilities;
 use super::types::{
-    CypherQuery, Filter, GraphDecay, GraphResult, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row,
-    ScopePage, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Lsn, NavigateHit, NavigateSpec, QueueMsg,
+    Row, ScopePage, VectorHit, WriteOp,
 };
 
 /// The storage abstraction for Lunaris.
@@ -128,6 +128,26 @@ pub trait StoragePort: Send + Sync + 'static {
         Err(StorageError::NotSupported(
             "graph_navigate_unsupported: backend has no native navigate",
         ))
+    }
+
+    /// Top sampled hot keys from the backend's frequency sketch (additive,
+    /// queue_depth precedent — default `NotSupported`, no capability flag;
+    /// the lunaris-server poller warns once and goes quiet).
+    ///
+    /// SCOPE-LESS BY DESIGN: this is an operator/server-global observability
+    /// view (which keys dominate backend traffic across ALL scopes), not
+    /// tenant data. It must never be exposed on a tenant-facing surface —
+    /// lunaris-server aggregates the raw keys into bounded
+    /// `(scope, kind)` Prometheus labels and drops everything unparseable.
+    ///
+    /// The Moon backend overrides this with raw `HOTKEYS COUNT <n>`
+    /// (`n` clamped to Moon's 1..=128 sketch capacity): 1-in-64 sampled,
+    /// SpaceSaving top-K, cumulative since Moon process start. An empty
+    /// reply (cold server / `MOON_NO_HOTKEYS=1` kill switch) is `Ok(vec![])`,
+    /// never an error.
+    async fn hot_keys(&self, count: usize) -> Result<Vec<HotKey>, StorageError> {
+        let _ = count;
+        Err(StorageError::NotSupported("hot_keys_unsupported: backend has no hot-key sketch"))
     }
 
     /// KV scan by prefix with optional bi-temporal snapshot.
