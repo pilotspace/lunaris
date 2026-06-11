@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "sq8-quantization-optin",
+  "active_task": "hotkeys-observability",
   "active_milestone": "moon-v030-exploit",
   "tasks": {
     "mq-typed-client": {
@@ -48,12 +48,13 @@
     },
     "hotkeys-observability": {
       "title": "HOTKEYS hot-key observability surface",
-      "phase": "specify",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "moon-v030-exploit",
       "depends_on": [],
       "created": "2026-06-11T03:19:35+00:00",
-      "updated": "2026-06-11T03:19:35+00:00"
+      "updated": "2026-06-11T06:36:07+00:00",
+      "flag_verified": true
     },
     "bench-rerun-v030": {
       "title": "Benchmark re-run on Moon v0.3.0 + 3-place number sync",
@@ -87,7 +88,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T06:06:13+00:00",
+  "updated": "2026-06-11T06:36:07+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
