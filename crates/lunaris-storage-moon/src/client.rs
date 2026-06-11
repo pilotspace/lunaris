@@ -30,6 +30,63 @@ use moon::{MoonClient as TypedClient, MoonError};
 /// Default Moon RESP port (matches Moon's `bin/moond` default).
 pub const DEFAULT_MOON_PORT: u16 = 6380;
 
+/// FT vector-quantization tier for Moon's `FT.CREATE … QUANTIZATION <q>`
+/// clause (Moon v0.3.0+). The server default is [`Quantization::Tq4`]
+/// (~452 B/vec, ~89% recall@10 at 768-d); [`Quantization::Sq8`] trades
+/// ~2× the footprint (~900 B/vec) for ~98% recall@10.
+///
+/// Opt in per handle via the `?quant=<q>` URL parameter
+/// (`moon://host:port?quant=sq8`); every index the handle creates —
+/// legacy global AND per-scope — inherits the choice. `None` keeps the
+/// SDK creation path byte-identical to pre-quantization behavior.
+///
+/// ## Sticky-schema footgun
+///
+/// Like `DIM`, quantization is fixed at `FT.CREATE` time: reopening with a
+/// different `?quant=` against existing indices silently keeps the old
+/// tier (Moon v0.3.0's `FT.INFO` exposes no quantization probe, so unlike
+/// dim there is no connect-time guardrail). See
+/// `docs/migration/0.7-quantization.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantization {
+    Tq1,
+    Tq2,
+    Tq3,
+    Tq4,
+    Sq8,
+}
+
+impl Quantization {
+    /// Wire rendering for the `FT.CREATE … QUANTIZATION <q>` clause.
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            Self::Tq1 => "TQ1",
+            Self::Tq2 => "TQ2",
+            Self::Tq3 => "TQ3",
+            Self::Tq4 => "TQ4",
+            Self::Sq8 => "SQ8",
+        }
+    }
+}
+
+impl std::str::FromStr for Quantization {
+    type Err = StorageError;
+
+    /// Case-insensitive parse of the `?quant=` URL value.
+    fn from_str(s: &str) -> Result<Self, StorageError> {
+        match s.to_ascii_lowercase().as_str() {
+            "tq1" => Ok(Self::Tq1),
+            "tq2" => Ok(Self::Tq2),
+            "tq3" => Ok(Self::Tq3),
+            "tq4" => Ok(Self::Tq4),
+            "sq8" => Ok(Self::Sq8),
+            _ => Err(StorageError::Backend(format!(
+                "moon_invalid_quantization: got '{s}', expected tq1|tq2|tq3|tq4|sq8"
+            ))),
+        }
+    }
+}
+
 /// Default FT vector-index dimension used by the bare [`MoonClient::connect`] /
 /// [`MoonStorage::connect`](crate::MoonStorage::connect) constructors. Matches
 /// EmbeddingGemma-300M (the default Lunaris embedder). Callers wiring a wider
@@ -60,6 +117,12 @@ pub struct MoonClient {
     /// constructor. Read by `ensure_indexes` (and re-exported to
     /// `MoonStorage::create_scope_indexes` via `self.client.dim`).
     pub dim: usize,
+    /// Optional FT quantization tier from the `?quant=...` query param.
+    /// `Some(q)` routes BOTH index-creation sites (legacy global
+    /// `ensure_indexes` + per-scope `create_scope_indexes`) through the raw
+    /// `FT.CREATE … QUANTIZATION <q>` path; `None` keeps the typed-SDK path
+    /// (server default TQ4).
+    pub quantization: Option<Quantization>,
     /// The typed `moon-client` SDK handle. Cheap to clone.
     pub(crate) inner: TypedClient,
 }
@@ -71,6 +134,7 @@ impl std::fmt::Debug for MoonClient {
             .field("port", &self.port)
             .field("workspace", &self.workspace)
             .field("dim", &self.dim)
+            .field("quantization", &self.quantization)
             .field("inner", &"<moon_client::MoonClient>")
             .finish()
     }
@@ -118,6 +182,14 @@ impl MoonClient {
             .to_string();
         let port = parsed.port().unwrap_or(DEFAULT_MOON_PORT);
         let workspace = parsed.query_pairs().find(|(k, _)| k == "ws").map(|(_, v)| v.into_owned());
+        // `?quant=<tier>` — parsed BEFORE any network IO so an invalid value
+        // surfaces as the named `moon_invalid_quantization` code, never a
+        // transport error. Order-independent with `?ws=`.
+        let quantization = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "quant")
+            .map(|(_, v)| v.parse::<Quantization>())
+            .transpose()?;
 
         // Moon speaks RESP2/RESP3 over the Redis protocol. We dial via the typed
         // moon-client SDK which internally opens a `redis::aio::MultiplexedConnection`.
@@ -138,7 +210,7 @@ impl MoonClient {
                 ))
             })?
             .map_err(moon_err)?;
-        let me = Self { host, port, workspace, dim, inner };
+        let me = Self { host, port, workspace, dim, quantization, inner };
         // Phase 22 dim-guardrail: probe existing indices BEFORE
         // `ensure_indexes` creates anything. If any index already exists at
         // a different dim, fail fast — Moon's FT.CREATE is idempotent so
@@ -224,7 +296,6 @@ impl MoonClient {
     /// past Phase 9.1, operators must `FT.DROPINDEX chunks` once before the new
     /// schema takes effect (Moon will recreate on next `ensure_indexes` call).
     async fn ensure_indexes(&self) -> Result<(), StorageError> {
-        use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
         let dim = self.dim;
         for (name, prefix) in &[
             ("chunks", "chunks:"),
@@ -232,32 +303,7 @@ impl MoonClient {
             ("facts", "facts:"),
             ("communities", "communities:"),
         ] {
-            let mut opts = VectorIndexOptions::new(dim, DistanceMetric::Cosine)
-                .prefix(*prefix)
-                .field_name("vec")
-                .add_field(SchemaField::Text("content".to_string()));
-            // Plan 09.1-02 Task 2 — chunks gets an additional NUMERIC field on
-            // `valid_time` so `Filter::ValidTimeRange` renders as
-            // `@valid_time:[lo hi]` against a real indexed field. Other indices
-            // (entities / facts / communities) do NOT participate in the
-            // TemporalQuery axis and stay unchanged.
-            if *name == "chunks" {
-                opts = opts.add_field(SchemaField::Numeric("valid_time".to_string()));
-                // Plan 15-01 Task 1 — source TAG field so `@source:{value}`
-                // FT.SEARCH queries resolve server-side (PERF-MOON-01).
-                opts = opts.add_field(SchemaField::Tag("source".to_string()));
-            }
-            let typed = self.inner.clone();
-            match typed.vector().create_index(name, opts).await {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("Index already exists") || msg.contains("already exists") {
-                        continue;
-                    }
-                    return Err(moon_err(e));
-                }
-            }
+            create_lunaris_index(&self.inner, name, prefix, dim, self.quantization).await?;
         }
         // Pre-create the well-known graph Lunaris's graph-on ingest writes
         // into (`crates/lunaris/src/ingest.rs::GRAPH_NAME = "lunaris_graph"`).
@@ -276,6 +322,123 @@ impl MoonClient {
             }
         }
         Ok(())
+    }
+}
+
+/// Idempotently create one Lunaris FT index, honoring the per-handle
+/// quantization choice. Shared by `MoonClient::ensure_indexes` (legacy global
+/// indices) and `MoonStorage::create_scope_indexes` (per-scope indices) so the
+/// two creation sites can never diverge on schema or quantization.
+///
+/// `kind` is the logical index kind (`"chunks"` / `"entities"` / `"facts"` /
+/// `"communities"`) — it controls the extra schema fields; `name` is the
+/// actual FT index name (equal to `kind` for the legacy global indices,
+/// `ft_index_name(scope, kind)` for per-scope ones), and `prefix` the HSET
+/// key prefix the index auto-covers.
+///
+/// - `quant: None` → the typed-SDK path, byte-identical to pre-quantization
+///   behavior (server default TQ4).
+/// - `quant: Some(q)` → raw RESP `FT.CREATE` mirroring the SDK's exact HNSW
+///   arg layout (vendor/moon/sdk/rust/src/vector.rs::create_index — base
+///   5 pairs = param_count 10) with `QUANTIZATION <q>` appended
+///   (param_count 12). Moon v0.3.0's typed `VectorIndexOptions` has no
+///   quantization slot, hence the raw escape hatch.
+///
+/// "already exists" replies are swallowed in both arms — Moon's `FT.CREATE`
+/// is idempotent and sticky-schema (an existing index keeps its dim AND its
+/// quantization; see the dim footgun on `connect_with_dim`).
+pub(crate) async fn create_lunaris_index(
+    typed: &TypedClient,
+    kind: &str,
+    prefix: &str,
+    dim: usize,
+    quant: Option<Quantization>,
+) -> Result<(), StorageError> {
+    create_lunaris_index_named(typed, kind, kind, prefix, dim, quant).await
+}
+
+/// See [`create_lunaris_index`]; this variant decouples the FT index `name`
+/// from the schema-selecting `kind` for the per-scope creation site.
+pub(crate) async fn create_lunaris_index_named(
+    typed: &TypedClient,
+    name: &str,
+    kind: &str,
+    prefix: &str,
+    dim: usize,
+    quant: Option<Quantization>,
+) -> Result<(), StorageError> {
+    use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
+    // Every index carries a TEXT `content` field so BM25 / HYBRID FT.SEARCH
+    // can score the per-row text payload (Gap 9). Plan 09.1-02 — chunks adds
+    // `valid_time` NUMERIC so `@valid_time:[lo hi]` hits a real indexed
+    // field; Plan 15-01 — chunks adds `source` TAG so `@source:{value}`
+    // resolves server-side (PERF-MOON-01).
+    let mut extra = vec![SchemaField::Text("content".to_string())];
+    if kind == "chunks" {
+        extra.push(SchemaField::Numeric("valid_time".to_string()));
+        extra.push(SchemaField::Tag("source".to_string()));
+    }
+
+    match quant {
+        None => {
+            let mut opts = VectorIndexOptions::new(dim, DistanceMetric::Cosine)
+                .prefix(prefix)
+                .field_name("vec");
+            for field in extra {
+                opts = opts.add_field(field);
+            }
+            let typed = typed.clone();
+            match typed.vector().create_index(name, opts).await {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("Index already exists") || msg.contains("already exists") {
+                        Ok(())
+                    } else {
+                        Err(moon_err(e))
+                    }
+                }
+            }
+        }
+        Some(q) => {
+            let mut cmd = redis::cmd("FT.CREATE");
+            cmd.arg(name).arg("ON").arg("HASH").arg("PREFIX").arg("1").arg(prefix).arg("SCHEMA");
+            for field in &extra {
+                for arg in field.to_args() {
+                    cmd.arg(arg);
+                }
+            }
+            // SDK base layout: TYPE, DIM, DISTANCE_METRIC, M, EF_CONSTRUCTION
+            // = 5 pairs = 10 args; QUANTIZATION adds one pair → 12.
+            cmd.arg("vec")
+                .arg("VECTOR")
+                .arg("HNSW")
+                .arg(12usize)
+                .arg("TYPE")
+                .arg("FLOAT32")
+                .arg("DIM")
+                .arg(dim)
+                .arg("DISTANCE_METRIC")
+                .arg("COSINE")
+                .arg("M")
+                .arg(16usize)
+                .arg("EF_CONSTRUCTION")
+                .arg(200usize)
+                .arg("QUANTIZATION")
+                .arg(q.as_wire());
+            let mut typed = typed.clone();
+            match cmd.query_async::<String>(typed.inner_mut()).await {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("Index already exists") || msg.contains("already exists") {
+                        Ok(())
+                    } else {
+                        Err(redis_err(e))
+                    }
+                }
+            }
+        }
     }
 }
 
