@@ -2,7 +2,6 @@
 //! Graph::anchored decay threading (contract FROZEN @ v1, 2026-06-11).
 //! Mock-port suite; no live backend.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,9 +13,7 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphDecay, GraphResult, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row,
     VectorHit, WriteOp,
 };
-use lunaris_core::{
-    Embedder, Hlc, StorageCapabilities, StorageError, StoragePort, StubEmbedder,
-};
+use lunaris_core::{Embedder, Hlc, StorageCapabilities, StorageError, StoragePort, StubEmbedder};
 use lunaris_retrieve::{Graph, Navigate, Query, QueryContext, Retriever};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -184,8 +181,7 @@ fn nh(id: &[u8], vec_score: f32, hop_depth: u32, final_score: f32) -> NavigateHi
 #[tokio::test]
 async fn navigate_uses_port_when_native() {
     let rec = Arc::new(NavRecordingStorage::with_native(true));
-    *rec.navigate_hits.lock() =
-        vec![nh(b"seed", 0.01, 0, 0.01), nh(b"expanded", 0.0, 1, 0.1)];
+    *rec.navigate_hits.lock() = vec![nh(b"seed", 0.01, 0, 0.01), nh(b"expanded", 0.0, 1, 0.1)];
     let ctx = ctx_for(rec.clone());
 
     let op = Navigate::new("entities", 5).with_hops(2).expect("valid hops");

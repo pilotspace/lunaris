@@ -107,6 +107,7 @@ impl StoragePort for NullStorage {
             max_scopes_recommended: 0,
             cypher_dialect: CypherDialect::Legacy,
             graph_decay_native: false,
+            graph_navigate_native: false,
         }
     }
 }

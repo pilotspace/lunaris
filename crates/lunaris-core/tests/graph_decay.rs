@@ -121,6 +121,7 @@ fn test_caps() -> StorageCapabilities {
         max_scopes_recommended: 0,
         cypher_dialect: Default::default(),
         graph_decay_native: false,
+        graph_navigate_native: false,
     }
 }
 

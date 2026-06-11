@@ -64,7 +64,7 @@ use lunaris_core::error::StorageError;
 use lunaris_core::storage::types::{Lsn, WriteOp};
 use std::sync::Mutex;
 
-use crate::client::{MoonClient, moon_err};
+use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::{ft_index_name, graph_key};
 
 static LAST_RETURNED_LSN: Mutex<Lsn> = Mutex::new(Lsn::ZERO);
@@ -214,14 +214,69 @@ async fn run_ops(
                 // HashMap internally), so we inline all values as literals.
                 // Hex-encode the raw id bytes — EntityId is [u8;16] hash,
                 // lossy UTF-8 produces Cypher-unsafe characters.
+                //
+                // ft-navigate-recall (contract v1): new nodes are created via
+                // GRAPH.ADDNODE carrying a `_key` property = the entity's FT
+                // doc key. ADDNODE is the ONLY write path that registers the
+                // `key_to_node` mapping FT.NAVIGATE's graph expansion needs —
+                // Cypher MERGE/CREATE/SET never do (Moon v0.3.0). ADDNODE
+                // inside the TXN is rollback-safe with read-your-writes
+                // (probed 2026-06-11). All OTHER props still flow through a
+                // Cypher SET: ADDNODE's prop parser auto-coerces digit-only
+                // strings to numbers, which would silently turn an all-digit
+                // hex `id` into a Float and break every `WHERE n.id='…'`
+                // string match (live-probed). `_key` is immune — it always
+                // starts with `lunaris_`.
                 let id_hex = hex::encode(id);
-                let set_clause = build_set_clause("n", props);
-                let cypher = if set_clause.is_empty() {
-                    format!("MERGE (n:{label} {{id: '{id_hex}'}}) RETURN n")
-                } else {
-                    format!("MERGE (n:{label} {{id: '{id_hex}'}}) {set_clause} RETURN n")
-                };
                 let scope_graph = graph_key(scope);
+                let set_clause = build_set_clause("n", props);
+
+                // Existence check keeps the write idempotent (ADDNODE has no
+                // MERGE semantics). Read-your-writes inside the TXN is proven,
+                // so a node ADDNODE'd earlier in this same batch is visible.
+                let exists_cypher =
+                    format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' RETURN id(n)");
+                let exists_reply: redis::Value = typed
+                    .graph()
+                    .query_raw(scope_graph.as_str(), &exists_cypher)
+                    .await
+                    .map_err(moon_err)?;
+                let exists = !crate::graph::parse_graph_reply(exists_reply)?.rows.is_empty();
+
+                let cypher = if exists {
+                    // Update path — refresh props on the existing node
+                    // (WHERE form: Moon ignores inline-property filters on
+                    // plain MATCH, see the GraphEdge arm note below).
+                    if set_clause.is_empty() {
+                        format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' RETURN n")
+                    } else {
+                        format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' {set_clause} RETURN n")
+                    }
+                } else {
+                    // Create path — ADDNODE registers `_key`, then one SET
+                    // targets the returned internal node id.
+                    let ft_key = format!("{}:{id_hex}", ft_index_name(scope, "entities"));
+                    let conn = typed.inner_mut();
+                    let node_id: i64 = redis::cmd("GRAPH.ADDNODE")
+                        .arg(scope_graph.as_str())
+                        .arg(label.as_str())
+                        .arg("_key")
+                        .arg(&ft_key)
+                        .query_async(conn)
+                        .await
+                        .map_err(redis_err)?;
+                    if set_clause.is_empty() {
+                        format!(
+                            "MATCH (n:{label}) WHERE id(n) = {node_id} \
+                             SET n.id = '{id_hex}' RETURN n"
+                        )
+                    } else {
+                        format!(
+                            "MATCH (n:{label}) WHERE id(n) = {node_id} \
+                             {set_clause}, n.id = '{id_hex}' RETURN n"
+                        )
+                    }
+                };
                 let _: redis::Value = typed
                     .graph()
                     .query_raw(scope_graph.as_str(), &cypher)

@@ -16,7 +16,10 @@ use lunaris_storage_moon::MoonStorage;
 use serde_json::json;
 use ulid::Ulid;
 
-const DIM: usize = 8;
+// Match the server's existing 768-d indices — the Phase-22 dim guardrail
+// rejects a mismatched handle at connect() and the graceful-skip would
+// otherwise silently turn this whole suite into a no-op (observed live).
+const DIM: usize = 768;
 
 fn url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".to_string())
@@ -163,10 +166,7 @@ async fn reingest_is_idempotent() {
 
     let q = lunaris_core::storage::types::CypherQuery {
         graph: String::new(),
-        cypher: format!(
-            "MATCH (n:Person) WHERE n.id = '{}' RETURN id(n)",
-            hex::encode(eid(1))
-        ),
+        cypher: format!("MATCH (n:Person) WHERE n.id = '{}' RETURN id(n)", hex::encode(eid(1))),
         params: Default::default(),
     };
     let result = moon.graph_traverse(&scope, &q, None).await.expect("count nodes");

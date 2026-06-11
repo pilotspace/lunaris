@@ -48,6 +48,8 @@ pub(crate) mod invalidate;
 pub mod keyspace;
 pub mod keyword;
 pub mod kv;
+// ft-navigate-recall — FT.NAVIGATE raw RESP path (typed SDK lacks a DECAY slot).
+pub(crate) mod navigate;
 pub mod queue;
 pub mod scopes;
 pub mod vector;
@@ -61,8 +63,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Filter, GraphDecay, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row,
-    Scope, ScopePage, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, NavigateHit,
+    NavigateSpec, QueueMsg, Row, Scope, ScopePage, StorageCapabilities, StorageError, StoragePort,
+    VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
 
@@ -255,6 +258,17 @@ impl StoragePort for MoonStorage {
         }
     }
 
+    async fn vector_navigate(
+        &self,
+        scope: &Scope,
+        index: &str,
+        query: &[f32],
+        k: usize,
+        spec: &NavigateSpec,
+    ) -> Result<Vec<NavigateHit>, StorageError> {
+        crate::navigate::vector_navigate(&self.client, scope, index, query, k, spec).await
+    }
+
     async fn scan_range(
         &self,
         scope: &Scope,
@@ -407,6 +421,7 @@ impl StoragePort for MoonStorage {
             max_scopes_recommended: 512,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
             graph_decay_native: true,
+            graph_navigate_native: true,
         }
     }
 }
@@ -457,6 +472,7 @@ mod tests {
             max_scopes_recommended: 512,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
             graph_decay_native: true,
+            graph_navigate_native: true,
         };
         assert!(
             !want.bi_temporal_native,

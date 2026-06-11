@@ -99,7 +99,7 @@ async fn search_raw(
 ///
 /// Production chunk ids are ULID bytes, but `StoragePort::vector_search`
 /// accepts arbitrary `Vec<u8>` ids and conformance exercises that contract.
-fn decode_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
     let prefix_len = ft_index.len() + 1; // +1 for the ':' separator
     if key.len() < prefix_len
         || !key.starts_with(ft_index.as_bytes())

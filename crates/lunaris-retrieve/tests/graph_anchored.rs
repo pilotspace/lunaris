@@ -189,6 +189,7 @@ impl StoragePort for RecordingStorage {
             // dispatch-tier tests can swap Legacy / PathMetrics / Full.
             cypher_dialect: *self.dialect.lock(),
             graph_decay_native: false,
+            graph_navigate_native: false,
         }
     }
 }

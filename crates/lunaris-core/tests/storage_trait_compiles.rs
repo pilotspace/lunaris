@@ -80,6 +80,7 @@ impl StoragePort for StubStorage {
             max_scopes_recommended: 0,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
             graph_decay_native: false,
+            graph_navigate_native: false,
         }
     }
 }

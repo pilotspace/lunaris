@@ -23,7 +23,8 @@ use crate::scope::Scope;
 
 use super::capabilities::StorageCapabilities;
 use super::types::{
-    CypherQuery, Filter, GraphDecay, GraphResult, Lsn, QueueMsg, Row, ScopePage, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row,
+    ScopePage, VectorHit, WriteOp,
 };
 
 /// The storage abstraction for Lunaris.
@@ -97,6 +98,36 @@ pub trait StoragePort: Send + Sync + 'static {
                 "graph_decay_unsupported: backend has no native decay traversal",
             )),
         }
+    }
+
+    /// Graph-expanded vector retrieval (ADD task `ft-navigate-recall`,
+    /// contract v1): KNN seeds → server-side BFS over the scope graph →
+    /// re-ranked hits with hop metadata.
+    ///
+    /// **Additive trait method** (mirrors `queue_depth` / `graph_traverse_decayed`):
+    /// the default returns `Err(StorageError::NotSupported("graph_navigate_unsupported…"))`
+    /// so every existing impl compiles unchanged — callers gate on
+    /// `capabilities().graph_navigate_native` (the DSL `Navigate` operator
+    /// degrades to plain `vector_search`).
+    ///
+    /// The Moon backend overrides this with raw
+    /// `FT.NAVIGATE <index> "*=>[KNN k @vec $v]" PARAMS 2 v <blob> HOPS n
+    /// [HOP_PENALTY p] [DECAY λ]`. Graph expansion only reaches nodes whose
+    /// `_key` property links them to an FT doc (written by the `GraphNode`
+    /// ADDNODE path) — indexes without graph-linked docs return KNN-only
+    /// hits with `hop_depth == 0`, never an error.
+    async fn vector_navigate(
+        &self,
+        scope: &Scope,
+        index: &str,
+        query: &[f32],
+        k: usize,
+        spec: &NavigateSpec,
+    ) -> Result<Vec<NavigateHit>, StorageError> {
+        let _ = (scope, index, query, k, spec);
+        Err(StorageError::NotSupported(
+            "graph_navigate_unsupported: backend has no native navigate",
+        ))
     }
 
     /// KV scan by prefix with optional bi-temporal snapshot.
