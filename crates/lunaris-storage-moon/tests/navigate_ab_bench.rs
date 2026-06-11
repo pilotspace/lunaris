@@ -182,8 +182,7 @@ async fn navigate_beats_plain_on_graph_linked_corpus() {
         }
 
         let t1 = Instant::now();
-        let nav =
-            moon.vector_navigate(&scope, "entities", &q, K, &spec).await.expect("navigate");
+        let nav = moon.vector_navigate(&scope, "entities", &q, K, &spec).await.expect("navigate");
         nav_lat_ms.push(t1.elapsed().as_secs_f64() * 1000.0);
         if nav.iter().any(|h| h.id == target) {
             nav_hits_targets += 1;
