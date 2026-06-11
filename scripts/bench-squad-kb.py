@@ -236,10 +236,42 @@ async def main() -> None:
         default=0,
         help="Print ingest progress every N docs (0 = off)",
     )
+    ap.add_argument(
+        "--embedder",
+        default="default",
+        choices=["default", "native", "q4-gguf"],
+        help=(
+            "default = whatever the SDK env-surface picks; native = FP16 granite-r2; "
+            "q4-gguf = NativeQuantizedEmbedder (needs an embedder-gguf wheel; GGUF path "
+            "from LUNARIS_BENCH_GGUF or the canonical spike cache location)"
+        ),
+    )
+    ap.add_argument(
+        "--retrieval-only-pass",
+        action="store_true",
+        help=(
+            "After the recall phase, re-run the queries through a noop-embedder handle "
+            "to measure retrieval-only latency (embed out of the loop, apples-to-apples "
+            "with the strict-replay baseline). Recall is not reported for this pass."
+        ),
+    )
     args = ap.parse_args()
 
+    embedder_cfg = None
+    embedder_desc = "SDK default (native FP16 granite-r2 unless env overrides)"
+    if args.embedder == "native":
+        embedder_cfg = lunaris.EmbedderConfig.native()
+        embedder_desc = "native FP16 granite-embedding-311m-multilingual-r2 (768d)"
+    elif args.embedder == "q4-gguf":
+        gguf = os.environ.get(
+            "LUNARIS_BENCH_GGUF",
+            os.path.expanduser("~/.cache/lunaris/spike/granite-r2/gguf/granite-r2-311m-Q4_K_M.gguf"),
+        )
+        embedder_cfg = lunaris.EmbedderConfig.native_quantized(gguf)
+        embedder_desc = f"native Q4_K_M GGUF granite-r2 (768d) [{gguf}]"
+
     print(f"# Backend      : {MOON_URL}")
-    print(f"# Embedder     : Ollama embeddinggemma:300m (768d Google EmbeddingGemma)")
+    print(f"# Embedder     : {embedder_desc}")
     print(f"# Corpus       : rajpurkar/squad {args.split}")
     print(
         f"# Plan         : ingest {args.docs} paragraphs, query {args.queries} times, "
@@ -252,7 +284,7 @@ async def main() -> None:
     sampler = ResourceSampler(targets=["moon", "ollama", "bench-squad-kb"])
     sampler.start()
 
-    handle = await lunaris.open(MOON_URL)
+    handle = await lunaris.open(MOON_URL, embedder=embedder_cfg)
     kb = DocumentKnowledgeBase.new(handle, SOURCE_PREFIX)
 
     # ── Ingest ────────────────────────────────────────────────────────────
@@ -300,6 +332,23 @@ async def main() -> None:
                 flush=True,
             )
     recall_total_s = time.perf_counter() - recall_start
+
+    # ── Retrieval-only latency (optional) ────────────────────────────────
+    # The blueprint's sub-25ms contract was historically measured with the
+    # query embed OUT of the loop (strict replay). A noop-embedder handle
+    # against the SAME ingested corpus pays ~0ms embed but issues the real
+    # FT.SEARCH, so its latency is the retrieval-only number. Recall is NOT
+    # meaningful on this pass (zero query vector) and is not reported.
+    retrieval_only_latencies: list[float] = []
+    if args.retrieval_only_pass:
+        noop_handle = await lunaris.open(
+            MOON_URL, embedder=lunaris.EmbedderConfig.noop(768)
+        )
+        noop_kb = DocumentKnowledgeBase.new(noop_handle, SOURCE_PREFIX)
+        for _gold_ctx_id, _answers, q in queries:
+            t = time.perf_counter()
+            await noop_kb.top(args.top_k).search(q)
+            retrieval_only_latencies.append((time.perf_counter() - t) * 1000.0)
 
     sampler.stop()
 
@@ -366,6 +415,12 @@ async def main() -> None:
     print(f"  latency p99       : {pct(recall_latencies, 99):.1f} ms")
     print(f"  latency max       : {max(recall_latencies):.1f} ms")
     print(f"  latency mean      : {statistics.mean(recall_latencies):.1f} ms")
+
+    if retrieval_only_latencies:
+        print("\n════════ RETRIEVAL-ONLY (noop query embed; latency only) ════════")
+        print(f"  latency p50       : {pct(retrieval_only_latencies, 50):.1f} ms")
+        print(f"  latency p95       : {pct(retrieval_only_latencies, 95):.1f} ms")
+        print(f"  latency p99       : {pct(retrieval_only_latencies, 99):.1f} ms")
 
     res = sampler.report()
     print("\n════════════ RESOURCE USAGE ════════════")
