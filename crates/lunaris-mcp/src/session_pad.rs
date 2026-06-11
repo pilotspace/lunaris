@@ -5,16 +5,48 @@
 //! pattern as the two `JsonScopesFileStore`s: each binary owns its struct,
 //! neither imports the other, both agree on the on-disk format.
 //!
-//! RED state: stubs only — the marker is never read, the default namespace
-//! never rotates, and no handover fires. The tests below encode the frozen
-//! contract and MUST fail until the build fills these in.
+//! # The convention
+//!
+//! When the marker names an active session for the server's scope, the
+//! DEFAULT scratchpad namespace becomes `scratchpad/{sanitized_session_id}/`.
+//! With no marker (hook not installed) the default stays `scratchpad/`
+//! (back-compat). An EXPLICIT `namespace` param always wins, verbatim.
+//!
+//! # Handover
+//!
+//! On the first scratchpad tool call after the active session changes (or
+//! after a server restart with a marker present), the previous session's
+//! pending consolidate events are drained via the guarded WHOLE-SCOPE
+//! consolidate — NOT prefix-filtered: `consolidate_scoped(Some(prefix))`
+//! drops drained non-matching events (see task consolidate-prefix-drop), so
+//! a prefix-filtered handover would silently eat other namespaces' events.
+//! Failures and guard refusals warn and carry forward; they NEVER error the
+//! tool call.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+
+/// Marker file shape — mirrors lunaris-hook's `session_marker::MarkerEntry`.
+/// Lenient: only `active_session_id` is required so a hook-side field
+/// addition never breaks the MCP reader.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MarkerEntry {
+    active_session_id: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    ended: bool,
+}
 
 /// Test seam: overrides the sessions-file location for in-process tests
 /// (mirrors the `SKIP_STAGE` atomic pattern — no `unsafe env::set_var`).
 static SESSIONS_FILE_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+/// Last session id this PROCESS served per scope. The disk marker is the
+/// source of truth for "active"; this map only answers "did it change since
+/// we last looked" — empty after a restart, which deliberately fires one
+/// handover (restart-safe; the drain is a no-op when the queue is empty).
+static LAST_SERVED: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 #[cfg(test)]
 pub(crate) fn set_sessions_file_for_tests(p: Option<PathBuf>) {
@@ -51,20 +83,47 @@ pub(crate) fn sessions_file_path() -> PathBuf {
 }
 
 /// Read the active (sanitized) session id for `scope` from the marker at
-/// `path`. `None` on missing file / missing entry / any IO or parse error.
-pub(crate) fn active_session_at(_path: &Path, _scope: &str) -> Option<String> {
-    None // RED stub
+/// `path`. `None` on missing file / missing entry / any IO or parse error
+/// (same tolerance the hook side has).
+pub(crate) fn active_session_at(path: &Path, scope: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let map: HashMap<String, MarkerEntry> = match serde_json::from_slice(&bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), err = %e, "sessions marker corrupt — ignoring");
+            return None;
+        }
+    };
+    map.get(scope).map(|e| e.active_session_id.clone())
 }
 
 /// The default scratchpad namespace for an optional active session:
 /// `scratchpad/{id}/` when present, `scratchpad/` otherwise.
-pub(crate) fn default_namespace(_active: Option<&str>) -> String {
-    "scratchpad/".to_owned() // RED stub
+pub(crate) fn default_namespace(active: Option<&str>) -> String {
+    match active {
+        Some(id) => format!("scratchpad/{id}/"),
+        None => "scratchpad/".to_owned(),
+    }
 }
 
-/// Returns `true` exactly once per (process, scope, active-session) change.
-pub(crate) fn take_pending_handover_at(_path: &Path, _scope: &str) -> bool {
-    false // RED stub
+/// Returns `true` exactly once per (process, scope, active-session) change:
+/// the first call after the marker's active session differs from what this
+/// process last served (or after a restart with a marker present). The
+/// caller runs the guarded whole-scope consolidate when this fires.
+pub(crate) fn take_pending_handover_at(path: &Path, scope: &str) -> bool {
+    let Some(active) = active_session_at(path, scope) else {
+        // No marker (hook not installed) — never trigger handover work.
+        return false;
+    };
+    let mut map =
+        LAST_SERVED.get_or_init(|| Mutex::new(HashMap::new())).lock().expect("last-served lock");
+    match map.get(scope) {
+        Some(last) if *last == active => false,
+        _ => {
+            map.insert(scope.to_owned(), active);
+            true
+        }
+    }
 }
 
 #[cfg(test)]
