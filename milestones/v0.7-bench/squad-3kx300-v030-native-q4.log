@@ -1,0 +1,148 @@
+# Backend      : moon://127.0.0.1:6390
+# Embedder     : native Q4_K_M GGUF granite-r2 (768d) [/Users/tindang/.cache/lunaris/spike/granite-r2/gguf/granite-r2-311m-Q4_K_M.gguf]
+# Corpus       : rajpurkar/squad validation
+# Plan         : ingest 3000 paragraphs, query 300 times, top-10
+# Loaded       : 2067 unique contexts, 300 queries
+  [ingest 500/2067] elapsed 444.7s rate 1.1/s recent-p50 763ms
+  [ingest 1000/2067] elapsed 1007.5s rate 1.0/s recent-p50 876ms
+  [ingest 1500/2067] elapsed 1557.5s rate 1.0/s recent-p50 949ms
+  [ingest 2000/2067] elapsed 2259.5s rate 0.9/s recent-p50 917ms
+
+════════════ MOON FOOTPRINT ════════════
+  dbsize                : 17616
+  chunks_num_docs       : 0
+  entities_num_docs     : 0
+  facts_num_docs        : 0
+  communities_num_docs  : 0
+  used_memory_human     : 115.89M
+  used_memory_bytes     : 121520128
+
+════════════ INGEST ════════════
+  docs              : 2067
+  total wall        : 2318.57 s
+  throughput        : 0.9 docs/s
+  per-doc p50       : 878.9 ms
+  per-doc p95       : 1947.0 ms
+  per-doc p99       : 5754.3 ms
+  per-doc max       : 31240.3 ms
+
+════════════ RECALL ════════════
+  queries           : 300
+  total wall        : 19.13 s
+  recall@1          : 71.3%
+  recall@3          : 79.7%
+  recall@5          : 86.7%
+  recall@10         : 90.7%
+  MRR               : 0.773
+  latency p50       : 60.8 ms
+  latency p95       : 99.2 ms
+  latency p99       : 117.1 ms
+  latency max       : 147.2 ms
+  latency mean      : 63.7 ms
+
+════════ RETRIEVAL-ONLY (noop query embed; latency only) ════════
+  latency p50       : 2.4 ms
+  latency p95       : 2.6 ms
+  latency p99       : 3.3 ms
+
+════════════ RESOURCE USAGE ════════════
+{
+  "samples": 2314,
+  "moon": {
+    "cpu_pct_mean": 2.3,
+    "cpu_pct_p95": 2.7,
+    "cpu_pct_max": 82.1,
+    "rss_mb_mean": 53.7,
+    "rss_mb_peak": 131.6
+  },
+  "ollama": {
+    "cpu_pct_mean": 0.0,
+    "cpu_pct_p95": 0.1,
+    "cpu_pct_max": 2.3,
+    "rss_mb_mean": 39.8,
+    "rss_mb_peak": 57.1
+  },
+  "bench-squad-kb": {
+    "cpu_pct_mean": 548.6,
+    "cpu_pct_p95": 766.9,
+    "cpu_pct_max": 804.7,
+    "rss_mb_mean": 455.4,
+    "rss_mb_peak": 1760.2
+  },
+  "system": {
+    "cpu_pct_mean": 88.6,
+    "cpu_pct_p95": 100.0,
+    "cpu_pct_max": 100.0,
+    "mem_pct_mean": 71.7,
+    "mem_pct_peak": 83.8
+  }
+}
+
+════════════ JSON ════════════
+{
+  "backend": "moon://127.0.0.1:6390",
+  "split": "validation",
+  "corpus_size": 2067,
+  "queries": 300,
+  "ingest": {
+    "total_s": 2318.575,
+    "docs_per_s": 0.89,
+    "p50_ms": 878.86,
+    "p95_ms": 1947.02,
+    "p99_ms": 5754.27,
+    "max_ms": 31240.35
+  },
+  "recall": {
+    "total_s": 19.127,
+    "recall_at_1": 0.7133,
+    "recall_at_3": 0.7967,
+    "recall_at_5": 0.8667,
+    "recall_at_10": 0.9067,
+    "mrr": 0.7726,
+    "p50_ms": 60.78,
+    "p95_ms": 99.18,
+    "p99_ms": 117.14,
+    "max_ms": 147.2,
+    "mean_ms": 63.73
+  },
+  "moon": {
+    "dbsize": 17616,
+    "chunks_num_docs": 0,
+    "entities_num_docs": 0,
+    "facts_num_docs": 0,
+    "communities_num_docs": 0,
+    "used_memory_human": "115.89M",
+    "used_memory_bytes": 121520128
+  },
+  "resources": {
+    "samples": 2314,
+    "moon": {
+      "cpu_pct_mean": 2.3,
+      "cpu_pct_p95": 2.7,
+      "cpu_pct_max": 82.1,
+      "rss_mb_mean": 53.7,
+      "rss_mb_peak": 131.6
+    },
+    "ollama": {
+      "cpu_pct_mean": 0.0,
+      "cpu_pct_p95": 0.1,
+      "cpu_pct_max": 2.3,
+      "rss_mb_mean": 39.8,
+      "rss_mb_peak": 57.1
+    },
+    "bench-squad-kb": {
+      "cpu_pct_mean": 548.6,
+      "cpu_pct_p95": 766.9,
+      "cpu_pct_max": 804.7,
+      "rss_mb_mean": 455.4,
+      "rss_mb_peak": 1760.2
+    },
+    "system": {
+      "cpu_pct_mean": 88.6,
+      "cpu_pct_p95": 100.0,
+      "cpu_pct_max": 100.0,
+      "mem_pct_mean": 71.7,
+      "mem_pct_peak": 83.8
+    }
+  }
+}
