@@ -34,33 +34,41 @@ async def _one_parse_failure() -> str:
 
 @pytest.mark.asyncio
 async def test_concurrent_awaits_dont_serialize() -> None:
-    """Fire N concurrent tasks through the async FFI; total wall-time stays
-    bounded.
+    """Fire N concurrent tasks through the async FFI; wall-time must beat
+    the serialized estimate by a clear margin.
 
-    The URL-parse error path is sub-millisecond, so the usual "concurrent
-    vs serial multiplier" shape is dominated by asyncio+tokio scheduler
-    noise rather than real parallelism. We instead assert a simple upper
-    bound: N concurrent parse-failure tasks complete in well under 1 second
-    total, which would be IMPOSSIBLE if the GIL were held across `.await`
-    under any realistic serialization multiple (a held-GIL run would still
-    show in the per-call time, but the absolute bound is sufficient for
-    the CLAUDE.md invariant proof at this latency regime).
+    The original absolute bound (`< 1.0s` for 50 calls) assumed the
+    URL-parse error path was sub-millisecond. That premise is dead: every
+    `open()` call now burns ~0.8s of CPU before resolving (success OR
+    parse-failure — measured 2026-06-11, tracked as its own task), so the
+    absolute bound failed for reasons unrelated to GIL discipline.
+
+    The ratio form below measures what the test always meant to prove:
+    if the GIL were held across `.await`, concurrent wall-time would equal
+    the serialized estimate (ratio ~1.0). With the GIL released, the calls
+    overlap across cores (ratio ~1/cores). 0.75 discriminates cleanly even
+    on a 2-core CI runner while a held-GIL regression lands at ≥0.95.
     """
-    n = 50
+    n = 16
+    serial_samples = 4
     # Warm up — first call compiles any lazy tokio/async-runtime init.
     _ = await _one_parse_failure()
+
+    start = time.perf_counter()
+    for _ in range(serial_samples):
+        _ = await _one_parse_failure()
+    serial_per_call = (time.perf_counter() - start) / serial_samples
 
     start = time.perf_counter()
     results = await asyncio.gather(*(_one_parse_failure() for _ in range(n)))
     concurrent_total = time.perf_counter() - start
 
     assert all(r == "STORAGE" for r in results), f"unexpected results: {results!r}"
-    # 1 second for 50 concurrent FFI round-trips is a very loose bound —
-    # a held-GIL regression would push this toward 50 × per-call which is
-    # in the tens of seconds even for the fast URL-parse path. Keeps the
-    # test stable on CI runners.
-    assert concurrent_total < 1.0, (
-        f"50 concurrent GIL-releasing awaits took {concurrent_total:.4f}s > 1.0s "
+    serialized_estimate = serial_per_call * n
+    assert concurrent_total < serialized_estimate * 0.75, (
+        f"{n} concurrent GIL-releasing awaits took {concurrent_total:.4f}s vs a "
+        f"serialized estimate of {serialized_estimate:.4f}s "
+        f"(ratio {concurrent_total / serialized_estimate:.2f} >= 0.75) "
         f"— GIL likely held across .await"
     )
 
