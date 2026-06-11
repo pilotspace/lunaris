@@ -67,7 +67,8 @@ pub(crate) async fn handle(
     params: ScratchpadGrepParams,
 ) -> Result<ScratchpadGrepResponse, ToolError> {
     crate::tools::staging::maybe_ensure_staged().await?;
-    let namespace = crate::tools::staging::resolve_namespace(params.namespace)?;
+    let namespace =
+        crate::tools::staging::resolve_namespace_session_aware(state, params.namespace).await?;
     let wm = WorkingMemory::new(state.lunaris.clone(), state.scope.clone(), namespace);
 
     // `WorkingMemory::grep` owns the fused→vector-only fallback AND recovers each

@@ -53,7 +53,8 @@ pub(crate) async fn handle(
     state: &AppState,
     params: ScratchpadWriteParams,
 ) -> Result<ScratchpadWriteResponse, ToolError> {
-    let namespace = crate::tools::staging::resolve_namespace(params.namespace)?;
+    let namespace =
+        crate::tools::staging::resolve_namespace_session_aware(state, params.namespace).await?;
     let wm = WorkingMemory::new(state.lunaris.clone(), state.scope.clone(), namespace);
     let lsn = wm.write(&params.key, params.value).await?;
     Ok(ScratchpadWriteResponse { lsn: lsn.to_string() })
@@ -155,5 +156,54 @@ mod tests {
             matches!(result, Err(ToolError::InvalidInput(_))),
             "empty namespace must return InvalidInput; got: {result:?}"
         );
+    }
+
+    /// scratchpad-handover: with a session marker present, the DEFAULT
+    /// namespace becomes the per-session pad — proven by writing with
+    /// namespace=None and reading back under the EXPLICIT per-session
+    /// namespace. Uses the session_pad test seam (no env mutation).
+    /// The handover consolidate itself guard-skips here (memory:// has
+    /// queue_native=false) and must NOT error the call — the failure-path
+    /// scenario rides the same assertion.
+    #[tokio::test]
+    async fn scratchpad_write_default_namespace_is_per_session_with_marker() {
+        use crate::tools::scratchpad_read::{ScratchpadReadParams, handle as read_handle};
+        crate::tools::staging::skip_stage_for_tests();
+        let _seam = crate::session_pad::lock_test_seam().await;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let marker = tmp.path().join("sessions.json");
+        let body = json!({
+            "test-sw-session": { "active_session_id": "sess-77", "ended": false,
+                                  "updated_at": "2026-06-11T00:00:00Z" }
+        });
+        std::fs::write(&marker, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
+        crate::session_pad::set_sessions_file_for_tests(Some(marker.clone()));
+
+        let state = fresh_state("test-sw-session").await;
+        handle(
+            &state,
+            ScratchpadWriteParams {
+                key: "handover-key".into(),
+                value: json!("session-77 value"),
+                namespace: None,
+            },
+        )
+        .await
+        .expect("default-namespace write with marker present must succeed");
+
+        // The write landed under the per-session pad, not the legacy default.
+        let resp = read_handle(
+            &state,
+            ScratchpadReadParams {
+                key: "handover-key".into(),
+                namespace: Some("scratchpad/sess-77/".into()),
+            },
+        )
+        .await
+        .expect("explicit per-session read must succeed");
+        assert!(resp.found, "default write with an active marker must land in scratchpad/sess-77/");
+
+        crate::session_pad::set_sessions_file_for_tests(None);
     }
 }
