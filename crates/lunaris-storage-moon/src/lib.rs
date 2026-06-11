@@ -61,8 +61,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use lunaris_core::{
-    CypherQuery, Filter, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row, Scope,
-    ScopePage, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, QueueMsg, Row,
+    Scope, ScopePage, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
 
@@ -240,6 +240,21 @@ impl StoragePort for MoonStorage {
         crate::graph::graph_traverse(&self.client, scope, query, as_of).await
     }
 
+    async fn graph_traverse_decayed(
+        &self,
+        scope: &Scope,
+        query: &CypherQuery,
+        as_of: Option<Hlc>,
+        decay: Option<&GraphDecay>,
+    ) -> Result<GraphResult, StorageError> {
+        match decay {
+            None => crate::graph::graph_traverse(&self.client, scope, query, as_of).await,
+            Some(d) => {
+                crate::graph::graph_traverse_decayed(&self.client, scope, query, as_of, d).await
+            }
+        }
+    }
+
     async fn scan_range(
         &self,
         scope: &Scope,
@@ -391,6 +406,7 @@ impl StoragePort for MoonStorage {
             // operators should consider workspace-level pooling (future RFC).
             max_scopes_recommended: 512,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            graph_decay_native: true,
         }
     }
 }
@@ -440,6 +456,7 @@ mod tests {
             native_rrf: true,
             max_scopes_recommended: 512,
             cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            graph_decay_native: true,
         };
         assert!(
             !want.bi_temporal_native,

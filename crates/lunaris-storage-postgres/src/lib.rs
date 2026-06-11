@@ -261,6 +261,7 @@ impl StoragePort for PostgresStorage {
             // until Apache AGE adds `reduce()` over variable-length paths and we
             // can graduate to CypherDialect::Full.
             cypher_dialect: lunaris_core::CypherDialect::PathMetrics,
+            graph_decay_native: false,
         }
     }
 }
@@ -307,6 +308,7 @@ mod tests {
             native_rrf: false,
             max_scopes_recommended: 0,
             cypher_dialect: lunaris_core::CypherDialect::PathMetrics,
+            graph_decay_native: false,
         };
         assert!(!want.bi_temporal_native);
         assert!(want.graph_native);

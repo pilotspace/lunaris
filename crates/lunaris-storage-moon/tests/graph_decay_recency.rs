@@ -42,7 +42,8 @@ fn q(cypher: &str) -> CypherQuery {
     CypherQuery { graph: String::new(), cypher: cypher.into(), params: Default::default() }
 }
 
-const SHORTEST: &str = "MATCH p = shortestPath((a:Person {name: 'A'})-[*..5]->(c:Person {name: 'C'})) RETURN p";
+const SHORTEST: &str =
+    "MATCH p = shortestPath((a:Person {name: 'A'})-[*..5]->(c:Person {name: 'C'})) RETURN p";
 
 /// Seed the stale-direct vs fresh-detour graph on the per-scope graph key.
 /// Returns (node_id_a, node_id_b, node_id_c) as the server assigned them.
@@ -200,7 +201,12 @@ async fn write_cypher_with_decay_rejected() {
 
     let decay = GraphDecay::new(1.0).expect("valid λ");
     let err = moon
-        .graph_traverse_decayed(&scope, &q("MERGE (x:Person {name: 'Z'}) RETURN x"), None, Some(&decay))
+        .graph_traverse_decayed(
+            &scope,
+            &q("MERGE (x:Person {name: 'Z'}) RETURN x"),
+            None,
+            Some(&decay),
+        )
         .await
         .expect_err("decay on a write query must be rejected by Moon");
     assert!(matches!(err, StorageError::Backend(_)), "server rejection passthrough, got {err:?}");
