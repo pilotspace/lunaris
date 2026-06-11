@@ -160,7 +160,9 @@ async fn sq8_beats_or_matches_tq4_recall_at_768d() {
 
     let recall_tq4 = measure_recall(&tq4, &scope_tq4, &corpus).await;
     let recall_sq8 = measure_recall(&sq8, &scope_sq8, &corpus).await;
-    eprintln!("QUANT EVAL VERDICT: sq8={recall_sq8:.3} tq4={recall_tq4:.3} (768-d, n={N_DOCS}, q={N_QUERIES}, k={K})");
+    eprintln!(
+        "QUANT EVAL VERDICT: sq8={recall_sq8:.3} tq4={recall_tq4:.3} (768-d, n={N_DOCS}, q={N_QUERIES}, k={K})"
+    );
 
     assert!(recall_sq8 >= 0.90, "SQ8 recall@10 must clear the 0.90 floor, got {recall_sq8:.3}");
     assert!(

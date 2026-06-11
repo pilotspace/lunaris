@@ -158,39 +158,30 @@ impl MoonStorage {
     /// Create per-scope FT indices and graph key. Called at most once per scope
     /// (guarded by `ensure_scope`'s in-memory set).
     async fn create_scope_indexes(&self, scope: &Scope) -> Result<(), StorageError> {
-        use moon::{DistanceMetric, SchemaField, VectorIndexOptions};
         // Single-sourced: the FT vector dimension is configured once on the
         // underlying client (`connect`/`connect_with_dim`); per-scope indices
-        // inherit it so engine-level `Lunaris::open` sizing flows through here.
+        // inherit it — and the `?quant=` choice — so engine-level
+        // `Lunaris::open` sizing flows through here. Schema construction is
+        // shared with the legacy global `ensure_indexes` via
+        // `client::create_lunaris_index_named` so the two sites can never
+        // diverge.
         let dim = self.client.dim;
+        let typed = self.client.typed();
 
         for kind in &["chunks", "entities", "facts", "communities"] {
             let idx_name = ft_index_name(scope, kind);
             // The FT prefix must match the key shape written by `atomic.rs::VectorUpsert`:
             // `{ft_index_name(scope, kind)}:{id_hex}`.
             let prefix = format!("{idx_name}:");
-
-            let mut opts = VectorIndexOptions::new(dim, DistanceMetric::Cosine)
-                .prefix(&prefix)
-                .field_name("vec")
-                .add_field(SchemaField::Text("content".to_string()));
-
-            if *kind == "chunks" {
-                opts = opts.add_field(SchemaField::Numeric("valid_time".to_string()));
-                opts = opts.add_field(SchemaField::Tag("source".to_string()));
-            }
-
-            let typed = self.client.typed();
-            match typed.vector().create_index(&idx_name, opts).await {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("Index already exists") || msg.contains("already exists") {
-                        continue;
-                    }
-                    return Err(crate::client::moon_err(e));
-                }
-            }
+            crate::client::create_lunaris_index_named(
+                &typed,
+                &idx_name,
+                kind,
+                &prefix,
+                dim,
+                self.client.quantization,
+            )
+            .await?;
         }
 
         // Create per-scope graph. Moon does not auto-create graphs on first GRAPH.QUERY.
