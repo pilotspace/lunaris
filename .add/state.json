@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "ft-navigate-recall",
+  "active_task": "sq8-quantization-optin",
   "active_milestone": "moon-v030-exploit",
   "tasks": {
     "mq-typed-client": {
@@ -38,12 +38,13 @@
     },
     "sq8-quantization-optin": {
       "title": "Opt-in SQ8/TQ4 FT quantization with 768d recall eval",
-      "phase": "specify",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "moon-v030-exploit",
       "depends_on": [],
       "created": "2026-06-11T03:19:35+00:00",
-      "updated": "2026-06-11T03:19:35+00:00"
+      "updated": "2026-06-11T06:06:13+00:00",
+      "flag_verified": true
     },
     "hotkeys-observability": {
       "title": "HOTKEYS hot-key observability surface",
@@ -86,7 +87,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-11T05:24:54+00:00",
+  "updated": "2026-06-11T06:06:13+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
