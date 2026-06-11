@@ -19,8 +19,38 @@ pub mod session_marker;
 
 use std::sync::Arc;
 
-use lunaris::{IngestKind, Lunaris};
+use lunaris::{EpisodeBuilder, IngestKind, Lunaris};
 use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort};
+
+/// Session-switch detection (session-switch-detect task).
+///
+/// SessionStart: record the new session in the durable marker and report a
+/// switch when a DIFFERENT session was active (crash-safe — needs no
+/// SessionEnd). SessionEnd: mark the session cleanly ended. All marker IO
+/// degrades to warn + continue (HOOK-06: never changes exit codes, never
+/// blocks the agent). Runs BEFORE the filter so the marker tracks reality
+/// even when an event is policy-denied.
+fn observe_session_marker(
+    event: &envelope::HookEvent,
+    scope: &Scope,
+) -> Option<session_marker::SwitchObserved> {
+    match event {
+        envelope::HookEvent::SessionStart(p) => {
+            let path = session_marker::sessions_file_path();
+            let switch = session_marker::observe_start_at(&path, scope.as_str(), &p.session_id);
+            if let Some(sw) = &switch {
+                session_marker::log_switch_line(scope.as_str(), sw, &p.session_id);
+            }
+            switch
+        }
+        envelope::HookEvent::SessionEnd(p) => {
+            let path = session_marker::sessions_file_path();
+            session_marker::observe_end_at(&path, scope.as_str(), &p.session_id);
+            None
+        }
+        _ => None,
+    }
+}
 
 /// Errors returned by [`run`].
 ///
@@ -92,6 +122,10 @@ pub async fn run(
         return Ok(None);
     }
 
+    // Session-switch detection — before the filter so the marker tracks
+    // reality even when this event is policy-denied.
+    let switch = observe_session_marker(&event, &scope);
+
     // Step 3: Apply FilterPolicy — path/kind verdict (HOOK-03).
     let policy =
         filter::FilterPolicy::from_env().map_err(|e| HookError::Filtered(e.to_string()))?;
@@ -119,13 +153,26 @@ pub async fn run(
 
     // Step 7: Build EpisodeBuilder from SCRUBBED content.
     // This is the scrubbed builder — no un-scrubbed bytes reach storage.
-    let builder =
-        ingest::build_episode_from_scrubbed(&event_value, &scrubbed_content, truncated_bytes)
+    // Built via parts so an observed session switch can ride the episode
+    // metadata (switch_from / switch_prev_ended) WITHOUT touching the
+    // canonical envelope bytes the dedupe key hashes below.
+    let mut parts =
+        ingest::build_episode_parts_from_scrubbed(&event_value, &scrubbed_content, truncated_bytes)
             .map_err(|e| {
                 HookError::Ingest(lunaris_core::LunarisError::Validate(
                     lunaris_core::ValidateError::Contradiction(e.to_string()),
                 ))
             })?;
+    if let Some(sw) = &switch {
+        for (k, v) in session_marker::switch_meta(sw) {
+            parts.metadata.insert(k, v);
+        }
+    }
+    let mut builder = EpisodeBuilder::new(parts.source, parts.content);
+    builder = builder.t_ref(parts.t_ref);
+    if !parts.metadata.is_empty() {
+        builder = builder.metadata(parts.metadata);
+    }
 
     // Step 8: Compute dedupe key from canonical JSON of the post-scrub envelope,
     // then call ingest_idempotent (HOOK-05).
@@ -182,6 +229,9 @@ pub async fn run_with_storage(
         return Ok(None);
     }
 
+    // Session-switch detection — same placement as `run` (before the filter).
+    let switch = observe_session_marker(&event, &scope);
+
     let policy =
         filter::FilterPolicy::from_env().map_err(|e| HookError::Filtered(e.to_string()))?;
     if policy.apply(&event) == filter::FilterVerdict::Deny {
@@ -197,13 +247,18 @@ pub async fn run_with_storage(
     let mut scrubbed_content = truncated.content;
     scrub_engine.apply(&mut scrubbed_content);
 
-    let parts =
+    let mut parts =
         ingest::build_episode_parts_from_scrubbed(&event_value, &scrubbed_content, truncated_bytes)
             .map_err(|e| {
                 HookError::Ingest(lunaris_core::LunarisError::Validate(
                     lunaris_core::ValidateError::Contradiction(e.to_string()),
                 ))
             })?;
+    if let Some(sw) = &switch {
+        for (k, v) in session_marker::switch_meta(sw) {
+            parts.metadata.insert(k, v);
+        }
+    }
 
     let canonical_bytes = {
         let mut canonical_value = event_value.clone();
