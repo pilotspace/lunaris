@@ -27,6 +27,14 @@ Suspects to investigate first: per-open construction of a heavy component on the
 v0.6 pipeline path (e.g. chunker/tokenizer/vocab) before URL validation; whatever
 it is, a parse-invalid URL should fail in microseconds.
 
+CI CONTRAST (PR #22 run, 2026-06-11): on ubuntu-latest + python 3.11 the same
+parse-failure path is ~0.2ms per call (16 concurrent awaits = 3.4ms total).
+The ~0.8s CPU burn reproduces ONLY locally (darwin arm64 + python 3.14 +
+maturin develop --release editable build). So the first discriminator for this
+task is environmental: py3.14 vs py3.11 / darwin vs linux / editable develop
+vs CI wheel. It may be a local-toolchain artifact rather than shipped-code
+behavior — prove which before touching any source.
+
 Feature: <name>
 Framings weighed: <chosen> (chosen) · <alternative> · <alternative>
 Must:
