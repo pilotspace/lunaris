@@ -6,7 +6,7 @@
 > UI/UX = UDD. When a loop reveals a gap here, come back and update this file —
 > that is the re-entrant arrow from the engine down to the foundation.
 
-slug: Lunaris · stage: production · updated: 2026-06-11
+slug: Lunaris · stage: production · updated: 2026-06-11 · foundation-version: 2
 goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicity and an opt-in graph — the contract that differentiates Lunaris from Mem0/Zep/Cognee
 
 ---
@@ -21,17 +21,23 @@ goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicit
   - Never hold a lock across `.await`; `parking_lot` only
   - JWT `tenant` claim is the only source of partition scope (wire `scope` fields ignored)
   - Every MCP `#[tool]` response schema root is `type:"object"` (flat structs, never tagged enums)
+- Moon substrate facts (folded 2026-06-11, moon-v030-exploit):
+  - Moon TXN is SHARD-LOCAL and binds to the connection's ACCEPT shard — multi-shard `atomic_write` is impossible until Moon ships `TXN BEGIN PIN` (RFC: docs/design/scope-hashtag-txn-rfc.md); all deployment recipes stay `--shards 1`
+  - Moon subcommand wire form is `TXN BEGIN`/`MQ <SUB>` (space-separated args); dotted spellings (`TXN.BEGIN`, `MQ.POP`) are server-unhandled — FT.*/GRAPH.* dotted intuition does not transfer
+  - Production GraphEdge writes carry no explicit WEIGHT → graph decay is age-only re-ranking today
+  - MQ `partition` is API-level metadata, not a wire concept, across all backends
 
 ## Spec / Living Document (SDD) — what we are building, now
 - Active milestone → `.add/milestones/moon-v030-exploit/MILESTONE.md` (see `add.py status`)
 - Frozen contracts (living docs): `StoragePort`/`KeywordPort` (lunaris-core), HTTP DTOs (`deny_unknown_fields`), MCP tool roster (11 tools, `server_boot.rs` guard)
-- Settled vs still open: Moon-first backend ordering settled · Moon pinned v0.3.0 (3e376a14) · open: SQ8-vs-TQ4 quantization at 768d, `{scope}` hash-tag multi-shard design
+- Settled vs still open (folded 2026-06-11): Moon-first backend ordering settled · Moon pinned v0.3.0 (3e376a14) · SETTLED: SQ8 over TQ4 on synthetic 768-d (FP stays default; corpus-realism caveat documented) · SETTLED: the 25ms contract is judged on the retrieval-only noop-embedder pass (canonical decomposition when embed is in-loop) · CLOSED: client-side `{scope}` hash-tagging disproven — multi-shard gated on Moon `TXN BEGIN PIN` (RFC) · open: upstream Moon requests (TXN PIN · FT.INFO quantization field · Cypher `_key` registration · HOTKEYS windowed reset) · open: shared reverse key-parser in lunaris-core (key-shape knowledge lives in 3 places) · open: 10k×1k like-for-like strict-replay rerun before any cross-version latency delta is quoted · open: SDK-presence ≠ server-support — every new SDK helper adoption needs a one-shot live probe before contracting
 
 ## Users (UDD) — UI/UX: design before code
 - No UI — the surface is: Rust crate API, HTTP API (axum, lunaris-server), MCP stdio server (11 tools), Python/TS SDKs
 - Primary users & jobs: internal agent platforms (Helios first) hiring Lunaris for durable agent memory: ingest observations → recall relevant context fast
 - Core flows: ingest (extract→atomic write) · recall (retrieval DSL, progressive-disclosure ladder on MCP) · scratchpad (working memory) · consolidate (ACT-R)
 - Design source of truth → docs/ARCHITECTURE.md + docs/book/ (mdBook)
+- Operator UX (folded 2026-06-11): cumulative-sketch gauges MUST carry "ranking, not rate" semantics in HELP text (operators alert without reading docs) · the Q4_K_M GGUF embedder is a legitimate high-throughput option, not a degraded mode (no visible recall cost at 3k-doc scale)
 
 ## Key Decisions (append-only)
 | date | decision | why | outcome |
@@ -41,3 +47,7 @@ goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicit
 | 2026-06-09 | MCP ships SQLite default; embedded-moon opt-in feature | `cargo test` stays light; npx/uvx binaries lean | PR #19 |
 | 2026-06-11 | vendor/moon pinned v0.3.0 (3e376a14) | SQ8, background HNSW compaction, HOTKEYS, elastic budgets | quick task 260611-d5w; SDK pin parity held (moondb 0.2.0) |
 | 2026-06-11 | ADD adopted for Moon-exploit wave; GSD continues owning .planning roadmap | spec/tests-first discipline for the 7-task wave | this foundation |
+| 2026-06-11 | SQ8 opt-in shipped, FP stays the FT default | tq4 collapses on synthetic 768-d (0.405); sq8 holds (0.995); real-corpus eval still owed | `?quant=` URL param; docs/migration/0.7-quantization.md |
+| 2026-06-11 | 25ms contract judged on retrieval-only (noop-embed) pass | embed-in-loop dominates end-to-end (61.5ms vs 3.1ms); baseline was embed-out-of-loop | docs/benchmarks/v0.7-moon-v030-rerun.md |
+| 2026-06-11 | Client-side hash-tagging rejected; multi-shard gated on Moon `TXN BEGIN PIN` | live probe: braced TXN rejected on 16/16 connections (accept-shard binding) | docs/design/scope-hashtag-txn-rfc.md + probe script |
+| 2026-06-11 | Milestone moon-v030-exploit folded: 28 deltas → foundation v2 | retrospective consolidation per fold.md, confirmed by Tin Dang | conventions + domain facts appended; all deltas flipped `folded` |

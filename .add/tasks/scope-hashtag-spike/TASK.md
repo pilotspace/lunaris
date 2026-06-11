@@ -178,8 +178,8 @@ Spec delta for the next loop: the spike disproved its own original premise (clie
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
-- [SDD · open] a "design spike" contract can be reshaped at freeze into a cross-repo RFC when the probe disproves the in-repo fix — the freeze answer itself carried the scope change (evidence: freeze #7 "Recommend Moon work now" → §3 v1 rewritten before stamping)
-- [TDD · open] for doc-deliverable spikes, making the probe script the executable test (exit 0 = evidence matrix reproduces) keeps red/green meaningful without a cargo suite (evidence: red = file absent, green = MATCH verdict, two runs)
-- [DDD · open] Moon subcommand wire form is `TXN BEGIN` (two args), not `TXN.BEGIN` — dotted-command intuition from FT.*/MQ.* does not transfer to TXN/TEMPORAL handlers (evidence: is_txn_begin at vendor/moon/src/command/transaction.rs:98; first probe run failed on it)
-- [ADD · open] probes that launch their own servers in tempdirs are immune to the SO_REUSEPORT stale-listener trap that bit the dim_configurable investigation (evidence: probe runs clean on arbitrary ports without lsof archaeology)
-<!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
+- [SDD · folded] a "design spike" contract can be reshaped at freeze into a cross-repo RFC when the probe disproves the in-repo fix — the freeze answer itself carried the scope change (evidence: freeze #7 "Recommend Moon work now" → §3 v1 rewritten before stamping)
+- [TDD · folded] for doc-deliverable spikes, making the probe script the executable test (exit 0 = evidence matrix reproduces) keeps red/green meaningful without a cargo suite (evidence: red = file absent, green = MATCH verdict, two runs)
+- [DDD · folded] Moon subcommand wire form is `TXN BEGIN` (two args), not `TXN.BEGIN` — dotted-command intuition from FT.*/MQ.* does not transfer to TXN/TEMPORAL handlers (evidence: is_txn_begin at vendor/moon/src/command/transaction.rs:98; first probe run failed on it)
+- [ADD · folded] probes that launch their own servers in tempdirs are immune to the SO_REUSEPORT stale-listener trap that bit the dim_configurable investigation (evidence: probe runs clean on arbitrary ports without lsof archaeology)
+<!-- e.g.  - [DDD · folded] the model missed multi-tenancy (evidence: scenario_x failed) -->
