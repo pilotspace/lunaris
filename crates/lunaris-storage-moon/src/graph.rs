@@ -125,7 +125,7 @@ async fn query_raw_with_clauses(
     cmd.query_async(raw_conn).await.map_err(redis_err)
 }
 
-fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {
+pub(crate) fn parse_graph_reply(v: redis::Value) -> Result<GraphResult, StorageError> {
     let arr = match v {
         redis::Value::Array(a) => a,
         other => {

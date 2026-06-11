@@ -110,6 +110,14 @@ pub struct StorageCapabilities {
     /// payloads parseable (missing field → `false`).
     #[serde(default)]
     pub graph_decay_native: bool,
+    /// `true` when the backend supports graph-expanded vector retrieval —
+    /// i.e., Moon's `FT.NAVIGATE` (KNN seeds → bounded BFS → hop-aware
+    /// re-rank). Callers gate `StoragePort::vector_navigate` on this flag;
+    /// the DSL `Navigate` operator degrades to plain `vector_search` when
+    /// `false`. `true` for Moon (v0.3.0+); `false` for Postgres/embedded.
+    /// `#[serde(default)]` keeps older serialized payloads parseable.
+    #[serde(default)]
+    pub graph_navigate_native: bool,
 }
 
 #[cfg(test)]

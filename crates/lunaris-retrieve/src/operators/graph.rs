@@ -71,6 +71,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use lunaris_core::storage::types::GraphDecay;
 use lunaris_core::{CypherDialect, CypherQuery, LunarisError};
 use lunaris_extract::EntityId;
 
@@ -120,6 +121,12 @@ pub struct Graph {
     /// `[0.0, 1.0]` to prevent a caller-passed out-of-range value from
     /// poisoning the score downstream.
     pub(crate) confidence_by_seed: HashMap<EntityId, f32>,
+    /// Optional recency decay (ADD task `ft-navigate-recall`): threads a λ
+    /// through `StoragePort::graph_traverse_decayed` so edge cost becomes
+    /// `|weight| + λ·w·age_seconds` on backends with native decay (Moon).
+    /// `None` keeps the exact pre-decay traversal (delegation guarantee of
+    /// the graph-decay-recency contract).
+    pub(crate) decay: Option<GraphDecay>,
 }
 
 impl Graph {
@@ -157,7 +164,17 @@ impl Graph {
             k: clamp_k(DEFAULT_GRAPH_K),
             graph: LUNARIS_GRAPH_NAME.into(),
             confidence_by_seed,
+            decay: None,
         }
+    }
+
+    /// Apply recency decay to the traversal (ADD task `ft-navigate-recall`).
+    /// The λ rides `StoragePort::graph_traverse_decayed`; backends without
+    /// `capabilities().graph_decay_native` surface `NotSupported` — gate on
+    /// the capability before composing decay into a recall.
+    pub fn with_decay(mut self, decay: GraphDecay) -> Self {
+        self.decay = Some(decay);
+        self
     }
 
     /// Convenience: list of seed [`EntityId`]s (without confidence). Mirrors
@@ -331,7 +348,13 @@ impl Retriever for Graph {
         // Wave 2.5C: use ctx.scope — plumbed from RetrievalBuilder::with_scope
         // (set by ScopedLunaris::recall/dsl) so graph_traverse is scope-isolated
         // at the storage layer. Bare Lunaris::recall() uses Scope::dev().
-        let result = ctx.storage.graph_traverse(&ctx.scope, &q, ctx.query.as_of).await?;
+        // ft-navigate-recall: route through graph_traverse_decayed — decay
+        // None delegates byte-for-byte to graph_traverse (graph-decay-recency
+        // contract), so the no-decay path is behaviorally unchanged.
+        let result = ctx
+            .storage
+            .graph_traverse_decayed(&ctx.scope, &q, ctx.query.as_of, self.decay.as_ref())
+            .await?;
 
         // P0 #4 Wave 3 + Wave 4 — Real graph scoring.
         //

@@ -16,6 +16,6 @@ pub use capabilities::{CypherDialect, StorageCapabilities};
 pub use keyword::{KeywordHit, KeywordPort, min_max_normalize};
 pub use port::StoragePort;
 pub use types::{
-    CypherQuery, Filter, GraphDecay, GraphResult, Key, Lsn, QueueMsg, Row, RrfFusion, ScopePage,
-    VectorHit, WriteOp,
+    CypherQuery, Filter, GraphDecay, GraphResult, Key, Lsn, NavigateHit, NavigateSpec, QueueMsg,
+    Row, RrfFusion, ScopePage, VectorHit, WriteOp,
 };

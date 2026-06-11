@@ -203,6 +203,86 @@ impl GraphDecay {
     }
 }
 
+/// Parameters for graph-expanded vector retrieval (ADD task
+/// `ft-navigate-recall`, contract v1). Maps to Moon's
+/// `FT.NAVIGATE ... HOPS <n> [HOP_PENALTY <p>] [DECAY <λ>]`.
+///
+/// Fields are PRIVATE — validity by construction. `hops` is bounded to
+/// `1..=5` (Moon's `MAX_EXPAND_DEPTH`); `hop_penalty` must be finite ≥ 0.
+///
+/// Note: `FT.NAVIGATE DECAY` has no time-weight slot (the server fixes
+/// `time_weight = 1.0`); a [`GraphDecay`] carrying `time_weight` sends only
+/// its λ on the navigate wire — `time_weight` is a `GRAPH.QUERY`-only knob.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavigateSpec {
+    hops: u32,
+    hop_penalty: Option<f64>,
+    decay: Option<GraphDecay>,
+}
+
+impl NavigateSpec {
+    /// Maximum hop depth Moon's graph expansion accepts (`MAX_EXPAND_DEPTH`).
+    pub const MAX_HOPS: u32 = 5;
+
+    /// Construct with a hop depth. Accepts `1..=5` only — 0 hops is plain
+    /// vector search (use `vector_search`), >5 is rejected by Moon anyway.
+    pub fn new(hops: u32) -> Result<Self, StorageError> {
+        if hops == 0 || hops > Self::MAX_HOPS {
+            return Err(StorageError::Backend(format!(
+                "navigate_invalid_hops: must be 1..={}, got {hops}",
+                Self::MAX_HOPS
+            )));
+        }
+        Ok(Self { hops, hop_penalty: None, decay: None })
+    }
+
+    /// Set the per-hop score penalty (server default 0.1 when unset).
+    /// Accepts finite p ≥ 0 (0 ranks graph hits purely by decay/vec score).
+    pub fn with_hop_penalty(self, p: f64) -> Result<Self, StorageError> {
+        if !p.is_finite() || p < 0.0 {
+            return Err(StorageError::Backend(format!(
+                "navigate_invalid_hop_penalty: must be finite and >= 0, got {p}"
+            )));
+        }
+        Ok(Self { hop_penalty: Some(p), ..self })
+    }
+
+    /// Apply recency decay to the discovery edge of each graph-expanded hit.
+    /// Infallible — `GraphDecay` is already validated by construction.
+    pub fn with_decay(self, decay: GraphDecay) -> Self {
+        Self { decay: Some(decay), ..self }
+    }
+
+    /// The hop depth (1..=5).
+    pub fn hops(&self) -> u32 {
+        self.hops
+    }
+
+    /// The per-hop penalty, if set (finite, ≥ 0).
+    pub fn hop_penalty(&self) -> Option<f64> {
+        self.hop_penalty
+    }
+
+    /// The recency decay, if set.
+    pub fn decay(&self) -> Option<GraphDecay> {
+        self.decay
+    }
+}
+
+/// A single hit returned by `StoragePort::vector_navigate`.
+///
+/// `id` is the decoded doc id (FT index prefix stripped + hex-decoded, the
+/// same rule as [`VectorHit`]). `hop_depth == 0` means the hit was a direct
+/// KNN seed; `>= 1` means it was discovered via graph expansion. Lower
+/// `final_score` = better (consistent with L2 distance ordering).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NavigateHit {
+    pub id: Vec<u8>,
+    pub vec_score: f32,
+    pub hop_depth: u32,
+    pub final_score: f32,
+}
+
 /// Dynamic header-keyed result table returned by `StoragePort::graph_traverse`.
 ///
 /// `headers` carries column names in row order; `rows` are row-major with
