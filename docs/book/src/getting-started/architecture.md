@@ -59,6 +59,12 @@ hardware ([benchmark methodology](https://github.com/pilotspace/lunaris/blob/mai
 p50 10.3 ms / p99 20.8 ms). Since the 2026-06-10 concurrent-hydration
 fan-out the tail is flat even at k=30 — p50 6.0 ms / p99 6.2 ms
 ([A/B methodology](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.6-recall-fanout-ab.md)).
+The contract was re-validated on Moon v0.3.0 with the 4-bit GGUF
+granite embedder — retrieval-only p50 3.1 ms / p99 3.6 ms on a 3k-doc
+SQuAD corpus
+([v0.3.0 rerun](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.7-moon-v030-rerun.md),
+which also sizes the Navigate operator's recall edge on graph-linked
+corpora: plain 0.00 → nav 1.00 recall@5 for +0.05 ms).
 
 ## 3. Why Moon makes this possible
 

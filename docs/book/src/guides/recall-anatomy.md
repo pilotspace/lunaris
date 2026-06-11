@@ -78,6 +78,13 @@ measurement is why v0.4 moved embedding **in-process on candle as the
 default** — the shipped configuration is the configuration the
 contract was proven on.
 
+The same decomposition repeated on Moon v0.3.0 with the 4-bit GGUF
+granite embedder (3k-doc SQuAD train corpus): end-to-end p50 61.5 ms,
+retrieval-only p50 3.1 ms / p99 3.6 ms — the gap is now in-process
+quantized embedding compute, not a network hop, and the engine path
+still sits far inside the 25 ms contract
+([v0.3.0 rerun](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.7-moon-v030-rerun.md)).
+
 ### The 97 ms tail lesson
 
 Hydration used to await one storage read per hit, serially — at k=30
