@@ -213,6 +213,20 @@ pub async fn run(
     Ok(Some(lsn))
 }
 
+/// What one hook invocation produced (session-context-inject task).
+///
+/// `lsn` mirrors [`run_with_storage`]'s return; `switch` carries the
+/// session-switch observation so `main.rs` can run the post-ingest
+/// `additionalContext` build OUTSIDE the HOOK-06 ingest budget.
+#[derive(Debug)]
+pub struct HookRunOutcome {
+    /// `Some(lsn)` when an Episode was written (or deduped); `None` for
+    /// unknown-kind no-ops.
+    pub lsn: Option<Lsn>,
+    /// `Some` when this event was a SessionStart that switched sessions.
+    pub switch: Option<session_marker::SwitchObserved>,
+}
+
 /// Process one hook envelope using raw storage instead of the full Lunaris
 /// handle. The hook hot path only writes episodes, so this avoids constructing
 /// native embedders/rerankers on every hook process invocation.
@@ -221,13 +235,24 @@ pub async fn run_with_storage(
     scope: Scope,
     storage: Arc<dyn StoragePort>,
 ) -> Result<Option<Lsn>, HookError> {
+    run_with_storage_outcome(stdin_bytes, scope, storage).await.map(|o| o.lsn)
+}
+
+/// [`run_with_storage`] variant that also reports the session-switch
+/// observation, so the caller can drive the SessionStart `additionalContext`
+/// injection (session-context-inject task) with its own budget.
+pub async fn run_with_storage_outcome(
+    stdin_bytes: &[u8],
+    scope: Scope,
+    storage: Arc<dyn StoragePort>,
+) -> Result<HookRunOutcome, HookError> {
     let event_value: serde_json::Value = serde_json::from_slice(stdin_bytes)
         .map_err(|e| envelope::ParseError::InvalidJson(e.to_string()))?;
 
     let event = envelope::parse_value(&event_value)?;
     if let envelope::HookEvent::Unknown(ref kind) = event {
         tracing::info!(kind = %kind, "unknown hook event kind — no-op (exit 0)");
-        return Ok(None);
+        return Ok(HookRunOutcome { lsn: None, switch: None });
     }
 
     // Session-switch detection — same placement as `run` (before the filter).
@@ -278,7 +303,9 @@ pub async fn run_with_storage(
     let dedupe_key = dedupe::derive_dedupe_key(scope.as_str(), &event_id, &canonical_bytes);
 
     match storage.lookup_by_dedupe_key(&scope, &dedupe_key).await {
-        Ok(Some(prior_lsn)) => return Ok(Some(prior_lsn)),
+        Ok(Some(prior_lsn)) => {
+            return Ok(HookRunOutcome { lsn: Some(prior_lsn), switch });
+        }
         Ok(None) => {}
         Err(e) => {
             tracing::warn!(
@@ -307,5 +334,5 @@ pub async fn run_with_storage(
         );
     }
 
-    Ok(Some(lsn))
+    Ok(HookRunOutcome { lsn: Some(lsn), switch })
 }
