@@ -15,7 +15,9 @@
 
 mod hybrid_filter_common;
 
-use hybrid_filter_common::{ChunkSpec, connect, direct_write_chunks, embedder, id_bytes, recall_hybrid, unique_scope};
+use hybrid_filter_common::{
+    ChunkSpec, connect, direct_write_chunks, embedder, id_bytes, recall_hybrid, unique_scope,
+};
 use lunaris_core::storage::types::Filter;
 
 /// Must 3 — filtered hybrid top-k is not silently starved below

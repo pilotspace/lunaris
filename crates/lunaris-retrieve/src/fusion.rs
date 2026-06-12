@@ -165,7 +165,11 @@ pub async fn fuse_via_moon_native(
         let w_dense = branch_weights.get(&SourceOp::Vector).copied().unwrap_or(0.5_f32) as f64;
         [w_bm25, w_dense, 0.0_f64]
     };
-    let composite_query = compose_query_with_filter(&ctx.query.text, &ctx.query.filter);
+    // CHANGE H: the query filter is no longer string-composed into the BM25
+    // query text (which left the dense-KNN branch unconstrained — the bypass
+    // bug). It is now translated to a native HYBRID `FILTER` clause that Moon
+    // applies to BOTH the BM25 and dense streams before RRF fusion (CHANGE J).
+    let moon_filter = filter_to_moon_hybrid_filter(&ctx.query.filter);
     // RFC 0001 Wave 1C parity fix: the write path routes to the per-scope FT
     // index (`lunaris_{scope}_{kind}_idx`) but this hybrid-fusion read path
     // was still passing the bare `hint.index` ("chunks") to Moon — so it
@@ -176,7 +180,16 @@ pub async fn fuse_via_moon_native(
     // for the same reason. Live-measurement gap, 2026-05-12.
     let per_scope_index = format!("lunaris_{}_{}_idx", ctx.scope.as_str(), hint.index);
     let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(&per_scope_index, &composite_query, &q_emb, "vec", None, k, weights)
+        .hybrid_search(
+            &per_scope_index,
+            &ctx.query.text,
+            &q_emb,
+            "vec",
+            None,
+            k,
+            weights,
+            moon_filter.as_ref(),
+        )
         .await
         .map_err(|e| {
             LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
@@ -253,54 +266,53 @@ fn decode_moon_vector_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
     hex::decode(&key[prefix_len..]).ok().filter(|b| b.len() == 16)
 }
 
-/// Compose a text query with an optional filter for the Moon FT.SEARCH
-/// hybrid_search path. When a filter is present the output is
-/// `(<filter_expr>) <text>` so Moon applies the filter server-side before
-/// RRF scoring. When no filter is set, returns the text unchanged.
-fn compose_query_with_filter(text: &str, filter: &Option<Filter>) -> String {
-    match filter {
-        Some(f) => format!("({}) {}", filter_to_moon_tag(f), text),
-        None => text.to_string(),
-    }
+/// Translate a Lunaris [`Filter`] tree into a Moon native [`HybridFilter`]
+/// (CHANGE I) for the `hybrid_search` push-down path. `None` ⇒ no filter, so
+/// the wire stays byte-identical to the pre-filter form and both branches run
+/// unconstrained (the documented backward-compatible default).
+///
+/// Mapping:
+/// - [`Filter::Eq`] → `Tag { field, value }` (exact TAG match; bare value)
+/// - [`Filter::StartsWith`] → `Tag { field, value: "<prefix>*" }` (prefix match)
+/// - [`Filter::And`] / [`Filter::Or`] → recursive `And` / `Or`
+/// - [`Filter::ValidTimeRange`] → `Numeric { field: "valid_time", min, max }`
+///   (inclusive). Open sides use FINITE sentinels because Moon's NUMERIC
+///   parser rejects non-finite bounds: `0.0` for an open `after`,
+///   `u64::MAX as f64` for an open `before`.
+fn filter_to_moon_hybrid_filter(filter: &Option<Filter>) -> Option<moon::text::HybridFilter> {
+    filter.as_ref().and_then(filter_node_to_hybrid)
 }
 
-/// Render a [`Filter`] tree as a Moon FT query expression for the hybrid
-/// search path. TAG-aware: `source` field renders as `@source:{value}`
-/// (TAG syntax per PERF-MOON-01), all other fields use TEXT syntax
-/// `@field:"value"`.
-///
-/// Mirrors `keyword::filter_to_moon` — duplicated locally per the
-/// codebase's established "extract when a third caller asks" convention
-/// (keyword.rs and vector.rs each have their own copy already).
-fn filter_to_moon_tag(f: &Filter) -> String {
+fn filter_node_to_hybrid(f: &Filter) -> Option<moon::text::HybridFilter> {
+    use moon::text::HybridFilter as Hf;
     match f {
         Filter::Eq { field, value } => {
-            if field == "source" {
-                format!("@{field}:{{{}}}", ft_tag_escape(&json_bare(value)))
-            } else {
-                format!("@{field}:{}", json_quoted(value))
-            }
+            Some(Hf::Tag { field: field.clone(), value: json_bare(value) })
         }
-        Filter::StartsWith { field, prefix } => format!("@{field}:{prefix}*"),
+        Filter::StartsWith { field, prefix } => {
+            Some(Hf::Tag { field: field.clone(), value: format!("{prefix}*") })
+        }
         Filter::And(xs) => {
-            format!("({})", xs.iter().map(filter_to_moon_tag).collect::<Vec<_>>().join(" "))
+            let children: Vec<Hf> = xs.iter().filter_map(filter_node_to_hybrid).collect();
+            (!children.is_empty()).then_some(Hf::And(children))
         }
         Filter::Or(xs) => {
-            format!("({})", xs.iter().map(filter_to_moon_tag).collect::<Vec<_>>().join(" | "))
+            let children: Vec<Hf> = xs.iter().filter_map(filter_node_to_hybrid).collect();
+            (!children.is_empty()).then_some(Hf::Or(children))
         }
-        Filter::ValidTimeRange { after, before } => {
-            let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
-            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
-            format!("@valid_time:[{lo} {hi}]")
-        }
-        // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New
-        // variants need explicit fusion-side rendering; until that
-        // lands, emit an unconstrained predicate and warn.
+        Filter::ValidTimeRange { after, before } => Some(Hf::Numeric {
+            field: "valid_time".to_string(),
+            min: after.map_or(0.0_f64, |h| h.wall_ms as f64),
+            max: before.map_or(u64::MAX as f64, |h| h.wall_ms as f64),
+        }),
+        // `#[non_exhaustive]` on `Filter` requires a wildcard arm. A new
+        // variant cannot be expressed as a HYBRID FILTER yet — emit no native
+        // constraint for that node (and warn) rather than guessing wrong.
         _ => {
             tracing::warn!(
-                "unknown Filter variant in retrieve fusion path — emitting unconstrained predicate"
+                "unknown Filter variant in retrieve fusion path — emitting no native filter constraint"
             );
-            "*".to_string()
+            None
         }
     }
 }
@@ -315,77 +327,108 @@ fn json_bare(v: &serde_json::Value) -> String {
     }
 }
 
-/// Return the value with quotes for TEXT field syntax.
-fn json_quoted(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => format!("\"{s}\""),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        _ => format!("\"{v}\""),
-    }
-}
-
-/// Escape RediSearch TAG special characters with backslash.
-/// Per RediSearch TAG rules: `,`, `.`, `{`, `}`, `\`, `:` must be escaped.
-fn ft_tag_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        if matches!(ch, ',' | '.' | '{' | '}' | '\\' | ':') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::operators::combinators::AndRetriever;
     use lunaris_core::storage::types::Filter;
 
-    // ── filter_to_moon_tag tests (Plan 15-02) ──
+    // ── filter_to_moon_hybrid_filter tests (CHANGE I/K) ──
+
+    use moon::text::HybridFilter as Hf;
 
     #[test]
-    fn filter_to_moon_tag_source_renders_tag_syntax() {
-        let f = Filter::Eq { field: "source".into(), value: serde_json::json!("notes.md") };
-        assert_eq!(filter_to_moon_tag(&f), "@source:{notes\\.md}");
+    fn hybrid_filter_none_when_no_filter() {
+        assert!(filter_to_moon_hybrid_filter(&None).is_none());
     }
 
     #[test]
-    fn filter_to_moon_tag_source_escapes_colon() {
-        let f = Filter::Eq { field: "source".into(), value: serde_json::json!("helios:fs/test") };
-        assert_eq!(filter_to_moon_tag(&f), "@source:{helios\\:fs/test}");
+    fn hybrid_filter_eq_renders_exact_tag() {
+        let f = Some(Filter::Eq { field: "source".into(), value: serde_json::json!("notes.md") });
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::Tag { field, value }) => {
+                assert_eq!(field, "source");
+                // Bare value, no quotes, no backslash-escaping — the native
+                // FILTER TAG leaf matches the indexed token directly.
+                assert_eq!(value, "notes.md");
+            }
+            other => panic!("expected Tag, got {other:?}"),
+        }
     }
 
     #[test]
-    fn filter_to_moon_tag_non_source_renders_text_syntax() {
-        let f = Filter::Eq { field: "kind".into(), value: serde_json::json!("episode") };
-        assert_eq!(filter_to_moon_tag(&f), "@kind:\"episode\"");
+    fn hybrid_filter_startswith_renders_prefix_tag() {
+        let f = Some(Filter::StartsWith { field: "source".into(), prefix: "helios".into() });
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::Tag { field, value }) => {
+                assert_eq!(field, "source");
+                assert_eq!(value, "helios*"); // trailing '*' ⇒ server treats as prefix
+            }
+            other => panic!("expected prefix Tag, got {other:?}"),
+        }
     }
 
     #[test]
-    fn filter_to_moon_tag_and_combo() {
-        let f = Filter::And(vec![
+    fn hybrid_filter_and_recurses_into_children() {
+        let f = Some(Filter::And(vec![
             Filter::Eq { field: "source".into(), value: serde_json::json!("x") },
             Filter::Eq { field: "kind".into(), value: serde_json::json!("y") },
-        ]);
-        assert_eq!(filter_to_moon_tag(&f), "(@source:{x} @kind:\"y\")");
+        ]));
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::And(children)) => {
+                assert_eq!(children.len(), 2);
+                assert!(
+                    matches!(&children[0], Hf::Tag { field, value } if field == "source" && value == "x")
+                );
+                assert!(
+                    matches!(&children[1], Hf::Tag { field, value } if field == "kind" && value == "y")
+                );
+            }
+            other => panic!("expected And, got {other:?}"),
+        }
     }
 
     #[test]
-    fn compose_query_with_filter_prepends_filter() {
-        let result = compose_query_with_filter(
-            "hello",
-            &Some(Filter::Eq { field: "source".into(), value: serde_json::json!("x") }),
-        );
-        assert_eq!(result, "(@source:{x}) hello");
+    fn hybrid_filter_or_recurses_into_children() {
+        let f = Some(Filter::Or(vec![
+            Filter::Eq { field: "source".into(), value: serde_json::json!("a") },
+            Filter::Eq { field: "source".into(), value: serde_json::json!("b") },
+        ]));
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::Or(children)) => assert_eq!(children.len(), 2),
+            other => panic!("expected Or, got {other:?}"),
+        }
     }
 
     #[test]
-    fn compose_query_with_filter_none_returns_text() {
-        let result = compose_query_with_filter("hello", &None);
-        assert_eq!(result, "hello");
+    fn hybrid_filter_valid_time_range_renders_finite_numeric() {
+        use lunaris_core::hlc::Hlc;
+        let after = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
+        let before = Hlc { wall_ms: 1_760_000_000_000, counter: 0, node_id: 0 };
+        let f = Some(Filter::ValidTimeRange { after: Some(after), before: Some(before) });
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::Numeric { field, min, max }) => {
+                assert_eq!(field, "valid_time");
+                assert_eq!(min, 1_700_000_000_000_f64);
+                assert_eq!(max, 1_760_000_000_000_f64);
+            }
+            other => panic!("expected Numeric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hybrid_filter_valid_time_open_sides_use_finite_sentinels() {
+        // Open `after`/`before` must stay finite — Moon's NUMERIC parser
+        // rejects ±inf.
+        let f = Some(Filter::ValidTimeRange { after: None, before: None });
+        match filter_to_moon_hybrid_filter(&f) {
+            Some(Hf::Numeric { min, max, .. }) => {
+                assert!(min.is_finite() && max.is_finite());
+                assert_eq!(min, 0.0_f64);
+                assert_eq!(max, u64::MAX as f64);
+            }
+            other => panic!("expected Numeric, got {other:?}"),
+        }
     }
 
     // ── Moon metadata parsing tests ──
