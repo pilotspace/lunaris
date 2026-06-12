@@ -209,11 +209,8 @@ impl StoragePort for BridgedStorage {
             let mut slot = self.consolidate_rx.lock().await;
             let msgs: Vec<QueueMsg> = if let Some(ref mut rx) = *slot {
                 let mut buf = Vec::new();
-                loop {
-                    match rx.try_recv() {
-                        Ok(msg) => buf.push(msg),
-                        Err(_) => break,
-                    }
+                while let Ok(msg) = rx.try_recv() {
+                    buf.push(msg);
                 }
                 buf
             } else {
@@ -741,7 +738,8 @@ async fn namespaced_consolidate_preserves_foreign_backlog() {
 
     let total_promoted = first_report.promotions.len() + second_report.promotions.len();
     assert_eq!(
-        total_promoted, 10,
+        total_promoted,
+        10,
         "DISCRIMINATING RED: total promoted across namespaced + unfiltered passes must equal \
          total seeded (10 = 5 matching + 5 foreign). \
          Got first={}, second={} (foreign events consumed from queue and not re-queued → loss). \
@@ -751,8 +749,7 @@ async fn namespaced_consolidate_preserves_foreign_backlog() {
     );
 
     // Also verify the foreign episode IDs are represented in the second pass.
-    let second_ids: Vec<Ulid> =
-        second_report.promotions.iter().map(|p| p.episode_id).collect();
+    let second_ids: Vec<Ulid> = second_report.promotions.iter().map(|p| p.episode_id).collect();
     for id in &foreign_ids {
         assert!(
             second_ids.contains(id),
@@ -914,18 +911,13 @@ async fn republish_failure_is_loud_not_fatal() {
     // WITH the fix + armed failure: 15 publish attempts (10 seed + 5 re-queue
     // attempts that return Err, but the attempt IS made).
     //
-    // The inner BridgedStorage records ALL publish calls including failed ones
-    // on the wrapper side — but since the wrapper returns Err without calling
-    // inner.publish, the count stays at 10.  We assert 15 to make this red.
-    let consolidate_publishes = inner
-        .published
-        .lock()
-        .iter()
-        .filter(|(t, _, _)| t == CONSOLIDATE_TOPIC)
-        .count();
+    // The wrapper forwards every publish to inner (recording the attempt)
+    // BEFORE overriding the result with Err when armed — so attempted
+    // re-queues are countable here even though the caller saw a failure.
+    let consolidate_publishes =
+        inner.published.lock().iter().filter(|(t, _, _)| t == CONSOLIDATE_TOPIC).count();
     assert_eq!(
-        consolidate_publishes,
-        15,
+        consolidate_publishes, 15,
         "DISCRIMINATING RED (loud-not-fatal): fix must attempt to re-publish 5 foreign \
          events back to CONSOLIDATE_TOPIC (even when publish returns Err — the attempt \
          must be made and the error surfaced).  \
