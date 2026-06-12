@@ -331,6 +331,15 @@ Reviewed by: AI gate (auto) on behalf of Tin Dang · date: 2026-06-12
 If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
 Reviewed by: <name> · date: <date>
 
+POST-GATE ADDENDUM 2026-06-12 (PR #25 CI): CodeQL raised 5 high
+rust/cleartext-logging alerts on handover.rs — all on TEST-ONLY assert!
+messages interpolating the rendered summary (`{s}`), which CodeQL taints
+from `prev_session_id` into the panic-message log sink. Resolved by code
+(commit 8aabf0d on main): dropped the interpolation; assertion conditions
+byte-unchanged (not a test weakening); production warn paths keep the
+documented T-24-04-01 stderr pattern and were not flagged. CodeQL green on
+re-run. Gate outcome unchanged (PASS).
+
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
 ---
