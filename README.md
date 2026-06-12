@@ -245,7 +245,7 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 |---|---|
 | **v0.2.1 — multi-agent partitioning** | Shipped 2026-05-11 |
 | **v0.4 — candle-native ML default** | Shipped 2026-05-14 — in-process embedder + reranker, Ollama path removed |
-| **v0.4 wave-a — `lunaris-mcp`** | Shipped 2026-05-24 — stdio MCP for Claude Code / Codex |
+| **v0.4.0 — MCP surface + embedded Moon + RAPTOR** | Shipped 2026-06-13 — `lunaris-mcp` scratchpad tools, embedded Moon, RAPTOR tree retrieval, recall fan-out optimization |
 | **v0.5 — proactive capture + packaging** | Shipped 2026-05-26 — `lunaris-hook` lifecycle capture, MCP polish, npx/uvx distribution |
 | **v0.6 — adaptive chunking + RAPTOR** | In progress on `main` — hierarchical memory tree, `.tree()` retrieval operator |
 | **MCP working memory + embedded Moon** | Merged to `main` 2026-06-09 — four `memory.scratchpad_*` tools, guarded `scratchpad_consolidate`, opt-in `--features embedded-moon` |

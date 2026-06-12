@@ -2,14 +2,14 @@
 
 All notable changes to Lunaris are documented here.
 
-## Unreleased — recall-path round-trip collapse (2026-06-10)
+## v0.4.0 — 2026-06-13
+
+### Performance
 
 Quick task `260610-f91`: removed the serialized storage round trips from the
 recall hot path with Moon as the default backend. Measured A/B at k=30 (MCP
 stdio, live Moon): recall p50 12 → 6.0 ms, p99 97.3 → 6.2 ms — the tail no
 longer scales with k. Methodology: `docs/benchmarks/v0.6-recall-fanout-ab.md`.
-
-### Performance
 
 - **`read_as_of` is one round trip** (`lunaris-storage-moon`): the two serial
   `HGET`s (`v`, then `bt`) collapsed into a single `HMGET key v bt`. Every KV
@@ -38,14 +38,55 @@ longer scales with k. Methodology: `docs/benchmarks/v0.6-recall-fanout-ab.md`.
   degrading `Hit::source` to `""`); restored the pre-fan-out `?` contract and
   pinned it with `hydrate_propagates_episode_read_errors`.
 
-## Unreleased — MCP working memory + embedded Moon (2026-06-09)
+### Added (RAPTOR tree retrieval)
+
+Completes the RAPTOR retrieval path. The hierarchical community tree that
+adaptive chunking builds at ingest is now both **populated as a searchable
+vector index** and **traversable from the retrieval DSL**, closing the
+"built-but-never-traversed" gap. (This is the Moon-exploit enhancement batch on top of v0.6.)
+
+- **`.tree(index, k, depth)` retrieval operator** (`lunaris-retrieve`) — RAPTOR
+  hierarchical retrieval over the `communities` index. Vector-searches the `k`
+  nearest community summary nodes, then descends `Community.members` breadth-first
+  (depth `1..=MAX_TREE_DEPTH` where `MAX_TREE_DEPTH = 4`, default `1`) to collect
+  every leaf chunk beneath them — including chunks that fall outside a flat
+  search's top-k budget. One vector search per query; deeper levels only read
+  community KV rows, so latency scales with depth × fan-out, not index size.
+  Composes with `.and()` / `.or()` / `.then()` / `.fuse_rrf()` / `.top()` like
+  every other operator. Operator form: `Tree::new("communities", k)`; builder
+  shortcut: `RetrievalBuilder::tree(...)`. Re-exported as `lunaris::Tree`.
+  Documented in `docs/book/src/guides/retrieval-dsl.md`.
+
+- **Community summaries embedded at ingest** (`lunaris-ingest`) — the RAPTOR
+  community tree's `summary` nodes (built bottom-up during ingest) now carry a
+  populated `summary_embedding` (768-d), written into the `communities` vector
+  index in the **same** ingest write batch (one extra `embed_batch`, no new
+  model, INGEST-04's single `atomic_write` preserved). Previously
+  `summary_embedding` was always `None` and the `communities` index was empty —
+  so `.tree()` and `Vector::new("communities", k)` returned nothing. This is the
+  precondition that makes tree retrieval functional.
+
+#### Notes
+
+- **Validation scope.** Tree retrieval is proven *wired and traversed* by a
+  discriminating integration test against live Moon: on a whole-document query,
+  flat top-`k` returns a single chunk while `.tree()` returns the full leaf set
+  (≥ 2). Semantic relevance-vs-flat with a production embedder is **not yet
+  benchmarked** — tracked as a follow-on, not claimed here.
+
+- **Deferred this batch** (detail in `tmp/moon-exploit/FOLLOW-ONS.md`):
+  Moon-native graph hybrid (`FT.NAVIGATE`) and SPLADE learned-sparse 3-way RRF
+  are both blocked on Moon **server** features (no sparse-write wire path;
+  `FT.NAVIGATE` degrades to plain KNN on current graph data) and are deferred
+  behind a filed Moon feature request. The bi-temporal KV hydrate gap has a
+  completed design spike (Lunaris-side versioned-key, ~4.5 days) pending
+  implementation.
+
+### Added (MCP working memory + embedded Moon)
 
 Merged the `feat/mcp-scratchpad-tools` milestone (PR #19): a working-memory
 scratchpad surface for the MCP server, an opt-in in-process Moon, and a
-guarded on-demand consolidate tool. (Version label provisional — finalize at
-the next tag.)
-
-### Added
+guarded on-demand consolidate tool.
 
 - **Four `memory.scratchpad_*` MCP tools** (`lunaris-mcp`) — key-addressed
   working memory under a `scratchpad/` namespace, separate from the durable
@@ -76,7 +117,7 @@ the next tag.)
   above the handler logic (the unit tests never construct the rmcp tool
   router, so a green unit suite did not prove the server can start).
 
-### Fixed
+### Fixed (MCP startup)
 
 - **`lunaris-mcp` could not start (any build).** `ScratchpadConsolidateResponse`
   was a `#[serde(tag = "status")]` enum, whose generated MCP `outputSchema`
@@ -85,53 +126,6 @@ the next tag.)
   root — so the server was un-launchable. Fixed by making the response a flat
   struct (root `type: "object"`); guarded by a `schema_for!` root-is-object
   regression test and the new `server_boot.rs` boot test. (`89b9181`)
-
-## Unreleased — RAPTOR tree retrieval wired into recall (2026-06-04)
-
-Completes the RAPTOR retrieval path. The hierarchical community tree that
-adaptive chunking builds at ingest is now both **populated as a searchable
-vector index** and **traversable from the retrieval DSL**, closing the
-"built-but-never-traversed" gap. (Version label provisional — finalize at the
-next tag; this is the Moon-exploit enhancement batch on top of v0.6.)
-
-### Added
-
-- **`.tree(index, k, depth)` retrieval operator** (`lunaris-retrieve`) — RAPTOR
-  hierarchical retrieval over the `communities` index. Vector-searches the `k`
-  nearest community summary nodes, then descends `Community.members` breadth-first
-  (depth `1..=MAX_TREE_DEPTH` where `MAX_TREE_DEPTH = 4`, default `1`) to collect
-  every leaf chunk beneath them — including chunks that fall outside a flat
-  search's top-k budget. One vector search per query; deeper levels only read
-  community KV rows, so latency scales with depth × fan-out, not index size.
-  Composes with `.and()` / `.or()` / `.then()` / `.fuse_rrf()` / `.top()` like
-  every other operator. Operator form: `Tree::new("communities", k)`; builder
-  shortcut: `RetrievalBuilder::tree(...)`. Re-exported as `lunaris::Tree`.
-  Documented in `docs/book/src/guides/retrieval-dsl.md`.
-
-- **Community summaries embedded at ingest** (`lunaris-ingest`) — the RAPTOR
-  community tree's `summary` nodes (built bottom-up during ingest) now carry a
-  populated `summary_embedding` (768-d), written into the `communities` vector
-  index in the **same** ingest write batch (one extra `embed_batch`, no new
-  model, INGEST-04's single `atomic_write` preserved). Previously
-  `summary_embedding` was always `None` and the `communities` index was empty —
-  so `.tree()` and `Vector::new("communities", k)` returned nothing. This is the
-  precondition that makes tree retrieval functional.
-
-### Notes
-
-- **Validation scope.** Tree retrieval is proven *wired and traversed* by a
-  discriminating integration test against live Moon: on a whole-document query,
-  flat top-`k` returns a single chunk while `.tree()` returns the full leaf set
-  (≥ 2). Semantic relevance-vs-flat with a production embedder is **not yet
-  benchmarked** — tracked as a follow-on, not claimed here.
-
-- **Deferred this batch** (detail in `tmp/moon-exploit/FOLLOW-ONS.md`):
-  Moon-native graph hybrid (`FT.NAVIGATE`) and SPLADE learned-sparse 3-way RRF
-  are both blocked on Moon **server** features (no sparse-write wire path;
-  `FT.NAVIGATE` degrades to plain KNN on current graph data) and are deferred
-  behind a filed Moon feature request. The bi-temporal KV hydrate gap has a
-  completed design spike (Lunaris-side versioned-key, ~4.5 days) pending
-  implementation.
 
 ## v0.5 Wave D — npx + uvx distribution: DIST-01 npm package + DIST-02 PyPI package (2026-05-26)
 
