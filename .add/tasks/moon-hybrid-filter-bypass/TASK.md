@@ -687,9 +687,46 @@ GAPS FOUND DURING TESTS (frozen-contract tensions — surfaced, not silently cod
 
 ## 5 · BUILD — AI writes code ▸ docs/07-step-5-build.md
 
-Safety rule (feature-specific): <e.g. debit+credit in one atomic transaction>
-Code lives in: `./src/`
-Constraints: do NOT change any test or the contract; allow-list packages only; ask if unclear.
+Safety rule (feature-specific): the filter allowlist is applied AFTER the three
+streams are collected and BEFORE rrf_fuse_three — never inside HNSW traversal or
+BM25 scoring; per-shard (not coordinator) on the multishard path, so k-starvation
+is not reintroduced. Conservative-drop: a dense/sparse hit whose key_hash has no
+text doc_id is dropped (cannot confirm it matches an indexed-field filter).
+
+### Step 1 — Moon-side (CHANGE A–G) — DONE + VERIFIED GREEN (2026-06-12)
+Implemented via senior-rust-engineer against BUILD-CONTEXT.md (CHANGE A `HybridFilter`
+enum in new `hybrid_filter.rs`; B+C pre-RRF allowlist + 5× k fan-out; D+E
+recursive panic-free FILTER wire parser + dispatcher plumbing; F multishard
+`FtHybridPayload.filter` + per-shard pre-fusion filtering; G SDK param).
+
+VERIFICATION BASE: the original ../moon HEAD (feat/shardslice-migration) is
+mid-migration and UNBUILDABLE for tests (33 pre-existing lib errors), so the fix
+was cherry-picked onto a clean branch off **tag v0.3.0** (c72c5861 — the base
+vendor/moon pins; deep-dive proved hybrid path byte-identical; builds + in-process
+harness works). Cherry-pick surfaced 6 v0.3.0-specific wiring points the
+migration-authored CHANGE D/F missed (FtHybridPayload field; 2 scatter_hybrid +
+1 spsc raw-streams call args; per-shard payload literal; 2 runtime handlers vs
+the migration's collapsed one) — fixed in commit c3aa41f.
+
+EVIDENCE (cargo test, off v0.3.0):
+  RED  (tests only, no impl): hybrid_filter_multishard leaked foreign-* hits;
+       hybrid_filter_backward_compat passed.
+  GREEN (impl applied): hybrid_filter_tag + hybrid_filter_multishard +
+       hybrid_filter_backward_compat → 3 passed.
+  REGRESSION: lib hybrid unit tests (incl. CHANGE E truncation/garbage parser
+       tests) + lunaris_hybrid_ft_search → 96 passed, 0 failed.
+
+Branch: `feat/hybrid-filter-pushdown` in a worktree at
+/Volumes/Games/tindang-repo/moon-verify (off v0.3.0). 7 commits cherry-picked
+from ../moon's feat/shardslice-migration (4e9c03c..e969cf0) + wiring fix c3aa41f.
+NEXT (outward, needs go-ahead): push to pilotspace/moon → PR → merge → bump
+vendor/moon submodule to the merged SHA.
+
+### Step 3 — Lunaris-side (CHANGE H/I/J/K) — PENDING submodule bump
+Blocked on step 2 (the new moondb SDK with the `filter` param must be vendored
+before fusion.rs can call it). Then: remove compose_query_with_filter from
+fuse_via_moon_native, add filter_to_moon_hybrid_filter, flip the 6 RED
+Lunaris-side tests to GREEN.
 
 <!-- EXIT: all green; coverage held; no test/contract touched; no unlisted dependency. -->
 
