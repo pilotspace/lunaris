@@ -1,7 +1,7 @@
 # TASK: Moon hybrid path: pushed-down filter constrains BM25 branch only — dense KNN leaks through RRF
 
 slug: moon-hybrid-filter-bypass · created: 2026-06-12 · stage: production
-phase: tests   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: build   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -625,17 +625,61 @@ Least-sure flag surfaced at freeze:
 
 ## 4 · TESTS — failing-first suite (red) ▸ docs/06-step-4-tests.md
 
-Coverage target: <e.g. 90%>
-Plan (one test per scenario, asserting behavior not internals):
+Coverage target: behavioral — every §2 Must has a discriminating live-Moon test
+that is RED today for the documented reason (foreign source leaks through the
+unfiltered dense-KNN branch) and GREEN after the cross-repo fix. Both §2 Reject
+scenarios + the k-starvation guard are pinned. (No line-coverage % target: this
+is a black-box behavioral suite over a storage boundary.)
+
+Tests live in: `/crates/lunaris-retrieve/tests/hybrid_filter.rs` `hybrid_filter_k_starvation.rs` `hybrid_filter_and_or.rs` · shared harness `hybrid_filter_common` `mod.rs` · Moon-side staged in `./tests/moon-side`
+<!-- Lunaris-side suite is runnable NOW (skips if MOON_URL unreachable). Moon-side
+     trio is staged for the pilotspace/moon PR (sequencing step 1) — see
+     ./tests/moon-side/README.md. -->
+
+Plan — one test per scenario (assert observable behavior, never internals):
 <test_plan>
-  - test_<scenario>: arrange <Given> / act <When> / assert <Then> + assert <unchanged>
+  Lunaris-side (crates/lunaris-retrieve/tests/, black-box through the DSL .filter()):
+  - hybrid_filter::filtered_hybrid_recall_excludes_foreign_source  → Must 1 (Eq).
+    PRODUCTION-WIRED: both sources via ingest_episode_with_receipt. RED.
+  - hybrid_filter::startswith_filter_constrains_both_branches       → Must 2b (StartsWith). RED.
+  - hybrid_filter::correctness_holds_without_any_per_caller_postfilter → Reject 1
+    (DSL boundary has no post-filter; correctness must be server-side). RED.
+  - hybrid_filter::no_filter_baseline_returns_both_sources          → Reject 2
+    (CHANGE A backward-compat). GREEN now+after (invariant guard).
+  - hybrid_filter_and_or::and_filter_source_and_valid_time_constrains_both → Must 2c
+    (And, source∩valid_time — see GAP 1). RED.
+  - hybrid_filter_and_or::or_filter_accepts_either_rejects_third    → Must 2d (Or). RED.
+  - hybrid_filter_and_or::valid_time_range_bounds_both_branches     → Must 2e (ValidTimeRange). RED.
+  - hybrid_filter_k_starvation::filtered_top_k_is_not_starved       → Must 3
+    (CHANGE C guard). GREEN now+after; RED only under a naive starving fix.
+
+  Moon-side (staged → pilotspace/moon tests/, against the new FILTER wire clause):
+  - hybrid_filter_tag::hybrid_filter_tag_excludes_foreign_from_both_branches (CHANGE A/B/E)
+  - hybrid_filter_multishard::hybrid_filter_multishard_no_foreign_and_no_starvation (CHANGE F2 — F2 discriminator)
+  - hybrid_filter_backward_compat::hybrid_no_filter_is_backward_compatible (CHANGE A invariant)
 </test_plan>
 
-Tests live in: `./tests/` · MUST run red (missing implementation) before Build.
-<!-- declare paths as backticked tokens on this line: `./...` = this task dir ·
-     a token with "/" = project root · a bare name = sibling of the previous
-     token's dir · a directory counts its *.py files (non-recursive); reports
-     mark declared counts with + · anything resolving outside the project root counts 0 -->
+LIVE-RED EVIDENCE (2026-06-12, native arm64 ../moon/target/debug/moon on :6390):
+  6 RED for the right reason (leak counts observed: Eq 1, StartsWith 2, Reject-1 3,
+  And 6, Or 2, ValidTimeRange 4) + 2 GREEN invariant guards (no_filter_baseline,
+  k_starvation). Compile-clean (harness sound, not a broken-harness red). The
+  default MOON_URL :6380 on this host is plain Redis 7.4.8 (no FT) → connect
+  hard-fails there by design; point MOON_URL at a real Moon.
+
+GAPS FOUND DURING TESTS (frozen-contract tensions — surfaced, not silently coded):
+  - GAP 1 — And-leaf field. §2 And used `chunk_type`, which is NOT an indexed FT
+    field (chunks schema = `content` TEXT + `valid_time` NUMERIC + `source` TAG +
+    `vec`), conflicting with §1 Must "on indexed fields". DECISION (Tin Dang,
+    2026-06-12): treat chunk_type as illustrative; the And test intersects the two
+    REAL indexed fields source∩valid_time (Tag ∩ Numeric — the stronger
+    heterogeneous-leaf test). Scenario clarification, NOT a contract change.
+  - GAP 2 — valid_time not ingest-populated. `valid_time` is declared NUMERIC but
+    the production ingest path never emits `valid_time_ms` (pipeline.rs:328-334),
+    and CHANGE L does not add it. The And/ValidTimeRange tests therefore
+    DIRECT-WRITE chunks carrying valid_time_ms (exercises the Moon/SDK numeric
+    capability this task owns, not the ingest→valid_time wiring). Recorded as an
+    out-of-scope follow-up in §7 (a Moon-filter fix without ingest population would
+    leave DSL ValidTimeRange filters inert on ingested chunks).
 
 <!-- EXIT: one test per scenario; suite red for the RIGHT reason; target recorded. -->
 
@@ -677,8 +721,15 @@ Reviewed by: <name> · date: <date>
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
-Spec delta for the next loop: <what production taught you>
+Watch (reuse scenarios as monitors): per-filter foreign-source leak rate (must be
+0 post-fix); filtered-vs-unfiltered recall@k delta (k-starvation regression).
+Spec delta for the next loop:
+  - FOLLOW-UP (GAP 2, out-of-scope here): the production ingest path does not emit
+    `valid_time_ms` (pipeline.rs:328-334), so a DSL `.filter(ValidTimeRange)` on
+    ingested chunks stays inert even after this Moon-side fix. A separate task must
+    add valid_time to chunk metadata + the write path, then flip the And/ValidTime
+    tests from direct-write to ingest-wired. Sibling to the already-split
+    `ft-navigate-filter-gap`.
 
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
