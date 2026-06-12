@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "session-context-inject",
+  "active_task": "consolidate-prefix-drop",
   "active_milestone": "hook-session-scratchpad",
   "tasks": {
     "mq-typed-client": {
@@ -174,12 +174,13 @@
     },
     "consolidate-prefix-drop": {
       "title": "P-C latent: WorkingMemory::consolidate with a namespace prefix drops drained non-matching events",
-      "phase": "specify",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "hook-session-scratchpad",
       "depends_on": [],
       "created": "2026-06-11T16:41:32+00:00",
-      "updated": "2026-06-11T16:41:32+00:00"
+      "updated": "2026-06-12T02:33:19+00:00",
+      "flag_verified": true
     },
     "moon-hybrid-filter-bypass": {
       "title": "Moon hybrid path: pushed-down filter constrains BM25 branch only \u2014 dense KNN leaks through RRF",
@@ -218,7 +219,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-12T00:40:07+00:00",
+  "updated": "2026-06-12T02:33:19+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
