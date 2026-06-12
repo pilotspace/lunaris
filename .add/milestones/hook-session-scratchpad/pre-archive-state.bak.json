@@ -1,0 +1,57 @@
+{
+  "milestone": {
+    "title": "Hook Session Scratchpad",
+    "goal": "",
+    "stage": "mvp",
+    "status": "done",
+    "created": "2026-06-11T16:00:50+00:00",
+    "updated": "2026-06-12T02:36:39+00:00"
+  },
+  "tasks": {
+    "session-switch-detect": {
+      "title": "SessionEnd envelope + durable last-active-session marker + switch detection in lunaris-hook",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [],
+      "created": "2026-06-11T16:01:45+00:00",
+      "updated": "2026-06-11T16:37:12+00:00",
+      "flag_verified": true
+    },
+    "scratchpad-handover": {
+      "title": "Guarded consolidate of previous session's pad + per-session namespace rotation",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [
+        "session-switch-detect"
+      ],
+      "created": "2026-06-11T16:01:45+00:00",
+      "updated": "2026-06-11T18:13:33+00:00",
+      "flag_verified": true
+    },
+    "session-context-inject": {
+      "title": "SessionStart additionalContext: distilled handover summary",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [
+        "scratchpad-handover"
+      ],
+      "created": "2026-06-11T16:01:45+00:00",
+      "updated": "2026-06-12T00:40:07+00:00",
+      "flag_verified": true
+    },
+    "consolidate-prefix-drop": {
+      "title": "P-C latent: WorkingMemory::consolidate with a namespace prefix drops drained non-matching events",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "hook-session-scratchpad",
+      "depends_on": [],
+      "created": "2026-06-11T16:41:32+00:00",
+      "updated": "2026-06-12T02:33:19+00:00",
+      "flag_verified": true
+    }
+  },
+  "archived_at": "2026-06-12T03:05:59+00:00"
+}
