@@ -17,8 +17,8 @@ use hybrid_filter_common::{
     ChunkSpec, connect, direct_write_chunks, embedder, id_bytes, ingest_source, recall_hybrid,
     unique_scope,
 };
-use lunaris_core::storage::types::Filter;
 use lunaris_core::HlcClock;
+use lunaris_core::storage::types::Filter;
 
 /// Must 1 — a `.filter(Eq source)`'d hybrid recall NEVER returns a foreign
 /// source, regardless of RRF rank. PRODUCTION-WIRED: both sources arrive via
