@@ -128,6 +128,9 @@ async fn async_main() -> i32 {
 
     // Capture scope string before moving into the async block.
     let scope_str = scope.as_str().to_owned();
+    // Clone for the post-ingest SessionStart context injection — it runs
+    // OUTSIDE the HOOK-06 ingest budget (session-context-inject task).
+    let scope_for_ctx = scope.clone();
 
     // Wrap the ingest call in tokio::time::timeout (emergency-drop, HOOK-06).
     //
@@ -148,19 +151,24 @@ async fn async_main() -> i32 {
             tokio::time::sleep(tokio::time::Duration::from_millis(stall_ms)).await;
         }
 
-        lunaris_hook::run_with_storage(&stdin_bytes, scope, storage).await
+        lunaris_hook::run_with_storage_outcome(&stdin_bytes, scope, storage).await
     })
     .await;
 
     match result {
-        Ok(Ok(Some(lsn))) => {
-            tracing::debug!(lsn = %lsn, "episode written");
-            0
-        }
-        Ok(Ok(None)) => {
-            // Unknown event kind — intentional no-op (B2 fix: exit 0, not 66).
-            // Exit 66 is reserved for filter-rejected events.
-            tracing::info!("unknown event kind — no-op, exiting 0");
+        Ok(Ok(outcome)) => {
+            match &outcome.lsn {
+                Some(lsn) => tracing::debug!(lsn = %lsn, "episode written"),
+                // Unknown event kind — intentional no-op (B2 fix: exit 0, not
+                // 66). Exit 66 is reserved for filter-rejected events.
+                None => tracing::info!("unknown event kind — no-op, exiting 0"),
+            }
+            // SessionStart switch: inject the previous pad's distilled summary
+            // (session-context-inject task). Best-effort with its OWN budget —
+            // never changes the exit code, stdout stays empty on any failure.
+            if let Some(sw) = outcome.switch {
+                inject_session_context(&storage_url, &scope_for_ctx, &sw.previous_session_id).await;
+            }
             0
         }
         Ok(Err(e)) => {
@@ -192,6 +200,47 @@ async fn async_main() -> i32 {
             });
             eprintln!("{}", serde_json::to_string(&warn_json).unwrap_or_default());
             0
+        }
+    }
+}
+
+/// SessionStart context injection (session-context-inject task).
+///
+/// Builds the previous pad's distilled summary inside its own
+/// `LUNARIS_HOOK_CONTEXT_BUDGET_MS` budget (default 250 ms, clamp 10–10000)
+/// and prints EXACTLY ONE Claude Code hook-JSON object to stdout on success.
+/// Every failure path (budget, enumeration error, empty pad) leaves stdout
+/// EMPTY and warns once on stderr — the exit code is never affected.
+async fn inject_session_context(storage_url: &str, scope: &lunaris_core::Scope, prev: &str) {
+    let budget_ms = lunaris_hook::handover::context_budget_ms(
+        std::env::var("LUNARIS_HOOK_CONTEXT_BUDGET_MS").ok().as_deref(),
+    );
+    let budget = tokio::time::Duration::from_millis(budget_ms);
+    match tokio::time::timeout(
+        budget,
+        lunaris_hook::handover::build_handover_context(storage_url, scope, prev),
+    )
+    .await
+    {
+        Ok(Some(ctx)) => {
+            let out = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": ctx,
+                }
+            });
+            println!("{}", serde_json::to_string(&out).unwrap_or_default());
+        }
+        // build_handover_context already warned with the reason.
+        Ok(None) => {}
+        Err(_elapsed) => {
+            let warn_json = serde_json::json!({
+                "level": "warn",
+                "event": "context_inject_skipped",
+                "reason": format!("budget_{budget_ms}ms"),
+                "scope": scope.as_str(),
+            });
+            eprintln!("{}", serde_json::to_string(&warn_json).unwrap_or_default());
         }
     }
 }
