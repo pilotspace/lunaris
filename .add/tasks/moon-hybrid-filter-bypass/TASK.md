@@ -1,7 +1,7 @@
 # TASK: Moon hybrid path: pushed-down filter constrains BM25 branch only — dense KNN leaks through RRF
 
 slug: moon-hybrid-filter-bypass · created: 2026-06-12 · stage: production
-phase: specify   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: tests   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -264,9 +264,19 @@ Moon-side changes (vendor/moon — land in pilotspace/moon first, then bump SHA)
 
 FILE: vendor/moon/src/command/vector_search/hybrid.rs
 
-  CHANGE A — HybridQuery gains an optional filter field:
-    pub filter: Option<crate::command::vector_search::ft_text_search::FieldFilter>
-    (FieldFilter already exists at ft_text_search.rs:916-923; no new type needed)
+  CHANGE A — HybridQuery gains an optional filter field carrying the FULL tree
+    (v1 scope upgraded at freeze — Tin Dang 2026-06-12, "Require full filter
+    tree in v1"):
+    pub filter: Option<HybridFilter>
+    where HybridFilter is a new recursive enum in hybrid.rs:
+      pub enum HybridFilter {
+          Tag { field: String, value: String },          // exact + prefix ({v*})
+          Numeric { field: String, min: f64, max: f64 },
+          And(Vec<HybridFilter>),
+          Or(Vec<HybridFilter>),
+      }
+    (leaf evaluation reuses the existing FieldFilter machinery,
+    ft_text_search.rs:916-923 — no leaf logic is duplicated)
 
   CHANGE B — execute_hybrid_search_local (hybrid.rs:289) applies the filter
     as a pre-RRF post-filter on BOTH streams AFTER collection and BEFORE
@@ -285,6 +295,11 @@ FILE: vendor/moon/src/command/vector_search/hybrid.rs
       - Sparse branch (when present): same doc_id intersection against allowlist.
     NOTE: the filter allowlist is computed ONCE from the text index before either
     stream loop; it is a roaring::RoaringBitmap or Vec<u32> of matching doc_ids.
+    Tree evaluation (full-tree v1): leaves (Tag / Numeric) produce bitmaps via
+    TextIndex::search_tag / search_numeric_range; And = bitmap intersection;
+    Or = bitmap union; evaluated bottom-up recursively. Depth/width are bounded
+    by the wire parser (CHANGE E): max depth 4, max 16 leaves — exceeding either
+    returns Frame::Error("ERR FILTER too complex").
 
   CHANGE C — k_per_stream fan-out when filter is present:
     In effective_k_per_stream() (hybrid.rs:78), when query.filter.is_some(),
@@ -299,12 +314,20 @@ FILE: vendor/moon/src/command/vector_search/hybrid.rs
 FILE: vendor/moon/src/command/vector_search/ft_search/ (parse.rs or mod.rs)
 
   CHANGE E — New FT.SEARCH wire modifier FILTER parsed during HYBRID dispatch
-    (ft.rs:68-142). Syntax appended after FUSION RRF [...]:
-      FILTER TAG @<field> <value>        (maps to FieldFilter::Tag)
-      FILTER NUMERIC @<field> [min max]  (maps to FieldFilter::NumericRange)
-    The parser scans for the FILTER keyword after the HYBRID block tokens;
-    if found, constructs a FieldFilter and sets HybridQuery.filter.
-    Unknown FILTER subtypes return Frame::Error("ERR unsupported FILTER type").
+    (ft.rs:68-142). Recursive prefix encoding (arity-counted, unambiguous,
+    zero lookahead) appended after FUSION RRF [...]:
+      FILTER <expr>
+      <expr> := TAG @<field> <value>
+              | NUMERIC @<field> <min> <max>
+              | AND <n> <expr>{n}
+              | OR  <n> <expr>{n}
+    Examples:
+      FILTER TAG @source scratchpad
+      FILTER AND 2 TAG @source a TAG @chunk_type fact
+      FILTER OR 2 TAG @source a AND 2 TAG @source b NUMERIC @valid_from 0 99
+    Limits enforced at parse: depth <= 4, total leaves <= 16 ->
+    Frame::Error("ERR FILTER too complex"). Unknown <expr> heads return
+    Frame::Error("ERR unsupported FILTER type").
     When FILTER is absent, HybridQuery.filter = None (backward compatible).
 
 FILE: vendor/moon/src/shard/scatter_hybrid.rs
@@ -325,16 +348,19 @@ FILE: vendor/moon/sdk/rust/src/text.rs
         sparse_field: Option<&str>,
         k: usize,
         weights: [f64; 3],
-        filter: Option<HybridTagFilter>,   // new — None is fully backward compat
+        filter: Option<HybridFilter>,   // new — None is fully backward compat
     )
-    where HybridTagFilter is a new minimal SDK enum:
-      pub enum HybridTagFilter {
+    where HybridFilter is the SDK mirror of the server enum (full tree):
+      pub enum HybridFilter {
           Tag { field: String, value: String },
           Numeric { field: String, min: f64, max: f64 },
+          And(Vec<HybridFilter>),
+          Or(Vec<HybridFilter>),
       }
-    Wire encoding: when filter is Some(HybridTagFilter::Tag { field, value }),
-    appends `FILTER TAG @{field} {value}` to the FT.SEARCH command after
-    the FUSION RRF clause. When None, wire is unchanged (backward compat).
+    Wire encoding: recursive prefix form per CHANGE E (`FILTER TAG @{f} {v}`,
+    `FILTER AND {n} ...`), appended after the FUSION RRF clause. When None,
+    wire is unchanged (backward compat). The encoder enforces the same
+    depth/leaf limits client-side and returns an SDK error before sending.
 
 ────────────────────────────────────────────────────────────────────────────────
 Lunaris-side changes (after Moon submodule bump + moondb crate version update):
@@ -356,22 +382,26 @@ FILE: crates/lunaris-retrieve/src/fusion.rs
           filter_to_moon_hybrid_filter(ctx.query.filter.as_ref()),  // new
       )
 
-  CHANGE I — new private function filter_to_moon_hybrid_filter:
-    fn filter_to_moon_hybrid_filter(f: Option<&Filter>) -> Option<moondb::HybridTagFilter>
-    Translates Lunaris Filter variants to moondb::HybridTagFilter:
-      Filter::Eq { field, value }          -> HybridTagFilter::Tag { field, value }
-      Filter::StartsWith { field, prefix } -> HybridTagFilter::Tag { field,
+  CHANGE I — new private function filter_to_moon_hybrid_filter (FULL tree, v1):
+    fn filter_to_moon_hybrid_filter(f: Option<&Filter>) -> Option<moondb::HybridFilter>
+    Translates the COMPLETE Lunaris Filter tree to moondb::HybridFilter:
+      Filter::Eq { field, value }          -> HybridFilter::Tag { field, value }
+      Filter::StartsWith { field, prefix } -> HybridFilter::Tag { field,
                                                value: prefix (Moon TAG prefix match
                                                via {prefix*} wire encoding) }
-      Filter::And / Or                     -> the first Tag-typed leaf is used (v1);
-                                             compound filter support deferred to v2
-                                             (see "Least-sure flag" below)
-      Filter::ValidTimeRange               -> None for now (text_index numeric field
-                                             for valid_from/valid_to is not yet declared
-                                             at FT.CREATE; add as a follow-on task)
-    Returns None when the filter variant has no Moon HybridTagFilter equivalent;
-    the Lunaris caller-side post-filter remains active as defense-in-depth for
-    those cases (per §1 After).
+      Filter::And(children)                -> HybridFilter::And(translate each)
+      Filter::Or(children)                 -> HybridFilter::Or(translate each)
+      Filter::ValidTimeRange { from, to }  -> HybridFilter::And([
+                                               Numeric{valid_from, ..}, Numeric{valid_to, ..}])
+                                               (requires CHANGE L numeric fields)
+    Whole-tree-or-nothing rule: if ANY node is untranslatable (future variant),
+    the WHOLE tree translates to None and the caller-side post-filter +
+    CHANGE C fan-out carry correctness for that query — partial translation is
+    FORBIDDEN (an Or with a dropped disjunct returns a SUBSET = silent loss;
+    an And with a dropped conjunct returns a superset that post-filter must
+    then correctness-trim, which the freeze decision rejects). For every
+    variant named in §1 Must, translation is total — post-filter is pure
+    defense-in-depth there (per §1 After).
 
   CHANGE J — compose_query_with_filter is no longer called from fuse_via_moon_native.
     Verify no other callers in the crate; if no callers remain, mark deprecated
@@ -382,8 +412,21 @@ FILE: crates/lunaris-storage-moon/src/vector.rs
   CHANGE K — re-validate filter_to_moon TAG rendering (@source:{value}):
     Now that TAG filtering is real server-side (via FT.SEARCH TAG-only path),
     verify the ft_tag_escape formatting used by filter_to_moon matches what Moon's
-    TAG parser expects. The HYBRID path uses HybridTagFilter directly (not the
+    TAG parser expects. The HYBRID path uses HybridFilter directly (not the
     text-query encoding), so this is a consistency check, not a logic change.
+
+FILE: crates/lunaris-storage-moon/src/client.rs
+
+  CHANGE L — FT.CREATE schema gains NUMERIC fields valid_from + valid_to
+    (client.rs:376-380, alongside the existing SchemaField::Tag("source")) so
+    Filter::ValidTimeRange is server-translatable (CHANGE I). MIGRATION CAVEAT:
+    existing indexes were created without these fields — new deployments get
+    them at scope-init; existing scopes need an index rebuild (document the
+    operator recipe; if Moon lacks FT.ALTER, the recipe is drop+recreate+
+    re-HSET, which Moon's synchronous inline indexing makes safe). The
+    conformance test must cover BOTH a fresh index (numeric fields present)
+    and the legacy-index fallback (ValidTimeRange -> whole-tree None ->
+    post-filter correctness path).
 
 ────────────────────────────────────────────────────────────────────────────────
 Invariants:
@@ -436,8 +479,10 @@ Conformance / regression tests:
   - /crates/lunaris-retrieve/tests/hybrid_filter_k_starvation.rs (new) —
     all-matching-source corpus of 20 chunks, k=10; result count == 10.
   - /crates/lunaris-retrieve/tests/hybrid_filter_and_or.rs (new) — And / Or
-    compound filter scenarios (defense-in-depth via post-filter; confirms no
-    regression in the And/Or cases where v1 translates only the first leaf).
+    compound filter scenarios resolved SERVER-SIDE (full-tree v1): asserts the
+    §2 And/Or scenarios hold with the Lunaris post-filter DISABLED in the test
+    (proving the server translation is correctness-complete, not post-filter-
+    masked), plus the whole-tree-or-nothing fallback case.
   - vendor/moon/tests/hybrid_filter_tag.rs (new, Moon-side) — unit test of
     execute_hybrid_search_local with filter=Some(FieldFilter::Tag{...}); asserts
     foreign-source vectors are absent from fused output from BOTH BM25 and KNN.
@@ -459,24 +504,26 @@ Cross-repo sequencing:
   4. Never pin a vendor/moon SHA not yet pushed to pilotspace/moon.
 ```
 
-Status: DRAFT
+Status: FROZEN @ v1 — approved by Tin Dang 2026-06-12 at the bundle decision
+point, choosing "Require full filter tree in v1" over the drafted
+first-leaf-only shortcut: the recursive HybridFilter tree (Tag / Numeric /
+And / Or), the compound FILTER wire encoding (CHANGE E), the total CHANGE I
+translation with the whole-tree-or-nothing rule, and CHANGE L numeric fields
+are all v1 scope. No correctness-critical post-filter remains for any §1 Must
+variant.
 
-Least-sure flag for freeze:
-  [contract] CHANGE I — compound filter (And / Or) v1 degrades to first-leaf-only
-    for the Moon HybridTagFilter translation: the risk is that a Filter::And(
-    [Eq{source,"A"}, Eq{chunk_type,"fact"}]) only enforces the source predicate
-    via the server-side FILTER TAG, and the chunk_type predicate is handled by the
-    remaining Lunaris post-filter (defense-in-depth). This is a correctness gap:
-    chunks matching source "A" but NOT chunk_type "fact" can survive from the
-    dense-KNN branch if the post-filter is ever disabled.
-    Cost if not addressed before freeze: the And/Or scenarios (Must 2c/2d) require
-    the post-filter to remain correctness-critical for compound filters, which
-    contradicts the §1 Reject ("per-caller post-filtering is NOT the fix").
-    Mitigation path: extend HybridTagFilter to an enum tree (Tag / Numeric / And /
-    Or) matching the Lunaris Filter tree and extend the Moon FILTER wire syntax to
-    support compound predicates — this is v2 scope; v1 ships the Eq + StartsWith
-    coverage, which resolves the production-observed scratchpad-isolation bug.
-    The freeze must acknowledge this scope boundary explicitly.
+Least-sure flag surfaced at freeze:
+  ⚠ [contract] CHANGE L index migration — existing scopes' FT indexes lack the
+    valid_from/valid_to NUMERIC fields, and Moon may not implement FT.ALTER;
+    the drop+recreate+re-HSET recipe is untested at scale and, mid-rebuild,
+    queries see a partial index. Cost if wrong: ValidTimeRange filters on
+    legacy scopes silently ride the fallback (whole-tree None + post-filter)
+    until reindexed — correct but slower; the conformance test pins both paths.
+  ⚠ [contract] the recursive FILTER wire parser (CHANGE E) is the largest new
+    Moon-server surface in the task; prefix/arity encoding is unambiguous but
+    hand-rolled parsers in handler_monoio have no fuzz coverage today. Cost if
+    wrong: malformed FILTER could panic the handler — the Moon PR must include
+    parser unit tests incl. truncation/overflow cases before the SHA bump.
 
 <!-- The freeze IS the one approval — lead it with the bundle's lowest-confidence flag: the 1-2
      points most likely wrong across the whole bundle, tagged [spec|scenario|contract|test], each

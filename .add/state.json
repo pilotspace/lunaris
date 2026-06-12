@@ -140,21 +140,21 @@
     },
     "moon-hybrid-filter-bypass": {
       "title": "Moon hybrid path: pushed-down filter constrains BM25 branch only \u2014 dense KNN leaks through RRF",
-      "phase": "specify",
+      "phase": "tests",
       "gate": "none",
       "milestone": null,
       "depends_on": [],
       "created": "2026-06-11T18:13:45+00:00",
-      "updated": "2026-06-12T02:34:48+00:00"
+      "updated": "2026-06-12T03:20:01+00:00"
     },
     "pyo3-rustsec-advisories": {
       "title": "pyo3 0.26.0 RUSTSEC-2026-0176/0177: bump to patched minor across PyO3 SDK stack",
-      "phase": "specify",
+      "phase": "contract",
       "gate": "none",
       "milestone": null,
       "depends_on": [],
       "created": "2026-06-12T02:34:15+00:00",
-      "updated": "2026-06-12T02:34:48+00:00"
+      "updated": "2026-06-12T03:20:01+00:00"
     }
   },
   "milestones": {
@@ -176,7 +176,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-12T03:05:59+00:00",
+  "updated": "2026-06-12T03:20:01+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

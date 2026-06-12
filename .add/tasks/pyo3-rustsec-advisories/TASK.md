@@ -1,7 +1,7 @@
 # TASK: pyo3 0.26.0 RUSTSEC-2026-0176/0177: bump to patched minor across PyO3 SDK stack
 
 slug: pyo3-rustsec-advisories · created: 2026-06-12 · stage: production
-phase: specify   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: contract   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -284,7 +284,20 @@ Least-sure flag for freeze:
   back to SPECIFY.
 ```
 
-Status: DRAFT
+Status: FROZEN @ v1 — approved by Tin Dang 2026-06-12 at the bundle decision
+point: OPTION A (wait for the 0.29 lockstep). The task is BLOCKED-ON-UPSTREAM
+until pyo3-async-runtimes >= 0.29 AND pythonize >= 0.29 exist on crates.io;
+CI cargo_deny stays expected-red meanwhile (documented in the triage memory —
+all other check sub-steps still gate). Recheck cadence: weekly-ish crates.io
+probe; the moment lockstep exists, proceed to §4 tests (red = the deny
+failure pinned to the two IDs) without a new approval. Option B (deny.toml
+stopgap) was explicitly NOT chosen — any future ignore entry still requires
+its own signed RISK-ACCEPTED.
+
+Least-sure flag surfaced at freeze:
+  ⚠ [contract] pyo3-async-runtimes 0.29.x availability (above) — if upstream
+    lags for weeks, the operator may want to revisit Option B; that is a
+    change request back to this freeze, not an auto-decision.
 <!-- The freeze IS the one approval — lead it with the bundle's lowest-confidence flag: the 1–2
      points most likely wrong across the whole bundle, tagged [spec|scenario|contract|test], each
      with why + cost (the §1 ⚠ assumptions feed it; a flag may point at a scenario or the contract
