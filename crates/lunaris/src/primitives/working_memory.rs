@@ -224,10 +224,87 @@ impl WorkingMemory {
 
     /// Phase 9.1 Plan 01 Task 3 — run one consolidation pass scoped to
     /// `self.scope_prefix`.
+    ///
+    /// ## Foreign-event preservation
+    ///
+    /// `drain_consolidate_events` subscribes to [`CONSOLIDATE_TOPIC`] and
+    /// consumes ALL pending events for the scope in one pass — it is not
+    /// prefix-aware.  Without an explicit re-queue step, calling
+    /// `consolidate_scoped(Some(prefix))` on the drained batch silently drops
+    /// the non-matching ("foreign") events: they are consumed from the
+    /// consumer-group queue and never seen by a subsequent pass (ADD task
+    /// `consolidate-prefix-drop`).
+    ///
+    /// Fix: after draining, partition events by
+    /// `source.starts_with(scope_prefix)`.  Matching events are forwarded to
+    /// `consolidate_scoped` (which therefore receives an already-filtered
+    /// batch and must NOT double-filter — hence `None` prefix in the call).
+    /// Foreign events are re-published verbatim to [`CONSOLIDATE_TOPIC`] so
+    /// that the next `consolidate_unfiltered` (or the background worker) can
+    /// pick them up.  A publish error on re-queue is loud-not-fatal: the call
+    /// still returns `Ok` with the matching report (matching consolidation
+    /// already happened and its result must not be discarded).
     pub async fn consolidate(&self) -> Result<ConsolidationReport, LunarisError> {
         let storage: Arc<dyn StoragePort> = self.lunaris.storage();
 
         let events = drain_consolidate_events(&storage, &self.scope).await?;
+
+        // Partition into events belonging to this namespace vs. all others.
+        // `scope_prefix` is captured by value (String → &str borrow is safe
+        // because self outlives this function).
+        let scope_prefix: &str = &self.scope_prefix;
+        let mut matching: Vec<ConsolidateEvent> = Vec::with_capacity(events.len());
+        let mut foreign: Vec<ConsolidateEvent> = Vec::new();
+        for ev in events {
+            if ev.source.starts_with(scope_prefix) {
+                matching.push(ev);
+            } else {
+                foreign.push(ev);
+            }
+        }
+
+        // Re-publish foreign events verbatim so they remain available for
+        // a subsequent `consolidate_unfiltered` pass or the background worker.
+        // Errors are surfaced via tracing but never propagate — the matching
+        // consolidation work must not be rolled back because of a re-queue
+        // failure.
+        let mut lost: usize = 0;
+        for ev in &foreign {
+            match serde_json::to_vec(ev) {
+                Ok(payload) => {
+                    if let Err(e) =
+                        storage.publish(&self.scope, CONSOLIDATE_TOPIC, 0, payload.into()).await
+                    {
+                        tracing::warn!(
+                            source = %ev.source,
+                            error = %e,
+                            "consolidate: failed to re-queue foreign event; \
+                             it will be lost for this scope's pass"
+                        );
+                        lost += 1;
+                    }
+                }
+                Err(e) => {
+                    // Serialisation of ConsolidateEvent is infallible in
+                    // practice (all fields are JSON-safe primitives); log and
+                    // count as lost rather than panic.
+                    tracing::warn!(
+                        source = %ev.source,
+                        error = %e,
+                        "consolidate: serde failure serialising foreign event for re-queue"
+                    );
+                    lost += 1;
+                }
+            }
+        }
+        if lost > 0 {
+            tracing::warn!(
+                lost,
+                scope_prefix,
+                "consolidate: {} foreign event(s) could not be re-queued and will be lost",
+                lost
+            );
+        }
 
         let pipeline = self.lunaris.consolidator_pipeline();
         let consolidator = match pipeline.snapshot_consolidator() {
@@ -237,9 +314,10 @@ impl WorkingMemory {
             }
         };
 
-        let report = consolidator
-            .consolidate_scoped(storage.clone(), &events, Some(&self.scope_prefix))
-            .await?;
+        // The matching batch is already filtered — pass None so consolidate_scoped
+        // does NOT double-filter (every event in `matching` already satisfies
+        // `starts_with(scope_prefix)`).
+        let report = consolidator.consolidate_scoped(storage.clone(), &matching, None).await?;
 
         // T1b fix (260609-dvi): emit BOTH promotion AND archive audit events.
         // Replaces the promotion-only loop with publish_per_event_audits, which
