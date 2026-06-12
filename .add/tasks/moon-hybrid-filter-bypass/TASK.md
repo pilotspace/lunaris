@@ -35,6 +35,26 @@ SPLIT EVIDENCE (recorded verbatim from scratchpad-handover build, 2026-06-11/12)
     - `WorkingMemory::find` post-enforces its source filter
       (`source_filter_matches`, shipped with scratchpad-handover).
 
+DEEPER EVIDENCE (session-context-inject build, 2026-06-12 — live-Moon probe):
+  Server-side `source` filtering does not exist on Moon AT ALL, in ANY FT path:
+  `FT.SEARCH lunaris_<scope>_chunks_idx "@source:scratchpad*"` returns
+  `ERR unknown field 'source'` against moon HEAD (debug build). Moon's FT text
+  parser resolves `@field:` ONLY against `text_index.text_fields`
+  (vendor/moon/src/server/conn/handler_monoio/ft.rs:238-253); the
+  `SchemaField::Tag("source")` that PERF-MOON-01 declares at FT.CREATE
+  (crates/lunaris-storage-moon/src/client.rs:376-380) is silently accepted and
+  silently unsearchable. The parenthesized composite that keyword.rs/fusion.rs
+  build — `"(@source:...) query"` — returns 0 hits without erroring. So:
+  - the BM25 branch filter is a NO-OP (not merely "the KNN branch leaks");
+  - vector.rs's `filter_to_moon` TAG rendering (`@source:{value}`) is equally
+    dead on the vector path — the comment "resolves server-side (PERF-MOON-01)"
+    describes an intent Moon never implemented;
+  - the real fix is Moon-side: implement TAG-field resolution (or generic
+    non-TEXT field predicates) in the FT query parser, then re-validate every
+    filter_to_moon rendering against it.
+  This RAISES the framing stakes: "lunaris-retrieve-side post-filter" is not a
+  partial-quality option but currently the ONLY mechanism that works at all.
+
 Framings weighed (decide at contract): Moon-side fix — HYBRID applies the
 filter expression to the KNN candidate set (vendor/moon change; the real fix,
 benefits all SDK users) · lunaris-retrieve-side post-filter inside
