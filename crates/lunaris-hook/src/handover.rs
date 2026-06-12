@@ -186,9 +186,12 @@ mod tests {
             &[entry("plan", "\"ship task 3\""), entry("blocker", "\"none\"")],
         )
         .expect("non-empty pad must render");
-        assert!(s.contains("sess-a"), "summary must name the previous session: {s}");
-        assert!(s.contains("plan"), "summary must list the keys: {s}");
-        assert!(s.contains("blocker"), "summary must list the keys: {s}");
+        // Assertion messages deliberately do NOT interpolate the rendered
+        // summary: CodeQL (rust/cleartext-logging) treats the session-id-
+        // tainted string reaching a panic message as a log sink.
+        assert!(s.contains("sess-a"), "summary must name the previous session");
+        assert!(s.contains("plan"), "summary must list the keys");
+        assert!(s.contains("blocker"), "summary must list the keys");
     }
 
     #[test]
@@ -211,7 +214,7 @@ mod tests {
     fn render_scrubs_secrets() {
         let token = format!("ghp_{}", "A".repeat(36));
         let s = render_summary("sess-a", &[entry("cred", &token)]).expect("must render");
-        assert!(!s.contains(&token), "raw GitHub token must never reach the summary: {s}");
-        assert!(s.contains("<REDACTED:GH_TOKEN>"), "scrubbed replacement must appear instead: {s}");
+        assert!(!s.contains(&token), "raw GitHub token must never reach the summary");
+        assert!(s.contains("<REDACTED:GH_TOKEN>"), "scrubbed replacement must appear instead");
     }
 }
