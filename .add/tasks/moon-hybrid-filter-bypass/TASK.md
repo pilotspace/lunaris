@@ -99,33 +99,60 @@ Assumptions — lowest-confidence first:
 
 ASSUMPTION SETTLED (2026-06-12):
   The ⚠ assumption — "Moon's HYBRID command can express a filter on the KNN branch
-  at all" — is CONFIRMED FALSE. Evidence from vendor/moon source:
+  at all" — is CONFIRMED FALSE. Evidence below RE-VERIFIED 2026-06-12 (second
+  pass) against ../moon working HEAD (16bc859, feat/shardslice-migration):
+  `git diff c72c5861..HEAD` over the hybrid-path files is EMPTY — vendor/moon
+  v0.3.0 and moon HEAD are byte-identical here (the shardslice migration
+  touched shard routing elsewhere). Line numbers below are the verified
+  moon-HEAD values (the first draft's citations drifted; corrected).
 
   (a) SERVER-SIDE FILTER PATH — DOES NOT EXIST ON THE HYBRID ROUTE:
-      vendor/moon/src/command/vector_search/hybrid.rs:52-68 — `HybridQuery`
-      struct carries NO filter field. The BM25 branch is called at hybrid.rs:332-340
-      as `execute_query_on_index_as_of(text_index, &text_clause, ...)` where
-      `text_clause` is produced by `parse_text_query` (hybrid.rs:321-331), NOT
-      by `pre_parse_field_filter`. The dense-KNN branch (`run_dense_knn`,
-      hybrid.rs:406-500) takes only `(idx, field, blob, k, as_of_lsn, committed)` —
-      no filter parameter exists.
+      moon src/command/vector_search/hybrid.rs:52-69 — `HybridQuery` struct
+      carries NO filter field (fields: index_name, text_query, dense_field,
+      dense_blob, sparse, weights, k_per_stream, top_k, offset, count).
+      `execute_hybrid_search_local` (hybrid.rs:300) calls the BM25 branch at
+      hybrid.rs:343-351 as `execute_query_on_index_as_of(text_index,
+      &text_clause, None, None, k, as_of_lsn)` — the two `None`s are
+      global_df/global_n (distributed BM25 stats, ft_text_search.rs:1617-1624),
+      NOT a filter slot. The dense-KNN branch (`run_dense_knn`, hybrid.rs:417)
+      takes only `(idx, field, blob, k, as_of_lsn, committed)` — no filter
+      parameter exists. The sparse (SPLADE) stream (hybrid.rs:372-390) is
+      equally unfiltered.
 
-      The `FieldFilter::Tag` type DOES exist (ft_text_search.rs:916-923) and
-      `TextIndex::search_tag` works correctly (text/store.rs:988-1014), but it is
-      only reachable via `pre_parse_field_filter` -> `scatter_text_search_filter`
-      (ft.rs:174-208) — a TAG-only FT.SEARCH path that completely bypasses HYBRID.
+      The `FieldFilter` type DOES exist (ft_text_search.rs:948) and
+      `TextIndex::search_tag` works correctly (text/store.rs:1026; numeric:
+      search_numeric_range, store.rs:1205), but it is only reachable via
+      `pre_parse_field_filter` (ft_text_search.rs:1149) — a TAG-only
+      FT.SEARCH path that completely bypasses HYBRID.
+
+  (a2) MULTI-SHARD PATH — A SECOND UNFILTERED EXECUTOR (deep-dive finding,
+      missed by the first draft): the ft.rs dispatcher ALWAYS routes HYBRID
+      through `scatter_hybrid_search` (ft.rs:128-137). For num_shards == 1 it
+      short-circuits into `execute_hybrid_search_local` (scatter_hybrid.rs:
+      70-96); for num_shards > 1 it runs DFS → per-shard raw-streams fan-out
+      via `hybrid_multi.rs::execute_hybrid_search_local_raw_streams`
+      (scatter_hybrid.rs:270,292) → coordinator-side `rrf_fuse_three` on the
+      stream unions. The cross-shard request is the in-process
+      `FtHybridPayload` (src/shard/dispatch.rs:222-240: index_name,
+      query_terms, dense/sparse fields+blobs, weights, k_per_stream, top_k,
+      global_df, global_n, as_of_lsn, reply_tx) — NO filter field. A filter
+      fix that only touches execute_hybrid_search_local is silently bypassed
+      on every multi-shard deployment.
 
   (b) WHY `compose_query_with_filter` IS A NO-OP ON BOTH BRANCHES:
       Lunaris builds `"(@source:{val}) text_query"` (fusion.rs:262) and passes it
       as the `text_query` argument to `hybrid_search`. On arrival at the Moon
-      server (ft.rs:68-142) the HYBRID path parses the text_query with
-      `parse_text_query` (hybrid.rs:321-331). That parser routes `@field:`
-      syntax through the TEXT-fields resolver (ft.rs:238-253) which errors with
-      `"ERR unknown field 'source'"` because `source` is declared as TAG
+      server, the HYBRID dispatcher (ft.rs:69-137: parse_hybrid_modifier at
+      ft.rs:72, HybridQuery built at ft.rs:101-112) hands the raw text_query
+      to `parse_text_query` inside execute_hybrid_search_local
+      (hybrid.rs:332-342). That parser routes `@field:` syntax through the
+      TEXT-fields resolver, which errors with `"ERR unknown field 'source'"`
+      because `source` is declared as TAG
       (crates/lunaris-storage-moon/src/client.rs:376-380), not as TEXT.
       Composite queries like `"(@source:{val}) text_query"` start with `(`,
-      not `@`, so they do NOT trigger `pre_parse_field_filter` (ft_text_search.rs:
-      1105-1106: `if !query.starts_with(b"@") { return Ok(None); }`), and the
+      not `@`, so they do NOT trigger `pre_parse_field_filter`
+      (ft_text_search.rs:1149-1150:
+      `if !query.starts_with(b"@") { return Ok(None); }`), and the
       parenthesized prefix is then tokenized as BM25 terms — producing 0 hits
       silently. The KNN branch receives no filter predicate at all.
 
@@ -311,10 +338,16 @@ FILE: vendor/moon/src/command/vector_search/hybrid.rs
     (initially None until wire protocol is extended — CHANGE E below):
     hq = HybridQuery { ..., filter: None };
 
-FILE: vendor/moon/src/command/vector_search/ft_search/ (parse.rs or mod.rs)
+FILE: vendor/moon/src/command/vector_search/hybrid.rs (parse_hybrid_modifier)
+      + vendor/moon/src/server/conn/handler_monoio/ft.rs (dispatcher)
+      [LOCATION CORRECTED 2026-06-12 deep-dive: HYBRID-clause parsing lives in
+       hybrid.rs::parse_hybrid_modifier (returns HybridQueryPartial + consumed
+       index); the dispatcher (ft.rs:69-137) then scans LIMIT etc. via
+       parse_limit_clause. FILTER scanning slots in alongside — NOT in
+       ft_search/parse.rs as first-drafted.]
 
   CHANGE E — New FT.SEARCH wire modifier FILTER parsed during HYBRID dispatch
-    (ft.rs:68-142). Recursive prefix encoding (arity-counted, unambiguous,
+    (ft.rs:69-137). Recursive prefix encoding (arity-counted, unambiguous,
     zero lookahead) appended after FUSION RRF [...]:
       FILTER <expr>
       <expr> := TAG @<field> <value>
@@ -331,10 +364,31 @@ FILE: vendor/moon/src/command/vector_search/ft_search/ (parse.rs or mod.rs)
     When FILTER is absent, HybridQuery.filter = None (backward compatible).
 
 FILE: vendor/moon/src/shard/scatter_hybrid.rs
+      + vendor/moon/src/shard/dispatch.rs
+      + vendor/moon/src/command/vector_search/hybrid_multi.rs
+      [REWRITTEN 2026-06-12 deep-dive: the first draft's "no signature change
+       needed" was WRONG — the multi-shard path does NOT go through
+       execute_hybrid_search_local at all.]
 
-  CHANGE F — scatter_hybrid_search threads HybridQuery.filter to each per-shard
-    execute_hybrid_search_local call (already carried in HybridQuery; no signature
-    change needed beyond CHANGE A propagation).
+  CHANGE F — thread the filter through BOTH scatter paths:
+    (F1) Single-shard fast path (scatter_hybrid.rs:70-96): carried inside
+         HybridQuery (CHANGE A) into execute_hybrid_search_local — covered by
+         CHANGE B, nothing extra.
+    (F2) Multi-shard raw-streams path (num_shards > 1):
+         - FtHybridPayload (src/shard/dispatch.rs:222-240) gains
+           `pub filter: Option<HybridFilter>`; scatter_hybrid_search copies it
+           from HybridQuery when building each per-shard payload.
+         - hybrid_multi.rs::execute_hybrid_search_local_raw_streams (the
+           per-shard executor, called at scatter_hybrid.rs:270,292) computes
+           the SAME allowlist as CHANGE B from ITS OWN shard-local text_index
+           (doc_ids are shard-local, so the allowlist cannot be computed at
+           the coordinator) and applies it to all three raw streams (BM25 /
+           dense / sparse) BEFORE returning them. Filtering must happen
+           per-shard pre-return, NOT after coordinator rrf_fuse_three —
+           post-fusion filtering would reintroduce k-starvation (filtered-out
+           hits would have consumed fused-window slots).
+         - The CHANGE C k_per_stream fan-out applies identically on the
+           raw-streams executor (same effective_k_per_stream override).
 
 FILE: vendor/moon/sdk/rust/src/text.rs
 
@@ -484,14 +538,36 @@ Conformance / regression tests:
     (proving the server translation is correctness-complete, not post-filter-
     masked), plus the whole-tree-or-nothing fallback case.
   - vendor/moon/tests/hybrid_filter_tag.rs (new, Moon-side) — unit test of
-    execute_hybrid_search_local with filter=Some(FieldFilter::Tag{...}); asserts
+    execute_hybrid_search_local with filter=Some(HybridFilter::Tag{...}); asserts
     foreign-source vectors are absent from fused output from BOTH BM25 and KNN.
+  - vendor/moon/tests/hybrid_filter_multishard.rs (new, Moon-side; ADDED by the
+    2026-06-12 deep-dive) — the F2 discriminator: num_shards > 1, mixed-source
+    docs spread across shards, filtered HYBRID query; asserts no foreign-source
+    hit in the coordinator-fused output AND that per-shard raw streams were
+    filtered pre-fusion (k-starvation: an all-matching corpus still fills
+    top_k). Without this test a single-shard-only fix passes everything else.
   - vendor/moon/tests/hybrid_filter_backward_compat.rs (new, Moon-side) —
     filter=None produces identical output to pre-CHANGE-A hybrid_search call.
   - /crates/lunaris-mcp/tests/server_boot.rs — existing server-boot roster test
     remains green (no new MCP tools in this task).
   - Existing per-caller guard tests (WorkingMemory::find, recall.rs) remain
     green and are NOT removed.
+
+────────────────────────────────────────────────────────────────────────────────
+Explicitly OUT of scope (named, not silent — 2026-06-12 deep-dive finding):
+────────────────────────────────────────────────────────────────────────────────
+  FT.NAVIGATE has the SAME hole and is NOT fixed here: Moon's navigate.rs
+  (src/command/vector_search/navigate.rs) has zero filter handling, the
+  Lunaris port method `vector_navigate` carries no filter, and the Navigate
+  operator (crates/lunaris-retrieve/src/operators/navigate.rs:139-145)
+  IGNORES ctx.query.filter on its native path — the filter only reaches the
+  capability-gated `fallback_vector` (navigate.rs:109-122), where the vector
+  TAG rendering is equally dead. A `.filter()`'d Navigate-preset recall on
+  Moon silently ignores the filter end-to-end. Recorded as split task
+  `ft-navigate-filter-gap` (record-verbatim + split, same pattern as this
+  task's own origin). Interim guard candidate for that task: Navigate +
+  Some(filter) should degrade to fallback_vector-with-post-filter rather
+  than silently ignoring.
 
 ────────────────────────────────────────────────────────────────────────────────
 Cross-repo sequencing:
@@ -504,13 +580,25 @@ Cross-repo sequencing:
   4. Never pin a vendor/moon SHA not yet pushed to pilotspace/moon.
 ```
 
-Status: FROZEN @ v1 — approved by Tin Dang 2026-06-12 at the bundle decision
-point, choosing "Require full filter tree in v1" over the drafted
+Status: FROZEN @ v1.1 — v1 approved by Tin Dang 2026-06-12 at the bundle
+decision point, choosing "Require full filter tree in v1" over the drafted
 first-leaf-only shortcut: the recursive HybridFilter tree (Tag / Numeric /
 And / Or), the compound FILTER wire encoding (CHANGE E), the total CHANGE I
 translation with the whole-tree-or-nothing rule, and CHANGE L numeric fields
 are all v1 scope. No correctness-critical post-filter remains for any §1 Must
 variant.
+v1.1 amendment (same day, requested by Tin Dang: "deepdive into ../moon then
+continue draft correct issues ... from latest codebase"): evidence line
+citations corrected against moon HEAD 16bc859 (hybrid files byte-identical
+to vendor v0.3.0); CHANGE E relocated to parse_hybrid_modifier/dispatcher;
+CHANGE F REWRITTEN for the multi-shard raw-streams path (FtHybridPayload +
+hybrid_multi.rs per-shard allowlist — the first draft's "no change needed"
+would have shipped a fix silently bypassed on every multi-shard deployment);
+hybrid_filter_multishard.rs added as the F2 discriminator; FT.NAVIGATE gap
+named explicitly out-of-scope -> split task ft-navigate-filter-gap. The
+approved SHAPE (full tree, both branches, k-starvation, no
+correctness-critical post-filter) is unchanged — the amendment makes the
+deliverables actually satisfy it on the real codebase.
 
 Least-sure flag surfaced at freeze:
   ⚠ [contract] CHANGE L index migration — existing scopes' FT indexes lack the

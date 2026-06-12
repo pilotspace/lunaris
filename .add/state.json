@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "pyo3-rustsec-advisories",
+  "active_task": "moon-hybrid-filter-bypass",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -155,6 +155,15 @@
       "depends_on": [],
       "created": "2026-06-12T02:34:15+00:00",
       "updated": "2026-06-12T03:20:01+00:00"
+    },
+    "ft-navigate-filter-gap": {
+      "title": "FT.NAVIGATE ignores DSL filters end-to-end (Navigate operator + Moon navigate.rs)",
+      "phase": "specify",
+      "gate": "none",
+      "milestone": null,
+      "depends_on": [],
+      "created": "2026-06-12T03:36:53+00:00",
+      "updated": "2026-06-12T03:36:53+00:00"
     }
   },
   "milestones": {
@@ -176,7 +185,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-12T03:20:01+00:00",
+  "updated": "2026-06-12T03:37:47+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
