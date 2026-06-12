@@ -112,6 +112,22 @@ pub trait Consolidator: Send + Sync + 'static {
     /// `dyn`-compat is preserved — no `Self: Sized` bound is added; the
     /// existing `consolidator_is_dyn_compat` compile-time test continues to
     /// pass.
+    ///
+    /// ## Already-drained-input hazard
+    ///
+    /// This method operates on a batch that the caller has **already drained**
+    /// from the consumer-group queue.  When `scope_prefix` is `Some(prefix)`,
+    /// the default impl filters the batch to matching events and silently
+    /// discards the rest — those non-matching events are gone from the queue
+    /// and will never be seen by a subsequent pass.
+    ///
+    /// Callers that drain a scope-wide queue and then call this method with a
+    /// narrow prefix **must re-publish the non-matching ("foreign") events**
+    /// back to the topic themselves before this call (or equivalently, partition
+    /// first and pass the pre-filtered matching slice with `scope_prefix = None`
+    /// so no events are dropped here).  See
+    /// `WorkingMemory::consolidate` (ADD task `consolidate-prefix-drop`) for
+    /// the canonical implementation of the partition-then-republish pattern.
     async fn consolidate_scoped(
         &self,
         storage: Arc<dyn StoragePort>,
