@@ -716,11 +716,12 @@ EVIDENCE (cargo test, off v0.3.0):
   REGRESSION: lib hybrid unit tests (incl. CHANGE E truncation/garbage parser
        tests) + lunaris_hybrid_ft_search → 96 passed, 0 failed.
 
-Branch: `feat/hybrid-filter-pushdown` in a worktree at
-/Volumes/Games/tindang-repo/moon-verify (off v0.3.0). 7 commits cherry-picked
-from ../moon's feat/shardslice-migration (4e9c03c..e969cf0) + wiring fix c3aa41f.
-NEXT (outward, needs go-ahead): push to pilotspace/moon → PR → merge → bump
-vendor/moon submodule to the merged SHA.
+Branch: `feat/hybrid-filter-pushdown` (worktree /Volumes/Games/tindang-repo/moon-verify).
+**PUSHED + PR open: pilotspace/moon#174** (base `main`, MERGEABLE) — rebased onto
+origin/main (21 commits ahead of v0.3.0, clean) and RE-VERIFIED green there:
+3 conformance + 96 regression = **99 passed, 0 failed** on top of main.
+NEXT (blocked on review/merge): merge #174 → bump vendor/moon submodule to the
+merged SHA (must be pushed first — never pin an unpushed ref).
 
 ### Step 3 — Lunaris-side (CHANGE H/I/J/K) — PENDING submodule bump
 Blocked on step 2 (the new moondb SDK with the `filter` param must be vendored
