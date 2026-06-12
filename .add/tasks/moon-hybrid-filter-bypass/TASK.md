@@ -1,7 +1,7 @@
 # TASK: Moon hybrid path: pushed-down filter constrains BM25 branch only — dense KNN leaks through RRF
 
 slug: moon-hybrid-filter-bypass · created: 2026-06-12 · stage: production
-phase: build   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -717,17 +717,55 @@ EVIDENCE (cargo test, off v0.3.0):
        tests) + lunaris_hybrid_ft_search → 96 passed, 0 failed.
 
 Branch: `feat/hybrid-filter-pushdown` (worktree /Volumes/Games/tindang-repo/moon-verify).
-**PUSHED + PR open: pilotspace/moon#174** (base `main`, MERGEABLE) — rebased onto
-origin/main (21 commits ahead of v0.3.0, clean) and RE-VERIFIED green there:
-3 conformance + 96 regression = **99 passed, 0 failed** on top of main.
-NEXT (blocked on review/merge): merge #174 → bump vendor/moon submodule to the
-merged SHA (must be pushed first — never pin an unpushed ref).
+**MERGED: pilotspace/moon#174** (admin rebase-merge, 2026-06-12; tip
+`58c26e89` on `main`). Pre-merge CI surfaced 4 Lint sub-gates the local
+`cargo test` had not exercised — all fixed and pushed before merge:
+(1) clippy `unused_mut` on the 3 hybrid result bindings (the `mut` is only
+consumed inside the `#[cfg(feature = "text-index")]` filter block; the
+no-default-features lint build dropped it) → `#[cfg_attr(not(text-index),
+allow(unused_mut))]`; (2) `cargo fmt --check` drift in hybrid_filter.rs +
+conformance tests; (3) Unwrap Ratchet (`audit-unwrap.sh`) flagged the
+`eval_filter` AND-arm `expect` → folded into a `let-else`; (4) CHANGELOG
+gate → `### Added` entry. Final CI: 8/8 checks pass (Lint/Check/Check
+macOS/MSRV/Memory/CodeRabbit), BLOCKED only on REVIEW_REQUIRED → admin
+override (user-authorized).
 
-### Step 3 — Lunaris-side (CHANGE H/I/J/K) — PENDING submodule bump
-Blocked on step 2 (the new moondb SDK with the `filter` param must be vendored
-before fusion.rs can call it). Then: remove compose_query_with_filter from
-fuse_via_moon_native, add filter_to_moon_hybrid_filter, flip the 6 RED
-Lunaris-side tests to GREEN.
+### Step 2 — submodule bump — DONE (2026-06-12)
+`vendor/moon` 3e376a14 (v0.3.0) → **58c26e89** (merged tip, pushed to
+pilotspace/moon main). The pre-existing dirty submodule working tree
+("rustfmt noise pre-v0.3.0 bump", 453 files — not ours) was STASHED, not
+discarded (recover via `git -C vendor/moon stash pop`, currently
+`stash@{0}`). Vendored SDK now exposes `moondb::text::HybridFilter` +
+`hybrid_search(..., filter: Option<&HybridFilter>)`.
+
+### Step 3 — Lunaris-side (CHANGE H/I/J/K) — DONE + VERIFIED GREEN (2026-06-12)
+- CHANGE H: dropped `compose_query_with_filter`; `fuse_via_moon_native` passes
+  `ctx.query.text` raw.
+- CHANGE I: `filter_to_moon_hybrid_filter` translates the `Filter` tree →
+  `moon::text::HybridFilter` (Eq→Tag exact, StartsWith→Tag "<prefix>*",
+  And/Or recurse, ValidTimeRange→Numeric "valid_time" with FINITE sentinels —
+  Moon's NUMERIC parser rejects ±inf). Removed dead
+  `filter_to_moon_tag`/`json_quoted`/`ft_tag_escape`; kept `json_bare`.
+- CHANGE J: filter passed as the new 8th `hybrid_search` arg → both BM25 and
+  dense streams constrained before RRF.
+- CHANGE K: obsolete `filter_to_moon_tag`/`compose_*` unit tests replaced with
+  translator tests.
+
+EVIDENCE (live merged Moon, `MOON_URL=moon://127.0.0.1:6395`):
+  RED→GREEN: the 6 RED tests (Must1 foreign-source exclusion, Must2b
+    startswith, Must2c/d/e and/or/valid-time, Reject1 no-postfilter) + the
+    2 GREEN guards (Reject2, Must3 k-starvation) → **8 passed, 0 failed**.
+  POSITIVE write-proof (not skip-passed): FT index count 56→88 across the run,
+    new indexes carry the test-scope prefixes hfeq/hfsw/hfand/hfnp/hfbl/hfks;
+    a dead-port run skip-passes in 0.01s vs 0.15s here — the contrast confirms
+    the assertions executed.
+  REGRESSION: full lunaris-retrieve suite **164 passed, 7 ignored, 0 failed**;
+    lib unit tests 18 passed (incl. 7 translator tests).
+  BUILD: `cargo build --workspace --exclude lunaris-py --exclude lunaris-ts`
+    clean (SDK 8-arg signature breaks no other caller); `clippy -p
+    lunaris-retrieve --all-targets -D warnings` clean; `cargo fmt --check` clean.
+  Commit: 7962ad8 (GREEN, atomic: submodule bump + CHANGE H/I/J/K). Pairs with
+  88ed0f3 (RED).
 
 <!-- EXIT: all green; coverage held; no test/contract touched; no unlisted dependency. -->
 
@@ -735,23 +773,23 @@ Lunaris-side tests to GREEN.
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [ ] all tests pass
-- [ ] coverage did not decrease
-- [ ] no test or contract was altered during build
-- [ ] concurrency / timing of the risky operation is safe
-- [ ] no exposed secrets, injection openings, or unexpected dependencies
-- [ ] layering & dependencies follow CONVENTIONS.md
-- [ ] a person reviewed and approved the change
+- [x] all tests pass — 8 integration (RED→GREEN) + 18 lib + 164 full retrieve suite, 0 failed
+- [x] coverage did not decrease — CHANGE K swapped 6 obsolete fn-tests for 7 translator tests (net +1); 8 integration tests retained
+- [x] no test or contract was altered during build — the frozen contract & red suite assertions are untouched; only obsolete unit tests for deleted fns were removed (CHANGE K, contract-sanctioned)
+- [x] concurrency / timing of the risky operation is safe — no new lock/await; `fuse_via_moon_native` snapshots before each `.await`; filter eval is per-shard server-side (Moon), single round trip unchanged
+- [x] no exposed secrets, injection openings, or unexpected dependencies — filter values are typed enum leaves (no string concat into the query); the only new dep is the already-vendored moondb SDK symbol `HybridFilter`
+- [x] layering & dependencies follow CONVENTIONS.md — translator lives in lunaris-retrieve fusion path; `moon::text::HybridFilter` imported from the SDK alias (no inverted dep on lunaris-storage-moon)
+- [~] a person reviewed and approved the change — auto-gated on complete evidence (autonomy: auto; non-security). Moon#174 carried CodeRabbit review + admin merge by the owner; Lunaris green commit awaits the owner's PR review.
 
 ### Deep checks — do not skim (fill the path that applies; the resolver judges which)
-- [ ] WIRING (code) — every new symbol is referenced; record where / how confirmed
-- [ ] DEAD-CODE (code) — no new unused or orphaned symbol introduced
-- [ ] SEMANTIC (prose / non-code) — read in full, not skimmed: <what read · what confirmed>
+- [x] WIRING (code) — `filter_to_moon_hybrid_filter` is called at fusion.rs in `fuse_via_moon_native` (CHANGE H site) and its result threaded into `hybrid_search(..., moon_filter.as_ref())` (CHANGE J); confirmed by the live RED→GREEN flip + FT-index write-proof (production fuse path actually invokes it). `filter_node_to_hybrid` referenced by the public translator + 7 unit tests.
+- [x] DEAD-CODE (code) — removed `filter_to_moon_tag`/`json_quoted`/`ft_tag_escape` (orphaned once compose dropped); `json_bare` retained (used by translator). `clippy --all-targets -D warnings` clean ⇒ no unused/orphaned symbol.
+- [x] SEMANTIC (prose / non-code) — read Moon server NUMERIC parser in full: it rejects non-finite bounds (`.filter(|v| v.is_finite())`), which DIRECTLY drove the finite-sentinel design for open ValidTimeRange sides; confirmed against `hybrid_filter.rs:165-178`.
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Auto-resolved: autonomy=auto, complete evidence, non-security change (no secrets/injection/concurrency residue). Moon-side change independently CI-verified (8/8) + owner-merged (#174).
+Reviewed by: ADD auto-gate (evidence-backed) · date: 2026-06-12
 
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
