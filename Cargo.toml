@@ -158,7 +158,7 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 # the vendored SDK had the 3-way hybrid_search, crates.io moondb 0.1.1 only
 # the 2-way; moondb 0.2.0 closed the gap. When the vendored SDK API changes,
 # cut a new moondb release in the moon repo and bump submodule + pin together.
-moon           = { path = "vendor/moon/sdk/rust", version = "0.2.0", package = "moondb" }
+moon           = { path = "vendor/moon/sdk/rust", version = "0.2.1", package = "moondb" }
 sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "sqlite", "uuid", "chrono", "json"] }
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
