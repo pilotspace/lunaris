@@ -127,6 +127,30 @@ guarded on-demand consolidate tool.
   struct (root `type: "object"`); guarded by a `schema_for!` root-is-object
   regression test and the new `server_boot.rs` boot test. (`89b9181`)
 
+### Added (hybrid filter push-down)
+
+- **`Filter` push-down into both hybrid branches** (`lunaris-retrieve`):
+  the DSL `Filter` (tag, date-range, scope constraints) is now forwarded
+  into both legs of `FT.SEARCH`'s hybrid path via `moon::text::HybridFilter`,
+  eliminating post-RRF client-side re-filtering. Previously, Moon returned
+  a broader candidate set that Lunaris narrowed after RRF; with push-down,
+  only matching hits enter the RRF pool. Requires moondb ≥ 0.2.1.
+
+### Dependencies
+
+- **moondb 0.2.1** (vendor/moon SDK bump): adds `moon::text::HybridFilter`
+  and a `filter` parameter to `hybrid_search`. The workspace pin is updated
+  from `0.2.0` → `0.2.1` in `Cargo.toml`.
+
+### Infrastructure
+
+- SDK version parity: `crates/lunaris-py/pyproject.toml` and
+  `crates/lunaris-ts/package.json` (including all five `optionalDependencies`)
+  updated to `0.4.0`; `ci.yml` `cargo_semver_checks` baseline advanced from
+  `v0.2.1` → `v0.3.0`; `crates-publish.yml` moondb publish step now passes
+  `--allow-dirty` (Cargo.lock is refreshed by cargo verify but is not
+  included in the crates.io tarball).
+
 ## v0.5 Wave D — npx + uvx distribution: DIST-01 npm package + DIST-02 PyPI package (2026-05-26)
 
 ### Added
