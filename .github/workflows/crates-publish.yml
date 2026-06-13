@@ -100,7 +100,7 @@ jobs:
             echo "moondb ${MOONDB_VER} already on crates.io — skipping"
           else
             echo "::group::publish moondb ${MOONDB_VER}"
-            cargo publish --manifest-path vendor/moon/sdk/rust/Cargo.toml
+            cargo publish --manifest-path vendor/moon/sdk/rust/Cargo.toml --allow-dirty
             echo "::endgroup::"
           fi
 
