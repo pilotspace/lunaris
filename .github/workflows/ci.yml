@@ -89,8 +89,8 @@ jobs:
           cargo semver-checks check-release \
             --package lunaris-core \
             --package lunaris \
-            --baseline-rev v0.2.1 || {
-            echo "::error::SemVer break detected vs v0.2.1 — bump major version or revert the break"
+            --baseline-rev v0.3.0 || {
+            echo "::error::SemVer break detected vs v0.3.0 — bump major version or revert the break"
             exit 1
           }
 
