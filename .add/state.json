@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "io-failsafe-wiring",
+  "active_task": "observability-rollout-maturity",
   "active_milestone": "mem0-parity-hardening",
   "tasks": {
     "mq-typed-client": {
@@ -182,7 +182,7 @@
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-14T16:01:15+00:00",
-      "updated": "2026-06-14T16:46:16+00:00",
+      "updated": "2026-06-15T06:57:43+00:00",
       "flag_verified": true,
       "tripwire": {
         "contract_md5": "56bac79138c0087a973a6838a336ea91",
@@ -197,6 +197,16 @@
           ".add/tasks/mem0-gap-analysis/tests/"
         ],
         "snapshot_md5": "8922f36d64702e371ca12b514bae1a9b"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-06-15T06:57:43+00:00",
+            "reason": "scope_violation: task 'mem0-gap-analysis' touched outside its declared \u00a75 Scope \u2014 .serena/.gitignore \u00b7 .serena/cache/rust/document_symbols.pkl \u00b7 .serena/cache/rust/raw_document_symbols.pkl \u00b7 .serena/project.local.yml \u00b7 .serena/project.yml (111463 total)",
+            "source": "scope"
+          }
+        ]
       }
     },
     "io-failsafe-wiring": {
@@ -236,12 +246,30 @@
     },
     "observability-rollout-maturity": {
       "title": "/healthz storage probe + wire lunaris_eval_score for rollout auto-cutback",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T08:07:49+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "be14bcad84738d52eb4ff6789afcf74a",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/storage/port.rs",
+          "crates/lunaris-storage-moon/src/client.rs",
+          "crates/lunaris/src/handle.rs",
+          "crates/lunaris-server/src/routes/healthz.rs",
+          "crates/lunaris-server/src/eval_score.rs",
+          "crates/lunaris-server/src/lib.rs",
+          "crates/lunaris-server/src/main.rs",
+          "crates/lunaris-server/src/impl StoragePort"
+        ],
+        "snapshot_md5": "5009fb7f33cde23f76701e709b179c73"
+      }
     },
     "eval-gauntlet-ci-gate": {
       "title": "Un-stub LoCoMo/LongMemEval/ER-F1 harnesses; make CI gate on real scores",
@@ -290,12 +318,24 @@
     },
     "extractor-fallback-wiring": {
       "title": "Wire FallbackExtractor+CircuitBreaker on the production extractor path (deferred Half A of io-failsafe-wiring)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T03:20:27+00:00",
-      "updated": "2026-06-15T03:20:27+00:00"
+      "updated": "2026-06-15T06:48:52+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "dcf0a8859d0e2b720417fd9188ddd826",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-extract/src/fallback.rs",
+          "crates/lunaris/src/handle.rs"
+        ],
+        "snapshot_md5": "5c3aa73f7f26b4a108f7dc33a753859f"
+      }
     }
   },
   "milestones": {
@@ -325,7 +365,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-15T03:46:29+00:00",
+  "updated": "2026-06-15T08:07:49+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
