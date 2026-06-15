@@ -102,9 +102,13 @@ two milestones:
 - **v0.3 self-hosted** — Docker / Helm, SLOs, design partners. The
   hosted-substrate experience for teams that want Lunaris but don't
   want to operate Moon themselves.
-- **Ecosystem (roadmap)** — LangGraph / CrewAI / Letta adapters. The
-  "drop Lunaris into your existing agent framework" experience. *Not yet
-  shipped as of v0.7 — the MCP server is today's universal framework shim.*
+- **Ecosystem (shipped)** — LangGraph / CrewAI / Letta adapters via the
+  `lunaris-integrations` package (`pip install lunaris-integrations[langgraph]`,
+  `[crewai]`, `[letta]`). The "drop Lunaris into your existing agent framework"
+  experience: LangGraph and CrewAI are drop-in store / storage classes; Letta
+  ships as a client-backed connector shim + recipe (its archival store is
+  server-side). The MCP server remains the universal shim for frameworks
+  without a dedicated adapter.
 
 See [`README.md#status`](../README.md#status) for the current
 milestone state table.

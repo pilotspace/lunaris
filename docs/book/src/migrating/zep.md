@@ -237,7 +237,8 @@ on date T" is itself recorded. See [Forgetting](../guides/forget.md).
 ## Known gaps vs Zep today
 
 - **Hosted SaaS.** Lunaris does not (yet) offer a managed service.
-  v0.4 ecosystem milestone tracks this.
+  Self-host via Docker / Helm today; a managed service remains on the
+  roadmap.
 - **MemGPT-style salience.** Lunaris's consolidator implements
   ACT-R (Anderson 1996) base-level activation + Petrov 2006 O(1)
   incremental approximation + Leiden community detection. The
