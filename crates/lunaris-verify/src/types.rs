@@ -85,6 +85,31 @@ impl VerifyDecision {
     }
 }
 
+/// Deterministic arbitration for a cross-episode contradiction
+/// ([`lunaris_extract::NeedsReviewReason::CrossEpisodeContradiction`]).
+///
+/// The memory-update convergence policy is **latest-assertion-wins**: the
+/// newly-ingested fact (`new_fact_id`) is the winner and the prior in-scope
+/// fact (`existing_fact_id`) is the loser to be superseded (its bi-temporal
+/// interval closed by `apply_supersede`). Every verifier backend's
+/// `CrossEpisodeContradiction` arm routes through this single helper so the
+/// rule is one deterministic, testable place rather than N model-dependent
+/// judgments. (Full LLM-semantic arbitration of the fact *texts* is a flagged
+/// follow-up — the reason carries fact ids + object ids, not the fact texts.)
+#[must_use]
+pub fn cross_episode_decision(
+    existing_fact_id: Ulid,
+    new_fact_id: Ulid,
+    backend: VerifierBackend,
+) -> VerifyDecision {
+    VerifyDecision::arbitrate(
+        new_fact_id,
+        existing_fact_id,
+        "cross-episode contradiction: latest assertion supersedes prior",
+        backend,
+    )
+}
+
 /// Provider tag for audit records. Serialized with default enum tagging
 /// (externally tagged → `"Candle"` / `"CloudAnthropic"` / etc.) so the audit
 /// schema is grep-friendly in ops tooling.

@@ -89,6 +89,51 @@ impl std::fmt::Display for EntityId {
     }
 }
 
+/// Deterministic 16-byte content-hash identifier for a `(subject, predicate,
+/// object)` fact triple — the **sync-dedup key** for memory-update convergence.
+///
+/// ```text
+/// FactId = blake3(subject_id.0 || 0x1F || predicate || 0x1F || object_id.0)[..16]
+/// ```
+///
+/// `0x1F` (ASCII Unit Separator) delimits the three fields so a predicate that
+/// happens to contain the byte sequence of an adjacent id cannot byte-alias
+/// into a neighbouring triple's key. Mirrors [`EntityId::from_name_and_type`]:
+/// re-asserting the identical triple yields the same `FactId`, so the
+/// structured-ingest write path can mint a stable `Ulid::from_bytes(fact_id.0)`
+/// and an exact re-ingest overwrites the same row in place (idempotent NOOP)
+/// rather than accruing a duplicate fact. A different object OR predicate yields
+/// a different id (a value change is NOT a dup) — proven by
+/// `factid_from_triple_is_deterministic_and_distinct`.
+///
+/// 16 bytes ↔ `Ulid` (both 128-bit) is a clean cast at the WriteOp boundary,
+/// same as the `EntityId` → `Ulid` mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FactId(pub [u8; 16]);
+
+impl FactId {
+    /// Derive the deterministic [`FactId`] for a `(subject_id, predicate,
+    /// object_id)` triple. See the struct rustdoc for the formula and rationale.
+    pub fn from_triple(subject_id: EntityId, predicate: &str, object_id: EntityId) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&subject_id.0);
+        hasher.update(&[0x1F]);
+        hasher.update(predicate.as_bytes());
+        hasher.update(&[0x1F]);
+        hasher.update(&object_id.0);
+        let h = hasher.finalize();
+        let bytes: [u8; 16] =
+            h.as_bytes()[..16].try_into().expect("blake3 output is 32 bytes; first 16 always fit");
+        FactId(bytes)
+    }
+}
+
+impl std::fmt::Display for FactId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&hex::encode(self.0))
+    }
+}
+
 /// Canonicalize an entity name per D-06:
 /// lowercase + trim + collapse internal whitespace + drop trailing punctuation.
 ///

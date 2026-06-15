@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "observability-rollout-maturity",
+  "active_task": "memory-update-intelligence",
   "active_milestone": "mem0-parity-hardening",
   "tasks": {
     "mq-typed-client": {
@@ -273,48 +273,187 @@
     },
     "eval-gauntlet-ci-gate": {
       "title": "Un-stub LoCoMo/LongMemEval/ER-F1 harnesses; make CI gate on real scores",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T13:20:13+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "f4740efb8e834143123b475d1e0fb367",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-bench/src/eval/scoring.rs",
+          "crates/lunaris-bench/src/eval/mod.rs",
+          "crates/lunaris-bench/src/eval/mod scoring;",
+          "crates/lunaris-bench/src/eval/er_f1.rs",
+          "crates/lunaris-bench/src/eval/locomo.rs",
+          "crates/lunaris-bench/src/eval/longmemeval.rs",
+          "crates/lunaris-bench/Cargo.toml",
+          "crates/lunaris-bench/eval-live",
+          "lunaris-extract/candle",
+          "lunaris-extract/default-features=false",
+          "lunaris-extract/CandleGemma3_4B",
+          "lunaris-extract/default",
+          ".github/workflows/eval-gauntlet.yml",
+          ".add/tasks/eval-gauntlet-ci-gate/UAT.md"
+        ],
+        "snapshot_md5": "a12d4a238c4a4804d76c8ca0b498c0eb"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-06-15T13:17:48+00:00",
+            "reason": "scope_violation: task 'eval-gauntlet-ci-gate' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-bench/Cargo.toml (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "memory-update-intelligence": {
       "title": "Write-time contradiction/dedup reconciliation so memories converge (Mem0 parity)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T16:52:37+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "2b229b88e8d09b73a8a56a61fdf16e61",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-extract/src/types.rs",
+          "crates/lunaris-extract/src/validator.rs",
+          "crates/lunaris-core/src/keyspace.rs",
+          "crates/lunaris/src/reconcile.rs",
+          "crates/lunaris/src/lib.rs",
+          "crates/lunaris/src/structured_ingest.rs",
+          "crates/lunaris/src/ingest.rs",
+          "crates/lunaris-verify/src/types.rs",
+          "crates/lunaris-verify/src/llm_verifier.rs",
+          "crates/lunaris-verify/src/candle_gemma3_270m.rs",
+          "crates/lunaris-verify/src/candle_gemma3_27b.rs",
+          "crates/lunaris-verify/src/cloud_api.rs",
+          "crates/lunaris-verify/src/divergence.rs",
+          "crates/lunaris-verify/src/lib.rs",
+          "crates/lunaris-verify/src/worker.rs",
+          "crates/lunaris-extract/tests/",
+          "crates/lunaris-core/tests/",
+          "crates/lunaris/tests/",
+          "crates/lunaris-verify/tests/"
+        ],
+        "snapshot_md5": "a913d44783b0f894c9f68a1b726be610"
+      }
     },
     "multi-level-memory-categories": {
       "title": "Typed user/session/agent memory levels + categories + metadata-filter API",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T11:22:40+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "04516d1c0857774e3d18d9822d8919b3",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/scope.rs",
+          "crates/lunaris-core/src/lib.rs",
+          "crates/lunaris-server/src/dto.rs",
+          "crates/lunaris-server/src/routes/ingest.rs",
+          "crates/lunaris-server/src/routes/recall.rs",
+          "crates/lunaris-server/src/routes/Filter",
+          "crates/lunaris-core/src/storage/types.rs",
+          "crates/lunaris-core/src/storage/MemoryLevel",
+          "crates/lunaris-core/src/storage/compose_levels"
+        ],
+        "snapshot_md5": "cb9302631cd9de7fcb6ada9c08319ecf"
+      }
     },
     "sdk-integrations-dx": {
       "title": "LangGraph/CrewAI adapters + SDK DX; make the adapter claim true",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T15:15:46+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "c10fc07492a2d50e293377c0bcfbc427",
+        "tests": {
+          "integrations/tests/conftest.py": "c82701a9dd2ca0ecb91d3de8b003527d",
+          "integrations/tests/test_client.py": "40385aebc2fe5521fb7331cde963faf6",
+          "integrations/tests/test_crewai.py": "9db843d15c6693033dc0df863b6ccadb",
+          "integrations/tests/test_docs_match_shipped.py": "9b169b04f070dabca24d90eaddc33244",
+          "integrations/tests/test_langgraph.py": "4dc4252d6dbeacbf16f92ba9a6756d6d",
+          "integrations/tests/test_letta.py": "9337c7285b9b9dc50238dad11564ae7f",
+          "integrations/tests/test_scope.py": "5867bc30bf2dce9c966cfcf3b398f020"
+        }
+      },
+      "scope": {
+        "declared": [
+          "integrations/lunaris_integrations/client.py",
+          "integrations/lunaris_integrations/langgraph.py",
+          "integrations/lunaris_integrations/crewai.py",
+          "integrations/lunaris_integrations/letta.py",
+          "integrations/lunaris_integrations/__init__.py",
+          "integrations/pyproject.toml",
+          "integrations/README.md",
+          "integrations/tests/",
+          "examples/langgraph-lunaris/",
+          "examples/crewai-lunaris/",
+          "examples/letta-lunaris/",
+          "docs/MIGRATING-FROM-ZEP.md",
+          "docs/book/src/migrating/zep.md",
+          "docs/POSITIONING.md",
+          "docs/book/src/getting-started/why-lunaris.md"
+        ],
+        "snapshot_md5": "049b45d331f4e941555e50ff238bc206"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-06-15T15:14:17+00:00",
+            "reason": "tamper_detected:build_tampered:integrations/tests/test_client.py",
+            "source": "tamper"
+          }
+        ]
+      }
     },
     "mem0-docs-reconcile": {
       "title": "Correct stale Mem0 claims in shipped docs (adapters not shipped; Mem0g exists)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T01:50:41+00:00"
+      "updated": "2026-06-15T12:02:13+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "6e9d974ad7bb9c775c38182c1832edb7",
+        "tests": {
+          ".add/tasks/mem0-docs-reconcile/tests/validate_mem0_docs.py": "3d5063f69853e520e9b962e84c2783f5"
+        }
+      },
+      "scope": {
+        "declared": [
+          "docs/MIGRATING-FROM-MEM0.md",
+          "docs/book/src/migrating/mem0.md"
+        ],
+        "snapshot_md5": "c5cec3ac4ce1f961e896266b206d49a0"
+      }
     },
     "extractor-fallback-wiring": {
       "title": "Wire FallbackExtractor+CircuitBreaker on the production extractor path (deferred Half A of io-failsafe-wiring)",
@@ -365,7 +504,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-15T08:07:49+00:00",
+  "updated": "2026-06-15T16:52:37+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

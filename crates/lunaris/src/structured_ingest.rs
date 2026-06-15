@@ -66,14 +66,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulid::Ulid;
 
-use lunaris_core::keyspace::{chunk_key, episode_key, fact_key as scoped_fact_key};
+use std::collections::HashMap;
+
+use lunaris_core::keyspace::{chunk_key, episode_key, fact_key as scoped_fact_key, fact_spo_key};
 use lunaris_core::{
-    Chunk, Embedder, HlcClock, Lsn, LunarisError, Scope, StorageError, StoragePort, WriteOp,
+    Chunk, Embedder, Hlc, HlcClock, Lsn, LunarisError, Scope, StorageError, StoragePort, WriteOp,
 };
-use lunaris_extract::types::EntityId;
+use lunaris_extract::types::{EntityId, Fact, FactId};
+use lunaris_extract::validator::{NeedsReviewItem, NeedsReviewReason};
 use lunaris_ingest::chunk_markdown;
 
 use crate::episode_builder::EpisodeBuilder;
+use crate::reconcile::{classify_fact, FactDecision, FactTriple, SpoEntry};
 
 // Index names + graph name kept in sync with the LLM-extracted path in
 // `crate::ingest`. Same string constants, kept private to this module so a
@@ -200,7 +204,7 @@ impl StructuredIngest {
     }
 }
 
-/// Internal implementation. Crate-private; the public surface is
+/// Internal implementation. The public surface is
 /// [`crate::Lunaris::ingest_structured`] /
 /// [`crate::ScopedLunaris::ingest_structured`] which inject the storage,
 /// embedder, and clock from the handle.
@@ -208,7 +212,14 @@ impl StructuredIngest {
 /// INGEST-04 invariant preserved: exactly ONE `atomic_write` call covers
 /// all writes (episode KV + per-chunk KV/Vector + per-entity
 /// GraphNode/Vector + per-relation GraphEdge + per-fact KV/Vector).
-pub(crate) async fn ingest_structured_inner(
+///
+/// Exposed as `#[doc(hidden)] pub` (not part of the stable surface) so the
+/// `memory-update-intelligence` integration tests can drive the REAL
+/// production write path against a recording `StoragePort` double — proving
+/// the dedup + cross-episode-publish logic is actually WIRED into ingest, not
+/// merely unit-correct in isolation. Production callers go through the handle.
+#[doc(hidden)]
+pub async fn ingest_structured_inner(
     storage: &dyn StoragePort,
     embedder: &dyn Embedder,
     clock: &HlcClock,
@@ -380,11 +391,104 @@ pub(crate) async fn ingest_structured_inner(
         });
     }
 
-    // Per-fact KV + VectorUpsert.
+    // Per-fact KV + VectorUpsert, with memory-update convergence:
+    //   - SYNC dedup: the fact id is the deterministic `FactId` of the
+    //     (subject, predicate, object) triple, so re-asserting an identical
+    //     fact overwrites the same row in place (no duplicate accrues).
+    //   - CROSS-EPISODE contradiction detection: each fact is classified
+    //     against the in-scope `(subject, predicate)` spo-index read once at
+    //     `now`; an overlapping different-object assertion is collected as a
+    //     `NeedsReviewItem` and published to the async verify queue AFTER the
+    //     commit (the verifier closes the loser via `apply_supersede`).
+    // The spo-index updates are folded into the SAME `ops` vec below, so the
+    // single-`atomic_write` (INGEST-04) invariant holds. Reads do not count.
+    let now_hlc = clock.tick();
+    // spo-key → running entries (seeded from storage on first touch this call,
+    // then mutated as additive/supersede facts are appended so multiple facts
+    // sharing a (subject, predicate) in the SAME payload see each other).
+    let mut spo_index: HashMap<Vec<u8>, Vec<SpoEntry>> = HashMap::new();
+    let mut needs_review: Vec<NeedsReviewItem> = Vec::new();
+
     for (f, emb) in payload.facts.iter().zip(fact_embeds.iter()) {
         let sid = EntityId::from_name_and_type(&f.subject_name, &f.subject_type);
         let oid = EntityId::from_name_and_type(&f.object_name, &f.object_type);
-        let fact_id = Ulid::new();
+        // Deterministic identity = sync dedup key.
+        let fact_id = Ulid::from_bytes(FactId::from_triple(sid, &f.predicate, oid).0);
+
+        // Seed the spo-index for this (subject, predicate) from storage once.
+        let spo_key = fact_spo_key(&episode.scope, &sid.0, &f.predicate);
+        if !spo_index.contains_key(&spo_key) {
+            let prior = read_spo_index(storage, &episode.scope, &spo_key, now_hlc).await?;
+            spo_index.insert(spo_key.clone(), prior);
+        }
+
+        let new_triple = FactTriple {
+            subject_id: sid,
+            predicate: f.predicate.clone(),
+            object_id: oid,
+            valid_from: f.valid_from,
+            valid_to: f.valid_to,
+        };
+        let prior = &spo_index[&spo_key];
+        match classify_fact(&new_triple, prior) {
+            FactDecision::Noop => {
+                // Exact re-assertion → dedup: the deterministic-id KvPut
+                // overwrites the fact row IN PLACE with the new window, so keep
+                // the matching spo-index entry's window in sync. Otherwise a
+                // later cross-episode check classifies against a STALE interval
+                // and can falsely supersede (BUG-1 / no_false_supersede).
+                if let Some(entry) = spo_index
+                    .get_mut(&spo_key)
+                    .and_then(|v| v.iter_mut().find(|e| e.object_id == oid))
+                {
+                    entry.valid_from = f.valid_from;
+                    entry.valid_to = f.valid_to;
+                }
+            }
+            FactDecision::Append => {
+                spo_index.get_mut(&spo_key).expect("seeded above").push(SpoEntry {
+                    object_id: oid,
+                    fact_id,
+                    valid_from: f.valid_from,
+                    valid_to: f.valid_to,
+                });
+            }
+            FactDecision::Supersede { loser_fact_id } => {
+                // The new fact is still written + indexed (additive); the
+                // verifier closes the loser asynchronously.
+                let existing_object = prior
+                    .iter()
+                    .find(|p| p.fact_id == loser_fact_id)
+                    .map_or(oid, |p| p.object_id);
+                needs_review.push(NeedsReviewItem::Fact {
+                    reason: NeedsReviewReason::CrossEpisodeContradiction {
+                        subject: sid,
+                        predicate: f.predicate.clone(),
+                        existing_fact_id: loser_fact_id,
+                        existing_object,
+                        new_fact_id: fact_id,
+                        new_object: oid,
+                    },
+                    raw: Fact {
+                        id: fact_id,
+                        subject_id: sid,
+                        predicate: f.predicate.clone(),
+                        object_id: oid,
+                        fact_text: f.fact_text.clone(),
+                        confidence: f.confidence,
+                        valid_from_iso: f.valid_from.to_rfc3339(),
+                        valid_to_iso: f.valid_to.map(|t| t.to_rfc3339()),
+                    },
+                });
+                spo_index.get_mut(&spo_key).expect("seeded above").push(SpoEntry {
+                    object_id: oid,
+                    fact_id,
+                    valid_from: f.valid_from,
+                    valid_to: f.valid_to,
+                });
+            }
+        }
+
         let fact_value = serde_json::to_vec(&serde_json::json!({
             "id": fact_id.to_string(),
             "subject_id": sid.0,
@@ -413,7 +517,82 @@ pub(crate) async fn ingest_structured_inner(
         });
     }
 
+    // Fold the updated spo-index rows into the SAME atomic_write (one KvPut per
+    // touched (subject, predicate) — INGEST-04 single-write preserved).
+    for (key, entries) in &spo_index {
+        let value = serde_json::to_vec(&spo_entries_to_json(entries)).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!(
+                "structured_ingest: spo-index serialize: {e}"
+            )))
+        })?;
+        ops.push(WriteOp::KvPut { key: key.clone(), value });
+    }
+
     // ── 5. Single atomic_write (INGEST-04 invariant) ────────────────────
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
+
+    // ── 6. Post-commit: publish cross-episode contradictions to the verify
+    //       queue (side channel; the ingest already committed atomically).
+    if !needs_review.is_empty() {
+        crate::ingest::publish_needs_review(storage, &episode.scope, &needs_review).await;
+    }
+
     Ok(lsn)
+}
+
+/// Read + parse the `(subject, predicate)` spo-index row at `as_of` into the
+/// prior [`SpoEntry`] list consumed by [`classify_fact`]. A missing row (or an
+/// empty/garbled value) yields an empty list — the first fact for a
+/// `(subject, predicate)` is always additive.
+async fn read_spo_index(
+    storage: &dyn StoragePort,
+    scope: &Scope,
+    key: &[u8],
+    as_of: Hlc,
+) -> Result<Vec<SpoEntry>, LunarisError> {
+    let Some(row) = storage.read_as_of(scope, key, as_of).await.map_err(LunarisError::Storage)?
+    else {
+        return Ok(Vec::new());
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&row.value).unwrap_or_default();
+    let mut out = Vec::with_capacity(arr.len());
+    for v in arr {
+        let (Some(obj_hex), Some(fid_str), Some(vf_str)) = (
+            v.get("object_id").and_then(|x| x.as_str()),
+            v.get("fact_id").and_then(|x| x.as_str()),
+            v.get("valid_from").and_then(|x| x.as_str()),
+        ) else {
+            continue;
+        };
+        let (Some(object_id), Some(fact_id), Some(valid_from)) = (
+            EntityId::from_hex(obj_hex),
+            Ulid::from_string(fid_str).ok(),
+            DateTime::parse_from_rfc3339(vf_str).ok().map(|d| d.with_timezone(&Utc)),
+        ) else {
+            continue;
+        };
+        let valid_to = v
+            .get("valid_to")
+            .and_then(|x| x.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc));
+        out.push(SpoEntry { object_id, fact_id, valid_from, valid_to });
+    }
+    Ok(out)
+}
+
+/// Serialize the spo-index entries to the canonical JSON array shape:
+/// `[{object_id:hex, fact_id:ulid_str, valid_from:iso, valid_to:iso|null}]`.
+fn spo_entries_to_json(entries: &[SpoEntry]) -> Vec<serde_json::Value> {
+    entries
+        .iter()
+        .map(|e| {
+            json!({
+                "object_id": format!("{}", e.object_id),
+                "fact_id": e.fact_id.to_string(),
+                "valid_from": e.valid_from.to_rfc3339(),
+                "valid_to": e.valid_to.map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect()
 }

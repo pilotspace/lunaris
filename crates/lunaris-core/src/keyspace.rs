@@ -94,6 +94,39 @@ pub fn fact_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     format!("{}fact:{id}", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for the `(subject, predicate)` secondary index used by cross-episode
+/// contradiction detection: `lunaris:{scope}:factspo:{hex(subject_id)}:{predicate}`.
+///
+/// Unlike the primitive `*_key` helpers this is keyed by the **deterministic
+/// 16-byte subject id** (raw bytes, NOT a `Ulid`) plus the predicate string, so
+/// the structured-ingest write path can `read_as_of` every prior in-scope fact
+/// asserting the same `(subject, predicate)` and classify the new fact as
+/// NOOP / Append / Supersede. The subject id is taken as `&[u8; 16]` rather than
+/// `lunaris_extract::EntityId` so `lunaris-core` keeps zero dependency on the
+/// extractor crate (layering) — callers pass `&entity_id.0`.
+///
+/// # Examples
+///
+/// ```
+/// use lunaris_core::{Scope, keyspace::fact_spo_key};
+/// let scope = Scope::new("agent_a").unwrap();
+/// let k = fact_spo_key(&scope, &[7u8; 16], "employer");
+/// let s = String::from_utf8(k).unwrap();
+/// assert!(s.starts_with("lunaris:agent_a:factspo:"));
+/// assert!(s.ends_with(":employer"));
+/// ```
+#[inline]
+pub fn fact_spo_key(scope: &Scope, subject_id: &[u8; 16], predicate: &str) -> Vec<u8> {
+    // Lowercase-hex the subject id inline (lunaris-core has no `hex` dep).
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hexed = String::with_capacity(32);
+    for &b in subject_id {
+        hexed.push(HEX[(b >> 4) as usize] as char);
+        hexed.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    format!("{}factspo:{hexed}:{predicate}", scope_prefix(scope)).into_bytes()
+}
+
 /// KV key for a community: `lunaris:{scope}:community:{ulid}`
 #[inline]
 pub fn community_key(scope: &Scope, id: Ulid) -> Vec<u8> {

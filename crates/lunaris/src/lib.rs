@@ -54,6 +54,11 @@ pub mod open;
 pub mod primitives;
 pub mod recall;
 pub mod recipes;
+// `memory-update-intelligence` — pure cross-episode reconciliation decision
+// core (dedup NOOP / additive Append / cross-episode Supersede). Consumed by
+// `structured_ingest` to converge memories without copying Mem0's
+// LLM-mutate-on-write; bi-temporal MVCC stays the source of truth.
+pub mod reconcile;
 // Plan 08-00 — `Lunaris::snapshot()` monotonic LSN marker. Pre-req for Plan
 // 08-01 codegen so the `snapshot` surface entry has a real inherent method
 // to bind from PyO3 + napi-rs. The module only contains an `impl Lunaris`
