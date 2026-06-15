@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lunaris-integrations"
+version = "0.7.0"
+description = "Memory adapters for agent frameworks (LangGraph, CrewAI, Letta) on top of Lunaris."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Lunaris" }]
+keywords = ["lunaris", "memory", "agents", "langgraph", "crewai", "letta"]
+
+# Core dependency only: httpx for the HTTP MemoryProtocol transport. The
+# framework deps + the in-process SDK are OPTIONAL extras — never hard deps.
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+langgraph = ["langgraph>=0.2"]
+crewai = ["crewai>=0.80"]
+letta = ["letta>=0.16"]
+# In-process SDK transport (SdkLunarisClient). Imported lazily; only needed if
+# you wrap a local lunaris-py handle instead of talking to lunaris-server.
+sdk = ["lunaris"]
+test = ["pytest>=8", "respx>=0.21"]
+
+[project.urls]
+Homepage = "https://github.com/pilotspace/lunaris"
+Repository = "https://github.com/pilotspace/lunaris"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lunaris_integrations"]

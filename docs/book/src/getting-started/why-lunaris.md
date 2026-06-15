@@ -103,9 +103,13 @@ on $incumbent if…" criteria:
   to operate Moon themselves. Also lands the typed `Scope` +
   `EpisodeBuilder` surface in the Python / TS SDKs and per-scope
   `ScopedLunaris::forget`.
-- **Ecosystem (roadmap)** — LangGraph / CrewAI / Letta adapters. The "drop
-  Lunaris into your existing agent framework" experience. *Not yet shipped as
-  of v0.7 — today the MCP server is the universal framework shim.*
+- **Ecosystem (shipped)** — LangGraph / CrewAI / Letta adapters via the
+  `lunaris-integrations` package (`pip install lunaris-integrations[langgraph]`,
+  `[crewai]`, `[letta]`). The "drop Lunaris into your existing agent framework"
+  experience: LangGraph and CrewAI are drop-in store / storage classes; Letta
+  ships as a client-backed connector shim + recipe (its archival store is
+  server-side). The MCP server remains the universal shim for frameworks
+  without a dedicated adapter.
 
 ## Where to go next
 
