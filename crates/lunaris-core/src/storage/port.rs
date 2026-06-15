@@ -150,6 +150,22 @@ pub trait StoragePort: Send + Sync + 'static {
         Err(StorageError::NotSupported("hot_keys_unsupported: backend has no hot-key sketch"))
     }
 
+    /// Cheap liveness probe for the `/healthz` rollout-cutback surface
+    /// (`observability-rollout-maturity`). SCOPE-LESS BY DESIGN — operator-global
+    /// like [`Self::hot_keys`]; `/healthz` is unauthenticated so there is no
+    /// tenant scope to thread.
+    ///
+    /// **Additive default = `Ok(())`** (mirrors the `queue_depth` / `hot_keys`
+    /// precedent): an in-process or otherwise un-probeable backend (SQLite,
+    /// in-memory, test mocks) reports healthy and keeps compiling unchanged. The
+    /// Moon backend OVERRIDES this with a real `PING` round-trip bounded by
+    /// `LUNARIS_MOON_OP_TIMEOUT`, so a dead/stalled Moon surfaces as `Err` and
+    /// `lunaris-server`'s `/healthz` answers 503 (Postgres `SELECT 1` is a
+    /// PG-parity follow-up — live-PG is deferred).
+    async fn health_check(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// KV scan by prefix with optional bi-temporal snapshot.
     ///
     /// **Deviation 1 from blueprint §6:** the blueprint signature is

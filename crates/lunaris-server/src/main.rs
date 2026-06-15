@@ -88,6 +88,11 @@ async fn main() -> ExitCode {
     let _hotkeys_poller =
         lunaris_server::hotkeys_poller::spawn_hotkeys_poller(lunaris.storage(), shutdown.notify());
 
+    // observability-rollout-maturity — publish lunaris_eval_score{harness} from
+    // the last eval run baked into the deployment (LUNARIS_EVAL_RESULTS_PATH) so
+    // /metrics reflects it instead of a constant 0. Soft no-op when unset.
+    lunaris_server::eval_score::load_eval_scores_from_env();
+
     if let Err(e) = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown.wait().await;

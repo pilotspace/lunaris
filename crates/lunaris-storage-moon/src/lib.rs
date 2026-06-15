@@ -212,6 +212,13 @@ impl StoragePort for MoonStorage {
         crate::atomic::atomic_write(&self.client, scope, ops).await
     }
 
+    /// observability-rollout-maturity — override the additive default with a
+    /// real Moon `PING` so a dead/stalled backend surfaces as `Err` on the
+    /// `/healthz` rollout-cutback probe. Bounded by `LUNARIS_MOON_OP_TIMEOUT`.
+    async fn health_check(&self) -> Result<(), StorageError> {
+        self.client.ping().await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn vector_search(
         &self,

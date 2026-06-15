@@ -58,6 +58,9 @@
 
 pub mod config;
 pub mod dto;
+// observability-rollout-maturity — boot-time loader that publishes
+// lunaris_eval_score{harness} from the last eval run (LUNARIS_EVAL_RESULTS_PATH).
+pub mod eval_score;
 // hotkeys-observability — 10s HOTKEYS poller feeding lunaris_hotkey_samples.
 pub mod hotkeys_poller;
 // Plan 05-05 OPS-06 — Prometheus metrics registry + GET /metrics text-format

@@ -829,6 +829,15 @@ impl Lunaris {
     pub fn embedder(&self) -> Arc<dyn Embedder> {
         self.embedder.clone()
     }
+
+    /// Liveness probe for `lunaris-server`'s `/healthz` rollout-cutback surface
+    /// (`observability-rollout-maturity`): delegates to the storage backend's
+    /// [`StoragePort::health_check`] (Moon issues a real PING; in-process
+    /// backends report healthy via the additive default). `Err` → the server
+    /// answers 503 so the 5%→100% rollout controller cuts traffic back.
+    pub async fn health_check(&self) -> Result<(), LunarisError> {
+        self.storage.health_check().await.map_err(LunarisError::Storage)
+    }
     pub fn clock(&self) -> Arc<HlcClock> {
         self.clock.clone()
     }
