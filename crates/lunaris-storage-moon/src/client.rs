@@ -285,6 +285,21 @@ impl MoonClient {
         self.inner.clone()
     }
 
+    /// Liveness `PING` round-trip on the established connection
+    /// (`observability-rollout-maturity`). `Ok(())` when Moon answers `PONG`;
+    /// `Err(StorageError::Backend)` when Moon is dead / stalled / unreachable.
+    /// Bounded by `LUNARIS_MOON_OP_TIMEOUT` because the connection was opened
+    /// with `connect_with_timeout(..)` (io-failsafe Half B), so the `/healthz`
+    /// probe can never hang the handler.
+    pub async fn ping(&self) -> Result<(), StorageError> {
+        let mut typed = self.typed();
+        redis::cmd("PING")
+            .query_async::<String>(typed.inner_mut())
+            .await
+            .map(|_| ())
+            .map_err(redis_err)
+    }
+
     /// Idempotently create the FT indexes Lunaris uses (`chunks`, `entities`,
     /// `facts`, `communities`). Each index declares the dense `vec` field
     /// (HNSW Cosine, `self.dim`-d — set at `connect`/`connect_with_dim`;
