@@ -184,6 +184,19 @@ pub fn is_transient(err: &LunarisError) -> bool {
     }
 }
 
+/// Wrap a real extractor with the production fallback floor: a
+/// [`FallbackExtractor`] whose fallback is [`NoopExtractor`]. This is the seam
+/// `Lunaris::open`'s `default_extractor` calls so the cache-hit extractor is
+/// breaker-guarded — a transient primary failure degrades to empty extraction
+/// (graph extraction off for that episode) instead of failing ingest, while a
+/// terminal error propagates unchanged.
+///
+/// `provider` is the breaker / tracing label (e.g. `"gemma-3-4b-it"`).
+#[must_use]
+pub fn fallback_wrap<P: Extractor>(primary: P, provider: &str) -> Arc<dyn Extractor> {
+    Arc::new(FallbackExtractor::new(primary, crate::NoopExtractor, ProviderId::new(provider)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +331,45 @@ mod tests {
         fallback2.applies = false;
         let f2 = FallbackExtractor::new(primary2, fallback2, ProviderId::new("test"));
         assert!(!f2.applies());
+    }
+
+    // ── extractor-fallback-wiring (Half A): the `fallback_wrap` production seam ──
+    // `fallback_wrap(primary, provider)` is the exact code `default_extractor`'s
+    // candle cache-hit arm calls; it pins NoopExtractor as the fallback floor.
+    // The return is `Arc<dyn Extractor>` (type-erased), so these assert on
+    // observable behavior, not internal call counts.
+
+    #[tokio::test]
+    async fn fallback_wrap_transient_degrades_to_noop() {
+        let wrapped = fallback_wrap(ScriptedExtractor::new(vec![transient_err()]), "gemma-3-4b-it");
+        let chunks = vec![
+            ChunkInput { chunk_id: Ulid::new(), text: "a".into(), heading_path: vec![] },
+            ChunkInput { chunk_id: Ulid::new(), text: "b".into(), heading_path: vec![] },
+        ];
+        let batch = wrapped
+            .extract(Ulid::new(), &chunks)
+            .await
+            .expect("transient primary must degrade to the NoopExtractor floor, not error");
+        assert_eq!(batch.by_chunk.len(), 2, "NoopExtractor emits one empty extraction per chunk");
+        assert!(
+            batch
+                .by_chunk
+                .iter()
+                .all(|r| r.entities.is_empty() && r.relations.is_empty() && r.facts.is_empty()),
+            "the fallback floor produces empty extractions"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_wrap_terminal_propagates() {
+        let wrapped = fallback_wrap(ScriptedExtractor::new(vec![terminal_err()]), "gemma-3-4b-it");
+        let err = wrapped
+            .extract(Ulid::new(), &[])
+            .await
+            .expect_err("terminal primary error must propagate, not fall back to Noop");
+        assert!(
+            matches!(err, LunarisError::Extract(ExtractError::GrammarReject(_))),
+            "terminal error propagates unchanged, got {err:?}"
+        );
     }
 }

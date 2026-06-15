@@ -1931,7 +1931,12 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
 #[cfg(feature = "candle")]
 async fn default_extractor() -> Arc<dyn Extractor> {
     match lunaris_extract::CandleGemma3_4B::new(Default::default()).await {
-        Ok(e) => Arc::new(e) as Arc<dyn Extractor>,
+        // Wrap the real extractor with the production fallback floor: a transient
+        // primary failure degrades to NoopExtractor (graph extraction off for that
+        // episode) instead of failing ingest; terminal errors still propagate.
+        // This is what puts FallbackExtractor + CircuitBreaker on the production
+        // open() path (io-failsafe-wiring Half A).
+        Ok(e) => lunaris_extract::fallback::fallback_wrap(e, "gemma-3-4b-it"),
         Err(e) => {
             tracing::warn!(
                 error = %e,
