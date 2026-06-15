@@ -38,6 +38,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::stream::{BoxStream, StreamExt};
 use lunaris_core::QueueMsg;
+use lunaris_core::keyspace::{entity_key, fact_key, relation_key};
 use lunaris_core::{BiTemporal, HlcClock, LunarisError, Scope, StorageError, StoragePort, WriteOp};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -302,7 +303,8 @@ pub(crate) async fn process_one(
 /// payload, so a typed-local mutation that doesn't ride inside the payload
 /// bytes is discarded. Task 4 mirrors the JSON-patch pattern proven in
 /// Plan 04-05 forget.rs.
-async fn apply_supersede(
+#[doc(hidden)] // exposed for the memory-update-intelligence supersede integration test
+pub async fn apply_supersede(
     storage: &Arc<dyn StoragePort>,
     decision: &VerifyDecision,
     clock: &Arc<HlcClock>,
@@ -312,23 +314,26 @@ async fn apply_supersede(
     let winner_id = decision.winner_id.expect("checked applies() earlier");
     let loser_id = decision.loser_id.expect("checked applies() earlier");
 
-    // 1. Derive canonical keys from envelope_kind + ulids. Match the key
-    //    prefixes used by `crates/lunaris/src/ingest.rs` (episode_key,
-    //    chunk_key, fact_key, etc.). Unknown kinds error out so the worker
-    //    drops the message rather than writing the wrong row
-    //    (T-04-04-09 mitigation).
-    let key_prefix = match envelope_kind {
-        "entity" => "entity",
-        "relation" => "relation",
-        "fact" => "fact",
+    // 1. Derive the CANONICAL `lunaris:{scope}:{kind}:{ulid}` keys via the
+    //    `lunaris_core::keyspace` helpers — the SAME helpers the ingest write
+    //    path uses (`entity_key` / `relation_key` / `fact_key`). Minting a key
+    //    from a local `format!` here was a latent bug: it produced the
+    //    scope-less `{kind}:{ulid}`, so `read_as_of` (which matches the literal
+    //    key) never found the real row and the supersede silently tombstoned a
+    //    phantom key — the loser stayed open (memory-update-intelligence
+    //    discriminating test `supersede_closes_loser_at_canonical_fact_key`).
+    //    CONVENTIONS.md: any caller that mints a KV key from a local helper is
+    //    a bug. Unknown kinds still error out (T-04-04-09 mitigation).
+    let (winner_key, loser_key) = match envelope_kind {
+        "entity" => (entity_key(scope, winner_id), entity_key(scope, loser_id)),
+        "relation" => (relation_key(scope, winner_id), relation_key(scope, loser_id)),
+        "fact" => (fact_key(scope, winner_id), fact_key(scope, loser_id)),
         other => {
             return Err(LunarisError::Storage(StorageError::Backend(format!(
                 "unknown envelope kind: {other}"
             ))));
         }
     };
-    let winner_key = format!("{key_prefix}:{winner_id}").into_bytes();
-    let loser_key = format!("{key_prefix}:{loser_id}").into_bytes();
 
     // 2. Stamp `now` via HlcClock::tick (the Hlc type itself has no
     //    `now()` constructor — Hlc::ZERO is the only const, and HlcClock

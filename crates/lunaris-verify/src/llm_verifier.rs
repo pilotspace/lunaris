@@ -36,8 +36,8 @@ use lunaris_core::LunarisError;
 use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
 
 use crate::types::VerifierBackend;
-use crate::{Verifier, VerifyDecision, arbitration_prompt, parse_decision_json};
-use lunaris_extract::NeedsReviewItem;
+use crate::{Verifier, VerifyDecision, arbitration_prompt, cross_episode_decision, parse_decision_json};
+use lunaris_extract::{NeedsReviewItem, NeedsReviewReason};
 
 /// Construction options for [`LlmVerifier`].
 #[derive(Clone, Debug)]
@@ -120,6 +120,29 @@ impl LlmVerifier {
 #[async_trait]
 impl Verifier for LlmVerifier {
     async fn verify(&self, item: NeedsReviewItem) -> Result<VerifyDecision, LunarisError> {
+        // Cross-episode contradiction (memory-update convergence): the reason
+        // already carries both fact ids and the policy is a fixed
+        // latest-assertion-wins rule, so we arbitrate deterministically WITHOUT
+        // an LLM round-trip. Every real backend (candle 270M/27B, ollama,
+        // cloud-api) funnels its `verify` through this `LlmVerifier`, so this
+        // single arm is the per-backend `CrossEpisodeContradiction` handler;
+        // the worker then closes the loser via `apply_supersede`. (Full
+        // LLM-semantic arbitration of fact texts is a flagged follow-up.)
+        if let NeedsReviewItem::Fact {
+            reason:
+                NeedsReviewReason::CrossEpisodeContradiction {
+                    existing_fact_id, new_fact_id, ..
+                },
+            ..
+        } = &item
+        {
+            return Ok(cross_episode_decision(
+                *existing_fact_id,
+                *new_fact_id,
+                self.opts.backend_tag,
+            ));
+        }
+
         let prompt = arbitration_prompt(&item);
         let gen_opts = GenOpts {
             max_tokens: self.opts.max_tokens,

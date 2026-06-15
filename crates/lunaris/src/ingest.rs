@@ -609,7 +609,7 @@ async fn embed_with_fallback(
 /// The Phase 4 Verifier worker reads `kind` to pick the deserialize shape
 /// for `item.raw`. Kept intentionally small and stable — adding fields here
 /// is fine; renaming or removing requires a Phase 4 coordination ping.
-async fn publish_needs_review(
+pub(crate) async fn publish_needs_review(
     storage: &dyn StoragePort,
     scope: &lunaris_core::Scope,
     items: &[NeedsReviewItem],

@@ -90,7 +90,7 @@ pub use supervisor::{
     ENV_SCOPE_CONCURRENCY, ENV_SCOPE_IDLE_TIMEOUT_MS, VerifySupervisor, VerifySupervisorHandle,
     scope_verify_topic,
 };
-pub use types::{VerifierBackend, VerifyDecision};
+pub use types::{VerifierBackend, VerifyDecision, cross_episode_decision};
 #[allow(deprecated)]
 pub use worker::{VERIFY_CONSUMER_GROUP, VERIFY_TOPIC, run_verify_worker};
 

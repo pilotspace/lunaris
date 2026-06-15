@@ -490,8 +490,13 @@ async fn verify_apply_supersede_writes_real_mvcc_rows() {
     let winner_ulid = ulid::Ulid::new();
     let alice_id = lunaris_extract::EntityId::from_name_and_type("Alice", "Person");
     let bob_id = lunaris_extract::EntityId::from_name_and_type("Bob", "Person");
-    let loser_key = format!("fact:{loser_ulid}").into_bytes();
-    let winner_key = format!("fact:{winner_ulid}").into_bytes();
+    // Seed at the CANONICAL `lunaris:{scope}:fact:{ulid}` key (the legacy
+    // worker supersedes under `Scope::dev()`). Prior to the worker key-mint fix
+    // this test seeded the scope-less `fact:{ulid}` and passed by accident
+    // (the buggy worker read the same scope-less key) — see
+    // `lunaris-verify/tests/memory_update_supersede.rs`.
+    let loser_key = lunaris_core::keyspace::fact_key(&lunaris_core::Scope::dev(), loser_ulid);
+    let winner_key = lunaris_core::keyspace::fact_key(&lunaris_core::Scope::dev(), winner_ulid);
     let t0 = Hlc::ZERO;
 
     // Build payloads that are valid `lunaris_extract::types::Fact` JSON

@@ -40,6 +40,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ulid::Ulid;
 
 use crate::types::{Entity, EntityId, ExtractionBatch, Fact, RawExtractionBatch, Relation};
 
@@ -83,6 +84,27 @@ pub enum NeedsReviewReason {
     /// triage which provider+model failed.
     #[error("extractor transient failure after 1 retry: {0}")]
     TransientAfterRetry(String),
+
+    /// A newly-ingested fact asserts a DIFFERENT object for an existing
+    /// `(subject, predicate)` whose validity window OVERLAPS the new one —
+    /// detected at structured ingest by reading the in-scope
+    /// `fact_spo_key` index (memory-update convergence). Unlike
+    /// [`Self::StructuralContradiction`] (single-Episode, demote-both) this is
+    /// CROSS-Episode and carries BOTH fact ids so the Phase 4 Verifier can
+    /// arbitrate a winner/loser via `cross_episode_decision` → `apply_supersede`
+    /// (latest-assertion-wins), closing the loser's bi-temporal interval.
+    #[error(
+        "cross-episode contradiction: ({subject}, {predicate}) existing object {existing_object} \
+         (fact {existing_fact_id}) vs new object {new_object} (fact {new_fact_id})"
+    )]
+    CrossEpisodeContradiction {
+        subject: EntityId,
+        predicate: String,
+        existing_fact_id: Ulid,
+        existing_object: EntityId,
+        new_fact_id: Ulid,
+        new_object: EntityId,
+    },
 }
 
 /// One failed extraction with the reason it was demoted. Preserves the raw
