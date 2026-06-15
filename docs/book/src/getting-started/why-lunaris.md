@@ -76,9 +76,9 @@ Pick Lunaris when you can say **yes** to most of these:
 | Bi-temporal | yes, at the storage layer (`valid` + `sys`) | no | yes | partial |
 | Substrate count | 1 (Moon *or* Postgres) | vector DB + store | vector DB + graph DB | configurable, multi |
 | Hybrid retrieval | typed DSL: `vector.and(keyword).fuse_rrf().top()` | flag | flag | pipeline step |
-| Graph | opt-in operator, off by default | n/a | always-on | pipeline-driven |
+| Graph | opt-in operator, off by default | Mem0g (Platform-only) | always-on | pipeline-driven |
 | Multi-tenancy | `Scope` newtype + Postgres RLS | `user_id` string | `session_id` | namespace |
-| Hosted option | not yet (v0.4) | yes | yes (Zep Cloud) | self-host |
+| Hosted option | not yet (roadmap) | yes | yes (Zep Cloud) | self-host |
 | License | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 Already running one of these? The migration chapters walk through
@@ -103,8 +103,9 @@ on $incumbent if…" criteria:
   to operate Moon themselves. Also lands the typed `Scope` +
   `EpisodeBuilder` surface in the Python / TS SDKs and per-scope
   `ScopedLunaris::forget`.
-- **v0.4 ecosystem** — LangGraph / CrewAI / Letta adapters. The "drop
-  Lunaris into your existing agent framework" experience.
+- **Ecosystem (roadmap)** — LangGraph / CrewAI / Letta adapters. The "drop
+  Lunaris into your existing agent framework" experience. *Not yet shipped as
+  of v0.7 — today the MCP server is the universal framework shim.*
 
 ## Where to go next
 

@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "moon-hybrid-filter-bypass",
-  "active_milestone": null,
+  "active_task": "io-failsafe-wiring",
+  "active_milestone": "mem0-parity-hardening",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -165,6 +165,137 @@
       "depends_on": [],
       "created": "2026-06-12T03:36:53+00:00",
       "updated": "2026-06-12T03:36:53+00:00"
+    },
+    "moon-v031-xshard-bump": {
+      "title": "Bump Moon to v0.3.1 (cross-shard read fast path) and verify Lunaris recall benefit",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": null,
+      "depends_on": [],
+      "created": "2026-06-14T15:26:24+00:00",
+      "updated": "2026-06-14T15:26:24+00:00"
+    },
+    "mem0-gap-analysis": {
+      "title": "Mem0 competitive gap analysis + ranked hardening backlog",
+      "phase": "build",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-14T16:01:15+00:00",
+      "updated": "2026-06-14T16:46:16+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "56bac79138c0087a973a6838a336ea91",
+        "tests": {
+          ".add/tasks/mem0-gap-analysis/tests/test_validate_gap_analysis.py": "1c0fe5f74feb1b03ff2031c01911179b",
+          ".add/tasks/mem0-gap-analysis/tests/validate_gap_analysis.py": "89f1e1bb5da7ad83d7fea694c0f7a345"
+        }
+      },
+      "scope": {
+        "declared": [
+          "docs/competitive/mem0-gap-analysis.md",
+          ".add/tasks/mem0-gap-analysis/tests/"
+        ],
+        "snapshot_md5": "8922f36d64702e371ca12b514bae1a9b"
+      }
+    },
+    "io-failsafe-wiring": {
+      "title": "Wire CircuitBreaker+FallbackExtractor on the production path; per-op timeouts on Moon IO",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T03:46:29+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "aa7306ce80f0faf18991380d969ec354",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-storage-moon/src/client.rs"
+        ],
+        "snapshot_md5": "333ba4a383b083848fc8c7ace47f7924"
+      },
+      "heal": {
+        "attempts": 2,
+        "history": [
+          {
+            "at": "2026-06-15T03:42:53+00:00",
+            "reason": "scope_violation: task 'io-failsafe-wiring' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-storage-moon/tests/op_timeout.rs (1 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-06-15T03:44:19+00:00",
+            "reason": "scope_violation: task 'io-failsafe-wiring' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-storage-moon/tests/op_timeout.rs (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
+    },
+    "observability-rollout-maturity": {
+      "title": "/healthz storage probe + wire lunaris_eval_score for rollout auto-cutback",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "eval-gauntlet-ci-gate": {
+      "title": "Un-stub LoCoMo/LongMemEval/ER-F1 harnesses; make CI gate on real scores",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "memory-update-intelligence": {
+      "title": "Write-time contradiction/dedup reconciliation so memories converge (Mem0 parity)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "multi-level-memory-categories": {
+      "title": "Typed user/session/agent memory levels + categories + metadata-filter API",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "sdk-integrations-dx": {
+      "title": "LangGraph/CrewAI adapters + SDK DX; make the adapter claim true",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "mem0-docs-reconcile": {
+      "title": "Correct stale Mem0 claims in shipped docs (adapters not shipped; Mem0g exists)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T01:50:41+00:00",
+      "updated": "2026-06-15T01:50:41+00:00"
+    },
+    "extractor-fallback-wiring": {
+      "title": "Wire FallbackExtractor+CircuitBreaker on the production extractor path (deferred Half A of io-failsafe-wiring)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "mem0-parity-hardening",
+      "depends_on": [],
+      "created": "2026-06-15T03:20:27+00:00",
+      "updated": "2026-06-15T03:20:27+00:00"
     }
   },
   "milestones": {
@@ -183,10 +314,18 @@
       "status": "active",
       "created": "2026-06-11T11:33:02+00:00",
       "updated": "2026-06-11T11:33:02+00:00"
+    },
+    "mem0-parity-hardening": {
+      "title": "Mem0-Parity Production Hardening",
+      "goal": "Lunaris is demonstrably production-ready and competitive with Mem0 \u2014 proven by a verified gap analysis, then by closing every P0 gap it surfaces (fail-safe IO, eval gates reproducing Mem0-comparable accuracy, and the prioritized capability/DX gaps).",
+      "stage": "production",
+      "status": "active",
+      "created": "2026-06-14T16:00:38+00:00",
+      "updated": "2026-06-14T16:00:38+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-12T14:30:14+00:00",
+  "updated": "2026-06-15T03:46:29+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
