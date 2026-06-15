@@ -193,23 +193,33 @@ impl MoonClient {
 
         // Moon speaks RESP2/RESP3 over the Redis protocol. We dial via the typed
         // moon-client SDK which internally opens a `redis::aio::MultiplexedConnection`.
-        // Bulk-write bench workloads (50K-1M HSET ops) can exceed the SDK's
-        // default ~60s timeout; we wrap the connect call in a 5-minute tokio
-        // timeout. `TypedClient::connect_with_timeout` exists on the local
-        // path-dep build of moondb but isn't in the crates.io 0.1.1 release,
-        // so we use the always-available `connect` + outer `tokio::time::timeout`
-        // for crates.io compatibility (semver-friendly).
+        //
+        // Two distinct bounds protect the ingest/recall handlers from a wedged Moon:
+        //   * the 300s outer `tokio::time::timeout` bounds CONNECTION ESTABLISHMENT
+        //     (TCP + handshake). Bulk-write bench workloads (50K-1M HSET ops) make a
+        //     short connect bound unsafe, so this stays generous; and
+        //   * `connect_with_timeout(.., moon_op_timeout())` sets a PER-COMMAND response
+        //     timeout (`LUNARIS_MOON_OP_TIMEOUT`, default 10s) on the multiplexed
+        //     connection, so EVERY later command (HSET / FT.* / TXN) is bounded. Without
+        //     it a Moon that stalls mid-operation hangs the handler indefinitely
+        //     (io-failsafe-wiring P0). The redis-rs ~500ms command default is not a
+        //     contract and is far too aggressive for production batches, so we set ours
+        //     explicitly. `connect_with_timeout` is in the vendored + published
+        //     `moondb 0.2.1` path-dep this workspace builds against.
         let redis_url = format!("redis://{host}:{port}");
         let connect_timeout = std::time::Duration::from_secs(300);
-        let inner = tokio::time::timeout(connect_timeout, TypedClient::connect(redis_url.as_str()))
-            .await
-            .map_err(|_| {
-                StorageError::Backend(format!(
-                    "moon connect timed out after {}s",
-                    connect_timeout.as_secs()
-                ))
-            })?
-            .map_err(moon_err)?;
+        let inner = tokio::time::timeout(
+            connect_timeout,
+            TypedClient::connect_with_timeout(redis_url.as_str(), moon_op_timeout()),
+        )
+        .await
+        .map_err(|_| {
+            StorageError::Backend(format!(
+                "moon connect timed out after {}s",
+                connect_timeout.as_secs()
+            ))
+        })?
+        .map_err(moon_err)?;
         let me = Self { host, port, workspace, dim, quantization, inner };
         // Phase 22 dim-guardrail: probe existing indices BEFORE
         // `ensure_indexes` creates anything. If any index already exists at
@@ -442,6 +452,46 @@ pub(crate) async fn create_lunaris_index_named(
     }
 }
 
+/// Resolve the per-command Moon response timeout from `LUNARIS_MOON_OP_TIMEOUT`
+/// (whole seconds). Unset → the 10s default silently; unparseable or `≤ 0` → the
+/// 10s default with a `warn!`. Never returns a zero or "infinite" timeout.
+///
+/// This is the value handed to [`TypedClient::connect_with_timeout`] in
+/// [`MoonClient::connect_with_dim`], so every Moon command on the resulting
+/// connection (HSET / FT.* / TXN) is response-bounded — a stalled Moon can no
+/// longer hang the ingest/recall handler (io-failsafe-wiring P0).
+fn moon_op_timeout() -> std::time::Duration {
+    parse_op_timeout(std::env::var("LUNARIS_MOON_OP_TIMEOUT").ok().as_deref())
+}
+
+/// Pure parser for the `LUNARIS_MOON_OP_TIMEOUT` value (whole seconds). `None`
+/// (unset) → the 10s default, silently; a `Some` that is unparseable or `≤ 0` →
+/// the 10s default with a `warn!`. Never returns a zero or "infinite" timeout.
+///
+/// Split out from [`moon_op_timeout`] so the edge cases are unit-testable without
+/// mutating the process environment — this crate is `#![forbid(unsafe_code)]` and
+/// `std::env::set_var` is `unsafe` on edition 2024.
+fn parse_op_timeout(raw: Option<&str>) -> std::time::Duration {
+    const DEFAULT_SECS: u64 = 10;
+    match raw {
+        // Unset is the normal case — the default, no warning.
+        None => std::time::Duration::from_secs(DEFAULT_SECS),
+        // Garbage ("abc"), non-positive ("0", "-1"), or overflow: never crash,
+        // never an infinite/zero timeout — fall back to the default with a warn.
+        Some(raw) => match raw.trim().parse::<u64>() {
+            Ok(secs) if secs > 0 => std::time::Duration::from_secs(secs),
+            _ => {
+                tracing::warn!(
+                    value = %raw,
+                    "ignoring invalid LUNARIS_MOON_OP_TIMEOUT (want a positive whole number \
+                     of seconds); using {DEFAULT_SECS}s default"
+                );
+                std::time::Duration::from_secs(DEFAULT_SECS)
+            }
+        },
+    }
+}
+
 /// Map a `moon_client::MoonError` into Lunaris's `StorageError`.
 ///
 /// We treat any reply starting with `NOSUPPORT ` (or containing "not supported") as
@@ -481,6 +531,27 @@ pub(crate) fn redis_err(e: redis::RedisError) -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// io-failsafe-wiring (Half B): `moon_op_timeout()` resolves the per-op Moon
+    /// response timeout from `LUNARIS_MOON_OP_TIMEOUT` (whole seconds). Unset →
+    /// 10s default; a valid positive value is honored; garbage or ≤0 falls back
+    /// to the 10s default (warn, never crash, never an infinite/zero timeout).
+    /// We exercise the pure parser directly — the crate is
+    /// `#![forbid(unsafe_code)]`, so mutating the process env (unsafe on edition
+    /// 2024) is not an option, and the env-reading wrapper `moon_op_timeout()` is
+    /// covered end-to-end by `tests/op_timeout.rs`.
+    #[test]
+    fn moon_op_timeout_default_and_override() {
+        use std::time::Duration;
+        assert_eq!(parse_op_timeout(None), Duration::from_secs(10), "unset -> 10s default");
+        assert_eq!(parse_op_timeout(Some("5")), Duration::from_secs(5), "\"5\" -> 5s");
+        assert_eq!(
+            parse_op_timeout(Some("abc")),
+            Duration::from_secs(10),
+            "garbage -> 10s default"
+        );
+        assert_eq!(parse_op_timeout(Some("0")), Duration::from_secs(10), "0 -> 10s default");
+    }
 
     #[tokio::test]
     async fn rejects_wrong_scheme() {
