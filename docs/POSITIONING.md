@@ -102,8 +102,9 @@ two milestones:
 - **v0.3 self-hosted** — Docker / Helm, SLOs, design partners. The
   hosted-substrate experience for teams that want Lunaris but don't
   want to operate Moon themselves.
-- **v0.4 ecosystem** — LangGraph / CrewAI / Letta adapters. The
-  "drop Lunaris into your existing agent framework" experience.
+- **Ecosystem (roadmap)** — LangGraph / CrewAI / Letta adapters. The
+  "drop Lunaris into your existing agent framework" experience. *Not yet
+  shipped as of v0.7 — the MCP server is today's universal framework shim.*
 
 See [`README.md#status`](../README.md#status) for the current
 milestone state table.
