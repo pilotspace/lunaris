@@ -59,4 +59,4 @@ The feature is off by default and is not compiled into the published
 
 ## License
 
-Apache-2.0 OR MIT
+Apache-2.0

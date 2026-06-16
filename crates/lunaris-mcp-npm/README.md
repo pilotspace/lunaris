@@ -81,4 +81,4 @@ backends, and all eleven MCP tools.
 
 ## License
 
-Apache-2.0 OR MIT
+Apache-2.0
