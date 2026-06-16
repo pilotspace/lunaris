@@ -77,7 +77,7 @@ use lunaris_extract::validator::{NeedsReviewItem, NeedsReviewReason};
 use lunaris_ingest::chunk_markdown;
 
 use crate::episode_builder::EpisodeBuilder;
-use crate::reconcile::{classify_fact, FactDecision, FactTriple, SpoEntry};
+use crate::reconcile::{FactDecision, FactTriple, SpoEntry, classify_fact};
 
 // Index names + graph name kept in sync with the LLM-extracted path in
 // `crate::ingest`. Same string constants, kept private to this module so a
@@ -456,10 +456,8 @@ pub async fn ingest_structured_inner(
             FactDecision::Supersede { loser_fact_id } => {
                 // The new fact is still written + indexed (additive); the
                 // verifier closes the loser asynchronously.
-                let existing_object = prior
-                    .iter()
-                    .find(|p| p.fact_id == loser_fact_id)
-                    .map_or(oid, |p| p.object_id);
+                let existing_object =
+                    prior.iter().find(|p| p.fact_id == loser_fact_id).map_or(oid, |p| p.object_id);
                 needs_review.push(NeedsReviewItem::Fact {
                     reason: NeedsReviewReason::CrossEpisodeContradiction {
                         subject: sid,

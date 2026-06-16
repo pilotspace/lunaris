@@ -8,7 +8,7 @@
 //! path closes the named loser). Green lands in build batch 3–4.
 
 use chrono::{DateTime, TimeZone, Utc};
-use lunaris::reconcile::{classify_fact, FactDecision, FactTriple, SpoEntry};
+use lunaris::reconcile::{FactDecision, FactTriple, SpoEntry, classify_fact};
 use lunaris_extract::types::EntityId;
 use ulid::Ulid;
 
