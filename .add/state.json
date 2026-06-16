@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "pyo3-rustsec-advisories",
+  "active_task": "eval-gauntlet-ci-gate",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -177,12 +177,12 @@
     },
     "mem0-gap-analysis": {
       "title": "Mem0 competitive gap analysis + ranked hardening backlog",
-      "phase": "build",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-14T16:01:15+00:00",
-      "updated": "2026-06-15T06:57:43+00:00",
+      "updated": "2026-06-16T14:46:16+00:00",
       "flag_verified": true,
       "tripwire": {
         "contract_md5": "56bac79138c0087a973a6838a336ea91",
@@ -196,14 +196,19 @@
           "docs/competitive/mem0-gap-analysis.md",
           ".add/tasks/mem0-gap-analysis/tests/"
         ],
-        "snapshot_md5": "8922f36d64702e371ca12b514bae1a9b"
+        "snapshot_md5": "36491a8a666510aa11e00097e652d907"
       },
       "heal": {
-        "attempts": 1,
+        "attempts": 2,
         "history": [
           {
             "at": "2026-06-15T06:57:43+00:00",
             "reason": "scope_violation: task 'mem0-gap-analysis' touched outside its declared \u00a75 Scope \u2014 .serena/.gitignore \u00b7 .serena/cache/rust/document_symbols.pkl \u00b7 .serena/cache/rust/raw_document_symbols.pkl \u00b7 .serena/project.local.yml \u00b7 .serena/project.yml (111463 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-06-16T14:29:36+00:00",
+            "reason": "scope_violation: task 'mem0-gap-analysis' touched outside its declared \u00a75 Scope \u2014 .pytest_cache/v/cache/lastfailed \u00b7 .pytest_cache/v/cache/nodeids \u00b7 .serena/.gitignore \u00b7 .serena/cache/rust/document_symbols.pkl \u00b7 .serena/cache/rust/raw_document_symbols.pkl (112063 total)",
             "source": "scope"
           }
         ]
@@ -278,30 +283,19 @@
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T13:20:13+00:00",
+      "updated": "2026-06-16T16:24:36+00:00",
       "flag_verified": true,
       "tripwire": {
-        "contract_md5": "f4740efb8e834143123b475d1e0fb367",
+        "contract_md5": "1c3178102c5f078ef9bd8af070dda259",
         "tests": {}
       },
       "scope": {
         "declared": [
-          "crates/lunaris-bench/src/eval/scoring.rs",
-          "crates/lunaris-bench/src/eval/mod.rs",
-          "crates/lunaris-bench/src/eval/mod scoring;",
-          "crates/lunaris-bench/src/eval/er_f1.rs",
-          "crates/lunaris-bench/src/eval/locomo.rs",
-          "crates/lunaris-bench/src/eval/longmemeval.rs",
-          "crates/lunaris-bench/Cargo.toml",
-          "crates/lunaris-bench/eval-live",
-          "lunaris-extract/candle",
-          "lunaris-extract/default-features=false",
-          "lunaris-extract/CandleGemma3_4B",
-          "lunaris-extract/default",
-          ".github/workflows/eval-gauntlet.yml",
-          ".add/tasks/eval-gauntlet-ci-gate/UAT.md"
+          "crates/lunaris-bench/src/eval/",
+          "crates/lunaris-bench/tests/",
+          ".github/workflows/eval-gauntlet.yml"
         ],
-        "snapshot_md5": "a12d4a238c4a4804d76c8ca0b498c0eb"
+        "snapshot_md5": "ee78649d3a5922203a43ec5b5b7cea4a"
       },
       "heal": {
         "attempts": 1,
@@ -312,7 +306,16 @@
             "source": "scope"
           }
         ]
-      }
+      },
+      "reopens": [
+        {
+          "from": "done",
+          "to": "ground",
+          "reason": "Integrity reconcile (2026-06-16): state.json showed done/PASS but TASK.md is a blank template at ground and the deliverable is unbuilt \u2014 eval scores still hardcoded 0.0 (locomo.rs:101, er_f1.rs:90), no accuracy-gauntlet CI gate (llm-gates.yml gates extractor/verifier agreement only). Reopening to build it honestly.",
+          "at": "2026-06-16T14:46:49+00:00",
+          "prior_gate": "PASS"
+        }
+      ]
     },
     "memory-update-intelligence": {
       "title": "Write-time contradiction/dedup reconciliation so memories converge (Mem0 parity)",
@@ -354,12 +357,12 @@
     },
     "multi-level-memory-categories": {
       "title": "Typed user/session/agent memory levels + categories + metadata-filter API",
-      "phase": "done",
-      "gate": "PASS",
+      "phase": "ground",
+      "gate": "none",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T11:22:40+00:00",
+      "updated": "2026-06-16T14:46:49+00:00",
       "flag_verified": true,
       "tripwire": {
         "contract_md5": "04516d1c0857774e3d18d9822d8919b3",
@@ -378,7 +381,16 @@
           "crates/lunaris-core/src/storage/compose_levels"
         ],
         "snapshot_md5": "cb9302631cd9de7fcb6ada9c08319ecf"
-      }
+      },
+      "reopens": [
+        {
+          "from": "done",
+          "to": "ground",
+          "reason": "Integrity reconcile (2026-06-16): state.json showed done/PASS but no category/level/metadata-filter API exists in crates/ and TASK.md is a blank template. Genuinely unbuilt P1 (not an exit criterion).",
+          "at": "2026-06-16T14:46:49+00:00",
+          "prior_gate": "PASS"
+        }
+      ]
     },
     "sdk-integrations-dx": {
       "title": "LangGraph/CrewAI adapters + SDK DX; make the adapter claim true",
@@ -434,12 +446,12 @@
     },
     "mem0-docs-reconcile": {
       "title": "Correct stale Mem0 claims in shipped docs (adapters not shipped; Mem0g exists)",
-      "phase": "done",
-      "gate": "PASS",
+      "phase": "ground",
+      "gate": "none",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-15T12:02:13+00:00",
+      "updated": "2026-06-16T14:46:49+00:00",
       "flag_verified": true,
       "tripwire": {
         "contract_md5": "6e9d974ad7bb9c775c38182c1832edb7",
@@ -453,7 +465,16 @@
           "docs/book/src/migrating/mem0.md"
         ],
         "snapshot_md5": "c5cec3ac4ce1f961e896266b206d49a0"
-      }
+      },
+      "reopens": [
+        {
+          "from": "done",
+          "to": "ground",
+          "reason": "Integrity reconcile (2026-06-16): state.json showed done/PASS with a blank TASK.md, but the deliverable already exists in docs \u2014 why-lunaris.md:79 acknowledges Mem0g (Platform-only) + POSITIONING.md:105 says adapters shipped (via PR #29 + gap-analysis \u00a7F). Reopening to honest state; deliverable is verify-ready.",
+          "at": "2026-06-16T14:46:49+00:00",
+          "prior_gate": "PASS"
+        }
+      ]
     },
     "extractor-fallback-wiring": {
       "title": "Wire FallbackExtractor+CircuitBreaker on the production extractor path (deferred Half A of io-failsafe-wiring)",
@@ -504,7 +525,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T14:18:47+00:00",
+  "updated": "2026-06-16T16:24:36+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
