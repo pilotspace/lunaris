@@ -193,6 +193,6 @@ Spec delta for the next loop: a CI workflow that has never been green is a diffe
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
-- [ADD · open] check a failing workflow's FULL run history before classifying a failure as a regression — "red since <date>" sampled from recent runs can hide "never passed" (evidence: 62/62 failures back to creation 2026-04-23 vs my initial "broken since 06-08" report)
-- [ADD · open] layered CI failures unmask one at a time: budget a triage round per layer when repairing a never-green workflow, and pre-agree the triage-or-split rule in the contract (evidence: venv fix immediately exposed the wrong postgres image)
-- [SDD · open] GHA services: blocks cannot run locally-built images — any Lunaris workflow needing pg-lunaris must copy the integration.yml manual docker-run pattern (Plan 14-01 D-02), never a services: entry (evidence: conformance-bindings shipped with plain postgres:16 and could never have passed its postgres row)
+- [ADD · folded] check a failing workflow's FULL run history before classifying a failure as a regression — "red since <date>" sampled from recent runs can hide "never passed" (evidence: 62/62 failures back to creation 2026-04-23 vs my initial "broken since 06-08" report)
+- [ADD · folded] layered CI failures unmask one at a time: budget a triage round per layer when repairing a never-green workflow, and pre-agree the triage-or-split rule in the contract (evidence: venv fix immediately exposed the wrong postgres image)
+- [SDD · folded] GHA services: blocks cannot run locally-built images — any Lunaris workflow needing pg-lunaris must copy the integration.yml manual docker-run pattern (Plan 14-01 D-02), never a services: entry (evidence: conformance-bindings shipped with plain postgres:16 and could never have passed its postgres row)

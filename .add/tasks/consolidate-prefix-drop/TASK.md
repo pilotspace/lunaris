@@ -314,13 +314,13 @@ never-matching backlog churn (drain + republish each cycle, DRAIN_CAP-bounded)
 foreign-event fast-path that skips drain when the prefix matches nothing.
 
 ### Competency deltas
-- [TDD · open] a red test can be red-for-the-wrong-satisfiability: the first
+- [TDD · folded] a red test can be red-for-the-wrong-satisfiability: the first
   harness take()-consumed the mpsc receiver so the discriminating test could
   NEVER go green — walk the future fix through the harness before accepting
   red (evidence: 8e4b218 → 322ce0a amend, satisfiability walkthrough).
-- [ADD · open] harness-machinery fixes during tests/build are legitimate when
+- [ADD · folded] harness-machinery fixes during tests/build are legitimate when
   zero assertions change, but commit them separately and say so (evidence:
   style commit 6491df7 vs frozen red 322ce0a).
-- [SDD · open] trait-default methods that receive already-consumed input need
+- [SDD · folded] trait-default methods that receive already-consumed input need
   the hazard IN THE DOC, not just at the call site — future implementors see
   the trait first (evidence: consolidate_scoped doc note shipped this task).

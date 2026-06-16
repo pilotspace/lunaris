@@ -6,7 +6,7 @@
 > UI/UX = UDD. When a loop reveals a gap here, come back and update this file —
 > that is the re-entrant arrow from the engine down to the foundation.
 
-slug: Lunaris · stage: production · updated: 2026-06-11 · foundation-version: 2
+slug: Lunaris · stage: production · updated: 2026-06-16 · foundation-version: 3
 goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicity and an opt-in graph — the contract that differentiates Lunaris from Mem0/Zep/Cognee
 
 ---
@@ -26,11 +26,13 @@ goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicit
   - Moon subcommand wire form is `TXN BEGIN`/`MQ <SUB>` (space-separated args); dotted spellings (`TXN.BEGIN`, `MQ.POP`) are server-unhandled — FT.*/GRAPH.* dotted intuition does not transfer
   - Production GraphEdge writes carry no explicit WEIGHT → graph decay is age-only re-ranking today
   - MQ `partition` is API-level metadata, not a wire concept, across all backends
+- At-rest read model is HETEROGENEOUS (folded 2026-06-16, memory-inspector): "memory" has THREE on-disk shapes — episode/chunk/community KV = `lunaris_core` primitives; `fact:` KV = `lunaris_extract::Fact`; entity/relation are GRAPH nodes/edges, never KV. The `core` primitives are the aspirational model, not on-disk truth; `*_prefix` keyspace helpers exist for all six kinds but the happy path never KV-populates entity/relation — a helper's existence ≠ data behind it. Decode each kind at its real shape.
 
 ## Spec / Living Document (SDD) — what we are building, now
 - Active milestone → `.add/milestones/moon-v030-exploit/MILESTONE.md` (see `add.py status`)
 - Frozen contracts (living docs): `StoragePort`/`KeywordPort` (lunaris-core), HTTP DTOs (`deny_unknown_fields`), MCP tool roster (11 tools, `server_boot.rs` guard)
 - Settled vs still open (folded 2026-06-11): Moon-first backend ordering settled · Moon pinned v0.3.0 (3e376a14) · SETTLED: SQ8 over TQ4 on synthetic 768-d (FP stays default; corpus-realism caveat documented) · SETTLED: the 25ms contract is judged on the retrieval-only noop-embedder pass (canonical decomposition when embed is in-loop) · CLOSED: client-side `{scope}` hash-tagging disproven — multi-shard gated on Moon `TXN BEGIN PIN` (RFC) · open: upstream Moon requests (TXN PIN · FT.INFO quantization field · Cypher `_key` registration · HOTKEYS windowed reset) · open: shared reverse key-parser in lunaris-core (key-shape knowledge lives in 3 places) · open: 10k×1k like-for-like strict-replay rerun before any cross-version latency delta is quoted · open: SDK-presence ≠ server-support — every new SDK helper adoption needs a one-shot live probe before contracting
+- Spec-discipline (folded 2026-06-16): verify library-behavior claims before freezing them (axum `Query<T>` DOES 400 on unknown params — read-only query-DTO scope-safety comes from `claims.scope`, never `deny_unknown_fields`) · the ground phase earns its keep by catching codebase-contradicted premises before a contract freezes (a `provenance: Vec<Ulid>` field never serialized) · specify graph/Cypher contracts by observable reachability ("depth=1 excludes 2-hop"), NOT query syntax — freezing Cypher TEXT once froze a broken query that still passed the gate · make "a production-path integration test per scenario" a hard exit-gate item, not implicit · additive-default trait method (`Ok(())` default + one backend override) keeps a port extension's blast radius to one trait + one backend · trait-default methods that consume their input must carry the hazard in the doc · GHA `services:` blocks can't run locally-built images — pg-lunaris workflows use the integration.yml manual docker-run pattern, never `services:`.
 
 ## Users (UDD) — UI/UX: design before code
 - No UI — the surface is: Rust crate API, HTTP API (axum, lunaris-server), MCP stdio server (11 tools), Python/TS SDKs
@@ -52,3 +54,4 @@ goal: sub-25ms recall over millions of bi-temporal facts, with provable atomicit
 | 2026-06-11 | Client-side hash-tagging rejected; multi-shard gated on Moon `TXN BEGIN PIN` | live probe: braced TXN rejected on 16/16 connections (accept-shard binding) | docs/design/scope-hashtag-txn-rfc.md + probe script |
 | 2026-06-11 | Milestone moon-v030-exploit folded: 28 deltas → foundation v2 | retrospective consolidation per fold.md, confirmed by Tin Dang | conventions + domain facts appended; all deltas flipped `folded` |
 | 2026-06-11 | **Moon-only direction**: Postgres AND SQLite backends deprecate-first (feature-gated off default), delete next minor; MCP default flips to Moon | Tin Dang: "only support Moon to maximize performance and features rich" — reverses the blueprint portability-proof constraint and the v0.5 SQLite-MCP-default decision | upcoming moon-only milestone owns the sweep (code gates, CI rows, docs, CLAUDE.md constraints, MCP packaging) |
+| 2026-06-16 | Folded 32 open deltas → foundation v3 (memory-inspector close + accumulated multi-milestone) | retrospective consolidation per fold.md, confirmed by Tin Dang | §Domain heterogeneous-read-model bullet + §Spec spec-discipline line + CONVENTIONS v3 TDD/ADD sections; all 32 deltas flipped `folded` |
