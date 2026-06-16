@@ -35,6 +35,6 @@ pub use primitives::{Chunk, Community, Entity, Episode, Fact, Relation};
 pub use scope::{Scope, ScopeError};
 pub use storage::{
     CypherDialect, CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Key, KeywordHit,
-    KeywordPort, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row, RrfFusion, ScopePage,
-    StorageCapabilities, StoragePort, VectorHit, WriteOp,
+    KeywordPort, ListError, Lsn, MAX_PAGE, NavigateHit, NavigateSpec, Page, QueueMsg, Row,
+    RrfFusion, ScopePage, StorageCapabilities, StoragePort, VectorHit, WriteOp, scan_page,
 };
