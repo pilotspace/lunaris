@@ -8,10 +8,13 @@
 //! - [`episode`] — `GET /v1/episode/{id}` single-episode lookup by ULID.
 //! - [`browse`] — `GET /v1/scopes` + `GET /v1/browse/{kind}` (Memory Inspector
 //!   Phase 1: paginated, JWT-scoped read surface over `scan_page`).
+//! - [`detail`] — `GET /v1/detail/{kind}/{id}` (Memory Inspector Phase 1:
+//!   single-primitive detail with provenance resolved to source episodes).
 //! - [`metrics`] — `GET /metrics` Prometheus text format (Plan 05-05 OPS-06;
 //!   open probe surface, NOT under `/v1`).
 
 pub mod browse;
+pub mod detail;
 pub mod episode;
 pub mod forget;
 pub mod healthz;
