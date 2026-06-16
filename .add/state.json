@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "browse-endpoints",
+  "active_task": "browse-shape-fix",
   "active_milestone": "memory-inspector",
   "tasks": {
     "mq-typed-client": {
@@ -586,6 +586,29 @@
       ],
       "created": "2026-06-16T05:04:35+00:00",
       "updated": "2026-06-16T05:04:35+00:00"
+    },
+    "browse-shape-fix": {
+      "title": "Fix browse/{kind} to the real at-rest shapes (fact=extract::Fact; entity/relation graph-native)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-inspector",
+      "depends_on": [],
+      "created": "2026-06-16T07:03:46+00:00",
+      "updated": "2026-06-16T07:31:25+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "6c17f4a2361f7a6f6ac5a4dd7fbf6b3c",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-server/src/routes/browse.rs",
+          "crates/lunaris-server/Cargo.toml",
+          "crates/lunaris-server/lunaris-extract",
+          "crates/lunaris-server/tests/browse_endpoints.rs"
+        ],
+        "snapshot_md5": "7719e27abddf28f9e13547b77025e650"
+      }
     }
   },
   "milestones": {
@@ -623,7 +646,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T06:49:07+00:00",
+  "updated": "2026-06-16T07:31:25+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
