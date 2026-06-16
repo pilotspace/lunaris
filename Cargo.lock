@@ -3352,6 +3352,7 @@ dependencies = [
  "governor",
  "is-terminal",
  "lunaris-core",
+ "lunaris-extract",
  "lunaris-memory",
  "lunaris-retrieve",
  "parking_lot",
