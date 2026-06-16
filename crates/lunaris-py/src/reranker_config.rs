@@ -24,7 +24,7 @@ use crate::errors::py_err;
 ///
 /// Construct via [`RerankerConfig::native`] / [`RerankerConfig::native_quantized`]
 /// / [`RerankerConfig::noop`] then pass to `Lunaris.open(url, reranker=cfg)`.
-#[pyclass(frozen, name = "RerankerConfig", module = "lunaris")]
+#[pyclass(frozen, name = "RerankerConfig", module = "lunaris", from_py_object)]
 #[derive(Clone)]
 pub struct RerankerConfig {
     pub(crate) inner: Arc<dyn Reranker>,

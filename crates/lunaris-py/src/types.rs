@@ -38,7 +38,7 @@ use ::lunaris::forget::{ForgetOptions, ForgetRequest, ForgetTarget};
 /// the serde schema.
 #[allow(dead_code)]
 pub(crate) fn forget_req_from_py(obj: &Bound<'_, PyAny>) -> PyResult<ForgetRequest> {
-    let dict: &Bound<'_, PyDict> = obj.downcast::<PyDict>().map_err(|_| {
+    let dict: &Bound<'_, PyDict> = obj.cast::<PyDict>().map_err(|_| {
         crate::errors::py_err_str(
             "VALIDATE",
             "forget request must be a dict with keys 'target' and optional 'options'",

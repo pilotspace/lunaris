@@ -56,7 +56,7 @@ use crate::errors::py_err;
 /// cfg = EmbedderConfig.native()  # uses default cache dir
 /// handle = await open(url, embedder=cfg)
 /// ```
-#[pyclass(frozen, name = "EmbedderConfig", module = "lunaris")]
+#[pyclass(frozen, name = "EmbedderConfig", module = "lunaris", from_py_object)]
 #[derive(Clone)]
 pub struct EmbedderConfig {
     pub(crate) inner: Arc<dyn Embedder>,

@@ -274,9 +274,9 @@ similar        = "2"
 # between `serde`-capable Rust types and Python dicts/lists so Episode +
 # ForgetTarget + Hit cross the FFI boundary as native Python objects without
 # a hand-rolled per-field dispatcher.
-pyo3                = { version = "0.26", features = ["extension-module", "abi3-py311"] }
-pyo3-async-runtimes = { version = "0.26", features = ["tokio-runtime"] }
-pythonize           = "0.26"
+pyo3                = { version = "0.29", features = ["extension-module", "abi3-py311"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+pythonize           = "0.29"
 # Phase 8 Plan 08-03 — napi-rs 3.x TypeScript bindings (lunaris-ts crate).
 # NAPI-8 feature pin is the ROADMAP Phase 8 risk-register stable ABI guard:
 # Node 20 LTS exposes NAPI v8 — pinning here ensures the `.node` binary

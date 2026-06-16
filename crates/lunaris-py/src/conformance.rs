@@ -38,7 +38,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 
 use ::lunaris_conformance::fixtures::FixtureCorpus;
-use ::lunaris_core::Embedder;
 
 use crate::PyLunaris;
 use crate::errors::py_err;
@@ -104,7 +103,7 @@ fn scan_kv_prefix<'py>(
             .map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
         let rows: Vec<(bytes::Bytes, bytes::Bytes)> =
             stream.try_collect().await.map_err(|e| py_err(::lunaris::LunarisError::Storage(e)))?;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let out = PyList::empty(py);
             for (k, v) in rows {
                 let k_bytes = PyBytes::new(py, &k);
