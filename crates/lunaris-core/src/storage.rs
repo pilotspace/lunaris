@@ -9,11 +9,13 @@
 
 pub mod capabilities;
 pub mod keyword;
+pub mod list;
 pub mod port;
 pub mod types;
 
 pub use capabilities::{CypherDialect, StorageCapabilities};
 pub use keyword::{KeywordHit, KeywordPort, min_max_normalize};
+pub use list::{ListError, MAX_PAGE, Page, scan_page};
 pub use port::StoragePort;
 pub use types::{
     CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Key, Lsn, NavigateHit, NavigateSpec,

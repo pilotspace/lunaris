@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "memory-update-intelligence",
-  "active_milestone": "mem0-parity-hardening",
+  "active_task": "read-api-pagination",
+  "active_milestone": "memory-inspector",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -475,6 +475,91 @@
         ],
         "snapshot_md5": "5c3aa73f7f26b4a108f7dc33a753859f"
       }
+    },
+    "read-api-pagination": {
+      "title": "Typed paginated list helper over scan_range (Page<T> + cursor)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-inspector",
+      "depends_on": [],
+      "created": "2026-06-16T05:04:35+00:00",
+      "updated": "2026-06-16T05:58:37+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "81a91c9274f3060de8d34e2c2d849c83",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/storage/list.rs",
+          "crates/lunaris-core/src/storage.rs",
+          "crates/lunaris-core/src/lib.rs",
+          "crates/lunaris-core/src/Page",
+          "crates/lunaris-core/src/scan_page",
+          "crates/lunaris-core/src/ListError",
+          "crates/lunaris-core/src/MAX_PAGE"
+        ],
+        "snapshot_md5": "29523ad975a51c63f47ff5179acd8d7c"
+      },
+      "heal": {
+        "attempts": 2,
+        "history": [
+          {
+            "at": "2026-06-16T05:54:43+00:00",
+            "reason": "scope_violation: task 'read-api-pagination' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-core/src/storage.rs (1 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-06-16T05:56:18+00:00",
+            "reason": "scope_violation: task 'read-api-pagination' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-core/src/storage.rs (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
+    },
+    "browse-endpoints": {
+      "title": "GET /v1/scopes + GET /v1/browse/{kind} (JWT-scoped, paginated)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-inspector",
+      "depends_on": [
+        "read-api-pagination"
+      ],
+      "created": "2026-06-16T05:04:35+00:00",
+      "updated": "2026-06-16T05:04:35+00:00"
+    },
+    "detail-provenance": {
+      "title": "GET /v1/{kind}/{id} detail with provenance resolved to source episodes",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-inspector",
+      "depends_on": [
+        "read-api-pagination"
+      ],
+      "created": "2026-06-16T05:04:35+00:00",
+      "updated": "2026-06-16T05:04:35+00:00"
+    },
+    "graph-endpoint": {
+      "title": "GET /v1/graph?root=&depth= via graph_traverse",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-inspector",
+      "depends_on": [],
+      "created": "2026-06-16T05:04:35+00:00",
+      "updated": "2026-06-16T05:04:35+00:00"
+    },
+    "inspector-spa": {
+      "title": "Read-only web dashboard SPA (browse \u00b7 lineage \u00b7 graph \u00b7 disabled Phase-2 timeline)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-inspector",
+      "depends_on": [
+        "browse-endpoints",
+        "detail-provenance",
+        "graph-endpoint"
+      ],
+      "created": "2026-06-16T05:04:35+00:00",
+      "updated": "2026-06-16T05:04:35+00:00"
     }
   },
   "milestones": {
@@ -501,10 +586,18 @@
       "status": "active",
       "created": "2026-06-14T16:00:38+00:00",
       "updated": "2026-06-14T16:00:38+00:00"
+    },
+    "memory-inspector": {
+      "title": "Memory Inspector \u2014 Phase 1",
+      "goal": "A reviewer can open a local browser, pick a scope, and browse and understand every captured memory \u2014 full content, provenance, and the entity graph \u2014 without writing a query.",
+      "stage": "mvp",
+      "status": "active",
+      "created": "2026-06-16T05:04:34+00:00",
+      "updated": "2026-06-16T05:04:34+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-15T16:52:37+00:00",
+  "updated": "2026-06-16T05:58:37+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
