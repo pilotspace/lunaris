@@ -2,6 +2,77 @@
 
 All notable changes to Lunaris are documented here.
 
+## v0.5.0 — 2026-06-16
+
+Closes the **mem0-parity-hardening** P1 wave and relicenses the project. Three
+landed changes: framework SDK adapters, write-time memory convergence, and an
+Apache-2.0-only relicense. No public Rust API breakage (`cargo-semver-checks`
+green vs `v0.4.0`); the behavioral change is that structured ingest now
+converges memories instead of only accreting them.
+
+### Added (framework integrations)
+
+A new pure-Python package **`lunaris_integrations`** makes the "drop Lunaris
+into your agent framework" story true in code — built on one shared,
+transport-agnostic `LunarisClient` and shipped separately from the native
+`lunaris` core wheel.
+
+- **LangGraph** — `LunarisStore(BaseStore)` maps `aput`/`aget`/`asearch` onto
+  ingest/recall, scoped by namespace.
+- **CrewAI** — `LunarisCrewAIStorage(BaseRAGStorage)` maps `save`/`search`/
+  `reset` onto ingest/recall/forget (Lunaris owns embedding — no CrewAI
+  embedder needed).
+- **Letta** — `LunarisArchivalConnector` (`insert`/`search`). Letta's archival
+  store is server/DB-coupled with no clean base to subclass at 0.16.8, so this
+  ships as a tested connector **shim + recipe** (`examples/letta-lunaris/`)
+  rather than a drop-in subclass — flagged at contract freeze.
+- **Transports** — `HttpLunarisClient` (MemoryProtocol over HTTP; scope stays
+  JWT-bound server-side, never on the wire), `SdkLunarisClient` (in-process
+  lunaris-py handle), and `StubLunarisClient` (records calls + canned hits, so
+  the unit layer runs with no backend/model/wheel). `namespace → scope` goes
+  through the RFC 0001 Scope alphabet; adapters are version-guarded and raise
+  `UnsupportedFrameworkVersion` on framework drift.
+
+### Added (write-time memory convergence)
+
+Structured ingest now **converges** memories instead of only appending them —
+outcome-parity with Mem0's "memory update", **without** copying its synchronous
+LLM-mutate-on-write. Bi-temporal MVCC stays the source of truth.
+
+- **Sync dedup** — facts are keyed by a deterministic
+  `FactId::from_triple = blake3(subject_id ++ predicate ++ object_id)[..16]`, so
+  re-asserting an identical triple overwrites in place (no duplicate row).
+- **Cross-episode contradiction** — each fact is classified
+  (`lunaris::reconcile::classify_fact`) against the in-scope `(subject,
+  predicate)` index. A different object with an overlapping validity window is
+  published as a `NeedsReviewItem::Fact{CrossEpisodeContradiction}`; the
+  existing async verifier resolves it (latest-assertion-wins) and closes the
+  superseded fact's bi-temporal interval. Disjoint windows append (legitimate
+  temporal succession — no false supersede). The index writes fold into the
+  same `atomic_write` (INGEST-04 preserved); detection reads only.
+
+### Changed
+
+- **License: Apache-2.0 only** (was dual `Apache-2.0 OR MIT`). The root
+  `LICENSE` now carries the full canonical Apache-2.0 text (it was previously a
+  dual-license *pointer* that shipped no actual license text); `LICENSE-APACHE`
+  and `LICENSE-MIT` were removed. Every crate, both Python SDKs, and both npm
+  SDKs report `Apache-2.0`. `deny.toml` is unchanged — it governs *dependency*
+  licenses, which stay permissive.
+
+### Fixed
+
+- **Supersede loser was never closed on real backends.**
+  `verify::worker::apply_supersede` minted KV keys via a local scope-less
+  `format!("{kind}:{ulid}")` instead of the canonical
+  `lunaris:{scope}:{kind}:{ulid}`, so `read_as_of` never found the loser and
+  the bi-temporal "After" guarantee silently did not hold on embedded/Moon/PG.
+  Now mints via `lunaris_core::keyspace::{entity,relation,fact}_key`; pinned by
+  a red→green supersede test.
+- **`lunaris-bench` non-exhaustive match** over the new
+  `CrossEpisodeContradiction` reason variant (would fail
+  `clippy --workspace --all-targets`).
+
 ## v0.4.0 — 2026-06-13
 
 ### Performance
