@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "browse-shape-fix",
+  "active_task": "inspector-spa",
   "active_milestone": "memory-inspector",
   "tasks": {
     "mq-typed-client": {
@@ -556,28 +556,67 @@
     },
     "detail-provenance": {
       "title": "GET /v1/{kind}/{id} detail with provenance resolved to source episodes",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-inspector",
       "depends_on": [
         "read-api-pagination"
       ],
       "created": "2026-06-16T05:04:35+00:00",
-      "updated": "2026-06-16T05:04:35+00:00"
+      "updated": "2026-06-16T08:08:13+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "a6747562b4faf1d933e1075cd10d717b",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-server/src/routes/detail.rs",
+          "crates/lunaris-server/src/routes/mod.rs",
+          "crates/lunaris-server/src/lib.rs",
+          "crates/lunaris-server/tests/detail_provenance.rs"
+        ],
+        "snapshot_md5": "77c3ac373791ffeff99ed2b0016dd2f0"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-06-16T08:07:06+00:00",
+            "reason": "scope_violation: task 'detail-provenance' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-server/tests/browse_endpoints.rs (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "graph-endpoint": {
       "title": "GET /v1/graph?root=&depth= via graph_traverse",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-inspector",
       "depends_on": [],
       "created": "2026-06-16T05:04:35+00:00",
-      "updated": "2026-06-16T05:04:35+00:00"
+      "updated": "2026-06-16T08:45:08+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "60680dfed657127b24cebf4707a132c8",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-server/src/routes/graph.rs",
+          "crates/lunaris-server/src/routes/mod.rs",
+          "crates/lunaris-server/src/lib.rs",
+          "crates/lunaris-server/src/dto.rs",
+          "crates/lunaris-server/tests/graph_endpoint.rs"
+        ],
+        "snapshot_md5": "bed0fc50655e75bd09495218ade810a5"
+      }
     },
     "inspector-spa": {
       "title": "Read-only web dashboard SPA (browse \u00b7 lineage \u00b7 graph \u00b7 disabled Phase-2 timeline)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-inspector",
       "depends_on": [
         "browse-endpoints",
@@ -585,7 +624,22 @@
         "graph-endpoint"
       ],
       "created": "2026-06-16T05:04:35+00:00",
-      "updated": "2026-06-16T05:04:35+00:00"
+      "updated": "2026-06-16T09:13:46+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "f44c56a90c1804634c4334632f77ef36",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-server/static/inspector.html",
+          "crates/lunaris-server/src/routes/ui.rs",
+          "crates/lunaris-server/src/routes/mod.rs",
+          "crates/lunaris-server/src/lib.rs",
+          "crates/lunaris-server/tests/inspector_ui.rs"
+        ],
+        "snapshot_md5": "518a16602132165f11d829e7b0f7404b"
+      }
     },
     "browse-shape-fix": {
       "title": "Fix browse/{kind} to the real at-rest shapes (fact=extract::Fact; entity/relation graph-native)",
@@ -646,7 +700,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T07:31:25+00:00",
+  "updated": "2026-06-16T09:13:46+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
