@@ -205,6 +205,12 @@ mod tests {
                 NeedsReviewReason::InvalidBitemporal { .. } => bitemporal += 1,
                 NeedsReviewReason::StructuralContradiction { .. } => structural += 1,
                 NeedsReviewReason::TransientAfterRetry(_) => transient += 1,
+                // The RFC-0006 synthetic corpus predates `memory-update-intelligence`
+                // and never emits a cross-episode contradiction — that reason is minted
+                // by the structured-ingest reconciliation path, not this generator — so
+                // it belongs to none of the four 25/25/25/25 buckets. Kept explicit (not
+                // a wildcard) so any further reason variant still trips this match.
+                NeedsReviewReason::CrossEpisodeContradiction { .. } => {}
             }
         }
         assert_eq!(gbnf, 25, "GbnfFailure count");
