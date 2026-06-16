@@ -133,6 +133,6 @@ Watch (reuse scenarios as monitors): conformance-bindings memory-smoke on every 
 Spec delta for the next loop: open-call-latency task carries the unmasked ~0.8s-per-open finding (darwin/py3.14 local only; CI fast).
 
 ### Competency deltas
-- [TDD · open] timing assertions must name their regime: an absolute bound and a ratio bound discriminate in OPPOSITE speed regimes — pick per measured serialized estimate, not per hope (evidence: gil test failed CI at ratio 1.01 in the fast regime after the local slow regime motivated the ratio form)
-- [TDD · open] absence-of-API tests must assert via typeof/hasattr, never via error-message regex — a TypeError message can satisfy a throw-pattern by accident (evidence: fromOnnxPath false-passes /onnx|read/i for 7 weeks)
-- [ADD · open] when a task unmasks a latent finding in an untouched file, the triage fork is: stale-premise part fixed in-scope (test tracked dead assumption) + behavior part split (open-call-latency) — recorded verbatim both times (evidence: §5 build log)
+- [TDD · folded] timing assertions must name their regime: an absolute bound and a ratio bound discriminate in OPPOSITE speed regimes — pick per measured serialized estimate, not per hope (evidence: gil test failed CI at ratio 1.01 in the fast regime after the local slow regime motivated the ratio form)
+- [TDD · folded] absence-of-API tests must assert via typeof/hasattr, never via error-message regex — a TypeError message can satisfy a throw-pattern by accident (evidence: fromOnnxPath false-passes /onnx|read/i for 7 weeks)
+- [ADD · folded] when a task unmasks a latent finding in an untouched file, the triage fork is: stale-premise part fixed in-scope (test tracked dead assumption) + behavior part split (open-call-latency) — recorded verbatim both times (evidence: §5 build log)

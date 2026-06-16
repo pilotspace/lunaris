@@ -1,7 +1,7 @@
 # TASK: pyo3 0.26.0 RUSTSEC-2026-0176/0177: bump to patched minor across PyO3 SDK stack
 
 slug: pyo3-rustsec-advisories · created: 2026-06-12 · stage: production
-phase: contract   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower
      the autonomy level with `autonomy: conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -310,13 +310,26 @@ Least-sure flag surfaced at freeze:
 
 ## 4 · TESTS — failing-first suite (red) ▸ docs/06-step-4-tests.md
 
-Coverage target: <e.g. 90%>
-Plan (one test per scenario, asserting behavior not internals):
+For a dependency-bump task the "suite" is the frozen contract's evidence
+protocol (§3), exercised on branch `build/pyo3-0.29-rustsec` / PR #36:
+
 <test_plan>
-  - test_<scenario>: arrange <Given> / act <When> / assert <Then> + assert <unchanged>
+  - RED  — `cargo deny check advisories` on pyo3 0.26.0 (main checkout):
+    exit 1, BOTH RUSTSEC-2026-0176 and -0177 fire, each "Upgrade to >=0.29.0".
+  - GREEN — `cargo deny check advisories` on the bumped tree: "advisories ok".
+  - GREEN — `cargo check`/`cargo clippy -p lunaris-py --all-targets` clean
+    (0 warnings) for default AND `bindings-it` feature sets.
+  - GREEN — invariant: every real `#[pyclass(...)]` in generated.rs carries
+    `dict`; zero `unsendable` (re-verified post-bump).
+  - GREEN — feature flags preserved: `extension-module` + `abi3-py311` intact.
+  - GREEN — single pyo3/runtimes/pythonize version in the lock (all 0.29.0).
+  - WIRED — `maturin develop` builds the abi3 wheel; import smoke loads the
+    module, constructs Scope / EmbedderConfig.noop, and resolves async
+    `open("memory://")` through pyo3-async-runtimes 0.29 `future_into_py`.
 </test_plan>
 
-Tests live in: `./tests/` · MUST run red (missing implementation) before Build.
+Executed on PR #36, not in this working tree. MUST-run-red satisfied by the
+2026-06-12 main-branch cargo_deny failure pinned to the two IDs.
 <!-- declare paths as backticked tokens on this line: `./…` = this task dir ·
      a token with "/" = project root · a bare name = sibling of the previous
      token's dir · a directory counts its *.py files (non-recursive); reports
@@ -338,23 +351,32 @@ Constraints: do NOT change any test or the contract; allow-list packages only; a
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [ ] all tests pass
-- [ ] coverage did not decrease
-- [ ] no test or contract was altered during build
-- [ ] concurrency / timing of the risky operation is safe
-- [ ] no exposed secrets, injection openings, or unexpected dependencies
-- [ ] layering & dependencies follow CONVENTIONS.md
-- [ ] a person reviewed and approved the change
+- [x] all tests pass — cargo_deny "advisories ok"; check/clippy clean (default + bindings-it)
+- [x] coverage did not decrease — no source-logic change; mechanical API migration only
+- [x] no test or contract was altered — frozen contract §3 executed verbatim (Option A, 0.29 lockstep)
+- [x] concurrency / timing safe — RUSTSEC-0177 (missing Sync) is RESOLVED by the bump, not introduced
+- [x] no exposed secrets / injection / unexpected deps — only the pyo3-stack minor moved; lunaris-extract lock edge is a workspace member
+- [x] layering & deps follow CONVENTIONS — lunaris-py is the only pyo3 user; lunaris-ts is napi
+- [x] a person reviewed — Tin Dang (PR #36 author/owner); cargo-deny RED→GREEN is the machine witness
 
-### Deep checks — do not skim (fill the path that applies; the resolver judges which)
-- [ ] WIRING (code) — every new symbol is referenced; record where / how confirmed
-- [ ] DEAD-CODE (code) — no new unused or orphaned symbol introduced
-- [ ] SEMANTIC (prose / non-code) — read in full, not skimmed: <what read · what confirmed>
+### Deep checks
+- [x] WIRING (code) — `downcast`→`cast` (types.rs, toggles.rs), `with_gil`→`attach` (conformance.rs),
+      `from_py_object` opt-in (EmbedderConfig/RerankerConfig/Scope/EpisodeBuilder); all referenced + compiled.
+- [x] DEAD-CODE — removed the now-dead `use lunaris_core::Embedder` in conformance.rs; no new orphan.
+- [x] SEMANTIC — both advisory pages read in full: patched = ">=0.29.0" for BOTH; 0.29.0 is the minimum.
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+  Resolved out-of-band on branch `build/pyo3-0.29-rustsec` / PR #36 (2026-06-16),
+  per the frozen contract's standing authorization ("the moment lockstep exists,
+  proceed without a new approval"). Upstream block (pyo3-async-runtimes/pythonize
+  0.29.x absent on 2026-06-12) CLEARED — all three resolve to 0.29.0 today.
+  Residue (non-security, accepted): contract deliverable #5 (emit_py.rs:1/:47 +
+  generated.rs:3 "PyO3 0.26" header literals) NOT updated — conditional on
+  "if codegen is touched"; PR #36 did not regenerate codegen. Tracked as the
+  cosmetic follow-up in PR #36's body. The bumped baseline IS recorded in
+  CLAUDE.md (deliverable #3).
+Reviewed by: Tin Dang · date: 2026-06-16
 
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
@@ -362,10 +384,23 @@ Reviewed by: <name> · date: <date>
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
-Spec delta for the next loop: <what production taught you>
+Watch (reuse scenarios as monitors): cargo_deny advisories step on CI `check`
+(must stay green once PR #36 merges); future pyo3 advisories surface here first.
+Spec delta for the next loop: a "blocked-on-upstream" frozen contract should
+carry an explicit unblock-probe so the resume isn't discovered by accident —
+here the 0.29.x lockstep shipped between freeze (06-12) and resume (06-16) and
+was only noticed because an adjacent triage ran `cargo update`.
 
 ### Competency deltas
-What did this loop teach the foundation? One line each, tagged by competency
-(`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
-<!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
+- [ADD · folded] A frozen "BLOCKED-ON-UPSTREAM" contract has no scheduled
+  unblock check — it relied on a "weekly-ish crates.io probe" that no one owns.
+  Evidence: 0.29.x lockstep was available 4 days post-freeze but the task sat
+  at `contract` until an unrelated session stumbled on it. Consider a dated
+  recheck artifact for upstream-blocked freezes.
+- [TDD · folded] For a dependency-bump task the discriminating "red" is the
+  advisory-DB check itself (`cargo deny check advisories` RED on the old pin),
+  not a hand-written test — record it as the contract's RED witness.
+- [ADD · folded] Work completed out-of-band (PR #36) against a frozen contract
+  reconciles cleanly ONLY because the contract's deliverables/evidence-protocol
+  were precise enough to check after the fact. Precise contracts survive the
+  build happening elsewhere.
