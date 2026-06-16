@@ -246,6 +246,7 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 | **v0.2.1 — multi-agent partitioning** | Shipped 2026-05-11 |
 | **v0.4 — candle-native ML default** | Shipped 2026-05-14 — in-process embedder + reranker, Ollama path removed |
 | **v0.4.0 — MCP surface + embedded Moon + RAPTOR** | Shipped 2026-06-13 — `lunaris-mcp` scratchpad tools, embedded Moon, RAPTOR tree retrieval, recall fan-out p50 12→6 ms, hybrid filter push-down |
+| **v0.5.0 — framework adapters + memory convergence + Apache-2.0** | Shipped 2026-06-16 — `lunaris_integrations` LangGraph/CrewAI/Letta adapters, write-time dedup + cross-episode supersede, relicensed Apache-2.0 |
 | **v0.5 — proactive capture + packaging** | Shipped 2026-05-26 — `lunaris-hook` lifecycle capture, MCP polish, npx/uvx distribution |
 | **v0.6 — adaptive chunking + RAPTOR** | In progress on `main` — hierarchical memory tree, `.tree()` retrieval operator |
 | **MCP working memory + embedded Moon** | Merged to `main` 2026-06-09 — four `memory.scratchpad_*` tools, guarded `scratchpad_consolidate`, opt-in `--features embedded-moon` |
@@ -270,7 +271,8 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 - **[`CLAUDE.md`](CLAUDE.md)** — engineering constraints (Rust edition, MSRV 1.94, file size, lock discipline).
 - **[`docs/rfcs/`](docs/rfcs/)** — design contracts. 0001 (Scope) shipped; 0004 / 0006 / 0007 in Draft.
 - **[`docs/migration/`](docs/migration/)** — upgrade guides, including the
-  [0.3 → 0.4 native-default cutover](docs/migration/0.3-to-0.4-native-default.md).
+  [0.3 → 0.4 native-default cutover](docs/migration/0.3-to-0.4-native-default.md)
+  and the [0.4 → 0.5 release notes](docs/migration/0.4-to-0.5.md).
 
 ## License
 
