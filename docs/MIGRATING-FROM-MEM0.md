@@ -20,7 +20,7 @@ not marketing comparisons.
 | **Storage**                                | Vector DB + graph DB + relational (3 services) | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
 | **Atomicity**                              | Best-effort per-store; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
 | **Bi-temporal facts**                      | Not modeled — overwrite semantics       | First-class `(valid_time, sys_time)` tuple per row     |
-| **Recall latency (laptop, 1M facts)**     | 200–500 ms (network hop to hosted)      | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64` (M2 Pro)  |
+| **Recall latency (laptop, 1M facts)**     | p95 ~1.44 s (Mem0-published "selective" figure, 2026-06; wide query-dependent range) | 10.3 ms p50 / 20.8 ms p99 strict-replay (manual bench, not CI-gated); budget p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64` (M2 Pro) |
 | **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call + RLS-enforced in Postgres |
 | **Forgetting**                             | Hard delete                              | Tombstone via bi-temporal `sys_time` close (audit trail preserved) |
 | **License**                                | Apache 2.0                              | Apache 2.0                                             |
@@ -146,8 +146,10 @@ Suggested phases:
 4. **Cutover when the diff is acceptable.** Promote Lunaris to
    primary; keep Mem0 as fallback for ~1 release.
 5. **Decommission Mem0.** At this point you own one Rust process
-   instead of three Python services. Recall p50 dropped from
-   ~300 ms (network + LLM hop) to ~15 ms (embedded substrate).
+   instead of three Python services. Recall p50 drops to ~10 ms on the
+   embedded substrate (10.3 ms strict-replay bench, manual — not
+   CI-gated); measure your own Mem0 baseline (Mem0's published figure is
+   a p95 ~1.44 s, selective).
 
 ## When NOT to migrate
 
@@ -175,10 +177,12 @@ productivity at the prototype stage. Use the right tool.
   but the default prompt set differs from Mem0's. If your existing
   Mem0 deployment depends on specific extracted fields, override
   `Extractor::extract` and port your prompt.
-- **Graph queries.** Mem0's graph features are opt-in beta; so is
-  Lunaris's `Graph::anchored(entity_ids, hops)` operator. Both
-  require the entity-resolution Extractor pipeline to have
-  populated `(entity, relation)` triples first.
+- **Graph queries.** Mem0 OSS v3 removed graph support — it is now
+  Platform-only (Mem0g, Neo4j-backed, with an LLM on the read path and
+  open deletion bugs). Lunaris's `Graph::anchored(entity_ids, hops)` is
+  an opt-in operator, off by default, with no LLM on the read path. Both
+  require the entity-resolution Extractor pipeline to have populated
+  `(entity, relation)` triples first.
 
 See `docs/RELEASE.md` for the current v0.2.x release scope and what
 lands in v0.3.
