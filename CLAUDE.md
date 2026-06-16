@@ -12,7 +12,7 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 ### Constraints
 
 - **Tech stack — Rust**: edition 2024, MSRV **1.94** (matches Moon to ease cross-repo work)
-- **Tech stack — Python**: 3.11+ (PyO3 0.26 baseline)
+- **Tech stack — Python**: 3.11+ (PyO3 0.29 baseline)
 - **Tech stack — TypeScript**: Node 20+, napi-rs 3.x
 - **Backend ordering — Moon first, Postgres second**: explicit inversion of blueprint §5.3, justified by internal-first deployment
 - **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, sqlx ≥0.9, candle ≥0.9, tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ (or direct Moon SDK if available in `moon/sdk/`)
