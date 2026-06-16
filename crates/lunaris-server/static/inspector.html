@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunaris Memory Inspector</title>
+<style>
+  :root { --bg:#0f1117; --panel:#181b24; --line:#2a2f3a; --fg:#e6e8ee; --muted:#9aa3b2; --accent:#6ea8fe; --warn:#e0b341; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); background:var(--panel); }
+  header h1 { margin:0 0 8px; font-size:18px; }
+  header h1 small { color:var(--muted); font-weight:400; font-size:12px; }
+  .auth { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .auth input, .auth select, .controls input, .controls select { background:#10131b; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+  button { background:#222838; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 12px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  main { display:grid; grid-template-columns: 1fr 380px; gap:0; }
+  section { padding:16px 18px; border-bottom:1px solid var(--line); }
+  #graph-panel, #timeline-panel { grid-column: 1 / -1; }
+  .controls { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:#1d2230; }
+  td.id { font-family:ui-monospace, monospace; font-size:12px; color:var(--accent); white-space:nowrap; }
+  aside#detail-drawer { position:fixed; top:0; right:0; width:420px; height:100%; background:var(--panel); border-left:1px solid var(--line); padding:18px; overflow:auto; box-shadow:-8px 0 24px rgba(0,0,0,.4); }
+  aside h2 { font-size:15px; font-family:ui-monospace, monospace; word-break:break-all; }
+  aside h3 { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:16px 0 6px; }
+  pre { background:#10131b; border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; font-size:12px; }
+  #detail-close { position:absolute; top:12px; right:14px; }
+  .nodes { display:flex; flex-wrap:wrap; gap:10px; }
+  .node-card { background:#10131b; border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:120px; }
+  .node-card.root { border-color:var(--accent); }
+  .node-card .nm { font-weight:600; }
+  .node-card .ty { color:var(--muted); font-size:12px; }
+  .node-card .nid { font-family:ui-monospace, monospace; font-size:11px; color:var(--muted); word-break:break-all; }
+  .disabled { opacity:.55; }
+  .pill { display:inline-block; font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+  #status { position:fixed; bottom:0; left:0; right:0; padding:7px 18px; background:#10131b; border-top:1px solid var(--line); color:var(--muted); font-size:12px; min-height:18px; }
+  .err { color:#ff8c8c; }
+  .muted { color:var(--muted); }
+  label { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lunaris Memory Inspector <small>read-only · Phase 1</small></h1>
+  <div class="auth">
+    <label>recall token <input id="token" type="password" autocomplete="off" placeholder="paste a recall token"></label>
+    <button id="save-token">Save token</button>
+    <label>scope
+      <select id="scope"><option value="">— pick a scope —</option></select>
+    </label>
+    <button id="reload-scopes">↻ scopes</button>
+  </div>
+</header>
+
+<main>
+  <section id="browse-panel">
+    <div class="controls">
+      <label>kind
+        <select id="kind">
+          <option>episode</option>
+          <option>chunk</option>
+          <option>fact</option>
+          <option>community</option>
+          <option>entity</option>
+          <option>relation</option>
+        </select>
+      </label>
+      <button id="browse-btn">Browse</button>
+      <button id="next-btn" disabled>Next →</button>
+      <span id="browse-note" class="muted"></span>
+    </div>
+    <table id="browse-table">
+      <thead><tr><th>id</th><th>summary</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="graph-panel">
+    <h2>Entity graph <span class="pill">nodes only · v1</span></h2>
+    <div class="controls">
+      <input id="graph-root" size="36" placeholder="root entity id (32-char hex)">
+      <label>depth <input id="graph-depth" type="number" value="2" min="1" max="5" style="width:60px"></label>
+      <button id="graph-btn">Traverse</button>
+      <span id="graph-note" class="muted"></span>
+    </div>
+    <div id="graph-canvas" class="nodes"></div>
+  </section>
+
+  <section id="timeline-panel" class="disabled">
+    <h2>Timeline <span class="pill">Phase 2</span></h2>
+    <p class="muted">Bi-temporal history — as-of / superseded / forgotten — arrives in Phase 2. This control is intentionally disabled.</p>
+    <button id="timeline-btn" disabled title="Phase 2 — not yet available">View history (disabled)</button>
+  </section>
+</main>
+
+<aside id="detail-drawer" hidden>
+  <button id="detail-close" aria-label="close">×</button>
+  <h2 id="detail-title"></h2>
+  <h3>Primitive</h3>
+  <pre id="detail-primitive"></pre>
+  <h3>Provenance</h3>
+  <div id="detail-provenance"></div>
+</aside>
+
+<div id="status" role="status"></div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  let cursor = null;
+
+  // ---- token (user-entered, persisted to localStorage; never hardcoded) ----
+  const TOKEN_KEY = "lunaris.inspector.token";
+  $("token").value = localStorage.getItem(TOKEN_KEY) || "";
+  $("save-token").addEventListener("click", () => {
+    localStorage.setItem(TOKEN_KEY, $("token").value.trim());
+    setStatus("token saved to this browser");
+  });
+
+  function authHeaders() {
+    const t = $("token").value.trim();
+    return t ? { "Authorization": "Bearer " + t } : {};
+  }
+
+  function setStatus(msg, isErr) {
+    const el = $("status");
+    el.textContent = msg || "";
+    el.className = isErr ? "err" : "";
+  }
+
+  // GET-only API helper. No method field => fetch defaults to a read.
+  async function api(path) {
+    const resp = await fetch(path, { headers: authHeaders() });
+    let body = null;
+    try { body = await resp.json(); } catch (_e) { body = null; }
+    if (!resp.ok) {
+      const code = (body && (body.error || body.message)) || ("HTTP " + resp.status);
+      const hint = resp.status === 401 ? " — set a valid recall token" : "";
+      throw new Error(code + hint);
+    }
+    return body;
+  }
+
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function txt(tag, s, cls) {
+    const e = document.createElement(tag);
+    e.textContent = s == null ? "" : String(s);
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  // ---- scopes ----
+  async function loadScopes() {
+    try {
+      const body = await api("/v1/scopes");
+      const sel = $("scope");
+      const keep = sel.value;
+      clear(sel);
+      sel.appendChild(txt("option", "— pick a scope —"));
+      (body.scopes || []).forEach((s) => {
+        const o = txt("option", s);
+        o.value = s;
+        sel.appendChild(o);
+      });
+      sel.value = keep;
+      setStatus("loaded " + ((body.scopes || []).length) + " scope(s)");
+    } catch (e) {
+      setStatus("scopes: " + e.message + " (some backends do not enumerate scopes)", true);
+    }
+  }
+
+  // ---- browse ----
+  function summaryOf(item) {
+    return item.fact_text || item.content || item.summary || item.text || "";
+  }
+
+  async function browse(reset) {
+    const scope = $("scope").value;
+    const kind = $("kind").value;
+    if (reset) cursor = null;
+    let path = "/v1/browse/" + encodeURIComponent(kind) + "?limit=20";
+    if (cursor) path += "&cursor=" + encodeURIComponent(cursor);
+    try {
+      const body = await api(path);
+      const tbody = $("browse-table").querySelector("tbody");
+      if (reset) clear(tbody);
+      $("browse-note").textContent = "";
+      if (body.graph_native) {
+        clear(tbody);
+        $("browse-note").textContent = kind + " is graph-native — use the Entity graph panel below";
+        $("next-btn").disabled = true;
+        setStatus(kind + " lives in the graph, not a table");
+        return;
+      }
+      (body.items || []).forEach((item) => {
+        const tr = document.createElement("tr");
+        tr.appendChild(txt("td", item.id, "id"));
+        tr.appendChild(txt("td", summaryOf(item)));
+        tr.addEventListener("click", () => openDetail(kind, item.id));
+        tbody.appendChild(tr);
+      });
+      cursor = body.next_cursor || null;
+      $("next-btn").disabled = !cursor;
+      setStatus("browse " + kind + ": " + ((body.items || []).length) + " row(s)" + (cursor ? " — more available" : ""));
+    } catch (e) {
+      setStatus("browse: " + e.message, true);
+    }
+  }
+
+  // ---- detail drawer (lineage) ----
+  async function openDetail(kind, id) {
+    try {
+      const body = await api("/v1/detail/" + encodeURIComponent(kind) + "/" + encodeURIComponent(id));
+      if (body.graph_native) {
+        $("graph-root").value = id;
+        setStatus(kind + " is graph-native — traversing from it");
+        traverse();
+        return;
+      }
+      $("detail-title").textContent = body.kind + " · " + body.id;
+      $("detail-primitive").textContent = JSON.stringify(body.primitive, null, 2);
+      const prov = body.provenance || {};
+      const box = $("detail-provenance");
+      clear(box);
+
+      const conf = document.createElement("div");
+      conf.appendChild(txt("span", "confidence: ", "muted"));
+      conf.appendChild(txt("span", prov.confidence == null ? "—" : prov.confidence));
+      if (prov.partial) conf.appendChild(txt("span", "  (provenance partial)", "err"));
+      box.appendChild(conf);
+
+      box.appendChild(txt("div", "source episodes:", "muted"));
+      const eps = prov.source_episodes || [];
+      if (eps.length === 0) box.appendChild(txt("div", "  (none)"));
+      eps.forEach((ep) => {
+        box.appendChild(txt("div", "• " + (ep.id || "") + " — " + (ep.content || ep.source || "")));
+      });
+
+      const ents = prov.entities || [];
+      if (ents.length) {
+        box.appendChild(txt("div", "entities:", "muted"));
+        ents.forEach((h) => box.appendChild(txt("div", "• " + h, "nid")));
+      }
+
+      $("detail-drawer").hidden = false;
+      setStatus("detail: " + body.kind + " " + body.id);
+    } catch (e) {
+      setStatus("detail: " + e.message, true);
+    }
+  }
+  $("detail-close").addEventListener("click", () => { $("detail-drawer").hidden = true; });
+
+  // ---- graph (nodes-only neighborhood) ----
+  function nodeCard(node, isRoot) {
+    const c = document.createElement("div");
+    c.className = isRoot ? "node-card root" : "node-card";
+    c.appendChild(txt("div", node.name || (isRoot ? "(root)" : "(unnamed)"), "nm"));
+    if (node.type) c.appendChild(txt("div", node.type, "ty"));
+    c.appendChild(txt("div", node.id || "", "nid"));
+    return c;
+  }
+
+  async function traverse() {
+    const root = $("graph-root").value.trim();
+    const depth = $("graph-depth").value || "2";
+    if (!root) { setStatus("enter a root entity id", true); return; }
+    try {
+      const body = await api("/v1/graph?root=" + encodeURIComponent(root) + "&depth=" + encodeURIComponent(depth));
+      const canvas = $("graph-canvas");
+      clear(canvas);
+      canvas.appendChild(nodeCard({ id: body.root, name: "(root)" }, true));
+      (body.nodes || []).forEach((n) => canvas.appendChild(nodeCard(n, false)));
+      $("graph-note").textContent = (body.nodes || []).length + " neighbor(s) within depth " + body.depth + (body.truncated ? " (truncated)" : "");
+      setStatus("graph: " + (body.nodes || []).length + " node(s)");
+    } catch (e) {
+      $("graph-note").textContent = "";
+      setStatus("graph: " + e.message + " (graph may not be enabled on this backend)", true);
+    }
+  }
+
+  // ---- wire-up ----
+  $("reload-scopes").addEventListener("click", loadScopes);
+  $("browse-btn").addEventListener("click", () => browse(true));
+  $("next-btn").addEventListener("click", () => browse(false));
+  $("graph-btn").addEventListener("click", traverse);
+
+  if ($("token").value) loadScopes();
+  setStatus("ready — paste a recall token, then pick a scope");
+})();
+</script>
+</body>
+</html>
