@@ -19,6 +19,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 lunaris = { workspace = true }
 lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
+# Memory Inspector browse — the at-rest `fact:` KV row is a `lunaris_extract::types::Fact`
+# (NOT `lunaris_core::Fact`); browse/fact deserializes the real shape. Server is the top
+# layer and `lunaris` already pulls this transitively, so no new external dependency.
+lunaris-extract = { workspace = true }
 axum                = { workspace = true }
 tower               = { workspace = true }
 tower-http          = { workspace = true }

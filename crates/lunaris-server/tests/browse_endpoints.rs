@@ -39,18 +39,19 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
 use futures::stream::{self, BoxStream};
-use lunaris::Lunaris;
-use lunaris_core::keyspace::{
-    chunk_key, community_key, entity_key, episode_key, fact_key, relation_key,
-};
+use chrono::{DateTime, Utc};
+use lunaris::structured_ingest::ingest_structured_inner;
+use lunaris::{EntityId, EpisodeBuilder, FactInput, Lunaris, StructuredIngest};
+use lunaris_core::keyspace::{chunk_key, community_key, episode_key, fact_key};
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
 use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, ScopePage, VectorHit, WriteOp,
 };
 use lunaris_core::{
-    BiTemporal, Chunk, Community, Embedder, Entity, Episode, Fact, Hlc, HlcClock, Relation, Scope,
-    StorageCapabilities, StorageError, StoragePort, StubEmbedder,
+    BiTemporal, Chunk, Community, Embedder, Episode, Hlc, HlcClock, Scope, StorageCapabilities,
+    StorageError, StoragePort, StubEmbedder,
 };
+use lunaris_extract::types::Fact as ExtractFact;
 use parking_lot::Mutex;
 use tower::ServiceExt;
 use ulid::Ulid;
@@ -108,7 +109,8 @@ impl MockStorage {
         self.rows.lock().insert((scope.as_str().to_string(), key), value);
     }
 
-    fn seed_fact(&self, scope: &Scope, f: &Fact) {
+    /// Seed a `fact:` row in the REAL at-rest shape (`lunaris_extract::Fact`).
+    fn seed_extract_fact(&self, scope: &Scope, f: &ExtractFact) {
         self.seed_raw(scope, fact_key(scope, f.id), serde_json::to_vec(f).unwrap());
     }
 
@@ -118,14 +120,6 @@ impl MockStorage {
 
     fn seed_chunk(&self, scope: &Scope, c: &Chunk) {
         self.seed_raw(scope, chunk_key(scope, c.id), serde_json::to_vec(c).unwrap());
-    }
-
-    fn seed_entity(&self, scope: &Scope, e: &Entity) {
-        self.seed_raw(scope, entity_key(scope, e.id), serde_json::to_vec(e).unwrap());
-    }
-
-    fn seed_relation(&self, scope: &Scope, r: &Relation) {
-        self.seed_raw(scope, relation_key(scope, r.id), serde_json::to_vec(r).unwrap());
     }
 
     fn seed_community(&self, scope: &Scope, c: &Community) {
@@ -360,19 +354,19 @@ fn bt() -> BiTemporal {
     }
 }
 
-fn fact_at(scope: &Scope, id: Ulid, text: &str) -> Fact {
-    Fact {
+/// A `fact:` row in the production at-rest shape (`lunaris_extract::Fact`) —
+/// NOT `core::Fact`. No `scope`/`bt`/`provenance` fields; scope partitioning is
+/// the KV key prefix, not a value field.
+fn extract_fact(id: Ulid, text: &str) -> ExtractFact {
+    ExtractFact {
         id,
-        scope: scope.clone(),
-        subject: id,
+        subject_id: EntityId::from_name_and_type("subj", "type"),
         predicate: "rel".to_string(),
-        object: id,
+        object_id: EntityId::from_name_and_type("obj", "type"),
         fact_text: text.to_string(),
-        embedding: None,
-        bt: bt(),
         confidence: 0.9,
-        provenance: vec![],
-        activation: 0.0,
+        valid_from_iso: "2026-06-16T00:00:00Z".to_string(),
+        valid_to_iso: None,
     }
 }
 
@@ -387,7 +381,7 @@ async fn test_browse_fact_scoped_ordered_page() {
     let s = Scope::new("agent.s").unwrap();
     let storage = Arc::new(MockStorage::new());
     for i in 1..=3u64 {
-        storage.seed_fact(&s, &fact_at(&s, uid(i), &format!("fact {i}")));
+        storage.seed_extract_fact(&s, &extract_fact(uid(i), &format!("fact {i}")));
     }
     let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
 
@@ -399,10 +393,13 @@ async fn test_browse_fact_scoped_ordered_page() {
     assert_eq!(items[0]["id"].as_str().unwrap(), uid(1).to_string(), "ULID-ascending: u1 first");
     assert_eq!(items[1]["id"].as_str().unwrap(), uid(2).to_string(), "ULID-ascending: u2 second");
     for it in items {
-        assert_eq!(it["scope"].as_str().unwrap(), "agent.s", "every item scoped to S");
+        // extract::Fact carries no `scope` field — scoping is the KV key prefix,
+        // which the mock's scan_range enforces. Assert the full primitive shape.
         assert!(it["fact_text"].is_string(), "full primitive JSON (fact_text present)");
+        assert!(it["confidence"].is_number(), "confidence present");
     }
     assert!(body["next_cursor"].is_string(), "more remain → next_cursor present");
+    assert!(body["graph_native"].is_null(), "KV kind carries no graph_native flag");
 }
 
 #[tokio::test]
@@ -410,7 +407,7 @@ async fn test_browse_pagination_walks_once() {
     let s = Scope::new("agent.s").unwrap();
     let storage = Arc::new(MockStorage::new());
     for i in 1..=3u64 {
-        storage.seed_fact(&s, &fact_at(&s, uid(i), &format!("fact {i}")));
+        storage.seed_extract_fact(&s, &extract_fact(uid(i), &format!("fact {i}")));
     }
     let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
 
@@ -443,7 +440,9 @@ async fn test_browse_pagination_walks_once() {
 }
 
 #[tokio::test]
-async fn test_each_kind_browsable() {
+async fn test_each_kv_kind_browsable() {
+    // KV-backed kinds only: episode, chunk, community (core primitives) + fact
+    // (extract::Fact). entity/relation are graph-native — covered separately.
     let s = Scope::new("agent.s").unwrap();
     let storage = Arc::new(MockStorage::new());
 
@@ -473,31 +472,7 @@ async fn test_each_kind_browsable() {
     };
     storage.seed_chunk(&s, &ch);
 
-    let en = Entity {
-        id: uid(12),
-        scope: s.clone(),
-        name: "Alice".to_string(),
-        aliases: vec![],
-        entity_type: "person".to_string(),
-        embedding: None,
-        bt: bt(),
-        confidence: 0.9,
-    };
-    storage.seed_entity(&s, &en);
-
-    let rel = Relation {
-        id: uid(13),
-        scope: s.clone(),
-        src: uid(12),
-        dst: uid(12),
-        rel_type: "knows".to_string(),
-        bt: bt(),
-        confidence: 0.9,
-        provenance: vec![],
-    };
-    storage.seed_relation(&s, &rel);
-
-    storage.seed_fact(&s, &fact_at(&s, uid(14), "a fact"));
+    storage.seed_extract_fact(&s, &extract_fact(uid(14), "a fact"));
 
     let com = Community {
         id: uid(15),
@@ -516,8 +491,6 @@ async fn test_each_kind_browsable() {
     let expect = [
         ("episode", uid(10)),
         ("chunk", uid(11)),
-        ("entity", uid(12)),
-        ("relation", uid(13)),
         ("fact", uid(14)),
         ("community", uid(15)),
     ];
@@ -527,6 +500,7 @@ async fn test_each_kind_browsable() {
         let items = body["items"].as_array().expect("items array");
         assert_eq!(items.len(), 1, "{kind} page holds its one seeded item");
         assert_eq!(items[0]["id"].as_str().unwrap(), id.to_string(), "{kind} item id");
+        assert!(body["graph_native"].is_null(), "{kind} is KV-backed — no graph_native flag");
     }
 }
 
@@ -556,18 +530,103 @@ async fn test_browse_ignores_wire_scope() {
     let s = Scope::new("agent.s").unwrap();
     let other = Scope::new("agent.other").unwrap();
     let storage = Arc::new(MockStorage::new());
-    storage.seed_fact(&s, &fact_at(&s, uid(1), "scope S fact"));
-    storage.seed_fact(&other, &fact_at(&other, uid(2), "scope OTHER fact"));
+    storage.seed_extract_fact(&s, &extract_fact(uid(1), "scope S fact"));
+    storage.seed_extract_fact(&other, &extract_fact(uid(2), "scope OTHER fact"));
     let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
 
     // Smuggled ?scope=agent.other must be IGNORED (claims.scope wins).
     let (status, body) = get(&app, "/v1/browse/fact?scope=agent.other", Some("tok-s")).await;
     assert_eq!(status, StatusCode::OK, "wire scope ignored, still 200; body={body}");
     let items = body["items"].as_array().expect("items array");
+    // extract::Fact has no scope field — assert isolation by id: only S's fact
+    // (uid 1) is returned; the OTHER-scope fact (uid 2) never leaks.
+    assert_eq!(items.len(), 1, "only the single scope-S fact");
+    assert_eq!(items[0]["id"].as_str().unwrap(), uid(1).to_string(), "the scope-S fact");
     for it in items {
-        assert_eq!(it["scope"].as_str().unwrap(), "agent.s", "only scope-S facts returned");
         assert_ne!(it["id"].as_str().unwrap(), uid(2).to_string(), "OTHER fact never leaks");
     }
+}
+
+/// DISCRIMINATING (built ≠ wired): seed a `fact:` row through the REAL
+/// production write path (`ingest_structured_inner`, the exact fn the handle's
+/// `ingest_structured` delegates to) — NOT a hand-seeded row — then prove
+/// browse/fact reads it. With the old `core::Fact` dispatch this 500s
+/// (corrupt_row); only the `extract::Fact` dispatch returns 200.
+#[tokio::test]
+async fn test_browse_fact_via_real_ingest_structured() {
+    let s = Scope::new("agent.s").unwrap();
+    let storage = Arc::new(MockStorage::new());
+    let embedder = StubEmbedder::new(768);
+    let clock = HlcClock::new(0);
+    let valid_from: DateTime<Utc> = "2026-06-16T00:00:00Z".parse().unwrap();
+
+    let payload = StructuredIngest::new(EpisodeBuilder::new("agent", "Alice founded Acme in 2020."))
+        .with_facts(vec![FactInput {
+            fact_text: "Alice founded Acme".to_string(),
+            subject_name: "Alice".to_string(),
+            subject_type: "person".to_string(),
+            predicate: "founded".to_string(),
+            object_name: "Acme".to_string(),
+            object_type: "org".to_string(),
+            confidence: 0.95,
+            valid_from,
+            valid_to: None,
+        }]);
+    ingest_structured_inner(storage.as_ref(), &embedder, clock.as_ref(), payload, s.clone())
+        .await
+        .expect("ingest_structured writes the production fact row");
+
+    let app = build_app(storage.clone(), write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
+    let (status, body) = get(&app, "/v1/browse/fact", Some("tok-s")).await;
+    assert_eq!(status, StatusCode::OK, "browse/fact must read the real ingest row; body={body}");
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "exactly the one ingested fact");
+    assert_eq!(items[0]["fact_text"].as_str().unwrap(), "Alice founded Acme");
+    assert!(items[0]["confidence"].is_number(), "confidence present in the stored fact");
+}
+
+/// The extractor-path shape (`extract::Fact` WITHOUT `source_episode_id`) also
+/// deserializes — proving both ingest shapes round-trip through browse/fact.
+#[tokio::test]
+async fn test_browse_fact_extractor_shape() {
+    let s = Scope::new("agent.s").unwrap();
+    let storage = Arc::new(MockStorage::new());
+    storage.seed_extract_fact(&s, &extract_fact(uid(1), "extractor-path fact"));
+    let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
+
+    let (status, body) = get(&app, "/v1/browse/fact", Some("tok-s")).await;
+    assert_eq!(status, StatusCode::OK, "extractor-shape fact must be 200; body={body}");
+    let items = body["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["fact_text"].as_str().unwrap(), "extractor-path fact");
+}
+
+#[tokio::test]
+async fn test_browse_entity_graph_native() {
+    let storage = Arc::new(MockStorage::new());
+    let probe = storage.clone();
+    let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
+
+    let (status, body) = get(&app, "/v1/browse/entity", Some("tok-s")).await;
+    assert_eq!(status, StatusCode::OK, "entity browse is 200 graph-native; body={body}");
+    assert_eq!(body["graph_native"], serde_json::Value::Bool(true), "graph_native flag set");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0, "no KV items fabricated");
+    assert!(body["next_cursor"].is_null(), "graph-native page has null cursor");
+    assert!(!probe.scan_called(), "graph-native kinds perform no scan");
+}
+
+#[tokio::test]
+async fn test_browse_relation_graph_native() {
+    let storage = Arc::new(MockStorage::new());
+    let probe = storage.clone();
+    let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
+
+    let (status, body) = get(&app, "/v1/browse/relation", Some("tok-s")).await;
+    assert_eq!(status, StatusCode::OK, "relation browse is 200 graph-native; body={body}");
+    assert_eq!(body["graph_native"], serde_json::Value::Bool(true), "graph_native flag set");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0, "no KV items fabricated");
+    assert!(body["next_cursor"].is_null());
+    assert!(!probe.scan_called(), "graph-native kinds perform no scan");
 }
 
 // ===========================================================================
