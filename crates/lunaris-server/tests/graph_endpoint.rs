@@ -309,7 +309,16 @@ async fn test_graph_neighborhood_and_cypher() {
     let q = &calls[0];
     assert_eq!(q.graph, "lunaris_graph", "canonical graph name");
     assert!(q.cypher.contains("[*1..2]"), "depth literal in cypher; got {}", q.cypher);
-    assert!(q.cypher.contains("id_hex"), "matches on id_hex; got {}", q.cypher);
+    assert!(
+        q.cypher.contains("WHERE n.id_hex = sid"),
+        "anchor MUST filter via WHERE — Moon silently ignores inline-property filters; got {}",
+        q.cypher
+    );
+    assert!(
+        !q.cypher.contains("{id_hex: sid}"),
+        "must NOT use the inline-property filter form; got {}",
+        q.cypher
+    );
     let ids = q.params["ids"].as_array().expect("ids param array");
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0].as_str().unwrap(), root.to_string(), "root rides in $ids (not the cypher)");
@@ -416,16 +425,49 @@ async fn test_graph_invalid_root_400() {
     assert!(probe.calls().is_empty(), "rejected before traversal");
 }
 
+/// Inspector-UAT change (2026-06-16): an absent/empty `root` is no longer a
+/// 400 — it lists ALL nodes in the scope graph (the "explore" entry point,
+/// since entity ids are not otherwise browsable). `depth` is irrelevant in this
+/// mode; the cypher is a bare `MATCH (n) ... LIMIT $k` — no UNWIND, no
+/// variable-length path.
 #[tokio::test]
-async fn test_graph_missing_root_400() {
-    let storage = Arc::new(MockStorage::new(true, GraphResult::default()));
+async fn test_graph_empty_root_lists_all_nodes() {
+    let a = ent("Acme");
+    let b = ent("Bob");
+    let storage = Arc::new(MockStorage::new(
+        true,
+        canned_graph(vec![(a, "Acme", "org"), (b, "Bob", "person")]),
+    ));
     let probe = storage.clone();
     let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
 
+    // No `root` param at all → all-nodes mode.
     let (status, body) = get(&app, "/v1/graph?depth=2", Some("tok-s")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"].as_str().unwrap(), "invalid_root");
-    assert!(probe.calls().is_empty(), "rejected before traversal");
+    assert_eq!(status, StatusCode::OK, "empty root lists all nodes; body={body}");
+    assert_eq!(body["graph_native"], serde_json::Value::Bool(true));
+    assert!(body["root"].is_null(), "no anchor → root is null; body={body}");
+    let nodes = body["nodes"].as_array().expect("nodes array");
+    assert_eq!(nodes.len(), 2, "all graph nodes listed");
+
+    let q = &probe.calls()[0];
+    assert!(q.cypher.contains("MATCH (n)"), "all-nodes scan; got {}", q.cypher);
+    assert!(!q.cypher.contains("UNWIND"), "no anchor UNWIND in all-nodes mode; got {}", q.cypher);
+    assert!(!q.cypher.contains("[*1.."), "no var-length path in all-nodes mode; got {}", q.cypher);
+    assert!(q.cypher.contains("n.id_hex AS id"), "returns id_hex; got {}", q.cypher);
+    assert!(q.params.contains_key("k"), "k (LIMIT) param present");
+}
+
+/// `?root=` (present but empty/whitespace) is treated identically to absent.
+#[tokio::test]
+async fn test_graph_empty_string_root_also_lists_all_nodes() {
+    let storage =
+        Arc::new(MockStorage::new(true, canned_graph(vec![(ent("Acme"), "Acme", "org")])));
+    let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
+
+    let (status, body) = get(&app, "/v1/graph?root=", Some("tok-s")).await;
+    assert_eq!(status, StatusCode::OK, "empty-string root → all nodes; body={body}");
+    assert!(body["root"].is_null());
+    assert_eq!(body["nodes"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]

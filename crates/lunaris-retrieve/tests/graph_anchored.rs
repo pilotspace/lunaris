@@ -264,9 +264,16 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
     // Wave 4 amendment: RecordingStorage defaults to CypherDialect::Legacy
     // (no overrides). The operator therefore dispatches the Legacy template
     // here. The dispatch_* tests cover the PathMetrics/Full assertions.
+    // Inspector-UAT fix (2026-06-16): the anchor filters via WHERE, not the
+    // inline-property form `(n {id_hex: sid})` which Moon silently ignores.
     assert!(
-        calls[0].0.cypher.contains("MATCH (n {id_hex: sid})"),
-        "Legacy MATCH must use id_hex property (W-7): {}",
+        calls[0].0.cypher.contains("WHERE n.id_hex = sid"),
+        "Legacy anchor must filter via WHERE n.id_hex (Moon ignores inline-property filters): {}",
+        calls[0].0.cypher,
+    );
+    assert!(
+        !calls[0].0.cypher.contains("{id_hex: sid}"),
+        "inline-property anchor filter must not be used: {}",
         calls[0].0.cypher,
     );
     assert!(
