@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "eval-gauntlet-ci-gate",
+  "active_task": "mem0-docs-reconcile",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -446,25 +446,26 @@
     },
     "mem0-docs-reconcile": {
       "title": "Correct stale Mem0 claims in shipped docs (adapters not shipped; Mem0g exists)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-16T14:46:49+00:00",
+      "updated": "2026-06-16T17:03:37+00:00",
       "flag_verified": true,
       "tripwire": {
-        "contract_md5": "6e9d974ad7bb9c775c38182c1832edb7",
+        "contract_md5": "0ee4db2102be119a0723ce829f2cd591",
         "tests": {
-          ".add/tasks/mem0-docs-reconcile/tests/validate_mem0_docs.py": "3d5063f69853e520e9b962e84c2783f5"
+          ".add/tasks/mem0-docs-reconcile/tests/validate_mem0_docs.py": "6731606ed004105cea5c9fdd01bf7519"
         }
       },
       "scope": {
         "declared": [
           "docs/MIGRATING-FROM-MEM0.md",
-          "docs/book/src/migrating/mem0.md"
+          "docs/book/src/migrating/mem0.md",
+          ".add/tasks/mem0-docs-reconcile/tests/"
         ],
-        "snapshot_md5": "c5cec3ac4ce1f961e896266b206d49a0"
+        "snapshot_md5": "893cb391765c753aaec2f346bbcbf952"
       },
       "reopens": [
         {
@@ -525,7 +526,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T16:24:36+00:00",
+  "updated": "2026-06-16T17:03:37+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
