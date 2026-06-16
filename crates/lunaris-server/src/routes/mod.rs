@@ -14,6 +14,8 @@
 //!   root-anchored entity-graph neighborhood via `graph_traverse`).
 //! - [`metrics`] — `GET /metrics` Prometheus text format (Plan 05-05 OPS-06;
 //!   open probe surface, NOT under `/v1`).
+//! - [`ui`] — `GET /` (Memory Inspector Phase 1: the self-contained read-only
+//!   dashboard shell; public, served at the root, NOT under `/v1`).
 
 pub mod browse;
 pub mod detail;
@@ -25,3 +27,4 @@ pub mod ingest;
 pub mod metrics;
 pub mod recall;
 pub mod snapshot;
+pub mod ui;

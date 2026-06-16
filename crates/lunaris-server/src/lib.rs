@@ -250,6 +250,10 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
 
     Router::new()
         .nest("/v1", v1)
+        // Memory Inspector (Phase 1) — the read-only dashboard shell, served
+        // PUBLICLY at the root (no auth to load the page; its /v1 fetches carry
+        // the user-entered recall token). Sits alongside /healthz + /metrics.
+        .route("/", get(routes::ui::ui_handler))
         .route("/healthz", get(routes::healthz::healthz_handler))
         // Plan 05-05 OPS-06 — `/metrics` mounted at root (NOT under `/v1`)
         // so Prometheus scrapers reach it without Bearer-auth tokens.
