@@ -290,16 +290,29 @@ async fn test_cross_episode_contradiction_publishes() {
     // Acme [2020, open) then Globex [2023, open) → overlapping, different object.
     ingest(&storage, &clock, &scope, one_fact("turn-1", "employer", "Acme", day(2020, 1, 1), None))
         .await;
-    ingest(&storage, &clock, &scope, one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None))
-        .await;
+    ingest(
+        &storage,
+        &clock,
+        &scope,
+        one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None),
+    )
+    .await;
 
     let pubs = storage.verify_publishes();
-    assert_eq!(pubs.len(), 1, "an overlapping different-object assertion must publish exactly one contradiction");
+    assert_eq!(
+        pubs.len(),
+        1,
+        "an overlapping different-object assertion must publish exactly one contradiction"
+    );
 
     let env: serde_json::Value = serde_json::from_slice(&pubs[0]).expect("verify envelope is JSON");
     assert_eq!(env["kind"], "fact", "envelope kind must be fact");
     let reason = &env["item"]["reason"]["CrossEpisodeContradiction"];
-    assert!(!reason.is_null(), "reason must be CrossEpisodeContradiction; got {}", env["item"]["reason"]);
+    assert!(
+        !reason.is_null(),
+        "reason must be CrossEpisodeContradiction; got {}",
+        env["item"]["reason"]
+    );
     assert_eq!(reason["predicate"], "employer");
     assert_eq!(
         reason["existing_fact_id"].as_str().unwrap(),
@@ -314,7 +327,11 @@ async fn test_cross_episode_contradiction_publishes() {
 
     // Both facts remain on disk — the supersede is async (the verifier closes
     // the loser later); ingest stays additive + atomic.
-    assert_eq!(storage.rows_under(&fact_prefix(&scope)), 2, "both fact rows retained pre-supersede");
+    assert_eq!(
+        storage.rows_under(&fact_prefix(&scope)),
+        2,
+        "both fact rows retained pre-supersede"
+    );
 }
 
 #[tokio::test]
@@ -332,8 +349,13 @@ async fn test_temporal_succession_no_publish() {
         one_fact("turn-1", "employer", "Acme", day(2020, 1, 1), Some(day(2022, 1, 1))),
     )
     .await;
-    ingest(&storage, &clock, &scope, one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None))
-        .await;
+    ingest(
+        &storage,
+        &clock,
+        &scope,
+        one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None),
+    )
+    .await;
 
     assert!(
         storage.verify_publishes().is_empty(),
@@ -352,10 +374,20 @@ async fn test_cross_scope_no_reconcile() {
     // Same (subject, predicate), overlapping windows, different object — but in
     // DIFFERENT scopes. Detection is scope-local, so scope B must not see A's
     // row → ZERO contradictions.
-    ingest(&storage, &clock, &scope_a, one_fact("turn-1", "employer", "Acme", day(2020, 1, 1), None))
-        .await;
-    ingest(&storage, &clock, &scope_b, one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None))
-        .await;
+    ingest(
+        &storage,
+        &clock,
+        &scope_a,
+        one_fact("turn-1", "employer", "Acme", day(2020, 1, 1), None),
+    )
+    .await;
+    ingest(
+        &storage,
+        &clock,
+        &scope_b,
+        one_fact("turn-2", "employer", "Globex", day(2023, 1, 1), None),
+    )
+    .await;
 
     assert!(
         storage.verify_publishes().is_empty(),
@@ -390,8 +422,13 @@ async fn test_reasserted_narrowed_window_keeps_spo_index_fresh() {
     .await;
     // 3. Now assert Globex from 2022 — DISJOINT from Acme's real [2020, 2021)
     //    window → must be additive, NEVER a (false) supersede.
-    ingest(&storage, &clock, &scope, one_fact("turn-3", "employer", "Globex", day(2022, 1, 1), None))
-        .await;
+    ingest(
+        &storage,
+        &clock,
+        &scope,
+        one_fact("turn-3", "employer", "Globex", day(2022, 1, 1), None),
+    )
+    .await;
 
     assert!(
         storage.verify_publishes().is_empty(),

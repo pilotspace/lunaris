@@ -6,7 +6,7 @@
 //! this pure helper is what each backend's CrossEpisodeContradiction arm calls,
 //! so the convergence policy is deterministic + testable without model weights.
 
-use lunaris_verify::{cross_episode_decision, VerifierBackend};
+use lunaris_verify::{VerifierBackend, cross_episode_decision};
 use ulid::Ulid;
 
 #[test]

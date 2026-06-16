@@ -199,15 +199,15 @@ async fn supersede_closes_loser_at_canonical_fact_key() {
     // The loser row AT THE CANONICAL KEY must be closed (sys_to set). With a
     // verifier that reads a non-canonical key, this row is never touched and
     // the assertion fails — recall-as-of-now would still surface the loser.
-    let loser_after = storage.value_at(&loser_key).expect("loser row still present at canonical key");
+    let loser_after =
+        storage.value_at(&loser_key).expect("loser row still present at canonical key");
     assert!(
         sys_to_is_closed(&loser_after),
         "supersede must close the loser's bi-temporal sys interval at the canonical fact key"
     );
 
     // The winner row stays present (and open).
-    let winner_after =
-        storage.value_at(&winner_key).expect("winner row present at canonical key");
+    let winner_after = storage.value_at(&winner_key).expect("winner row present at canonical key");
     assert!(
         !sys_to_is_closed(&winner_after),
         "winner must remain open (sys_to null) after supersede"

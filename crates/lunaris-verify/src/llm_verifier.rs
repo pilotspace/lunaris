@@ -36,7 +36,9 @@ use lunaris_core::LunarisError;
 use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
 
 use crate::types::VerifierBackend;
-use crate::{Verifier, VerifyDecision, arbitration_prompt, cross_episode_decision, parse_decision_json};
+use crate::{
+    Verifier, VerifyDecision, arbitration_prompt, cross_episode_decision, parse_decision_json,
+};
 use lunaris_extract::{NeedsReviewItem, NeedsReviewReason};
 
 /// Construction options for [`LlmVerifier`].
@@ -130,9 +132,7 @@ impl Verifier for LlmVerifier {
         // LLM-semantic arbitration of fact texts is a flagged follow-up.)
         if let NeedsReviewItem::Fact {
             reason:
-                NeedsReviewReason::CrossEpisodeContradiction {
-                    existing_fact_id, new_fact_id, ..
-                },
+                NeedsReviewReason::CrossEpisodeContradiction { existing_fact_id, new_fact_id, .. },
             ..
         } = &item
         {
