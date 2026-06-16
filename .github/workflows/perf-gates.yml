@@ -8,8 +8,12 @@ name: perf-gates
 #
 # Self-hosted runner labels (`self-hosted, macos, arm64, metal` etc.) are
 # operator-provisioned — see `docs/runbooks/v0.4-self-hosted-runners.md`.
-# Until the runners are registered, the matching matrix cells will queue
-# and time out (timeout-minutes: 60); the GH-managed cells still run.
+# Until the operator sets the `PERF_SELFHOSTED_READY` repo variable to
+# 'true', the self-hosted cells are EXCLUDED from the matrix: a queued
+# self-hosted job with no registered runner never hits `timeout-minutes`
+# (that clock only starts once a runner picks it up), so leaving the cells
+# in would wedge the whole run in `queued` and `perf-gates-summary` would
+# never report. The GitHub-managed cells always run and gate.
 #
 # Security note: every `run:` block in this workflow consumes only static
 # matrix values + repo-owned secrets. No PR-supplied strings
@@ -42,41 +46,71 @@ permissions:
   contents: read
 
 jobs:
-  perf:
+  # Assemble the perf matrix. The two GitHub-managed cells (x86_64+MKL,
+  # aarch64+NEON) always run and gate. The two self-hosted cells
+  # (apple-metal, cuda-sm80) are appended ONLY when the operator has set the
+  # `PERF_SELFHOSTED_READY` repo variable to 'true' (runbook §6) — otherwise
+  # they would queue forever and wedge the run (see the header note).
+  prepare:
+    name: prepare-matrix
     # Skip on PR unless the `perf-bench` label is present. Always run on
     # push to main and on manual dispatch.
     if: >
       github.event_name != 'pull_request'
       || contains(github.event.pull_request.labels.*.name, 'perf-bench')
+    runs-on: ubuntu-latest
+    outputs:
+      hosts: ${{ steps.set.outputs.hosts }}
+    steps:
+      - name: Assemble host matrix
+        id: set
+        env:
+          # Repo variable, operator-controlled — not event-derived input.
+          SELFHOSTED_READY: ${{ vars.PERF_SELFHOSTED_READY }}
+        run: |
+          set -euo pipefail
+          gh_cells='[
+            {"label":"cpu-x86_64-mkl","runs-on":"ubuntu-latest","feature":"cpu-mkl","gate-row":"x86_64 + MKL — embed p50 ≤ 40 ms / p99 ≤ 90 ms / rerank p50 ≤ 300 ms"},
+            {"label":"cpu-aarch64-neon","runs-on":"ubuntu-22.04-arm","feature":"per-device-bench","gate-row":"aarch64 + NEON — embed p50 ≤ 80 ms / p99 ≤ 200 ms / rerank p50 ≤ 600 ms"}
+          ]'
+          self_cells='[
+            {"label":"apple-metal","runs-on":["self-hosted","macos","arm64","metal"],"feature":"metal","gate-row":"Apple Silicon (Metal) — embed p50 ≤ 5 ms / p99 ≤ 15 ms / rerank p50 ≤ 40 ms"},
+            {"label":"cuda-sm80","runs-on":["self-hosted","linux","x86_64","cuda"],"feature":"cuda","gate-row":"NVIDIA sm_80+ (CUDA) — embed p50 ≤ 3 ms / p99 ≤ 10 ms / rerank p50 ≤ 25 ms"}
+          ]'
+          if [ "${SELFHOSTED_READY:-}" = "true" ]; then
+            hosts=$(jq -cn --argjson a "$gh_cells" --argjson b "$self_cells" '$a + $b')
+          else
+            echo "::notice::PERF_SELFHOSTED_READY != 'true' — self-hosted perf cells excluded (runbook §6); GitHub-managed cells still gate."
+            hosts=$(jq -cn --argjson a "$gh_cells" '$a')
+          fi
+          echo "hosts=${hosts}" >> "$GITHUB_OUTPUT"
+
+  perf:
+    needs: prepare
     name: ${{ matrix.host.label }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        host:
-          - label: apple-metal
-            runs-on: [self-hosted, macos, arm64, metal]
-            feature: metal
-            gate-row: "Apple Silicon (Metal) — embed p50 ≤ 5 ms / p99 ≤ 15 ms / rerank p50 ≤ 40 ms"
-          - label: cuda-sm80
-            runs-on: [self-hosted, linux, x86_64, cuda]
-            feature: cuda
-            gate-row: "NVIDIA sm_80+ (CUDA) — embed p50 ≤ 3 ms / p99 ≤ 10 ms / rerank p50 ≤ 25 ms"
-          - label: cpu-x86_64-mkl
-            runs-on: ubuntu-latest
-            feature: cpu-mkl
-            gate-row: "x86_64 + MKL — embed p50 ≤ 40 ms / p99 ≤ 90 ms / rerank p50 ≤ 300 ms"
-          - label: cpu-aarch64-neon
-            runs-on: ubuntu-22.04-arm
-            feature: per-device-bench
-            gate-row: "aarch64 + NEON — embed p50 ≤ 80 ms / p99 ≤ 200 ms / rerank p50 ≤ 600 ms"
+        host: ${{ fromJSON(needs.prepare.outputs.hosts) }}
     runs-on: ${{ matrix.host.runs-on }}
     env:
       MATRIX_LABEL: ${{ matrix.host.label }}
       MATRIX_FEATURE: ${{ matrix.host.feature }}
       MATRIX_GATE_ROW: ${{ matrix.host.gate-row }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init vendor/moon submodule
+        # The `moondb` path dep (vendor/moon/sdk/rust) is required for cargo
+        # to resolve lunaris-storage-moon; without it the build fails before
+        # any bench runs (RUSTSEC-free, real build-break). Non-recursive:
+        # vendor/moon has its own nested .planning submodule the
+        # GITHUB_TOKEN cannot clone.
+        run: git submodule update --init vendor/moon
 
       - name: Print gate row
         run: |
@@ -185,8 +219,17 @@ jobs:
         env:
           PERF_RESULT: ${{ needs.perf.result }}
         run: |
-          if [ "${PERF_RESULT}" != "success" ]; then
-            echo "::error::At least one perf-gates matrix cell failed; see job logs."
-            exit 1
-          fi
-          echo "All perf-gates matrix cells green."
+          # success → every dispatched cell passed (or captured a fresh
+          #           baseline, no regression check this run).
+          # skipped → the matrix was gated off (unlabelled PR, or no
+          #           eligible cells) — nothing to gate, not a regression.
+          # else    → a cell regressed >5% or failed to build/run; gate.
+          case "${PERF_RESULT}" in
+            success)
+              echo "All perf-gates matrix cells green." ;;
+            skipped)
+              echo "::notice::perf-gates matrix skipped — nothing to gate." ;;
+            *)
+              echo "::error::perf-gates matrix result='${PERF_RESULT}' — a cell regressed or failed; see job logs."
+              exit 1 ;;
+          esac
