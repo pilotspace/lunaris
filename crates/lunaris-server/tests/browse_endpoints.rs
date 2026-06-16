@@ -38,8 +38,8 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use bytes::Bytes;
-use futures::stream::{self, BoxStream};
 use chrono::{DateTime, Utc};
+use futures::stream::{self, BoxStream};
 use lunaris::structured_ingest::ingest_structured_inner;
 use lunaris::{EntityId, EpisodeBuilder, FactInput, Lunaris, StructuredIngest};
 use lunaris_core::keyspace::{chunk_key, community_key, episode_key, fact_key};
@@ -292,10 +292,7 @@ fn write_tokens_file(entries: &[(&str, &str, &[&str])]) -> PathBuf {
     let path = dir.join(format!("lunaris-browse-tokens-{}.json", Ulid::new()));
     let mut map = serde_json::Map::new();
     for (tok, tenant, scopes) in entries {
-        map.insert(
-            tok.to_string(),
-            serde_json::json!({ "tenant": tenant, "scopes": scopes }),
-        );
+        map.insert(tok.to_string(), serde_json::json!({ "tenant": tenant, "scopes": scopes }));
     }
     std::fs::write(&path, serde_json::to_string(&map).unwrap()).expect("write tokens");
     path
@@ -322,7 +319,11 @@ fn build_app(storage: Arc<MockStorage>, tokens_file: PathBuf) -> axum::Router {
 }
 
 /// GET `uri` (optionally bearer-authed) → (status, parsed-or-Null body).
-async fn get(app: &axum::Router, uri: &str, token: Option<&str>) -> (StatusCode, serde_json::Value) {
+async fn get(
+    app: &axum::Router,
+    uri: &str,
+    token: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
     let mut builder = Request::builder().method("GET").uri(uri);
     if let Some(tok) = token {
         builder = builder.header("authorization", format!("Bearer {tok}"));
@@ -422,7 +423,8 @@ async fn test_browse_pagination_walks_once() {
     assert_eq!(page1, vec![uid(1).to_string(), uid(2).to_string()]);
     let cursor = p1["next_cursor"].as_str().expect("page 1 has a cursor").to_string();
 
-    let (s2, p2) = get(&app, &format!("/v1/browse/fact?limit=2&cursor={cursor}"), Some("tok-s")).await;
+    let (s2, p2) =
+        get(&app, &format!("/v1/browse/fact?limit=2&cursor={cursor}"), Some("tok-s")).await;
     assert_eq!(s2, StatusCode::OK);
     let page2: Vec<String> = p2["items"]
         .as_array()
@@ -488,12 +490,8 @@ async fn test_each_kv_kind_browsable() {
 
     let app = build_app(storage, write_tokens_file(&[("tok-s", "agent.s", RECALL)]));
 
-    let expect = [
-        ("episode", uid(10)),
-        ("chunk", uid(11)),
-        ("fact", uid(14)),
-        ("community", uid(15)),
-    ];
+    let expect =
+        [("episode", uid(10)), ("chunk", uid(11)), ("fact", uid(14)), ("community", uid(15))];
     for (kind, id) in expect {
         let (status, body) = get(&app, &format!("/v1/browse/{kind}"), Some("tok-s")).await;
         assert_eq!(status, StatusCode::OK, "{kind} must be 200; body={body}");
@@ -560,18 +558,19 @@ async fn test_browse_fact_via_real_ingest_structured() {
     let clock = HlcClock::new(0);
     let valid_from: DateTime<Utc> = "2026-06-16T00:00:00Z".parse().unwrap();
 
-    let payload = StructuredIngest::new(EpisodeBuilder::new("agent", "Alice founded Acme in 2020."))
-        .with_facts(vec![FactInput {
-            fact_text: "Alice founded Acme".to_string(),
-            subject_name: "Alice".to_string(),
-            subject_type: "person".to_string(),
-            predicate: "founded".to_string(),
-            object_name: "Acme".to_string(),
-            object_type: "org".to_string(),
-            confidence: 0.95,
-            valid_from,
-            valid_to: None,
-        }]);
+    let payload =
+        StructuredIngest::new(EpisodeBuilder::new("agent", "Alice founded Acme in 2020."))
+            .with_facts(vec![FactInput {
+                fact_text: "Alice founded Acme".to_string(),
+                subject_name: "Alice".to_string(),
+                subject_type: "person".to_string(),
+                predicate: "founded".to_string(),
+                object_name: "Acme".to_string(),
+                object_type: "org".to_string(),
+                confidence: 0.95,
+                valid_from,
+                valid_to: None,
+            }]);
     ingest_structured_inner(storage.as_ref(), &embedder, clock.as_ref(), payload, s.clone())
         .await
         .expect("ingest_structured writes the production fact row");
