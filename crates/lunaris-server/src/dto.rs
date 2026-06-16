@@ -161,6 +161,26 @@ pub struct ScopesQuery {
     pub limit: usize,
 }
 
+/// `GET /v1/graph?root=&depth=` query string (Memory Inspector Phase 1).
+///
+/// `root` is the 32-char lowercase-hex `EntityId` to anchor the traversal on;
+/// `depth` is the hop count (defaults to `DEFAULT_GRAPH_HOPS`, capped at
+/// `MAX_GRAPH_HOPS`). Both are validated in `graph_handler` (a `None`/empty/
+/// non-hex `root` → 400 `invalid_root`; out-of-range `depth` → 400
+/// `invalid_depth`) rather than via serde, so the error envelope is the
+/// inspector's typed `{ error }` shape, not a serde rejection. `root` is
+/// `Option` so an absent param surfaces as `invalid_root` (not an extractor
+/// 400). `deny_unknown_fields` is omitted for the same reason as
+/// [`BrowseQuery`]: `serde_urlencoded` would reject unknown params at runtime,
+/// and there is no overridable scope/tenant field to protect here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GraphQuery {
+    /// Root entity id (32-char lowercase hex); absent/invalid → 400 `invalid_root`.
+    pub root: Option<String>,
+    /// Traversal depth in hops; absent → `DEFAULT_GRAPH_HOPS`, `0`/`>MAX_GRAPH_HOPS` → 400.
+    pub depth: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

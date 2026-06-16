@@ -234,6 +234,18 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
                     state.clone(),
                     scoped_auth("recall"),
                 )),
+        )
+        // Root-anchored entity-graph neighborhood via graph_traverse. Same
+        // recall-scoped auth + tracing + rate-limit stack.
+        .route(
+            "/graph",
+            get(routes::graph::graph_handler)
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
         );
 
     Router::new()

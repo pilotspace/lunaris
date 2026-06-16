@@ -10,6 +10,8 @@
 //!   Phase 1: paginated, JWT-scoped read surface over `scan_page`).
 //! - [`detail`] — `GET /v1/detail/{kind}/{id}` (Memory Inspector Phase 1:
 //!   single-primitive detail with provenance resolved to source episodes).
+//! - [`graph`] — `GET /v1/graph?root=&depth=` (Memory Inspector Phase 1:
+//!   root-anchored entity-graph neighborhood via `graph_traverse`).
 //! - [`metrics`] — `GET /metrics` Prometheus text format (Plan 05-05 OPS-06;
 //!   open probe surface, NOT under `/v1`).
 
@@ -17,6 +19,7 @@ pub mod browse;
 pub mod detail;
 pub mod episode;
 pub mod forget;
+pub mod graph;
 pub mod healthz;
 pub mod ingest;
 pub mod metrics;
