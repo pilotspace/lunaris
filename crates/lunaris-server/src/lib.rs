@@ -219,6 +219,21 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
                     state.clone(),
                     scoped_auth("recall"),
                 )),
+        )
+        // Single-primitive detail with provenance resolved to source episodes
+        // (KV kinds) or a graph-native signal (entity/relation). Same
+        // recall-scoped auth + tracing + rate-limit stack. A distinct
+        // `/detail/...` path (not `/{kind}/{id}`) avoids colliding with the
+        // existing `/episode/{id}` route at the axum router boundary.
+        .route(
+            "/detail/{kind}/{id}",
+            get(routes::detail::detail_handler)
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
         );
 
     Router::new()
