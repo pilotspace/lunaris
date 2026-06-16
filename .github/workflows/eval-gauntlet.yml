@@ -1,69 +1,51 @@
 # Plan 05-06 EVAL-08 — eval gauntlet CI workflow.
 #
-# Triggered on `push` to `main` AND `pull_request`. Provisions Moon +
-# Postgres via Docker service containers, builds the release lunaris-evals
-# binary, runs `lunaris-evals all`, uploads the eval-results.json artifact,
-# and gates merge on `"status":"FAIL"` per CONTEXT.md D-22.
+# Runs on the self-hosted `llm-weights-cached` runner (same pool as
+# llm-gates.yml) because real LongMemEval / LoCoMo / ER-F1 numbers need cached
+# model weights + a live Moon backend — neither exists on a stock GitHub runner.
+# Moon is built from the `vendor/moon` submodule and launched manually (the
+# integration.yml pattern), NOT pulled as a container image: `moondb/moon` is
+# not published, so a container-image dependency would make this job a phantom
+# that can never produce numbers.
 #
-# Soft-fail discipline (CONTEXT.md D-21): `"status":"SKIPPED"` does NOT
-# block merge — only `"status":"FAIL"` triggers the gate command. Datasets
-# that fail to download (HF rate limit, network outage) emit SKIPPED rows
-# so a transient hiccup doesn't false-fail PRs.
+# Soft-fail discipline (CONTEXT.md D-21): `"status":"SKIPPED"` does NOT block
+# merge — only `"status":"FAIL"` triggers the gate. On a runner without cached
+# weights (e.g. the Gemma secret is empty), the extractor/recall harnesses emit
+# SKIPPED rows and the gate stays green; real numbers populate at HUMAN-UAT on
+# a fully-provisioned weights-cached runner.
 #
 # ## Security posture
 #
-# - No `run:` step interpolates untrusted user input (no github.event.*
-#   issue/PR/commit-message refs). All `${{ ... }}` expansions are limited
-#   to runner-provided paths (runner.temp) and Cargo.lock hashFiles.
-# - Backends run in service containers on the runner — no remote network
-#   access to a managed Lunaris cluster.
-#
-# ## Docker image notes (PATTERNS.md B-NOTE)
-#
-# `moondb/moon:latest` MAY not be published on Docker Hub. If the workflow
-# fails at the service-startup step, fall back to building from a sibling
-# `moon` repo checkout step (operator runbook). This workflow assumes the
-# image is published; verify at first-run and adjust per the B-NOTE comment.
+# - No `run:` step interpolates untrusted user input (no github.event.* refs).
+#   `${{ ... }}` expansions are limited to runner.temp, Cargo.lock hashFiles,
+#   and repository secrets.
+# - Moon runs locally on the runner (port 6390) — no remote network access to a
+#   managed Lunaris cluster.
 
 name: Eval Gauntlet
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: eval-gauntlet-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   eval-gauntlet:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, llm-weights-cached]
     # Per CONTEXT.md latency budget: eval-all <= 30 min target + safety margin.
-    timeout-minutes: 60
-
-    services:
-      # Moon container exposes the Redis-compatible RESP protocol on port
-      # 6390. Lunaris::open dispatches on URL scheme — `moon://` routes to
-      # MoonStorage (W-8 fix: NOT `redis://`).
-      moon:
-        image: moondb/moon:latest
-        ports:
-          - '6390:6390'
-      postgres:
-        image: postgres:16
-        ports:
-          - '5432:5432'
-        env:
-          POSTGRES_PASSWORD: lunaris
-          POSTGRES_DB: lunaris
-          POSTGRES_USER: lunaris
+    timeout-minutes: 90
 
     env:
-      # W-8 fix verbatim: canonical URL scheme per Plan 05-01 D-01 +
-      # Lunaris::open URL routing is `moon://` (NOT `redis://`). The Moon
-      # container exposes the RESP protocol on port 6390, but Lunaris::open
-      # dispatches on the URL scheme — `moon://` is the prefix that routes
-      # to MoonStorage. probe_backend (Plan 05-02) strips both `moon://`
-      # and `redis://` for raw TCP probe purposes; that's a separate code
-      # path from URL routing.
+      # Canonical URL scheme per Plan 05-01 D-01: Lunaris::open routes on the
+      # `moon://` scheme (NOT `redis://`). Moon exposes RESP on port 6390.
       MOON_URL: moon://localhost:6390
-      PG_URL: postgres://lunaris:lunaris@localhost/lunaris
+      # Cached Gemma weights for the ER-F1 extractor; empty on bare runners →
+      # the er-f1 harness SKIPs (never a 0.0->FAIL).
+      LUNARIS_EXTRACT_GEMMA_PATH: ${{ secrets.LUNARIS_EXTRACT_GEMMA_PATH }}
       LUNARIS_EVAL_CACHE_DIR: ${{ runner.temp }}/lunaris-eval-cache
 
     steps:
@@ -73,6 +55,8 @@ jobs:
           submodules: false
 
       - name: Init vendor/moon submodule
+        # Non-recursive: vendor/moon has its own nested .planning submodule
+        # (pilotspace/moon-docs, SSH-only) that we do NOT need for builds.
         run: git submodule update --init vendor/moon
 
       - name: Install Rust 1.94 toolchain
@@ -85,23 +69,35 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.LUNARIS_EVAL_CACHE_DIR }}
-          # Cargo.lock as the cache key proxy — when deps change, dataset
-          # paths inside hf-hub MAY shift between revisions; keying off
-          # Cargo.lock is conservative + cheap.
+          # Cargo.lock as the cache key proxy — when deps change, dataset paths
+          # inside hf-hub MAY shift between revisions; keying off Cargo.lock is
+          # conservative + cheap.
           key: lunaris-eval-cache-${{ hashFiles('Cargo.lock') }}
 
-      - name: Wait for Moon + Postgres backends
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: >
+          cargo build --release
+          --manifest-path vendor/moon/Cargo.toml
+          --bin moon
+
+      - name: Launch Moon (manual docker-run-equivalent; port 6390)
+        # Manual launch (not a container image) per the integration.yml pattern.
+        # Logs to RUNNER_TEMP so an on-failure dump has something to show.
         run: |
+          mkdir -p "$RUNNER_TEMP"
+          ./vendor/moon/target/release/moon --port 6390 \
+            > "$RUNNER_TEMP/moon.log" 2>&1 &
+          echo "MOON_PID=$!" >> "$GITHUB_ENV"
           for i in $(seq 1 30); do
-            if (echo > /dev/tcp/localhost/6390) >/dev/null 2>&1 && \
-               (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; then
-              echo "moon + postgres reachable after $i attempts"
+            if (echo > /dev/tcp/localhost/6390) >/dev/null 2>&1; then
+              echo "moon reachable after $i attempts"
               exit 0
             fi
-            echo "waiting for moon (6390) + postgres (5432) ($i/30)..."
+            echo "waiting for moon (6390) ($i/30)..."
             sleep 2
           done
-          echo "ERROR: backends not reachable after 60s"
+          echo "ERROR: moon not reachable after 60s"
+          cat "$RUNNER_TEMP/moon.log" || true
           exit 1
 
       - name: Build lunaris-evals (release)
@@ -118,7 +114,10 @@ jobs:
           path: eval-results.json
 
       - name: Gate merge on status FAIL
-        # CI greps for FAIL rows. Soft-fail (SKIPPED) does NOT block merge
-        # per CONTEXT.md D-21. The single-line shell test is the exact gate
-        # command from the plan body Step 3.5.
-        run: '! grep -q ''"status":"FAIL"'' eval-results.json'
+        # CI greps for FAIL rows. Soft-fail (SKIPPED) does NOT block merge per
+        # CONTEXT.md D-21. Single-line shell test is the exact gate command.
+        run: '! grep -qE ''"status": ?"FAIL"'' eval-results.json'
+
+      - name: Stop Moon
+        if: always()
+        run: kill "$MOON_PID" 2>/dev/null || true

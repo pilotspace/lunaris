@@ -1,0 +1,18 @@
+[
+  {
+    "question_id": "q1",
+    "question_type": "single-session-user",
+    "question": "What city did I visit in May?",
+    "answer": "Paris",
+    "question_date": "2023-06-01",
+    "haystack_session_ids": ["s1"],
+    "haystack_dates": ["2023-05-10"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "In May I visited Paris for a week.", "has_answer": true},
+        {"role": "assistant", "content": "That sounds wonderful!"}
+      ]
+    ],
+    "answer_session_ids": ["s1"]
+  }
+]
