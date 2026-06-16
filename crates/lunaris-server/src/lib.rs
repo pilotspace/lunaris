@@ -196,6 +196,29 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
                     state.clone(),
                     scoped_auth("recall"),
                 )),
+        )
+        // Memory Inspector (Phase 1) — read-only browse surface. CROSS-SCOPE
+        // partition enumeration + per-kind paginated browse, both behind the
+        // same recall-scoped auth + tracing + rate-limit stack as /episode.
+        .route(
+            "/scopes",
+            get(routes::browse::scopes_handler)
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
+        )
+        .route(
+            "/browse/{kind}",
+            get(routes::browse::browse_handler)
+                .route_layer(rate_limit.clone())
+                .route_layer(axum::middleware::from_fn(middleware::tracing::tracing_middleware))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    scoped_auth("recall"),
+                )),
         );
 
     Router::new()

@@ -6,9 +6,12 @@
 //! - [`forget`] — `POST /v1/forget` (Plan 04-05 surface + D-21 two-step rail).
 //! - [`snapshot`] — `GET /v1/snapshot/{lsn}` NDJSON stream.
 //! - [`episode`] — `GET /v1/episode/{id}` single-episode lookup by ULID.
+//! - [`browse`] — `GET /v1/scopes` + `GET /v1/browse/{kind}` (Memory Inspector
+//!   Phase 1: paginated, JWT-scoped read surface over `scan_page`).
 //! - [`metrics`] — `GET /metrics` Prometheus text format (Plan 05-05 OPS-06;
 //!   open probe surface, NOT under `/v1`).
 
+pub mod browse;
 pub mod episode;
 pub mod forget;
 pub mod healthz;

@@ -116,6 +116,51 @@ pub struct ForgetRequestDto {
     pub confirmation_token: Option<String>,
 }
 
+/// Default page size for the browse / scopes read endpoints (contract v1).
+fn default_browse_limit() -> usize {
+    20
+}
+
+/// `GET /v1/browse/{kind}` query string (Memory Inspector Phase 1).
+///
+/// Scope is the JWT `claims.scope` ONLY — there is no `scope` field here, and
+/// `browse_handler` reads `claims.scope` exclusively, so a smuggled `?scope=`
+/// query param is structurally ignored (the safe behavior Tin confirmed at the
+/// `browse-endpoints` freeze). `deny_unknown_fields` is deliberately OMITTED:
+/// unlike the JSON request bodies — where the attribute is load-bearing against
+/// scope/tenant smuggling — axum `Query<T>` via `serde_urlencoded` DOES reject
+/// unknown fields at runtime, which would turn the confirmed "ignore `?scope=`"
+/// contract into a 400. There is no overridable field to protect here, so
+/// omitting it honors the frozen behavior without weakening security. `limit`
+/// defaults to 20; the cap (`MAX_PAGE` = 500) is enforced downstream by
+/// `scan_page`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrowseQuery {
+    /// Opaque forward cursor from a prior page's `next_cursor`; `None`/empty = first page.
+    pub cursor: Option<String>,
+    /// Page size, `1..=MAX_PAGE`. Out-of-range values are rejected by `scan_page`.
+    #[serde(default = "default_browse_limit")]
+    pub limit: usize,
+}
+
+/// `GET /v1/scopes` query string — CROSS-SCOPE partition enumeration.
+///
+/// Passed verbatim to `Lunaris::list_scopes(prefix, limit, cursor)`; `limit`
+/// defaults to 20. The cursor is the opaque backend handle from a prior page.
+/// `deny_unknown_fields` is omitted for the same reason as [`BrowseQuery`]:
+/// `serde_urlencoded` would reject unknown params at runtime, and there is no
+/// overridable scope/tenant field on this read-only query to protect.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScopesQuery {
+    /// Optional scope-string prefix filter (substring match is backend-defined).
+    pub prefix: Option<String>,
+    /// Opaque forward cursor from a prior page's `next_cursor`.
+    pub cursor: Option<String>,
+    /// Page size; passed through to the backend enumerator.
+    #[serde(default = "default_browse_limit")]
+    pub limit: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

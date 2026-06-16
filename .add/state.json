@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "read-api-pagination",
+  "active_task": "browse-endpoints",
   "active_milestone": "memory-inspector",
   "tasks": {
     "mq-typed-client": {
@@ -519,14 +519,40 @@
     },
     "browse-endpoints": {
       "title": "GET /v1/scopes + GET /v1/browse/{kind} (JWT-scoped, paginated)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-inspector",
       "depends_on": [
         "read-api-pagination"
       ],
       "created": "2026-06-16T05:04:35+00:00",
-      "updated": "2026-06-16T05:04:35+00:00"
+      "updated": "2026-06-16T06:49:07+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "318940e420697b3c5cf6f89783182a4e",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-server/src/routes/browse.rs",
+          "crates/lunaris-server/src/routes.rs",
+          "routes/mod.rs",
+          "crates/lunaris-server/src/routes/",
+          "crates/lunaris-server/src/lib.rs",
+          "crates/lunaris-server/src/dto.rs"
+        ],
+        "snapshot_md5": "205d3ddce395dca7e8905743d6872157"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-06-16T06:46:08+00:00",
+            "reason": "scope_violation: task 'browse-endpoints' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-server/tests/browse_endpoints.rs (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "detail-provenance": {
       "title": "GET /v1/{kind}/{id} detail with provenance resolved to source episodes",
@@ -597,7 +623,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T05:58:37+00:00",
+  "updated": "2026-06-16T06:49:07+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
