@@ -151,7 +151,7 @@ fn read_nested_enabled(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<bool> {
         Some(v) => v,
         None => return Ok(false),
     };
-    let nested_dict: &Bound<'_, PyDict> = match nested.downcast::<PyDict>() {
+    let nested_dict: &Bound<'_, PyDict> = match nested.cast::<PyDict>() {
         Ok(d) => d,
         Err(_) => return Ok(false),
     };

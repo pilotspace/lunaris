@@ -40,7 +40,7 @@ use crate::generated::PyLunaris;
 /// s2 = Scope("")                  # raises ValueError
 /// s3 = Scope("a" * 129)           # raises ValueError
 /// ```
-#[pyclass(name = "Scope", dict)]
+#[pyclass(name = "Scope", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyScope {
     pub(crate) inner: ::lunaris::Scope,
@@ -99,7 +99,7 @@ impl PyScope {
 /// )
 /// lsn = await engine.scoped(Scope("acme:agent-1")).ingest(builder)
 /// ```
-#[pyclass(name = "EpisodeBuilder", dict)]
+#[pyclass(name = "EpisodeBuilder", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyEpisodeBuilder {
     pub(crate) inner: ::lunaris::EpisodeBuilder,
