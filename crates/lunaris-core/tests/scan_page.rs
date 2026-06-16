@@ -358,8 +358,7 @@ async fn test_corrupt_row_stops_page() {
     let bad = vec![(Bytes::from(fact_key(&sc, uid(1))), Bytes::from_static(b"{ not json"))];
     let port = FakePort::new(bad);
 
-    let err =
-        scan_page::<Fact>(&port, &sc, &fact_prefix(&sc), None, 10, None).await.unwrap_err();
+    let err = scan_page::<Fact>(&port, &sc, &fact_prefix(&sc), None, 10, None).await.unwrap_err();
     assert_eq!(err.code(), "corrupt_row", "an undeserializable page value stops the page");
 }
 
