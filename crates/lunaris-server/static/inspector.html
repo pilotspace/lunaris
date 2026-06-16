@@ -84,7 +84,7 @@
   <section id="graph-panel">
     <h2>Entity graph <span class="pill">nodes only · v1</span></h2>
     <div class="controls">
-      <input id="graph-root" size="36" placeholder="root entity id (32-char hex)">
+      <input id="graph-root" size="36" placeholder="root entity id (32-char hex) — blank = all nodes">
       <label>depth <input id="graph-depth" type="number" value="2" min="1" max="5" style="width:60px"></label>
       <button id="graph-btn">Traverse</button>
       <span id="graph-note" class="muted"></span>
@@ -270,15 +270,23 @@
   async function traverse() {
     const root = $("graph-root").value.trim();
     const depth = $("graph-depth").value || "2";
-    if (!root) { setStatus("enter a root entity id", true); return; }
+    // A blank root lists ALL nodes in the scope graph (the explore entry point);
+    // a root anchors a depth-bounded neighborhood.
+    const url = root
+      ? "/v1/graph?root=" + encodeURIComponent(root) + "&depth=" + encodeURIComponent(depth)
+      : "/v1/graph";
     try {
-      const body = await api("/v1/graph?root=" + encodeURIComponent(root) + "&depth=" + encodeURIComponent(depth));
+      const body = await api(url);
       const canvas = $("graph-canvas");
       clear(canvas);
-      canvas.appendChild(nodeCard({ id: body.root, name: "(root)" }, true));
+      if (body.root) canvas.appendChild(nodeCard({ id: body.root, name: "(root)" }, true));
       (body.nodes || []).forEach((n) => canvas.appendChild(nodeCard(n, false)));
-      $("graph-note").textContent = (body.nodes || []).length + " neighbor(s) within depth " + body.depth + (body.truncated ? " (truncated)" : "");
-      setStatus("graph: " + (body.nodes || []).length + " node(s)");
+      const count = (body.nodes || []).length;
+      const summary = body.root
+        ? count + " neighbor(s) within depth " + body.depth
+        : count + " node(s) in graph";
+      $("graph-note").textContent = summary + (body.truncated ? " (truncated)" : "");
+      setStatus("graph: " + count + " node(s)");
     } catch (e) {
       $("graph-note").textContent = "";
       setStatus("graph: " + e.message + " (graph may not be enabled on this backend)", true);

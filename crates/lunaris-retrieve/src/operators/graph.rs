@@ -276,7 +276,7 @@ impl Graph {
         let cypher = match dialect {
             CypherDialect::Legacy => format!(
                 "UNWIND $ids AS sid \
-                 MATCH (n {{id_hex: sid}})-[*1..{hops}]-(m) \
+                 MATCH (n)-[*1..{hops}]-(m) WHERE n.id_hex = sid \
                  RETURN \
                    m.id_hex AS id, \
                    m.name AS name, \
@@ -286,7 +286,7 @@ impl Graph {
             ),
             CypherDialect::PathMetrics => format!(
                 "UNWIND $ids AS sid \
-                 MATCH p = (n {{id_hex: sid}})-[*1..{hops}]-(m) \
+                 MATCH p = (n)-[*1..{hops}]-(m) WHERE n.id_hex = sid \
                  RETURN \
                    m.id_hex AS id, \
                    m.name AS name, \
@@ -298,7 +298,7 @@ impl Graph {
             ),
             CypherDialect::Full => format!(
                 "UNWIND $ids AS sid \
-                 MATCH p = (n {{id_hex: sid}})-[*1..{hops}]-(m) \
+                 MATCH p = (n)-[*1..{hops}]-(m) WHERE n.id_hex = sid \
                  RETURN \
                    m.id_hex AS id, \
                    m.name AS name, \
@@ -562,16 +562,30 @@ mod tests {
 
     #[test]
     fn build_cypher_uses_id_hex_property_name_not_id() {
-        // W-7 fix: MATCH and RETURN MUST use `id_hex` across ALL dialect
-        // tiers. Plan 03-03's GraphNode writes `id_hex`; using `id` would
-        // silently return zero rows.
+        // W-7 fix: MATCH and RETURN MUST use the `id_hex` property (Plan
+        // 03-03's GraphNode writes `id_hex`; using `id` would silently return
+        // zero rows).
+        //
+        // Inspector-UAT fix (2026-06-16): the anchor filter MUST be a `WHERE`
+        // clause, NOT the inline-property form `(n {id_hex: sid})`. Moon's
+        // Cypher executor SILENTLY IGNORES inline-property filters on a plain
+        // MATCH (live-confirmed) — it matches every node as an anchor, so the
+        // traversal returns the whole connected component and neither `root`
+        // nor `hops` constrains. See `feedback_moon_cypher_inline_filter`.
         let id = EntityId::from_name_and_type("Alice", "Person");
         let g = Graph::anchored(vec![(id, 1.0)], 2);
         for dialect in [CypherDialect::Legacy, CypherDialect::PathMetrics, CypherDialect::Full] {
             let q = g.build_cypher(dialect);
             assert!(
-                q.cypher.contains("id_hex: sid"),
-                "[{dialect:?}] MATCH must use id_hex property: {}",
+                q.cypher.contains("WHERE n.id_hex = sid"),
+                "[{dialect:?}] anchor MUST filter via `WHERE n.id_hex = sid` (Moon ignores \
+                 inline-property filters): {}",
+                q.cypher
+            );
+            assert!(
+                !q.cypher.contains("{id_hex: sid}"),
+                "[{dialect:?}] inline-property filter `(n {{id_hex: sid}})` is silently ignored \
+                 by Moon — must not be used: {}",
                 q.cypher
             );
             assert!(

@@ -183,6 +183,28 @@ endpoint or a `PathMetrics`-dialect / bounded per-hop edge query. Mitigation: th
 `edges` key can land later without breaking `nodes` readers); the contract is the portable substrate-truth
 today; the discriminating test pins the exact `CypherQuery` the handler builds against the real
 `graph_traverse` port, so the traversal shape can't silently drift.
+
+### v2 amendment — 2026-06-16 (Memory Inspector live UAT; change-request by Tin)
+
+Live UAT against real Moon surfaced two changes; the response ENVELOPE is unchanged
+(additive), so this amends behaviour, not shape:
+
+1. **Anchor correctness (bug fix).** The v1 Cypher `MATCH (n {id_hex: sid})-[*1..N]-(m)`
+   used an inline-property filter that Moon SILENTLY IGNORES — it matched every node as an
+   anchor, so neither `root` nor `depth` constrained the traversal (live-confirmed:
+   `root=Bob&depth=1` returned a 2-hop node). The anchor now rides a `WHERE` clause:
+   `UNWIND $ids AS sid MATCH (n)-[*1..{depth}]-(m) WHERE n.id_hex = sid RETURN …`. The same
+   inline-filter bug was live in `lunaris-retrieve::Graph::anchored` (all 3 dialects) and is
+   fixed there too. New live-Moon regression test:
+   `lunaris-storage-moon/tests/graph_anchor_constrains.rs` (the mock suite records the
+   CypherQuery string but never executes it, so it could not catch this).
+2. **Empty root → all nodes (new behaviour).** An absent or empty/whitespace `root` is no
+   longer `400 invalid_root` — it lists every node in the scope graph
+   (`MATCH (n) … LIMIT $k`, no anchor, `depth` ignored), with `root:null` / `depth:null` in
+   the response. Rationale: entity ids are graph-native (not browsable via `/v1/browse`), so
+   without this a reviewer has no entry point. A non-empty `root` that is not 32-hex is still
+   `400 invalid_root`.
+
 <!-- The freeze IS the one approval — lead it with the bundle's lowest-confidence flag: the 1–2
      points most likely wrong across the whole bundle, tagged [spec|scenario|contract|test], each
      with why + cost (the §1 ⚠ assumptions feed it; a flag may point at a scenario or the contract
@@ -266,10 +288,12 @@ Reviewed by: Tin Dang (fully-auto delegation) · date: 2026-06-16
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
-Spec delta for the next loop: <what production taught you>
+Watch (reuse scenarios as monitors): graph-mode 200-rate vs 501; per-rejection rate (invalid_root/invalid_depth); empty-vs-anchored ratio.
+Spec delta for the next loop: live UAT (2026-06-16) proved `root`+`depth` did NOT constrain on Moon — the inline-property anchor filter `(n {id_hex: sid})` is silently ignored (matched every node). Fixed to the `WHERE n.id_hex = sid` form here + in `lunaris-retrieve::Graph::anchored`. Added empty-root → all-nodes. Open follow-up: explicit edges (v1 nodes-only) still deferred; the recall graph-mode shared the same anchor bug and is now fixed but lacks its own live-Moon assertion.
 
 ### Competency deltas
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
+- [TDD · open] A mock that records the `CypherQuery` STRING cannot catch a backend that mis-executes that string — the inline-filter bug passed graph-endpoint's gate and only surfaced in live UAT. Graph/Cypher contracts need a live-Moon discriminating test on the production path, not just a string-shape assertion (evidence: `graph_anchor_constrains.rs` is RED-worthy where the mock suite was green). Reinforces [[feedback_built_not_wired]].
+- [SDD · open] "root-anchored neighborhood" was under-specified as a string template, not a behaviour — the freeze pinned the Cypher TEXT but not the observable "depth=1 excludes 2-hop nodes" property. Specify graph contracts by observable reachability, not query syntax (evidence: v1 froze the exact broken cypher and the gate passed).
 <!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
