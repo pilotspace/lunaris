@@ -1,0 +1,10 @@
+[
+  {
+    "tokens": ["I", "visited", "the", "Empire", "State", "Building", "today", "."],
+    "tags":   [12,  12,        12,    3,        9,       9,          12,      12]
+  },
+  {
+    "tokens": ["Alice", "works", "at", "Acme", "."],
+    "tags":   [4,       12,      12,   0,      12]
+  }
+]

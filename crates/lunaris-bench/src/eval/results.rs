@@ -49,6 +49,13 @@ pub fn print_markdown_summary(rows: &[EvalRow]) {
     println!("Summary: {pass} PASS, {fail} FAIL, {skip} SKIPPED");
 }
 
+/// The merge-gate predicate: `true` iff any row FAILED. The `lunaris-evals`
+/// binary maps a `true` return to process exit code 1. SKIPPED is the D-21
+/// soft-fail status and does NOT gate (only `"status":"FAIL"` blocks merge).
+pub fn gate_failed(rows: &[EvalRow]) -> bool {
+    rows.iter().any(|r| r.status == "FAIL")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

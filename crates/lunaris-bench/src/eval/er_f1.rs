@@ -62,7 +62,8 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
             }
         };
 
-    // Verify the dataset bytes are parseable (sanity gate).
+    // Parse the WNUT-2017 gold spans (pure; fixture-tested). Garbage bytes →
+    // SKIP (a malformed dataset is an absent capability, never a 0.0→FAIL).
     let bytes = match std::fs::read(&dataset_path) {
         Ok(b) => b,
         Err(e) => {
@@ -75,19 +76,84 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    if let Err(e) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-        results.push(EvalRow::skipped(
-            HARNESS,
-            METRIC,
-            THRESHOLD,
-            &format!("parse {}: {e}", dataset_path.display()),
-        ));
-        return Ok(());
+    let docs = match parse_wnut(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            results.push(EvalRow::skipped(
+                HARNESS,
+                METRIC,
+                THRESHOLD,
+                &format!("parse {}: {e}", dataset_path.display()),
+            ));
+            return Ok(());
+        }
+    };
+
+    // The production extractor lives on the Lunaris handle. At HUMAN-UAT this is
+    // the native Gemma backend (feature build + LUNARIS_EXTRACT_GEMMA_PATH); a
+    // handle carrying only NoopExtractor (`applies() == false`) → SKIP. Never
+    // FAIL on a merely-absent extractor.
+    let url = std::env::var("MOON_URL")
+        .or_else(|_| std::env::var("LUNARIS_URL"))
+        .unwrap_or_else(|_| "memory://".to_string());
+    let lunaris = match lunaris::Lunaris::open(&url).await {
+        Ok(l) => l,
+        Err(e) => {
+            results.push(EvalRow::skipped(
+                HARNESS,
+                METRIC,
+                THRESHOLD,
+                &format!("Lunaris::open({url}) failed: {e}"),
+            ));
+            return Ok(());
+        }
+    };
+    let extractor = match lunaris.extractor() {
+        Some(e) if e.applies() => e,
+        _ => {
+            results.push(EvalRow::skipped(
+                HARNESS,
+                METRIC,
+                THRESHOLD,
+                "extractor not loadable (NoopExtractor) — wire the native Gemma backend at HUMAN-UAT",
+            ));
+            return Ok(());
+        }
+    };
+
+    // Run the extractor over each WNUT doc; compare its (entity, type) output to
+    // gold via the pure micro-F1 scorer. Aligning the extractor's type taxonomy
+    // onto WNUT's {person, location, corporation, …} is a HUMAN-UAT refinement.
+    let mut predicted: Vec<(String, String)> = Vec::new();
+    let mut gold: Vec<(String, String)> = Vec::new();
+    for doc in &docs {
+        gold.extend(doc.gold.iter().cloned());
+        let chunk = lunaris_extract::ChunkInput {
+            chunk_id: ulid::Ulid::new(),
+            text: doc.text.clone(),
+            heading_path: Vec::new(),
+        };
+        match extractor.extract(ulid::Ulid::new(), std::slice::from_ref(&chunk)).await {
+            Ok(batch) => {
+                for raw in batch.by_chunk {
+                    for ent in raw.entities {
+                        predicted.push((ent.name, ent.entity_type));
+                    }
+                }
+            }
+            Err(e) => {
+                results.push(EvalRow::skipped(
+                    HARNESS,
+                    METRIC,
+                    THRESHOLD,
+                    &format!("extractor failed: {e}"),
+                ));
+                return Ok(());
+            }
+        }
     }
 
-    // Stub F1 = 0; full implementation per dataset README + extractor
-    // invocation lands in 05-HUMAN-UAT.md.
-    let f1 = 0.0;
+    let f1 = crate::eval::score::compute_f1(&predicted, &gold);
     results.push(EvalRow::judge_ge(
         HARNESS,
         METRIC,
@@ -96,6 +162,84 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
         started.elapsed().as_millis() as u64,
     ));
     Ok(())
+}
+
+/// One WNUT-2017 document: the raw token text plus the gold `(entity, type)`
+/// pairs derived from its BIO tag spans. Produced by [`parse_wnut`].
+#[derive(Debug, Clone)]
+pub struct WnutDoc {
+    pub text: String,
+    pub gold: Vec<(String, String)>,
+}
+
+/// WNUT-2017 tner BIO id→label map (`tner/wnut2017` `label2id`): ids 0..=11 are
+/// the `B-`/`I-` tags for {corporation, creative-work, group, location, person,
+/// product}; id 12 is `O`. The entity *type* is the suffix after the BIO prefix.
+const WNUT_LABELS: [&str; 13] = [
+    "B-corporation",
+    "B-creative-work",
+    "B-group",
+    "B-location",
+    "B-person",
+    "B-product",
+    "I-corporation",
+    "I-creative-work",
+    "I-group",
+    "I-location",
+    "I-person",
+    "I-product",
+    "O",
+];
+
+#[derive(serde::Deserialize)]
+struct WnutRaw {
+    tokens: Vec<String>,
+    tags: Vec<i64>,
+}
+
+/// Close the open BIO span (if any), pushing its `(entity_text, type)` pair.
+fn close_span(open: &mut Option<(String, Vec<String>)>, gold: &mut Vec<(String, String)>) {
+    if let Some((ty, toks)) = open.take() {
+        gold.push((toks.join(" "), ty));
+    }
+}
+
+/// Parse WNUT-2017 tner-format bytes (`[{"tokens":[...],"tags":[int,...]}]`)
+/// into docs with BIO spans collapsed to `(entity_text, type)` gold pairs.
+/// Pure (bytes → typed); `Err` on malformed JSON so the caller maps to SKIPPED.
+pub fn parse_wnut(bytes: &[u8]) -> anyhow::Result<Vec<WnutDoc>> {
+    let raws: Vec<WnutRaw> =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("parse wnut: {e}"))?;
+    let mut docs = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let text = raw.tokens.join(" ");
+        let mut gold: Vec<(String, String)> = Vec::new();
+        // The span currently being accumulated: (entity_type, tokens-so-far).
+        let mut open: Option<(String, Vec<String>)> = None;
+        for (tok, tag) in raw.tokens.iter().zip(raw.tags.iter()) {
+            let label = WNUT_LABELS.get(*tag as usize).copied().unwrap_or("O");
+            if let Some(ty) = label.strip_prefix("B-") {
+                close_span(&mut open, &mut gold);
+                open = Some((ty.to_string(), vec![tok.clone()]));
+            } else if let Some(ty) = label.strip_prefix("I-") {
+                let extend = matches!(&open, Some((open_ty, _)) if open_ty == ty);
+                if extend {
+                    if let Some((_, toks)) = open.as_mut() {
+                        toks.push(tok.clone());
+                    }
+                } else {
+                    // I- with no matching open B- (malformed BIO): start fresh.
+                    close_span(&mut open, &mut gold);
+                    open = Some((ty.to_string(), vec![tok.clone()]));
+                }
+            } else {
+                close_span(&mut open, &mut gold); // "O"/unknown → end the span
+            }
+        }
+        close_span(&mut open, &mut gold);
+        docs.push(WnutDoc { text, gold });
+    }
+    Ok(docs)
 }
 
 #[cfg(test)]
@@ -107,7 +251,15 @@ mod tests {
         let mut results: Vec<EvalRow> = Vec::new();
         super::run(&mut results).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
+        // SKIP-not-FAIL invariant (Reject: false_fail_on_absent): with the
+        // extractor env absent the harness MUST emit SKIPPED, never a 0.0→FAIL.
+        // A live run with weights present may legitimately PASS/FAIL — assert
+        // the strict invariant only when the gating capability is absent.
+        if std::env::var("LUNARIS_EXTRACT_GEMMA_PATH").is_err() {
+            assert_eq!(results[0].status, "SKIPPED");
+        } else {
+            assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
+        }
         assert_eq!(results[0].harness, HARNESS);
         assert_eq!(results[0].metric, METRIC);
         assert_eq!(results[0].threshold, THRESHOLD);

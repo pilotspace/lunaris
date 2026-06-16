@@ -1,0 +1,18 @@
+[
+  {
+    "sample_id": "loc1",
+    "conversation": {
+      "speaker_a": "Alice",
+      "speaker_b": "Bob",
+      "session_1_date_time": "2023-01-01 10:00",
+      "session_1": [
+        {"speaker": "Alice", "dia_id": "D1:1", "text": "I went to Rome last week."},
+        {"speaker": "Bob", "dia_id": "D1:2", "text": "How was it?"}
+      ]
+    },
+    "qa": [
+      {"question": "Where did Alice go?", "answer": "Rome", "category": 1, "evidence": ["D1:1"]},
+      {"question": "Who did Alice talk to?", "answer": "Bob", "category": 2, "evidence": ["D1:2"]}
+    ]
+  }
+]

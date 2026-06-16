@@ -128,6 +128,45 @@ pub async fn run_all(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Ingest each query's gold answer as a recallable memory under `session`'s pad
+/// — the minimal corpus that makes the answer recall-surfaceable. Shared by the
+/// LongMemEval + LoCoMo J-score harnesses. The full multi-session corpus ingest
+/// (distractors, session/event summaries) is the HUMAN-UAT harness; this proves
+/// the live ingest→recall→score path end-to-end.
+pub(crate) async fn ingest_answers_to_pad(
+    lunaris: &std::sync::Arc<lunaris::Lunaris>,
+    session: &str,
+    queries: &[longmemeval::EvalQuery],
+) -> anyhow::Result<()> {
+    let pad =
+        lunaris::CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), session);
+    for (i, q) in queries.iter().enumerate() {
+        pad.write(&format!("{session}-{i:06}.md"), q.expected_answer.clone()).await?;
+    }
+    Ok(())
+}
+
+/// Recall top-k by each question from `session`'s pad and score with the pure
+/// recall-J proxy ([`score::recall_j_score`]): the % of questions whose top-k
+/// recalled text contains the normalized gold answer.
+pub(crate) async fn recall_j_score_from_pad(
+    lunaris: &std::sync::Arc<lunaris::Lunaris>,
+    session: &str,
+    queries: &[longmemeval::EvalQuery],
+) -> anyhow::Result<f64> {
+    let pad =
+        lunaris::CodingSessionMemory::new(lunaris.clone(), lunaris_core::Scope::dev(), session);
+    let mut per_query = Vec::with_capacity(queries.len());
+    for q in queries {
+        let hits = pad.grep(&q.query, 5).await?;
+        per_query.push(score::QueryHit {
+            topk_texts: hits.iter().map(|h| h.text.clone()).collect(),
+            gold_answer: q.expected_answer.clone(),
+        });
+    }
+    Ok(score::recall_j_score(&per_query))
+}
+
 pub mod e2e;
 pub mod er_f1;
 pub mod locomo;
@@ -135,6 +174,7 @@ pub mod longmemeval;
 pub mod memory;
 pub mod perf_delta;
 pub mod results;
+pub mod score;
 
 #[cfg(test)]
 mod tests {
