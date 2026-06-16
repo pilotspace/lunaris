@@ -36,13 +36,12 @@ use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use lunaris_core::keyspace::{
-    chunk_prefix, community_prefix, entity_prefix, episode_prefix, fact_prefix, relation_prefix,
-};
-use lunaris_core::{
-    Chunk, Community, Entity, Episode, Fact, ListError, Page, Relation, Scope, StoragePort,
-    scan_page,
-};
+use lunaris_core::keyspace::{chunk_prefix, community_prefix, episode_prefix, fact_prefix};
+use lunaris_core::{Chunk, Community, Episode, ListError, Page, Scope, StoragePort, scan_page};
+// The at-rest `fact:` KV row is a `lunaris_extract::Fact` (subject_id/object_id
+// EntityIds, no scope/bt/provenance), NOT `lunaris_core::Fact`. Deserializing
+// into the real type preserves the corrupt_row guarantee.
+use lunaris_extract::types::Fact as ExtractFact;
 
 use crate::dto::{BrowseQuery, ScopesQuery};
 use crate::middleware::auth::AuthClaims;
@@ -51,10 +50,13 @@ use crate::state::AppState;
 
 /// Handler for `GET /v1/browse/{kind}`.
 ///
-/// Dispatches `{kind}` to the matching keyspace prefix + primitive type, pages
-/// the caller's JWT-bound scope via [`scan_page`], and serializes the typed
-/// `Page<T>` to `{ items, next_cursor }`. An unknown kind is rejected
-/// pre-scan (`400 invalid_kind`).
+/// KV-backed kinds (`episode`/`chunk`/`community` → core primitives; `fact` →
+/// `lunaris_extract::Fact`, the real at-rest shape) dispatch to the matching
+/// keyspace prefix, page the caller's JWT-bound scope via [`scan_page`], and
+/// serialize the typed `Page<T>` to `{ items, next_cursor }`. Graph-native
+/// kinds (`entity`/`relation`) live in the graph, not KV — they return
+/// `200 { items: [], next_cursor: null, graph_native: true }` with no scan, so
+/// the SPA routes to `GET /v1/graph`. An unknown kind is `400 invalid_kind`.
 pub async fn browse_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<AuthClaims>,
@@ -75,16 +77,26 @@ pub async fn browse_handler(
         "chunk" => {
             page_json::<Chunk>(storage.as_ref(), scope, &chunk_prefix(scope), cursor, q.limit).await
         }
-        "entity" => {
-            page_json::<Entity>(storage.as_ref(), scope, &entity_prefix(scope), cursor, q.limit)
-                .await
+        // Graph-native kinds: entities are GraphNodes and relations are
+        // GraphEdges (NOT KV rows), so there is nothing to scan. Return a typed
+        // empty page carrying `graph_native: true` so the SPA routes to
+        // GET /v1/graph instead of rendering an empty table as "no data".
+        // No storage call is made (scenario: "no scan is performed").
+        "entity" | "relation" => {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "items": [],
+                    "next_cursor": serde_json::Value::Null,
+                    "graph_native": true,
+                })),
+            )
+                .into_response();
         }
-        "relation" => {
-            page_json::<Relation>(storage.as_ref(), scope, &relation_prefix(scope), cursor, q.limit)
-                .await
-        }
+        // The at-rest fact row is `lunaris_extract::Fact`, not `core::Fact`.
         "fact" => {
-            page_json::<Fact>(storage.as_ref(), scope, &fact_prefix(scope), cursor, q.limit).await
+            page_json::<ExtractFact>(storage.as_ref(), scope, &fact_prefix(scope), cursor, q.limit)
+                .await
         }
         "community" => {
             page_json::<Community>(
