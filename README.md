@@ -274,5 +274,5 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 ## License
 
-Dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT),
-at your option. See [`LICENSE`](LICENSE).
+Licensed under the [Apache License, Version 2.0](LICENSE). See [`LICENSE`](LICENSE)
+for the full text.

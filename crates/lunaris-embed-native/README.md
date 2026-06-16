@@ -191,7 +191,7 @@ of 1.0 — see P1-1 in
 
 ## License
 
-Apache-2.0 OR MIT — same as the rest of the Lunaris workspace.
+Apache-2.0 — same as the rest of the Lunaris workspace.
 The granite-r2 weights themselves are Apache-2.0 (IBM).
 
 [modernbert]: https://arxiv.org/abs/2412.13663

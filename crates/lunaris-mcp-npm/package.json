@@ -20,7 +20,7 @@
     "README.md"
   ],
   "keywords": ["mcp", "lunaris", "memory", "agent", "claude-code"],
-  "license": "Apache-2.0 OR MIT",
+  "license": "Apache-2.0",
   "author": {"name": "Lunaris Authors"},
   "repository": {
     "type": "git",
