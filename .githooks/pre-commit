@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Guard: vendor/moon must never carry uncommitted working-tree changes.
+#
+# Why: vendor/moon is a pinned submodule that is BOTH a path-dependency and the
+# binary source. It has no rustfmt.toml of its own, so any `cargo fmt`/`rustfmt`
+# run with a CWD inside vendor/moon climbs up to Lunaris's root rustfmt.toml
+# (use_small_heuristics = "Max") and silently reflows all 481 Moon source files.
+# That produces a ~22k-line phantom diff and means Lunaris builds against a Moon
+# that no longer matches its pinned SHA (a reproducibility hazard).
+#
+# This guard catches that (and any other accidental in-place edit) at commit
+# time. It checks working-tree modifications ONLY — a legitimate submodule SHA
+# bump leaves a clean working tree at the new commit and passes through.
+#
+# Remediation when this fires:  git submodule update --force vendor/moon
+# (or, if the edits are intentional, commit them inside vendor/moon and bump
+#  the pin in the parent repo.)
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+sub="vendor/moon"
+
+if [ ! -e "$repo_root/$sub/.git" ]; then
+  # Submodule not initialized in this clone — nothing to guard.
+  exit 0
+fi
+
+dirty="$(git -C "$repo_root/$sub" status --porcelain 2>/dev/null || true)"
+
+if [ -n "$dirty" ]; then
+  count="$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')"
+  echo "✖ commit blocked: vendor/moon has $count uncommitted working-tree change(s)." >&2
+  echo "" >&2
+  echo "  vendor/moon is a pinned submodule; its working tree must match the pinned SHA." >&2
+  echo "  This is almost always an accidental 'cargo fmt' run inside vendor/moon" >&2
+  echo "  (it inherits Lunaris's rustfmt.toml and reflows Moon's source)." >&2
+  echo "" >&2
+  echo "  Restore the pin:   git submodule update --force vendor/moon" >&2
+  echo "  Intentional edit?  commit it inside vendor/moon, then bump the pin here." >&2
+  echo "  Override (rare):   git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0
