@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "mem0-docs-reconcile",
+  "active_task": "multi-level-memory-categories",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -357,15 +357,15 @@
     },
     "multi-level-memory-categories": {
       "title": "Typed user/session/agent memory levels + categories + metadata-filter API",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "mem0-parity-hardening",
       "depends_on": [],
       "created": "2026-06-15T01:50:41+00:00",
-      "updated": "2026-06-16T14:46:49+00:00",
+      "updated": "2026-06-22T05:41:29+00:00",
       "flag_verified": true,
       "tripwire": {
-        "contract_md5": "04516d1c0857774e3d18d9822d8919b3",
+        "contract_md5": "d2e03cbdbdcb8a110b5f126c38ff7166",
         "tests": {}
       },
       "scope": {
@@ -375,12 +375,13 @@
           "crates/lunaris-server/src/dto.rs",
           "crates/lunaris-server/src/routes/ingest.rs",
           "crates/lunaris-server/src/routes/recall.rs",
-          "crates/lunaris-server/src/routes/Filter",
-          "crates/lunaris-core/src/storage/types.rs",
-          "crates/lunaris-core/src/storage/MemoryLevel",
-          "crates/lunaris-core/src/storage/compose_levels"
+          "crates/lunaris-storage-embedded/src/vector.rs",
+          "crates/lunaris-core/tests/scope_compose.rs",
+          "crates/lunaris-server/tests/multi_level_scope.rs",
+          "crates/lunaris-server/tests/categories_filter.rs",
+          "crates/lunaris-storage-embedded/tests/categories_membership.rs"
         ],
-        "snapshot_md5": "cb9302631cd9de7fcb6ada9c08319ecf"
+        "snapshot_md5": "11f311745094a81f093908dc2df47531"
       },
       "reopens": [
         {
@@ -390,7 +391,22 @@
           "at": "2026-06-16T14:46:49+00:00",
           "prior_gate": "PASS"
         }
-      ]
+      ],
+      "heal": {
+        "attempts": 2,
+        "history": [
+          {
+            "at": "2026-06-22T05:38:54+00:00",
+            "reason": "scope_violation: task 'multi-level-memory-categories' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-core/tests/scope_compose.rs \u00b7 crates/lunaris-storage-embedded/tests/categories_membership.rs (2 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-06-22T05:39:33+00:00",
+            "reason": "scope_violation: task 'multi-level-memory-categories' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-core/tests/scope_compose.rs \u00b7 crates/lunaris-storage-embedded/tests/categories_membership.rs (2 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "sdk-integrations-dx": {
       "title": "LangGraph/CrewAI adapters + SDK DX; make the adapter claim true",
@@ -526,7 +542,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-16T17:03:37+00:00",
+  "updated": "2026-06-22T05:41:29+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
