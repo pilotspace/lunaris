@@ -136,7 +136,19 @@ pub(crate) fn filter_to_sqlite(f: &Filter) -> String {
                 serde_json::Value::String(s) => format!("'{}'", s.replace('\'', "''")),
                 other => format!("'{}'", other.to_string().replace('\'', "''")),
             };
-            format!("json_extract(metadata, '$.{field}') = {literal}")
+            // Honor set-MEMBERSHIP: a metadata field may be a JSON ARRAY (e.g.
+            // `categories = ["blue", ...]`), so compile `Eq` to a `json_each`
+            // membership test, NOT whole-value equality. `json_each` over a
+            // SCALAR field yields one row carrying that value (so plain scalar
+            // `Eq` is preserved as a 1-element membership), over an ARRAY one
+            // row per element, and over a MISSING field zero rows (no match).
+            // Without this, `json_extract(metadata, '$.categories')` returns
+            // the array TEXT (`["blue"]`) which never equals a scalar, so a
+            // categories filter silently annihilated the result set.
+            // (multi-level-memory-categories — frozen-flag mitigation.)
+            format!(
+                "EXISTS (SELECT 1 FROM json_each(metadata, '$.{field}') WHERE value = {literal})"
+            )
         }
         Filter::StartsWith { field, prefix } => {
             let escaped = prefix.replace('\'', "''");
@@ -329,7 +341,12 @@ mod tests {
     fn filter_eq_string_escapes_quotes() {
         let f = Filter::Eq { field: "source".into(), value: serde_json::json!("alice's notes") };
         let sql = filter_to_sqlite(&f);
-        assert_eq!(sql, "json_extract(metadata, '$.source') = 'alice''s notes'");
+        // Eq now compiles to a json_each membership test (honors array fields
+        // like `categories`; preserves scalar Eq) — see filter_to_sqlite.
+        assert_eq!(
+            sql,
+            "EXISTS (SELECT 1 FROM json_each(metadata, '$.source') WHERE value = 'alice''s notes')"
+        );
     }
 
     #[test]
@@ -349,9 +366,11 @@ mod tests {
             ]),
         ]);
         let sql = filter_to_sqlite(&f);
-        assert!(sql.starts_with("(json_extract(metadata, '$.kind') = 'note' AND ("));
-        assert!(sql.contains("json_extract(metadata, '$.tag') = 'a'"));
-        assert!(sql.contains("json_extract(metadata, '$.tag') = 'b'"));
+        assert!(sql.starts_with(
+            "(EXISTS (SELECT 1 FROM json_each(metadata, '$.kind') WHERE value = 'note') AND ("
+        ));
+        assert!(sql.contains("json_each(metadata, '$.tag') WHERE value = 'a'"));
+        assert!(sql.contains("json_each(metadata, '$.tag') WHERE value = 'b'"));
     }
 
     #[test]

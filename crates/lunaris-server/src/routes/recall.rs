@@ -22,12 +22,16 @@ use futures::StreamExt;
 use futures::stream::{self, Stream};
 
 use lunaris_core::Hlc;
+use lunaris_core::storage::types::Filter;
 use lunaris_retrieve::{DEFAULT_GRAPH_HOPS, EntityId, Graph, Hit, Query, Vector};
 
-use crate::dto::{RecallRequest, RetrievalMode};
+use crate::dto::{
+    RecallRequest, RetrievalMode, categories_filter, compose_request_scope, validate_categories,
+};
 use crate::metrics::metrics;
 use crate::middleware::auth::AuthClaims;
 use crate::middleware::error::map_error;
+use crate::routes::ingest::level_reject;
 use crate::state::AppState;
 
 pub async fn recall_handler(
@@ -87,22 +91,45 @@ pub async fn recall_handler(
         }
     };
 
-    // RFC 0001 Wave 1E: use engine.scoped(claims.scope) to get the
-    // scope-aware RetrievalBuilder. ScopedLunaris::dsl() returns a
-    // RetrievalBuilder pre-seeded with the engine's storage/embedder/keyword
-    // Arcs. The scoped wrapper uses the JWT-bound scope, closing the
-    // Scope::dev() crutch that existed in v0.1.
-    let scoped = state.lunaris.scoped(claims.scope.clone());
+    // multi-level-memory-categories: compose the SAME partition a matching
+    // level-tagged ingest wrote, and validate categories. Reject with 400
+    // (the contract's error codes) before touching storage.
+    let err_inc =
+        || metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
+    let scope = match compose_request_scope(
+        &claims.scope,
+        req.user_id.as_deref(),
+        req.agent_id.as_deref(),
+        req.session_id.as_deref(),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            timer.observe_duration();
+            err_inc();
+            return level_reject(e);
+        }
+    };
+    if let Err(e) = validate_categories(&req.categories) {
+        timer.observe_duration();
+        err_inc();
+        return level_reject(e);
+    }
+
+    // RFC 0001 Wave 1E: use engine.scoped(scope) to get the scope-aware
+    // RetrievalBuilder, now bound to the COMPOSED scope (JWT base is its
+    // prefix). ScopedLunaris::dsl() returns a RetrievalBuilder pre-seeded with
+    // the engine's storage/embedder/keyword Arcs.
+    let scoped = state.lunaris.scoped(scope.clone());
     let mut builder = scoped.dsl();
 
-    // Apply optional filter — surface parse failures as 400 (the caller's
-    // body was valid JSON but the filter DSL is invalid).
-    if let Some(filter_str) = &req.filter {
-        builder = match builder.filter_str(filter_str) {
-            Ok(updated) => updated,
+    // Parse the optional string-DSL filter — surface parse failures as 400
+    // (the body was valid JSON but the filter DSL is invalid).
+    let string_filter = match &req.filter {
+        Some(s) => match lunaris_retrieve::filter_str(s) {
+            Ok(f) => Some(f),
             Err(e) => {
                 timer.observe_duration();
-                metrics().recall_total.with_label_values(&[scope_str, mode_label, "error"]).inc();
+                err_inc();
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(serde_json::json!({
@@ -112,7 +139,17 @@ pub async fn recall_handler(
                 )
                     .into_response();
             }
-        };
+        },
+        None => None,
+    };
+    // AND-combine the string-DSL filter with the categories filter.
+    let combined = match (string_filter, categories_filter(&req.categories)) {
+        (Some(a), Some(b)) => Some(Filter::And(vec![a, b])),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    };
+    if let Some(f) = combined {
+        builder = builder.filter(f);
     }
 
     // Plan 07-01 — compose Graph::anchored into the root when mode=graph and
@@ -267,6 +304,10 @@ mod tests {
             as_of: None,
             filter: None,
             mode: RetrievalMode::Semantic,
+            user_id: None,
+            agent_id: None,
+            session_id: None,
+            categories: Vec::new(),
         };
         let q = build_query(&req).expect("ok");
         // build_query keeps Query::text default k (30) when req.k == 0.

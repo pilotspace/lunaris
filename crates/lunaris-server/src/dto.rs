@@ -17,7 +17,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use lunaris_core::storage::types::Lsn;
+use lunaris_core::storage::types::{Filter, Lsn};
+use lunaris_core::{Scope, compose_levels};
+
+/// Max number of categories accepted on a single request (D-25 cardinality
+/// discipline — keeps the Moon FT TAG label set small).
+const MAX_CATEGORIES: usize = 16;
+/// Max byte length of a single category.
+const MAX_CATEGORY_LEN: usize = 64;
+/// Well-known metadata key under which categories are persisted + indexed.
+pub const CATEGORIES_METADATA_KEY: &str = "categories";
 
 /// `POST /v1/ingest` request body — RFC 0001 Wave 1E shape.
 ///
@@ -47,6 +56,21 @@ pub struct IngestBody {
     /// values are passed through as-is.
     #[serde(default)]
     pub metadata: serde_json::Map<String, serde_json::Value>,
+    /// Optional per-user memory level. Composed onto the JWT base scope as
+    /// `{base}.u-{user_id}` (see [`compose_request_scope`]). Absent → base scope.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// Optional per-agent memory level → `.a-{agent_id}`.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// Optional per-session / run memory level → `.s-{session_id}`.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Optional categories — persisted at `Episode.metadata["categories"]`
+    /// and indexed so recall can filter on them. Bounded (≤16 items, each
+    /// 1..=64 bytes); see [`validate_categories`].
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 /// `POST /v1/recall` request body. Two retrieval modes per D-05 + PROTO-03.
@@ -69,10 +93,91 @@ pub struct RecallRequest {
     /// Retrieval mode (D-05 / PROTO-03).
     #[serde(default)]
     pub mode: RetrievalMode,
+    /// Optional per-user memory level — composed identically to ingest so a
+    /// matching recall binds the SAME partition a level-tagged ingest wrote.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// Optional per-agent memory level → `.a-{agent_id}`.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// Optional per-session / run memory level → `.s-{session_id}`.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Optional categories filter — AND-combined with `filter` via
+    /// `Filter::Eq`/`Or` on the categories field (see [`categories_filter`]).
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 fn default_k() -> usize {
     10
+}
+
+/// Why a request's level ids / categories were rejected. The handler maps each
+/// variant to a `400` carrying the contract's stable error string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelError {
+    /// A level id is empty or carries a non-segment char (`.`/`:`/`/`/space).
+    InvalidSegment,
+    /// The composed scope exceeds the 128-byte `Scope` cap.
+    ScopeTooLong,
+    /// Categories violate the bound (>16 items, or an item empty / >64 bytes).
+    InvalidCategories,
+}
+
+impl LevelError {
+    /// The stable wire error code for this rejection.
+    pub fn code(self) -> &'static str {
+        match self {
+            LevelError::InvalidSegment => "invalid_level_segment",
+            LevelError::ScopeTooLong => "scope_too_long",
+            LevelError::InvalidCategories => "invalid_categories",
+        }
+    }
+}
+
+/// Validate the optional level ids and compose them onto `base` in canonical
+/// order. Each id is pre-screened with [`Scope::is_valid_segment`] so a char
+/// failure maps to [`LevelError::InvalidSegment`]; once the ids are clean,
+/// only the 128-byte cap can fail inside [`compose_levels`], mapping to
+/// [`LevelError::ScopeTooLong`]. All-`None` returns `base.clone()`.
+pub fn compose_request_scope(
+    base: &Scope,
+    user_id: Option<&str>,
+    agent_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Result<Scope, LevelError> {
+    for id in [user_id, agent_id, session_id].into_iter().flatten() {
+        if !Scope::is_valid_segment(id) {
+            return Err(LevelError::InvalidSegment);
+        }
+    }
+    compose_levels(base, user_id, agent_id, session_id).map_err(|_| LevelError::ScopeTooLong)
+}
+
+/// Validate the categories bound: ≤16 items, each 1..=64 bytes.
+pub fn validate_categories(categories: &[String]) -> Result<(), LevelError> {
+    if categories.len() > MAX_CATEGORIES {
+        return Err(LevelError::InvalidCategories);
+    }
+    if categories.iter().any(|c| c.is_empty() || c.len() > MAX_CATEGORY_LEN) {
+        return Err(LevelError::InvalidCategories);
+    }
+    Ok(())
+}
+
+/// Build a [`Filter`] matching ANY of `categories` on the `"categories"`
+/// field: empty → `None`, one → `Eq`, many → `Or` of `Eq`.
+pub fn categories_filter(categories: &[String]) -> Option<Filter> {
+    let eq = |c: &String| Filter::Eq {
+        field: CATEGORIES_METADATA_KEY.to_string(),
+        value: serde_json::Value::String(c.clone()),
+    };
+    match categories {
+        [] => None,
+        [one] => Some(eq(one)),
+        many => Some(Filter::Or(many.iter().map(eq).collect())),
+    }
 }
 
 /// Two retrieval modes per CONTEXT.md D-05 + PROTO-03.
