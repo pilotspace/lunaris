@@ -136,6 +136,36 @@ impl Scope {
         // SAFETY: "_dev_" matches ^[A-Za-z0-9_\-.]{1,128}$ by inspection.
         Self(SmolStr::new("_dev_"))
     }
+
+    /// Is `segment` a legal sub-partition segment?
+    ///
+    /// A segment is a non-empty run of `[A-Za-z0-9_-]`. Note `.` is EXCLUDED
+    /// here even though [`Scope::new`] permits it in a whole scope, because
+    /// `.` is the level separator (see [`child`](Scope::child)): a segment
+    /// carrying its own `.` would forge an extra level. `:` and `/` are
+    /// likewise excluded so a composed segment can never byte-alias the
+    /// `lunaris:{scope}:{kind}:{ulid}` KV format.
+    #[inline]
+    pub fn is_valid_segment(segment: &str) -> bool {
+        !segment.is_empty()
+            && segment.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    }
+
+    /// Compose a child sub-partition by appending a validated `.{segment}`.
+    ///
+    /// `segment` must satisfy [`is_valid_segment`](Scope::is_valid_segment);
+    /// the full composed string is then re-validated by [`Scope::new`]
+    /// (alphabet + 128-byte cap). Consequently `self.as_str()` is ALWAYS a
+    /// byte-prefix of the returned child — this is the load-bearing isolation
+    /// guarantee for multi-level memory (RFC 0001 sub-partitions): a caller
+    /// can only NARROW into a sub-partition of its own scope, never escape to
+    /// a sibling or parent.
+    pub fn child(&self, segment: &str) -> Result<Scope, ScopeError> {
+        if !Self::is_valid_segment(segment) {
+            return Err(ScopeError::Invalid(segment.to_string()));
+        }
+        Scope::new(format!("{}.{segment}", self.0.as_str()))
+    }
 }
 
 impl std::fmt::Display for Scope {
@@ -148,6 +178,63 @@ impl AsRef<str> for Scope {
     fn as_ref(&self) -> &str {
         self.0.as_str()
     }
+}
+
+/// The canonical memory-partition levels, composed UNDER the JWT base scope
+/// in this fixed order (`User` → `Agent` → `Session`). Each carries a
+/// one-char disambiguating tag so the composed scope is self-describing and
+/// collision-resistant: `{base}.u-{user}.a-{agent}.s-{session}`, including
+/// only the levels whose id is present.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryLevel {
+    /// Per-user memory space (tag `u`).
+    User,
+    /// Per-agent memory space (tag `a`).
+    Agent,
+    /// Per-session / run memory space (tag `s`).
+    Session,
+}
+
+impl MemoryLevel {
+    /// The one-char tag prefixed to a level id in the composed scope.
+    #[inline]
+    pub fn tag(&self) -> &'static str {
+        match self {
+            MemoryLevel::User => "u",
+            MemoryLevel::Agent => "a",
+            MemoryLevel::Session => "s",
+        }
+    }
+}
+
+/// Compose the JWT-bound `base` scope with optional user/agent/session ids,
+/// in the canonical [`MemoryLevel`] order, into the bound partition.
+///
+/// Each present id becomes a `{tag}-{id}` segment appended via
+/// [`Scope::child`], so `base.as_str()` is ALWAYS a byte-prefix of the
+/// result (sub-partition, never escape). All-`None` returns `base.clone()`
+/// — back-compat: operate at the base scope, today's behavior.
+///
+/// An id outside the segment alphabet (`[A-Za-z0-9_-]`, e.g. one carrying a
+/// `.`/`:`/`/`) or one whose composition exceeds the 128-byte scope cap
+/// yields `Err(ScopeError::Invalid)`. The HTTP layer pre-screens ids with
+/// [`Scope::is_valid_segment`] so it can distinguish `invalid_level_segment`
+/// from `scope_too_long` (only the length cap can fail once ids are clean).
+pub fn compose_levels(
+    base: &Scope,
+    user: Option<&str>,
+    agent: Option<&str>,
+    session: Option<&str>,
+) -> Result<Scope, ScopeError> {
+    let mut scope = base.clone();
+    for (level, id) in
+        [(MemoryLevel::User, user), (MemoryLevel::Agent, agent), (MemoryLevel::Session, session)]
+    {
+        if let Some(id) = id {
+            scope = scope.child(&format!("{}-{id}", level.tag()))?;
+        }
+    }
+    Ok(scope)
 }
 
 /// Error returned when constructing an invalid [`Scope`].
