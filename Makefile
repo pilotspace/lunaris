@@ -12,7 +12,7 @@
 .PHONY: help bench-public bench-recall bench-ingest bench-helios \
         bench-baseline test test-pg test-moon docs docs-serve docs-rust \
         ci-local clean release-preflight release-preflight-fast \
-        check-scope-leaks
+        check-scope-leaks setup-hooks
 
 help:
 	@echo "Lunaris top-level targets"
@@ -39,6 +39,7 @@ help:
 	@echo "    docs-rust         Build rustdoc for the workspace (cargo doc --no-deps)"
 	@echo ""
 	@echo "  Misc"
+	@echo "    setup-hooks       Activate tracked git hooks (run once per clone)"
 	@echo "    ci-local          Reproduce the CI gate locally (fmt + clippy + test)"
 	@echo "    clean             Remove target/, docs/benchmarks/v0.2.x-tmp/"
 
@@ -168,3 +169,18 @@ release-preflight-fast:
 
 check-scope-leaks:
 	cargo run -p xtask --quiet -- check-scope
+
+# ---------------------------------------------------------------------------
+# Dev environment bootstrap
+# ---------------------------------------------------------------------------
+#
+# `setup-hooks` activates the tracked git hooks in `.githooks/`. Git can't
+# auto-enable hooks from a tracked dir (security), so each fresh clone runs
+# this once. The pre-commit hook blocks commits while `vendor/moon` carries
+# uncommitted working-tree changes — an accidental `cargo fmt` inside the
+# vendored submodule reflows all of Moon to Lunaris's rustfmt style and
+# silently de-pins the build. See `.githooks/pre-commit` for the full story.
+
+setup-hooks:
+	git config core.hooksPath .githooks
+	@echo "✓ git hooks activated (core.hooksPath = .githooks)"
