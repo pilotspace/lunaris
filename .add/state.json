@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "multi-level-memory-categories",
+  "active_task": "moon-v031-xshard-bump",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -168,12 +168,25 @@
     },
     "moon-v031-xshard-bump": {
       "title": "Bump Moon to v0.3.1 (cross-shard read fast path) and verify Lunaris recall benefit",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": null,
       "depends_on": [],
       "created": "2026-06-14T15:26:24+00:00",
-      "updated": "2026-06-14T15:26:24+00:00"
+      "updated": "2026-06-22T06:33:59+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "13f7eba64770528b53c7a51fa6f9324d",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "vendor/moon/",
+          "vendor/moon/Cargo.lock",
+          ".add/tasks/moon-v031-xshard-bump/TASK.md"
+        ],
+        "snapshot_md5": "f4215edcf77ca4027340af7ffe4bdcc5"
+      }
     },
     "mem0-gap-analysis": {
       "title": "Mem0 competitive gap analysis + ranked hardening backlog",
@@ -542,7 +555,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-22T05:41:29+00:00",
+  "updated": "2026-06-22T06:33:59+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
