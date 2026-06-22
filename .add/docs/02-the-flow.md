@@ -8,10 +8,13 @@
 
 AIDD is one repeatable flow of **seven steps**: six build the feature — Specify → Scenarios → Contract → Tests → Build → Verify — and the seventh, **Observe**, feeds what production teaches back into the next Specify. In the default flow the AI drafts the specification bundle (steps 1–4) and a person approves it **once**, at the contract freeze; the AI performs the Build; and Verify is resolved on evidence under `autonomy: auto`, with a person owning any residue. (See [11 Governance](./11-governance.md) for the autonomy level and the one-approval decision point.)
 
+**Before those seven steps comes a phase-0 preamble: `ground`.** Before it specifies anything, the AI gathers the real current codebase the task touches — the actual files, symbols, signatures, patterns, and conventions — into a lean §0 *grounding map*, surfacing the **anchors** the frozen contract will later cite. Ground is AI-owned and adds no new approval (the one approval stays at the contract freeze); it aims the specification bundle at reality instead of assumption, so the contract, tests, and build are grounded in the code as it actually is. The seven steps keep their numbering and brand — ground precedes them as step 0 (it is drawn as node 0 in the diagram below).
+
 ![The ADD flow — a solid primary flow Specify→Scenarios→Contract→Tests→Build→Verify→Observe, with dashed backward-correction arrows (any phase may return to an earlier one), a Tests⇄Build red/green engine, and Observe looping back to the next Specify](./add-flow.png)
 
 ```mermaid
 flowchart LR
+  S0["0 Ground<br/>the real codebase"] --> S1["1 Specify<br/>the rules"]
   S1["1 Specify<br/>the rules"] --> S2["2 Scenarios<br/>pass/fail cases"]
   S2 --> S3["3 Contract<br/>freeze the shape"]
   S3 --> S4["4 Tests<br/>failing-first (red)"]
@@ -27,7 +30,7 @@ flowchart LR
   classDef machine fill:#E6F1FB,stroke:#185FA5,color:#042C53;
   class S1,S2 human;
   class S3,S4 decision;
-  class S5,S6 machine;
+  class S0,S5,S6 machine;
 ```
 
 > **Solid arrows are the primary flow** — you never start a phase before its input exists (forward-skip forbidden). **Dashed arrows are backward correction** — any phase may return to an earlier one to repair its artifact (the long loop, Observe → Specify, is the same rule at milestone scale). The tight Tests ⇄ Build cycle is the per-feature red/green engine.
@@ -80,7 +83,7 @@ The flow runs in two directions under two rules that never conflict. **Backward 
 | 6 Verify | own the residue (security · concurrency · architecture); approve when `conservative` | gather evidence; **auto-PASS on complete evidence** under `autonomy: auto` |
 | 7 Observe | read the signal; consolidate confirmed deltas into PROJECT.md | run behind a flag; emit lessons learned |
 
-**What the human sees when it is their turn — the decision arc.** Whenever the flow stops for the human — the baseline approval that ends setup, the contract-freeze decision point and an escalated verify gate within each task, and the wider decision points of the loop (intake · scope · milestone close · stage graduation) — the AI opens its report with the **decision arc**: three engine-sourced lines — `goal:` the milestone goal the work serves · `done:` the proven progress toward it · `plan:` what comes next. The arc renders first, above the report's summary, so the human confirms with sight of the whole trajectory rather than a local snapshot. It is presentation only — it never adds a gate or changes an outcome. See [Appendix C](./appendix-c-glossary.md).
+**What the human sees when it is their turn — the decision arc.** Whenever the flow stops for the human — the baseline approval that ends setup, the contract-freeze decision point and an escalated verify gate within each task, and the wider decision points of the loop (intake · scope · milestone close · stage graduation) — the AI opens its report with the **decision arc**: three engine-sourced lines — `goal:` the milestone goal the work serves · `done:` the proven progress toward it · `plan:` what comes next. The arc renders first, above the report's summary, so the human confirms with sight of the whole trajectory rather than a local snapshot. Within that report the AI also presents the **DECISION** itself as a **guided choice** — one highlighted **recommended pick** (`▶ … (recommended)`) plus its real, described alternatives — so the human chooses with the recommendation and each option's consequence in view rather than a bare next-step line. Both are presentation only — they never add a gate or change an outcome, and the guided choice fires at human gates only. See [Appendix C](./appendix-c-glossary.md) and the `add` skill's `report-template.md` for the convention itself.
 
 ## What survives, and what is disposable
 

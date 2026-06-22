@@ -88,6 +88,8 @@ The defining instruction: *if a requirement is unclear, ask — do not resolve i
 - **Free-text errors.** Errors must be named codes, not sentences, so they can become scenarios and contract responses.
 - **Hidden assumptions.** If an assumption is not written down, it is not confirmed — it is a future bug with a delay timer.
 - **A flat list of "confirmed" assumptions.** Eight equal-looking ticks invite a reflex approval. Rank them; flag the one or two that are load-bearing. An unranked list hides the risk inside the noise.
+- **"Existing behavior" claims without a citation.** An assumption row that asserts "this is how X works today" is describing intent, not code. Any wiring claim or assumption that depends on the current state of an existing path must carry a grep/line citation (e.g. `file.rs:203`) — otherwise it is a future bug in disguise.
+- **Wiring claims that name a symbol, not a caller chain.** Verifying that a function exists is not the same as verifying it is reachable. A wiring claim is only valid when it names the production caller chain from an actual entry point — not just the symbol's location in a file. A function that nothing calls is dead, not wired.
 
 ## Exit check
 

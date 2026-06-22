@@ -54,6 +54,9 @@ For every feature, before AI writes any code, you write four short artifacts in 
 **Lineage**
 - [15 · Foundations & Lineage](./15-foundations-and-lineage.md)
 
+**Releasing**
+- [16 · Releasing](./16-releasing.md)
+
 **Part IV — Reference**
 - [Appendix A · Templates](./appendix-a-templates.md)
 - [Appendix B · Prompt library](./appendix-b-prompts.md)

@@ -25,9 +25,12 @@ Verify can be resolved two ways, set per task by the `autonomy:` header (see [go
 
 ## Part one — confirm the evidence
 
+Before the build, the task pre-declares its **build expectations** — the observable outcomes a correct build must produce, read off §2's scenarios and §3's contract. Confirm each one here against evidence you can see, not a restated test name: this is what makes the gate check the build is *right*, not merely that the suite is green.
+
 - [ ] All tests pass.
 - [ ] Coverage did not decrease.
 - [ ] No test or contract was altered during the build.
+- [ ] Every pre-declared build expectation is confirmed by real evidence (not merely a green test).
 
 If any of these is false, stop here and return to the build; there is nothing to verify yet.
 
@@ -48,6 +51,14 @@ Two failures slip straight past green tests. The first is code that is never *wi
 
 This is *evidence*, not impression: a reference search showing where each new symbol is called, a scan confirming nothing new is orphaned, or — for prose — a note of exactly what was read and what it confirmed. An unfilled deep check is a **shallow verify**, not a pass. The engine cannot judge wiring, dead code, or whether prose was truly read; the resolver records the evidence, and a person (under `conservative`) or the recorded run (under `auto`) signs it.
 
+**The wiring trace is a named step, not a free-form note.** For every new hook, closure, or middleware registered in this task: trace from the process entry point to the call site and record it explicitly — symbol, file, line. A symbol that is only reachable via a test helper or `make_config` but not via the production entry point (e.g. `build_harness_with_dispatcher`, `interactive_mode`) is not wired. This is the third repeated class in production: "runtime-activation-order/silent-noop" — the code exists and the unit tests pass, but the feature is absent in the running program. The wiring trace is how you catch it before a user does.
+
+## Part four — was the green earned?
+
+Passing tests say the code satisfies the cases you wrote down. They do not say it earned that pass honestly — and the mechanical tamper tripwire (Step 6's floor) only catches an *edited* test or contract, not a build that gamed the *unchanged* suite. The same rubric the phase guide carries names what the tripwire cannot see:
+
+A green suite proves the tests pass — not that the build EARNED them. Three judgment cheats pass the unchanged suite without earning it: src overfit to the test fixtures (special-cased to the literal inputs, not the general behavior §1 asked for), vacuous asserts (tautological — green even against an empty implementation), and real logic stubbed away (the function returns a constant the tests happen to accept). These cheats are invisible to the mechanical tamper tripwire, which only sees edited files. Score them with an adversarial refute-read: an independent reviewer — a subagent under `autonomy: auto` is recommended, the engine never spawns one — prompted to argue the green was NOT earned from outside the build context. This is the verify-gate, whole-suite specialization of run.md's adversarial verify (see run.md), not a new discipline. A confirmed earned-green failure is HARD-STOP-class: never auto-passed, never RISK-ACCEPTED — but a first cheat is a chance to redo: a confirmed cheat (mechanical tamper or a reported earned-green failure) enters the bounded self-heal loop — it returns to build for an honest redo, and only after the loop's cap does it HARD-STOP to the human (the loop lives in run.md).
+
 ## Recording the outcome
 
 Every verification ends with exactly one recorded outcome, with an accountable owner — never a silent pass:
@@ -63,6 +74,7 @@ A security finding is always a `HARD-STOP`; it is never waved through with a wai
 ## The verification checklist
 
 - [ ] All tests pass (the evidence).
+- [ ] Every pre-declared build expectation is confirmed by observable evidence.
 - [ ] Concurrency/timing of the risky operation is safe.
 - [ ] No exposed secrets, injection openings, or unexpected dependencies.
 - [ ] Layering and dependencies follow `CONVENTIONS.md`.
@@ -75,6 +87,9 @@ A security finding is always a `HARD-STOP`; it is never waved through with a wai
 - **Shipping on plausibility.** Reading the diff, finding it reasonable, and approving — without the evidence and the non-functional review — is the precise failure the method exists to prevent.
 - **Treating a security gap as acceptable risk.** It is a `HARD-STOP`, not a waiver.
 - **Skipping the concurrency check** because the tests are green. Tests rarely exercise simultaneity; this is a manual check by design.
+- **Trusting the green agent's self-reported test count.** A build agent running a filtered suite (e.g. `-E 'test(theme)'`) only sees tests inside the filter. Collateral failures outside the filter — a stale count in `all_commands_in_registry`, an e2e snapshot the agent did not touch — are invisible. The orchestrator's **full-suite rerun is load-bearing**; never skip it on the grounds that the scoped run was green.
+- **User-observable-only failures escalate to the human before exhausting discriminating probes.** When a symptom is only observable by a person (a TCC dialog, a visual flicker, an OS-level prompt), do not respond by running the suite again. Instead, design two or three targeted probes that let the user distinguish cause A from cause B in one interaction each. Three AskUser probes resolve what three blind reruns cannot.
+- **Background-process hangs misdiagnosed as test failures.** A test that never exits is not a failure in the test logic — it is a hang. The diagnosis recipe: background the test process, run `pgrep` to find it, use the platform profiler (`sample <pid>` on macOS, `perf` on Linux) to sample the stack, then `lsof -p <pid>` to see open files. Run an isolation experiment (suspect line on/off, 3×3) before reading any code. Entry-count caps do not bound wall time — a single huge directory or a blocking syscall inside a `spawn_blocking` call can hang indefinitely even when the entry cap is satisfied.
 
 ## If the check fails
 

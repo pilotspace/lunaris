@@ -58,6 +58,10 @@ Scenario: not my account
 
 The `And no balance changes` line is doing real work: it specifies that a rejected transfer must leave the world untouched — a property the AI could easily violate by deducting before checking.
 
+## Cover the edge cases
+
+The transfer above is one domain; the same gaps recur in every domain — an HR leave request, a marketing campaign send, a checkout. Beyond the spec's "Reject" rules, sweep the recurring gaps and add a scenario for each that applies (or rule it out on purpose): boundary, duplicate/idempotent, ownership, stale/out-of-order, partial failure, concurrency, malformed input, limits/volume.
+
 ## The AI's role here
 
 Hand the AI the spec and have it draft a scenario for each rule, including the rejection rules. Then read them as the person who owns the requirement: do they describe what you actually meant? Correct any that drift. See `playbook/2_scenarios.md` in [Appendix B](./appendix-b-prompts.md).
@@ -65,6 +69,7 @@ Hand the AI the spec and have it draft a scenario for each rule, including the r
 ## Common mistakes
 
 - **Only happy-path scenarios.** Every "Reject" rule in the spec needs its own scenario, or that rule will never be verified.
+- **Edge cases left to the build.** A boundary, a duplicate, or a partial failure with no scenario becomes whatever the AI happens to code. Sweep the categories above against the task's domain.
 - **Vague results.** "Then it works" is not checkable. The result must be a specific, observable fact ("A has 70").
 - **Forgetting the unchanged state.** For any rejection, assert that nothing changed; otherwise a partial, corrupting failure can pass.
 
@@ -72,6 +77,7 @@ Hand the AI the spec and have it draft a scenario for each rule, including the r
 
 - [ ] Every "Must" rule has at least one scenario.
 - [ ] Every "Reject" rule has at least one scenario.
+- [ ] The edge-case categories that apply to this task's domain have a scenario (or are ruled out on purpose).
 - [ ] Each scenario's result is a specific, observable fact.
 - [ ] Rejections assert what must stay unchanged.
 

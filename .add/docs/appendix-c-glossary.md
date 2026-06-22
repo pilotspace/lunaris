@@ -24,6 +24,10 @@
 
 **Gate** — a checkpoint with an explicit pass/fail exit. Its outcome is `PASS`, `RISK-ACCEPTED`, or `HARD-STOP`.
 
+**Ground (phase-0 preamble)** — the per-task phase *before* Specify in which the AI gathers the real current codebase the task touches — files, symbols, signatures, patterns, conventions — into a lean **grounding map**, surfacing the **anchors** the frozen contract will cite. It is AI-owned and adds no approval (the one approval stays at the contract freeze); it precedes the seven steps as step 0 so the contract, tests, and build are grounded in the code as it actually is, not in assumption. Lives in the `add` skill's `phases/0-ground.md`.
+
+**Grounding map / anchors** — the §0 GROUND artifact: the real files, symbols, and conventions a task touches, plus the **anchors** — the symbols the frozen contract names. Task-specific delta only: it defers to `PROJECT.md` / `CONVENTIONS.md` for architecture and never re-runs the setup brownfield scan. `add.py status` / `check` surface whether the active task's contract is grounded (measure, never block — the contract-freeze checklist asks the human to confirm it).
+
 **`HARD-STOP`** — a gate outcome meaning work cannot proceed; triggered by any failing test or security finding.
 
 **Intake** — the step *before* a task: sizing a raw request into versioned scope by classifying it into one **request bucket**. The AI proposes `{bucket, rationale, command}`; the human confirms. Lives in the `add` skill's `intake.md` (the intake level, above the per-task flow).
@@ -37,6 +41,10 @@
 **Decision point** (formerly "seam") — a place where the flow stops for human judgment: the contract-freeze approval (the one approval), an escalated verify gate, intake confirmation, milestone close. The machine layer keeps the legacy name: the `--json` owner enum `seam`, the decide-digest key `seam`, and the `seam-audit` CI job.
 
 **The decision arc** — the three engine-sourced lines a gate report opens with at every **decision point**: `goal:` the milestone goal the work serves · `done:` the achievement, the proven progress toward it (the gate reports render this line as `done`) · `plan:` what comes next. What `done` reports adapts per gate (verify: tests + evidence · milestone close: exit-criteria met · intake: the request sized) while the three-part shape stays constant. Rendered first, above the report's summary, so the human confirms with sight of the whole trajectory, not a local snapshot. Engine-sourced like all evidence — goal · done · plan are pulled from `add.py` output, never re-typed. Presentation only: it never adds a gate or changes a `PASS` / `RISK-ACCEPTED` / `HARD-STOP` / freeze outcome. The report it opens is the chat report a person reads at a decision point — distinct from the three Test/Quality/Risk reports a verify gate produces ([11 Governance](./11-governance.md)). See the `add` skill's `report-template.md`.
+
+**Guided decision** — a **decision point** presented not as a bare next-step line but as one highlighted **recommended pick** plus its real, described alternatives (each with its one-line consequence), so the human chooses with the recommendation and what each option costs already in view. It refines the report's DECISION block — composing with **the decision arc**, never adding a gate — and fires at human gates only (never at an autonomous `[you drive]` step). The sibling of the decision arc: both are what the human sees when it is their turn. See the `add` skill's `report-template.md` for the convention itself.
+
+**Recommended pick** — the one option a **guided decision** highlights with the `▶ … (recommended)` marker: exactly one, never zero and never two. The AI's confidence self-score informs the pick; the human overrides it freely. See **Guided decision**.
 
 **Specification bundle** (formerly "the one-approval front") — §1–§4 of a task (spec · scenarios · contract · failing tests) drafted by the AI as one piece and approved by a person **once**, at the contract freeze. Rejecting any part returns the whole bundle to draft. The single approval it carries is the bundle approval.
 
@@ -68,9 +76,25 @@
 
 **Baseline approval** (formerly "the lock-down") — the single human gate ending autonomous setup: an explicit yes that freezes the foundation, first scope, and first contract together; runs as `add.py lock --by <name>`.
 
-**Scope level** (formerly "altitude") — the granularity a decision lives at: intake level (request → versioned scope) · milestone level · setup/foundation level · task level. (A cross-stage decision lives one level out, at the **stage-graduation** loop — which `graduate.md` also numbers as a scope level; see **Stage graduation**.) One ⚠-assumption notation is shared across every scope level.
+**Scope level** (formerly "altitude") — the granularity a decision lives at: intake level (request → versioned scope) · milestone level · setup/foundation level · task level · release level (≥1 closed milestone → a versioned, watched cut; see **Release scope level**). (A cross-stage decision lives one level out, at the **stage-graduation** loop — which `graduate.md` also numbers as a scope level; see **Stage graduation**.) One ⚠-assumption notation is shared across every scope level.
 
-**Autonomy level** (formerly "autonomy dial") — the per-task setting (`autonomy: auto | conservative`) choosing who resolves Verify; high-risk scope refuses an unguarded `auto`.
+**Autonomy level** (formerly "autonomy dial") — the explicit per-task setting (`autonomy: manual | conservative | auto`, an ordered ladder manual < conservative < auto) choosing who resolves Verify: `auto` auto-PASSes on complete evidence, `conservative` keeps a human at the gate, `manual` is the strict floor (the human owns the gate; nothing auto-resolves). A high-risk scope refuses an unguarded `auto` — it must be lowered to `manual` or `conservative`. New tasks seed a visible, overridable `autonomy: auto`; a live task with no level warns (`implicit_autonomy`), a token outside the set is rejected (`unknown_autonomy_level`).
+
+**Release** — a versioned, user-facing cut that bundles one or more closed milestones into something real users can run; its notes are evidence-backed, its risk is disclosed, and its behaviour is then watched. Recorded with `add.py release <version>`, which writes the changelog block and the ledger row but never tags, publishes, or deploys — the outward act stays human-owned. See [16 · Releasing](./16-releasing.md).
+
+**Release scope level** — the fifth scope level: releasing as its own granularity, orthogonal to the stage. A release bundles ≥1 closed milestone (never forced one-per-milestone) and may be cut at any stage — prototype preview, mvp beta, production GA. Distinct from milestone-close (feature-complete + consolidated) and from stage graduation (which changes rigor, not version). See **Scope level** and [16 · Releasing](./16-releasing.md).
+
+**Ship review** — the whole-milestone, cross-task evidence the AI fills at milestone close in the `## Close — ship review` section: ship-by-domain (what changed per bounded context), cross-task evidence (one row per task: gate · tests · residue), and a goal-met map (each exit criterion tied to its evidence). A person reads it *before* checking the exit-criteria boxes — evidence, not a new gate. The ritual lives in the `add` skill's `loop.md`. See [09 · The Loop](./09-the-loop.md).
+
+**Release steps** — the AI-defined, per-milestone ordered hints to ship a closed milestone, of which `merge` is one small step (a pull request, an exported hand-off document, a tag or a publish are others). Defined at close and **fed** into the release scope (see **Release**), never a second flow.
+
+**Readiness floor** — the engine-enforced pre-cut gate `add.py release` applies before it records anything: a green suite, zero open security `HARD-STOP`, a closed-and-unreleased milestone to bundle, and every riding `RISK-ACCEPTED` waiver disclosed in the notes. Its four rejects are `release_security_open` (un-forceable) · `release_tests_red` · `release_no_closed_milestone` · `release_undisclosed_waiver`; `--force` may override every reject except the security stop.
+
+**RELEASES.md ledger** — the append-only, newest-first trail of release rows at the project root (date · version · milestones · waivers shipped · evidence). Like the §Key Decisions log it is never rewritten; a superseded or yanked version is recorded as a new row. The ledger is the attribution source — a milestone is "released" because a row says so — which is why the `→ releasable` cue never has to read a milestone file.
+
+**Hotfix release** — a narrowed PATCH cut that re-enters at Specify as a change request when a regression is found in a released version. It runs the same seven-step release flow scoped to the fix; releasing has no separate emergency mode, only the ordinary flow at a tighter scope.
+
+**Auto-ready goal** — a milestone goal whose every exit criterion **cites a verifier** (`(verify: <test|command|metric>)`), so the engine can self-verify the result against the goal without human judgment. It is the prerequisite by which **autonomy is earned by goal-clarity**: the **autonomy level** governs *who* resolves Verify, but a clarified, machine-checkable goal is what makes a self-verifying run meaningful. `add.py check` raises a `goal_not_auto_ready` **WARN** (never red) for the active milestone until it has an auto-ready goal (≥1 exit criterion and every one cited), and `status` surfaces it (`goal-ready: auto-ready ✓` / cited-of-total); a zero-criteria goal reads not-auto-ready and is milestone-shaping's nudge, not this warning's. The lint forces a citation *slot* per criterion — it raises the floor but **cannot prove the citation is real** (a human can write `(verify: it works)`): citation-theater is the accepted irreducible floor, and the freeze gate and autonomy behavior are unchanged by it.
 
 **Automated quality gate** (formerly "evidence auto-gate") — the Verify resolver under `autonomy: auto`: a run may auto-PASS on complete evidence, recorded as *auto-resolved*; a security finding always escalates (`HARD-STOP`).
 
@@ -94,6 +118,22 @@
 
 **Verification capacity / review throughput** — the rate at which a team can confirm AI output is correct; the real ceiling on safe speed.
 
+**Foundation compaction** — the retrospective shrink: collapse a foundation spec's stable, shipped, zero-residue tail into one rolled-up settled line; the AI proposes and the human confirms; summarize and point, never delete; a SEPARATE step from the retrospective consolidation; distinct from the engine `add.py compact` (which archives finished-milestone files). See **Rolled-up settled line**, **Per-spec shape**.
+
+**Rolled-up settled line** — the single line a compaction leaves in place of a collapsed run of records: lossy on prose, lossless on traceability (it carries a `see git` pointer).
+
+**Per-spec shape** — each foundation spec's own tailored rolled-line format (PROJECT §Spec bullets · §Key-Decisions rows · CONVENTIONS learnings · GLOSSARY definition · MODEL_REGISTRY rows), all sharing one eligibility rule: shipped + zero open residues.
+
+**Newest-first append-only** — every append-only foundation sequence prepends the newest record at the top; the rolled-up settled line anchors at the bottom (the oldest end), so compaction collapses upward.
+
+**Wireframe** — the Stage-A low-fidelity, *structural* map of one screen: its regions and the component **slots** inside them, derived from `prototypes/<name>.json` *before* any color, type, or spacing — it answers "what goes where", not "what it looks like". Beat 3 of the UDD **design-definition loop**; the low-fi half of the two-stage fidelity that ends in a confirmed capture. See the `add` skill's `udd-wireframe.md` (Stage A).
+
+**Design mock** — the Stage-B high-fidelity, **self-contained** HTML render of a screen: the `catalog.json` components as a reusable token-bound kit, bound to `tokens.json` and populated with mock data, openable offline and screenshot-able. The human-facing *visible* evidence the human confirms (the frozen `prototypes/<name>.json` tree is its machine-checkable twin). Beat 4's hi-fi artifact; the recipe lives in the `add` skill's `udd-wireframe.md` (Stage B).
+
+**Capture** — the real rendered image (PNG/SVG) of a design mock: the **design-confirm evidence** artifact. Captures live at `.add/design/captures/<name>.<ext>` (one per prototype) and are attached or mentioned in the feature's `TASK.md`; `@json-render/image` (Satori → PNG/SVG, no browser) is the named default capture engine, otherwise the self-contained mock is screenshot headless. The engine never renders — it only MEASURES presence: `add.py check` raises a never-red `missing_capture` WARN for a prototype with no capture.
+
+**Design-confirm** — the human touchpoint closing the UDD **design-definition loop** (`review-domain → research-components → wireframe → render-capture-confirm`, beat 4 of the `add` skill's `design.md`): approving the captured screen image **before build**, show-before-ask, so the implementation matches the layout the human has already seen instead of discovering it.
+
 ---
 
 ## Optional mapping to formal phase names
@@ -103,6 +143,7 @@ This book uses plain step names. Teams connecting it to a larger formal standard
 | Plain step (this book) | Formal phase name |
 |------------------------|-------------------|
 | Project setup | Foundation |
+| Ground (preamble) | Codebase Discovery (the §0 grounding map) |
 | Specify | Domain Discovery + Spec Definition |
 | (design portion) | UX-Driven Design |
 | Scenarios | Behavior specification (Given/When/Then) |

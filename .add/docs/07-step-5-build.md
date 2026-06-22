@@ -78,3 +78,5 @@ The autonomy granted in this step should match the evidence and your review capa
 ## If the check fails
 
 If the AI weakened a test, reject and re-prompt. If it added an out-of-allow-list package, the pipeline blocks it; have the AI find an approved alternative or raise the package for human approval. If the batch is too large to review, ask the AI to split the work and resubmit. Only once the exit check passes does the change proceed to verification.
+
+And in the other direction: if the *verify* gate later finds a confirmed cheat — a tamper, or a build that gamed the green (overfit to the fixtures, vacuous asserts, stubbed-away logic) — the task returns *here* for an honest redo. That return is the **bounded self-heal loop** (see the run chapter): revert the tampered file or de-overfit the code, then advance again. It is capped — after the cap a confirmed cheat HARD-STOPs to the human rather than looping forever, and a gamed green is never auto-passed.

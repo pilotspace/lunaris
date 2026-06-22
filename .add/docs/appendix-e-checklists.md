@@ -19,6 +19,7 @@ Every exit check in the book, collected for quick use. Print this page.
 - [ ] Every rejection has a named error code.
 - [ ] Success state-change described.
 - [ ] Assumptions ranked lowest-confidence first; the 1–2 most-likely-wrong ⚠-flagged with why + cost (or an honest "none material" that still names the single biggest risk).
+- [ ] "Existing behavior" assumptions carry grep/line citations; wiring claims name the production caller chain.
 
 ## Step 2 — Scenarios
 
@@ -40,6 +41,9 @@ Every exit check in the book, collected for quick use. Print this page.
 - [ ] Suite runs in the pipeline and is red for the right reason.
 - [ ] Tests assert behavior, not internals.
 - [ ] Coverage target recorded.
+- [ ] No `should_panic` lying reds — unimplemented paths use `todo!()` so they fail.
+- [ ] Collateral tests for globally-enumerated things listed by exact name.
+- [ ] Arithmetic checked: fixtures can reach green against frozen constants.
 
 ## Step 5 — Build
 
@@ -55,7 +59,10 @@ Every exit check in the book, collected for quick use. Print this page.
 - [ ] Concurrency/timing of the risky operation is safe.
 - [ ] No exposed secrets, injection, or unexpected dependencies.
 - [ ] Layering and dependencies follow `CONVENTIONS.md`.
-- [ ] A person reviewed and approved.
+- [ ] Deep check: wiring trace recorded (every new symbol reachable from production entry point) and no dead code introduced.
+- [ ] Was the green earned? Adversarial refute-read on the unchanged suite (no overfit, no vacuous asserts, no stubbed logic).
+- [ ] Full-suite rerun by orchestrator (not only the agent's scoped run).
+- [ ] A person reviewed and approved, **or** auto-resolved by the run (under `autonomy: auto`, no residue).
 - [ ] Outcome recorded (`PASS` / `RISK-ACCEPTED` / `HARD-STOP`).
 
 ## The loop
@@ -71,10 +78,15 @@ Every exit check in the book, collected for quick use. Print this page.
 A feature is shippable only when all are true:
 
 - [ ] Spec complete: behavior stated, rejections named, assumptions ranked lowest-confidence first with the biggest risk flagged.
+- [ ] Wiring and "existing behavior" assumptions carry grep/line citations; wiring claims name the production caller chain.
 - [ ] Every rule has a scenario.
 - [ ] Contract frozen; contract tests green.
-- [ ] A test per scenario; suite was red before the build.
+- [ ] A test per scenario; suite was red before the build (no `should_panic` lying reds).
+- [ ] Collateral tests listed by exact name; arithmetic checked against frozen constants.
 - [ ] All tests green; coverage held; tests and contract untouched by the AI.
+- [ ] Wiring trace recorded: every new symbol reachable from production entry point.
+- [ ] Adversarial refute-read confirms the green was earned (no overfit, no vacuous asserts, no stubbed logic).
+- [ ] Full-suite rerun by orchestrator; not just the agent's scoped run.
 - [ ] Concurrency, security, and architecture checked by a person.
 - [ ] Gate outcome recorded with an accountable owner.
 - [ ] Released behind a flag, with monitors in place.

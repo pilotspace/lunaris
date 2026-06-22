@@ -60,6 +60,11 @@ The AI generates the test suite from the scenarios and contract. Your job is to 
 - **A green suite before the build.** Means the tests are not actually exercising the missing feature — fix them now.
 - **Skipping the side-effect assertions.** Without `assert a.balance == 20` on the rejection path, a corrupting partial failure passes silently.
 - **No coverage target.** Without a recorded target, coverage can quietly erode during the build.
+- **`should_panic` as a red test.** Marking a test `#[should_panic(expected = "implement in green wave")]` (or the equivalent in any language) passes immediately and stays green while red — it is a lying red. Declare unimplemented paths with `todo!()` (or `unimplemented!()`) so the test actually fails. If a test is intentionally designed to flip from red to green during the build, say so with a comment: `// flip authorized at green wave`.
+- **Collateral tests named by category, not by exact name.** When a spec adds a slash command, a new CLI subcommand, or any other globally-enumerated thing, there is a fixed collateral set of tests that count or enumerate it (e.g. a command-registry count test, a help-text snapshot, an autocomplete positional assert). Pre-list these tests by their **exact test names** in §4 — not categories — so the build agent's edits to those "pre-existing" tests are expected and the count is right. Naming only the category means the agent finds the wrong test or misses one.
+- **Arithmetic not checked against frozen constants.** Before freezing, check that the red suite can reach green: a fixture with N bytes fails a hard-coded M-byte budget if N > M — the suite can never pass. Run the numbers before freeze, and add an additive override (e.g. `set_budget`) when the scenario implies a limit the production constant cannot satisfy in test.
+- **Non-hermetic tests that read real user state.** Tests that call a loader with `None` (defaulting to `~/.helios/settings.json` or the real home dir) become torn-read flakes under a parallel suite and assert nothing useful. Red tests that create or read production paths must redirect them to a temp dir; grep new tests for `home_dir`, `~/.config`, real-path defaults before freeze.
+- **Tests that share a per-machine singleton without isolation.** Background services (embedded servers, filesystem watchers) bind to fixed ports or paths. Tests that start such a service must tear it down, or they collide with a parallel run or an already-running dev instance. If the singleton cannot be isolated, gate those tests as serial (one thread, no parallel execution) and document it.
 
 ## Exit check
 
@@ -67,6 +72,9 @@ The AI generates the test suite from the scenarios and contract. Your job is to 
 - [ ] The suite runs in the pipeline and is **red for the right reason**.
 - [ ] Tests assert observable behavior, not internals.
 - [ ] A coverage target is recorded.
+- [ ] No `should_panic` lying reds — unimplemented paths use `todo!()` or equivalent so they actually fail.
+- [ ] Collateral tests for globally-enumerated things (command counts, help snapshots) are listed by exact name.
+- [ ] Arithmetic checked: the red fixtures can reach green against the frozen constants.
 
 ## If the check fails
 
