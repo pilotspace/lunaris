@@ -1,0 +1,19 @@
+  [longmemeval] JUDGE mode ON — gen=minimax-m3:cloud judge=minimax-m3:cloud k=10 n=10
+  [longmemeval 1/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 2/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 3/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 4/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 5/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 6/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 7/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 8/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 9/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+  [longmemeval 10/10] J-score running=100.0%  (evidence-recall@10=100.0%)
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 100.000 | 65.000 | PASS | 1266509 ms |
+
+Summary: 1 PASS, 0 FAIL, 0 SKIPPED

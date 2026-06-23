@@ -1,0 +1,42 @@
+[2m2026-06-23T06:40:25.963923Z[0m [32m INFO[0m [2mhf_hub[0m[2m:[0m Using token file found "/Users/tindang/.cache/huggingface/token"
+[2m2026-06-23T06:40:25.969186Z[0m [32m INFO[0m [2mlunaris_embed_native::rayon_pool[0m[2m:[0m rayon global pool installed at physical-core count [3mbackend[0m[2m=[0m"lunaris-embed-native" [3mphysical_cores[0m[2m=[0m12
+[2m2026-06-23T06:40:26.029243Z[0m [32m INFO[0m [2mlunaris_embed_native::device_select[0m[2m:[0m device_select: Cpu → Metal(0) (metal feature on) [3mbackend[0m[2m=[0m"lunaris-embed-native"
+[2m2026-06-23T06:40:31.225008Z[0m [32m INFO[0m [2mlunaris_embed_native::quantized_embedder[0m[2m:[0m quantized embedder loaded [3mbackend[0m[2m=[0m"lunaris-embed-native (quantized)" [3mmodel[0m[2m=[0m"granite-embedding-311m-multilingual-r2" [3mgguf[0m[2m=[0m/Users/tindang/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf [3msha256[0m[2m=[0m0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276
+[2m2026-06-23T06:40:31.277505Z[0m [32m INFO[0m [2mlunaris_embed_native::device_select[0m[2m:[0m device warm-up matmul completed [3mdevice[0m[2m=[0mMetal(MetalDevice(DeviceId(1)))
+[2m2026-06-23T06:40:31.277545Z[0m [32m INFO[0m [2mlunaris::handle[0m[2m:[0m embedder_backend_resolved [3membedder_backend[0m[2m=[0m"native-quantized" [3mgguf[0m[2m=[0m/Users/tindang/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+[2m2026-06-23T06:40:31.709447Z[0m [32m INFO[0m [2mlunaris::handle[0m[2m:[0m reranker_backend_resolved (load deferred to first rerank()) [3mreranker_backend[0m[2m=[0m"native-quantized (lazy)" [3mgguf[0m[2m=[0m/Users/tindang/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+[2m2026-06-23T06:40:31.709498Z[0m [32m INFO[0m [2mlunaris::consolidator[0m[2m:[0m consolidator_backend_resolved [3mconsolidator_backend[0m[2m=[0m"ActRConsolidator"
+[2m2026-06-23T06:40:31.711483Z[0m [32m INFO[0m [2mlunaris::handle[0m[2m:[0m prewarm_concurrency_resolved [3mprewarm_concurrency[0m[2m=[0m4
+  [longmemeval] JUDGE mode ON — gen=minimax-m3:cloud judge=minimax-m3:cloud k=10 n=1
+[2m2026-06-23T06:40:32.058114Z[0m [32m INFO[0m [2mlunaris_embed_native::device_select[0m[2m:[0m device_select: Cpu → Metal(0) (metal feature on) [3mbackend[0m[2m=[0m"lunaris-embed-native"
+[2m2026-06-23T06:40:33.511241Z[0m [32m INFO[0m [2mlunaris_embed_native::quantized_embedder[0m[2m:[0m quantized embedder loaded [3mbackend[0m[2m=[0m"lunaris-embed-native (quantized)" [3mmodel[0m[2m=[0m"granite-embedding-311m-multilingual-r2" [3mgguf[0m[2m=[0m/Users/tindang/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf [3msha256[0m[2m=[0m0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276
+[2m2026-06-23T06:40:33.511511Z[0m [32m INFO[0m [2mlunaris_embed_native::device_select[0m[2m:[0m device warm-up matmul completed [3mdevice[0m[2m=[0mMetal(MetalDevice(DeviceId(2)))
+[2m2026-06-23T06:42:14.800776Z[0m [33m WARN[0m [1mlunaris.recall[0m[2m:[0m [2mlunaris::recall[0m[2m:[0m Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval
+[2m2026-06-23T06:42:14.803657Z[0m [33m WARN[0m [2mlunaris_retrieve::builder[0m[2m:[0m RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()
+  [longmemeval 1/1] J-score running=100.0%  (evidence-recall@10=100.0%)
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 100.000 | 65.000 | PASS | 114250 ms |
+
+Summary: 1 PASS, 0 FAIL, 0 SKIPPED
+      114.85 real        14.72 user         4.91 sys
+          2581282816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              487748  page reclaims
+                1157  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                1169  messages sent
+                1179  messages received
+                   0  signals received
+                 176  voluntary context switches
+               93129  involuntary context switches
+        270244945465  instructions retired
+         76352178800  cycles elapsed
+         10063023776  peak memory footprint

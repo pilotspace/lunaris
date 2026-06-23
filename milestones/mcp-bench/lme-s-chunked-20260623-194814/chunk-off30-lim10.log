@@ -1,0 +1,10 @@
+  [longmemeval] JUDGE mode ON — gen=minimax-m3:cloud judge=minimax-m3:cloud k=10 n=10
+SKIPPED longmemeval::j_score — eval pass failed: storage: backend: lunaris-embed-native (quantized): quantized: candle: Metal error Failed to create metal resource: Buffer
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 0.000 | 65.000 | SKIPPED | 0 ms |
+
+Summary: 0 PASS, 0 FAIL, 1 SKIPPED
