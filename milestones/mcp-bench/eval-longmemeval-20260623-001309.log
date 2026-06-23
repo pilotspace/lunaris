@@ -1,0 +1,12 @@
+[2m2026-06-22T17:14:26.950004Z[0m [33m WARN[0m [2mlunaris::recall[0m[2m:[0m Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval
+[2m2026-06-22T17:14:26.954826Z[0m [33m WARN[0m [2mlunaris_retrieve::builder[0m[2m:[0m RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()
+  [longmemeval 1/50] evidence-recall@10 running=0.0%
+[2m2026-06-22T17:15:38.655529Z[0m [33m WARN[0m [2mlunaris::recall[0m[2m:[0m Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval
+[2m2026-06-22T17:15:38.656469Z[0m [33m WARN[0m [2mlunaris_retrieve::builder[0m[2m:[0m RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()
+  [longmemeval 2/50] evidence-recall@10 running=0.0%
+[2m2026-06-22T17:16:36.484848Z[0m [33m WARN[0m [2mlunaris::recall[0m[2m:[0m Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval
+[2m2026-06-22T17:16:36.486602Z[0m [33m WARN[0m [2mlunaris_retrieve::builder[0m[2m:[0m RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()
+  [longmemeval 3/50] evidence-recall@10 running=0.0%
+[2m2026-06-22T17:17:51.673842Z[0m [33m WARN[0m [2mlunaris::recall[0m[2m:[0m Lunaris::recall() uses Scope::dev() — migrate to engine.scoped(scope).recall() for scope-isolated retrieval
+[2m2026-06-22T17:17:51.683496Z[0m [33m WARN[0m [2mlunaris_retrieve::builder[0m[2m:[0m RetrievalBuilder using Scope::dev() default — migrate to engine.scoped(scope).dsl()
+  [longmemeval 4/50] evidence-recall@10 running=0.0%

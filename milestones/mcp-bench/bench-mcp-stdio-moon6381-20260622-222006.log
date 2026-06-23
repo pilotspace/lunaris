@@ -1,0 +1,39 @@
+=== Lunaris-via-MCP stdio benchmark ===
+binary:  /Volumes/Games/tindang-repo/lunaris/target/release/lunaris-mcp
+scope:   bench-mcp-stdio
+storage: moon://127.0.0.1:6381
+ingest:  100 ops
+content: unique
+recall:  200 ops
+warmup:  ingest=3, recall=5
+stage:   skipped
+
+COLD START
+  spawn            4.1 ms  (process + bootstrap + embedder load)
+  initialize    2326.1 ms
+  tools/list      10.8 ms  (11 tools)
+  TOTAL         2341.0 ms
+
+memory.ingest  (n=100, warmup=3)
+  p50    136.1 ms
+  p95    146.2 ms
+  p99    174.3 ms
+  max    179.7 ms
+  mean   137.8 ms
+
+memory.status
+  latency           2.4 ms
+  queue_native  True
+  graph_native  True
+  native_rrf    True
+  queues        __lunaris_embed__=ok:0, __lunaris_verify__=ok:0, __lunaris_consolidate__=ok:0
+
+memory.recall  (n=200, warmup=5, k=5)
+  p50      1.4 ms
+  p95      1.5 ms
+  p99      1.6 ms
+  max      1.7 ms
+  mean     1.4 ms
+  avg hits/query 5.0
+
+=== benchmark complete ===

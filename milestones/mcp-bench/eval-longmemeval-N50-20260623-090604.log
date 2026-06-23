@@ -1,0 +1,58 @@
+  [longmemeval 1/50] evidence-recall@10 running=100.0%
+  [longmemeval 2/50] evidence-recall@10 running=100.0%
+  [longmemeval 3/50] evidence-recall@10 running=100.0%
+  [longmemeval 4/50] evidence-recall@10 running=100.0%
+  [longmemeval 5/50] evidence-recall@10 running=100.0%
+  [longmemeval 6/50] evidence-recall@10 running=100.0%
+  [longmemeval 7/50] evidence-recall@10 running=100.0%
+  [longmemeval 8/50] evidence-recall@10 running=100.0%
+  [longmemeval 9/50] evidence-recall@10 running=100.0%
+  [longmemeval 10/50] evidence-recall@10 running=100.0%
+  [longmemeval 11/50] evidence-recall@10 running=100.0%
+  [longmemeval 12/50] evidence-recall@10 running=100.0%
+  [longmemeval 13/50] evidence-recall@10 running=100.0%
+  [longmemeval 14/50] evidence-recall@10 running=100.0%
+  [longmemeval 15/50] evidence-recall@10 running=93.3%
+  [longmemeval 16/50] evidence-recall@10 running=93.8%
+  [longmemeval 17/50] evidence-recall@10 running=94.1%
+  [longmemeval 18/50] evidence-recall@10 running=94.4%
+  [longmemeval 19/50] evidence-recall@10 running=94.7%
+  [longmemeval 20/50] evidence-recall@10 running=95.0%
+  [longmemeval 21/50] evidence-recall@10 running=95.2%
+  [longmemeval 22/50] evidence-recall@10 running=95.5%
+  [longmemeval 23/50] evidence-recall@10 running=95.7%
+  [longmemeval 24/50] evidence-recall@10 running=95.8%
+  [longmemeval 25/50] evidence-recall@10 running=96.0%
+  [longmemeval 26/50] evidence-recall@10 running=96.2%
+  [longmemeval 27/50] evidence-recall@10 running=96.3%
+  [longmemeval 28/50] evidence-recall@10 running=96.4%
+  [longmemeval 29/50] evidence-recall@10 running=96.6%
+  [longmemeval 30/50] evidence-recall@10 running=96.7%
+  [longmemeval 31/50] evidence-recall@10 running=96.8%
+  [longmemeval 32/50] evidence-recall@10 running=96.9%
+  [longmemeval 33/50] evidence-recall@10 running=97.0%
+  [longmemeval 34/50] evidence-recall@10 running=97.1%
+  [longmemeval 35/50] evidence-recall@10 running=97.1%
+  [longmemeval 36/50] evidence-recall@10 running=97.2%
+  [longmemeval 37/50] evidence-recall@10 running=97.3%
+  [longmemeval 38/50] evidence-recall@10 running=97.4%
+  [longmemeval 39/50] evidence-recall@10 running=97.4%
+  [longmemeval 40/50] evidence-recall@10 running=95.0%
+  [longmemeval 41/50] evidence-recall@10 running=95.1%
+  [longmemeval 42/50] evidence-recall@10 running=95.2%
+  [longmemeval 43/50] evidence-recall@10 running=95.3%
+  [longmemeval 44/50] evidence-recall@10 running=95.5%
+  [longmemeval 45/50] evidence-recall@10 running=95.6%
+  [longmemeval 46/50] evidence-recall@10 running=95.7%
+  [longmemeval 47/50] evidence-recall@10 running=95.7%
+  [longmemeval 48/50] evidence-recall@10 running=95.8%
+  [longmemeval 49/50] evidence-recall@10 running=95.9%
+  [longmemeval 50/50] evidence-recall@10 running=94.0%
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 94.000 | 65.000 | PASS | 2861866 ms |
+
+Summary: 1 PASS, 0 FAIL, 0 SKIPPED

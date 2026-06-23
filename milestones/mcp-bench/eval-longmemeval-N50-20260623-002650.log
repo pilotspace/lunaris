@@ -1,0 +1,3 @@
+  [longmemeval 1/50] evidence-recall@10 running=100.0%
+SKIPPED longmemeval::j_score — eval pass failed: storage: backend: moon: redis error: timed out
+eval-results write to milestones/mcp-bench/eval-longmemeval.json failed: Operation not permitted (os error 1)
