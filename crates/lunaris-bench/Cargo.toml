@@ -109,6 +109,11 @@ ci-perf-gates = []
 # required-features gate references them in [[bin]].required-features.
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
+# Local-dev passthrough so the eval gauntlet (lunaris-evals) can use the native
+# Q4/Q5 GGUF embedder+reranker via LUNARIS_EMBEDDER_GGUF / LUNARIS_RERANKER_GGUF
+# instead of the default Ollama/FP16 path. Not wired into CI defaults.
+embedder-gguf = ["lunaris/embedder-gguf"]
+reranker-gguf = ["lunaris/reranker-gguf"]
 
 # ---------------------------------------------------------------------------
 # O-01-F — per-device perf benches.

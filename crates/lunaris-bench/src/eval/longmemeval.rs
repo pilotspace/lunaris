@@ -43,8 +43,8 @@ use crate::eval::EvalRow;
 pub(crate) const HARNESS: &str = "longmemeval";
 pub(crate) const METRIC: &str = "j_score";
 pub(crate) const THRESHOLD: f64 = 65.0;
-const HF_REPO: &str = "xiaowu0162/long-mem-eval";
-const DATASET_FILENAME: &str = "data/longmemeval_oracle.json";
+const HF_REPO: &str = "xiaowu0162/longmemeval";
+const DATASET_FILENAME: &str = "longmemeval_oracle";
 
 pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let started = Instant::now();
@@ -93,20 +93,22 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
         }
     };
 
-    let queries = match ingest_corpus_and_collect_queries(&lunaris, &dataset_path).await {
-        Ok(q) => q,
+    let bytes = match std::fs::read(&dataset_path) {
+        Ok(b) => b,
         Err(e) => {
-            results.push(EvalRow::skipped(
-                HARNESS,
-                METRIC,
-                THRESHOLD,
-                &format!("corpus ingest failed: {e}"),
-            ));
+            results.push(EvalRow::skipped(HARNESS, METRIC, THRESHOLD, &format!("read dataset: {e}")));
+            return Ok(());
+        }
+    };
+    let records = match parse_longmemeval_full(&bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            results.push(EvalRow::skipped(HARNESS, METRIC, THRESHOLD, &format!("parse: {e}")));
             return Ok(());
         }
     };
 
-    let j_score = match compute_j_score(&lunaris, &queries).await {
+    let j_score = match score_haystack(&lunaris, &records).await {
         Ok(s) => s,
         Err(e) => {
             results.push(EvalRow::skipped(
@@ -185,25 +187,123 @@ pub struct EvalQuery {
     pub expected_answer: String,
 }
 
-async fn ingest_corpus_and_collect_queries(
-    lunaris: &std::sync::Arc<lunaris::Lunaris>,
-    dataset_path: &Path,
-) -> anyhow::Result<Vec<EvalQuery>> {
-    let bytes = std::fs::read(dataset_path)
-        .map_err(|e| anyhow::anyhow!("read {}: {e}", dataset_path.display()))?;
-    let queries = parse_longmemeval(&bytes)?;
-    // Ingest each gold answer as a recallable memory. The full haystack-session
-    // ingest (distractors, multi-turn sessions) is the HUMAN-UAT corpus
-    // harness; this proves the live ingest→recall→score path end-to-end.
-    crate::eval::ingest_answers_to_pad(lunaris, "longmemeval-eval", &queries).await?;
-    Ok(queries)
+/// Full LongMemEval record: question + gold answer + the multi-session haystack
+/// (real conversational distractors) + which sessions hold the evidence. This is
+/// the corpus the deferred HUMAN-UAT harness was meant to ingest — not just the
+/// gold answers.
+pub(crate) struct HaystackRecord {
+    pub question: String,
+    pub answer: String,
+    pub answer_session_ids: Vec<String>,
+    /// `(session_id, turn_texts)` for every haystack session, distractors included.
+    pub sessions: Vec<(String, Vec<String>)>,
 }
 
-async fn compute_j_score(
+/// Parse the `longmemeval_oracle` JSON (a list of records) into full haystack
+/// records. Each turn is rendered `"{role}: {content}"`.
+pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<HaystackRecord>> {
+    #[derive(serde::Deserialize)]
+    struct Turn {
+        role: String,
+        content: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        question: String,
+        answer: serde_json::Value,
+        #[serde(default)]
+        answer_session_ids: Vec<String>,
+        #[serde(default)]
+        haystack_session_ids: Vec<String>,
+        #[serde(default)]
+        haystack_sessions: Vec<Vec<Turn>>,
+    }
+    let raws: Vec<Raw> = serde_json::from_slice(bytes)
+        .map_err(|e| anyhow::anyhow!("parse longmemeval haystack: {e}"))?;
+    Ok(raws
+        .into_iter()
+        .map(|r| {
+            let answer = match r.answer {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            let sessions = r
+                .haystack_session_ids
+                .into_iter()
+                .zip(r.haystack_sessions)
+                .map(|(sid, turns)| {
+                    let texts: Vec<String> =
+                        turns.into_iter().map(|t| format!("{}: {}", t.role, t.content)).collect();
+                    (sid, texts)
+                })
+                .collect();
+            HaystackRecord {
+                question: r.question,
+                answer,
+                answer_session_ids: r.answer_session_ids,
+                sessions,
+            }
+        })
+        .collect())
+}
+
+/// True iff top-k surfaced a turn from a gold answer-session — phrasing-
+/// independent retrieval success. `hit_sources` are the `Hit::source` strings,
+/// each of which embeds its originating `session_id` (turns are written under a
+/// path that contains the sid).
+pub(crate) fn evidence_recall_hit(hit_sources: &[String], answer_session_ids: &[String]) -> bool {
+    hit_sources
+        .iter()
+        .any(|s| answer_session_ids.iter().any(|sid| !sid.is_empty() && s.contains(sid.as_str())))
+}
+
+/// Real-corpus retrieval harness. For each of the first `limit` records
+/// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
+/// (distractor sessions included) into the engine's default scope under a
+/// per-question SESSION PREFIX — `CodingSessionMemory::grep` recalls through the
+/// engine-global scope and filters by `source StartsWith helios:fs/<sid>/`
+/// (Moon pushes the StartsWith into FT.SEARCH), so recall cannot leak across
+/// questions. A per-question *scope* would NOT work: grep ignores the pad's
+/// scope. Score **evidence-recall@k**: the % of questions whose top-k surfaced a
+/// turn from a gold answer-session. Phrasing-independent; measures retrieval
+/// quality without the synthesized-answer substring bias.
+async fn score_haystack(
     lunaris: &std::sync::Arc<lunaris::Lunaris>,
-    queries: &[EvalQuery],
+    records: &[HaystackRecord],
 ) -> anyhow::Result<f64> {
-    crate::eval::recall_j_score_from_pad(lunaris, "longmemeval-eval", queries).await
+    let limit: usize =
+        std::env::var("LUNARIS_EVAL_LME_LIMIT").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+    let k: usize =
+        std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+    let n = records.len().min(limit);
+    if n == 0 {
+        return Ok(0.0);
+    }
+    let mut evidence_hits = 0usize;
+    for (i, rec) in records.iter().take(n).enumerate() {
+        let pad = lunaris::CodingSessionMemory::new(
+            lunaris.clone(),
+            lunaris_core::Scope::dev(),
+            &format!("lme{i:04}"),
+        );
+        for (sid, turns) in &rec.sessions {
+            for (ti, text) in turns.iter().enumerate() {
+                // Path embeds the session_id so `Hit::source` reveals provenance.
+                pad.write(&format!("{sid}/{ti:04}.md"), text.clone()).await?;
+            }
+        }
+        let hits = pad.grep(&rec.question, k).await?;
+        let sources: Vec<String> = hits.iter().map(|h| h.source.clone()).collect();
+        if evidence_recall_hit(&sources, &rec.answer_session_ids) {
+            evidence_hits += 1;
+        }
+        eprintln!(
+            "  [longmemeval {}/{n}] evidence-recall@{k} running={:.1}%",
+            i + 1,
+            100.0 * evidence_hits as f64 / (i + 1) as f64
+        );
+    }
+    Ok(100.0 * evidence_hits as f64 / n as f64)
 }
 
 pub fn parse_longmemeval(bytes: &[u8]) -> anyhow::Result<Vec<EvalQuery>> {
@@ -279,5 +379,46 @@ mod tests {
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = anyhow::Result<PathBuf>> + Send>,
         > = |_, _, _| Box::pin(async move { Ok(PathBuf::new()) });
+    }
+
+    #[test]
+    fn parse_longmemeval_full_extracts_haystack_and_evidence() {
+        let json = br#"[
+          {
+            "question": "What broke first?",
+            "answer": "the GPS",
+            "answer_session_ids": ["s2"],
+            "haystack_session_ids": ["s1", "s2"],
+            "haystack_sessions": [
+              [{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}],
+              [{"role":"user","content":"my gps failed"}]
+            ]
+          }
+        ]"#;
+        let recs = parse_longmemeval_full(json).expect("parse");
+        assert_eq!(recs.len(), 1);
+        let r = &recs[0];
+        assert_eq!(r.question, "What broke first?");
+        assert_eq!(r.answer, "the GPS");
+        assert_eq!(r.answer_session_ids, vec!["s2".to_string()]);
+        assert_eq!(r.sessions.len(), 2);
+        assert_eq!(r.sessions[0].0, "s1");
+        assert_eq!(r.sessions[0].1[0], "user: hi");
+        assert_eq!(r.sessions[1].0, "s2");
+        assert_eq!(r.sessions[1].1[0], "user: my gps failed");
+    }
+
+    #[test]
+    fn evidence_recall_hit_detects_gold_session_in_source() {
+        let answer_sessions = vec!["s2".to_string()];
+        let sources_hit = vec![
+            "helios:fs/lme0000/h/s1/0001.md".to_string(),
+            "helios:fs/lme0000/h/s2/0000.md".to_string(),
+        ];
+        assert!(evidence_recall_hit(&sources_hit, &answer_sessions));
+        let sources_miss = vec!["helios:fs/lme0000/h/s1/0000.md".to_string()];
+        assert!(!evidence_recall_hit(&sources_miss, &answer_sessions));
+        // Empty gold-session id must never match everything.
+        assert!(!evidence_recall_hit(&sources_hit, &[String::new()]));
     }
 }
