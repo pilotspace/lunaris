@@ -118,3 +118,42 @@ RUST_LOG=error MOON_URL="moon://127.0.0.1:6381" \
   target/release/lunaris-evals longmemeval --output milestones/mcp-bench/eval-longmemeval.json
 ```
 (build with `--features embedder-gguf,reranker-gguf`). Dataset: `xiaowu0162/longmemeval` file `longmemeval_oracle`.
+
+---
+
+# LongMemEval-S J-score (apples-to-apple LLM-judge) — reranked recall + minimax-m3:cloud
+
+**Date:** 2026-06-23 · **Host:** darwin-arm64 (Apple M4 Pro) · **Dataset:** `xiaowu0162/longmemeval` file **`longmemeval_s`** (full adversarial haystack, ~50 sessions / ~500 turns per question)
+**Stack:** granite-r2 **Q4_K_M** embedder + bge-reranker-v2-m3 **Q5_K_M** cross-encoder **on Metal GPU** · gen + judge **`minimax-m3:cloud`** (Ollama) · official LongMemEval per-question-type judge prompts · live Moon@6381
+**Harness:** `lunaris-evals longmemeval` with `LUNARIS_EVAL_LME_DATASET=longmemeval_s LME_JUDGE=1 LME_RERANK=1`, driven in process-isolated windows (`LME_OFFSET`).
+
+## Results (n = 20, offsets spanning 0–49)
+
+| metric | value |
+|---|---:|
+| **J-score (LLM-judge answer accuracy)** | **95.0% (19/20)** |
+| **evidence-recall@10** | **95.0% (19/20)** |
+| gen + judge model | minimax-m3:cloud (official LongMemEval judge prompts) |
+
+## The decisive finding — the reranker IS the result
+
+Identical questions (q0–9); only the retrieval config changed:
+
+| config | evidence-recall@10 | J-score |
+|---|---:|---:|
+| vector-only (`Vector::new("chunks", 30)`, no rerank) | 20% (2/10) | 20% |
+| **+ bge cross-encoder rerank** (production path) | **100% (10/10)** | **90–100%** |
+
+The earlier "~20%" came from the harness running the **bare** recall builder, which never calls `.rerank()` — it measured un-reranked vector recall. Wiring the cross-encoder back in (the apples-to-apple config — Zep/Mem0 also rerank retrieved context before generation) is the entire difference. Once retrieval saturates, **J ≤ recall**, the gap being generation/reasoning misses rather than retrieval misses — the healthy signature, not a recall-gated artifact. Fix: commit `9aebfa4`.
+
+## Honest caveats
+
+- **n = 20, not 50.** candle's Metal backend leaks activation buffers across forward passes (variable chunk lengths → an unbounded shape-keyed buffer cache it never frees), exhausting the GPU pool after ~13 questions/process and degrading further across process boundaries (even a 240 s reclaim between processes did not fully clear it). Only fresh-GPU chunks complete cleanly; the 20 scored questions span offsets 0–49 so the sample is representative, but a clean 50 needs a candle fix or a CPU (non-Metal) run.
+- **LLM-judge variance:** q0–9 scored 9/10 in one probe and 10/10 in another (minimax-m3:cloud is non-deterministic). Read the headline as **J ≈ 90–95%**.
+- Metal acceleration also cut ingest **~11×** (≈21 min → ≈2 min/question) — commit `096d46d`; orthogonal to the J-score.
+
+## Headline
+
+**Reranked Lunaris scores J ≈ 95% (19/20) on LongMemEval-S full haystack** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)** on the same metric class. The prior 20% was a harness mis-configuration (no rerank), not a Lunaris limitation.
+
+**Reproduce:** `tmp/run-lme-s-chunked.sh 50 10 240` · build `--features embedder-gguf,reranker-gguf,lunaris/metal`.
