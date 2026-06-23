@@ -1,0 +1,11 @@
+  [longmemeval] JUDGE mode ON — gen=minimax-m3:cloud judge=minimax-m3:cloud k=10 n=1
+  [longmemeval 1/1] J-score running=0.0%  (evidence-recall@10=100.0%)
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 0.000 | 65.000 | FAIL | 103920 ms |
+
+Summary: 0 PASS, 1 FAIL, 0 SKIPPED
+eval-gauntlet: at least one harness FAILED — see milestones/mcp-bench/lme-s-chunked-20260624-000627/chunk-off39-lim1.json

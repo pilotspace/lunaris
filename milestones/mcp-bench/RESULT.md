@@ -127,13 +127,15 @@ RUST_LOG=error MOON_URL="moon://127.0.0.1:6381" \
 **Stack:** granite-r2 **Q4_K_M** embedder + bge-reranker-v2-m3 **Q5_K_M** cross-encoder **on Metal GPU** · gen + judge **`minimax-m3:cloud`** (Ollama) · official LongMemEval per-question-type judge prompts · live Moon@6381
 **Harness:** `lunaris-evals longmemeval` with `LUNARIS_EVAL_LME_DATASET=longmemeval_s LME_JUDGE=1 LME_RERANK=1`, driven in process-isolated windows (`LME_OFFSET`).
 
-## Results (n = 20, offsets spanning 0–49)
+## Results (n = 39 of 50; offsets spanning 0–49)
 
 | metric | value |
 |---|---:|
-| **J-score (LLM-judge answer accuracy)** | **95.0% (19/20)** |
-| **evidence-recall@10** | **95.0% (19/20)** |
+| **J-score (LLM-judge answer accuracy)** | **92.3% (36/39)** |
+| **evidence-recall@10** | **94.9% (37/39)** |
 | gen + judge model | minimax-m3:cloud (official LongMemEval judge prompts) |
+
+Run via **one question per process** (`chunk=1`) to dodge the Metal leak (see caveat): 50 fresh single-question Metal processes, **39 completed**, 11 (the largest haystacks) crashed candle's Metal buffer even solo. Earlier n=20 pilot agreed: J=95% (19/20). J (92.3%) < recall (94.9%) — 2 retrieval misses + 1 generation miss among the 37 retrieved; the healthy decoupling.
 
 ## The decisive finding — the reranker IS the result
 
@@ -148,12 +150,12 @@ The earlier "~20%" came from the harness running the **bare** recall builder, wh
 
 ## Honest caveats
 
-- **n = 20, not 50.** candle's Metal backend leaks activation buffers across forward passes (variable chunk lengths → an unbounded shape-keyed buffer cache it never frees), exhausting the GPU pool after ~13 questions/process and degrading further across process boundaries (even a 240 s reclaim between processes did not fully clear it). Only fresh-GPU chunks complete cleanly; the 20 scored questions span offsets 0–49 so the sample is representative, but a clean 50 needs a candle fix or a CPU (non-Metal) run.
+- **n = 39 of 50 — and the 11 missing are the *hardest* questions.** candle's Metal backend leaks activation buffers across forward passes (variable chunk lengths → an unbounded shape-keyed buffer cache it never frees), exhausting the GPU pool. Running one question per process dodges the cross-process degradation, but the 11 largest haystacks (offsets 13, 15, 16, 18, 25, 28, 30, 31, 35, 42, 45) crash candle's Metal buffer even solo. Those are the longest-context questions, so **dropping them likely makes n=39 slightly *optimistic*** — a clean 50 needs a candle Metal fix or a CPU (non-Metal) pass over those 11 (~15–25 min each on CPU, ~3–4.5 hr total). The 39 scored span offsets 0–49.
 - **LLM-judge variance:** q0–9 scored 9/10 in one probe and 10/10 in another (minimax-m3:cloud is non-deterministic). Read the headline as **J ≈ 90–95%**.
 - Metal acceleration also cut ingest **~11×** (≈21 min → ≈2 min/question) — commit `096d46d`; orthogonal to the J-score.
 
 ## Headline
 
-**Reranked Lunaris scores J ≈ 95% (19/20) on LongMemEval-S full haystack** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)** on the same metric class. The prior 20% was a harness mis-configuration (no rerank), not a Lunaris limitation.
+**Reranked Lunaris scores J = 92.3% (36/39) on LongMemEval-S full haystack** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)** on the same metric class. The prior 20% was a harness mis-configuration (no rerank), not a Lunaris limitation.
 
 **Reproduce:** `tmp/run-lme-s-chunked.sh 50 10 240` · build `--features embedder-gguf,reranker-gguf,lunaris/metal`.

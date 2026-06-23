@@ -1,0 +1,10 @@
+[
+  {
+    "harness": "longmemeval",
+    "metric": "j_score",
+    "value": 100.0,
+    "threshold": 65.0,
+    "status": "PASS",
+    "duration_ms": 236454
+  }
+]

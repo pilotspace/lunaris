@@ -24,8 +24,9 @@ not a retrieval one. The distinction below is load-bearing: our LongMemEval numb
 **Bottom line up front:** Lunaris's *moat is the retrieve path* — **p50 1.4 ms in-engine / ~62 ms end-to-end**, which is
 **~100× faster than Zep (155–162 ms)** and **~1000× faster than Mem0 (p95 1.44 s)**. The generation half is now measured
 too: on the **full adversarial LongMemEval-S haystack with reranked recall + an LLM judge (the apples-to-apple config)**,
-Lunaris scores **J ≈ 95% (19/20)** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)**. The sample is **n=20**
-(a candle Metal-leak truncates the full 50 on this box — see §3 caveat), so read it as **J ≈ 90–95%, pending a clean 50**.
+Lunaris scores **J = 92.3% (36/39)** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)**. The sample is **n=39 of 50**
+(a candle Metal-leak crashes the 11 largest haystacks even one-per-process — see §3 caveat); dropping the hardest questions
+likely makes 92.3% slightly optimistic, so read it as **J ≈ 90–92%, pending a clean 50**.
 Crucial methodology note: an early "~20%" reading was the harness measuring **un-reranked vector recall** (the bare builder
 never called `.rerank()`); wiring the production cross-encoder back in lifts evidence-recall@10 from 20% → 100% and J from
 20% → ~95% on identical questions. The reranker is the difference.
@@ -41,7 +42,7 @@ never called `.rerank()`); wiring the production cross-encoder back in lifts evi
 | recall@1 / @5 / @10 | **71.4% / 88.4% / 93.2%** | 1000 SQuAD paras × 500 q, **no reranker** |
 | MRR | 0.786 | single-hop retrieval |
 | **LongMemEval evidence-recall@10** | **94.0%** (47/50) | oracle setting, **full embed+bge-rerank** stack, multi-session haystack ingest — *retrieval*, not J-score |
-| **LongMemEval-S J-score (LLM-judge)** | **≈95%** (19/20) | **NEW 2026-06-23** — full adversarial haystack, reranked recall, minimax-m3:cloud gen+judge, official judge prompts. **The apples-to-apple generation metric.** n=20 (Metal-leak truncation, see caveat); read as J≈90–95%. |
+| **LongMemEval-S J-score (LLM-judge)** | **92.3%** (36/39) | **NEW 2026-06-23** — full adversarial haystack, reranked recall, minimax-m3:cloud gen+judge, official judge prompts. **The apples-to-apple generation metric.** n=39 of 50 (Metal-leak crashes the 11 largest, see caveat); the dropped 11 are the hardest, so read as J≈90–92%. |
 | Engine footprint (Moon) | **0.9% CPU, 75 MB RSS** | embedder is the cost, not the store |
 | Ingest throughput | 1.1 docs/s (p50 807 ms/doc) | CPU GGUF embed of full paragraphs — the weak spot |
 
@@ -103,17 +104,19 @@ pgvector) + a graph (Neo4j/FalkorDB) + an LLM extraction service — more moving
 - **Correctness contract** — atomic writes, bi-temporal MVCC, DB-level tenant isolation, opt-in graph.
 
 **Measured — generation J-score (the apples-to-apple metric, NEW 2026-06-23)**
-- **LongMemEval-S J-score ≈ 95% (19/20)** — full adversarial haystack, reranked recall, answer generated + LLM-judged
+- **LongMemEval-S J-score = 92.3% (36/39)** — full adversarial haystack, reranked recall, answer generated + LLM-judged
   by minimax-m3:cloud with the official LongMemEval per-type judge prompts (see `RESULT.md`). This is the **same metric
   class** Zep (90.2%) / Mem0 (66–68%) report — answer accuracy, not retrieval — and Lunaris matches the top of the field.
-  **Caveat: n=20**, because a candle Metal activation-buffer leak truncates the full 50 on this host (only fresh-GPU
-  process windows complete; the 20 span offsets 0–49, so representative). Read as **J ≈ 90–95%, clean 50 pending**.
-- **LongMemEval evidence-recall@10 = 94–95%** — the retrieval half, oracle + full-haystack settings agree. With rerank
-  on the full haystack, recall@10 = 95% (19/20); the gold answer-session reliably reaches the top-10.
+  **Caveat: n=39 of 50**, because a candle Metal activation-buffer leak crashes the 11 largest haystacks even one question
+  per process. Those 11 are the longest-context questions, so dropping them likely makes 92.3% **slightly optimistic**.
+  Read as **J ≈ 90–92%, clean 50 pending**.
+- **LongMemEval evidence-recall@10 = 94.9% (37/39)** — the retrieval half, oracle + full-haystack settings agree. With
+  rerank on the full haystack the gold answer-session reliably reaches the top-10.
 
 **Unproven (honest gaps)**
-- **Clean N=50 / N=500 J-score** — the n=20 above is decisive in direction but small; a full run needs a candle Metal
-  fix or a CPU (non-Metal) pass. LOCOMO and multi-hop (HotpotQA, Cognee's strength) are not yet benchmarked for Lunaris.
+- **Clean N=50 / N=500 J-score** — the n=39 above is decisive in direction but the 11 hardest are missing; a full run needs
+  a candle Metal fix or a CPU (non-Metal) pass over offsets 13/15/16/18/25/28/30/31/35/42/45. LOCOMO and multi-hop
+  (HotpotQA, Cognee's strength) are not yet benchmarked for Lunaris.
 
 **Lags (measured)**
 - **Ingest throughput** — CPU GGUF embed is the bottleneck; Metal acceleration (commit `096d46d`) cut LongMemEval
@@ -131,15 +134,16 @@ That is exactly the project's core-value contract ("sub-25 ms recall over millio
 atomicity, opt-in graph") and the benchmark demonstrates it.
 
 And the **generation half is now demonstrated too**: on the full adversarial LongMemEval-S haystack with reranked recall
-and an LLM judge — the same metric class Mem0 (66–68%) and Zep (90.2%) publish — Lunaris scores **J ≈ 95% (19/20)**,
+and an LLM judge — the same metric class Mem0 (66–68%) and Zep (90.2%) publish — Lunaris scores **J = 92.3% (36/39)**,
 matching the top of the field. The hard-won lesson behind that number: the benchmark first read **20%** purely because the
 eval harness ran the **bare vector recall builder and never invoked the cross-encoder reranker**; wiring `.rerank()` back in
 (the production path) lifts evidence-recall@10 from 20% → 100% and J from 20% → ~95% on identical questions. So the
 differentiator on this benchmark is **retrieval configuration, not the engine** — and Lunaris's engine was never the cap.
 
-The remaining honest gap is **scale of the J-score sample** (n=20, blocked by a candle Metal buffer leak on this host, not
-a Lunaris limitation) and **multi-hop** (HotpotQA). A clean N=50/500 J-score (candle fix or CPU pass) and a HotpotQA run
-are the next moves before claiming end-to-end parity at full sample size.
+The remaining honest gap is **scale of the J-score sample** (n=39 of 50, with the 11 hardest haystacks blocked by a candle
+Metal buffer leak on this host, not a Lunaris limitation — so 92.3% is likely slightly optimistic) and **multi-hop**
+(HotpotQA). A clean N=50/500 J-score (candle fix or CPU pass) and a HotpotQA run are the next moves before claiming
+end-to-end parity at full sample size.
 
 ---
 

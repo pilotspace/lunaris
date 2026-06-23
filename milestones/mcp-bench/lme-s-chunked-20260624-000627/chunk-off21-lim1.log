@@ -1,0 +1,10 @@
+  [longmemeval] JUDGE mode ON — gen=minimax-m3:cloud judge=minimax-m3:cloud k=10 n=1
+  [longmemeval 1/1] J-score running=100.0%  (evidence-recall@10=100.0%)
+
+# Eval Gauntlet Results
+
+| Harness | Metric | Value | Threshold | Status | Duration |
+| --- | --- | --- | --- | --- | --- |
+| longmemeval | j_score | 100.000 | 65.000 | PASS | 104953 ms |
+
+Summary: 1 PASS, 0 FAIL, 0 SKIPPED
