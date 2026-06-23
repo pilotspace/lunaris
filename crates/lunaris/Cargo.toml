@@ -142,6 +142,21 @@ embed-remote = ["dep:lunaris-embed-remote"]
 # / `NativeQuantizedReranker`. Without this flag the env vars are ignored.
 embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
 reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
+# Hardware-accelerator backends for the native embedder + reranker (candle
+# compute path). These pass through to BOTH native crates so the umbrella
+# `lunaris` build — and therefore every downstream consumer (SDKs, server,
+# eval binary) — can light up the GPU/BLAS backend that `device_select.rs`
+# already knows how to upgrade to. WITHOUT one of these, candle runs naive
+# CPU matmul (the M-series GPU + Accelerate BLAS sit idle): root cause of the
+# ~21 min/question LongMemEval ingest. Off by default — opt-in per host arch:
+#   --features metal           (Apple M-series GPU; auto Cpu→Metal upgrade)
+#   --features cpu-accelerate   (Apple Accelerate / BLAS, CPU)
+#   --features cpu-mkl          (Intel MKL, CPU)
+#   --features cuda             (NVIDIA GPU; auto Cpu→Cuda upgrade)
+metal          = ["lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
+cpu-accelerate = ["lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
+cpu-mkl        = ["lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
+cuda           = ["lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
 # Extractor + verifier LLM backends. `candle` produces real Gemma-3 4B for
 # extract + Gemma-3 27B for verify (legacy); `cloud-api` enables the
 # provider-mux backend; `verify-small` / `verify-large` pick the verifier
