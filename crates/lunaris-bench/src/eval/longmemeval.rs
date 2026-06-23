@@ -313,6 +313,22 @@ pub(crate) fn evidence_recall_hit(hit_sources: &[String], answer_session_ids: &[
 async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result<f64> {
     let limit: usize =
         std::env::var("LUNARIS_EVAL_LME_LIMIT").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+    // Chunked-run support: skip the first `offset` records so the gauntlet can
+    // be driven in process-isolated windows. The native GGUF embedder/reranker
+    // leak Metal weight buffers on every per-question `Lunaris::open` (candle
+    // does not free them), so a single process exhausts the GPU buffer pool
+    // after ~13 opens. Running N in windows of <=10 (offset 0,10,20,…) keeps
+    // each process under that ceiling; the OS frees all Metal buffers on exit.
+    let offset: usize =
+        std::env::var("LUNARIS_EVAL_LME_OFFSET").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    // Cross-encoder rerank toggle. The bare `recall()` root is pure vector
+    // (`Vector::new("chunks", 30)`) with NO rerank — the weakest config. The
+    // production recall path reranks the vector candidates with the bge
+    // cross-encoder, which is what Zep/Mem0 do too, so default ON for an
+    // apples-to-apple number. Set LUNARIS_EVAL_LME_RERANK=0 to measure the
+    // raw vector baseline.
+    let rerank_enabled =
+        std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
     let k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let judge_mode = std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false);
@@ -321,7 +337,9 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
     let judge_model = std::env::var("LUNARIS_EVAL_LME_JUDGE_MODEL")
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
-    let n = records.len().min(limit);
+    // Window = records[offset .. offset+limit]. `n` is the actual count after
+    // clamping to the dataset tail (a final short chunk is fine).
+    let n = records.len().saturating_sub(offset).min(limit);
     if n == 0 {
         return Ok(0.0);
     }
@@ -339,9 +357,19 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         );
     }
 
+    // NOTE on Metal stability: the native GGUF embedder leaks candle Metal
+    // activation buffers across forward passes (variable chunk lengths => an
+    // ever-growing shape-keyed buffer cache candle never frees), so a single
+    // process degrades then dies at ~Q13 with "Failed to create metal
+    // resource: Buffer". Reusing the embedder Arc across questions does NOT
+    // help (it's activation buffers, not weights) and actually makes Metal
+    // thrash. The robust workaround is process isolation: drive N in windows of
+    // <=10 via `LUNARIS_EVAL_LME_OFFSET` (see `tmp/run-lme-s-chunked.sh`); each
+    // process exits well under the ceiling and the OS reclaims all Metal
+    // buffers. We therefore keep the simple per-question `Lunaris::open` here.
     let mut evidence_hits = 0usize;
     let mut judge_correct = 0usize;
-    for (i, rec) in records.iter().take(n).enumerate() {
+    for (i, rec) in records.iter().skip(offset).take(n).enumerate() {
         // Pristine store + fresh empty indexes for THIS question only.
         reset_moon(url).await?;
         let lunaris = std::sync::Arc::new(lunaris::Lunaris::open(url).await?);
@@ -382,7 +410,14 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // isolation is already guaranteed by the FLUSHALL above, so a plain
         // top-k recall over the (single-question) dev scope is correct and
         // surfaces the gold turns the filtered path was dropping.
-        let builder = lunaris.recall_with_degraded_check().await?;
+        let mut builder = lunaris.recall_with_degraded_check().await?;
+        if rerank_enabled {
+            // Wrap the vector root in the cross-encoder reranker so the top-30
+            // vector candidates are re-scored against the question text and the
+            // best move into the top-k. Without this the eval measured raw
+            // vector recall only.
+            builder = builder.rerank(lunaris.reranker());
+        }
         let hits = builder.top(k).execute(lunaris::Query::text(&rec.question)).await?;
         let sources: Vec<String> = hits.iter().map(|h| h.source.clone()).collect();
         let recall_hit = evidence_recall_hit(&sources, &rec.answer_session_ids);
