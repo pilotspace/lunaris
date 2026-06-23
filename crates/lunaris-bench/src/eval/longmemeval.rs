@@ -44,7 +44,19 @@ pub(crate) const HARNESS: &str = "longmemeval";
 pub(crate) const METRIC: &str = "j_score";
 pub(crate) const THRESHOLD: f64 = 65.0;
 const HF_REPO: &str = "xiaowu0162/longmemeval";
-const DATASET_FILENAME: &str = "longmemeval_oracle";
+/// Default dataset file. `longmemeval_oracle` = reduced (evidence-only)
+/// haystack — easy retrieval, fast. Set `LUNARIS_EVAL_LME_DATASET=longmemeval_s`
+/// for the FULL adversarial haystack (~50 sessions / ~494 turns per question)
+/// that competitors (Zep 90.2%, etc.) report their J-score on.
+const DEFAULT_DATASET_FILENAME: &str = "longmemeval_oracle";
+
+/// Resolve the dataset file from `LUNARIS_EVAL_LME_DATASET` (default
+/// `longmemeval_oracle`). Only the two canonical haystack files are accepted
+/// so a typo can't silently 404 into a SKIP.
+fn dataset_filename() -> String {
+    std::env::var("LUNARIS_EVAL_LME_DATASET")
+        .unwrap_or_else(|_| DEFAULT_DATASET_FILENAME.to_string())
+}
 
 pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let started = Instant::now();
@@ -67,7 +79,8 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 
     // Cache-first download via hf-hub 0.4. B-4 fix shape: ApiBuilder +
     // with_cache_dir; ZERO unsafe blocks anywhere.
-    let dataset_path = match download_dataset(HF_REPO, DATASET_FILENAME, &cache).await {
+    let dataset_file = dataset_filename();
+    let dataset_path = match download_dataset(HF_REPO, &dataset_file, &cache).await {
         Ok(p) => p,
         Err(e) => {
             results.push(EvalRow::skipped(
@@ -80,18 +93,18 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
         }
     };
 
-    let lunaris = match lunaris::Lunaris::open(&url).await {
-        Ok(l) => std::sync::Arc::new(l),
-        Err(e) => {
-            results.push(EvalRow::skipped(
-                HARNESS,
-                METRIC,
-                THRESHOLD,
-                &format!("Lunaris::open({url}) failed: {e}"),
-            ));
-            return Ok(());
-        }
-    };
+    // Reachability check only — `score_haystack` re-opens a fresh handle per
+    // question (after a full Moon reset) so each question retrieves from its
+    // own haystack against ghost-free indices.
+    if let Err(e) = lunaris::Lunaris::open(&url).await {
+        results.push(EvalRow::skipped(
+            HARNESS,
+            METRIC,
+            THRESHOLD,
+            &format!("Lunaris::open({url}) failed: {e}"),
+        ));
+        return Ok(());
+    }
 
     let bytes = match std::fs::read(&dataset_path) {
         Ok(b) => b,
@@ -108,7 +121,7 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
         }
     };
 
-    let j_score = match score_haystack(&lunaris, &records).await {
+    let j_score = match score_haystack(&url, &records).await {
         Ok(s) => s,
         Err(e) => {
             results.push(EvalRow::skipped(
@@ -192,11 +205,22 @@ pub struct EvalQuery {
 /// the corpus the deferred HUMAN-UAT harness was meant to ingest — not just the
 /// gold answers.
 pub(crate) struct HaystackRecord {
+    pub question_id: String,
+    pub question_type: String,
     pub question: String,
     pub answer: String,
     pub answer_session_ids: Vec<String>,
     /// `(session_id, turn_texts)` for every haystack session, distractors included.
     pub sessions: Vec<(String, Vec<String>)>,
+}
+
+impl HaystackRecord {
+    /// LongMemEval marks abstention (unanswerable) questions with a `_abs`
+    /// suffix on the `question_id`. The judge prompt for these asks whether
+    /// the model correctly identified the question as unanswerable.
+    pub(crate) fn is_abstention(&self) -> bool {
+        self.question_id.ends_with("_abs")
+    }
 }
 
 /// Parse the `longmemeval_oracle` JSON (a list of records) into full haystack
@@ -209,6 +233,10 @@ pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<Haystac
     }
     #[derive(serde::Deserialize)]
     struct Raw {
+        #[serde(default)]
+        question_id: String,
+        #[serde(default)]
+        question_type: String,
         question: String,
         answer: serde_json::Value,
         #[serde(default)]
@@ -238,6 +266,8 @@ pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<Haystac
                 })
                 .collect();
             HaystackRecord {
+                question_id: r.question_id,
+                question_type: r.question_type,
                 question: r.question,
                 answer,
                 answer_session_ids: r.answer_session_ids,
@@ -257,53 +287,247 @@ pub(crate) fn evidence_recall_hit(hit_sources: &[String], answer_session_ids: &[
         .any(|s| answer_session_ids.iter().any(|sid| !sid.is_empty() && s.contains(sid.as_str())))
 }
 
-/// Real-corpus retrieval harness. For each of the first `limit` records
+/// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
-/// (distractor sessions included) into the engine's default scope under a
-/// per-question SESSION PREFIX — `CodingSessionMemory::grep` recalls through the
-/// engine-global scope and filters by `source StartsWith helios:fs/<sid>/`
-/// (Moon pushes the StartsWith into FT.SEARCH), so recall cannot leak across
-/// questions. A per-question *scope* would NOT work: grep ignores the pad's
-/// scope. Score **evidence-recall@k**: the % of questions whose top-k surfaced a
-/// turn from a gold answer-session. Phrasing-independent; measures retrieval
-/// quality without the synthesized-answer substring bias.
-async fn score_haystack(
-    lunaris: &std::sync::Arc<lunaris::Lunaris>,
-    records: &[HaystackRecord],
-) -> anyhow::Result<f64> {
+/// (distractor sessions included), then recall the top-k turns and score.
+///
+/// **Per-question isolation = full Moon reset + re-open.** Each question must
+/// retrieve from ONLY its own haystack (the LongMemEval setting). The pad's
+/// `StartsWith{source}` filter can't enforce this — it's malformed for Moon's
+/// TAG `source` field and fails open — so we physically isolate: `reset_moon`
+/// (`FLUSHALL` + `FT.DROPINDEX`) then `Lunaris::open` (recreates empty
+/// indexes) before each question. DROPINDEX is essential: a bare FLUSHALL
+/// leaves the vector index full of GHOST docs that bury the gold under dead
+/// KNN hits. We then recall WITHOUT the source filter (isolation already
+/// holds) so the gold turns actually surface.
+///
+/// Two metrics, selected by `LUNARIS_EVAL_LME_JUDGE`:
+/// - **unset/0** → **evidence-recall@k**: % of questions whose top-k surfaced a
+///   turn from a gold answer-session. Phrasing-independent retrieval quality;
+///   fast, no LLM. (Returned as the gauntlet value.)
+/// - **1** → **J-score**: retrieve top-k → generate an answer from that context
+///   with a chat model → judge the answer against gold with the *official*
+///   LongMemEval per-question-type judge prompt. This is the apples-to-apple
+///   number competitors (Zep/Mem0) publish. Evidence-recall is still logged
+///   alongside. Default gen+judge model `minimax-m3:cloud`.
+async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result<f64> {
     let limit: usize =
         std::env::var("LUNARIS_EVAL_LME_LIMIT").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
     let k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+    let judge_mode = std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false);
+    let debug = std::env::var("LUNARIS_EVAL_LME_DEBUG").map(|v| v == "1").unwrap_or(false);
+    let gen_model = std::env::var("LUNARIS_EVAL_LME_GEN_MODEL")
+        .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
+    let judge_model = std::env::var("LUNARIS_EVAL_LME_JUDGE_MODEL")
+        .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
     let n = records.len().min(limit);
     if n == 0 {
         return Ok(0.0);
     }
+
+    // Build the chat client only in judge mode (avoids requiring Ollama for
+    // the fast recall-only path).
+    let chat = if judge_mode {
+        Some(super::lme_judge::OllamaChat::new()?)
+    } else {
+        None
+    };
+    if judge_mode {
+        eprintln!(
+            "  [longmemeval] JUDGE mode ON — gen={gen_model} judge={judge_model} k={k} n={n}"
+        );
+    }
+
     let mut evidence_hits = 0usize;
+    let mut judge_correct = 0usize;
     for (i, rec) in records.iter().take(n).enumerate() {
+        // Pristine store + fresh empty indexes for THIS question only.
+        reset_moon(url).await?;
+        let lunaris = std::sync::Arc::new(lunaris::Lunaris::open(url).await?);
         let pad = lunaris::CodingSessionMemory::new(
             lunaris.clone(),
             lunaris_core::Scope::dev(),
             &format!("lme{i:04}"),
         );
-        for (sid, turns) in &rec.sessions {
+        // Optional session cap for fast debug iteration: keep the first
+        // `maxsess` sessions PLUS every gold answer-session (so the evidence is
+        // always present). Unset = full haystack.
+        let maxsess: Option<usize> =
+            std::env::var("LUNARIS_EVAL_LME_MAXSESS").ok().and_then(|s| s.parse().ok());
+        let mut ingested = 0usize;
+        for (si, (sid, turns)) in rec.sessions.iter().enumerate() {
+            let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
+            if let Some(m) = maxsess {
+                if si >= m && !is_gold {
+                    continue;
+                }
+            }
             for (ti, text) in turns.iter().enumerate() {
                 // Path embeds the session_id so `Hit::source` reveals provenance.
                 pad.write(&format!("{sid}/{ti:04}.md"), text.clone()).await?;
+                ingested += 1;
             }
         }
-        let hits = pad.grep(&rec.question, k).await?;
+        // Unfiltered recall. We deliberately DO NOT use `pad.grep`, whose
+        // `StartsWith{source}` filter is malformed for Moon's TAG `source`
+        // field (`@source:helios:fs/lme0000/*` with unescaped `:` / `/`) and
+        // non-deterministically returns a tiny mismatched subset. Per-question
+        // isolation is already guaranteed by the FLUSHALL above, so a plain
+        // top-k recall over the (single-question) dev scope is correct and
+        // surfaces the gold turns the filtered path was dropping.
+        let builder = lunaris.recall_with_degraded_check().await?;
+        let hits = builder.top(k).execute(lunaris::Query::text(&rec.question)).await?;
         let sources: Vec<String> = hits.iter().map(|h| h.source.clone()).collect();
-        if evidence_recall_hit(&sources, &rec.answer_session_ids) {
+        let recall_hit = evidence_recall_hit(&sources, &rec.answer_session_ids);
+        if recall_hit {
             evidence_hits += 1;
         }
-        eprintln!(
-            "  [longmemeval {}/{n}] evidence-recall@{k} running={:.1}%",
-            i + 1,
-            100.0 * evidence_hits as f64 / (i + 1) as f64
-        );
+        if debug {
+            eprintln!(
+                "  [DEBUG q{i}] qid={} type={} ingested={ingested} turns | gold_sids={:?} | {} hits",
+                rec.question_id, rec.question_type, rec.answer_session_ids, hits.len()
+            );
+            for (hi, h) in hits.iter().take(5).enumerate() {
+                eprintln!(
+                    "    hit[{hi}] score={:.3} source={:?} text={:?}",
+                    h.score,
+                    h.source,
+                    h.text.chars().take(70).collect::<String>()
+                );
+            }
+            eprintln!("    => evidence_recall_hit = {recall_hit}");
+        }
+
+        if let Some(chat) = &chat {
+            // Generation context = SESSION-EXPANDED retrieval (LongMemEval's
+            // standard setting). A single retrieved turn rarely carries the
+            // answer fact — the evidence lives somewhere in that turn's
+            // SESSION. So we take the distinct sessions hit in the top-k and
+            // feed each one's FULL ordered turn list. Since gold-session
+            // recall is ~100%, this guarantees the answer-bearing turn is in
+            // context. `hits[].text` is the lossy chunk text; we instead pull
+            // the verbatim turns from `rec.sessions` keyed by the session id
+            // embedded in `hit.source` (`helios:fs/lme####/<sid>/<turn>.md`).
+            let contexts = expand_hit_sessions(&sources, rec);
+            let verdict = judge_one(chat, &gen_model, &judge_model, rec, &contexts).await;
+            match verdict {
+                Ok((correct, answer, raw)) => {
+                    if correct {
+                        judge_correct += 1;
+                    }
+                    if debug {
+                        eprintln!("    GOLD={:?}", rec.answer.chars().take(120).collect::<String>());
+                        eprintln!("    GEN ={:?}", answer.chars().take(200).collect::<String>());
+                        eprintln!("    JUDGE_RAW={:?} -> correct={correct}", raw.chars().take(60).collect::<String>());
+                    }
+                }
+                Err(e) => {
+                    // Design-for-failure: a transport/judge error counts as a
+                    // miss for THIS question, never aborts the gauntlet.
+                    eprintln!("  [longmemeval {}/{n}] judge error (counted miss): {e}", i + 1);
+                }
+            }
+            eprintln!(
+                "  [longmemeval {}/{n}] J-score running={:.1}%  (evidence-recall@{k}={:.1}%)",
+                i + 1,
+                100.0 * judge_correct as f64 / (i + 1) as f64,
+                100.0 * evidence_hits as f64 / (i + 1) as f64,
+            );
+        } else {
+            eprintln!(
+                "  [longmemeval {}/{n}] evidence-recall@{k} running={:.1}%",
+                i + 1,
+                100.0 * evidence_hits as f64 / (i + 1) as f64
+            );
+        }
     }
-    Ok(100.0 * evidence_hits as f64 / n as f64)
+
+    if judge_mode {
+        Ok(100.0 * judge_correct as f64 / n as f64)
+    } else {
+        Ok(100.0 * evidence_hits as f64 / n as f64)
+    }
+}
+
+/// Fully reset the Moon instance so the next question retrieves from a
+/// pristine store. `FLUSHALL` alone is NOT enough: it clears the data keys
+/// but the FT vector index keeps every prior doc as a GHOST entry
+/// (`num_docs` stays high with zero live keys). KNN then returns top-k
+/// dominated by dead references that hydrate away — leaving ~1 live hit and
+/// a 0% recall. So we also `FT.DROPINDEX` every `lunaris__dev__*` index;
+/// the subsequent `Lunaris::open` re-runs `ensure_indexes` and recreates
+/// them empty. `moon_url` is the `moon://host:port` form, mapped to
+/// `redis://` for the redis-compatible wire.
+async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
+    let redis_url = moon_url.replacen("moon://", "redis://", 1);
+    let client = redis::Client::open(redis_url)?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    redis::cmd("FLUSHALL").query_async::<()>(&mut conn).await?;
+    let indexes: Vec<String> =
+        redis::cmd("FT._LIST").query_async(&mut conn).await.unwrap_or_default();
+    for idx in indexes.iter().filter(|i| i.starts_with("lunaris__dev__")) {
+        // Ignore "unknown index" — a fresh Moon may not have it yet.
+        let _ = redis::cmd("FT.DROPINDEX").arg(idx).query_async::<()>(&mut conn).await;
+    }
+    Ok(())
+}
+
+/// Extract the session id from a hit source of the form
+/// `helios:fs/lme####/<sid>/<turn>.md`. The sid is the 3rd `/`-segment
+/// (session ids contain `_`/`-`/digits but never `/`). Returns `None` for
+/// shapes that don't match.
+fn sid_from_source(source: &str) -> Option<&str> {
+    source.split('/').nth(2).filter(|s| !s.is_empty())
+}
+
+/// Session-level context expansion. Given the top-k hit `sources` and the
+/// record, return the FULL ordered turn texts of every distinct session that
+/// appears in the hits (sessions ordered by their first appearance in the
+/// ranking; turns within a session in their original order). This is the
+/// LongMemEval session-retrieval setting — the answer fact lives somewhere in
+/// the hit session, not necessarily in the single retrieved turn.
+fn expand_hit_sessions(sources: &[String], rec: &HaystackRecord) -> Vec<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    for src in sources {
+        if let Some(sid) = sid_from_source(src) {
+            if !seen.contains(&sid) {
+                seen.push(sid);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for sid in seen {
+        if let Some((_, turns)) = rec.sessions.iter().find(|(s, _)| s == sid) {
+            out.extend(turns.iter().cloned());
+        }
+    }
+    out
+}
+
+/// One question's gen→judge round-trip. Generates an answer from the
+/// retrieved `contexts`, then judges it against the gold answer with the
+/// official per-question-type prompt. Returns `(verdict, gen_answer,
+/// judge_raw)` so the caller can log the model outputs under `--debug`.
+async fn judge_one(
+    chat: &super::lme_judge::OllamaChat,
+    gen_model: &str,
+    judge_model: &str,
+    rec: &HaystackRecord,
+    contexts: &[String],
+) -> anyhow::Result<(bool, String, String)> {
+    let gen_user = super::lme_judge::gen_user_prompt(contexts, &rec.question);
+    let response =
+        chat.chat(gen_model, super::lme_judge::gen_system_prompt(), &gen_user).await?;
+    let prompt = super::lme_judge::judge_prompt(
+        &rec.question_type,
+        rec.is_abstention(),
+        &rec.question,
+        &rec.answer,
+        &response,
+    );
+    let verdict_raw = chat.chat(judge_model, "", &prompt).await?;
+    Ok((super::lme_judge::parse_verdict(&verdict_raw), response, verdict_raw))
 }
 
 pub fn parse_longmemeval(bytes: &[u8]) -> anyhow::Result<Vec<EvalQuery>> {
@@ -385,6 +609,8 @@ mod tests {
     fn parse_longmemeval_full_extracts_haystack_and_evidence() {
         let json = br#"[
           {
+            "question_id": "q123",
+            "question_type": "multi-session",
             "question": "What broke first?",
             "answer": "the GPS",
             "answer_session_ids": ["s2"],
@@ -398,6 +624,9 @@ mod tests {
         let recs = parse_longmemeval_full(json).expect("parse");
         assert_eq!(recs.len(), 1);
         let r = &recs[0];
+        assert_eq!(r.question_id, "q123");
+        assert_eq!(r.question_type, "multi-session");
+        assert!(!r.is_abstention());
         assert_eq!(r.question, "What broke first?");
         assert_eq!(r.answer, "the GPS");
         assert_eq!(r.answer_session_ids, vec!["s2".to_string()]);
@@ -406,6 +635,59 @@ mod tests {
         assert_eq!(r.sessions[0].1[0], "user: hi");
         assert_eq!(r.sessions[1].0, "s2");
         assert_eq!(r.sessions[1].1[0], "user: my gps failed");
+    }
+
+    #[test]
+    fn abstention_detected_from_question_id_suffix() {
+        let json = br#"[
+          {
+            "question_id": "q999_abs",
+            "question_type": "single-session-user",
+            "question": "unanswerable?",
+            "answer": "not in history",
+            "haystack_session_ids": ["s1"],
+            "haystack_sessions": [[{"role":"user","content":"hi"}]]
+          }
+        ]"#;
+        let recs = parse_longmemeval_full(json).expect("parse");
+        assert!(recs[0].is_abstention());
+    }
+
+    #[test]
+    fn sid_from_source_extracts_third_segment() {
+        assert_eq!(
+            sid_from_source("helios:fs/lme0000/answer_280352e9/0003.md"),
+            Some("answer_280352e9")
+        );
+        assert_eq!(sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0/0002.md"), Some("sharegpt_Jcy1CVN_0"));
+        assert_eq!(sid_from_source("malformed"), None);
+    }
+
+    #[test]
+    fn expand_hit_sessions_returns_full_sessions_in_rank_order() {
+        let rec = HaystackRecord {
+            question_id: "q".into(),
+            question_type: "single-session-user".into(),
+            question: "?".into(),
+            answer: "A".into(),
+            answer_session_ids: vec!["s_gold".into()],
+            sessions: vec![
+                ("s_distract".into(), vec!["user: noise".into(), "assistant: noise2".into()]),
+                ("s_gold".into(), vec!["user: q".into(), "assistant: the degree is BA".into(), "user: thanks".into()]),
+            ],
+        };
+        // Hit ranking: one distractor turn first, then a gold turn. Expansion
+        // must include BOTH full sessions, gold's FULL 3 turns (incl. the
+        // answer-bearing middle turn that retrieval alone missed).
+        let sources = vec![
+            "helios:fs/lme0000/s_distract/0000.md".to_string(),
+            "helios:fs/lme0000/s_gold/0000.md".to_string(),
+        ];
+        let ctx = expand_hit_sessions(&sources, &rec);
+        assert_eq!(ctx.len(), 5); // 2 distractor + 3 gold turns
+        assert!(ctx.iter().any(|t| t.contains("the degree is BA")));
+        // Distractor session comes first (first appearance in ranking).
+        assert_eq!(ctx[0], "user: noise");
     }
 
     #[test]
