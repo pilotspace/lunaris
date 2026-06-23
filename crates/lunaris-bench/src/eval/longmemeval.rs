@@ -355,6 +355,14 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // always present). Unset = full haystack.
         let maxsess: Option<usize> =
             std::env::var("LUNARIS_EVAL_LME_MAXSESS").ok().and_then(|s| s.parse().ok());
+        // INGEST GRANULARITY = one document PER SESSION (turns joined), NOT
+        // per turn. A turn-per-document run pays the full ingest pipeline
+        // (chunk + doctree + RAPTOR community tree + vector upserts) ~550×
+        // per question → ~30 min/question → ~25 h for N=50. A session is a
+        // coherent document anyway: one write per session amortises the
+        // RAPTOR/doctree overhead ~10× and yields fewer, larger chunks to
+        // embed. `Hit::source` is then `helios:fs/lme####/<sid>.md`, still
+        // carrying the session id for evidence-recall + session expansion.
         let mut ingested = 0usize;
         for (si, (sid, turns)) in rec.sessions.iter().enumerate() {
             let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
@@ -363,11 +371,9 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                     continue;
                 }
             }
-            for (ti, text) in turns.iter().enumerate() {
-                // Path embeds the session_id so `Hit::source` reveals provenance.
-                pad.write(&format!("{sid}/{ti:04}.md"), text.clone()).await?;
-                ingested += 1;
-            }
+            let doc = turns.join("\n\n");
+            pad.write(&format!("{sid}.md"), doc).await?;
+            ingested += turns.len();
         }
         // Unfiltered recall. We deliberately DO NOT use `pad.grep`, whose
         // `StartsWith{source}` filter is malformed for Moon's TAG `source`
@@ -474,11 +480,15 @@ async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
 }
 
 /// Extract the session id from a hit source of the form
-/// `helios:fs/lme####/<sid>/<turn>.md`. The sid is the 3rd `/`-segment
-/// (session ids contain `_`/`-`/digits but never `/`). Returns `None` for
-/// shapes that don't match.
+/// `helios:fs/lme####/<sid>.md` (one-doc-per-session ingest). The sid is the
+/// 3rd `/`-segment with any `.md` suffix stripped (session ids contain
+/// `_`/`-`/digits but never `/`). Returns `None` for shapes that don't match.
 fn sid_from_source(source: &str) -> Option<&str> {
-    source.split('/').nth(2).filter(|s| !s.is_empty())
+    source
+        .split('/')
+        .nth(2)
+        .map(|s| s.strip_suffix(".md").unwrap_or(s))
+        .filter(|s| !s.is_empty())
 }
 
 /// Session-level context expansion. Given the top-k hit `sources` and the
@@ -655,11 +665,12 @@ mod tests {
 
     #[test]
     fn sid_from_source_extracts_third_segment() {
+        // One-doc-per-session ingest: `helios:fs/lme####/<sid>.md`.
         assert_eq!(
-            sid_from_source("helios:fs/lme0000/answer_280352e9/0003.md"),
+            sid_from_source("helios:fs/lme0000/answer_280352e9.md"),
             Some("answer_280352e9")
         );
-        assert_eq!(sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0/0002.md"), Some("sharegpt_Jcy1CVN_0"));
+        assert_eq!(sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0.md"), Some("sharegpt_Jcy1CVN_0"));
         assert_eq!(sid_from_source("malformed"), None);
     }
 
