@@ -56,9 +56,7 @@ pub const MAX_PUBLIC_BATCH: usize = 8;
 /// default [`MAX_PUBLIC_BATCH`] rather than panicking or producing a 0-window
 /// (`slice::chunks(0)` panics).
 fn resolve_batch_size(raw: Option<&str>) -> usize {
-    raw.and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n >= 1)
-        .unwrap_or(MAX_PUBLIC_BATCH)
+    raw.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(MAX_PUBLIC_BATCH)
 }
 
 /// Effective per-forward re-chunk ceiling. Defaults to [`MAX_PUBLIC_BATCH`] (8,
@@ -70,6 +68,62 @@ fn resolve_batch_size(raw: Option<&str>) -> usize {
 pub fn public_batch_size() -> usize {
     static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| resolve_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref()))
+}
+
+/// Reference "normal" sequence length, in **input bytes**, that the count-based
+/// batch ceiling ([`public_batch_size`]) was calibrated against (~512 tokens at
+/// ~4 bytes/token). The activation budget is `public_batch_size × REF²` so that
+/// a batch of `public_batch_size` reference-length inputs is the worst-case
+/// footprint we ever schedule — and longer inputs get proportionally FEWER rows
+/// to hold that same footprint constant.
+pub(crate) const EMBED_REF_SEQ_BYTES: usize = 2048;
+/// Activation-footprint budget in `rows × bytes²` units. The transformer's
+/// attention scratch scales as `rows × seq²`; bounding `rows × max_seq_bytes²`
+/// per forward pass therefore caps peak activation memory **regardless of input
+/// length** — closing the count-only ceiling's blind spot where a batch of long
+/// inputs (e.g. RAPTOR community summaries) padded a `[rows, heads, 8192, 8192]`
+/// attention tensor to tens/hundreds of GB and OOM-killed ingest (and crashed
+/// Metal's buffer pool). Bytes (not tokens) is a conservative proxy: bytes ≥
+/// tokens, so the budget never under-counts the real sequence length.
+pub(crate) fn activation_budget() -> u128 {
+    (public_batch_size() as u128) * (EMBED_REF_SEQ_BYTES as u128).pow(2)
+}
+
+/// Plan order-preserving forward batches from per-input byte lengths so that
+/// every batch satisfies BOTH ceilings:
+///   1. `rows ≤ max_rows` (the legacy count cap / `LUNARIS_EMBED_BATCH`), and
+///   2. `rows × max_len_in_batch² ≤ budget` (the activation-footprint cap).
+///
+/// Returns the batch sizes (counts) in input order; their sum equals
+/// `byte_lens.len()`, so callers can walk contiguous windows without
+/// re-ordering and keep output indices aligned with input indices.
+///
+/// A single input whose own footprint exceeds `budget` still forms a batch of
+/// exactly one (the irreducible floor — the tokenizer separately truncates it
+/// to `max_position_embeddings`, bounding the real tensor). `max_rows` is
+/// clamped to ≥1 so a misconfigured ceiling can never yield a 0-window.
+pub(crate) fn plan_batches(byte_lens: &[usize], max_rows: usize, budget: u128) -> Vec<usize> {
+    let max_rows = max_rows.max(1);
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut count: usize = 0;
+    let mut max_len: usize = 0;
+    for &len in byte_lens {
+        if count >= 1 {
+            let prospective_max = max_len.max(len) as u128;
+            let footprint = (count as u128 + 1) * prospective_max * prospective_max;
+            if count >= max_rows || footprint > budget {
+                sizes.push(count);
+                count = 0;
+                max_len = 0;
+            }
+        }
+        count += 1;
+        max_len = max_len.max(len);
+    }
+    if count > 0 {
+        sizes.push(count);
+    }
+    sizes
 }
 use crate::config::{ConfigError, ModernBertConfig};
 use crate::modernbert::{ForwardError, pooled_forward};
@@ -279,19 +333,24 @@ impl Embedder for NativeEmbedder {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            // O-01-E — public-API batch ceiling. Re-chunk user input into
-            // windows of MAX_PUBLIC_BATCH so the activation-tensor footprint
-            // is bounded regardless of caller batch size. Each chunk runs
-            // through the same `embed_blocking` synchronous path; we
-            // concatenate the per-chunk rows preserving input order. For
-            // batches ≤ MAX_PUBLIC_BATCH this is a single chunk = single
-            // forward pass = zero overhead vs the pre-O-01-E path.
-            let batch = public_batch_size();
+            // O-01-E + activation-budget — re-chunk user input so each forward
+            // pass is bounded BOTH by row count (`public_batch_size`) and by the
+            // `rows × max_seq²` activation footprint (`plan_batches`). The latter
+            // is what makes the "footprint guarantee" actually hold for long
+            // inputs: a wide batch of long RAPTOR community summaries used to pad
+            // a `[rows, heads, seq, seq]` tensor to ~124 GB and OOM-kill ingest.
+            // Each window runs through the same `embed_blocking` path; rows are
+            // concatenated preserving input order. For ≤8 short inputs this is a
+            // single window = single forward pass = zero overhead vs before.
+            let lens: Vec<usize> = owned.iter().map(|s| s.len()).collect();
+            let sizes = plan_batches(&lens, public_batch_size(), activation_budget());
             let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
-            for chunk in owned.chunks(batch) {
-                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+            let mut start = 0usize;
+            for sz in sizes {
+                let refs: Vec<&str> = owned[start..start + sz].iter().map(|s| s.as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
                 out.extend(rows);
+                start += sz;
             }
             Ok(out)
         })
@@ -382,5 +441,88 @@ mod tests {
         assert_eq!(chunks[2].len(), 5);
         let flat: Vec<i32> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
         assert_eq!(flat, xs);
+    }
+
+    // -- Activation-budget batch planner (the OOM fix) ----------------------
+
+    /// Every batch the planner emits must satisfy BOTH ceilings: rows ≤ max_rows
+    /// AND rows × max_len² ≤ budget. This is the invariant that bounds peak
+    /// attention memory regardless of input length.
+    fn assert_budget_holds(lens: &[usize], sizes: &[usize], max_rows: usize, budget: u128) {
+        assert_eq!(sizes.iter().sum::<usize>(), lens.len(), "sizes must cover all inputs");
+        let mut idx = 0;
+        for &sz in sizes {
+            assert!(sz >= 1, "no empty batches");
+            assert!(sz <= max_rows.max(1) || sz == 1, "row-count ceiling");
+            let max_len = lens[idx..idx + sz].iter().copied().max().unwrap_or(0) as u128;
+            let footprint = sz as u128 * max_len * max_len;
+            // A batch of one is the irreducible floor and may exceed budget.
+            assert!(sz == 1 || footprint <= budget, "footprint {footprint} > budget {budget}");
+            idx += sz;
+        }
+    }
+
+    #[test]
+    fn plan_batches_short_inputs_fill_to_row_cap() {
+        // 20 short inputs, budget generous → batches limited by max_rows (8).
+        let lens = vec![100usize; 20];
+        let budget = activation_budget_for(8);
+        let sizes = plan_batches(&lens, 8, budget);
+        assert_eq!(sizes, vec![8, 8, 4]);
+        assert_budget_holds(&lens, &sizes, 8, budget);
+    }
+
+    /// THE OOM REGRESSION GUARD. A single very long input (an unbounded RAPTOR
+    /// community summary) must NEVER be co-batched with others — the old
+    /// `chunks(public_batch_size())` path put up to 32 of these in one
+    /// `[rows, heads, seq, seq]` forward and allocated ~124 GB. With the budget
+    /// planner the long input forms a batch of exactly one.
+    #[test]
+    fn plan_batches_isolates_a_long_input() {
+        let mut lens = vec![200usize; 5];
+        lens.insert(2, 32_768); // ~8192 tokens, the embedder's max
+        let budget = activation_budget_for(32); // even with the eval's batch=32
+        let sizes = plan_batches(&lens, 32, budget);
+        // The long input sits alone; it is NOT padded across a wide batch.
+        let long_pos = sizes.iter().scan(0usize, |acc, &s| {
+            let start = *acc;
+            *acc += s;
+            Some((start, s))
+        });
+        assert!(
+            long_pos.into_iter().any(|(start, s)| start == 2 && s == 1),
+            "long input must be solo: {sizes:?}"
+        );
+        assert_budget_holds(&lens, &sizes, 32, budget);
+    }
+
+    #[test]
+    fn plan_batches_medium_inputs_get_fewer_rows() {
+        // Inputs at 2× the reference length → ~1/4 the rows of the count cap.
+        let lens = vec![EMBED_REF_SEQ_BYTES * 2; 16];
+        let budget = activation_budget_for(8);
+        let sizes = plan_batches(&lens, 8, budget);
+        assert!(sizes.iter().all(|&s| s <= 2), "2× length ⇒ ≤2 rows/batch: {sizes:?}");
+        assert_budget_holds(&lens, &sizes, 8, budget);
+    }
+
+    #[test]
+    fn plan_batches_empty_and_singleton() {
+        assert!(plan_batches(&[], 8, activation_budget_for(8)).is_empty());
+        assert_eq!(plan_batches(&[5], 8, activation_budget_for(8)), vec![1]);
+    }
+
+    #[test]
+    fn plan_batches_never_emits_zero_window_even_at_max_rows_zero() {
+        // A misconfigured ceiling of 0 must clamp to 1, never panic / 0-window.
+        let lens = vec![10usize; 3];
+        let sizes = plan_batches(&lens, 0, activation_budget_for(8));
+        assert_eq!(sizes, vec![1, 1, 1]);
+    }
+
+    /// Test-only budget that does not read process env (avoids the global-env
+    /// race the `resolve_batch_size` tests document).
+    fn activation_budget_for(rows: usize) -> u128 {
+        (rows as u128) * (EMBED_REF_SEQ_BYTES as u128).pow(2)
     }
 }
