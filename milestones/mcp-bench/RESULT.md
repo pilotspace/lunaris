@@ -135,7 +135,7 @@ RUST_LOG=error MOON_URL="moon://127.0.0.1:6381" \
 | **evidence-recall@10** | **94.9% (37/39)** |
 | gen + judge model | minimax-m3:cloud (official LongMemEval judge prompts) |
 
-Run via **one question per process** (`chunk=1`) to dodge the Metal leak (see caveat): 50 fresh single-question Metal processes, **39 completed**, 11 (the largest haystacks) crashed candle's Metal buffer even solo. Earlier n=20 pilot agreed: J=95% (19/20). J (92.3%) < recall (94.9%) — 2 retrieval misses + 1 generation miss among the 37 retrieved; the healthy decoupling.
+Run via **one question per process** (`chunk=1`) to dodge the Metal leak (see caveat): 50 fresh single-question Metal processes, **39 completed**, 11 crashed candle's Metal buffer at process start (a cross-process GPU-reclaim race — *not* correlated with haystack size; see caveat). Earlier n=20 pilot agreed: J=95% (19/20). J (92.3%) < recall (94.9%) — 2 retrieval misses + 1 generation miss among the 37 retrieved; the healthy decoupling.
 
 ## The decisive finding — the reranker IS the result
 
@@ -150,7 +150,8 @@ The earlier "~20%" came from the harness running the **bare** recall builder, wh
 
 ## Honest caveats
 
-- **n = 39 of 50 — and the 11 missing are the *hardest* questions.** candle's Metal backend leaks activation buffers across forward passes (variable chunk lengths → an unbounded shape-keyed buffer cache it never frees), exhausting the GPU pool. Running one question per process dodges the cross-process degradation, but the 11 largest haystacks (offsets 13, 15, 16, 18, 25, 28, 30, 31, 35, 42, 45) crash candle's Metal buffer even solo. Those are the longest-context questions, so **dropping them likely makes n=39 slightly *optimistic*** — a clean 50 needs a candle Metal fix or a CPU (non-Metal) pass over those 11 (~15–25 min each on CPU, ~3–4.5 hr total). The 39 scored span offsets 0–49.
+- **n = 39 of 50 — and the 11 drops are a GPU-timing artifact, *not* the harder questions (verified).** candle's Metal allocator caches activation buffers by shape and never frees them within a process; on process exit macOS GPU reclaim lags. A fresh one-question process that starts while the pool is still saturated from the prior process fails its *first* `Buffer` allocation — all 11 SKIPs crash at **duration 0 ms**, before any ingest work (`candle: Metal error Failed to create metal resource: Buffer`). It is a **cross-process reclaim race, not a haystack-size limit**: the 11 dropped haystacks average **485K chars vs 490K for the 36 that passed** (statistically indistinguishable, drops marginally *smaller*); the single largest haystack passed, the smallest was dropped, and all 50 are the same question type. So the 11 are **effectively a random subsample → n=39 is approximately unbiased**, not optimistic. A clean 50 still needs a candle Metal fix or a CPU (non-Metal) pass over offsets 13/15/16/18/25/28/30/31/35/42/45 (~15–25 min each on CPU, ~3–4.5 hr total). The 39 scored span offsets 0–49.
+- **The 3 genuine FAILs split cleanly:** off10 + off14 had **recall@10 = 0%** (retrieval misses — the evidence turn never reached the top-10, so the answer was necessarily wrong); off39 had **recall@10 = 100%** (a generation miss — evidence retrieved, minimax-m3 still answered wrong). That is exactly J=36/39 vs recall=37/39 — 2 retrieval + 1 generation miss, the healthy decoupling rather than a recall-gated artifact.
 - **LLM-judge variance:** q0–9 scored 9/10 in one probe and 10/10 in another (minimax-m3:cloud is non-deterministic). Read the headline as **J ≈ 90–95%**.
 - Metal acceleration also cut ingest **~11×** (≈21 min → ≈2 min/question) — commit `096d46d`; orthogonal to the J-score.
 
