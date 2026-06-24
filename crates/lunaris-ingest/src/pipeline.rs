@@ -58,14 +58,40 @@ fn resolve_ingest_batch_size(raw: Option<&str>) -> usize {
 /// Effective ingest-driver batch, reading `LUNARIS_EMBED_BATCH` once + caching.
 fn ingest_embed_batch_size() -> usize {
     static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHE
-        .get_or_init(|| resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref()))
+    *CACHE.get_or_init(|| {
+        resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref())
+    })
 }
 
 /// Default chunker target tokens per `chunk_markdown` invocation.
 const DEFAULT_TARGET_TOKENS: usize = 500;
 /// Default chunker overlap tokens.
 const DEFAULT_OVERLAP_TOKENS: usize = 100;
+
+/// Hard cap (in bytes) on a community summary before it is stored AND embedded.
+/// A summary is a retrieval handle for its subtree, not the subtree itself —
+/// ~500 tokens is ample. The cap also closes an ingest-OOM at the source:
+/// [`ExtractiveSummarizer`] falls back to the FULL child text when a chunk lacks
+/// sentence terminals (conversation/JSON turns rarely have clean ones), so an
+/// uncapped root-community summary concatenates whole sections and can reach the
+/// embedder's 8192-token ceiling; batched, that padded the attention tensor to
+/// tens/hundreds of GB and OOM-killed the haystack ingest.
+/// `lunaris_embed_native::plan_batches` is the embedder's own (defense-in-depth)
+/// guard — this keeps summaries short before they ever reach it.
+const MAX_SUMMARY_BYTES: usize = 2048;
+
+/// Truncate `s` to at most `max` bytes, snapping down to the nearest UTF-8 char
+/// boundary so the result is always valid UTF-8.
+fn truncate_summary(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
 
 /// Vector index name the chunk embeddings land in. Matches the
 /// `chunks|entities|facts|communities` whitelist in the Phase 1
@@ -279,9 +305,12 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         .collect();
     let summaries = summarizer.summarize(&inputs).await;
 
-    // Assign summaries back to communities (in the same bottom-up order).
+    // Assign summaries back to communities (in the same bottom-up order),
+    // capping each at MAX_SUMMARY_BYTES so neither storage nor the downstream
+    // embed_batch ever sees a pathologically long "summary".
     for (order_pos, &community_idx) in ordered_indices.iter().enumerate() {
-        communities[community_idx].summary = summaries[order_pos].clone();
+        communities[community_idx].summary =
+            truncate_summary(&summaries[order_pos], MAX_SUMMARY_BYTES);
     }
 
     // Phase-30 B1: embed all community summaries (single-pass, reuse pipeline embedder).
@@ -597,5 +626,29 @@ mod tests {
     fn ingest_batch_falls_back_on_garbage() {
         assert_eq!(resolve_ingest_batch_size(Some("0")), INGEST_EMBED_BATCH_SIZE);
         assert_eq!(resolve_ingest_batch_size(Some("xyz")), INGEST_EMBED_BATCH_SIZE);
+    }
+
+    #[test]
+    fn truncate_summary_is_noop_under_cap() {
+        let s = "short summary";
+        assert_eq!(truncate_summary(s, MAX_SUMMARY_BYTES), s);
+    }
+
+    #[test]
+    fn truncate_summary_caps_long_input() {
+        let s = "x".repeat(MAX_SUMMARY_BYTES * 3);
+        let out = truncate_summary(&s, MAX_SUMMARY_BYTES);
+        assert_eq!(out.len(), MAX_SUMMARY_BYTES);
+    }
+
+    #[test]
+    fn truncate_summary_snaps_to_char_boundary() {
+        // 'é' is 2 bytes (U+00E9). A cap that lands mid-codepoint must snap DOWN
+        // so the result is always valid UTF-8 (never panics on a byte split).
+        let s = "é".repeat(100); // 200 bytes
+        let out = truncate_summary(&s, 5); // 5 is mid-codepoint (odd byte)
+        assert!(out.len() <= 5);
+        assert_eq!(out.len() % 2, 0, "must snap to a 2-byte 'é' boundary");
+        assert!(out.chars().all(|c| c == 'é'));
     }
 }
