@@ -119,9 +119,10 @@ pgvector) + a graph (Neo4j/FalkorDB) + an LLM extraction service — more moving
   retrieval misses (off10/off14, recall@10=0%) + 1 generation miss (off39, recall@10=100% but answer judged wrong).
 
 **Unproven (honest gaps)**
-- **Clean N=50 / N=500 J-score** — the n=39 above is decisive but 11 are GPU-dropped; a full run needs a candle Metal fix
-  or a CPU (non-Metal) pass over offsets 13/15/16/18/25/28/30/31/35/42/45. LOCOMO and multi-hop (HotpotQA, Cognee's
-  strength) are not yet benchmarked for Lunaris.
+- **Clean N=50 / N=500 J-score** — the n=39 above is decisive but 11 are GPU-dropped. Both local routes are blocked on this
+  host: Metal hits the buffer-reclaim race, and a CPU (non-Metal) pass attempted 2026-06-24 OOM-crashed the laptop (0/11
+  scored, SIGKILL'd before completion). A full run needs a candle Metal fix or a higher-RAM machine. LOCOMO and multi-hop
+  (HotpotQA, Cognee's strength) are not yet benchmarked for Lunaris.
 
 **Lags (measured)**
 - **Ingest throughput** — CPU GGUF embed is the bottleneck; Metal acceleration (commit `096d46d`) cut LongMemEval
