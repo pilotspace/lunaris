@@ -157,15 +157,24 @@ impl Embedder for NativeQuantizedEmbedder {
         let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
         let me = self.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            // O-01-E — re-chunk to MAX_PUBLIC_BATCH (see
-            // `embedder::MAX_PUBLIC_BATCH` for rationale). Mirror of the
-            // FP16 path; same activation-footprint guarantee.
-            let batch = crate::embedder::public_batch_size();
+            // O-01-E + activation-budget — re-chunk by BOTH the row-count
+            // ceiling (`public_batch_size`) and the `rows × max_seq²` activation
+            // footprint (`plan_batches`). Mirror of the FP16 path; this is the
+            // guarantee that actually holds for long inputs — see
+            // `embedder::plan_batches` (RAPTOR-summary OOM fix).
+            let lens: Vec<usize> = owned.iter().map(|s| s.len()).collect();
+            let sizes = crate::embedder::plan_batches(
+                &lens,
+                crate::embedder::public_batch_size(),
+                crate::embedder::activation_budget(),
+            );
             let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
-            for chunk in owned.chunks(batch) {
-                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+            let mut start = 0usize;
+            for sz in sizes {
+                let refs: Vec<&str> = owned[start..start + sz].iter().map(|s| s.as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
                 out.extend(rows);
+                start += sz;
             }
             Ok(out)
         })
