@@ -430,10 +430,11 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         let mut ingested = 0usize;
         for (si, (sid, turns)) in rec.sessions.iter().enumerate() {
             let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
-            if let Some(m) = maxsess {
-                if si >= m && !is_gold {
-                    continue;
-                }
+            if let Some(m) = maxsess
+                && si >= m
+                && !is_gold
+            {
+                continue;
             }
             let doc = turns.join("\n\n");
             pad.write(&format!("{sid}.md"), doc).await?;
@@ -601,10 +602,10 @@ fn sid_from_source(source: &str) -> Option<&str> {
 fn expand_hit_sessions(sources: &[String], rec: &HaystackRecord) -> Vec<String> {
     let mut seen: Vec<&str> = Vec::new();
     for src in sources {
-        if let Some(sid) = sid_from_source(src) {
-            if !seen.contains(&sid) {
-                seen.push(sid);
-            }
+        if let Some(sid) = sid_from_source(src)
+            && !seen.contains(&sid)
+        {
+            seen.push(sid);
         }
     }
     let mut out = Vec::new();
