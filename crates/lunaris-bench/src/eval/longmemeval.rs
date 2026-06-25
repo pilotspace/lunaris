@@ -109,7 +109,12 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let bytes = match std::fs::read(&dataset_path) {
         Ok(b) => b,
         Err(e) => {
-            results.push(EvalRow::skipped(HARNESS, METRIC, THRESHOLD, &format!("read dataset: {e}")));
+            results.push(EvalRow::skipped(
+                HARNESS,
+                METRIC,
+                THRESHOLD,
+                &format!("read dataset: {e}"),
+            ));
             return Ok(());
         }
     };
@@ -327,8 +332,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // cross-encoder, which is what Zep/Mem0 do too, so default ON for an
     // apples-to-apple number. Set LUNARIS_EVAL_LME_RERANK=0 to measure the
     // raw vector baseline.
-    let rerank_enabled =
-        std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
+    let rerank_enabled = std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
     let k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let judge_mode = std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false);
@@ -346,11 +350,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
 
     // Build the chat client only in judge mode (avoids requiring Ollama for
     // the fast recall-only path).
-    let chat = if judge_mode {
-        Some(super::lme_judge::OllamaChat::new()?)
-    } else {
-        None
-    };
+    let chat = if judge_mode { Some(super::lme_judge::OllamaChat::new()?) } else { None };
     if judge_mode {
         eprintln!(
             "  [longmemeval] JUDGE mode ON — gen={gen_model} judge={judge_model} k={k} n={n}"
@@ -427,7 +427,10 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         if debug {
             eprintln!(
                 "  [DEBUG q{i}] qid={} type={} ingested={ingested} turns | gold_sids={:?} | {} hits",
-                rec.question_id, rec.question_type, rec.answer_session_ids, hits.len()
+                rec.question_id,
+                rec.question_type,
+                rec.answer_session_ids,
+                hits.len()
             );
             for (hi, h) in hits.iter().take(5).enumerate() {
                 eprintln!(
@@ -458,9 +461,15 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                         judge_correct += 1;
                     }
                     if debug {
-                        eprintln!("    GOLD={:?}", rec.answer.chars().take(120).collect::<String>());
+                        eprintln!(
+                            "    GOLD={:?}",
+                            rec.answer.chars().take(120).collect::<String>()
+                        );
                         eprintln!("    GEN ={:?}", answer.chars().take(200).collect::<String>());
-                        eprintln!("    JUDGE_RAW={:?} -> correct={correct}", raw.chars().take(60).collect::<String>());
+                        eprintln!(
+                            "    JUDGE_RAW={:?} -> correct={correct}",
+                            raw.chars().take(60).collect::<String>()
+                        );
                     }
                 }
                 Err(e) => {
@@ -519,11 +528,7 @@ async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
 /// 3rd `/`-segment with any `.md` suffix stripped (session ids contain
 /// `_`/`-`/digits but never `/`). Returns `None` for shapes that don't match.
 fn sid_from_source(source: &str) -> Option<&str> {
-    source
-        .split('/')
-        .nth(2)
-        .map(|s| s.strip_suffix(".md").unwrap_or(s))
-        .filter(|s| !s.is_empty())
+    source.split('/').nth(2).map(|s| s.strip_suffix(".md").unwrap_or(s)).filter(|s| !s.is_empty())
 }
 
 /// Session-level context expansion. Given the top-k hit `sources` and the
@@ -562,8 +567,7 @@ async fn judge_one(
     contexts: &[String],
 ) -> anyhow::Result<(bool, String, String)> {
     let gen_user = super::lme_judge::gen_user_prompt(contexts, &rec.question);
-    let response =
-        chat.chat(gen_model, super::lme_judge::gen_system_prompt(), &gen_user).await?;
+    let response = chat.chat(gen_model, super::lme_judge::gen_system_prompt(), &gen_user).await?;
     let prompt = super::lme_judge::judge_prompt(
         &rec.question_type,
         rec.is_abstention(),
@@ -705,7 +709,10 @@ mod tests {
             sid_from_source("helios:fs/lme0000/answer_280352e9.md"),
             Some("answer_280352e9")
         );
-        assert_eq!(sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0.md"), Some("sharegpt_Jcy1CVN_0"));
+        assert_eq!(
+            sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0.md"),
+            Some("sharegpt_Jcy1CVN_0")
+        );
         assert_eq!(sid_from_source("malformed"), None);
     }
 
@@ -719,7 +726,14 @@ mod tests {
             answer_session_ids: vec!["s_gold".into()],
             sessions: vec![
                 ("s_distract".into(), vec!["user: noise".into(), "assistant: noise2".into()]),
-                ("s_gold".into(), vec!["user: q".into(), "assistant: the degree is BA".into(), "user: thanks".into()]),
+                (
+                    "s_gold".into(),
+                    vec![
+                        "user: q".into(),
+                        "assistant: the degree is BA".into(),
+                        "user: thanks".into(),
+                    ],
+                ),
             ],
         };
         // Hit ranking: one distractor turn first, then a gold turn. Expansion
