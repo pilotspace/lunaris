@@ -20,8 +20,8 @@ use lunaris_core::{
     WriteOp,
 };
 use lunaris_ingest::{
-    BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter,
-    ingest_episode_with_receipt,
+    BpeTokenCounter, IngestOptions, TokenCounter, ingest_episode, ingest_episode_with_counter,
+    ingest_episode_with_counter_options, ingest_episode_with_receipt,
 };
 use lunaris_storage_embedded::EmbeddedStorage;
 use parking_lot::Mutex;
@@ -368,9 +368,10 @@ async fn community_bt_comes_from_caller_clock() {
 /// the implementation embeds community summaries at ingest and writes them as `VectorUpsert`
 /// ops into the `communities` index.
 ///
-/// Two assertions:
-/// 1. Every community `KvPut` in the batch deserializes to a `Community` whose
-///    `summary_embedding` is `Some` with exactly 768 dimensions.
+/// Two assertions (post-`6093a9f` embedding-redundancy contract):
+/// 1. Every community `KvPut` hydration doc deserializes to a `Community` whose
+///    `summary_embedding` is `None` — the embedding is NOT double-stored in the
+///    JSON doc (`skip_serializing`); it lives binary in the `VectorUpsert` only.
 /// 2. At least one `VectorUpsert { index: "communities", .. }` with a 768-d embedding
 ///    appears in the batch — proving the `communities` FT index is populated.
 #[tokio::test]
@@ -386,7 +387,11 @@ async fn community_summary_embedding_populated_at_ingest() {
 
     let batch = storage.first_batch();
 
-    // 1. Every community KvPut must have summary_embedding = Some with dim 768.
+    // 1. The community KvPut hydration doc must NOT carry summary_embedding.
+    //    The redundancy fix (6093a9f) drops it via skip_serializing — storing the
+    //    768 floats as JSON here too was ~80% doc bloat and nothing reads it back
+    //    (the binary vector lives in the communities VectorUpsert, asserted in #2).
+    //    Mirrors the Chunk.embedding contract.
     let community_kvputs: Vec<&[u8]> = batch
         .iter()
         .filter_map(|op| {
@@ -402,11 +407,11 @@ async fn community_summary_embedding_populated_at_ingest() {
     assert!(!community_kvputs.is_empty(), "must have at least one community KvPut");
     for raw in &community_kvputs {
         let c: Community = serde_json::from_slice(raw).expect("community KvPut is valid JSON");
-        let emb = c
-            .summary_embedding
-            .as_ref()
-            .expect("B1/D4: Community.summary_embedding must be Some after Phase-30 ingest");
-        assert_eq!(emb.len(), 768, "summary_embedding must be 768-d (granite dim)");
+        assert!(
+            c.summary_embedding.is_none(),
+            "redundancy fix (6093a9f): Community.summary_embedding must NOT be serialized \
+             into the hydration doc — it lives binary in the communities VectorUpsert"
+        );
     }
 
     // 2. At least one VectorUpsert for the communities index with correct dim.
@@ -479,6 +484,402 @@ async fn community_vector_index_searchable_after_ingest() {
             "community VectorUpsert metadata must include 'summary' for BM25 content extraction"
         );
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedding-dedup test helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Wraps `StubEmbedder` and records every text fed to `embed_batch`.
+/// Used to assert that the dedup path skips embedding for cache-hit texts.
+struct CountingEmbedder {
+    inner: StubEmbedder,
+    recorded: Mutex<Vec<String>>,
+}
+
+impl CountingEmbedder {
+    fn new(dim: usize) -> Self {
+        Self { inner: StubEmbedder::new(dim), recorded: Mutex::new(Vec::new()) }
+    }
+
+    fn embedded_texts(&self) -> Vec<String> {
+        self.recorded.lock().clone()
+    }
+}
+
+#[async_trait]
+impl Embedder for CountingEmbedder {
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        {
+            let mut guard = self.recorded.lock();
+            for s in inputs {
+                guard.push(s.to_string());
+            }
+        }
+        self.inner.embed_batch(inputs).await
+    }
+}
+
+/// Encodes a `Vec<f32>` as little-endian bytes — mirrors the decode used in pipeline.rs.
+fn encode_embedding(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for &f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// `StoragePort` that:
+/// - Records `atomic_write` batches (like `RecordingStorage`).
+/// - Overrides `kv_get_many` to return a warm cache hit for every requested key,
+///   returning `encode_embedding(&[0.5_f32; DIM])` for every key.
+///
+/// This simulates a fully-warm embedding cache so the dedup path should skip
+/// calling the embedder for any key present in the cache (all of them).
+struct WarmCacheStorage {
+    batches: Mutex<Vec<Vec<WriteOp>>>,
+    dim: usize,
+}
+
+impl WarmCacheStorage {
+    fn new(dim: usize) -> Self {
+        Self { batches: Mutex::new(Vec::new()), dim }
+    }
+
+    fn batch_count(&self) -> usize {
+        self.batches.lock().len()
+    }
+}
+
+#[async_trait]
+impl StoragePort for WarmCacheStorage {
+    async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        self.batches.lock().push(ops.to_vec());
+        Ok(Lsn { wall_ms: 1, counter: 0 })
+    }
+
+    async fn vector_search(
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &[f32],
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+        _rerank: bool,
+    ) -> Result<Vec<VectorHit>, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::vector_search"))
+    }
+
+    async fn graph_traverse(
+        &self,
+        _scope: &Scope,
+        _query: &CypherQuery,
+        _as_of: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::graph_traverse"))
+    }
+
+    async fn scan_range(
+        &self,
+        _scope: &Scope,
+        _prefix: &[u8],
+        _as_of: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::scan_range"))
+    }
+
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        _key: &[u8],
+        _as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::read_as_of"))
+    }
+
+    async fn publish(
+        &self,
+        _scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::publish"))
+    }
+
+    async fn subscribe(
+        &self,
+        _scope: &Scope,
+        _group: &str,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+        Err(StorageError::NotSupported("WarmCacheStorage::subscribe"))
+    }
+
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            bi_temporal_native: false,
+            graph_native: false,
+            rerank_native: false,
+            queue_native: false,
+            max_vector_dim: 768,
+            native_rrf: false,
+            max_scopes_recommended: 0,
+            cypher_dialect: lunaris_core::CypherDialect::Legacy,
+            graph_decay_native: false,
+            graph_navigate_native: false,
+        }
+    }
+
+    /// Always-warm cache: return `encode_embedding([0.5; dim])` for every key.
+    async fn kv_get_many(
+        &self,
+        _scope: &Scope,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Option<Vec<u8>>>, StorageError> {
+        let hit = encode_embedding(&vec![0.5_f32; self.dim]);
+        Ok(keys.iter().map(|_| Some(hit.clone())).collect())
+    }
+}
+
+/// `StoragePort` whose `kv_get_many` always returns `Err`.
+/// Used to assert that a cache-read error degrades gracefully to embedding.
+struct ErrorCacheStorage {
+    inner: RecordingStorage,
+}
+
+impl ErrorCacheStorage {
+    fn new() -> Self {
+        Self { inner: RecordingStorage::default() }
+    }
+}
+
+#[async_trait]
+impl StoragePort for ErrorCacheStorage {
+    async fn atomic_write(&self, scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
+        self.inner.atomic_write(scope, ops).await
+    }
+
+    async fn vector_search(
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &[f32],
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+        _rerank: bool,
+    ) -> Result<Vec<VectorHit>, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::vector_search"))
+    }
+
+    async fn graph_traverse(
+        &self,
+        _scope: &Scope,
+        _query: &CypherQuery,
+        _as_of: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::graph_traverse"))
+    }
+
+    async fn scan_range(
+        &self,
+        _scope: &Scope,
+        _prefix: &[u8],
+        _as_of: Option<Hlc>,
+    ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::scan_range"))
+    }
+
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        _key: &[u8],
+        _as_of: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::read_as_of"))
+    }
+
+    async fn publish(
+        &self,
+        _scope: &Scope,
+        _topic: &str,
+        _partition: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::publish"))
+    }
+
+    async fn subscribe(
+        &self,
+        _scope: &Scope,
+        _group: &str,
+        _topic: &str,
+        _partition: u16,
+    ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+        Err(StorageError::NotSupported("ErrorCacheStorage::subscribe"))
+    }
+
+    fn capabilities(&self) -> StorageCapabilities {
+        self.inner.capabilities()
+    }
+
+    /// Always errors — the ingest pipeline must degrade to full embedding, not fail.
+    async fn kv_get_many(
+        &self,
+        _scope: &Scope,
+        _keys: &[Vec<u8>],
+    ) -> Result<Vec<Option<Vec<u8>>>, StorageError> {
+        Err(StorageError::Backend("simulated kv_get_many failure".into()))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedding-dedup tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// TEST 1 (discriminating): when dedup is ON and the cache is fully warm,
+/// the embedder must NOT be asked to embed any of the chunk-draft texts.
+///
+/// Uses the 12 kb fixture (same as `single_atomic_write_call`) which reliably
+/// produces ≥4 chunks under the 500-token target — enough for the assertion to
+/// be meaningful. Community summary texts are a different set and may still be
+/// embedded (the warm cache covers chunk texts only via their blake3 hash).
+#[tokio::test]
+async fn dedup_skips_embedding_cached_chunks() {
+    // Use the 12 kb fixture — guaranteed ≥4 chunks.
+    let ep_content = include_str!("fixtures/12kb_doc.md");
+
+    // Obtain the chunk draft texts so we know exactly what the chunker produces.
+    let (drafts_ref, _) = lunaris_ingest::chunk_markdown_with_headings(ep_content, 500, 100);
+    assert!(drafts_ref.len() >= 2, "12kb fixture must produce ≥2 chunks");
+    let chunk_texts: std::collections::HashSet<String> =
+        drafts_ref.iter().map(|d| d.text.clone()).collect();
+
+    // ── baseline: dedup OFF → embedder sees all chunk texts ──
+    {
+        let clock2 = HlcClock::new(0);
+        let storage = Arc::new(RecordingStorage::default());
+        let embedder = Arc::new(CountingEmbedder::new(768));
+        let ep = Episode::new(Scope::dev(), "arch.md", ep_content, &clock2);
+        ingest_episode(&*storage, &*embedder, &clock2, ep).await.expect("baseline ingest ok");
+        let recorded_off = embedder.embedded_texts();
+        // Sanity: at least the chunk texts should appear when dedup is off.
+        let chunk_texts_embedded: Vec<_> =
+            recorded_off.iter().filter(|t| chunk_texts.contains(*t)).collect();
+        assert!(
+            !chunk_texts_embedded.is_empty(),
+            "baseline (dedup OFF) must embed chunk texts; got recorded={recorded_off:?}"
+        );
+    }
+
+    // ── dedup ON, warm cache → chunk texts must NOT be embedded ──
+    {
+        let clock = HlcClock::new(0);
+        let storage = Arc::new(WarmCacheStorage::new(768));
+        let embedder = Arc::new(CountingEmbedder::new(768));
+        let ep = Episode::new(Scope::dev(), "arch.md", ep_content, &clock);
+        let opts = IngestOptions { dedup_embeddings: true };
+        ingest_episode_with_counter_options(
+            &*storage,
+            &*embedder,
+            &clock,
+            ep,
+            Arc::new(lunaris_ingest::SurrogateTokenCounter),
+            opts,
+        )
+        .await
+        .expect("dedup ingest ok");
+
+        let recorded_on = embedder.embedded_texts();
+        let chunk_texts_still_embedded: Vec<_> =
+            recorded_on.iter().filter(|t| chunk_texts.contains(*t)).collect();
+        assert!(
+            chunk_texts_still_embedded.is_empty(),
+            "dedup ON + warm cache: embedder must NOT be called for any chunk text; \
+             but was called for: {chunk_texts_still_embedded:?}"
+        );
+    }
+}
+
+/// TEST 2: dedup OFF must produce zero `embcache` KvPut ops in the batch —
+/// byte-identical to the pre-existing path (no cache writes when dedup is off).
+#[tokio::test]
+async fn dedup_off_produces_no_embcache_kvputs() {
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = small_episode(&clock);
+
+    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+
+    let batch = storage.first_batch();
+    let n_embcache = batch.iter().filter(|op| {
+        matches!(op, WriteOp::KvPut { key, .. } if key.windows(10).any(|w| w == b":embcache"))
+    }).count();
+    assert_eq!(n_embcache, 0, "dedup OFF must produce zero embcache KvPut ops");
+}
+
+/// TEST 3: with dedup ON, INGEST-04 must still hold — exactly one `atomic_write`.
+#[tokio::test]
+async fn single_atomic_write_preserved_with_dedup() {
+    let storage = Arc::new(WarmCacheStorage::new(768));
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = twelve_kb_episode(&clock);
+    let opts = IngestOptions { dedup_embeddings: true };
+
+    ingest_episode_with_counter_options(
+        &*storage,
+        &*embedder,
+        &clock,
+        ep,
+        Arc::new(lunaris_ingest::SurrogateTokenCounter),
+        opts,
+    )
+    .await
+    .expect("dedup ingest ok");
+
+    assert_eq!(
+        storage.batch_count(),
+        1,
+        "INGEST-04 must hold with dedup ON: exactly one atomic_write call"
+    );
+}
+
+/// TEST 4: when `kv_get_many` returns `Err`, the pipeline degrades to full embedding —
+/// ingest succeeds, no panic, no error surface.
+#[tokio::test]
+async fn cache_read_error_degrades_to_embed() {
+    let storage = Arc::new(ErrorCacheStorage::new());
+    let embedder = Arc::new(CountingEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = small_episode(&clock);
+    let opts = IngestOptions { dedup_embeddings: true };
+
+    // Must NOT return Err — cache read errors degrade silently to full embedding.
+    ingest_episode_with_counter_options(
+        &*storage,
+        &*embedder,
+        &clock,
+        ep,
+        Arc::new(lunaris_ingest::SurrogateTokenCounter),
+        opts,
+    )
+    .await
+    .expect("cache-read-error must degrade to embed, not fail the ingest");
+
+    // Embedder must have been called (proving the degraded path ran).
+    assert!(
+        !embedder.embedded_texts().is_empty(),
+        "after cache-read error, embedder must have been called for at least one text"
+    );
 }
 
 /// Finding 1 guard — production ingest path uses BPE counter, not hardcoded surrogate.

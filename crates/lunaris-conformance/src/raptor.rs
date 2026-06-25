@@ -249,31 +249,21 @@ pub async fn run_raptor_parity_suite(
             b.id
         );
 
-        // Phase-30 B1: summary_embedding must be Some(768-d) on both.
-        // (Replaces the Phase-29 D4 guardrail that asserted None.)
-        let emb_a = a.summary_embedding.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "parity: community {} summary_embedding is None on storage_a (Phase-30 B1 requires Some)",
-                a.id
-            )
-        })?;
-        let emb_b = b.summary_embedding.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "parity: community {} summary_embedding is None on storage_b (Phase-30 B1 requires Some)",
-                b.id
-            )
-        })?;
+        // Redundancy fix (6093a9f): summary_embedding is skip_serializing'd out of
+        // the KV hydration doc on BOTH backends — the 768-d vector lives only in the
+        // communities VectorUpsert index (vector_search reads it there, never this
+        // doc). The hydration contract must hold identically on both backends.
         anyhow::ensure!(
-            emb_a.len() == 768,
-            "parity: community {} summary_embedding has wrong dim {} on storage_a (expected 768)",
-            a.id,
-            emb_a.len()
+            a.summary_embedding.is_none(),
+            "parity: community {} summary_embedding must be None after hydration on storage_a \
+             (lives in the communities vector index, not the KV doc)",
+            a.id
         );
         anyhow::ensure!(
-            emb_b.len() == 768,
-            "parity: community {} summary_embedding has wrong dim {} on storage_b (expected 768)",
-            b.id,
-            emb_b.len()
+            b.summary_embedding.is_none(),
+            "parity: community {} summary_embedding must be None after hydration on storage_b \
+             (lives in the communities vector index, not the KV doc)",
+            b.id
         );
     }
 
