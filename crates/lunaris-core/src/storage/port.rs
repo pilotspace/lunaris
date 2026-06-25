@@ -400,4 +400,24 @@ pub trait StoragePort: Send + Sync + 'static {
         let _ = (scope, dedupe_key, lsn);
         Ok(())
     }
+
+    /// Batch KV get for embedding-cache lookups.
+    ///
+    /// Returns one `Option<Vec<u8>>` per entry in `keys`, in the same order.
+    /// `Some(bytes)` → cache hit; `None` → cache miss.
+    ///
+    /// **Additive default** (mirrors `lookup_by_dedupe_key`): returns `Ok(vec![None; keys.len()])`
+    /// so every existing backend compiles unchanged — the ingest dedup path degrades to a
+    /// full embed pass on backends that do not override this method.
+    ///
+    /// Callers MUST treat `Err(_)` identically to all-None: log a warning and fall back to
+    /// embedding. Cache read errors must NEVER fail an ingest.
+    async fn kv_get_many(
+        &self,
+        scope: &Scope,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Option<Vec<u8>>>, StorageError> {
+        let _ = scope;
+        Ok(vec![None; keys.len()])
+    }
 }

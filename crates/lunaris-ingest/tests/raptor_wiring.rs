@@ -93,19 +93,16 @@ async fn fixture_3a_h1_community_summary_non_empty() {
         );
     }
 
-    // Phase-30 B1: every persisted community must have summary_embedding populated.
-    // (Replaces the Phase-29 D4 guard that asserted summary_embedding=None.)
+    // Redundancy fix (6093a9f): a HYDRATED community must NOT carry
+    // summary_embedding — it is skip_serializing'd out of the KV doc (the 768-d
+    // vector lives binary in the communities VectorUpsert index, queried by
+    // vector_search, never read back from this doc). Storing it here too was
+    // ~80% doc bloat. Mirrors the Chunk.embedding hydration contract.
     for c in &communities {
-        let emb = c.summary_embedding.as_ref().unwrap_or_else(|| {
-            panic!(
-                "Community (id={}, level={}) must have summary_embedding=Some after Phase-30 B1",
-                c.id, c.level
-            )
-        });
-        assert_eq!(
-            emb.len(),
-            768,
-            "Community (id={}, level={}) summary_embedding must be 768-d",
+        assert!(
+            c.summary_embedding.is_none(),
+            "Community (id={}, level={}) summary_embedding must be None after hydration \
+             (lives in the communities vector index, not the KV doc)",
             c.id,
             c.level
         );

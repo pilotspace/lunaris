@@ -28,8 +28,9 @@ pub use chunker::{
     make_token_counter, raptor_community_id, run_bakeoff, segment_units,
 };
 pub use pipeline::{
-    INGEST_EMBED_BATCH_SIZE, IngestReceipt, ingest_episode, ingest_episode_with_bakeoff,
-    ingest_episode_with_counter, ingest_episode_with_counter_and_receipt,
+    INGEST_EMBED_BATCH_SIZE, IngestOptions, IngestReceipt, ingest_episode,
+    ingest_episode_with_bakeoff, ingest_episode_with_counter,
+    ingest_episode_with_counter_and_receipt, ingest_episode_with_counter_options,
     ingest_episode_with_receipt,
 };
 pub use schema_gate::{SchemaError, validate_chunk_metadata, validate_chunk_text};
@@ -41,5 +42,5 @@ pub use summarizer::{ExtractiveSummarizer, Summarizer, SummaryInput};
 // from lunaris-storage-moon so the engine layer has no infra dependency for keys).
 pub use lunaris_core::keyspace::{
     chunk_key, chunk_prefix, community_key, community_prefix, doctree_key, doctree_prefix,
-    episode_key, episode_prefix,
+    embcache_key, episode_key, episode_prefix,
 };

@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
-    keyspace::{community_key, doctree_key},
+    keyspace::{community_key, doctree_key, embcache_key},
 };
 use serde_json::json;
 
@@ -37,6 +37,63 @@ use crate::chunker::{
 use crate::schema_gate::validate_chunk_metadata;
 use crate::summarizer::{ExtractiveSummarizer, Summarizer as _, SummaryInput};
 use crate::{chunk_key, episode_key};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IngestOptions — feature flags for the ingest pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-call feature flags for the ingest pipeline.
+///
+/// Constructed with `Default` (all flags `false`) to preserve byte-identical
+/// behaviour on existing call sites. Opt-in features are added here rather than
+/// as new function parameters so the entry-point signatures stay stable.
+///
+/// # Safety / invariants
+///
+/// `IngestOptions` is `Copy + Default`. Callers must not rely on any flag being
+/// `true` by default — new flags must always default to `false` (opt-in only).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IngestOptions {
+    /// When `true`, the pipeline looks up each chunk's embedding in the KV
+    /// embedding cache (`embcache_key`) before calling the embedder. A cache
+    /// hit reuses the cached vector; a cache miss embeds and then stores the
+    /// result as a `WriteOp::KvPut` in the same atomic batch (INGEST-04 holds).
+    ///
+    /// Cache read errors degrade silently to full embedding (design-for-failure).
+    /// Cache write ops are appended to the single `atomic_write` batch, so
+    /// they commit atomically with the rest of the episode.
+    ///
+    /// **Default: `false`** — zero behaviour change for existing callers.
+    pub dedup_embeddings: bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedding cache encode/decode (little-endian f32 bytes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Encode `Vec<f32>` as little-endian raw bytes for KV cache storage.
+///
+/// The wire format mirrors `lunaris-storage-moon`'s `VectorUpsert` encoding:
+/// each `f32` occupies exactly 4 bytes in native IEEE-754 little-endian order.
+/// Callers must use `decode_embedding` to recover the vector.
+fn encode_embedding_cache(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for &f in v {
+        out.extend_from_slice(&f.to_le_bytes());
+    }
+    out
+}
+
+/// Decode bytes produced by `encode_embedding_cache` back to `Vec<f32>`.
+///
+/// Returns `None` when `bytes` is empty or its length is not a multiple of 4
+/// (malformed cache entry) — callers treat `None` as a cache miss.
+fn decode_embedding_cache(bytes: &[u8]) -> Option<Vec<f32>> {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    Some(bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect())
+}
 
 /// Number of chunks per `embed_batch` call. Per blueprint §4.1 ingest hot path.
 pub const INGEST_EMBED_BATCH_SIZE: usize = 32;
@@ -154,7 +211,16 @@ pub async fn ingest_episode_with_receipt<S: StoragePort + ?Sized>(
         DEFAULT_TARGET_TOKENS,
         DEFAULT_OVERLAP_TOKENS,
     );
-    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+    ingest_episode_inner(
+        storage,
+        embedder,
+        clock,
+        episode,
+        drafts,
+        heading_records,
+        IngestOptions::default(),
+    )
+    .await
 }
 
 /// Run the full ingest pipeline for a single Episode using a caller-supplied
@@ -203,14 +269,55 @@ pub async fn ingest_episode_with_counter_and_receipt<S: StoragePort + ?Sized>(
     );
 
     // Steps 2-5 are identical to ingest_episode; delegate to the shared helper.
-    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+    ingest_episode_inner(
+        storage,
+        embedder,
+        clock,
+        episode,
+        drafts,
+        heading_records,
+        IngestOptions::default(),
+    )
+    .await
 }
 
-/// Shared pipeline body used by both [`ingest_episode`] and
-/// [`ingest_episode_with_counter`] after chunking is complete.
+/// Run the full ingest pipeline with a caller-supplied [`TokenCounter`] and
+/// explicit [`IngestOptions`].
 ///
-/// Runs embedding → Chunk construction → delegates to [`assemble_and_write`]
-/// for WriteOp assembly and the single atomic write (INGEST-04).
+/// This is the primary extension point for opt-in features (e.g.,
+/// `dedup_embeddings`). All invariants of [`ingest_episode_with_counter`]
+/// hold unchanged:
+/// - **INGEST-04**: exactly ONE `atomic_write` call per Episode.
+/// - **INGEST-02**: embedding batch fallback is preserved on cache misses.
+/// - Cache read errors degrade silently to full embedding (design-for-failure).
+///
+/// Callers that do not need custom options should use
+/// [`ingest_episode_with_counter`] (calls this with `IngestOptions::default()`).
+pub async fn ingest_episode_with_counter_options<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    counter: Arc<dyn TokenCounter + Send + Sync>,
+    opts: IngestOptions,
+) -> Result<Lsn, LunarisError> {
+    let (drafts, heading_records) = chunk_markdown_with_headings_with_counter(
+        &episode.content,
+        DEFAULT_TARGET_TOKENS,
+        DEFAULT_OVERLAP_TOKENS,
+        counter.as_ref(),
+    );
+    Ok(ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records, opts)
+        .await?
+        .lsn)
+}
+
+/// Shared pipeline body used by all standard ingest entry points after chunking
+/// is complete.
+///
+/// Runs embedding (with optional dedup) → Chunk construction → delegates to
+/// [`assemble_and_write`] for WriteOp assembly and the single atomic write
+/// (INGEST-04).
 async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     storage: &S,
     embedder: &dyn Embedder,
@@ -218,10 +325,19 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     episode: Episode,
     drafts: Vec<ChunkDraft>,
     heading_records: Vec<crate::chunker::HeadingRecord>,
+    opts: IngestOptions,
 ) -> Result<IngestReceipt, LunarisError> {
     let episode_id = episode.id;
-    // Step 2: embed in batches of 32 with per-chunk fallback
-    let embeddings = embed_with_fallback(embedder, &drafts).await?;
+
+    // Step 2: embed in batches of 32 with per-chunk fallback (INGEST-02).
+    // When dedup_embeddings is true, check the KV cache first; misses are embedded
+    // and their cache-write ops are returned for inclusion in the atomic batch.
+    let (embeddings, cache_write_ops) = if opts.dedup_embeddings {
+        embed_with_dedup(storage, embedder, &episode.scope, &drafts).await?
+    } else {
+        let embeddings = embed_with_fallback(embedder, &drafts).await?;
+        (embeddings, Vec::new())
+    };
     debug_assert_eq!(embeddings.len(), drafts.len());
 
     // Step 3: build typed Chunks (drafts + their freshly-issued embeddings)
@@ -233,8 +349,18 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     }
 
     // Steps 4+5: assemble WriteOps and issue the single atomic write (INGEST-04).
-    let receipt =
-        assemble_and_write(storage, embedder, &episode, chunks, &heading_records, clock).await?;
+    // cache_write_ops (KvPut embcache entries for newly-embedded texts) are passed
+    // through so they land in the same atomic batch — INGEST-04 is preserved.
+    let receipt = assemble_and_write(
+        storage,
+        embedder,
+        &episode,
+        chunks,
+        &heading_records,
+        clock,
+        cache_write_ops,
+    )
+    .await?;
     Ok(IngestReceipt { lsn: receipt.lsn, episode_id, chunk_ids: receipt.chunk_ids })
 }
 
@@ -269,6 +395,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     chunks: Vec<Chunk>,
     heading_records: &[crate::chunker::HeadingRecord],
     clock: &HlcClock,
+    extra_ops: Vec<WriteOp>,
 ) -> Result<AssembleReceipt, LunarisError> {
     let source_char_len = episode.content.chars().count();
     let doctree =
@@ -355,9 +482,10 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     );
 
     // Assemble all WriteOps into the single batch.
-    // Capacity: doctree + episode + 2×chunk + 2×community (KvPut + VectorUpsert).
+    // Capacity: doctree + episode + 2×chunk + 2×community (KvPut + VectorUpsert)
+    // + any embcache KvPuts from the dedup path (extra_ops).
     let mut ops: Vec<WriteOp> =
-        Vec::with_capacity(2 + 2 * wired_chunks.len() + 2 * communities.len());
+        Vec::with_capacity(2 + 2 * wired_chunks.len() + 2 * communities.len() + extra_ops.len());
     let chunk_ids: Vec<ulid::Ulid> = wired_chunks.iter().map(|chunk| chunk.id).collect();
 
     ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
@@ -431,6 +559,9 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         // (graph-OFF/SQLite never exercises it — same trap as Phase-28 graph-ON RC).
     }
 
+    // Append embcache KvPuts (dedup path) — must land in the SAME atomic batch (INGEST-04).
+    ops.extend(extra_ops);
+
     // INGEST-04: the single atomic write for this episode (see module-level invariant).
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
     Ok(AssembleReceipt { lsn, chunk_ids })
@@ -480,6 +611,183 @@ async fn embed_with_fallback(
                     "embed_batch failed; falling back to per-chunk"
                 );
                 for text in &texts {
+                    let single = embedder.embed_batch(&[text]).await?;
+                    match single.into_iter().next() {
+                        Some(v) => out.push(v),
+                        None => {
+                            return Err(LunarisError::Storage(StorageError::Backend(
+                                "embed_batch returned 0 rows for single input".into(),
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Embedding dedup: check the KV embedding cache for each draft, embed only misses,
+/// and return cache-write ops for newly-embedded unique texts.
+///
+/// # Failure modes — all degrade gracefully
+///
+/// - **Cache read error** (`kv_get_many` returns `Err`): logged as `warn`, all
+///   entries treated as misses. Ingest proceeds with full embedding. Never fails.
+/// - **Malformed cached bytes** (length not a multiple of 4 or empty): treated as
+///   miss — defensive against partial writes or format drift.
+/// - **Embedder error on a miss**: surfaces to caller (same as `embed_with_fallback`).
+///
+/// # Deduplication within the episode
+///
+/// Identical texts in one episode are embedded exactly once. The first occurrence
+/// is embedded and cached; subsequent occurrences reuse the same `Vec<f32>` clone.
+///
+/// # Returns
+///
+/// `(embeddings, cache_write_ops)` where:
+/// - `embeddings[i]` is the embedding for `drafts[i]` (order-preserving).
+/// - `cache_write_ops` contains one `WriteOp::KvPut` per **newly-embedded unique
+///   text** (to be appended to the atomic batch by `assemble_and_write`).
+async fn embed_with_dedup<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    scope: &lunaris_core::Scope,
+    drafts: &[ChunkDraft],
+) -> Result<(Vec<Vec<f32>>, Vec<WriteOp>), LunarisError> {
+    use std::collections::HashMap;
+
+    if drafts.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    // Step 1: compute blake3 hash for every draft text (hex string → cache key).
+    // Dedup within the episode: track unique texts by hash so identical texts
+    // produce one cache lookup and one embed call, not N.
+    let hashes: Vec<String> =
+        drafts.iter().map(|d| blake3::hash(d.text.as_bytes()).to_hex().to_string()).collect();
+
+    // Collect unique hashes in first-occurrence order (preserves stable ordering
+    // for the kv_get_many call).
+    let mut unique_hashes: Vec<&str> = Vec::new();
+    let mut seen: HashMap<&str, usize> = HashMap::new(); // hash → index in unique_hashes
+    for h in &hashes {
+        let h_str = h.as_str();
+        if !seen.contains_key(h_str) {
+            seen.insert(h_str, unique_hashes.len());
+            unique_hashes.push(h_str);
+        }
+    }
+
+    // Build the cache keys for the unique set.
+    let cache_keys: Vec<Vec<u8>> = unique_hashes.iter().map(|h| embcache_key(scope, h)).collect();
+
+    // Step 2: batch cache lookup — degrade on error (design-for-failure).
+    let cache_results: Vec<Option<Vec<u8>>> = match storage.kv_get_many(scope, &cache_keys).await {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::warn!(
+                err = %e,
+                n = cache_keys.len(),
+                "kv_get_many failed; degrading to full embedding (embed_with_dedup)"
+            );
+            vec![None; cache_keys.len()]
+        }
+    };
+    debug_assert_eq!(cache_results.len(), unique_hashes.len());
+
+    // Step 3: decode cache hits. A hit with malformed bytes → treated as miss.
+    // unique_embedding[i] = Some(vec) if hash unique_hashes[i] had a valid cache hit.
+    let mut unique_embeddings: Vec<Option<Vec<f32>>> =
+        cache_results.into_iter().map(|opt| opt.and_then(|b| decode_embedding_cache(&b))).collect();
+
+    // Step 4: collect miss indices (into unique_hashes) and embed them.
+    let miss_indices: Vec<usize> =
+        unique_embeddings.iter().enumerate().filter(|(_, e)| e.is_none()).map(|(i, _)| i).collect();
+
+    let mut cache_write_ops: Vec<WriteOp> = Vec::with_capacity(miss_indices.len());
+
+    if !miss_indices.is_empty() {
+        // Gather the miss texts. We need the actual draft text for each unique hash
+        // at a miss index. Build a reverse map: hash → first draft text.
+        let mut hash_to_text: HashMap<&str, &str> = HashMap::with_capacity(unique_hashes.len());
+        for (draft, hash) in drafts.iter().zip(hashes.iter()) {
+            hash_to_text.entry(hash.as_str()).or_insert(draft.text.as_str());
+        }
+
+        let miss_texts: Vec<&str> =
+            miss_indices.iter().map(|&i| hash_to_text[unique_hashes[i]]).collect();
+
+        // Embed misses in batches with per-item fallback (INGEST-02 parity).
+        let miss_embeddings = embed_texts_with_fallback(embedder, &miss_texts).await?;
+
+        // Assign embedded results back to unique_embeddings and build cache write ops.
+        for (miss_pos, &unique_idx) in miss_indices.iter().enumerate() {
+            let embedding = miss_embeddings[miss_pos].clone();
+            // Cache write op: key = embcache_key, value = little-endian f32 bytes.
+            cache_write_ops.push(WriteOp::KvPut {
+                key: cache_keys[unique_idx].clone(),
+                value: encode_embedding_cache(&embedding),
+            });
+            unique_embeddings[unique_idx] = Some(embedding);
+        }
+    }
+
+    // Step 5: reconstruct embeddings in original draft order from unique_embeddings.
+    let embeddings: Vec<Vec<f32>> = hashes
+        .iter()
+        .map(|h| {
+            let idx = seen[h.as_str()];
+            unique_embeddings[idx]
+                .clone()
+                .expect("all unique_embeddings populated after miss-embed step")
+        })
+        .collect();
+
+    debug_assert_eq!(embeddings.len(), drafts.len());
+    Ok((embeddings, cache_write_ops))
+}
+
+/// Embed a flat list of texts in batches with per-item fallback on batch error.
+///
+/// Internal helper shared by `embed_with_dedup`. Unlike `embed_with_fallback`
+/// (which takes `&[ChunkDraft]`), this operates on raw `&[&str]` so the dedup
+/// path can pass the deduplicated miss-text slice directly.
+async fn embed_texts_with_fallback(
+    embedder: &dyn Embedder,
+    texts: &[&str],
+) -> Result<Vec<Vec<f32>>, LunarisError> {
+    let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+    for batch in texts.chunks(ingest_embed_batch_size()) {
+        match embedder.embed_batch(batch).await {
+            Ok(rows) if rows.len() == batch.len() => {
+                out.extend(rows);
+            }
+            Ok(rows) => {
+                tracing::warn!(
+                    expected = batch.len(),
+                    got = rows.len(),
+                    "embed_texts_with_fallback: wrong row count; falling back to per-item"
+                );
+                for text in batch {
+                    let single = embedder.embed_batch(&[text]).await?;
+                    match single.into_iter().next() {
+                        Some(v) => out.push(v),
+                        None => {
+                            return Err(LunarisError::Storage(StorageError::Backend(
+                                "embed_batch returned 0 rows for single input".into(),
+                            )));
+                        }
+                    }
+                }
+            }
+            Err(batch_err) => {
+                tracing::warn!(
+                    err = %batch_err,
+                    batch_size = batch.len(),
+                    "embed_texts_with_fallback: batch failed; falling back to per-item"
+                );
+                for text in batch {
                     let single = embedder.embed_batch(&[text]).await?;
                     match single.into_iter().next() {
                         Some(v) => out.push(v),
@@ -592,9 +900,18 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     }
 
     // Step 4: delegate to assemble_and_write — the single storage write call (INGEST-04).
-    Ok(assemble_and_write(storage, embedder, &episode, chunks, &winner.heading_records, clock)
-        .await?
-        .lsn)
+    // Bakeoff path has no embcache ops (dedup is not applied to the bakeoff path — out of scope).
+    Ok(assemble_and_write(
+        storage,
+        embedder,
+        &episode,
+        chunks,
+        &winner.heading_records,
+        clock,
+        Vec::new(),
+    )
+    .await?
+    .lsn)
 }
 
 #[cfg(test)]

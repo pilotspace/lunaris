@@ -142,6 +142,21 @@ pub fn doctree_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     format!("{}doctree:{id}", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for an embedding cache entry: `lunaris:{scope}:embcache:{hash_hex}`
+///
+/// `hash_hex` is the lowercase-hex encoding of a `blake3` hash of the chunk text.
+/// This key namespaces the embedding cache per scope so that cross-scope
+/// text sharing (same words, different agents) cannot produce stale hits if
+/// the embedder is ever reconfigured differently per scope.
+///
+/// Used exclusively by the `IngestOptions::dedup_embeddings` fast path in
+/// `lunaris-ingest`. Backends that do not override `StoragePort::kv_get_many`
+/// always return a miss, making the cache transparent (degrade to re-embedding).
+#[inline]
+pub fn embcache_key(scope: &Scope, hash_hex: &str) -> Vec<u8> {
+    format!("{}embcache:{hash_hex}", scope_prefix(scope)).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Scoped primitive scan-prefix helpers
 // ---------------------------------------------------------------------------
