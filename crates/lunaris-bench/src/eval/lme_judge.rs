@@ -91,10 +91,17 @@ impl OllamaChat {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            anyhow::bail!("ollama {model} HTTP {status}: {}", text.chars().take(300).collect::<String>());
+            anyhow::bail!(
+                "ollama {model} HTTP {status}: {}",
+                text.chars().take(300).collect::<String>()
+            );
         }
-        let v: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("ollama {model} bad JSON: {e}; body={}", text.chars().take(200).collect::<String>()))?;
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            anyhow::anyhow!(
+                "ollama {model} bad JSON: {e}; body={}",
+                text.chars().take(200).collect::<String>()
+            )
+        })?;
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
             anyhow::bail!("ollama {model} error: {err}");
         }
@@ -122,7 +129,9 @@ pub(crate) fn gen_system_prompt() -> &'static str {
 /// Build the generation user-prompt: retrieved context block + the question.
 /// `contexts` are the top-k retrieved turn texts (each already `"role: ..."`).
 pub(crate) fn gen_user_prompt(contexts: &[String], question: &str) -> String {
-    let mut s = String::with_capacity(question.len() + contexts.iter().map(|c| c.len() + 8).sum::<usize>() + 64);
+    let mut s = String::with_capacity(
+        question.len() + contexts.iter().map(|c| c.len() + 8).sum::<usize>() + 64,
+    );
     s.push_str("# Retrieved conversation memories\n\n");
     for (i, c) in contexts.iter().enumerate() {
         s.push_str(&format!("[{}] {}\n", i + 1, c));
@@ -190,7 +199,9 @@ mod tests {
     #[test]
     fn judge_prompt_default_matches_official_template() {
         let p = judge_prompt("multi-session", false, "Q?", "A", "R");
-        assert!(p.starts_with("I will give you a question, a correct answer, and a response from a model."));
+        assert!(p.starts_with(
+            "I will give you a question, a correct answer, and a response from a model."
+        ));
         assert!(p.contains("Question: Q?"));
         assert!(p.contains("Correct Answer: A"));
         assert!(p.contains("Model Response: R"));
