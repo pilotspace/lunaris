@@ -24,11 +24,14 @@ not a retrieval one. The distinction below is load-bearing: our LongMemEval numb
 **Bottom line up front:** Lunaris's *moat is the retrieve path* — **p50 1.4 ms in-engine / ~62 ms end-to-end**, which is
 **~100× faster than Zep (155–162 ms)** and **~1000× faster than Mem0 (p95 1.44 s)**. The generation half is now measured
 too: on the **full adversarial LongMemEval-S haystack with reranked recall + an LLM judge (the apples-to-apple config)**,
-Lunaris scores **J = 92.3% (36/39)** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)**. The sample is **n=39 of 50**
-(a candle Metal cross-process buffer-reclaim race crashes 11 questions at process start — see §3 caveat). The drops are
-**uncorrelated with haystack size or question type** (verified: dropped haystacks average 485K chars vs 490K for those that
-passed), so they are an effectively random subsample and **n=39 is approximately unbiased**, not optimistic. Read it as
-**J ≈ 92%, pending a clean 50**.
+Lunaris scores **J = 94.0% (47/50) on a clean N=50 with a GPT-4o judge (2026-06-25)** —
+**BEATING Zep (90.2%)** and far above **Mem0 (66–68%)**; evidence-recall@10 = 96% (48/50).
+This supersedes the earlier **n=39 / J=92.3%** run: the 11 drops were NOT a candle Metal
+race but a **Lunaris embedder OOM bug** (count-batching unbounded RAPTOR community
+summaries → a 124 GB attention tensor), fixed in `713478b`+`44d31f2` → all 50 now
+complete on Metal. Judge sensitivity, on identical deterministic retrieval: **minimax-m3
+J=88% vs GPT-4o J=94%** — GPT-4o is the LongMemEval standard (Zep's methodology), so 94%
+is the apples-to-apple figure. Caveat: N=50 is a 10% slice (wide CI); definitive = full 500.
 Crucial methodology note: an early "~20%" reading was the harness measuring **un-reranked vector recall** (the bare builder
 never called `.rerank()`); wiring the production cross-encoder back in lifts evidence-recall@10 from 20% → 100% and J from
 20% → ~95% on identical questions. The reranker is the difference.
@@ -44,7 +47,7 @@ never called `.rerank()`); wiring the production cross-encoder back in lifts evi
 | recall@1 / @5 / @10 | **71.4% / 88.4% / 93.2%** | 1000 SQuAD paras × 500 q, **no reranker** |
 | MRR | 0.786 | single-hop retrieval |
 | **LongMemEval evidence-recall@10** | **94.0%** (47/50) | oracle setting, **full embed+bge-rerank** stack, multi-session haystack ingest — *retrieval*, not J-score |
-| **LongMemEval-S J-score (LLM-judge)** | **92.3%** (36/39) | **NEW 2026-06-23** — full adversarial haystack, reranked recall, minimax-m3:cloud gen+judge, official judge prompts. **The apples-to-apple generation metric.** n=39 of 50 (Metal cross-process reclaim race crashes 11 at process start, size-uncorrelated → ~unbiased subsample, see caveat). Read as J≈92%. |
+| **LongMemEval-S J-score (LLM-judge)** | **94.0%** (47/50) | **CLEAN N=50, GPT-4o judge, 2026-06-25 — BEATS Zep 90.2%.** Full adversarial haystack, reranked recall, gen=minimax-m3:cloud / judge=openai/gpt-4o (LongMemEval standard). Supersedes the n=39/92.3% run (the 11 drops were a Lunaris embedder OOM bug, fixed `713478b`+`44d31f2`). minimax-judge gave 88% on identical retrieval → judge matters ~6pt. N=50 = 10% slice (wide CI). |
 | Engine footprint (Moon) | **0.9% CPU, 75 MB RSS** | embedder is the cost, not the store |
 | Ingest throughput | 1.1 docs/s (p50 807 ms/doc) | CPU GGUF embed of full paragraphs — the weak spot |
 

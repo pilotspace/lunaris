@@ -127,7 +127,37 @@ RUST_LOG=error MOON_URL="moon://127.0.0.1:6381" \
 **Stack:** granite-r2 **Q4_K_M** embedder + bge-reranker-v2-m3 **Q5_K_M** cross-encoder **on Metal GPU** · gen + judge **`minimax-m3:cloud`** (Ollama) · official LongMemEval per-question-type judge prompts · live Moon@6381
 **Harness:** `lunaris-evals longmemeval` with `LUNARIS_EVAL_LME_DATASET=longmemeval_s LME_JUDGE=1 LME_RERANK=1`, driven in process-isolated windows (`LME_OFFSET`).
 
-## Results (n = 39 of 50; offsets spanning 0–49)
+## ✅ CLEAN N=50 (GPT-4o judge) — 2026-06-25 — SUPERSEDES the n=39 run below
+
+| metric | value |
+|---|---:|
+| **J-score (GPT-4o LLM-judge)** | **94.0% (47/50)** |
+| **evidence-recall@10** | **96.0% (48/50)** |
+| gen / judge | minimax-m3:cloud (gen, temp 0) / **openai/gpt-4o** (judge — LongMemEval standard) |
+
+**Lunaris J = 94.0% BEATS Zep (90.2%) and crushes Mem0 (66–68%).** The n=39 limit
+below is RESOLVED: the 11 Metal/CPU crashes were a **Lunaris embedder bug** — the
+native embedder batched unbounded RAPTOR community summaries by fixed COUNT, padding
+to the longest member → a `[32,heads,8192,8192]` attention tensor ≈ **124 GB** that
+OOM-killed CPU and crashed Metal's buffer pool. Fixed in `713478b` (activation-budget
+batching, `plan_batches`) + `44d31f2` (cap community summary at 2048 B). Post-fix the
+exact OOM config (off13 full haystack + rerank + batch=32) peaks **4.7 GB**; all 50
+questions complete on Metal.
+
+**Judge sensitivity, isolated:** identical deterministic retrieval (gen=minimax temp 0),
+only the judge swapped → **minimax-m3 J=88.0% (44/50)** vs **GPT-4o J=94.0% (47/50)**.
+The 6-pt gap was minimax over-penalizing correct answers; GPT-4o is the LongMemEval
+standard (= Zep's methodology), so **94.0% is the apples-to-apple number**. With GPT-4o
+the J tracked recall almost exactly — the 3 FAILs: q10 (retrieval-miss), q2 & q49
+(generation-misses); q14 was a recall-miss GPT-4o still scored correct. Methodology:
+diskless Moon (`--appendonly no --save ""`), model routing via `tmp/route_shim.py`
+(gen→Ollama minimax, judge→OpenRouter gpt-4o), ~1.8 hr Metal. Raw:
+`tmp/lme-gpt4o-n50-final.json`. Caveat: N=50 is a 10% slice of the 500-question set
+(wide CI); a definitive claim wants the full 500 (~18 hr Metal).
+
+---
+
+## Results — n = 39 of 50 (SUPERSEDED 2026-06-25 by the clean N=50 above)
 
 | metric | value |
 |---|---:|
@@ -158,5 +188,7 @@ The earlier "~20%" came from the harness running the **bare** recall builder, wh
 ## Headline
 
 **Reranked Lunaris scores J = 92.3% (36/39) on LongMemEval-S full haystack** — matching **Zep (90.2%)** and far above **Mem0 (66–68%)** on the same metric class. The prior 20% was a harness mis-configuration (no rerank), not a Lunaris limitation.
+
+> **UPDATE 2026-06-25 — clean N=50, GPT-4o judge: J = 94.0% (47/50), recall@10 = 96% — Lunaris now BEATS Zep (90.2%).** The n=39 cap was a Lunaris embedder OOM bug, since fixed (`713478b`+`44d31f2`); see the "✅ CLEAN N=50" section above. The candle "Metal leak" framing in the caveat below was a misdiagnosis — the real cause was the 124 GB activation tensor from count-batching unbounded RAPTOR summaries.
 
 **Reproduce:** `tmp/run-lme-s-chunked.sh 50 10 240` · build `--features embedder-gguf,reranker-gguf,lunaris/metal`.
