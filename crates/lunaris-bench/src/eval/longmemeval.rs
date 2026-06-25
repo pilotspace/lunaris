@@ -292,6 +292,36 @@ pub(crate) fn evidence_recall_hit(hit_sources: &[String], answer_session_ids: &[
         .any(|s| answer_session_ids.iter().any(|sid| !sid.is_empty() && s.contains(sid.as_str())))
 }
 
+/// `(covered, total)` count of **distinct non-empty gold sessions** that the
+/// retrieved `hit_sources` surfaced. `total` is the number of gold answer-
+/// sessions the question requires; `covered` is how many of them a top-k hit
+/// actually carried. Empty sids are ignored on both sides (a question with no
+/// non-empty gold session yields `(0, 0)`).
+pub(crate) fn evidence_recall_coverage(
+    hit_sources: &[String],
+    answer_session_ids: &[String],
+) -> (usize, usize) {
+    let covered_one = |sid: &str| !sid.is_empty() && hit_sources.iter().any(|s| s.contains(sid));
+    let total = answer_session_ids.iter().filter(|s| !s.is_empty()).count();
+    let covered = answer_session_ids.iter().filter(|s| covered_one(s.as_str())).count();
+    (covered, total)
+}
+
+/// Strict ("all-gold") evidence recall: true iff **every** gold answer-session
+/// was surfaced in the top-k. This is the honest retrieval metric for
+/// multi-session questions, whose answer must synthesize facts across *all* gold
+/// sessions — partial coverage yields a wrong answer even though the any-gold
+/// [`evidence_recall_hit`] still reads as a hit (it fires on a single covered
+/// session). Returns false when the question has no non-empty gold session, so
+/// an empty gold list is never counted as a vacuous success.
+pub(crate) fn evidence_recall_all_hit(
+    hit_sources: &[String],
+    answer_session_ids: &[String],
+) -> bool {
+    let (covered, total) = evidence_recall_coverage(hit_sources, answer_session_ids);
+    total > 0 && covered == total
+}
+
 /// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
 /// (distractor sessions included), then recall the top-k turns and score.
@@ -368,6 +398,12 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // process exits well under the ceiling and the OS reclaims all Metal
     // buffers. We therefore keep the simple per-question `Lunaris::open` here.
     let mut evidence_hits = 0usize;
+    // Strict "all-gold" recall: every required gold session surfaced (the honest
+    // metric for multi-session questions). `gold_*_sum` accumulate the per-
+    // question (covered, total) so we can report mean gold-session coverage.
+    let mut evidence_all_hits = 0usize;
+    let mut gold_covered_sum = 0usize;
+    let mut gold_total_sum = 0usize;
     let mut judge_correct = 0usize;
     for (i, rec) in records.iter().skip(offset).take(n).enumerate() {
         // Pristine store + fresh empty indexes for THIS question only.
@@ -424,6 +460,14 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         if recall_hit {
             evidence_hits += 1;
         }
+        let recall_all = evidence_recall_all_hit(&sources, &rec.answer_session_ids);
+        if recall_all {
+            evidence_all_hits += 1;
+        }
+        let (gold_covered, gold_total) =
+            evidence_recall_coverage(&sources, &rec.answer_session_ids);
+        gold_covered_sum += gold_covered;
+        gold_total_sum += gold_total;
         if debug {
             eprintln!(
                 "  [DEBUG q{i}] qid={} type={} ingested={ingested} turns | gold_sids={:?} | {} hits",
@@ -441,6 +485,9 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 );
             }
             eprintln!("    => evidence_recall_hit = {recall_hit}");
+            eprintln!(
+                "    => evidence_recall_all = {recall_all} (gold sessions covered {gold_covered}/{gold_total})"
+            );
         }
 
         if let Some(chat) = &chat {
@@ -479,19 +526,33 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 }
             }
             eprintln!(
-                "  [longmemeval {}/{n}] J-score running={:.1}%  (evidence-recall@{k}={:.1}%)",
+                "  [longmemeval {}/{n}] J-score running={:.1}%  (evidence-recall@{k} any-gold={:.1}%, all-gold={:.1}%)",
                 i + 1,
                 100.0 * judge_correct as f64 / (i + 1) as f64,
                 100.0 * evidence_hits as f64 / (i + 1) as f64,
+                100.0 * evidence_all_hits as f64 / (i + 1) as f64,
             );
         } else {
             eprintln!(
-                "  [longmemeval {}/{n}] evidence-recall@{k} running={:.1}%",
+                "  [longmemeval {}/{n}] evidence-recall@{k} running: any-gold={:.1}%, all-gold={:.1}%",
                 i + 1,
-                100.0 * evidence_hits as f64 / (i + 1) as f64
+                100.0 * evidence_hits as f64 / (i + 1) as f64,
+                100.0 * evidence_all_hits as f64 / (i + 1) as f64
             );
         }
     }
+
+    let mean_coverage = if gold_total_sum > 0 {
+        100.0 * gold_covered_sum as f64 / gold_total_sum as f64
+    } else {
+        0.0
+    };
+    eprintln!(
+        "[longmemeval] evidence-recall@{k} over n={n}: any-gold={:.1}%  all-gold={:.1}%  \
+         (gold-session coverage {gold_covered_sum}/{gold_total_sum} = {mean_coverage:.1}%)",
+        100.0 * evidence_hits as f64 / n as f64,
+        100.0 * evidence_all_hits as f64 / n as f64,
+    );
 
     if judge_mode {
         Ok(100.0 * judge_correct as f64 / n as f64)
@@ -762,5 +823,36 @@ mod tests {
         assert!(!evidence_recall_hit(&sources_miss, &answer_sessions));
         // Empty gold-session id must never match everything.
         assert!(!evidence_recall_hit(&sources_hit, &[String::new()]));
+    }
+
+    #[test]
+    fn evidence_recall_all_hit_requires_every_gold_session() {
+        // A multi-session question whose answer needs THREE gold sessions.
+        let gold = vec!["s2".to_string(), "s5".to_string(), "s7".to_string()];
+        let all_present = vec![
+            "helios:fs/lme0000/h/s2/0000.md".to_string(),
+            "helios:fs/lme0000/h/s5/0003.md".to_string(),
+            "helios:fs/lme0000/h/s7/0001.md".to_string(),
+            "helios:fs/lme0000/h/s9/0000.md".to_string(), // distractor session
+        ];
+        let partial = vec![
+            "helios:fs/lme0000/h/s2/0000.md".to_string(),
+            "helios:fs/lme0000/h/s5/0003.md".to_string(),
+            // s7 (a required gold session) is missing
+            "helios:fs/lme0000/h/s9/0000.md".to_string(),
+        ];
+        // all-gold fires only when EVERY required session is covered.
+        assert!(evidence_recall_all_hit(&all_present, &gold));
+        assert!(!evidence_recall_all_hit(&partial, &gold));
+        // Contrast: the any-gold metric OVERSTATES the partial case as a hit —
+        // exactly the multi-session inflation the strict metric corrects.
+        assert!(evidence_recall_hit(&partial, &gold));
+        // Coverage counts (covered, total).
+        assert_eq!(evidence_recall_coverage(&all_present, &gold), (3, 3));
+        assert_eq!(evidence_recall_coverage(&partial, &gold), (2, 3));
+        // Empty / all-empty gold is never a recall success (no vacuous true).
+        assert!(!evidence_recall_all_hit(&all_present, &[]));
+        assert!(!evidence_recall_all_hit(&all_present, &[String::new()]));
+        assert_eq!(evidence_recall_coverage(&all_present, &[String::new()]), (0, 0));
     }
 }
