@@ -69,7 +69,14 @@ pub struct Chunk {
     pub heading_path: Vec<String>,
     #[serde(default)]
     pub overlap_tail: String,
-    #[serde(default)]
+    // The 768-d embedding lives in the FT vector index as a binary blob
+    // (`atomic.rs::VectorUpsert` → field `vec`). Serializing it AGAIN into the
+    // KvPut hydration doc as JSON floats was ~80% of the doc (~10 KB vs 3 KB
+    // binary) and is never read back (recall/consolidate/verify touch only the
+    // index). `skip_serializing` omits it from new payloads; `default` keeps
+    // pre-fix rows (which carry "embedding") deserialisable. See
+    // project_moon_embedding_doc_redundancy.
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     /// Optional link to the nearest parent [`TocNode`] in the document tree.
     ///
@@ -125,7 +132,14 @@ pub struct Entity {
     #[serde(default)]
     pub aliases: Vec<String>,
     pub entity_type: String,
-    #[serde(default)]
+    // The 768-d embedding lives in the FT vector index as a binary blob
+    // (`atomic.rs::VectorUpsert` → field `vec`). Serializing it AGAIN into the
+    // KvPut hydration doc as JSON floats was ~80% of the doc (~10 KB vs 3 KB
+    // binary) and is never read back (recall/consolidate/verify touch only the
+    // index). `skip_serializing` omits it from new payloads; `default` keeps
+    // pre-fix rows (which carry "embedding") deserialisable. See
+    // project_moon_embedding_doc_redundancy.
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
     pub confidence: f32,
@@ -210,7 +224,14 @@ pub struct Fact {
     pub predicate: String,
     pub object: Ulid,
     pub fact_text: String,
-    #[serde(default)]
+    // The 768-d embedding lives in the FT vector index as a binary blob
+    // (`atomic.rs::VectorUpsert` → field `vec`). Serializing it AGAIN into the
+    // KvPut hydration doc as JSON floats was ~80% of the doc (~10 KB vs 3 KB
+    // binary) and is never read back (recall/consolidate/verify touch only the
+    // index). `skip_serializing` omits it from new payloads; `default` keeps
+    // pre-fix rows (which carry "embedding") deserialisable. See
+    // project_moon_embedding_doc_redundancy.
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
     pub confidence: f32,
@@ -262,7 +283,9 @@ pub struct Community {
     #[serde(default)]
     pub members: Vec<Ulid>,
     pub summary: String,
-    #[serde(default)]
+    // Same rationale as Chunk/Entity/Fact embeddings: the binary copy lives in
+    // the communities FT index; the JSON copy here was dead weight.
+    #[serde(default, skip_serializing)]
     pub summary_embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
 }
@@ -362,5 +385,57 @@ mod tests {
         let back: Chunk = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.parent_id, Some(parent));
         assert_eq!(back.text, chunk.text);
+    }
+
+    #[test]
+    fn embedding_is_not_serialized_into_hydration_doc() {
+        // The 768-d embedding is stored binary in the FT index (VectorUpsert);
+        // re-serialising it as JSON floats into the KvPut hydration doc was
+        // ~80% of the doc and is never read back. The doc MUST omit it.
+        let clock = test_clock();
+        let mut chunk =
+            Chunk::new(dev_scope(), ulid::Ulid::new(), "hello world", 2, 0, vec![], &clock);
+        chunk.embedding = Some(vec![0.123_f32; 768]);
+        let json = serde_json::to_string(&chunk).expect("serialize");
+        assert!(
+            !json.contains("\"embedding\""),
+            "embedding must NOT be serialized into the hydration doc; got {json}"
+        );
+        // Hydration payload stays intact and small (pre-fix this was >10 KB).
+        assert!(json.len() < 600, "doc must be small without the embedding, was {}", json.len());
+        let back: Chunk = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.text, "hello world");
+        assert!(back.embedding.is_none(), "embedding lives in the index, not the doc");
+    }
+
+    #[test]
+    fn embedding_back_compat_pre_fix_row_with_embedding_still_deserializes() {
+        // `skip_serializing` omits embedding on WRITE but deserialize stays
+        // tolerant: a pre-fix row that carries "embedding" must still load.
+        let clock = test_clock();
+        let chunk = Chunk::new(dev_scope(), ulid::Ulid::new(), "hi", 1, 0, vec![], &clock);
+        let mut map: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&serde_json::to_string(&chunk).unwrap()).unwrap();
+        map.insert("embedding".into(), serde_json::json!([0.5_f32, 0.5, 0.5, 0.5]));
+        let with_emb = serde_json::to_string(&map).unwrap();
+        let back: Chunk =
+            serde_json::from_str(&with_emb).expect("pre-fix row with embedding must deserialize");
+        assert_eq!(back.text, "hi");
+        assert_eq!(back.embedding, Some(vec![0.5_f32, 0.5, 0.5, 0.5]));
+    }
+
+    #[test]
+    fn community_summary_embedding_is_not_serialized() {
+        let clock = test_clock();
+        let mut c = Community::new(dev_scope(), 0, "root summary", &clock);
+        c.summary_embedding = Some(vec![0.9_f32; 768]);
+        let json = serde_json::to_string(&c).expect("serialize");
+        assert!(
+            !json.contains("summary_embedding"),
+            "community summary_embedding must NOT be serialized into the hydration doc"
+        );
+        let back: Community = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.summary, "root summary");
+        assert!(back.summary_embedding.is_none());
     }
 }
