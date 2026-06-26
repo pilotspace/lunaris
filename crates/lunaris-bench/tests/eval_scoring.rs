@@ -75,10 +75,17 @@ fn harnesses_wire_the_pure_scorers_not_hardcoded_zero() {
     let loc = std::fs::read_to_string(dir.join("locomo.rs")).unwrap();
 
     assert!(erf.contains("compute_f1"), "er_f1::run must call compute_f1");
-    assert!(lme.contains("recall_j_score"), "longmemeval must call recall_j_score");
+    // longmemeval was rewired from recall-only to the apples-to-apple gen+judge
+    // J-score path (commit 1942803); the live arm must call `score_haystack`.
+    assert!(
+        lme.contains("score_haystack"),
+        "longmemeval must call score_haystack (gen+judge J-score)"
+    );
     assert!(loc.contains("recall_j_score"), "locomo must call recall_j_score");
 
     assert!(!erf.contains("let f1 = 0.0"), "er_f1 still hardcodes f1 = 0.0 (the 0.0->FAIL trap)");
     assert!(!loc.contains("let j_score = 0.0"), "locomo still hardcodes j_score = 0.0");
-    assert!(!lme.contains("Ok(0.0)"), "longmemeval still returns the Ok(0.0) stub");
+    // `run()` must derive j_score from score_haystack, not the hardcoded stub.
+    // (score_haystack itself keeps a legit `Ok(0.0)` empty-window guard.)
+    assert!(!lme.contains("let j_score = 0.0"), "longmemeval still hardcodes j_score = 0.0");
 }
