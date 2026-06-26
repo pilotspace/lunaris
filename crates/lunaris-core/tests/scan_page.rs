@@ -281,7 +281,16 @@ async fn test_full_primitive_not_truncated() {
         scan_page::<Fact>(&port, &sc, &fact_prefix(&sc), None, 10, None).await.unwrap();
 
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0], f, "returned Fact equals stored Fact across all fields");
+    // The embedding is intentionally index-only (skip_serializing, commit 6093a9f):
+    // dropped from the hydration doc, so it comes back None. The point of this test
+    // — the 4096-char fact_text is NOT truncated and every other field survives —
+    // holds after normalizing the embedding out of the full-struct comparison.
+    assert!(page.items[0].embedding.is_none(), "fact embedding is index-only, not in the doc");
+    f.embedding = None;
+    assert_eq!(
+        page.items[0], f,
+        "returned Fact equals stored Fact across all (non-embedding) fields"
+    );
 }
 
 #[tokio::test]
