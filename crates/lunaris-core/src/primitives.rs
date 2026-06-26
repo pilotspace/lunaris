@@ -283,13 +283,13 @@ pub struct Community {
     #[serde(default)]
     pub members: Vec<Ulid>,
     pub summary: String,
-    // Unlike Chunk/Entity/Fact (whose vectors are re-read from the binary FT
-    // index, never the doc), the community summary embedding has NO second store:
-    // RAPTOR hydrates it straight back from this payload via `read_as_of`, and
-    // the Phase-30 B1 parity contract requires `Some(768-d)` after the round-trip
-    // (crates/lunaris-conformance/src/raptor.rs). So it MUST stay serialized —
-    // `skip_serializing` here silently dropped it and broke RAPTOR parity.
-    #[serde(default)]
+    // Index-only, same as Chunk/Entity/Fact: the summary embedding is written to
+    // the `communities` FT vector index via `VectorUpsert` at ingest
+    // (lunaris-ingest/src/pipeline.rs ~L408), and RAPTOR recall reads it from that
+    // index (the Tree operator vector-searches `"communities"`, then reads the KV
+    // row only for the summary text/members — never the embedding). So the JSON
+    // copy in the hydration doc is dead weight; `skip_serializing` drops it.
+    #[serde(default, skip_serializing)]
     pub summary_embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
 }
@@ -429,20 +429,21 @@ mod tests {
     }
 
     #[test]
-    fn community_summary_embedding_survives_the_hydration_round_trip() {
-        // Communities have NO second (FT-index) copy of their embedding — RAPTOR
-        // reads it straight back from this doc and the Phase-30 B1 parity contract
-        // requires Some(768-d). So unlike Chunk/Entity/Fact it MUST be persisted.
+    fn community_summary_embedding_is_index_only_not_in_the_doc() {
+        // The summary embedding lives in the `communities` FT vector index
+        // (VectorUpsert at ingest), and RAPTOR recall reads it from there — never
+        // from this doc. So like Chunk/Entity/Fact it is skip_serializing'd out of
+        // the hydration payload and comes back None after the round-trip.
         let clock = test_clock();
         let mut c = Community::new(dev_scope(), 0, "root summary", &clock);
         c.summary_embedding = Some(vec![0.9_f32; 768]);
         let json = serde_json::to_string(&c).expect("serialize");
         assert!(
-            json.contains("summary_embedding"),
-            "community summary_embedding MUST be serialized (RAPTOR reads it back; Phase-30 B1)"
+            !json.contains("summary_embedding"),
+            "community summary_embedding must NOT be serialized into the hydration doc (index-only)"
         );
         let back: Community = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.summary, "root summary");
-        assert_eq!(back.summary_embedding, Some(vec![0.9_f32; 768]));
+        assert!(back.summary_embedding.is_none(), "embedding lives in the FT index, not the doc");
     }
 }

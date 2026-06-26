@@ -149,7 +149,9 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 /// - `id`, `level`, `parent` — exact equality (all deterministic).
 /// - `members` — community-typed members exact equality; leaf member count equality.
 /// - `summary` — non-empty on both.
-/// - `summary_embedding` — `Some(768-d)` on both (Phase-30 B1: populated at ingest).
+/// - `summary_embedding` — `None` on both after hydration: it is index-only
+///   (skip_serializing'd out of the KV doc; the 768-d vector lives in the
+///   `communities` FT index via VectorUpsert), not carried in the payload.
 ///
 /// Used for both SQLite self-parity (unconditional) and Moon vs SQLite (UAT-gated).
 pub async fn run_raptor_parity_suite(
