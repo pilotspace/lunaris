@@ -51,6 +51,15 @@ fn chunk_roundtrip() {
     c.overlap_tail = "...".into();
     let s = serde_json::to_string(&c).unwrap();
     let back: Chunk = serde_json::from_str(&s).unwrap();
+    // The 768-d embedding is intentionally index-only (skip_serializing, commit
+    // 6093a9f): the binary copy lives in the FT vector index, never the doc, and
+    // no production path reads it back from the hydration payload. So it does NOT
+    // survive the round-trip — but every other field must.
+    assert!(
+        back.embedding.is_none(),
+        "chunk embedding is index-only, dropped from the hydration doc"
+    );
+    c.embedding = None;
     assert_eq!(c, back);
 }
 

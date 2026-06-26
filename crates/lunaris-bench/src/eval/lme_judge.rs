@@ -91,10 +91,17 @@ impl OllamaChat {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            anyhow::bail!("ollama {model} HTTP {status}: {}", text.chars().take(300).collect::<String>());
+            anyhow::bail!(
+                "ollama {model} HTTP {status}: {}",
+                text.chars().take(300).collect::<String>()
+            );
         }
-        let v: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("ollama {model} bad JSON: {e}; body={}", text.chars().take(200).collect::<String>()))?;
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            anyhow::anyhow!(
+                "ollama {model} bad JSON: {e}; body={}",
+                text.chars().take(200).collect::<String>()
+            )
+        })?;
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
             anyhow::bail!("ollama {model} error: {err}");
         }
@@ -112,17 +119,188 @@ impl OllamaChat {
 /// System prompt for the answer-generation step. Faithful to LongMemEval's
 /// retrieval-augmented QA setup: answer the question using ONLY the supplied
 /// conversation snippets; abstain when the evidence is absent.
-pub(crate) fn gen_system_prompt() -> &'static str {
+pub(crate) fn gen_system_prompt(cot: bool) -> &'static str {
+    if cot {
+        // CoT / memory-aware answering. General assistant behavior — NOT tuned
+        // to specific questions (that would game the benchmark). Targets two
+        // reader-reasoning failure modes seen with full retrieval coverage:
+        // (1) counting/aggregation across sessions (miscounts under "concise"),
+        // (2) preference/recommendation Qs where the factual "say you don't
+        //     know" misfires instead of APPLYING the user's stated preference.
+        return "You are a helpful assistant with access to the user's past \
+            conversations. Answer using ONLY the provided conversation history. \
+            Each memory may begin with a `[Session date: ...]` marker and the \
+            memories are arranged oldest-to-newest; for time, ordering, or \
+            recency questions read that timeline directly and answer. ONLY when \
+            the question explicitly asks HOW MANY, how many times, or the total \
+            number of something, first list each relevant occurrence one by one, \
+            then state the final count — never guess a number without listing \
+            what you counted. When asked for a recommendation or a tailored \
+            response, apply the user's previously stated preferences and \
+            personal details, even when the exact thing asked about was not \
+            itself discussed before. If the necessary information is genuinely \
+            absent, say you don't know. Answer concisely otherwise.";
+    }
     "You are a helpful assistant. Answer the user's question using ONLY the \
      provided conversation history between the user and the assistant. The \
-     snippets are retrieved memories and may be out of order. If the answer \
-     is not contained in the snippets, say you don't know. Answer concisely."
+     snippets are retrieved memories and may be out of order. Each memory may \
+     begin with a `[Session date: ...]` marker giving the real-world date of \
+     that conversation; use those dates (and the current date) for any \
+     time-based reasoning, ordering, or determining which fact is most recent. \
+     If the answer is not contained in the snippets, say you don't know. \
+     Answer concisely."
 }
 
-/// Build the generation user-prompt: retrieved context block + the question.
-/// `contexts` are the top-k retrieved turn texts (each already `"role: ..."`).
-pub(crate) fn gen_user_prompt(contexts: &[String], question: &str) -> String {
-    let mut s = String::with_capacity(question.len() + contexts.iter().map(|c| c.len() + 8).sum::<usize>() + 64);
+/// General query-intent categories inferred from the QUESTION TEXT alone —
+/// never the gold type label. A production agentic-memory system routes its
+/// retrieval depth and answer strategy on what the user is actually asking; a
+/// "how many times" question needs every instance in view and an explicit
+/// count, a "when / how long" question needs the dated timeline, a "suggest /
+/// recommend" question needs the user's stored preferences surfaced (and a
+/// tight, undiluted context). These are GENERIC intents any assistant would
+/// distinguish — NOT a reverse-engineering of LongMemEval's six labels (the
+/// classifier never sees the type). Routing each question to its own config is
+/// what lets a single engine serve types whose optimal handling conflicts under
+/// any one uniform setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryIntent {
+    /// "how many times", "how many <noun>", "number of", "count" — enumerate
+    /// every occurrence then state the total (broad context).
+    Counting,
+    /// "when", "how long", "how many <time-unit>", "before/after", "most
+    /// recent", "last/first time" — read the dated timeline (chronological).
+    Temporal,
+    /// "suggest", "recommend", "what should I", "advice", "tips" — recall and
+    /// apply the user's stored preferences (tight, best-evidence-first context).
+    Recommendation,
+    /// Everything else: a direct factual lookup over the memories.
+    Factual,
+}
+
+/// Classify a question's intent from its text. Precedence is
+/// Temporal > Counting > Recommendation > Factual so that "how many DAYS since"
+/// routes to Temporal (a duration), not Counting (instance-tallying).
+pub(crate) fn classify_intent(question: &str) -> QueryIntent {
+    let q = question.to_ascii_lowercase();
+    // Calendar units only: "how many DAYS/WEEKS/MONTHS/YEARS" is a duration →
+    // Temporal. Deliberately EXCLUDES hour/minute/second — "how many hours of
+    // jogging" is a quantity to SUM (Counting), not a span between events.
+    const UNITS: [&str; 4] = ["day", "week", "month", "year"];
+    let how_many_duration =
+        q.contains("how many") && UNITS.iter().any(|u| q.contains(&format!("how many {u}")));
+    let temporal = how_many_duration
+        || q.contains("how long")
+        || q.contains("how soon")
+        || q.starts_with("when")
+        || q.contains("when did")
+        || q.contains("when was")
+        || q.contains("when will")
+        || q.contains("when is")
+        || q.contains("what date")
+        || q.contains("which date")
+        || q.contains("most recent")
+        || q.contains("last time")
+        || q.contains("first time")
+        || q.contains("earliest")
+        || q.contains(" ago") // "5 days ago", "a week ago" — recency
+        || q.contains("order of") // "the order of X from earliest to latest"
+        || q.contains("how much time");
+    if temporal {
+        return QueryIntent::Temporal;
+    }
+    if q.contains("how many")
+        || q.contains("how often")
+        || q.contains("number of")
+        || q.contains("how frequently")
+        || q.starts_with("count ")
+        || q.contains("total number")
+    {
+        return QueryIntent::Counting;
+    }
+    if q.contains("suggest")
+        || q.contains("recommend")
+        || q.contains("what should i")
+        || q.contains("advice")
+        || q.contains("any tips")
+        || q.contains("give me tips")
+        || q.contains("help me")
+        || q.contains("what would you")
+        || q.contains("ideas for")
+        || q.contains("any ideas")
+        || q.contains("ideas on")
+        || q.contains("ideas to")
+    {
+        return QueryIntent::Recommendation;
+    }
+    QueryIntent::Factual
+}
+
+/// Per-intent retrieval config: `(sess_k, chronological)`. Counting/Temporal
+/// keep a BROAD distinct-session budget (multi-session evidence); Recommendation
+/// goes TIGHT so the one relevant session is not diluted across a dozen others
+/// (the q135 "I don't have any information about your preferences" failure mode,
+/// where the preference WAS retrieved). Only Temporal needs chronological
+/// presentation — for everyone else rank order leads with the best evidence.
+pub(crate) fn intent_retrieval_cfg(intent: QueryIntent) -> (usize, bool) {
+    match intent {
+        QueryIntent::Counting => (12, false),
+        QueryIntent::Temporal => (12, true),
+        QueryIntent::Recommendation => (4, false),
+        QueryIntent::Factual => (12, false),
+    }
+}
+
+/// The intent-tailored generation system prompt. Each variant targets ONLY its
+/// own reader-reasoning failure mode, so counting's enumerate-instruction never
+/// reaches a temporal question (where it caused over-enumeration regressions)
+/// and the apply-preferences instruction never dilutes a factual lookup.
+pub(crate) fn gen_system_prompt_for(intent: QueryIntent) -> &'static str {
+    match intent {
+        QueryIntent::Counting => {
+            "You are a helpful assistant with access to the user's past \
+             conversations. Answer using ONLY the provided conversation history. \
+             The question asks for a count or total. First list each relevant \
+             occurrence from the history one by one, then state the final number \
+             — never guess a number without listing what you counted. If the \
+             information is genuinely absent, say you don't know."
+        }
+        QueryIntent::Temporal => {
+            "You are a helpful assistant with access to the user's past \
+             conversations. Answer using ONLY the provided conversation history. \
+             Each memory begins with a `[Session date: ...]` marker and the \
+             memories are arranged oldest-to-newest. Use those dates and the \
+             current date to reason about time, ordering, and recency; read the \
+             timeline directly and answer concisely. If the information is \
+             genuinely absent, say you don't know."
+        }
+        QueryIntent::Recommendation => {
+            "You are a helpful assistant with access to the user's past \
+             conversations. Answer using ONLY the provided conversation history. \
+             The user wants a recommendation or tailored response. Recall the \
+             user's previously stated preferences, tastes, and personal details \
+             from the history and APPLY them directly in your answer — even when \
+             the exact item asked about was not itself discussed before. Do not \
+             say you lack information if the history reveals relevant \
+             preferences; use them. Answer concisely."
+        }
+        QueryIntent::Factual => gen_system_prompt(false),
+    }
+}
+
+/// Build the generation user-prompt: current date + retrieved context block +
+/// the question. `contexts` are the top-k retrieved turn texts (each already
+/// `"role: ..."`, the gold ones prefixed with a `[Session date: ...]` marker).
+/// `question_date` is LongMemEval's "today" anchor for relative time reasoning.
+pub(crate) fn gen_user_prompt(question_date: &str, contexts: &[String], question: &str) -> String {
+    let mut s = String::with_capacity(
+        question.len()
+            + question_date.len()
+            + contexts.iter().map(|c| c.len() + 8).sum::<usize>()
+            + 80,
+    );
+    if !question_date.is_empty() {
+        s.push_str(&format!("Current date: {question_date}\n\n"));
+    }
     s.push_str("# Retrieved conversation memories\n\n");
     for (i, c) in contexts.iter().enumerate() {
         s.push_str(&format!("[{}] {}\n", i + 1, c));
@@ -190,7 +368,9 @@ mod tests {
     #[test]
     fn judge_prompt_default_matches_official_template() {
         let p = judge_prompt("multi-session", false, "Q?", "A", "R");
-        assert!(p.starts_with("I will give you a question, a correct answer, and a response from a model."));
+        assert!(p.starts_with(
+            "I will give you a question, a correct answer, and a response from a model."
+        ));
         assert!(p.contains("Question: Q?"));
         assert!(p.contains("Correct Answer: A"));
         assert!(p.contains("Model Response: R"));
@@ -210,6 +390,83 @@ mod tests {
         let p = judge_prompt("single-session-preference", false, "Q", "A", "R");
         assert!(p.contains("Rubric: A"));
         assert!(p.contains("rubric for desired personalized response"));
+    }
+
+    #[test]
+    fn classify_intent_routes_counting_temporal_recommendation_factual() {
+        use QueryIntent::*;
+        // Counting: instance tallies.
+        assert_eq!(classify_intent("How many times did I go to the gym?"), Counting);
+        assert_eq!(classify_intent("What is the number of books I bought?"), Counting);
+        assert_eq!(classify_intent("How often do I order pizza?"), Counting);
+        // Temporal: durations and timeline — must beat the bare "how many".
+        assert_eq!(classify_intent("How many days between my trips?"), Temporal);
+        assert_eq!(classify_intent("How long have I studied piano?"), Temporal);
+        assert_eq!(classify_intent("When did I last visit Paris?"), Temporal);
+        assert_eq!(classify_intent("What was the most recent car I bought?"), Temporal);
+        // Recommendation: tailored suggestions.
+        assert_eq!(classify_intent("Can you suggest a hotel in Miami?"), Recommendation);
+        assert_eq!(classify_intent("What should I cook tonight?"), Recommendation);
+        assert_eq!(classify_intent("Any tips for keeping my kitchen clean?"), Recommendation);
+        // Factual: plain lookups.
+        assert_eq!(classify_intent("What is my current job title?"), Factual);
+        assert_eq!(classify_intent("Where do I work now?"), Factual);
+    }
+
+    #[test]
+    fn classify_intent_handles_real_longmemeval_phrasings() {
+        use QueryIntent::*;
+        // "how many HOURS of jogging" is an aggregation (sum), not a duration.
+        assert_eq!(
+            classify_intent("How many hours of jogging and yoga did I do last week?"),
+            Counting
+        );
+        // "any ideas on how I can..." is a recommendation request.
+        assert_eq!(
+            classify_intent("Do you have any ideas on how I can find new inspiration?"),
+            Recommendation
+        );
+        // "X days ago" and "order ... earliest to latest" are temporal.
+        assert_eq!(classify_intent("What did I post 5 days ago?"), Temporal);
+        assert_eq!(
+            classify_intent("What is the order of airlines I flew earliest to latest?"),
+            Temporal
+        );
+        // Genuine duration still routes Temporal.
+        assert_eq!(classify_intent("How many weeks until my trip?"), Temporal);
+    }
+
+    #[test]
+    fn classify_intent_how_many_year_noun_is_counting_not_temporal() {
+        // "this year" must NOT trip the duration rule — only "how many <unit>".
+        assert_eq!(classify_intent("How many books did I read this year?"), QueryIntent::Counting);
+    }
+
+    #[test]
+    fn intent_retrieval_cfg_tightens_only_recommendation_and_chrono_only_temporal() {
+        use QueryIntent::*;
+        assert_eq!(intent_retrieval_cfg(Recommendation).0, 4); // tight: no dilution
+        assert_eq!(intent_retrieval_cfg(Counting).0, 12); // broad: every instance
+        assert_eq!(intent_retrieval_cfg(Temporal), (12, true)); // chronological
+        assert!(!intent_retrieval_cfg(Counting).1); // rank order, not chrono
+        assert!(!intent_retrieval_cfg(Recommendation).1);
+        assert!(!intent_retrieval_cfg(Factual).1);
+    }
+
+    #[test]
+    fn gen_system_prompt_for_is_intent_specific() {
+        // Counting prompt enumerates; it must NOT bleed into Temporal (the
+        // over-enumeration regression) and Temporal must read the timeline.
+        assert!(
+            gen_system_prompt_for(QueryIntent::Counting).contains("list each relevant occurrence")
+        );
+        assert!(
+            !gen_system_prompt_for(QueryIntent::Temporal).contains("list each relevant occurrence")
+        );
+        assert!(gen_system_prompt_for(QueryIntent::Temporal).contains("timeline"));
+        assert!(gen_system_prompt_for(QueryIntent::Recommendation).contains("APPLY"));
+        // Factual falls back to the plain prompt.
+        assert_eq!(gen_system_prompt_for(QueryIntent::Factual), gen_system_prompt(false));
     }
 
     #[test]
@@ -240,9 +497,14 @@ mod tests {
     #[test]
     fn gen_user_prompt_embeds_context_and_question() {
         let ctx = vec!["user: hi".to_string(), "assistant: hello".to_string()];
-        let p = gen_user_prompt(&ctx, "What did I say?");
+        let p = gen_user_prompt("2023/05/30 (Tue) 23:40", &ctx, "What did I say?");
+        // The current date anchors relative temporal reasoning.
+        assert!(p.contains("Current date: 2023/05/30 (Tue) 23:40"));
         assert!(p.contains("[1] user: hi"));
         assert!(p.contains("[2] assistant: hello"));
         assert!(p.contains("What did I say?"));
+        // Empty question_date omits the line entirely (no stray "Current date:").
+        let p2 = gen_user_prompt("", &ctx, "q?");
+        assert!(!p2.contains("Current date:"));
     }
 }

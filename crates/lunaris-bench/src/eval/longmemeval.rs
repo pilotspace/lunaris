@@ -109,7 +109,12 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let bytes = match std::fs::read(&dataset_path) {
         Ok(b) => b,
         Err(e) => {
-            results.push(EvalRow::skipped(HARNESS, METRIC, THRESHOLD, &format!("read dataset: {e}")));
+            results.push(EvalRow::skipped(
+                HARNESS,
+                METRIC,
+                THRESHOLD,
+                &format!("read dataset: {e}"),
+            ));
             return Ok(());
         }
     };
@@ -210,8 +215,13 @@ pub(crate) struct HaystackRecord {
     pub question: String,
     pub answer: String,
     pub answer_session_ids: Vec<String>,
-    /// `(session_id, turn_texts)` for every haystack session, distractors included.
+    /// `(session_id, turn_texts)` for every haystack session, distractors
+    /// included. Each session's turn list is prefixed with a `[Session date:
+    /// ...]` marker (LongMemEval `haystack_dates`) for temporal grounding.
     pub sessions: Vec<(String, Vec<String>)>,
+    /// LongMemEval `question_date` — the "current" date the question is asked
+    /// on, used as the anchor for relative temporal reasoning ("how long ago").
+    pub question_date: String,
 }
 
 impl HaystackRecord {
@@ -245,6 +255,14 @@ pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<Haystac
         haystack_session_ids: Vec<String>,
         #[serde(default)]
         haystack_sessions: Vec<Vec<Turn>>,
+        /// LongMemEval provides the real-world date of each haystack session and
+        /// the "current" date of the question. Required for temporal-reasoning
+        /// (how-many-days) and knowledge-update (which fact is newer); dropping
+        /// them silently cripples 42% of the benchmark.
+        #[serde(default)]
+        question_date: String,
+        #[serde(default)]
+        haystack_dates: Vec<String>,
     }
     let raws: Vec<Raw> = serde_json::from_slice(bytes)
         .map_err(|e| anyhow::anyhow!("parse longmemeval haystack: {e}"))?;
@@ -255,13 +273,24 @@ pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<Haystac
                 serde_json::Value::String(s) => s,
                 other => other.to_string(),
             };
+            // Pad dates with None so a missing/short `haystack_dates` never drops
+            // sessions; align by index (date[i] is session[i]'s timestamp).
+            let dates = r.haystack_dates.into_iter().map(Some).chain(std::iter::repeat(None));
             let sessions = r
                 .haystack_session_ids
                 .into_iter()
                 .zip(r.haystack_sessions)
-                .map(|(sid, turns)| {
-                    let texts: Vec<String> =
-                        turns.into_iter().map(|t| format!("{}: {}", t.role, t.content)).collect();
+                .zip(dates)
+                .map(|((sid, turns), date)| {
+                    // Prepend the session's real-world date so the gen model can
+                    // reason temporally (days-between) and resolve knowledge
+                    // updates (which fact is newer). The marker also flows into
+                    // the ingested doc, making date tokens searchable.
+                    let mut texts: Vec<String> = Vec::with_capacity(turns.len() + 1);
+                    if let Some(d) = date.filter(|d: &String| !d.is_empty()) {
+                        texts.push(format!("[Session date: {d}]"));
+                    }
+                    texts.extend(turns.into_iter().map(|t| format!("{}: {}", t.role, t.content)));
                     (sid, texts)
                 })
                 .collect();
@@ -272,6 +301,7 @@ pub(crate) fn parse_longmemeval_full(bytes: &[u8]) -> anyhow::Result<Vec<Haystac
                 answer,
                 answer_session_ids: r.answer_session_ids,
                 sessions,
+                question_date: r.question_date,
             }
         })
         .collect())
@@ -285,6 +315,36 @@ pub(crate) fn evidence_recall_hit(hit_sources: &[String], answer_session_ids: &[
     hit_sources
         .iter()
         .any(|s| answer_session_ids.iter().any(|sid| !sid.is_empty() && s.contains(sid.as_str())))
+}
+
+/// `(covered, total)` count of **distinct non-empty gold sessions** that the
+/// retrieved `hit_sources` surfaced. `total` is the number of gold answer-
+/// sessions the question requires; `covered` is how many of them a top-k hit
+/// actually carried. Empty sids are ignored on both sides (a question with no
+/// non-empty gold session yields `(0, 0)`).
+pub(crate) fn evidence_recall_coverage(
+    hit_sources: &[String],
+    answer_session_ids: &[String],
+) -> (usize, usize) {
+    let covered_one = |sid: &str| !sid.is_empty() && hit_sources.iter().any(|s| s.contains(sid));
+    let total = answer_session_ids.iter().filter(|s| !s.is_empty()).count();
+    let covered = answer_session_ids.iter().filter(|s| covered_one(s.as_str())).count();
+    (covered, total)
+}
+
+/// Strict ("all-gold") evidence recall: true iff **every** gold answer-session
+/// was surfaced in the top-k. This is the honest retrieval metric for
+/// multi-session questions, whose answer must synthesize facts across *all* gold
+/// sessions — partial coverage yields a wrong answer even though the any-gold
+/// [`evidence_recall_hit`] still reads as a hit (it fires on a single covered
+/// session). Returns false when the question has no non-empty gold session, so
+/// an empty gold list is never counted as a vacuous success.
+pub(crate) fn evidence_recall_all_hit(
+    hit_sources: &[String],
+    answer_session_ids: &[String],
+) -> bool {
+    let (covered, total) = evidence_recall_coverage(hit_sources, answer_session_ids);
+    total > 0 && covered == total
 }
 
 /// Real-corpus harness. For each of the first `limit` records
@@ -327,8 +387,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // cross-encoder, which is what Zep/Mem0 do too, so default ON for an
     // apples-to-apple number. Set LUNARIS_EVAL_LME_RERANK=0 to measure the
     // raw vector baseline.
-    let rerank_enabled =
-        std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
+    let rerank_enabled = std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
     let k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let judge_mode = std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false);
@@ -346,11 +405,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
 
     // Build the chat client only in judge mode (avoids requiring Ollama for
     // the fast recall-only path).
-    let chat = if judge_mode {
-        Some(super::lme_judge::OllamaChat::new()?)
-    } else {
-        None
-    };
+    let chat = if judge_mode { Some(super::lme_judge::OllamaChat::new()?) } else { None };
     if judge_mode {
         eprintln!(
             "  [longmemeval] JUDGE mode ON — gen={gen_model} judge={judge_model} k={k} n={n}"
@@ -368,6 +423,12 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // process exits well under the ceiling and the OS reclaims all Metal
     // buffers. We therefore keep the simple per-question `Lunaris::open` here.
     let mut evidence_hits = 0usize;
+    // Strict "all-gold" recall: every required gold session surfaced (the honest
+    // metric for multi-session questions). `gold_*_sum` accumulate the per-
+    // question (covered, total) so we can report mean gold-session coverage.
+    let mut evidence_all_hits = 0usize;
+    let mut gold_covered_sum = 0usize;
+    let mut gold_total_sum = 0usize;
     let mut judge_correct = 0usize;
     for (i, rec) in records.iter().skip(offset).take(n).enumerate() {
         // Pristine store + fresh empty indexes for THIS question only.
@@ -394,10 +455,11 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         let mut ingested = 0usize;
         for (si, (sid, turns)) in rec.sessions.iter().enumerate() {
             let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
-            if let Some(m) = maxsess {
-                if si >= m && !is_gold {
-                    continue;
-                }
+            if let Some(m) = maxsess
+                && si >= m
+                && !is_gold
+            {
+                continue;
             }
             let doc = turns.join("\n\n");
             pad.write(&format!("{sid}.md"), doc).await?;
@@ -410,24 +472,83 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // isolation is already guaranteed by the FLUSHALL above, so a plain
         // top-k recall over the (single-question) dev scope is correct and
         // surfaces the gold turns the filtered path was dropping.
-        let mut builder = lunaris.recall_with_degraded_check().await?;
-        if rerank_enabled {
-            // Wrap the vector root in the cross-encoder reranker so the top-30
-            // vector candidates are re-scored against the question text and the
-            // best move into the top-k. Without this the eval measured raw
-            // vector recall only.
-            builder = builder.rerank(lunaris.reranker());
-        }
-        let hits = builder.top(k).execute(lunaris::Query::text(&rec.question)).await?;
+        // Retrieval. Default (LME_HYBRID unset) = the historical vector-only
+        // root + optional rerank. LME_HYBRID=1 = Lunaris's full HYBRID root:
+        // semantic Vector fused with BM25 Keyword via RRF, then reranked — the
+        // blueprint's canonical recall (recall.rs §8). BM25 surfaces gold
+        // sessions whose lexical overlap with the question ranks low in pure
+        // vector space, which is exactly the multi-session coverage gap that
+        // vector-only retrieval misses. The fused candidate POOL is LME_POOL
+        // (default 30) per arm; the final gen context stays at top-k so it
+        // remains tight and low-noise (no gen-context bloat).
+        let hybrid = std::env::var("LUNARIS_EVAL_LME_HYBRID").map(|v| v == "1").unwrap_or(false);
+        let pool: usize =
+            std::env::var("LUNARIS_EVAL_LME_POOL").ok().and_then(|s| s.parse().ok()).unwrap_or(30);
+        let hits = if hybrid {
+            let fused = lunaris::Vector::new("chunks", pool)
+                .and(lunaris::Keyword::bm25("chunks", pool))
+                .fuse_rrf(60);
+            let builder = lunaris.recall_with_degraded_check().await?;
+            if rerank_enabled {
+                builder
+                    .with_root(fused.rerank(lunaris.reranker()).top(k))
+                    .execute(lunaris::Query::text(&rec.question))
+                    .await?
+            } else {
+                builder.with_root(fused.top(k)).execute(lunaris::Query::text(&rec.question)).await?
+            }
+        } else {
+            let mut builder = lunaris.recall_with_degraded_check().await?;
+            if rerank_enabled {
+                builder = builder.rerank(lunaris.reranker());
+            }
+            builder.top(k).execute(lunaris::Query::text(&rec.question)).await?
+        };
         let sources: Vec<String> = hits.iter().map(|h| h.source.clone()).collect();
+        // Session-diverse gen context (multi-session coverage fix). LME_SESS_K
+        // caps the context at N DISTINCT sessions, drawn in rank order from the
+        // (larger) LME_TOPK chunk pool — so a 4-5-gold question gets every gold
+        // session the pool retrieved instead of a top-k that clusters into 2-3
+        // sessions. Unset => usize::MAX => historical behavior. The metrics
+        // below run on the capped set so recall reflects the actual gen context.
+        // Intent-adaptive routing (LME_ADAPTIVE=1): classify the question's
+        // intent from its TEXT (never the gold type) and let that pick the
+        // session budget, chronological ordering, and gen prompt. Resolves the
+        // cross-type config conflicts that cap a single uniform setting (broad
+        // context helps counting but dilutes preference; chrono helps temporal
+        // but buries the one relevant session). Off => the env-knob behavior.
+        let adaptive =
+            std::env::var("LUNARIS_EVAL_LME_ADAPTIVE").map(|v| v == "1").unwrap_or(false);
+        let intent = super::lme_judge::classify_intent(&rec.question);
+        let (intent_sess_k, intent_chrono) = super::lme_judge::intent_retrieval_cfg(intent);
+        let sess_k: usize = if adaptive {
+            intent_sess_k
+        } else {
+            std::env::var("LUNARIS_EVAL_LME_SESS_K")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(usize::MAX)
+        };
+        let sources = cap_to_distinct_sessions(&sources, sess_k);
         let recall_hit = evidence_recall_hit(&sources, &rec.answer_session_ids);
         if recall_hit {
             evidence_hits += 1;
         }
+        let recall_all = evidence_recall_all_hit(&sources, &rec.answer_session_ids);
+        if recall_all {
+            evidence_all_hits += 1;
+        }
+        let (gold_covered, gold_total) =
+            evidence_recall_coverage(&sources, &rec.answer_session_ids);
+        gold_covered_sum += gold_covered;
+        gold_total_sum += gold_total;
         if debug {
             eprintln!(
                 "  [DEBUG q{i}] qid={} type={} ingested={ingested} turns | gold_sids={:?} | {} hits",
-                rec.question_id, rec.question_type, rec.answer_session_ids, hits.len()
+                rec.question_id,
+                rec.question_type,
+                rec.answer_session_ids,
+                hits.len()
             );
             for (hi, h) in hits.iter().take(5).enumerate() {
                 eprintln!(
@@ -438,6 +559,9 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 );
             }
             eprintln!("    => evidence_recall_hit = {recall_hit}");
+            eprintln!(
+                "    => evidence_recall_all = {recall_all} (gold sessions covered {gold_covered}/{gold_total})"
+            );
         }
 
         if let Some(chat) = &chat {
@@ -450,17 +574,40 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             // context. `hits[].text` is the lossy chunk text; we instead pull
             // the verbatim turns from `rec.sessions` keyed by the session id
             // embedded in `hit.source` (`helios:fs/lme####/<sid>/<turn>.md`).
-            let contexts = expand_hit_sessions(&sources, rec);
-            let verdict = judge_one(chat, &gen_model, &judge_model, rec, &contexts).await;
+            let chrono = if adaptive {
+                intent_chrono
+            } else {
+                std::env::var("LUNARIS_EVAL_LME_CHRONO").map(|v| v == "1").unwrap_or(false)
+            };
+            let contexts = expand_hit_sessions(&sources, rec, chrono);
+            // Gen system prompt: intent-tailored when adaptive, else the COT knob.
+            let gen_sys = if adaptive {
+                super::lme_judge::gen_system_prompt_for(intent)
+            } else {
+                let cot = std::env::var("LUNARIS_EVAL_LME_COT").map(|v| v == "1").unwrap_or(false);
+                super::lme_judge::gen_system_prompt(cot)
+            };
+            if debug {
+                eprintln!(
+                    "    INTENT={intent:?} sess_k={sess_k} chrono={chrono} adaptive={adaptive}"
+                );
+            }
+            let verdict = judge_one(chat, &gen_model, &judge_model, rec, &contexts, gen_sys).await;
             match verdict {
                 Ok((correct, answer, raw)) => {
                     if correct {
                         judge_correct += 1;
                     }
                     if debug {
-                        eprintln!("    GOLD={:?}", rec.answer.chars().take(120).collect::<String>());
+                        eprintln!(
+                            "    GOLD={:?}",
+                            rec.answer.chars().take(120).collect::<String>()
+                        );
                         eprintln!("    GEN ={:?}", answer.chars().take(200).collect::<String>());
-                        eprintln!("    JUDGE_RAW={:?} -> correct={correct}", raw.chars().take(60).collect::<String>());
+                        eprintln!(
+                            "    JUDGE_RAW={:?} -> correct={correct}",
+                            raw.chars().take(60).collect::<String>()
+                        );
                     }
                 }
                 Err(e) => {
@@ -470,19 +617,33 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 }
             }
             eprintln!(
-                "  [longmemeval {}/{n}] J-score running={:.1}%  (evidence-recall@{k}={:.1}%)",
+                "  [longmemeval {}/{n}] J-score running={:.1}%  (evidence-recall@{k} any-gold={:.1}%, all-gold={:.1}%)",
                 i + 1,
                 100.0 * judge_correct as f64 / (i + 1) as f64,
                 100.0 * evidence_hits as f64 / (i + 1) as f64,
+                100.0 * evidence_all_hits as f64 / (i + 1) as f64,
             );
         } else {
             eprintln!(
-                "  [longmemeval {}/{n}] evidence-recall@{k} running={:.1}%",
+                "  [longmemeval {}/{n}] evidence-recall@{k} running: any-gold={:.1}%, all-gold={:.1}%",
                 i + 1,
-                100.0 * evidence_hits as f64 / (i + 1) as f64
+                100.0 * evidence_hits as f64 / (i + 1) as f64,
+                100.0 * evidence_all_hits as f64 / (i + 1) as f64
             );
         }
     }
+
+    let mean_coverage = if gold_total_sum > 0 {
+        100.0 * gold_covered_sum as f64 / gold_total_sum as f64
+    } else {
+        0.0
+    };
+    eprintln!(
+        "[longmemeval] evidence-recall@{k} over n={n}: any-gold={:.1}%  all-gold={:.1}%  \
+         (gold-session coverage {gold_covered_sum}/{gold_total_sum} = {mean_coverage:.1}%)",
+        100.0 * evidence_hits as f64 / n as f64,
+        100.0 * evidence_all_hits as f64 / n as f64,
+    );
 
     if judge_mode {
         Ok(100.0 * judge_correct as f64 / n as f64)
@@ -519,11 +680,7 @@ async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
 /// 3rd `/`-segment with any `.md` suffix stripped (session ids contain
 /// `_`/`-`/digits but never `/`). Returns `None` for shapes that don't match.
 fn sid_from_source(source: &str) -> Option<&str> {
-    source
-        .split('/')
-        .nth(2)
-        .map(|s| s.strip_suffix(".md").unwrap_or(s))
-        .filter(|s| !s.is_empty())
+    source.split('/').nth(2).map(|s| s.strip_suffix(".md").unwrap_or(s)).filter(|s| !s.is_empty())
 }
 
 /// Session-level context expansion. Given the top-k hit `sources` and the
@@ -532,19 +689,71 @@ fn sid_from_source(source: &str) -> Option<&str> {
 /// ranking; turns within a session in their original order). This is the
 /// LongMemEval session-retrieval setting — the answer fact lives somewhere in
 /// the hit session, not necessarily in the single retrieved turn.
-fn expand_hit_sessions(sources: &[String], rec: &HaystackRecord) -> Vec<String> {
+fn expand_hit_sessions(
+    sources: &[String],
+    rec: &HaystackRecord,
+    chronological: bool,
+) -> Vec<String> {
     let mut seen: Vec<&str> = Vec::new();
     for src in sources {
-        if let Some(sid) = sid_from_source(src) {
-            if !seen.contains(&sid) {
-                seen.push(sid);
-            }
+        if let Some(sid) = sid_from_source(src)
+            && !seen.contains(&sid)
+        {
+            seen.push(sid);
         }
     }
+    let mut picked: Vec<&(String, Vec<String>)> =
+        seen.iter().filter_map(|sid| rec.sessions.iter().find(|(s, _)| s == sid)).collect();
+    // Chronological presentation: sort the distinct sessions by their
+    // `[Session date: ...]` marker so the reader sees a clean timeline. The
+    // LongMemEval `YYYY/MM/DD (Day) HH:MM` format sorts lexicographically into
+    // true time order. This turns ordering / recency / which-fact-is-newer
+    // questions into top-to-bottom reads instead of forcing the reader to
+    // re-sort retrieval-rank order in its head. `sort_by` is stable, so undated
+    // sessions keep rank order. Off => historical first-appearance order.
+    if chronological {
+        picked.sort_by(|a, b| session_date_key(a).cmp(session_date_key(b)));
+    }
     let mut out = Vec::new();
-    for sid in seen {
-        if let Some((_, turns)) = rec.sessions.iter().find(|(s, _)| s == sid) {
-            out.extend(turns.iter().cloned());
+    for (_, turns) in picked {
+        out.extend(turns.iter().cloned());
+    }
+    out
+}
+
+/// The `[Session date: ...]` marker prefixing a session's turns (empty string
+/// when absent — those sort first, keeping rank order among themselves).
+fn session_date_key(session: &(String, Vec<String>)) -> &str {
+    session.1.first().map(|s| s.as_str()).filter(|s| s.starts_with("[Session date:")).unwrap_or("")
+}
+
+/// Session-diverse truncation of the ranked hit `sources` for the gen context.
+///
+/// Returns the prefix of `sources` that covers at most `cap` DISTINCT sessions,
+/// in rank order. Extra hits from an already-included session are retained
+/// (harmless — [`expand_hit_sessions`] dedups them); once `cap` distinct
+/// sessions are seen, later hits from NEW sessions are dropped. `cap ==
+/// usize::MAX` (the default when `LME_SESS_K` is unset) is a no-op, preserving
+/// the historical "every distinct session in the top-k chunks" behavior.
+///
+/// This is the fix for the **multi-session coverage ceiling**: a tight top-k of
+/// CHUNKS can cluster into 2-3 sessions (the cross-encoder piles several chunks
+/// from the same strong session), starving 4-5-gold questions of the *other*
+/// gold sessions even when they were retrieved. Retrieving a larger CHUNK pool
+/// (`LME_TOPK`) and then capping at `cap` DISTINCT sessions guarantees the gen
+/// context spans up to `cap` sessions, so every gold session present in the
+/// pool reaches the judge instead of being squeezed out by clustering.
+fn cap_to_distinct_sessions(sources: &[String], cap: usize) -> Vec<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for src in sources {
+        match sid_from_source(src) {
+            Some(sid) if seen.contains(&sid) => out.push(src.clone()),
+            Some(sid) if seen.len() < cap => {
+                seen.push(sid);
+                out.push(src.clone());
+            }
+            _ => {} // distinct-session budget exhausted, or sourceless: drop
         }
     }
     out
@@ -560,10 +769,10 @@ async fn judge_one(
     judge_model: &str,
     rec: &HaystackRecord,
     contexts: &[String],
+    gen_sys_prompt: &str,
 ) -> anyhow::Result<(bool, String, String)> {
-    let gen_user = super::lme_judge::gen_user_prompt(contexts, &rec.question);
-    let response =
-        chat.chat(gen_model, super::lme_judge::gen_system_prompt(), &gen_user).await?;
+    let gen_user = super::lme_judge::gen_user_prompt(&rec.question_date, contexts, &rec.question);
+    let response = chat.chat(gen_model, gen_sys_prompt, &gen_user).await?;
     let prompt = super::lme_judge::judge_prompt(
         &rec.question_type,
         rec.is_abstention(),
@@ -658,8 +867,10 @@ mod tests {
             "question_type": "multi-session",
             "question": "What broke first?",
             "answer": "the GPS",
+            "question_date": "2023/05/30 (Tue) 23:40",
             "answer_session_ids": ["s2"],
             "haystack_session_ids": ["s1", "s2"],
+            "haystack_dates": ["2023/05/20 (Sat) 02:21", "2023/05/21 (Sun) 10:00"],
             "haystack_sessions": [
               [{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}],
               [{"role":"user","content":"my gps failed"}]
@@ -674,12 +885,18 @@ mod tests {
         assert!(!r.is_abstention());
         assert_eq!(r.question, "What broke first?");
         assert_eq!(r.answer, "the GPS");
+        // question_date is parsed (anchor for relative temporal reasoning).
+        assert_eq!(r.question_date, "2023/05/30 (Tue) 23:40");
         assert_eq!(r.answer_session_ids, vec!["s2".to_string()]);
         assert_eq!(r.sessions.len(), 2);
         assert_eq!(r.sessions[0].0, "s1");
-        assert_eq!(r.sessions[0].1[0], "user: hi");
+        // Each session's turn list is prefixed with its [Session date: ...]
+        // marker; the original turns follow.
+        assert_eq!(r.sessions[0].1[0], "[Session date: 2023/05/20 (Sat) 02:21]");
+        assert_eq!(r.sessions[0].1[1], "user: hi");
         assert_eq!(r.sessions[1].0, "s2");
-        assert_eq!(r.sessions[1].1[0], "user: my gps failed");
+        assert_eq!(r.sessions[1].1[0], "[Session date: 2023/05/21 (Sun) 10:00]");
+        assert_eq!(r.sessions[1].1[1], "user: my gps failed");
     }
 
     #[test]
@@ -705,7 +922,10 @@ mod tests {
             sid_from_source("helios:fs/lme0000/answer_280352e9.md"),
             Some("answer_280352e9")
         );
-        assert_eq!(sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0.md"), Some("sharegpt_Jcy1CVN_0"));
+        assert_eq!(
+            sid_from_source("helios:fs/lme0001/sharegpt_Jcy1CVN_0.md"),
+            Some("sharegpt_Jcy1CVN_0")
+        );
         assert_eq!(sid_from_source("malformed"), None);
     }
 
@@ -716,10 +936,18 @@ mod tests {
             question_type: "single-session-user".into(),
             question: "?".into(),
             answer: "A".into(),
+            question_date: String::new(),
             answer_session_ids: vec!["s_gold".into()],
             sessions: vec![
                 ("s_distract".into(), vec!["user: noise".into(), "assistant: noise2".into()]),
-                ("s_gold".into(), vec!["user: q".into(), "assistant: the degree is BA".into(), "user: thanks".into()]),
+                (
+                    "s_gold".into(),
+                    vec![
+                        "user: q".into(),
+                        "assistant: the degree is BA".into(),
+                        "user: thanks".into(),
+                    ],
+                ),
             ],
         };
         // Hit ranking: one distractor turn first, then a gold turn. Expansion
@@ -729,11 +957,86 @@ mod tests {
             "helios:fs/lme0000/s_distract/0000.md".to_string(),
             "helios:fs/lme0000/s_gold/0000.md".to_string(),
         ];
-        let ctx = expand_hit_sessions(&sources, &rec);
+        let ctx = expand_hit_sessions(&sources, &rec, false);
         assert_eq!(ctx.len(), 5); // 2 distractor + 3 gold turns
         assert!(ctx.iter().any(|t| t.contains("the degree is BA")));
         // Distractor session comes first (first appearance in ranking).
         assert_eq!(ctx[0], "user: noise");
+    }
+
+    #[test]
+    fn expand_hit_sessions_chronological_orders_by_session_date() {
+        // Two dated sessions retrieved in REVERSE-chronological rank order (the
+        // later session ranked first). Chronological mode must reorder them so
+        // the timeline reads oldest->newest — what temporal/recency questions
+        // need.
+        let rec = HaystackRecord {
+            question_id: "q".into(),
+            question_type: "temporal-reasoning".into(),
+            question: "?".into(),
+            answer: "A".into(),
+            question_date: "2023/06/01 (Thu) 09:00".into(),
+            answer_session_ids: vec!["s_jun".into(), "s_jan".into()],
+            sessions: vec![
+                (
+                    "s_jun".into(),
+                    vec!["[Session date: 2023/06/01 (Thu) 08:00]".into(), "user: June".into()],
+                ),
+                (
+                    "s_jan".into(),
+                    vec!["[Session date: 2023/01/02 (Mon) 08:00]".into(), "user: January".into()],
+                ),
+            ],
+        };
+        // Ranking surfaces June (later) first, January (earlier) second.
+        let sources = vec![
+            "helios:fs/lme0000/s_jun/0000.md".to_string(),
+            "helios:fs/lme0000/s_jan/0000.md".to_string(),
+        ];
+        // Rank order keeps June first.
+        let rank = expand_hit_sessions(&sources, &rec, false);
+        assert_eq!(rank[0], "[Session date: 2023/06/01 (Thu) 08:00]");
+        // Chronological reorders: January (older) first, June second.
+        let chrono = expand_hit_sessions(&sources, &rec, true);
+        assert_eq!(chrono[0], "[Session date: 2023/01/02 (Mon) 08:00]");
+        assert_eq!(chrono[1], "user: January");
+        assert_eq!(chrono[2], "[Session date: 2023/06/01 (Thu) 08:00]");
+        assert!(
+            chrono.iter().position(|t| t == "user: January").unwrap()
+                < chrono.iter().position(|t| t == "user: June").unwrap()
+        );
+    }
+
+    #[test]
+    fn cap_to_distinct_sessions_bounds_distinct_session_count() {
+        use std::collections::BTreeSet;
+        let s = |sid: &str, t: usize| format!("helios:fs/lme0001/{sid}/{t}.md");
+        // Ranked hits clustering into sessions: A,A,B,A,C,D,B — only 4 distinct
+        // (A,B,C,D) but A dominates the top of the ranking (the clustering that
+        // starves multi-session gold coverage).
+        let sources =
+            vec![s("A", 0), s("A", 1), s("B", 0), s("A", 2), s("C", 0), s("D", 0), s("B", 1)];
+
+        // cap=2 keeps ONLY the first 2 distinct sessions (A,B); C and D are
+        // dropped, but every A/B hit (incl. the trailing B) is retained.
+        let capped = cap_to_distinct_sessions(&sources, 2);
+        let sids: BTreeSet<_> = capped.iter().filter_map(|x| sid_from_source(x)).collect();
+        assert_eq!(sids, ["A", "B"].into_iter().collect());
+        assert_eq!(capped.len(), 5); // A0,A1,B0,A2,B1 (C0,D0 dropped)
+
+        // cap=usize::MAX (the LME_SESS_K-unset default) is a strict no-op.
+        let all = cap_to_distinct_sessions(&sources, usize::MAX);
+        assert_eq!(all, sources);
+        let all_sids: BTreeSet<_> = all.iter().filter_map(|x| sid_from_source(x)).collect();
+        assert_eq!(all_sids.len(), 4);
+
+        // The payoff: a 4-gold question whose gold sessions are B,C,D,A. The
+        // historical tight top-k that clustered into {A,B} covers only 2/4;
+        // capping a LARGER pool at 4 distinct sessions recovers all 4.
+        let gold = vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
+        assert_eq!(evidence_recall_coverage(&cap_to_distinct_sessions(&sources, 2), &gold), (2, 4));
+        assert_eq!(evidence_recall_coverage(&cap_to_distinct_sessions(&sources, 4), &gold), (4, 4));
+        assert!(evidence_recall_all_hit(&cap_to_distinct_sessions(&sources, 4), &gold));
     }
 
     #[test]
@@ -748,5 +1051,36 @@ mod tests {
         assert!(!evidence_recall_hit(&sources_miss, &answer_sessions));
         // Empty gold-session id must never match everything.
         assert!(!evidence_recall_hit(&sources_hit, &[String::new()]));
+    }
+
+    #[test]
+    fn evidence_recall_all_hit_requires_every_gold_session() {
+        // A multi-session question whose answer needs THREE gold sessions.
+        let gold = vec!["s2".to_string(), "s5".to_string(), "s7".to_string()];
+        let all_present = vec![
+            "helios:fs/lme0000/h/s2/0000.md".to_string(),
+            "helios:fs/lme0000/h/s5/0003.md".to_string(),
+            "helios:fs/lme0000/h/s7/0001.md".to_string(),
+            "helios:fs/lme0000/h/s9/0000.md".to_string(), // distractor session
+        ];
+        let partial = vec![
+            "helios:fs/lme0000/h/s2/0000.md".to_string(),
+            "helios:fs/lme0000/h/s5/0003.md".to_string(),
+            // s7 (a required gold session) is missing
+            "helios:fs/lme0000/h/s9/0000.md".to_string(),
+        ];
+        // all-gold fires only when EVERY required session is covered.
+        assert!(evidence_recall_all_hit(&all_present, &gold));
+        assert!(!evidence_recall_all_hit(&partial, &gold));
+        // Contrast: the any-gold metric OVERSTATES the partial case as a hit —
+        // exactly the multi-session inflation the strict metric corrects.
+        assert!(evidence_recall_hit(&partial, &gold));
+        // Coverage counts (covered, total).
+        assert_eq!(evidence_recall_coverage(&all_present, &gold), (3, 3));
+        assert_eq!(evidence_recall_coverage(&partial, &gold), (2, 3));
+        // Empty / all-empty gold is never a recall success (no vacuous true).
+        assert!(!evidence_recall_all_hit(&all_present, &[]));
+        assert!(!evidence_recall_all_hit(&all_present, &[String::new()]));
+        assert_eq!(evidence_recall_coverage(&all_present, &[String::new()]), (0, 0));
     }
 }
