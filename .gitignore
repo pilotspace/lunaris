@@ -94,3 +94,4 @@ milestones/v0.1.1-bench/cache/
 # cargo tests with --features embedded-moon (CWD = crates/lunaris-mcp/).
 # No leading slash — intentional, matches at any directory depth.
 .lunaris-moon/
+tmp/cf.env
