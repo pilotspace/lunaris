@@ -283,9 +283,13 @@ pub struct Community {
     #[serde(default)]
     pub members: Vec<Ulid>,
     pub summary: String,
-    // Same rationale as Chunk/Entity/Fact embeddings: the binary copy lives in
-    // the communities FT index; the JSON copy here was dead weight.
-    #[serde(default, skip_serializing)]
+    // Unlike Chunk/Entity/Fact (whose vectors are re-read from the binary FT
+    // index, never the doc), the community summary embedding has NO second store:
+    // RAPTOR hydrates it straight back from this payload via `read_as_of`, and
+    // the Phase-30 B1 parity contract requires `Some(768-d)` after the round-trip
+    // (crates/lunaris-conformance/src/raptor.rs). So it MUST stay serialized —
+    // `skip_serializing` here silently dropped it and broke RAPTOR parity.
+    #[serde(default)]
     pub summary_embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
 }
@@ -425,17 +429,20 @@ mod tests {
     }
 
     #[test]
-    fn community_summary_embedding_is_not_serialized() {
+    fn community_summary_embedding_survives_the_hydration_round_trip() {
+        // Communities have NO second (FT-index) copy of their embedding — RAPTOR
+        // reads it straight back from this doc and the Phase-30 B1 parity contract
+        // requires Some(768-d). So unlike Chunk/Entity/Fact it MUST be persisted.
         let clock = test_clock();
         let mut c = Community::new(dev_scope(), 0, "root summary", &clock);
         c.summary_embedding = Some(vec![0.9_f32; 768]);
         let json = serde_json::to_string(&c).expect("serialize");
         assert!(
-            !json.contains("summary_embedding"),
-            "community summary_embedding must NOT be serialized into the hydration doc"
+            json.contains("summary_embedding"),
+            "community summary_embedding MUST be serialized (RAPTOR reads it back; Phase-30 B1)"
         );
         let back: Community = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.summary, "root summary");
-        assert!(back.summary_embedding.is_none());
+        assert_eq!(back.summary_embedding, Some(vec![0.9_f32; 768]));
     }
 }
