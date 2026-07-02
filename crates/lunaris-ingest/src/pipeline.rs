@@ -41,6 +41,27 @@ use crate::{chunk_key, episode_key};
 /// Number of chunks per `embed_batch` call. Per blueprint §4.1 ingest hot path.
 pub const INGEST_EMBED_BATCH_SIZE: usize = 32;
 
+/// Pure resolver for the effective ingest-driver batch from a raw env value.
+/// The embedder re-chunks to its own ceiling (`LUNARIS_EMBED_BATCH`), but the
+/// driver must hand it at least that many chunks per call or the embedder can
+/// never assemble a full large batch. We therefore feed
+/// `max(INGEST_EMBED_BATCH_SIZE, requested)` — never below the blueprint
+/// default, and design-for-failure on garbage/zero (falls back to the const).
+fn resolve_ingest_batch_size(raw: Option<&str>) -> usize {
+    let requested = raw
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(INGEST_EMBED_BATCH_SIZE);
+    requested.max(INGEST_EMBED_BATCH_SIZE)
+}
+
+/// Effective ingest-driver batch, reading `LUNARIS_EMBED_BATCH` once + caching.
+fn ingest_embed_batch_size() -> usize {
+    static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CACHE
+        .get_or_init(|| resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref()))
+}
+
 /// Default chunker target tokens per `chunk_markdown` invocation.
 const DEFAULT_TARGET_TOKENS: usize = 500;
 /// Default chunker overlap tokens.
@@ -396,7 +417,7 @@ async fn embed_with_fallback(
     drafts: &[ChunkDraft],
 ) -> Result<Vec<Vec<f32>>, LunarisError> {
     let mut out: Vec<Vec<f32>> = Vec::with_capacity(drafts.len());
-    for batch in drafts.chunks(INGEST_EMBED_BATCH_SIZE) {
+    for batch in drafts.chunks(ingest_embed_batch_size()) {
         let texts: Vec<&str> = batch.iter().map(|d| d.text.as_str()).collect();
         match embedder.embed_batch(&texts).await {
             Ok(rows) => {
@@ -554,5 +575,27 @@ mod tests {
     #[test]
     fn batch_size_constant_is_32() {
         assert_eq!(INGEST_EMBED_BATCH_SIZE, 32);
+    }
+
+    #[test]
+    fn ingest_batch_defaults_to_const_when_unset() {
+        assert_eq!(resolve_ingest_batch_size(None), INGEST_EMBED_BATCH_SIZE);
+    }
+
+    #[test]
+    fn ingest_batch_raises_for_large_override() {
+        assert_eq!(resolve_ingest_batch_size(Some("128")), 128);
+    }
+
+    #[test]
+    fn ingest_batch_never_drops_below_const() {
+        // A small override must NOT shrink the driver below the blueprint floor.
+        assert_eq!(resolve_ingest_batch_size(Some("4")), INGEST_EMBED_BATCH_SIZE);
+    }
+
+    #[test]
+    fn ingest_batch_falls_back_on_garbage() {
+        assert_eq!(resolve_ingest_batch_size(Some("0")), INGEST_EMBED_BATCH_SIZE);
+        assert_eq!(resolve_ingest_batch_size(Some("xyz")), INGEST_EMBED_BATCH_SIZE);
     }
 }
