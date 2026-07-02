@@ -26,7 +26,16 @@ if [ ! -e "$repo_root/$sub/.git" ]; then
   exit 0
 fi
 
-dirty="$(git -C "$repo_root/$sub" status --porcelain 2>/dev/null || true)"
+# Unset GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE / GIT_PREFIX before the nested
+# git call: when this hook runs from a LINKED WORKTREE, `git commit` exports
+# these pointing at the worktree's own private gitdir/index (so the lookups
+# above stay correct) — but left set, they leak into the submodule status
+# check below and make it read the WRONG repository (the worktree's gitdir,
+# applied to the submodule's working tree), producing a bogus dirty list
+# instead of vendor/moon's real status. `-C` alone does not override an
+# already-exported GIT_DIR.
+dirty="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX \
+  git -C "$repo_root/$sub" status --porcelain 2>/dev/null || true)"
 
 if [ -n "$dirty" ]; then
   count="$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')"
