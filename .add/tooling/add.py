@@ -2902,9 +2902,12 @@ def _tripwire_divergence(root: Path, slug: str, tw: dict) -> list[str]:
 # out-of-scope touch — the dogfooding lesson that added it). A regenerated artifact is
 # likewise NOT a source touch — counting one produced repeated false `scope_violation`s in
 # consuming projects (`.next/`, `coverage/`, `tsconfig.tsbuildinfo`, whose `incremental`
-# rewrite even races a clean re-snapshot), so they are pruned here too.
+# rewrite even races a clean re-snapshot), so they are pruned here too. `.claude` holds the
+# CLI's own session-local lock/session files (e.g. `scheduled_tasks.lock`, gitignored,
+# `pid`/`acquiredAt` churn per session) — same class as `.serena`, tool bookkeeping with no
+# build signal, and it produced the identical false `scope_violation` this comment predicts.
 _SCOPE_EXCLUDE_DIRS = (".git", ".add", "__pycache__", "node_modules", ".serena",
-                       ".next", "coverage", "test-results")
+                       ".next", "coverage", "test-results", ".claude")
 _SCOPE_EXCLUDE_FILES = (".DS_Store",)                  # plus *.pyc / *.tsbuildinfo by suffix
 _SCOPE_EXCLUDE_SUFFIXES = (".pyc", ".tsbuildinfo")
 
