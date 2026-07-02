@@ -47,6 +47,30 @@ use crate::GRANITE_R2_DIM;
 /// Operators who explicitly want larger batches must call `embed_blocking`
 /// directly (it does NOT re-chunk).
 pub const MAX_PUBLIC_BATCH: usize = 8;
+
+/// Pure resolver for the effective re-chunk ceiling from a raw env value.
+/// Split out from [`public_batch_size`] so the fallback policy is unit-testable
+/// without touching process env (avoids the global-env test race).
+///
+/// Design-for-failure: a missing, non-numeric, or zero value yields the safe
+/// default [`MAX_PUBLIC_BATCH`] rather than panicking or producing a 0-window
+/// (`slice::chunks(0)` panics).
+fn resolve_batch_size(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(MAX_PUBLIC_BATCH)
+}
+
+/// Effective per-forward re-chunk ceiling. Defaults to [`MAX_PUBLIC_BATCH`] (8,
+/// the safe cross-backend activation-footprint ceiling) but operators on
+/// memory-rich hosts (Apple M-Pro/Max, CUDA) can raise it via the
+/// `LUNARIS_EMBED_BATCH` env var to better saturate the GPU on bulk ingest —
+/// e.g. the LongMemEval haystack ingest that embeds hundreds of chunks per
+/// document. Read once and cached for the process lifetime.
+pub fn public_batch_size() -> usize {
+    static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| resolve_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref()))
+}
 use crate::config::{ConfigError, ModernBertConfig};
 use crate::modernbert::{ForwardError, pooled_forward};
 use crate::tokenizer::{EncodedBatch, GraniteTokenizer, TokenizerError};
@@ -262,8 +286,9 @@ impl Embedder for NativeEmbedder {
             // concatenate the per-chunk rows preserving input order. For
             // batches ≤ MAX_PUBLIC_BATCH this is a single chunk = single
             // forward pass = zero overhead vs the pre-O-01-E path.
+            let batch = public_batch_size();
             let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
-            for chunk in owned.chunks(MAX_PUBLIC_BATCH) {
+            for chunk in owned.chunks(batch) {
                 let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
                 out.extend(rows);
@@ -287,6 +312,33 @@ mod tests {
     #[allow(dead_code)]
     fn _dyn_compat(e: NativeEmbedder) -> std::sync::Arc<dyn Embedder> {
         std::sync::Arc::new(e)
+    }
+
+    // O-01-E+ — LUNARIS_EMBED_BATCH override resolver. Pure-function tests so
+    // the fallback policy is verified without mutating process env.
+    #[test]
+    fn resolve_batch_size_defaults_when_unset() {
+        assert_eq!(resolve_batch_size(None), MAX_PUBLIC_BATCH);
+    }
+
+    #[test]
+    fn resolve_batch_size_honors_large_override() {
+        assert_eq!(resolve_batch_size(Some("64")), 64);
+        assert_eq!(resolve_batch_size(Some("128")), 128);
+    }
+
+    #[test]
+    fn resolve_batch_size_trims_whitespace() {
+        assert_eq!(resolve_batch_size(Some("  32 ")), 32);
+    }
+
+    #[test]
+    fn resolve_batch_size_rejects_zero_and_garbage() {
+        // 0 would make `slice::chunks(0)` panic — must fall back, never 0.
+        assert_eq!(resolve_batch_size(Some("0")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("-4")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("abc")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("")), MAX_PUBLIC_BATCH);
     }
 
     #[test]

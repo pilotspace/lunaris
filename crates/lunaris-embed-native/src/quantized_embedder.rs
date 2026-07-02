@@ -160,8 +160,9 @@ impl Embedder for NativeQuantizedEmbedder {
             // O-01-E — re-chunk to MAX_PUBLIC_BATCH (see
             // `embedder::MAX_PUBLIC_BATCH` for rationale). Mirror of the
             // FP16 path; same activation-footprint guarantee.
+            let batch = crate::embedder::public_batch_size();
             let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
-            for chunk in owned.chunks(crate::embedder::MAX_PUBLIC_BATCH) {
+            for chunk in owned.chunks(batch) {
                 let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
                 out.extend(rows);
