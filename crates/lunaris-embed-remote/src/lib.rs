@@ -33,6 +33,10 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+/// OpenAI-compatible `/embeddings` remote embedder — the supported remote path
+/// once the native candle embedder is compiled out (`native` feature off).
+pub mod openai;
+
 use std::time::Duration;
 
 use async_trait::async_trait;

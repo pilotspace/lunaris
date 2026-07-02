@@ -29,6 +29,10 @@ reqwest      = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 tracing      = { workspace = true }
+# `time` for the OpenAI embedder's retry backoff (tokio::time::sleep).
+tokio        = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# HTTP mock server for the OpenAI-compatible embedder's request/retry/shape tests.
+wiremock = "0.6"
