@@ -1780,7 +1780,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     //    candle-free.
     #[cfg(feature = "native")]
     {
-        return resolve_embedder_native().await;
+        resolve_embedder_native().await
     }
 
     // 4. Candle disabled — NoopEmbedder (zero vectors). Vector recall returns
@@ -1799,7 +1799,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
                  LUNARIS_EMBEDDER_OLLAMA_URL) for real vectors."
             );
         });
-        return Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>);
+        Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
     }
 }
 
@@ -1950,7 +1950,7 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
     //    is compiled in. Gated helper keeps candle out of candle-free builds.
     #[cfg(feature = "native")]
     {
-        return resolve_reranker_native().await;
+        resolve_reranker_native().await
     }
 
     // 3. Candle disabled — NoopReranker (rerank pass skipped per RETRIEVE-06).
@@ -1964,7 +1964,7 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
                  per RETRIEVE-06 contract)."
             );
         });
-        return Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>);
+        Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
     }
 }
 
