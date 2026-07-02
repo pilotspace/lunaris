@@ -1641,6 +1641,8 @@ static RERANKER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
 /// Granite-r2 model directory name under `<cache>/lunaris/models/`.
 const GRANITE_R2_DIR: &str = "granite-embedding-311m-multilingual-r2";
 /// bge-reranker-v2-m3 model directory name under `<cache>/lunaris/models/`.
+/// Referenced by the `native`-gated reranker path (and the dir-layout unit test).
+#[cfg(any(feature = "native", test))]
 const BGE_RERANKER_DIR: &str = "bge-reranker-v2-m3";
 
 /// Resolve the canonical cache directory for a named model artifact. Returns
@@ -1666,7 +1668,9 @@ fn embedder_dir() -> std::path::PathBuf {
 }
 
 /// Resolve the reranker model directory from [`RERANKER_DIR_ENV_VAR`],
-/// falling back to the default cache layout.
+/// falling back to the default cache layout. Only referenced by the
+/// `native`-gated reranker path.
+#[cfg(feature = "native")]
 fn reranker_dir() -> std::path::PathBuf {
     std::env::var(RERANKER_DIR_ENV_VAR)
         .ok()
@@ -1690,7 +1694,30 @@ fn reranker_dir() -> std::path::PathBuf {
 ///    of the open path completes (vector recall returns empty rows; operator
 ///    sees the banner and can fix their cache layout).
 async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
-    // 1. Operator escape hatch — only when feature is on.
+    // 1. Remote OpenAI-compatible embedder (`POST /v1/embeddings`) — the
+    //    supported remote path once `native` (candle) is compiled out. Selected
+    //    when LUNARIS_EMBEDDER_OPENAI_URL is set; wins over the Ollama hatch.
+    #[cfg(feature = "embed-remote")]
+    {
+        if std::env::var(lunaris_embed_remote::openai::OPENAI_URL_ENV_VAR)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some()
+        {
+            let opts = lunaris_embed_remote::openai::OpenAiEmbedderOpts::default();
+            let e = lunaris_embed_remote::openai::OpenAiEmbedder::new(opts)?;
+            EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
+                tracing::info!(
+                    target: "lunaris::handle",
+                    embedder_backend = "openai-remote",
+                    "embedder_backend_resolved (remote OpenAI-compatible /embeddings)"
+                );
+            });
+            return Ok(Arc::new(e) as Arc<dyn Embedder>);
+        }
+    }
+
+    // 1b. Ollama HTTP escape hatch — legacy remote path.
     #[cfg(feature = "embed-remote")]
     {
         if let Some(url) =
@@ -1747,7 +1774,40 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
         }
     }
 
-    // 3. Default FP16 native embedder.
+    // 3. Default FP16 native (candle) embedder — only when the `native` feature
+    //    is compiled in. All candle / lunaris_embed_native references live in
+    //    the gated helper below so a `default-features = false` build is
+    //    candle-free.
+    #[cfg(feature = "native")]
+    {
+        return resolve_embedder_native().await;
+    }
+
+    // 4. Candle disabled — NoopEmbedder (zero vectors). Vector recall returns
+    //    empty rows until a remote embedder is configured. Build with
+    //    `--features embed-remote` and set LUNARIS_EMBEDDER_OLLAMA_URL for a
+    //    remote server embedder.
+    #[cfg(not(feature = "native"))]
+    {
+        let dim = resolve_embed_dim();
+        EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
+            tracing::warn!(
+                target: "lunaris::handle",
+                fallback_dim = dim,
+                "native embedder feature disabled — using NoopEmbedder (zero vectors). \
+                 Configure a remote embedder (build with --features embed-remote and set \
+                 LUNARIS_EMBEDDER_OLLAMA_URL) for real vectors."
+            );
+        });
+        return Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>);
+    }
+}
+
+/// Step 3 of [`resolve_embedder`] — the candle FP16 `NativeEmbedder` path.
+/// Extracted behind `#[cfg(feature = "native")]` so every `candle_core` /
+/// `lunaris_embed_native` reference is elided from candle-free builds.
+#[cfg(feature = "native")]
+async fn resolve_embedder_native() -> Result<Arc<dyn Embedder>, LunarisError> {
     let dir = embedder_dir();
     let opts = lunaris_embed_native::NativeEmbedderOpts {
         weights_path: dir.join("model.safetensors"),
@@ -1768,7 +1828,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
             Ok(Arc::new(e) as Arc<dyn Embedder>)
         }
         Err(err) => {
-            // 4. Cache miss — NoopEmbedder fallback so the rest of open()
+            // Cache miss — NoopEmbedder fallback so the rest of open()
             // completes. Operator sees one banner per process.
             let dim = resolve_embed_dim();
             EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
@@ -1886,7 +1946,33 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
         }
     }
 
-    // 2. Default FP32 native reranker.
+    // 2. Default FP32 native (candle) reranker — only when the `native` feature
+    //    is compiled in. Gated helper keeps candle out of candle-free builds.
+    #[cfg(feature = "native")]
+    {
+        return resolve_reranker_native().await;
+    }
+
+    // 3. Candle disabled — NoopReranker (rerank pass skipped per RETRIEVE-06).
+    #[cfg(not(feature = "native"))]
+    {
+        RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
+            tracing::info!(
+                target: "lunaris::handle",
+                reranker_backend = "noop",
+                "native reranker feature disabled — using NoopReranker (rerank pass skipped \
+                 per RETRIEVE-06 contract)."
+            );
+        });
+        return Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>);
+    }
+}
+
+/// Step 2 of [`resolve_reranker`] — the candle FP32 `NativeReranker` path.
+/// Extracted behind `#[cfg(feature = "native")]` so every `candle_core` /
+/// `lunaris_rerank_native` reference is elided from candle-free builds.
+#[cfg(feature = "native")]
+async fn resolve_reranker_native() -> Result<Arc<dyn Reranker>, LunarisError> {
     let dir = reranker_dir();
     let opts = lunaris_rerank_native::NativeRerankerOpts {
         weights_path: dir.join("model.safetensors"),
@@ -1906,7 +1992,7 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
             });
             Ok(Arc::new(r) as Arc<dyn Reranker>)
         }
-        // 3. Cache miss — NoopReranker fallback per RETRIEVE-06.
+        // Cache miss — NoopReranker fallback per RETRIEVE-06.
         Err(err) => {
             RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
                 tracing::warn!(

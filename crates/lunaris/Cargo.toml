@@ -39,18 +39,18 @@ lunaris-storage-postgres  = { workspace = true }
 # with zero external services. Pure SQLite — no heavy deps to gate behind a
 # feature.
 lunaris-storage-embedded  = { workspace = true }
-# v0.4 N-03 cutover — native candle embedder + reranker are the supported
-# defaults. Always built (no feature gate): the umbrella's `Lunaris::open()`
-# constructs `NativeEmbedder` + `NativeReranker` and falls back to the
-# always-available `NoopEmbedder` / `NoopReranker` from `lunaris-core` /
-# `lunaris-rerank` on cache miss. Operators opt into the Ollama HTTP escape
-# hatch via the `embed-remote` feature below.
-lunaris-embed-native      = { workspace = true }
+# Native candle embedder + reranker. Gated behind the `native` feature (kept in
+# `default` — see [features]) so consumers can opt OUT of the ~100 MB candle
+# stack via `default-features = false`. `Lunaris::open()`'s `resolve_embedder()`
+# / `resolve_reranker()` construct `NativeEmbedder` / `NativeReranker` only when
+# `native` is on, falling back to the always-available `NoopEmbedder` /
+# `NoopReranker` (candle-free consumers use the `embed-remote` HTTP embedder).
+lunaris-embed-native      = { workspace = true, optional = true }
 lunaris-embed-remote      = { workspace = true, optional = true }
 lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }
 lunaris-rerank            = { workspace = true }
-lunaris-rerank-native     = { workspace = true }
+lunaris-rerank-native     = { workspace = true, optional = true }
 lunaris-retrieve          = { workspace = true }
 # Plan 04 — verifier + consolidator crates. default-features = false is
 # inherited from workspace.dependencies so the candle / ollama / cloud-api
@@ -58,13 +58,11 @@ lunaris-retrieve          = { workspace = true }
 # forwarded (see [features] below — W-5 AUGMENT forwards).
 lunaris-verify            = { workspace = true }
 lunaris-consolidate       = { workspace = true }
-# v0.4 N-03 — `resolve_embedder()` / `resolve_reranker()` construct
-# `lunaris_embed_native::NativeEmbedderOpts` and
-# `lunaris_rerank_native::NativeRerankerOpts` which carry a `candle_core::Device`
-# field. The native crates already pull candle transitively; this direct
-# entry exposes the `Device::Cpu` constructor at the umbrella so the resolver
-# does not need a separate re-export shim.
-candle-core    = { workspace = true }
+# `resolve_embedder()` / `resolve_reranker()` construct `NativeEmbedderOpts` /
+# `NativeRerankerOpts` which carry a `candle_core::Device` field. Optional +
+# gated behind `native` alongside the native crates so a `default-features =
+# false` build pulls no candle.
+candle-core    = { workspace = true, optional = true }
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
 chrono         = { workspace = true }
@@ -129,7 +127,13 @@ nix            = { workspace = true }
 # verifier** LLM backends (Gemma-3 4B / 270M / 27B + Anthropic/OpenAI/Gemini
 # provider mux) — the embedder + reranker no longer depend on `candle` as a
 # feature toggle (it's a permanent runtime dep on the native crates).
-default     = []
+default     = ["native"]
+# Native candle embedder + reranker (granite-r2 + bge-reranker-v2-m3). In
+# `default` so existing consumers are unaffected; opt OUT with
+# `default-features = false` to build candle-free (~100 MB lighter) and drive
+# embeddings via a remote server (`embed-remote`). Gates all `candle_core` /
+# `lunaris_embed_native` / `lunaris_rerank_native` references in `handle.rs`.
+native = ["dep:lunaris-embed-native", "dep:lunaris-rerank-native", "dep:candle-core"]
 # v0.4 N-03 — feature-gated Ollama HTTP escape hatch. Off by default. When
 # set, `resolve_embedder()` honours `LUNARIS_EMBEDDER_OLLAMA_URL` and
 # constructs `lunaris_embed_remote::OllamaEmbedder` instead of the native
@@ -140,8 +144,9 @@ embed-remote = ["dep:lunaris-embed-remote"]
 # respective native crates. When set, `LUNARIS_EMBEDDER_GGUF` /
 # `LUNARIS_RERANKER_GGUF` env-var overrides activate `NativeQuantizedEmbedder`
 # / `NativeQuantizedReranker`. Without this flag the env vars are ignored.
-embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
-reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
+# gguf implies `native` — it pulls the (now optional) native crates.
+embedder-gguf = ["native", "lunaris-embed-native/embedder-gguf"]
+reranker-gguf = ["native", "lunaris-rerank-native/reranker-gguf"]
 # Extractor + verifier LLM backends. `candle` produces real Gemma-3 4B for
 # extract + Gemma-3 27B for verify (legacy); `cloud-api` enables the
 # provider-mux backend; `verify-small` / `verify-large` pick the verifier
