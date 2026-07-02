@@ -37,6 +37,29 @@ use crate::config::{ConfigError, XlmRobertaRerankerConfig};
 /// table specifies p50 at K=10 for rerank; this ceiling at 8 means K=10
 /// fits in two chunks (8 + 2) with no per-chunk fixed cost.
 pub const MAX_PUBLIC_BATCH: usize = 8;
+
+/// Pure resolver for the effective re-chunk ceiling from a raw env value.
+/// Split out from [`public_batch_size`] so the fallback policy is unit-testable
+/// without touching process env (avoids the global-env test race). Mirrors
+/// `lunaris_embed_native::embedder::resolve_batch_size` byte-for-byte — same
+/// fallback policy on both sides of the embed/rerank split.
+///
+/// Design-for-failure: a missing, non-numeric, or zero/negative value yields
+/// the safe default [`MAX_PUBLIC_BATCH`] rather than panicking or producing a
+/// 0-window (`slice::chunks(0)` panics).
+fn resolve_batch_size(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(MAX_PUBLIC_BATCH)
+}
+
+/// Effective per-forward rerank-pair re-chunk ceiling. Defaults to
+/// [`MAX_PUBLIC_BATCH`] (8) but operators on memory-rich hosts can raise it via
+/// `LUNARIS_RERANK_BATCH` to better saturate the GPU on bulk rerank (mirrors
+/// the embedder's `LUNARIS_EMBED_BATCH` / `public_batch_size`). Read once and
+/// cached for the process lifetime.
+pub fn public_batch_size() -> usize {
+    static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| resolve_batch_size(std::env::var("LUNARIS_RERANK_BATCH").ok().as_deref()))
+}
 use crate::tokenizer::{EncodedPairBatch, PairTokenizer, TokenizerError};
 use crate::xlmr_reranker::{ForwardError, XlmRobertaReranker};
 
@@ -215,14 +238,16 @@ impl Reranker for NativeReranker {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RerankCandidate>, LunarisError> {
-            // O-01-E — re-chunk docs into windows of MAX_PUBLIC_BATCH so
-            // each forward pass tokenizes ≤ 8 pairs. At K=10 (the rerank
-            // gate's test point) this is two chunks (8 + 2); at K=30 it's
-            // four chunks (8+8+8+6). The per-chunk fixed cost is one
-            // `encode_pair_batch` + one `score_blocking` — same kernel
-            // path as the pre-O-01-E single-shot dispatch, just bounded.
+            // O-01-E — re-chunk docs into windows of public_batch_size()
+            // (default MAX_PUBLIC_BATCH=8, override via LUNARIS_RERANK_BATCH)
+            // so each forward pass tokenizes at most that many pairs. At the
+            // default, K=10 (the rerank gate's test point) is two chunks
+            // (8 + 2); at K=30 it's four chunks (8+8+8+6). The per-chunk
+            // fixed cost is one `encode_pair_batch` + one `score_blocking` —
+            // same kernel path as the original single-shot dispatch, just
+            // bounded.
             let mut all_scores: Vec<f32> = Vec::with_capacity(docs.len());
-            for chunk in docs.chunks(MAX_PUBLIC_BATCH) {
+            for chunk in docs.chunks(public_batch_size()) {
                 let pairs: Vec<(&str, &str)> =
                     chunk.iter().map(|d| (owned_query.as_str(), d.text.as_str())).collect();
                 let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
@@ -275,5 +300,35 @@ mod tests {
             NativeRerankerError::Config(_) => {}
             other => panic!("expected Config error, got: {other:?}"),
         }
+    }
+
+    // -- embed-accel-passthrough task: LUNARIS_RERANK_BATCH resolver --------
+    // Mirrors lunaris-embed-native::embedder::{resolve_batch_size,
+    // public_batch_size} 1:1 (same fallback policy, same pure-function shape
+    // to avoid the global-env test race — see that module's doc comment).
+    // RED until `resolve_batch_size` / `public_batch_size` exist in this crate.
+
+    #[test]
+    fn resolve_batch_size_defaults_when_unset() {
+        assert_eq!(resolve_batch_size(None), MAX_PUBLIC_BATCH);
+    }
+
+    #[test]
+    fn resolve_batch_size_honors_large_override() {
+        assert_eq!(resolve_batch_size(Some("64")), 64);
+        assert_eq!(resolve_batch_size(Some("128")), 128);
+    }
+
+    #[test]
+    fn resolve_batch_size_trims_whitespace() {
+        assert_eq!(resolve_batch_size(Some("  32 ")), 32);
+    }
+
+    #[test]
+    fn resolve_batch_size_rejects_zero_and_garbage() {
+        assert_eq!(resolve_batch_size(Some("0")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("-4")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("abc")), MAX_PUBLIC_BATCH);
+        assert_eq!(resolve_batch_size(Some("")), MAX_PUBLIC_BATCH);
     }
 }
