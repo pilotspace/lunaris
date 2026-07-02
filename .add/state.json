@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "moon-v031-xshard-bump",
+  "active_task": "embed-accel-passthrough",
   "active_milestone": null,
   "tasks": {
     "mq-typed-client": {
@@ -526,6 +526,42 @@
         ],
         "snapshot_md5": "5c3aa73f7f26b4a108f7dc33a753859f"
       }
+    },
+    "embed-accel-passthrough": {
+      "title": "Land Metal/Accelerator feature passthrough on main + reranker batch tunable",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": null,
+      "depends_on": [],
+      "created": "2026-07-02T10:44:41+00:00",
+      "updated": "2026-07-02T13:24:02+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "e9e49ac6fe46c7d4703bdafebb6c79e1",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/Cargo.toml",
+          "crates/lunaris-embed-native/src/embedder.rs"
+        ],
+        "snapshot_md5": "d6f8e1bbadbaefff1c34fe3a9ac54065"
+      },
+      "heal": {
+        "attempts": 2,
+        "history": [
+          {
+            "at": "2026-07-02T12:18:36+00:00",
+            "reason": "scope_violation: task 'embed-accel-passthrough' touched outside its declared \u00a75 Scope \u2014 .claude/scheduled_tasks.lock (1 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-07-02T12:29:26+00:00",
+            "reason": "scope_violation: task 'embed-accel-passthrough' touched outside its declared \u00a75 Scope \u2014 .claude/scheduled_tasks.lock \u00b7 .claude/settings.local.json \u00b7 .claude/skills/add/SKILL.md \u00b7 .claude/skills/add/adopt.md \u00b7 .claude/skills/add/advisor.md (65 total)",
+            "source": "scope"
+          }
+        ]
+      }
     }
   },
   "milestones": {
@@ -555,7 +591,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-06-22T06:33:59+00:00",
+  "updated": "2026-07-02T13:24:02+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
