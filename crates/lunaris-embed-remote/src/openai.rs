@@ -206,7 +206,11 @@ impl OpenAiEmbedder {
 
     /// One HTTP round-trip. `Err(true, _)` is transient (retry-worthy),
     /// `Err(false, _)` is fatal (config / shape — do not retry).
-    async fn try_once(&self, url: &str, inputs: &[&str]) -> Result<Vec<Vec<f32>>, (bool, LunarisError)> {
+    async fn try_once(
+        &self,
+        url: &str,
+        inputs: &[&str],
+    ) -> Result<Vec<Vec<f32>>, (bool, LunarisError)> {
         let body = EmbedRequest { model: &self.model, input: inputs };
         let mut req = self.client.post(url).json(&body);
         if let Some(key) = self.api_key.as_deref() {
