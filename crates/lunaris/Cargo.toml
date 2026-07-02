@@ -160,10 +160,13 @@ reranker-gguf = ["native", "lunaris-rerank-native/reranker-gguf"]
 #   --features cpu-accelerate   (Apple Accelerate / BLAS, CPU)
 #   --features cpu-mkl          (Intel MKL, CPU)
 #   --features cuda             (NVIDIA GPU; auto Cpu→Cuda upgrade)
+#   --features cuda-fa2         (NVIDIA GPU + FlashAttention 2 kernels; untested
+#                                 on Apple Silicon hosts, see O-01 cuda_notes.rs)
 metal          = ["native", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
 cpu-accelerate = ["native", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
 cpu-mkl        = ["native", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
 cuda           = ["native", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
+cuda-fa2       = ["native", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
 # Extractor + verifier LLM backends. `candle` produces real Gemma-3 4B for
 # extract + Gemma-3 27B for verify (legacy); `cloud-api` enables the
 # provider-mux backend; `verify-small` / `verify-large` pick the verifier
