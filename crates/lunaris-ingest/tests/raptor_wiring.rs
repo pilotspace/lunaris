@@ -155,6 +155,62 @@ async fn fixture_3b_leaf_chunk_parent_id_set() {
 }
 
 // ---------------------------------------------------------------------------
+// Summary-length cap: the ingest-OOM regression guard
+// ---------------------------------------------------------------------------
+
+/// Reproduces the haystack-ingest OOM at the data level: a long section with NO
+/// sentence terminals makes `ExtractiveSummarizer::first_sentence` fall back to
+/// the FULL child text, so the aggregated root-community summary would be
+/// thousands of bytes. Uncapped, that reaches the embedder's 8192-token ceiling
+/// and — batched across communities — padded a `[rows, heads, 8192, 8192]`
+/// attention tensor to ~124 GB, OOM-killing ingest (and crashing Metal's buffer
+/// pool). Every persisted community summary MUST now be ≤ the 2048-byte cap.
+#[tokio::test]
+async fn long_terminal_free_section_summary_is_capped() {
+    let storage =
+        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    let embedder = StubEmbedder::new(768);
+    let clock = HlcClock::new(0);
+
+    // ~4200 bytes of words with NO '.', '?', or '!' → no sentence boundary, so
+    // the extractive summarizer returns whole chunks and the section summary
+    // balloons well past the 2048-byte cap absent the fix.
+    let body = "alpha beta gamma delta epsilon zeta eta theta ".repeat(90);
+    let content = format!("# Section\n\n{body}\n");
+    let ep = Episode::new(Scope::dev(), "longsec.md", content, &clock);
+    let scope = ep.scope.clone();
+
+    ingest_episode(&storage, &embedder, &clock, ep).await.expect("ingest must succeed");
+
+    let communities: Vec<Community> =
+        scan_deserialize(&storage, &scope, community_prefix(&scope)).await;
+    assert!(!communities.is_empty(), "communities must be persisted");
+
+    // The cap (the fix): no summary may exceed 2048 bytes, even when the
+    // extractive no-terminal fallback returns whole sections.
+    for c in &communities {
+        assert!(
+            c.summary.len() <= 2048,
+            "community (id={}, level={}) summary is {} bytes; MAX_SUMMARY_BYTES (2048) cap not applied — \
+             an uncapped summary OOM-kills the embedder",
+            c.id,
+            c.level,
+            c.summary.len()
+        );
+    }
+
+    // Discriminator: the fixture MUST actually exercise the long-summary path
+    // (a trivially short fixture would pass the cap check vacuously). At least
+    // one summary should be pushed up near the cap.
+    assert!(
+        communities.iter().any(|c| c.summary.len() > 1024),
+        "fixture must produce at least one >1KB pre-cap summary to exercise the cap; \
+         got lengths {:?}",
+        communities.iter().map(|c| c.summary.len()).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // INGEST-04 grep invariant: exactly ONE atomic_write call site in pipeline.rs
 // ---------------------------------------------------------------------------
 
