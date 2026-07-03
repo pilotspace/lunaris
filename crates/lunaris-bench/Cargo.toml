@@ -57,6 +57,14 @@ anyhow             = { workspace = true }
 clap               = { workspace = true }
 hf-hub             = { workspace = true }
 dirs               = { workspace = true }
+# Plan EVAL — LongMemEval J-score gen+judge stage POSTs Ollama /api/chat
+# (answer generation + LLM-as-judge via minimax-m3:cloud). Reuses the
+# workspace reqwest (json+rustls) already pulled by lunaris-embed-remote.
+reqwest            = { workspace = true }
+# LongMemEval-S harness flushes Moon between questions so each question
+# retrieves from ITS OWN haystack (the StartsWith source-filter fails open on
+# Moon, so physical isolation is the only correct per-question boundary).
+redis              = { workspace = true }
 # Plan 05-06 EVAL-04 memory harness (RSS sampling) needs a tracing-subscriber
 # init in the binary entry per chaos.rs convention; reuses the existing
 # tracing dep already in [dependencies] above.
@@ -109,6 +117,11 @@ ci-perf-gates = []
 # required-features gate references them in [[bin]].required-features.
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
+# Local-dev passthrough so the eval gauntlet (lunaris-evals) can use the native
+# Q4/Q5 GGUF embedder+reranker via LUNARIS_EMBEDDER_GGUF / LUNARIS_RERANKER_GGUF
+# instead of the default Ollama/FP16 path. Not wired into CI defaults.
+embedder-gguf = ["lunaris/embedder-gguf"]
+reranker-gguf = ["lunaris/reranker-gguf"]
 
 # ---------------------------------------------------------------------------
 # O-01-F — per-device perf benches.

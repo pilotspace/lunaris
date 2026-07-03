@@ -169,6 +169,7 @@ pub(crate) async fn recall_j_score_from_pad(
 
 pub mod e2e;
 pub mod er_f1;
+mod lme_judge;
 pub mod locomo;
 pub mod longmemeval;
 pub mod memory;
