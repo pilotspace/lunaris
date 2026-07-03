@@ -58,8 +58,9 @@ fn resolve_ingest_batch_size(raw: Option<&str>) -> usize {
 /// Effective ingest-driver batch, reading `LUNARIS_EMBED_BATCH` once + caching.
 fn ingest_embed_batch_size() -> usize {
     static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHE
-        .get_or_init(|| resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref()))
+    *CACHE.get_or_init(|| {
+        resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref())
+    })
 }
 
 /// Default chunker target tokens per `chunk_markdown` invocation.
