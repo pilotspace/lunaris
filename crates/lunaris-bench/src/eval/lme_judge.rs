@@ -185,9 +185,18 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
     // Calendar units only: "how many DAYS/WEEKS/MONTHS/YEARS" is a duration →
     // Temporal. Deliberately EXCLUDES hour/minute/second — "how many hours of
     // jogging" is a quantity to SUM (Counting), not a span between events.
+    // A connective ("between"/"since"/"until"/"before"/"after") is REQUIRED to
+    // treat it as a duration — bare "how many days did you do X" is a TALLY of
+    // distinct occurrence-days (Counting), not a span between two points in
+    // time. v0.7 N=500 rerun q112/q117 misrouted the bare form to Temporal,
+    // which reads the timeline instead of enumerating and counting, and
+    // undercounted. ("... ago" durations are still caught below by the
+    // standalone " ago" check, independent of this connective list.)
     const UNITS: [&str; 4] = ["day", "week", "month", "year"];
-    let how_many_duration =
-        q.contains("how many") && UNITS.iter().any(|u| q.contains(&format!("how many {u}")));
+    const DURATION_CONNECTIVES: [&str; 5] = ["between", "since", "until", "before", "after"];
+    let how_many_duration = q.contains("how many")
+        && UNITS.iter().any(|u| q.contains(&format!("how many {u}")))
+        && DURATION_CONNECTIVES.iter().any(|c| q.contains(c));
     let temporal = how_many_duration
         || q.contains("how long")
         || q.contains("how soon")
@@ -261,8 +270,12 @@ pub(crate) fn gen_system_prompt_for(intent: QueryIntent) -> &'static str {
              conversations. Answer using ONLY the provided conversation history. \
              The question asks for a count or total. First list each relevant \
              occurrence from the history one by one, then state the final number \
-             — never guess a number without listing what you counted. If the \
-             information is genuinely absent, say you don't know."
+             — never guess a number without listing what you counted. Watch for \
+             the same real-world event mentioned in more than one session (e.g. \
+             planned in one session and recapped in another) — count each \
+             distinct real-world occurrence exactly once, not once per session \
+             or message that mentions it. If the information is genuinely \
+             absent, say you don't know."
         }
         QueryIntent::Temporal => {
             "You are a helpful assistant with access to the user's past \
@@ -467,6 +480,42 @@ mod tests {
         assert!(gen_system_prompt_for(QueryIntent::Recommendation).contains("APPLY"));
         // Factual falls back to the plain prompt.
         assert_eq!(gen_system_prompt_for(QueryIntent::Factual), gen_system_prompt(false));
+    }
+
+    #[test]
+    fn classify_intent_day_tally_without_connective_is_counting() {
+        // "how many days did you do X" (no since/between/ago/before/after) is a
+        // TALLY of distinct occurrence-days, not a duration between two dates —
+        // v0.7 N=500 rerun q112/q117 misrouted this to Temporal (the timeline
+        // prompt), so generation undercounted (missed a same-week occurrence)
+        // instead of getting Counting's enumerate-then-count instruction.
+        use QueryIntent::*;
+        assert_eq!(classify_intent("On how many days did I go jogging in December?"), Counting);
+        assert_eq!(
+            classify_intent("How many days this month did I attend a faith-related activity?"),
+            Counting
+        );
+        // Genuine durations (a connective word ties two points in time) must
+        // still route Temporal — do not regress the existing passing cases.
+        assert_eq!(classify_intent("How many days between my trips?"), Temporal);
+        assert_eq!(classify_intent("How many days since I last called mom?"), Temporal);
+        assert_eq!(classify_intent("How many days ago did I post that?"), Temporal);
+        assert_eq!(classify_intent("How many weeks until my trip?"), Temporal);
+    }
+
+    #[test]
+    fn gen_system_prompt_for_counting_warns_about_cross_session_dedup() {
+        // v0.7 N=500 rerun q70/q81/q86: evidence_recall_all=true (every gold
+        // session WAS retrieved) yet generation still miscounted — the same
+        // real-world event was mentioned in more than one session (planned,
+        // then happened) and the model double-counted or merged occurrences.
+        // The Counting prompt must explicitly warn against this.
+        let p = gen_system_prompt_for(QueryIntent::Counting);
+        assert!(
+            p.contains("distinct real-world occurrence") || p.contains("same event"),
+            "Counting prompt must instruct the model to dedupe the same real-world \
+             event mentioned across multiple sessions, got: {p}"
+        );
     }
 
     #[test]
