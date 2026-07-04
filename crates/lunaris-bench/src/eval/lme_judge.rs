@@ -147,6 +147,11 @@ pub(crate) fn gen_system_prompt(cot: bool) -> &'static str {
      begin with a `[Session date: ...]` marker giving the real-world date of \
      that conversation; use those dates (and the current date) for any \
      time-based reasoning, ordering, or determining which fact is most recent. \
+     If the same fact or value is stated more than once at different times, \
+     the most recently-dated statement supersedes the earlier one — report \
+     the newest value, not an average or the original one. Be precise about \
+     which fact the question asks for: do not substitute a related but \
+     different fact or event when the specific one asked about is absent. \
      If the answer is not contained in the snippets, say you don't know. \
      Answer concisely."
 }
@@ -238,6 +243,11 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
         || q.contains("any ideas")
         || q.contains("ideas on")
         || q.contains("ideas to")
+        // "do you think ...?" / "what do you think?" — an implicit ask-for-
+        // opinion that the single-session-preference rubric judge expects to
+        // be answered by recalling and applying the user's stated preferences,
+        // same as an explicit "what should I..." (v0.7 N=500 rerun q151/q153).
+        || q.contains("do you think")
     {
         return QueryIntent::Recommendation;
     }
@@ -274,8 +284,11 @@ pub(crate) fn gen_system_prompt_for(intent: QueryIntent) -> &'static str {
              the same real-world event mentioned in more than one session (e.g. \
              planned in one session and recapped in another) — count each \
              distinct real-world occurrence exactly once, not once per session \
-             or message that mentions it. If the information is genuinely \
-             absent, say you don't know."
+             or message that mentions it. If the question is instead about a \
+             single fact, value, or status that changed over time (not a count \
+             of distinct events), do not sum or count how many times it was \
+             mentioned — report only the most recently stated value. If the \
+             information is genuinely absent, say you don't know."
         }
         QueryIntent::Temporal => {
             "You are a helpful assistant with access to the user's past \
@@ -515,6 +528,72 @@ mod tests {
             p.contains("distinct real-world occurrence") || p.contains("same event"),
             "Counting prompt must instruct the model to dedupe the same real-world \
              event mentioned across multiple sessions, got: {p}"
+        );
+    }
+
+    #[test]
+    fn classify_intent_recommendation_do_you_think_phrasing() {
+        // v0.7 N=500 rerun q151/q153 (reader-reasoning gap) and q152
+        // (retrieval gap): implicit ask-for-opinion phrasing ("do you think
+        // ...?", "what do you think?") misrouted to Factual instead of
+        // Recommendation, so generation got the plain "say you don't know"
+        // prompt instead of the tight-context apply-preferences prompt the
+        // single-session-preference rubric expects.
+        use QueryIntent::*;
+        assert_eq!(classify_intent("Do you think it might be my living room?"), Recommendation);
+        assert_eq!(
+            classify_intent("I'm trying to decide between two storage units. What do you think?"),
+            Recommendation
+        );
+        assert_eq!(
+            classify_intent(
+                "Do you think it would be a good idea to attend my high school reunion?"
+            ),
+            Recommendation
+        );
+    }
+
+    #[test]
+    fn gen_system_prompt_warns_about_superseding_facts() {
+        // v0.7 N=500 rerun knowledge-update misses (q389/q414/q423/q443/...):
+        // evidence_recall_all=true yet generation reported the earlier,
+        // superseded value instead of the latest one, despite the session-
+        // date markers being present in context. The base prompt (used by
+        // the Factual intent) must explicitly warn that a later-dated
+        // statement supersedes an earlier one.
+        let p = gen_system_prompt(false);
+        assert!(
+            p.contains("supersede") || p.contains("most recently-dated") || p.contains("newest"),
+            "base prompt must explicitly warn that a later-dated statement \
+             supersedes an earlier one, got: {p}"
+        );
+    }
+
+    #[test]
+    fn gen_system_prompt_warns_against_substituting_adjacent_facts() {
+        // v0.7 N=500 rerun q230/q232 (abstention): the model invented a
+        // specific answer by conflating an adjacent-but-different fact/event
+        // with the one actually asked about, instead of recognizing the
+        // specific fact was absent.
+        let p = gen_system_prompt(false);
+        assert!(
+            p.contains("do not substitute") || p.contains("related-but-different"),
+            "base prompt must warn against substituting a related-but-different \
+             fact for the one actually asked about, got: {p}"
+        );
+    }
+
+    #[test]
+    fn gen_system_prompt_for_counting_carves_out_single_evolving_facts() {
+        // v0.7 N=500 rerun q381/q383/q367/q430: Counting's enumerate-then-
+        // count instruction actively fought knowledge-update semantics —
+        // summing/counting mentions of a single evolving value (a threshold,
+        // a status, a count) instead of reporting the latest one.
+        let p = gen_system_prompt_for(QueryIntent::Counting);
+        assert!(
+            p.contains("changed over time") || p.contains("most recently stated"),
+            "Counting prompt must carve out single-evolving-fact questions from \
+             the enumerate-and-count instruction, got: {p}"
         );
     }
 
