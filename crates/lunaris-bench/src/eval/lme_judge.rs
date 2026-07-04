@@ -147,13 +147,17 @@ pub(crate) fn gen_system_prompt(cot: bool) -> &'static str {
      begin with a `[Session date: ...]` marker giving the real-world date of \
      that conversation; use those dates (and the current date) for any \
      time-based reasoning, ordering, or determining which fact is most recent. \
-     If the same fact or value is stated more than once at different times, \
-     the most recently-dated statement supersedes the earlier one — report \
-     the newest value, not an average or the original one. Be precise about \
-     which fact the question asks for: do not substitute a related but \
-     different fact or event when the specific one asked about is absent. \
-     If the answer is not contained in the snippets, say you don't know. \
-     Answer concisely."
+     Before treating two statements as conflicting versions of one fact, \
+     confirm they describe the exact same attribute of the exact same thing \
+     — a similar-sounding number or topic is NOT the same fact (e.g. a \
+     device's spec sheet is not the same fact as the user's own plan or \
+     status, even if both are dated and both mention a similar unit). Only \
+     when they are genuinely the same fact does the most recently-dated \
+     statement supersede the earlier one; report the newest value in that \
+     case, not an average or the original. Be precise about which fact the \
+     question asks for: do not substitute a related but different fact or \
+     event when the specific one asked about is absent. If the answer is \
+     not contained in the snippets, say you don't know. Answer concisely."
 }
 
 /// General query-intent categories inferred from the QUESTION TEXT alone —
@@ -566,6 +570,26 @@ mod tests {
             p.contains("supersede") || p.contains("most recently-dated") || p.contains("newest"),
             "base prompt must explicitly warn that a later-dated statement \
              supersedes an earlier one, got: {p}"
+        );
+    }
+
+    #[test]
+    fn gen_system_prompt_recency_rule_requires_same_specific_fact() {
+        // v0.7 N=500 retry regression (q17): "the most recently-dated
+        // statement supersedes the earlier one" fired on two DIFFERENT facts
+        // that merely shared a similar topic (a router's spec vs. the user's
+        // internet plan speed) purely because the router mention happened to
+        // be dated after the gold fact -- the retrieved context was BYTE-
+        // IDENTICAL to the pre-fix run, so this is a prompt-wording bug, not
+        // a retrieval regression. The recency rule must require the two
+        // statements be genuinely the same specific fact before superseding,
+        // not just a similar-sounding number or topic.
+        let p = gen_system_prompt(false);
+        assert!(
+            p.contains("exact same") || p.contains("genuinely the same fact"),
+            "base prompt's recency rule must require the SAME specific fact/ \
+             attribute before applying supersession, not just a similar topic \
+             or number, got: {p}"
         );
     }
 
