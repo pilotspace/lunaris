@@ -223,6 +223,29 @@ key-value point reads aren't natively temporal and index schemas are
 fixed at creation, so the architecture page lists every limit beside
 every win.
 
+## Recall quality — LongMemEval-S
+
+Full `longmemeval_s` dataset (N=500, not a subsample), `main` HEAD, one
+process per question:
+
+| Metric | Score |
+|---|---|
+| **Retrieval — any gold session surfaced** | **98.2% (491/500)** |
+| **Retrieval — all gold sessions surfaced** | **93.0% (465/500)** |
+| End-to-end J-score (MiniMax m3 as both generator and judge) | 85.4% (427/500) |
+| Zep (published, GPT-4o reader) | 90.2% |
+| Mem0 (published) | 66–68% |
+
+Retrieval itself is strong and holds up at full scale. The end-to-end
+J-score sits below retrieval recall because most misses are the reader
+model reasoning incorrectly over evidence it *did* retrieve (multi-session
+counting/aggregation questions), not Lunaris failing to find the right
+memories — see the miss breakdown in
+[`docs/benchmarks/v0.7-longmemeval-jscore-validation.md`](docs/benchmarks/v0.7-longmemeval-jscore-validation.md).
+The Zep/Mem0 figures use their own (different) reader models, so the
+end-to-end row is not a controlled apples-to-apples comparison — it's
+included for context, not as a head-to-head claim.
+
 ## Multi-agent isolation
 
 Every Lunaris operation is partitioned by `Scope` — a validated newtype
