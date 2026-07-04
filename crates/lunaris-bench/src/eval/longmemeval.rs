@@ -347,6 +347,21 @@ pub(crate) fn evidence_recall_all_hit(
     total > 0 && covered == total
 }
 
+/// Bucket A1 fix (LongMemEval N=500 validation, 2026-07): the hybrid arm's
+/// `fused.rerank(reranker)` call went through `FuseRrfRetriever::rerank()`'s
+/// convenience sugar, which hardcodes `DEFAULT_RERANK_TOP_IN=30` regardless
+/// of `LME_POOL`/`LME_TOPK`. Every hit-count log line across a full N=500 run
+/// read exactly "30 hits" no matter what pool/topk was configured, silently
+/// discarding fused candidates ranked 31+ before the cross-encoder ever saw
+/// them. The vector branch and the BM25 branch each contribute up to `pool`
+/// hits, so the fused set has at most twice that many distinct candidates
+/// (worst case zero overlap) -- that is the true upper bound the rerank pass
+/// needs to consider so `LME_POOL` actually widens the pool instead of being
+/// silently capped back down to 30.
+fn hybrid_rerank_top_in(pool: usize) -> usize {
+    pool.saturating_mul(2)
+}
+
 /// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
 /// (distractor sessions included), then recall the top-k turns and score.
@@ -490,8 +505,17 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 .fuse_rrf(60);
             let builder = lunaris.recall_with_degraded_check().await?;
             if rerank_enabled {
+                // Bucket A1 fix: `fused.rerank(reranker)` sugar defaults to
+                // DEFAULT_RERANK_TOP_IN=30, ignoring LME_POOL — use
+                // with_top_in so the full fused pool actually reaches the
+                // cross-encoder.
+                let reranked = lunaris::RerankRetriever::with_top_in(
+                    Box::new(fused),
+                    lunaris.reranker(),
+                    hybrid_rerank_top_in(pool),
+                );
                 builder
-                    .with_root(fused.rerank(lunaris.reranker()).top(k))
+                    .with_root(reranked.top(k))
                     .execute(lunaris::Query::text(&rec.question))
                     .await?
             } else {
@@ -913,6 +937,16 @@ mod tests {
         ]"#;
         let recs = parse_longmemeval_full(json).expect("parse");
         assert!(recs[0].is_abstention());
+    }
+
+    #[test]
+    fn hybrid_rerank_top_in_covers_the_full_fused_pool() {
+        // Bucket A1 regression guard: LME_POOL=40 must widen the rerank
+        // pre-truncation window to 80, not silently stay at
+        // DEFAULT_RERANK_TOP_IN=30 via the `.rerank()` sugar's default.
+        assert_eq!(hybrid_rerank_top_in(30), 60);
+        assert_eq!(hybrid_rerank_top_in(40), 80);
+        assert_eq!(hybrid_rerank_top_in(1), 2);
     }
 
     #[test]

@@ -333,6 +333,49 @@ async fn rerank_truncates_to_k_in() {
 }
 
 #[tokio::test]
+async fn rerank_with_top_in_widens_the_truncation_window() {
+    // Bucket A1 regression guard (LongMemEval N=500 validation, 2026-07):
+    // `with_top_in` had ZERO test coverage anywhere in the workspace, and
+    // the eval harness relied on the `.rerank()` sugar's hardcoded
+    // DEFAULT_RERANK_TOP_IN=30 while trying to widen the pool via its own
+    // LME_POOL/LME_TOPK env config — every hit-count log line across a
+    // full N=500 run read exactly "30 hits" regardless of that config.
+    // Prove `with_top_in` actually overrides the pre-rerank truncation
+    // window past the default.
+    let rec = Arc::new(RecordingStorage::new());
+    let mut hits = Vec::with_capacity(50);
+    for i in 0..50 {
+        let id = seed_chunk(&rec, &format!("doc {i}"));
+        hits.push(vh(&id, 1.0 - (i as f32) * 0.01));
+    }
+    rec.set_vector_hits(hits);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    let recorder = Arc::new(RecordingReranker::new());
+    let upstream: Box<dyn Retriever> = Box::new(Vector::new("chunks", 50));
+    let root = lunaris_retrieve::RerankRetriever::with_top_in(
+        upstream,
+        recorder.clone() as Arc<dyn Reranker>,
+        45,
+    );
+    let raw = root.retrieve(&ctx).await.unwrap();
+
+    assert_eq!(
+        raw.len(),
+        45,
+        "with_top_in(45) must widen the truncation window past DEFAULT_RERANK_TOP_IN=30"
+    );
+    assert_eq!(
+        recorder.received.lock().len(),
+        45,
+        "reranker MUST receive exactly 45 candidates when k_in=45"
+    );
+}
+
+#[tokio::test]
 async fn rerank_partial_hydrates_text() {
     let rec = Arc::new(RecordingStorage::new());
     // Seed chunks with distinct text bodies so we can prove the partial
