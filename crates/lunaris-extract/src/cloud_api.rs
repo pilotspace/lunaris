@@ -59,6 +59,7 @@ pub enum CloudProvider {
     Anthropic,
     OpenAI,
     Gemini,
+    MiniMax,
 }
 
 impl FromStr for CloudProvider {
@@ -68,8 +69,9 @@ impl FromStr for CloudProvider {
             "anthropic" | "claude" => Ok(Self::Anthropic),
             "openai" | "gpt" => Ok(Self::OpenAI),
             "gemini" | "google" => Ok(Self::Gemini),
+            "minimax" => Ok(Self::MiniMax),
             other => Err(LunarisError::Storage(StorageError::Backend(format!(
-                "cloud-api: unknown provider {other:?} (expected anthropic|openai|gemini)"
+                "cloud-api: unknown provider {other:?} (expected anthropic|openai|gemini|minimax)"
             )))),
         }
     }
@@ -81,6 +83,7 @@ impl CloudProvider {
             Self::Anthropic => "claude-3-5-haiku-latest",
             Self::OpenAI => "gpt-4o-mini",
             Self::Gemini => "gemini-2.5-flash",
+            Self::MiniMax => "MiniMax-M3",
         }
     }
     fn api_key_env(self) -> &'static str {
@@ -88,6 +91,7 @@ impl CloudProvider {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenAI => "OPENAI_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
+            Self::MiniMax => "MINIMAX_API_KEY",
         }
     }
     fn model_env(self) -> &'static str {
@@ -95,6 +99,7 @@ impl CloudProvider {
             Self::Anthropic => "ANTHROPIC_EXTRACT_MODEL",
             Self::OpenAI => "OPENAI_EXTRACT_MODEL",
             Self::Gemini => "GEMINI_EXTRACT_MODEL",
+            Self::MiniMax => "MINIMAX_EXTRACT_MODEL",
         }
     }
 }
@@ -107,6 +112,7 @@ impl From<CloudProvider> for lunaris_llm::CloudProvider {
             CloudProvider::Anthropic => lunaris_llm::CloudProvider::Anthropic,
             CloudProvider::OpenAI => lunaris_llm::CloudProvider::OpenAI,
             CloudProvider::Gemini => lunaris_llm::CloudProvider::Gemini,
+            CloudProvider::MiniMax => lunaris_llm::CloudProvider::MiniMax,
         }
     }
 }
@@ -124,7 +130,18 @@ pub struct CloudApiExtractorOpts {
     pub api_key: String,
     pub batch_timeout_ms: u64,
     pub max_retries: u8,
+    /// Per-call max output tokens. Defaults to 512 (LlmExtractorOpts's
+    /// historical implicit value) -- unchanged for existing callers. A
+    /// reasoning-heavy cloud model can exhaust 512 tokens on its own
+    /// reasoning before emitting the JSON answer (confirmed against
+    /// MiniMax-M3 via the LongMemEval graph-pipeline prototype, 2026-07:
+    /// `finish_reason: length`, empty content) -- raise this explicitly
+    /// for such models.
+    pub max_tokens: u32,
 }
+
+/// Historical implicit default (was hardcoded in [`CloudApiExtractor::new`]).
+const DEFAULT_MAX_TOKENS: u32 = 512;
 
 impl Default for CloudApiExtractorOpts {
     fn default() -> Self {
@@ -141,6 +158,7 @@ impl Default for CloudApiExtractorOpts {
             api_key,
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
             max_retries: DEFAULT_MAX_RETRIES,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 }
@@ -152,9 +170,9 @@ pub struct CloudApiExtractor {
     backend: Arc<CloudBackend>,
     provider: CloudProvider,
     batch_timeout_ms: u64,
-    /// Per-call GenOpts — max_tokens and temperature use the
-    /// LlmExtractorOpts defaults (512 / 0.0). timeout is set to the full
-    /// batch budget so CloudBackend's own D-21 retry stays within D-02.
+    /// Per-call GenOpts — max_tokens from `opts.max_tokens` (default 512),
+    /// temperature fixed at 0.0. timeout is set to the full batch budget so
+    /// CloudBackend's own D-21 retry stays within D-02.
     gen_opts: GenOpts,
 }
 
@@ -184,7 +202,7 @@ impl CloudApiExtractor {
         // Per-call timeout = full batch budget so the internal retry in
         // CloudBackend::generate stays bounded within D-02.
         let gen_opts = GenOpts {
-            max_tokens: 512,
+            max_tokens: opts.max_tokens,
             temperature: 0.0,
             timeout: Duration::from_millis(opts.batch_timeout_ms),
         };
@@ -201,13 +219,11 @@ impl CloudApiExtractor {
     /// `generate()` returns `Err`, we emit the transient sentinel so the
     /// validator can route it to `NeedsReviewReason::TransientAfterRetry`.
     async fn extract_one_with_sentinel(&self, chunk: &ChunkInput) -> RawExtraction {
-        let prompt = format!(
-            "Extract entities and relations from the chunk below. Respond with \
-             a JSON object {{\"entities\":[...],\"relations\":[...]}} only.\n\n\
-             <chunk heading=\"{}\">\n{}\n</chunk>",
-            chunk.heading_path.join(" / "),
-            chunk.text
-        );
+        // Shared with llm_extractor.rs -- this file used to carry its own
+        // independent, equally vague prompt (no field names), reproducing
+        // the exact "missing field entity_type" parse-failure bug found
+        // and fixed there (LongMemEval graph-pipeline prototype, 2026-07).
+        let prompt = crate::llm_extractor::build_prompt(chunk);
         match self.backend.generate(&prompt, SchemaConstraint::None, self.gen_opts).await {
             Ok(text) => crate::llm_extractor::parse_extraction_json_pub(&text, chunk.chunk_id),
             Err(e) => {
@@ -315,6 +331,7 @@ mod tests {
             api_key: "".into(),
             batch_timeout_ms: 150,
             max_retries: 1,
+            max_tokens: 512,
         };
         let err = CloudApiExtractor::new(opts).expect_err("empty key must error");
         let msg = err.to_string();
@@ -331,6 +348,7 @@ mod tests {
             api_key: "sk-ant-SECRET-KEY-ABCDEF".into(),
             batch_timeout_ms: 150,
             max_retries: 1,
+            max_tokens: 512,
         };
         let extractor = CloudApiExtractor::new(opts).unwrap();
         let dbg = format!("{extractor:?}");
@@ -352,5 +370,48 @@ mod tests {
             lunaris_llm::CloudProvider::from(CloudProvider::Gemini),
             lunaris_llm::CloudProvider::Gemini
         ));
+    }
+
+    #[test]
+    fn cloud_provider_from_str_parses_minimax() {
+        assert_eq!(CloudProvider::from_str("minimax").unwrap(), CloudProvider::MiniMax);
+        assert_eq!(CloudProvider::from_str("MiniMax").unwrap(), CloudProvider::MiniMax);
+    }
+
+    #[test]
+    fn minimax_default_model_and_envs() {
+        assert_eq!(CloudProvider::MiniMax.default_model(), "MiniMax-M3");
+        assert_eq!(CloudProvider::MiniMax.api_key_env(), "MINIMAX_API_KEY");
+        assert_eq!(CloudProvider::MiniMax.model_env(), "MINIMAX_EXTRACT_MODEL");
+    }
+
+    #[test]
+    fn cloud_provider_bridge_maps_minimax() {
+        assert!(matches!(
+            lunaris_llm::CloudProvider::from(CloudProvider::MiniMax),
+            lunaris_llm::CloudProvider::MiniMax
+        ));
+    }
+
+    #[test]
+    fn max_tokens_defaults_to_512_and_is_configurable() {
+        // 512 is LlmExtractorOpts's historical implicit default -- unchanged
+        // for existing callers. LongMemEval graph-pipeline prototype
+        // (2026-07) found MiniMax-M3 occasionally exhausts 512 tokens on
+        // its own reasoning before emitting the JSON answer
+        // (finish_reason: length, empty content) -- callers with a
+        // reasoning-heavy cloud model need to raise this explicitly.
+        let default_opts = CloudApiExtractorOpts::default();
+        assert_eq!(default_opts.max_tokens, 512);
+        let opts = CloudApiExtractorOpts {
+            provider: CloudProvider::MiniMax,
+            model: "MiniMax-M3".into(),
+            api_key: "dummy".into(),
+            batch_timeout_ms: 150,
+            max_retries: 1,
+            max_tokens: 2048,
+        };
+        let _extractor =
+            CloudApiExtractor::new(opts).expect("client builds with custom max_tokens");
     }
 }

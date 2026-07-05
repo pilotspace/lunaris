@@ -179,7 +179,11 @@ impl Extractor for LlmExtractor {
     }
 }
 
-fn build_prompt(chunk: &ChunkInput) -> String {
+/// `pub(crate)` so `cloud_api.rs` shares this exact prompt instead of
+/// maintaining its own copy -- it previously had an independent, equally
+/// vague local prompt (same missing-field-names bug, found+fixed
+/// separately during the same review that produced this shared version).
+pub(crate) fn build_prompt(chunk: &ChunkInput) -> String {
     // T-03-01-01 mitigation: wrap chunk text in `<chunk>` delimiters so
     // the downstream validator can flag any extracted entity whose name
     // equals the literal delimiter (prompt-injection guard).

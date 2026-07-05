@@ -21,7 +21,7 @@ pub(super) fn build_request(
     // max_tokens is required for /v1/messages. The caller's GenOpts
     // value already accounts for the worst-case output the upstream
     // schema can produce.
-    let max_tokens = opts.max_tokens as u32;
+    let max_tokens = opts.max_tokens;
 
     let body = match constraint {
         SchemaConstraint::JsonSchema(schema) => serde_json::json!({

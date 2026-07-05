@@ -36,7 +36,7 @@ use lunaris_extract::{CandleGemma3_4B, CandleGemma3_4BOpts};
 #[allow(unused_imports)]
 use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 
-#[cfg(feature = "cloud-api")]
+#[cfg(all(feature = "cloud-api", feature = "extractor-it"))]
 use lunaris_extract::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
 
 /// Compile-time + runtime proof that the trait stays object-safe — `Arc<dyn
@@ -166,6 +166,7 @@ async fn ollama_extracts_real_batch() {
         endpoint: url,
         model: std::env::var("OLLAMA_EXTRACT_MODEL").unwrap_or_else(|_| "gemma3:4b".to_string()),
         batch_timeout_ms: 30_000,
+        timeout_ms: 30_000,
     })
     .expect("client builds");
     let chunks = vec![ChunkInput {
@@ -183,7 +184,7 @@ async fn ollama_extracts_real_batch() {
 async fn cloud_api_extracts_real_batch() {
     let Some(provider_str) = std::env::var("LUNARIS_EXTRACT_PROVIDER").ok() else {
         eprintln!(
-            "SKIP cloud_api_extracts_real_batch — set LUNARIS_EXTRACT_PROVIDER (anthropic|openai|gemini) and the matching <PROVIDER>_API_KEY env"
+            "SKIP cloud_api_extracts_real_batch — set LUNARIS_EXTRACT_PROVIDER (anthropic|openai|gemini|minimax) and the matching <PROVIDER>_API_KEY env"
         );
         return;
     };
@@ -193,6 +194,7 @@ async fn cloud_api_extracts_real_batch() {
         CloudProvider::Anthropic => "ANTHROPIC_API_KEY",
         CloudProvider::OpenAI => "OPENAI_API_KEY",
         CloudProvider::Gemini => "GEMINI_API_KEY",
+        CloudProvider::MiniMax => "MINIMAX_API_KEY",
     };
     let Some(api_key) = std::env::var(api_key_env).ok() else {
         eprintln!("SKIP cloud_api_extracts_real_batch — set {api_key_env}");
@@ -204,10 +206,12 @@ async fn cloud_api_extracts_real_batch() {
             CloudProvider::Anthropic => "claude-3-5-haiku-latest".into(),
             CloudProvider::OpenAI => "gpt-4o-mini".into(),
             CloudProvider::Gemini => "gemini-2.5-flash".into(),
+            CloudProvider::MiniMax => "MiniMax-M3".into(),
         },
         api_key,
         batch_timeout_ms: 30_000,
         max_retries: 1,
+        max_tokens: 512,
     })
     .expect("client builds");
     let chunks = vec![ChunkInput {

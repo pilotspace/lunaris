@@ -32,6 +32,7 @@ use crate::{GenOpts, LlmBackend, ProviderKind, SchemaConstraint};
 
 mod anthropic;
 mod gemini;
+mod minimax;
 mod openai;
 
 /// Per-call HTTP transport timeout. Cloud APIs can take 5-10s under
@@ -43,12 +44,16 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// matches D-21.
 const DEFAULT_MAX_RETRIES: u8 = 1;
 
-/// Which cloud provider (subset of [`ProviderKind`]).
+/// Which cloud provider. MiniMax is NOT a subset of [`ProviderKind`] (the
+/// internal Extract/Verify/Reflect pipeline-config selector) -- it exists
+/// only for direct construction (e.g. an eval harness), not the
+/// `LUNARIS_*_PROVIDER`/TOML config-file resolution path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloudProvider {
     Anthropic,
     OpenAI,
     Gemini,
+    MiniMax,
 }
 
 impl CloudProvider {
@@ -57,6 +62,7 @@ impl CloudProvider {
             CloudProvider::Anthropic => "ANTHROPIC_API_KEY",
             CloudProvider::OpenAI => "OPENAI_API_KEY",
             CloudProvider::Gemini => "GEMINI_API_KEY",
+            CloudProvider::MiniMax => "MINIMAX_API_KEY",
         }
     }
 
@@ -65,6 +71,7 @@ impl CloudProvider {
             CloudProvider::Anthropic => "anthropic",
             CloudProvider::OpenAI => "openai",
             CloudProvider::Gemini => "gemini",
+            CloudProvider::MiniMax => "minimax",
         }
     }
 }
@@ -162,6 +169,9 @@ impl CloudBackend {
             CloudProvider::Gemini => {
                 gemini::build_request(&self.model, &self.api_key, prompt, constraint, opts)
             }
+            CloudProvider::MiniMax => {
+                minimax::build_request(&self.model, &self.api_key, prompt, constraint, opts)
+            }
         };
 
         let mut req = self.client.post(&url).json(&body);
@@ -186,6 +196,7 @@ impl CloudBackend {
             CloudProvider::Anthropic => anthropic::decode_response(&body_text),
             CloudProvider::OpenAI => openai::decode_response(&body_text),
             CloudProvider::Gemini => gemini::decode_response(&body_text),
+            CloudProvider::MiniMax => minimax::decode_response(&body_text),
         }
     }
 }
@@ -286,6 +297,24 @@ mod tests {
         })
         .unwrap();
         assert_eq!(backend.model_id(), "openai://gpt-4o-mini");
+    }
+
+    #[test]
+    fn minimax_provider_constructs_and_is_namespaced() {
+        // LongMemEval graph-pipeline prototype (2026-07): api.minimax.io
+        // via a local Ollama-shaped shim stacked two independent retry
+        // loops (the shim's + CloudBackend's/OllamaBackend's own), adding
+        // latency variance. A native provider removes that middle hop.
+        assert_eq!(CloudProvider::MiniMax.api_key_env(), "MINIMAX_API_KEY");
+        assert_eq!(CloudProvider::MiniMax.telemetry_prefix(), "minimax");
+        let backend = CloudBackend::new(CloudBackendOpts {
+            provider: CloudProvider::MiniMax,
+            model: "MiniMax-M3".into(),
+            api_key: "dummy-key".into(),
+            max_retries: 1,
+        })
+        .unwrap();
+        assert_eq!(backend.model_id(), "minimax://MiniMax-M3");
     }
 
     #[test]
