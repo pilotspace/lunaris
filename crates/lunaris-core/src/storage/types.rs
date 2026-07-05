@@ -119,6 +119,17 @@ pub enum WriteOp {
 /// a letter or underscore gets an extra `_` prefixed (Cypher identifiers can't
 /// start with a digit). An all-invalid or empty input returns `fallback` instead
 /// of an empty or all-underscore string.
+///
+/// A shape-valid identifier can still break Moon's Cypher parser if it's a
+/// whole-word match against one of Moon's reserved keywords: Moon's lexer
+/// (`vendor/moon/src/graph/cypher/lexer.rs`) matches these case-insensitively
+/// as exact tokens, which take priority over its identifier regex. A
+/// free-form extractor emitting a predicate like `"is"` (the copula in "Tom
+/// is a doctor") produces exactly this collision -- `MERGE (a)-[r:is]->(b)`
+/// lexes `is` as the `IS` keyword, not an identifier, and the parser rejects
+/// it (live-testing regression, LongMemEval graph-pipeline prototype,
+/// 2026-07). Any sanitized result that fully matches (case-insensitively) a
+/// reserved word also falls back to `fallback`.
 pub fn sanitize_graph_ident(s: &str, fallback: &str) -> String {
     let mut out: String =
         s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
@@ -128,8 +139,20 @@ pub fn sanitize_graph_ident(s: &str, fallback: &str) -> String {
     if !matches!(out.chars().next(), Some(c) if c.is_ascii_alphabetic() || c == '_') {
         out.insert(0, '_');
     }
+    if CYPHER_RESERVED_WORDS.contains(&out.to_ascii_lowercase().as_str()) {
+        return fallback.to_string();
+    }
     out
 }
+
+/// Moon's Cypher keyword set (`vendor/moon/src/graph/cypher/lexer.rs`,
+/// `#[token(..., ignore(case))]` variants) -- kept in sync by hand since
+/// lunaris-core has no dependency on Moon's vendored Cypher module.
+const CYPHER_RESERVED_WORDS: &[&str] = &[
+    "match", "optional", "where", "return", "create", "delete", "detach", "set", "merge", "with",
+    "unwind", "order", "by", "limit", "skip", "as", "and", "or", "not", "true", "false", "null",
+    "in", "is", "call", "yield", "distinct", "asc", "desc", "on",
+];
 
 #[cfg(test)]
 mod sanitize_graph_ident_tests {
@@ -173,6 +196,33 @@ mod sanitize_graph_ident_tests {
         // Cypher identifiers here are ASCII-only per T-01-03-01's regex; non-ASCII
         // letters are treated the same as punctuation, not preserved lossily.
         assert_eq!(sanitize_graph_ident("café", "Entity"), "caf_");
+    }
+
+    #[test]
+    fn reserved_keyword_falls_back() {
+        // The exact live-testing regression: MiniMax emitted predicate="is"
+        // for a copula fact ("Tom is a doctor"). "is" is shape-valid but
+        // collides with Moon's `IS` keyword token.
+        assert_eq!(sanitize_graph_ident("is", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("on", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("not", "RELATED_TO"), "RELATED_TO");
+    }
+
+    #[test]
+    fn reserved_keyword_match_is_case_insensitive() {
+        // Moon's lexer matches keywords via `ignore(case)`.
+        assert_eq!(sanitize_graph_ident("IS", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("Is", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("Set", "Entity"), "Entity");
+    }
+
+    #[test]
+    fn keyword_as_a_substring_is_not_treated_as_reserved() {
+        // Only a FULL match against a reserved word collides -- a longer
+        // identifier that merely starts with one lexes fine as a single
+        // Ident token (maximal munch), matching Moon's real lexer behavior.
+        assert_eq!(sanitize_graph_ident("is_a", "RELATED_TO"), "is_a");
+        assert_eq!(sanitize_graph_ident("Island", "Entity"), "Island");
     }
 }
 
