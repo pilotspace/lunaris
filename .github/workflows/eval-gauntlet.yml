@@ -47,6 +47,28 @@ jobs:
       # the er-f1 harness SKIPs (never a 0.0->FAIL).
       LUNARIS_EXTRACT_GEMMA_PATH: ${{ secrets.LUNARIS_EXTRACT_GEMMA_PATH }}
       LUNARIS_EVAL_CACHE_DIR: ${{ runner.temp }}/lunaris-eval-cache
+      # v0.7 N=500 validation (2026-07) found this gate silently defaulted to
+      # `longmemeval_oracle` (the easy, evidence-only haystack) with pure
+      # vector-only retrieval — nothing like the real `longmemeval_s`
+      # adversarial config every published number in docs/benchmarks/ is
+      # measured against. Pin the real dataset + Lunaris's actual production
+      # retrieval shape (hybrid vector+BM25 fusion, intent-adaptive routing,
+      # rerank) so this gate protects the real recall contract. Plain literal
+      # values only — no untrusted github.event.* interpolation here.
+      LUNARIS_EVAL_LME_DATASET: longmemeval_s
+      LUNARIS_EVAL_LME_HYBRID: "1"
+      LUNARIS_EVAL_LME_ADAPTIVE: "1"
+      LUNARIS_EVAL_LME_RERANK: "1"
+      # JUDGE mode (LLM gen+judge, ~2-5 min/question with an LLM in the loop)
+      # deliberately stays OFF here: it needs a reader-model secret this gate
+      # doesn't have, and even a small N would blow the eval-all 30-min
+      # target. Evidence-recall@k is the honest metric for a fast per-push
+      # gate anyway — it's Lunaris's own contract (sub-25ms *recall*
+      # correctness, not e2e QA accuracy per CLAUDE.md) and needs no external
+      # API. LIMIT is intentionally small: the real `_s` haystacks (~500
+      # turns each) cost real ingest+embed time per question even without a
+      # judge call; re-tune once real runner timing is observed.
+      LUNARIS_EVAL_LME_LIMIT: "15"
 
     steps:
       - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
