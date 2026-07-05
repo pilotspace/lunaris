@@ -131,13 +131,27 @@ reranker-gguf = ["lunaris/reranker-gguf"]
 # from the bench harness. The `per_device.rs` bench is `#[cfg(feature =
 # "per-device-bench")]`-gated so the default `cargo bench` workflow stays
 # unchanged.
+#
+# ALSO forwards to `lunaris/<feature>` (the umbrella crate) so the SAME flag
+# activates Metal/BLAS/CUDA for `lunaris-evals` (which goes through
+# `Lunaris::open()` -> `lunaris::handle`, not the standalone native crates
+# the per-device bench instantiates directly). Without this, `--features
+# metal` silently only sped up `per_device.rs` while the real eval harness
+# kept running naive CPU candle -- and worse, since the `lunaris` dep line
+# above hardcodes `features = ["ollama", "cloud-api"]` with no `embedder-gguf`
+# passthrough of its own, a bare `--features metal` build drops GGUF support
+# entirely and falls through `resolve_embedder()` all the way to `NoopEmbedder`
+# (zero vectors) -- caught live 2026-07 when a `--features metal`-only rebuild
+# silently produced meaningless zero-vector retrieval on a LongMemEval rerun.
+# --features metal,embedder-gguf,reranker-gguf is the correct combo for the
+# eval gauntlet on Apple Silicon.
 # ---------------------------------------------------------------------------
 per-device-bench = ["dep:lunaris-embed-native", "dep:lunaris-rerank-native", "dep:candle-core"]
-cpu-accelerate   = ["per-device-bench", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
-cpu-mkl          = ["per-device-bench", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
-metal            = ["per-device-bench", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
-cuda             = ["per-device-bench", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
-cuda-fa2         = ["cuda", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
+cpu-accelerate   = ["per-device-bench", "lunaris/cpu-accelerate", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
+cpu-mkl          = ["per-device-bench", "lunaris/cpu-mkl", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
+metal            = ["per-device-bench", "lunaris/metal", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
+cuda             = ["per-device-bench", "lunaris/cuda", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
+cuda-fa2         = ["cuda", "lunaris/cuda-fa2", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
 
 [[bench]]
 name = "ingest_hot_path"
