@@ -126,12 +126,13 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
         }
     };
 
+    let metric = metric_name(judge_mode_enabled());
     let j_score = match score_haystack(&url, &records).await {
         Ok(s) => s,
         Err(e) => {
             results.push(EvalRow::skipped(
                 HARNESS,
-                METRIC,
+                metric,
                 THRESHOLD,
                 &format!("eval pass failed: {e}"),
             ));
@@ -141,7 +142,7 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
 
     results.push(EvalRow::judge_ge(
         HARNESS,
-        METRIC,
+        metric,
         j_score,
         THRESHOLD,
         started.elapsed().as_millis() as u64,
@@ -362,6 +363,23 @@ fn hybrid_rerank_top_in(pool: usize) -> usize {
     pool.saturating_mul(2)
 }
 
+/// Whether judge mode (LLM gen+judge round-trip) is active, vs the cheap
+/// evidence-recall-only pass. A single source of truth so `run()` can report
+/// the correct metric name and `score_haystack` can decide its scoring path
+/// from the same read.
+fn judge_mode_enabled() -> bool {
+    std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false)
+}
+
+/// v0.7 N=500 validation review: `run()` used to hardcode `EvalRow`'s metric
+/// to `METRIC` ("j_score") unconditionally, so a cheap evidence-recall@k pass
+/// (the CI default, since `LUNARIS_EVAL_LME_JUDGE` is unset there) was
+/// indistinguishable in `eval-results.json` from a real LLM-judged score.
+/// Report which one actually ran.
+fn metric_name(judge_mode: bool) -> &'static str {
+    if judge_mode { METRIC } else { "evidence_recall" }
+}
+
 /// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
 /// (distractor sessions included), then recall the top-k turns and score.
@@ -391,9 +409,13 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // Chunked-run support: skip the first `offset` records so the gauntlet can
     // be driven in process-isolated windows. The native GGUF embedder/reranker
     // leak Metal weight buffers on every per-question `Lunaris::open` (candle
-    // does not free them), so a single process exhausts the GPU buffer pool
-    // after ~13 opens. Running N in windows of <=10 (offset 0,10,20,…) keeps
-    // each process under that ceiling; the OS frees all Metal buffers on exit.
+    // does not free them), so a single process degrades then eventually dies.
+    // The exact ceiling has varied across observations (~13 opens here vs.
+    // ~30 in docs/benchmarks/v0.7-longmemeval-jscore-validation.md) — treat
+    // both as approximate, not a guarantee. The only verified-safe practice
+    // is `LUNARIS_EVAL_LME_LIMIT=1` (one process per question); the OS
+    // reclaims all Metal buffers on every process exit regardless of which
+    // ceiling is real on a given host.
     let offset: usize =
         std::env::var("LUNARIS_EVAL_LME_OFFSET").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     // Cross-encoder rerank toggle. The bare `recall()` root is pure vector
@@ -405,7 +427,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     let rerank_enabled = std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
     let k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
-    let judge_mode = std::env::var("LUNARIS_EVAL_LME_JUDGE").map(|v| v == "1").unwrap_or(false);
+    let judge_mode = judge_mode_enabled();
     let debug = std::env::var("LUNARIS_EVAL_LME_DEBUG").map(|v| v == "1").unwrap_or(false);
     let gen_model = std::env::var("LUNARIS_EVAL_LME_GEN_MODEL")
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
@@ -430,13 +452,19 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // NOTE on Metal stability: the native GGUF embedder leaks candle Metal
     // activation buffers across forward passes (variable chunk lengths => an
     // ever-growing shape-keyed buffer cache candle never frees), so a single
-    // process degrades then dies at ~Q13 with "Failed to create metal
-    // resource: Buffer". Reusing the embedder Arc across questions does NOT
-    // help (it's activation buffers, not weights) and actually makes Metal
-    // thrash. The robust workaround is process isolation: drive N in windows of
-    // <=10 via `LUNARIS_EVAL_LME_OFFSET` (see `tmp/run-lme-s-chunked.sh`); each
-    // process exits well under the ceiling and the OS reclaims all Metal
-    // buffers. We therefore keep the simple per-question `Lunaris::open` here.
+    // process degrades then eventually dies with "Failed to create metal
+    // resource: Buffer". The exact question count before failure has varied
+    // across observations (~13 here vs. ~30 in
+    // docs/benchmarks/v0.7-longmemeval-jscore-validation.md) — do not rely on
+    // either as a safe ceiling. Reusing the embedder Arc across questions
+    // does NOT help (it's activation buffers, not weights) and actually
+    // makes Metal thrash. The verified-safe workaround is full process
+    // isolation per question: `LUNARIS_EVAL_LME_LIMIT=1` with
+    // `LUNARIS_EVAL_LME_OFFSET` looped at the shell level (see
+    // docs/benchmarks/v0.7-longmemeval-jscore-validation.md's reproduction
+    // recipe) — every process exits before any leak accumulates and the OS
+    // reclaims all Metal buffers. We therefore keep the simple per-question
+    // `Lunaris::open` here.
     let mut evidence_hits = 0usize;
     // Strict "all-gold" recall: every required gold session surfaced (the honest
     // metric for multi-session questions). `gold_*_sum` accumulate the per-
@@ -937,6 +965,16 @@ mod tests {
         ]"#;
         let recs = parse_longmemeval_full(json).expect("parse");
         assert!(recs[0].is_abstention());
+    }
+
+    #[test]
+    fn metric_name_reflects_actual_scoring_mode() {
+        // v0.7 N=500 validation review: `run()` used to tag EVERY EvalRow as
+        // metric "j_score" regardless of LUNARIS_EVAL_LME_JUDGE, so a cheap
+        // evidence-recall@k pass (the CI default) was indistinguishable in
+        // eval-results.json from a real LLM-judged score.
+        assert_eq!(metric_name(true), "j_score");
+        assert_eq!(metric_name(false), "evidence_recall");
     }
 
     #[test]
