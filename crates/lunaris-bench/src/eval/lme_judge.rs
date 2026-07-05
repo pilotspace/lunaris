@@ -40,9 +40,18 @@ impl OllamaChat {
     pub(crate) fn new() -> anyhow::Result<Self> {
         // Generous timeout: cloud reasoning models on ~k-turn contexts can
         // take tens of seconds. Circuit-break per request, not per gauntlet.
-        let client = reqwest::Client::builder().timeout(Duration::from_secs(300)).build()?;
-        let endpoint = std::env::var("LUNARIS_EVAL_OLLAMA_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        Self::with_timeout(
+            std::env::var("LUNARIS_EVAL_OLLAMA_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string()),
+            Duration::from_secs(300),
+        )
+    }
+
+    /// Same as [`Self::new`] but with an explicit endpoint + HTTP timeout.
+    /// Exists so the stalled-connection regression test can use a short
+    /// timeout instead of waiting out the real 300s production ceiling.
+    fn with_timeout(endpoint: String, timeout: Duration) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder().timeout(timeout).build()?;
         Ok(Self { client, endpoint })
     }
 
@@ -598,5 +607,49 @@ mod tests {
         // Empty question_date omits the line entirely (no stray "Current date:").
         let p2 = gen_user_prompt("", &ctx, "q?");
         assert!(!p2.contains("Current date:"));
+    }
+
+    /// Live A/B testing (2026-07) observed the Rust eval client apparently
+    /// hang indefinitely after `tmp/route_shim.py` logged a 502 for an
+    /// empty/exhausted MiniMax response (`finish_reason: 'length'`). This
+    /// simulates the suspected root cause deterministically -- a peer that
+    /// accepts the connection, sends a 502 status line promising more body
+    /// than it delivers, then stalls forever without closing -- using a
+    /// short client-side timeout instead of the real 300s production
+    /// ceiling, so the test itself stays fast.
+    #[tokio::test]
+    async fn chat_once_errors_out_within_timeout_when_connection_stalls_after_502() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                // Promise 100 bytes of body, deliver 5, then stall -- never close.
+                let _ = socket
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 100\r\n\r\nboom!")
+                    .await;
+                let _ = socket.flush().await;
+                std::future::pending::<()>().await;
+            }
+        });
+
+        let chat = OllamaChat::with_timeout(format!("http://{addr}"), Duration::from_millis(300))
+            .expect("client");
+
+        let result = tokio::time::timeout(Duration::from_secs(2), chat.chat_once("m", "", "hi"))
+            .await
+            .expect(
+                "chat_once must return within the outer 2s test bound -- if this times out, \
+                 the HTTP client's own timeout is not actually bounding a stalled connection",
+            );
+        assert!(
+            result.is_err(),
+            "a stalled/incomplete response must surface as an error, not hang"
+        );
     }
 }
