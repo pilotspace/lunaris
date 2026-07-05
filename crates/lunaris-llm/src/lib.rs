@@ -81,7 +81,7 @@ pub use config::{LlmConfig, Pipeline, ProviderKind};
 #[cfg(any(test, feature = "faux"))]
 pub use faux::FauxBackend;
 #[cfg(feature = "ollama")]
-pub use ollama::{OllamaBackend, OllamaBackendOpts};
+pub use ollama::{DEFAULT_HTTP_TIMEOUT, OllamaBackend, OllamaBackendOpts};
 
 /// Object-safe async LLM backend.
 ///

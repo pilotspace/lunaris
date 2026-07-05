@@ -27,7 +27,7 @@
 
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
-use lunaris_llm::{LlmBackend, OllamaBackend, OllamaBackendOpts};
+use lunaris_llm::{DEFAULT_HTTP_TIMEOUT, LlmBackend, OllamaBackend, OllamaBackendOpts};
 use std::sync::Arc;
 
 use crate::Verifier;
@@ -103,7 +103,11 @@ impl std::fmt::Debug for OllamaVerifier {
 
 impl OllamaVerifier {
     pub fn new(opts: OllamaVerifierOpts) -> Result<Self, LunarisError> {
-        let backend_opts = OllamaBackendOpts { endpoint: opts.endpoint, model: opts.model };
+        let backend_opts = OllamaBackendOpts {
+            endpoint: opts.endpoint,
+            model: opts.model,
+            http_timeout: DEFAULT_HTTP_TIMEOUT,
+        };
         let backend: Arc<dyn LlmBackend> = Arc::new(OllamaBackend::new(backend_opts)?);
         let verifier = LlmVerifier::with_opts(
             backend,

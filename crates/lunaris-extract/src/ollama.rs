@@ -31,6 +31,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 use lunaris_llm::{OllamaBackend, OllamaBackendOpts};
+use std::time::Duration;
 use ulid::Ulid;
 
 use crate::Extractor;
@@ -46,6 +47,12 @@ const DEFAULT_MODEL: &str = "gemma3:4b";
 /// Default per-batch timeout per D-02 (matches candle backend).
 const DEFAULT_BATCH_TIMEOUT_MS: u64 = 150;
 
+/// Historical implicit per-chunk / HTTP-transport timeout (was hardcoded via
+/// `LlmExtractorOpts::default().per_chunk_timeout_ms`, 450ms — tuned for a
+/// local candle/Ollama instance). Kept as the default so existing callers see
+/// no behavior change; cloud-routed backends should override `timeout_ms`.
+const DEFAULT_TIMEOUT_MS: u64 = 450;
+
 /// Construction options for [`OllamaExtractor`].
 ///
 /// `Default` resolves `endpoint` from `OLLAMA_URL` env (falls back to
@@ -56,6 +63,12 @@ pub struct OllamaExtractorOpts {
     pub endpoint: String,
     pub model: String,
     pub batch_timeout_ms: u64,
+    /// Per-chunk `generate()` timeout AND the backend's HTTP transport
+    /// timeout — both set to this same value. The tighter of the two always
+    /// won anyway (today that's the 450ms per-chunk wrap), so one dial is
+    /// simpler and behaviorally identical to the old hardcoded pairing.
+    /// Cloud-routed models need this in the tens of seconds, not milliseconds.
+    pub timeout_ms: u64,
 }
 
 impl Default for OllamaExtractorOpts {
@@ -65,6 +78,7 @@ impl Default for OllamaExtractorOpts {
             model: std::env::var("OLLAMA_EXTRACT_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.to_string()),
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
         }
     }
 }
@@ -80,16 +94,19 @@ pub struct OllamaExtractor {
 
 impl OllamaExtractor {
     /// Construct a new Ollama-backed extractor. Builds an `OllamaBackend`
-    /// with a 10s HTTP timeout and wraps it in a `LlmExtractor`.
+    /// with `opts.timeout_ms` as both the HTTP transport timeout and the
+    /// per-chunk generation timeout, and wraps it in a `LlmExtractor`.
     pub fn new(opts: OllamaExtractorOpts) -> Result<Self, LunarisError> {
-        let backend_opts = OllamaBackendOpts { endpoint: opts.endpoint, model: opts.model };
+        let backend_opts = OllamaBackendOpts {
+            endpoint: opts.endpoint,
+            model: opts.model,
+            http_timeout: Duration::from_millis(opts.timeout_ms),
+        };
         let backend =
             Arc::new(OllamaBackend::new(backend_opts)?) as Arc<dyn lunaris_llm::LlmBackend>;
         let extractor_opts = LlmExtractorOpts {
             batch_timeout_ms: opts.batch_timeout_ms,
-            // No per_chunk_timeout_ms in legacy OllamaExtractorOpts — use the
-            // LlmExtractorOpts default (450ms, 3× per-batch).
-            per_chunk_timeout_ms: LlmExtractorOpts::default().per_chunk_timeout_ms,
+            per_chunk_timeout_ms: opts.timeout_ms,
             // Ollama uses JSON-schema structured output, not inline GBNF.
             // The OllamaBackend receives SchemaConstraint::None here and
             // enforces the extraction schema via the JSON-schema `format`
@@ -129,10 +146,27 @@ mod tests {
         assert!(!opts.endpoint.is_empty());
         assert!(!opts.model.is_empty());
         assert_eq!(opts.batch_timeout_ms, DEFAULT_BATCH_TIMEOUT_MS);
+        // Historical implicit default (LlmExtractorOpts::default().per_chunk_timeout_ms)
+        // preserved exactly so existing callers see no behavior change.
+        assert_eq!(opts.timeout_ms, DEFAULT_TIMEOUT_MS);
     }
 
     #[test]
     fn extractor_construction_succeeds_with_defaults() {
         let _e = OllamaExtractor::new(OllamaExtractorOpts::default()).expect("client builds");
+    }
+
+    #[test]
+    fn extractor_construction_succeeds_with_generous_cloud_timeout() {
+        // A cloud-routed model behind a shim (e.g. the LongMemEval eval
+        // harness's graph-pipeline prototype) needs far more than the
+        // local-model 450ms default on both the transport and per-chunk
+        // layers -- this just proves a large override builds cleanly.
+        let opts = OllamaExtractorOpts {
+            timeout_ms: 60_000,
+            batch_timeout_ms: 120_000,
+            ..OllamaExtractorOpts::default()
+        };
+        let _e = OllamaExtractor::new(opts).expect("client builds with a generous timeout");
     }
 }

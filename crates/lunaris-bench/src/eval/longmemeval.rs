@@ -380,6 +380,22 @@ fn metric_name(judge_mode: bool) -> &'static str {
     if judge_mode { METRIC } else { "evidence_recall" }
 }
 
+/// Prototype toggle (`LUNARIS_EVAL_LME_GRAPH=1`): route per-question ingest
+/// through structured Fact/Entity/Relation extraction
+/// (`lunaris.graph_pipeline().enable()` + a cloud-routed `OllamaExtractor`)
+/// instead of the default graph-OFF chunk+embed-only fast path.
+///
+/// Motivation: a `tmp/ceiling_test.py` diagnostic (2026-07, not part of this
+/// harness) fed the SAME reader model hand-authored, deduped-but-unsummed
+/// facts instead of raw multi-session prose for three known LongMemEval
+/// multi-session counting misses (hours/babies/cuisines totals) and got all
+/// three right — evidence the bottleneck is presentation, not the reader's
+/// arithmetic. This toggle lets that hypothesis be tested against the real
+/// extraction pipeline instead of hand-authored facts.
+fn graph_pipeline_enabled() -> bool {
+    std::env::var("LUNARIS_EVAL_LME_GRAPH").map(|v| v == "1").unwrap_or(false)
+}
+
 /// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
 /// (distractor sessions included), then recall the top-k turns and score.
@@ -433,6 +449,31 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
     let judge_model = std::env::var("LUNARIS_EVAL_LME_JUDGE_MODEL")
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
+    // Graph-pipeline extraction prototype (see graph_pipeline_enabled doc).
+    // Reuses the same shim endpoint as gen/judge (LUNARIS_EVAL_OLLAMA_URL) and
+    // defaults its model to the gen model — extraction and generation are
+    // both "ask the reader model to read text", just different prompts.
+    let graph_enabled = graph_pipeline_enabled();
+    let extract_model =
+        std::env::var("LUNARIS_EVAL_LME_EXTRACT_MODEL").unwrap_or_else(|_| gen_model.clone());
+    let ollama_url = std::env::var("LUNARIS_EVAL_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+    // Generous, cloud-model-appropriate timeouts. The library defaults (450ms
+    // per-chunk / 150ms per-batch) are tuned for a local candle/Ollama
+    // instance and would time out on nearly every call through a cloud shim,
+    // masking the very effect this prototype exists to measure (design-for-
+    // failure means a timeout degrades to an empty extraction, NOT a crash —
+    // but a silent empty-extraction-via-timeout would misreport as "structured
+    // extraction doesn't help" when the real cause is "the call never got a
+    // chance to finish").
+    let extract_timeout_ms: u64 = std::env::var("LUNARIS_EVAL_LME_EXTRACT_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60_000);
+    let extract_batch_timeout_ms: u64 = std::env::var("LUNARIS_EVAL_LME_EXTRACT_BATCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120_000);
     // Window = records[offset .. offset+limit]. `n` is the actual count after
     // clamping to the dataset tail (a final short chunk is fine).
     let n = records.len().saturating_sub(offset).min(limit);
@@ -477,6 +518,27 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // Pristine store + fresh empty indexes for THIS question only.
         reset_moon(url).await?;
         let lunaris = std::sync::Arc::new(lunaris::Lunaris::open(url).await?);
+        if graph_enabled {
+            // Graph-pipeline prototype: route ingest through structured
+            // Fact/Entity/Relation extraction instead of the default
+            // graph-OFF chunk+embed-only fast path. `lunaris::OllamaExtractor`
+            // is already re-exported (lunaris-bench's `lunaris` dep already
+            // carries `features = ["ollama"]`) — no new Cargo dependency.
+            let extractor = lunaris::OllamaExtractor::new(lunaris::OllamaExtractorOpts {
+                endpoint: ollama_url.clone(),
+                model: extract_model.clone(),
+                batch_timeout_ms: extract_batch_timeout_ms,
+                timeout_ms: extract_timeout_ms,
+            })
+            .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
+            lunaris.graph_pipeline().set_extractor(std::sync::Arc::new(extractor));
+            lunaris.graph_pipeline().enable();
+            if debug {
+                eprintln!(
+                    "    GRAPH pipeline ENABLED extract_model={extract_model} timeout_ms={extract_timeout_ms} batch_timeout_ms={extract_batch_timeout_ms}"
+                );
+            }
+        }
         let pad = lunaris::CodingSessionMemory::new(
             lunaris.clone(),
             lunaris_core::Scope::dev(),
@@ -975,6 +1037,18 @@ mod tests {
         // eval-results.json from a real LLM-judged score.
         assert_eq!(metric_name(true), "j_score");
         assert_eq!(metric_name(false), "evidence_recall");
+    }
+
+    #[test]
+    fn graph_pipeline_defaults_to_off() {
+        // The graph-pipeline extraction prototype must never activate
+        // silently -- the default harness config exercises Lunaris's
+        // graph-OFF fast path (chunk+embed only), matching every published
+        // v0.7 benchmark number. Only an explicit LUNARIS_EVAL_LME_GRAPH=1
+        // opts in.
+        if std::env::var("LUNARIS_EVAL_LME_GRAPH").is_err() {
+            assert!(!graph_pipeline_enabled());
+        }
     }
 
     #[test]

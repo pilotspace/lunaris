@@ -24,8 +24,9 @@
 //!
 //! Two layers, matching the existing extract pattern:
 //!
-//! - `reqwest::Client` is built with a fixed 10s timeout — protects
-//!   against TCP-level hangs.
+//! - `reqwest::Client` is built with [`OllamaBackendOpts::http_timeout`]
+//!   (default [`DEFAULT_HTTP_TIMEOUT`], 10s) — protects against TCP-level
+//!   hangs. Cloud-routed callers pass a larger value explicitly.
 //! - [`GenOpts::timeout`] wraps the outer call via
 //!   `tokio::time::timeout` — clamps per-call latency to the D-02 budget.
 
@@ -37,9 +38,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GenOpts, LlmBackend, SchemaConstraint};
 
-/// Per-call HTTP transport timeout. The narrower [`GenOpts::timeout`]
-/// clamps further on top of this.
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default per-call HTTP transport timeout, appropriate for a local Ollama
+/// instance. Cloud-routed backends (e.g. a shim proxying to a hosted model)
+/// need far more headroom — construct [`OllamaBackendOpts`] with a larger
+/// `http_timeout` explicitly rather than changing this default, which
+/// existing local-Ollama callers rely on.
+pub const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default Ollama endpoint when none is supplied.
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
@@ -52,16 +56,21 @@ pub struct OllamaBackendOpts {
     pub endpoint: String,
     /// Ollama model identifier (e.g. `"gemma3:4b"`, `"llama3.2:3b"`).
     pub model: String,
+    /// Per-request HTTP transport timeout. The narrower [`GenOpts::timeout`]
+    /// clamps further on top of this.
+    pub http_timeout: Duration,
 }
 
 impl OllamaBackendOpts {
     /// Construct from env. `endpoint` reads `OLLAMA_URL`; `model` must be
     /// supplied (no implicit default — caller has the model name from
-    /// `LlmConfig`).
+    /// `LlmConfig`). `http_timeout` is [`DEFAULT_HTTP_TIMEOUT`] — override
+    /// the field directly for a cloud-routed backend.
     pub fn from_env(model: impl Into<String>) -> Self {
         Self {
             endpoint: std::env::var("OLLAMA_URL").unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string()),
             model: model.into(),
+            http_timeout: DEFAULT_HTTP_TIMEOUT,
         }
     }
 }
@@ -77,9 +86,10 @@ pub struct OllamaBackend {
 
 impl OllamaBackend {
     pub fn new(opts: OllamaBackendOpts) -> Result<Self, LunarisError> {
-        let client = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build().map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("ollama client: {e}")))
-        })?;
+        let client =
+            reqwest::Client::builder().timeout(opts.http_timeout).build().map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!("ollama client: {e}")))
+            })?;
         let model_id = format!("ollama://{}", opts.model);
         Ok(Self { client, endpoint: opts.endpoint, model: opts.model, model_id })
     }
@@ -194,6 +204,7 @@ mod tests {
         let backend = OllamaBackend::new(OllamaBackendOpts {
             endpoint: "http://localhost:11434".into(),
             model: "gemma3:4b".into(),
+            http_timeout: DEFAULT_HTTP_TIMEOUT,
         })
         .unwrap();
         assert_eq!(backend.model_id(), "ollama://gemma3:4b");
@@ -204,9 +215,34 @@ mod tests {
         let backend = OllamaBackend::new(OllamaBackendOpts {
             endpoint: "http://example.invalid:9999".into(),
             model: "llama3.2:3b".into(),
+            http_timeout: DEFAULT_HTTP_TIMEOUT,
         })
         .unwrap();
         assert_eq!(backend.endpoint, "http://example.invalid:9999");
         assert_eq!(backend.model, "llama3.2:3b");
+    }
+
+    #[test]
+    fn from_env_defaults_http_timeout_to_the_local_ollama_constant() {
+        // Cloud-routed callers (lunaris-extract's OllamaExtractor, via a
+        // custom http_timeout) need far more than 10s; local-Ollama callers
+        // that go through from_env must keep today's behavior unchanged.
+        let opts = OllamaBackendOpts::from_env("gemma3:4b");
+        assert_eq!(opts.http_timeout, DEFAULT_HTTP_TIMEOUT);
+    }
+
+    #[test]
+    fn custom_http_timeout_is_accepted_by_the_client_builder() {
+        // The whole point of exposing http_timeout: a cloud-model caller can
+        // ask for a generous ceiling instead of the hardcoded 10s. This just
+        // proves construction succeeds with a non-default value plumbed all
+        // the way to the reqwest::Client builder.
+        let backend = OllamaBackend::new(OllamaBackendOpts {
+            endpoint: "http://example.invalid:9999".into(),
+            model: "llama3.2:3b".into(),
+            http_timeout: Duration::from_secs(120),
+        })
+        .unwrap();
+        assert_eq!(backend.endpoint, "http://example.invalid:9999");
     }
 }
