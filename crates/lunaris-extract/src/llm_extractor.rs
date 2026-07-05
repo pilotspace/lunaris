@@ -183,9 +183,31 @@ fn build_prompt(chunk: &ChunkInput) -> String {
     // T-03-01-01 mitigation: wrap chunk text in `<chunk>` delimiters so
     // the downstream validator can flag any extracted entity whose name
     // equals the literal delimiter (prompt-injection guard).
+    //
+    // The explicit field-name shape below matters for backends that reach
+    // this function WITHOUT a GBNF grammar to fall back on. Candle gets the
+    // schema enforced via SchemaConstraint::Gbnf (lunaris-llm's candle.rs
+    // appends the grammar text to the prompt); Ollama drops GBNF entirely
+    // (OllamaExtractor::new() sets gbnf: None) so this prompt text is the
+    // ONLY schema guidance an Ollama/cloud-routed model ever sees. A vague
+    // "respond with {entities:[...],relations:[...]}" placeholder (the
+    // prior text) let a live model guess plausible-but-wrong field names,
+    // failing parse_extraction_json's required-field check on every chunk
+    // (confirmed against MiniMax-M3 via the LongMemEval graph-pipeline
+    // prototype, 2026-07 -- 100% empty-extraction fallback).
     format!(
         "Extract entities and relations from the chunk below as JSON.\n\n\
-         Respond with a JSON object {{\"entities\":[...],\"relations\":[...]}} only.\n\n\
+         Respond with a JSON object of EXACTLY this shape (all fields \
+         required except aliases and valid_to_iso):\n\
+         {{\"entities\":[{{\"name\":\"Alice\",\"entity_type\":\"Person\",\
+         \"aliases\":[],\"confidence\":0.9,\"valid_from_iso\":\"2025-01-01\",\
+         \"valid_to_iso\":null}}],\n\
+         \"relations\":[{{\"subject_name\":\"Alice\",\"subject_type\":\"Person\",\
+         \"predicate\":\"met\",\"object_name\":\"Bob\",\"object_type\":\"Person\",\
+         \"confidence\":0.9,\"valid_from_iso\":\"2025-01-01\",\"valid_to_iso\":null}}]}}\n\
+         Use no other field names. valid_from_iso is the date (from the \
+         chunk's context, else today) the fact became true. If nothing is \
+         extractable, return {{\"entities\":[],\"relations\":[]}}.\n\n\
          <chunk heading=\"{}\">\n{}\n</chunk>",
         chunk.heading_path.join(" / "),
         chunk.text
@@ -330,6 +352,36 @@ mod tests {
             chunk_id: Ulid::new(),
             heading_path: vec!["section".into()],
             text: text.into(),
+        }
+    }
+
+    #[test]
+    fn build_prompt_includes_every_required_json_field_name() {
+        // Candle gets the field-name schema via the in-prompt GBNF grammar
+        // (lunaris-llm/src/candle.rs's SchemaConstraint::Gbnf branch).
+        // Ollama drops GBNF entirely (lunaris-llm/src/ollama.rs: both
+        // SchemaConstraint::None and ::Gbnf map to no `format` field) and
+        // OllamaExtractor::new() sets gbnf: None anyway -- so build_prompt's
+        // own text is the ONLY schema guidance an Ollama/cloud-routed model
+        // ever sees. Confirmed live against MiniMax-M3 (LongMemEval
+        // graph-pipeline prototype, 2026-07): without explicit field names
+        // every single chunk produced plausible-but-wrong JSON that failed
+        // parse_extraction_json's required-field check (EntityJson /
+        // RelationJson have no #[serde(default)] on entity_type/confidence/
+        // valid_from_iso/subject_name/subject_type/predicate/object_name/
+        // object_type), silently degrading to 100% empty extractions.
+        let p = build_prompt(&chunk("Alice met Bob in Paris."));
+        for field in [
+            "entity_type",
+            "confidence",
+            "valid_from_iso",
+            "subject_name",
+            "subject_type",
+            "predicate",
+            "object_name",
+            "object_type",
+        ] {
+            assert!(p.contains(field), "prompt missing required field name: {field}");
         }
     }
 
