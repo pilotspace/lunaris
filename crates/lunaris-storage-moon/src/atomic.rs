@@ -387,19 +387,28 @@ fn build_set_clause(var: &str, props: &serde_json::Value) -> String {
     format!("SET {}", parts.join(", "))
 }
 
+/// T-01-03-01 follow-up: Moon's Cypher lexer
+/// (`vendor/moon/src/graph/cypher/lexer.rs`) matches single-quoted strings
+/// via `'[^']*'` — there is no backslash-escape mechanism at all, and Moon
+/// never un-escapes on read. Backslash-escaping (the previous approach)
+/// was doubly wrong: (a) it doubled every literal backslash, corrupting
+/// stored data that legitimately contains one (e.g. a Windows path), and
+/// (b) a `\'` before an embedded quote does nothing to Moon's lexer, which
+/// terminates the literal at the first bare `'` regardless — leaking the
+/// remainder as bare, syntactically invalid tokens (observed live against
+/// free-form MiniMax extraction output on strings like "child's toy").
+/// Since `'` is the only byte that can end a `'...'` literal, replacing it
+/// outright (lossy, but safe) is sufficient — no other byte needs escaping.
 fn json_to_cypher_literal(v: &serde_json::Value) -> String {
+    fn quote(s: &str) -> String {
+        format!("'{}'", s.replace('\'', "\u{2019}"))
+    }
     match v {
-        serde_json::Value::String(s) => {
-            let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
-            format!("'{escaped}'")
-        }
+        serde_json::Value::String(s) => quote(s),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Null => "null".to_string(),
-        other => {
-            let s = other.to_string().replace('\\', "\\\\").replace('\'', "\\'");
-            format!("'{s}'")
-        }
+        other => quote(&other.to_string()),
     }
 }
 
@@ -500,5 +509,56 @@ mod valid_time_tests {
             src.contains("graph_key(scope)"),
             "GraphNode/GraphEdge must use graph_key(scope) for the GRAPH.QUERY target"
         );
+    }
+}
+
+#[cfg(test)]
+mod cypher_literal_tests {
+    //! T-01-03-01 follow-up: Moon's Cypher lexer has no escape mechanism
+    //! for single-quoted strings (`'[^']*'`, see `vendor/moon/src/graph/
+    //! cypher/lexer.rs`). These pin `json_to_cypher_literal`'s behaviour
+    //! without requiring a live Moon: the literal body must never contain
+    //! a raw `'`, and backslashes must pass through unmodified since Moon
+    //! never un-escapes on read.
+
+    use super::json_to_cypher_literal;
+    use serde_json::json;
+
+    fn body(lit: &str) -> &str {
+        &lit[1..lit.len() - 1]
+    }
+
+    #[test]
+    fn string_without_special_chars_round_trips_unchanged() {
+        let lit = json_to_cypher_literal(&json!("hello world"));
+        assert_eq!(lit, "'hello world'");
+    }
+
+    #[test]
+    fn apostrophe_never_appears_inside_the_literal_body() {
+        let lit = json_to_cypher_literal(&json!("child's toy"));
+        assert!(
+            !body(&lit).contains('\''),
+            "literal body must not contain a raw apostrophe: {lit}"
+        );
+    }
+
+    #[test]
+    fn backslash_is_not_doubled() {
+        let lit = json_to_cypher_literal(&json!("C:\\Users\\x"));
+        assert_eq!(lit, "'C:\\Users\\x'");
+    }
+
+    #[test]
+    fn possessive_title_is_safe_to_embed() {
+        let lit = json_to_cypher_literal(&json!("Grey's Anatomy"));
+        assert!(!body(&lit).contains('\''));
+        assert!(lit.starts_with('\'') && lit.ends_with('\''));
+    }
+
+    #[test]
+    fn non_string_serialized_value_is_also_apostrophe_safe() {
+        let lit = json_to_cypher_literal(&json!(["a's", "b's"]));
+        assert!(!body(&lit).contains('\''));
     }
 }
