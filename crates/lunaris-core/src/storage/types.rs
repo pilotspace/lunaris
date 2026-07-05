@@ -100,6 +100,82 @@ pub enum WriteOp {
     GraphEdge { graph: String, src: Vec<u8>, dst: Vec<u8>, rel: String, props: serde_json::Value },
 }
 
+/// Sanitize free-form text into a Cypher-safe identifier for
+/// [`WriteOp::GraphNode::label`] / [`WriteOp::GraphEdge::rel`].
+///
+/// T-01-03-01 (see `lunaris-storage-moon::atomic` / `lunaris-storage-postgres::atomic`
+/// module docs): both Moon's Cypher and Postgres/AGE's Cypher-in-SQL interpolate
+/// `label`/`rel` directly into the query string with no parameterization -- v0
+/// trusts callers to validate against `^[A-Za-z_][A-Za-z0-9_]*$` BEFORE calling
+/// `atomic_write`. Grammar-constrained extractors (Candle + GBNF) always produce
+/// clean identifiers; free-form JSON extractors (Ollama, cloud-API models with no
+/// schema enforcement) do not -- an entity_type of `"TV Show"` broke Moon's Cypher
+/// parser in live testing (LongMemEval graph-pipeline prototype, 2026-07). Callers
+/// that build `GraphNode`/`GraphEdge` from extractor or agent-supplied text (both
+/// `lunaris::ingest` and `lunaris::structured_ingest`) MUST route `entity_type` /
+/// `predicate` through this function first.
+///
+/// Every byte outside `[A-Za-z0-9_]` becomes `_`; a leading character that isn't
+/// a letter or underscore gets an extra `_` prefixed (Cypher identifiers can't
+/// start with a digit). An all-invalid or empty input returns `fallback` instead
+/// of an empty or all-underscore string.
+pub fn sanitize_graph_ident(s: &str, fallback: &str) -> String {
+    let mut out: String =
+        s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
+    if out.is_empty() || out.chars().all(|c| c == '_') {
+        return fallback.to_string();
+    }
+    if !matches!(out.chars().next(), Some(c) if c.is_ascii_alphabetic() || c == '_') {
+        out.insert(0, '_');
+    }
+    out
+}
+
+#[cfg(test)]
+mod sanitize_graph_ident_tests {
+    use super::*;
+
+    #[test]
+    fn passthrough_for_already_clean_identifiers() {
+        assert_eq!(sanitize_graph_ident("Person", "Entity"), "Person");
+        assert_eq!(sanitize_graph_ident("attends_school", "RELATED_TO"), "attends_school");
+    }
+
+    #[test]
+    fn spaces_become_underscores() {
+        // The exact live-testing regression: MiniMax emitted an entity_type of
+        // "TV Show", which broke Moon's Cypher parser on the bare `Show` token.
+        assert_eq!(sanitize_graph_ident("TV Show", "Entity"), "TV_Show");
+    }
+
+    #[test]
+    fn punctuation_becomes_underscores() {
+        assert_eq!(sanitize_graph_ident("co-worker's", "RELATED_TO"), "co_worker_s");
+    }
+
+    #[test]
+    fn leading_digit_gets_prefixed() {
+        assert_eq!(sanitize_graph_ident("3d_printer", "Entity"), "_3d_printer");
+    }
+
+    #[test]
+    fn empty_input_falls_back() {
+        assert_eq!(sanitize_graph_ident("", "Entity"), "Entity");
+    }
+
+    #[test]
+    fn all_invalid_input_falls_back() {
+        assert_eq!(sanitize_graph_ident("!!!", "RELATED_TO"), "RELATED_TO");
+    }
+
+    #[test]
+    fn unicode_letters_become_underscores() {
+        // Cypher identifiers here are ASCII-only per T-01-03-01's regex; non-ASCII
+        // letters are treated the same as punctuation, not preserved lossily.
+        assert_eq!(sanitize_graph_ident("café", "Entity"), "caf_");
+    }
+}
+
 // ----- VectorHit -----
 
 /// A single `vector_search` result.

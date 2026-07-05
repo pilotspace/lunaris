@@ -19,5 +19,5 @@ pub use list::{ListError, MAX_PAGE, Page, scan_page};
 pub use port::StoragePort;
 pub use types::{
     CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Key, Lsn, NavigateHit, NavigateSpec,
-    QueueMsg, Row, RrfFusion, ScopePage, VectorHit, WriteOp,
+    QueueMsg, Row, RrfFusion, ScopePage, VectorHit, WriteOp, sanitize_graph_ident,
 };

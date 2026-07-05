@@ -71,6 +71,7 @@ use std::collections::HashMap;
 use lunaris_core::keyspace::{chunk_key, episode_key, fact_key as scoped_fact_key, fact_spo_key};
 use lunaris_core::{
     Chunk, Embedder, Hlc, HlcClock, Lsn, LunarisError, Scope, StorageError, StoragePort, WriteOp,
+    sanitize_graph_ident,
 };
 use lunaris_extract::types::{EntityId, Fact, FactId};
 use lunaris_extract::validator::{NeedsReviewItem, NeedsReviewReason};
@@ -353,7 +354,10 @@ pub async fn ingest_structured_inner(
         ops.push(WriteOp::GraphNode {
             graph: GRAPH_NAME.into(),
             id: id_bytes.clone(),
-            label: e.entity_type.clone(),
+            // T-01-03-01: agent-supplied entity_type is untrusted free-form
+            // text, same Cypher-injection/parse-break risk as extractor
+            // output in crate::ingest. See sanitize_graph_ident doc.
+            label: sanitize_graph_ident(&e.entity_type, "Entity"),
             props: json!({
                 "id_hex": format!("{eid}"),
                 "name": e.name,
@@ -381,7 +385,8 @@ pub async fn ingest_structured_inner(
             graph: GRAPH_NAME.into(),
             src: sid.0.to_vec(),
             dst: oid.0.to_vec(),
-            rel: r.predicate.clone(),
+            // T-01-03-01: same rationale as the GraphNode label above.
+            rel: sanitize_graph_ident(&r.predicate, "RELATED_TO"),
             props: json!({
                 "confidence": r.confidence,
                 "valid_from_iso": r.valid_from.to_rfc3339(),

@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
-    keyspace::fact_key as scoped_fact_key,
+    keyspace::fact_key as scoped_fact_key, sanitize_graph_ident,
 };
 use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate};
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines
@@ -479,7 +479,11 @@ async fn ingest_episode_graph_on(
         ops.push(WriteOp::GraphNode {
             graph: GRAPH_NAME.into(),
             id: id_bytes.clone(),
-            label: e.entity_type.clone(),
+            // T-01-03-01: free-form extractor output (MiniMax et al.) is not
+            // grammar-constrained like Candle+GBNF, so entity_type can contain
+            // spaces/punctuation that breaks Moon/AGE's Cypher parser when
+            // interpolated raw as a node label. See sanitize_graph_ident doc.
+            label: sanitize_graph_ident(&e.entity_type, "Entity"),
             props: json!({
                 "id_hex": format!("{}", e.id),
                 "name": e.name,
@@ -509,7 +513,8 @@ async fn ingest_episode_graph_on(
             graph: GRAPH_NAME.into(),
             src: r.subject_id.0.to_vec(),
             dst: r.object_id.0.to_vec(),
-            rel: r.predicate.clone(),
+            // T-01-03-01: same rationale as the GraphNode label above.
+            rel: sanitize_graph_ident(&r.predicate, "RELATED_TO"),
             props: json!({
                 "confidence": r.confidence,
                 "valid_from_iso": r.valid_from_iso,

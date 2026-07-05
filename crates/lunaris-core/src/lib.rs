@@ -36,5 +36,6 @@ pub use scope::{MemoryLevel, Scope, ScopeError, compose_levels};
 pub use storage::{
     CypherDialect, CypherQuery, Filter, GraphDecay, GraphResult, HotKey, Key, KeywordHit,
     KeywordPort, ListError, Lsn, MAX_PAGE, NavigateHit, NavigateSpec, Page, QueueMsg, Row,
-    RrfFusion, ScopePage, StorageCapabilities, StoragePort, VectorHit, WriteOp, scan_page,
+    RrfFusion, ScopePage, StorageCapabilities, StoragePort, VectorHit, WriteOp,
+    sanitize_graph_ident, scan_page,
 };
