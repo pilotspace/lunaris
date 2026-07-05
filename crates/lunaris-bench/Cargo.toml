@@ -14,7 +14,7 @@ publish     = false
 # 1M-fact corpus generator and the 12 KB markdown fixture.
 
 [dependencies]
-lunaris = { workspace = true, features = ["ollama"] }
+lunaris = { workspace = true, features = ["ollama", "cloud-api"] }
 lunaris-core = { workspace = true }
 lunaris-storage-moon = { workspace = true }
 lunaris-ingest = { workspace = true }

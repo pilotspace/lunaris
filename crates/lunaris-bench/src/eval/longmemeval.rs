@@ -382,8 +382,9 @@ fn metric_name(judge_mode: bool) -> &'static str {
 
 /// Prototype toggle (`LUNARIS_EVAL_LME_GRAPH=1`): route per-question ingest
 /// through structured Fact/Entity/Relation extraction
-/// (`lunaris.graph_pipeline().enable()` + a cloud-routed `OllamaExtractor`)
-/// instead of the default graph-OFF chunk+embed-only fast path.
+/// (`lunaris.graph_pipeline().enable()` + a native `CloudApiExtractor`
+/// targeting MiniMax's `api.minimax.io` directly) instead of the default
+/// graph-OFF chunk+embed-only fast path.
 ///
 /// Motivation: a `tmp/ceiling_test.py` diagnostic (2026-07, not part of this
 /// harness) fed the SAME reader model hand-authored, deduped-but-unsummed
@@ -392,6 +393,15 @@ fn metric_name(judge_mode: bool) -> &'static str {
 /// three right — evidence the bottleneck is presentation, not the reader's
 /// arithmetic. This toggle lets that hypothesis be tested against the real
 /// extraction pipeline instead of hand-authored facts.
+///
+/// Was originally prototyped through `tmp/route_shim.py` (an Ollama-shaped
+/// local shim that forwards to `api.minimax.io`) via `OllamaExtractor`, so
+/// this could reuse the harness's existing Ollama-transport wiring with zero
+/// new Rust code. Rewired onto `CloudApiExtractor`/`CloudProvider::MiniMax`
+/// (2026-07) to drop that shim's stacked retry loop (it wrapped
+/// `OllamaBackend`'s own retry, compounding latency on every transient
+/// error) and to pick up `CloudApiExtractor`'s D-21 sentinel-on-retry-
+/// exhaust semantics instead of `OllamaExtractor`'s silent-empty-on-error.
 fn graph_pipeline_enabled() -> bool {
     std::env::var("LUNARIS_EVAL_LME_GRAPH").map(|v| v == "1").unwrap_or(false)
 }
@@ -450,30 +460,33 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     let judge_model = std::env::var("LUNARIS_EVAL_LME_JUDGE_MODEL")
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
     // Graph-pipeline extraction prototype (see graph_pipeline_enabled doc).
-    // Reuses the same shim endpoint as gen/judge (LUNARIS_EVAL_OLLAMA_URL) and
-    // defaults its model to the gen model — extraction and generation are
-    // both "ask the reader model to read text", just different prompts.
+    // `LUNARIS_EVAL_LME_EXTRACT_MODEL` overrides the model id sent straight to
+    // api.minimax.io (falls back to MINIMAX_EXTRACT_MODEL, then "MiniMax-M3" —
+    // see the construction site below for why this isn't
+    // CloudApiExtractorOpts::default()). MINIMAX_API_KEY is read directly at
+    // that same site, never threaded through a harness variable or logged.
     let graph_enabled = graph_pipeline_enabled();
-    let extract_model =
-        std::env::var("LUNARIS_EVAL_LME_EXTRACT_MODEL").unwrap_or_else(|_| gen_model.clone());
-    let ollama_url = std::env::var("LUNARIS_EVAL_OLLAMA_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
-    // Generous, cloud-model-appropriate timeouts. The library defaults (450ms
-    // per-chunk / 150ms per-batch) are tuned for a local candle/Ollama
-    // instance and would time out on nearly every call through a cloud shim,
-    // masking the very effect this prototype exists to measure (design-for-
-    // failure means a timeout degrades to an empty extraction, NOT a crash —
-    // but a silent empty-extraction-via-timeout would misreport as "structured
-    // extraction doesn't help" when the real cause is "the call never got a
-    // chance to finish").
-    let extract_timeout_ms: u64 = std::env::var("LUNARIS_EVAL_LME_EXTRACT_TIMEOUT_MS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60_000);
+    let extract_model = std::env::var("LUNARIS_EVAL_LME_EXTRACT_MODEL").ok();
+    // Generous, cloud-model-appropriate batch timeout. The extractor's own
+    // library default (150ms) is tuned for a local candle/Ollama instance and
+    // would time out on nearly every call to a real cloud API, masking the
+    // very effect this prototype exists to measure (design-for-failure means
+    // a timeout degrades to an empty extraction, NOT a crash — but a silent
+    // empty-extraction-via-timeout would misreport as "structured extraction
+    // doesn't help" when the real cause is "the call never got a chance to
+    // finish"). This single knob bounds both the per-chunk CloudBackend retry
+    // budget and the whole-batch fallback-to-per-chunk timeout (D-02).
     let extract_batch_timeout_ms: u64 = std::env::var("LUNARIS_EVAL_LME_EXTRACT_BATCH_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(120_000);
+    // MiniMax-M3 is reasoning-heavy: the library default (512) was observed
+    // exhausted (`finish_reason: length`, empty content) on real chunks
+    // during this prototype's live A/B testing. Default higher here.
+    let extract_max_tokens: u32 = std::env::var("LUNARIS_EVAL_LME_EXTRACT_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2048);
     // Window = records[offset .. offset+limit]. `n` is the actual count after
     // clamping to the dataset tail (a final short chunk is fine).
     let n = records.len().saturating_sub(offset).min(limit);
@@ -521,21 +534,38 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         if graph_enabled {
             // Graph-pipeline prototype: route ingest through structured
             // Fact/Entity/Relation extraction instead of the default
-            // graph-OFF chunk+embed-only fast path. `lunaris::OllamaExtractor`
-            // is already re-exported (lunaris-bench's `lunaris` dep already
-            // carries `features = ["ollama"]`) — no new Cargo dependency.
-            let extractor = lunaris::OllamaExtractor::new(lunaris::OllamaExtractorOpts {
-                endpoint: ollama_url.clone(),
-                model: extract_model.clone(),
+            // graph-OFF chunk+embed-only fast path. `lunaris::CloudApiExtractor`
+            // is already re-exported (lunaris-bench's `lunaris` dep now
+            // carries `features = ["ollama", "cloud-api"]`) — no new Cargo
+            // dependency.
+            //
+            // NOT built via `CloudApiExtractorOpts::default()`:  that resolves
+            // `provider` from `LUNARIS_EXTRACT_PROVIDER` (falling back to
+            // Anthropic) BEFORE reading `model`/`api_key` from the provider's
+            // env — overriding just `.provider` afterward via struct-update
+            // syntax would silently keep Anthropic's model/key unless that
+            // env var happened to already say "minimax". Reading
+            // MINIMAX_API_KEY / MINIMAX_EXTRACT_MODEL directly (the exact env
+            // names CloudProvider::MiniMax resolves to internally) sidesteps
+            // that trap. The key is never echoed or logged.
+            let api_key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
+            let extract_model_used = extract_model.clone().unwrap_or_else(|| {
+                std::env::var("MINIMAX_EXTRACT_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string())
+            });
+            let extractor = lunaris::CloudApiExtractor::new(lunaris::CloudApiExtractorOpts {
+                provider: lunaris::CloudProvider::MiniMax,
+                model: extract_model_used.clone(),
+                api_key,
                 batch_timeout_ms: extract_batch_timeout_ms,
-                timeout_ms: extract_timeout_ms,
+                max_retries: 1,
+                max_tokens: extract_max_tokens,
             })
             .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
             lunaris.graph_pipeline().set_extractor(std::sync::Arc::new(extractor));
             lunaris.graph_pipeline().enable();
             if debug {
                 eprintln!(
-                    "    GRAPH pipeline ENABLED extract_model={extract_model} timeout_ms={extract_timeout_ms} batch_timeout_ms={extract_batch_timeout_ms}"
+                    "    GRAPH pipeline ENABLED extract_model={extract_model_used} batch_timeout_ms={extract_batch_timeout_ms} max_tokens={extract_max_tokens}"
                 );
             }
         }
