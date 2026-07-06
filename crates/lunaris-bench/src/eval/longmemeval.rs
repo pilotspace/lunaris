@@ -496,7 +496,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
 
     // Build the chat client only in judge mode (avoids requiring Ollama for
     // the fast recall-only path).
-    let chat = if judge_mode { Some(super::lme_judge::OllamaChat::new()?) } else { None };
+    let chat = if judge_mode { Some(super::lme_judge::ChatClient::new()?) } else { None };
     if judge_mode {
         eprintln!(
             "  [longmemeval] JUDGE mode ON — gen={gen_model} judge={judge_model} k={k} n={n}"
@@ -908,7 +908,7 @@ fn cap_to_distinct_sessions(sources: &[String], cap: usize) -> Vec<String> {
 /// official per-question-type prompt. Returns `(verdict, gen_answer,
 /// judge_raw)` so the caller can log the model outputs under `--debug`.
 async fn judge_one(
-    chat: &super::lme_judge::OllamaChat,
+    chat: &super::lme_judge::ChatClient,
     gen_model: &str,
     judge_model: &str,
     rec: &HaystackRecord,
