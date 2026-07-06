@@ -125,6 +125,186 @@ impl OllamaChat {
     }
 }
 
+/// Direct MiniMax `/v1/text/chatcompletion_v2` client — the **native
+/// provider** path for gen+judge chat calls, bypassing the Ollama-shaped
+/// local shim (`tmp/route_shim.py`) entirely.
+///
+/// Live A/B testing (2026-07) found `route_shim.py` can silently wedge:
+/// the process stays alive and keeps LISTENing on its port (so a liveness
+/// check that only confirms the port is open passes), but stops answering
+/// requests entirely — every call hangs until the harness's own timeout,
+/// turning a multi-hour retry run into 100% `judge error` misses with no
+/// actual model signal. Talking to `api.minimax.io` directly removes that
+/// extra hop and its failure mode.
+///
+/// Mirrors `lunaris_llm::cloud::minimax`'s proven request/response shape
+/// (same endpoint, same `choices[0].message.content` decode) and
+/// `route_shim.py`'s `via_minimax` leg (same live-validated behavior) — but
+/// is a separate, harness-local client rather than a reuse of
+/// `lunaris_llm::CloudBackend`, because `LlmBackend::generate()` takes a
+/// single prompt string with no system-role field, while gen+judge needs
+/// system+user sent as distinct messages (`route_shim.py`'s `via_minimax`
+/// forwards exactly that shape to the same endpoint, confirmed live).
+const MINIMAX_URL: &str = "https://api.minimax.io/v1/text/chatcompletion_v2";
+
+/// MiniMax-M3 is reasoning-heavy; the extraction path (`longmemeval.rs`)
+/// already had to bump its library default (512) to 2048 after observing
+/// `finish_reason: length` truncation on real chunks. Gen/judge answers are
+/// short but the model's internal reasoning tokens count against the same
+/// budget, so default generously here too rather than repeat that pitfall.
+const MINIMAX_MAX_TOKENS: u32 = 4096;
+
+pub(crate) struct MiniMaxChat {
+    client: reqwest::Client,
+    endpoint: String,
+    api_key: String,
+}
+
+impl MiniMaxChat {
+    pub(crate) fn new(api_key: String) -> anyhow::Result<Self> {
+        Self::with_endpoint(MINIMAX_URL.to_string(), api_key, Duration::from_secs(300))
+    }
+
+    /// Same as [`Self::new`] but with an explicit endpoint + timeout, so the
+    /// mock-server regression tests can point at a local listener instead of
+    /// the real API (mirrors [`OllamaChat::with_timeout`]).
+    fn with_endpoint(endpoint: String, api_key: String, timeout: Duration) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder().timeout(timeout).build()?;
+        Ok(Self { client, endpoint, api_key })
+    }
+
+    /// Same retry policy as [`OllamaChat::chat`] (3 attempts, 2s/4s linear
+    /// backoff; empty completion counts as a failed attempt, not a result).
+    pub(crate) async fn chat(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+    ) -> anyhow::Result<String> {
+        let mut last_err = None;
+        for attempt in 1..=3u32 {
+            match self.chat_once(model, system, user).await {
+                Ok(s) if !s.is_empty() => return Ok(s),
+                Ok(_) => last_err = Some(anyhow::anyhow!("empty completion")),
+                Err(e) => last_err = Some(e),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("minimax chat failed")))
+    }
+
+    /// Single non-streaming chat attempt against MiniMax's own API. `system`
+    /// may be empty (omitted), same convention as [`OllamaChat::chat_once`].
+    async fn chat_once(&self, model: &str, system: &str, user: &str) -> anyhow::Result<String> {
+        let mut messages = Vec::with_capacity(2);
+        if !system.is_empty() {
+            messages.push(serde_json::json!({"role": "system", "content": system}));
+        }
+        messages.push(serde_json::json!({"role": "user", "content": user}));
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": MINIMAX_MAX_TOKENS,
+        });
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .header("authorization", format!("Bearer {}", self.api_key))
+            .json(&body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "minimax {model} HTTP {status}: {}",
+                text.chars().take(300).collect::<String>()
+            );
+        }
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            anyhow::anyhow!(
+                "minimax {model} bad JSON: {e}; body={}",
+                text.chars().take(200).collect::<String>()
+            )
+        })?;
+        let content = v
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|c| c.first())
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        Ok(content)
+    }
+}
+
+/// True iff `model` names a MiniMax model (case-insensitive substring), the
+/// same test both [`ChatClient::chat`]'s dispatch and callers use to decide
+/// whether the native provider applies. Every harness run script names its
+/// gen/judge model `"minimax-m3:cloud"` (the Ollama-tag convention) or the
+/// bare `"MiniMax-M3"` (the extraction path's convention) — both match.
+fn is_minimax_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("minimax")
+}
+
+/// Normalize a harness model string to the model id MiniMax's own API
+/// expects. Strips any `:tag` suffix (the Ollama-tag convention used by
+/// every run script's `LUNARIS_EVAL_LME_GEN_MODEL=minimax-m3:cloud`) and
+/// canonicalizes the well-known M3 alias; an unrecognized MiniMax variant
+/// passes through as-is (minus the tag) rather than being silently mangled.
+fn minimax_model_id(model: &str) -> String {
+    let base = model.split(':').next().unwrap_or(model);
+    if base.eq_ignore_ascii_case("minimax-m3") {
+        "MiniMax-M3".to_string()
+    } else {
+        base.to_string()
+    }
+}
+
+/// Gen+judge chat dispatcher: routes MiniMax-named models to the native
+/// [`MiniMaxChat`] client (no local shim hop), everything else to the
+/// legacy Ollama-shaped [`OllamaChat`] shim client (the GLM/gpt-oss/gpt-4o
+/// reader configs used earlier in this project's history routed through
+/// `tmp/route_shim.py`'s other legs and still can).
+pub(crate) struct ChatClient {
+    ollama: OllamaChat,
+    minimax: Option<MiniMaxChat>,
+}
+
+impl ChatClient {
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        let ollama = OllamaChat::new()?;
+        let key = std::env::var("MINIMAX_API_KEY").unwrap_or_default();
+        let minimax = if key.is_empty() { None } else { Some(MiniMaxChat::new(key)?) };
+        Ok(Self { ollama, minimax })
+    }
+
+    pub(crate) async fn chat(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+    ) -> anyhow::Result<String> {
+        if is_minimax_model(model) {
+            let mm = self.minimax.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "model {model:?} is a MiniMax model but MINIMAX_API_KEY is unset \
+                     — set it to use the native provider (no shim fallback for MiniMax models)"
+                )
+            })?;
+            mm.chat(&minimax_model_id(model), system, user).await
+        } else {
+            self.ollama.chat(model, system, user).await
+        }
+    }
+}
+
 /// System prompt for the answer-generation step. Faithful to LongMemEval's
 /// retrieval-augmented QA setup: answer the question using ONLY the supplied
 /// conversation snippets; abstain when the evidence is absent.
@@ -650,6 +830,210 @@ mod tests {
         assert!(
             result.is_err(),
             "a stalled/incomplete response must surface as an error, not hang"
+        );
+    }
+
+    #[test]
+    fn is_minimax_model_matches_case_insensitive_substring() {
+        assert!(is_minimax_model("minimax-m3:cloud"));
+        assert!(is_minimax_model("MiniMax-M3"));
+        assert!(is_minimax_model("MINIMAX"));
+        assert!(!is_minimax_model("gpt-4o"));
+        assert!(!is_minimax_model("llama3.2"));
+        assert!(!is_minimax_model(""));
+    }
+
+    #[test]
+    fn minimax_model_id_normalizes_the_ollama_tag_convention() {
+        // The Ollama-tag convention every run script uses for gen/judge model.
+        assert_eq!(minimax_model_id("minimax-m3:cloud"), "MiniMax-M3");
+        // Already-canonical, no tag (the extraction path's convention).
+        assert_eq!(minimax_model_id("MiniMax-M3"), "MiniMax-M3");
+        // Bare lowercase, no tag.
+        assert_eq!(minimax_model_id("minimax-m3"), "MiniMax-M3");
+        // Unrecognized MiniMax variant passes through (tag stripped, not mangled).
+        assert_eq!(minimax_model_id("minimax-turbo:cloud"), "minimax-turbo");
+    }
+
+    /// Proves the native MiniMax client sends the exact request shape
+    /// `route_shim.py`'s live-validated `via_minimax` leg sends: both
+    /// system+user messages, the Bearer auth header, and decodes the
+    /// standard `choices[0].message.content` response.
+    #[tokio::test]
+    async fn minimax_chat_once_sends_auth_and_messages_and_decodes_content() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let received = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = tx.send(received);
+                let body = br#"{"choices":[{"message":{"content":"hello from minimax"}}]}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        let chat = MiniMaxChat::with_endpoint(
+            format!("http://{addr}"),
+            "sk-test-key".to_string(),
+            Duration::from_secs(5),
+        )
+        .expect("client");
+
+        let result = chat.chat_once("MiniMax-M3", "be terse", "say hi").await.expect("chat_once");
+        assert_eq!(result, "hello from minimax");
+
+        let received = rx.await.expect("mock server captured a request");
+        assert!(
+            received.to_ascii_lowercase().contains("authorization: bearer sk-test-key"),
+            "must send the Bearer auth header, got: {received}"
+        );
+        assert!(received.contains("MiniMax-M3"), "must send the model id, got: {received}");
+        assert!(
+            received.contains(r#""role":"system""#),
+            "must send the system message, got: {received}"
+        );
+        assert!(received.contains("be terse"), "must send the system content, got: {received}");
+        assert!(
+            received.contains(r#""role":"user""#),
+            "must send the user message, got: {received}"
+        );
+        assert!(received.contains("say hi"), "must send the user content, got: {received}");
+    }
+
+    /// Same design-for-failure property as the Ollama client's stall test:
+    /// a stalled/incomplete MiniMax response must error out within the
+    /// configured timeout, never hang -- this is the exact failure mode
+    /// that wedged `route_shim.py` (listening but unresponsive) for hours
+    /// in live use, the motivating bug for this whole native-client change.
+    #[tokio::test]
+    async fn minimax_chat_once_errors_out_within_timeout_when_connection_stalls() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n{\"choic")
+                    .await;
+                let _ = socket.flush().await;
+                std::future::pending::<()>().await;
+            }
+        });
+
+        let chat = MiniMaxChat::with_endpoint(
+            format!("http://{addr}"),
+            "sk-test-key".to_string(),
+            Duration::from_millis(300),
+        )
+        .expect("client");
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), chat.chat_once("MiniMax-M3", "", "hi"))
+                .await
+                .expect("chat_once must return within the outer 2s test bound");
+        assert!(
+            result.is_err(),
+            "a stalled/incomplete response must surface as an error, not hang"
+        );
+    }
+
+    /// `ChatClient` is the fix's actual payoff: a MiniMax-named model must
+    /// route to the native client (never silently fall through to a shim
+    /// that might be listening-but-wedged, the exact failure this whole
+    /// change exists to eliminate), and a non-MiniMax model keeps using the
+    /// legacy Ollama-shaped shim path unchanged.
+    #[tokio::test]
+    async fn chat_client_routes_minimax_models_to_the_native_client() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let ollama_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ollama mock");
+        let ollama_addr = ollama_listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = ollama_listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let body = br#"{"message":{"content":"from ollama"}}"#;
+                let response = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        let minimax_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind minimax mock");
+        let minimax_addr = minimax_listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = minimax_listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let body = br#"{"choices":[{"message":{"content":"from minimax"}}]}"#;
+                let response = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        let client = ChatClient {
+            ollama: OllamaChat::with_timeout(
+                format!("http://{ollama_addr}"),
+                Duration::from_secs(5),
+            )
+            .expect("ollama client"),
+            minimax: Some(
+                MiniMaxChat::with_endpoint(
+                    format!("http://{minimax_addr}"),
+                    "sk-test".to_string(),
+                    Duration::from_secs(5),
+                )
+                .expect("minimax client"),
+            ),
+        };
+
+        let mm_result = client.chat("minimax-m3:cloud", "", "hi").await.expect("minimax dispatch");
+        assert_eq!(mm_result, "from minimax");
+
+        let ollama_result = client.chat("llama3.2", "", "hi").await.expect("ollama dispatch");
+        assert_eq!(ollama_result, "from ollama");
+    }
+
+    #[tokio::test]
+    async fn chat_client_errors_clearly_when_minimax_model_but_no_key() {
+        // No network call should even happen -- the missing-key check must
+        // short-circuit before touching the (deliberately unroutable) ollama
+        // endpoint, so this test completes instantly with no retry/backoff.
+        let client = ChatClient {
+            ollama: OllamaChat::with_timeout(
+                "http://127.0.0.1:1".to_string(),
+                Duration::from_millis(50),
+            )
+            .expect("ollama client"),
+            minimax: None,
+        };
+        let err = client.chat("minimax-m3:cloud", "", "hi").await.unwrap_err();
+        assert!(
+            err.to_string().contains("MINIMAX_API_KEY"),
+            "must name the missing env var, got: {err}"
         );
     }
 }
