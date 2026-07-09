@@ -488,10 +488,17 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         .and_then(|s| s.parse().ok())
         .unwrap_or(2048);
     // Window = records[offset .. offset+limit]. `n` is the actual count after
-    // clamping to the dataset tail (a final short chunk is fine).
+    // clamping to the dataset tail (a final short chunk is fine). An EMPTY
+    // window is a harness misconfiguration (offset beyond the dataset), and
+    // reporting it as a real J=0.0 is exactly the `0.0 → judge_ge → FAIL`
+    // trap `eval_scoring.rs` pins — bail instead; the caller's SKIP-not-FAIL
+    // arm turns this into an honest `EvalRow::skipped`.
     let n = records.len().saturating_sub(offset).min(limit);
     if n == 0 {
-        return Ok(0.0);
+        anyhow::bail!(
+            "empty eval window: offset {offset} >= dataset len {} (limit {limit})",
+            records.len()
+        );
     }
 
     // Build the chat client only in judge mode (avoids requiring Ollama for
