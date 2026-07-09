@@ -364,6 +364,65 @@ mod tests {
         }
     }
 
+    // W3 (moon-v051-perf-exploit) — Task 3: launch-config refresh against the
+    // v0.5.1+ flag set.
+    //
+    // `launch_embedded_moon` builds `ServerConfig` via `parse_from([])` (the
+    // clap-default re-derivation footgun workaround documented on that
+    // function: `ServerConfig::default()` gives databases=0/shards=0 because
+    // `#[derive(Default)]` uses Rust's numeric zero, not the clap
+    // `#[arg(default_value_t)]` values). This test proves that pattern still
+    // yields sane values for the NEW v0.5.1 flags added since the last audit
+    // of this file, and that embedded-moon does NOT force any of them off
+    // their new upstream default:
+    //   - `--wal-kv-log` default "auto" (AOF+WAL KV double-write elimination,
+    //     PR #211) — embedded-moon must NOT force it to "on" (that would
+    //     reintroduce the double-write Moon 0.5.1 just eliminated).
+    //   - `--mem-full-pct` default 95 (RSS watchdog "mem-full guard").
+    //   - `--io-busy-poll-us` default 0 (disabled; opt-in only, and only
+    //     meaningful on pinned/dedicated cores per the flag's own doc comment
+    //     — an embedded, shared-process instance must never spin by default).
+    //   - `--disk-offload` default "enable" (MoonStore v2 tiered storage).
+    //   - `--disk-free-min-pct` default 5 (diskfull write-pause guard).
+    #[test]
+    fn server_config_new_v051_flags_have_sane_defaults() {
+        use clap::Parser;
+        let config = moon_server::config::ServerConfig::parse_from::<[&str; 0], &str>([]);
+
+        assert_eq!(
+            config.wal_kv_log, "auto",
+            "embedded-moon must inherit the v0.5.1 `auto` wal-kv-log default \
+             (never force \"on\", which would reintroduce the AOF+WAL KV \
+             double-write PR #211 eliminated)"
+        );
+        assert_eq!(
+            config.mem_full_pct, 95,
+            "RSS watchdog mem-full-pct must keep its upstream default"
+        );
+        assert_eq!(
+            config.io_busy_poll_us, 0,
+            "io-busy-poll-us must stay disabled by default — busy-polling \
+             regresses shared/unpinned cores (embedded-moon runs in-process \
+             alongside the MCP server, never on dedicated cores)"
+        );
+        assert_eq!(
+            config.disk_offload, "enable",
+            "disk-offload must keep its upstream default (tiered RAM->mmap->NVMe storage)"
+        );
+        assert_eq!(
+            config.disk_free_min_pct, 5,
+            "disk-free-min-pct must keep its upstream default (5% diskfull write-pause guard)"
+        );
+
+        // Pre-existing footgun this whole `parse_from([])` pattern exists to
+        // dodge — still holds under v0.5.1's expanded flag set.
+        assert_eq!(
+            config.databases, 16,
+            "databases must be the clap default, not Default::default()'s 0"
+        );
+        assert_eq!(config.shards, 1, "shards must be the clap default, not Default::default()'s 0");
+    }
+
     // RED TEST: round-trip through live Moon.
     // This test references AppState { _embedded_moon } which does not yet exist.
     // It will fail to COMPILE until T2 adds the field to AppState.

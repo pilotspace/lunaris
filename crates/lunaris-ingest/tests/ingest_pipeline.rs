@@ -294,6 +294,67 @@ async fn episode_and_chunks_appear_in_single_batch() {
     }
 }
 
+/// W3 (moon-v051-perf-exploit) — chunk KvPut payloads must not carry the
+/// embedding at the real production ingest path (not just the primitives.rs
+/// unit level). Every chunk KvPut byte blob must (a) deserialize with
+/// `embedding == None` and (b) not contain the literal `"embedding"` key at
+/// all — the FT `chunks` VectorUpsert (already asserted 768-d elsewhere in
+/// this file) is the sole home for the vector now.
+#[tokio::test]
+async fn chunk_kvput_payload_never_carries_embedding() {
+    use lunaris_core::primitives::Chunk;
+
+    let storage = Arc::new(RecordingStorage::default());
+    let embedder = Arc::new(StubEmbedder::new(768));
+    let clock = HlcClock::new(0);
+    let ep = twelve_kb_episode(&clock);
+
+    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    let batch = storage.first_batch();
+
+    let chunk_kvputs: Vec<&[u8]> = batch
+        .iter()
+        .filter_map(|op| {
+            if let WriteOp::KvPut { key, value } = op
+                && key.windows(6).any(|w| w == b":chunk")
+            {
+                Some(value.as_slice())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(!chunk_kvputs.is_empty(), "must have at least one chunk KvPut");
+
+    let mut total_bytes = 0usize;
+    for raw in &chunk_kvputs {
+        total_bytes += raw.len();
+        let c: Chunk = serde_json::from_slice(raw).expect("chunk KvPut is valid JSON");
+        assert!(
+            c.embedding.is_none(),
+            "W3: Chunk.embedding must be None after KV round-trip (skip_serializing)"
+        );
+        assert!(
+            !raw.windows(b"\"embedding\"".len()).any(|w| w == b"\"embedding\""),
+            "W3: the raw chunk KvPut bytes must not contain the \"embedding\" key at all"
+        );
+    }
+
+    // Sanity ceiling: `twelve_kb_episode` produces ~500-token chunks (up to
+    // ~3.5 KB of text + heading_path + bt JSON with no embedding). A 768-d
+    // f32 JSON array would add roughly another 7-9 KB on top of that — so a
+    // generous 6 KB ceiling still catches a regression that starts inlining
+    // the vector again, without being tightly coupled to this fixture's
+    // exact chunk-text length. See `c_chunk_kv_payload_shrinks_at_least_4x`
+    // in lunaris-core for the precise ratio proof.
+    let avg_bytes = total_bytes / chunk_kvputs.len();
+    assert!(
+        avg_bytes < 6144,
+        "average chunk KvPut size {avg_bytes} bytes looks too large for an \
+         embedding-free payload — is something still inlining the vector?"
+    );
+}
+
 #[tokio::test]
 async fn embed_fallback_on_batch_error() {
     let storage = Arc::new(RecordingStorage::default());
@@ -370,9 +431,15 @@ async fn community_bt_comes_from_caller_clock() {
 ///
 /// Two assertions:
 /// 1. Every community `KvPut` in the batch deserializes to a `Community` whose
-///    `summary_embedding` is `Some` with exactly 768 dimensions.
+///    `summary_embedding` is `None` (W3 moon-v051-perf-exploit: the field is no
+///    longer serialized into the KV payload — see
+///    `crates/lunaris-core/tests/c_embedding_skip_serialize.rs` for the
+///    dedicated skip-serialize + payload-size-reduction proof) — and that the
+///    KvPut bytes are meaningfully smaller than they'd be if the embedding
+///    were still inlined.
 /// 2. At least one `VectorUpsert { index: "communities", .. }` with a 768-d embedding
-///    appears in the batch — proving the `communities` FT index is populated.
+///    appears in the batch — proving the `communities` FT index is populated
+///    (this remains the source of truth for "was it embedded", not the KV blob).
 #[tokio::test]
 async fn community_summary_embedding_populated_at_ingest() {
     use lunaris_core::primitives::Community;
@@ -386,7 +453,8 @@ async fn community_summary_embedding_populated_at_ingest() {
 
     let batch = storage.first_batch();
 
-    // 1. Every community KvPut must have summary_embedding = Some with dim 768.
+    // 1. Every community KvPut must NOT carry summary_embedding (W3 skip_serializing),
+    //    and must not even contain the substring "summary_embedding" in the raw bytes.
     let community_kvputs: Vec<&[u8]> = batch
         .iter()
         .filter_map(|op| {
@@ -402,11 +470,17 @@ async fn community_summary_embedding_populated_at_ingest() {
     assert!(!community_kvputs.is_empty(), "must have at least one community KvPut");
     for raw in &community_kvputs {
         let c: Community = serde_json::from_slice(raw).expect("community KvPut is valid JSON");
-        let emb = c
-            .summary_embedding
-            .as_ref()
-            .expect("B1/D4: Community.summary_embedding must be Some after Phase-30 ingest");
-        assert_eq!(emb.len(), 768, "summary_embedding must be 768-d (granite dim)");
+        assert!(
+            c.summary_embedding.is_none(),
+            "W3: Community.summary_embedding must be None after KV round-trip \
+             (skip_serializing) — population is proven via the communities \
+             VectorUpsert below, not the KV blob"
+        );
+        assert!(
+            !raw.windows(b"summary_embedding".len()).any(|w| w == b"summary_embedding"),
+            "W3: the raw community KvPut bytes must not contain the \
+             'summary_embedding' key at all"
+        );
     }
 
     // 2. At least one VectorUpsert for the communities index with correct dim.

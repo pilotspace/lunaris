@@ -432,7 +432,36 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     }
 
     // INGEST-04: the single atomic write for this episode (see module-level invariant).
+    // NOTE: `maintenance_hint` below is a SEPARATE, best-effort call — it does
+    // not count against the "exactly one atomic_write" invariant (INGEST-04
+    // only constrains `atomic_write`, not maintenance signalling).
+    let vector_upserts = ops.iter().filter(|op| matches!(op, WriteOp::VectorUpsert { .. })).count();
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
+
+    // W3 (moon-v051-perf-exploit) — post-bulk-ingest maintenance hint.
+    //
+    // Cross-agent contract (FROZEN, see tmp/moon-perf-context.md): Agent A adds
+    // `StoragePort::maintenance_hint` + `MaintenanceHint` to
+    // `lunaris_core::storage::port`, defaulted to a no-op so every existing
+    // backend keeps compiling without an override. This call is fully
+    // best-effort: a failure here must NEVER fail an already-committed
+    // ingest (the atomic_write above already succeeded), so errors are
+    // logged and swallowed, not propagated.
+    if let Err(e) = storage
+        .maintenance_hint(
+            &episode.scope,
+            lunaris_core::storage::port::MaintenanceHint::BulkIngestComplete { vector_upserts },
+        )
+        .await
+    {
+        tracing::warn!(
+            err = %e,
+            vector_upserts,
+            episode_id = %episode.id,
+            "post-ingest maintenance_hint failed (best-effort, ingest already committed)"
+        );
+    }
+
     Ok(AssembleReceipt { lsn, chunk_ids })
 }
 

@@ -149,7 +149,11 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 /// - `id`, `level`, `parent` — exact equality (all deterministic).
 /// - `members` — community-typed members exact equality; leaf member count equality.
 /// - `summary` — non-empty on both.
-/// - `summary_embedding` — `Some(768-d)` on both (Phase-30 B1: populated at ingest).
+/// - `summary_embedding` — `None` on both after the KV read-back (W3
+///   embedding double-store fix: the field is `skip_serializing`, the vector
+///   lives only in the `communities` vector index / vector column; Phase-30
+///   B1 population-at-ingest is proven index-side by
+///   `lunaris-ingest/tests/raptor_wiring.rs`, not through the KV blob).
 ///
 /// Used for both SQLite self-parity (unconditional) and Moon vs SQLite (UAT-gated).
 pub async fn run_raptor_parity_suite(
@@ -249,31 +253,25 @@ pub async fn run_raptor_parity_suite(
             b.id
         );
 
-        // Phase-30 B1: summary_embedding must be Some(768-d) on both.
-        // (Replaces the Phase-29 D4 guardrail that asserted None.)
-        let emb_a = a.summary_embedding.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "parity: community {} summary_embedding is None on storage_a (Phase-30 B1 requires Some)",
-                a.id
-            )
-        })?;
-        let emb_b = b.summary_embedding.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "parity: community {} summary_embedding is None on storage_b (Phase-30 B1 requires Some)",
-                b.id
-            )
-        })?;
+        // W3 embedding double-store fix (moon-v051-perf-exploit): the KV
+        // payload never carries the embedding (`skip_serializing`), so a
+        // KV read-back MUST yield None on both backends. This replaces the
+        // Phase-30 B1 `Some(768-d)` assertion, which probed population
+        // through the (now intentionally slimmed) KV blob; population at
+        // ingest is still guaranteed, but is proven against the
+        // `communities` vector index (`raptor_wiring.rs`), the only place
+        // the vector actually lives.
         anyhow::ensure!(
-            emb_a.len() == 768,
-            "parity: community {} summary_embedding has wrong dim {} on storage_a (expected 768)",
-            a.id,
-            emb_a.len()
+            a.summary_embedding.is_none(),
+            "parity: community {} summary_embedding must be None after KV read-back on storage_a \
+             (skip_serializing contract)",
+            a.id
         );
         anyhow::ensure!(
-            emb_b.len() == 768,
-            "parity: community {} summary_embedding has wrong dim {} on storage_b (expected 768)",
-            b.id,
-            emb_b.len()
+            b.summary_embedding.is_none(),
+            "parity: community {} summary_embedding must be None after KV read-back on storage_b \
+             (skip_serializing contract)",
+            b.id
         );
     }
 
