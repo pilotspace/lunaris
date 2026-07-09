@@ -217,6 +217,35 @@ impl RetrievalBuilder {
         Self { root: Box::new(new_root), ..self }
     }
 
+    /// W5 task 1: wrap the current root with a [`crate::RerankRetriever`]
+    /// configured with an abstention gate. Hits scoring below `min_score`
+    /// on the cross-encoder's sigmoid output (∈ [0,1] for
+    /// `bge-reranker-v2-m3`) are dropped instead of being returned as
+    /// "best of the worst" — an empty result is a legitimate abstention
+    /// signal. Uses the default top-in ([`crate::DEFAULT_RERANK_TOP_IN`]);
+    /// use `.rerank(reranker)` + `RerankRetriever::with_top_in(..)` directly
+    /// (via `.with_root_boxed`) when both a custom `k_in` AND a threshold
+    /// are needed.
+    ///
+    /// ```ignore
+    /// let hits = lunaris.recall()
+    ///     .rerank_with_threshold(handle.reranker(), 0.5)
+    ///     .top(5)
+    ///     .execute(Query::text("what did we decide about pricing?"))
+    ///     .await?;
+    /// // hits.is_empty() == true means "no confident memory" (abstain), not
+    /// // "reranker returned zero-relevance results ranked anyway".
+    /// ```
+    pub fn rerank_with_threshold(
+        self,
+        reranker: Arc<dyn lunaris_rerank::Reranker>,
+        min_score: f32,
+    ) -> Self {
+        let new_root = crate::operators::rerank::RerankRetriever::new(self.root, reranker)
+            .with_min_score(min_score);
+        Self { root: Box::new(new_root), ..self }
+    }
+
     /// Plan 02-03: Wrap the current root with a [`crate::DegradedFallbackRetriever`].
     /// On any error from the current (primary) root, the operator switches
     /// to `fallback` and tags returned hits with `degraded: true`.
@@ -321,6 +350,29 @@ impl RetrievalBuilder {
         if query.as_of.is_none() {
             query.as_of = self.base_as_of;
         }
+        // W5 task 2 (AS_OF pinning): if the caller supplied NO as_of at all
+        // (neither `Query::as_of` nor the builder's `.as_of(ts)` default),
+        // pin ONE snapshot timestamp HERE — at the root of this retrieve
+        // execution, before `QueryContext` is constructed — and thread it
+        // through `query.as_of` for the entire fan-out.
+        //
+        // Without this, every operator/helper that defaults a missing
+        // `as_of` (`Tree`'s BFS descent, `rerank`'s `partial_hydrate_text`,
+        // `hydrate()`'s final chunk+episode pass) independently calls
+        // `HlcClock::new(0).tick()` at whatever wall-clock instant it
+        // happens to run. A single fused tree with multiple branches can
+        // then straddle a concurrent invalidation: one branch reads
+        // pre-supersede facts, another reads post-supersede facts, in the
+        // SAME logical query. Pinning once here means every downstream
+        // `ctx.query.as_of.unwrap_or_else(|| live_clock.tick())` fallback
+        // never fires — they all observe the identical `Some(pinned)`.
+        //
+        // A caller-supplied as_of (explicit `Query { as_of: Some(_), .. }`
+        // or `.as_of(ts)` on the builder) is NEVER touched — this branch
+        // only runs when both are `None`.
+        if query.as_of.is_none() {
+            query.as_of = Some(lunaris_core::HlcClock::new(0).tick());
+        }
         let as_of = query.as_of;
         // Plan 04-04 B-9: snapshot the initial_degraded flag BEFORE moving
         // the rest of the builder into the QueryContext / hydrate calls.
@@ -418,6 +470,12 @@ impl RetrievalBuilder {
         }
         if query.as_of.is_none() {
             query.as_of = self.base_as_of;
+        }
+        // W5 task 2 (AS_OF pinning) — same seam as `execute()`. `execute_raw`
+        // skips `hydrate()` but the operator tree (Tree/rerank/Graph/etc.)
+        // still needs a single pinned instant threaded through `ctx.query.as_of`.
+        if query.as_of.is_none() {
+            query.as_of = Some(lunaris_core::HlcClock::new(0).tick());
         }
         let scope = self.scope.clone();
         let ctx = match self.moon_storage.clone() {
