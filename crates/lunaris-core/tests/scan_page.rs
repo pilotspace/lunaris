@@ -281,7 +281,17 @@ async fn test_full_primitive_not_truncated() {
         scan_page::<Fact>(&port, &sc, &fact_prefix(&sc), None, 10, None).await.unwrap();
 
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0], f, "returned Fact equals stored Fact across all fields");
+    // W3 embedding double-store fix: `embedding` is skip_serializing (the
+    // vector lives only in the FT index / vector column), so it is
+    // intentionally absent after a storage roundtrip. Everything else must
+    // survive untruncated.
+    assert_eq!(
+        page.items[0].embedding, None,
+        "embedding never round-trips through KV (skip_serializing)"
+    );
+    let mut expect = f.clone();
+    expect.embedding = None;
+    assert_eq!(page.items[0], expect, "returned Fact equals stored Fact across all other fields");
 }
 
 #[tokio::test]
