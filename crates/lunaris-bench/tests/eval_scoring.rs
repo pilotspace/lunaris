@@ -75,7 +75,14 @@ fn harnesses_wire_the_pure_scorers_not_hardcoded_zero() {
     let loc = std::fs::read_to_string(dir.join("locomo.rs")).unwrap();
 
     assert!(erf.contains("compute_f1"), "er_f1::run must call compute_f1");
-    assert!(lme.contains("recall_j_score"), "longmemeval must call recall_j_score");
+    // longmemeval moved from the recall_j_score proxy to real gen+judge
+    // scoring (`score_haystack` driving `lme_judge::ChatClient`) in the
+    // native-MiniMax refactor (9827648) — pin the new wiring, same intent:
+    // a REAL scorer must be called, never a stub.
+    assert!(
+        lme.contains("score_haystack") && lme.contains("lme_judge::"),
+        "longmemeval must score via score_haystack + lme_judge (gen+judge path)"
+    );
     assert!(loc.contains("recall_j_score"), "locomo must call recall_j_score");
 
     assert!(!erf.contains("let f1 = 0.0"), "er_f1 still hardcodes f1 = 0.0 (the 0.0->FAIL trap)");
