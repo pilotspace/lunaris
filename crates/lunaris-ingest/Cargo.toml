@@ -42,10 +42,23 @@ blake3         = { workspace = true }
 workspace = true
 optional = true
 
+# W3 (moon-v051-perf-exploit): optional dep for the live-Moon embedding
+# double-store proof (`tests/c_live_moon_embedding_kv_size.rs`). Mirrors the
+# `lunaris-recipes` `moon-it` pattern: `optional = true` + `dep:` feature so
+# `cargo test -p lunaris-ingest` (default features) never compiles the Moon
+# client at all.
+[dependencies.lunaris-storage-moon]
+workspace = true
+optional = true
+
 [features]
 # llm-summarizer: enables LlmSummarizer wrapping Arc<dyn LlmBackend>.
 # Default build does NOT require LLM weights.
 llm-summarizer = ["lunaris-llm"]
+# moon-it: enables tests/c_live_moon_embedding_kv_size.rs against a real Moon
+# at MOON_URL (default moon://localhost:7803 for this test — see the file
+# header). NOT part of `default`.
+moon-it = ["dep:lunaris-storage-moon"]
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }

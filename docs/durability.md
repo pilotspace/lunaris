@@ -1,6 +1,11 @@
 # Durability & Crash Recovery
 
-Status: alpha. Complements `docs/guide.md`. All claims validated against live Moon on 2026-04-23 — rerun `scripts/test-recovery.py` to re-verify.
+Status: alpha. Complements `docs/guide.md`. Baseline claims validated against
+live Moon on 2026-04-23 — rerun `scripts/test-recovery.py` to re-verify. §2.1,
+§2.4, §2.5 updated 2026-07-10 for the Moon v0.5.1+ substrate bump
+(moon-v051-perf-exploit, `vendor/moon` @ `c9508066`); the SDK
+(`moondb 0.2.1`) is API-identical across the bump, so every change below is
+server-side behavior, not a Lunaris wire-format change.
 
 Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
 
@@ -44,6 +49,45 @@ Moon combines **AOF (append-only file)** with **base RDB snapshots**:
 
 The `--save` rules follow the Redis convention: `seconds changes` pairs — here, rewrite if either 1 change happened in 3600 s OR 100 changes in 300 s. Pair them with an explicit `BGREWRITEAOF` before planned shutdowns if you want a clean snapshot.
 
+**Everything above is still accurate on Moon v0.5.1+.** `--wal-kv-log` (§2.1)
+changes what feeds the *WAL* (a separate, per-shard checkpoint/replication
+log — see §2.4), not the AOF/RDB rotation Lunaris' `BGREWRITEAOF` guidance
+depends on. Do not confuse the WAL with the AOF: AOF is still the crash-
+recovery authority whenever `--appendonly yes` is set, and `BGREWRITEAOF`
+still produces the `appendonlydir/moon.aof.<N>.base.rdb` anchor snapshot
+the base-RDB trap below is about.
+
+### 2.1 AOF+WAL KV double-write eliminated (`--wal-kv-log`, v0.5.1)
+
+Before v0.5.1, every KV write with `--appendonly yes` was logged to **both**
+the per-shard AOF and the per-shard WAL — measured 2.7× file-byte / 4.1×
+device write amplification at `--shards 4`, even though startup recovery
+always wipes WAL-replayed state and replays the AOF (the WAL copy was pure
+disk wear on the write path Lunaris' `atomic_write` hot-loops on).
+
+`--wal-kv-log auto|on|off` (default **`auto`**) controls this:
+
+- **`auto`** (default, what Lunaris ships): KV records are skipped from the
+  WAL while the AOF is the recovery authority (`--appendonly yes`) and no
+  CDC subscriber is attached. Logging re-engages dynamically the moment a
+  CDC subscriber attaches, so point-in-time/CDC consumers still see every
+  write — there is no window where they'd miss records.
+- **`on`**: pre-0.5.1 behavior — always log KV records to the WAL. Set this
+  if you run `--appendonly no` (see below) and still want a WAL-based
+  point-in-time recovery / full CDC history, since `auto` would otherwise
+  have no durability log to fall back to.
+- **`off`**: never log KV records to the WAL (FPI/checkpoint/feature records
+  are unaffected either way). With `--appendonly no` **and** `--wal-kv-log
+  off`, there is NO KV durability log at all — every write is memory-only.
+
+Lunaris' embedded-Moon launcher (`crates/lunaris-mcp/src/embedded_moon.rs`)
+does not set `--wal-kv-log` at all, so it inherits the `auto` default —
+verified by
+`embedded_moon::tests::server_config_new_v051_flags_have_sane_defaults`.
+Never force it to `on` for a Lunaris deployment unless you have a CDC
+consumer or a specific PITR requirement — `auto` gives the same crash-
+recovery guarantee at a fraction of the write amplification.
+
 ### 2.2 The base-RDB trap
 
 **Without an existing base RDB, AOF-only state is unreplayable.** If you start Moon fresh, ingest data, and `kill -9` before the first auto-save / `BGREWRITEAOF` has run, the restart fails with:
@@ -78,6 +122,92 @@ done
 
 This is not data loss. The underlying HSETs are already fsync'd. The workaround in tests is to `sleep` 1–2 s before taking the "pre-crash" snapshot. In production you don't need to do anything — the data is durable either way.
 
+### 2.4 AOF backpressure is now fail-loud, not silent (v0.5.1)
+
+Before v0.5.1, a full AOF writer channel (sustained write pressure, slow
+disk) logged a `warn!` and **dropped the record while the client still
+received `+OK`** — a client-acked write that Lunaris believed was committed
+could silently vanish on the next AOF replay (AOF/memory divergence).
+
+v0.5.1 durable handler paths now await the enqueue under
+`--aof-fsync-timeout-ms` and surface the failure as an error frame instead:
+the synchronous SPSC-drain and inline-SET paths apply one bounded blocking
+send (a single 5 ms budget shared across a whole pipeline/MULTI batch), and
+on loss, the response is replaced with **`MOONERR AOF backpressure`** instead
+of an ack. Every drop is `error!`-logged and counted in the
+**`aof_backpressure_dropped`** counter exposed via `INFO persistence`.
+
+**Operational impact for Lunaris:** `atomic_write` propagates this as a
+`StorageError::Backend` from the Moon backend — the ingest pipeline's
+existing `?`-propagation (no silent partial commit) already surfaces it
+correctly; no Lunaris-side code change was required. Operators SHOULD poll
+`aof_backpressure_dropped` alongside `chunks_num_docs` in health checks —
+a nonzero and climbing counter means the disk can't keep up with the write
+rate, not that data has been silently lost (the new behavior guarantees the
+opposite: a client only sees `+OK` when the AOF write has actually been
+durably enqueued).
+
+### 2.5 Vector-index restart durability — no full re-index (v0.5.1 / B1-B3)
+
+Before this work, every Moon restart discarded all in-memory vector index
+state and paid a **full re-index** (TQ/SQ8 encode + HNSW build) of every
+matching hash key by re-scanning the entire keyspace — for a large `chunks`
+index this dominated cold-start time.
+
+Vector indexes now **persist their segments across restarts**. Each index
+gets an `idx-<hex(name)>/` directory holding:
+
+- an atomically-written `manifest.json` (collection_id, segment ids,
+  id-allocator floors),
+- a checksummed `keymap-<epoch>.bin` (key_hash → global_id + vector
+  checksum + original key), covering every indexed key (mutable + immutable)
+  at the moment of the snapshot,
+- the immutable HNSW segments themselves (staged write:
+  `staging-<id>` → fsync → atomic rename, written in the background after
+  each compact/GraphUnion merge install).
+
+On restart, Moon **loads this state instead of discarding it**: segments are
+read back and reattached (pinning the index's `collection_id` to the
+persisted value so the HNSW QJL rotation seed matches), and the keyspace
+rescan becomes a **dedup rescan**: a key whose vector bytes checksum-match
+the last snapshot is rebuilt as metadata-only (no HNSW/TQ/SQ8 re-encode);
+only genuinely changed or unknown keys are fully re-indexed; keys removed
+from the keyspace since the snapshot are tombstoned.
+
+**Crash-safety contract:** any corrupt/missing artifact (segment, checksum
+mismatch, unreadable header) degrades to a rescan-rebuild of exactly the
+affected keys — never to wrong search results. A manifest may *understate*
+what's durable (costing an extra rescan) but never *overstates* it. Startup
+also sweeps orphaned segment/staging/keymap files and stale `idx-*`
+directories left by an interrupted drop.
+
+**Known gap:** for multi-vector-field indexes, only the *default* vector
+field's segments/checksums are persisted — additional named vector fields
+always re-encode on restart (documented, conservative — Lunaris only uses
+the default field per index today, so this doesn't affect the
+`chunks`/`entities`/`facts`/`communities` indexes).
+
+**Operational impact for Lunaris:** embedded-Moon (`embedded_moon.rs`) and
+any standalone Moon deployment now have materially faster restart-to-ready
+time proportional to *changed* keys since the last snapshot, not total
+keyspace size — relevant for the MCP server's in-process launch path, which
+previously paid the full re-index cost on every process restart.
+
+### 2.6 RSS memory watchdog (`--mem-full-pct`, Wave 3)
+
+The memory analogue of the disk-free guard (§2 launch example uses
+`--disk-free-min-pct`, MA12): Moon now pauses writes once process RSS
+crosses `--mem-full-pct` percent of the detected system/cgroup memory limit
+(default **95**), and resumes only once RSS drops to `mem_full_pct - 5`
+(hysteresis, prevents flapping). Unlike `--maxmemory` (which can be an
+unconfigured 0), this fires on *actual* RSS vs the detected limit — a
+meaningful backstop for the disk-starved/RAM-constrained hosts this project
+already runs live-Moon tests on. Read-only commands are never blocked; like
+the diskfull guard, DEL/UNLINK/EXPIRE/FLUSHALL are write-flagged and blocked
+too (no allowlist). Set to `0` to disable. Embedded-Moon does not override
+this flag, so it inherits the 95% default — verified by
+`embedded_moon::tests::server_config_new_v051_flags_have_sane_defaults`.
+
 ---
 
 ## 3. Recovery procedure
@@ -105,7 +235,7 @@ while ! redis-cli -p 6380 PING | grep -q PONG; do sleep 0.1; done
 python -c "import asyncio, lunaris; asyncio.run(lunaris.open('moon://127.0.0.1:6380'))"
 ```
 
-Expected replay cost: ~20 ms per 1 MB of AOF on darwin-arm64. A 50-doc / ~820 KB AOF replays in 0.90 s end-to-end (including FT rebuild).
+Expected replay cost: ~20 ms per 1 MB of AOF on darwin-arm64. A 50-doc / ~820 KB AOF replays in 0.90 s end-to-end (measured pre-v0.5.1, when every restart paid a full FT re-index). On v0.5.1+ the FT vector portion of that number is now a dedup rescan (§2.5) rather than a full TQ/SQ8 encode + HNSW rebuild — restart-to-ready time should be equal or faster for an unchanged keyspace; re-run `scripts/test-recovery.py` for a current number before citing it as a live SLA.
 
 ### 3.2 Lunaris client process crashed
 
@@ -158,6 +288,8 @@ Evidence log: [`milestones/v0.1.1-bench/recovery-test.log`](../milestones/v0.1.1
 - **No Postgres recovery harness.** Postgres handles its own durability (WAL + fsync); a symmetric test is BENCH-04 on the roadmap.
 - **AOF grows unboundedly without auto-rewrite.** Use `--save` rules or schedule `BGREWRITEAOF` — otherwise replay time grows linearly with write volume.
 - **Pipeline workers replay idempotently** (`consolidator`, `verifier`) — they read from Moon Streams on start-up and resume from the last committed offset. No action needed on the Lunaris side.
+- **`scripts/test-recovery.py` predates the v0.5.1+ substrate bump** (§2.1, §2.4, §2.5). It still exercises the right failure modes (kill-9, restart, probe-identity) but its reference numbers (§4) were captured before the vector-index dedup rescan and AOF-backpressure fail-loud changes — re-run it and update §4's numbers rather than trusting the 2026-04-23 figures for anything restart-time or backpressure related.
+- **Multi-vector-field indexes re-encode fully on restart** (§2.5) — only the default vector field's segments/checksums persist. Not a Lunaris-visible gap today (one vector field per index), but relevant if a future recipe adds a second named vector field to an existing index.
 
 ---
 
@@ -165,7 +297,9 @@ Evidence log: [`milestones/v0.1.1-bench/recovery-test.log`](../milestones/v0.1.1
 
 - `.planning/architect/blueprint.md` §5.4 — durability contract
 - `crates/lunaris-storage-moon/src/atomic.rs` — the `WriteOp` envelope shape
-- `moon/src/persistence/` (upstream Moon repo) — AOF + RDB implementation
+- `crates/lunaris-mcp/src/embedded_moon.rs` — in-process Moon launch config; `parse_from([])` clap-default derivation (databases/shards/wal-kv-log/mem-full-pct/io-busy-poll-us/disk-offload all inherit upstream defaults)
+- `vendor/moon/src/persistence/` — AOF + RDB implementation
+- `vendor/moon/CHANGELOG.md` — `[0.5.1]` (AOF+WAL double-write elimination, AOF backpressure fail-loud) and `[Unreleased]` (vector-index restart durability B1-B3, RSS watchdog) sections are the source for §2.1/§2.4/§2.5/§2.6
 - `docs/guide.md` §ingest + §recall — end-user API the recovery guarantees apply to
 
 ---

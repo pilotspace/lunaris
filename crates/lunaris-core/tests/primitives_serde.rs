@@ -51,7 +51,14 @@ fn chunk_roundtrip() {
     c.overlap_tail = "...".into();
     let s = serde_json::to_string(&c).unwrap();
     let back: Chunk = serde_json::from_str(&s).unwrap();
-    assert_eq!(c, back);
+    // W3 embedding double-store fix: `embedding` is skip_serializing (the
+    // binary vector lives in the FT index / vector column, never the KV JSON
+    // payload), so it is intentionally LOST across a serde roundtrip. Assert
+    // that contract explicitly, then compare everything else.
+    assert_eq!(back.embedding, None, "embedding must not survive serialization (skip_serializing)");
+    let mut expect = c.clone();
+    expect.embedding = None;
+    assert_eq!(expect, back);
 }
 
 #[test]

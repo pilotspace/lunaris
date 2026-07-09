@@ -93,19 +93,21 @@ async fn fixture_3a_h1_community_summary_non_empty() {
         );
     }
 
-    // Phase-30 B1: every persisted community must have summary_embedding populated.
-    // (Replaces the Phase-29 D4 guard that asserted summary_embedding=None.)
+    // Phase-30 B1 populates `summary_embedding` in-memory at ingest and writes
+    // it into the `communities` vector index (see
+    // `community_vector_index_searchable_after_ingest` in ingest_pipeline.rs
+    // for that proof). W3 (moon-v051-perf-exploit) then stopped serializing
+    // the field into the KV `KvPut` payload — it duplicated ~80% of the
+    // document's bytes for data the vector index already carries. A
+    // `Community` round-tripped through `scan_deserialize` (KV JSON) below
+    // therefore now sees `summary_embedding == None`; that is the new
+    // contract, not a regression.
     for c in &communities {
-        let emb = c.summary_embedding.as_ref().unwrap_or_else(|| {
-            panic!(
-                "Community (id={}, level={}) must have summary_embedding=Some after Phase-30 B1",
-                c.id, c.level
-            )
-        });
-        assert_eq!(
-            emb.len(),
-            768,
-            "Community (id={}, level={}) summary_embedding must be 768-d",
+        assert!(
+            c.summary_embedding.is_none(),
+            "Community (id={}, level={}) summary_embedding must be None after a KV round-trip \
+             post-W3 (skip_serializing) — population is proven via the communities \
+             VectorUpsert/vector_search path instead",
             c.id,
             c.level
         );

@@ -69,7 +69,25 @@ pub struct Chunk {
     pub heading_path: Vec<String>,
     #[serde(default)]
     pub overlap_tail: String,
-    #[serde(default)]
+    /// The 768-d embedding vector.
+    ///
+    /// ## W3 embedding double-store fix (moon-v051-perf-exploit)
+    ///
+    /// `skip_serializing` is deliberate: the KV `KvPut` JSON payload used to
+    /// carry this as a raw JSON float array — ~80% of the document's bytes
+    /// and a straight duplicate of the binary vector Moon's FT index (and
+    /// the SQLite/Postgres dedicated vector column) already stores. Nothing
+    /// on the read path (`lunaris-retrieve::hydrate`, the `tree.rs` RAPTOR
+    /// descent, the `detail.rs` inspector route) reads `.embedding` back off
+    /// a KV-deserialized primitive — verified via `find_referencing_symbols`
+    /// before this cut.
+    ///
+    /// `#[serde(default)]` keeps deserialization tolerant of BOTH shapes:
+    /// legacy payloads written before this fix (field present) still
+    /// populate `Some(..)`; payloads written after it (field absent)
+    /// deserialize to `None`. This is a one-way, additive-compatible
+    /// serialize-side change — never a breaking wire format change.
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     /// Optional link to the nearest parent [`TocNode`] in the document tree.
     ///
@@ -125,7 +143,8 @@ pub struct Entity {
     #[serde(default)]
     pub aliases: Vec<String>,
     pub entity_type: String,
-    #[serde(default)]
+    /// See the W3 skip_serializing rationale on [`Chunk::embedding`].
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
     pub confidence: f32,
@@ -210,7 +229,8 @@ pub struct Fact {
     pub predicate: String,
     pub object: Ulid,
     pub fact_text: String,
-    #[serde(default)]
+    /// See the W3 skip_serializing rationale on [`Chunk::embedding`].
+    #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
     pub confidence: f32,
@@ -262,7 +282,10 @@ pub struct Community {
     #[serde(default)]
     pub members: Vec<Ulid>,
     pub summary: String,
-    #[serde(default)]
+    /// See the W3 skip_serializing rationale on [`Chunk::embedding`]. Populated
+    /// in-memory at ingest (Phase-30 B1) and written to the `communities`
+    /// vector index; never round-trips through the KV JSON blob.
+    #[serde(default, skip_serializing)]
     pub summary_embedding: Option<Vec<f32>>,
     pub bt: BiTemporal,
 }
