@@ -69,6 +69,7 @@ use lunaris_core::{
     NavigateSpec, QueueMsg, Row, Scope, ScopePage, StorageCapabilities, StorageError, StoragePort,
     VectorHit, WriteOp,
 };
+use lunaris_core::storage::port::MaintenanceHint;
 use parking_lot::Mutex;
 
 use crate::keyspace::{ft_index_name, graph_key};
@@ -175,13 +176,18 @@ impl MoonStorage {
             // The FT prefix must match the key shape written by `atomic.rs::VectorUpsert`:
             // `{ft_index_name(scope, kind)}:{id_hex}`.
             let prefix = format!("{idx_name}:");
-            crate::client::create_lunaris_index_named(
+            // moon-v051-perf-exploit W1: thread the connect-time `?ef=` choice
+            // through per-scope creation too (quantization already flowed; ef
+            // is the same sticky FT.CREATE-time knob — see client.rs
+            // `parse_ef_runtime` for why there is no hardcoded default).
+            crate::client::create_lunaris_index_named_ef(
                 &typed,
                 &idx_name,
                 kind,
                 &prefix,
                 dim,
                 self.client.quantization,
+                self.client.ef_runtime,
             )
             .await?;
         }
@@ -217,6 +223,28 @@ impl StoragePort for MoonStorage {
     /// `/healthz` rollout-cutback probe. Bounded by `LUNARIS_MOON_OP_TIMEOUT`.
     async fn health_check(&self) -> Result<(), StorageError> {
         self.client.ping().await
+    }
+
+    /// moon-v051-perf-exploit W1: Moon override of the default no-op. On
+    /// `BulkIngestComplete` at/above `LUNARIS_MOON_COMPACT_MIN` vector
+    /// upserts, force-compacts the scope's vector indexes so recall hits the
+    /// compacted HNSW + exact-rerank segments instead of brute-force mutable
+    /// scans — see `vector::maybe_compact_after_bulk_ingest` for the full
+    /// contract (missing-index tolerance, threshold parsing).
+    async fn maintenance_hint(
+        &self,
+        scope: &Scope,
+        hint: MaintenanceHint,
+    ) -> Result<(), StorageError> {
+        match hint {
+            MaintenanceHint::BulkIngestComplete { vector_upserts } => {
+                crate::vector::maybe_compact_after_bulk_ingest(&self.client, scope, vector_upserts)
+                    .await
+            }
+            // `MaintenanceHint` is #[non_exhaustive]: future hints are
+            // advisory by contract, so an unknown one is a no-op, not an error.
+            _ => Ok(()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -27,6 +27,13 @@ use lunaris_core::storage::types::{Filter, VectorHit};
 use crate::client::{MoonClient, moon_err, redis_err};
 use crate::keyspace::ft_index_name;
 
+/// The four Lunaris-owned per-scope vector index kinds. Mirrors the list in
+/// `client.rs::ensure_indexes` / `lib.rs::create_scope_indexes` — kept as a
+/// standalone const here (rather than importing theirs) because neither is
+/// `pub` and this crate's file-ownership split (moon-v051-perf-exploit W1)
+/// keeps this module independent of `lib.rs`.
+const SCOPE_VECTOR_INDEX_KINDS: [&str; 4] = ["chunks", "entities", "facts", "communities"];
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn vector_search(
     c: &MoonClient,
@@ -243,11 +250,123 @@ fn parse_ft_search(
     Ok(hits)
 }
 
+// ── moon-v051-perf-exploit W1-3: post-bulk-ingest FT.COMPACT maintenance ──
+
+/// Resolve the `LUNARIS_MOON_COMPACT_MIN` gate (whole vector-upsert count).
+/// Unset → 512 default, silently; unparseable or `0` → 512 default with a
+/// `warn!`. Never returns 0 — a 0 gate would force-compact on every single
+/// upsert, defeating the point of batching. Mirrors `parse_op_timeout`.
+fn compact_min_threshold() -> usize {
+    parse_compact_min(std::env::var("LUNARIS_MOON_COMPACT_MIN").ok().as_deref())
+}
+
+/// Pure parser for [`compact_min_threshold`] — split out so the edge cases
+/// are unit-testable without mutating the process environment (same
+/// rationale as `client::parse_op_timeout`).
+fn parse_compact_min(raw: Option<&str>) -> usize {
+    const DEFAULT: usize = 512;
+    match raw {
+        None => DEFAULT,
+        Some(raw) => match raw.trim().parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                tracing::warn!(
+                    value = %raw,
+                    "ignoring invalid LUNARIS_MOON_COMPACT_MIN (want a positive whole number); \
+                     using {DEFAULT} default"
+                );
+                DEFAULT
+            }
+        },
+    }
+}
+
+/// Backing implementation for `StoragePort::maintenance_hint`'s Moon
+/// override (`MaintenanceHint::BulkIngestComplete`) — see
+/// `lunaris_core::storage::port::MaintenanceHint` for the frozen contract
+/// this answers.
+///
+/// `pub` (not `pub(crate)`, unlike the rest of this file's helpers):
+/// `lunaris-storage-moon/src/lib.rs` — the file that owns
+/// `impl StoragePort for MoonStorage` — is OUTSIDE this workstream's file
+/// ownership (moon-v051-perf-exploit W1 owns `client.rs`/`vector.rs`/
+/// `lunaris-core::storage::port`, not `lib.rs`), so this function is
+/// exposed at the crate's public surface specifically so:
+/// 1. this workstream's own live test can call it directly, and
+/// 2. wiring it into the trait is a single-line addition for whoever
+///    edits `lib.rs`'s `impl StoragePort for MoonStorage` block:
+///    ```ignore
+///    async fn maintenance_hint(&self, scope: &Scope, hint: MaintenanceHint) -> Result<(), StorageError> {
+///        match hint {
+///            MaintenanceHint::BulkIngestComplete { vector_upserts } => {
+///                crate::vector::maybe_compact_after_bulk_ingest(&self.client, scope, vector_upserts).await
+///            }
+///        }
+///    }
+///    ```
+///
+/// Below `LUNARIS_MOON_COMPACT_MIN` (default 512) vector upserts, this is a
+/// no-op — `Ok(())` without any Moon round trip. At or above the gate, it
+/// issues `FT.COMPACT` on all four of the scope's vector indexes
+/// (`chunks`/`entities`/`facts`/`communities`) so subsequent recall hits the
+/// compacted HNSW + exact-rerank segment instead of the brute-force mutable
+/// scan. A missing index (`"Unknown Index name"` — a kind the scope never
+/// wrote to) is tolerated, not an error; any other Moon failure propagates
+/// (maintenance failures are non-fatal for the CALLER per the trait's doc,
+/// but this function still reports them so the caller can log/observe).
+pub async fn maybe_compact_after_bulk_ingest(
+    client: &MoonClient,
+    scope: &Scope,
+    vector_upserts: usize,
+) -> Result<(), StorageError> {
+    if vector_upserts < compact_min_threshold() {
+        return Ok(());
+    }
+    let typed = client.typed();
+    for kind in SCOPE_VECTOR_INDEX_KINDS {
+        let idx = ft_index_name(scope, kind);
+        let t = typed.clone();
+        if let Err(e) = t.vector().compact(&idx).await {
+            let msg = e.to_string();
+            if msg.contains("Unknown Index name") {
+                continue;
+            }
+            return Err(moon_err(e));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lunaris_core::storage::types::Filter;
     use serde_json::json;
+
+    // ── W1-3: LUNARIS_MOON_COMPACT_MIN parsing ──
+
+    #[test]
+    fn parse_compact_min_unset_defaults_to_512() {
+        assert_eq!(parse_compact_min(None), 512);
+    }
+
+    #[test]
+    fn parse_compact_min_honors_valid_override() {
+        assert_eq!(parse_compact_min(Some("100")), 100);
+        assert_eq!(parse_compact_min(Some("1")), 1);
+    }
+
+    #[test]
+    fn parse_compact_min_rejects_zero_falls_back_to_default() {
+        assert_eq!(parse_compact_min(Some("0")), 512);
+    }
+
+    #[test]
+    fn parse_compact_min_rejects_garbage_falls_back_to_default() {
+        assert_eq!(parse_compact_min(Some("abc")), 512);
+        assert_eq!(parse_compact_min(Some("-5")), 512);
+        assert_eq!(parse_compact_min(Some("")), 512);
+    }
 
     /// Helper: construct a per-scope FT index name for tests — mirrors what
     /// `atomic.rs` writes and what `vector_search` queries.
