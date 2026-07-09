@@ -400,4 +400,173 @@ pub trait StoragePort: Send + Sync + 'static {
         let _ = (scope, dedupe_key, lsn);
         Ok(())
     }
+
+    // ── moon-v051-perf-exploit W1-3: post-bulk-ingest maintenance hint ──
+
+    /// Post-bulk-ingest maintenance hint. Backends MAY use this to
+    /// compact/optimize storage after a large write burst; the default is a
+    /// no-op so every existing `StoragePort` impl (Postgres, embedded
+    /// SQLite, test mocks) keeps compiling and behaving unchanged —
+    /// additive trait method, mirrors the `queue_depth` / `hot_keys`
+    /// precedent.
+    ///
+    /// The Moon backend overrides this: on
+    /// `MaintenanceHint::BulkIngestComplete { vector_upserts }` at or above
+    /// `LUNARIS_MOON_COMPACT_MIN` (env, default 512), it issues `FT.COMPACT`
+    /// on each of the scope's vector indexes so subsequent recall hits the
+    /// compacted HNSW + exact-rerank segment instead of the brute-force
+    /// mutable scan. See `lunaris_storage_moon::vector::
+    /// maybe_compact_after_bulk_ingest` (the free function backing that
+    /// override).
+    ///
+    /// Callers (e.g. the ingest pipeline, AFTER its single `atomic_write` —
+    /// INGEST-04 is unaffected, this is a separate, non-atomic call) MUST
+    /// treat any `Err` as non-fatal — maintenance is an optimization hint,
+    /// never load-bearing for correctness.
+    async fn maintenance_hint(
+        &self,
+        scope: &Scope,
+        hint: MaintenanceHint,
+    ) -> Result<(), StorageError> {
+        let _ = (scope, hint);
+        Ok(())
+    }
+}
+
+/// Hint passed to [`StoragePort::maintenance_hint`] describing what just
+/// happened so a backend can decide whether/how to optimize.
+///
+/// `#[non_exhaustive]` — new hint kinds may be added; backends match
+/// exhaustively with a wildcard arm so they degrade to a no-op on an
+/// unrecognized variant instead of failing to compile.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaintenanceHint {
+    /// A bulk-ingest run (e.g. one pipeline batch) just committed
+    /// `vector_upserts` `WriteOp::VectorUpsert` operations. Backends with a
+    /// mutable-vs-compacted segment split (Moon) may use this as the signal
+    /// to force compaction once the batch clears a size-based gate.
+    BulkIngestComplete { vector_upserts: usize },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// moon-v051-perf-exploit W1-3 RED→GREEN discriminator: any existing
+    /// `StoragePort` implementor that does NOT override `maintenance_hint`
+    /// must keep compiling (additive-default contract) AND the default
+    /// body must be a true no-op — `Ok(())` regardless of the hint payload,
+    /// never touching backend state.
+    struct NoopPort;
+
+    #[async_trait]
+    impl StoragePort for NoopPort {
+        async fn atomic_write(
+            &self,
+            _scope: &Scope,
+            _ops: &[WriteOp],
+        ) -> Result<Lsn, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        #[allow(clippy::too_many_arguments)]
+        async fn vector_search(
+            &self,
+            _scope: &Scope,
+            _index: &str,
+            _query: &[f32],
+            _k: usize,
+            _filter: Option<&Filter>,
+            _as_of: Option<Hlc>,
+            _rerank: bool,
+        ) -> Result<Vec<VectorHit>, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        async fn graph_traverse(
+            &self,
+            _scope: &Scope,
+            _query: &CypherQuery,
+            _as_of: Option<Hlc>,
+        ) -> Result<GraphResult, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        async fn scan_range(
+            &self,
+            _scope: &Scope,
+            _prefix: &[u8],
+            _as_of: Option<Hlc>,
+        ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        async fn read_as_of(
+            &self,
+            _scope: &Scope,
+            _key: &[u8],
+            _as_of: Hlc,
+        ) -> Result<Option<Row<Bytes>>, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        async fn publish(
+            &self,
+            _scope: &Scope,
+            _topic: &str,
+            _partition: u16,
+            _payload: Bytes,
+        ) -> Result<u64, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        async fn subscribe(
+            &self,
+            _scope: &Scope,
+            _group: &str,
+            _topic: &str,
+            _partition: u16,
+        ) -> Result<BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError> {
+            unimplemented!("not exercised by this test")
+        }
+        fn capabilities(&self) -> StorageCapabilities {
+            StorageCapabilities {
+                bi_temporal_native: false,
+                graph_native: false,
+                rerank_native: false,
+                queue_native: false,
+                max_vector_dim: 768,
+                native_rrf: false,
+                max_scopes_recommended: 0,
+                cypher_dialect: crate::storage::capabilities::CypherDialect::Legacy,
+                graph_decay_native: false,
+                graph_navigate_native: false,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_maintenance_hint_is_a_true_noop() {
+        let port = NoopPort;
+        let scope = Scope::dev();
+        let r = port
+            .maintenance_hint(
+                &scope,
+                MaintenanceHint::BulkIngestComplete { vector_upserts: 10_000 },
+            )
+            .await;
+        assert!(
+            r.is_ok(),
+            "additive default must be Ok(()) so every existing impl compiles unchanged"
+        );
+    }
+
+    #[test]
+    fn maintenance_hint_carries_the_frozen_bulk_ingest_complete_shape() {
+        // Structural guard on the FROZEN cross-agent contract
+        // (tmp/moon-perf-context.md): the variant name and its single
+        // `vector_upserts: usize` field must not drift, since Agent C's
+        // ingest pipeline codes against this exact shape.
+        let hint = MaintenanceHint::BulkIngestComplete { vector_upserts: 512 };
+        match hint {
+            MaintenanceHint::BulkIngestComplete { vector_upserts } => {
+                assert_eq!(vector_upserts, 512);
+            }
+        }
+    }
 }

@@ -141,7 +141,11 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
     let weights: [f64; 3] = [0.5, 0.5, 0.0];
     let index_name = keyspace::ft_index_name(&Scope::dev(), "facts");
     let hits = text
-        .hybrid_search(&index_name, predicate, &embedding, "vec", None, 5, weights)
+        // moon-v051-perf-exploit W0 fallout: the vendor bump added a `filter:
+        // Option<&HybridFilter>` 8th param to `hybrid_search` (PR #174, HYBRID
+        // FILTER on both branches). `None` preserves this test's pre-existing
+        // unfiltered behavior byte-for-byte.
+        .hybrid_search(&index_name, predicate, &embedding, "vec", None, 5, weights, None)
         .await
         .expect("hybrid_search must succeed once @content is in the schema (Gap 9 closure)");
 

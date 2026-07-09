@@ -1,12 +1,19 @@
 //! ADD task `sq8-quantization-optin` — live recall@10 eval at 768-d
-//! (contract FROZEN @ v1, 2026-06-11). Gated behind `moon-it` + `MOON_URL`.
+//! (contract FROZEN @ v1, 2026-06-11; **default flipped to SQ8 by
+//! moon-v051-perf-exploit W1-1, 2026-07-10** — see
+//! `docs/design/moon-v051-perf-exploit.md` §W1 and
+//! `lunaris_storage_moon::client::resolve_quantization`). Gated behind
+//! `moon-it` + `MOON_URL`.
 //!
 //! Both index sets are provisioned through the PRODUCTION per-scope path
-//! (`MoonStorage` handle → `ensure_scope` → FT.CREATE): the TQ4 baseline via
-//! a plain handle (server default), the SQ8 candidate via `?quant=sq8`.
-//! Vectors are written through `atomic_write` and compaction is forced with
-//! `FT.COMPACT` so recall is measured over quantized HNSW segments, not the
-//! raw write buffer.
+//! (`MoonStorage` handle → `ensure_scope` → FT.CREATE). Since W1-1, a PLAIN
+//! handle (no `?quant=`) now defaults to SQ8, so the TQ4 baseline here is
+//! requested explicitly via `?quant=tq4` (the RSS-constrained escape
+//! hatch) and the SQ8 candidate via `?quant=sq8` (now redundant with the
+//! default, kept explicit so this eval stays meaningful even if the
+//! default changes again). Vectors are written through `atomic_write` and
+//! compaction is forced with `FT.COMPACT` so recall is measured over
+//! quantized HNSW segments, not the raw write buffer.
 
 #![cfg(feature = "moon-it")]
 
@@ -143,13 +150,13 @@ async fn measure_recall(moon: &MoonStorage, scope: &Scope, corpus: &[Vec<f32>]) 
 }
 
 /// §2 DISCRIMINATOR + eval — SQ8 recall@10 must clear the 0.90 floor AND
-/// match-or-beat the TQ4 server default at 768-d.
+/// match-or-beat the TQ4 escape-hatch tier at 768-d.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sq8_beats_or_matches_tq4_recall_at_768d() {
-    let Some(tq4) = connect_or_skip(&url()).await else { return };
+    let Some(tq4) = connect_or_skip(&url_with("quant=tq4")).await else { return };
     let Some(sq8) = connect_or_skip(&url_with("quant=sq8")).await else { return };
     assert_eq!(sq8.client().quantization, Some(Quantization::Sq8), "handle records the choice");
-    assert_eq!(tq4.client().quantization, None, "plain handle stays default");
+    assert_eq!(tq4.client().quantization, Some(Quantization::Tq4), "explicit tq4 override honored");
 
     let corpus: Vec<Vec<f32>> = (0..N_DOCS).map(|i| det_vec(i as u64 + 1)).collect();
 
@@ -168,6 +175,64 @@ async fn sq8_beats_or_matches_tq4_recall_at_768d() {
     assert!(
         recall_sq8 >= recall_tq4,
         "SQ8 must match-or-beat the TQ4 default: sq8={recall_sq8:.3} tq4={recall_tq4:.3}"
+    );
+}
+
+/// p50/p99 `vector_search` latency, sequential, over `N_QUERIES` queries
+/// against an already-compacted index.
+async fn measure_latency_ms(moon: &MoonStorage, scope: &Scope, corpus: &[Vec<f32>]) -> (f64, f64) {
+    let mut samples = Vec::with_capacity(N_QUERIES);
+    for qi in 0..N_QUERIES {
+        let base = &corpus[qi * 7 % N_DOCS];
+        let noise = det_vec(0xABCD_0000 + qi as u64);
+        let q: Vec<f32> = base.iter().zip(&noise).map(|(b, n)| b + 0.05 * n).collect();
+        let start = std::time::Instant::now();
+        moon.vector_search(scope, "chunks", &q, K, None, None, false).await.expect("vector search");
+        samples.push(start.elapsed().as_secs_f64() * 1000.0);
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50 = samples[samples.len() / 2];
+    let p99 = samples[(samples.len() * 99 / 100).min(samples.len() - 1)];
+    (p50, p99)
+}
+
+/// moon-v051-perf-exploit W1 exit criterion — "SQ8+ef default beats TQ4
+/// baseline on recall@10 at lower or equal p50". Reuses the recall test's
+/// corpus/seed helpers against fresh scopes, on the SAME already-compacted
+/// indexes, then times `vector_search` sequentially.
+///
+/// The latency assertion is intentionally generous (2×, not strict ≤) —
+/// this runs on a shared dev host (other moon-v051-perf-exploit agents'
+/// Moon instances are also live on this machine) where wall-clock p50/p99
+/// carries real scheduling noise; the recall assertion above is the hard
+/// gate, this one is meant to catch a gross regression (e.g. SQ8 somehow
+/// coming out 5× slower) while reporting the real numbers either way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sq8_p50_latency_within_tolerance_of_tq4() {
+    let Some(tq4) = connect_or_skip(&url_with("quant=tq4")).await else { return };
+    let Some(sq8) = connect_or_skip(&url_with("quant=sq8")).await else { return };
+
+    let corpus: Vec<Vec<f32>> = (0..N_DOCS).map(|i| det_vec(i as u64 + 1)).collect();
+    let scope_tq4 = fresh_scope("tq4-lat");
+    let scope_sq8 = fresh_scope("sq8-lat");
+    seed_corpus(&tq4, &scope_tq4, &corpus).await;
+    seed_corpus(&sq8, &scope_sq8, &corpus).await;
+
+    // Warm up (first query pays connection/cache warmup cost).
+    let _ = tq4.vector_search(&scope_tq4, "chunks", &corpus[0], K, None, None, false).await;
+    let _ = sq8.vector_search(&scope_sq8, "chunks", &corpus[0], K, None, None, false).await;
+
+    let (tq4_p50, tq4_p99) = measure_latency_ms(&tq4, &scope_tq4, &corpus).await;
+    let (sq8_p50, sq8_p99) = measure_latency_ms(&sq8, &scope_sq8, &corpus).await;
+    eprintln!(
+        "QUANT LATENCY VERDICT: sq8 p50={sq8_p50:.3}ms p99={sq8_p99:.3}ms | \
+         tq4 p50={tq4_p50:.3}ms p99={tq4_p99:.3}ms (768-d, n={N_DOCS}, q={N_QUERIES}, k={K})"
+    );
+
+    assert!(
+        sq8_p50 <= tq4_p50 * 2.0 + 1.0,
+        "SQ8 p50 must stay within a generous 2x+1ms tolerance of TQ4 p50 (gross-regression \
+         guard, not a precise bound on a shared dev host): sq8={sq8_p50:.3}ms tq4={tq4_p50:.3}ms"
     );
 }
 
@@ -200,4 +265,19 @@ async fn ws_and_quant_params_coexist() {
     let Some(b) = connect_or_skip(&url_with("quant=tq4&ws=hot")).await else { return };
     assert_eq!(b.client().workspace.as_deref(), Some("hot"));
     assert_eq!(b.client().quantization, Some(Quantization::Tq4));
+}
+
+/// moon-v051-perf-exploit W1-1 DISCRIMINATOR — a PLAIN handle (no `?quant=`
+/// at all) must default to SQ8 through the real `MoonStorage::connect`
+/// path, not just the pure `resolve_quantization` unit test in client.rs.
+/// This is the live proof that the default actually reaches the network
+/// connect flow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plain_handle_defaults_to_sq8() {
+    let Some(plain) = connect_or_skip(&url()).await else { return };
+    assert_eq!(
+        plain.client().quantization,
+        Some(Quantization::Sq8),
+        "v0.5.1+ default: an absent ?quant= now resolves to Sq8, not the old TQ4-via-None path"
+    );
 }
