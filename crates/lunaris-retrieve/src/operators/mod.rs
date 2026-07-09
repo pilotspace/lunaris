@@ -1,5 +1,6 @@
 //! Retriever trait + per-call query context shared across the operator tree.
 
+pub mod aggregate;
 pub mod combinators;
 pub mod degraded;
 pub mod fuse;

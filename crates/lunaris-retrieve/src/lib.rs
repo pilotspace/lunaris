@@ -46,6 +46,11 @@ pub mod types;
 
 pub use builder::RetrievalBuilder;
 pub use hydrate::{hydrate, partial_hydrate_text};
+// W5 task 3: FT.AGGREGATE deterministic counting/grouping operator. NOT a
+// `Retriever` (see module docs) — re-exported at the crate root alongside
+// the other operator surfaces so recipes/MCP tools can
+// `use lunaris_retrieve::{Aggregate, AggregateReducer, AggregateGroup}`.
+pub use operators::aggregate::{Aggregate, AggregateGroup, AggregateReducer};
 pub use operators::combinators::{AndRetriever, OrRetriever, ThenRetriever, then};
 pub use operators::degraded::{DegradedFallbackRetriever, degraded_fallback};
 pub use operators::fuse::FuseRrfRetriever;

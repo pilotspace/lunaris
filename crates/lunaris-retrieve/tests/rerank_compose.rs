@@ -472,3 +472,159 @@ async fn rerank_preserves_degraded_flag_through_rerank_pass() {
     assert_eq!(raw.len(), 1);
     assert!(raw[0].degraded, "rerank MUST preserve upstream degraded=true");
 }
+
+// ============================================================ W5 task 1: abstention gate
+
+/// Reranker that assigns a FIXED score to every candidate, regardless of
+/// content — lets tests place every hit unambiguously above or below a
+/// threshold. `applies() == true` (a real cross-encoder stand-in).
+struct FixedScoreReranker(f32);
+
+#[async_trait]
+impl Reranker for FixedScoreReranker {
+    async fn rerank(
+        &self,
+        _query: &str,
+        mut docs: Vec<RerankCandidate>,
+    ) -> Result<Vec<RerankCandidate>, LunarisError> {
+        for d in &mut docs {
+            d.score = self.0;
+        }
+        Ok(docs)
+    }
+    fn applies(&self) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn rerank_min_score_gate_drops_all_hits_below_threshold() {
+    // RED (pre-W5): RerankRetriever had no `min_score` field/method at all —
+    // this test would not compile. GREEN (post-W5): every hit scores 0.2,
+    // well below a 0.5 threshold, so the gate must drop them ALL — an empty
+    // result is the "abstain" signal, not an error.
+    let rec = Arc::new(RecordingStorage::new());
+    let id_a = seed_chunk(&rec, "alpha document text");
+    let id_b = seed_chunk(&rec, "beta document text");
+    rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7)]);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    let root =
+        Vector::new("chunks", 30).rerank(Arc::new(FixedScoreReranker(0.2))).with_min_score(0.5);
+    let raw = root.retrieve(&ctx).await.unwrap();
+
+    assert!(
+        raw.is_empty(),
+        "hits scoring 0.2 must be dropped by a 0.5 threshold (abstention), got {} hits",
+        raw.len()
+    );
+}
+
+#[tokio::test]
+async fn rerank_min_score_gate_keeps_hits_at_or_above_threshold() {
+    let rec = Arc::new(RecordingStorage::new());
+    let id_a = seed_chunk(&rec, "alpha document text");
+    let id_b = seed_chunk(&rec, "beta document text");
+    rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7)]);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    // Threshold exactly equals the fixed score — inclusive (`>=`) boundary.
+    let root =
+        Vector::new("chunks", 30).rerank(Arc::new(FixedScoreReranker(0.5))).with_min_score(0.5);
+    let raw = root.retrieve(&ctx).await.unwrap();
+
+    assert_eq!(raw.len(), 2, "hits scoring exactly at the threshold must be KEPT (>=, inclusive)");
+}
+
+#[tokio::test]
+async fn rerank_min_score_gate_default_none_preserves_behavior() {
+    // Non-breaking default: `.rerank(...)` without the gate must behave
+    // identically to pre-W5 — every hit survives regardless of score.
+    let rec = Arc::new(RecordingStorage::new());
+    let id_a = seed_chunk(&rec, "alpha document text");
+    rec.set_vector_hits(vec![vh(&id_a, 0.9)]);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    // FixedScoreReranker(0.0) — the lowest possible sigmoid score — still
+    // must survive because no threshold was configured.
+    let root = Vector::new("chunks", 30).rerank(Arc::new(FixedScoreReranker(0.0)));
+    let raw = root.retrieve(&ctx).await.unwrap();
+    assert_eq!(raw.len(), 1, "min_score=None (default) must never drop hits");
+}
+
+#[tokio::test]
+async fn rerank_min_score_gate_skipped_when_reranker_does_not_apply() {
+    // Edge case: NoopReranker's passthrough score is on the UPSTREAM
+    // operator's scale (cosine similarity here, 0.9 / 0.7), not the
+    // cross-encoder sigmoid the threshold is calibrated against. The gate
+    // MUST be skipped when `applies() == false`, or a model-missing
+    // degraded path would silently masquerade as "found nothing".
+    let rec = Arc::new(RecordingStorage::new());
+    let id_a = seed_chunk(&rec, "alpha document text");
+    let id_b = seed_chunk(&rec, "beta document text");
+    rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7)]);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    // Threshold of 0.99 would drop BOTH hits if applied against their
+    // upstream scores (0.9, 0.7) — but NoopReranker.applies() == false, so
+    // the gate must be skipped entirely.
+    let root = Vector::new("chunks", 30).rerank(Arc::new(NoopReranker)).with_min_score(0.99);
+    let raw = root.retrieve(&ctx).await.unwrap();
+
+    assert_eq!(
+        raw.len(),
+        2,
+        "min_score gate MUST be skipped on the NoopReranker (applies()==false) fallback path"
+    );
+}
+
+#[tokio::test]
+async fn rerank_min_score_gate_preserves_count_validation_contract() {
+    // The count-validation contract (T-02-03-04) must still fire BEFORE the
+    // abstention gate — a buggy reranker that drops a doc must still surface
+    // OperatorFailed, not silently look like "gate dropped it".
+    struct DroppingReranker;
+    #[async_trait]
+    impl Reranker for DroppingReranker {
+        async fn rerank(
+            &self,
+            _q: &str,
+            mut docs: Vec<RerankCandidate>,
+        ) -> Result<Vec<RerankCandidate>, LunarisError> {
+            docs.pop();
+            for d in &mut docs {
+                d.score = 0.9; // high score — would pass the gate if reached
+            }
+            Ok(docs)
+        }
+        fn applies(&self) -> bool {
+            true
+        }
+    }
+
+    let rec = Arc::new(RecordingStorage::new());
+    let id_a = seed_chunk(&rec, "alpha");
+    let id_b = seed_chunk(&rec, "beta");
+    rec.set_vector_hits(vec![vh(&id_a, 0.9), vh(&id_b, 0.7)]);
+
+    let (storage, keyword, embedder) = build_ctx(rec.clone());
+    let ctx =
+        QueryContext::new(Query::text("q"), lunaris_core::Scope::dev(), embedder, storage, keyword);
+
+    let root = Vector::new("chunks", 30).rerank(Arc::new(DroppingReranker)).with_min_score(0.1);
+    let res = root.retrieve(&ctx).await;
+    let err = res.expect_err("count mismatch must surface even with a gate configured");
+    assert!(format!("{err}").contains("reranker returned"));
+}

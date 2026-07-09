@@ -54,13 +54,19 @@ pub struct RerankRetriever {
     pub(crate) upstream: Box<dyn Retriever>,
     pub(crate) reranker: Arc<dyn Reranker>,
     pub(crate) k_in: usize,
+    /// W5 task 1 (abstention gate): absolute floor on the cross-encoder's
+    /// sigmoid score (`bge-reranker-v2-m3` emits scores ∈ [0,1]). Hits
+    /// scoring below the threshold are dropped — see the `retrieve()` impl
+    /// for the exact staging relative to the count-validation contract.
+    /// `None` (default) preserves the pre-W5 "reorder, never drop" behavior.
+    pub(crate) min_score: Option<f32>,
 }
 
 impl RerankRetriever {
     /// Wrap `upstream` with a rerank pass using the default top-in
     /// ([`DEFAULT_RERANK_TOP_IN`] = 30).
     pub fn new(upstream: Box<dyn Retriever>, reranker: Arc<dyn Reranker>) -> Self {
-        Self { upstream, reranker, k_in: DEFAULT_RERANK_TOP_IN }
+        Self { upstream, reranker, k_in: DEFAULT_RERANK_TOP_IN, min_score: None }
     }
 
     /// Wrap with a caller-configured top-in. Use when the recall pipeline
@@ -71,7 +77,25 @@ impl RerankRetriever {
         reranker: Arc<dyn Reranker>,
         k_in: usize,
     ) -> Self {
-        Self { upstream, reranker, k_in }
+        Self { upstream, reranker, k_in, min_score: None }
+    }
+
+    /// W5 task 1: abstention gate. Cross-encoder hits scoring below
+    /// `min_score` are dropped from the result set instead of being returned
+    /// as "best of the worst" — an empty `Vec` is a legitimate abstention
+    /// signal the caller can render as "no confident memory found" rather
+    /// than grounding a wrong answer on a low-relevance hit.
+    ///
+    /// `min_score` is compared against the cross-encoder's raw sigmoid
+    /// output ∈ [0,1] (`bge-reranker-v2-m3`). The gate is skipped entirely
+    /// when the configured [`Reranker::applies`] is `false` (the
+    /// `NoopReranker` degraded-fallback path) — see `retrieve()` for why.
+    ///
+    /// Non-breaking: default is `None`, which preserves the pre-W5 ordering
+    /// contract exactly (every existing caller is unaffected).
+    pub fn with_min_score(mut self, min_score: f32) -> Self {
+        self.min_score = Some(min_score);
+        self
     }
 
     /// Convenience: cap the final result set after the rerank pass resolves.
@@ -94,6 +118,20 @@ impl RerankRetriever {
 /// chain via either method-style or function-style composition.
 pub fn rerank(upstream: Box<dyn Retriever>, reranker: Arc<dyn Reranker>) -> RerankRetriever {
     RerankRetriever::new(upstream, reranker)
+}
+
+/// Builder-friendly factory: `rerank_with_threshold(upstream, reranker, k_in,
+/// min_score)` — W5 task 1's DSL builder surface. Combines
+/// [`RerankRetriever::with_top_in`] and [`RerankRetriever::with_min_score`]
+/// in one call for the common "widen the pool AND abstain below threshold"
+/// composition.
+pub fn rerank_with_threshold(
+    upstream: Box<dyn Retriever>,
+    reranker: Arc<dyn Reranker>,
+    k_in: usize,
+    min_score: f32,
+) -> RerankRetriever {
+    RerankRetriever::with_top_in(upstream, reranker, k_in).with_min_score(min_score)
 }
 
 #[async_trait]
@@ -144,7 +182,11 @@ impl Retriever for RerankRetriever {
         let reranked = self.reranker.rerank(&ctx.query.text, candidates).await?;
 
         // 6. Validate hit count (T-02-03-04 mitigation — guards against a
-        //    spoofed/buggy reranker dropping or duplicating docs).
+        //    spoofed/buggy reranker dropping or duplicating docs). This MUST
+        //    run against the reranker's raw output, BEFORE the W5 abstention
+        //    gate below — count validation is an anti-spoof invariant, the
+        //    threshold drop is a separate, legitimate content decision. Do
+        //    not fold them into one check.
         if reranked.len() != candidate_count {
             return Err(LunarisError::Retrieve(RetrieveError::OperatorFailed(format!(
                 "reranker returned {} docs, expected {}",
@@ -153,11 +195,32 @@ impl Retriever for RerankRetriever {
             ))));
         }
 
-        // 7. Map back to RawHit; preserve degraded flag from upstream (rerank
+        // 7. W5 task 1 — rerank abstention gate. Drop hits scoring below
+        //    `min_score`, AFTER the count-validation contract above (a
+        //    separate stage, per module docs).
+        //
+        //    Only applied when a REAL cross-encoder fired
+        //    (`reranker.applies() == true`). `NoopReranker`'s passthrough
+        //    score is the UPSTREAM operator's own scale (cosine similarity /
+        //    normalized BM25 / RRF sum) — not the bge-reranker-v2-m3 sigmoid
+        //    ∈ [0,1] the threshold is calibrated against. Applying the gate
+        //    on that mismatched scale would silently turn "model weights
+        //    missing" into "abstained on every query", which is a worse
+        //    failure mode than the un-gated degraded passthrough. An empty
+        //    `Vec` after gating is a legitimate abstention signal and flows
+        //    through unchanged (no special-casing needed below).
+        let applies = self.reranker.applies();
+        let reranked: Vec<RerankCandidate> = match self.min_score {
+            Some(threshold) if applies => {
+                reranked.into_iter().filter(|c| c.score >= threshold).collect()
+            }
+            _ => reranked,
+        };
+
+        // 8. Map back to RawHit; preserve degraded flag from upstream (rerank
         //    does NOT introduce degradation; degraded_fallback does).
         let degraded_by_id: std::collections::HashMap<Vec<u8>, bool> =
             raw_for_zip.into_iter().map(|h| (h.id, h.degraded)).collect();
-        let applies = self.reranker.applies();
         Ok(reranked
             .into_iter()
             .map(|c| RawHit {
