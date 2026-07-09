@@ -540,37 +540,11 @@ pub(crate) async fn create_lunaris_index(
     create_lunaris_index_named_ef(typed, kind, kind, prefix, dim, quant, ef).await
 }
 
-/// See [`create_lunaris_index`]; this variant decouples the FT index `name`
-/// from the schema-selecting `kind` for the per-scope creation site.
-///
-/// ## Signature frozen for `MoonStorage::create_scope_indexes` (lib.rs)
-///
-/// This exact 6-argument signature is called from
-/// `crates/lunaris-storage-moon/src/lib.rs::create_scope_indexes`, a file
-/// outside this workstream's ownership (moon-v051-perf-exploit W1). Adding
-/// the W1-2 `ef` parameter here would be a breaking source change to a call
-/// site this agent cannot edit, so the ef-aware logic lives in the new
-/// [`create_lunaris_index_named_ef`] (always `ef = None` when reached via
-/// this wrapper) instead. **Follow-up required**: per-scope indices — the
-/// ones real recall queries actually hit — do not yet inherit `?ef=` until
-/// `create_scope_indexes` is updated to call
-/// `create_lunaris_index_named_ef(&typed, &idx_name, kind, &prefix, dim,
-/// self.client.quantization, self.client.ef_runtime)` instead. Quantization
-/// (W1-1) has NO such gap — it was already threaded through as an explicit
-/// argument before this change.
-pub(crate) async fn create_lunaris_index_named(
-    typed: &TypedClient,
-    name: &str,
-    kind: &str,
-    prefix: &str,
-    dim: usize,
-    quant: Option<Quantization>,
-) -> Result<(), StorageError> {
-    create_lunaris_index_named_ef(typed, name, kind, prefix, dim, quant, None).await
-}
-
-/// Full implementation shared by [`create_lunaris_index`] and
-/// [`create_lunaris_index_named`] — see both for the parameter contract.
+/// Full implementation behind [`create_lunaris_index`] (legacy global site)
+/// and `lib.rs::create_scope_indexes` (per-scope site) — decouples the FT
+/// index `name` from the schema-selecting `kind`. Both creation sites thread
+/// the handle's `?quant=`/`?ef=` choices through here so they can never
+/// diverge.
 ///
 /// `pub` (not `pub(crate)`, unlike its siblings): the moon-v051-perf-exploit
 /// W1-2 live test suite (`tests/a_quant_ef_guardrails.rs`) calls this
