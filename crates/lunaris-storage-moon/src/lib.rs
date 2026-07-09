@@ -64,12 +64,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
+use lunaris_core::storage::port::MaintenanceHint;
 use lunaris_core::{
     CypherQuery, Filter, GraphDecay, GraphResult, Hlc, KeywordHit, KeywordPort, Lsn, NavigateHit,
     NavigateSpec, QueueMsg, Row, Scope, ScopePage, StorageCapabilities, StorageError, StoragePort,
     VectorHit, WriteOp,
 };
-use lunaris_core::storage::port::MaintenanceHint;
 use parking_lot::Mutex;
 
 use crate::keyspace::{ft_index_name, graph_key};
