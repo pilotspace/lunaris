@@ -94,12 +94,55 @@ pub(crate) async fn atomic_write(
     // at or before the requested timestamp. Register one after each successful
     // commit so a caller can write, issue a normal HLC tick, and recall through
     // vector/keyword AS_OF without having to know Moon's temporal plumbing.
-    typed.temporal().snapshot_at().await.map_err(moon_err)?;
+    //
+    // moon-v051-perf-exploit W2 Task 3: this fired unconditionally on EVERY
+    // commit, costing one extra round trip per write even for AS_OF-free
+    // deployments. Gated behind `LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT`
+    // (default TRUE for compat — parse-split + unit tests mirror the
+    // `LUNARIS_MOON_OP_TIMEOUT` pattern in `client.rs`).
+    if snapshot_every_commit() {
+        typed.temporal().snapshot_at().await.map_err(moon_err)?;
+    }
     let wall_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
     Ok(next_returned_lsn(wall_ms))
+}
+
+/// Resolve whether `atomic_write` should register a `TEMPORAL.SNAPSHOT_AT`
+/// after every commit, from `LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT`. Default
+/// (unset) is `true` for backward compatibility — flipping it off is an
+/// explicit opt-in for AS_OF-free deployments that want to shave one round
+/// trip per write.
+fn snapshot_every_commit() -> bool {
+    parse_snapshot_every_commit(std::env::var("LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT").ok().as_deref())
+}
+
+/// Pure parser for `LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT`. `None` (unset) →
+/// `true`, silently. `Some("true"/"1"/"yes")` (case-insensitive, trimmed) →
+/// `true`. `Some("false"/"0"/"no")` → `false`. Anything else (garbage) →
+/// `true` with a `warn!`, matching `parse_op_timeout`'s "never silently
+/// break, warn and use the safe default" contract. Split out from
+/// `snapshot_every_commit` so it's unit-testable without mutating the
+/// process environment (this crate is `#![forbid(unsafe_code)]` and
+/// `std::env::set_var` is `unsafe` on edition 2024).
+fn parse_snapshot_every_commit(raw: Option<&str>) -> bool {
+    match raw {
+        None => true,
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => {
+                tracing::warn!(
+                    value = %raw,
+                    "ignoring invalid LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT (want true/false); \
+                     defaulting to true (snapshot every commit)"
+                );
+                true
+            }
+        },
+    }
 }
 
 fn next_returned_lsn(now_ms: u64) -> Lsn {
@@ -126,6 +169,40 @@ mod lsn_tests {
         assert!(second > first);
         assert_eq!(second.wall_ms, first.wall_ms);
         assert_eq!(second.counter, first.counter + 1);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_gating_tests {
+    //! moon-v051-perf-exploit W2 Task 3 — pins `parse_snapshot_every_commit`'s
+    //! behaviour without mutating the process environment (mirrors
+    //! `client.rs::parse_op_timeout`'s test-split pattern).
+    use super::parse_snapshot_every_commit;
+
+    #[test]
+    fn unset_defaults_to_true() {
+        assert!(parse_snapshot_every_commit(None));
+    }
+
+    #[test]
+    fn explicit_true_variants_enable_snapshotting() {
+        for v in ["true", "TRUE", " true ", "1", "yes", "YES", "on"] {
+            assert!(parse_snapshot_every_commit(Some(v)), "expected true for {v:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_false_variants_disable_snapshotting() {
+        for v in ["false", "FALSE", " false ", "0", "no", "NO", "off"] {
+            assert!(!parse_snapshot_every_commit(Some(v)), "expected false for {v:?}");
+        }
+    }
+
+    #[test]
+    fn garbage_value_falls_back_to_true() {
+        for v in ["", "maybe", "2", "truthy"] {
+            assert!(parse_snapshot_every_commit(Some(v)), "expected fallback true for {v:?}");
+        }
     }
 }
 
@@ -209,50 +286,94 @@ async fn run_ops(
                 // RFC 0001 Wave 1C: use per-scope graph key, ignoring the WriteOp's
                 // `graph` field (which was the global "lunaris_graph" pre-RFC).
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
-                // Moon Cypher only supports `SET n.prop = expr` (no map-merge `+=`).
-                // Moon's GRAPH.QUERY handler also ignores `--params` (always empty
-                // HashMap internally), so we inline all values as literals.
+                // Moon Cypher only supports `SET n.prop = expr` (no map-merge `+=`),
+                // so the non-`id` props still flow through a literal Cypher SET
+                // (`build_set_clause`) — only the point-lookup `id` filter below
+                // is parameterized.
                 // Hex-encode the raw id bytes — EntityId is [u8;16] hash,
                 // lossy UTF-8 produces Cypher-unsafe characters.
                 //
-                // ft-navigate-recall (contract v1): new nodes are created via
-                // GRAPH.ADDNODE carrying a `_key` property = the entity's FT
-                // doc key. ADDNODE is the ONLY write path that registers the
-                // `key_to_node` mapping FT.NAVIGATE's graph expansion needs —
-                // Cypher MERGE/CREATE/SET never do (Moon v0.3.0). ADDNODE
-                // inside the TXN is rollback-safe with read-your-writes
-                // (probed 2026-06-11). All OTHER props still flow through a
-                // Cypher SET: ADDNODE's prop parser auto-coerces digit-only
-                // strings to numbers, which would silently turn an all-digit
-                // hex `id` into a Float and break every `WHERE n.id='…'`
-                // string match (live-probed). `_key` is immune — it always
-                // starts with `lunaris_`.
+                // moon-v051-perf-exploit W2 Task 1 (2026-07-10): point lookups now
+                // use the inline-property form `(n:{label} {id: $id})` + a real
+                // bound `$id` parameter instead of `WHERE n.id = '<hex>'`. Proven
+                // live via `GRAPH.PROFILE` against vendored moon (re-verified at
+                // both c9508066 and the mid-wave re-bump to f9ad681f/v0.6.0): the
+                // WHERE-equality form always compiles to `NodeScan` (visits every
+                // node under the label). Source-confirmed in `vendor/moon/src/
+                // graph/cypher/planner.rs::compile`/`extract_range_conjuncts`: the
+                // f9ad681f planner DOES upgrade some `WHERE` conjuncts to
+                // `IndexScan` (W2-3, range comparisons `>`/`>=`/`</`<=` and P3 text
+                // predicates), but `Equal` is explicitly excluded from that
+                // upgrade (`_ => return` in `extract_range_conjuncts`), so our
+                // point-lookup shape (`WHERE n.id = '<hex>'`) still falls through
+                // to a plain `NodeScan` + `Filter` on both pins. The
+                // inline-property form compiles to `IndexScan` (narrows via the
+                // per-segment property index built in `push_node_scan`) with a
+                // residual `Filter` kept downstream for the index's superset
+                // semantics — no correctness gap. The old "Moon ignores
+                // inline-property filters" hazard (pre-v3-2, PR #193) is
+                // CONFIRMED FIXED live: a 2-node graph profiled with the WHERE
+                // form visited both nodes (`NodeScan` row count 2) vs. the inline
+                // form visiting exactly the matching node (`IndexScan` row count
+                // 1) — full GRAPH.PROFILE transcript in this wave's summary.
+                // Using `--params` (via `GraphClient::query_with_params`) instead
+                // of a literal also removes the need for the lossy
+                // quote-escaping hack on `id` — `parse_params` in `vendor/moon/
+                // src/command/graph/graph_read.rs` is now a real, live-verified
+                // JSON→`Value` path (the "Moon always ignores --params" comment
+                // this replaced was stale).
+                //
+                // moon-v051-perf-exploit W2 Task 2: the old code paid a
+                // dedicated `MATCH…RETURN id(n)` existence-check round trip
+                // before EVERY write, then a second round trip to create-or-
+                // update. That check is now folded into an optimistic
+                // update-first attempt: try the SET directly through the same
+                // inline-property MATCH; Moon safely no-ops (0 rows, 0
+                // `Properties set`, live-probed) when `id` doesn't match, so a
+                // miss is side-effect-free and falls through to the create path
+                // below. Net effect: an existing-node write (the common case —
+                // re-mentioned entities) drops from 2 round trips to 1; a
+                // brand-new node still costs the same 2 (ADDNODE + follow-up
+                // SET) it always did, no regression.
+                //
+                // ft-navigate-recall (contract v1) — unchanged constraint,
+                // reverified against the overhauled engine: GRAPH.ADDNODE is
+                // STILL the only write path that registers the `key_to_node`
+                // mapping FT.NAVIGATE's graph expansion needs
+                // (`NamedGraph::register_key`, `vendor/moon/src/graph/
+                // store.rs`). Cypher CREATE/MERGE/SET in the new planner/
+                // executor (`vendor/moon/src/graph/cypher/executor/write.rs`)
+                // still never call it — grepped clean. A true single-round-trip
+                // MERGE-based upsert would silently break FT.NAVIGATE for every
+                // newly created node, so ADDNODE remains mandatory on the
+                // create path; see the Moon-side change request in this wave's
+                // summary (teaching Cypher CREATE/MERGE to call `register_key`
+                // when a `_key` property is set would let the create path drop
+                // to 1 round trip too).
+                // ADDNODE's prop parser auto-coerces digit-only strings to
+                // numbers, which would silently turn an all-digit hex `id` into
+                // a Float and break every future point lookup — `id` and the
+                // rest of `props` still flow through the literal Cypher SET
+                // below, never through ADDNODE's own prop args. `_key` is
+                // immune — it always starts with `lunaris_`.
                 let id_hex = hex::encode(id);
                 let scope_graph = graph_key(scope);
                 let set_clause = build_set_clause("n", props);
+                let id_params_json = serde_json::to_string(&serde_json::json!({ "id": id_hex }))?;
 
-                // Existence check keeps the write idempotent (ADDNODE has no
-                // MERGE semantics). Read-your-writes inside the TXN is proven,
-                // so a node ADDNODE'd earlier in this same batch is visible.
-                let exists_cypher =
-                    format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' RETURN id(n)");
-                let exists_reply: redis::Value = typed
+                let optimistic_cypher = if set_clause.is_empty() {
+                    format!("MATCH (n:{label} {{id: $id}}) RETURN n")
+                } else {
+                    format!("MATCH (n:{label} {{id: $id}}) {set_clause} RETURN n")
+                };
+                let optimistic_reply: redis::Value = typed
                     .graph()
-                    .query_raw(scope_graph.as_str(), &exists_cypher)
+                    .query_with_params(scope_graph.as_str(), &optimistic_cypher, &id_params_json)
                     .await
                     .map_err(moon_err)?;
-                let exists = !crate::graph::parse_graph_reply(exists_reply)?.rows.is_empty();
+                let updated = !crate::graph::parse_graph_reply(optimistic_reply)?.rows.is_empty();
 
-                let cypher = if exists {
-                    // Update path — refresh props on the existing node
-                    // (WHERE form: Moon ignores inline-property filters on
-                    // plain MATCH, see the GraphEdge arm note below).
-                    if set_clause.is_empty() {
-                        format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' RETURN n")
-                    } else {
-                        format!("MATCH (n:{label}) WHERE n.id = '{id_hex}' {set_clause} RETURN n")
-                    }
-                } else {
+                if !updated {
                     // Create path — ADDNODE registers `_key`, then one SET
                     // targets the returned internal node id.
                     let ft_key = format!("{}:{id_hex}", ft_index_name(scope, "entities"));
@@ -265,7 +386,7 @@ async fn run_ops(
                         .query_async(conn)
                         .await
                         .map_err(redis_err)?;
-                    if set_clause.is_empty() {
+                    let cypher = if set_clause.is_empty() {
                         format!(
                             "MATCH (n:{label}) WHERE id(n) = {node_id} \
                              SET n.id = '{id_hex}' RETURN n"
@@ -275,45 +396,59 @@ async fn run_ops(
                             "MATCH (n:{label}) WHERE id(n) = {node_id} \
                              {set_clause}, n.id = '{id_hex}' RETURN n"
                         )
-                    }
-                };
-                let _: redis::Value = typed
-                    .graph()
-                    .query_raw(scope_graph.as_str(), &cypher)
-                    .await
-                    .map_err(moon_err)?;
+                    };
+                    let _: redis::Value = typed
+                        .graph()
+                        .query_raw(scope_graph.as_str(), &cypher)
+                        .await
+                        .map_err(moon_err)?;
+                }
             }
             WriteOp::GraphEdge { graph: _, src, dst, rel, props } => {
                 // RFC 0001 Wave 1C: use per-scope graph key.
                 // T-01-03-01: caller-validated `rel`. See module rustdoc above.
-                // Same constraints as GraphNode: inline literals, no params, no `+=`.
+                // Same constraint as GraphNode: Moon Cypher has no map-merge
+                // `+=`, so edge props still flow through a literal Cypher SET.
                 //
-                // Moon-Cypher gotcha (2026-05-14): the inline-property filter
-                // `MATCH (a {id:'<hex>'})` is silently IGNORED by Moon's
-                // Cypher executor — it returns every node, not just the one
-                // matching `id`. This caused the MERGE below to fan out into
-                // a cross-product (every (a,b) pair got an edge), wildly
-                // inflating graph edge counts. The fix is the WHERE clause
-                // form, which Moon evaluates correctly. Reproduced against
-                // Moon release v0.1.x via `GRAPH.QUERY` shell test.
+                // Moon-Cypher gotcha (2026-05-14, FIXED v3-2/PR #193): the
+                // inline-property filter `MATCH (a {id:'<hex>'})` used to be
+                // silently IGNORED by Moon's Cypher executor — it returned
+                // every node, fanning the MERGE below out into a cross
+                // product (every (a,b) pair got an edge). The WHERE clause
+                // form was the workaround. moon-v051-perf-exploit W2 Task 1
+                // re-verified this LIVE against vendored moon (both c9508066
+                // and the mid-wave re-bump to f9ad681f/v0.6.0) before switching
+                // back: a 3-node graph, two sequential `MATCH (a {id:$src_id}),
+                // (b {id:$dst_id}) MERGE (a)-[r:KNOWS]->(b)` calls with
+                // different (src,dst) params produced EXACTLY 2 edges (not the
+                // 9-edge cross product the old bug would have produced) — full
+                // transcript in this wave's summary. Switching back to the
+                // inline form gives the same
+                // `IndexScan` narrowing win as the GraphNode arm, on both
+                // endpoints, plus removes the lossy quote-escaping need on
+                // `src`/`dst` (real `$src_id`/`$dst_id` params via
+                // `GraphClient::query_with_params`).
                 let src_hex = hex::encode(src);
                 let dst_hex = hex::encode(dst);
                 let set_clause = build_set_clause("r", props);
+                let endpoint_params_json = serde_json::to_string(
+                    &serde_json::json!({ "src_id": src_hex, "dst_id": dst_hex }),
+                )?;
                 let cypher = if set_clause.is_empty() {
                     format!(
-                        "MATCH (a),(b) WHERE a.id='{src_hex}' AND b.id='{dst_hex}' \
+                        "MATCH (a {{id: $src_id}}), (b {{id: $dst_id}}) \
                          MERGE (a)-[r:{rel}]->(b) RETURN r"
                     )
                 } else {
                     format!(
-                        "MATCH (a),(b) WHERE a.id='{src_hex}' AND b.id='{dst_hex}' \
+                        "MATCH (a {{id: $src_id}}), (b {{id: $dst_id}}) \
                          MERGE (a)-[r:{rel}]->(b) {set_clause} RETURN r"
                     )
                 };
                 let scope_graph = graph_key(scope);
                 let _: redis::Value = typed
                     .graph()
-                    .query_raw(scope_graph.as_str(), &cypher)
+                    .query_with_params(scope_graph.as_str(), &cypher, &endpoint_params_json)
                     .await
                     .map_err(moon_err)?;
             }

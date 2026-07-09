@@ -2,13 +2,18 @@
 //! UAT, 2026-06-16). Gated behind `moon-it` + a reachable `MOON_URL`.
 //!
 //! Proves on REAL Moon that:
-//! - the inline-property anchor filter `(n {id_hex: sid})` is SILENTLY IGNORED
-//!   — Moon matches every node as an anchor, so a depth-1 traversal wrongly
-//!   reaches 2-hop nodes (this is the bug the Inspector UAT surfaced; the same
-//!   pattern was live in `lunaris-retrieve::Graph::anchored` and the
-//!   `/v1/graph` endpoint), and
 //! - the `WHERE n.id_hex = sid` form correctly constrains BOTH the anchor
-//!   (`root`) and the hop bound (`depth`).
+//!   (`root`) and the hop bound (`depth`), and
+//! - the inline-property anchor filter `(n {id_hex: sid})` NOW ALSO constrains
+//!   correctly. History: pre-v3-2 Moon silently IGNORED inline-property
+//!   filters — every node matched as an anchor and a depth-1 traversal
+//!   wrongly reached 2-hop nodes (the bug the Inspector UAT surfaced,
+//!   2026-06-16, workaround = WHERE form). Moon PR #193 (v0.4.0, vendored
+//!   ≥ c9508066) fixed the planner to emit a Filter for inline properties,
+//!   and the W2 graph hot-path work (moon-v051-perf-exploit, 2026-07-10)
+//!   switched production point-lookups BACK to the inline form for
+//!   IndexScan narrowing — so this test now pins the FIXED behavior of
+//!   both forms as the regression guard.
 //!
 //! This is the regression guard the mock-based `graph_endpoint` suite could
 //! never be — it records the CypherQuery string but never executes it.
@@ -65,8 +70,10 @@ fn edge(src: &[u8; 16], dst: &[u8; 16], rel: &str) -> WriteOp {
     }
 }
 
-/// The production anchored traversal template. `inline=true` is the BROKEN
-/// pre-fix form; `inline=false` is the WHERE-clause fix.
+/// The production anchored traversal template. Both forms must constrain
+/// identically on Moon ≥ v0.4.0 (`inline=true` was broken pre-v3-2 and is
+/// now the preferred IndexScan-narrowed form; `inline=false` is the
+/// WHERE-clause era workaround, kept as a parity probe).
 fn anchored(hops: usize, inline: bool) -> String {
     if inline {
         format!(
@@ -138,13 +145,25 @@ async fn graph_anchor_where_form_constrains_root_and_depth() {
         "WHERE form depth=2 reaches both 1- and 2-hop nodes; got {n2:?}"
     );
 
-    // BROKEN (inline) form, root=Bob depth=1 → wrongly reaches the 2-hop
-    // Lunaris, proving Moon silently ignores the inline-property anchor filter.
+    // FIXED (inline) form, root=Bob depth=1 → ONLY Alice. Pre-v3-2 Moon
+    // ignored the inline-property anchor filter and this wrongly reached the
+    // 2-hop Lunaris; PR #193 fixed it, and production point-lookups now use
+    // the inline form for IndexScan narrowing — so inline must behave
+    // identically to the WHERE form here.
     let i1 = storage.graph_traverse(&scope, &q(anchored(1, true)), None).await.expect("inline d1");
     let ni1 = names(&i1);
+    assert!(ni1.contains("Alice"), "inline form must reach the 1-hop Alice; got {ni1:?}");
     assert!(
-        ni1.contains("Lunaris"),
-        "inline-property filter is ignored by Moon → depth=1 wrongly reaches Lunaris (this is \
-         the bug the WHERE form fixes); got {ni1:?}"
+        !ni1.contains("Lunaris"),
+        "inline-property filter must constrain on Moon ≥ v0.4.0 → depth=1 must NOT reach the \
+         2-hop Lunaris (pre-v3-2 regression guard); got {ni1:?}"
+    );
+
+    // Inline depth=2 parity with the WHERE form.
+    let i2 = storage.graph_traverse(&scope, &q(anchored(2, true)), None).await.expect("inline d2");
+    let ni2 = names(&i2);
+    assert!(
+        ni2.contains("Alice") && ni2.contains("Lunaris"),
+        "inline form depth=2 reaches both 1- and 2-hop nodes; got {ni2:?}"
     );
 }
