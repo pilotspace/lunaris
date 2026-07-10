@@ -3305,6 +3305,8 @@ dependencies = [
  "async-trait",
  "llama-cpp-2",
  "lunaris-core",
+ "lunaris-rerank",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
