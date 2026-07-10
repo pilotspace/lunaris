@@ -38,6 +38,10 @@ members = [
   # by default). The supported v0.4 embedder is lunaris-embed-native. See
   # crates/lunaris-embed-remote/src/lib.rs for rationale.
   "crates/lunaris-embed-remote",
+  # ADR 2026-07-10: opt-in llama.cpp runtime (embedder spike). Grouped with
+  # the other inference-backend crates; its `llamacpp` feature MUST stay out
+  # of every default feature set (empty shell when off — no C++ build).
+  "crates/lunaris-llamacpp",
   "crates/lunaris-extract",
   # Phase 11 (LLM unification) — shared LlmBackend trait + LlmConfig consumed by
   # lunaris-extract, lunaris-verify, and the turn-end reflect supervisor. Placed
@@ -108,6 +112,7 @@ lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version
 lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.5.0", default-features = false }
 lunaris-embed-native      = { path = "crates/lunaris-embed-native",      version = "0.5.0", default-features = false }
 lunaris-embed-remote      = { path = "crates/lunaris-embed-remote",      version = "0.5.0", default-features = false }
+lunaris-llamacpp          = { path = "crates/lunaris-llamacpp",          version = "0.5.0", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.5.0", default-features = false }
 lunaris-rerank-native     = { path = "crates/lunaris-rerank-native",     version = "0.5.0", default-features = false }
 lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.5.0", default-features = false }

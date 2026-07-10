@@ -1,0 +1,50 @@
+# lunaris-llamacpp — opt-in llama.cpp inference runtime (ADR 2026-07-10).
+#
+# Spike scope: `LlamaCppEmbedder` (granite-embedding-311m GGUF) behind the
+# `llamacpp` feature. With the feature OFF (the default everywhere), this
+# crate compiles as an empty shell — no C++ toolchain, no llama.cpp build —
+# so `cargo test --workspace` / CI clippy stay light. This mirrors the
+# `embedded-moon` discipline: `llamacpp` MUST stay out of every default
+# feature set, and the published binaries do NOT enable it.
+#
+# Why this crate exists at all: the §4b profiling matrix
+# (docs/design/quantized-inference-extractor-reranker.md §4b-RESULTS)
+# measured candle ~5x below llama.cpp's Metal ceiling for the embedder and
+# found candle's quantized CPU matmuls bypass BLAS entirely; see
+# docs/decisions/2026-07-10-llamacpp-inference-runtime.md for the full ADR
+# (a deliberate PARTIAL reversal of the v0.4 N-03 candle-only cutover —
+# in-process FFI, so the no-external-inference-process property holds).
+#
+# Build:
+#   cargo check -p lunaris-llamacpp                        # empty shell, ~0s
+#   cargo test  -p lunaris-llamacpp --features llamacpp    # builds llama.cpp (cmake + clang)
+
+[package]
+name         = "lunaris-llamacpp"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "Opt-in llama.cpp inference runtime for Lunaris (embedder spike)"
+
+[dependencies]
+lunaris-core = { workspace = true }
+async-trait  = { workspace = true }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+thiserror    = { workspace = true }
+
+# The entire llama.cpp surface hangs off this optional dep. Exact-version
+# pin: llama-cpp-2 tracks llama.cpp upstream aggressively; bump deliberately
+# (same policy as the vendored Moon SHA).
+llama-cpp-2 = { version = "=0.1.151", optional = true }
+
+[features]
+default  = []
+llamacpp = ["dep:llama-cpp-2"]
+# Metal offload for the llama.cpp backend (macOS). Composes with `llamacpp`.
+metal    = ["llamacpp", "llama-cpp-2/metal"]
+
+[dev-dependencies]
