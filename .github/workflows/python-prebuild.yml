@@ -67,6 +67,12 @@ jobs:
           - os: macos-15-intel
             target: x86_64-apple-darwin
             manylinux: "off"
+            # llama.cpp uses std::filesystem (macOS 10.15+). maturin's
+            # x86_64 default deployment target is 10.12 — the ggml
+            # compile dies with "'path' is unavailable: introduced in
+            # macOS 10.15" (Phase D dispatch run 29103327683). The wheel
+            # platform tag moves to macosx_10_15_x86_64 accordingly.
+            deployment-target: "10.15"
           - os: macos-14 # Apple Silicon runners
             target: aarch64-apple-darwin
             manylinux: "off"
@@ -93,6 +99,8 @@ jobs:
           key: ${{ matrix.target }}
       - name: Build wheel via maturin
         uses: PyO3/maturin-action@v1
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target || '' }}
         with:
           command: build
           args: >-
@@ -101,6 +109,20 @@ jobs:
             --target ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           working-directory: crates/lunaris-py
+          # llama.cpp-only cutover (Phase D): the default `llamacpp`
+          # feature compiles llama.cpp inside the manylinux container —
+          # llama-cpp-sys-2 needs cmake AND libclang (bindgen). The
+          # manylinux_2_28 image (AlmaLinux 8, dnf) and the aarch64
+          # cross image (Debian-based, apt) ship neither guaranteed;
+          # install whichever package manager is present. Proven
+          # missing in dispatch run 29103327683 ("Unable to find
+          # libclang" from bindgen 0.72).
+          before-script-linux: |
+            if command -v dnf >/dev/null 2>&1; then
+              dnf install -y clang-devel cmake
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y libclang-dev cmake
+            fi
       - name: Upload wheel artefact
         uses: actions/upload-artifact@v4
         with:
