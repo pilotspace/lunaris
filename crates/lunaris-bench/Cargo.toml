@@ -122,6 +122,13 @@ verify-large = ["lunaris-verify/verify-large"]
 # instead of the default Ollama/FP16 path. Not wired into CI defaults.
 embedder-gguf = ["lunaris/embedder-gguf"]
 reranker-gguf = ["lunaris/reranker-gguf"]
+# llama.cpp-only cutover Phase B — forwards to the umbrella so the eval
+# gauntlet (`Lunaris::open()` path) resolves the llama.cpp GGUF backends.
+# Same lesson as the metal/cpu-accelerate forwards above (727bc65): a bench
+# feature that is not forwarded to `lunaris` silently changes which
+# embedder the eval actually runs. Combine with `metal` for GPU offload:
+#   --features llamacpp,metal
+llamacpp = ["lunaris/llamacpp"]
 
 # ---------------------------------------------------------------------------
 # O-01-F — per-device perf benches.

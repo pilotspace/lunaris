@@ -47,7 +47,9 @@ async fn production_open_resolves_llamacpp_embedder_and_reranker() {
             .filter(|p| p.exists())
             .or_else(|| staged("bge-reranker-v2-m3.Q5_K_M.gguf")),
     ) else {
-        eprintln!("[skip] production_open_resolves_llamacpp_embedder_and_reranker — GGUFs not staged");
+        eprintln!(
+            "[skip] production_open_resolves_llamacpp_embedder_and_reranker — GGUFs not staged"
+        );
         return;
     };
 
@@ -55,8 +57,7 @@ async fn production_open_resolves_llamacpp_embedder_and_reranker() {
     // fails and (in a candle build) resolution would fall back to
     // Noop{Embedder,Reranker}. If this build serves REAL vectors + a REAL
     // rerank, the llamacpp step is wired into the production chain.
-    let empty =
-        std::env::temp_dir().join(format!("lunaris-llamacpp-wired-{}", std::process::id()));
+    let empty = std::env::temp_dir().join(format!("lunaris-llamacpp-wired-{}", std::process::id()));
     std::fs::create_dir_all(&empty).expect("create empty model dir");
     // SAFETY-NOTE: single-test binary, set before any `.await`.
     unsafe {
