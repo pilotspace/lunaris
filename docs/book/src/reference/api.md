@@ -37,12 +37,12 @@ types, `init_logging`, the pipeline handles, etc.
 | `lunaris-core` | Shared primitives (`Episode`/`Chunk`/`Entity`/`Fact`/`Relation`/`Community`), `StoragePort` trait, HLC clock, `Scope` newtype, `keyspace`, error taxonomy, circuit breaker |
 | `lunaris-ingest` | Markdown chunker + batched embedder driver + the single `atomic_write` |
 | `lunaris-retrieve` | The retrieval DSL (`Vector`/`Keyword`/`Graph`/`Tree`, combinators, RRF fusion, rerank, fallback), `tower::Service`-shaped |
-| `lunaris-extract` | Entity/relation/fact extractor (candle / Ollama / cloud-API) + validator |
+| `lunaris-extract` | Entity/relation/fact extractor (remote-only: Ollama / cloud-API providers) + validator |
 | `lunaris-consolidate` | ACT-R consolidator (Anderson 1996; Leiden communities) — opt-in |
-| `lunaris-verify` | Slow-path arbitration verifier + MVCC supersede writer — opt-in |
-| `lunaris-embed-native` | `Embedder` impl — in-process candle (granite-r2 FP16, bge-reranker FP32) |
-| `lunaris-embed-remote` | `Embedder` impl — Ollama HTTP escape hatch (`--features embed-remote`) |
-| `lunaris-rerank` | Cross-encoder reranker (BGE-Reranker-v2-m3) + `NoopReranker` |
+| `lunaris-verify` | Slow-path arbitration verifier (remote-only providers) + MVCC supersede writer — opt-in |
+| `lunaris-llamacpp` | `Embedder` + `Reranker` impls — in-process llama.cpp (`LlamaCppEmbedder`: granite-r2 Q4_K_M GGUF; `LlamaCppReranker`: bge-reranker-v2-m3 Q5_K_M GGUF); default-enabled `llamacpp` feature on the umbrella |
+| `lunaris-embed-remote` | `Embedder` impl — Ollama HTTP escape hatch (`--features embed-remote`); resolves after the llama.cpp step |
+| `lunaris-rerank` | `Reranker` trait + `NoopReranker` (the cross-encoder impl lives in `lunaris-llamacpp`) |
 | `lunaris-storage-moon` | `StoragePort` on a Redis-compatible substrate (native `FT.*`, `GRAPH.QUERY`, MQ, RRF) |
 | `lunaris-storage-postgres` | `StoragePort` on Postgres + pgvector + Apache AGE + pgmq (RLS-enforced isolation) |
 | `lunaris-server` | HTTP + SSE MemoryProtocol 0.1 server (axum) |

@@ -71,12 +71,11 @@ tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 Features (see the `[features]` section of `crates/lunaris/Cargo.toml`):
 
-- `default = []` — nothing extra. The embedder (`granite-embedding-311m-multilingual-r2`, 768-d) and reranker (`bge-reranker-v2-m3` cross-encoder) are **always compiled** as a permanent native runtime dep — there is no feature toggle and no env-var backend swap. Weights load from `~/.cache/lunaris/models/`.
-- `candle` — real Gemma-3 4B extractor + Gemma-3 27B verifier (the slow-path LLM tiers; the embedder / reranker do **not** depend on this flag).
+- `default = ["llamacpp"]` — the llama.cpp inference runtime (llama.cpp-only cutover, ADR 2026-07-10): embedder `granite-embedding-311m-multilingual-r2` Q4_K_M GGUF (768-d) + reranker `bge-reranker-v2-m3` Q5_K_M GGUF. GGUFs load from `~/.lunaris/models/` (override: `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`). Building with the default needs cmake + a C++ toolchain; `default-features = false` gives the Tier-0 no-inference build (NoopEmbedder/NoopReranker, pure Rust).
+- `metal` / `cuda` / `vulkan` — per-target GPU offload for the llama.cpp runtime (CPU is the default device).
 - `ollama` — HTTP-backed extractor + verifier pointing at `http://localhost:11434`.
-- `cloud-api` — Anthropic / OpenAI / Gemini backends for the extractor + verifier.
-- `embed-remote` — air-gap escape hatch: route the embedder through an existing Ollama instance via `LUNARIS_EMBEDDER_OLLAMA_URL` (operator-only, not the supported path).
-- `embedder-gguf` / `reranker-gguf` — Q4_K_M / Q5_K_M quantized native variants (`LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`).
+- `cloud-api` — remote extractor + verifier backends (Anthropic / OpenAI / Gemini / MiniMax / any OpenAI-compatible URL), resolved from `LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_VERIFY_PROVIDER`. There is no in-process LLM backend — see [the 0.5→0.6 migration note](migration/0.5-to-0.6-llamacpp-only.md).
+- `embed-remote` — air-gap escape hatch: route the embedder through an existing Ollama instance via `LUNARIS_EMBEDDER_OLLAMA_URL` (operator-only, resolved after the llama.cpp step).
 - `moon-it`, `pg-it` — gate live-backend integration tests.
 
 ```rust
@@ -102,8 +101,8 @@ URL schemes are matched at `crates/lunaris/src/open.rs:20-30` and `crates/lunari
 
 ### Gotchas
 
-- **Weights cache**: the default embedder is `NativeEmbedder` (`granite-embedding-311m-multilingual-r2`, 768-d) loaded from `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/` (`resolve_embedder()` in `crates/lunaris/src/handle.rs`; override the directory with `LUNARIS_EMBEDDER_DIR`). On a cache miss `open` does **not** fail — it logs a `WARN` banner and falls back to a zero-vector `NoopEmbedder`, so the rest of the open path completes but **vector recall returns empty rows** until weights are staged. Either pre-download (see section 10) or swap to a different embedder with `with_embedder(...)` before first use.
-- **Embedder / reranker need no feature flag**: they are always compiled (a permanent native runtime dep). The `candle` / `ollama` / `cloud-api` features only select the **extractor + verifier** LLM backends — see [the v0.4 native-default migration note](migration/0.3-to-0.4-native-default.md).
+- **GGUF staging**: the default embedder is `LlamaCppEmbedder` (`granite-embedding-311m-multilingual-r2` Q4_K_M GGUF, 768-d) loaded from `~/.lunaris/models/` (`resolve_embedder()` in `crates/lunaris/src/handle.rs`; override the path with `LUNARIS_EMBEDDER_GGUF`). On a missing GGUF `open` does **not** fail — it logs a `WARN` banner and falls back to a zero-vector `NoopEmbedder`, so the rest of the open path completes but **vector recall returns empty rows** until the GGUF is staged. Download it out-of-band (SHA-256s printed by `cargo run -p lunaris-bench --bin stage-models -- --help`) or swap to a different embedder with `with_embedder(...)` before first use.
+- **Embedder / reranker ride the default `llamacpp` feature**: the `ollama` / `cloud-api` features only select the **extractor + verifier** LLM backends — see [the 0.5→0.6 llama.cpp-only migration note](migration/0.5-to-0.6-llamacpp-only.md).
 - **Typos in the URL**: `mon://...` or `redis://...` yield `UnsupportedScheme`, not a connection error. Double-check the scheme when the error mentions a string you did not type.
 
 ---
@@ -130,7 +129,7 @@ use lunaris_core::StubEmbedder;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    // Production form — pulls the real storage + candle embedder from the URL:
+    // Production form — pulls the real storage + llama.cpp embedder from the URL:
     //   let lunaris = Lunaris::open("moon://localhost:6380").await?;
     //
     // Test form — matches tests/ingest_smoke.rs:91-108. Replace `my_storage()`
@@ -297,7 +296,7 @@ This mirrors the canonical compose example in the `recall()` doc comment (`crate
 
 - **Graph is default OFF.** Blueprint §5.2 + `crates/lunaris/src/handle.rs:124-130`. Toggling at runtime via `handle.graph_pipeline().enable()` is idempotent; `LUNARIS_GRAPH_ENABLED=1` seeds the initial state at open time.
 - **Hops are capped.** `DEFAULT_GRAPH_HOPS = 2`, `MAX_GRAPH_HOPS = 5` at `crates/lunaris-retrieve/src/operators/graph.rs:54-59`. Asking for more gets clamped.
-- **The extractor is required for graph ingest.** Default is candle Gemma-3 4B; on cache miss (no 3 GiB of weights on disk) the handle substitutes `NoopExtractor` and emits a `tracing::warn!` (`crates/lunaris/src/handle.rs:538-559`). In that state `graph_pipeline().enable()` is a no-op — you will get zero `GraphNode`s written. Fix with `handle.with_extractor(Arc::new(OllamaExtractor::new(...)?))` or by pre-downloading the weights.
+- **The extractor is required for graph ingest.** Extraction is remote-only (llama.cpp-only cutover): with `LUNARIS_EXTRACT_PROVIDER` unset the handle uses `NoopExtractor` and `graph_pipeline().enable()` is a no-op — you will get zero `GraphNode`s written. Fix by setting `LUNARIS_EXTRACT_PROVIDER` (anthropic|openai|gemini|minimax|openai-compat, see the [0.5→0.6 migration note](migration/0.5-to-0.6-llamacpp-only.md)) or via `handle.with_extractor(Arc::new(OllamaExtractor::new(...)?))` (`ollama` feature).
 - **Graph traversal uses `Vector::and(Graph::anchored(...))`.** When a `Graph` branch is present, `fuse_rrf` always uses client-side fusion (`crates/lunaris-retrieve/src/fusion.rs`) — the Moon-native one-trip path only fires for Vector+Keyword(BM25) on the same index.
 
 ---
@@ -907,17 +906,16 @@ Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, chunks)`,
 
 ## 10. Troubleshooting
 
-### `granite-r2 weights unavailable ... falling back to NoopEmbedder` (vector recall returns empty)
+### `llamacpp embedder failed to open; falling through to the remote/Noop chain` (vector recall returns empty)
 
 This is a `WARN`, not a hard error — `open` succeeds with a zero-vector
-`NoopEmbedder` and recall returns empty rows until weights are staged.
-Download the weights (or point `LUNARIS_EMBEDDER_DIR` at an existing copy),
-or swap the embedder:
-
-```bash
-huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2 \
-  --local-dir ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2
-```
+`NoopEmbedder` and recall returns empty rows until the GGUF is staged.
+Download the embedder GGUF to
+`~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`
+(or point `LUNARIS_EMBEDDER_GGUF` at an existing copy) and verify it
+against the canonical SHA-256 printed by
+`cargo run -p lunaris-bench --bin stage-models -- --help`. The MCP server
+stages it automatically on first recall.
 
 Or (air-gap escape hatch, requires `--features embed-remote`):
 
@@ -926,9 +924,10 @@ let lunaris = lunaris::Lunaris::open(url).await?
     .with_embedder(Arc::new(lunaris_embed_remote::OllamaEmbedder::new(Default::default())?));
 ```
 
-### `bge-reranker-v2-m3 unavailable; using NoopReranker`
+### Reranker GGUF missing → `NoopReranker`
 
-Same pattern — pre-download to `~/.cache/lunaris/models/bge-reranker-v2-m3/` (command in the `tracing::warn!` body at `crates/lunaris/src/handle.rs:510`) or call `handle.with_reranker(...)` with a custom impl. The log is informational; recall keeps working without the 12 ms cross-encoder pass.
+Same pattern — stage `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`
+(override: `LUNARIS_RERANKER_GGUF`) or call `handle.with_reranker(...)` with a custom impl. The reranker loads lazily on first recall; the log is informational and recall keeps working without the cross-encoder pass.
 
 ### `LunarisError::Storage(StorageError::UnsupportedScheme("..."))`
 

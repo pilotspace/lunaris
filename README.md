@@ -159,10 +159,10 @@ let lsn = scoped.ingest(EpisodeBuilder::new("user-msg", "Alice loves chocolate."
 The connection URL is the only backend switch: `moon://` (latency
 flagship), `postgres://` (portability, RLS-isolated), `memory://` /
 `sqlite:///path` (zero infrastructure). Embedding and reranking run
-**in-process on CPU** (candle-native `granite-embedding-311m` +
-`bge-reranker-v2-m3`) — no embedding API, no network on the hot path;
-the model weights are staged once on first use. Quantized GGUF and
-air-gapped options: [configuration reference](docs/book/src/reference/configuration.md).
+**in-process** via llama.cpp (`granite-embedding-311m` Q4_K_M +
+`bge-reranker-v2-m3` Q5_K_M GGUF) — no embedding API, no network on the
+hot path; GPU offload is a build-time `metal`/`cuda`/`vulkan` feature.
+Air-gapped options: [configuration reference](docs/book/src/reference/configuration.md).
 
 Runnable examples: [`examples/quickstart-py/`](examples/quickstart-py/) ·
 [`examples/quickstart-ts/`](examples/quickstart-ts/) ·
@@ -267,7 +267,7 @@ lunaris.scoped(scope_b).ingest(builder).await?;
 | Milestone | Status |
 |---|---|
 | **v0.2.1 — multi-agent partitioning** | Shipped 2026-05-11 |
-| **v0.4 — candle-native ML default** | Shipped 2026-05-14 — in-process embedder + reranker, Ollama path removed |
+| **v0.4 — in-process ML default** | Shipped 2026-05-14 — in-process embedder + reranker, Ollama path removed (candle then; llama.cpp since v0.6) |
 | **v0.4.0 — MCP surface + embedded Moon + RAPTOR** | Shipped 2026-06-13 — `lunaris-mcp` scratchpad tools, embedded Moon, RAPTOR tree retrieval, recall fan-out p50 12→6 ms, hybrid filter push-down |
 | **v0.5.0 — framework adapters + memory convergence + Apache-2.0** | Shipped 2026-06-16 — `lunaris_integrations` LangGraph/CrewAI/Letta adapters, write-time dedup + cross-episode supersede, relicensed Apache-2.0 |
 | **v0.5 — proactive capture + packaging** | Shipped 2026-05-26 — `lunaris-hook` lifecycle capture, MCP polish, npx/uvx distribution |

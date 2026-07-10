@@ -7,9 +7,10 @@
 //!
 //! 1. `docker compose up -d` (from this directory) — starts Postgres
 //!    16 + pgvector + pgmq + Apache AGE on `localhost:5432`.
-//! 2. `ollama serve &` and `ollama pull nomic-embed-text` — Ollama at
-//!    `http://localhost:11434` for the embedder. (Or rebuild with
-//!    `--no-default-features --features candle` for in-process candle.)
+//! 2. Stage the granite-r2 Q4_K_M GGUF at `~/.lunaris/models/` for the
+//!    default in-process llama.cpp embedder. (Or `ollama serve &` with
+//!    `--features embed-remote` + `LUNARIS_EMBEDDER_OLLAMA_URL` as the
+//!    air-gap escape hatch.)
 //! 3. `export LUNARIS_PG_URL="postgres://lunaris:lunaris@localhost:5432/lunaris"`.
 //! 4. `cargo run`.
 //!

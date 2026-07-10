@@ -52,10 +52,11 @@ main();
 ## Custom embedder + reranker
 
 The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
-runs **in-process** via candle, and auto-downloads to
-`~/.cache/lunaris/models/` on first use — **no Ollama, no ONNX Runtime, no
-external service required.** An air-gapped Ollama HTTP embedder remains
-available as an operator escape hatch behind `--features embed-remote`.
+served from a Q4_K_M GGUF **in-process** via llama.cpp — **no Ollama, no
+external service required.** Stage the GGUF at `~/.lunaris/models/` (the MCP
+server does this lazily; other deployments download out-of-band). An
+air-gapped Ollama HTTP embedder remains available as an operator escape
+hatch behind `--features embed-remote`.
 
 The `EmbedderConfig` and `RerankerConfig` factories swap the backend on a
 freshly-opened handle via the chainable `withEmbedder` / `withReranker`
@@ -67,14 +68,14 @@ import { open, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 // `withEmbedder` / `withReranker` are chainable and return a NEW handle.
 const mem = (await open("moon://127.0.0.1:6380"))
-  .withEmbedder(EmbedderConfig.native())   // granite-r2, in-process
-  .withReranker(RerankerConfig.native());  // bge-reranker-v2-m3
+  .withEmbedder(EmbedderConfig.llamacpp())   // granite-r2 Q4_K_M GGUF, in-process llama.cpp
+  .withReranker(RerankerConfig.llamacpp());  // bge-reranker-v2-m3 Q5_K_M GGUF
 // ... ingest / recall as usual
 ```
 
 See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
-the full customization guide — native in-process, quantized GGUF, and the
-operator Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
+the full customization guide — in-process llama.cpp, noop, and the operator
+Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
 
 ## Surface parity
 

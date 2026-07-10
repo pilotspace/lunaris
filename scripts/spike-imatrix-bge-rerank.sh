@@ -3,7 +3,8 @@
 #
 # Re-quantize bge-reranker-v2-m3 GGUF using llama.cpp imatrix calibration,
 # targeting the ≤ 0.10 sigmoid-space drift gate enforced by
-# `crates/lunaris-rerank-native/tests/quantized_equivalence.rs`.
+# the retired candle reranker's quantized_equivalence tests (now
+# `crates/lunaris-llamacpp/tests/section5_rerank_parity.rs`).
 #
 # Why this exists (recap from N-02 step 2):
 # - Plain Q4_K_M (240 MiB, 4.53 BPW) fails the gate at max-delta 0.218
@@ -134,7 +135,7 @@ fi
 SHA256_HEX="$( $SHA256_BIN "$Q5_GGUF" | awk '{print $1}' )"
 echo "$SHA256_HEX  $(basename "$Q5_GGUF")" > "$SHA_FILE"
 log "SHA-256 = $SHA256_HEX"
-log "pin in crates/lunaris-rerank-native/src/lib.rs:"
+log "pin in crates/lunaris-bench/src/bin/stage_models.rs:"
 log "    pub const BGE_RERANKER_GGUF_Q4_SHA256: &str = \"$SHA256_HEX\";"
 
 size_bytes="$(stat -f '%z' "$Q5_GGUF" 2>/dev/null || stat -c '%s' "$Q5_GGUF")"

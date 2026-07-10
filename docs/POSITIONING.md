@@ -61,7 +61,7 @@ Pick a different tool when you can say **yes** to any of these:
 | **Composable retrieval DSL**            | `.vector().and(.keyword()).fuse_rrf(60).top(5)` is one typed expression. Hybrid search isn't a feature flag; it's an operator combinator. | `crates/lunaris-retrieve/src/builder.rs` |
 | **Type-enforced multi-tenancy**         | `Scope::new(s)?` validates against `[A-Za-z0-9_\-.]{1,128}` regex; the wire can't smuggle a different scope past `ScopedLunaris`. RLS enforces it again on the database boundary. | `crates/lunaris-core/src/scope.rs` + `docs/migration/0.1-to-0.2.md` §6.2 |
 | **Opt-in graph**                        | `Graph::anchored(entity_ids, hops)` is an operator. Off by default — your dev box doesn't load a graph extractor until you call `.with_graph_pipeline(true)`. | `crates/lunaris-retrieve/src/operators/graph.rs` |
-| **Pluggable verifier with laptop floor** | Default 27B → 270M flip (RFC 0006). 540 MB RAM target on a dev laptop without sacrificing the slow-path arbitration. | `crates/lunaris-verify/src/candle_gemma3_270m.rs` + `docs/rfcs/0006-verifier-default-swap.md` |
+| **Pluggable verifier, laptop-friendly** | Remote-only verifier (llama.cpp-only cutover): point `LUNARIS_VERIFY_PROVIDER` at any cloud or OpenAI-compatible local server — zero local LLM weights, zero RAM floor. | `crates/lunaris-verify/src/cloud_api.rs` + `docs/decisions/2026-07-10-llamacpp-only-cutover.md` |
 
 ## Migration paths
 

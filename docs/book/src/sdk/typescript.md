@@ -150,6 +150,11 @@ See [Consolidation & Verification](../guides/consolidate-verify.md) and
 
 ## Embedder / reranker config
 
+> **v0.6 llama.cpp-only cutover.** The candle-native embedder/reranker paths
+> are deleted; `llamacpp` (in-process llama.cpp, GGUF artifacts) is the only
+> local inference runtime, on by default. See `docs/sdk/embedder-config.md`
+> and `docs/migration/0.5-to-0.6-llamacpp-only.md` (the migration guide).
+
 Override the default from code via `EmbedderConfig` / `RerankerConfig`,
 surfaced as a chainable `withEmbedder` / `withReranker` extension on the
 `Lunaris` class (camelCase opts bags):
@@ -159,32 +164,41 @@ import { open, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 // `withEmbedder` / `withReranker` are chainable and return a NEW handle.
 const mem = (await open("memory://demo"))
-  .withEmbedder(EmbedderConfig.native())   // granite-r2, in-process
-  .withReranker(RerankerConfig.native());  // bge-reranker-v2-m3
+  .withEmbedder(EmbedderConfig.llamacpp())   // granite-r2 Q4_K_M GGUF, in-process llama.cpp
+  .withReranker(RerankerConfig.llamacpp());  // bge-reranker-v2-m3 Q5_K_M GGUF
 ```
 
 Factories (camelCase, mirroring the Python surface):
 
 | Factory | Use when |
 |---|---|
-| `EmbedderConfig.native(opts?)` where `opts = { modelDir?: string }` | Default — granite-embedding-311m-multilingual-r2 (768-d), in-process candle, auto-downloads to `~/.cache/lunaris/models/`. |
-| `EmbedderConfig.nativeQuantized(opts)` where `opts = { ggufPath: string, modelDir?: string }` | Q4_K_M GGUF (~240 MiB) for RSS-constrained hosts; requires `--features embedder-gguf`. |
+| `EmbedderConfig.llamacpp(opts?)` where `opts = { ggufPath?: string }` | Default — granite-embedding-311m-multilingual-r2 (768-d), Q4_K_M GGUF, in-process llama.cpp. Loads eagerly; raises on a missing/corrupt GGUF. Staged default: `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`. |
 | `EmbedderConfig.noop(dim?)` | Deterministic zero-vector — tests / offline use only. |
-| `RerankerConfig.native(opts?)` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (FP32, sigmoid ∈ [0,1]), in-process. |
-| `RerankerConfig.nativeQuantized(opts)` | Q5_K_M-imatrix GGUF; requires `--features reranker-gguf`. |
+| `RerankerConfig.llamacpp(opts?)` where `opts = { ggufPath?: string }` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (Q5_K_M GGUF, sigmoid ∈ [0,1]), in-process llama.cpp. Staged default: `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`. |
 | `RerankerConfig.noop()` | Skip the cross-encoder rescoring pass — lowest latency floor. |
 
 Notes:
 
-- Weights auto-download on first use to `~/.cache/lunaris/models/` — point
-  `modelDir` (or `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR`) at a
-  writable path with ~1 GB free; one-time per host.
+- **No auto-download.** Point `ggufPath` (or `LUNARIS_EMBEDDER_GGUF` /
+  `LUNARIS_RERANKER_GGUF`) at a pre-staged artifact; the MCP server stages
+  GGUFs lazily on first recall, other deployments download them out-of-band
+  and verify against the canonical SHA-256s (`cargo run -p lunaris-bench
+  --bin stage-models -- --help`).
+- **Retired**: `EmbedderConfig.native()` / `.nativeQuantized()` (and the
+  reranker equivalents) were deleted in the v0.6 llama.cpp-only cutover; the
+  factories still exist as stubs that **raise immediately** with a migration
+  hint pointing at `llamacpp({ ggufPath })`. See
+  `docs/migration/0.5-to-0.6-llamacpp-only.md`.
 - An air-gapped Ollama HTTP embedder remains available as an operator escape
-  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`).
+  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`),
+  resolving **after** the llama.cpp step.
+- **Tier-0 `.node` artifacts** (built with `default-features = false`, no C++
+  toolchain, no `llamacpp` feature) raise a clear "no-inference build" error
+  from `llamacpp()` — use `noop()` there.
 - **FFI cliff:** you cannot implement the Rust `Embedder` / `Reranker` trait
   from TypeScript — per-call FFI callbacks would be too slow for the hot
   path. Roll-your-own backends are Rust-crate-only; contribute a constructor
-  to `lunaris-embed-native` or `lunaris-embed-remote`.
+  to `lunaris-llamacpp` or `lunaris-embed-remote`.
 
 ## Async discipline
 
@@ -207,13 +221,15 @@ take no locks themselves. Practical notes:
 
 - **`undefined symbol: napi_get_value_*` at load time** — your Node runtime
   is older than NAPI 8 (Node 18 or lower). Upgrade to Node 20 LTS+.
-- **"weights download failed / connection refused"** — first-call download is
-  hitting the network; pre-populate `modelDir` (or `LUNARIS_EMBEDDER_DIR`),
-  ensure write access + ~1 GB free, confirm outbound HTTPS to `huggingface.co`.
-- **"granite-embedding weights missing …"** — the in-process native embedder
-  needs weights; pre-download them with `huggingface-cli download
-  ibm-granite/granite-embedding-311m-multilingual-r2` or point `modelDir` at
-  an existing local copy.
+- **"failed to open GGUF" / missing artifact** — the in-process llama.cpp
+  embedder needs the GGUF staged. Download it out-of-band and verify the
+  SHA-256 printed by `cargo run -p lunaris-bench --bin stage-models --
+  --help`, or point `ggufPath` / `LUNARIS_EMBEDDER_GGUF` at an existing copy.
+  If you run through the MCP server, let it stage the artifact lazily on
+  first recall.
+- **`native()` / `nativeQuantized()` raises "removed in the llama.cpp-only
+  cutover"** — working as intended; swap the call to
+  `llamacpp({ ggufPath })`.
 
 ## See also
 

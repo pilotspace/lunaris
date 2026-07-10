@@ -52,10 +52,11 @@ asyncio.run(main())
 ## Custom embedder + reranker
 
 The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
-runs **in-process** via candle, and auto-downloads to
-`~/.cache/lunaris/models/` on first use — **no Ollama, no ONNX Runtime, no
-external service required.** An air-gapped Ollama HTTP embedder remains
-available as an operator escape hatch behind `--features embed-remote`.
+served from a Q4_K_M GGUF **in-process** via llama.cpp — **no Ollama, no
+external service required.** Stage the GGUF at `~/.lunaris/models/` (the MCP
+server does this lazily; other deployments download out-of-band). An
+air-gapped Ollama HTTP embedder remains available as an operator escape
+hatch behind `--features embed-remote`.
 
 The `EmbedderConfig` and `RerankerConfig` factories swap the backend at
 handle-construction time; the env-driven default remains in place for callers
@@ -69,8 +70,8 @@ from lunaris import EmbedderConfig, RerankerConfig
 async def main():
     mem = await lunaris.open(
         "moon://127.0.0.1:6380",
-        embedder=EmbedderConfig.native(),     # granite-r2, in-process, auto-downloads to ~/.cache/lunaris/models/
-        reranker=RerankerConfig.native(),     # bge-reranker-v2-m3 cross-encoder
+        embedder=EmbedderConfig.llamacpp(),   # granite-r2 Q4_K_M GGUF, in-process llama.cpp
+        reranker=RerankerConfig.llamacpp(),   # bge-reranker-v2-m3 Q5_K_M GGUF cross-encoder
     )
     # ... ingest / recall as usual
 
@@ -78,8 +79,8 @@ asyncio.run(main())
 ```
 
 See [`docs/sdk/embedder-config.md`](../../docs/sdk/embedder-config.md) for
-the full customization guide — native in-process, quantized GGUF, and the
-operator Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
+the full customization guide — in-process llama.cpp, noop, and the operator
+Ollama escape hatch — with troubleshooting and the FFI-cliff limits.
 
 ## Surface parity
 

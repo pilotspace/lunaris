@@ -27,7 +27,7 @@ not marketing comparisons.
 | **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call + RLS-enforced in Postgres |
 | **Forgetting**                             | Hard delete                              | Tombstone via bi-temporal `sys_time` close (audit trail preserved) |
 | **License**                                | Apache 2.0                              | Apache 2.0                                             |
-| **Default LLM coupling**                  | OpenAI                                   | None — pick candle (local), Ollama, or cloud-API extractor; verifier optional |
+| **Default LLM coupling**                  | OpenAI                                   | None — extractor/verifier are remote-only (anthropic/openai/gemini/minimax/openai-compat) or a custom impl; both optional |
 
 ## Code-side comparison
 
@@ -177,10 +177,11 @@ productivity at the prototype stage. Use the right tool.
   yet; v0.3 will add a bulk-ingest path that amortises the embed
   + atomic_write call. Today you call `ingest()` in a loop.
 - **Mem0's metadata-extraction prompts.** Lunaris ships an
-  Extractor trait with three backends (candle / ollama / cloud-api),
-  but the default prompt set differs from Mem0's. If your existing
-  Mem0 deployment depends on specific extracted fields, override
-  `Extractor::extract` and port your prompt.
+  Extractor trait with remote-only backends (`ollama` /
+  `cloud-api`, selected via `LUNARIS_EXTRACT_PROVIDER`), but the default
+  prompt set differs from Mem0's. If your existing Mem0 deployment depends
+  on specific extracted fields, override `Extractor::extract` and port your
+  prompt.
 - **Graph queries.** Mem0 OSS v3 removed graph support — it is now
   Platform-only (Mem0g, Neo4j-backed, with an LLM on the read path and
   open deletion bugs). Lunaris's `Graph::anchored(entity_ids, hops)` is

@@ -91,29 +91,32 @@ let hits = scoped
 - **Any `Graph` branch forces client-side RRF** — the Moon-native one-trip
   fusion path only fires for `Vector + Keyword(BM25)` on the same index.
 
-## Extractor tiers (RFC 0004)
+## Extractor tiers (RFC 0004, superseded by the v0.6 llama.cpp-only cutover)
 
-One `Extractor` trait, three feature-gated backends, plus a `NoopExtractor`
-fallback. The default model size is the *Medium* tier (Gemma-3-4B); RFC 0004
-also defines a *Small/Tiny* tier (lighter model, ER-F1 ≥ 0.70 floor, < 1.5 GB
-RAM) and a *Large* tier:
+RFC 0004 originally defined an in-process candle extractor tier (Medium:
+Gemma-3-4B) alongside Ollama and cloud-API backends. The candle tier was
+deleted in the v0.6 llama.cpp-only cutover
+(`docs/decisions/2026-07-10-llamacpp-only-cutover.md`) — the extractor is now
+**remote-only**, plus a `NoopExtractor` fallback:
 
-| Backend | Cargo feature | Notes |
+| Backend | Selector | Notes |
 |---|---|---|
-| `CandleGemma3_4B` | `candle` (default) | In-process Gemma-3-4B-it via candle; ~150 ms per-batch timeout, falls back to per-chunk on timeout. Loads from `~/.cache/lunaris/models/`. |
-| `OllamaExtractor` | `ollama` | POSTs `/api/chat` with a JSON-schema `format` field. |
-| `CloudApiExtractor` | `cloud-api` | Provider-mux Anthropic / OpenAI / Gemini via `LUNARIS_EXTRACT_PROVIDER`; single retry on transient errors then a sentinel that the validator routes to `TransientAfterRetry`. |
-| `NoopExtractor` | always available | `applies() == false`; installed automatically when the candle weights are missing. |
+| `OllamaExtractor` | Cargo feature `ollama`, used via `with_extractor` or `LUNARIS_EXTRACT_PROVIDER=openai-compat` | POSTs `/api/chat` (or the OpenAI-compatible endpoint) with a JSON-schema `format` field. |
+| Cloud-API extractor | `LUNARIS_EXTRACT_PROVIDER` = `anthropic`\|`openai`\|`gemini`\|`minimax` (Cargo feature `cloud-api`) | Single retry on transient errors then a sentinel that the validator routes to `TransientAfterRetry`. |
+| `NoopExtractor` | always available | `applies() == false`; installed automatically when no extract provider is configured. |
 
-(`crates/lunaris-extract/src/lib.rs`; RFC 0004 "extractor tiers".)
+(`crates/lunaris-extract/src/lib.rs`; RFC 0004 "extractor tiers" — historical,
+its candle tier no longer exists.)
 
 ## Gotchas
 
-- **The extractor is required for graph ingest.** On a candle cache miss (no
-  ~3 GiB of weights on disk) `Lunaris::open` substitutes `NoopExtractor` and
-  emits a `tracing::warn!` — in that state `graph_pipeline().enable()` is a
-  no-op and zero `GraphNode`s get written. Fix with `with_extractor` (e.g.
-  `OllamaExtractor::new(...)`) or pre-download the weights.
+- **The extractor is required for graph ingest.** With no
+  `LUNARIS_EXTRACT_PROVIDER` set (and no `with_extractor` override),
+  `Lunaris::open` substitutes `NoopExtractor` and emits a `tracing::warn!` —
+  in that state `graph_pipeline().enable()` is a no-op and zero `GraphNode`s
+  get written. Fix by setting `LUNARIS_EXTRACT_PROVIDER` (e.g. `minimax`, or
+  `openai-compat` pointed at a local Ollama/llama-server) or supplying a
+  custom `with_extractor` impl.
 - **`communities` stays empty** until the [consolidator](./consolidate-verify.md)'s
   Leiden community-detection run lands (v1) — recall over that index returns
   nothing meanwhile.

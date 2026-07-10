@@ -92,20 +92,34 @@ at `moon://host:port`. Moon provides native `FT.SEARCH` (vector + BM25),
 index into one round trip. No Moon repo? Stick with Postgres; every
 `Lunaris` call works identically against either backend.
 
-### Embedder: in-process native, no external service required
+### Embedder: in-process llama.cpp, no external service required
 
-The default embedder is
-**granite-embedding-311m-multilingual-r2** (768-d), runs **in-process** via
-candle, and auto-downloads to `~/.cache/lunaris/models/` on first use — **no
-Ollama, no ONNX Runtime, no external service required.** An air-gapped Ollama
-HTTP embedder remains available as an operator escape hatch behind
+> **v0.6 llama.cpp-only cutover.** The candle inference stack is deleted.
+> The only local embed/rerank runtime is
+> `lunaris-llamacpp` — in-process llama.cpp FFI, static-linked, no external
+> server. See `docs/decisions/2026-07-10-llamacpp-only-cutover.md` (the
+> cutover ADR) and `docs/migration/0.5-to-0.6-llamacpp-only.md` (the
+> migration guide).
+
+The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
+loaded from a **Q4_K_M GGUF** (~240 MiB) via in-process llama.cpp — **no
+Ollama, no external service required.** The default reranker is
+**bge-reranker-v2-m3** (Q5_K_M GGUF, ~446 MiB), lazy-loaded on first recall.
+Both GGUFs are expected at `~/.lunaris/models/`; the MCP server stages them
+lazily on first recall, other deployments download them out-of-band. An
+air-gapped Ollama HTTP embedder remains available as an operator escape hatch
+behind `--features embed-remote` (resolves **after** the llama.cpp step).
+
+Override the artifact paths with `LUNARIS_EMBEDDER_GGUF=<path>` /
+`LUNARIS_RERANKER_GGUF=<path>`. There is no auto-download in the umbrella
+crate — a missing GGUF logs a `WARN` and falls back to `NoopEmbedder` /
+`NoopReranker`. Operators running an air-gapped Ollama for embedding (not the
+supported path) can set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` alongside
 `--features embed-remote`.
 
-Override the model directory with `LUNARIS_EMBEDDER_DIR=<path>`. For
-RSS-constrained hosts, activate the Q4_K_M GGUF variant via
-`--features embedder-gguf` and set `LUNARIS_EMBEDDER_GGUF=<path/to/granite-r2.Q4_K_M.gguf>`.
-Operators running an air-gapped Ollama for embedding (not the supported path)
-can set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` alongside `--features embed-remote`.
+Building the `llamacpp` feature (default) needs **cmake + a C++ toolchain**.
+For a pure-Rust, no-inference build (Tier-0, small devices):
+`default-features = false` → `NoopEmbedder`/`NoopReranker`.
 
 See the
 [Configuration Reference](../reference/configuration.md#1-cargo-feature-flags)
@@ -132,24 +146,26 @@ cargo add tokio --features macros,rt-multi-thread
 Feature flags on the `lunaris` umbrella crate (full table in the
 [Configuration Reference](../reference/configuration.md#1-cargo-feature-flags)):
 
-> **Note.** The native granite-r2 embedder and bge-reranker-v2-m3 reranker
-> are **always compiled** — no feature gate is needed. The flags below only
-> gate optional backends for the extractor, verifier, and escape-hatch paths.
+> **Note.** `llamacpp` is the only local embed/rerank runtime and is
+> **on by default** — building it needs cmake + a C++ toolchain. The flags
+> below also gate the extractor/verifier remote-provider backends and the
+> escape-hatch paths.
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `embedder-gguf` | | Q4_K_M GGUF quantized native embedder; activated by `LUNARIS_EMBEDDER_GGUF` |
-| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized native reranker; activated by `LUNARIS_RERANKER_GGUF` |
-| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only, not the supported path) |
-| `candle` | | In-process candle **extractor** (Gemma-3 4B) + **verifier** (Gemma-3 27B) LLM backends |
-| `ollama` | | Ollama HTTP **extractor** + **verifier** backends (NOT the embedder) |
+| `llamacpp` | ✅ | In-process llama.cpp embedder (granite-r2 Q4_K_M GGUF) + reranker (bge-reranker-v2-m3 Q5_K_M GGUF) |
+| `metal` / `cuda` / `vulkan` | | GPU offload — forwards to `llama-cpp-2`'s backends |
+| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only, not the supported path); resolves after the `llamacpp` step |
+| `ollama` | | `OllamaExtractor` / Ollama HTTP **verifier** backend selector (NOT the embedder) |
 | `cloud-api` | | Cloud-API extractor / verifier backends (pulls `reqwest`) |
-| `verify-small` | | In-process candle Gemma-3-270M verifier — the laptop-floor build (~600 MB disk / ~1 GB RAM, RFC 0006) |
-| `verify-large` | | In-process candle Gemma-3-27B verifier (explicit alias per RFC 0006) |
 
-`default = []` — the native embedder + reranker are unconditional; no
-feature is required for the core recall path. The extractor and verifier
-pipelines are opt-in at build time.
+`default = ["llamacpp"]`. Extractor and verifier are **remote-only** —
+`LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_VERIFY_PROVIDER`
+(`anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat`, the last
+covering Ollama / llama-server / vLLM / LM Studio via
+`LUNARIS_OPENAI_COMPAT_BASE_URL`) or a caller-supplied `with_extractor` /
+`with_verifier` impl; unset resolves to `NoopExtractor`/`NoopVerifier`. For a
+pure-Rust, no-C++-toolchain build (Tier-0): `default-features = false`.
 
 Smoke test — no services needed:
 

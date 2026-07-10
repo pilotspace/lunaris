@@ -3,7 +3,7 @@
 LLM-backed entity, relation, and fact extractor for the [Lunaris](https://github.com/pilotspace/lunaris) agent
 memory engine.
 
-This crate is the entity/relation/fact extractor — candle Gemma 3 4B for in-process inference, Ollama and cloud-API providers for hosted-LLM deployments.
+This crate is the entity/relation/fact extractor — remote-only since the llama.cpp cutover: Ollama and cloud-API providers (Anthropic / OpenAI / Gemini / MiniMax / any OpenAI-compatible URL) for hosted-LLM deployments.
 
 ## Use
 

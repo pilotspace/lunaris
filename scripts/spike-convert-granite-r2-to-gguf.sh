@@ -28,7 +28,7 @@
 #   graph explicit and the rerun cost zero.
 # - Pre-commit / CI never run this; it's a one-shot spike that the engineer
 #   executes once per model revision and pins the resulting SHA-256 in
-#   crates/lunaris-embed-native/src/lib.rs as GRANITE_R2_GGUF_Q4_SHA256.
+#   crates/lunaris-bench/src/bin/stage_models.rs as GRANITE_GGUF_Q4_K_M_SHA256.
 #
 # What this script does NOT do:
 # - Download granite-r2 weights from HuggingFace. The FP16 spawn already
@@ -144,7 +144,7 @@ fi
 $SHA256_BIN "$Q4_GGUF" | tee "$Q4_SHA"
 SHA256_HEX="$( $SHA256_BIN "$Q4_GGUF" | awk '{print $1}' )"
 log "SHA-256 = $SHA256_HEX"
-log "pin in crates/lunaris-embed-native/src/lib.rs:"
+log "pin in crates/lunaris-bench/src/bin/stage_models.rs:"
 log "    pub const GRANITE_R2_GGUF_Q4_SHA256: &str = \"$SHA256_HEX\";"
 
 # --- step 7: tensor manifest -------------------------------------------------

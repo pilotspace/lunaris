@@ -22,82 +22,73 @@ off"* — the safe production floor. Turn things on deliberately.
 
 ### `lunaris` (umbrella crate)
 
-> **Note.** The native granite-r2 embedder and bge-reranker-v2-m3 reranker
-> are **always compiled** into the umbrella — no feature gate, no env-var
-> backend swap. The flags below only gate optional extractor / verifier LLM
-> backends and escape-hatch paths.
+> **v0.6 llama.cpp-only cutover.** The candle inference stack (`native`,
+> `embedder-gguf`, `reranker-gguf`, `verify-small`, `verify-large`,
+> `cpu-accelerate`, `cpu-mkl`, `cuda-fa2`) is deleted. `llamacpp` is the only
+> local embed/rerank runtime and is **on by default**; it needs cmake + a C++
+> toolchain. See `docs/decisions/2026-07-10-llamacpp-only-cutover.md` (the
+> cutover ADR) and `docs/migration/0.5-to-0.6-llamacpp-only.md` (the
+> migration guide).
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `embedder-gguf` | | Q4_K_M GGUF quantized native embedder; activated by `LUNARIS_EMBEDDER_GGUF` |
-| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized native reranker; activated by `LUNARIS_RERANKER_GGUF` |
-| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only); activated by `LUNARIS_EMBEDDER_OLLAMA_URL` |
-| `candle` | | In-process candle **extractor** (Gemma-3 4B) + **verifier** (Gemma-3 27B) LLM backends |
-| `ollama` | | Ollama HTTP **extractor** + **verifier** backends (NOT the embedder) |
+| `llamacpp` | ✅ | In-process llama.cpp embedder (`LlamaCppEmbedder`, granite-r2 Q4_K_M GGUF) + reranker (`LlamaCppReranker`, bge-reranker-v2-m3 Q5_K_M GGUF) |
+| `metal` | | GPU offload on Apple Silicon — forwards to `llama-cpp-2` |
+| `cuda` | | GPU offload via CUDA — forwards to `llama-cpp-2` |
+| `vulkan` | | GPU offload via Vulkan — forwards to `llama-cpp-2` |
+| `embed-remote` | | Ollama HTTP embedder **escape hatch** (operator-only); activated by `LUNARIS_EMBEDDER_OLLAMA_URL`; resolves **after** the `llamacpp` step |
+| `ollama` | | `OllamaExtractor` (`with_extractor`) / Ollama HTTP **verifier** backend selector (NOT the embedder) |
 | `cloud-api` | | Cloud-API extractor / verifier backends (pulls `reqwest`) |
-| `verify-small` | | Forward `lunaris-verify/verify-small` — the candle Gemma-3 270M laptop-floor verifier (RFC 0006) |
-| `verify-large` | | Forward `lunaris-verify/verify-large` — the candle Gemma-3 27B verifier (alias of `candle` on the verify crate) |
 
-`default = []` — the native embedder + reranker are unconditional; no feature
-is required for the core recall path. The extractor and verifier pipelines are
-opt-in at build time. (The umbrella also forwards `moon-it` / `pg-it`
-integration features to the storage crates.)
+`default = ["llamacpp"]`. CPU is the default device; device selection is a
+runtime probe, overridden by `LUNARIS_DEVICE=cpu` (the kill-switch that forces
+zero GPU layers even on an accelerated build). Extractor and verifier are
+**remote-only** — `LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_VERIFY_PROVIDER`
+(`anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat`) or a
+caller-supplied `with_extractor` / `with_verifier` impl; unset resolves to
+`NoopExtractor`/`NoopVerifier`. For a pure-Rust, no-C++-toolchain build
+(Tier-0, small devices): `default-features = false` →
+`NoopEmbedder`/`NoopReranker`. (The umbrella also forwards `moon-it` /
+`pg-it` integration features to the storage crates.)
 
-### `lunaris-embed-native`
+### `lunaris-llamacpp`
 
-| Feature | Default | Effect |
-|---|:--:|---|
-| `embedder-gguf` | | Q4_K_M GGUF quantized variant (`NativeQuantizedEmbedder`) |
-| `embedder-it` | | Gates real-weights integration tests |
-
-Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
-`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**,
-and **Apple Silicon builds additionally compile the Metal kernels** via
-target-specific dependency blocks (`cpu-accelerate` / `metal` are redundant
-no-ops there). Device pick is a **runtime probe** (CUDA → Metal → CPU) with
-clean CPU fallback; `LUNARIS_DEVICE=auto|cpu|cuda|metal` overrides it —
-`cpu` skips GPU probes (bounds RSS on long-lived servers). `cpu-mkl`,
-`cuda`, `cuda-fa2` remain opt-in (external toolchains).
-
-### `lunaris-rerank-native`
+The only local embed/rerank runtime. `LlamaCppEmbedder` and
+`LlamaCppReranker` load their GGUF eagerly and raise/log a `WARN` +
+`NoopEmbedder`/`NoopReranker` fallback on a missing or corrupt artifact —
+there is **no auto-download**; the MCP server stages GGUFs lazily on first
+recall, other deployments download them out-of-band and verify against the
+canonical SHA-256s printed by `cargo run -p lunaris-bench --bin stage-models
+-- --help`.
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized variant (`NativeQuantizedReranker`) |
-| `reranker-it` | | Gates real-weights integration tests |
-
-Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
-`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**,
-and **Apple Silicon builds additionally compile the Metal kernels** via
-target-specific dependency blocks (`cpu-accelerate` / `metal` are redundant
-no-ops there). Device pick is a **runtime probe** (CUDA → Metal → CPU) with
-clean CPU fallback; `LUNARIS_DEVICE=auto|cpu|cuda|metal` overrides it —
-`cpu` skips GPU probes (bounds RSS on long-lived servers). `cpu-mkl`,
-`cuda`, `cuda-fa2` remain opt-in (external toolchains).
-
-`NoopReranker` is always available (no feature gate) — selectable at runtime
-for the latency-floor path.
+| `metal` / `cuda` / `vulkan` | | Forwarded from the umbrella — GPU offload via `llama-cpp-2` |
 
 ### `lunaris-extract`
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| `candle` | ✅ | In-process candle Gemma-3-4B fact extractor |
-| `ollama` | | Ollama HTTP extractor |
+| `ollama` | | `OllamaExtractor` — HTTP `/api/chat` extractor |
 | `cloud-api` | | Cloud-API extractor (pulls `reqwest`) |
 | `extractor-it` | | Enables integration tests that hit a live Ollama / cloud API |
+
+With no feature/provider active, `NoopExtractor` is the fallback (`applies()
+== false`). Provider selection at runtime is via `LUNARIS_EXTRACT_PROVIDER`.
 
 ### `lunaris-verify`
 
 | Feature | Default | Effect |
 |---|:--:|---|
-| *(none)* | ✅ | No verifier backend compiled — `NoopVerifier` only (RFC 0006) |
-| `candle` | | In-process candle Gemma-3-27B verifier |
-| `verify-small` | | In-process candle Gemma-3-270M verifier — the laptop-floor build (~600 MB weights, ~1 GB RAM, no Ollama). Pulls in `candle`. |
-| `verify-large` | | In-process candle Gemma-3-27B verifier — alias of `candle`, named explicitly for RFC 0006 symmetry |
+| *(none)* | ✅ | No verifier backend compiled — `NoopVerifier` only |
 | `ollama` | | Ollama HTTP verifier |
 | `cloud-api` | | Cloud-API verifier (pulls `reqwest`) |
-| `verifier-it` | | Enables integration tests that load a real Gemma-3 27B model / hit a live Ollama / cloud API |
+| `verifier-it` | | Enables integration tests that hit a live Ollama / cloud API |
+
+The candle-based `verify-small` (Gemma-3-270M) / `verify-large` (Gemma-3-27B)
+tiers from RFC 0006 were deleted in the v0.6 llama.cpp-only cutover — the
+verifier is remote-only (`LUNARIS_VERIFY_PROVIDER`) or `NoopVerifier`, with no
+in-process model tier.
 
 ### Integration-test features (never default)
 
@@ -122,40 +113,45 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 
 | Variable | Values | Default | Controls |
 |---|---|---|---|
-| `LUNARIS_VERIFIER_BACKEND` | `270m`\|`small` \| `27b`\|`large` \| `noop` | `270m` | Which verifier model (RFC 0006); `270m`/`small` needs the `verify-small` feature, `27b`/`large` needs `verify-large` (or `candle`). The effective verifier is still `NoopVerifier` until the matching feature is built **and** the model weights are staged — a cache miss or missing feature logs a `tracing::warn!` and falls back to `NoopVerifier` (the verifier worker stays disabled). |
+| `LUNARIS_VERIFY_PROVIDER` | `anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat` | unset | Remote verifier provider (v0.6 llama.cpp-only cutover deleted the local `270m`/`27b` model tiers — see `docs/decisions/2026-07-10-llamacpp-only-cutover.md`). Set-but-broken logs a `tracing::warn!` and falls back to `NoopVerifier`; unset is also `NoopVerifier`. |
 | `LUNARIS_CONSOLIDATOR_BACKEND` | `actr` \| `noop` | `actr` | ACT-R consolidator vs no-op |
 | `LUNARIS_GRAPH_ENABLED` | bool | off | Entity / community graph extraction pipeline |
 | `LUNARIS_VERIFY_ENABLED` | bool | off | Slow-path arbitration verifier pipeline |
 | `LUNARIS_CONSOLIDATE_ENABLED` | bool | off | Consolidation pipeline |
 
-> The native granite-r2 embedder and bge-reranker-v2-m3 reranker are selected
-> unconditionally — there is no `LUNARIS_EMBEDDER_BACKEND` or
-> `LUNARIS_RERANKER_BACKEND` variable. Use the env vars below to change the
-> model directory, activate a GGUF quantized variant, or (operators only)
-> redirect the embedder to a remote Ollama endpoint.
+> The llama.cpp granite-r2 embedder and bge-reranker-v2-m3 reranker are
+> selected unconditionally when the `llamacpp` feature is on (default) —
+> there is no `LUNARIS_EMBEDDER_BACKEND` or `LUNARIS_RERANKER_BACKEND`
+> variable. Use the env vars below to change the GGUF path or (operators
+> only) redirect the embedder to a remote Ollama endpoint.
 
 ### Embedder and reranker details
 
 | Variable | Default | Controls |
 |---|---|---|
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding LRU entries per `Lunaris` handle. Set `0` to disable. |
-| `LUNARIS_EMBEDDER_DIR` | `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/` | Directory holding native granite-r2 model artifacts |
-| `LUNARIS_RERANKER_DIR` | `~/.cache/lunaris/models/bge-reranker-v2-m3/` | Directory holding native bge-reranker-v2-m3 model artifacts |
-| `LUNARIS_EMBEDDER_GGUF` | — | Path to a Q4_K_M GGUF file; activates `NativeQuantizedEmbedder` (requires `--features embedder-gguf`) |
-| `LUNARIS_RERANKER_GGUF` | — | Path to a Q5_K_M-imatrix GGUF file; activates `NativeQuantizedReranker` (requires `--features reranker-gguf`) |
-| `LUNARIS_EMBEDDER_OLLAMA_URL` | — | **Operator escape hatch only.** Routes the embedder to a remote Ollama HTTP endpoint; requires `--features embed-remote`. Not the supported path. |
+| `LUNARIS_EMBEDDER_GGUF` | `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf` | Path to the granite-r2 Q4_K_M GGUF loaded by `LlamaCppEmbedder`. No auto-download — a missing/corrupt file logs a `WARN` and falls back to `NoopEmbedder`. |
+| `LUNARIS_RERANKER_GGUF` | `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf` | Path to the bge-reranker-v2-m3 Q5_K_M GGUF loaded by `LlamaCppReranker` (lazy-loaded on first recall). Missing/corrupt file logs a `WARN` and falls back to `NoopReranker`. |
+| `LUNARIS_DEVICE` | `auto` | `cpu` is the runtime kill-switch forcing zero GPU layers even on a `metal`/`cuda`/`vulkan` build. |
+| `LUNARIS_EMBEDDER_OLLAMA_URL` | — | **Operator escape hatch only.** Routes the embedder to a remote Ollama HTTP endpoint; requires `--features embed-remote`; resolves **after** the llama.cpp step. Not the supported path. |
 | `LUNARIS_OLLAMA_MODEL` | `embeddinggemma:300m` | Ollama model tag for the `embed-remote` escape-hatch embedder |
-| `OLLAMA_URL` | `http://localhost:11434` | Endpoint honoured by the Ollama extractor / verifier backends |
-| `OLLAMA_EXTRACT_MODEL` | `gemma3:4b` | Model tag for the Ollama extractor backend |
-| `OLLAMA_VERIFY_MODEL` | `gemma3:27b` | Model tag for the Ollama verifier backend |
 
-### Verifier / extractor cloud-API
+### Verifier / extractor providers (remote-only)
 
 | Variable | Default | Controls |
 |---|---|---|
-| `LUNARIS_VERIFY_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `gemini` — cloud provider for the verifier backend |
+| `LUNARIS_EXTRACT_PROVIDER` | unset | `anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat` — remote provider for the extractor backend (per-provider key is `<PROVIDER>_API_KEY`, e.g. `ANTHROPIC_API_KEY`); unset is `NoopExtractor` |
 | `LUNARIS_VERIFY_API_KEY` | — | Shared API key for the verifier (falls back to the provider-specific env var, e.g. `OPENAI_API_KEY`) |
-| `LUNARIS_EXTRACT_PROVIDER` | `anthropic` | `anthropic` \| `openai` \| `gemini` — cloud provider for the extractor backend (per-provider key is `<PROVIDER>_API_KEY`, e.g. `ANTHROPIC_API_KEY`) |
+| `LUNARIS_OPENAI_COMPAT_BASE_URL` | — | Base URL for the `openai-compat` provider (Ollama / llama-server / vLLM / LM Studio); keyless allowed |
+| `OPENAI_COMPAT_EXTRACT_MODEL` | — | Model tag for the `openai-compat` extractor |
+| `OPENAI_COMPAT_VERIFY_MODEL` | — | Model tag for the `openai-compat` verifier |
+| `OLLAMA_URL` | `http://localhost:11434` | Endpoint honoured by `OllamaExtractor` / the Ollama verifier backend (Cargo feature `ollama`, distinct from `openai-compat`) |
+| `OLLAMA_EXTRACT_MODEL` | `gemma3:4b` | Model tag for `OllamaExtractor` |
+| `OLLAMA_VERIFY_MODEL` | `gemma3:27b` | Model tag for the Ollama verifier backend |
+
+A provider that is set but fails to construct (bad URL, missing key) logs a
+`tracing::warn!` and degrades to `NoopExtractor`/`NoopVerifier` — never a
+silent backend swap.
 
 ### Supervision / worker pool
 

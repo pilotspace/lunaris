@@ -51,9 +51,10 @@ which reads the graph-pipeline toggle **once** at the top and picks a branch
    single-input embeds; a per-chunk failure surfaces immediately as
    `LunarisError::Storage(Backend(_))`
    (`crates/lunaris-ingest/src/pipeline.rs:120-178`). The default embedder is
-   **granite-embedding-311m-multilingual-r2** (768-d), running in-process via
-   candle — no external service required; weights auto-download to
-   `~/.cache/lunaris/models/` on first call. See
+   **granite-embedding-311m-multilingual-r2** (768-d, Q4_K_M GGUF), running
+   in-process via **llama.cpp** — no external service required; the GGUF is
+   staged at `~/.lunaris/models/` (the MCP server stages it lazily on first
+   recall; other deployments download it out-of-band). See
    [Configuration → Embedder](../reference/configuration.md#embedder-and-reranker-details).
 3. **Assemble one `Vec<WriteOp>`** — one `KvPut` for the episode, plus per
    chunk a `KvPut` (chunk JSON) and a `VectorUpsert` (768-d embedding +
@@ -94,7 +95,7 @@ the graph-on branch:
 
 - Each chunk is run through the [`Extractor`](./graph.md) →
   `validator::validate` → `ValidatedExtraction`. (A `NoopExtractor` —
-  installed automatically when the Gemma-3-4B weights are missing —
+  installed automatically when no `LUNARIS_EXTRACT_PROVIDER` is configured —
   short-circuits this: `applies() == false` skips the extract call entirely,
   so no `GraphNode`s are written.)
 - The single `WriteOp` vector grows to include, per extracted entity, a
@@ -112,14 +113,13 @@ A toggle change *during* an in-flight ingest takes effect on the **next** call
 - **Bare `Lunaris::ingest(Episode)` still exists** but the scoped path is the
   one to use. The HTTP server already routes every `POST /v1/ingest` through
   `ScopedLunaris::ingest` keyed on the JWT `tenant` claim.
-- **Weights cache.** The default embedder (native granite-r2) auto-downloads
-  its weights to `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`
-  on first call — no manual step. Missing weights surface as a `Backend` error
-  of the form `granite-embedding weights missing at PATH` with a suggested
-  `huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2`
-  command. Point `LUNARIS_EMBEDDER_DIR` at an existing local copy to skip the
-  download, or build with `--features embed-remote` and set
-  `LUNARIS_EMBEDDER_OLLAMA_URL` to use the Ollama HTTP escape hatch.
+- **GGUF staging.** The default embedder (llama.cpp granite-r2) expects its
+  GGUF at `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`
+  — there is **no auto-download** in the umbrella crate; a missing GGUF logs a
+  `WARN` and falls back to `NoopEmbedder`. The MCP server stages GGUFs lazily
+  on first recall. Point `LUNARIS_EMBEDDER_GGUF` at an existing local copy, or
+  build with `--features embed-remote` and set `LUNARIS_EMBEDDER_OLLAMA_URL`
+  to use the Ollama HTTP escape hatch (resolves after the llama.cpp step).
 - **Embedding dimension.** The Moon adapter creates its vector index at the
   configured embedder's dimension (default 768-d; `Lunaris::open` passes
   `embedder.dim()`, or use `MoonStorage::connect_with_dim` directly), so a
