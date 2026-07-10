@@ -163,6 +163,8 @@ flagship), `postgres://` (portability, RLS-isolated), `memory://` /
 `bge-reranker-v2-m3` Q5_K_M GGUF) — no embedding API, no network on the
 hot path; GPU offload is a build-time `metal`/`cuda`/`vulkan` feature.
 Air-gapped options: [configuration reference](docs/book/src/reference/configuration.md).
+Memory budgets per build tier (Tier-0 no-inference → full cross-encoder):
+[deployment tiers](docs/deployment-tiers.md).
 
 Runnable examples: [`examples/quickstart-py/`](examples/quickstart-py/) ·
 [`examples/quickstart-ts/`](examples/quickstart-ts/) ·
