@@ -203,11 +203,42 @@ impl Reranker for NativeQuantizedReranker {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RerankCandidate>, LunarisError> {
-            let pairs: Vec<(&str, &str)> =
-                docs.iter().map(|d| (owned_query.as_str(), d.text.as_str())).collect();
-            let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
+            // §4b length bucketing — the quantized path previously scored ALL
+            // pairs in one unchunked pad-to-longest forward (no
+            // public_batch_size window at all, unlike the FP path). Now both
+            // paths share the same plan: length-sorted windows capped at
+            // public_batch_size() rows and ≤25% padding, scores scattered
+            // back through `order` so the positional zip below still pairs
+            // score i with docs[i].
+            let lens: Vec<usize> =
+                docs.iter().map(|d| owned_query.len() + d.text.len()).collect();
+            let (order, sizes) = crate::reranker::plan_bucketed_batches(
+                &lens,
+                crate::reranker::public_batch_size(),
+                u128::MAX,
+            );
+            let mut all_scores: Vec<f32> = vec![f32::NAN; docs.len()];
+            let mut start = 0usize;
+            for sz in sizes {
+                let idxs = &order[start..start + sz];
+                let pairs: Vec<(&str, &str)> = idxs
+                    .iter()
+                    .map(|&i| (owned_query.as_str(), docs[i].text.as_str()))
+                    .collect();
+                let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
+                if scores.len() != sz {
+                    return Err(LunarisError::Storage(StorageError::Backend(format!(
+                        "lunaris-rerank-native (quantized): score_blocking returned {} scores for {sz} pairs",
+                        scores.len()
+                    ))));
+                }
+                for (&i, s) in idxs.iter().zip(scores) {
+                    all_scores[i] = s;
+                }
+                start += sz;
+            }
 
-            let mut scored: Vec<(f32, RerankCandidate)> = scores
+            let mut scored: Vec<(f32, RerankCandidate)> = all_scores
                 .into_iter()
                 .zip(docs)
                 .map(|(s, mut d)| {

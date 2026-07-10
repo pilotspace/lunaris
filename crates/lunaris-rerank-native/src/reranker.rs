@@ -60,6 +60,67 @@ pub fn public_batch_size() -> usize {
     static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| resolve_batch_size(std::env::var("LUNARIS_RERANK_BATCH").ok().as_deref()))
 }
+
+/// Maximum tolerated padding fraction per forward window — mirrors
+/// `lunaris_embed_native::embedder::{MAX_PAD_FRACTION_NUM,_DEN}` byte-for-byte
+/// (same policy on both sides of the embed/rerank split). The §4b profiling
+/// matrix measured 48% padding waste on batch=8 rerank pairs, making batch=8
+/// ~3× slower per pair than batch=1.
+pub(crate) const MAX_PAD_FRACTION_NUM: u128 = 1;
+pub(crate) const MAX_PAD_FRACTION_DEN: u128 = 4;
+
+/// Length-bucketed batch plan (§4b-RESULTS finding #1) — mirrors
+/// `lunaris_embed_native::embedder::plan_bucketed_batches` byte-for-byte
+/// except the doc-comment. Rerank callers pass `u128::MAX` as `budget` (the
+/// activation-footprint ceiling is an embedder concern; pair length is
+/// already bounded by the tokenizer's `max_len` truncation).
+///
+/// Returns `(order, sizes)`: `order` is the input indices stably sorted by
+/// byte length; `sizes` are forward-window row counts over that sorted
+/// order. Every window satisfies `rows ≤ max_rows`,
+/// `rows × max_len_in_window² ≤ budget`, and padding ≤
+/// [`MAX_PAD_FRACTION_NUM`]/[`MAX_PAD_FRACTION_DEN`] of the window's padded
+/// area. Callers MUST scatter window outputs back through `order`.
+pub(crate) fn plan_bucketed_batches(
+    byte_lens: &[usize],
+    max_rows: usize,
+    budget: u128,
+) -> (Vec<usize>, Vec<usize>) {
+    let max_rows = max_rows.max(1);
+    let mut order: Vec<usize> = (0..byte_lens.len()).collect();
+    order.sort_by_key(|&i| byte_lens[i]);
+
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut count: usize = 0;
+    let mut max_len: usize = 0;
+    let mut sum_len: u128 = 0;
+    for &i in &order {
+        let len = byte_lens[i];
+        if count >= 1 {
+            let rows = count as u128 + 1;
+            let pmax = max_len.max(len) as u128;
+            let footprint = rows * pmax * pmax;
+            let padded_area = rows * pmax;
+            let pad_cells = padded_area - (sum_len + len as u128);
+            if count >= max_rows
+                || footprint > budget
+                || pad_cells * MAX_PAD_FRACTION_DEN > padded_area * MAX_PAD_FRACTION_NUM
+            {
+                sizes.push(count);
+                count = 0;
+                max_len = 0;
+                sum_len = 0;
+            }
+        }
+        count += 1;
+        max_len = max_len.max(len);
+        sum_len += len as u128;
+    }
+    if count > 0 {
+        sizes.push(count);
+    }
+    (order, sizes)
+}
 use crate::tokenizer::{EncodedPairBatch, PairTokenizer, TokenizerError};
 use crate::xlmr_reranker::{ForwardError, XlmRobertaReranker};
 
@@ -273,20 +334,34 @@ impl Reranker for NativeReranker {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RerankCandidate>, LunarisError> {
-            // O-01-E — re-chunk docs into windows of public_batch_size()
-            // (default MAX_PUBLIC_BATCH=8, override via LUNARIS_RERANK_BATCH)
-            // so each forward pass tokenizes at most that many pairs. At the
-            // default, K=10 (the rerank gate's test point) is two chunks
-            // (8 + 2); at K=30 it's four chunks (8+8+8+6). The per-chunk
-            // fixed cost is one `encode_pair_batch` + one `score_blocking` —
-            // same kernel path as the original single-shot dispatch, just
-            // bounded.
-            let mut all_scores: Vec<f32> = Vec::with_capacity(docs.len());
-            for chunk in docs.chunks(public_batch_size()) {
+            // O-01-E + §4b length bucketing — re-chunk docs into windows of at
+            // most public_batch_size() pairs (default MAX_PUBLIC_BATCH=8,
+            // override via LUNARIS_RERANK_BATCH), walking a length-sorted
+            // order so a window never mixes a short doc with a long one (the
+            // §4b matrix measured 48% padding waste on mixed batch=8 pairs).
+            // Scores scatter back through `order` so `all_scores[i]` is
+            // docs[i]'s score — the zip below pairs them positionally. Pair
+            // length includes the constant query so the waste ceiling sees
+            // the real padded sequence.
+            let lens: Vec<usize> = docs.iter().map(|d| owned_query.len() + d.text.len()).collect();
+            let (order, sizes) = plan_bucketed_batches(&lens, public_batch_size(), u128::MAX);
+            let mut all_scores: Vec<f32> = vec![f32::NAN; docs.len()];
+            let mut start = 0usize;
+            for sz in sizes {
+                let idxs = &order[start..start + sz];
                 let pairs: Vec<(&str, &str)> =
-                    chunk.iter().map(|d| (owned_query.as_str(), d.text.as_str())).collect();
+                    idxs.iter().map(|&i| (owned_query.as_str(), docs[i].text.as_str())).collect();
                 let scores = me.score_blocking(&pairs).map_err(LunarisError::from)?;
-                all_scores.extend(scores);
+                if scores.len() != sz {
+                    return Err(LunarisError::Storage(StorageError::Backend(format!(
+                        "lunaris-rerank-native: score_blocking returned {} scores for {sz} pairs",
+                        scores.len()
+                    ))));
+                }
+                for (&i, s) in idxs.iter().zip(scores) {
+                    all_scores[i] = s;
+                }
+                start += sz;
             }
 
             // Pair scores with docs, mutate score in place, sort desc.
@@ -365,5 +440,86 @@ mod tests {
         assert_eq!(resolve_batch_size(Some("-4")), MAX_PUBLIC_BATCH);
         assert_eq!(resolve_batch_size(Some("abc")), MAX_PUBLIC_BATCH);
         assert_eq!(resolve_batch_size(Some("")), MAX_PUBLIC_BATCH);
+    }
+
+    // §4b length bucketing — `plan_bucketed_batches` (mirror of the
+    // lunaris-embed-native tests, rerank operating point: budget=u128::MAX).
+    // RED observed as E0425 (helper absent) before the planner landed.
+
+    fn assert_bucketed_invariants(
+        lens: &[usize],
+        order: &[usize],
+        sizes: &[usize],
+        max_rows: usize,
+    ) {
+        let mut seen = order.to_vec();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..lens.len()).collect::<Vec<_>>(), "order must be a permutation");
+        assert_eq!(sizes.iter().sum::<usize>(), lens.len(), "sizes must cover every input");
+
+        let mut start = 0usize;
+        for &sz in sizes {
+            let window: Vec<usize> = order[start..start + sz].iter().map(|&i| lens[i]).collect();
+            let rows = sz as u128;
+            let pmax = *window.iter().max().unwrap() as u128;
+            let sum: u128 = window.iter().map(|&l| l as u128).sum();
+            assert!(sz <= max_rows.max(1), "rows {sz} > max_rows {max_rows}");
+            let padded_area = rows * pmax;
+            assert!(
+                (padded_area - sum) * MAX_PAD_FRACTION_DEN <= padded_area * MAX_PAD_FRACTION_NUM,
+                "padding waste over ceiling in window {window:?}"
+            );
+            start += sz;
+        }
+    }
+
+    /// THE §4b REGRESSION GUARD (rerank side). Interleaved short/long pairs
+    /// (the shape the profiling matrix measured at 48% padding waste) must
+    /// split into length-homogeneous windows.
+    #[test]
+    fn bucketed_plan_separates_interleaved_pair_lengths() {
+        // Pair lens = query + doc bytes; constant query offset (60) applied.
+        let lens = vec![74usize, 1260, 74, 1260, 74, 1260];
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, u128::MAX);
+        assert_eq!(sizes, vec![3, 3], "short and long pairs must land in separate windows");
+        assert_eq!(&order[..3], &[0, 2, 4], "equal lengths keep input order (stable sort)");
+        assert_eq!(&order[3..], &[1, 3, 5]);
+        assert_bucketed_invariants(&lens, &order, &sizes, 8);
+    }
+
+    #[test]
+    fn bucketed_plan_identical_lengths_fill_to_row_cap() {
+        // K=10 at the default row cap of 8 — the rerank gate's test point —
+        // must still be two windows (8 + 2), same as the contiguous chunking.
+        let lens = vec![300usize; 10];
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, u128::MAX);
+        assert_eq!(sizes, vec![8, 2]);
+        assert_eq!(order, (0..10).collect::<Vec<_>>(), "stable sort keeps identity order");
+        assert_bucketed_invariants(&lens, &order, &sizes, 8);
+    }
+
+    #[test]
+    fn bucketed_plan_smooth_ramp_does_not_fragment() {
+        let lens: Vec<usize> = (0..16).map(|i| 400 + i * 10).collect();
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, u128::MAX);
+        assert_eq!(sizes, vec![8, 8], "a smooth ramp fills windows to the row cap");
+        assert_bucketed_invariants(&lens, &order, &sizes, 8);
+    }
+
+    #[test]
+    fn bucketed_plan_empty_singleton_and_zero_rows() {
+        let (order, sizes) = plan_bucketed_batches(&[], 8, u128::MAX);
+        assert!(order.is_empty() && sizes.is_empty());
+        let (order, sizes) = plan_bucketed_batches(&[5], 8, u128::MAX);
+        assert_eq!((order, sizes), (vec![0], vec![1]));
+        let (_, sizes) = plan_bucketed_batches(&[10, 10, 10], 0, u128::MAX);
+        assert_eq!(sizes, vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn bucketed_plan_zero_length_inputs_do_not_divide_by_zero() {
+        let lens = vec![0usize, 0, 0, 500];
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, u128::MAX);
+        assert_bucketed_invariants(&lens, &order, &sizes, 8);
     }
 }
