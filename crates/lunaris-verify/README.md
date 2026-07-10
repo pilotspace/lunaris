@@ -3,7 +3,7 @@
 Slow-path arbitration verifier for the [Lunaris](https://github.com/pilotspace/lunaris) agent
 memory engine.
 
-This crate is the slow-path verifier — candle Gemma 3 27B (or 270M via the verify-small feature, RFC 0006), Ollama, and cloud-API arbitration backends behind a typed Verifier trait.
+This crate is the slow-path verifier — remote-only since the llama.cpp cutover: Ollama and cloud-API arbitration backends (Anthropic / OpenAI / Gemini / MiniMax / any OpenAI-compatible URL) behind a typed Verifier trait.
 
 ## Use
 

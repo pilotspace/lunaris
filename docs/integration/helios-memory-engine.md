@@ -1,5 +1,27 @@
 # Helios ↔ Lunaris Integration Recipe
 
+> **⚠️ v0.6 llama.cpp-only cutover (ADR 2026-07-10).** This recipe was
+> written against the v0.4/v0.5 candle stack. The **architecture is still
+> the supported pattern** — Helios builds `Arc<dyn Embedder>` /
+> `Arc<dyn Reranker>` components and hot-swaps the Lunaris handle via
+> `ArcSwap` — but the candle constructors in §3 were deleted. Mapping:
+>
+> | This doc says | Use instead |
+> |---|---|
+> | `NativeEmbedder` / `NativeQuantizedEmbedder` (`lunaris_embed_native`) | `lunaris_llamacpp::LlamaCppEmbedder::open(LlamaCppEmbedderOpts { gguf_path, .. })` — granite-r2 Q4_K_M GGUF |
+> | `NativeReranker` / `NativeQuantizedReranker` (`lunaris_rerank_native`) | `lunaris_llamacpp::LlamaCppReranker::open(LlamaCppRerankerOpts { gguf_path, .. })` — bge-reranker-v2-m3 Q5_K_M GGUF |
+> | features `embedder-gguf` / `reranker-gguf` | feature `llamacpp` (default on the umbrella) |
+> | `candle-core` dep + `metal`/`cuda`/`cpu-mkl` candle features | no candle dep; build with umbrella `metal` / `cuda` / `vulkan` |
+> | FP16 ↔ Q4 / FP32 ↔ Q5 runtime toggle | collapsed — one GGUF tier per model; the remaining toggles are llamacpp ↔ Ollama-remote ↔ noop |
+>
+> Output contracts are unchanged (768-d L2-normalized embeddings; sigmoid
+> rerank scores ∈ [0, 1]), so §4–§17 (handle swap, config schema,
+> hot-reload, CLI, test plan, ops) apply as written modulo constructor
+> names. See
+> [`docs/migration/0.5-to-0.6-llamacpp-only.md`](../migration/0.5-to-0.6-llamacpp-only.md)
+> and the `lunaris-llamacpp` rustdoc for current signatures.
+
+
 **Purpose:** Embed Lunaris as the memory engine for Helios with **runtime-toggleable** embedder/reranker modes (FP16 ↔ Q4, FP32 ↔ Q5, native ↔ Ollama) — no rebuild, no restart.
 
 **Audience:** Helios engineers integrating against Lunaris v0.4 (commit `79c0d0d` or later).

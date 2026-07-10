@@ -1,6 +1,7 @@
 // vitest coverage for the EmbedderConfig + RerankerConfig napi surface,
-// refreshed to the v0.4+ native API (N-03 cutover deleted the fastembed /
-// ollama / fromOnnx* factories — see docs/migration/0.3-to-0.4-native-default.md).
+// refreshed to the v0.6 llama.cpp-only API (the cutover deleted the candle
+// native()/nativeQuantized() backends — see
+// docs/migration/0.5-to-0.6-llamacpp-only.md).
 //
 // Scenarios mirror the pytest sibling at
 // crates/lunaris-py/tests/test_embedder_config.py one-for-one (same names,
@@ -8,10 +9,10 @@
 //
 // ## Two tiers
 //
-// **Offline (default):** factory surface + cheap error paths. The native
-// factories read LOCAL files only (model dir artifacts) — no network, no HF
-// Hub download — so a bogus modelDir/ggufPath fails fast and deterministically
-// on any machine, including a bare CI runner.
+// **Offline (default):** factory surface + cheap error paths. The llamacpp
+// factories read LOCAL files only (the GGUF artifact) — no network, no HF
+// Hub download — so a bogus ggufPath fails fast and deterministically on any
+// machine, including a bare CI runner.
 //
 // **Integration (LUNARIS_TS_IT=1):** opens a real Lunaris handle against the
 // Moon dev instance and smoke-checks the withEmbedder plumbing with the
@@ -42,25 +43,30 @@ describe("EmbedderConfig — offline tier", () => {
     expect(cfg.declaredDim).toBe(512);
   });
 
-  // PY: test_embedder_config_native_missing_artifacts
-  test("native() factory is exposed and fails fast on a missing model dir", () => {
-    expect(EmbedderConfig.native).toBeTypeOf("function");
-    // Local-file read only — no network. A bogus dir means no
-    // model.safetensors / tokenizer.json / config.json, so open() throws.
+  // PY: test_embedder_config_llamacpp_missing_gguf
+  test("llamacpp() factory is exposed and fails fast on a missing GGUF", () => {
+    expect(EmbedderConfig.llamacpp).toBeTypeOf("function");
+    // Local-file read only — no network. Two valid builds, both MUST throw
+    // here: a Tier-0 build (no `llamacpp` feature) raises the no-inference
+    // stub error; a full build fails the local GGUF read.
     expect(() =>
-      EmbedderConfig.native({ modelDir: "/nope/does-not-exist" }),
+      EmbedderConfig.llamacpp({ ggufPath: "/nope/does-not-exist.gguf" }),
     ).toThrow();
   });
 
-  // PY: test_embedder_config_native_quantized_unavailable_or_bad_path
-  test("nativeQuantized() throws on a missing GGUF (or without embedder-gguf)", () => {
-    expect(EmbedderConfig.nativeQuantized).toBeTypeOf("function");
-    // Two valid builds, both MUST throw here: without `embedder-gguf` the
-    // stub raises a clear feature error; with it, the missing GGUF path
-    // fails the local read. Either way no model download is involved.
+  // PY: test_embedder_config_retired_native_factories
+  test("retired native()/nativeQuantized() raise the migration hint", () => {
+    // llama.cpp-only cutover: the candle factories survive as stubs so
+    // existing callers get an actionable error, not a missing-method crash.
+    // Pin the MESSAGE (not just "throws") — a Tier-0/full-build artifact
+    // error would also throw, and this test must discriminate.
+    expect(EmbedderConfig.native).toBeTypeOf("function");
+    expect(() => EmbedderConfig.native({ modelDir: "/nope" })).toThrow(
+      /llama\.cpp-only cutover/,
+    );
     expect(() =>
-      EmbedderConfig.nativeQuantized({ ggufPath: "/nope/does-not-exist.gguf" }),
-    ).toThrow();
+      EmbedderConfig.nativeQuantized({ ggufPath: "/nope.gguf" }),
+    ).toThrow(/llama\.cpp-only cutover/);
   });
 
   // PY: test_embedder_config_deleted_factories_gone
@@ -83,20 +89,23 @@ describe("RerankerConfig — offline tier", () => {
     expect(cfg).toBeDefined();
   });
 
-  // PY: test_reranker_config_native_missing_artifacts
-  test("native() factory is exposed and fails fast on a missing model dir", () => {
-    expect(RerankerConfig.native).toBeTypeOf("function");
+  // PY: test_reranker_config_llamacpp_missing_gguf
+  test("llamacpp() factory is exposed and fails fast on a missing GGUF", () => {
+    expect(RerankerConfig.llamacpp).toBeTypeOf("function");
     expect(() =>
-      RerankerConfig.native({ modelDir: "/nope/does-not-exist" }),
+      RerankerConfig.llamacpp({ ggufPath: "/nope/does-not-exist.gguf" }),
     ).toThrow();
   });
 
-  // PY: test_reranker_config_native_quantized_unavailable_or_bad_path
-  test("nativeQuantized() throws on a missing GGUF (or without reranker-gguf)", () => {
-    expect(RerankerConfig.nativeQuantized).toBeTypeOf("function");
+  // PY: test_reranker_config_retired_native_factories
+  test("retired native()/nativeQuantized() raise the migration hint", () => {
+    expect(RerankerConfig.native).toBeTypeOf("function");
+    expect(() => RerankerConfig.native({ modelDir: "/nope" })).toThrow(
+      /llama\.cpp-only cutover/,
+    );
     expect(() =>
-      RerankerConfig.nativeQuantized({ ggufPath: "/nope/does-not-exist.gguf" }),
-    ).toThrow();
+      RerankerConfig.nativeQuantized({ ggufPath: "/nope.gguf" }),
+    ).toThrow(/llama\.cpp-only cutover/);
   });
 
   // PY: test_reranker_config_deleted_factories_gone
@@ -126,7 +135,7 @@ describe("Lunaris.withEmbedder / withReranker — integration tier", () => {
 
   // PY: test_lunaris_open_with_bad_dim_raises_on_first_embed
   //
-  // Deferred to an upstream-supplied native model fixture (mirrors the
+  // Deferred to an upstream-supplied llamacpp model fixture (mirrors the
   // pytest sibling's deferral). The DimValidatingEmbedder wrapper IS active
   // in the BYO path — first embed_batch checks observed vs. declared dim —
   // but exercising it requires real model artifacts whose output dim ≠

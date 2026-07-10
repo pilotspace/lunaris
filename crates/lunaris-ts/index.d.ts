@@ -80,27 +80,31 @@ export declare class EmbedderConfig {
    */
   static noop(dim?: number | undefined | null): EmbedderConfig
   /**
-   * FP16 candle `NativeEmbedder` backed by
-   * `ibm-granite/granite-embedding-311m-multilingual-r2` (768-d).
+   * llama.cpp `LlamaCppEmbedder` backed by the granite-r2 Q4_K_M GGUF
+   * (768-d).
    *
-   * `modelDir` defaults to
-   * `~/Library/Caches/lunaris/models/granite-embedding-311m-multilingual-r2/`
-   * on macOS (resolves via `dirs::cache_dir()` on other platforms).
+   * `ggufPath` defaults to the staged artifact
+   * `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
+   */
+  static llamacpp(opts?: LlamaCppConfigOpts | undefined | null): EmbedderConfig
+  /**
+   * Stub raising `InvalidArg` when the cdylib was built without the
+   * `llamacpp` feature (Tier-0 build).
+   */
+  static llamacpp(opts?: LlamaCppConfigOpts | undefined | null): EmbedderConfig
+  /**
+   * RETIRED (llama.cpp-only cutover): the candle `NativeEmbedder` was
+   * deleted. Use `EmbedderConfig.llamacpp()` instead.
    */
   static native(opts?: NativeConfigOpts | undefined | null): EmbedderConfig
   /**
-   * Q4_K_M GGUF `NativeQuantizedEmbedder` — requires the napi cdylib
-   * to be built with the `embedder-gguf` feature.
-   */
-  static nativeQuantized(opts: NativeQuantizedConfigOpts): EmbedderConfig
-  /**
-   * Stub raising `InvalidArg` when the cdylib was built without
-   * `embedder-gguf`. Surfaces a clear error instead of `undefined`.
+   * RETIRED (llama.cpp-only cutover): the candle quantized embedder was
+   * deleted. Use `EmbedderConfig.llamacpp()` instead.
    */
   static nativeQuantized(opts: NativeQuantizedConfigOpts): EmbedderConfig
   /**
    * Output dimensionality declared by the operator at config time.
-   * For native paths this is `GRANITE_R2_DIM = 768`.
+   * For the llamacpp path this is granite-r2's 768.
    */
   get declaredDim(): number
 }
@@ -232,15 +236,29 @@ export declare class MultiTurnConversation {
  */
 export declare class RerankerConfig {
   /**
-   * FP32 candle `NativeReranker` backed by `BAAI/bge-reranker-v2-m3`.
-   * `modelDir` defaults to `<cache>/lunaris/models/bge-reranker-v2-m3/`.
+   * llama.cpp `LlamaCppReranker` backed by the bge-reranker-v2-m3 Q5_K_M
+   * GGUF (cross-encoder, sigmoid scores ∈ [0, 1]).
+   *
+   * `ggufPath` defaults to the staged artifact
+   * `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`. Loads eagerly and
+   * raises on a missing/corrupt artifact (explicit construction = fail
+   * fast; the umbrella's default resolution defers the load instead).
+   */
+  static llamacpp(opts?: LlamaCppRerankerConfigOpts | undefined | null): RerankerConfig
+  /**
+   * Stub raising `InvalidArg` when the cdylib was built without the
+   * `llamacpp` feature (Tier-0 build).
+   */
+  static llamacpp(opts?: LlamaCppRerankerConfigOpts | undefined | null): RerankerConfig
+  /**
+   * RETIRED (llama.cpp-only cutover): the candle `NativeReranker` was
+   * deleted. Use `RerankerConfig.llamacpp()` instead.
    */
   static native(opts?: NativeRerankerConfigOpts | undefined | null): RerankerConfig
   /**
-   * Q4_K_M GGUF `NativeQuantizedReranker` — requires the napi cdylib built
-   * with `reranker-gguf`.
+   * RETIRED (llama.cpp-only cutover): the candle quantized reranker was
+   * deleted. Use `RerankerConfig.llamacpp()` instead.
    */
-  static nativeQuantized(opts: NativeQuantizedRerankerConfigOpts): RerankerConfig
   static nativeQuantized(opts: NativeQuantizedRerankerConfigOpts): RerankerConfig
   /** RETRIEVE-06 fallback — passes candidates through with original scores. */
   static noop(): RerankerConfig
@@ -454,6 +472,22 @@ export declare function graphPipelineEnable(handle: GraphPipelineHandle): void
 
 export declare function graphPipelineIsEnabled(handle: GraphPipelineHandle): boolean
 
+export interface LlamaCppConfigOpts {
+  /**
+   * Path to the GGUF artifact. Default:
+   * `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
+   */
+  ggufPath?: string
+}
+
+export interface LlamaCppRerankerConfigOpts {
+  /**
+   * Path to the GGUF artifact. Default:
+   * `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`.
+   */
+  ggufPath?: string
+}
+
 /**
  * Construct a `ScopedLunaris` bound to `scope`.
  *
@@ -468,32 +502,30 @@ export declare function lunarisScoped(handle: Lunaris, scope: Scope): ScopedLuna
 
 export interface NativeConfigOpts {
   /**
-   * Override for the granite-r2 model directory. Default:
-   * `<cache>/lunaris/models/granite-embedding-311m-multilingual-r2/`.
+   * RETIRED — kept so existing callers get the migration error, not a
+   * TypeScript signature break.
    */
   modelDir?: string
 }
 
 export interface NativeQuantizedConfigOpts {
-  /** Path to the Q4_K_M GGUF artifact. */
+  /** RETIRED — see `EmbedderConfig.llamacpp()`. */
   ggufPath: string
-  /**
-   * Override for the model directory holding `tokenizer.json` +
-   * `config.json`. Default: same as `EmbedderConfig.native()`.
-   */
+  /** RETIRED — see `EmbedderConfig.llamacpp()`. */
   modelDir?: string
 }
 
 export interface NativeQuantizedRerankerConfigOpts {
-  /** Path to the Q4_K_M GGUF artifact. */
+  /** RETIRED — see `RerankerConfig.llamacpp()`. */
   ggufPath: string
+  /** RETIRED — see `RerankerConfig.llamacpp()`. */
   modelDir?: string
 }
 
 export interface NativeRerankerConfigOpts {
   /**
-   * Override for the bge-reranker model directory. Default:
-   * `<cache>/lunaris/models/bge-reranker-v2-m3/`.
+   * RETIRED — kept so existing callers get the migration error, not a
+   * TypeScript signature break.
    */
   modelDir?: string
 }

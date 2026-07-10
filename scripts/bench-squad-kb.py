@@ -239,11 +239,11 @@ async def main() -> None:
     ap.add_argument(
         "--embedder",
         default="default",
-        choices=["default", "native", "q4-gguf"],
+        choices=["default", "llamacpp"],
         help=(
-            "default = whatever the SDK env-surface picks; native = FP16 granite-r2; "
-            "q4-gguf = NativeQuantizedEmbedder (needs an embedder-gguf wheel; GGUF path "
-            "from LUNARIS_BENCH_GGUF or the canonical spike cache location)"
+            "default = whatever the SDK env-surface picks; llamacpp = "
+            "EmbedderConfig.llamacpp() (granite-r2 Q4_K_M GGUF; path from "
+            "LUNARIS_BENCH_GGUF or the ~/.lunaris/models/ staged default)"
         ),
     )
     ap.add_argument(
@@ -258,17 +258,14 @@ async def main() -> None:
     args = ap.parse_args()
 
     embedder_cfg = None
-    embedder_desc = "SDK default (native FP16 granite-r2 unless env overrides)"
-    if args.embedder == "native":
-        embedder_cfg = lunaris.EmbedderConfig.native()
-        embedder_desc = "native FP16 granite-embedding-311m-multilingual-r2 (768d)"
-    elif args.embedder == "q4-gguf":
-        gguf = os.environ.get(
-            "LUNARIS_BENCH_GGUF",
-            os.path.expanduser("~/.cache/lunaris/spike/granite-r2/gguf/granite-r2-311m-Q4_K_M.gguf"),
+    embedder_desc = "SDK default (llama.cpp Q4_K_M granite-r2 unless env overrides)"
+    if args.embedder == "llamacpp":
+        gguf = os.environ.get("LUNARIS_BENCH_GGUF")  # None -> staged default
+        embedder_cfg = lunaris.EmbedderConfig.llamacpp(gguf)
+        embedder_desc = (
+            f"llama.cpp Q4_K_M GGUF granite-r2 (768d) "
+            f"[{gguf or '~/.lunaris/models/ staged default'}]"
         )
-        embedder_cfg = lunaris.EmbedderConfig.native_quantized(gguf)
-        embedder_desc = f"native Q4_K_M GGUF granite-r2 (768d) [{gguf}]"
 
     print(f"# Backend      : {MOON_URL}")
     print(f"# Embedder     : {embedder_desc}")

@@ -19,12 +19,19 @@ Prebuilt wheels ship for 5 targets (BIND-PY-05): `linux-x86_64`
 `macosx-arm64`, `win-amd64`. They use the `abi3-py311` stable ABI, so **one
 wheel per target covers Python 3.11, 3.12, and 3.13**.
 
-The bundled wheels are built with the native granite embedder included — the
-default embedder is **granite-embedding-311m-multilingual-r2** (768-d), runs
-**in-process** via candle, and auto-downloads to `~/.cache/lunaris/models/` on
-first use — **no Ollama, no ONNX Runtime, no external service required.** An
-air-gapped Ollama HTTP embedder remains available as an operator escape hatch
-behind `--features embed-remote`.
+> **v0.6 llama.cpp-only cutover.** The candle-native embedder/reranker paths
+> are deleted; `llamacpp` (in-process llama.cpp, GGUF artifacts) is the only
+> local inference runtime, on by default. See `docs/sdk/embedder-config.md`
+> and `docs/migration/0.5-to-0.6-llamacpp-only.md` (the migration guide).
+
+The bundled wheels are built with the llama.cpp inference runtime included —
+the default embedder is **granite-embedding-311m-multilingual-r2** (768-d,
+Q4_K_M GGUF), runs **in-process** via llama.cpp, staged at
+`~/.lunaris/models/` — **no Ollama, no external service required.** There is
+no auto-download; the MCP server stages GGUFs lazily on first recall, other
+deployments download them out-of-band. An air-gapped Ollama HTTP embedder
+remains available as an operator escape hatch behind `--features
+embed-remote` (resolves after the llama.cpp step).
 
 No matching wheel? Source install (needs Rust 1.94+ and a maturin toolchain;
 2–5 min):
@@ -183,8 +190,8 @@ from lunaris import EmbedderConfig, RerankerConfig
 # `open` is async — call it inside an async function or `asyncio.run(...)`.
 mem = await lunaris.open(
     "memory://demo",
-    embedder=EmbedderConfig.native(),     # granite-r2, in-process, auto-downloads to ~/.cache/lunaris/models/
-    reranker=RerankerConfig.native(),     # bge-reranker-v2-m3 cross-encoder
+    embedder=EmbedderConfig.llamacpp(),   # granite-r2 Q4_K_M GGUF, in-process llama.cpp, staged default GGUF
+    reranker=RerankerConfig.llamacpp(),   # bge-reranker-v2-m3 Q5_K_M GGUF cross-encoder
 )
 ```
 
@@ -192,29 +199,38 @@ mem = await lunaris.open(
 
 | Factory | Use when |
 |---|---|
-| `EmbedderConfig.native(model_dir=None)` | Default — granite-embedding-311m-multilingual-r2 (768-d), in-process candle, auto-downloads to `~/.cache/lunaris/models/`. |
-| `EmbedderConfig.native_quantized(gguf_path, model_dir=None)` | Q4_K_M GGUF (~240 MiB) for RSS-constrained hosts; requires `--features embedder-gguf`. |
+| `EmbedderConfig.llamacpp(gguf_path=None)` | Default — granite-embedding-311m-multilingual-r2 (768-d), Q4_K_M GGUF, in-process llama.cpp. Loads eagerly; raises on a missing/corrupt GGUF. Staged default: `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`. |
 | `EmbedderConfig.noop(dim=768)` | Deterministic zero-vector — tests / offline use only. |
 
 `RerankerConfig` factories:
 
 | Factory | Use when |
 |---|---|
-| `RerankerConfig.native(model_dir=None)` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (FP32, sigmoid ∈ [0,1]), in-process. |
-| `RerankerConfig.native_quantized(gguf_path, model_dir=None)` | Q5_K_M-imatrix GGUF; requires `--features reranker-gguf`. |
+| `RerankerConfig.llamacpp(gguf_path=None)` | Default — BAAI/bge-reranker-v2-m3 cross-encoder (Q5_K_M GGUF, sigmoid ∈ [0,1]), in-process llama.cpp. Staged default: `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`. |
 | `RerankerConfig.noop()` | Skip the cross-encoder rescoring pass — lowest latency floor. |
 
 Notes:
 
-- Weights auto-download on first use to `~/.cache/lunaris/models/` — point
-  `model_dir` (or `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR`) at a
-  writable path with ~1 GB free; the download is one-time per host.
+- **No auto-download.** Point `gguf_path` (or `LUNARIS_EMBEDDER_GGUF` /
+  `LUNARIS_RERANKER_GGUF`) at a pre-staged artifact; the MCP server stages
+  GGUFs lazily on first recall, other deployments download them out-of-band
+  and verify against the canonical SHA-256s (`cargo run -p lunaris-bench
+  --bin stage-models -- --help`).
+- **Retired**: `EmbedderConfig.native()` / `.native_quantized()` (and the
+  reranker equivalents) were deleted in the v0.6 llama.cpp-only cutover; the
+  factories still exist as stubs that **raise immediately** with a migration
+  hint pointing at `llamacpp(gguf_path=...)`. See
+  `docs/migration/0.5-to-0.6-llamacpp-only.md`.
 - An air-gapped Ollama HTTP embedder remains available as an operator escape
-  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`).
+  hatch behind `--features embed-remote` (`LUNARIS_EMBEDDER_OLLAMA_URL`),
+  resolving **after** the llama.cpp step.
+- **Tier-0 wheels** (built with `default-features = false`, no C++
+  toolchain, no `llamacpp` feature) raise a clear "no-inference build" error
+  from `llamacpp()` — use `noop()` there.
 - **FFI cliff:** you cannot implement the Rust `Embedder` / `Reranker` trait
   from Python — per-call FFI callbacks would be too slow for the hot path.
   Roll-your-own backends are a Rust-crate-only escape hatch; contribute a
-  constructor to `lunaris-embed-native` or `lunaris-embed-remote`.
+  constructor to `lunaris-llamacpp` or `lunaris-embed-remote`.
 
 ## GIL / async notes
 
@@ -241,16 +257,16 @@ across awaits (CLAUDE.md mandate; brace-balanced scan test in
   (`python -c "import sysconfig; print(sysconfig.get_platform())"`); if it
   isn't one of the 5 above, do a source install
   (`pip install lunaris --no-binary lunaris`, needs Rust 1.94+).
-- **"granite-embedding weights missing at …"** — the in-process native
-  embedder needs weights. Either pre-download them
-  (`huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2
-  --local-dir ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`)
-  or point `LUNARIS_EMBEDDER_DIR` at an existing local copy. As an operator
-  escape hatch, build with `--features embed-remote` and set
-  `LUNARIS_EMBEDDER_OLLAMA_URL`.
-- **"weights download failed / connection refused"** — first-call download is
-  hitting the network; pre-populate the model dir, ensure write access + ~1 GB
-  free, confirm outbound HTTPS to `huggingface.co`.
+- **"failed to open GGUF" / missing artifact** — the in-process llama.cpp
+  embedder needs the GGUF staged. Download it out-of-band and verify the
+  SHA-256 printed by `cargo run -p lunaris-bench --bin stage-models --
+  --help`, point `gguf_path` / `LUNARIS_EMBEDDER_GGUF` at an existing copy, or
+  (if you run through the MCP server) let it stage the artifact lazily on
+  first recall. As an operator escape hatch, build with `--features
+  embed-remote` and set `LUNARIS_EMBEDDER_OLLAMA_URL`.
+- **`native()` / `native_quantized()` raises "removed in the llama.cpp-only
+  cutover"** — working as intended; swap the call to
+  `llamacpp(gguf_path=...)`.
 - **`conformance_fixture_episodes` not exported** — correct; that helper
   lives behind the `bindings-it` Cargo feature, used only by the per-driver
   parity tests. Production wheels ship without it.

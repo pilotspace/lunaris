@@ -1707,7 +1707,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     }
 
     // 1. Remote OpenAI-compatible embedder (`POST /v1/embeddings`) — the
-    //    supported remote path once `native` (candle) is compiled out. Selected
+    //    supported remote path when no local GGUF is reachable. Selected
     //    when LUNARIS_EMBEDDER_OPENAI_URL is set; wins over the Ollama hatch.
     #[cfg(feature = "embed-remote")]
     {

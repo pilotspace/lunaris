@@ -18,7 +18,7 @@ swappable because the engine never sees a concrete database.
 |---|---|---|
 | **L5 — Surface** | `lunaris-server` (axum HTTP + SSE), `lunaris-py` (PyO3), `lunaris-ts` (napi-rs), `lunaris-mcp` (+ `lunaris-mcp-npm` / `lunaris-mcp-py` dist), `lunaris-hook`, `lunaris-recipes` | How agents reach the engine: HTTP, Python, TypeScript, MCP tools, proactive capture hooks, prebuilt recipes |
 | **L4 — Engine facade** | `lunaris` (umbrella) | One handle, whole engine: `open()`, `ingest()`, `recall()`, `forget()`, `snapshot()`, `structured_ingest()`, plus the opt-in graph / consolidator / verifier pipelines |
-| **L3 — Cognition** | `lunaris-ingest`, `lunaris-retrieve`, `lunaris-extract`, `lunaris-consolidate`, `lunaris-verify` + ML runtimes `lunaris-embed-native`, `lunaris-rerank-native`, `lunaris-llm`, `lunaris-embed-remote` | Pipelines that turn raw observations into primitives, and queries into fused result sets. All models run on `candle` (CPU), in-process |
+| **L3 — Cognition** | `lunaris-ingest`, `lunaris-retrieve`, `lunaris-extract`, `lunaris-consolidate`, `lunaris-verify` + ML runtimes `lunaris-llamacpp`, `lunaris-llm`, `lunaris-embed-remote` | Pipelines that turn raw observations into primitives, and queries into fused result sets. Embedder + reranker run on in-process llama.cpp (GGUF, static-linked FFI); extractor/verifier LLM slots are remote-only |
 | **L2 — Contracts** | `lunaris-core` | The kernel: primitives, `BiTemporal`, HLC clocks, validated `Scope`, canonical keyspace, `StoragePort` / `KeywordPort` traits, capability negotiation, circuit breakers, audit |
 | **L1 — Substrate** | `lunaris-storage-moon` (flagship), `lunaris-storage-postgres` (portability proof), `lunaris-storage-embedded` (SQLite, zero-deps) | One trait, three backends. Moon first by design |
 
@@ -107,7 +107,7 @@ budget like this:
 
 | Stage | What happens | Why it's fast |
 |---|---|---|
-| 1. Query embed | granite-embedding-311m runs **in-process** on candle (CPU) | No HTTP hop to an embedding server. This is the single biggest win — see the 86 ms lesson below |
+| 1. Query embed | granite-embedding-311m runs **in-process** on llama.cpp (Q4_K_M GGUF) | No HTTP hop to an embedding server. This is the single biggest win — see the 86 ms lesson below |
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side (`RrfFusion::Moon`) | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command (PERF-MOON-01) | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered `buffered(32)` fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
@@ -121,8 +121,9 @@ that hop (`scripts/ollama-replay-server.py` +
 `scripts/precompute-embeds.py`). The engine's own search + hydrate
 path was ~10 ms all along; the network hop to the embedder was ~75 ms
 of pure overhead. That measurement is why v0.4 (N-03) moved embedding
-in-process on candle as the default — the deployment now matches the
-configuration the contract was proven on.
+in-process as the default — a property the v0.6 llama.cpp-only cutover
+preserves (llama-cpp-2 is in-process FFI, static-linked) — so the
+deployment matches the configuration the contract was proven on.
 
 **Why a fan-out stack can't follow:** vector DB + text search + graph
 DB + broker means (a) one network round trip *per lane* plus app-side

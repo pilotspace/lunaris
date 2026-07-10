@@ -1,16 +1,17 @@
-"""`EmbedderConfig` / `RerankerConfig` binding tests — v0.4+ native surface.
+"""`EmbedderConfig` / `RerankerConfig` binding tests — v0.6 llama.cpp-only surface.
 
-Refreshed after the v0.4 N-03 cutover deleted the `fastembed` / `ollama` /
-`from_onnx_*` factories (see docs/migration/0.3-to-0.4-native-default.md).
-Scenarios mirror the vitest sibling at
+Refreshed after the llama.cpp-only cutover deleted the candle
+`native()` / `native_quantized()` backends (see
+docs/migration/0.5-to-0.6-llamacpp-only.md); those factories survive as
+loud migration-hint stubs. Scenarios mirror the vitest sibling at
 crates/lunaris-ts/__test__/embedder_config.spec.mts one-for-one.
 
 Two tiers:
 
-1. **Offline** (default) — factory surface + cheap error paths. The native
-   factories read LOCAL files only (model-dir artifacts) — no network, no HF
-   Hub download — so a bogus ``model_dir`` / ``gguf_path`` fails fast and
-   deterministically on any machine, including a bare CI runner.
+1. **Offline** (default) — factory surface + cheap error paths. The llamacpp
+   factories read LOCAL files only (the GGUF artifact) — no network, no HF
+   Hub download — so a bogus ``gguf_path`` fails fast and deterministically
+   on any machine, including a bare CI runner.
 
 2. **`bindings_it`** — integration tests that need a live Moon backend.
    The embedder-kwarg plumbing test uses the model-free ``noop()`` config so
@@ -42,29 +43,31 @@ def test_embedder_config_noop_custom_dim() -> None:
     assert "dim=512" in repr(cfg)
 
 
-def test_embedder_config_native_missing_artifacts() -> None:
-    """`native(model_dir=...)` with a bogus dir must raise `LunarisError`.
+def test_embedder_config_llamacpp_missing_gguf() -> None:
+    """`llamacpp(gguf_path=...)` with a bogus path must raise.
 
-    Local-file read only — no network. A bogus dir means no
-    model.safetensors / tokenizer.json / config.json, so
-    `NativeEmbedder::open` fails fast.
+    Local-file read only — no network. Two valid wheel builds, both MUST
+    raise here: a Tier-0 wheel (no `llamacpp` feature) raises the
+    no-inference `ValueError` stub; a full wheel fails the local GGUF read
+    with `LunarisError`.
     """
-    with pytest.raises(lunaris.LunarisError):
-        lunaris.EmbedderConfig.native(model_dir="/nope/does-not-exist")
-
-
-def test_embedder_config_native_quantized_unavailable_or_bad_path() -> None:
-    """`native_quantized()` with a bogus GGUF path must raise.
-
-    Two valid wheel builds, both MUST raise here: without `embedder-gguf`
-    the stub raises a clear `ValueError` naming the feature; with it, the
-    missing GGUF path fails the local read with `LunarisError`. Either way
-    no model download is involved.
-    """
-    # Positional: the feature-off stub names its (ignored) params
-    # `_gguf_path` / `_model_dir`, so a `gguf_path=` kwarg only exists on
-    # feature-on builds. Positional works on both.
+    assert hasattr(lunaris.EmbedderConfig, "llamacpp")
+    # Positional: the Tier-0 stub names its (ignored) param `_gguf_path`,
+    # so a `gguf_path=` kwarg only exists on feature-on builds.
     with pytest.raises((ValueError, lunaris.LunarisError)):
+        lunaris.EmbedderConfig.llamacpp("/nope/does-not-exist.gguf")
+
+
+def test_embedder_config_retired_native_factories() -> None:
+    """`native()` / `native_quantized()` raise the migration hint.
+
+    Pin the MESSAGE (not just "raises") — a Tier-0/full-build artifact
+    error would also raise, and this test must discriminate the retirement
+    stub from an artifact failure.
+    """
+    with pytest.raises(ValueError, match="llama.cpp-only cutover"):
+        lunaris.EmbedderConfig.native("/nope/does-not-exist")
+    with pytest.raises(ValueError, match="llama.cpp-only cutover"):
         lunaris.EmbedderConfig.native_quantized("/nope/does-not-exist.gguf")
 
 
@@ -92,16 +95,18 @@ def test_reranker_config_noop() -> None:
     assert "noop" in repr(cfg)
 
 
-def test_reranker_config_native_missing_artifacts() -> None:
-    """`native(model_dir=...)` with a bogus dir must raise `LunarisError`."""
-    with pytest.raises(lunaris.LunarisError):
-        lunaris.RerankerConfig.native(model_dir="/nope/does-not-exist")
-
-
-def test_reranker_config_native_quantized_unavailable_or_bad_path() -> None:
-    """Bogus GGUF path raises whether or not `reranker-gguf` is compiled in."""
-    # Positional for the same stub-kwarg-naming reason as the embedder test.
+def test_reranker_config_llamacpp_missing_gguf() -> None:
+    """Bogus GGUF path raises on both Tier-0 and full wheel builds."""
+    assert hasattr(lunaris.RerankerConfig, "llamacpp")
     with pytest.raises((ValueError, lunaris.LunarisError)):
+        lunaris.RerankerConfig.llamacpp("/nope/does-not-exist.gguf")
+
+
+def test_reranker_config_retired_native_factories() -> None:
+    """`native()` / `native_quantized()` raise the migration hint."""
+    with pytest.raises(ValueError, match="llama.cpp-only cutover"):
+        lunaris.RerankerConfig.native("/nope/does-not-exist")
+    with pytest.raises(ValueError, match="llama.cpp-only cutover"):
         lunaris.RerankerConfig.native_quantized("/nope/does-not-exist.gguf")
 
 

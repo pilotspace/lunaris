@@ -86,10 +86,11 @@ Rust quickstart for the end-to-end recall walkthrough.
 
 - `Error: Cannot find module 'lunaris'` → run `npm install` (or
   `npm install ../../crates/lunaris-ts` for local dev).
-- `LunarisError: embedding-gemma weights missing` → the default
-  features built a candle-backed embedder and the weights aren't
-  cached. Rebuild the `.node` without the `candle` feature or
-  pre-download the weights.
+- Vector recall returns empty rows / a `WARN` about the embedder →
+  the granite-r2 Q4_K_M GGUF isn't staged. Download it to
+  `~/.lunaris/models/` (SHA-256s:
+  `cargo run -p lunaris-bench --bin stage-models -- --help`) or pass
+  `EmbedderConfig.llamacpp({ ggufPath })` explicitly.
 - `postgres connection refused` → wait for the docker-compose
   healthcheck (`docker compose ps -f ../quickstart-rs/docker-compose.yml`).
 - `relation "episodes" does not exist` → re-run step 3.

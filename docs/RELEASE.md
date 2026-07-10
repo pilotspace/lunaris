@@ -103,11 +103,10 @@ The v0.4.0 publishable set:
 |---|---|---|
 | `lunaris-core` | **publish=true** | Core types — must publish first (every other crate depends on it). |
 | `lunaris-storage-postgres` | **publish=true** | OSS-default backend. `lunaris-storage-moon` is an OPTIONAL dep behind the `moon-it` feature. |
-| `lunaris-embed-native` | **publish=true** (cargo default — no `publish` key) | Native granite-r2 embedder (candle FP16; `embedder-gguf` adds the Q4_K_M GGUF variant). |
+| `lunaris-llamacpp` | **publish=true** (cargo default — no `publish` key) | THE inference runtime (llama.cpp-only cutover): granite-r2 Q4_K_M embedder + bge-reranker-v2-m3 Q5_K_M reranker behind the `llamacpp` feature. |
 | `lunaris-embed-remote` | **publish=true** (cargo default — no `publish` key) | Ollama HTTP escape-hatch embedder; optional dep behind the umbrella `embed-remote` feature. |
-| `lunaris-rerank` | **publish=true** | Reranker trait + `NoopReranker` seam (the cross-encoder impl lives in `lunaris-rerank-native`). |
-| `lunaris-rerank-native` | **publish=true** (cargo default — no `publish` key) | Native bge-reranker-v2-m3 cross-encoder (candle FP32; `reranker-gguf` adds the Q5_K_M GGUF variant). |
-| `lunaris-extract` | **publish=true** | Extractor (candle, ollama, cloud-api). |
+| `lunaris-rerank` | **publish=true** | Reranker trait + `NoopReranker` seam (the cross-encoder impl lives in `lunaris-llamacpp`). |
+| `lunaris-extract` | **publish=true** | Extractor (ollama, cloud-api — remote-only since the llama.cpp cutover). |
 | `lunaris-verify` | **publish=true** | Verifier (incl. RFC 0006 270M scaffold). |
 | `lunaris-consolidate` | **publish=true** | ACT-R consolidator. |
 | `lunaris-ingest` | **publish=true** | Ingest pipeline. |

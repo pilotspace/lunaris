@@ -10,7 +10,7 @@ This example targets the **v0.2.x OSS Foundation** milestone — Postgres
 
 - `docker` + `docker compose` v2.20+
 - `cargo` 1.94+ (Rust edition 2024 toolchain)
-- `ollama` 0.3+ running locally (or rebuild with `candle` — see below)
+- the granite-r2 Q4_K_M GGUF staged at `~/.lunaris/models/` (default llama.cpp embedder); graph extraction optionally via a remote provider — see below
 
 ## Five steps
 
@@ -55,17 +55,20 @@ docker compose down -v   # -v wipes the pg data volume
 ## In-process variant (no Ollama)
 
 To run with all-Candle in-process (Gemma 3 4B extractor + EmbeddingGemma
-embedder, ~5 GB of weights, ~8 GB RAM at runtime):
+embedder — remote-only since the llama.cpp cutover):
 
 ```bash
-# In examples/quickstart-rs/Cargo.toml, change the lunaris dep to:
-#   lunaris = { path = "../../crates/lunaris", default-features = false, features = ["candle"] }
+# Extraction/verification run against a remote provider (or any
+# OpenAI-compatible server such as a local Ollama):
+export LUNARIS_GRAPH_ENABLED=1
+export LUNARIS_EXTRACT_PROVIDER=openai-compat
+export LUNARIS_OPENAI_COMPAT_BASE_URL=http://127.0.0.1:11434/v1
+export OPENAI_COMPAT_EXTRACT_MODEL=gemma3:4b
 cargo run --release
 ```
 
-For the **laptop-floor** path (RFC 0006 — Gemma 3 270M verifier, ~540 MB),
-add `features = ["candle", "verify-small"]`. Note: 270M is a scaffold
-in v0.2.x; the production default-flip is gated on Phase 24 bench.
+See `docs/migration/0.5-to-0.6-llamacpp-only.md` for the full
+provider matrix (anthropic | openai | gemini | minimax | openai-compat).
 
 ## Recall walkthrough
 
@@ -97,11 +100,11 @@ at `docs.lunaris.dev`.
 
 ## Troubleshooting
 
-- `Lunaris::open` returns `embedding-gemma weights missing` → the
-  `candle` feature is on and weights aren't cached. Either pre-download
-  via `huggingface-cli download google/embeddinggemma-300m --local-dir
-  ~/.cache/lunaris/models/embeddinggemma-300m/` or rebuild with the
-  `ollama` feature.
+- Vector recall returns empty rows / a `WARN` about the embedder →
+  the granite-r2 Q4_K_M GGUF isn't staged at `~/.lunaris/models/`.
+  Download it out-of-band (SHA-256s:
+  `cargo run -p lunaris-bench --bin stage-models -- --help`) or set
+  `LUNARIS_EMBEDDER_GGUF` to an existing copy.
 - `postgres connection refused` → the container is still starting.
   Wait for the healthcheck (`docker compose ps`).
 - `relation "episodes" does not exist` → migrations haven't run. Re-run

@@ -242,7 +242,7 @@ on date T" is itself recorded.
   activation). If your evals depend on Zep's specific recency
   weighting, port the eval first.
 - **OpenAI-default embedder.** Zep ships with an opinionated
-  embedder; Lunaris is unopinionated — you choose candle
+  embedder; Lunaris is unopinionated — you choose llama.cpp
   (local 768d), Ollama, or a cloud API. v0.3 ships a Helm chart
   with a sensible default.
 

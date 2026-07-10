@@ -55,7 +55,7 @@ round trips**. Here is how a typical
 
 | Stage | What happens | Why it's fast |
 |---|---|---|
-| 1. Query embed | granite-embedding-311m runs **in-process** on candle (CPU) | No HTTP hop to an embedding server — the single biggest win (see the 86 ms lesson) |
+| 1. Query embed | granite-embedding-311m runs **in-process** on llama.cpp (CPU, Q4_K_M GGUF) | No HTTP hop to an embedding server — the single biggest win (see the 86 ms lesson) |
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
@@ -74,9 +74,12 @@ measured:
 
 The engine's own search + hydrate path was ~10 ms all along; the
 network hop to the embedder was ~75 ms of pure overhead. That
-measurement is why v0.4 moved embedding **in-process on candle as the
-default** — the shipped configuration is the configuration the
-contract was proven on.
+measurement is why v0.4 moved embedding **in-process as the default**
+— the shipped configuration is the configuration the contract was
+proven on. (v0.4 ran the in-process embedder on candle; the v0.6
+llama.cpp-only cutover (`docs/decisions/2026-07-10-llamacpp-only-cutover.md`)
+replaced candle with llama.cpp as the in-process runtime — the
+"no network hop" property this lesson describes is unchanged.)
 
 The same decomposition repeated on Moon v0.3.0 with the 4-bit GGUF
 granite embedder (3k-doc SQuAD train corpus): end-to-end p50 61.5 ms,

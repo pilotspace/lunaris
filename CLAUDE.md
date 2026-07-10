@@ -15,7 +15,7 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 - **Tech stack — Python**: 3.11+ (PyO3 0.29 baseline)
 - **Tech stack — TypeScript**: Node 20+, napi-rs 3.x
 - **Backend ordering — Moon first, Postgres second**: explicit inversion of blueprint §5.3, justified by internal-first deployment
-- **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, sqlx ≥0.9, candle ≥0.9, tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ (or direct Moon SDK if available in `moon/sdk/`)
+- **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, sqlx ≥0.9, llama-cpp-2 (exact-pinned), tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ (or direct Moon SDK if available in `moon/sdk/`)
 - **No duplicate vector / BM25 libs**: Moon native `FT.*` is the canonical implementation; Lunaris does NOT bundle a second HNSW (e.g., `instant-distance`) or BM25 (e.g., `tantivy`)
 - **Timeline — 7 calendar days to production rollout**: explicit user override of blueprint §14 (90-day plan). The team takes the risk of compressed validation; mitigated by automated quality gates on every push (LongMemEval, LoCoMo, ER-F1, perf smoke) and progressive rollout (5% → 25% → 100% traffic at lunaris.dev)
 - **Real-use-case-at-once testing**: all 10 recipes get integration tests against both Moon and Postgres simultaneously. No "we'll add Postgres later" scope cuts.
@@ -27,18 +27,24 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 <!-- GSD:stack-start source:STACK.md -->
 ## Technology Stack
 
-- **ML runtime** — `candle 0.10` (CPU). Single backend for embedder +
-  reranker + extractor + verifier. **v0.4 N-03 cutover (2026-05-14)** deleted
-  the fastembed-rs / ONNX Runtime / production-Ollama paths; see
-  `docs/migration/0.3-to-0.4-native-default.md`.
+- **ML runtime** — `lunaris-llamacpp` (in-process llama.cpp via
+  `llama-cpp-2`, exact-pinned). Sole local inference backend for embedder +
+  reranker; extractor/verifier LLM slots are **remote-only**
+  (`LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_VERIFY_PROVIDER`:
+  anthropic|openai|gemini|minimax|openai-compat). **v0.6 llama.cpp-only
+  cutover (ADR 2026-07-10)** deleted the candle stack; see
+  `docs/migration/0.5-to-0.6-llamacpp-only.md`. Feature `llamacpp` is the
+  umbrella default (needs cmake + C++); `default-features = false` = Tier-0
+  no-inference build. GPU: build-time `metal` / `cuda` / `vulkan`.
 - **Embedder** — `ibm-granite/granite-embedding-311m-multilingual-r2`
-  (Apache-2.0, ModernBERT, 768-d, FP16) via `lunaris-embed-native`. Q4_K_M
-  GGUF variant available under `--features embedder-gguf` for RSS-constrained
-  hosts. Air-gap escape hatch: `lunaris-embed-remote::OllamaEmbedder`
-  behind `--features embed-remote` (operator-only, not the supported path).
+  (Apache-2.0, ModernBERT, 768-d) as Q4_K_M GGUF at
+  `~/.lunaris/models/` (override `LUNARIS_EMBEDDER_GGUF`). Air-gap escape
+  hatch: `lunaris-embed-remote::OllamaEmbedder` behind
+  `--features embed-remote` (operator-only, resolves after the llama.cpp
+  step).
 - **Reranker** — `BAAI/bge-reranker-v2-m3` (Apache-2.0, XLM-RoBERTa,
-  cross-encoder, FP32, sigmoid output ∈ [0,1]) via `lunaris-rerank-native`.
-  Q5_K_M-imatrix GGUF under `--features reranker-gguf`.
+  cross-encoder, sigmoid output ∈ [0,1]) as Q5_K_M GGUF, lazy-loaded on
+  first recall (override `LUNARIS_RERANKER_GGUF`).
 - **Storage** — Moon (Redis-compatible, internal) + Postgres (portability
   proof) + SQLite (`memory://`, `sqlite:///path`, zero-deps onboarding).
 - **HTTP** — `axum ≥0.8` + `tower ≥0.5` + `tower-http` + `tracing` +
@@ -46,9 +52,9 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 - **Async** — `tokio` latest 1.x + `parking_lot` for sync primitives;
   no `std::sync::*Lock` in workspace code (matches Moon's UNSAFE_POLICY).
 - **Errors** — `thiserror 2.x` (library) + `anyhow 1.x` (application).
-- **SDKs** — `pyo3 0.26` (Python) + `napi-rs 3.x` (TypeScript). Both
-  expose `EmbedderConfig.native()` / `RerankerConfig.native()` as v0.4 entry
-  points.
+- **SDKs** — `pyo3 0.29` (Python) + `napi-rs 3.x` (TypeScript). Both
+  expose `EmbedderConfig.llamacpp()` / `RerankerConfig.llamacpp()` as the
+  v0.6 entry points (retired `native()` factories raise migration hints).
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->

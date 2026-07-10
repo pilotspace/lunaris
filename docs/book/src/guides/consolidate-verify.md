@@ -8,10 +8,12 @@ the two opt-in *slow paths* — neither runs on the recall hot path. Both ship
 | Pipeline | Handle | Backend env | Enable env | What it does |
 |---|---|---|---|---|
 | Consolidate | `ConsolidatorPipelineHandle` | `LUNARIS_CONSOLIDATOR_BACKEND` (`actr`/`noop`) | `LUNARIS_CONSOLIDATE_ENABLED` | ACT-R activation, promotion/archival, Leiden communities |
-| Verify | `VerifierPipelineHandle` | `LUNARIS_VERIFIER_BACKEND` (`270m`/`small` \| `27b`/`large` \| `noop`) | `LUNARIS_VERIFY_ENABLED` | Slow-path arbitration of contradicting / invalid primitives |
+| Verify | `VerifierPipelineHandle` | `LUNARIS_VERIFY_PROVIDER` (`anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat`, else `Noop`) | `LUNARIS_VERIFY_ENABLED` | Slow-path arbitration of contradicting / invalid primitives |
 
-Backend *availability* is gated by Cargo features; the env vars only choose
-among what was compiled in. See
+The verifier is **remote-only** since the v0.6 llama.cpp-only cutover — see
+`docs/decisions/2026-07-10-llamacpp-only-cutover.md` (the cutover ADR). No
+local model tiers to build or stage; a set-but-broken provider degrades
+loudly to `NoopVerifier` (warn), never a silent backend swap. See
 [Configuration Reference](../reference/configuration.md).
 
 ## The consolidator (ACT-R)
@@ -81,31 +83,25 @@ lunaris.verify_pipeline().enable();
 — the verifier runs handle-wide. Returning `VerifyDecision::deferred()` is
 "abstain": the worker skips the supersede write for that item.
 
-### RFC 0006 — backend selector vs the effective verifier
+### Remote-only verifier (v0.6 llama.cpp-only cutover)
 
-`LUNARIS_VERIFIER_BACKEND` *defaults to `270m`* (the RFC 0006 laptop floor),
-but the **effective verifier** is `NoopVerifier` unless two things are true:
-the matching Cargo feature is built **and** the model weights are staged in
-`~/.cache/lunaris/models/`. With stock features (`lunaris-verify` ships
-`default = []`; the `lunaris` umbrella's default `candle` feature forwards the
-27B backend, not `verify-small`) the `270m` selector resolves to "try 27B" →
-cache miss on a dev box → a `tracing::warn!` → `NoopVerifier`. So out of the
-box, *and any time the resolved backend's weights are missing*, the verifier
-worker runs the no-op (no crash, no useful output) — a "deferred" decision the
-worker treats as "skip". To get a *real* verifier on a laptop, build with
-`--features verify-small` and stage the 270M weights.
+RFC 0006 originally shipped a candle-based laptop floor (`verify-small`,
+Gemma-3-270M) vs a "get it right" tier (`verify-large`, Gemma-3-27B). Both
+were deleted in the v0.6 llama.cpp-only cutover — see
+`docs/decisions/2026-07-10-llamacpp-only-cutover.md` (the cutover ADR). There
+is no in-process verifier model anymore; `LUNARIS_VERIFY_PROVIDER` selects a
+remote provider, or the effective verifier is `NoopVerifier`:
 
-| Cargo feature | Backend | `LUNARIS_VERIFIER_BACKEND` value |
+| `LUNARIS_VERIFY_PROVIDER` value | Backend | Notes |
 |---|---|---|
-| *(none — `lunaris-verify` crate's own default `[]`)* | `NoopVerifier` only | `noop` |
-| `verify-small` (pulls in `candle`) | `CandleGemma3_270M` — **the laptop-floor build** (~600 MB disk / ~1 GB RAM, no Ollama) | `270m` / `small` |
-| `candle` (or `verify-large`, its alias — this is what the `lunaris` umbrella's default `candle` forwards) | `CandleGemma3_27B` — the slow-path "get it right" model (7–10× slower than the 4B extractor); ~14 GiB weights | `27b` / `large` |
-| `ollama` | `OllamaVerifier` (HTTP `/api/chat`) | — |
-| `cloud-api` | `CloudApiVerifier` (Anthropic `claude-3-5-sonnet-latest` / OpenAI `gpt-4o-2024-11-20` / Gemini `gemini-1.5-pro-latest`) via `LUNARIS_VERIFY_PROVIDER` + `LUNARIS_VERIFY_API_KEY` | — |
+| *(unset)* | `NoopVerifier` | No crash, no work done — the safe default |
+| `anthropic` \| `openai` \| `gemini` \| `minimax` | Cloud-API verifier via the matching provider SDK | Needs the provider's API key env var |
+| `openai-compat` | Generic OpenAI-compatible HTTP verifier | `LUNARIS_OPENAI_COMPAT_BASE_URL` (keyless allowed); covers Ollama, llama-server, vLLM, LM Studio |
 
-The **verify-small** build is the recommended way to run a *real* verifier on
-a laptop without Ollama: `cargo build --features verify-small`, then
-`LUNARIS_VERIFIER_BACKEND=270m LUNARIS_VERIFY_ENABLED=1`.
+A provider that is set but fails to construct (bad URL, missing key) logs a
+`tracing::warn!` and degrades to `NoopVerifier` — it never silently falls
+back to a different backend. Rust callers can still supply any custom impl
+via `with_verifier`.
 
 ## Surfacing backlog to readers — `recall_with_degraded_check`
 

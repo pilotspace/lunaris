@@ -34,7 +34,7 @@
 # What this script does NOT do:
 # - Commit the GGUF file to git. The file is ~300 MB and lives in the local
 #   cache. The SHA-256 alone is what we pin in
-#   crates/lunaris-rerank-native/src/lib.rs as BGE_RERANKER_GGUF_Q4_SHA256.
+#   crates/lunaris-bench/src/bin/stage_models.rs as BGE_GGUF_Q5_K_M_SHA256.
 
 set -euo pipefail
 
@@ -197,7 +197,7 @@ fi
 $SHA256_BIN "$Q4_GGUF" | tee "$Q4_SHA"
 SHA256_HEX="$( $SHA256_BIN "$Q4_GGUF" | awk '{print $1}' )"
 log "SHA-256 = $SHA256_HEX"
-log "pin in crates/lunaris-rerank-native/src/lib.rs:"
+log "pin in crates/lunaris-bench/src/bin/stage_models.rs:"
 log "    pub const BGE_RERANKER_GGUF_Q4_SHA256: &str = \"$SHA256_HEX\";"
 
 # --- step 7: tensor manifest -------------------------------------------------

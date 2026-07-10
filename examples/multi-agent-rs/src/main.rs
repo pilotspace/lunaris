@@ -25,7 +25,7 @@
 //!   Moon `chunks` FT index is 768d (matches EmbeddingGemma), so the dims line
 //!   up; the *ranking* is meaningless, which is why the assertions below check
 //!   "≥ 1 hit" / "no cross-scope leak" rather than "the right hit ranked
-//!   first". Swap `StubEmbedder` for a real backend (fastembed / candle /
+//!   first". Swap `StubEmbedder` for a real backend (llama.cpp /
 //!   ollama via `Lunaris::open`) and the same code recalls semantically.
 //!
 //! ## Prerequisites
