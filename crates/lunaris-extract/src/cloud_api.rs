@@ -138,10 +138,39 @@ pub struct CloudApiExtractorOpts {
     /// `finish_reason: length`, empty content) -- raise this explicitly
     /// for such models.
     pub max_tokens: u32,
+    /// Max per-chunk extraction calls in flight (order-preserving; see
+    /// [`DEFAULT_EXTRACT_CONCURRENCY`] for the measured rationale). 1 =
+    /// the historical strictly-serial loop.
+    pub concurrency: usize,
 }
 
 /// Historical implicit default (was hardcoded in [`CloudApiExtractor::new`]).
 const DEFAULT_MAX_TOKENS: u32 = 512;
+
+/// Default bounded concurrency for per-chunk cloud extraction calls.
+///
+/// The 2026-07-10 LongMemEval flame investigation root-caused ~95% of
+/// per-question wall time to this file's previously strictly-serial
+/// per-chunk loop (~11s per MiniMax-M3 completion, ~40 chunks, one at a
+/// time, process idle in `__psynch_cvwait`). A live probe measured 3.8x
+/// overlap at 4 concurrent calls with zero rate-limit errors. Cloud calls
+/// are independent HTTP requests, so bounded overlap is safe; 4 keeps a
+/// comfortable margin under provider rate limits. Set to 1 to restore the
+/// historical serial behavior.
+const DEFAULT_EXTRACT_CONCURRENCY: usize = 4;
+
+/// Drive the given per-chunk extraction futures with at most `concurrency`
+/// in flight, preserving input order in the returned vec (`out[i]`
+/// corresponds to `futs[i]` — downstream consumers align by index).
+/// Futures are lazy: building the full Vec up front costs nothing until
+/// `buffered` polls them. `concurrency` is clamped to at least 1.
+async fn extract_chunks_buffered<Fut>(futs: Vec<Fut>, concurrency: usize) -> Vec<RawExtraction>
+where
+    Fut: std::future::Future<Output = RawExtraction>,
+{
+    use futures::StreamExt;
+    futures::stream::iter(futs).buffered(concurrency.max(1)).collect().await
+}
 
 impl Default for CloudApiExtractorOpts {
     fn default() -> Self {
@@ -159,6 +188,7 @@ impl Default for CloudApiExtractorOpts {
             batch_timeout_ms: DEFAULT_BATCH_TIMEOUT_MS,
             max_retries: DEFAULT_MAX_RETRIES,
             max_tokens: DEFAULT_MAX_TOKENS,
+            concurrency: DEFAULT_EXTRACT_CONCURRENCY,
         }
     }
 }
@@ -174,6 +204,8 @@ pub struct CloudApiExtractor {
     /// temperature fixed at 0.0. timeout is set to the full batch budget so
     /// CloudBackend's own D-21 retry stays within D-02.
     gen_opts: GenOpts,
+    /// Bounded per-chunk extraction concurrency (see CloudApiExtractorOpts).
+    concurrency: usize,
 }
 
 impl std::fmt::Debug for CloudApiExtractor {
@@ -211,6 +243,7 @@ impl CloudApiExtractor {
             provider: opts.provider,
             batch_timeout_ms: opts.batch_timeout_ms,
             gen_opts,
+            concurrency: opts.concurrency.max(1),
         })
     }
 
@@ -273,11 +306,11 @@ impl Extractor for CloudApiExtractor {
         let batch_timeout = Duration::from_millis(self.batch_timeout_ms);
         let chunks_owned: Vec<ChunkInput> = chunks.to_vec();
         let this = self.clone();
+        let concurrency = self.concurrency;
         let batch_fut = async move {
-            let mut by_chunk = Vec::with_capacity(chunks_owned.len());
-            for c in &chunks_owned {
-                by_chunk.push(this.extract_one_with_sentinel(c).await);
-            }
+            let futs: Vec<_> =
+                chunks_owned.iter().map(|c| this.extract_one_with_sentinel(c)).collect();
+            let by_chunk = extract_chunks_buffered(futs, concurrency).await;
             RawExtractionBatch { by_chunk }
         };
 
@@ -289,10 +322,9 @@ impl Extractor for CloudApiExtractor {
                     timeout_ms = self.batch_timeout_ms,
                     "cloud-api batch timeout; falling back to per-chunk"
                 );
-                let mut by_chunk = Vec::with_capacity(chunks.len());
-                for c in chunks {
-                    by_chunk.push(self.extract_one_with_sentinel(c).await);
-                }
+                let futs: Vec<_> =
+                    chunks.iter().map(|c| self.extract_one_with_sentinel(c)).collect();
+                let by_chunk = extract_chunks_buffered(futs, self.concurrency).await;
                 Ok(RawExtractionBatch { by_chunk })
             }
         }
@@ -306,6 +338,88 @@ impl Extractor for CloudApiExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn extract_chunks_buffered_overlaps_up_to_concurrency_and_preserves_order() {
+        // The 2026-07-10 benchmark flame investigation root-caused the LME
+        // graph pipeline's 8-min questions to THIS file's strictly serial
+        // per-chunk `.await` loop: ~11s per MiniMax completion × ~40 chunks,
+        // one at a time, while the process sat in __psynch_cvwait. The live
+        // probe measured 3.8x overlap at 4 concurrent calls with zero
+        // rate-limit errors — bounded buffering is a pure win for cloud
+        // backends. Output order MUST still match input order (by_chunk[i]
+        // corresponds to chunks[i] downstream).
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let chunks: Vec<ChunkInput> = (0..8)
+            .map(|i| ChunkInput {
+                chunk_id: Ulid::new(),
+                text: format!("chunk {i}"),
+                heading_path: vec![],
+            })
+            .collect();
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let futs: Vec<_> = chunks
+            .iter()
+            .map(|c| {
+                let id = c.chunk_id;
+                let in_flight = Arc::clone(&in_flight);
+                let max_seen = Arc::clone(&max_seen);
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    RawExtraction { source_chunk_id: id, ..Default::default() }
+                }
+            })
+            .collect();
+        let out = extract_chunks_buffered(futs, 4).await;
+        assert_eq!(out.len(), chunks.len());
+        for (c, r) in chunks.iter().zip(&out) {
+            assert_eq!(c.chunk_id, r.source_chunk_id, "buffered output must preserve input order");
+        }
+        let peak = max_seen.load(Ordering::SeqCst);
+        assert!(peak >= 3, "expected >=3 overlapping extractions at concurrency 4, saw {peak}");
+    }
+
+    #[tokio::test]
+    async fn extract_chunks_buffered_concurrency_1_stays_strictly_serial() {
+        // concurrency=1 must reproduce the historical serial behavior exactly
+        // (local-backend callers rely on it — a model-mutex-bound backend
+        // gains nothing from overlap and would only accrue per-chunk-timeout
+        // exposure while queued).
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let chunks: Vec<ChunkInput> = (0..4)
+            .map(|i| ChunkInput {
+                chunk_id: Ulid::new(),
+                text: format!("chunk {i}"),
+                heading_path: vec![],
+            })
+            .collect();
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let futs: Vec<_> = chunks
+            .iter()
+            .map(|c| {
+                let id = c.chunk_id;
+                let in_flight = Arc::clone(&in_flight);
+                let max_seen = Arc::clone(&max_seen);
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    RawExtraction { source_chunk_id: id, ..Default::default() }
+                }
+            })
+            .collect();
+        let out = extract_chunks_buffered(futs, 1).await;
+        assert_eq!(out.len(), chunks.len());
+        assert_eq!(max_seen.load(Ordering::SeqCst), 1, "concurrency=1 must never overlap");
+    }
 
     #[test]
     fn cloud_provider_from_str_parses_all_three() {
@@ -332,6 +446,7 @@ mod tests {
             batch_timeout_ms: 150,
             max_retries: 1,
             max_tokens: 512,
+            concurrency: 1,
         };
         let err = CloudApiExtractor::new(opts).expect_err("empty key must error");
         let msg = err.to_string();
@@ -349,6 +464,7 @@ mod tests {
             batch_timeout_ms: 150,
             max_retries: 1,
             max_tokens: 512,
+            concurrency: 1,
         };
         let extractor = CloudApiExtractor::new(opts).unwrap();
         let dbg = format!("{extractor:?}");
@@ -410,6 +526,7 @@ mod tests {
             batch_timeout_ms: 150,
             max_retries: 1,
             max_tokens: 2048,
+            concurrency: 4,
         };
         let _extractor =
             CloudApiExtractor::new(opts).expect("client builds with custom max_tokens");

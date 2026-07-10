@@ -487,6 +487,15 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(2048);
+    // Bounded per-chunk extraction concurrency. The 2026-07-10 flame
+    // investigation measured ~11s per MiniMax completion in a strictly
+    // serial loop consuming ~95% of question wall time; a live probe showed
+    // 3.8x overlap at 4 concurrent calls with zero rate-limit errors. Set
+    // to 1 to restore the historical serial behavior.
+    let extract_concurrency: usize = std::env::var("LUNARIS_EVAL_LME_EXTRACT_CONCURRENCY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
     // Window = records[offset .. offset+limit]. `n` is the actual count after
     // clamping to the dataset tail (a final short chunk is fine). An EMPTY
     // window is a harness misconfiguration (offset beyond the dataset), and
@@ -566,6 +575,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 batch_timeout_ms: extract_batch_timeout_ms,
                 max_retries: 1,
                 max_tokens: extract_max_tokens,
+                concurrency: extract_concurrency,
             })
             .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
             lunaris.graph_pipeline().set_extractor(std::sync::Arc::new(extractor));
