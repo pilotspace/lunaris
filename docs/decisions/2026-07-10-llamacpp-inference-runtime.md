@@ -125,6 +125,15 @@ preserved even though the single-runtime property is not):
   a warm context at pp512. **Follow-up:** context reuse/pool (keeps the
   fixed-buffer property; removes the per-call setup) before quoting a
   Metal number.
+- **Phase A2 update (context pool, `EncodeWorker`): Metal warm =
+  ~18,300 tok/s** on the same ~310-token batch (cold first-encode ≈5,900
+  tok/s including backend graph compile). One long-lived context on a
+  worker thread erased the per-call setup: **~14× the spike's Metal
+  number and ~6.8× candle Metal (~2,700)**, exceeding the llama-bench
+  pp512 ceiling on this tiny batch. Fixed compute buffers retained
+  (142 MiB MTL0 + 88 MiB CPU, allocated once) — the no-leak property
+  that motivated the swap. The smoke test now prints cold and warm
+  passes separately.
 - Integration findings worth keeping: encoder-only models need
   `llama_encode` (llama_decode returns a bare -1); pooled embeddings
   require every token flagged for output; the CONTEXT's `n_seq_max`
