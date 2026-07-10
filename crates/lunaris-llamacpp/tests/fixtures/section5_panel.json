@@ -1,0 +1,709 @@
+{
+ "schema_version": 2,
+ "model": "BAAI/bge-reranker-v2-m3",
+ "activation": "sigmoid",
+ "reference": "candle FP32 NativeReranker, CPU, captured 2026-07-10 pre-Phase-C (the HF-gate-validated path; see lunaris git history: lunaris-rerank-native/tests/numerical_equivalence.rs)",
+ "populated": "2026-07-10",
+ "pairs": [
+  {
+   "id": "en-en-001",
+   "query": "how to sort a list in python",
+   "doc": "Use the built-in sorted() function or list.sort() method.",
+   "category": "en_to_en",
+   "fp32_score": 0.8944363594055176
+  },
+  {
+   "id": "en-en-002",
+   "query": "how to sort a list in python",
+   "doc": "The capital of France is Paris.",
+   "category": "en_to_en",
+   "fp32_score": 1.621366391191259e-05
+  },
+  {
+   "id": "en-en-003",
+   "query": "what causes rain",
+   "doc": "Rain forms when water vapor in clouds condenses and falls as precipitation.",
+   "category": "en_to_en",
+   "fp32_score": 0.9727547764778137
+  },
+  {
+   "id": "en-en-004",
+   "query": "what causes rain",
+   "doc": "The Roman Empire fell in 476 AD.",
+   "category": "en_to_en",
+   "fp32_score": 1.6364376278943382e-05
+  },
+  {
+   "id": "en-en-005",
+   "query": "benefits of regular exercise",
+   "doc": "Regular exercise improves cardiovascular health, mood, and longevity.",
+   "category": "en_to_en",
+   "fp32_score": 0.9985408782958984
+  },
+  {
+   "id": "en-en-006",
+   "query": "benefits of regular exercise",
+   "doc": "Photosynthesis converts sunlight into chemical energy.",
+   "category": "en_to_en",
+   "fp32_score": 1.6039173715398647e-05
+  },
+  {
+   "id": "en-en-007",
+   "query": "difference between TCP and UDP",
+   "doc": "TCP is connection-oriented and reliable; UDP is connectionless and faster.",
+   "category": "en_to_en",
+   "fp32_score": 0.9995891451835632
+  },
+  {
+   "id": "en-en-008",
+   "query": "difference between TCP and UDP",
+   "doc": "The mitochondrion is the powerhouse of the cell.",
+   "category": "en_to_en",
+   "fp32_score": 1.6397183571825735e-05
+  },
+  {
+   "id": "en-en-009",
+   "query": "what is machine learning",
+   "doc": "Machine learning trains statistical models to make predictions from data.",
+   "category": "en_to_en",
+   "fp32_score": 0.9752772450447083
+  },
+  {
+   "id": "en-en-010",
+   "query": "what is machine learning",
+   "doc": "The Pacific Ocean is the largest ocean on Earth.",
+   "category": "en_to_en",
+   "fp32_score": 1.6090516510303132e-05
+  },
+  {
+   "id": "en-en-011",
+   "query": "how does encryption work",
+   "doc": "Encryption transforms plaintext into ciphertext using a key, reversible only with the matching key.",
+   "category": "en_to_en",
+   "fp32_score": 0.98104327917099
+  },
+  {
+   "id": "en-en-012",
+   "query": "how does encryption work",
+   "doc": "Shakespeare wrote 37 plays during his career.",
+   "category": "en_to_en",
+   "fp32_score": 1.6706260794308037e-05
+  },
+  {
+   "id": "en-en-013",
+   "query": "best practices for password security",
+   "doc": "Use long unique passwords stored in a password manager and enable 2FA.",
+   "category": "en_to_en",
+   "fp32_score": 0.017218992114067078
+  },
+  {
+   "id": "en-en-014",
+   "query": "best practices for password security",
+   "doc": "Mount Everest is the tallest mountain above sea level.",
+   "category": "en_to_en",
+   "fp32_score": 1.6241563571384177e-05
+  },
+  {
+   "id": "en-en-015",
+   "query": "what is a database index",
+   "doc": "A database index is a data structure that speeds up row lookup at the cost of write overhead.",
+   "category": "en_to_en",
+   "fp32_score": 0.9996806383132935
+  },
+  {
+   "id": "en-en-016",
+   "query": "what is a database index",
+   "doc": "Bananas contain potassium and dietary fiber.",
+   "category": "en_to_en",
+   "fp32_score": 1.661710484768264e-05
+  },
+  {
+   "id": "en-en-017",
+   "query": "how to write a unit test",
+   "doc": "Write a function that exercises one behavior, asserts the expected output, and runs in isolation.",
+   "category": "en_to_en",
+   "fp32_score": 0.004086019936949015
+  },
+  {
+   "id": "en-en-018",
+   "query": "how to write a unit test",
+   "doc": "The Great Wall of China is over 13,000 miles long.",
+   "category": "en_to_en",
+   "fp32_score": 1.604339195182547e-05
+  },
+  {
+   "id": "en-en-019",
+   "query": "symptoms of the flu",
+   "doc": "Common flu symptoms include fever, body aches, cough, and fatigue.",
+   "category": "en_to_en",
+   "fp32_score": 0.9964115023612976
+  },
+  {
+   "id": "en-en-020",
+   "query": "symptoms of the flu",
+   "doc": "Saturn has prominent rings made of ice and rock.",
+   "category": "en_to_en",
+   "fp32_score": 1.599935785634443e-05
+  },
+  {
+   "id": "en-en-021",
+   "query": "what is a vector database",
+   "doc": "A vector database indexes high-dimensional embeddings for approximate nearest-neighbor search.",
+   "category": "en_to_en",
+   "fp32_score": 0.9947869181632996
+  },
+  {
+   "id": "en-en-022",
+   "query": "what is a vector database",
+   "doc": "Bread is made by fermenting flour and water with yeast.",
+   "category": "en_to_en",
+   "fp32_score": 1.6293426597258076e-05
+  },
+  {
+   "id": "en-en-023",
+   "query": "how to deploy a web app",
+   "doc": "Build the app, containerize it, push the image to a registry, and roll it out to a cluster.",
+   "category": "en_to_en",
+   "fp32_score": 0.18435817956924438
+  },
+  {
+   "id": "en-en-024",
+   "query": "how to deploy a web app",
+   "doc": "Whales are marine mammals, not fish.",
+   "category": "en_to_en",
+   "fp32_score": 1.6427962691523135e-05
+  },
+  {
+   "id": "en-en-025",
+   "query": "explain transformer architecture",
+   "doc": "Transformers use self-attention layers to weight token relevance, replacing recurrence with parallelism.",
+   "category": "en_to_en",
+   "fp32_score": 0.22182896733283997
+  },
+  {
+   "id": "en-vi-001",
+   "query": "what is the capital of vietnam",
+   "doc": "Hà Nội là thủ đô của Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 0.8367316722869873
+  },
+  {
+   "id": "en-vi-002",
+   "query": "what is the capital of vietnam",
+   "doc": "Phở là món ăn truyền thống của Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 0.00019460415933281183
+  },
+  {
+   "id": "en-vi-003",
+   "query": "traditional vietnamese coffee",
+   "doc": "Cà phê sữa đá là thức uống truyền thống nổi tiếng của Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 0.942644476890564
+  },
+  {
+   "id": "en-vi-004",
+   "query": "traditional vietnamese coffee",
+   "doc": "Vịnh Hạ Long là di sản thế giới được UNESCO công nhận.",
+   "category": "en_to_vi",
+   "fp32_score": 1.596965557837393e-05
+  },
+  {
+   "id": "en-vi-005",
+   "query": "vietnamese pho recipe",
+   "doc": "Phở bò được nấu từ nước dùng xương bò, bánh phở, thịt bò và rau thơm.",
+   "category": "en_to_vi",
+   "fp32_score": 0.10888668894767761
+  },
+  {
+   "id": "en-vi-006",
+   "query": "vietnamese pho recipe",
+   "doc": "Hồ Hoàn Kiếm nằm ở trung tâm Hà Nội.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6006730220397003e-05
+  },
+  {
+   "id": "en-vi-007",
+   "query": "ha long bay travel",
+   "doc": "Vịnh Hạ Long có hàng nghìn đảo đá vôi và là điểm du lịch nổi tiếng.",
+   "category": "en_to_vi",
+   "fp32_score": 0.031207121908664703
+  },
+  {
+   "id": "en-vi-008",
+   "query": "ha long bay travel",
+   "doc": "Bánh mì Việt Nam là sự kết hợp giữa ẩm thực Pháp và Việt.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6246149243670516e-05
+  },
+  {
+   "id": "en-vi-009",
+   "query": "vietnamese new year traditions",
+   "doc": "Tết Nguyên Đán là dịp lễ quan trọng nhất, mọi người sum họp gia đình và lì xì.",
+   "category": "en_to_vi",
+   "fp32_score": 0.05849674344062805
+  },
+  {
+   "id": "en-vi-010",
+   "query": "vietnamese new year traditions",
+   "doc": "Sài Gòn là tên cũ của Thành phố Hồ Chí Minh.",
+   "category": "en_to_vi",
+   "fp32_score": 1.612664527783636e-05
+  },
+  {
+   "id": "en-vi-011",
+   "query": "learning vietnamese language",
+   "doc": "Tiếng Việt sử dụng bảng chữ cái Latin với các dấu thanh điệu.",
+   "category": "en_to_vi",
+   "fp32_score": 0.03375265374779701
+  },
+  {
+   "id": "en-vi-012",
+   "query": "learning vietnamese language",
+   "doc": "Áo dài là trang phục truyền thống của phụ nữ Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 1.624895230634138e-05
+  },
+  {
+   "id": "en-vi-013",
+   "query": "how to make banh mi",
+   "doc": "Bánh mì Việt Nam gồm vỏ bánh giòn, pa-tê, thịt nguội, rau thơm và đồ chua.",
+   "category": "en_to_vi",
+   "fp32_score": 0.07584970444440842
+  },
+  {
+   "id": "en-vi-014",
+   "query": "how to make banh mi",
+   "doc": "Sông Mê Kông chảy qua đồng bằng Nam Bộ.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6050711565185338e-05
+  },
+  {
+   "id": "en-vi-015",
+   "query": "vietnam war history",
+   "doc": "Chiến tranh Việt Nam kết thúc năm 1975 với sự thống nhất đất nước.",
+   "category": "en_to_vi",
+   "fp32_score": 0.678399920463562
+  },
+  {
+   "id": "en-vi-016",
+   "query": "vietnam war history",
+   "doc": "Bún chả là món ăn nổi tiếng của Hà Nội.",
+   "category": "en_to_vi",
+   "fp32_score": 1.61015286721522e-05
+  },
+  {
+   "id": "en-vi-017",
+   "query": "rice farming in vietnam",
+   "doc": "Đồng bằng sông Cửu Long là vựa lúa lớn nhất Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 0.1122422069311142
+  },
+  {
+   "id": "en-vi-018",
+   "query": "rice farming in vietnam",
+   "doc": "Hồ Tây là hồ lớn nhất ở Hà Nội.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6069088815129362e-05
+  },
+  {
+   "id": "en-vi-019",
+   "query": "ao dai traditional dress",
+   "doc": "Áo dài là biểu tượng của vẻ đẹp và văn hóa truyền thống Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 0.9845713376998901
+  },
+  {
+   "id": "en-vi-020",
+   "query": "ao dai traditional dress",
+   "doc": "Phở bò là món ăn sáng phổ biến tại Việt Nam.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6077077816589735e-05
+  },
+  {
+   "id": "en-vi-021",
+   "query": "vietnamese coffee culture",
+   "doc": "Văn hóa cà phê Việt Nam rất đa dạng với cà phê phin, cà phê trứng và cà phê muối.",
+   "category": "en_to_vi",
+   "fp32_score": 0.9917958378791809
+  },
+  {
+   "id": "en-vi-022",
+   "query": "vietnamese coffee culture",
+   "doc": "Sông Hồng chảy qua thủ đô Hà Nội.",
+   "category": "en_to_vi",
+   "fp32_score": 1.6114177924464457e-05
+  },
+  {
+   "id": "en-vi-023",
+   "query": "mekong delta tourism",
+   "doc": "Du lịch đồng bằng sông Cửu Long mang đến trải nghiệm chợ nổi và vườn trái cây.",
+   "category": "en_to_vi",
+   "fp32_score": 0.16784147918224335
+  },
+  {
+   "id": "en-vi-024",
+   "query": "mekong delta tourism",
+   "doc": "Tiếng Việt có sáu thanh điệu khác nhau.",
+   "category": "en_to_vi",
+   "fp32_score": 1.5989555322448723e-05
+  },
+  {
+   "id": "en-vi-025",
+   "query": "vietnamese silk craft",
+   "doc": "Lụa Hà Đông và lụa Vạn Phúc là những làng nghề dệt lụa truyền thống nổi tiếng.",
+   "category": "en_to_vi",
+   "fp32_score": 0.2164975106716156
+  },
+  {
+   "id": "en-code-001",
+   "query": "python sort list",
+   "doc": "def sort_numbers(xs):\n    return sorted(xs)\n",
+   "category": "en_to_code",
+   "fp32_score": 0.13752296566963196
+  },
+  {
+   "id": "en-code-002",
+   "query": "python sort list",
+   "doc": "SELECT * FROM users WHERE created_at > NOW() - INTERVAL '7 days';",
+   "category": "en_to_code",
+   "fp32_score": 0.0005017654621042311
+  },
+  {
+   "id": "en-code-003",
+   "query": "rust async function",
+   "doc": "async fn fetch_url(url: &str) -> Result<String, reqwest::Error> {\n    reqwest::get(url).await?.text().await\n}\n",
+   "category": "en_to_code",
+   "fp32_score": 0.01934056170284748
+  },
+  {
+   "id": "en-code-004",
+   "query": "rust async function",
+   "doc": "import numpy as np\narr = np.zeros((10, 10))",
+   "category": "en_to_code",
+   "fp32_score": 0.00026711050304584205
+  },
+  {
+   "id": "en-code-005",
+   "query": "sql group by example",
+   "doc": "SELECT category, COUNT(*) AS n FROM products GROUP BY category ORDER BY n DESC;",
+   "category": "en_to_code",
+   "fp32_score": 0.0945773720741272
+  },
+  {
+   "id": "en-code-006",
+   "query": "sql group by example",
+   "doc": "fn main() { println!(\"Hello, world!\"); }",
+   "category": "en_to_code",
+   "fp32_score": 0.000403206970077008
+  },
+  {
+   "id": "en-code-007",
+   "query": "javascript fetch api",
+   "doc": "const res = await fetch('/api/users');\nconst json = await res.json();",
+   "category": "en_to_code",
+   "fp32_score": 0.9206631183624268
+  },
+  {
+   "id": "en-code-008",
+   "query": "javascript fetch api",
+   "doc": "CREATE INDEX idx_users_email ON users(email);",
+   "category": "en_to_code",
+   "fp32_score": 0.0003504146297927946
+  },
+  {
+   "id": "en-code-009",
+   "query": "python read csv file",
+   "doc": "import csv\nwith open('data.csv') as f:\n    reader = csv.DictReader(f)\n    rows = list(reader)\n",
+   "category": "en_to_code",
+   "fp32_score": 0.7692051529884338
+  },
+  {
+   "id": "en-code-010",
+   "query": "python read csv file",
+   "doc": "let v: Vec<i32> = (0..10).collect();",
+   "category": "en_to_code",
+   "fp32_score": 0.0008687704685144126
+  },
+  {
+   "id": "en-code-011",
+   "query": "rust error handling result",
+   "doc": "fn parse(s: &str) -> Result<i32, std::num::ParseIntError> {\n    s.parse::<i32>()\n}\n",
+   "category": "en_to_code",
+   "fp32_score": 0.001006797538138926
+  },
+  {
+   "id": "en-code-012",
+   "query": "rust error handling result",
+   "doc": "df.groupby('category').agg({'price': 'mean'})",
+   "category": "en_to_code",
+   "fp32_score": 1.6345715266652405e-05
+  },
+  {
+   "id": "en-code-013",
+   "query": "regex match email",
+   "doc": "import re\npattern = r'^[\\w._%+-]+@[\\w.-]+\\.[A-Za-z]{2,}$'\nre.match(pattern, addr)",
+   "category": "en_to_code",
+   "fp32_score": 0.0090920589864254
+  },
+  {
+   "id": "en-code-014",
+   "query": "regex match email",
+   "doc": "git checkout -b feature/login",
+   "category": "en_to_code",
+   "fp32_score": 1.9035787772736512e-05
+  },
+  {
+   "id": "en-code-015",
+   "query": "docker run container",
+   "doc": "docker run -d --name web -p 8080:80 nginx:alpine",
+   "category": "en_to_code",
+   "fp32_score": 0.19047406315803528
+  },
+  {
+   "id": "en-code-016",
+   "query": "docker run container",
+   "doc": "console.log('hello');",
+   "category": "en_to_code",
+   "fp32_score": 0.0006323716370388865
+  },
+  {
+   "id": "en-code-017",
+   "query": "kubernetes deployment yaml",
+   "doc": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 3",
+   "category": "en_to_code",
+   "fp32_score": 0.002614076714962721
+  },
+  {
+   "id": "en-code-018",
+   "query": "kubernetes deployment yaml",
+   "doc": "for i in range(10): print(i)",
+   "category": "en_to_code",
+   "fp32_score": 1.6161286112037487e-05
+  },
+  {
+   "id": "en-code-019",
+   "query": "python list comprehension",
+   "doc": "squares = [x * x for x in range(10) if x % 2 == 0]",
+   "category": "en_to_code",
+   "fp32_score": 3.100029061897658e-05
+  },
+  {
+   "id": "en-code-020",
+   "query": "python list comprehension",
+   "doc": "SELECT version();",
+   "category": "en_to_code",
+   "fp32_score": 1.8492954040993936e-05
+  },
+  {
+   "id": "en-code-021",
+   "query": "rust hashmap insert",
+   "doc": "use std::collections::HashMap;\nlet mut m: HashMap<&str, i32> = HashMap::new();\nm.insert(\"a\", 1);",
+   "category": "en_to_code",
+   "fp32_score": 0.2045893520116806
+  },
+  {
+   "id": "en-code-022",
+   "query": "rust hashmap insert",
+   "doc": "<html><body>Hello</body></html>",
+   "category": "en_to_code",
+   "fp32_score": 1.7146616301033646e-05
+  },
+  {
+   "id": "en-code-023",
+   "query": "git rebase interactive",
+   "doc": "git rebase -i HEAD~3  # squash and reorder the last three commits",
+   "category": "en_to_code",
+   "fp32_score": 0.022980229929089546
+  },
+  {
+   "id": "en-code-024",
+   "query": "git rebase interactive",
+   "doc": "function add(a, b) { return a + b; }",
+   "category": "en_to_code",
+   "fp32_score": 2.7973488613497466e-05
+  },
+  {
+   "id": "en-code-025",
+   "query": "tokio spawn task",
+   "doc": "tokio::spawn(async move {\n    process(payload).await;\n});",
+   "category": "en_to_code",
+   "fp32_score": 0.6515855193138123
+  },
+  {
+   "id": "vi-vi-001",
+   "query": "phở bò ngon nhất ở đâu",
+   "doc": "Phở Thìn ở Lò Đúc là một trong những quán phở bò nổi tiếng nhất Hà Nội.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9298754334449768
+  },
+  {
+   "id": "vi-vi-002",
+   "query": "phở bò ngon nhất ở đâu",
+   "doc": "Cà phê sữa đá là thức uống phổ biến vào buổi sáng.",
+   "category": "vi_to_vi",
+   "fp32_score": 2.153081732103601e-05
+  },
+  {
+   "id": "vi-vi-003",
+   "query": "học tiếng anh hiệu quả",
+   "doc": "Để học tiếng Anh hiệu quả nên luyện nghe nói hàng ngày và đọc nhiều tài liệu.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9967827796936035
+  },
+  {
+   "id": "vi-vi-004",
+   "query": "học tiếng anh hiệu quả",
+   "doc": "Vịnh Hạ Long có nhiều hang động đẹp.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.61925854627043e-05
+  },
+  {
+   "id": "vi-vi-005",
+   "query": "cách nấu phở gà",
+   "doc": "Để nấu phở gà ngon cần ninh xương gà với gừng, hành nướng và gia vị thuốc bắc.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9919034838676453
+  },
+  {
+   "id": "vi-vi-006",
+   "query": "cách nấu phở gà",
+   "doc": "Áo dài là biểu tượng văn hóa Việt Nam.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.658132350712549e-05
+  },
+  {
+   "id": "vi-vi-007",
+   "query": "du lịch đà lạt",
+   "doc": "Đà Lạt nổi tiếng với khí hậu mát mẻ quanh năm và những đồi thông xanh.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9234949350357056
+  },
+  {
+   "id": "vi-vi-008",
+   "query": "du lịch đà lạt",
+   "doc": "Phở là món ăn truyền thống của miền Bắc.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.0018249958520755172
+  },
+  {
+   "id": "vi-vi-009",
+   "query": "văn hóa trà việt nam",
+   "doc": "Trà sen Tây Hồ là một trong những loại trà truyền thống quý hiếm của Việt Nam.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.743166446685791
+  },
+  {
+   "id": "vi-vi-010",
+   "query": "văn hóa trà việt nam",
+   "doc": "Sài Gòn có nhiều quán cà phê hiện đại.",
+   "category": "vi_to_vi",
+   "fp32_score": 3.852900044876151e-05
+  },
+  {
+   "id": "vi-vi-011",
+   "query": "kinh nghiệm phượt sapa",
+   "doc": "Đi phượt Sa Pa nên chuẩn bị áo ấm, giày leo núi và lên kế hoạch trekking các bản làng.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.8583855628967285
+  },
+  {
+   "id": "vi-vi-012",
+   "query": "kinh nghiệm phượt sapa",
+   "doc": "Bánh mì Việt Nam có lớp vỏ giòn rụm.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.6101805158541538e-05
+  },
+  {
+   "id": "vi-vi-013",
+   "query": "cách làm bánh chưng ngày tết",
+   "doc": "Bánh chưng được gói bằng lá dong, nhân đậu xanh, thịt mỡ và nếp.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.8652153611183167
+  },
+  {
+   "id": "vi-vi-014",
+   "query": "cách làm bánh chưng ngày tết",
+   "doc": "Hồ Gươm nằm ở trung tâm Hà Nội.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.8386044757789932e-05
+  },
+  {
+   "id": "vi-vi-015",
+   "query": "lịch sử thủ đô hà nội",
+   "doc": "Hà Nội có lịch sử hơn một nghìn năm, được vua Lý Thái Tổ chọn làm kinh đô năm 1010.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9866470098495483
+  },
+  {
+   "id": "vi-vi-016",
+   "query": "lịch sử thủ đô hà nội",
+   "doc": "Cà phê trứng là đặc sản Hà Nội.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.0006485157064162195
+  },
+  {
+   "id": "vi-vi-017",
+   "query": "học lập trình python",
+   "doc": "Để bắt đầu học Python nên làm quen với cú pháp, biến, vòng lặp và hàm cơ bản.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.988579273223877
+  },
+  {
+   "id": "vi-vi-018",
+   "query": "học lập trình python",
+   "doc": "Vịnh Hạ Long là di sản thế giới.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.6100484572234564e-05
+  },
+  {
+   "id": "vi-vi-019",
+   "query": "văn hóa áo dài việt nam",
+   "doc": "Áo dài Việt Nam có nhiều kiểu dáng, phổ biến nhất là áo dài truyền thống cổ cao.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9816914200782776
+  },
+  {
+   "id": "vi-vi-020",
+   "query": "văn hóa áo dài việt nam",
+   "doc": "Phở bò là món ăn quốc dân của Việt Nam.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.00017412164015695453
+  },
+  {
+   "id": "vi-vi-021",
+   "query": "ẩm thực miền tây nam bộ",
+   "doc": "Ẩm thực miền Tây nổi bật với canh chua cá lóc, cá kho tộ và lẩu mắm.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.978898823261261
+  },
+  {
+   "id": "vi-vi-022",
+   "query": "ẩm thực miền tây nam bộ",
+   "doc": "Bún chả Hà Nội rất nổi tiếng.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.09512446820735931
+  },
+  {
+   "id": "vi-vi-023",
+   "query": "tết nguyên đán việt nam",
+   "doc": "Tết Nguyên Đán là dịp lễ lớn nhất trong năm, với các phong tục lì xì, gói bánh chưng và chúc Tết.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9691052436828613
+  },
+  {
+   "id": "vi-vi-024",
+   "query": "tết nguyên đán việt nam",
+   "doc": "Sông Mê Kông chảy qua nhiều nước.",
+   "category": "vi_to_vi",
+   "fp32_score": 1.7287786249653436e-05
+  },
+  {
+   "id": "vi-vi-025",
+   "query": "nghệ thuật rối nước",
+   "doc": "Múa rối nước là loại hình nghệ thuật dân gian độc đáo của Việt Nam, biểu diễn trên mặt nước.",
+   "category": "vi_to_vi",
+   "fp32_score": 0.9976414442062378
+  }
+ ]
+}
