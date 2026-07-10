@@ -189,23 +189,33 @@ impl Embedder for NativeQuantizedEmbedder {
         let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
         let me = self.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            // O-01-E + activation-budget — re-chunk by BOTH the row-count
-            // ceiling (`public_batch_size`) and the `rows × max_seq²` activation
-            // footprint (`plan_batches`). Mirror of the FP16 path; this is the
-            // guarantee that actually holds for long inputs — see
-            // `embedder::plan_batches` (RAPTOR-summary OOM fix).
+            // O-01-E + activation-budget + §4b length bucketing — mirror of
+            // the FP16 path: row-count ceiling (`public_batch_size`), the
+            // `rows × max_seq²` activation footprint (RAPTOR-summary OOM fix),
+            // and the padding-waste ceiling via a length-sorted window walk.
+            // Rows scatter back through `order` so `out[i]` stays the
+            // embedding of `inputs[i]`.
             let lens: Vec<usize> = owned.iter().map(|s| s.len()).collect();
-            let sizes = crate::embedder::plan_batches(
+            let (order, sizes) = crate::embedder::plan_bucketed_batches(
                 &lens,
                 crate::embedder::public_batch_size(),
                 crate::embedder::activation_budget(),
             );
-            let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
+            let mut out: Vec<Vec<f32>> = vec![Vec::new(); owned.len()];
             let mut start = 0usize;
             for sz in sizes {
-                let refs: Vec<&str> = owned[start..start + sz].iter().map(|s| s.as_str()).collect();
+                let idxs = &order[start..start + sz];
+                let refs: Vec<&str> = idxs.iter().map(|&i| owned[i].as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
-                out.extend(rows);
+                if rows.len() != sz {
+                    return Err(LunarisError::Storage(StorageError::Backend(format!(
+                        "lunaris-embed-native (quantized): embed_blocking returned {} rows for {sz} inputs",
+                        rows.len()
+                    ))));
+                }
+                for (&i, row) in idxs.iter().zip(rows) {
+                    out[i] = row;
+                }
                 start += sz;
             }
             Ok(out)

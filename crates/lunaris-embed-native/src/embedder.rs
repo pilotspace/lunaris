@@ -89,41 +89,73 @@ pub(crate) fn activation_budget() -> u128 {
     (public_batch_size() as u128) * (EMBED_REF_SEQ_BYTES as u128).pow(2)
 }
 
-/// Plan order-preserving forward batches from per-input byte lengths so that
-/// every batch satisfies BOTH ceilings:
-///   1. `rows ≤ max_rows` (the legacy count cap / `LUNARIS_EMBED_BATCH`), and
-///   2. `rows × max_len_in_batch² ≤ budget` (the activation-footprint cap).
+/// Maximum tolerated padding fraction per forward window: padded cells
+/// (`rows × max_len − Σ len`) must stay ≤ 1/4 of the padded area
+/// (`rows × max_len`). The §4b profiling matrix measured 67% padding waste
+/// under pad-to-longest at batch=8, making batch=8 *slower* than batch=1 in
+/// every device × quant cell — this ceiling is what makes batching a win
+/// again instead of a tax.
+pub(crate) const MAX_PAD_FRACTION_NUM: u128 = 1;
+pub(crate) const MAX_PAD_FRACTION_DEN: u128 = 4;
+
+/// Length-bucketed batch plan (§4b-RESULTS finding #1).
 ///
-/// Returns the batch sizes (counts) in input order; their sum equals
-/// `byte_lens.len()`, so callers can walk contiguous windows without
-/// re-ordering and keep output indices aligned with input indices.
+/// Returns `(order, sizes)`: `order` is the input indices stably sorted by
+/// byte length (equal-length inputs keep their relative order, so the plan
+/// is deterministic), and `sizes` are forward-window row counts over that
+/// sorted order. Every window satisfies THREE ceilings:
+///   1. `rows ≤ max_rows` (the count cap / `LUNARIS_EMBED_BATCH`),
+///   2. `rows × max_len_in_window² ≤ budget` (the activation-footprint cap —
+///      the RAPTOR-summary ~124 GB OOM guard; a lone over-budget input still
+///      forms a window of exactly one, the irreducible floor — the tokenizer
+///      separately truncates it to `max_position_embeddings`), and
+///   3. padding ≤ [`MAX_PAD_FRACTION_NUM`]/[`MAX_PAD_FRACTION_DEN`] of the
+///      window's padded area (the padding-waste cap — new here).
 ///
-/// A single input whose own footprint exceeds `budget` still forms a batch of
-/// exactly one (the irreducible floor — the tokenizer separately truncates it
-/// to `max_position_embeddings`, bounding the real tensor). `max_rows` is
-/// clamped to ≥1 so a misconfigured ceiling can never yield a 0-window.
-pub(crate) fn plan_batches(byte_lens: &[usize], max_rows: usize, budget: u128) -> Vec<usize> {
+/// Because the walk is over sorted lengths, ceiling 3 only fires at genuine
+/// length jumps (a 16-token memo next to a 512-token summary); a smoothly
+/// increasing corpus fills windows to `max_rows` exactly like the contiguous
+/// planner. Callers MUST scatter window outputs back through `order` — the
+/// window walk no longer visits inputs in input order.
+pub(crate) fn plan_bucketed_batches(
+    byte_lens: &[usize],
+    max_rows: usize,
+    budget: u128,
+) -> (Vec<usize>, Vec<usize>) {
     let max_rows = max_rows.max(1);
+    let mut order: Vec<usize> = (0..byte_lens.len()).collect();
+    order.sort_by_key(|&i| byte_lens[i]);
+
     let mut sizes: Vec<usize> = Vec::new();
     let mut count: usize = 0;
     let mut max_len: usize = 0;
-    for &len in byte_lens {
+    let mut sum_len: u128 = 0;
+    for &i in &order {
+        let len = byte_lens[i];
         if count >= 1 {
-            let prospective_max = max_len.max(len) as u128;
-            let footprint = (count as u128 + 1) * prospective_max * prospective_max;
-            if count >= max_rows || footprint > budget {
+            let rows = count as u128 + 1;
+            let pmax = max_len.max(len) as u128;
+            let footprint = rows * pmax * pmax;
+            let padded_area = rows * pmax;
+            let pad_cells = padded_area - (sum_len + len as u128);
+            if count >= max_rows
+                || footprint > budget
+                || pad_cells * MAX_PAD_FRACTION_DEN > padded_area * MAX_PAD_FRACTION_NUM
+            {
                 sizes.push(count);
                 count = 0;
                 max_len = 0;
+                sum_len = 0;
             }
         }
         count += 1;
         max_len = max_len.max(len);
+        sum_len += len as u128;
     }
     if count > 0 {
         sizes.push(count);
     }
-    sizes
+    (order, sizes)
 }
 use crate::config::{ConfigError, ModernBertConfig};
 use crate::modernbert::{ForwardError, pooled_forward};
@@ -368,23 +400,35 @@ impl Embedder for NativeEmbedder {
         let me = self.clone();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            // O-01-E + activation-budget — re-chunk user input so each forward
-            // pass is bounded BOTH by row count (`public_batch_size`) and by the
-            // `rows × max_seq²` activation footprint (`plan_batches`). The latter
-            // is what makes the "footprint guarantee" actually hold for long
-            // inputs: a wide batch of long RAPTOR community summaries used to pad
-            // a `[rows, heads, seq, seq]` tensor to ~124 GB and OOM-kill ingest.
-            // Each window runs through the same `embed_blocking` path; rows are
-            // concatenated preserving input order. For ≤8 short inputs this is a
-            // single window = single forward pass = zero overhead vs before.
+            // O-01-E + activation-budget + §4b length bucketing — re-chunk user
+            // input so each forward pass is bounded by row count
+            // (`public_batch_size`), by the `rows × max_seq²` activation
+            // footprint (the RAPTOR-summary 124 GB OOM guard), AND by padding
+            // waste (`plan_bucketed_batches` walks a length-sorted order so a
+            // window never mixes a short memo with a long summary — the §4b
+            // matrix measured pad-to-longest making batch=8 slower than
+            // batch=1). Each window runs through the same `embed_blocking`
+            // path; rows are scattered back through `order` so `out[i]` is the
+            // embedding of `inputs[i]` exactly as before. For ≤8 same-length
+            // inputs this is a single window = single forward = zero overhead.
             let lens: Vec<usize> = owned.iter().map(|s| s.len()).collect();
-            let sizes = plan_batches(&lens, public_batch_size(), activation_budget());
-            let mut out: Vec<Vec<f32>> = Vec::with_capacity(owned.len());
+            let (order, sizes) =
+                plan_bucketed_batches(&lens, public_batch_size(), activation_budget());
+            let mut out: Vec<Vec<f32>> = vec![Vec::new(); owned.len()];
             let mut start = 0usize;
             for sz in sizes {
-                let refs: Vec<&str> = owned[start..start + sz].iter().map(|s| s.as_str()).collect();
+                let idxs = &order[start..start + sz];
+                let refs: Vec<&str> = idxs.iter().map(|&i| owned[i].as_str()).collect();
                 let rows = me.embed_blocking(&refs).map_err(LunarisError::from)?;
-                out.extend(rows);
+                if rows.len() != sz {
+                    return Err(LunarisError::Storage(StorageError::Backend(format!(
+                        "lunaris-embed-native: embed_blocking returned {} rows for {sz} inputs",
+                        rows.len()
+                    ))));
+                }
+                for (&i, row) in idxs.iter().zip(rows) {
+                    out[i] = row;
+                }
                 start += sz;
             }
             Ok(out)
@@ -478,86 +522,133 @@ mod tests {
         assert_eq!(flat, xs);
     }
 
-    // -- Activation-budget batch planner (the OOM fix) ----------------------
-
-    /// Every batch the planner emits must satisfy BOTH ceilings: rows ≤ max_rows
-    /// AND rows × max_len² ≤ budget. This is the invariant that bounds peak
-    /// attention memory regardless of input length.
-    fn assert_budget_holds(lens: &[usize], sizes: &[usize], max_rows: usize, budget: u128) {
-        assert_eq!(sizes.iter().sum::<usize>(), lens.len(), "sizes must cover all inputs");
-        let mut idx = 0;
-        for &sz in sizes {
-            assert!(sz >= 1, "no empty batches");
-            assert!(sz <= max_rows.max(1) || sz == 1, "row-count ceiling");
-            let max_len = lens[idx..idx + sz].iter().copied().max().unwrap_or(0) as u128;
-            let footprint = sz as u128 * max_len * max_len;
-            // A batch of one is the irreducible floor and may exceed budget.
-            assert!(sz == 1 || footprint <= budget, "footprint {footprint} > budget {budget}");
-            idx += sz;
-        }
-    }
-
-    #[test]
-    fn plan_batches_short_inputs_fill_to_row_cap() {
-        // 20 short inputs, budget generous → batches limited by max_rows (8).
-        let lens = vec![100usize; 20];
-        let budget = activation_budget_for(8);
-        let sizes = plan_batches(&lens, 8, budget);
-        assert_eq!(sizes, vec![8, 8, 4]);
-        assert_budget_holds(&lens, &sizes, 8, budget);
-    }
-
-    /// THE OOM REGRESSION GUARD. A single very long input (an unbounded RAPTOR
-    /// community summary) must NEVER be co-batched with others — the old
-    /// `chunks(public_batch_size())` path put up to 32 of these in one
-    /// `[rows, heads, seq, seq]` forward and allocated ~124 GB. With the budget
-    /// planner the long input forms a batch of exactly one.
-    #[test]
-    fn plan_batches_isolates_a_long_input() {
-        let mut lens = vec![200usize; 5];
-        lens.insert(2, 32_768); // ~8192 tokens, the embedder's max
-        let budget = activation_budget_for(32); // even with the eval's batch=32
-        let sizes = plan_batches(&lens, 32, budget);
-        // The long input sits alone; it is NOT padded across a wide batch.
-        let long_pos = sizes.iter().scan(0usize, |acc, &s| {
-            let start = *acc;
-            *acc += s;
-            Some((start, s))
-        });
-        assert!(
-            long_pos.into_iter().any(|(start, s)| start == 2 && s == 1),
-            "long input must be solo: {sizes:?}"
-        );
-        assert_budget_holds(&lens, &sizes, 32, budget);
-    }
-
-    #[test]
-    fn plan_batches_medium_inputs_get_fewer_rows() {
-        // Inputs at 2× the reference length → ~1/4 the rows of the count cap.
-        let lens = vec![EMBED_REF_SEQ_BYTES * 2; 16];
-        let budget = activation_budget_for(8);
-        let sizes = plan_batches(&lens, 8, budget);
-        assert!(sizes.iter().all(|&s| s <= 2), "2× length ⇒ ≤2 rows/batch: {sizes:?}");
-        assert_budget_holds(&lens, &sizes, 8, budget);
-    }
-
-    #[test]
-    fn plan_batches_empty_and_singleton() {
-        assert!(plan_batches(&[], 8, activation_budget_for(8)).is_empty());
-        assert_eq!(plan_batches(&[5], 8, activation_budget_for(8)), vec![1]);
-    }
-
-    #[test]
-    fn plan_batches_never_emits_zero_window_even_at_max_rows_zero() {
-        // A misconfigured ceiling of 0 must clamp to 1, never panic / 0-window.
-        let lens = vec![10usize; 3];
-        let sizes = plan_batches(&lens, 0, activation_budget_for(8));
-        assert_eq!(sizes, vec![1, 1, 1]);
-    }
-
     /// Test-only budget that does not read process env (avoids the global-env
     /// race the `resolve_batch_size` tests document).
     fn activation_budget_for(rows: usize) -> u128 {
         (rows as u128) * (EMBED_REF_SEQ_BYTES as u128).pow(2)
+    }
+
+    // §4b length bucketing — `plan_bucketed_batches`. RED observed as E0425
+    // (helper absent) before the planner landed. The activation-budget cases
+    // below carry over the OOM-fix regression coverage from the deleted
+    // contiguous `plan_batches` planner (this planner supersedes it at every
+    // call site).
+
+    /// Every window over the sorted order must satisfy all three ceilings.
+    fn assert_bucketed_invariants(
+        lens: &[usize],
+        order: &[usize],
+        sizes: &[usize],
+        max_rows: usize,
+        budget: u128,
+    ) {
+        // `order` is a permutation of 0..n and `sizes` covers it exactly.
+        let mut seen = order.to_vec();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..lens.len()).collect::<Vec<_>>(), "order must be a permutation");
+        assert_eq!(sizes.iter().sum::<usize>(), lens.len(), "sizes must cover every input");
+
+        let mut start = 0usize;
+        for &sz in sizes {
+            let window: Vec<usize> = order[start..start + sz].iter().map(|&i| lens[i]).collect();
+            let rows = sz as u128;
+            let pmax = *window.iter().max().unwrap() as u128;
+            let sum: u128 = window.iter().map(|&l| l as u128).sum();
+            assert!(sz <= max_rows.max(1), "rows {sz} > max_rows {max_rows}");
+            // Singleton windows are the irreducible floor — a lone input may
+            // exceed the budget by design (tokenizer truncation bounds it).
+            assert!(sz == 1 || rows * pmax * pmax <= budget, "footprint over budget: {window:?}");
+            let padded_area = rows * pmax;
+            assert!(
+                (padded_area - sum) * MAX_PAD_FRACTION_DEN <= padded_area * MAX_PAD_FRACTION_NUM,
+                "padding waste over ceiling in window {window:?}"
+            );
+            start += sz;
+        }
+    }
+
+    /// THE §4b REGRESSION GUARD. An interleaved short/long corpus (the shape
+    /// the profiling matrix measured at 67% padding waste) must split into
+    /// length-homogeneous windows, never one mixed pad-to-longest window.
+    #[test]
+    fn bucketed_plan_separates_interleaved_lengths() {
+        let lens = vec![40usize, 1200, 40, 1200, 40, 1200];
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, budget);
+        assert_eq!(sizes, vec![3, 3], "shorts and longs must land in separate windows");
+        // Sorted walk puts the three shorts first, stably (0, 2, 4).
+        assert_eq!(&order[..3], &[0, 2, 4], "equal lengths keep input order (stable sort)");
+        assert_eq!(&order[3..], &[1, 3, 5]);
+        assert_bucketed_invariants(&lens, &order, &sizes, 8, budget);
+    }
+
+    #[test]
+    fn bucketed_plan_identical_lengths_fill_to_row_cap() {
+        // No length variance ⇒ the waste ceiling never fires; behaves exactly
+        // like the contiguous planner (8+8+4) with an identity-ish order.
+        let lens = vec![100usize; 20];
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, budget);
+        assert_eq!(sizes, vec![8, 8, 4]);
+        assert_eq!(order, (0..20).collect::<Vec<_>>(), "stable sort keeps identity order");
+        assert_bucketed_invariants(&lens, &order, &sizes, 8, budget);
+    }
+
+    #[test]
+    fn bucketed_plan_smooth_ramp_does_not_fragment() {
+        // Smoothly increasing lengths (±10%) must NOT split on the waste
+        // ceiling — bucketing only pays at genuine length jumps.
+        let lens: Vec<usize> = (0..16).map(|i| 400 + i * 10).collect();
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, budget);
+        assert_eq!(sizes, vec![8, 8], "a smooth ramp fills windows to the row cap");
+        assert_bucketed_invariants(&lens, &order, &sizes, 8, budget);
+    }
+
+    /// The RAPTOR-summary OOM guard carries over: a single very long input
+    /// still lands in a window of exactly one, even sorted to the end.
+    #[test]
+    fn bucketed_plan_preserves_the_oom_guard() {
+        let mut lens = vec![200usize; 5];
+        lens.insert(2, 32_768);
+        let budget = activation_budget_for(32);
+        let (order, sizes) = plan_bucketed_batches(&lens, 32, budget);
+        assert_eq!(*order.last().unwrap(), 2, "the long input sorts to the end");
+        assert_eq!(*sizes.last().unwrap(), 1, "the long input must sit alone");
+        assert_bucketed_invariants(&lens, &order, &sizes, 32, budget);
+    }
+
+    #[test]
+    fn bucketed_plan_medium_inputs_get_fewer_rows() {
+        // Inputs at 2× the reference length → ~1/4 the rows of the count cap
+        // (the activation budget, not the row cap, is binding). Ported from
+        // the deleted contiguous planner's regression suite.
+        let lens = vec![EMBED_REF_SEQ_BYTES * 2; 16];
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, budget);
+        assert!(sizes.iter().all(|&s| s <= 2), "2× length ⇒ ≤2 rows/batch: {sizes:?}");
+        assert_bucketed_invariants(&lens, &order, &sizes, 8, budget);
+    }
+
+    #[test]
+    fn bucketed_plan_empty_singleton_and_zero_rows() {
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&[], 8, budget);
+        assert!(order.is_empty() && sizes.is_empty());
+        let (order, sizes) = plan_bucketed_batches(&[5], 8, budget);
+        assert_eq!((order, sizes), (vec![0], vec![1]));
+        // A misconfigured ceiling of 0 must clamp to 1, never panic / 0-window.
+        let (_, sizes) = plan_bucketed_batches(&[10, 10, 10], 0, budget);
+        assert_eq!(sizes, vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn bucketed_plan_zero_length_inputs_do_not_divide_by_zero() {
+        // Empty strings ⇒ padded_area = 0; the waste rule must not panic and
+        // the plan must still cover every input.
+        let lens = vec![0usize, 0, 0, 500];
+        let budget = activation_budget_for(8);
+        let (order, sizes) = plan_bucketed_batches(&lens, 8, budget);
+        assert_bucketed_invariants(&lens, &order, &sizes, 8, budget);
     }
 }
