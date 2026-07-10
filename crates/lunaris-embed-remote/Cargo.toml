@@ -2,7 +2,7 @@
 #
 # Milestone v0.4 N-03 cutover. Hosts the Ollama HTTP embedder ported out of
 # the retired `lunaris-embed::ollama` module. Off by default — the supported
-# v0.4 path is `lunaris-embed-native::NativeEmbedder` (candle + granite-r2).
+# path is `lunaris-llamacpp::LlamaCppEmbedder` (llama.cpp + granite-r2 GGUF).
 # This crate exists only so air-gapped operators with an Ollama instance
 # already running can keep the HTTP path without dragging the ONNX / fastembed
 # stack back into the binary.

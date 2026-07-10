@@ -25,7 +25,7 @@ categories  = ["database", "asynchronous", "data-structures"]
 #   use lunaris::Lunaris;
 [package.metadata.docs.rs]
 all-features = false
-features = ["candle", "ollama", "cloud-api", "embed-remote", "embedder-gguf", "reranker-gguf"]
+features = ["ollama", "cloud-api", "embed-remote"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
@@ -39,22 +39,14 @@ lunaris-storage-postgres  = { workspace = true }
 # with zero external services. Pure SQLite — no heavy deps to gate behind a
 # feature.
 lunaris-storage-embedded  = { workspace = true }
-# Native candle embedder + reranker. Gated behind the `native` feature (kept in
-# `default` — see [features]) so consumers can opt OUT of the ~100 MB candle
-# stack via `default-features = false`. `Lunaris::open()`'s `resolve_embedder()`
-# / `resolve_reranker()` construct `NativeEmbedder` / `NativeReranker` only when
-# `native` is on, falling back to the always-available `NoopEmbedder` /
-# `NoopReranker` (candle-free consumers use the `embed-remote` HTTP embedder).
-lunaris-embed-native      = { workspace = true, optional = true }
 lunaris-embed-remote      = { workspace = true, optional = true }
 lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }
 lunaris-rerank            = { workspace = true }
-lunaris-rerank-native     = { workspace = true, optional = true }
-# llama.cpp-only cutover Phase B — GGUF embedder + reranker served by an
-# in-process llama.cpp runtime (one warm context per model on a worker
-# thread). Opt-in until the LongMemEval / §5 quality gates pass; wins over
-# the candle paths when enabled.
+# llama.cpp-only cutover — THE inference runtime: GGUF embedder + reranker
+# served by an in-process llama.cpp runtime (one warm context per model on a
+# worker thread). In `default`; opt out via `default-features = false` for
+# the Tier-0 no-C++-toolchain build (Noop or remote embedder).
 lunaris-llamacpp          = { workspace = true, optional = true }
 lunaris-retrieve          = { workspace = true }
 # Plan 04 — verifier + consolidator crates. default-features = false is
@@ -63,11 +55,6 @@ lunaris-retrieve          = { workspace = true }
 # forwarded (see [features] below — W-5 AUGMENT forwards).
 lunaris-verify            = { workspace = true }
 lunaris-consolidate       = { workspace = true }
-# `resolve_embedder()` / `resolve_reranker()` construct `NativeEmbedderOpts` /
-# `NativeRerankerOpts` which carry a `candle_core::Device` field. Optional +
-# gated behind `native` alongside the native crates so a `default-features =
-# false` build pulls no candle.
-candle-core    = { workspace = true, optional = true }
 async-trait    = { workspace = true }
 bytes          = { workspace = true }
 chrono         = { workspace = true }
@@ -88,10 +75,9 @@ tracing-subscriber = { workspace = true }
 is-terminal    = { workspace = true }
 ulid           = { workspace = true }
 url            = { workspace = true }
-# v0.4 N-03 — used by `resolve_embedder()` / `resolve_reranker()` to resolve
-# `~/.cache/lunaris/models/{granite-embedding-311m-multilingual-r2,bge-reranker-v2-m3}/`
-# as the canonical default load location for native model artifacts. Operator
-# overrides via `LUNARIS_EMBEDDER_DIR` / `LUNARIS_RERANKER_DIR` bypass `dirs`.
+# Used to resolve `~/.lunaris/models/` (staged GGUFs) and the legacy
+# `~/.cache/lunaris/models/` tokenizer location for the BPE token counter.
+# Operator overrides via LUNARIS_*_GGUF / LUNARIS_EMBEDDER_DIR bypass `dirs`.
 dirs           = { workspace = true }
 # Phase 14.2 — ephemeral per-handle LRU boost cache.
 lru            = { workspace = true }
@@ -122,76 +108,25 @@ rand           = { workspace = true }
 nix            = { workspace = true }
 
 [features]
-# v0.4 N-03 cutover (2026-05-14): the umbrella now ships `NativeEmbedder` +
-# `NativeReranker` (candle + granite-r2 + bge-reranker-v2-m3) as the supported
-# default. No env-var backend swap. The retired pre-v0.4 features
-# (`fastembed`, `ollama`, `candle-only`, `recommended`) are gone — operators
-# who relied on them must follow `docs/migration/0.3-to-0.4-native-default.md`.
-#
-# llama.cpp-only cutover Phase C (2026-07-10): the default inference runtime
-# is llama.cpp (GGUF Q4_K_M embedder + Q5_K_M reranker), gated by the Phase B
+# llama.cpp-only cutover Phase C (2026-07-10): llama.cpp is THE inference
+# runtime (GGUF Q4_K_M embedder + Q5_K_M reranker), gated by the Phase B
 # quality run — LongMemEval-S N=50 J=96.0% / recall@10=98.0% vs candle
-# baseline 94.0%/96.0% at ~4x less wall. `native` (candle) survives as an
-# opt-in fallback only until C3 deletes it. The extractor/verifier LLM slots
-# are REMOTE-ONLY (C2c deleted the in-process candle Gemma-3 backends).
+# baseline 94.0%/96.0% at ~4x less wall. C3 deleted the candle native
+# embedder/reranker crates; the extractor/verifier LLM slots are REMOTE-ONLY
+# (C2c). Tier-0 (no local inference): `default-features = false` [+
+# `embed-remote`].
 default     = ["llamacpp"]
-# Native candle embedder + reranker (granite-r2 + bge-reranker-v2-m3). In
-# `default` so existing consumers are unaffected; opt OUT with
-# `default-features = false` to build candle-free (~100 MB lighter) and drive
-# embeddings via a remote server (`embed-remote`). Gates all `candle_core` /
-# `lunaris_embed_native` / `lunaris_rerank_native` references in `handle.rs`.
-native = ["dep:lunaris-embed-native", "dep:lunaris-rerank-native", "dep:candle-core"]
-# v0.4 N-03 — feature-gated Ollama HTTP escape hatch. Off by default. When
-# set, `resolve_embedder()` honours `LUNARIS_EMBEDDER_OLLAMA_URL` and
-# constructs `lunaris_embed_remote::OllamaEmbedder` instead of the native
-# default. NOT the supported path; documented as "operator escape hatch."
+# Remote HTTP embedder backends (`LUNARIS_EMBEDDER_OPENAI_URL` /
+# `LUNARIS_EMBEDDER_OLLAMA_URL`). The Tier-0 / air-gap path — no C++
+# toolchain, no local weights.
 embed-remote = ["dep:lunaris-embed-remote"]
-# v0.4 N-03 — GGUF Q4_K_M quantized variants of the native embedder +
-# reranker. Forwards to the `embedder-gguf` / `reranker-gguf` flags on the
-# respective native crates. When set, `LUNARIS_EMBEDDER_GGUF` /
-# `LUNARIS_RERANKER_GGUF` env-var overrides activate `NativeQuantizedEmbedder`
-# / `NativeQuantizedReranker`. Without this flag the env vars are ignored.
-# gguf implies `native` — it pulls the (now optional) native crates.
-embedder-gguf = ["native", "lunaris-embed-native/embedder-gguf"]
-reranker-gguf = ["native", "lunaris-rerank-native/reranker-gguf"]
-# Hardware-accelerator backends for the native embedder + reranker (candle
-# compute path). These pass through to BOTH native crates so the umbrella
-# `lunaris` build — and therefore every downstream consumer (SDKs, server,
-# eval binary) — can light up the GPU/BLAS backend that `device_select.rs`
-# already knows how to upgrade to.
-#
-# macOS CPU BLAS is AUTOMATIC since the platform-default-accel change: the
-# native crates carry a `[target.'cfg(target_os = "macos")'.dependencies]`
-# block enabling candle's Accelerate backend for macOS-target builds only
-# (resolver v3 keeps it off Linux/Windows), so `cpu-accelerate` below is a
-# redundant no-op on macOS — kept for build scripts that pass it explicitly.
-# On Linux/Windows CPU, candle's pure-Rust gemm path is the default (MKL is
-# x86-only + external-toolchain, so it stays opt-in), and WITHOUT one of the
-# GPU features candle runs CPU matmul: on pre-change macOS that naive path
-# was the root cause of the ~21 min/question LongMemEval ingest.
-#
-# Apple Silicon additionally compiles the METAL kernels by default (aarch64
-# macOS target block in the native crates) and `device_select` picks the GPU
-# by RUNTIME probe — `Device::new_metal(0)` succeeds → Metal, else
-# Cpu+Accelerate. `LUNARIS_DEVICE=cpu|metal|cuda|auto` is the operator
-# override; set `LUNARIS_DEVICE=cpu` on long-lived macOS servers that must
-# bound RSS: candle's shape-keyed Metal buffer cache grows unboundedly
-# within a process (the leak that forces the benchmark harness into
-# process-per-question isolation). CUDA still requires building with the
-# `cuda` feature (external toolchain) — once compiled, the same runtime
-# probe activates it. `native` gate mirrors embedder-gguf / reranker-gguf
-# above (pulls the now-optional native crates). GPU/MKL opt-in per host arch:
-#   --features metal           (Apple M-series GPU; auto Cpu→Metal upgrade)
-#   --features cpu-accelerate   (Apple Accelerate / BLAS, CPU)
-#   --features cpu-mkl          (Intel MKL, CPU)
-#   --features cuda             (NVIDIA GPU; auto Cpu→Cuda upgrade)
-#   --features cuda-fa2         (NVIDIA GPU + FlashAttention 2 kernels; untested
-#                                 on Apple Silicon hosts, see O-01 cuda_notes.rs)
-metal          = ["native", "lunaris-embed-native/metal", "lunaris-rerank-native/metal", "lunaris-llamacpp?/metal"]
-cpu-accelerate = ["native", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
-cpu-mkl        = ["native", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
-cuda           = ["native", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
-cuda-fa2       = ["native", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
+# GPU offload for the llama.cpp runtime — enable the feature matching the
+# build device (cutover decision 4: CPU default; per-target build-time GPU).
+# Device selection stays a runtime probe; LUNARIS_DEVICE=cpu forces CPU on a
+# GPU-enabled build.
+metal          = ["llamacpp", "lunaris-llamacpp/metal"]
+cuda           = ["llamacpp", "lunaris-llamacpp/cuda"]
+vulkan         = ["llamacpp", "lunaris-llamacpp/vulkan"]
 # Extractor + verifier LLM backends — REMOTE-ONLY since the llama.cpp
 # cutover (Phase C2c deleted the in-process candle Gemma-3 backends).
 # `cloud-api` enables the provider-mux backend (Anthropic / OpenAI / Gemini /
@@ -199,13 +134,11 @@ cuda-fa2       = ["native", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-nat
 # transport.
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
 ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
-# llama.cpp-only cutover Phase B: GGUF embedder + reranker via in-process
-# llama.cpp. When enabled, `resolve_embedder()` / `resolve_reranker()` try
-# this backend FIRST (env `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`,
-# else the `~/.lunaris/models/` staged defaults), falling through to the
-# existing candle/Noop chain on missing artifacts. Off by default until the
-# LongMemEval J>=94% + §5 rerank gates pass (then this becomes the default
-# and the candle stack is deleted — Phase C).
+# THE inference runtime (in `default`): GGUF embedder + reranker via
+# in-process llama.cpp. `resolve_embedder()` / `resolve_reranker()` resolve
+# the artifact from `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`, else
+# the `~/.lunaris/models/` staged defaults, falling through to the
+# remote/Noop chain on missing artifacts.
 llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6380
 moon-it = ["lunaris-storage-moon/moon-it"]

@@ -15,22 +15,16 @@ publish.workspace      = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Rust surface being bound. `default-features = false` opts out of the
-# `candle` default on the umbrella crate so the Node cdylib does NOT
-# pull the 500 MB candle+tokenizers dep tree or require embedding-gemma
-# weights to be present at runtime — same Rule 1 fix Plan 08-02 applied
-# to lunaris-py. Production deploys that want the real candle embedder
-# enable the feature at `napi build` time.
+# Rust surface being bound. `default-features = false` keeps the cdylib's
+# feature set explicit — the SDK adds `llamacpp` via its own default
+# feature below (Tier-0 builds use `--no-default-features`).
 lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"], package = "lunaris-memory" }
 lunaris-core        = { path = "../lunaris-core" }
-# v0.4 N-03 — lunaris-embed retired; SDK config rewrites in commit 6 will
-# replace fastembed/ollama factories with native()/native_quantized().
 lunaris-rerank        = { path = "../lunaris-rerank", default-features = false }
-lunaris-embed-native  = { path = "../lunaris-embed-native", default-features = false }
-lunaris-rerank-native = { path = "../lunaris-rerank-native", default-features = false }
-# v0.4 N-03 — `EmbedderConfig.native(...)` / `RerankerConfig.native(...)` pass
-# `candle_core::Device::Cpu` into the native opts structs.
-candle-core           = { workspace = true }
+# llama.cpp-only cutover — `EmbedderConfig.llamacpp()` / `RerankerConfig.
+# llamacpp()` construct the GGUF backends directly. Optional: Tier-0 builds
+# use `--no-default-features` and get fail-loudly stubs instead.
+lunaris-llamacpp      = { path = "../lunaris-llamacpp", optional = true }
 lunaris-recipes     = { path = "../lunaris-recipes" }
 lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
@@ -53,7 +47,11 @@ thiserror           = { workspace = true }
 napi-build          = { workspace = true }
 
 [features]
-default = []
+# `llamacpp` in default: the shipped .node binary embeds the llama.cpp
+# runtime (cutover decision — llama.cpp for all devices). Tier-0 builds opt
+# out via `napi build --no-default-features`.
+default = ["llamacpp"]
+llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 # Plan 08-03 BLOCKER 3+4 resolution — conformance helpers
 # (`conformanceFixtureEpisodes`, `scanKvPrefix`) compile only under this
 # feature. Production npm packages do NOT enable it. The Plan 08-01
@@ -68,18 +66,11 @@ default = []
 # constants.
 bindings-it = ["dep:lunaris-conformance"]
 
-# Q4_K_M / Q5_K_M GGUF backends (`EmbedderConfig.nativeQuantized` /
-# `RerankerConfig.nativeQuantized`). Forwarded to the native crates at
-# .node-build time:
-#   napi build --features embedder-gguf,reranker-gguf
-# The `#[cfg(feature = "...-gguf")]` gates in embedder_config.rs /
-# reranker_config.rs were dead (check-cfg "unexpected cfg condition value")
-# until these declarations.
-embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
-reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
-
-# v0.4 N-03 — fastembed/ORT EP forwards retired. The native crates run on
-# candle (CPU; future hardware acceleration roadmap covered in O-02).
+# GPU offload for the llama.cpp runtime — enabled per-target by the npm
+# prebuild matrix (Phase D).
+metal = ["llamacpp", "lunaris-llamacpp/metal"]
+cuda  = ["llamacpp", "lunaris-llamacpp/cuda"]
+vulkan = ["llamacpp", "lunaris-llamacpp/vulkan"]
 
 [package.metadata.docs.rs]
 # lunaris-ts is a cdylib — docs.rs doesn't build napi-rs extension modules,

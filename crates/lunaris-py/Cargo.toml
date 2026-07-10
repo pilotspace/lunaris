@@ -20,33 +20,21 @@ crate-type = ["cdylib", "rlib"]
 doc        = false
 
 [dependencies]
-# Rust surface being bound. `default-features = false` opts out of the
-# `candle` default on the umbrella crate so the Python cdylib does NOT
-# pull the 500 MB candle+tokenizers dep tree or require embedding-gemma
-# weights to be present at runtime. Production deploys that need a real
-# embedder pass one through `Lunaris::with_parts` after construction or
-# enable the `candle` feature explicitly at wheel-build time.
+# Rust surface being bound. `default-features = false` keeps the cdylib's
+# feature set explicit — the SDK adds `llamacpp` via its own default
+# feature below (Tier-0 wheels build with `--no-default-features`).
 lunaris             = { path = "../lunaris", default-features = false, features = ["ollama"], package = "lunaris-memory" }
 lunaris-core        = { path = "../lunaris-core" }
 lunaris-recipes     = { path = "../lunaris-recipes" }
 lunaris-retrieve    = { path = "../lunaris-retrieve", default-features = false }
-# Phase 21 Plan 21-01 — direct deps on the backend crates so the handwritten
-# `EmbedderConfig` / `RerankerConfig` pyclasses can construct `FastembedEmbedder`
-# / `FastembedReranker` / `OllamaEmbedder` without forwarding feature flags
-# through the umbrella `lunaris` crate. The umbrella stays at
-# `default-features = false, features = ["ollama"]` so production wheels don't
-# accidentally pull candle.
-# v0.4 N-03 — lunaris-embed retired; SDK config rewrites in commit 5 will
-# replace fastembed/ollama factories with native()/native_quantized().
-# lunaris-rerank slimmed to trait + Noop; native impl lives in
-# lunaris-rerank-native (added below).
+# Direct deps on the backend crates so the handwritten `EmbedderConfig` /
+# `RerankerConfig` pyclasses can construct backends without forwarding
+# feature flags through the umbrella `lunaris` crate.
 lunaris-rerank        = { path = "../lunaris-rerank", default-features = false }
-lunaris-embed-native  = { path = "../lunaris-embed-native", default-features = false }
-lunaris-rerank-native = { path = "../lunaris-rerank-native", default-features = false }
-# v0.4 N-03 — `EmbedderConfig.native(...)` / `RerankerConfig.native(...)` pass
-# `candle_core::Device::Cpu` into the native opts structs. Pulled directly so
-# the SDK does not depend on a re-export shim from the native crates.
-candle-core           = { workspace = true }
+# llama.cpp-only cutover — `EmbedderConfig.llamacpp()` / `RerankerConfig.
+# llamacpp()` construct the GGUF backends directly. Optional: Tier-0 wheels
+# build with `--no-default-features` and get fail-loudly stubs instead.
+lunaris-llamacpp      = { path = "../lunaris-llamacpp", optional = true }
 # Conformance fixtures — only pulled in under the `bindings-it` feature.
 lunaris-conformance = { workspace = true, optional = true }
 # PyO3 + async runtime + pythonize — workspace-pinned versions per Plan 08-02.
@@ -68,7 +56,11 @@ tracing             = { workspace = true }
 thiserror           = { workspace = true }
 
 [features]
-default = []
+# `llamacpp` in default: the shipped wheel embeds the llama.cpp runtime
+# (cutover decision — llama.cpp for all devices). Tier-0 builds opt out via
+# `maturin build --no-default-features`.
+default = ["llamacpp"]
+llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 # Plan 08-02 BLOCKER 3+4 resolution — conformance helpers
 # (`conformance_fixture_episodes`, `scan_kv_prefix`) compile only under this
 # feature. Production PyPI wheels do NOT enable it. The Plan 08-01 parity-check
@@ -83,22 +75,11 @@ default = []
 # constants.
 bindings-it = ["dep:lunaris-conformance"]
 
-# Q4_K_M / Q5_K_M GGUF backends (`EmbedderConfig.native_quantized` /
-# `RerankerConfig.native_quantized`). Forwarded to the native crates at
-# wheel-build time:
-#   maturin build --features embedder-gguf,reranker-gguf
-# The `#[cfg(feature = "...-gguf")]` gates in embedder_config.rs /
-# reranker_config.rs were dead (check-cfg "unexpected cfg condition value")
-# until these declarations.
-embedder-gguf = ["lunaris-embed-native/embedder-gguf"]
-reranker-gguf = ["lunaris-rerank-native/reranker-gguf"]
-
-# Phase 21 Plan 21-01 — pass-through ORT execution-provider features. When
-# enabled the `EmbedderConfig`/`RerankerConfig` parsers accept `"coreml"` /
-# `"cuda"` and forward to the matching lunaris-embed + lunaris-rerank feature.
-# Default-off: production wheels are CPU-only unless the build pipeline opts in.
-# v0.4 N-03 — fastembed/ORT EP forwards retired. The native crates run on
-# candle (CPU; future hardware acceleration roadmap covered in O-02).
+# GPU offload for the llama.cpp runtime — enabled per-target by the wheel
+# build matrix (Phase D).
+metal = ["llamacpp", "lunaris-llamacpp/metal"]
+cuda  = ["llamacpp", "lunaris-llamacpp/cuda"]
+vulkan = ["llamacpp", "lunaris-llamacpp/vulkan"]
 
 [package.metadata.docs.rs]
 # lunaris-py is a cdylib — docs.rs doesn't build Python extension modules,

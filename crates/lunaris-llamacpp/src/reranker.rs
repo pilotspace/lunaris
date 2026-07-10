@@ -1,7 +1,8 @@
 //! [`LlamaCppReranker`] — bge-reranker-v2-m3 GGUF cross-encoder via
 //! in-process llama.cpp. Phase A1 of the runtime cutover (unknown #1).
 //!
-//! Output contract matches `lunaris-rerank-native`: sigmoid scores in
+//! Output contract (carried over from the retired candle reranker,
+//! llama.cpp-only cutover): sigmoid scores in
 //! `[0, 1]`, one per candidate; the `lunaris_rerank::Reranker` impl returns
 //! exactly `docs.len()` candidates sorted score-desc.
 //!
@@ -12,7 +13,7 @@
 //! sequence — the safe accessor would read out of bounds. CLS pooling
 //! stores a correctly `n_embd`-sized buffer, so the encoder runs under CLS
 //! and the XLM-R classification head (`dense → tanh → out_proj → sigmoid`,
-//! the same math as `lunaris-rerank-native::quantized_xlmr`) is applied in
+//! the same math as the retired candle `quantized_xlmr` module) is applied in
 //! Rust from weights read directly out of the GGUF (`gguf_head`). The head
 //! is a single 1024×1024 GEMV per candidate — microseconds against a
 //! multi-hundred-ms encoder pass.
@@ -201,7 +202,7 @@ impl LlamaCppReranker {
 
 /// XLM-R classification head: `sigmoid(out_w · tanh(W·cls + b) + out_b)` —
 /// HF `Linear` row-major convention (`dense_w` row `j` = output neuron `j`).
-/// Same math as `lunaris-rerank-native::quantized_xlmr`'s classifier path.
+/// Same math as the retired candle `quantized_xlmr` classifier path.
 fn head_score(h: &ClsHead, cls: &[f32]) -> f32 {
     let n = h.hidden;
     let mut logit = h.out_b;

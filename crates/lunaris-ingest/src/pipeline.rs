@@ -71,7 +71,7 @@ fn ingest_embed_batch_size() -> usize {
 /// uncapped root-community summary concatenates whole sections and can reach the
 /// embedder's 8192-token ceiling; batched, that padded the attention tensor to
 /// tens/hundreds of GB and OOM-killed the haystack ingest.
-/// `lunaris_embed_native::plan_batches` is the embedder's own (defense-in-depth)
+/// the embedder's own internal batch planning is the (defense-in-depth)
 /// guard — this keeps summaries short before they ever reach it.
 const MAX_SUMMARY_BYTES: usize = 2048;
 

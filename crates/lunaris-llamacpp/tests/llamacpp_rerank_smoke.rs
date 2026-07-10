@@ -6,7 +6,7 @@
 //! GGUF; skips (does not fail) when the artifact is missing — same
 //! convention as `llamacpp_smoke.rs`.
 //!
-//! Contract under test (parity with `lunaris-rerank-native`'s output
+//! Contract under test (parity with the retired candle reranker's output
 //! contract, so the umbrella can swap implementations 1:1):
 //! - sigmoid scores in [0, 1], one per candidate, positionally derivable;
 //! - the canonical bge panda pair discriminates: relevant > 0.9,

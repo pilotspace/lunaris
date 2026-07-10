@@ -4,7 +4,7 @@
 //!
 //! The reference scores were captured 2026-07-10 (pre-Phase-C, while the
 //! candle FP32 `NativeReranker` still existed) from the path that was
-//! itself HF-gate-validated in `lunaris-rerank-native/tests/
+//! itself HF-gate-validated by the retired candle reranker's tests/
 //! numerical_equivalence.rs` (see git history) — so passing here
 //! transitively tracks HF FP32.
 //!

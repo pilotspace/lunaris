@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive crates.io publish order for the 15 lunaris crates, including
+"""Derive crates.io publish order for the 14 lunaris crates, including
 dev-dependencies (versioned dev-deps are kept in the published manifest and
 crates.io validates they exist)."""
 import json
@@ -8,8 +8,8 @@ from graphlib import TopologicalSorter
 
 PUBLISH = {
     "lunaris-core", "lunaris-llm", "lunaris-extract", "lunaris-consolidate",
-    "lunaris-embed-native", "lunaris-embed-remote", "lunaris-ingest",
-    "lunaris-rerank", "lunaris-rerank-native", "lunaris-storage-moon",
+    "lunaris-embed-remote", "lunaris-ingest",
+    "lunaris-rerank", "lunaris-llamacpp", "lunaris-storage-moon",
     "lunaris-retrieve", "lunaris-storage-embedded", "lunaris-storage-postgres",
     "lunaris-verify", "lunaris-memory",
 }

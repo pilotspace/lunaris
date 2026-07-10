@@ -67,16 +67,6 @@ redis              = { workspace = true }
 # tracing dep already in [dependencies] above.
 tracing-subscriber = { workspace = true }
 
-# O-01-F — per-device perf bench dependencies. Optional so the default
-# `cargo bench` build doesn't pull candle weights resolution; activated by
-# the `per-device-bench` feature (or any of the backend pass-through
-# features `metal` / `cpu-accelerate` / `cpu-mkl` / `cuda` / `cuda-fa2`).
-lunaris-embed-native  = { workspace = true, optional = true }
-lunaris-rerank-native = { workspace = true, optional = true }
-# Candle types (Device, etc.) needed by the per-device bench when the
-# `per-device-bench` feature is on.
-candle-core           = { workspace = true, optional = true }
-
 # Plan 05-06 EVAL-04 Linux RSS sampling via procfs. cfg-gated per-OS so the
 # Windows + macOS targets don't pull procfs (which only compiles on Linux).
 # macOS uses `ps -o rss= -p <pid>` shell-out (no extra dep) per B-6 fix.
@@ -109,11 +99,6 @@ budget-it = []
 #   cargo test -p lunaris-bench --features ci-perf-gates --test binary_size_gate
 # (scripts/check-binary-size.sh wraps both.)
 ci-perf-gates = []
-# Local-dev passthrough so the eval gauntlet (lunaris-evals) can use the native
-# Q4/Q5 GGUF embedder+reranker via LUNARIS_EMBEDDER_GGUF / LUNARIS_RERANKER_GGUF
-# instead of the default Ollama/FP16 path. Not wired into CI defaults.
-embedder-gguf = ["lunaris/embedder-gguf"]
-reranker-gguf = ["lunaris/reranker-gguf"]
 # llama.cpp-only cutover Phase B — forwards to the umbrella so the eval
 # gauntlet (`Lunaris::open()` path) resolves the llama.cpp GGUF backends.
 # Same lesson as the metal/cpu-accelerate forwards above (727bc65): a bench
@@ -122,50 +107,17 @@ reranker-gguf = ["lunaris/reranker-gguf"]
 #   --features llamacpp,metal
 llamacpp = ["lunaris/llamacpp"]
 
-# ---------------------------------------------------------------------------
-# O-01-F — per-device perf benches.
-#
-# Each feature pass-throughs to `lunaris-embed-native` + `lunaris-rerank-native`
-# so `cargo bench --features metal` activates the Metal backend end-to-end
-# from the bench harness. The `per_device.rs` bench is `#[cfg(feature =
-# "per-device-bench")]`-gated so the default `cargo bench` workflow stays
-# unchanged.
-#
-# ALSO forwards to `lunaris/<feature>` (the umbrella crate) so the SAME flag
-# activates Metal/BLAS/CUDA for `lunaris-evals` (which goes through
-# `Lunaris::open()` -> `lunaris::handle`, not the standalone native crates
-# the per-device bench instantiates directly). Without this, `--features
-# metal` silently only sped up `per_device.rs` while the real eval harness
-# kept running naive CPU candle -- and worse, since the `lunaris` dep line
-# above hardcodes `features = ["ollama", "cloud-api"]` with no `embedder-gguf`
-# passthrough of its own, a bare `--features metal` build drops GGUF support
-# entirely and falls through `resolve_embedder()` all the way to `NoopEmbedder`
-# (zero vectors) -- caught live 2026-07 when a `--features metal`-only rebuild
-# silently produced meaningless zero-vector retrieval on a LongMemEval rerun.
-# --features metal,embedder-gguf,reranker-gguf is the correct combo for the
-# eval gauntlet on Apple Silicon.
-# ---------------------------------------------------------------------------
-per-device-bench = ["dep:lunaris-embed-native", "dep:lunaris-rerank-native", "dep:candle-core"]
-cpu-accelerate   = ["per-device-bench", "lunaris/cpu-accelerate", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
-cpu-mkl          = ["per-device-bench", "lunaris/cpu-mkl", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
-metal            = ["per-device-bench", "lunaris/metal", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
-cuda             = ["per-device-bench", "lunaris/cuda", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
-cuda-fa2         = ["cuda", "lunaris/cuda-fa2", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
+# GPU offload for the llama.cpp runtime, forwarded to the umbrella so the
+# eval gauntlet (`Lunaris::open()` path) gets the same offload (727bc65
+# lesson: un-forwarded accelerator features silently change which embedder
+# the eval runs). Combine as `--features llamacpp,metal`.
+metal            = ["llamacpp", "lunaris/metal"]
+cuda             = ["llamacpp", "lunaris/cuda"]
+vulkan           = ["llamacpp", "lunaris/vulkan"]
 
 [[bench]]
 name = "ingest_hot_path"
 harness = false
-
-# O-01-F — per-device perf gates for the hardware-target matrix in
-# HARDWARE-OPTIMIZATION-ROADMAP §26-37. Gated on `per-device-bench` so the
-# default `cargo bench` workflow stays unchanged; activate via:
-#   cargo bench -p lunaris-bench --features metal          --bench per_device
-#   cargo bench -p lunaris-bench --features cpu-accelerate --bench per_device
-#   cargo bench -p lunaris-bench --features cuda           --bench per_device
-[[bench]]
-name = "per_device"
-harness = false
-required-features = ["per-device-bench"]
 
 [[bench]]
 name = "recall_hot_path"

@@ -1,7 +1,8 @@
 //! [`LlamaCppEmbedder`] — granite-embedding-311m GGUF via in-process
 //! llama.cpp (llama-cpp-2 FFI, static-linked; no external server process).
 //!
-//! Output contract matches `lunaris-embed-native`: CLS-pooled (llama.cpp
+//! Output contract (carried over from the retired candle embedder,
+//! llama.cpp-only cutover): CLS-pooled (llama.cpp
 //! `LLAMA_POOLING_TYPE_CLS`), L2-normalized, 768-d rows, `out[i]` is the
 //! embedding of `inputs[i]`.
 //!
@@ -34,7 +35,7 @@ use crate::worker::EncodeWorker;
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
 /// granite-embedding-311m output dimensionality — must agree with
-/// `lunaris_embed_native::GRANITE_R2_DIM` (verified at `open`).
+/// granite-r2's published 768-d output dim (verified at `open`).
 pub const GRANITE_R2_DIM: usize = 768;
 
 /// Public construction options.

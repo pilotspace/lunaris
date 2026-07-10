@@ -154,7 +154,7 @@ pub use lunaris_retrieve::{
 
 // Reranker trait + helpers re-exported from lunaris-rerank so callers
 // `use lunaris::{Reranker, NoopReranker}`. The concrete cross-encoder
-// (`NativeReranker`) lives in `lunaris-rerank-native` — operators who want
+// (`LlamaCppReranker`) lives in `lunaris-llamacpp` — operators who want
 // to construct it directly import from that crate; callers who only need
 // the trait + Noop seam stay on this re-export. v0.4 N-03 cutover.
 pub use lunaris_rerank::{NoopReranker, RerankCandidate, Reranker};

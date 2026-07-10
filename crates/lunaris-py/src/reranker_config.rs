@@ -1,29 +1,27 @@
-//! v0.4 N-03 cutover — `RerankerConfig` for the Python SDK, rewritten on
-//! `lunaris-rerank-native::NativeReranker` (+ `NativeQuantizedReranker` under
-//! `reranker-gguf`). The retired `RerankerConfig.fastembed()` factory is
-//! replaced by `RerankerConfig.native()` and `::native_quantized()` — see
-//! `docs/migration/0.3-to-0.4-native-default.md`.
+//! llama.cpp-only cutover (2026-07, Phase C) — `RerankerConfig` for the
+//! Python SDK, rewritten on `lunaris-llamacpp::LlamaCppReranker`
+//! (bge-reranker-v2-m3 Q5_K_M GGUF). The retired v0.4
+//! `RerankerConfig.native()` / `::native_quantized()` factories (candle)
+//! fail loudly with a migration hint; the supported factories are
+//! [`RerankerConfig::llamacpp`] and [`RerankerConfig::noop`].
 //!
 //! Not codegen-managed (mirrors `embedder_config.rs`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lunaris_core::LunarisError;
 use lunaris_rerank::{NoopReranker, Reranker};
-#[cfg(feature = "reranker-gguf")]
-use lunaris_rerank_native::{NativeQuantizedReranker, NativeQuantizedRerankerOpts};
-use lunaris_rerank_native::{NativeReranker, NativeRerankerOpts};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+#[cfg(feature = "llamacpp")]
 use crate::errors::py_err;
 
 /// Opaque holder for a resolved [`Reranker`] backend.
 ///
-/// Construct via [`RerankerConfig::native`] / [`RerankerConfig::native_quantized`]
-/// / [`RerankerConfig::noop`] then pass to `Lunaris.open(url, reranker=cfg)`.
+/// Construct via [`RerankerConfig::llamacpp`] / [`RerankerConfig::noop`]
+/// then pass to `Lunaris.open(url, reranker=cfg)`.
 #[pyclass(frozen, name = "RerankerConfig", module = "lunaris", from_py_object)]
 #[derive(Clone)]
 pub struct RerankerConfig {
@@ -33,51 +31,66 @@ pub struct RerankerConfig {
 
 #[pymethods]
 impl RerankerConfig {
-    /// FP32 candle `NativeReranker` backed by `BAAI/bge-reranker-v2-m3`.
+    /// llama.cpp `LlamaCppReranker` backed by the bge-reranker-v2-m3 Q5_K_M
+    /// GGUF (cross-encoder, sigmoid scores ∈ [0, 1]).
     ///
-    /// `model_dir` defaults to `<cache>/lunaris/models/bge-reranker-v2-m3/`.
+    /// - `gguf_path`: path to the GGUF artifact. `None` defers to the staged
+    ///   default `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`.
+    ///
+    /// Loads eagerly and raises `LunarisError` on a missing/corrupt artifact
+    /// (explicit construction = fail fast; the umbrella's default resolution
+    /// defers the load to first rerank instead).
     #[staticmethod]
-    #[pyo3(signature = (model_dir=None))]
-    fn native(model_dir: Option<PathBuf>) -> PyResult<Self> {
-        let dir = model_dir.unwrap_or_else(default_bge_dir);
-        let opts = NativeRerankerOpts {
-            weights_path: dir.join("model.safetensors"),
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let r = NativeReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(r), backend: "native" })
+    #[pyo3(signature = (gguf_path=None))]
+    #[cfg(feature = "llamacpp")]
+    fn llamacpp(gguf_path: Option<PathBuf>) -> PyResult<Self> {
+        let gguf_path = gguf_path.unwrap_or_else(default_reranker_gguf);
+        let opts = lunaris_llamacpp::LlamaCppRerankerOpts { gguf_path, ..Default::default() };
+        let r = lunaris_llamacpp::LlamaCppReranker::open(opts)
+            .map_err(|e| py_err(lunaris_core::LunarisError::from(e)))?;
+        Ok(Self { inner: Arc::new(r), backend: "llamacpp" })
     }
 
-    /// Q4_K_M GGUF `NativeQuantizedReranker` — requires the wheel built with
-    /// `reranker-gguf`.
+    /// Stub raising `ValueError` when the wheel was built without the
+    /// `llamacpp` feature (Tier-0 build).
     #[staticmethod]
-    #[pyo3(signature = (gguf_path, model_dir=None))]
-    #[cfg(feature = "reranker-gguf")]
-    fn native_quantized(gguf_path: PathBuf, model_dir: Option<PathBuf>) -> PyResult<Self> {
-        let dir = model_dir.unwrap_or_else(default_bge_dir);
-        let opts = NativeQuantizedRerankerOpts {
-            gguf_path,
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let r = NativeQuantizedReranker::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(r), backend: "native-quantized" })
+    #[pyo3(signature = (_gguf_path=None))]
+    #[cfg(not(feature = "llamacpp"))]
+    #[allow(unused_variables)]
+    fn llamacpp(_gguf_path: Option<PathBuf>) -> PyResult<Self> {
+        Err(PyValueError::new_err(
+            "RerankerConfig.llamacpp() requires the lunaris wheel to be built with the \
+             `llamacpp` feature (this is a Tier-0 no-inference build). Use \
+             RerankerConfig.noop() or install a full wheel.",
+        ))
     }
 
+    /// RETIRED (llama.cpp-only cutover): the candle `NativeReranker` was
+    /// deleted. Use [`RerankerConfig::llamacpp`] instead.
+    #[staticmethod]
+    #[pyo3(signature = (_model_dir=None))]
+    #[allow(unused_variables)]
+    fn native(_model_dir: Option<PathBuf>) -> PyResult<Self> {
+        Err(PyValueError::new_err(
+            "RerankerConfig.native() was removed in the llama.cpp-only cutover (v0.6): \
+             the candle FP32 reranker no longer exists. Use RerankerConfig.llamacpp() \
+             (bge-reranker-v2-m3 Q5_K_M GGUF, same sigmoid score contract).",
+        ))
+    }
+
+    /// RETIRED (llama.cpp-only cutover): the candle quantized reranker was
+    /// deleted. Use [`RerankerConfig::llamacpp`] instead.
     #[staticmethod]
     #[pyo3(signature = (_gguf_path=None, _model_dir=None))]
-    #[cfg(not(feature = "reranker-gguf"))]
     #[allow(unused_variables)]
     fn native_quantized(
         _gguf_path: Option<PathBuf>,
         _model_dir: Option<PathBuf>,
     ) -> PyResult<Self> {
         Err(PyValueError::new_err(
-            "RerankerConfig.native_quantized() requires the lunaris-py wheel to be built \
-             with the `reranker-gguf` feature.",
+            "RerankerConfig.native_quantized() was removed in the llama.cpp-only cutover \
+             (v0.6). Use RerankerConfig.llamacpp(gguf_path) — same GGUF artifact, served \
+             by llama.cpp.",
         ))
     }
 
@@ -92,14 +105,10 @@ impl RerankerConfig {
     }
 }
 
-fn default_bge_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Caches"))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("lunaris").join("models").join("bge-reranker-v2-m3")
+/// Staged default location for the reranker GGUF (`~/.lunaris/models/`).
+#[cfg(feature = "llamacpp")]
+fn default_reranker_gguf() -> PathBuf {
+    crate::embedder_config::lunaris_models_dir().join("bge-reranker-v2-m3.Q5_K_M.gguf")
 }
 
 /// Apply a [`RerankerConfig`] to a freshly-constructed `Lunaris` handle.
@@ -131,8 +140,21 @@ mod tests {
     }
 
     #[test]
-    fn default_bge_dir_ends_with_canonical_name() {
-        let p = default_bge_dir();
-        assert!(p.ends_with("lunaris/models/bge-reranker-v2-m3"), "got {}", p.display());
+    fn retired_native_factories_fail_loudly() {
+        // PyErr rendering needs the GIL; asserting Err is enough — the
+        // message content is a compile-time literal above.
+        assert!(RerankerConfig::native(None).is_err());
+        assert!(RerankerConfig::native_quantized(None, None).is_err());
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[test]
+    fn default_reranker_gguf_ends_with_staged_name() {
+        let p = default_reranker_gguf();
+        assert!(
+            p.ends_with(".lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf"),
+            "got {}",
+            p.display()
+        );
     }
 }

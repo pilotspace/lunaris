@@ -1,7 +1,7 @@
 # lunaris-rerank — `Reranker` trait + `NoopReranker` no-op seam.
 #
 # v0.4 N-03 cutover: this crate is now a trait-and-noop host (~300 LOC).
-# The default cross-encoder backend moved to `lunaris-rerank-native`
+# The default cross-encoder backend moved to `lunaris-llamacpp`
 # (candle + bge-reranker-v2-m3 FP32). The legacy `BgeRerankerV2M3` (candle)
 # and `FastembedReranker` (ORT) backends are deleted along with their
 # integration tests.
