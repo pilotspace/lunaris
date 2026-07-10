@@ -1694,6 +1694,54 @@ fn reranker_dir() -> std::path::PathBuf {
 ///    of the open path completes (vector recall returns empty rows; operator
 ///    sees the banner and can fix their cache layout).
 async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
+    // 0. llama.cpp GGUF embedder (cutover Phase B) — wins whenever the
+    //    feature is compiled in AND the GGUF artifact is reachable
+    //    (LUNARIS_EMBEDDER_GGUF, else the ~/.lunaris/models/ staged
+    //    default). Missing artifact or open failure falls through to the
+    //    existing chain, so a llamacpp build without staged GGUFs behaves
+    //    exactly like today.
+    #[cfg(feature = "llamacpp")]
+    {
+        if let Some(gguf_path) = llamacpp_gguf_path(EMBEDDER_GGUF_ENV_VAR, LLAMACPP_EMBEDDER_GGUF) {
+            let opts = lunaris_llamacpp::LlamaCppEmbedderOpts {
+                gguf_path: gguf_path.clone(),
+                n_gpu_layers: llamacpp_gpu_layers(),
+                ..Default::default()
+            };
+            // Weight load + context creation are synchronous — keep them off
+            // the runtime worker.
+            let opened =
+                tokio::task::spawn_blocking(move || lunaris_llamacpp::LlamaCppEmbedder::open(opts))
+                    .await
+                    .map_err(|e| {
+                        LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
+                            "llamacpp embedder init join: {e}"
+                        )))
+                    })?;
+            match opened {
+                Ok(e) => {
+                    EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
+                        tracing::info!(
+                            target: "lunaris::handle",
+                            embedder_backend = "llamacpp",
+                            gguf = %gguf_path.display(),
+                            "embedder_backend_resolved"
+                        );
+                    });
+                    return Ok(Arc::new(e) as Arc<dyn Embedder>);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        gguf = %gguf_path.display(),
+                        "llamacpp embedder failed to open; falling through to the \
+                         candle/remote chain"
+                    );
+                }
+            }
+        }
+    }
+
     // 1. Remote OpenAI-compatible embedder (`POST /v1/embeddings`) — the
     //    supported remote path once `native` (candle) is compiled out. Selected
     //    when LUNARIS_EMBEDDER_OPENAI_URL is set; wins over the Ollama hatch.
@@ -1897,6 +1945,32 @@ fn resolve_embed_dim() -> usize {
 ///    [`NoopReranker`] per the RETRIEVE-06 contract — the recall path runs
 ///    end-to-end even without the cross-encoder pass.
 async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
+    // 0. llama.cpp GGUF reranker (cutover Phase B) — same precedence rule as
+    //    the embedder. Load is DEFERRED to the first `rerank()` call via
+    //    `LazyLlamaCppReranker` (N-04 D1: the recall hot path may never
+    //    reach the rerank stage; don't pay the weight load + context RSS at
+    //    open()). Pre-flight only checks the artifact exists so a typo'd
+    //    path still falls through to the candle chain immediately.
+    #[cfg(feature = "llamacpp")]
+    {
+        if let Some(gguf_path) = llamacpp_gguf_path(RERANKER_GGUF_ENV_VAR, LLAMACPP_RERANKER_GGUF) {
+            let lazy = LazyLlamaCppReranker::new(lunaris_llamacpp::LlamaCppRerankerOpts {
+                gguf_path: gguf_path.clone(),
+                n_gpu_layers: llamacpp_gpu_layers(),
+                ..Default::default()
+            });
+            RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
+                tracing::info!(
+                    target: "lunaris::handle",
+                    reranker_backend = "llamacpp (lazy)",
+                    gguf = %gguf_path.display(),
+                    "reranker_backend_resolved (load deferred to first rerank())"
+                );
+            });
+            return Ok(Arc::new(lazy) as Arc<dyn Reranker>);
+        }
+    }
+
     // 1. Quantized GGUF — only when feature is on.
     //
     // N-04 D1 — DO NOT call `NativeQuantizedReranker::open` here. The Q5_K_M
@@ -2158,6 +2232,117 @@ async fn default_verifier() -> Arc<dyn Verifier> {
 /// (`StorageError::Backend`) — NO silent fallback.
 fn default_consolidator() -> Result<Arc<dyn Consolidator>, LunarisError> {
     ConsolidatorPipelineHandle::backend_from_env()
+}
+
+// ── llama.cpp cutover Phase B — path resolution + lazy reranker ─────────────
+
+/// Staged-artifact default filenames under `~/.lunaris/models/` — the same
+/// layout `lunaris-llamacpp`'s own smoke tests use.
+#[cfg(feature = "llamacpp")]
+const LLAMACPP_EMBEDDER_GGUF: &str = "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf";
+#[cfg(feature = "llamacpp")]
+const LLAMACPP_RERANKER_GGUF: &str = "bge-reranker-v2-m3.Q5_K_M.gguf";
+
+/// Resolve a llama.cpp GGUF artifact: env override first, then the staged
+/// `~/.lunaris/models/` default. Returns `None` (→ caller falls through to
+/// the candle chain) unless the file actually exists.
+#[cfg(feature = "llamacpp")]
+fn llamacpp_gguf_path(env_var: &str, staged_name: &str) -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os(env_var)
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        if p.exists() {
+            return Some(p);
+        }
+        tracing::warn!(
+            env = env_var,
+            path = %p.display(),
+            "GGUF path from env does not exist; falling through"
+        );
+        return None;
+    }
+    std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".lunaris/models").join(staged_name))
+        .filter(|p| p.exists())
+}
+
+/// GPU offload for the llama.cpp backends: everything when the `metal`
+/// feature is compiled in (Apple Silicon default), nothing otherwise.
+/// `LUNARIS_DEVICE=cpu` is the operator kill-switch, mirroring the candle
+/// `device_select` contract.
+#[cfg(feature = "llamacpp")]
+fn llamacpp_gpu_layers() -> u32 {
+    let forced_cpu = std::env::var("LUNARIS_DEVICE")
+        .map(|v| v.trim().eq_ignore_ascii_case("cpu"))
+        .unwrap_or(false);
+    if !forced_cpu && cfg!(feature = "metal") { u32::MAX } else { 0 }
+}
+
+/// Deferred-load wrapper for [`lunaris_llamacpp::LlamaCppReranker`] — the
+/// llama.cpp twin of [`LazyQuantizedReranker`] below (same N-04 D1
+/// rationale: the Q5_K_M weights + warm context only materialize on the
+/// first `rerank()` call; `applies()` answers `true` eagerly because config
+/// promises a real reranker). On init failure the OnceCell stays empty so a
+/// later call can retry.
+#[cfg(feature = "llamacpp")]
+struct LazyLlamaCppReranker {
+    opts: lunaris_llamacpp::LlamaCppRerankerOpts,
+    cell: tokio::sync::OnceCell<Arc<lunaris_llamacpp::LlamaCppReranker>>,
+}
+
+#[cfg(feature = "llamacpp")]
+impl LazyLlamaCppReranker {
+    fn new(opts: lunaris_llamacpp::LlamaCppRerankerOpts) -> Self {
+        Self { opts, cell: tokio::sync::OnceCell::new() }
+    }
+
+    async fn get_or_load(&self) -> Result<Arc<lunaris_llamacpp::LlamaCppReranker>, LunarisError> {
+        let opts = self.opts.clone();
+        self.cell
+            .get_or_try_init(|| async move {
+                tokio::task::spawn_blocking(move || lunaris_llamacpp::LlamaCppReranker::open(opts))
+                    .await
+                    .map_err(|e| {
+                        LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
+                            "lazy llamacpp reranker init join: {e}"
+                        )))
+                    })?
+                    .map(Arc::new)
+                    .map_err(LunarisError::from)
+            })
+            .await
+            .cloned()
+    }
+}
+
+#[cfg(feature = "llamacpp")]
+impl std::fmt::Debug for LazyLlamaCppReranker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LazyLlamaCppReranker")
+            .field("gguf", &self.opts.gguf_path)
+            .field("loaded", &self.cell.initialized())
+            .finish()
+    }
+}
+
+#[cfg(feature = "llamacpp")]
+#[async_trait::async_trait]
+impl Reranker for LazyLlamaCppReranker {
+    fn applies(&self) -> bool {
+        // Config promises a real reranker — answer eagerly so
+        // `Hit { rerank_applied }` doesn't lie on cold paths.
+        true
+    }
+
+    async fn rerank(
+        &self,
+        query: &str,
+        docs: Vec<lunaris_rerank::RerankCandidate>,
+    ) -> Result<Vec<lunaris_rerank::RerankCandidate>, LunarisError> {
+        let inner = self.get_or_load().await?;
+        inner.rerank(query, docs).await
+    }
 }
 
 // ── N-04 D1 — lazy quantized reranker ────────────────────────────────────────
