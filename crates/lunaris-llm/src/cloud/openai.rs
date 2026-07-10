@@ -37,6 +37,23 @@ pub(super) fn build_request(
     (URL.to_string(), body, headers)
 }
 
+/// Same chat-completions request against an arbitrary base URL (Ollama
+/// `/v1`, llama-server, vLLM, LM Studio). `api_key = None` (or empty)
+/// omits the `authorization` header — local servers are typically
+/// unauthenticated.
+pub(super) fn build_request_at(
+    _base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
+    prompt: &str,
+    constraint: SchemaConstraint<'_>,
+    opts: &GenOpts,
+) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
+    // RED stub (A3): delegates to the fixed-endpoint builder — the unit
+    // test pins the real contract (base-URL join + auth-only-with-key).
+    build_request(model, api_key.unwrap_or(""), prompt, constraint, opts)
+}
+
 pub(super) fn decode_response(body: &str) -> Result<String, LunarisError> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(|e| {
         LunarisError::Storage(StorageError::Backend(format!("cloud-api (openai) parse: {e}")))
@@ -88,6 +105,36 @@ mod tests {
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert_eq!(body["response_format"]["json_schema"]["strict"], true);
         assert!(headers.iter().any(|(k, v)| *k == "authorization" && v == "Bearer sk-dummy"));
+    }
+
+    #[test]
+    fn build_request_at_joins_base_url_and_gates_auth_on_key() {
+        let opts = GenOpts::default();
+        // Trailing slash on the base must not double up.
+        let (url, _, headers) = build_request_at(
+            "http://localhost:11434/v1/",
+            "qwen3:4b",
+            None,
+            "hi",
+            SchemaConstraint::None,
+            &opts,
+        );
+        assert_eq!(url, "http://localhost:11434/v1/chat/completions");
+        assert!(
+            headers.iter().all(|(k, _)| *k != "authorization"),
+            "no key -> no authorization header, got {headers:?}"
+        );
+
+        let (url2, _, headers2) = build_request_at(
+            "http://box:8080/v1",
+            "m",
+            Some("sk-x"),
+            "hi",
+            SchemaConstraint::None,
+            &opts,
+        );
+        assert_eq!(url2, "http://box:8080/v1/chat/completions");
+        assert!(headers2.iter().any(|(k, v)| *k == "authorization" && v == "Bearer sk-x"));
     }
 
     #[test]

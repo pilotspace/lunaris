@@ -54,6 +54,11 @@ pub enum CloudProvider {
     OpenAI,
     Gemini,
     MiniMax,
+    /// Any OpenAI-compatible `/chat/completions` server at a caller-supplied
+    /// base URL (Ollama `/v1`, llama-server, vLLM, LM Studio). Requires
+    /// `CloudBackendOpts.base_url`; the API key is OPTIONAL (local servers
+    /// are typically unauthenticated).
+    OpenAiCompat,
 }
 
 impl CloudProvider {
@@ -63,6 +68,7 @@ impl CloudProvider {
             CloudProvider::OpenAI => "OPENAI_API_KEY",
             CloudProvider::Gemini => "GEMINI_API_KEY",
             CloudProvider::MiniMax => "MINIMAX_API_KEY",
+            CloudProvider::OpenAiCompat => "LUNARIS_OPENAI_COMPAT_API_KEY",
         }
     }
 
@@ -72,6 +78,7 @@ impl CloudProvider {
             CloudProvider::OpenAI => "openai",
             CloudProvider::Gemini => "gemini",
             CloudProvider::MiniMax => "minimax",
+            CloudProvider::OpenAiCompat => "openai-compat",
         }
     }
 }
@@ -83,9 +90,12 @@ impl TryFrom<ProviderKind> for CloudProvider {
             ProviderKind::Anthropic => Ok(CloudProvider::Anthropic),
             ProviderKind::OpenAI => Ok(CloudProvider::OpenAI),
             ProviderKind::Gemini => Ok(CloudProvider::Gemini),
-            ProviderKind::Candle | ProviderKind::Ollama => Err(LunarisError::Storage(
-                StorageError::Backend(format!("cloud-api: provider {p:?} is not a cloud provider")),
-            )),
+            // RED (A3): OpenAiCompat conversion lands with the green half.
+            ProviderKind::Candle | ProviderKind::Ollama | ProviderKind::OpenAiCompat => {
+                Err(LunarisError::Storage(StorageError::Backend(format!(
+                    "cloud-api: provider {p:?} is not a cloud provider"
+                ))))
+            }
         }
     }
 }
@@ -97,6 +107,10 @@ pub struct CloudBackendOpts {
     pub model: String,
     pub api_key: String,
     pub max_retries: u8,
+    /// Base URL for [`CloudProvider::OpenAiCompat`] (e.g.
+    /// `http://localhost:11434/v1`); ignored by the fixed-endpoint
+    /// providers. `from_env` reads `LUNARIS_OPENAI_COMPAT_BASE_URL`.
+    pub base_url: Option<String>,
 }
 
 impl CloudBackendOpts {
@@ -105,7 +119,13 @@ impl CloudBackendOpts {
     /// rejects empty keys with an actionable error.
     pub fn from_env(provider: CloudProvider, model: impl Into<String>) -> Self {
         let api_key = std::env::var(provider.api_key_env()).unwrap_or_default();
-        Self { provider, model: model.into(), api_key, max_retries: DEFAULT_MAX_RETRIES }
+        let base_url = match provider {
+            CloudProvider::OpenAiCompat => {
+                std::env::var("LUNARIS_OPENAI_COMPAT_BASE_URL").ok().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        };
+        Self { provider, model: model.into(), api_key, max_retries: DEFAULT_MAX_RETRIES, base_url }
     }
 }
 
@@ -118,6 +138,7 @@ pub struct CloudBackend {
     api_key: String,
     max_retries: u8,
     model_id: String,
+    base_url: Option<String>,
 }
 
 impl std::fmt::Debug for CloudBackend {
@@ -150,6 +171,7 @@ impl CloudBackend {
             api_key: opts.api_key,
             max_retries: opts.max_retries,
             model_id,
+            base_url: opts.base_url,
         })
     }
 
@@ -171,6 +193,13 @@ impl CloudBackend {
             }
             CloudProvider::MiniMax => {
                 minimax::build_request(&self.model, &self.api_key, prompt, constraint, opts)
+            }
+            CloudProvider::OpenAiCompat => {
+                // RED (A3): transport not implemented yet.
+                let _ = &self.base_url;
+                return Err(LunarisError::Storage(StorageError::Backend(
+                    "cloud-api: openai-compat transport not implemented".to_string(),
+                )));
             }
         };
 
@@ -197,6 +226,7 @@ impl CloudBackend {
             CloudProvider::OpenAI => openai::decode_response(&body_text),
             CloudProvider::Gemini => gemini::decode_response(&body_text),
             CloudProvider::MiniMax => minimax::decode_response(&body_text),
+            CloudProvider::OpenAiCompat => openai::decode_response(&body_text),
         }
     }
 }
@@ -280,6 +310,7 @@ mod tests {
             model: "claude-3-5-sonnet-latest".into(),
             api_key: String::new(),
             max_retries: 1,
+            base_url: None,
         })
         .unwrap_err();
         let msg = err.to_string();
@@ -294,6 +325,7 @@ mod tests {
             model: "gpt-4o-mini".into(),
             api_key: "dummy-key".into(),
             max_retries: 1,
+            base_url: None,
         })
         .unwrap();
         assert_eq!(backend.model_id(), "openai://gpt-4o-mini");
@@ -312,9 +344,48 @@ mod tests {
             model: "MiniMax-M3".into(),
             api_key: "dummy-key".into(),
             max_retries: 1,
+            base_url: None,
         })
         .unwrap();
         assert_eq!(backend.model_id(), "minimax://MiniMax-M3");
+    }
+
+    #[test]
+    fn openai_compat_allows_empty_api_key_and_is_namespaced() {
+        // Local OpenAI-compatible servers (Ollama /v1, llama-server, LM
+        // Studio) are typically unauthenticated — an empty key must NOT be
+        // a construction error for this provider (it is for every other).
+        let backend = CloudBackend::new(CloudBackendOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            max_retries: 1,
+            base_url: Some("http://localhost:11434/v1".into()),
+        })
+        .expect("empty api_key must be allowed for openai-compat");
+        assert_eq!(backend.model_id(), "openai-compat://qwen3:4b");
+    }
+
+    #[test]
+    fn openai_compat_requires_base_url() {
+        let err = CloudBackend::new(CloudBackendOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            max_retries: 1,
+            base_url: None,
+        })
+        .expect_err("openai-compat without a base_url must fail fast");
+        let msg = err.to_string();
+        assert!(msg.contains("LUNARIS_OPENAI_COMPAT_BASE_URL"), "must name the env: {msg}");
+    }
+
+    #[test]
+    fn provider_kind_openai_compat_converts() {
+        assert_eq!(
+            CloudProvider::try_from(ProviderKind::OpenAiCompat).unwrap(),
+            CloudProvider::OpenAiCompat
+        );
     }
 
     #[test]
