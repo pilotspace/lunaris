@@ -152,4 +152,36 @@ mod tests {
         // Cpu — both are acceptable, only assert "did not panic".
         let _ = select_device(Device::Cpu);
     }
+
+    /// Apple Silicon default builds must (a) COMPILE the Metal kernels — via
+    /// the aarch64-macOS target-specific dependency block in Cargo.toml, not
+    /// the opt-in `metal` feature — and (b) pick the GPU at RUNTIME whenever
+    /// the device actually initializes. Runtime probing (not `cfg`) is the
+    /// contract: `Device::new_metal` is always defined and returns a clean
+    /// error on hosts whose binary lacks the kernels or whose GPU is absent,
+    /// so the ladder degrades to Cpu instead of being compiled out.
+    /// `LUNARIS_DEVICE=cpu` remains the operator kill-switch (Metal's
+    /// shape-keyed buffer cache grows in long-lived processes).
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn apple_silicon_default_build_selects_metal_at_runtime() {
+        assert!(
+            candle_core::utils::metal_is_available(),
+            "Metal kernels not compiled into an Apple Silicon default build — \
+             restore the aarch64-macOS target-specific candle-core/metal + \
+             candle-nn/metal dependency features in \
+             lunaris-embed-native/Cargo.toml"
+        );
+        // Only assert the runtime pick where Metal genuinely initializes
+        // (CI VMs may expose no usable GPU — there the compile guard above
+        // is the enforceable half).
+        if Device::new_metal(0).is_ok() {
+            let d = select_device(Device::Cpu);
+            assert!(
+                matches!(d, Device::Metal(_)),
+                "Metal initializes on this host but the runtime ladder \
+                 returned {d:?} — the probe must not be cfg-gated"
+            );
+        }
+    }
 }

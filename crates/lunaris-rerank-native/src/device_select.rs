@@ -79,6 +79,28 @@ mod tests {
         let _ = select_device(Device::Cpu);
     }
 
+    /// Mirror of `lunaris-embed-native::device_select`'s Apple-Silicon
+    /// runtime-Metal contract — see that test for the full rationale.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn apple_silicon_default_build_selects_metal_at_runtime() {
+        assert!(
+            candle_core::utils::metal_is_available(),
+            "Metal kernels not compiled into an Apple Silicon default build — \
+             restore the aarch64-macOS target-specific candle-core/metal + \
+             candle-nn/metal dependency features in \
+             lunaris-rerank-native/Cargo.toml"
+        );
+        if Device::new_metal(0).is_ok() {
+            let d = select_device(Device::Cpu);
+            assert!(
+                matches!(d, Device::Metal(_)),
+                "Metal initializes on this host but the runtime ladder \
+                 returned {d:?} — the probe must not be cfg-gated"
+            );
+        }
+    }
+
     /// Mirror of `lunaris-embed-native::device_select`'s macOS-BLAS default
     /// contract — see that test for the full rationale.
     #[cfg(target_os = "macos")]
