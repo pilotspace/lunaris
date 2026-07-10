@@ -28,11 +28,8 @@ lunaris-extract = { workspace = true }
 # wiring in 16-01) so we depend on `lunaris-consolidate` explicitly. No extra
 # features — the default build is NoopConsolidator + ActRConsolidator types.
 lunaris-consolidate = { workspace = true }
-# Phase 24 / RFC 0006 §4 — verifier divergence corpus generator + the
-# binary that loads 27B + 270M to capture the divergence number on the
-# reference rig. default-features = false keeps the candle / ollama
-# stack out of the bench build unless the operator opts in via the
-# `--features verify-small,verify-large` flag on the binary.
+# Phase 24 / RFC 0006 §4 — divergence corpus generator types. The 27B/270M
+# capture binary was deleted with the candle backends (llama.cpp cutover C2c).
 lunaris-verify = { workspace = true }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
@@ -112,11 +109,6 @@ budget-it = []
 #   cargo test -p lunaris-bench --features ci-perf-gates --test binary_size_gate
 # (scripts/check-binary-size.sh wraps both.)
 ci-perf-gates = []
-# Phase 24 / RFC 0006 §4 — verifier divergence capture binary forwards.
-# These match the lunaris-verify feature names; the binary's
-# required-features gate references them in [[bin]].required-features.
-verify-small = ["lunaris-verify/verify-small"]
-verify-large = ["lunaris-verify/verify-large"]
 # Local-dev passthrough so the eval gauntlet (lunaris-evals) can use the native
 # Q4/Q5 GGUF embedder+reranker via LUNARIS_EMBEDDER_GGUF / LUNARIS_RERANKER_GGUF
 # instead of the default Ollama/FP16 path. Not wired into CI defaults.
@@ -224,15 +216,6 @@ path = "src/bin/evals.rs"
 [[bin]]
 name = "eval_05_helios_10k"
 path = "src/bin/eval_05_helios_10k.rs"
-
-# Phase 24 / RFC 0006 §4 — verifier divergence capture binary. Loads
-# both Candle backends, runs compare_verifiers over the 100-item corpus,
-# prints divergence_rate + PASS/FAIL. required-features = both Candle
-# backends; a bare `cargo build -p lunaris-bench` skips this binary.
-[[bin]]
-name = "verifier-divergence"
-path = "src/bin/verifier_divergence.rs"
-required-features = ["verify-small", "verify-large"]
 
 # O-03-A — perf-gate-check CI binary.
 #

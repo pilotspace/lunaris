@@ -1,18 +1,15 @@
 //! lunaris-extract — Phase 3 entity + relation + fact extractor (default-OFF
 //! per blueprint §5.2).
 //!
-//! Three feature-gated backends behind one dyn-compatible [`Extractor`] trait:
+//! Extraction is REMOTE-ONLY since the llama.cpp-only cutover (2026-07,
+//! Phase C). Two feature-gated backends behind one dyn-compatible
+//! [`Extractor`] trait:
 //!
-//! - [`CandleGemma3_4B`] (default, `feature = "candle"`) — Gemma-3 4B
-//!   instruction-tuned, loaded via candle 0.10's typed
-//!   `candle_transformers::models::gemma3::Model`. Uses the safe
-//!   `VarBuilder::from_buffered_safetensors` loader (CLAUDE.md no-unsafe rule).
-//!   Per-batch timeout (~150 ms by default; D-02) falls back to per-chunk
-//!   extraction on timeout — mirrors `lunaris-ingest::pipeline::embed_with_fallback`.
 //! - `OllamaExtractor` (`feature = "ollama"`) — POSTs `/api/chat` with the
 //!   GBNF grammar translated to a JSON schema in the `format` field.
 //! - `CloudApiExtractor` (`feature = "cloud-api"`) — provider-mux Anthropic /
-//!   OpenAI / Gemini selectable via `LUNARIS_EXTRACT_PROVIDER` env (D-01). Per
+//!   OpenAI / Gemini / MiniMax / OpenAI-compatible URL selectable via
+//!   `LUNARIS_EXTRACT_PROVIDER` env (D-01). Per
 //!   D-21: single retry on transient errors then emit a sentinel entity that
 //!   the [`validator::validate`] pass routes to
 //!   `NeedsReviewReason::TransientAfterRetry`.
@@ -21,15 +18,10 @@
 //!
 //! The umbrella `Lunaris` handle keeps the extractor under a
 //! `GraphPipelineHandle` toggle (Plan 03-03). With the toggle OFF the extractor
-//! is dead code: no model loaded, no candle device init, no extra threads
-//! spawned. The crate compiles + tests succeed without any Gemma weights
-//! present (the `missing_weights_returns_actionable_error` test is the
-//! load-bearing assertion). Cache miss returns the actionable error
-//! ```text
-//! gemma-3-4b-it weights missing at PATH — run `huggingface-cli download google/gemma-3-4b-it --local-dir PATH`
-//! ```
-//! Plan 03-03 catches it and substitutes [`NoopExtractor`] with
-//! `tracing::warn!`.
+//! is dead code: no HTTP client constructed, no extra threads spawned.
+//! Zero-config `open()` resolves [`NoopExtractor`] (degraded mode) — a real
+//! backend requires `LUNARIS_EXTRACT_PROVIDER` (+ provider envs) or an
+//! explicit `with_extractor` call.
 //!
 //! ## EntityId derivation (D-06)
 //!
@@ -63,8 +55,7 @@
 //!   [`ChunkInput`], [`RawExtraction`], [`RawExtractionBatch`],
 //!   [`ExtractionBatch`])
 //! - [`noop`] — [`NoopExtractor`] (always-empty extraction; default when
-//!   graph pipeline is OFF or weights missing)
-//! - [`candle_gemma3`] (gated `candle`) — [`CandleGemma3_4B`]
+//!   graph pipeline is OFF or no provider is configured)
 //! - `ollama` (gated `ollama`) — `OllamaExtractor`
 //! - `cloud_api` (gated `cloud-api`) — `CloudApiExtractor`
 //! - [`validator`] — [`validator::validate`] + `NeedsReviewReason`
@@ -76,17 +67,13 @@ use async_trait::async_trait;
 use lunaris_core::LunarisError;
 use ulid::Ulid;
 
-#[cfg(feature = "candle")]
-pub mod candle_gemma3;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 // RFC 0007 §3 — FallbackExtractor<P, F> static-dispatch combinator with
 // per-instance CircuitBreaker. Always built; the breaker primitive lives
 // in lunaris-core::circuit_breaker.
 pub mod fallback;
-// Phase 11 — backend-agnostic adapter over `lunaris_llm::LlmBackend`. Additive;
-// legacy CandleGemma3_4B / OllamaExtractor / CloudApiExtractor remain untouched
-// in this commit. Duplication-delete happens in the follow-up commit.
+// Phase 11 — backend-agnostic adapter over `lunaris_llm::LlmBackend`.
 pub mod llm_extractor;
 pub mod noop;
 #[cfg(feature = "ollama")]
@@ -94,8 +81,6 @@ pub mod ollama;
 pub mod types;
 pub mod validator;
 
-#[cfg(feature = "candle")]
-pub use candle_gemma3::{CandleGemma3_4B, CandleGemma3_4BOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
 pub use llm_extractor::{LlmExtractor, LlmExtractorOpts};
@@ -112,9 +97,9 @@ pub use validator::{
 
 /// Object-safe async extractor.
 ///
-/// Per blueprint §5.2 + D-01 the default implementation is [`CandleGemma3_4B`];
-/// alternative backends include `OllamaExtractor` (HTTP) and
-/// `CloudApiExtractor` (Anthropic / OpenAI / Gemini). All implementations
+/// Since the llama.cpp-only cutover the shipped backends are
+/// `OllamaExtractor` (HTTP) and `CloudApiExtractor` (Anthropic / OpenAI /
+/// Gemini / MiniMax / OpenAI-compatible URL). All implementations
 /// MUST honour the per-batch timeout (D-02) by falling back to per-chunk
 /// extraction on timeout, and MUST emit either valid extractions or a sentinel
 /// recognized by [`validator::validate`] — never silently drop chunks.

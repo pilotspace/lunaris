@@ -19,17 +19,16 @@
 //! # llm.toml — every section is optional. Anything omitted falls through
 //! # to env, then to the hard-coded pipeline default.
 //! [default]
-//! provider = "candle"
-//! model    = "gemma-3-4b-it"
+//! provider = "ollama"
+//! model    = "gemma3:4b"
 //!
 //! [extract]
 //! # inherits provider from [default], overrides model
-//! model = "gemma-3-4b-it"
+//! model = "gemma3:4b"
 //!
 //! [verify]
-//! # opt back in to the slow-path 27B model
-//! provider = "candle"
-//! model    = "gemma-3-27b-it"
+//! provider = "anthropic"
+//! model    = "claude-3-5-sonnet-latest"
 //!
 //! [reflect]
 //! provider = "ollama"
@@ -76,19 +75,19 @@ impl Pipeline {
     /// Hard-coded default `(provider, model)` for this pipeline, used
     /// when neither env nor config file specifies one.
     ///
-    /// All three pipelines now default to Gemma-3 4B — a single weight
-    /// payload covers extract, verify, and reflect on dev hardware.
-    /// The verify flip from 27B → 4B is gated by the ER-F1 quality
-    /// test (`crates/lunaris-verify/tests/quality_gate_4b_vs_27b.rs`)
-    /// driven by `.github/workflows/llm-gates.yml`. Operators who
-    /// need 27B-fidelity arbitration override the default via
-    /// `LUNARIS_LLM_VERIFY_MODEL=gemma-3-27b-it` or the config-file
-    /// `[verify] model = "gemma-3-27b-it"` section.
+    /// llama.cpp-only cutover (2026-07, Phase C): the in-process candle
+    /// backends are gone and the LLM slots are remote-only, so the
+    /// zero-config default is the keyless local-remote transport — an
+    /// Ollama server on localhost with Gemma-3 4B. Operators pick a cloud
+    /// provider via `LUNARIS_LLM_PROVIDER` / per-pipeline env or the
+    /// config file. Note the production `Lunaris::open()` path treats
+    /// "no provider env set" as degraded (Noop) — this default only
+    /// shapes `LlmConfig` resolution for callers that use it directly.
     pub fn default_provider_and_model(self) -> (ProviderKind, &'static str) {
         match self {
-            Pipeline::Extract => (ProviderKind::Candle, "gemma-3-4b-it"),
-            Pipeline::Verify => (ProviderKind::Candle, "gemma-3-4b-it"),
-            Pipeline::Reflect => (ProviderKind::Candle, "gemma-3-4b-it"),
+            Pipeline::Extract => (ProviderKind::Ollama, "gemma3:4b"),
+            Pipeline::Verify => (ProviderKind::Ollama, "gemma3:4b"),
+            Pipeline::Reflect => (ProviderKind::Ollama, "gemma3:4b"),
         }
     }
 }
@@ -97,8 +96,6 @@ impl Pipeline {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
-    /// In-process candle inference.
-    Candle,
     /// Ollama HTTP server.
     Ollama,
     /// Anthropic cloud API.
@@ -121,7 +118,6 @@ impl FromStr for ProviderKind {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "candle" => Ok(ProviderKind::Candle),
             "ollama" => Ok(ProviderKind::Ollama),
             "anthropic" => Ok(ProviderKind::Anthropic),
             "openai" => Ok(ProviderKind::OpenAI),
@@ -276,7 +272,7 @@ fn load_config_file() -> Result<LlmConfigFile, LlmConfigError> {
 #[derive(Debug, Error)]
 pub enum LlmConfigError {
     #[error(
-        "unknown LLM provider: `{0}` (expected one of: candle, ollama, anthropic, openai, \
+        "unknown LLM provider: `{0}` (expected one of: ollama, anthropic, openai, \
          gemini, openai-compat)"
     )]
     UnknownProvider(String),
@@ -293,29 +289,28 @@ mod tests {
     #[test]
     fn defaults_match_today_hardcoded_pipeline_defaults() {
         // Pin the current defaults so a silent flip requires editing the
-        // test, not just the const. All three pipelines now default to
-        // 4B (verify-flip evidence gated by `.github/workflows/
-        // llm-gates.yml`); a future re-flip to 27B for any pipeline
-        // would need to touch this assertion deliberately.
+        // test, not just the const. llama.cpp-only cutover: the LLM slots
+        // are remote-only, so the zero-config default is the keyless
+        // localhost transport (Ollama + Gemma-3 4B) for all three
+        // pipelines.
         assert_eq!(
             Pipeline::Extract.default_provider_and_model(),
-            (ProviderKind::Candle, "gemma-3-4b-it")
+            (ProviderKind::Ollama, "gemma3:4b")
         );
         assert_eq!(
             Pipeline::Verify.default_provider_and_model(),
-            (ProviderKind::Candle, "gemma-3-4b-it")
+            (ProviderKind::Ollama, "gemma3:4b")
         );
         assert_eq!(
             Pipeline::Reflect.default_provider_and_model(),
-            (ProviderKind::Candle, "gemma-3-4b-it")
+            (ProviderKind::Ollama, "gemma3:4b")
         );
     }
 
     #[test]
     fn provider_kind_parses_case_insensitive() {
-        assert_eq!("candle".parse::<ProviderKind>().unwrap(), ProviderKind::Candle);
-        assert_eq!("CANDLE".parse::<ProviderKind>().unwrap(), ProviderKind::Candle);
         assert_eq!("ollama".parse::<ProviderKind>().unwrap(), ProviderKind::Ollama);
+        assert_eq!("OLLAMA".parse::<ProviderKind>().unwrap(), ProviderKind::Ollama);
         assert_eq!("anthropic".parse::<ProviderKind>().unwrap(), ProviderKind::Anthropic);
         assert_eq!("openai".parse::<ProviderKind>().unwrap(), ProviderKind::OpenAI);
         assert_eq!("gemini".parse::<ProviderKind>().unwrap(), ProviderKind::Gemini);
@@ -347,6 +342,11 @@ mod tests {
     fn provider_kind_rejects_unknown() {
         let err = "qwen".parse::<ProviderKind>().unwrap_err();
         assert!(matches!(err, LlmConfigError::UnknownProvider(_)));
+        // llama.cpp-only cutover: the in-process candle provider is GONE —
+        // a leftover `provider = "candle"` config must fail loudly, not
+        // silently map to some other transport.
+        let err = "candle".parse::<ProviderKind>().unwrap_err();
+        assert!(matches!(err, LlmConfigError::UnknownProvider(_)));
     }
 
     #[test]
@@ -367,12 +367,12 @@ mod tests {
         let env = EnvSource::Map(&[
             ("LUNARIS_LLM_PROVIDER", "anthropic"),
             ("LUNARIS_LLM_MODEL", "claude-3-5-sonnet-latest"),
-            ("LUNARIS_EXTRACT_PROVIDER", "candle"),
-            ("LUNARIS_EXTRACT_MODEL", "gemma-3-4b-it"),
+            ("LUNARIS_EXTRACT_PROVIDER", "openai-compat"),
+            ("LUNARIS_EXTRACT_MODEL", "qwen3:4b"),
         ]);
         let extract = LlmConfig::resolve_with(Pipeline::Extract, &file, env).unwrap();
-        assert_eq!(extract.provider, ProviderKind::Candle);
-        assert_eq!(extract.model, "gemma-3-4b-it");
+        assert_eq!(extract.provider, ProviderKind::OpenAiCompat);
+        assert_eq!(extract.model, "qwen3:4b");
         // Verify has no per-pipeline override → falls through to workspace.
         let verify = LlmConfig::resolve_with(Pipeline::Verify, &file, env).unwrap();
         assert_eq!(verify.provider, ProviderKind::Anthropic);
@@ -388,8 +388,8 @@ mod tests {
             model = "gemma3:4b"
 
             [verify]
-            provider = "candle"
-            model = "gemma-3-27b-it"
+            provider = "anthropic"
+            model = "claude-3-5-sonnet-latest"
             "#,
         )
         .unwrap();
@@ -399,8 +399,8 @@ mod tests {
         assert_eq!(extract.provider, ProviderKind::Ollama);
         assert_eq!(extract.model, "gemma3:4b");
         let verify = LlmConfig::resolve_with(Pipeline::Verify, &file, env).unwrap();
-        assert_eq!(verify.provider, ProviderKind::Candle);
-        assert_eq!(verify.model, "gemma-3-27b-it");
+        assert_eq!(verify.provider, ProviderKind::Anthropic);
+        assert_eq!(verify.model, "claude-3-5-sonnet-latest");
     }
 
     #[test]
@@ -408,8 +408,8 @@ mod tests {
         let file = LlmConfigFile::parse(
             r#"
             [extract]
-            provider = "candle"
-            model = "gemma-3-4b-it"
+            provider = "anthropic"
+            model = "claude-3-5-haiku-latest"
             "#,
         )
         .unwrap();
@@ -417,7 +417,7 @@ mod tests {
         let cfg = LlmConfig::resolve_with(Pipeline::Extract, &file, env).unwrap();
         // Env provider wins; model falls back to file (file ≻ default).
         assert_eq!(cfg.provider, ProviderKind::Ollama);
-        assert_eq!(cfg.model, "gemma-3-4b-it");
+        assert_eq!(cfg.model, "claude-3-5-haiku-latest");
     }
 
     #[test]
@@ -438,7 +438,7 @@ mod tests {
         let err = LlmConfigFile::parse(
             r#"
             [extract]
-            povider = "candle"
+            povider = "ollama"
             "#,
         )
         .unwrap_err();

@@ -69,10 +69,9 @@ pub struct GraphPipelineHandle {
 impl GraphPipelineHandle {
     /// Construct a fresh handle. `initial_enabled` is read from
     /// `LUNARIS_GRAPH_ENABLED=1|0` by [`crate::Lunaris::open`] (D-10);
-    /// `extractor` is the one constructed by `default_extractor()` (typically
-    /// [`lunaris_extract::CandleGemma3_4B`] under the `candle` feature with a
-    /// fallback to [`NoopExtractor`] on cache miss — see Plan 02-03's
-    /// `default_reranker` pattern).
+    /// `extractor` is the one constructed by `default_extractor()` (a remote
+    /// `CloudApiExtractor` when `LUNARIS_EXTRACT_PROVIDER` is set, else
+    /// [`NoopExtractor`] — llama.cpp cutover, remote-only).
     pub fn new(initial_enabled: bool, extractor: Arc<dyn Extractor>) -> Self {
         Self {
             enabled: RwLock::new(initial_enabled),
@@ -143,32 +142,12 @@ impl GraphPipelineHandle {
         *self.state_changes.lock()
     }
 
-    /// Force the extractor to reload from default cache (D-12). Useful when
-    /// the operator just downloaded weights and wants the runtime to pick
-    /// them up without restarting the process.
-    ///
-    /// On `candle` feature: tries [`lunaris_extract::CandleGemma3_4B`]'s
-    /// default-cache constructor; on Err returns the actionable error (does
-    /// NOT silently substitute Noop — `force_reload` is the explicit
-    /// "rebuild" path, callers handle the failure).
-    ///
-    /// Without `candle`: no-op that returns `Ok(())` so callers don't need
-    /// cfg-gated branches. The handle keeps whatever extractor was installed
-    /// (typically Noop in this build).
-    #[cfg(feature = "candle")]
+    /// Force-reload hook (D-12). With the llama.cpp cutover the extractor is
+    /// remote-only — there is no local weight cache to reload — so this is a
+    /// no-op that returns `Ok(())` (callers don't need cfg-gated branches).
+    /// Swap backends at runtime via [`Self::set_extractor`] instead.
     pub async fn force_reload(&self) -> Result<(), LunarisError> {
-        let new_extractor = lunaris_extract::CandleGemma3_4B::new(Default::default()).await?;
-        let new_arc: Arc<dyn Extractor> = Arc::new(new_extractor);
-        *self.extractor.write() = Some(new_arc);
-        tracing::info!("graph_pipeline_extractor_reloaded");
-        Ok(())
-    }
-
-    /// Without `candle` there's no real extractor to reload — see the
-    /// `cfg(feature = "candle")` doc above for the production path.
-    #[cfg(not(feature = "candle"))]
-    pub async fn force_reload(&self) -> Result<(), LunarisError> {
-        tracing::info!("graph_pipeline_extractor_reloaded (noop — candle feature off)");
+        tracing::info!("graph_pipeline_extractor_reloaded (noop — extractor is remote-only)");
         Ok(())
     }
 

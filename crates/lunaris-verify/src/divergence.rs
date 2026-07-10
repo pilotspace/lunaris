@@ -136,7 +136,7 @@ mod tests {
     }
 
     fn arbitrate(winner: Ulid, loser: Ulid) -> VerifyDecision {
-        VerifyDecision::arbitrate(winner, loser, "test", VerifierBackend::Candle)
+        VerifyDecision::arbitrate(winner, loser, "test", VerifierBackend::Ollama)
     }
 
     fn nri() -> NeedsReviewItem {
@@ -219,8 +219,8 @@ mod tests {
     fn reason_string_difference_is_ignored() {
         let w = Ulid::new();
         let l = Ulid::new();
-        let a = VerifyDecision::arbitrate(w, l, "reason A", VerifierBackend::Candle);
-        let b = VerifyDecision::arbitrate(w, l, "totally different prose", VerifierBackend::Candle);
+        let a = VerifyDecision::arbitrate(w, l, "reason A", VerifierBackend::Ollama);
+        let b = VerifyDecision::arbitrate(w, l, "totally different prose", VerifierBackend::Ollama);
         assert!(decisions_equivalent(&a, &b), "reason strings must not affect equivalence");
     }
 }

@@ -6,8 +6,8 @@
 //!   in which case `Lunaris::ingest` short-circuits before calling `extract`
 //!   anyway. The Noop seam keeps the trait-object slot full so the umbrella
 //!   handle's invariant `extractor: Arc<dyn Extractor>` always holds.
-//! - The candle backend cache is missing (Plan 03-03 calls
-//!   `CandleGemma3_4B::try_new_from_default_cache()` and on `Err` substitutes
+//! - No remote provider is configured (`LUNARIS_EXTRACT_PROVIDER` unset —
+//!   `Lunaris::open()` substitutes
 //!   `Arc::new(NoopExtractor)` with `tracing::warn!`). Mirrors the Plan 02-03
 //!   `BgeRerankerV2M3 → NoopReranker` cache-miss pattern.
 //!
@@ -21,7 +21,7 @@ use ulid::Ulid;
 use crate::Extractor;
 use crate::types::{ChunkInput, RawExtraction, RawExtractionBatch};
 
-/// Default extractor when graph pipeline is OFF (Plan 03-03) or when the candle
+/// Default extractor when graph pipeline is OFF (Plan 03-03) or when no remote
 /// backend cache is missing. Returns one empty [`RawExtraction`] per input
 /// chunk so the per-chunk index alignment downstream still holds.
 #[derive(Debug, Clone, Copy, Default)]

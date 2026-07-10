@@ -111,11 +111,14 @@ pub fn cross_episode_decision(
 }
 
 /// Provider tag for audit records. Serialized with default enum tagging
-/// (externally tagged → `"Candle"` / `"CloudAnthropic"` / etc.) so the audit
+/// (externally tagged → `"Ollama"` / `"CloudAnthropic"` / etc.) so the audit
 /// schema is grep-friendly in ops tooling.
+///
+/// llama.cpp-only cutover (2026-07, Phase C): the `Candle` variant was
+/// removed with the in-process backends — historical audit records carrying
+/// `"Candle"` predate the cutover and are not deserialized by Lunaris.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerifierBackend {
-    Candle,
     Ollama,
     CloudAnthropic,
     CloudOpenAI,

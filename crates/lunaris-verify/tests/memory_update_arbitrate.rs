@@ -14,7 +14,7 @@ fn cross_episode_latest_assertion_supersedes_prior() {
     let existing = Ulid::new();
     let new = Ulid::new();
 
-    let decision = cross_episode_decision(existing, new, VerifierBackend::Candle);
+    let decision = cross_episode_decision(existing, new, VerifierBackend::Ollama);
 
     assert!(
         decision.applies(),
@@ -22,5 +22,5 @@ fn cross_episode_latest_assertion_supersedes_prior() {
     );
     assert_eq!(decision.winner_id, Some(new), "the newer assertion is the winner");
     assert_eq!(decision.loser_id, Some(existing), "the prior fact is the loser (superseded)");
-    assert_eq!(decision.backend, VerifierBackend::Candle, "carries the deciding backend tag");
+    assert_eq!(decision.backend, VerifierBackend::Ollama, "carries the deciding backend tag");
 }
