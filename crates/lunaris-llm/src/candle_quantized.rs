@@ -335,49 +335,120 @@ fn load_eos_ids(config_path: &Path, model_name: &str) -> Vec<u32> {
     }
 }
 
-/// Upgrade `Device::Cpu` to Metal/Cuda when the corresponding feature is
-/// enabled; a caller-supplied non-`Cpu` device is honored verbatim. Mirrors
-/// `lunaris-rerank-native::device_select::select_device` exactly (same
-/// rationale — see that module for the full write-up).
+/// Operator override for the automatic device ladder (`LUNARIS_DEVICE`) —
+/// mirror of `lunaris-embed-native::device_select::DeviceOverride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeviceOverride {
+    Auto,
+    ForceCpu,
+    PreferCuda,
+    PreferMetal,
+}
+
+/// Pure parse half of the `LUNARIS_DEVICE` handling — mirror of
+/// `lunaris-embed-native::device_select::parse_device_override`.
+fn parse_device_override(raw: Option<&str>) -> DeviceOverride {
+    match raw.map(str::trim) {
+        None | Some("") => DeviceOverride::Auto,
+        Some(s) if s.eq_ignore_ascii_case("auto") => DeviceOverride::Auto,
+        Some(s) if s.eq_ignore_ascii_case("cpu") => DeviceOverride::ForceCpu,
+        Some(s) if s.eq_ignore_ascii_case("cuda") => DeviceOverride::PreferCuda,
+        Some(s) if s.eq_ignore_ascii_case("metal") => DeviceOverride::PreferMetal,
+        Some(other) => {
+            tracing::warn!(
+                value = other,
+                "LUNARIS_DEVICE not one of auto|cpu|cuda|metal — treating as auto"
+            );
+            DeviceOverride::Auto
+        }
+    }
+}
+
+/// Upgrade `Device::Cpu` to the best GPU backend that initializes at
+/// runtime, honoring `LUNARIS_DEVICE`; a caller-supplied non-`Cpu` device is
+/// honored verbatim. Mirrors
+/// `lunaris-embed-native::device_select::select_device` exactly — runtime
+/// probes, not cfg gates (see that module for the full write-up).
 fn select_device(requested: Device) -> Device {
     if !matches!(requested, Device::Cpu) {
         tracing::debug!(?requested, "select_device: caller-provided device honored verbatim");
         return requested;
     }
+    let ov = parse_device_override(std::env::var("LUNARIS_DEVICE").ok().as_deref());
+    select_device_with(ov)
+}
 
-    #[cfg(feature = "cuda")]
-    {
-        match Device::new_cuda(0) {
+/// Override-explicit core of [`select_device`] — separated so tests can
+/// drive every branch without racing on process env.
+fn select_device_with(ov: DeviceOverride) -> Device {
+    match ov {
+        DeviceOverride::ForceCpu => {
+            tracing::info!("select_device: LUNARIS_DEVICE=cpu — skipping GPU probes");
+            Device::Cpu
+        }
+        DeviceOverride::PreferCuda => match Device::new_cuda(0) {
             Ok(d) => {
                 tracing::info!(
                     backend = "lunaris-llm (quantized)",
-                    "select_device: Cpu → Cuda(0) (cuda feature on)"
+                    "select_device: Cpu → Cuda(0) (LUNARIS_DEVICE=cuda)"
                 );
-                return d;
+                d
             }
             Err(e) => {
-                tracing::debug!(error = %e, "select_device: cuda init failed");
+                tracing::warn!(
+                    error = %e,
+                    "LUNARIS_DEVICE=cuda but CUDA did not initialize \
+                     (kernels not compiled in, or no usable GPU) — using Cpu"
+                );
+                Device::Cpu
             }
-        }
-    }
-
-    #[cfg(feature = "metal")]
-    {
-        match Device::new_metal(0) {
+        },
+        DeviceOverride::PreferMetal => match Device::new_metal(0) {
             Ok(d) => {
                 tracing::info!(
                     backend = "lunaris-llm (quantized)",
-                    "select_device: Cpu → Metal(0) (metal feature on)"
+                    "select_device: Cpu → Metal(0) (LUNARIS_DEVICE=metal)"
                 );
-                return d;
+                d
             }
             Err(e) => {
-                tracing::debug!(error = %e, "select_device: metal init failed");
+                tracing::warn!(
+                    error = %e,
+                    "LUNARIS_DEVICE=metal but Metal did not initialize \
+                     (kernels not compiled in, or no usable GPU) — using Cpu"
+                );
+                Device::Cpu
             }
+        },
+        DeviceOverride::Auto => {
+            match Device::new_cuda(0) {
+                Ok(d) => {
+                    tracing::info!(
+                        backend = "lunaris-llm (quantized)",
+                        "select_device: Cpu → Cuda(0) (runtime probe)"
+                    );
+                    return d;
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "select_device: cuda probe failed, trying next");
+                }
+            }
+            match Device::new_metal(0) {
+                Ok(d) => {
+                    tracing::info!(
+                        backend = "lunaris-llm (quantized)",
+                        "select_device: Cpu → Metal(0) (runtime probe)"
+                    );
+                    return d;
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "select_device: metal probe failed, falling back");
+                }
+            }
+            tracing::debug!("select_device: staying on Device::Cpu");
+            Device::Cpu
         }
     }
-
-    Device::Cpu
 }
 
 /// Tiny dummy matmul to pay GPU JIT cost up front. Best-effort; errors are
@@ -434,6 +505,27 @@ mod tests {
     #[test]
     fn select_device_does_not_panic() {
         let _ = select_device(Device::Cpu);
+    }
+
+    #[test]
+    fn parse_device_override_matrix() {
+        use DeviceOverride::*;
+        assert_eq!(parse_device_override(None), Auto);
+        assert_eq!(parse_device_override(Some("")), Auto);
+        assert_eq!(parse_device_override(Some("auto")), Auto);
+        assert_eq!(parse_device_override(Some("CPU")), ForceCpu);
+        assert_eq!(parse_device_override(Some(" cpu ")), ForceCpu);
+        assert_eq!(parse_device_override(Some("Metal")), PreferMetal);
+        assert_eq!(parse_device_override(Some("cuda")), PreferCuda);
+        // Unknown values degrade to Auto (warn, never error).
+        assert_eq!(parse_device_override(Some("tpu")), Auto);
+    }
+
+    /// The kill-switch: `ForceCpu` (what `LUNARIS_DEVICE=cpu` parses to)
+    /// must skip the GPU probes even on hosts where Metal initializes.
+    #[test]
+    fn force_cpu_override_skips_gpu_probes() {
+        assert!(matches!(select_device_with(DeviceOverride::ForceCpu), Device::Cpu));
     }
 
     /// Mirror of `lunaris-embed-native::device_select`'s Apple-Silicon

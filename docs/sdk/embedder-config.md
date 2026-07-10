@@ -263,11 +263,15 @@ detect the degraded path.
   resolution chain). **`LUNARIS_EMBEDDER_BACKEND` / `LUNARIS_RERANKER_BACKEND`
   are retired** — there is no env-var backend swap in v0.4+.
 - **Accelerator features.** The native crates are `Device`-parameterized.
-  **macOS targets get Accelerate BLAS automatically** (target-specific
-  dependency block in the native crates — no feature flag needed; `cpu-accelerate`
-  remains as an explicit no-op passthrough). Build with `cpu-mkl` (Intel BLAS),
-  `metal` (Apple Silicon GPU), `cuda`, or `cuda-fa2` to opt into the other
-  candle compute paths. The CPU path is always available with no extra feature.
+  **macOS targets get Accelerate BLAS automatically**, and **Apple Silicon
+  targets also compile the Metal kernels** (target-specific dependency blocks
+  in the native crates — no feature flags needed). The device is chosen by a
+  **runtime probe** at `open()`: CUDA → Metal → CPU, falling back cleanly when
+  kernels aren't compiled in or no usable GPU exists. `LUNARIS_DEVICE`
+  (`auto|cpu|cuda|metal`) overrides the probe — `cpu` is the kill-switch for
+  long-lived servers that must bound RSS. Build with `cpu-mkl` (Intel BLAS),
+  `cuda`, or `cuda-fa2` to opt into the other candle compute paths. The CPU
+  path is always available with no extra feature.
 - **Cross-SDK consistency.** Vectors produced by `EmbedderConfig.native()` are
   byte-identical across the Python and TypeScript SDKs for the same input
   (enforced mechanically — see [§Next steps](#next-steps)).

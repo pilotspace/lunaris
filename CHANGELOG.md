@@ -16,9 +16,18 @@ All notable changes to Lunaris are documented here.
   ingest on default builds). Linux/Windows builds are byte-identical
   (resolver v3 scopes target-specific dependency features to the build
   target); the `cpu-accelerate` feature remains as an explicit no-op-on-macOS
-  passthrough. `metal` stays opt-in deliberately: candle's shape-keyed Metal
-  buffer cache grows unboundedly in long-lived processes. `cuda` / `cpu-mkl`
-  stay opt-in (external toolchains).
+  passthrough. `cuda` / `cpu-mkl` stay opt-in (external toolchains).
+- **Apple Silicon builds now compile Metal kernels by default and pick the
+  GPU at runtime** — `select_device` in all three candle crates now uses
+  runtime probes instead of `cfg`-gated branches: `Device::new_cuda(0)` →
+  `Device::new_metal(0)` → CPU, degrading cleanly when kernels aren't
+  compiled in or no usable GPU exists (CI VMs). New `LUNARIS_DEVICE`
+  env override (`auto|cpu|cuda|metal`): `cpu` is the kill-switch for
+  long-lived macOS servers that must bound RSS (candle's shape-keyed Metal
+  buffer cache grows unboundedly within a process — the benchmark harness
+  works around it with process-per-question isolation); `metal`/`cuda`
+  force one probe and warn+fall back to CPU. An explicit SDK/caller device
+  is still honored verbatim and is never overridden by env.
 
 ## v0.5.0 — 2026-06-16
 
