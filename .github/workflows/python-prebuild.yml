@@ -61,9 +61,16 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "manylinux_2_28"
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm # native ARM runner (free on public repos)
             target: aarch64-unknown-linux-gnu
             manylinux: "manylinux_2_28"
+            # NOT ubuntu-latest + cross: the rust-cross
+            # manylinux_2_28-cross:aarch64 image ships a GCC 7.5 cross
+            # toolchain, and llama.cpp's NEON vld1q_*_x2/_x4 intrinsics
+            # need GCC >= 9 ("invalid initializer" wall, run
+            # 29107908949). Building natively picks the
+            # quay.io/pypa/manylinux_2_28_aarch64 image (modern
+            # gcc-toolset), same as the green x86_64 cell.
           - os: macos-15-intel
             target: x86_64-apple-darwin
             manylinux: "off"
