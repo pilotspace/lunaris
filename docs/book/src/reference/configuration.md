@@ -51,9 +51,13 @@ integration features to the storage crates.)
 | `embedder-it` | | Gates real-weights integration tests |
 
 Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
-`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**
-via a target-specific dependency block (`cpu-accelerate` is a redundant
-no-op there); the GPU / MKL variants remain opt-in on every platform.
+`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**,
+and **Apple Silicon builds additionally compile the Metal kernels** via
+target-specific dependency blocks (`cpu-accelerate` / `metal` are redundant
+no-ops there). Device pick is a **runtime probe** (CUDA → Metal → CPU) with
+clean CPU fallback; `LUNARIS_DEVICE=auto|cpu|cuda|metal` overrides it —
+`cpu` skips GPU probes (bounds RSS on long-lived servers). `cpu-mkl`,
+`cuda`, `cuda-fa2` remain opt-in (external toolchains).
 
 ### `lunaris-rerank-native`
 
@@ -63,9 +67,13 @@ no-op there); the GPU / MKL variants remain opt-in on every platform.
 | `reranker-it` | | Gates real-weights integration tests |
 
 Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
-`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**
-via a target-specific dependency block (`cpu-accelerate` is a redundant
-no-op there); the GPU / MKL variants remain opt-in on every platform.
+`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**,
+and **Apple Silicon builds additionally compile the Metal kernels** via
+target-specific dependency blocks (`cpu-accelerate` / `metal` are redundant
+no-ops there). Device pick is a **runtime probe** (CUDA → Metal → CPU) with
+clean CPU fallback; `LUNARIS_DEVICE=auto|cpu|cuda|metal` overrides it —
+`cpu` skips GPU probes (bounds RSS on long-lived servers). `cpu-mkl`,
+`cuda`, `cuda-fa2` remain opt-in (external toolchains).
 
 `NoopReranker` is always available (no feature gate) — selectable at runtime
 for the latency-floor path.
