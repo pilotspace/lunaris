@@ -152,6 +152,9 @@ const CYPHER_RESERVED_WORDS: &[&str] = &[
     "match", "optional", "where", "return", "create", "delete", "detach", "set", "merge", "with",
     "unwind", "order", "by", "limit", "skip", "as", "and", "or", "not", "true", "false", "null",
     "in", "is", "call", "yield", "distinct", "asc", "desc", "on",
+    // Moon v0.6.0 string-operator tokens (lexer lines 80-84). Drift from a
+    // vendor bump is caught by `reserved_word_list_matches_vendored_moon_lexer`.
+    "contains", "starts", "ends",
 ];
 
 #[cfg(test)]
@@ -214,6 +217,50 @@ mod sanitize_graph_ident_tests {
         assert_eq!(sanitize_graph_ident("IS", "RELATED_TO"), "RELATED_TO");
         assert_eq!(sanitize_graph_ident("Is", "RELATED_TO"), "RELATED_TO");
         assert_eq!(sanitize_graph_ident("Set", "Entity"), "Entity");
+    }
+
+    #[test]
+    fn moon_v060_string_operator_keywords_fall_back() {
+        // Live regression (2026-07-10 failed-cases smoke, q10): MiniMax
+        // emitted relation type "Contains"; the Moon v0.6.0 lexer added
+        // CONTAINS/STARTS/ENDS string-operator tokens and the hand-synced
+        // list here silently drifted — Moon threw "Cypher parse error:
+        // expected identifier, found Contains" and the whole ingest failed.
+        assert_eq!(sanitize_graph_ident("Contains", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("starts", "RELATED_TO"), "RELATED_TO");
+        assert_eq!(sanitize_graph_ident("ENDS", "RELATED_TO"), "RELATED_TO");
+    }
+
+    #[test]
+    fn reserved_word_list_matches_vendored_moon_lexer() {
+        // Drift gate for the "kept in sync by hand" promise on
+        // CYPHER_RESERVED_WORDS: read the vendored Moon Cypher lexer and
+        // assert every `ignore(case)` keyword token is present in the list.
+        // Skips when the submodule isn't checked out (published-crate
+        // builds, partial clones) — the gate matters exactly where vendor
+        // bumps happen: this repo's CI.
+        let lexer = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../vendor/moon/src/graph/cypher/lexer.rs");
+        let Ok(src) = std::fs::read_to_string(&lexer) else {
+            eprintln!("skip: vendored moon lexer not present at {}", lexer.display());
+            return;
+        };
+        let mut missing: Vec<String> = Vec::new();
+        for line in src.lines() {
+            let Some(rest) = line.trim().strip_prefix("#[token(b\"") else { continue };
+            let Some(word) = rest.split('"').next() else { continue };
+            if !rest.contains("ignore(case)") {
+                continue;
+            }
+            let lower = word.to_ascii_lowercase();
+            if !CYPHER_RESERVED_WORDS.contains(&lower.as_str()) && !missing.contains(&lower) {
+                missing.push(lower);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "Moon lexer keywords missing from CYPHER_RESERVED_WORDS (vendor bump drift): {missing:?}"
+        );
     }
 
     #[test]
