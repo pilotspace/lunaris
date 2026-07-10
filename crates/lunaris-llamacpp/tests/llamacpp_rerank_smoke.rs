@@ -138,12 +138,13 @@ async fn embedder_and_reranker_coexist_in_one_process() {
     // Order matters for the regression this pins: the SECOND open used to
     // fail with BackendAlreadyInitialized when each model owned the backend.
     use lunaris_core::Embedder;
-    let embedder = lunaris_llamacpp::LlamaCppEmbedder::open(lunaris_llamacpp::LlamaCppEmbedderOpts {
-        gguf_path: embed_gguf,
-        n_gpu_layers: 0,
-        ..Default::default()
-    })
-    .expect("open embedder first");
+    let embedder =
+        lunaris_llamacpp::LlamaCppEmbedder::open(lunaris_llamacpp::LlamaCppEmbedderOpts {
+            gguf_path: embed_gguf,
+            n_gpu_layers: 0,
+            ..Default::default()
+        })
+        .expect("open embedder first");
     let reranker = open_reranker(rerank_gguf);
 
     let rows = embedder.embed_batch(&["panda memo"]).await.expect("embed after reranker open");

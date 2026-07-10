@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
-use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
@@ -85,7 +84,6 @@ impl From<LlamaCppEmbedderError> for LunarisError {
 }
 
 struct Inner {
-    backend: LlamaBackend,
     model: LlamaModel,
     n_threads: Option<i32>,
     max_batch_tokens: u32,
@@ -110,18 +108,16 @@ impl LlamaCppEmbedder {
     /// Construct from a GGUF on disk. Loads weights synchronously; callers
     /// concerned about runtime stalls should wrap in `spawn_blocking`.
     ///
-    /// `LlamaBackend::init` is once-per-process; a second `open` in the same
-    /// process surfaces llama-cpp-2's `BackendAlreadyInitialized` as
-    /// [`LlamaCppEmbedderError::Llama`] — one embedder per process is the
-    /// spike contract.
+    /// Uses the process-shared `LlamaBackend` (`crate::backend`), so any
+    /// number of models — embedder + reranker + later extractor — coexist
+    /// in one process.
     pub fn open(opts: LlamaCppEmbedderOpts) -> Result<Self, LlamaCppEmbedderError> {
         if !opts.gguf_path.exists() {
             return Err(LlamaCppEmbedderError::WeightsMissing(opts.gguf_path));
         }
-        let backend =
-            LlamaBackend::init().map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
+        let backend = crate::backend::shared_backend().map_err(LlamaCppEmbedderError::Llama)?;
         let model_params = LlamaModelParams::default().with_n_gpu_layers(opts.n_gpu_layers);
-        let model = LlamaModel::load_from_file(&backend, &opts.gguf_path, &model_params)
+        let model = LlamaModel::load_from_file(backend, &opts.gguf_path, &model_params)
             .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
         let n_embd = model.n_embd();
         if n_embd as usize != GRANITE_R2_DIM {
@@ -129,7 +125,6 @@ impl LlamaCppEmbedder {
         }
         Ok(Self {
             inner: Arc::new(Inner {
-                backend,
                 model,
                 n_threads: opts.n_threads,
                 max_batch_tokens: opts.max_batch_tokens.max(16),
@@ -173,7 +168,10 @@ impl LlamaCppEmbedder {
         }
         let mut ctx = inner
             .model
-            .new_context(&inner.backend, ctx_params)
+            .new_context(
+                crate::backend::shared_backend().map_err(LlamaCppEmbedderError::Llama)?,
+                ctx_params,
+            )
             .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
 
         let mut out: Vec<Vec<f32>> = vec![Vec::new(); inputs.len()];

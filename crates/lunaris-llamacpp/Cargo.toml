@@ -31,6 +31,11 @@ description  = "Opt-in llama.cpp inference runtime for Lunaris (embedder spike)"
 
 [dependencies]
 lunaris-core = { workspace = true }
+# Reranker output contract (`Reranker` trait + `RerankCandidate`) — light
+# crate (trait + Noop impl), needed unconditionally so the trait impl
+# compiles with the feature on; the feature-off shell doesn't reference it
+# but the dep is cheap.
+lunaris-rerank = { workspace = true }
 async-trait  = { workspace = true }
 tokio        = { workspace = true }
 tracing      = { workspace = true }
@@ -48,3 +53,5 @@ llamacpp = ["dep:llama-cpp-2"]
 metal    = ["llamacpp", "llama-cpp-2/metal"]
 
 [dev-dependencies]
+# rerank smoke test constructs RerankCandidate { metadata: Value::Null }.
+serde_json = { workspace = true }
