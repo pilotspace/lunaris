@@ -2108,8 +2108,81 @@ async fn resolve_reranker_native() -> Result<Arc<dyn Reranker>, LunarisError> {
 ///
 /// Callers wire their own extractor via [`Lunaris::with_extractor`] or
 /// `handle.graph_pipeline().set_extractor(extractor)` for late binding.
+/// Cutover decision 1 (llama.cpp-only, 2026-07-10): extraction is going
+/// remote-only. When `LUNARIS_EXTRACT_PROVIDER` names a provider
+/// (anthropic|openai|gemini|minimax|openai-compat), construct the
+/// `CloudApiExtractor` from env — model via `<PROVIDER>_EXTRACT_MODEL`,
+/// key via `<PROVIDER>_API_KEY` (optional for openai-compat), base URL via
+/// `LUNARIS_OPENAI_COMPAT_BASE_URL` — wrapped in the production fallback
+/// floor. A set-but-broken provider degrades to `NoopExtractor` with a
+/// warn (config error must NOT silently fall back to a different backend).
+/// Returns `None` when the env is unset → caller continues its chain.
+#[cfg(feature = "cloud-api")]
+fn remote_extractor_from_env() -> Option<Arc<dyn Extractor>> {
+    let raw = std::env::var("LUNARIS_EXTRACT_PROVIDER").ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let opts = lunaris_extract::CloudApiExtractorOpts::default();
+    let label = opts.model.clone();
+    match lunaris_extract::CloudApiExtractor::new(opts) {
+        Ok(e) => {
+            tracing::info!(
+                target: "lunaris::handle",
+                provider = %raw.trim(),
+                model = %label,
+                "extractor_backend_resolved (remote cloud-api)"
+            );
+            Some(lunaris_extract::fallback::fallback_wrap(e, &label))
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                provider = %raw.trim(),
+                "LUNARIS_EXTRACT_PROVIDER set but the remote extractor failed to construct; \
+                 graph extraction disabled (NoopExtractor) until the config is fixed"
+            );
+            Some(Arc::new(NoopExtractor) as Arc<dyn Extractor>)
+        }
+    }
+}
+
+/// Verifier twin of [`remote_extractor_from_env`], keyed on
+/// `LUNARIS_VERIFY_PROVIDER` (`lunaris_verify::cloud_api::ENV_PROVIDER`).
+#[cfg(feature = "cloud-api")]
+fn remote_verifier_from_env() -> Option<Arc<dyn Verifier>> {
+    let raw = std::env::var(lunaris_verify::cloud_api::ENV_PROVIDER).ok()?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let opts = lunaris_verify::CloudApiVerifierOpts::default();
+    match lunaris_verify::CloudApiVerifier::new(opts) {
+        Ok(v) => {
+            tracing::info!(
+                target: "lunaris::handle",
+                provider = %raw.trim(),
+                "verifier_backend_resolved (remote cloud-api)"
+            );
+            Some(Arc::new(v) as Arc<dyn Verifier>)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                provider = %raw.trim(),
+                "LUNARIS_VERIFY_PROVIDER set but the remote verifier failed to construct; \
+                 verification disabled (NoopVerifier) until the config is fixed"
+            );
+            Some(Arc::new(NoopVerifier) as Arc<dyn Verifier>)
+        }
+    }
+}
+
 #[cfg(feature = "candle")]
 async fn default_extractor() -> Arc<dyn Extractor> {
+    #[cfg(feature = "cloud-api")]
+    if let Some(e) = remote_extractor_from_env() {
+        return e;
+    }
     match lunaris_extract::CandleGemma3_4B::new(Default::default()).await {
         // Wrap the real extractor with the production fallback floor: a transient
         // primary failure degrades to NoopExtractor (graph extraction off for that
@@ -2133,6 +2206,10 @@ async fn default_extractor() -> Arc<dyn Extractor> {
 /// under the `ollama` feature) via [`Lunaris::with_extractor`].
 #[cfg(not(feature = "candle"))]
 async fn default_extractor() -> Arc<dyn Extractor> {
+    #[cfg(feature = "cloud-api")]
+    if let Some(e) = remote_extractor_from_env() {
+        return e;
+    }
     Arc::new(NoopExtractor) as Arc<dyn Extractor>
 }
 
@@ -2156,6 +2233,10 @@ async fn default_extractor() -> Arc<dyn Extractor> {
 /// Callers wire their own verifier via [`Lunaris::with_verifier`].
 #[cfg(feature = "candle")]
 async fn default_verifier() -> Arc<dyn Verifier> {
+    #[cfg(feature = "cloud-api")]
+    if let Some(v) = remote_verifier_from_env() {
+        return v;
+    }
     let raw = std::env::var("LUNARIS_VERIFIER_BACKEND").unwrap_or_default();
     let backend = raw.trim().to_ascii_lowercase();
     match backend.as_str() {
@@ -2216,6 +2297,10 @@ async fn default_verifier_27b() -> Arc<dyn Verifier> {
 /// a custom [`Verifier`] impl via [`Lunaris::with_verifier`].
 #[cfg(not(feature = "candle"))]
 async fn default_verifier() -> Arc<dyn Verifier> {
+    #[cfg(feature = "cloud-api")]
+    if let Some(v) = remote_verifier_from_env() {
+        return v;
+    }
     Arc::new(NoopVerifier) as Arc<dyn Verifier>
 }
 
