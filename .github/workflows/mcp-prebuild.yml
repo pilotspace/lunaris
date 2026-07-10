@@ -82,7 +82,10 @@ jobs:
         if: matrix.cross == true && runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          # g++ cross REQUIRED since the llama.cpp-only cutover: the default
+          # `llamacpp` feature compiles llama.cpp (C++ via cmake) — a
+          # C-only cross toolchain dies at the first .cpp file.
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           # rust-toolchain.toml (channel "1.94") overrides the toolchain the
           # dtolnay action installed targets into (exact "1.94.1" — a
           # DIFFERENT rustup toolchain dir), so the cross std landed in the
@@ -90,11 +93,15 @@ jobs:
           # for `core`". Add the target to the ACTIVE (override-resolved)
           # toolchain.
           rustup target add aarch64-unknown-linux-gnu
-          # No .cargo/config.toml in-repo: point cargo and cc-rs at the
-          # cross linker / compiler / archiver for C deps (e.g. aws-lc-sys).
+          # No .cargo/config.toml in-repo: point cargo, cc-rs, and cmake-rs
+          # at the cross linker / compilers / archiver for C and C++ deps
+          # (aws-lc-sys, llama-cpp-sys-2). cmake-rs reads the same
+          # CC_/CXX_<target> vars and forwards them as
+          # -DCMAKE_{C,CXX}_COMPILER to the llama.cpp configure step.
           {
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
             echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
             echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
           } >> "$GITHUB_ENV"
       - name: Build lunaris-mcp release binary

@@ -16,6 +16,12 @@ publish     = false
 [dependencies]
 lunaris = { workspace = true, features = ["ollama", "cloud-api"] }
 lunaris-core = { workspace = true }
+# Phase D — llamacpp_hot_path bench constructs the llama.cpp backends
+# directly (not through the umbrella resolver) so a missing GGUF is a
+# loud per-cell skip, not a silent NoopEmbedder. Optional: only the
+# `llamacpp` feature pulls the C++ build into bench compiles.
+lunaris-llamacpp = { workspace = true, optional = true }
+lunaris-rerank = { workspace = true }
 lunaris-storage-moon = { workspace = true }
 lunaris-ingest = { workspace = true }
 # Plan 03-04 — bench needs the Extractor trait + EntityId for the graph-on
@@ -105,7 +111,7 @@ ci-perf-gates = []
 # feature that is not forwarded to `lunaris` silently changes which
 # embedder the eval actually runs. Combine with `metal` for GPU offload:
 #   --features llamacpp,metal
-llamacpp = ["lunaris/llamacpp"]
+llamacpp = ["lunaris/llamacpp", "dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 
 # GPU offload for the llama.cpp runtime, forwarded to the umbrella so the
 # eval gauntlet (`Lunaris::open()` path) gets the same offload (727bc65
@@ -118,6 +124,14 @@ vulkan           = ["llamacpp", "lunaris/vulkan"]
 [[bench]]
 name = "ingest_hot_path"
 harness = false
+
+# Phase D — llama.cpp embed/rerank steady-state cells; replaces the deleted
+# candle per_device bench. Gated so plain `cargo bench` / `cargo test
+# --workspace` never compiles llama.cpp.
+[[bench]]
+name = "llamacpp_hot_path"
+harness = false
+required-features = ["llamacpp"]
 
 [[bench]]
 name = "recall_hot_path"
