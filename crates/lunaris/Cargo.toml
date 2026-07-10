@@ -51,6 +51,11 @@ lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }
 lunaris-rerank            = { workspace = true }
 lunaris-rerank-native     = { workspace = true, optional = true }
+# llama.cpp-only cutover Phase B — GGUF embedder + reranker served by an
+# in-process llama.cpp runtime (one warm context per model on a worker
+# thread). Opt-in until the LongMemEval / §5 quality gates pass; wins over
+# the candle paths when enabled.
+lunaris-llamacpp          = { workspace = true, optional = true }
 lunaris-retrieve          = { workspace = true }
 # Plan 04 — verifier + consolidator crates. default-features = false is
 # inherited from workspace.dependencies so the candle / ollama / cloud-api
@@ -180,7 +185,7 @@ reranker-gguf = ["native", "lunaris-rerank-native/reranker-gguf"]
 #   --features cuda             (NVIDIA GPU; auto Cpu→Cuda upgrade)
 #   --features cuda-fa2         (NVIDIA GPU + FlashAttention 2 kernels; untested
 #                                 on Apple Silicon hosts, see O-01 cuda_notes.rs)
-metal          = ["native", "lunaris-embed-native/metal", "lunaris-rerank-native/metal"]
+metal          = ["native", "lunaris-embed-native/metal", "lunaris-rerank-native/metal", "lunaris-llamacpp?/metal"]
 cpu-accelerate = ["native", "lunaris-embed-native/cpu-accelerate", "lunaris-rerank-native/cpu-accelerate"]
 cpu-mkl        = ["native", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
 cuda           = ["native", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
@@ -203,6 +208,14 @@ ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
 extractor-gguf = ["candle", "lunaris-extract/extractor-gguf"]
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
+# llama.cpp-only cutover Phase B: GGUF embedder + reranker via in-process
+# llama.cpp. When enabled, `resolve_embedder()` / `resolve_reranker()` try
+# this backend FIRST (env `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`,
+# else the `~/.lunaris/models/` staged defaults), falling through to the
+# existing candle/Noop chain on missing artifacts. Off by default until the
+# LongMemEval J>=94% + §5 rerank gates pass (then this becomes the default
+# and the candle stack is deleted — Phase C).
+llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6380
 moon-it = ["lunaris-storage-moon/moon-it"]
 # Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris

@@ -3387,6 +3387,7 @@ dependencies = [
  "lunaris-embed-remote",
  "lunaris-extract",
  "lunaris-ingest",
+ "lunaris-llamacpp",
  "lunaris-rerank",
  "lunaris-rerank-native",
  "lunaris-retrieve",
