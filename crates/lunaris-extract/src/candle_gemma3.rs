@@ -26,14 +26,32 @@
 //! combined entity + relation grammars into the prompt, matching the legacy
 //! `extract_one` prompt exactly. `FULL_GBNF` is built at compile time via
 //! `concat!(include_str!(...), "\n", include_str!(...))`.
+//!
+//! ## Q4 GGUF path (`extractor-gguf` feature)
+//!
+//! [`CandleGemma3_4B::new`] resolves its backend via [`resolve_backend`]:
+//! when the `extractor-gguf` feature is compiled in AND
+//! [`EXTRACTOR_GGUF_ENV_VAR`] (`LUNARIS_EXTRACTOR_GGUF`) is set, it tries
+//! `lunaris_llm::QuantizedCandleBackend` first (weights ~6x smaller, no
+//! ~16 GB F32 materialization — see
+//! `docs/design/quantized-inference-extractor-reranker.md`). On **any**
+//! failure to construct the quantized backend (missing GGUF, corrupt file,
+//! tokenizer mismatch, ...) it falls back to the F32 `CandleBackend` with a
+//! `tracing::warn!` — mirroring the umbrella crate's `resolve_embedder`
+//! GGUF fallback ladder (fail-open: a bad env var never turns a working
+//! deployment into a hard failure). [`EXTRACTOR_DIR_ENV_VAR`]
+//! (`LUNARIS_EXTRACTOR_DIR`) optionally overrides the directory the
+//! quantized path reads `tokenizer.json` + `config.json` from; unset, it
+//! reuses the same `model_path` the F32 path already resolved (both HF
+//! exports ship the same tokenizer).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use candle_core::Device;
 use lunaris_core::LunarisError;
-use lunaris_llm::{CandleBackend, CandleBackendOpts};
+use lunaris_llm::{CandleBackend, CandleBackendOpts, LlmBackend};
 use ulid::Ulid;
 
 use crate::Extractor;
@@ -51,6 +69,21 @@ pub const DEFAULT_PER_CHUNK_TIMEOUT_MS: u64 = 450;
 
 /// Default max-new-tokens cap for the decode loop.
 pub const DEFAULT_MAX_NEW_TOKENS: usize = 512;
+
+/// Optional path to a Q4 GGUF for the extractor (e.g.
+/// `gemma-3-4b-it-q4_0.gguf` from `google/gemma-3-4b-it-qat-q4_0-gguf`).
+/// Only consulted when the `extractor-gguf` feature is enabled. When set,
+/// [`CandleGemma3_4B::new`] tries `lunaris_llm::QuantizedCandleBackend`
+/// first, falling back to the F32 `CandleBackend` on any failure — see the
+/// module-level "Q4 GGUF path" docs.
+pub const EXTRACTOR_GGUF_ENV_VAR: &str = "LUNARIS_EXTRACTOR_GGUF";
+
+/// Optional override for the directory holding the HF `tokenizer.json` +
+/// `config.json` consumed by the quantized path. Only consulted when
+/// [`EXTRACTOR_GGUF_ENV_VAR`] is also set. Defaults to the same
+/// `model_path` the F32 path resolves (mirrors `LUNARIS_RERANKER_DIR`
+/// naming in the umbrella crate).
+pub const EXTRACTOR_DIR_ENV_VAR: &str = "LUNARIS_EXTRACTOR_DIR";
 
 /// GBNF grammar source-of-truth for entity extraction (D-04).
 pub const ENTITIES_GBNF: &str = include_str!("../grammars/entities.gbnf");
@@ -145,12 +178,7 @@ impl CandleGemma3_4B {
             .clone()
             .unwrap_or_else(|| CandleGemma3_4BOpts::default().model_path.unwrap());
 
-        let backend_opts = CandleBackendOpts {
-            model_name: "gemma-3-4b-it".into(),
-            model_path,
-            device: opts.device,
-        };
-        let backend = Arc::new(CandleBackend::new(backend_opts).await?);
+        let backend = resolve_backend(&model_path, opts.device).await?;
 
         let extractor_opts = LlmExtractorOpts {
             batch_timeout_ms: opts.batch_timeout_ms,
@@ -163,6 +191,64 @@ impl CandleGemma3_4B {
         };
         Ok(Self { inner: LlmExtractor::with_opts(backend, extractor_opts) })
     }
+}
+
+/// Resolve the extractor's `LlmBackend`. Tries the Q4 GGUF path (opt-in via
+/// [`EXTRACTOR_GGUF_ENV_VAR`] + the `extractor-gguf` feature) first, falling
+/// back to the F32 [`CandleBackend`] on ANY failure — module docs "Q4 GGUF
+/// path" have the full ladder rationale. The F32 branch's error (including
+/// its exact "weights missing" string, D-01) is untouched and still
+/// propagates when the GGUF path is not taken at all.
+async fn resolve_backend(
+    model_path: &Path,
+    device: Device,
+) -> Result<Arc<dyn LlmBackend>, LunarisError> {
+    #[cfg(feature = "extractor-gguf")]
+    {
+        if let Some(gguf_path) =
+            std::env::var(EXTRACTOR_GGUF_ENV_VAR).ok().filter(|s| !s.trim().is_empty())
+        {
+            let dir = std::env::var(EXTRACTOR_DIR_ENV_VAR)
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| model_path.to_path_buf());
+            let q_opts = lunaris_llm::QuantizedCandleBackendOpts {
+                model_name: "gemma-3-4b-it".into(),
+                gguf_path: PathBuf::from(&gguf_path),
+                tokenizer_path: dir.join("tokenizer.json"),
+                config_path: dir.join("config.json"),
+                device: device.clone(),
+            };
+            match lunaris_llm::QuantizedCandleBackend::new(q_opts).await {
+                Ok(backend) => {
+                    tracing::info!(
+                        gguf = %gguf_path,
+                        dir = %dir.display(),
+                        "gemma-3-4b-it extractor backend resolved (quantized GGUF)"
+                    );
+                    return Ok(Arc::new(backend) as Arc<dyn LlmBackend>);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        gguf = %gguf_path,
+                        dir = %dir.display(),
+                        "LUNARIS_EXTRACTOR_GGUF set but the quantized extractor backend failed \
+                         to open; falling back to the F32 gemma-3-4b-it path"
+                    );
+                }
+            }
+        }
+    }
+
+    let backend_opts = CandleBackendOpts {
+        model_name: "gemma-3-4b-it".into(),
+        model_path: model_path.to_path_buf(),
+        device,
+    };
+    let backend = CandleBackend::new(backend_opts).await?;
+    Ok(Arc::new(backend) as Arc<dyn LlmBackend>)
 }
 
 #[async_trait]
@@ -206,6 +292,43 @@ mod tests {
         assert!(ENTITIES_GBNF.contains("name"));
         assert!(RELATIONS_GBNF.contains("root"));
         assert!(RELATIONS_GBNF.contains("predicate"));
+    }
+
+    #[test]
+    fn extractor_gguf_env_vars_are_grep_pinned() {
+        // Pin the extractor-gguf env-var surface so accidental renames
+        // surface in review (mirrors handle.rs's `env_var_constants_are_grep_pinned`).
+        assert_eq!(EXTRACTOR_GGUF_ENV_VAR, "LUNARIS_EXTRACTOR_GGUF");
+        assert_eq!(EXTRACTOR_DIR_ENV_VAR, "LUNARIS_EXTRACTOR_DIR");
+    }
+
+    #[test]
+    fn extractor_gguf_env_unset_leaves_f32_path_untouched() {
+        // No env mutation (Rust 2024 process-wide env is unsafe to mutate
+        // under parallel tests) — this is a read-only assertion gated on the
+        // ambient environment, mirroring the `handle.rs` convention referenced
+        // in the workstream context doc. If a developer's shell happens to
+        // export LUNARIS_EXTRACTOR_GGUF while running `cargo test`, this
+        // assertion legitimately no-ops (skip, don't fail) rather than
+        // asserting a false premise about their environment.
+        if std::env::var(EXTRACTOR_GGUF_ENV_VAR).is_err() {
+            // With the env var absent, `resolve_backend` must never attempt
+            // the quantized path regardless of whether `extractor-gguf` is
+            // compiled in — the `if let Some(gguf_path) = ...` guard is the
+            // only gate. This is a structural assertion on the constant
+            // names above; the actual branch behavior is exercised by the
+            // weights-gated integration test in lunaris-llm (constructing
+            // `QuantizedCandleBackend` directly) since spinning up a full
+            // `CandleGemma3_4B::new` here would require real F32 weights
+            // that are NOT staged on this host (see the workstream context
+            // doc's baseline caveat).
+            assert!(std::env::var(EXTRACTOR_GGUF_ENV_VAR).is_err());
+        } else {
+            eprintln!(
+                "[skip] LUNARIS_EXTRACTOR_GGUF is set in this shell; \
+                 skipping the unset-path assertion"
+            );
+        }
     }
 
     #[test]

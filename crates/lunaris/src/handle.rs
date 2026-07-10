@@ -2021,6 +2021,17 @@ async fn resolve_reranker_native() -> Result<Arc<dyn Reranker>, LunarisError> {
 /// working binary that has the trait wired but never calls a real model.
 /// Mirrors the [`default_reranker`] BgeRerankerV2M3 pattern from Plan 02-03.
 ///
+/// **`extractor-gguf` (workstream A, see
+/// `docs/design/quantized-inference-extractor-reranker.md`):** unlike the
+/// embedder/reranker, the Q4 GGUF ladder is NOT resolved here — it lives
+/// inside `CandleGemma3_4B::new()` itself
+/// (`lunaris_extract::candle_gemma3::resolve_backend`), which this function
+/// already calls unconditionally. When the `extractor-gguf` feature is on
+/// AND `LUNARIS_EXTRACTOR_GGUF` is set, that inner call resolves
+/// `lunaris_llm::QuantizedCandleBackend` first, falling back to the F32
+/// path (and, from here, to [`NoopExtractor`] on total failure) with no
+/// change needed in this function.
+///
 /// Callers wire their own extractor via [`Lunaris::with_extractor`] or
 /// `handle.graph_pipeline().set_extractor(extractor)` for late binding.
 #[cfg(feature = "candle")]

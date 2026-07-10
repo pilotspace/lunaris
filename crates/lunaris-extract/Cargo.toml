@@ -13,6 +13,7 @@
 #   cargo check -p lunaris-extract --no-default-features --features ollama
 #   cargo check -p lunaris-extract --no-default-features --features cloud-api
 #   cargo check -p lunaris-extract --no-default-features --features candle,ollama,cloud-api
+#   cargo check -p lunaris-extract --features extractor-gguf                  # + Q4 GGUF opt-in path
 #   cargo test  -p lunaris-extract --features extractor-it                    # gated live-backend tests
 
 [package]
@@ -46,6 +47,12 @@ cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
 # + cloud-api keys). SKIPs cleanly without env vars (mirrors `embedder-it` from
 # lunaris-embed).
 extractor-it = []
+# Q4 GGUF Gemma-3 extractor path (`CandleGemma3_4B` resolves
+# `QuantizedCandleBackend` when `LUNARIS_EXTRACTOR_GGUF` is set — see
+# `candle_gemma3::resolve_backend`). Forwards `lunaris-llm/candle-quantized`.
+# Implies `candle` (the F32 path stays the fallback target on any GGUF
+# failure). Mirrors the umbrella crate's `embedder-gguf`/`reranker-gguf`.
+extractor-gguf = ["candle", "lunaris-llm/candle-quantized"]
 # Forwards the lunaris-llm faux feature so external consumers can enable
 # FauxBackend via `lunaris-extract/faux` in their own dev-dependencies.
 faux         = ["lunaris-llm/faux"]

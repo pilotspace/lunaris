@@ -174,6 +174,15 @@ cuda-fa2       = ["native", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-nat
 candle    = ["lunaris-extract/candle", "lunaris-verify/candle"]
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
 ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
+# Q4 GGUF Gemma-3 extractor path (workstream A of
+# docs/design/quantized-inference-extractor-reranker.md). Forwards to
+# `lunaris-extract/extractor-gguf` (which forwards to
+# `lunaris-llm/candle-quantized`). When `LUNARIS_EXTRACTOR_GGUF` is set,
+# `default_extractor()`'s `CandleGemma3_4B::new()` call resolves
+# `QuantizedCandleBackend` first, falling back to the F32 `candle` path on
+# any failure — see `lunaris_extract::candle_gemma3` module docs. Without
+# this flag the env var is ignored (mirrors `embedder-gguf`/`reranker-gguf`).
+extractor-gguf = ["candle", "lunaris-extract/extractor-gguf"]
 verify-small = ["lunaris-verify/verify-small"]
 verify-large = ["lunaris-verify/verify-large"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6380
