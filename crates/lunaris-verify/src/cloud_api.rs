@@ -218,6 +218,7 @@ impl CloudApiVerifier {
             model: opts.model.clone(),
             api_key: opts.api_key,
             max_retries: opts.max_retries,
+            base_url: None,
         };
         let backend: Arc<dyn lunaris_llm::LlmBackend> = Arc::new(CloudBackend::new(backend_opts)?);
 

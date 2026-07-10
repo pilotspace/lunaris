@@ -107,6 +107,12 @@ pub enum ProviderKind {
     OpenAI,
     /// Google Gemini cloud API.
     Gemini,
+    /// Any OpenAI-compatible `/chat/completions` server at a caller-supplied
+    /// base URL (Ollama `/v1`, llama-server, vLLM, LM Studio). The base URL
+    /// comes from `LUNARIS_OPENAI_COMPAT_BASE_URL`; the API key
+    /// (`LUNARIS_OPENAI_COMPAT_API_KEY`) is OPTIONAL — local servers are
+    /// typically unauthenticated.
+    OpenAiCompat,
 }
 
 impl FromStr for ProviderKind {
@@ -311,6 +317,27 @@ mod tests {
         assert_eq!("openai".parse::<ProviderKind>().unwrap(), ProviderKind::OpenAI);
         assert_eq!("gemini".parse::<ProviderKind>().unwrap(), ProviderKind::Gemini);
         assert_eq!("google".parse::<ProviderKind>().unwrap(), ProviderKind::Gemini);
+    }
+
+    #[test]
+    fn openai_compat_parses_from_env_string_and_toml() {
+        // A3 (llama.cpp-only cutover): extractor/verifier go remote-only —
+        // cloud mux + ONE generic OpenAI-compatible URL backend. Operators
+        // select it exactly like any other provider.
+        assert_eq!("openai-compat".parse::<ProviderKind>().unwrap(), ProviderKind::OpenAiCompat);
+        assert_eq!("OPENAI-COMPAT".parse::<ProviderKind>().unwrap(), ProviderKind::OpenAiCompat);
+
+        let file = LlmConfigFile::parse(
+            r#"
+            [extract]
+            provider = "openai-compat"
+            model = "qwen3:4b"
+            "#,
+        )
+        .unwrap();
+        let cfg = LlmConfig::resolve_with(Pipeline::Extract, &file, EnvSource::Map(&[])).unwrap();
+        assert_eq!(cfg.provider, ProviderKind::OpenAiCompat);
+        assert_eq!(cfg.model, "qwen3:4b");
     }
 
     #[test]

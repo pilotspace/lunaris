@@ -229,6 +229,7 @@ impl CloudApiExtractor {
             model: opts.model,
             api_key: opts.api_key,
             max_retries: opts.max_retries,
+            base_url: None,
         };
         let backend = Arc::new(CloudBackend::new(backend_opts)?);
         // Per-call timeout = full batch budget so the internal retry in
