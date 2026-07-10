@@ -60,6 +60,11 @@ pub enum CloudProvider {
     OpenAI,
     Gemini,
     MiniMax,
+    /// Any OpenAI-compatible `/chat/completions` server at a caller-supplied
+    /// base URL (Ollama `/v1`, llama-server, vLLM, LM Studio) — the
+    /// llama.cpp-only cutover's air-gap/local story. Base URL from
+    /// `LUNARIS_OPENAI_COMPAT_BASE_URL`; API key optional.
+    OpenAiCompat,
 }
 
 impl FromStr for CloudProvider {
@@ -70,8 +75,10 @@ impl FromStr for CloudProvider {
             "openai" | "gpt" => Ok(Self::OpenAI),
             "gemini" | "google" => Ok(Self::Gemini),
             "minimax" => Ok(Self::MiniMax),
+            "openai-compat" | "openai-compatible" => Ok(Self::OpenAiCompat),
             other => Err(LunarisError::Storage(StorageError::Backend(format!(
-                "cloud-api: unknown provider {other:?} (expected anthropic|openai|gemini|minimax)"
+                "cloud-api: unknown provider {other:?} \
+                 (expected anthropic|openai|gemini|minimax|openai-compat)"
             )))),
         }
     }
@@ -84,6 +91,10 @@ impl CloudProvider {
             Self::OpenAI => "gpt-4o-mini",
             Self::Gemini => "gemini-2.5-flash",
             Self::MiniMax => "MiniMax-M3",
+            // No universal default exists for arbitrary OpenAI-compatible
+            // servers — the operator names the model via
+            // OPENAI_COMPAT_EXTRACT_MODEL (empty = actionable error at new()).
+            Self::OpenAiCompat => "",
         }
     }
     fn api_key_env(self) -> &'static str {
@@ -92,6 +103,7 @@ impl CloudProvider {
             Self::OpenAI => "OPENAI_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
             Self::MiniMax => "MINIMAX_API_KEY",
+            Self::OpenAiCompat => "LUNARIS_OPENAI_COMPAT_API_KEY",
         }
     }
     fn model_env(self) -> &'static str {
@@ -100,6 +112,7 @@ impl CloudProvider {
             Self::OpenAI => "OPENAI_EXTRACT_MODEL",
             Self::Gemini => "GEMINI_EXTRACT_MODEL",
             Self::MiniMax => "MINIMAX_EXTRACT_MODEL",
+            Self::OpenAiCompat => "OPENAI_COMPAT_EXTRACT_MODEL",
         }
     }
 }
@@ -113,6 +126,7 @@ impl From<CloudProvider> for lunaris_llm::CloudProvider {
             CloudProvider::OpenAI => lunaris_llm::CloudProvider::OpenAI,
             CloudProvider::Gemini => lunaris_llm::CloudProvider::Gemini,
             CloudProvider::MiniMax => lunaris_llm::CloudProvider::MiniMax,
+            CloudProvider::OpenAiCompat => lunaris_llm::CloudProvider::OpenAiCompat,
         }
     }
 }
@@ -142,6 +156,10 @@ pub struct CloudApiExtractorOpts {
     /// [`DEFAULT_EXTRACT_CONCURRENCY`] for the measured rationale). 1 =
     /// the historical strictly-serial loop.
     pub concurrency: usize,
+    /// Base URL for [`CloudProvider::OpenAiCompat`]; ignored by the
+    /// fixed-endpoint providers. `Default` reads
+    /// `LUNARIS_OPENAI_COMPAT_BASE_URL`.
+    pub base_url: Option<String>,
 }
 
 /// Historical implicit default (was hardcoded in [`CloudApiExtractor::new`]).
@@ -181,6 +199,12 @@ impl Default for CloudApiExtractorOpts {
         let model = std::env::var(provider.model_env())
             .unwrap_or_else(|_| provider.default_model().to_string());
         let api_key = std::env::var(provider.api_key_env()).unwrap_or_default();
+        let base_url = match provider {
+            CloudProvider::OpenAiCompat => {
+                std::env::var("LUNARIS_OPENAI_COMPAT_BASE_URL").ok().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        };
         Self {
             provider,
             model,
@@ -189,6 +213,7 @@ impl Default for CloudApiExtractorOpts {
             max_retries: DEFAULT_MAX_RETRIES,
             max_tokens: DEFAULT_MAX_TOKENS,
             concurrency: DEFAULT_EXTRACT_CONCURRENCY,
+            base_url,
         }
     }
 }
@@ -223,13 +248,24 @@ impl std::fmt::Debug for CloudApiExtractor {
 impl CloudApiExtractor {
     /// Construct a new cloud-API extractor.
     pub fn new(opts: CloudApiExtractorOpts) -> Result<Self, LunarisError> {
+        // openai-compat has no universal default model — fail fast with the
+        // env name instead of sending an empty model string to the server.
+        // (Key/base-url validation lives in lunaris_llm::CloudBackend::new:
+        // empty key is ALLOWED for openai-compat, base_url is required.)
+        if opts.provider == CloudProvider::OpenAiCompat && opts.model.trim().is_empty() {
+            return Err(LunarisError::Storage(StorageError::Backend(
+                "cloud-api: openai-compat model is empty — set OPENAI_COMPAT_EXTRACT_MODEL \
+                 (or CloudApiExtractorOpts.model) to the model your server hosts"
+                    .to_string(),
+            )));
+        }
         let llm_provider = lunaris_llm::CloudProvider::from(opts.provider);
         let backend_opts = CloudBackendOpts {
             provider: llm_provider,
             model: opts.model,
             api_key: opts.api_key,
             max_retries: opts.max_retries,
-            base_url: None,
+            base_url: opts.base_url,
         };
         let backend = Arc::new(CloudBackend::new(backend_opts)?);
         // Per-call timeout = full batch budget so the internal retry in
@@ -448,6 +484,7 @@ mod tests {
             max_retries: 1,
             max_tokens: 512,
             concurrency: 1,
+            base_url: None,
         };
         let err = CloudApiExtractor::new(opts).expect_err("empty key must error");
         let msg = err.to_string();
@@ -466,6 +503,7 @@ mod tests {
             max_retries: 1,
             max_tokens: 512,
             concurrency: 1,
+            base_url: None,
         };
         let extractor = CloudApiExtractor::new(opts).unwrap();
         let dbg = format!("{extractor:?}");
@@ -511,6 +549,54 @@ mod tests {
     }
 
     #[test]
+    fn openai_compat_parses_and_constructs_keyless() {
+        // Cutover: the generic OpenAI-compatible URL backend must parse from
+        // the provider env string AND construct without an API key.
+        assert_eq!(CloudProvider::from_str("openai-compat").unwrap(), CloudProvider::OpenAiCompat);
+        assert_eq!(
+            CloudProvider::from_str("openai-compatible").unwrap(),
+            CloudProvider::OpenAiCompat
+        );
+        assert!(matches!(
+            lunaris_llm::CloudProvider::from(CloudProvider::OpenAiCompat),
+            lunaris_llm::CloudProvider::OpenAiCompat
+        ));
+        let e = CloudApiExtractor::new(CloudApiExtractorOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            ..CloudApiExtractorOpts::default()
+        })
+        .expect("keyless openai-compat extractor must construct");
+        let dbg = format!("{e:?}");
+        assert!(dbg.contains("OpenAiCompat"), "got: {dbg}");
+    }
+
+    #[test]
+    fn openai_compat_requires_model_and_base_url() {
+        let err = CloudApiExtractor::new(CloudApiExtractorOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: String::new(),
+            api_key: String::new(),
+            base_url: Some("http://localhost:11434/v1".into()),
+            ..CloudApiExtractorOpts::default()
+        })
+        .expect_err("empty model must fail fast");
+        assert!(err.to_string().contains("OPENAI_COMPAT_EXTRACT_MODEL"), "got: {err}");
+
+        let err = CloudApiExtractor::new(CloudApiExtractorOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            base_url: None,
+            ..CloudApiExtractorOpts::default()
+        })
+        .expect_err("missing base_url must fail fast");
+        assert!(err.to_string().contains("LUNARIS_OPENAI_COMPAT_BASE_URL"), "got: {err}");
+    }
+
+    #[test]
     fn max_tokens_defaults_to_512_and_is_configurable() {
         // 512 is LlmExtractorOpts's historical implicit default -- unchanged
         // for existing callers. LongMemEval graph-pipeline prototype
@@ -528,6 +614,7 @@ mod tests {
             max_retries: 1,
             max_tokens: 2048,
             concurrency: 4,
+            base_url: None,
         };
         let _extractor =
             CloudApiExtractor::new(opts).expect("client builds with custom max_tokens");

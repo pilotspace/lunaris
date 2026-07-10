@@ -207,12 +207,16 @@ async fn cloud_api_extracts_real_batch() {
             CloudProvider::OpenAI => "gpt-4o-mini".into(),
             CloudProvider::Gemini => "gemini-2.5-flash".into(),
             CloudProvider::MiniMax => "MiniMax-M3".into(),
+            CloudProvider::OpenAiCompat => {
+                std::env::var("OPENAI_COMPAT_EXTRACT_MODEL").unwrap_or_default()
+            }
         },
         api_key,
         batch_timeout_ms: 30_000,
         max_retries: 1,
         max_tokens: 512,
         concurrency: 4,
+        base_url: std::env::var("LUNARIS_OPENAI_COMPAT_BASE_URL").ok(),
     })
     .expect("client builds");
     let chunks = vec![ChunkInput {
