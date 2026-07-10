@@ -120,6 +120,71 @@ the native paths so the bottleneck is a measurement, not a guess:
   D) is the lever; if it's padding/batching/tokenization → fix in place
   and keep candle.
 
+### 4b-RESULTS — profiling matrix MEASURED 2026-07-10 (uncontended host)
+
+Release builds, corpus-replay profilers (`profile_embed` corpus 64 on
+Metal / 16 on CPU; `profile_rerank` corpus 8 k=10 on Metal / 4 k=5 on
+CPU). Two measurement caveats discovered and accounted for:
+
+1. **`select_device` auto-upgrades `Device::Cpu` → Metal whenever the
+   `metal` feature is compiled in** (`device_select.rs` rule 3 — by
+   design, and forwarded by the umbrella since `727bc65`). True CPU
+   cells therefore require a metal-less build; any binary built with
+   `metal` profiles Metal regardless of `--device cpu`.
+2. **candle Metal is lazy**: the `forward` span records command
+   encoding only (~1-6 ms); real GPU compute + sync lands in the `copy`
+   span (`to_vec2`). On Metal read `forward+copy`; the printed
+   `forward_tokens_per_sec` is only meaningful on CPU cells.
+
+Effective throughput, real (unpadded) tokens per second, full-call time:
+
+| Model | Device / build | Quant | batch=1 | batch=8 (pad-to-longest) |
+|---|---|---|---|---|
+| granite-311m | cpu naive | Q4_K_M | 164 | 49 |
+| granite-311m | cpu + Accelerate | Q4_K_M | **217** | 70 |
+| granite-311m | cpu + Accelerate | FP32 | **1,213** | 379 |
+| granite-311m | Metal | Q4_K_M | ~2,700 | ~590 |
+| granite-311m | Metal | FP | ~2,500 | ~600 |
+| bge-reranker-v2-m3 | cpu + Accelerate | Q5_K_M | 119 | 57 |
+| bge-reranker-v2-m3 | cpu + Accelerate | FP32 | **493** | 284 |
+| bge-reranker-v2-m3 | Metal | Q5_K_M | ~1,800 | ~570 |
+| bge-reranker-v2-m3 | Metal | FP32 | ~1,800 | ~640 |
+
+(Metal cells derived from full-call span distributions — p50/p90 are
+bimodal across the synthetic corpus's short/long buckets, so treat as
+±30%. Raw tables in the 2026-07-10 job scratchpad `profile_matrix/`.)
+
+Findings, ranked by leverage:
+
+1. **Pad-to-longest batching is the #1 tax — batch=8 is *slower* than
+   batch=1 in every cell** (3-5×). Padding waste is 67% (embed) / 48%
+   (rerank) at batch 8, and attention cost scales with the padded
+   length. Production ingest runs `LUNARIS_EMBED_BATCH=8`, i.e. today's
+   worst cell. Fix in place (no runtime swap needed): length-sort /
+   token-budget bucketing before batch assembly, so a batch never mixes
+   a 16-token and a 512-token document.
+2. **§4b decision rule fires: forward ≥95% of wall in every cell** →
+   the runtime swap (§4c) is the kernel-level lever. Gap vs llama.cpp
+   Metal ceilings: embedder ~2.7k vs 13,650 (~5×), reranker ~1.8k vs
+   5,731 (~3×) — and llama.cpp's fixed compute buffer also retires the
+   candle Metal shape-cache leak that forced process-per-question in
+   the LongMemEval harness.
+3. **candle GGUF on CPU is a 4-5.6× *slowdown* vs FP32+Accelerate**
+   (217 vs 1,213 embed; 119 vs 493 rerank): candle's quantized matmul
+   kernels never route through BLAS, while the FP32 path does. Q4/Q5
+   GGUF under candle only makes sense on Metal (where it's ≈ FP at
+   batch 1 and saves ~4× RSS). On CPU-only hosts, prefer FP32 until a
+   llama.cpp backend (whose NEON quantized kernels are the point)
+   lands. The RSS-constrained-host guidance for `embedder-gguf` should
+   carry this latency caveat.
+4. **Metal per-call sync costs ~17 ms** (b1 `copy` p50) — real batching
+   would amortize it, but only pays off after (1) removes the padding
+   tax. Bucketed batch=8 on Metal is the projected best candle
+   operating point (>7k tok/s plausible).
+5. Tokenize / pooling / score_extract are all sub-millisecond — no
+   optimization opportunity there; do not spend effort on the
+   tokenizer.
+
 ## 4c. Workstream D — llama.cpp low-level runtime (spike MEASURED 2026-07-10)
 
 llama.cpp (brew, build f5525f7e7, Metal) runs **all three of our GGUF
