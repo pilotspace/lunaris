@@ -436,6 +436,20 @@ mod tests {
         let _ = select_device(Device::Cpu);
     }
 
+    /// Mirror of `lunaris-embed-native::device_select`'s macOS-BLAS default
+    /// contract for the extractor/verifier candle path — see that test for
+    /// the full rationale.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_build_has_accelerate_blas() {
+        assert!(
+            candle_core::utils::has_accelerate(),
+            "candle compiled without Accelerate on macOS — restore the \
+             target-specific optional candle-core/accelerate + \
+             candle-nn/accelerate dependency features in lunaris-llm/Cargo.toml"
+        );
+    }
+
     #[test]
     fn warmup_cpu_is_infallible() {
         warmup_device(&Device::Cpu);
