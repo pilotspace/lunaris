@@ -132,7 +132,12 @@ nix            = { workspace = true }
 # verifier** LLM backends (Gemma-3 4B / 270M / 27B + Anthropic/OpenAI/Gemini
 # provider mux) — the embedder + reranker no longer depend on `candle` as a
 # feature toggle (it's a permanent runtime dep on the native crates).
-default     = ["native"]
+# llama.cpp-only cutover Phase C (2026-07-10): the default inference runtime
+# is llama.cpp (GGUF Q4_K_M embedder + Q5_K_M reranker), gated by the Phase B
+# quality run — LongMemEval-S N=50 J=96.0% / recall@10=98.0% vs candle
+# baseline 94.0%/96.0% at ~4x less wall. `native` (candle) survives as an
+# opt-in fallback only until C3 deletes it.
+default     = ["llamacpp"]
 # Native candle embedder + reranker (granite-r2 + bge-reranker-v2-m3). In
 # `default` so existing consumers are unaffected; opt OUT with
 # `default-features = false` to build candle-free (~100 MB lighter) and drive
