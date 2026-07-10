@@ -78,4 +78,17 @@ mod tests {
     fn select_does_not_panic() {
         let _ = select_device(Device::Cpu);
     }
+
+    /// Mirror of `lunaris-embed-native::device_select`'s macOS-BLAS default
+    /// contract — see that test for the full rationale.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_build_has_accelerate_blas() {
+        assert!(
+            candle_core::utils::has_accelerate(),
+            "candle compiled without Accelerate on macOS — restore the \
+             target-specific candle-core/accelerate + candle-nn/accelerate \
+             dependency features in lunaris-rerank-native/Cargo.toml"
+        );
+    }
 }

@@ -127,6 +127,23 @@ mod tests {
         warmup_device(&Device::Cpu);
     }
 
+    /// macOS builds must carry Accelerate BLAS by DEFAULT — via the
+    /// `[target.'cfg(target_os = "macos")'.dependencies]` block in this
+    /// crate's Cargo.toml, not the opt-in `cpu-accelerate` flag. Without
+    /// BLAS, candle's F32 matmul falls back to naive gemm: the documented
+    /// root cause of the ~21 min/question LongMemEval ingest (see the
+    /// accelerator-feature comment in `crates/lunaris/Cargo.toml`).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_build_has_accelerate_blas() {
+        assert!(
+            candle_core::utils::has_accelerate(),
+            "candle compiled without Accelerate on macOS — restore the \
+             target-specific candle-core/accelerate + candle-nn/accelerate \
+             dependency features in lunaris-embed-native/Cargo.toml"
+        );
+    }
+
     #[cfg(feature = "metal")]
     #[test]
     fn select_upgrades_cpu_to_metal_when_feature_on() {
