@@ -65,6 +65,13 @@ pub enum CloudProvider {
     Anthropic,
     OpenAI,
     Gemini,
+    /// MiniMax `api.minimax.io` — part of the cutover's cloud mux (extract
+    /// already had it; verify gains it for provider parity).
+    MiniMax,
+    /// Any OpenAI-compatible `/chat/completions` server at a caller-supplied
+    /// base URL (Ollama `/v1`, llama-server, vLLM, LM Studio). Base URL from
+    /// `LUNARIS_OPENAI_COMPAT_BASE_URL`; API key optional.
+    OpenAiCompat,
 }
 
 impl FromStr for CloudProvider {
@@ -74,8 +81,11 @@ impl FromStr for CloudProvider {
             "anthropic" | "claude" => Ok(Self::Anthropic),
             "openai" | "gpt" => Ok(Self::OpenAI),
             "gemini" | "google" => Ok(Self::Gemini),
+            "minimax" => Ok(Self::MiniMax),
+            "openai-compat" | "openai-compatible" => Ok(Self::OpenAiCompat),
             other => Err(LunarisError::Storage(StorageError::Backend(format!(
-                "cloud-api-verify: unknown provider {other:?} (expected anthropic|openai|gemini)"
+                "cloud-api-verify: unknown provider {other:?} \
+                 (expected anthropic|openai|gemini|minimax|openai-compat)"
             )))),
         }
     }
@@ -90,6 +100,10 @@ impl CloudProvider {
             Self::Anthropic => "claude-3-5-sonnet-latest",
             Self::OpenAI => "gpt-4o-2024-11-20",
             Self::Gemini => "gemini-1.5-pro-latest",
+            Self::MiniMax => "MiniMax-M3",
+            // No universal default for arbitrary OpenAI-compatible servers —
+            // operator names it via OPENAI_COMPAT_VERIFY_MODEL.
+            Self::OpenAiCompat => "",
         }
     }
     fn api_key_env(self) -> &'static str {
@@ -97,6 +111,8 @@ impl CloudProvider {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenAI => "OPENAI_API_KEY",
             Self::Gemini => "GEMINI_API_KEY",
+            Self::MiniMax => "MINIMAX_API_KEY",
+            Self::OpenAiCompat => "LUNARIS_OPENAI_COMPAT_API_KEY",
         }
     }
     fn model_env(self) -> &'static str {
@@ -104,6 +120,8 @@ impl CloudProvider {
             Self::Anthropic => "ANTHROPIC_VERIFY_MODEL",
             Self::OpenAI => "OPENAI_VERIFY_MODEL",
             Self::Gemini => "GEMINI_VERIFY_MODEL",
+            Self::MiniMax => "MINIMAX_VERIFY_MODEL",
+            Self::OpenAiCompat => "OPENAI_COMPAT_VERIFY_MODEL",
         }
     }
 
@@ -113,6 +131,8 @@ impl CloudProvider {
             Self::Anthropic => LlmCloudProvider::Anthropic,
             Self::OpenAI => LlmCloudProvider::OpenAI,
             Self::Gemini => LlmCloudProvider::Gemini,
+            Self::MiniMax => LlmCloudProvider::MiniMax,
+            Self::OpenAiCompat => LlmCloudProvider::OpenAiCompat,
         }
     }
 }
@@ -140,6 +160,8 @@ fn provider_to_backend(p: CloudProvider) -> VerifierBackend {
         CloudProvider::Anthropic => VerifierBackend::CloudAnthropic,
         CloudProvider::OpenAI => VerifierBackend::CloudOpenAI,
         CloudProvider::Gemini => VerifierBackend::CloudGemini,
+        CloudProvider::MiniMax => VerifierBackend::CloudMiniMax,
+        CloudProvider::OpenAiCompat => VerifierBackend::CloudOpenAiCompat,
     }
 }
 
@@ -156,6 +178,10 @@ pub struct CloudApiVerifierOpts {
     pub model: String,
     pub api_key: String,
     pub max_retries: u8,
+    /// Base URL for [`CloudProvider::OpenAiCompat`]; ignored by the
+    /// fixed-endpoint providers. `Default` reads
+    /// `LUNARIS_OPENAI_COMPAT_BASE_URL`.
+    pub base_url: Option<String>,
 }
 
 impl Default for CloudApiVerifierOpts {
@@ -171,7 +197,13 @@ impl Default for CloudApiVerifierOpts {
         let api_key = std::env::var(ENV_API_KEY)
             .or_else(|_| std::env::var(provider.api_key_env()))
             .unwrap_or_default();
-        Self { provider, model, api_key, max_retries: DEFAULT_MAX_RETRIES }
+        let base_url = match provider {
+            CloudProvider::OpenAiCompat => {
+                std::env::var("LUNARIS_OPENAI_COMPAT_BASE_URL").ok().filter(|s| !s.is_empty())
+            }
+            _ => None,
+        };
+        Self { provider, model, api_key, max_retries: DEFAULT_MAX_RETRIES, base_url }
     }
 }
 
@@ -204,7 +236,19 @@ impl std::fmt::Debug for CloudApiVerifier {
 
 impl CloudApiVerifier {
     pub fn new(opts: CloudApiVerifierOpts) -> Result<Self, LunarisError> {
-        if opts.api_key.is_empty() {
+        // openai-compat: key optional (local servers are typically
+        // unauthenticated; base_url required — enforced by CloudBackend::new),
+        // but the model has no universal default and must be explicit.
+        if opts.provider == CloudProvider::OpenAiCompat {
+            if opts.model.trim().is_empty() {
+                return Err(LunarisError::Storage(StorageError::Backend(
+                    "cloud-api-verify: openai-compat model is empty — set \
+                     OPENAI_COMPAT_VERIFY_MODEL (or CloudApiVerifierOpts.model) to the model \
+                     your server hosts"
+                        .to_string(),
+                )));
+            }
+        } else if opts.api_key.is_empty() {
             return Err(LunarisError::Storage(StorageError::Backend(format!(
                 "cloud-api-verify: api_key is empty — set {} or {} env",
                 ENV_API_KEY,
@@ -218,7 +262,7 @@ impl CloudApiVerifier {
             model: opts.model.clone(),
             api_key: opts.api_key,
             max_retries: opts.max_retries,
-            base_url: None,
+            base_url: opts.base_url,
         };
         let backend: Arc<dyn lunaris_llm::LlmBackend> = Arc::new(CloudBackend::new(backend_opts)?);
 
@@ -283,6 +327,56 @@ mod tests {
     }
 
     #[test]
+    fn minimax_and_openai_compat_parse_and_bridge() {
+        // Cutover provider parity: verify gains MiniMax (extract had it) and
+        // the generic OpenAI-compatible URL backend.
+        assert_eq!(CloudProvider::from_str("minimax").unwrap(), CloudProvider::MiniMax);
+        assert_eq!(CloudProvider::from_str("openai-compat").unwrap(), CloudProvider::OpenAiCompat);
+        assert_eq!(provider_to_backend(CloudProvider::MiniMax), VerifierBackend::CloudMiniMax);
+        assert_eq!(
+            provider_to_backend(CloudProvider::OpenAiCompat),
+            VerifierBackend::CloudOpenAiCompat
+        );
+    }
+
+    #[test]
+    fn openai_compat_constructs_keyless_with_explicit_model_and_base_url() {
+        let v = CloudApiVerifier::new(CloudApiVerifierOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            max_retries: 1,
+            base_url: Some("http://localhost:11434/v1".into()),
+        })
+        .expect("keyless openai-compat verifier must construct");
+        let dbg = format!("{v:?}");
+        assert!(dbg.contains("OpenAiCompat"), "got: {dbg}");
+    }
+
+    #[test]
+    fn openai_compat_requires_model_and_base_url() {
+        let err = CloudApiVerifier::new(CloudApiVerifierOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: String::new(),
+            api_key: String::new(),
+            max_retries: 1,
+            base_url: Some("http://localhost:11434/v1".into()),
+        })
+        .expect_err("empty model must fail fast");
+        assert!(err.to_string().contains("OPENAI_COMPAT_VERIFY_MODEL"), "got: {err}");
+
+        let err = CloudApiVerifier::new(CloudApiVerifierOpts {
+            provider: CloudProvider::OpenAiCompat,
+            model: "qwen3:4b".into(),
+            api_key: String::new(),
+            max_retries: 1,
+            base_url: None,
+        })
+        .expect_err("missing base_url must fail fast");
+        assert!(err.to_string().contains("LUNARIS_OPENAI_COMPAT_BASE_URL"), "got: {err}");
+    }
+
+    #[test]
     fn default_model_is_sonnet_for_anthropic() {
         // D-02: verifier uses the larger sonnet model, not haiku.
         assert_eq!(CloudProvider::Anthropic.default_model(), "claude-3-5-sonnet-latest");
@@ -301,6 +395,7 @@ mod tests {
             model: "claude-3-5-sonnet-latest".into(),
             api_key: "".into(),
             max_retries: 1,
+            base_url: None,
         };
         let err = CloudApiVerifier::new(opts).expect_err("empty key must error");
         let msg = err.to_string();
@@ -322,6 +417,7 @@ mod tests {
             model: "claude-3-5-sonnet-latest".into(),
             api_key: "sk-ant-SECRET-KEY-ABCDEF".into(),
             max_retries: 1,
+            base_url: None,
         };
         let verifier = CloudApiVerifier::new(opts).unwrap();
         let dbg = format!("{verifier:?}");

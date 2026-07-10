@@ -120,6 +120,9 @@ pub enum VerifierBackend {
     CloudAnthropic,
     CloudOpenAI,
     CloudGemini,
+    CloudMiniMax,
+    /// Generic OpenAI-compatible URL server (llama.cpp-only cutover).
+    CloudOpenAiCompat,
     Noop,
 }
 

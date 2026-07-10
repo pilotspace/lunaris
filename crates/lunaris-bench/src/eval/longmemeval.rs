@@ -576,6 +576,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 max_retries: 1,
                 max_tokens: extract_max_tokens,
                 concurrency: extract_concurrency,
+                base_url: None,
             })
             .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
             lunaris.graph_pipeline().set_extractor(std::sync::Arc::new(extractor));
