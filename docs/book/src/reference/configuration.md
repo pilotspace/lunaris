@@ -50,8 +50,10 @@ integration features to the storage crates.)
 | `embedder-gguf` | | Q4_K_M GGUF quantized variant (`NativeQuantizedEmbedder`) |
 | `embedder-it` | | Gates real-weights integration tests |
 
-Hardware-acceleration variants (all off by default): `cpu-accelerate`,
-`cpu-mkl`, `metal`, `cuda`, `cuda-fa2`.
+Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
+`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**
+via a target-specific dependency block (`cpu-accelerate` is a redundant
+no-op there); the GPU / MKL variants remain opt-in on every platform.
 
 ### `lunaris-rerank-native`
 
@@ -60,8 +62,10 @@ Hardware-acceleration variants (all off by default): `cpu-accelerate`,
 | `reranker-gguf` | | Q5_K_M-imatrix GGUF quantized variant (`NativeQuantizedReranker`) |
 | `reranker-it` | | Gates real-weights integration tests |
 
-Hardware-acceleration variants (all off by default): `cpu-accelerate`,
-`cpu-mkl`, `metal`, `cuda`, `cuda-fa2`.
+Hardware-acceleration variants: `cpu-accelerate`, `cpu-mkl`, `metal`,
+`cuda`, `cuda-fa2`. **macOS builds enable Accelerate BLAS automatically**
+via a target-specific dependency block (`cpu-accelerate` is a redundant
+no-op there); the GPU / MKL variants remain opt-in on every platform.
 
 `NoopReranker` is always available (no feature gate) — selectable at runtime
 for the latency-floor path.

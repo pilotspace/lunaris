@@ -59,6 +59,14 @@ unicode-normalization = "0"
 num_cpus            = { workspace = true }
 rayon               = { workspace = true }
 
+# macOS Accelerate BLAS by default for macOS-target builds — mirror of
+# `lunaris-embed-native`'s target-specific block; see that Cargo.toml for the
+# full rationale. Guarded by
+# `device_select::tests::macos_default_build_has_accelerate_blas`.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
+candle-nn   = { workspace = true, features = ["accelerate"] }
+
 [dev-dependencies]
 tokio               = { workspace = true }
 serde               = { workspace = true }

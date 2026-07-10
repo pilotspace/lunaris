@@ -151,11 +151,22 @@ reranker-gguf = ["native", "lunaris-rerank-native/reranker-gguf"]
 # compute path). These pass through to BOTH native crates so the umbrella
 # `lunaris` build — and therefore every downstream consumer (SDKs, server,
 # eval binary) — can light up the GPU/BLAS backend that `device_select.rs`
-# already knows how to upgrade to. WITHOUT one of these, candle runs naive
-# CPU matmul (the M-series GPU + Accelerate BLAS sit idle): root cause of the
-# ~21 min/question LongMemEval ingest. `native` gate mirrors embedder-gguf /
-# reranker-gguf above (pulls the now-optional native crates). Off by default —
-# opt-in per host arch:
+# already knows how to upgrade to.
+#
+# macOS CPU BLAS is AUTOMATIC since the platform-default-accel change: the
+# native crates carry a `[target.'cfg(target_os = "macos")'.dependencies]`
+# block enabling candle's Accelerate backend for macOS-target builds only
+# (resolver v3 keeps it off Linux/Windows), so `cpu-accelerate` below is a
+# redundant no-op on macOS — kept for build scripts that pass it explicitly.
+# On Linux/Windows CPU, candle's pure-Rust gemm path is the default (MKL is
+# x86-only + external-toolchain, so it stays opt-in), and WITHOUT one of the
+# GPU features candle runs CPU matmul: on pre-change macOS that naive path
+# was the root cause of the ~21 min/question LongMemEval ingest. `metal`
+# stays opt-in DELIBERATELY: candle's shape-keyed Metal buffer cache grows
+# unboundedly in long-lived processes (the leak that forces the benchmark
+# harness into process-per-question isolation) — do not default it without
+# fixing that. `native` gate mirrors embedder-gguf / reranker-gguf above
+# (pulls the now-optional native crates). GPU/MKL opt-in per host arch:
 #   --features metal           (Apple M-series GPU; auto Cpu→Metal upgrade)
 #   --features cpu-accelerate   (Apple Accelerate / BLAS, CPU)
 #   --features cpu-mkl          (Intel MKL, CPU)

@@ -48,6 +48,20 @@ unicode-normalization = "0"
 num_cpus            = { workspace = true }
 rayon               = { workspace = true }
 
+# macOS always ships the Accelerate framework, so BLAS is on by DEFAULT for
+# macOS-target builds — every consumer (SDK wheels, npm binaries, lunaris-mcp,
+# lunaris-server) gets fast F32 matmul without knowing about feature flags.
+# Resolver v2/v3 scopes target-specific dependency features to builds FOR this
+# target: Linux/Windows builds (and CI's --workspace clippy) are unaffected,
+# unlike a `default = ["cpu-accelerate"]` which feature-unification would
+# force everywhere (the same trap documented for the mlx-spike exclusion in
+# the workspace Cargo.toml). The opt-in `cpu-accelerate` flag below is kept
+# as a no-op-on-macOS passthrough for build scripts that pass it explicitly.
+# Guarded by `device_select::tests::macos_default_build_has_accelerate_blas`.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["accelerate"] }
+candle-nn   = { workspace = true, features = ["accelerate"] }
+
 [dev-dependencies]
 tokio               = { workspace = true }
 # Used by `tests/quantized_equivalence.rs` to SHA-256-verify the GGUF
