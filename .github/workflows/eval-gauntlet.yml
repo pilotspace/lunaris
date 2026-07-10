@@ -35,6 +35,10 @@ concurrency:
 
 jobs:
   eval-gauntlet:
+    # Runner prerequisites since the llama.cpp-only cutover (Phase D):
+    # cmake + a C++ toolchain must be installed on the self-hosted host —
+    # the default `llamacpp` feature compiles llama.cpp. The old candle
+    # safetensors cache is no longer read; GGUFs live in ~/.lunaris/models/.
     runs-on: [self-hosted, llm-weights-cached]
     # Per CONTEXT.md latency budget: eval-all <= 30 min target + safety margin.
     timeout-minutes: 90

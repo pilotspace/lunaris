@@ -1,0 +1,156 @@
+# perf-gates.yml — llama.cpp embed/rerank perf regression gate (Phase D of
+# the llama.cpp-only cutover, ADR docs/decisions/2026-07-10-llamacpp-only-cutover.md).
+#
+# Replaces the deleted candle per-device gate (O-01-F): the device × quant
+# matrix collapsed to one runtime, so the gate is now the
+# `llamacpp_hot_path` Criterion bench (embed batch8 short/long + rerank 1x8)
+# on the GitHub-hosted CPU cell, compared against a saved baseline with the
+# `perf-gate-check` bin (5% cliff).
+#
+# Baseline lifecycle:
+#   - `workflow_dispatch` with save-baseline=true captures the current run
+#     as the blessed baseline artifact (90-day retention, re-bless before
+#     expiry or after an accepted perf change).
+#   - PR runs (label `perf-bench`) and pushes to main restore that artifact
+#     and fail on >5% regression. First run on a fresh repo (no artifact)
+#     is vacuously green by design — the bench still runs, catching crashes.
+#
+# GGUF staging: downloads the canonical artifacts and verifies the pinned
+# SHA-256s. URLs + digests MUST stay in sync with
+# crates/lunaris-mcp/src/model_stager.rs (ModelKind::url / ::sha256) — a
+# digest mismatch is an integrity failure, not a flake.
+
+name: perf-gates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-llamacpp/**"
+      - "crates/lunaris-bench/benches/llamacpp_hot_path.rs"
+      - ".github/workflows/perf-gates.yml"
+      - "Cargo.lock"
+  pull_request:
+    # Opt-in on PRs: the bench costs a llama.cpp compile + ~700 MB of GGUF
+    # download. Label the PR `perf-bench` to run it.
+  workflow_dispatch:
+    inputs:
+      save-baseline:
+        description: "Capture this run as the blessed baseline"
+        type: boolean
+        default: false
+
+concurrency:
+  group: perf-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    name: cpu-x86_64 llamacpp hot path
+    if: >
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'perf-bench')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Keep in sync with crates/lunaris-mcp/src/model_stager.rs.
+      EMBEDDER_GGUF_URL: https://huggingface.co/mykor/granite-embedding-311m-multilingual-r2-GGUF/resolve/main/granite-embedding-311M-multilingual-r2-Q4_K_M.gguf
+      EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
+      RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf
+      RERANKER_GGUF_SHA256: 1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef
+      BASELINE_NAME: v0.6-llamacpp-cpu-x86_64
+      # Resolved once: workflow_dispatch asking to (re)bless the baseline.
+      SAVE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.save-baseline }}
+    steps:
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: perf-llamacpp-cpu
+
+      - name: Cache GGUF artifacts
+        id: gguf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.lunaris/models
+          key: gguf-${{ env.EMBEDDER_GGUF_SHA256 }}-${{ env.RERANKER_GGUF_SHA256 }}
+
+      - name: Stage GGUF artifacts (download + SHA-256 verify)
+        if: steps.gguf-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.lunaris/models
+          curl -sSfL --retry 3 "${EMBEDDER_GGUF_URL}" \
+            -o ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          curl -sSfL --retry 3 "${RERANKER_GGUF_URL}" \
+            -o ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+          cd ~/.lunaris/models
+          sha256sum -c <<EOF
+          ${EMBEDDER_GGUF_SHA256}  granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          ${RERANKER_GGUF_SHA256}  bge-reranker-v2-m3.Q5_K_M.gguf
+          EOF
+
+      - name: Assert artifacts staged
+        # The bench SKIPS cells on a missing GGUF (correct for dev boxes);
+        # in CI that would silently gate nothing. Fail loudly instead.
+        run: |
+          test -s ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          test -s ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+
+      - name: Restore saved baseline
+        if: env.SAVE_BASELINE != 'true'
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          name: perf-baseline-${{ env.BASELINE_NAME }}
+          path: target/criterion/
+          workflow: perf-gates.yml
+          workflow_conclusion: success
+          search_artifacts: true
+
+      - name: Run llamacpp hot-path bench
+        env:
+          CRITERION_HOME: target/criterion
+        run: |
+          set -euo pipefail
+          if [ "${SAVE_BASELINE}" = "true" ]; then
+            echo "::notice::Capturing baseline '${BASELINE_NAME}'."
+            cargo bench -p lunaris-bench --features llamacpp --bench llamacpp_hot_path -- \
+              --save-baseline "${BASELINE_NAME}"
+          elif [ -n "$(find target/criterion -name 'estimates.json' -path "*/${BASELINE_NAME}/*" -print -quit 2>/dev/null)" ]; then
+            echo "::notice::Found saved baseline '${BASELINE_NAME}' — running comparison."
+            cargo bench -p lunaris-bench --features llamacpp --bench llamacpp_hot_path -- \
+              --baseline "${BASELINE_NAME}"
+          else
+            echo "::warning::No saved baseline — bench runs but the regression gate is vacuously green. Dispatch with save-baseline=true to bless one."
+            cargo bench -p lunaris-bench --features llamacpp --bench llamacpp_hot_path -- \
+              --save-baseline "${BASELINE_NAME}"
+          fi
+
+      - name: Enforce 5% regression cliff
+        if: env.SAVE_BASELINE != 'true'
+        run: |
+          cargo run --release -p lunaris-bench --bin perf-gate-check -- \
+            --criterion-dir target/criterion \
+            --threshold 0.05
+
+      - name: Upload baseline artifact
+        if: env.SAVE_BASELINE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-${{ env.BASELINE_NAME }}
+          path: target/criterion/
+          retention-days: 90
+
+      - name: Upload Criterion output (forensics)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-criterion-${{ github.run_id }}
+          path: target/criterion/
+          retention-days: 14

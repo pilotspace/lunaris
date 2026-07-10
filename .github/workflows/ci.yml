@@ -61,6 +61,16 @@ jobs:
       - run: cargo check -p lunaris-verify --no-default-features
       - run: cargo check -p lunaris-verify --features ollama,cloud-api
 
+      # llama.cpp cutover (Phase D/E) — Tier-0 no-inference build. The
+      # umbrella default is `llamacpp` (compiles llama.cpp, needs cmake +
+      # C++); `--no-default-features` MUST keep compiling as the pure-Rust
+      # small-device path (NoopEmbedder/NoopReranker + remote LLM slots).
+      # This cell is the regression guard for "small devices still run
+      # Lunaris" — if a change makes the umbrella unconditionally require
+      # the llama.cpp C++ build, it fails here, not on an operator's box.
+      - run: cargo check -p lunaris-memory --no-default-features
+      - run: cargo check -p lunaris-memory --no-default-features --features ollama,cloud-api,embed-remote
+
       # Phase 20 — semver-checks gate. Runs cargo-semver-checks against
       # the previously-published v0.2.1 surface (NOT v0.2.0 — that tag
       # was never cut; releases jumped v0.1.2 -> v0.2.1) so any
