@@ -50,6 +50,13 @@
 //! - `candle` — links the candle stack; required for `CandleBackend`.
 //! - `ollama` — links `reqwest`; required for `OllamaBackend`.
 //! - `cloud-api` — links `reqwest`; required for the per-provider impls.
+//! - `candle-quantized` — Q4 GGUF Gemma-3 via `candle_transformers::models::
+//!   quantized_gemma3`; required for `QuantizedCandleBackend`. Implies
+//!   `candle` (no new dependency lines — candle-transformers already ships
+//!   the quantized module).
+//! - `metal` / `cuda` — device-upgrade ladder for the quantized backend
+//!   (mirrors `lunaris-rerank-native`'s `device_select.rs`). Cpu unless one
+//!   of these is enabled.
 //!
 //! Default is `[]` (noop) so a `lunaris-llm = { workspace = true }`
 //! that forgets to enable a feature still compiles — it just can't
@@ -65,6 +72,8 @@ use lunaris_core::LunarisError;
 
 #[cfg(feature = "candle")]
 pub mod candle;
+#[cfg(feature = "candle-quantized")]
+pub mod candle_quantized;
 #[cfg(feature = "cloud-api")]
 pub mod cloud;
 pub mod config;
@@ -75,6 +84,8 @@ pub mod ollama;
 
 #[cfg(feature = "candle")]
 pub use candle::{CandleBackend, CandleBackendOpts};
+#[cfg(feature = "candle-quantized")]
+pub use candle_quantized::{QuantizedCandleBackend, QuantizedCandleBackendOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider, is_transient};
 pub use config::{LlmConfig, Pipeline, ProviderKind};

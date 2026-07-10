@@ -14,6 +14,8 @@
 #   cargo check -p lunaris-llm --features ollama
 #   cargo check -p lunaris-llm --features cloud-api
 #   cargo check -p lunaris-llm --features candle,ollama,cloud-api
+#   cargo check -p lunaris-llm --features candle-quantized                # Q4 GGUF Gemma-3 (QuantizedCandleBackend)
+#   cargo check -p lunaris-llm --features candle-quantized,metal          # + Metal device upgrade
 
 [package]
 name        = "lunaris-llm"
@@ -45,10 +47,23 @@ default      = []
 candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot"]
 ollama       = ["dep:reqwest"]
 cloud-api    = ["dep:reqwest"]
+# Q4 GGUF Gemma-3 backend (`QuantizedCandleBackend`) via candle-transformers'
+# `quantized_gemma3::ModelWeights`. Implies `candle` (same optional deps —
+# candle-transformers already ships the quantized module, no new dependency
+# lines needed). Forwarded by `lunaris-extract/extractor-gguf` -> umbrella
+# `lunaris/extractor-gguf`. Mirrors the embedder/reranker
+# `embedder-gguf`/`reranker-gguf` naming convention.
+candle-quantized = ["candle"]
 # Test-double utilities. Never compiled into production binaries.
 # Consuming crates add `lunaris-llm = { workspace = true, features = ["faux"] }`
 # to their `[dev-dependencies]` to get `FauxBackend`.
 faux         = ["dep:parking_lot"]
+# Device-upgrade ladder for the quantized backend (mirrors
+# `lunaris-rerank-native`'s `metal`/`cuda` features + `device_select.rs`).
+# Off by default — Cpu unless one of these is enabled. cuda is
+# untested-on-target (same caveat as lunaris-rerank-native's device_select).
+metal        = ["candle-quantized", "candle-core/metal", "candle-nn/metal"]
+cuda         = ["candle-quantized", "candle-core/cuda", "candle-core/cudnn", "candle-nn/cuda"]
 
 [dependencies]
 lunaris-core   = { workspace = true }
