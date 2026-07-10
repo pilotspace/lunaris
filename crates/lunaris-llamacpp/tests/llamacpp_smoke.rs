@@ -89,10 +89,22 @@ async fn llamacpp_embedder_smoke_and_throughput() {
 
     // Rough throughput print for comparison against §4b (not asserted — CI
     // hosts vary; the number is the point, the gate is the contract above).
+    // Two passes: the first encode pays backend graph compile (cold); the
+    // second hits the A2 warm context — the number that compares against
+    // llama-bench's warm ceiling.
     let approx_tokens = inputs.iter().map(|s| s.len() / 4).sum::<usize>();
+    let backend = if cfg!(feature = "metal") { "metal" } else { "cpu" };
     println!(
-        "llamacpp embed: ~{approx_tokens} tokens in {wall:?} (~{:.0} tok/s, {} backend)",
+        "llamacpp embed (cold): ~{approx_tokens} tokens in {wall:?} (~{:.0} tok/s, {backend})",
         approx_tokens as f64 / wall.as_secs_f64(),
-        if cfg!(feature = "metal") { "metal" } else { "cpu" },
+    );
+
+    let start = Instant::now();
+    let rows_warm = embedder.embed_batch(&inputs).await.expect("warm embed_batch");
+    let warm = start.elapsed();
+    assert_eq!(rows_warm.len(), 3);
+    println!(
+        "llamacpp embed (warm): ~{approx_tokens} tokens in {warm:?} (~{:.0} tok/s, {backend})",
+        approx_tokens as f64 / warm.as_secs_f64(),
     );
 }
