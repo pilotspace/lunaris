@@ -9,16 +9,15 @@
 //!
 //! - [`Lunaris::open`] — production constructor. Routes the `url` through the
 //!   Phase 1 [`crate::open::open`] dispatcher to pick a [`StoragePort`] backend,
-//!   constructs the default embedder
-//!   ([`lunaris_embed_native::NativeEmbedder`] backed by granite-r2 — v0.4
-//!   N-03 cutover) and a fresh `HlcClock(node_id=0)`.
+//!   constructs the default embedder (llama.cpp Q4_K_M granite-r2 GGUF —
+//!   llama.cpp-only cutover) and a fresh `HlcClock(node_id=0)`.
 //! - [`Lunaris::with_parts`] — escape hatch for tests + the Plan 02-01
 //!   latency-budget swap. Lets callers wire any `Arc<dyn StoragePort>` and
 //!   `Arc<dyn Embedder>` directly. Used by the Phase 2 ingest smoke test
 //!   (in-memory recording storage + `StubEmbedder`).
 //! - [`Lunaris::with_embedder`] — public escape hatch to replace the
-//!   embedder on an already-constructed handle (e.g., swap from
-//!   `NativeEmbedder` to the feature-gated `lunaris_embed_remote::OllamaEmbedder`
+//!   embedder on an already-constructed handle (e.g., swap to the
+//!   feature-gated `lunaris_embed_remote::OllamaEmbedder`
 //!   or to a BYO `Arc<dyn Embedder>`).
 //!
 //! ## Invariant
@@ -270,44 +269,36 @@ impl Lunaris {
     ///   dev/embedded backend (no Docker, no Postgres, no Moon). `memory://`
     ///   is in-process and ephemeral; `sqlite:///path` is file-backed.
     ///
-    /// ## Default backend resolution (v0.4 native)
+    /// ## Default backend resolution (llama.cpp-only cutover)
     ///
-    /// - **Embedder** — [`lunaris_embed_native::NativeEmbedder`] backed by
-    ///   `ibm-granite/granite-embedding-311m-multilingual-r2` (FP16, 768-d).
-    ///   Loaded from
-    ///   `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`
-    ///   (override via `LUNARIS_EMBEDDER_DIR`). Missing weights → fail-fast
-    ///   with an actionable `huggingface-cli` instruction. Operators on
-    ///   v0.4-quantized builds (`--features embedder-gguf`) can point
-    ///   `LUNARIS_EMBEDDER_GGUF=<path/to/granite-r2.Q4_K_M.gguf>` to load
-    ///   `NativeQuantizedEmbedder` instead.
-    /// - **Reranker** — [`lunaris_rerank_native::NativeReranker`] backed by
-    ///   `BAAI/bge-reranker-v2-m3` (FP32, sigmoid scores ∈ [0, 1]). Loaded
-    ///   from `~/.cache/lunaris/models/bge-reranker-v2-m3/` (override via
-    ///   `LUNARIS_RERANKER_DIR`). Cache miss → `tracing::warn!` +
-    ///   [`NoopReranker`] (RETRIEVE-06 contract: recall path runs even
-    ///   without the rerank pass). Operators on quantized builds
-    ///   (`--features reranker-gguf`) can point
-    ///   `LUNARIS_RERANKER_GGUF=<path/to/bge-reranker.Q4_K_M.gguf>` to load
-    ///   `NativeQuantizedReranker`.
-    /// - **Verifier / Consolidator** — unchanged. Resolved from
-    ///   `LUNARIS_VERIFIER_BACKEND` / `LUNARIS_CONSOLIDATOR_BACKEND` (see
-    ///   `default_verifier`, `default_consolidator`).
-    /// - **Air-gap escape hatch** — build with `--features embed-remote` and
-    ///   set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` to route the embedder
-    ///   through an existing Ollama instance via
-    ///   [`lunaris_embed_remote::OllamaEmbedder`]. NOT the supported path;
-    ///   logged as a runtime warn.
-    ///
-    /// See `docs/migration/0.3-to-0.4-native-default.md` for the full
-    /// migration recipe.
+    /// - **Embedder** — [`lunaris_llamacpp::LlamaCppEmbedder`] backed by the
+    ///   `granite-embedding-311m-multilingual-r2` Q4_K_M GGUF (768-d).
+    ///   Resolved from `LUNARIS_EMBEDDER_GGUF`, else the
+    ///   `~/.lunaris/models/` staged default. Missing GGUF →
+    ///   `tracing::warn!` + [`lunaris_core::NoopEmbedder`] (zero vectors).
+    /// - **Reranker** — [`lunaris_llamacpp::LlamaCppReranker`] backed by the
+    ///   `bge-reranker-v2-m3` Q5_K_M GGUF (sigmoid scores ∈ [0, 1]).
+    ///   Resolved from `LUNARIS_RERANKER_GGUF`, else the staged default;
+    ///   weight load deferred to the first `rerank()` (N-04 D1). Missing
+    ///   GGUF → [`NoopReranker`] (RETRIEVE-06 contract: recall path runs
+    ///   even without the rerank pass).
+    /// - **Extractor / Verifier** — REMOTE-ONLY. Resolved from
+    ///   `LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_VERIFY_PROVIDER`
+    ///   (see `default_extractor`, `default_verifier`); unset → degraded
+    ///   Noop mode.
+    /// - **Consolidator** — resolved from `LUNARIS_CONSOLIDATOR_BACKEND`
+    ///   (see `default_consolidator`).
+    /// - **Remote embedder (Tier-0 / air-gap)** — build with
+    ///   `--features embed-remote` and set
+    ///   `LUNARIS_EMBEDDER_OPENAI_URL` (OpenAI-compatible `/v1/embeddings`)
+    ///   or `LUNARIS_EMBEDDER_OLLAMA_URL` to skip local inference entirely.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
         let embedder = resolve_embedder().await?;
         Self::open_with_embedder(url, embedder).await
     }
 
     /// Like [`Lunaris::open`] but uses the caller-provided `embedder`
-    /// directly instead of constructing the default `NativeEmbedder` /
+    /// directly instead of constructing the default llama.cpp embedder /
     /// `NoopEmbedder` fallback.
     ///
     /// Use this when:
@@ -627,8 +618,8 @@ impl Lunaris {
 
     /// Public escape hatch — replace the embedder on an existing handle.
     ///
-    /// [`Lunaris::open`] constructs the default `NativeEmbedder` backed by
-    /// granite-r2 (v0.4 N-03 cutover); call this method post-construction
+    /// [`Lunaris::open`] constructs the default llama.cpp embedder backed by
+    /// the granite-r2 Q4_K_M GGUF; call this method post-construction
     /// to swap in any `Arc<dyn Embedder>` (e.g., a `StubEmbedder` in tests,
     /// the feature-gated `lunaris_embed_remote::OllamaEmbedder`, or a remote
     /// embedder service).
@@ -711,8 +702,8 @@ impl Lunaris {
 
     /// Escape hatch — replace the reranker on an existing handle.
     ///
-    /// [`Lunaris::open`] constructs the default `NativeReranker` backed by
-    /// bge-reranker-v2-m3 (v0.4 N-03 cutover) and falls back to
+    /// [`Lunaris::open`] constructs the default llama.cpp reranker backed by
+    /// the bge-reranker-v2-m3 Q5_K_M GGUF and falls back to
     /// [`NoopReranker`] on cache miss per the RETRIEVE-06 contract. Tests
     /// pass `Arc::new(NoopReranker)` for determinism; production callers can
     /// wire a custom cross-encoder (e.g., a remote rerank service) without
@@ -1488,34 +1479,23 @@ impl<'a> ScopedLunaris<'a> {
     }
 }
 
-// ── v0.4 N-03 cutover: native embedder + reranker resolution ──────────────────
+// ── llama.cpp-only cutover: embedder + reranker resolution ────────────────────
 //
-// `LUNARIS_EMBEDDER_BACKEND` / `LUNARIS_RERANKER_BACKEND` are retired (RFC-style
-// breaking change for v0.4). The supported runtime is candle-native + the
-// frozen pair `granite-embedding-311m-multilingual-r2` (embedder) and
-// `bge-reranker-v2-m3` (reranker). The only knobs are:
+// The supported runtime is in-process llama.cpp + the frozen GGUF pair
+// `granite-embedding-311m-multilingual-r2.Q4_K_M` (embedder) and
+// `bge-reranker-v2-m3.Q5_K_M` (reranker). The knobs are:
 //
-// - `LUNARIS_EMBEDDER_DIR` — optional override for the granite-r2 model
-//   directory (default `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`).
-// - `LUNARIS_RERANKER_DIR` — optional override for the bge-reranker dir
-//   (default `~/.cache/lunaris/models/bge-reranker-v2-m3/`).
-// - `LUNARIS_EMBEDDER_GGUF` — optional path to a Q4_K_M GGUF; activates the
-//   quantized embedder ONLY when the `embedder-gguf` feature is enabled.
-// - `LUNARIS_RERANKER_GGUF` — same for the quantized reranker (`reranker-gguf`).
-// - `LUNARIS_EMBEDDER_OLLAMA_URL` — operator escape hatch; only consulted when
-//   the `embed-remote` feature is enabled. NOT the supported path.
+// - `LUNARIS_EMBEDDER_GGUF` — path to the embedder GGUF; default is the
+//   `~/.lunaris/models/` staged artifact.
+// - `LUNARIS_RERANKER_GGUF` — same for the reranker GGUF.
+// - `LUNARIS_DEVICE=cpu` — force CPU even on Metal-enabled builds.
+// - `LUNARIS_EMBEDDER_OPENAI_URL` / `LUNARIS_EMBEDDER_OLLAMA_URL` — remote
+//   embedder endpoints; only consulted when the `embed-remote` feature is
+//   enabled (Tier-0 / air-gap path).
+// - `LUNARIS_EMBEDDER_DIR` — legacy dir override; still consulted for
+//   `tokenizer.json` by the BPE token counter (`make_token_counter`).
 // - `LUNARIS_EMBED_DIM` — only applies when the resolver falls back to
-//   `NoopEmbedder` (granite-r2 weights missing); default 768.
-//
-// Cache layout:
-//   ~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/
-//     ├── model.safetensors
-//     ├── tokenizer.json
-//     └── config.json
-//   ~/.cache/lunaris/models/bge-reranker-v2-m3/
-//     ├── model.safetensors
-//     ├── tokenizer.json
-//     └── config.json
+//   `NoopEmbedder` (no GGUF staged); default 768.
 //
 // One-shot tracing::info! per process logs the resolved backend + path; if
 // the embedder falls back to noop the operator gets a tracing::warn! banner.
@@ -1529,14 +1509,11 @@ pub const EMBEDDER_DIR_ENV_VAR: &str = "LUNARIS_EMBEDDER_DIR";
 /// artifacts. Default: `<cache-dir>/lunaris/models/bge-reranker-v2-m3/`.
 pub const RERANKER_DIR_ENV_VAR: &str = "LUNARIS_RERANKER_DIR";
 
-/// Optional path to a Q4_K_M GGUF for the embedder. Only consulted when the
-/// `embedder-gguf` feature is enabled. When set, activates
-/// `NativeQuantizedEmbedder` instead of the default FP16
-/// `NativeEmbedder`.
+/// Optional path override for the embedder Q4_K_M GGUF (llama.cpp runtime).
+/// Default: the `~/.lunaris/models/` staged artifact.
 pub const EMBEDDER_GGUF_ENV_VAR: &str = "LUNARIS_EMBEDDER_GGUF";
 
-/// Optional path to a Q4_K_M GGUF for the reranker. Only consulted when the
-/// `reranker-gguf` feature is enabled.
+/// Optional path override for the reranker Q5_K_M GGUF (llama.cpp runtime).
 pub const RERANKER_GGUF_ENV_VAR: &str = "LUNARIS_RERANKER_GGUF";
 
 /// Env var that controls the dim of the `NoopEmbedder` fallback used when
@@ -1641,8 +1618,9 @@ static RERANKER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
 /// Granite-r2 model directory name under `<cache>/lunaris/models/`.
 const GRANITE_R2_DIR: &str = "granite-embedding-311m-multilingual-r2";
 /// bge-reranker-v2-m3 model directory name under `<cache>/lunaris/models/`.
-/// Referenced by the `native`-gated reranker path (and the dir-layout unit test).
-#[cfg(any(feature = "native", test))]
+/// Referenced by the dir-layout unit test (the FP32 dir also provides the
+/// canonical `tokenizer.json` location some operator tooling still stages).
+#[cfg(test)]
 const BGE_RERANKER_DIR: &str = "bge-reranker-v2-m3";
 
 /// Resolve the canonical cache directory for a named model artifact. Returns
@@ -1667,39 +1645,25 @@ fn embedder_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| default_model_dir(GRANITE_R2_DIR))
 }
 
-/// Resolve the reranker model directory from [`RERANKER_DIR_ENV_VAR`],
-/// falling back to the default cache layout. Only referenced by the
-/// `native`-gated reranker path.
-#[cfg(feature = "native")]
-fn reranker_dir() -> std::path::PathBuf {
-    std::env::var(RERANKER_DIR_ENV_VAR)
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| default_model_dir(BGE_RERANKER_DIR))
-}
-
-/// v0.4 N-03 — resolve the default embedder for [`Lunaris::open`]. Tries:
+/// Resolve the default embedder for [`Lunaris::open`] (llama.cpp-only
+/// cutover). Tries:
 ///
-/// 1. (feature `embed-remote`) If `LUNARIS_EMBEDDER_OLLAMA_URL` is set,
-///    construct [`lunaris_embed_remote::OllamaEmbedder`]. Operator escape
-///    hatch; emits a runtime warn.
-/// 2. (feature `embedder-gguf`) If `LUNARIS_EMBEDDER_GGUF` is set, construct
-///    `NativeQuantizedEmbedder` from the GGUF path + the granite-r2 tokenizer
-///    found via `embedder_dir()`.
-/// 3. Otherwise, construct [`lunaris_embed_native::NativeEmbedder`] from
-///    `<embedder_dir>/model.safetensors` + `tokenizer.json` + `config.json`.
-/// 4. On cache miss, emit a `tracing::warn!` and fall back to
-///    [`NoopEmbedder`] at [`lunaris_core::NOOP_DEFAULT_DIM`] so the rest
-///    of the open path completes (vector recall returns empty rows; operator
-///    sees the banner and can fix their cache layout).
+/// 1. (feature `llamacpp`, default) `LUNARIS_EMBEDDER_GGUF` or the
+///    `~/.lunaris/models/` staged Q4_K_M GGUF via
+///    [`lunaris_llamacpp::LlamaCppEmbedder`].
+/// 2. (feature `embed-remote`) `LUNARIS_EMBEDDER_OPENAI_URL`
+///    (OpenAI-compatible `/v1/embeddings`) then `LUNARIS_EMBEDDER_OLLAMA_URL`
+///    — the Tier-0 no-C++-toolchain remote path.
+/// 3. Otherwise, emit a `tracing::warn!` and fall back to [`NoopEmbedder`]
+///    at [`lunaris_core::NOOP_DEFAULT_DIM`] so the rest of the open path
+///    completes (vector recall returns empty rows; operator sees the banner
+///    and can stage the GGUF).
 async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     // 0. llama.cpp GGUF embedder (cutover Phase B) — wins whenever the
     //    feature is compiled in AND the GGUF artifact is reachable
     //    (LUNARIS_EMBEDDER_GGUF, else the ~/.lunaris/models/ staged
     //    default). Missing artifact or open failure falls through to the
-    //    existing chain, so a llamacpp build without staged GGUFs behaves
-    //    exactly like today.
+    //    remote/Noop chain.
     #[cfg(feature = "llamacpp")]
     {
         if let Some(gguf_path) = llamacpp_gguf_path(EMBEDDER_GGUF_ENV_VAR, LLAMACPP_EMBEDDER_GGUF) {
@@ -1735,7 +1699,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
                         error = %err,
                         gguf = %gguf_path.display(),
                         "llamacpp embedder failed to open; falling through to the \
-                         candle/remote chain"
+                         remote/Noop chain"
                     );
                 }
             }
@@ -1785,116 +1749,21 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
         }
     }
 
-    // 2. Quantized GGUF — only when feature is on AND env var is set.
-    #[cfg(feature = "embedder-gguf")]
-    {
-        if let Some(gguf_path) = std::env::var(EMBEDDER_GGUF_ENV_VAR).ok().filter(|s| !s.is_empty())
-        {
-            let dir = embedder_dir();
-            let device = candle_core::Device::Cpu;
-            let opts = lunaris_embed_native::NativeQuantizedEmbedderOpts {
-                gguf_path: std::path::PathBuf::from(&gguf_path),
-                tokenizer_path: dir.join("tokenizer.json"),
-                config_path: dir.join("config.json"),
-                device,
-            };
-            match lunaris_embed_native::NativeQuantizedEmbedder::open(opts) {
-                Ok(e) => {
-                    EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
-                        tracing::info!(
-                            target: "lunaris::handle",
-                            embedder_backend = "native-quantized",
-                            gguf = %gguf_path,
-                            "embedder_backend_resolved"
-                        );
-                    });
-                    return Ok(Arc::new(e) as Arc<dyn Embedder>);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        error = %err,
-                        gguf = %gguf_path,
-                        "LUNARIS_EMBEDDER_GGUF set but quantized embedder failed to open; \
-                         falling through to FP16"
-                    );
-                }
-            }
-        }
-    }
-
-    // 3. Default FP16 native (candle) embedder — only when the `native` feature
-    //    is compiled in. All candle / lunaris_embed_native references live in
-    //    the gated helper below so a `default-features = false` build is
-    //    candle-free.
-    #[cfg(feature = "native")]
-    {
-        resolve_embedder_native().await
-    }
-
-    // 4. Candle disabled — NoopEmbedder (zero vectors). Vector recall returns
-    //    empty rows until a remote embedder is configured. Build with
-    //    `--features embed-remote` and set LUNARIS_EMBEDDER_OLLAMA_URL for a
-    //    remote server embedder.
-    #[cfg(not(feature = "native"))]
-    {
-        let dim = resolve_embed_dim();
-        EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
-            tracing::warn!(
-                target: "lunaris::handle",
-                fallback_dim = dim,
-                "native embedder feature disabled — using NoopEmbedder (zero vectors). \
-                 Configure a remote embedder (build with --features embed-remote and set \
-                 LUNARIS_EMBEDDER_OLLAMA_URL) for real vectors."
-            );
-        });
-        Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
-    }
-}
-
-/// Step 3 of [`resolve_embedder`] — the candle FP16 `NativeEmbedder` path.
-/// Extracted behind `#[cfg(feature = "native")]` so every `candle_core` /
-/// `lunaris_embed_native` reference is elided from candle-free builds.
-#[cfg(feature = "native")]
-async fn resolve_embedder_native() -> Result<Arc<dyn Embedder>, LunarisError> {
-    let dir = embedder_dir();
-    let opts = lunaris_embed_native::NativeEmbedderOpts {
-        weights_path: dir.join("model.safetensors"),
-        tokenizer_path: dir.join("tokenizer.json"),
-        config_path: dir.join("config.json"),
-        device: candle_core::Device::Cpu,
-    };
-    match lunaris_embed_native::NativeEmbedder::open(opts) {
-        Ok(e) => {
-            EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
-                tracing::info!(
-                    target: "lunaris::handle",
-                    embedder_backend = "native",
-                    weights_dir = %dir.display(),
-                    "embedder_backend_resolved"
-                );
-            });
-            Ok(Arc::new(e) as Arc<dyn Embedder>)
-        }
-        Err(err) => {
-            // Cache miss — NoopEmbedder fallback so the rest of open()
-            // completes. Operator sees one banner per process.
-            let dim = resolve_embed_dim();
-            EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
-                tracing::warn!(
-                    target: "lunaris::handle",
-                    error = %err,
-                    weights_dir = %dir.display(),
-                    fallback_dim = dim,
-                    "granite-r2 weights unavailable at the resolved model dir; falling back \
-                     to NoopEmbedder (zero vectors). Vector recall will return empty rows \
-                     until weights are staged. Install via \
-                     `huggingface-cli download ibm-granite/granite-embedding-311m-multilingual-r2 \
-                      --local-dir <weights_dir>` or override with LUNARIS_EMBEDDER_DIR=<dir>."
-                );
-            });
-            Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
-        }
-    }
+    // 2. No local runtime reachable — NoopEmbedder (zero vectors). Vector
+    //    recall returns empty rows until a GGUF is staged (llamacpp) or a
+    //    remote embedder is configured (`embed-remote`).
+    let dim = resolve_embed_dim();
+    EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
+        tracing::warn!(
+            target: "lunaris::handle",
+            fallback_dim = dim,
+            "no embedder backend available — using NoopEmbedder (zero vectors). \
+             Stage the llama.cpp GGUF (LUNARIS_EMBEDDER_GGUF or ~/.lunaris/models/) \
+             or configure a remote embedder (--features embed-remote + \
+             LUNARIS_EMBEDDER_OPENAI_URL / LUNARIS_EMBEDDER_OLLAMA_URL) for real vectors."
+        );
+    });
+    Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
 }
 
 /// Resolve the NoopEmbedder fallback dim from [`EMBED_DIM_ENV_VAR`].
@@ -1934,23 +1803,21 @@ fn resolve_embed_dim() -> usize {
     dim
 }
 
-/// v0.4 N-03 — resolve the default reranker for [`Lunaris::open`]. Tries:
+/// Resolve the default reranker for [`Lunaris::open`] (llama.cpp-only
+/// cutover). Tries:
 ///
-/// 1. (feature `reranker-gguf`) If `LUNARIS_RERANKER_GGUF` is set, construct
-///    `NativeQuantizedReranker` from the GGUF path + the bge-reranker
-///    tokenizer found via `reranker_dir()`.
-/// 2. Otherwise, construct [`lunaris_rerank_native::NativeReranker`] from
-///    `<reranker_dir>/model.safetensors` + `tokenizer.json` + `config.json`.
-/// 3. On cache miss, emit a `tracing::warn!` and fall back to
-///    [`NoopReranker`] per the RETRIEVE-06 contract — the recall path runs
-///    end-to-end even without the cross-encoder pass.
+/// 1. (feature `llamacpp`, default) `LUNARIS_RERANKER_GGUF` or the
+///    `~/.lunaris/models/` staged Q5_K_M GGUF, deferred-loaded via
+///    `LazyLlamaCppReranker` (N-04 D1).
+/// 2. Otherwise fall back to [`NoopReranker`] per the RETRIEVE-06 contract —
+///    the recall path runs end-to-end even without the cross-encoder pass.
 async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
     // 0. llama.cpp GGUF reranker (cutover Phase B) — same precedence rule as
     //    the embedder. Load is DEFERRED to the first `rerank()` call via
     //    `LazyLlamaCppReranker` (N-04 D1: the recall hot path may never
     //    reach the rerank stage; don't pay the weight load + context RSS at
     //    open()). Pre-flight only checks the artifact exists so a typo'd
-    //    path still falls through to the candle chain immediately.
+    //    path still falls through to Noop immediately.
     #[cfg(feature = "llamacpp")]
     {
         if let Some(gguf_path) = llamacpp_gguf_path(RERANKER_GGUF_ENV_VAR, LLAMACPP_RERANKER_GGUF) {
@@ -1971,118 +1838,18 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
         }
     }
 
-    // 1. Quantized GGUF — only when feature is on.
-    //
-    // N-04 D1 — DO NOT call `NativeQuantizedReranker::open` here. The Q5_K_M
-    // GGUF (446 MiB) mmaps into RSS the moment `open` runs, and the recall
-    // hot path may never actually invoke the rerank stage (RETRIEVE-06
-    // budget bust → skip). We pre-flight that the artifact paths exist (so
-    // a typo'd env var still falls through to FP32 immediately, not at
-    // first-rerank-time), then hand back a `LazyQuantizedReranker` which
-    // defers the mmap until the first `rerank()` call.
-    #[cfg(feature = "reranker-gguf")]
-    {
-        if let Some(gguf_path) = std::env::var(RERANKER_GGUF_ENV_VAR).ok().filter(|s| !s.is_empty())
-        {
-            let dir = reranker_dir();
-            let opts = lunaris_rerank_native::NativeQuantizedRerankerOpts {
-                gguf_path: std::path::PathBuf::from(&gguf_path),
-                tokenizer_path: dir.join("tokenizer.json"),
-                config_path: dir.join("config.json"),
-                device: candle_core::Device::Cpu,
-            };
-            // Pre-flight: refuse the lazy path early if any required artifact
-            // is missing. This preserves the v0.4 N-03 fall-through-to-FP32
-            // behaviour on cache-miss while keeping the GGUF mmap deferred.
-            let preflight_ok = opts.gguf_path.exists()
-                && opts.tokenizer_path.exists()
-                && opts.config_path.exists();
-            if preflight_ok {
-                let lazy = LazyQuantizedReranker::new(opts);
-                RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
-                    tracing::info!(
-                        target: "lunaris::handle",
-                        reranker_backend = "native-quantized (lazy)",
-                        gguf = %gguf_path,
-                        "reranker_backend_resolved (load deferred to first rerank())"
-                    );
-                });
-                return Ok(Arc::new(lazy) as Arc<dyn Reranker>);
-            } else {
-                tracing::warn!(
-                    gguf = %gguf_path,
-                    tokenizer = %opts.tokenizer_path.display(),
-                    config = %opts.config_path.display(),
-                    "LUNARIS_RERANKER_GGUF set but one or more artifacts are missing on disk; \
-                     falling through to FP32"
-                );
-            }
-        }
-    }
-
-    // 2. Default FP32 native (candle) reranker — only when the `native` feature
-    //    is compiled in. Gated helper keeps candle out of candle-free builds.
-    #[cfg(feature = "native")]
-    {
-        resolve_reranker_native().await
-    }
-
-    // 3. Candle disabled — NoopReranker (rerank pass skipped per RETRIEVE-06).
-    #[cfg(not(feature = "native"))]
-    {
-        RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
-            tracing::info!(
-                target: "lunaris::handle",
-                reranker_backend = "noop",
-                "native reranker feature disabled — using NoopReranker (rerank pass skipped \
-                 per RETRIEVE-06 contract)."
-            );
-        });
-        Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
-    }
-}
-
-/// Step 2 of [`resolve_reranker`] — the candle FP32 `NativeReranker` path.
-/// Extracted behind `#[cfg(feature = "native")]` so every `candle_core` /
-/// `lunaris_rerank_native` reference is elided from candle-free builds.
-#[cfg(feature = "native")]
-async fn resolve_reranker_native() -> Result<Arc<dyn Reranker>, LunarisError> {
-    let dir = reranker_dir();
-    let opts = lunaris_rerank_native::NativeRerankerOpts {
-        weights_path: dir.join("model.safetensors"),
-        tokenizer_path: dir.join("tokenizer.json"),
-        config_path: dir.join("config.json"),
-        device: candle_core::Device::Cpu,
-    };
-    match lunaris_rerank_native::NativeReranker::open(opts) {
-        Ok(r) => {
-            RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
-                tracing::info!(
-                    target: "lunaris::handle",
-                    reranker_backend = "native",
-                    weights_dir = %dir.display(),
-                    "reranker_backend_resolved"
-                );
-            });
-            Ok(Arc::new(r) as Arc<dyn Reranker>)
-        }
-        // Cache miss — NoopReranker fallback per RETRIEVE-06.
-        Err(err) => {
-            RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
-                tracing::warn!(
-                    target: "lunaris::handle",
-                    error = %err,
-                    weights_dir = %dir.display(),
-                    "bge-reranker-v2-m3 unavailable at the resolved model dir; falling back \
-                     to NoopReranker (recall budget skips the rerank pass per RETRIEVE-06 \
-                     contract). Install via \
-                     `huggingface-cli download BAAI/bge-reranker-v2-m3 --local-dir <weights_dir>` \
-                     or override with LUNARIS_RERANKER_DIR=<dir>."
-                );
-            });
-            Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
-        }
-    }
+    // 1. No local runtime reachable — NoopReranker (rerank pass skipped per
+    //    RETRIEVE-06). Stage the llama.cpp GGUF for a real reranker.
+    RERANKER_BACKEND_LOG_ONCE.get_or_init(|| {
+        tracing::info!(
+            target: "lunaris::handle",
+            reranker_backend = "noop",
+            "no reranker backend available — using NoopReranker (rerank pass skipped \
+             per RETRIEVE-06 contract). Stage the llama.cpp GGUF \
+             (LUNARIS_RERANKER_GGUF or ~/.lunaris/models/) for a real reranker."
+        );
+    });
+    Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
 }
 
 /// Plan 03-03: Construct the default extractor for [`Lunaris::open`].
@@ -2245,12 +2012,11 @@ fn llamacpp_gpu_layers() -> u32 {
     if !forced_cpu && cfg!(feature = "metal") { u32::MAX } else { 0 }
 }
 
-/// Deferred-load wrapper for [`lunaris_llamacpp::LlamaCppReranker`] — the
-/// llama.cpp twin of [`LazyQuantizedReranker`] below (same N-04 D1
-/// rationale: the Q5_K_M weights + warm context only materialize on the
-/// first `rerank()` call; `applies()` answers `true` eagerly because config
-/// promises a real reranker). On init failure the OnceCell stays empty so a
-/// later call can retry.
+/// Deferred-load wrapper for [`lunaris_llamacpp::LlamaCppReranker`]
+/// (N-04 D1 rationale: the Q5_K_M weights + warm context only materialize
+/// on the first `rerank()` call; `applies()` answers `true` eagerly because
+/// config promises a real reranker). On init failure the OnceCell stays
+/// empty so a later call can retry.
 #[cfg(feature = "llamacpp")]
 struct LazyLlamaCppReranker {
     opts: lunaris_llamacpp::LlamaCppRerankerOpts,
@@ -2311,100 +2077,13 @@ impl Reranker for LazyLlamaCppReranker {
     }
 }
 
-// ── N-04 D1 — lazy quantized reranker ────────────────────────────────────────
-//
-// `NativeQuantizedReranker::open` mmaps the 446 MiB Q5_K_M-imatrix GGUF the
-// moment it is called. Eagerly calling it inside `resolve_reranker()`
-// inflates `Lunaris::open()` RSS by ~440 MiB even when the recall hot path
-// never reaches the rerank stage (e.g., budget-bust per RETRIEVE-06, or
-// callers that override the reranker before issuing recall).
-//
-// `LazyQuantizedReranker` defers the mmap until the first `rerank()` call
-// via `tokio::sync::OnceCell::get_or_try_init`. The trait `applies()`
-// answer stays `true` (config promises a real reranker — the
-// `rerank_applied` flag on `Hit` must reflect intent, not init state)
-// matching `NativeQuantizedReranker::applies` verbatim.
-//
-// On lazy-init failure the error is surfaced to the caller via
-// `LunarisError::Storage(Backend(_))` — the OnceCell is left empty so a
-// later call can retry (e.g., operator fixes a permissions issue between
-// rerank attempts). The init closure runs inside `spawn_blocking` so the
-// 446 MiB mmap + tensor parse doesn't stall the tokio runtime.
-#[cfg(feature = "reranker-gguf")]
-struct LazyQuantizedReranker {
-    opts: lunaris_rerank_native::NativeQuantizedRerankerOpts,
-    cell: tokio::sync::OnceCell<Arc<lunaris_rerank_native::NativeQuantizedReranker>>,
-}
-
-#[cfg(feature = "reranker-gguf")]
-impl LazyQuantizedReranker {
-    fn new(opts: lunaris_rerank_native::NativeQuantizedRerankerOpts) -> Self {
-        Self { opts, cell: tokio::sync::OnceCell::new() }
-    }
-
-    /// First-call init under `get_or_try_init`. Hand-rolls the `Result`
-    /// shape required by OnceCell instead of `match`-and-rewrap because
-    /// the error type leaving this fn MUST be `LunarisError` (OnceCell's
-    /// stored type is the success arm only).
-    async fn get_or_load(
-        &self,
-    ) -> Result<Arc<lunaris_rerank_native::NativeQuantizedReranker>, LunarisError> {
-        let opts = self.opts.clone();
-        self.cell
-            .get_or_try_init(|| async move {
-                tokio::task::spawn_blocking(move || {
-                    lunaris_rerank_native::NativeQuantizedReranker::open(opts)
-                })
-                .await
-                .map_err(|e| {
-                    LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
-                        "lazy reranker init join: {e}"
-                    )))
-                })?
-                .map(Arc::new)
-                .map_err(LunarisError::from)
-            })
-            .await
-            .cloned()
-    }
-}
-
-#[cfg(feature = "reranker-gguf")]
-impl std::fmt::Debug for LazyQuantizedReranker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LazyQuantizedReranker")
-            .field("gguf", &self.opts.gguf_path)
-            .field("loaded", &self.cell.initialized())
-            .finish()
-    }
-}
-
-#[cfg(feature = "reranker-gguf")]
-#[async_trait::async_trait]
-impl Reranker for LazyQuantizedReranker {
-    fn applies(&self) -> bool {
-        // Config promises a real reranker — answer eagerly so `Hit { rerank_applied }`
-        // doesn't lie on cold paths.
-        true
-    }
-
-    async fn rerank(
-        &self,
-        query: &str,
-        docs: Vec<lunaris_rerank::RerankCandidate>,
-    ) -> Result<Vec<lunaris_rerank::RerankCandidate>, LunarisError> {
-        let inner = self.get_or_load().await?;
-        inner.rerank(query, docs).await
-    }
-}
-
 // ── v0.4 N-03 — unit tests for env-var resolution (cache-dir layout) ─────────
 //
 // `resolve_embedder()` / `resolve_reranker()` are async + perform I/O; the
 // unit tests below cover only the pure path-resolution helpers and the
 // `resolve_embed_dim()` parser, which are deterministic and side-effect-free.
-// Construction of real `NativeEmbedder` / `NativeReranker` is exercised by
-// the native crates' own `numerical_equivalence` integration tests.
+// Construction of the real llama.cpp embedder/reranker is exercised by
+// lunaris-llamacpp's own integration tests + the `llamacpp_wired` test.
 #[cfg(test)]
 mod backend_resolution_tests {
     use super::*;

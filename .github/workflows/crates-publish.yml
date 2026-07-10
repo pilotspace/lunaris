@@ -110,9 +110,9 @@ jobs:
 
           # Dev-dep-aware topological order — see header comment.
           CRATES="lunaris-core lunaris-storage-moon lunaris-storage-postgres \
-            lunaris-storage-embedded lunaris-llm lunaris-embed-native \
-            lunaris-embed-remote lunaris-rerank lunaris-extract \
-            lunaris-ingest lunaris-rerank-native lunaris-verify \
+            lunaris-storage-embedded lunaris-llm lunaris-embed-remote \
+            lunaris-rerank lunaris-llamacpp lunaris-extract \
+            lunaris-ingest lunaris-verify \
             lunaris-consolidate lunaris-retrieve lunaris-memory"
 
           for crate in ${CRATES}; do

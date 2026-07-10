@@ -1,11 +1,9 @@
-//! v0.4 N-03 cutover — TypeScript-facing `EmbedderConfig` napi class,
-//! rewritten on `lunaris-embed-native::NativeEmbedder` (+
-//! `NativeQuantizedEmbedder` under `embedder-gguf`). The retired
-//! `EmbedderConfig.fastembed/.fromOnnxBytes/.fromOnnxPath/.ollama` factories
-//! are replaced by `EmbedderConfig.native()` and
-//! `EmbedderConfig.nativeQuantized()` — see
-//! `docs/migration/0.3-to-0.4-native-default.md` for the TypeScript
-//! migration recipe.
+//! llama.cpp-only cutover (2026-07, Phase C) — TypeScript-facing
+//! `EmbedderConfig` napi class, rewritten on
+//! `lunaris-llamacpp::LlamaCppEmbedder` (granite-r2 Q4_K_M GGUF). The
+//! retired v0.4 `EmbedderConfig.native()` / `EmbedderConfig.nativeQuantized()`
+//! factories (candle) fail loudly with a migration hint; the supported
+//! factories are `EmbedderConfig.llamacpp()` and `EmbedderConfig.noop()`.
 //!
 //! Handwritten (NOT codegen-managed). Mirrors the Python sibling
 //! `crates/lunaris-py/src/embedder_config.rs` modulo camelCase.
@@ -16,12 +14,12 @@ use std::sync::Arc;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use lunaris_core::{Embedder, LunarisError, NOOP_DEFAULT_DIM, NoopEmbedder};
-use lunaris_embed_native::{GRANITE_R2_DIM, NativeEmbedder, NativeEmbedderOpts};
-#[cfg(feature = "embedder-gguf")]
-use lunaris_embed_native::{NativeQuantizedEmbedder, NativeQuantizedEmbedderOpts};
+use lunaris_core::{Embedder, NOOP_DEFAULT_DIM, NoopEmbedder};
 
+#[cfg(feature = "llamacpp")]
 use crate::errors::napi_err;
+#[cfg(feature = "llamacpp")]
+use lunaris_core::LunarisError;
 
 /// Opaque container around a resolved [`lunaris_core::Embedder`]. Constructed
 /// via one of the `#[napi(factory)]` methods; consumed by
@@ -42,57 +40,65 @@ impl EmbedderConfig {
         Self { inner: Arc::new(NoopEmbedder::new(dim as usize)), declared_dim: dim }
     }
 
-    /// FP16 candle `NativeEmbedder` backed by
-    /// `ibm-granite/granite-embedding-311m-multilingual-r2` (768-d).
+    /// llama.cpp `LlamaCppEmbedder` backed by the granite-r2 Q4_K_M GGUF
+    /// (768-d).
     ///
-    /// `modelDir` defaults to
-    /// `~/Library/Caches/lunaris/models/granite-embedding-311m-multilingual-r2/`
-    /// on macOS (resolves via `dirs::cache_dir()` on other platforms).
+    /// `ggufPath` defaults to the staged artifact
+    /// `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
     #[napi(factory)]
-    pub fn native(opts: Option<NativeConfigOpts>) -> Result<Self> {
+    #[cfg(feature = "llamacpp")]
+    pub fn llamacpp(opts: Option<LlamaCppConfigOpts>) -> Result<Self> {
         let opts = opts.unwrap_or_default();
-        let dir = opts.model_dir.map(PathBuf::from).unwrap_or_else(default_granite_dir);
-        let opts = NativeEmbedderOpts {
-            weights_path: dir.join("model.safetensors"),
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let e = NativeEmbedder::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(e), declared_dim: GRANITE_R2_DIM as u32 })
+        let gguf_path = opts.gguf_path.map(PathBuf::from).unwrap_or_else(default_embedder_gguf);
+        let opts = lunaris_llamacpp::LlamaCppEmbedderOpts { gguf_path, ..Default::default() };
+        let e = lunaris_llamacpp::LlamaCppEmbedder::open(opts)
+            .map_err(|e| napi_err(LunarisError::from(e)))?;
+        let dim = e.dim() as u32;
+        Ok(Self { inner: Arc::new(e), declared_dim: dim })
     }
 
-    /// Q4_K_M GGUF `NativeQuantizedEmbedder` — requires the napi cdylib
-    /// to be built with the `embedder-gguf` feature.
-    #[napi(factory, js_name = "nativeQuantized")]
-    #[cfg(feature = "embedder-gguf")]
-    pub fn native_quantized(opts: NativeQuantizedConfigOpts) -> Result<Self> {
-        let dir = opts.model_dir.map(PathBuf::from).unwrap_or_else(default_granite_dir);
-        let opts = NativeQuantizedEmbedderOpts {
-            gguf_path: PathBuf::from(opts.gguf_path),
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let e = NativeQuantizedEmbedder::open(opts).map_err(|e| napi_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(e), declared_dim: GRANITE_R2_DIM as u32 })
+    /// Stub raising `InvalidArg` when the cdylib was built without the
+    /// `llamacpp` feature (Tier-0 build).
+    #[napi(factory)]
+    #[cfg(not(feature = "llamacpp"))]
+    #[allow(unused_variables)]
+    pub fn llamacpp(opts: Option<LlamaCppConfigOpts>) -> Result<Self> {
+        Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            "EmbedderConfig.llamacpp() requires the lunaris cdylib to be built with the \
+             `llamacpp` feature (this is a Tier-0 no-inference build). Use \
+             EmbedderConfig.noop() or install a full build.",
+        ))
     }
 
-    /// Stub raising `InvalidArg` when the cdylib was built without
-    /// `embedder-gguf`. Surfaces a clear error instead of `undefined`.
+    /// RETIRED (llama.cpp-only cutover): the candle `NativeEmbedder` was
+    /// deleted. Use `EmbedderConfig.llamacpp()` instead.
+    #[napi(factory)]
+    #[allow(unused_variables)]
+    pub fn native(opts: Option<NativeConfigOpts>) -> Result<Self> {
+        Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            "EmbedderConfig.native() was removed in the llama.cpp-only cutover (v0.6): \
+             the candle FP16 embedder no longer exists. Use EmbedderConfig.llamacpp() \
+             (granite-r2 Q4_K_M GGUF, same 768-d vectors).",
+        ))
+    }
+
+    /// RETIRED (llama.cpp-only cutover): the candle quantized embedder was
+    /// deleted. Use `EmbedderConfig.llamacpp()` instead.
     #[napi(factory, js_name = "nativeQuantized")]
-    #[cfg(not(feature = "embedder-gguf"))]
     #[allow(unused_variables)]
     pub fn native_quantized(opts: NativeQuantizedConfigOpts) -> Result<Self> {
         Err(napi::Error::new(
             napi::Status::InvalidArg,
-            "EmbedderConfig.nativeQuantized() requires the lunaris-ts cdylib to be built \
-             with the `embedder-gguf` feature.",
+            "EmbedderConfig.nativeQuantized() was removed in the llama.cpp-only cutover \
+             (v0.6). Use EmbedderConfig.llamacpp({ ggufPath }) — same GGUF artifact, \
+             served by llama.cpp.",
         ))
     }
 
     /// Output dimensionality declared by the operator at config time.
-    /// For native paths this is `GRANITE_R2_DIM = 768`.
+    /// For the llamacpp path this is granite-r2's 768.
     #[napi(getter)]
     pub fn declared_dim(&self) -> u32 {
         self.declared_dim
@@ -101,29 +107,42 @@ impl EmbedderConfig {
 
 #[napi(object)]
 #[derive(Default)]
+pub struct LlamaCppConfigOpts {
+    /// Path to the GGUF artifact. Default:
+    /// `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
+    pub gguf_path: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Default)]
 pub struct NativeConfigOpts {
-    /// Override for the granite-r2 model directory. Default:
-    /// `<cache>/lunaris/models/granite-embedding-311m-multilingual-r2/`.
+    /// RETIRED — kept so existing callers get the migration error, not a
+    /// TypeScript signature break.
     pub model_dir: Option<String>,
 }
 
 #[napi(object)]
 pub struct NativeQuantizedConfigOpts {
-    /// Path to the Q4_K_M GGUF artifact.
+    /// RETIRED — see `EmbedderConfig.llamacpp()`.
     pub gguf_path: String,
-    /// Override for the model directory holding `tokenizer.json` +
-    /// `config.json`. Default: same as `EmbedderConfig.native()`.
+    /// RETIRED — see `EmbedderConfig.llamacpp()`.
     pub model_dir: Option<String>,
 }
 
-fn default_granite_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
+/// `~/.lunaris/models/` — the GGUF staging directory shared with the
+/// umbrella resolver and the `stage-models` tool.
+#[cfg(feature = "llamacpp")]
+pub(crate) fn lunaris_models_dir() -> PathBuf {
+    std::env::var_os("HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Caches"))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("lunaris").join("models").join("granite-embedding-311m-multilingual-r2")
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".lunaris")
+        .join("models")
+}
+
+#[cfg(feature = "llamacpp")]
+fn default_embedder_gguf() -> PathBuf {
+    lunaris_models_dir().join("granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
 }
 
 #[cfg(test)]
@@ -133,15 +152,27 @@ mod tests {
     #[test]
     fn noop_default_dim_matches_granite_r2() {
         let cfg = EmbedderConfig::noop(None);
-        assert_eq!(cfg.declared_dim, GRANITE_R2_DIM as u32);
         assert_eq!(cfg.declared_dim, 768);
     }
 
     #[test]
-    fn default_granite_dir_ends_with_canonical_name() {
-        let p = default_granite_dir();
+    fn retired_native_factories_fail_loudly() {
+        assert!(EmbedderConfig::native(None).is_err());
         assert!(
-            p.ends_with("lunaris/models/granite-embedding-311m-multilingual-r2"),
+            EmbedderConfig::native_quantized(NativeQuantizedConfigOpts {
+                gguf_path: "x.gguf".into(),
+                model_dir: None,
+            })
+            .is_err()
+        );
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[test]
+    fn default_embedder_gguf_ends_with_staged_name() {
+        let p = default_embedder_gguf();
+        assert!(
+            p.ends_with(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"),
             "got {}",
             p.display()
         );

@@ -30,17 +30,14 @@ members = [
   # grouping-by-concern rule (all downstream-consumer crates clustered).
   "crates/lunaris-recipes",
   "crates/lunaris-consolidate",
-  # Milestone v0.4 N-03 cutover — the legacy `lunaris-embed` crate
-  # (fastembed/candle-gemma/ollama/fallback) was deleted; `lunaris-embed-native`
-  # (candle granite-r2) is the canonical embedder.
-  "crates/lunaris-embed-native",
-  # v0.4 N-03 cutover — Ollama HTTP escape hatch crate (feature-gated, off
-  # by default). The supported v0.4 embedder is lunaris-embed-native. See
+  # llama.cpp-only cutover (Phase C) — Ollama/OpenAI-compatible HTTP escape
+  # hatch crate (feature-gated, off by default; operator-only). See
   # crates/lunaris-embed-remote/src/lib.rs for rationale.
   "crates/lunaris-embed-remote",
-  # ADR 2026-07-10: opt-in llama.cpp runtime (embedder spike). Grouped with
-  # the other inference-backend crates; its `llamacpp` feature MUST stay out
-  # of every default feature set (empty shell when off — no C++ build).
+  # llama.cpp-only cutover (ADR 2026-07-10, Phase C) — THE Lunaris inference
+  # runtime (embedder + reranker). The umbrella enables `llamacpp` by
+  # default; with the feature off this is an empty shell (no C++ build),
+  # which is the Tier-0 no-inference path.
   "crates/lunaris-llamacpp",
   "crates/lunaris-extract",
   # Phase 11 (LLM unification) — shared LlmBackend trait + LlmConfig consumed by
@@ -49,11 +46,6 @@ members = [
   "crates/lunaris-llm",
   "crates/lunaris-ingest",
   "crates/lunaris-rerank",
-  # Milestone v0.4 N-02 — native candle XLM-RoBERTa cross-encoder reranker
-  # for bge-reranker-v2-m3. Companion to lunaris-embed-native; coexists with
-  # `lunaris-rerank` until the N-03 cutover. See
-  # crates/lunaris-rerank-native/src/lib.rs for rationale.
-  "crates/lunaris-rerank-native",
   "crates/lunaris-retrieve",
   "crates/lunaris-server",
   # Wave A — MCP server binary exposing Lunaris memory to Claude Code / Codex
@@ -102,7 +94,7 @@ publish      = false
 # crates.io version for `cargo publish`. Version stays in lockstep
 # with `[workspace.package].version` above; bump them together.
 # `default-features = false` here so downstream callers can opt back
-# in via `features = ["candle", ...]` without colliding with cargo's
+# in via `features = ["llamacpp", ...]` without colliding with cargo's
 # rule that disallows downstream `default-features = false` when the
 # workspace entry leaves defaults enabled.
 lunaris                   = { path = "crates/lunaris",                   version = "0.5.0", default-features = false, package = "lunaris-memory" }
@@ -110,11 +102,9 @@ lunaris-core              = { path = "crates/lunaris-core",              version
 lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.5.0", default-features = false }
 lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.5.0", default-features = false }
 lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.5.0", default-features = false }
-lunaris-embed-native      = { path = "crates/lunaris-embed-native",      version = "0.5.0", default-features = false }
 lunaris-embed-remote      = { path = "crates/lunaris-embed-remote",      version = "0.5.0", default-features = false }
 lunaris-llamacpp          = { path = "crates/lunaris-llamacpp",          version = "0.5.0", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.5.0", default-features = false }
-lunaris-rerank-native     = { path = "crates/lunaris-rerank-native",     version = "0.5.0", default-features = false }
 lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.5.0", default-features = false }
 lunaris-llm               = { path = "crates/lunaris-llm",               version = "0.5.0", default-features = false }
 lunaris-verify            = { path = "crates/lunaris-verify",            version = "0.5.0", default-features = false }
@@ -168,16 +158,13 @@ sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
 pulldown-cmark = { version = "0.13", default-features = false }
-candle-core    = "0.10"
-candle-nn      = "0.10"
-candle-transformers = "0.10"
-# v0.4 N-03 cutover — fastembed-rs / ONNX Runtime / `ort` workspace deps
-# retired alongside the `lunaris-embed` crate. The canonical embedder +
-# reranker run on candle 0.10 (FP16) and Q4_K_M GGUF (via candle-quantized),
-# wired through `lunaris-embed-native` and `lunaris-rerank-native`. The
-# `hf-hub` dep is intentionally KEPT — `lunaris-bench` still uses it for
-# eval-dataset download (LongMemEval / LoCoMo / WNUT-2017) per
-# `crates/lunaris-bench/src/eval/longmemeval.rs:165`.
+# llama.cpp-only cutover (Phase C) — the candle 0.10 workspace deps were
+# retired with `lunaris-embed-native` / `lunaris-rerank-native`; inference
+# now runs on `lunaris-llamacpp` (llama-cpp-2). `tokenizers` is KEPT: the
+# ingest token counter (`lunaris-ingest`) still loads granite-r2's
+# tokenizer.json for chunk budgeting. `hf-hub` is also KEPT —
+# `lunaris-bench` uses it for eval-dataset download (LongMemEval / LoCoMo /
+# WNUT-2017) per `crates/lunaris-bench/src/eval/longmemeval.rs:165`.
 tokenizers     = { version = "0.22", default-features = false, features = ["onig"] }
 dirs           = "6"
 # `reqwest` is shared by `lunaris-embed-remote` (Ollama HTTP escape hatch)
@@ -216,17 +203,6 @@ tower-governor     = { package = "tower_governor", version = "0.8", default-feat
 # `governor::clock::QuantaInstant` in the GovernorLayer return type signature.
 governor           = "0.10"
 is-terminal        = "0.4"
-# O-01-B — physical-core rayon thread-pool sizing for the candle CPU backend.
-# `num_cpus::get_physical()` returns physical (non-hyperthreaded) core count;
-# rayon's default `get()` includes logical cores, which for BLAS-heavy
-# matmul workloads thrashes the L2 / L3 cache by 1.3–1.8× without a perf win
-# (see HARDWARE-OPTIMIZATION-ROADMAP §51 "rayon thread pool sized to physical
-# cores"). Both crates are already in the transitive graph via candle; we
-# promote them to workspace deps so embed-native / rerank-native can call
-# `ThreadPoolBuilder::new().num_threads(num_cpus::get_physical())` once at
-# `open()`.
-num_cpus           = "1"
-rayon              = "1"
 # Phase 14.2 — ephemeral per-handle LRU boost cache (ReflectOutput.boost rescoring).
 # `lru 0.12` is the standard LRU cache crate (hashbrown-backed, no_std-compatible).
 # Wrapped in `parking_lot::RwLock` for lock discipline.

@@ -2,7 +2,7 @@
 //!
 //! Runs on every default `cargo test -p lunaris-rerank`. The v0.4 N-03
 //! cutover deleted `BgeRerankerV2M3`; the bge cross-encoder + its live
-//! integration test now live in `lunaris-rerank-native`. This contract
+//! integration test now live in `lunaris-llamacpp`. This contract
 //! suite is the canonical trait + Noop coverage that survives the cutover.
 
 use std::sync::Arc;

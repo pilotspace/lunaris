@@ -125,7 +125,7 @@ impl AppState {
     /// [`SKIP_EMBEDDER_PROBE_ENV_VAR`]). Operators may set this for benchmark /
     /// ingest-only workloads that never call `memory.recall`.
     ///
-    /// **Cold-start note:** `Lunaris::open` with `embedder-gguf` feature active
+    /// **Cold-start note:** `Lunaris::open` with the `llamacpp` feature active
     /// but no GGUF staged silently falls back to `NoopEmbedder`. Step 4 catches
     /// this and converts the silent fallback into a loud, actionable error. Do
     /// NOT call `model_stager::ensure_staged` here — that call is deferred to

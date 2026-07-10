@@ -35,17 +35,16 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::Parser;
 
-/// SHA-256 of the canonical Q4_K_M granite-r2 GGUF used by the
-/// `--features embedder-gguf` path. Operators downloading the GGUF
-/// out-of-band MUST verify this hash before serving traffic.
+/// SHA-256 of the canonical Q4_K_M granite-r2 GGUF (the llama.cpp
+/// embedder artifact). Operators downloading the GGUF out-of-band MUST
+/// verify this hash before serving traffic.
 const GRANITE_GGUF_Q4_K_M_SHA256: &str =
     "0768a38b0bc9900e89bb15ae0b6ea2ca7db130759e0eca226119610aedf5e276";
 const GRANITE_GGUF_SIZE_MIB: f64 = 240.7;
 
 /// SHA-256 of the canonical Q5_K_M-imatrix bge-reranker-v2-m3 GGUF
-/// used by `--features reranker-gguf`. Mirrors
-/// `lunaris_rerank_native::BGE_RERANKER_GGUF_Q4_SHA256` — re-stated
-/// here so this binary's `--help` is self-contained.
+/// (the llama.cpp reranker artifact). Re-stated here so this binary's
+/// `--help` is self-contained.
 const BGE_GGUF_Q5_K_M_SHA256: &str =
     "6cdcc566200dba69553a89a9d59ff6d631e33969bc9367eff6914919f7722a1c";
 const BGE_GGUF_SIZE_MIB: f64 = 446.0;
@@ -59,7 +58,7 @@ const SAFETENSORS_FILES: &[&str] = &["model.safetensors", "tokenizer.json", "con
 
 /// Long-form `--help` body. Lists both repos AND the canonical GGUF
 /// SHA-256s so the operator can verify a quantized download without
-/// chasing the constants in `lunaris-rerank-native`.
+/// chasing constants in another crate.
 fn after_help() -> String {
     format!(
         "Models staged:\n  \

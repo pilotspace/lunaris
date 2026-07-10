@@ -1,15 +1,13 @@
 //! `lunaris-embed-remote` — Ollama HTTP escape-hatch embedder.
 //!
-//! # OPERATOR ESCAPE HATCH — NOT THE SUPPORTED v0.4 PATH
+//! # OPERATOR ESCAPE HATCH — NOT THE SUPPORTED PATH
 //!
-//! The supported v0.4 embedder is
-//! [`lunaris_embed_native::NativeEmbedder`](https://docs.rs/lunaris-embed-native)
-//! (candle + `ibm-granite/granite-embedding-311m-multilingual-r2`). This crate
-//! is feature-gated (`embed-remote` on the `lunaris-memory` umbrella) and
-//! intentionally off by default. It exists so air-gapped operators with a
-//! pre-existing Ollama instance can keep an HTTP-based fallback during the
-//! v0.4 transition without pulling fastembed / ORT / hf-hub back into the
-//! binary.
+//! The supported embedder is `lunaris_llamacpp::LlamaCppEmbedder`
+//! (llama.cpp + granite-r2 Q4_K_M GGUF; llama.cpp-only cutover, ADR
+//! 2026-07-10). This crate is feature-gated (`embed-remote` on the
+//! `lunaris-memory` umbrella) and intentionally off by default. It exists so
+//! air-gapped operators with a pre-existing Ollama instance can keep an
+//! HTTP-based fallback without a local GGUF artifact.
 //!
 //! Activate by:
 //!
@@ -19,7 +17,8 @@
 //! ```
 //!
 //! and set `LUNARIS_EMBEDDER_OLLAMA_URL=<endpoint>` at startup. The umbrella's
-//! `resolve_embedder()` consults that env var BEFORE the native default.
+//! `resolve_embedder()` consults that env var AFTER the llama.cpp default
+//! (remote is the fallback, not the override).
 //!
 //! ## Wire shape
 //!
@@ -122,7 +121,7 @@ impl OllamaEmbedder {
             model = %opts.model,
             dim = opts.dim,
             "OllamaEmbedder constructed — this is an OPERATOR ESCAPE HATCH and is not \
-             the supported v0.4 path. Use lunaris-embed-native::NativeEmbedder unless \
+             the supported path. Use the llama.cpp embedder (lunaris-llamacpp) unless \
              you have a specific reason to route embeddings through Ollama."
         );
         Ok(Self { client, endpoint: opts.endpoint, model: opts.model, dim: opts.dim })

@@ -22,10 +22,10 @@ name = "lunaris-contextd"
 path = "src/contextd.rs"
 
 [dependencies]
-# Lunaris engine — NO embedder-gguf or reranker-gguf features.
-# The hook hot-path is content-only; embedding is deferred to first recall
-# (HOOK-06 latency budget: p50 <= 50ms).
-lunaris      = { workspace = true, features = ["embedder-gguf", "reranker-gguf"] }
+# Lunaris engine — llama.cpp GGUF embedder+reranker (llama.cpp-only cutover,
+# Phase C). The hook hot-path is content-only; embedding is deferred to first
+# recall (HOOK-06 latency budget: p50 <= 50ms) — the GGUF loads lazily.
+lunaris      = { workspace = true, features = ["llamacpp"] }
 lunaris-core = { workspace = true }
 lunaris-ingest = { workspace = true }
 lunaris-retrieve = { workspace = true }

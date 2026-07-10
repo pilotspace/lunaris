@@ -3,8 +3,8 @@
 //! v0.4 N-03 cutover: this crate slimmed from "default backend host" to
 //! "trait + Noop seam." The concrete cross-encoders moved out:
 //!
-//! - `BgeRerankerV2M3` (candle) is deleted. The native replacement is
-//!   [`lunaris_rerank_native::NativeReranker`] (candle + bge-reranker-v2-m3
+//! - `BgeRerankerV2M3` (candle) is deleted. The replacement is
+//!   `lunaris_llamacpp::LlamaCppReranker` (llama.cpp + bge-reranker-v2-m3
 //!   FP32, sigmoid output ∈ [0, 1]).
 //! - `FastembedReranker` (ORT) and the `fastembed_exec` EP helper are deleted
 //!   with the rest of the fastembed transitive surface.

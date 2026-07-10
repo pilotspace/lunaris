@@ -1,11 +1,9 @@
-//! v0.4 N-03 cutover — `EmbedderConfig` for the Python SDK, rewritten on
-//! `lunaris-embed-native::NativeEmbedder` (+ `NativeQuantizedEmbedder` under
-//! `embedder-gguf`). The retired `EmbedderConfig.fastembed()` /
-//! `EmbedderConfig.from_onnx_path()` / `EmbedderConfig.ollama()` factories
-//! are replaced by `EmbedderConfig.native()` and
-//! `EmbedderConfig.native_quantized()` — see
-//! `docs/migration/0.3-to-0.4-native-default.md` for the Python migration
-//! recipe.
+//! llama.cpp-only cutover (2026-07, Phase C) — `EmbedderConfig` for the
+//! Python SDK, rewritten on `lunaris-llamacpp::LlamaCppEmbedder` (granite-r2
+//! Q4_K_M GGUF). The retired v0.4 `EmbedderConfig.native()` /
+//! `EmbedderConfig.native_quantized()` factories (candle) fail loudly with a
+//! migration hint; the supported factories are [`EmbedderConfig::llamacpp`]
+//! and [`EmbedderConfig::noop`].
 //!
 //! This module is **NOT codegen-managed** (mirrors the `scope.rs` /
 //! `toggles.rs` precedent). `EmbedderConfig` is an opaque holder around a
@@ -18,26 +16,11 @@
 //! would require per-call Python→Rust callbacks, which are slow and brittle.
 //! The factory methods below cover every customization the Rust crate
 //! supports MINUS the "roll your own trait impl" escape hatch (Rust-only).
-//!
-//! ## Factory methods
-//!
-//! - [`EmbedderConfig::native`] — FP16 candle granite-r2 embedder from a
-//!   model directory (default `<cache>/lunaris/models/granite-embedding-311m-multilingual-r2/`).
-//! - [`EmbedderConfig::native_quantized`] — Q4_K_M GGUF embedder (gated
-//!   on the `lunaris-embed-native/embedder-gguf` feature at wheel-build time).
-//! - [`EmbedderConfig::noop`] — zero-vector backend at caller-chosen dim.
-//!
-//! TODO(N-04): pre-existing Scope-codegen errors in `crates/lunaris-ts` and
-//! `crates/lunaris-py` are tracked separately; this rewrite does not depend
-//! on the codegen output and is unaffected.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use lunaris_core::{Embedder, LunarisError, NOOP_DEFAULT_DIM, NoopEmbedder, StorageError};
-use lunaris_embed_native::{GRANITE_R2_DIM, NativeEmbedder, NativeEmbedderOpts};
-#[cfg(feature = "embedder-gguf")]
-use lunaris_embed_native::{NativeQuantizedEmbedder, NativeQuantizedEmbedderOpts};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -46,14 +29,13 @@ use crate::errors::py_err;
 
 /// Opaque holder for a resolved [`Embedder`] backend.
 ///
-/// Construct via the [`EmbedderConfig::native`] /
-/// [`EmbedderConfig::native_quantized`] / [`EmbedderConfig::noop`] static
-/// methods, then pass to `Lunaris.open(url, embedder=cfg)`.
+/// Construct via the [`EmbedderConfig::llamacpp`] / [`EmbedderConfig::noop`]
+/// static methods, then pass to `Lunaris.open(url, embedder=cfg)`.
 ///
 /// ```python
 /// from lunaris import EmbedderConfig, open
 ///
-/// cfg = EmbedderConfig.native()  # uses default cache dir
+/// cfg = EmbedderConfig.llamacpp()  # uses the ~/.lunaris/models/ staged GGUF
 /// handle = await open(url, embedder=cfg)
 /// ```
 #[pyclass(frozen, name = "EmbedderConfig", module = "lunaris", from_py_object)]
@@ -66,65 +48,66 @@ pub struct EmbedderConfig {
 
 #[pymethods]
 impl EmbedderConfig {
-    /// Construct the FP16 candle `NativeEmbedder` backed by
-    /// `ibm-granite/granite-embedding-311m-multilingual-r2` (768-d).
+    /// Construct the llama.cpp `LlamaCppEmbedder` backed by the granite-r2
+    /// Q4_K_M GGUF (768-d).
     ///
-    /// - `model_dir`: directory holding `model.safetensors`, `tokenizer.json`,
-    ///   `config.json`. `None` defers to the canonical cache layout
-    ///   `<cache_dir>/lunaris/models/granite-embedding-311m-multilingual-r2/`.
+    /// - `gguf_path`: path to the GGUF artifact. `None` defers to the staged
+    ///   default `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
     ///
-    /// Raises `LunarisError` if any of the three artifacts is missing.
+    /// Raises `LunarisError` if the artifact is missing or fails to load.
     #[staticmethod]
-    #[pyo3(signature = (model_dir=None))]
-    fn native(model_dir: Option<PathBuf>) -> PyResult<Self> {
-        let dir = model_dir.unwrap_or_else(default_granite_dir);
-        let opts = NativeEmbedderOpts {
-            weights_path: dir.join("model.safetensors"),
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let e = NativeEmbedder::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(e), backend: "native", dim: GRANITE_R2_DIM })
-    }
-
-    /// Construct the Q4_K_M GGUF `NativeQuantizedEmbedder`. Requires the
-    /// wheel to be built with the `embedder-gguf` feature.
-    ///
-    /// - `gguf_path`: path to the granite-r2 Q4_K_M GGUF artifact.
-    /// - `model_dir`: directory holding `tokenizer.json` + `config.json`
-    ///   (the GGUF carries weights but not the tokenizer/config). `None`
-    ///   uses the canonical cache layout.
-    #[staticmethod]
-    #[pyo3(signature = (gguf_path, model_dir=None))]
-    #[cfg(feature = "embedder-gguf")]
-    fn native_quantized(gguf_path: PathBuf, model_dir: Option<PathBuf>) -> PyResult<Self> {
-        let dir = model_dir.unwrap_or_else(default_granite_dir);
-        let opts = NativeQuantizedEmbedderOpts {
-            gguf_path,
-            tokenizer_path: dir.join("tokenizer.json"),
-            config_path: dir.join("config.json"),
-            device: candle_core::Device::Cpu,
-        };
-        let e = NativeQuantizedEmbedder::open(opts).map_err(|e| py_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(e), backend: "native-quantized", dim: GRANITE_R2_DIM })
+    #[pyo3(signature = (gguf_path=None))]
+    #[cfg(feature = "llamacpp")]
+    fn llamacpp(gguf_path: Option<PathBuf>) -> PyResult<Self> {
+        let gguf_path = gguf_path.unwrap_or_else(default_embedder_gguf);
+        let opts = lunaris_llamacpp::LlamaCppEmbedderOpts { gguf_path, ..Default::default() };
+        let e = lunaris_llamacpp::LlamaCppEmbedder::open(opts)
+            .map_err(|e| py_err(lunaris_core::LunarisError::from(e)))?;
+        let dim = e.dim();
+        Ok(Self { inner: Arc::new(e), backend: "llamacpp", dim })
     }
 
     /// Stub raising `ValueError` when the wheel was built without the
-    /// `embedder-gguf` feature. Surfaces a clear error rather than a
-    /// silent `AttributeError`.
+    /// `llamacpp` feature (Tier-0 build). Surfaces a clear error rather
+    /// than a silent `AttributeError`.
+    #[staticmethod]
+    #[pyo3(signature = (_gguf_path=None))]
+    #[cfg(not(feature = "llamacpp"))]
+    #[allow(unused_variables)]
+    fn llamacpp(_gguf_path: Option<PathBuf>) -> PyResult<Self> {
+        Err(PyValueError::new_err(
+            "EmbedderConfig.llamacpp() requires the lunaris wheel to be built with the \
+             `llamacpp` feature (this is a Tier-0 no-inference build). Use \
+             EmbedderConfig.noop(), a remote embedder, or install a full wheel.",
+        ))
+    }
+
+    /// RETIRED (llama.cpp-only cutover): the candle `NativeEmbedder` was
+    /// deleted. Use [`EmbedderConfig::llamacpp`] instead.
+    #[staticmethod]
+    #[pyo3(signature = (_model_dir=None))]
+    #[allow(unused_variables)]
+    fn native(_model_dir: Option<PathBuf>) -> PyResult<Self> {
+        Err(PyValueError::new_err(
+            "EmbedderConfig.native() was removed in the llama.cpp-only cutover (v0.6): \
+             the candle FP16 embedder no longer exists. Use EmbedderConfig.llamacpp() \
+             (granite-r2 Q4_K_M GGUF, same 768-d vectors).",
+        ))
+    }
+
+    /// RETIRED (llama.cpp-only cutover): the candle quantized embedder was
+    /// deleted. Use [`EmbedderConfig::llamacpp`] instead.
     #[staticmethod]
     #[pyo3(signature = (_gguf_path=None, _model_dir=None))]
-    #[cfg(not(feature = "embedder-gguf"))]
     #[allow(unused_variables)]
     fn native_quantized(
         _gguf_path: Option<PathBuf>,
         _model_dir: Option<PathBuf>,
     ) -> PyResult<Self> {
         Err(PyValueError::new_err(
-            "EmbedderConfig.native_quantized() requires the lunaris-py wheel to be built \
-             with the `embedder-gguf` feature (forwards to \
-             lunaris-embed-native/embedder-gguf).",
+            "EmbedderConfig.native_quantized() was removed in the llama.cpp-only cutover \
+             (v0.6). Use EmbedderConfig.llamacpp(gguf_path) — same GGUF artifact, served \
+             by llama.cpp.",
         ))
     }
 
@@ -132,14 +115,14 @@ impl EmbedderConfig {
     /// unit tests. Returns all-zero vectors of length `dim`.
     ///
     /// `dim` defaults to [`NOOP_DEFAULT_DIM`] = 768 — matching granite-r2 —
-    /// so storage indices stay interoperable across noop ↔ native swaps.
+    /// so storage indices stay interoperable across noop ↔ llamacpp swaps.
     #[staticmethod]
     #[pyo3(signature = (dim = NOOP_DEFAULT_DIM))]
     fn noop(dim: usize) -> Self {
         Self { inner: Arc::new(NoopEmbedder::new(dim)), backend: "noop", dim }
     }
 
-    /// Debug-friendly repr: `EmbedderConfig(backend='native', dim=768)`.
+    /// Debug-friendly repr: `EmbedderConfig(backend='llamacpp', dim=768)`.
     fn __repr__(&self) -> String {
         format!("EmbedderConfig(backend={:?}, dim={})", self.backend, self.dim)
     }
@@ -151,21 +134,27 @@ impl EmbedderConfig {
     }
 }
 
-/// Canonical cache directory for the granite-r2 model artifacts. Mirrors
-/// `lunaris::handle::default_model_dir(GRANITE_R2_DIR)` so the SDK + the
-/// umbrella agree on the on-disk layout.
-fn default_granite_dir() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
+/// Staged default location for the embedder GGUF. Mirrors the umbrella
+/// `lunaris::handle` staged-artifact layout (`~/.lunaris/models/`) so the SDK
+/// + the umbrella agree on the on-disk layout.
+#[cfg(feature = "llamacpp")]
+fn default_embedder_gguf() -> PathBuf {
+    lunaris_models_dir().join("granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
+}
+
+/// `~/.lunaris/models/` — the GGUF staging directory shared with the
+/// umbrella resolver and the `stage-models` tool.
+#[cfg(feature = "llamacpp")]
+pub(crate) fn lunaris_models_dir() -> PathBuf {
+    std::env::var_os("HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Caches"))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("lunaris").join("models").join("granite-embedding-311m-multilingual-r2")
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".lunaris")
+        .join("models")
 }
 
 /// Apply an [`EmbedderConfig`] to a freshly-constructed `Lunaris` handle.
-/// PyO3 0.26 does not support multiple `#[pymethods]` blocks without the
+/// PyO3 0.29 does not support multiple `#[pymethods]` blocks without the
 /// `multiple-pymethods` feature; the free-function pattern mirrors
 /// `scope.rs::lunaris_scoped`.
 #[pyfunction]
@@ -185,7 +174,7 @@ pub(crate) fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()>
 }
 
 /// Read `path` into a `Vec<u8>`, surfacing the failing field name. Kept for
-/// potential BYO-weight callers in N-04.
+/// potential BYO-weight callers.
 #[allow(dead_code)]
 fn read_path(field: &str, path: &std::path::Path) -> PyResult<Vec<u8>> {
     std::fs::read(path).map_err(|e| {
@@ -204,14 +193,22 @@ mod tests {
     fn noop_default_dim_matches_granite_r2() {
         let cfg = EmbedderConfig::noop(NOOP_DEFAULT_DIM);
         assert_eq!(cfg.dim(), 768);
-        assert_eq!(cfg.dim(), GRANITE_R2_DIM);
     }
 
     #[test]
-    fn default_granite_dir_ends_with_canonical_name() {
-        let p = default_granite_dir();
+    fn retired_native_factories_fail_loudly() {
+        // PyErr rendering needs the GIL; asserting Err is enough here — the
+        // message content is a compile-time literal above.
+        assert!(EmbedderConfig::native(None).is_err());
+        assert!(EmbedderConfig::native_quantized(None, None).is_err());
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[test]
+    fn default_embedder_gguf_ends_with_staged_name() {
+        let p = default_embedder_gguf();
         assert!(
-            p.ends_with("lunaris/models/granite-embedding-311m-multilingual-r2"),
+            p.ends_with(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"),
             "got {}",
             p.display()
         );

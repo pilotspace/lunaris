@@ -26,9 +26,10 @@ path = "src/main.rs"
 # transport-io adds tokio::io::{stdin,stdout} + codec framing needed for stdio.
 rmcp = { version = "1.7", features = ["transport-io"] }
 
-# Lunaris engine — Q4_K_M GGUF embedder+reranker; lazy download to ~/.lunaris/models/.
-# default-features = false on the workspace entry; we add only what we need here.
-lunaris      = { workspace = true, features = ["embedder-gguf", "reranker-gguf"] }
+# Lunaris engine — llama.cpp GGUF embedder+reranker (Q4_K_M / Q5_K_M) staged
+# under ~/.lunaris/models/. default-features = false on the workspace entry;
+# we add only what we need here.
+lunaris      = { workspace = true, features = ["llamacpp"] }
 lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
 
