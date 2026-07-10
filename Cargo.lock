@@ -3129,6 +3129,7 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "dirs",
+ "futures",
  "hex",
  "lunaris-core",
  "lunaris-llm",

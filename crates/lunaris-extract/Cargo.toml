@@ -65,6 +65,7 @@ lunaris-core = { workspace = true }
 # `default-features = false` so this crate stays the single source of truth for
 # which transports are enabled — we forward via `features` below.
 lunaris-llm = { workspace = true }
+futures        = { workspace = true }
 async-trait    = { workspace = true }
 thiserror      = { workspace = true }
 tracing        = { workspace = true }

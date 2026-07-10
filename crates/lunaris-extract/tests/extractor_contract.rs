@@ -212,6 +212,7 @@ async fn cloud_api_extracts_real_batch() {
         batch_timeout_ms: 30_000,
         max_retries: 1,
         max_tokens: 512,
+        concurrency: 4,
     })
     .expect("client builds");
     let chunks = vec![ChunkInput {
