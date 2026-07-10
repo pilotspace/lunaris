@@ -52,16 +52,17 @@ fn default_cache_dir() -> Option<PathBuf> {
 
 fn default_gguf_path() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| {
-        PathBuf::from(h)
-            .join(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
+        PathBuf::from(h).join(".lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf")
     })
 }
 
 #[test]
 fn quantized_embed_emits_the_four_microscope_spans() {
     let cache_dir = default_cache_dir();
-    let tokenizer_path =
-        resolve_path("GRANITE_R2_TOKENIZER_PATH", cache_dir.clone().map(|d| d.join("tokenizer.json")));
+    let tokenizer_path = resolve_path(
+        "GRANITE_R2_TOKENIZER_PATH",
+        cache_dir.clone().map(|d| d.join("tokenizer.json")),
+    );
     let config_path =
         resolve_path("GRANITE_R2_CONFIG_PATH", cache_dir.map(|d| d.join("config.json")));
     let gguf_path = resolve_path("GRANITE_R2_GGUF_PATH", default_gguf_path());

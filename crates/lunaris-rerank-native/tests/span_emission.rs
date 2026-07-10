@@ -44,7 +44,8 @@ fn resolve_path(env_var: &str, fallback: Option<PathBuf>) -> Option<PathBuf> {
 }
 
 fn default_cache_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/lunaris/models/bge-reranker-v2-m3"))
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".cache/lunaris/models/bge-reranker-v2-m3"))
 }
 
 fn default_gguf_path() -> Option<PathBuf> {

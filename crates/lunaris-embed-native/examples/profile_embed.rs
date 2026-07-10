@@ -70,12 +70,56 @@ use tracing_subscriber::registry::LookupSpan;
 /// BPE merges collapsing every document to the same handful of ids, without
 /// pulling in a `lorem-ipsum`-style dependency.
 const WORD_BANK: &[&str] = &[
-    "the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog", "async", "runtime",
-    "candle", "tensor", "forward", "pass", "quantized", "matmul", "kernel", "padding", "batch",
-    "token", "embedding", "granite", "reranker", "cross", "encoder", "attention", "layer",
-    "normalize", "cosine", "similarity", "graph", "memory", "agent", "recall", "scope", "moon",
-    "storage", "vector", "index", "search", "query", "document", "chunk", "summary", "entity",
-    "relation", "fact", "community", "hybrid", "fusion",
+    "the",
+    "quick",
+    "brown",
+    "fox",
+    "jumps",
+    "over",
+    "lazy",
+    "dog",
+    "async",
+    "runtime",
+    "candle",
+    "tensor",
+    "forward",
+    "pass",
+    "quantized",
+    "matmul",
+    "kernel",
+    "padding",
+    "batch",
+    "token",
+    "embedding",
+    "granite",
+    "reranker",
+    "cross",
+    "encoder",
+    "attention",
+    "layer",
+    "normalize",
+    "cosine",
+    "similarity",
+    "graph",
+    "memory",
+    "agent",
+    "recall",
+    "scope",
+    "moon",
+    "storage",
+    "vector",
+    "index",
+    "search",
+    "query",
+    "document",
+    "chunk",
+    "summary",
+    "entity",
+    "relation",
+    "fact",
+    "community",
+    "hybrid",
+    "fusion",
 ];
 
 /// SplitMix64 — a tiny, allocation-free, deterministic PRNG. Not
@@ -255,8 +299,11 @@ fn print_report(samples: &[StageSample], label: &str) {
     }
 
     let total_tokens = real_tokens_total + padded_tokens_total;
-    let waste_pct =
-        if total_tokens > 0 { 100.0 * padded_tokens_total as f64 / total_tokens as f64 } else { 0.0 };
+    let waste_pct = if total_tokens > 0 {
+        100.0 * padded_tokens_total as f64 / total_tokens as f64
+    } else {
+        0.0
+    };
     let forward_s = forward_total_ns as f64 / 1_000_000_000.0;
     let tokens_per_sec = if forward_s > 0.0 { real_tokens_total as f64 / forward_s } else { 0.0 };
 

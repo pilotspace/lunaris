@@ -97,9 +97,9 @@ where
         let name = span_ref.name();
         let fields =
             span_ref.extensions().get::<HashMap<String, String>>().cloned().unwrap_or_default();
-        self.captured.lock().expect("capturing layer mutex poisoned").push(CapturedSpan {
-            name,
-            fields,
-        });
+        self.captured
+            .lock()
+            .expect("capturing layer mutex poisoned")
+            .push(CapturedSpan { name, fields });
     }
 }

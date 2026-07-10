@@ -78,13 +78,9 @@ pub fn pooled_forward(
     // bottleneck (runtime-swap lever); if it's tokenize/copy instead, fix in
     // place.
     let hidden = {
-        let _enter = tracing::trace_span!(
-            "lunaris.embed.forward",
-            batch_size,
-            max_seq_len,
-            quant = "fp32"
-        )
-        .entered();
+        let _enter =
+            tracing::trace_span!("lunaris.embed.forward", batch_size, max_seq_len, quant = "fp32")
+                .entered();
         model.forward(input_ids, attention_mask)?
     };
 
