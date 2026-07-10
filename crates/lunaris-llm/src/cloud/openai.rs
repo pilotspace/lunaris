@@ -4,11 +4,23 @@ use lunaris_core::{LunarisError, StorageError};
 
 use crate::{GenOpts, SchemaConstraint};
 
-const URL: &str = "https://api.openai.com/v1/chat/completions";
-
 pub(super) fn build_request(
     model: &str,
     api_key: &str,
+    prompt: &str,
+    constraint: SchemaConstraint<'_>,
+    opts: &GenOpts,
+) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
+    build_request_at("https://api.openai.com/v1", model, Some(api_key), prompt, constraint, opts)
+}
+
+/// Same chat-completions request against an arbitrary base URL (Ollama
+/// `/v1`, llama-server, vLLM, LM Studio). `api_key = None` omits the
+/// `authorization` header — local servers are typically unauthenticated.
+pub(super) fn build_request_at(
+    base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
     prompt: &str,
     constraint: SchemaConstraint<'_>,
     opts: &GenOpts,
@@ -33,25 +45,12 @@ pub(super) fn build_request(
     if let Some(rf) = response_format {
         body["response_format"] = rf;
     }
-    let headers = vec![("authorization", format!("Bearer {api_key}"))];
-    (URL.to_string(), body, headers)
-}
-
-/// Same chat-completions request against an arbitrary base URL (Ollama
-/// `/v1`, llama-server, vLLM, LM Studio). `api_key = None` (or empty)
-/// omits the `authorization` header — local servers are typically
-/// unauthenticated.
-pub(super) fn build_request_at(
-    _base_url: &str,
-    model: &str,
-    api_key: Option<&str>,
-    prompt: &str,
-    constraint: SchemaConstraint<'_>,
-    opts: &GenOpts,
-) -> (String, serde_json::Value, Vec<(&'static str, String)>) {
-    // RED stub (A3): delegates to the fixed-endpoint builder — the unit
-    // test pins the real contract (base-URL join + auth-only-with-key).
-    build_request(model, api_key.unwrap_or(""), prompt, constraint, opts)
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let headers = match api_key {
+        Some(key) if !key.is_empty() => vec![("authorization", format!("Bearer {key}"))],
+        _ => Vec::new(),
+    };
+    (url, body, headers)
 }
 
 pub(super) fn decode_response(body: &str) -> Result<String, LunarisError> {
@@ -101,7 +100,7 @@ mod tests {
             SchemaConstraint::JsonSchema(&schema),
             &opts,
         );
-        assert_eq!(url, URL);
+        assert_eq!(url, "https://api.openai.com/v1/chat/completions");
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert_eq!(body["response_format"]["json_schema"]["strict"], true);
         assert!(headers.iter().any(|(k, v)| *k == "authorization" && v == "Bearer sk-dummy"));
