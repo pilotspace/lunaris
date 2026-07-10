@@ -67,17 +67,36 @@ pub fn pooled_forward(
     input_ids: &Tensor,
     attention_mask: &Tensor,
 ) -> Result<Tensor, ForwardError> {
+    let (batch_size, max_seq_len) = input_ids.dims2().unwrap_or((0, 0));
+
     // The candle ModernBert forward returns `(batch, seq, hidden)` in the
     // model's compute dtype. We feed in U32 ids and the U32 mask (which is
     // what candle_transformers also expects per its
-    // `prepare_4d_attention_mask` signature).
-    let hidden = model.forward(input_ids, attention_mask)?;
+    // `prepare_4d_attention_mask` signature). Span-per-call: this is the
+    // stage the §4b microscope decision rule cares about — if ≥60% of p50
+    // latency lives inside this span, candle's matmul kernels are the
+    // bottleneck (runtime-swap lever); if it's tokenize/copy instead, fix in
+    // place.
+    let hidden = {
+        let _enter = tracing::trace_span!(
+            "lunaris.embed.forward",
+            batch_size,
+            max_seq_len,
+            quant = "fp32"
+        )
+        .entered();
+        model.forward(input_ids, attention_mask)?
+    };
 
     let dims = hidden.dims().to_vec();
     if dims.len() != 3 {
         return Err(ForwardError::UnexpectedHidden { actual: dims, expected: GRANITE_R2_DIM });
     }
     let hidden_size = dims[2];
+
+    let _pool_enter =
+        tracing::trace_span!("lunaris.embed.pooling", batch_size, max_seq_len, quant = "fp32")
+            .entered();
 
     // CLS-pool: take the first position along the seq axis. Result: (b, hidden).
     let cls = hidden.i((.., 0, ..))?.contiguous()?;

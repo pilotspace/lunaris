@@ -146,10 +146,41 @@ impl NativeQuantizedReranker {
         if pairs.is_empty() {
             return Ok(Vec::new());
         }
-        let EncodedPairBatch { input_ids, attention_mask, token_type_ids } =
-            self.inner.tokenizer.encode_pair_batch(pairs, &self.inner.device)?;
+
+        // See `crate::reranker::NativeReranker::score_blocking` for the full
+        // rationale (tokenize-pairs+batch-assembly fused in one library call;
+        // span fields recorded post-hoc, gated behind `is_disabled()`).
+        let tokenize_span = tracing::trace_span!(
+            "lunaris.rerank.tokenize_pairs",
+            batch_size = pairs.len(),
+            max_seq_len = tracing::field::Empty,
+            real_tokens = tracing::field::Empty,
+            padded_tokens = tracing::field::Empty,
+            quant = "q5_k_m",
+        );
+        let EncodedPairBatch { input_ids, attention_mask, token_type_ids } = {
+            let _enter = tokenize_span.enter();
+            self.inner.tokenizer.encode_pair_batch(pairs, &self.inner.device)?
+        };
+        if !tokenize_span.is_disabled() {
+            if let Ok(seq_len) = attention_mask.dim(1) {
+                tokenize_span.record("max_seq_len", seq_len);
+            }
+            if let Ok((real, padded)) = crate::tokenizer::mask_token_stats(&attention_mask) {
+                tokenize_span.record("real_tokens", real);
+                tokenize_span.record("padded_tokens", padded);
+            }
+        }
+
         let scores = self.inner.model.score(&input_ids, &attention_mask, &token_type_ids)?;
-        Ok(scores.to_vec1::<f32>()?)
+
+        let copy_span =
+            tracing::trace_span!("lunaris.rerank.copy", batch_size = pairs.len(), quant = "q5_k_m");
+        let out = {
+            let _enter = copy_span.enter();
+            scores.to_vec1::<f32>()?
+        };
+        Ok(out)
     }
 }
 

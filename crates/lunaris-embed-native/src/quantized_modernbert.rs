@@ -275,30 +275,50 @@ impl QuantizedModernBert {
             });
         }
         let seq_len = dims[1];
-
-        // ---------- masks ----------
-        let global_attention_mask =
-            prepare_4d_attention_mask(attention_mask, DType::F32)?.to_device(input_ids.device())?;
-        let local_attention_mask =
-            get_local_attention_mask(seq_len, self.cfg.local_attention / 2, input_ids.device())?;
-
-        // ---------- embedding + post-embedding norm ----------
-        //
-        // `Embedding::forward` would require constructing a `candle_nn::Embedding`
-        // every call (or holding one on Self); the cheaper path is a direct
-        // `index_select` against the F32 weight matrix.
-        let mut xs = self.word_embd.index_select(&input_ids.flatten_all()?, 0)?;
         let batch = dims[0];
-        xs = xs.reshape((batch, seq_len, self.cfg.hidden_size))?;
-        xs = xs.apply(&self.embd_norm)?;
 
-        // ---------- transformer stack ----------
-        for layer in self.layers.iter() {
-            xs = layer.forward(&xs, &global_attention_mask, &local_attention_mask)?;
-        }
+        // ---------- forward: masks + embedding + Q4 transformer stack ------
+        //
+        // Everything from mask prep through `final_norm` lives inside one
+        // span — this is the candle-quantized-matmul-kernel stage the §4b
+        // microscope decision rule is built around (see
+        // `docs/design/quantized-inference-extractor-reranker.md` §4b/§4c).
+        let hidden = {
+            let _enter = tracing::trace_span!(
+                "lunaris.embed.forward",
+                batch_size = batch,
+                max_seq_len = seq_len,
+                quant = "q4_k_m"
+            )
+            .entered();
 
-        // ---------- final norm + CLS pool + fp32 normalize ----------
-        let hidden = xs.apply(&self.final_norm)?;
+            // ---------- masks ----------
+            let global_attention_mask = prepare_4d_attention_mask(attention_mask, DType::F32)?
+                .to_device(input_ids.device())?;
+            let local_attention_mask = get_local_attention_mask(
+                seq_len,
+                self.cfg.local_attention / 2,
+                input_ids.device(),
+            )?;
+
+            // ---------- embedding + post-embedding norm ----------
+            //
+            // `Embedding::forward` would require constructing a `candle_nn::Embedding`
+            // every call (or holding one on Self); the cheaper path is a direct
+            // `index_select` against the F32 weight matrix.
+            let mut xs = self.word_embd.index_select(&input_ids.flatten_all()?, 0)?;
+            xs = xs.reshape((batch, seq_len, self.cfg.hidden_size))?;
+            xs = xs.apply(&self.embd_norm)?;
+
+            // ---------- transformer stack ----------
+            for layer in self.layers.iter() {
+                xs = layer.forward(&xs, &global_attention_mask, &local_attention_mask)?;
+            }
+
+            // ---------- final norm ----------
+            xs.apply(&self.final_norm)?
+        };
+
         let h_dims = hidden.dims().to_vec();
         if h_dims.len() != 3 || h_dims[2] != GRANITE_R2_DIM {
             return Err(QuantizedError::UnexpectedHidden {
@@ -306,6 +326,14 @@ impl QuantizedModernBert {
                 expected: GRANITE_R2_DIM,
             });
         }
+
+        let _pool_enter = tracing::trace_span!(
+            "lunaris.embed.pooling",
+            batch_size = batch,
+            max_seq_len = seq_len,
+            quant = "q4_k_m"
+        )
+        .entered();
 
         // CLS pool — first token. why: granite-r2's sentence-embedding
         // pipeline uses CLS pooling (`1_Pooling/config.json`), NOT the

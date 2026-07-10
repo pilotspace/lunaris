@@ -351,6 +351,18 @@ impl QuantizedXlmRoberta {
         let seq_len = dims[1];
         let device = input_ids.device();
 
+        // Span-per-call: mask prep through the Q5 transformer stack is the
+        // candle-quantized-matmul-kernel stage the §4b microscope decision
+        // rule is built around — see
+        // `docs/design/quantized-inference-extractor-reranker.md` §4b/§4c.
+        let _forward_enter = tracing::trace_span!(
+            "lunaris.rerank.forward",
+            batch_size = batch,
+            max_seq_len = seq_len,
+            quant = "q5_k_m"
+        )
+        .entered();
+
         // ---------- attention mask (4D additive) ----------
         let attn_mask_4d = prepare_4d_attention_mask(attention_mask)?.to_device(device)?;
 
@@ -430,6 +442,15 @@ impl QuantizedXlmRoberta {
         for layer in self.layers.iter() {
             xs = layer.forward(&xs, &attn_mask_4d)?;
         }
+        drop(_forward_enter);
+
+        let _extract_enter = tracing::trace_span!(
+            "lunaris.rerank.score_extract",
+            batch_size = batch,
+            max_seq_len = seq_len,
+            quant = "q5_k_m"
+        )
+        .entered();
 
         // ---------- classifier head ----------
         //
