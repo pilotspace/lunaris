@@ -90,12 +90,10 @@ impl TryFrom<ProviderKind> for CloudProvider {
             ProviderKind::Anthropic => Ok(CloudProvider::Anthropic),
             ProviderKind::OpenAI => Ok(CloudProvider::OpenAI),
             ProviderKind::Gemini => Ok(CloudProvider::Gemini),
-            // RED (A3): OpenAiCompat conversion lands with the green half.
-            ProviderKind::Candle | ProviderKind::Ollama | ProviderKind::OpenAiCompat => {
-                Err(LunarisError::Storage(StorageError::Backend(format!(
-                    "cloud-api: provider {p:?} is not a cloud provider"
-                ))))
-            }
+            ProviderKind::OpenAiCompat => Ok(CloudProvider::OpenAiCompat),
+            ProviderKind::Candle | ProviderKind::Ollama => Err(LunarisError::Storage(
+                StorageError::Backend(format!("cloud-api: provider {p:?} is not a cloud provider")),
+            )),
         }
     }
 }
@@ -154,7 +152,19 @@ impl std::fmt::Debug for CloudBackend {
 
 impl CloudBackend {
     pub fn new(opts: CloudBackendOpts) -> Result<Self, LunarisError> {
-        if opts.api_key.is_empty() {
+        // OpenAiCompat: base_url required, api_key optional (local
+        // OpenAI-compatible servers are typically unauthenticated).
+        // Every fixed-endpoint provider: api_key required.
+        if opts.provider == CloudProvider::OpenAiCompat {
+            if opts.base_url.as_deref().is_none_or(str::is_empty) {
+                return Err(LunarisError::Storage(StorageError::Backend(
+                    "cloud-api: openai-compat needs a base URL (e.g. \
+                     http://localhost:11434/v1) — set LUNARIS_OPENAI_COMPAT_BASE_URL \
+                     or CloudBackendOpts.base_url"
+                        .to_string(),
+                )));
+            }
+        } else if opts.api_key.is_empty() {
             return Err(LunarisError::Storage(StorageError::Backend(format!(
                 "cloud-api: api_key is empty — set {} env",
                 opts.provider.api_key_env()
@@ -194,13 +204,14 @@ impl CloudBackend {
             CloudProvider::MiniMax => {
                 minimax::build_request(&self.model, &self.api_key, prompt, constraint, opts)
             }
-            CloudProvider::OpenAiCompat => {
-                // RED (A3): transport not implemented yet.
-                let _ = &self.base_url;
-                return Err(LunarisError::Storage(StorageError::Backend(
-                    "cloud-api: openai-compat transport not implemented".to_string(),
-                )));
-            }
+            CloudProvider::OpenAiCompat => openai::build_request_at(
+                self.base_url.as_deref().unwrap_or_default(),
+                &self.model,
+                (!self.api_key.is_empty()).then_some(self.api_key.as_str()),
+                prompt,
+                constraint,
+                opts,
+            ),
         };
 
         let mut req = self.client.post(&url).json(&body);

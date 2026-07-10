@@ -111,7 +111,7 @@ async fn bearer_header_sent_when_key_is_configured() {
 
     let head = rx.recv().expect("captured");
     assert!(
-        head.lines().any(|l| l.to_ascii_lowercase() == "authorization: bearer sk-local-test"),
+        head.lines().any(|l| l.eq_ignore_ascii_case("authorization: Bearer sk-local-test")),
         "configured key must arrive as a Bearer header, got:\n{head}"
     );
 }

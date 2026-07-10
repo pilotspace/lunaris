@@ -112,6 +112,7 @@ pub enum ProviderKind {
     /// comes from `LUNARIS_OPENAI_COMPAT_BASE_URL`; the API key
     /// (`LUNARIS_OPENAI_COMPAT_API_KEY`) is OPTIONAL — local servers are
     /// typically unauthenticated.
+    #[serde(rename = "openai-compat")]
     OpenAiCompat,
 }
 
@@ -125,6 +126,7 @@ impl FromStr for ProviderKind {
             "anthropic" => Ok(ProviderKind::Anthropic),
             "openai" => Ok(ProviderKind::OpenAI),
             "gemini" | "google" => Ok(ProviderKind::Gemini),
+            "openai-compat" | "openai-compatible" => Ok(ProviderKind::OpenAiCompat),
             other => Err(LlmConfigError::UnknownProvider(other.to_string())),
         }
     }
@@ -274,7 +276,8 @@ fn load_config_file() -> Result<LlmConfigFile, LlmConfigError> {
 #[derive(Debug, Error)]
 pub enum LlmConfigError {
     #[error(
-        "unknown LLM provider: `{0}` (expected one of: candle, ollama, anthropic, openai, gemini)"
+        "unknown LLM provider: `{0}` (expected one of: candle, ollama, anthropic, openai, \
+         gemini, openai-compat)"
     )]
     UnknownProvider(String),
     #[error("failed to read LLM config file `{path}`: {cause}")]
