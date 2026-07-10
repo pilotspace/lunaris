@@ -28,8 +28,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
-use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::token::LlamaToken;
@@ -38,6 +36,7 @@ use lunaris_rerank::{RerankCandidate, Reranker};
 
 use crate::backend::shared_backend;
 use crate::gguf_head::{ClsHead, GgufHeadError};
+use crate::worker::EncodeWorker;
 
 /// bge-reranker-v2-m3 hidden size — the encoder's `n_embd` and the
 /// classification head's input width (verified at `open`).
@@ -84,14 +83,16 @@ impl From<LlamaCppRerankerError> for LunarisError {
 }
 
 struct Inner {
-    model: LlamaModel,
+    model: Arc<LlamaModel>,
+    worker: EncodeWorker,
     head: ClsHead,
-    n_threads: Option<i32>,
-    max_batch_tokens: u32,
+    /// Effective per-window token budget — fixed at `open` (also sizes the
+    /// worker context), pair construction truncates against it.
+    budget: usize,
 }
 
 /// llama.cpp-backed cross-encoder reranker. Cheap to clone — heavy state
-/// behind `Arc`; context-per-call, same rationale as the embedder.
+/// behind `Arc`; one warm worker context, same rationale as the embedder.
 #[derive(Clone)]
 pub struct LlamaCppReranker {
     inner: Arc<Inner>,
@@ -101,14 +102,15 @@ impl std::fmt::Debug for LlamaCppReranker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlamaCppReranker")
             .field("dim", &BGE_RERANKER_DIM)
-            .field("max_batch_tokens", &self.inner.max_batch_tokens)
+            .field("budget", &self.inner.budget)
             .finish()
     }
 }
 
 impl LlamaCppReranker {
     /// Construct from a GGUF on disk. Loads weights + the classification
-    /// head synchronously; wrap in `spawn_blocking` if runtime stalls
+    /// head + spawns the encode worker (model + ONE warm context — Phase
+    /// A2) synchronously; wrap in `spawn_blocking` if runtime stalls
     /// matter. Uses the process-shared `LlamaBackend`, so it coexists with
     /// [`crate::LlamaCppEmbedder`] in one process.
     pub fn open(opts: LlamaCppRerankerOpts) -> Result<Self, LlamaCppRerankerError> {
@@ -130,14 +132,22 @@ impl LlamaCppReranker {
                 dims: vec![head.hidden as u64],
             }));
         }
-        Ok(Self {
-            inner: Arc::new(Inner {
-                model,
-                head,
-                n_threads: opts.n_threads,
-                max_batch_tokens: opts.max_batch_tokens.max(16),
-            }),
-        })
+        let model = Arc::new(model);
+        let budget = opts.max_batch_tokens.max(16).min(model.n_ctx_train()) as usize;
+        let worker = EncodeWorker::spawn(
+            Arc::clone(&model),
+            budget,
+            opts.n_threads,
+            "lunaris-llamacpp-rerank",
+        )
+        .map_err(LlamaCppRerankerError::Llama)?;
+        Ok(Self { inner: Arc::new(Inner { model, worker, head, budget }) })
+    }
+
+    /// How many llama.cpp contexts this handle has ever created — exactly 1
+    /// (the A2 warm-context contract; see `tests/context_reuse.rs`).
+    pub fn contexts_created(&self) -> usize {
+        self.inner.worker.contexts_created()
     }
 
     /// Synchronous scoring path — sigmoid score per doc, in INPUT order.
@@ -151,8 +161,7 @@ impl LlamaCppReranker {
             return Ok(Vec::new());
         }
         let inner = &*self.inner;
-        let budget = inner.max_batch_tokens.min(inner.model.n_ctx_train()) as usize;
-        let llama = |e: std::fmt::Arguments<'_>| LlamaCppRerankerError::Llama(e.to_string());
+        let budget = inner.budget;
 
         let bos = inner.model.token_bos();
         let eos = inner.model.token_eos();
@@ -161,7 +170,7 @@ impl LlamaCppReranker {
         let q_toks = inner
             .model
             .str_to_token(query, AddBos::Never)
-            .map_err(|e| llama(format_args!("{e}")))?;
+            .map_err(|e| LlamaCppRerankerError::Llama(e.to_string()))?;
 
         // Build [BOS] q [EOS] [SEP] d [EOS] per pair, truncating the doc
         // tail to the window budget (and the query itself only when the
@@ -173,7 +182,7 @@ impl LlamaCppReranker {
             let d_toks = inner
                 .model
                 .str_to_token(doc, AddBos::Never)
-                .map_err(|e| llama(format_args!("{e}")))?;
+                .map_err(|e| LlamaCppRerankerError::Llama(e.to_string()))?;
             let d_keep = d_toks.len().min(budget.saturating_sub(overhead + q_keep).max(1));
             let mut seq = Vec::with_capacity(overhead + q_keep + d_keep);
             seq.push(bos);
@@ -185,65 +194,8 @@ impl LlamaCppReranker {
             token_lists.push(seq);
         }
 
-        let mut ctx_params = LlamaContextParams::default()
-            .with_embeddings(true)
-            // CLS, not Rank — see the module doc (Rank + the pinned
-            // binding's n_embd-sized slice = OOB read).
-            .with_pooling_type(LlamaPoolingType::Cls)
-            .with_n_ctx(std::num::NonZeroU32::new(budget as u32))
-            .with_n_batch(budget as u32)
-            .with_n_ubatch(budget as u32)
-            .with_n_seq_max(docs.len() as u32);
-        if let Some(t) = inner.n_threads {
-            ctx_params = ctx_params.with_n_threads(t);
-        }
-        let backend = shared_backend().map_err(LlamaCppRerankerError::Llama)?;
-        let mut ctx =
-            inner.model.new_context(backend, ctx_params).map_err(|e| llama(format_args!("{e}")))?;
-
-        let mut out = vec![f32::NAN; docs.len()];
-        let mut batch = LlamaBatch::new(budget, docs.len() as i32);
-        let mut window: Vec<usize> = Vec::new();
-        let mut used = 0usize;
-
-        for (i, tokens) in token_lists.iter().enumerate() {
-            if !window.is_empty() && used + tokens.len() > budget {
-                self.flush_window(&mut ctx, &mut batch, &mut window, &mut out)?;
-                used = 0;
-            }
-            batch
-                .add_sequence(tokens, window.len() as i32, true)
-                .map_err(|e| llama(format_args!("{e}")))?;
-            window.push(i);
-            used += tokens.len();
-        }
-        self.flush_window(&mut ctx, &mut batch, &mut window, &mut out)?;
-
-        Ok(out)
-    }
-
-    /// Encode the packed window, CLS-pool each sequence, apply the
-    /// classification head, scatter sigmoid scores to input slots.
-    fn flush_window(
-        &self,
-        ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
-        batch: &mut LlamaBatch,
-        window: &mut Vec<usize>,
-        out: &mut [f32],
-    ) -> Result<(), LlamaCppRerankerError> {
-        if window.is_empty() {
-            return Ok(());
-        }
-        ctx.encode(batch).map_err(|e| LlamaCppRerankerError::Llama(e.to_string()))?;
-        for (seq, &doc_idx) in window.iter().enumerate() {
-            let cls = ctx
-                .embeddings_seq_ith(seq as i32)
-                .map_err(|e| LlamaCppRerankerError::Llama(e.to_string()))?;
-            out[doc_idx] = head_score(&self.inner.head, cls);
-        }
-        batch.clear();
-        window.clear();
-        Ok(())
+        let cls_rows = inner.worker.encode(token_lists).map_err(LlamaCppRerankerError::Llama)?;
+        Ok(cls_rows.iter().map(|cls| head_score(&inner.head, cls)).collect())
     }
 }
 

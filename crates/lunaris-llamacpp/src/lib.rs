@@ -20,6 +20,8 @@ mod embedder;
 mod gguf_head;
 #[cfg(feature = "llamacpp")]
 mod reranker;
+#[cfg(feature = "llamacpp")]
+mod worker;
 
 #[cfg(feature = "llamacpp")]
 pub use embedder::{LlamaCppEmbedder, LlamaCppEmbedderError, LlamaCppEmbedderOpts};
