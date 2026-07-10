@@ -55,3 +55,10 @@ metal    = ["llamacpp", "llama-cpp-2/metal"]
 [dev-dependencies]
 # rerank smoke test constructs RerankCandidate { metadata: Value::Null }.
 serde_json = { workspace = true }
+# §5 cutover gate (tests/section5_rerank_parity.rs): candle FP32
+# NativeReranker is the in-process reference. Dev-only edge; dies with the
+# candle stack in Phase C. Both crates are already workspace members, so
+# the default `cargo test --workspace` build cost is a cache hit and the
+# test body stays behind `--features llamacpp`.
+lunaris-rerank-native = { workspace = true }
+candle-core = { workspace = true }
