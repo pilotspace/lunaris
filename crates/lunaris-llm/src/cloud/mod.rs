@@ -91,9 +91,9 @@ impl TryFrom<ProviderKind> for CloudProvider {
             ProviderKind::OpenAI => Ok(CloudProvider::OpenAI),
             ProviderKind::Gemini => Ok(CloudProvider::Gemini),
             ProviderKind::OpenAiCompat => Ok(CloudProvider::OpenAiCompat),
-            ProviderKind::Candle | ProviderKind::Ollama => Err(LunarisError::Storage(
-                StorageError::Backend(format!("cloud-api: provider {p:?} is not a cloud provider")),
-            )),
+            ProviderKind::Ollama => Err(LunarisError::Storage(StorageError::Backend(format!(
+                "cloud-api: provider {p:?} is not a cloud provider"
+            )))),
         }
     }
 }
@@ -407,7 +407,6 @@ mod tests {
         );
         assert_eq!(CloudProvider::try_from(ProviderKind::OpenAI).unwrap(), CloudProvider::OpenAI);
         assert_eq!(CloudProvider::try_from(ProviderKind::Gemini).unwrap(), CloudProvider::Gemini);
-        assert!(CloudProvider::try_from(ProviderKind::Candle).is_err());
         assert!(CloudProvider::try_from(ProviderKind::Ollama).is_err());
     }
 

@@ -188,7 +188,7 @@ async fn supersede_closes_loser_at_canonical_fact_key() {
     storage.seed(winner_key.clone(), fact_payload("Alice employer Globex (winner)", &open), open);
 
     // latest-assertion-wins: new=winner supersedes existing=loser.
-    let decision = cross_episode_decision(loser, winner, VerifierBackend::Candle);
+    let decision = cross_episode_decision(loser, winner, VerifierBackend::Ollama);
     assert!(decision.applies(), "a cross-episode decision must arbitrate");
 
     let storage_dyn: Arc<dyn StoragePort> = storage.clone();

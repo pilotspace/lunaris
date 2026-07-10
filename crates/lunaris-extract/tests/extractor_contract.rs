@@ -1,19 +1,11 @@
 //! Extractor contract tests for Phase 3 graph-pipeline scaffold.
 //!
-//! Default features (`candle`) run:
+//! Default features run:
 //!   - `extractor_is_dyn_compat` — `Arc<dyn Extractor>` constructible.
 //!   - `noop_extractor_works` — empty in / empty out per the
 //!     [`crate::Extractor::applies`] short-circuit invariant.
-//!   - `missing_weights_returns_actionable_error` — load-bearing assertion
-//!     for the cache-miss → actionable-error contract (Plan 02-03 pattern):
-//!     verifies the error string contains both `gemma-3-4b-it weights
-//!     missing` AND `huggingface-cli download` AND the offending path so
-//!     the operator can copy-paste the fix command.
 //!
 //! `--features extractor-it` additionally runs:
-//!   - `candle_extracts_real_batch` (requires `LUNARIS_EXTRACT_GEMMA_PATH`
-//!     env pointing at a directory containing tokenizer.json + config.json
-//!     + model.safetensors)
 //!   - `ollama_extracts_real_batch` (requires `OLLAMA_URL`)
 //!   - `cloud_api_extracts_real_batch` (requires
 //!     `LUNARIS_EXTRACT_PROVIDER` + `<PROVIDER>_API_KEY`)
@@ -26,11 +18,6 @@ use std::sync::Arc;
 
 use lunaris_extract::{ChunkInput, Extractor, NoopExtractor};
 use ulid::Ulid;
-
-#[cfg(feature = "candle")]
-use lunaris_core::{LunarisError, StorageError};
-#[cfg(feature = "candle")]
-use lunaris_extract::{CandleGemma3_4B, CandleGemma3_4BOpts};
 
 #[cfg(feature = "ollama")]
 #[allow(unused_imports)]
@@ -76,84 +63,6 @@ async fn noop_extractor_works() {
     }
 }
 
-/// Load-bearing test for the cache-miss contract (Plan 02-03 pattern).
-///
-/// The umbrella `Lunaris::open(url)` (Plan 03-03) catches this error and
-/// substitutes [`NoopExtractor`] with `tracing::warn!`, so the dev box
-/// without a 4B model on disk still runs. The error MUST include all three:
-/// `gemma-3-4b-it weights missing`, `huggingface-cli download`, AND the
-/// offending path — so an operator who sees the warn line can copy-paste
-/// the exact command to download the cache.
-#[cfg(feature = "candle")]
-#[tokio::test]
-async fn missing_weights_returns_actionable_error() {
-    let nonexistent = std::path::PathBuf::from(format!(
-        "/tmp/lunaris-nonexistent-extractor-cache-{}",
-        std::process::id()
-    ));
-    let opts = CandleGemma3_4BOpts {
-        model_path: Some(nonexistent.clone()),
-        device: candle_core::Device::Cpu,
-        batch_timeout_ms: 150,
-        per_chunk_timeout_ms: 450,
-        max_new_tokens: 512,
-    };
-    let err = CandleGemma3_4B::new(opts).await.expect_err("missing path must error");
-    match err {
-        LunarisError::Storage(StorageError::Backend(msg)) => {
-            assert!(
-                msg.contains("gemma-3-4b-it weights missing"),
-                "actionable error must contain literal hint, got: {msg}"
-            );
-            assert!(
-                msg.contains("huggingface-cli download"),
-                "actionable error must include install hint, got: {msg}"
-            );
-            assert!(
-                msg.contains(&nonexistent.to_string_lossy().to_string()),
-                "actionable error must include the offending path, got: {msg}"
-            );
-        }
-        other => panic!("expected Storage(Backend), got {other:?}"),
-    }
-}
-
-/// Real Gemma-3 4B forward-pass (extractor-it gated, env-gated).
-///
-/// SKIPs cleanly when `LUNARIS_EXTRACT_GEMMA_PATH` is unset so CI default
-/// `cargo test --features extractor-it` doesn't fail without the model
-/// cached. When the env is set, runs ONE small batch through the real
-/// candle stack and asserts the result has one entry per input chunk.
-#[cfg(all(feature = "candle", feature = "extractor-it"))]
-#[tokio::test]
-async fn candle_extracts_real_batch() {
-    let Some(path) = std::env::var("LUNARIS_EXTRACT_GEMMA_PATH").ok() else {
-        eprintln!(
-            "SKIP candle_extracts_real_batch — set LUNARIS_EXTRACT_GEMMA_PATH to a directory containing tokenizer.json + config.json + model.safetensors"
-        );
-        return;
-    };
-    let extractor = CandleGemma3_4B::new(CandleGemma3_4BOpts {
-        model_path: Some(std::path::PathBuf::from(path)),
-        device: candle_core::Device::Cpu,
-        // generous timeouts for the live test (real forward pass on CPU is slow)
-        batch_timeout_ms: 30_000,
-        per_chunk_timeout_ms: 30_000,
-        max_new_tokens: 256,
-    })
-    .await
-    .expect("real Gemma-3 4B should load");
-
-    let chunks = vec![ChunkInput {
-        chunk_id: Ulid::new(),
-        text: "Alice Smith was born in Paris in 1990.".into(),
-        heading_path: vec!["bio".into()],
-    }];
-    let out = extractor.extract(Ulid::new(), &chunks).await.expect("real extract");
-    assert_eq!(out.by_chunk.len(), 1);
-    assert_eq!(out.by_chunk[0].source_chunk_id, chunks[0].chunk_id);
-}
-
 /// Live Ollama extractor (extractor-it gated, env-gated).
 #[cfg(all(feature = "ollama", feature = "extractor-it"))]
 #[tokio::test]
@@ -195,10 +104,16 @@ async fn cloud_api_extracts_real_batch() {
         CloudProvider::OpenAI => "OPENAI_API_KEY",
         CloudProvider::Gemini => "GEMINI_API_KEY",
         CloudProvider::MiniMax => "MINIMAX_API_KEY",
+        // Keyless local servers are the norm — the key stays optional.
+        CloudProvider::OpenAiCompat => "LUNARIS_OPENAI_COMPAT_API_KEY",
     };
-    let Some(api_key) = std::env::var(api_key_env).ok() else {
-        eprintln!("SKIP cloud_api_extracts_real_batch — set {api_key_env}");
-        return;
+    let api_key = match std::env::var(api_key_env) {
+        Ok(k) => k,
+        Err(_) if provider == CloudProvider::OpenAiCompat => String::new(),
+        Err(_) => {
+            eprintln!("SKIP cloud_api_extracts_real_batch — set {api_key_env}");
+            return;
+        }
     };
     let extractor = CloudApiExtractor::new(CloudApiExtractorOpts {
         provider,

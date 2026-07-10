@@ -128,15 +128,12 @@ nix            = { workspace = true }
 # (`fastembed`, `ollama`, `candle-only`, `recommended`) are gone — operators
 # who relied on them must follow `docs/migration/0.3-to-0.4-native-default.md`.
 #
-# The `candle` / `cloud-api` features below ONLY gate the **extractor +
-# verifier** LLM backends (Gemma-3 4B / 270M / 27B + Anthropic/OpenAI/Gemini
-# provider mux) — the embedder + reranker no longer depend on `candle` as a
-# feature toggle (it's a permanent runtime dep on the native crates).
 # llama.cpp-only cutover Phase C (2026-07-10): the default inference runtime
 # is llama.cpp (GGUF Q4_K_M embedder + Q5_K_M reranker), gated by the Phase B
 # quality run — LongMemEval-S N=50 J=96.0% / recall@10=98.0% vs candle
 # baseline 94.0%/96.0% at ~4x less wall. `native` (candle) survives as an
-# opt-in fallback only until C3 deletes it.
+# opt-in fallback only until C3 deletes it. The extractor/verifier LLM slots
+# are REMOTE-ONLY (C2c deleted the in-process candle Gemma-3 backends).
 default     = ["llamacpp"]
 # Native candle embedder + reranker (granite-r2 + bge-reranker-v2-m3). In
 # `default` so existing consumers are unaffected; opt OUT with
@@ -195,24 +192,13 @@ cpu-accelerate = ["native", "lunaris-embed-native/cpu-accelerate", "lunaris-rera
 cpu-mkl        = ["native", "lunaris-embed-native/cpu-mkl", "lunaris-rerank-native/cpu-mkl"]
 cuda           = ["native", "lunaris-embed-native/cuda", "lunaris-rerank-native/cuda"]
 cuda-fa2       = ["native", "lunaris-embed-native/cuda-fa2", "lunaris-rerank-native/cuda-fa2"]
-# Extractor + verifier LLM backends. `candle` produces real Gemma-3 4B for
-# extract + Gemma-3 27B for verify (legacy); `cloud-api` enables the
-# provider-mux backend; `verify-small` / `verify-large` pick the verifier
-# tier per RFC 0006.
-candle    = ["lunaris-extract/candle", "lunaris-verify/candle"]
+# Extractor + verifier LLM backends — REMOTE-ONLY since the llama.cpp
+# cutover (Phase C2c deleted the in-process candle Gemma-3 backends).
+# `cloud-api` enables the provider-mux backend (Anthropic / OpenAI / Gemini /
+# MiniMax / OpenAI-compatible URL); `ollama` enables the native /api/chat
+# transport.
 cloud-api = ["lunaris-extract/cloud-api", "lunaris-verify/cloud-api"]
 ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
-# Q4 GGUF Gemma-3 extractor path (workstream A of
-# docs/design/quantized-inference-extractor-reranker.md). Forwards to
-# `lunaris-extract/extractor-gguf` (which forwards to
-# `lunaris-llm/candle-quantized`). When `LUNARIS_EXTRACTOR_GGUF` is set,
-# `default_extractor()`'s `CandleGemma3_4B::new()` call resolves
-# `QuantizedCandleBackend` first, falling back to the F32 `candle` path on
-# any failure — see `lunaris_extract::candle_gemma3` module docs. Without
-# this flag the env var is ignored (mirrors `embedder-gguf`/`reranker-gguf`).
-extractor-gguf = ["candle", "lunaris-extract/extractor-gguf"]
-verify-small = ["lunaris-verify/verify-small"]
-verify-large = ["lunaris-verify/verify-large"]
 # llama.cpp-only cutover Phase B: GGUF embedder + reranker via in-process
 # llama.cpp. When enabled, `resolve_embedder()` / `resolve_reranker()` try
 # this backend FIRST (env `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_RERANKER_GGUF`,

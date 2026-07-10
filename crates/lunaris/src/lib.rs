@@ -131,8 +131,6 @@ pub use lunaris_verify::{
 };
 
 // Cfg-gated verifier backends — mirror the extract backends gating pattern.
-#[cfg(feature = "candle")]
-pub use lunaris_verify::{CandleGemma3_27B, CandleGemma3_27BOpts};
 #[cfg(feature = "cloud-api")]
 pub use lunaris_verify::{CloudApiVerifier, CloudApiVerifierOpts};
 #[cfg(feature = "ollama")]
@@ -172,11 +170,8 @@ pub use lunaris_extract::{
     EntityId, Extractor, NeedsReviewItem, NeedsReviewReason, NoopExtractor, ValidatedExtraction,
 };
 
-// Cfg-gated extractor backends — mirror the `BgeRerankerV2M3` gating pattern
-// at lines 38-39. A `cargo check --no-default-features` build pulls neither
-// the candle stack nor the http stack.
-#[cfg(feature = "candle")]
-pub use lunaris_extract::{CandleGemma3_4B, CandleGemma3_4BOpts};
+// Cfg-gated extractor backends. A `cargo check --no-default-features`
+// build pulls no http stack.
 #[cfg(feature = "cloud-api")]
 pub use lunaris_extract::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
 #[cfg(feature = "ollama")]

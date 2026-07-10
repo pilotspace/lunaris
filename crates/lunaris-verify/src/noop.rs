@@ -4,8 +4,8 @@
 //!
 //! - The verify pipeline is OFF (Plan 04-04; default per blueprint §5.1 + D-02),
 //!   in which case the worker is never spawned and `verify` is never called.
-//! - The candle backend cache is missing (Plan 04-04 `default_verifier` tries
-//!   `CandleGemma3_27B::try_new_from_default_cache()` and on `Err` substitutes
+//! - No remote provider is configured (`LUNARIS_VERIFY_PROVIDER` unset —
+//!   `default_verifier` substitutes
 //!   `Arc::new(NoopVerifier)` with `tracing::warn!`). Mirrors the Plan 03-01
 //!   `NoopExtractor` cache-miss fallback.
 //!
@@ -20,7 +20,7 @@ use crate::Verifier;
 use crate::types::VerifyDecision;
 use lunaris_extract::NeedsReviewItem;
 
-/// Default verifier when the pipeline is OFF (Plan 04-04) or when the candle
+/// Default verifier when the pipeline is OFF (Plan 04-04) or when no remote
 /// backend cache is missing. Returns a [`VerifyDecision::deferred`] so the
 /// worker treats the item as "abstain — leave the underlying primitive row
 /// untouched".

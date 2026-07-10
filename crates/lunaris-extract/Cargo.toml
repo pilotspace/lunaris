@@ -1,20 +1,20 @@
 # lunaris-extract — Phase 3 graph-pipeline extractor (default-OFF per blueprint §5.2).
 #
-# Default backend: CandleGemma3_4B (Gemma-3 4B instruction-tuned, candle 0.10 typed
-# `gemma3::Model`). Alt backends: OllamaExtractor (HTTP /api/chat with `format`
-# JSON-schema field) + CloudApiExtractor (Anthropic / OpenAI / Gemini selectable
-# via LUNARIS_EXTRACT_PROVIDER env). All three implement the dyn-compatible
-# `Extractor` trait so the umbrella `Lunaris::with_extractor` swap stays
-# trait-object friendly.
+# llama.cpp-only cutover (2026-07, Phase C): extraction is REMOTE-ONLY. The
+# in-process candle Gemma-3 backend was deleted; the shipped backends are
+# OllamaExtractor (HTTP /api/chat with `format` JSON-schema field) and
+# CloudApiExtractor (Anthropic / OpenAI / Gemini / MiniMax / any
+# OpenAI-compatible URL, selectable via LUNARIS_EXTRACT_PROVIDER env). Both
+# implement the dyn-compatible `Extractor` trait so the umbrella
+# `Lunaris::with_extractor` swap stays trait-object friendly. Zero-config is
+# degraded mode (NoopExtractor — episodes/chunks/recall work, no graph).
 #
 # Build matrix:
-#   cargo check -p lunaris-extract                                            # candle (default)
-#   cargo check -p lunaris-extract --no-default-features                      # noop only
-#   cargo check -p lunaris-extract --no-default-features --features ollama
-#   cargo check -p lunaris-extract --no-default-features --features cloud-api
-#   cargo check -p lunaris-extract --no-default-features --features candle,ollama,cloud-api
-#   cargo check -p lunaris-extract --features extractor-gguf                  # + Q4 GGUF opt-in path
-#   cargo test  -p lunaris-extract --features extractor-it                    # gated live-backend tests
+#   cargo check -p lunaris-extract                                # noop only (default = [])
+#   cargo check -p lunaris-extract --features ollama
+#   cargo check -p lunaris-extract --features cloud-api
+#   cargo check -p lunaris-extract --features ollama,cloud-api
+#   cargo test  -p lunaris-extract --features extractor-it        # gated live-backend tests
 
 [package]
 name        = "lunaris-extract"
@@ -32,27 +32,18 @@ keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
 [package.metadata.docs.rs]
 all-features = false
-features = ["candle", "ollama", "cloud-api"]
+features = ["ollama", "cloud-api"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default      = ["candle"]
-# Each transport feature also forwards the matching `lunaris-llm/<feature>` so
-# downstream users that enable `--features candle` on lunaris-extract get
-# `lunaris_llm::CandleBackend` available too. Same shape for ollama / cloud-api.
-candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "dep:parking_lot", "lunaris-llm/candle"]
+# Remote-only: no transport linked unless the consumer opts in. Each transport
+# feature forwards the matching `lunaris-llm/<feature>`.
+default      = []
 ollama       = ["dep:reqwest", "lunaris-llm/ollama"]
 cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
-# Gates live-backend integration tests (real Gemma-3 4B model load + Ollama HTTP
-# + cloud-api keys). SKIPs cleanly without env vars (mirrors `embedder-it` from
-# lunaris-embed).
+# Gates live-backend integration tests (Ollama HTTP + cloud-api keys). SKIPs
+# cleanly without env vars (mirrors `embedder-it` from lunaris-embed).
 extractor-it = []
-# Q4 GGUF Gemma-3 extractor path (`CandleGemma3_4B` resolves
-# `QuantizedCandleBackend` when `LUNARIS_EXTRACTOR_GGUF` is set — see
-# `candle_gemma3::resolve_backend`). Forwards `lunaris-llm/candle-quantized`.
-# Implies `candle` (the F32 path stays the fallback target on any GGUF
-# failure). Mirrors the umbrella crate's `embedder-gguf`/`reranker-gguf`.
-extractor-gguf = ["candle", "lunaris-llm/candle-quantized"]
 # Forwards the lunaris-llm faux feature so external consumers can enable
 # FauxBackend via `lunaris-extract/faux` in their own dev-dependencies.
 faux         = ["lunaris-llm/faux"]
@@ -60,10 +51,9 @@ faux         = ["lunaris-llm/faux"]
 [dependencies]
 lunaris-core = { workspace = true }
 # Phase 11 — unified LlmBackend trait. Consumed by `llm_extractor::LlmExtractor`,
-# the backend-agnostic adapter introduced alongside the legacy CandleGemma3_4B /
-# OllamaExtractor / CloudApiExtractor (which remain untouched in this commit).
-# `default-features = false` so this crate stays the single source of truth for
-# which transports are enabled — we forward via `features` below.
+# the backend-agnostic adapter. `default-features = false` so this crate stays
+# the single source of truth for which transports are enabled — we forward via
+# `features` above.
 lunaris-llm = { workspace = true }
 futures        = { workspace = true }
 async-trait    = { workspace = true }
@@ -77,18 +67,6 @@ serde          = { workspace = true, features = ["derive"] }
 serde_json     = { workspace = true }
 hex            = { workspace = true }
 ulid           = { workspace = true }
-# candle stack — gated behind `candle` feature. Mirrors lunaris-embed +
-# lunaris-rerank exactly so the workspace-pinned 0.10 versions stay aligned.
-candle-core         = { workspace = true, optional = true }
-candle-nn           = { workspace = true, optional = true }
-candle-transformers = { workspace = true, optional = true }
-tokenizers          = { workspace = true, optional = true }
-dirs                = { workspace = true, optional = true }
-# parking_lot::Mutex wraps the candle Gemma3Model handle (forward(&mut self) needs
-# &mut). Lock is taken INSIDE spawn_blocking so the CLAUDE.md "never hold lock
-# across .await" rule is upheld trivially. Gated behind `candle` (only the candle
-# backend needs the model handle).
-parking_lot         = { workspace = true, optional = true }
 # http stack — shared by `ollama` and `cloud-api` features. serde + serde_json
 # stay UNCONDITIONAL above (they are required for the trait DTOs regardless).
 reqwest        = { workspace = true, optional = true }

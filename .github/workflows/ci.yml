@@ -56,13 +56,10 @@ jobs:
       # `maturin build` + `napi build` correctly.
       - run: cargo check -p lunaris-py -p lunaris-ts --all-targets
 
-      # RFC 0006 scaffold gate — verify-small (Gemma 3 270M) and
-      # verify-large (Gemma 3 27B alias) must compile cleanly on every PR.
-      # Without this gate the laptop-floor scaffold rots silently the
-      # next time someone refactors candle types.
+      # llama.cpp cutover (C2c): verify is remote-only — keep the noop-default
+      # + transport feature builds compiling on every PR.
       - run: cargo check -p lunaris-verify --no-default-features
-      - run: cargo check -p lunaris-verify --features verify-small
-      - run: cargo check -p lunaris-verify --features verify-large
+      - run: cargo check -p lunaris-verify --features ollama,cloud-api
 
       # Phase 20 — semver-checks gate. Runs cargo-semver-checks against
       # the previously-published v0.2.1 surface (NOT v0.2.0 — that tag

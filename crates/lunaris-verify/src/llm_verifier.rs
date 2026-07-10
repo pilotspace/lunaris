@@ -7,26 +7,17 @@
 //! reflect) on `lunaris_llm::LlmBackend`. This adapter is the
 //! verify-side seat: it owns the arbitration-prompt template and the
 //! `{winner_id, loser_id, reason}` JSON post-hoc parse. Whatever
-//! `LlmBackend` impl the caller picks (`CandleBackend` 4B/27B/270M,
-//! `OllamaBackend`, `CloudBackend`) flows through this one verifier.
-//!
-//! ## Verify default is still 27B
-//!
-//! This commit is **additive**: legacy [`crate::CandleGemma3_27B`],
-//! [`crate::OllamaVerifier`], and [`crate::CloudApiVerifier`] are
-//! unchanged. The umbrella `Lunaris::with_verifier` default is
-//! [`crate::NoopVerifier`] (blueprint §5.1) and any consumer that
-//! explicitly enables verify today gets the same 27B path it had
-//! before. The flip to 4B default is gated on the ER-F1 quality test
-//! (Task 6 in the migration plan) — landed in a separate commit that
-//! cites the gate evidence.
+//! `LlmBackend` impl the caller picks (`OllamaBackend`, `CloudBackend`)
+//! flows through this one verifier. Since the llama.cpp-only cutover
+//! (2026-07, Phase C) the verify slot is remote-only — the in-process
+//! candle backends are gone. The umbrella `Lunaris::with_verifier`
+//! default is [`crate::NoopVerifier`] (blueprint §5.1).
 //!
 //! ## Per-call timeout
 //!
-//! 27B is ~7-10× slower than 4B for the same prompt. The default
-//! [`LlmVerifierOpts::timeout_ms`] is 1500 ms to give the slow path
-//! headroom; callers using a 4B backend should override downward to
-//! match the D-02 budget (≈ 200 ms).
+//! The default [`LlmVerifierOpts::timeout_ms`] is 1500 ms to give slow
+//! remote models headroom; callers on a fast local server should
+//! override downward to match the D-02 budget (≈ 200 ms).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,7 +44,7 @@ pub struct LlmVerifierOpts {
     /// Sampling temperature. 0.0 = greedy (recommended for arbitration).
     pub temperature: f32,
     /// Backend tag stamped into the returned [`VerifyDecision`] for
-    /// audit/telemetry. Defaults to [`VerifierBackend::Candle`]; ollama/
+    /// audit/telemetry. Defaults to [`VerifierBackend::Ollama`];
     /// cloud-api consumers should override.
     pub backend_tag: VerifierBackend,
     /// Optional JSON schema to pass as [`SchemaConstraint::JsonSchema`] on
@@ -73,7 +64,7 @@ pub struct LlmVerifierOpts {
     /// When `true`, any `Err` returned by the backend is re-propagated as
     /// `Err` instead of being silently downgraded to `Ok(deferred())`.
     /// Default is `false` to preserve `LlmVerifier`'s no-error contract for
-    /// candle / cloud-api paths. Ollama sets this `true` to restore the
+    /// cloud-api paths. Ollama sets this `true` to restore the
     /// pre-Phase-12 nack-on-transport-failure behaviour (R2).
     pub propagate_transport_errors: bool,
 }
@@ -84,7 +75,7 @@ impl Default for LlmVerifierOpts {
             timeout_ms: 1500,
             max_tokens: 256,
             temperature: 0.0,
-            backend_tag: VerifierBackend::Candle,
+            backend_tag: VerifierBackend::Ollama,
             schema: None,
             defer_with_cause_on_error: false,
             propagate_transport_errors: false,
@@ -125,7 +116,7 @@ impl Verifier for LlmVerifier {
         // Cross-episode contradiction (memory-update convergence): the reason
         // already carries both fact ids and the policy is a fixed
         // latest-assertion-wins rule, so we arbitrate deterministically WITHOUT
-        // an LLM round-trip. Every real backend (candle 270M/27B, ollama,
+        // an LLM round-trip. Every real backend (ollama,
         // cloud-api) funnels its `verify` through this `LlmVerifier`, so this
         // single arm is the per-backend `CrossEpisodeContradiction` handler;
         // the worker then closes the loser via `apply_supersede`. (Full

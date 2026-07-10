@@ -1,14 +1,13 @@
 # lunaris-verify — Phase 4 slow-path arbitration verifier (default-OFF per blueprint §5.1).
 #
+# llama.cpp-only cutover (2026-07, Phase C): verification is REMOTE-ONLY.
 # Default backend: NoopVerifier (D-02). Real backends:
-#   CandleGemma3_27B (Gemma-3 27B IT, candle 0.10 typed `gemma3::Model`)
 #   OllamaVerifier (HTTP /api/chat with `format` JSON-schema field)
-#   CloudApiVerifier (Anthropic / OpenAI / Gemini selectable via LUNARIS_VERIFY_PROVIDER)
+#   CloudApiVerifier (Anthropic / OpenAI / Gemini / MiniMax / OpenAI-compatible
+#   URL, selectable via LUNARIS_VERIFY_PROVIDER)
 #
 # Build matrix:
-#   cargo check -p lunaris-verify --no-default-features                   # noop only (default for v0)
-#   cargo check -p lunaris-verify                                         # same as --no-default-features (D-02)
-#   cargo check -p lunaris-verify --features candle
+#   cargo check -p lunaris-verify                                         # noop only (default = [])
 #   cargo check -p lunaris-verify --features ollama
 #   cargo check -p lunaris-verify --features cloud-api
 #   cargo test  -p lunaris-verify --features verifier-it                  # gated live-backend tests
@@ -29,30 +28,15 @@ keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
 [package.metadata.docs.rs]
 all-features = false
-features = ["candle", "ollama", "cloud-api", "verify-small", "verify-large"]
+features = ["ollama", "cloud-api"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default      = []
-# `candle` also forwards `lunaris-llm/candle` so the unified `CandleBackend`
-# is available when the verify pipeline opts into the candle stack
-# (`LlmVerifier` consumes it via the ER-F1 quality-gate integration test).
-candle       = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers", "dep:dirs", "lunaris-llm/candle"]
-# RFC 0006 scaffold — gates the Gemma-3 270M verifier impl (the
-# "Lunaris on a laptop" target). Shares the candle dependency set with
-# `candle`. The production default-flip (270M as the Verifier default)
-# lands separately after the Phase 24 head-to-head bench passes the
-# 100-item quality gate. Until then, 270M is opt-in.
-verify-small = ["candle"]
-# Mirror of the existing `candle` feature, named explicitly for RFC 0006
-# symmetry. Selects the Gemma-3 27B path. Kept as an alias for forward
-# compatibility — once the default flips, `candle` becomes equivalent
-# to `verify-small` and `verify-large` becomes the opt-in for 27B.
-verify-large = ["candle"]
 ollama       = ["dep:reqwest", "lunaris-llm/ollama"]
 cloud-api    = ["dep:reqwest", "lunaris-llm/cloud-api"]
-# Gates live-backend integration tests (real Gemma-3 27B model load + Ollama HTTP
-# + cloud-api keys). SKIPs cleanly without env vars (mirrors `extractor-it`).
+# Gates live-backend integration tests (Ollama HTTP + cloud-api keys).
+# SKIPs cleanly without env vars (mirrors `extractor-it`).
 verifier-it  = []
 # Forwards the lunaris-llm faux feature so external consumers can enable
 # FauxBackend via `lunaris-verify/faux` in their own dev-dependencies.
@@ -61,10 +45,7 @@ faux         = ["lunaris-llm/faux"]
 [dependencies]
 lunaris-core = { workspace = true }
 lunaris-extract = { workspace = true }   # NeedsReviewItem + DTOs reuse
-# Phase 11 — unified LlmBackend trait. Consumed by `llm_verifier::LlmVerifier`
-# alongside the legacy CandleGemma3_27B / OllamaVerifier / CloudApiVerifier
-# (untouched in this commit). Verify default stays 27B; flip is a separate
-# later commit gated on the ER-F1 quality test.
+# Phase 11 — unified LlmBackend trait. Consumed by `llm_verifier::LlmVerifier`.
 lunaris-llm = { workspace = true }
 async-trait     = { workspace = true }
 thiserror       = { workspace = true }
@@ -78,12 +59,6 @@ serde_json      = { workspace = true }
 hex             = { workspace = true }
 ulid            = { workspace = true }
 chrono          = { workspace = true }   # W-4 fix: chrono::Utc::now().to_rfc3339() for ISO-8601 audit timestamps
-# candle stack — gated behind `candle` feature. Mirrors lunaris-extract layout.
-candle-core         = { workspace = true, optional = true }
-candle-nn           = { workspace = true, optional = true }
-candle-transformers = { workspace = true, optional = true }
-tokenizers          = { workspace = true, optional = true }
-dirs                = { workspace = true, optional = true }
 # Wave 3F: parking_lot is now unconditional — VerifySupervisor uses RwLock
 # regardless of which backend feature is enabled.
 parking_lot         = { workspace = true }

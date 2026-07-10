@@ -4,28 +4,27 @@
 //! `Lunaris` handle constructs a [`NoopVerifier`] and the worker thread is
 //! NOT spawned until `handle.verify_pipeline().enable()` is called (Plan 04-04).
 //!
-//! Four feature-gated backends behind one dyn-compatible [`Verifier`] trait:
+//! Verification is REMOTE-ONLY since the llama.cpp-only cutover (2026-07,
+//! Phase C). Feature-gated backends behind one dyn-compatible [`Verifier`]
+//! trait:
 //!
 //! - [`NoopVerifier`] (unconditional, default when the pipeline is OFF or
 //!   when no backend is wired via `with_verifier`) — returns a "deferred"
 //!   [`VerifyDecision`] that the worker treats as "skip this item" without
 //!   issuing the MVCC supersede write.
-//! - `CandleGemma3_27B` (`feature = "candle"`) — Gemma-3 27B instruction-tuned
-//!   verifier via candle 0.10; much slower (7-10x) than the 4B extractor so
-//!   the per-chunk + batch timeouts are bumped accordingly.
 //! - `OllamaVerifier` (`feature = "ollama"`) — POSTs `/api/chat` with a JSON-
 //!   schema `format` field restricting the model to the `{winner_id, reason}`
 //!   arbitration shape.
 //! - `CloudApiVerifier` (`feature = "cloud-api"`) — provider-mux for Anthropic
 //!   (claude-3-5-sonnet-latest default — sonnet not haiku because verifier is
-//!   the slow-path "get it right" model), OpenAI (gpt-4o), and Gemini
-//!   (gemini-1.5-pro). D-21 single-retry-then-flag preserved.
+//!   the slow-path "get it right" model), OpenAI (gpt-4o), Gemini
+//!   (gemini-1.5-pro), MiniMax, and any OpenAI-compatible URL server.
+//!   D-21 single-retry-then-flag preserved.
 //!
 //! ## Default-OFF contract (blueprint §5.1)
 //!
 //! `default = []` in `Cargo.toml` (`[features]` section). v0 ships verifier
-//! OFF; loading a 27B model by default is a non-starter on dev hardware.
-//! Plan 04-04 wires the `VerifierPipelineHandle::enable()` toggle that
+//! OFF. Plan 04-04 wires the `VerifierPipelineHandle::enable()` toggle that
 //! spawns the worker via `run_verify_worker`.
 //!
 //! ## Worker subscribe + MVCC supersede (Plan 04-01 Task 3 + Plan 04-04 Task 4)
@@ -44,17 +43,10 @@
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 
-#[cfg(feature = "verify-small")]
-pub mod candle_gemma3_270m;
-#[cfg(feature = "candle")]
-pub mod candle_gemma3_27b;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 pub mod divergence;
-// Phase 11 — backend-agnostic Verifier over `lunaris_llm::LlmBackend`. Additive;
-// legacy CandleGemma3_27B / CandleGemma3_270M / OllamaVerifier /
-// CloudApiVerifier remain untouched. Default verify model stays 27B; the
-// flip to 4B is gated on ER-F1 and lands in a separate later commit.
+// Phase 11 — backend-agnostic Verifier over `lunaris_llm::LlmBackend`.
 pub mod llm_verifier;
 pub mod noop;
 // Phase 11 — per-turn reflection supervisor. Scaffold only in this commit:
@@ -69,10 +61,6 @@ pub mod supervisor;
 pub mod types;
 pub mod worker;
 
-#[cfg(feature = "candle")]
-pub use candle_gemma3_27b::{CandleGemma3_27B, CandleGemma3_27BOpts};
-#[cfg(feature = "verify-small")]
-pub use candle_gemma3_270m::{CandleGemma3_270M, CandleGemma3_270MOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiVerifier, CloudApiVerifierOpts, CloudProvider};
 pub use llm_verifier::{LlmVerifier, LlmVerifierOpts};
@@ -101,8 +89,8 @@ pub use lunaris_extract::{NeedsReviewItem, NeedsReviewReason};
 /// Object-safe async verifier.
 ///
 /// Per blueprint §5.1 + D-01 the v0 default implementation is
-/// [`NoopVerifier`]; alternative backends include `CandleGemma3_27B`,
-/// `OllamaVerifier`, and `CloudApiVerifier`. All implementations MUST honour
+/// [`NoopVerifier`]; alternative backends include `OllamaVerifier` and
+/// `CloudApiVerifier`. All implementations MUST honour
 /// the [`applies`](Verifier::applies) contract — `false` signals the worker
 /// that the verifier is a passthrough and MUST short-circuit the MVCC
 /// supersede write (Plan 04-01 Task 3 worker loop).

@@ -4,21 +4,20 @@
 //! ## Why this crate exists
 //!
 //! Before this crate, `lunaris-extract` and `lunaris-verify` each carried
-//! their own copies of:
+//! their own copies of an Ollama HTTP client speaking `/api/chat`, a
+//! multi-provider cloud-API mux (Anthropic / OpenAI / Gemini / MiniMax /
+//! OpenAI-compatible URL), and a per-crate env namespace
+//! (`LUNARIS_EXTRACT_PROVIDER`, `LUNARIS_VERIFY_PROVIDER`).
 //!
-//! - a candle Gemma-3 model loader + handle (`CandleGemma3_4B` /
-//!   `CandleGemma3_27B` / `CandleGemma3_270M`),
-//! - an Ollama HTTP client speaking `/api/chat`,
-//! - a three-provider cloud-API mux (Anthropic / OpenAI / Gemini),
-//! - and a per-crate env namespace (`LUNARIS_EXTRACT_PROVIDER`,
-//!   `LUNARIS_VERIFY_PROVIDER`).
+//! That duplication means swapping in a new backend (Qwen, Llama, a hosted
+//! SaaS) touches every consuming crate. This crate collapses the surface to
+//! one trait — [`LlmBackend`] — with one method — [`LlmBackend::generate`] —
+//! and one constraint enum — [`SchemaConstraint`]. The concrete impls live
+//! behind feature flags and are wired by [`config::LlmConfig`].
 //!
-//! That duplication is ~3.2k lines and means swapping in a new backend
-//! (Qwen, Llama, a hosted SaaS) touches every consuming crate. This crate
-//! collapses the surface to one trait — [`LlmBackend`] — with one method —
-//! [`LlmBackend::generate`] — and one constraint enum — [`SchemaConstraint`].
-//! Three concrete impls live behind feature flags and are wired by
-//! [`config::LlmConfig`].
+//! Since the llama.cpp-only cutover (2026-07, Phase C) the LLM slots are
+//! **remote-only**: the in-process candle backends were deleted. Local
+//! inference (embedder + reranker) lives in `lunaris-llamacpp`.
 //!
 //! ## Trait shape
 //!
@@ -38,25 +37,10 @@
 //! method. If a future use-case can't fit, the abstraction is wrong —
 //! pivot before adding a second method.
 //!
-//! ## Scope of this commit
-//!
-//! Trait + config + tests only. No backend implementations yet — those
-//! land in the follow-up commit that *moves* the CandleGemma3 / Ollama /
-//! CloudApi modules out of `lunaris-extract` and `lunaris-verify`.
-//! Downstream crates don't depend on `lunaris-llm` yet either.
-//!
 //! ## Feature flags (forwarded by consumers)
 //!
-//! - `candle` — links the candle stack; required for `CandleBackend`.
 //! - `ollama` — links `reqwest`; required for `OllamaBackend`.
 //! - `cloud-api` — links `reqwest`; required for the per-provider impls.
-//! - `candle-quantized` — Q4 GGUF Gemma-3 via `candle_transformers::models::
-//!   quantized_gemma3`; required for `QuantizedCandleBackend`. Implies
-//!   `candle` (no new dependency lines — candle-transformers already ships
-//!   the quantized module).
-//! - `metal` / `cuda` — device-upgrade ladder for the quantized backend
-//!   (mirrors `lunaris-rerank-native`'s `device_select.rs`). Cpu unless one
-//!   of these is enabled.
 //!
 //! Default is `[]` (noop) so a `lunaris-llm = { workspace = true }`
 //! that forgets to enable a feature still compiles — it just can't
@@ -70,10 +54,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 
-#[cfg(feature = "candle")]
-pub mod candle;
-#[cfg(feature = "candle-quantized")]
-pub mod candle_quantized;
 #[cfg(feature = "cloud-api")]
 pub mod cloud;
 pub mod config;
@@ -82,10 +62,6 @@ pub mod faux;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 
-#[cfg(feature = "candle")]
-pub use candle::{CandleBackend, CandleBackendOpts};
-#[cfg(feature = "candle-quantized")]
-pub use candle_quantized::{QuantizedCandleBackend, QuantizedCandleBackendOpts};
 #[cfg(feature = "cloud-api")]
 pub use cloud::{CloudBackend, CloudBackendOpts, CloudProvider, is_transient};
 pub use config::{LlmConfig, Pipeline, ProviderKind};
@@ -116,7 +92,7 @@ pub trait LlmBackend: Send + Sync + 'static {
     ) -> Result<String, LunarisError>;
 
     /// Stable identifier for telemetry, quality gates, and audit logs.
-    /// Example: `"candle://gemma-3-4b-it"`, `"ollama://gemma3:4b"`,
+    /// Example: `"ollama://gemma3:4b"`,
     /// `"anthropic://claude-3-5-sonnet-latest"`.
     fn model_id(&self) -> &str;
 
@@ -132,18 +108,17 @@ pub trait LlmBackend: Send + Sync + 'static {
 /// Three flavors map to the three transports we ship:
 ///
 /// - `None` — free-form text (callers parse themselves).
-/// - `Gbnf(...)` — llama.cpp / candle GBNF grammar; candle backends consume
-///   the grammar directly; Ollama translates to JSON-schema; cloud-API
-///   either uses tool-use or relaxes to `None` with a stricter prompt.
+/// - `Gbnf(...)` — llama.cpp GBNF grammar; Ollama translates to
+///   JSON-schema; cloud-API either uses tool-use or relaxes to `None`
+///   with a stricter prompt.
 /// - `JsonSchema(...)` — a serde_json `Value` containing a JSON-schema
 ///   object; Ollama passes it as the `format` field; cloud-API uses
-///   provider-native schema mode; candle backends fall back to GBNF if
-///   the grammar can be derived, else error.
+///   provider-native schema mode.
 #[derive(Debug, Clone, Copy)]
 pub enum SchemaConstraint<'a> {
     /// Free-form output. The caller post-processes.
     None,
-    /// llama.cpp / candle GBNF grammar source.
+    /// llama.cpp GBNF grammar source.
     Gbnf(&'a str),
     /// JSON-schema object.
     JsonSchema(&'a serde_json::Value),
