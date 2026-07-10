@@ -76,6 +76,11 @@ jobs:
           - os: macos-14 # Apple Silicon runners
             target: aarch64-apple-darwin
             manylinux: "off"
+            # ARM macOS floor is 11.0 anyway; set it explicitly so the
+            # MACOSX_DEPLOYMENT_TARGET env below never receives an empty
+            # string (clang: "cannot parse integer from empty string" —
+            # run 29106550764 broke this previously-green cell that way).
+            deployment-target: "11.0"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             manylinux: "off"
@@ -100,7 +105,9 @@ jobs:
       - name: Build wheel via maturin
         uses: PyO3/maturin-action@v1
         env:
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target || '' }}
+          # Fallback must be a VALID version — empty string hard-fails
+          # clang on macOS. Non-macOS toolchains ignore this var.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target || '11.0' }}
         with:
           command: build
           args: >-
@@ -122,6 +129,14 @@ jobs:
               dnf install -y clang-devel cmake
             elif command -v apt-get >/dev/null 2>&1; then
               apt-get update && apt-get install -y libclang-dev cmake
+            fi
+            # Cross cell only: bindgen drives HOST clang against TARGET
+            # headers, so without the cross sysroot stdint.h resolution
+            # dies with "bits/libc-header-start.h file not found" (run
+            # 29106550764). The export persists — before-script-linux and
+            # the maturin invocation run in one shell script.
+            if command -v aarch64-unknown-linux-gnu-gcc >/dev/null 2>&1; then
+              export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(aarch64-unknown-linux-gnu-gcc -print-sysroot)"
             fi
       - name: Upload wheel artefact
         uses: actions/upload-artifact@v4
