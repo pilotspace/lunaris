@@ -54,6 +54,10 @@ tokio               = { workspace = true }
 # payload against the `GRANITE_R2_GGUF_Q4_SHA256` pin before running the
 # drift gate. Workspace dep — no new transitive surface.
 sha2                = { workspace = true }
+# Workspace dep (already used by lunaris-server) — the capturing `Layer` for
+# `tests/span_emission.rs` and the per-stage aggregator in
+# `examples/profile_embed.rs`. Dev-only: never compiled into the library.
+tracing-subscriber  = { workspace = true }
 
 [features]
 default       = []

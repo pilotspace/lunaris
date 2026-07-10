@@ -266,10 +266,45 @@ impl NativeEmbedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
-        let EncodedBatch { input_ids, attention_mask } =
-            self.inner.tokenizer.encode_batch(inputs, &self.inner.device)?;
+
+        // -- tokenize + batch-assembly ---------------------------------------
+        // `tokenizers::Tokenizer::encode_batch` fuses per-string tokenization
+        // with pad-to-batch-longest assembly in one call — the two stages the
+        // microscope plan names (§4b) can't be split further without reaching
+        // into that crate's internals. The span still carries the
+        // batch-assembly measurement payload (real_tokens/padded_tokens
+        // recorded AFTER the call) so padding waste is visible. Field values
+        // are only computed `if !span.is_disabled()` — the mask reduction in
+        // `mask_token_stats` is real device compute, not free, so we skip it
+        // entirely when nothing is subscribed (near-zero-cost-when-disabled).
+        let tokenize_span = tracing::trace_span!(
+            "lunaris.embed.tokenize",
+            batch_size = inputs.len(),
+            max_seq_len = tracing::field::Empty,
+            real_tokens = tracing::field::Empty,
+            padded_tokens = tracing::field::Empty,
+        );
+        let EncodedBatch { input_ids, attention_mask } = {
+            let _enter = tokenize_span.enter();
+            self.inner.tokenizer.encode_batch(inputs, &self.inner.device)?
+        };
+        if !tokenize_span.is_disabled() {
+            if let Ok(seq_len) = attention_mask.dim(1) {
+                tokenize_span.record("max_seq_len", seq_len);
+            }
+            if let Ok((real, padded)) = crate::tokenizer::mask_token_stats(&attention_mask) {
+                tokenize_span.record("real_tokens", real);
+                tokenize_span.record("padded_tokens", padded);
+            }
+        }
+
         let pooled = pooled_forward(&self.inner.model, &input_ids, &attention_mask)?;
-        let rows: Vec<Vec<f32>> = pooled.to_vec2::<f32>()?;
+
+        let copy_span = tracing::trace_span!("lunaris.embed.copy", batch_size = inputs.len());
+        let rows: Vec<Vec<f32>> = {
+            let _enter = copy_span.enter();
+            pooled.to_vec2::<f32>()?
+        };
         for row in &rows {
             if row.len() != GRANITE_R2_DIM {
                 return Err(NativeEmbedderError::Weights(format!(

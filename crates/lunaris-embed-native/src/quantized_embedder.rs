@@ -137,9 +137,41 @@ impl NativeQuantizedEmbedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
-        let batch = self.inner.tokenizer.encode_batch(inputs, self.inner.model.device())?;
+
+        // See `crate::embedder::NativeEmbedder::embed_blocking` for the full
+        // rationale (tokenize+batch-assembly fused in one library call; span
+        // fields recorded post-hoc, gated behind `is_disabled()` so the mask
+        // reduction never runs when nothing is subscribed).
+        let tokenize_span = tracing::trace_span!(
+            "lunaris.embed.tokenize",
+            batch_size = inputs.len(),
+            max_seq_len = tracing::field::Empty,
+            real_tokens = tracing::field::Empty,
+            padded_tokens = tracing::field::Empty,
+            quant = "q4_k_m",
+        );
+        let batch = {
+            let _enter = tokenize_span.enter();
+            self.inner.tokenizer.encode_batch(inputs, self.inner.model.device())?
+        };
+        if !tokenize_span.is_disabled() {
+            if let Ok(seq_len) = batch.attention_mask.dim(1) {
+                tokenize_span.record("max_seq_len", seq_len);
+            }
+            if let Ok((real, padded)) = crate::tokenizer::mask_token_stats(&batch.attention_mask) {
+                tokenize_span.record("real_tokens", real);
+                tokenize_span.record("padded_tokens", padded);
+            }
+        }
+
         let pooled = self.inner.model.pooled_forward(&batch.input_ids, &batch.attention_mask)?;
-        let rows: Vec<Vec<f32>> = pooled.to_vec2::<f32>()?;
+
+        let copy_span =
+            tracing::trace_span!("lunaris.embed.copy", batch_size = inputs.len(), quant = "q4_k_m");
+        let rows: Vec<Vec<f32>> = {
+            let _enter = copy_span.enter();
+            pooled.to_vec2::<f32>()?
+        };
         Ok(rows)
     }
 }

@@ -80,8 +80,23 @@ impl XlmRobertaReranker {
         attention_mask: &Tensor,
         token_type_ids: &Tensor,
     ) -> Result<Tensor, ForwardError> {
+        let (batch_size, max_seq_len) = input_ids.dims2().unwrap_or((0, 0));
+
         // logits: (batch, num_labels). For bge-reranker-v2-m3, num_labels == 1.
-        let logits = self.model.forward(input_ids, attention_mask, token_type_ids)?;
+        // Span-per-call: the §4b microscope decision rule reads this stage —
+        // if ≥60% of p50 latency lives here, candle's matmul kernels are the
+        // bottleneck (runtime-swap lever, §4c); otherwise fix
+        // tokenize/batch/copy in place.
+        let logits = {
+            let _enter = tracing::trace_span!(
+                "lunaris.rerank.forward",
+                batch_size,
+                max_seq_len,
+                quant = "fp32"
+            )
+            .entered();
+            self.model.forward(input_ids, attention_mask, token_type_ids)?
+        };
         let dims = logits.dims().to_vec();
         if dims.len() != 2 || dims[1] != self.num_labels {
             return Err(ForwardError::UnexpectedShape {
@@ -89,6 +104,14 @@ impl XlmRobertaReranker {
                 expected_labels: self.num_labels,
             });
         }
+
+        let _extract_enter = tracing::trace_span!(
+            "lunaris.rerank.score_extract",
+            batch_size,
+            max_seq_len,
+            quant = "fp32"
+        )
+        .entered();
 
         // Squeeze the trailing num_labels axis when it's 1 (bge case). For
         // num_labels > 1 we'd need to choose a class index; bge is single-label.

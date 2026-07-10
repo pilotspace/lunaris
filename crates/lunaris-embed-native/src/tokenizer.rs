@@ -142,6 +142,54 @@ impl GraniteTokenizer {
     }
 }
 
+/// Compute `(real_tokens, padded_tokens)` from an `attention_mask` tensor of
+/// shape `(batch, seq_len)`, `DType::U32`, where `1` = real token, `0` = pad.
+///
+/// Used exclusively by the tracing instrumentation (see
+/// `docs/design/quantized-inference-extractor-reranker.md` §4b — the
+/// microscope workstream) to attribute batch-assembly padding waste; this is
+/// NOT on any correctness path, so callers MUST treat a candle error here as
+/// best-effort (skip the span fields, never fail the actual embed call).
+///
+/// why `sum_all()` and not a host-side loop: the mask already lives on the
+/// compute device (CPU/Metal/CUDA); reducing there and pulling back a single
+/// scalar is cheaper than round-tripping the whole `(batch, seq_len)` tensor
+/// to a `Vec` just to sum it host-side.
+pub(crate) fn mask_token_stats(mask: &Tensor) -> candle_core::Result<(usize, usize)> {
+    let (batch, seq_len) = mask.dims2()?;
+    let total = batch * seq_len;
+    let real = mask.sum_all()?.to_dtype(DType::U32)?.to_scalar::<u32>()? as usize;
+    let padded = total.saturating_sub(real);
+    Ok((real, padded))
+}
+
+#[cfg(test)]
+mod mask_token_stats_tests {
+    use super::*;
+
+    #[test]
+    fn mask_token_stats_counts_real_and_padded() -> candle_core::Result<()> {
+        let device = Device::Cpu;
+        // batch=2, seq_len=4: row 0 fully real, row 1 has 2 real + 2 pad.
+        let mask = Tensor::from_vec(vec![1u32, 1, 1, 1, 1, 1, 0, 0], (2, 4), &device)?
+            .to_dtype(DType::U32)?;
+        let (real, padded) = mask_token_stats(&mask)?;
+        assert_eq!(real, 6);
+        assert_eq!(padded, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn mask_token_stats_all_pad_edge_case() -> candle_core::Result<()> {
+        let device = Device::Cpu;
+        let mask = Tensor::zeros((1, 8), DType::U32, &device)?;
+        let (real, padded) = mask_token_stats(&mask)?;
+        assert_eq!(real, 0);
+        assert_eq!(padded, 8);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     // Offline tests run only the type-level checks; the live tokenizer roundtrip
