@@ -90,6 +90,17 @@ parking_lot         = { workspace = true, optional = true }
 # http stack — shared by `ollama` + `cloud-api`.
 reqwest        = { workspace = true, optional = true }
 
+# macOS Accelerate BLAS by default when the candle backend is enabled —
+# mirror of `lunaris-embed-native`'s target-specific block (see that
+# Cargo.toml for the full rationale). `optional = true` keeps these inert
+# unless the `candle` feature activates `dep:candle-core`/`dep:candle-nn`;
+# the target-scoped declarations then contribute the `accelerate` feature on
+# macOS-target builds only. Guarded by
+# `candle_quantized::tests::macos_default_build_has_accelerate_blas`.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, optional = true, features = ["accelerate"] }
+candle-nn   = { workspace = true, optional = true, features = ["accelerate"] }
+
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # FauxBackend (cfg(test)) needs parking_lot::Mutex. Listed here so that

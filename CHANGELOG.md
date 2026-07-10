@@ -2,6 +2,24 @@
 
 All notable changes to Lunaris are documented here.
 
+## Unreleased
+
+### Changed (platform performance defaults)
+
+- **macOS builds now get Accelerate BLAS by default** — `lunaris-embed-native`,
+  `lunaris-rerank-native`, and `lunaris-llm` (candle path) carry a
+  `[target.'cfg(target_os = "macos")'.dependencies]` block that enables
+  candle's Accelerate backend for macOS-target builds only. Every consumer
+  (Python wheels, npm binaries, `lunaris-mcp`, `lunaris-server`, the eval
+  harness) gets fast F32 matmul out of the box instead of candle's naive
+  CPU gemm (previously the root cause of ~21 min/question LongMemEval
+  ingest on default builds). Linux/Windows builds are byte-identical
+  (resolver v3 scopes target-specific dependency features to the build
+  target); the `cpu-accelerate` feature remains as an explicit no-op-on-macOS
+  passthrough. `metal` stays opt-in deliberately: candle's shape-keyed Metal
+  buffer cache grows unboundedly in long-lived processes. `cuda` / `cpu-mkl`
+  stay opt-in (external toolchains).
+
 ## v0.5.0 — 2026-06-16
 
 Closes the **mem0-parity-hardening** P1 wave and relicenses the project. Three
