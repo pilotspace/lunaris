@@ -5,22 +5,21 @@
 //! `LLAMA_POOLING_TYPE_CLS`), L2-normalized, 768-d rows, `out[i]` is the
 //! embedding of `inputs[i]`.
 //!
-//! Spike-scope design decisions (ADR
-//! `docs/decisions/2026-07-10-llamacpp-inference-runtime.md`):
+//! Design (ADR `docs/decisions/2026-07-10-llamacpp-inference-runtime.md`
+//! + cutover Phase A2):
 //!
-//! - **Context per `embed_blocking` call.** `LlamaModel::new_context`
-//!   borrows the model (`LlamaContext<'a>`), so storing a long-lived
-//!   context next to the model would need a self-referential cell. A fresh
-//!   context per call sidesteps that, costs one compute-buffer allocation
-//!   (~ms — llama.cpp's buffers are FIXED size, the very property the ADR
-//!   wants vs candle's shape-keyed Metal cache), and makes concurrent
-//!   `embed_batch` calls safe without a model mutex (`LlamaModel` is
-//!   `Sync`; each call owns its context).
+//! - **One warm context on a worker thread** (`crate::worker::EncodeWorker`)
+//!   — the spike's context-per-call design paid llama.cpp's context setup on
+//!   every batch, which capped Metal at ~1/10 of its warm ceiling. The
+//!   worker owns model + context (no self-referential struct), keeps
+//!   llama.cpp's FIXED compute buffers (the anti-leak property the ADR
+//!   wants vs candle's shape-keyed Metal cache), and frees everything on
+//!   drop.
 //! - **Token-budget windows, not row-count windows.** Sequences are packed
-//!   into one `LlamaBatch` until the next would exceed `max_batch_tokens`,
-//!   then decoded together — llama.cpp packs ragged sequences into the
-//!   ubatch without padding, so the §4b padding-waste ceiling has no
-//!   equivalent here.
+//!   into one `LlamaBatch` until the next would exceed the budget (or the
+//!   context's `n_seq_max`), then encoded together — llama.cpp packs ragged
+//!   sequences into the ubatch without padding, so the §4b padding-waste
+//!   ceiling has no equivalent here.
 //! - Per-input truncation to `n_ctx_train` (8192 for granite-r2) mirrors
 //!   the native tokenizer's `max_position_embeddings` truncation.
 
@@ -28,10 +27,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
-use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
+
+use crate::worker::EncodeWorker;
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
 /// granite-embedding-311m output dimensionality — must agree with
@@ -84,9 +83,11 @@ impl From<LlamaCppEmbedderError> for LunarisError {
 }
 
 struct Inner {
-    model: LlamaModel,
-    n_threads: Option<i32>,
-    max_batch_tokens: u32,
+    model: Arc<LlamaModel>,
+    worker: EncodeWorker,
+    /// Effective per-window token budget — fixed at `open` (also sizes the
+    /// worker context), callers truncate against it.
+    budget: usize,
 }
 
 /// llama.cpp-backed embedder. Cheap to clone — heavy state behind `Arc`.
@@ -99,14 +100,16 @@ impl std::fmt::Debug for LlamaCppEmbedder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlamaCppEmbedder")
             .field("dim", &GRANITE_R2_DIM)
-            .field("max_batch_tokens", &self.inner.max_batch_tokens)
+            .field("budget", &self.inner.budget)
             .finish()
     }
 }
 
 impl LlamaCppEmbedder {
-    /// Construct from a GGUF on disk. Loads weights synchronously; callers
-    /// concerned about runtime stalls should wrap in `spawn_blocking`.
+    /// Construct from a GGUF on disk. Loads weights + spawns the encode
+    /// worker (model + ONE warm context on a dedicated thread — Phase A2)
+    /// synchronously; callers concerned about runtime stalls should wrap in
+    /// `spawn_blocking`.
     ///
     /// Uses the process-shared `LlamaBackend` (`crate::backend`), so any
     /// number of models — embedder + reranker + later extractor — coexist
@@ -123,23 +126,32 @@ impl LlamaCppEmbedder {
         if n_embd as usize != GRANITE_R2_DIM {
             return Err(LlamaCppEmbedderError::WrongDim(n_embd));
         }
-        Ok(Self {
-            inner: Arc::new(Inner {
-                model,
-                n_threads: opts.n_threads,
-                max_batch_tokens: opts.max_batch_tokens.max(16),
-            }),
-        })
+        let model = Arc::new(model);
+        let budget = opts.max_batch_tokens.max(16).min(model.n_ctx_train()) as usize;
+        let worker = EncodeWorker::spawn(
+            Arc::clone(&model),
+            budget,
+            opts.n_threads,
+            "lunaris-llamacpp-embed",
+        )
+        .map_err(LlamaCppEmbedderError::Llama)?;
+        Ok(Self { inner: Arc::new(Inner { model, worker, budget }) })
+    }
+
+    /// How many llama.cpp contexts this handle has ever created — exactly 1
+    /// (the A2 warm-context contract; see `tests/context_reuse.rs`).
+    pub fn contexts_created(&self) -> usize {
+        self.inner.worker.contexts_created()
     }
 
     /// Synchronous embed path — the async trait method wraps this in
-    /// `spawn_blocking`.
+    /// `spawn_blocking`. Tokenizes caller-side (the model handle is shared
+    /// with the worker), encodes on the warm worker context, L2-normalizes.
     pub fn embed_blocking(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LlamaCppEmbedderError> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
         let inner = &*self.inner;
-        let budget = inner.max_batch_tokens.min(inner.model.n_ctx_train()) as usize;
 
         // Tokenize everything up front (cheap), truncating each input to the
         // window budget so a single long document can always form a window.
@@ -149,81 +161,13 @@ impl LlamaCppEmbedder {
                 .model
                 .str_to_token(text, AddBos::Always)
                 .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
-            tokens.truncate(budget);
+            tokens.truncate(inner.budget);
             token_lists.push(tokens);
         }
 
-        let mut ctx_params = LlamaContextParams::default()
-            .with_embeddings(true)
-            .with_pooling_type(LlamaPoolingType::Cls)
-            .with_n_ctx(std::num::NonZeroU32::new(budget as u32))
-            .with_n_batch(budget as u32)
-            .with_n_ubatch(budget as u32)
-            // The CONTEXT enforces its own sequence ceiling (default 1) —
-            // batch init fails with a bare "failed to initialize batch" when
-            // a seq id ≥ n_seq_max shows up. Size it to the call's fan-out.
-            .with_n_seq_max(inputs.len() as u32);
-        if let Some(t) = inner.n_threads {
-            ctx_params = ctx_params.with_n_threads(t);
-        }
-        let mut ctx = inner
-            .model
-            .new_context(
-                crate::backend::shared_backend().map_err(LlamaCppEmbedderError::Llama)?,
-                ctx_params,
-            )
-            .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
-
-        let mut out: Vec<Vec<f32>> = vec![Vec::new(); inputs.len()];
-        let mut batch = LlamaBatch::new(budget, inputs.len() as i32);
-        let mut window: Vec<usize> = Vec::new(); // input indices in the batch
-        let mut used = 0usize;
-
-        for (i, tokens) in token_lists.iter().enumerate() {
-            if !window.is_empty() && used + tokens.len() > budget {
-                flush_window(&mut ctx, &mut batch, &mut window, &mut out)?;
-                used = 0;
-            }
-            // logits_all=true: pooled (CLS/MEAN) embeddings need every token
-            // flagged for output — llama.cpp's batch validation rejects an
-            // encoder batch with only last-token outputs ("failed to
-            // initialize batch"). Mirrors upstream's embedding example.
-            batch
-                .add_sequence(tokens, window.len() as i32, true)
-                .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
-            window.push(i);
-            used += tokens.len();
-        }
-        flush_window(&mut ctx, &mut batch, &mut window, &mut out)?;
-
-        Ok(out)
+        let raw = inner.worker.encode(token_lists).map_err(LlamaCppEmbedderError::Llama)?;
+        Ok(raw.iter().map(|row| l2_normalize(row)).collect())
     }
-}
-
-/// Decode the packed batch and scatter each sequence's pooled embedding back
-/// to its input slot; resets the batch + window for the next fill.
-fn flush_window(
-    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
-    batch: &mut LlamaBatch,
-    window: &mut Vec<usize>,
-    out: &mut [Vec<f32>],
-) -> Result<(), LlamaCppEmbedderError> {
-    if window.is_empty() {
-        return Ok(());
-    }
-    // granite-r2 is encoder-only (ModernBERT): llama.cpp requires
-    // `llama_encode` there — `llama_decode` returns -1 for encoder-only
-    // models (surfaced by llama-cpp-2 as the misleading "n_tokens == 0").
-    ctx.encode(batch).map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
-    for (seq, &input_idx) in window.iter().enumerate() {
-        let emb = ctx
-            .embeddings_seq_ith(seq as i32)
-            .map_err(|e| LlamaCppEmbedderError::Llama(e.to_string()))?;
-        out[input_idx] = l2_normalize(emb);
-    }
-    batch.clear();
-    window.clear();
-    Ok(())
 }
 
 fn l2_normalize(v: &[f32]) -> Vec<f32> {

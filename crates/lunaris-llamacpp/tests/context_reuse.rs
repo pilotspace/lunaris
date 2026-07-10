@@ -89,10 +89,17 @@ fn reranker_reuses_one_context_across_calls() {
         let scores = reranker
             .score_blocking(
                 "what is panda?",
-                &["hi", "The giant panda is a bear species endemic to China."],
+                &[
+                    "hi",
+                    "The giant panda (Ailuropoda melanoleuca), sometimes called a panda bear \
+                     or simply panda, is a bear species endemic to China.",
+                ],
             )
             .expect("score");
-        assert!(scores[1] > 0.9 && scores[0] < 0.1, "discrimination contract must survive A2");
+        assert!(
+            scores[1] > 0.9 && scores[0] < 0.1,
+            "discrimination contract must survive A2 (canonical pair, FP32 ref ≈0.997/0.0003): {scores:?}"
+        );
     }
     assert_eq!(
         reranker.contexts_created(),
