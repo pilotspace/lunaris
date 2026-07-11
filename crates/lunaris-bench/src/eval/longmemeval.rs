@@ -605,19 +605,64 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // RAPTOR/doctree overhead ~10× and yields fewer, larger chunks to
         // embed. `Hit::source` is then `helios:fs/lme####/<sid>.md`, still
         // carrying the session id for evidence-recall + session expansion.
-        let mut ingested = 0usize;
-        for (si, (sid, turns)) in rec.sessions.iter().enumerate() {
-            let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
-            if let Some(m) = maxsess
-                && si >= m
-                && !is_gold
-            {
-                continue;
+        // Materialize the (source, doc, turn_count) set to ingest, applying
+        // the maxsess+gold filter once. Order is irrelevant to the final
+        // store: each session is a DISTINCT doc key (`<sid>.md`) and every
+        // entity/relation key is a deterministic blake3 of name+type, so
+        // concurrent writes are idempotent same-key puts — no last-writer
+        // hazard, no cross-session interference.
+        let docs: Vec<(String, String, usize)> = rec
+            .sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(si, (sid, turns))| {
+                let is_gold = rec.answer_session_ids.iter().any(|a| a == sid);
+                if let Some(m) = maxsess
+                    && si >= m
+                    && !is_gold
+                {
+                    return None;
+                }
+                Some((format!("{sid}.md"), turns.join("\n\n"), turns.len()))
+            })
+            .collect();
+        // INGEST CONCURRENCY (`LUNARIS_EVAL_LME_INGEST_CONCURRENCY`, default 1
+        // = the historical strictly-sequential behaviour). With the graph
+        // pipeline ON, per-session ingest is dominated by remote per-chunk
+        // extraction, and the ~50 sessions ran back-to-back → a full haystack
+        // took ~30 min/question (7 days for the full 500). Overlapping the
+        // per-session writes cuts that ~linearly. Keep
+        // `ingest_concurrency × EXTRACT_CONCURRENCY ≈ 16` so total in-flight
+        // MiniMax calls stay under the provider's rate limit (HTTP 529).
+        let ingest_concurrency: usize = std::env::var("LUNARIS_EVAL_LME_INGEST_CONCURRENCY")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|c| c.max(1))
+            .unwrap_or(1);
+        let ingested: usize = if ingest_concurrency <= 1 {
+            let mut acc = 0usize;
+            for (name, doc, nturns) in &docs {
+                pad.write(name, doc.clone()).await?;
+                acc += nturns;
             }
-            let doc = turns.join("\n\n");
-            pad.write(&format!("{sid}.md"), doc).await?;
-            ingested += turns.len();
-        }
+            acc
+        } else {
+            use futures::stream::StreamExt;
+            let results: Vec<Result<usize, lunaris_core::LunarisError>> =
+                futures::stream::iter(docs.iter())
+                    .map(|(name, doc, nturns)| {
+                        let pad = &pad;
+                        async move { pad.write(name, doc.clone()).await.map(|_| *nturns) }
+                    })
+                    .buffer_unordered(ingest_concurrency)
+                    .collect()
+                    .await;
+            let mut acc = 0usize;
+            for r in results {
+                acc += r?;
+            }
+            acc
+        };
         // Unfiltered recall. We deliberately DO NOT use `pad.grep`, whose
         // `StartsWith{source}` filter is malformed for Moon's TAG `source`
         // field (`@source:helios:fs/lme0000/*` with unescaped `:` / `/`) and
