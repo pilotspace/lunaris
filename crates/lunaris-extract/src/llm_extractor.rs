@@ -29,6 +29,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
 use lunaris_llm::{GenOpts, LlmBackend, SchemaConstraint};
+use serde::Deserialize;
 use ulid::Ulid;
 
 use crate::Extractor;
@@ -282,21 +283,66 @@ fn parse_extraction_json(decoded: &str, chunk_id: Ulid) -> RawExtraction {
     }
 }
 
+/// Deserialize a JSON array element-by-element, silently dropping any element
+/// that fails to deserialize instead of failing the whole array. Cloud
+/// extractors (MiniMax-M3, LongMemEval graph run 2026-07) intermittently emit
+/// one malformed entity/relation per chunk; without this, a single bad element
+/// dropped EVERY good sibling in the same chunk (q1 lost 10 chunks' worth of
+/// extractions this way, silently starving the graph). Design-for-failure: a
+/// bad element degrades to its own omission, never to a whole-chunk loss.
+fn lenient_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let raw = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let total = raw.len();
+    let kept: Vec<T> = raw.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+    if kept.len() < total {
+        tracing::debug!(
+            dropped = total - kept.len(),
+            kept = kept.len(),
+            "lenient_vec: skipped malformed extraction elements"
+        );
+    }
+    Ok(kept)
+}
+
+/// Accept a JSON string, `null`, or an absent field, mapping the empty cases
+/// to `""`. Cloud models routinely null out a `*_type` they cannot classify or
+/// a `valid_from_iso` they cannot date; dropping the whole element over an
+/// un-inferred type loses a real, otherwise-usable fact.
+fn string_or_null<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Neutral confidence for elements whose `confidence` the model omitted or
+/// nulled — keeps the element rather than dropping it over a missing score.
+fn mid_confidence() -> f32 {
+    0.5
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct ExtractionJson {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_vec")]
     entities: Vec<EntityJson>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_vec")]
     relations: Vec<RelationJson>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct EntityJson {
     name: String,
+    #[serde(default, deserialize_with = "string_or_null")]
     entity_type: String,
     #[serde(default)]
     aliases: Vec<String>,
+    #[serde(default = "mid_confidence")]
     confidence: f32,
+    #[serde(default, deserialize_with = "string_or_null")]
     valid_from_iso: String,
     #[serde(default)]
     valid_to_iso: Option<String>,
@@ -305,11 +351,15 @@ struct EntityJson {
 #[derive(Debug, serde::Deserialize)]
 struct RelationJson {
     subject_name: String,
+    #[serde(default, deserialize_with = "string_or_null")]
     subject_type: String,
     predicate: String,
     object_name: String,
+    #[serde(default, deserialize_with = "string_or_null")]
     object_type: String,
+    #[serde(default = "mid_confidence")]
     confidence: f32,
+    #[serde(default, deserialize_with = "string_or_null")]
     valid_from_iso: String,
     #[serde(default)]
     valid_to_iso: Option<String>,
@@ -426,6 +476,45 @@ mod tests {
         assert_eq!(out.by_chunk.len(), 1);
         assert!(out.by_chunk[0].entities.is_empty());
         assert!(out.by_chunk[0].relations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn one_malformed_element_does_not_drop_the_whole_chunk() {
+        // Real MiniMax-M3 failure modes observed in the LongMemEval graph
+        // run (2026-07): a relation MISSING `subject_type`, a `null` where a
+        // type/date string is expected, and an irrecoverable stub object.
+        // Pre-fix, `serde_json::from_str::<ExtractionJson>` failed on the
+        // WHOLE document and dropped every good sibling too — q1 alone lost
+        // 10 chunks' worth of extractions this way, silently starving the
+        // graph. Each recoverable element must now survive; only the
+        // genuinely-unusable one is skipped.
+        let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new().with_response(
+            r#"{
+                "entities":[
+                    {"name":"Alice","entity_type":"Person","confidence":0.9,"valid_from_iso":"2025-01-01"},
+                    {"name":"Bob","entity_type":null,"confidence":0.8,"valid_from_iso":null}
+                ],
+                "relations":[
+                    {"subject_name":"Alice","predicate":"met","object_name":"Bob","object_type":"Person","confidence":0.9,"valid_from_iso":"2025-01-01"},
+                    {"subject_name":"Alice","subject_type":"Person","predicate":"visited","object_name":"Paris","object_type":"City","confidence":0.7,"valid_from_iso":"2025-01-02"},
+                    {"predicate":"orphan-no-subject-or-object"}
+                ]
+            }"#,
+        ));
+        let extractor = LlmExtractor::new(backend);
+        let c = chunk("Alice met Bob in Paris.");
+        let out = extractor.extract(Ulid::new(), &[c]).await.unwrap();
+        assert_eq!(out.by_chunk.len(), 1);
+        // Both entities survive — Bob's null entity_type/date are tolerated.
+        assert_eq!(out.by_chunk[0].entities.len(), 2, "both entities must survive");
+        // Two relations survive — the first (missing subject_type) is
+        // recovered via default; the orphan (no subject/object name) is the
+        // only element dropped.
+        assert_eq!(
+            out.by_chunk[0].relations.len(),
+            2,
+            "recoverable relations must survive; only the orphan drops"
+        );
     }
 
     #[tokio::test]
