@@ -224,6 +224,30 @@ pub struct MoonClient {
     pub ef_runtime: Option<u32>,
     /// The typed `moon-client` SDK handle. Cheap to clone.
     pub(crate) inner: TypedClient,
+    /// Per-physical-connection serializer for cross-store transactions.
+    ///
+    /// Moon tracks the active `TXN.BEGIN … TXN.COMMIT` cross-store transaction
+    /// PER CONNECTION (`conn_state.active_cross_txn`), and `inner` shares ONE
+    /// `redis::aio::MultiplexedConnection` across every `clone()`. So two
+    /// concurrent `atomic_write`s would multiplex two `TXN.BEGIN`s onto the same
+    /// socket and the second gets `ERR already in a cross-store transaction`
+    /// (first hit in production as LongMemEval q89 under concurrent ingest).
+    /// `atomic_write` acquires this async mutex around its whole
+    /// begin/ops/commit critical section so only one cross-store txn is open on
+    /// the connection at a time.
+    ///
+    /// It is `Arc`-cloned in lockstep with `inner` on every `MoonClient::clone`,
+    /// so it is exactly 1:1 with the physical connection — independent
+    /// `connect()` handles (distinct sockets, independent txn state) get
+    /// independent guards and do not serialize against each other.
+    ///
+    /// A `tokio::sync::Mutex` (NOT `parking_lot`) is REQUIRED here: the guard is
+    /// deliberately held across the `.await`s of `txn_begin`/`txn_commit`. That
+    /// is the one legitimate "lock across await" — an async mutex yields the
+    /// executor while held, which is exactly what serializing an async critical
+    /// section needs (a sync guard held across await is the footgun UNSAFE_POLICY
+    /// forbids; this is not that).
+    pub(crate) txn_guard: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for MoonClient {
@@ -328,7 +352,16 @@ impl MoonClient {
             ))
         })?
         .map_err(moon_err)?;
-        let me = Self { host, port, workspace, dim, quantization, ef_runtime, inner };
+        let me = Self {
+            host,
+            port,
+            workspace,
+            dim,
+            quantization,
+            ef_runtime,
+            inner,
+            txn_guard: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        };
         // Phase 22 dim-guardrail (+ W1-1 quantization-drift warning): probe
         // existing indices BEFORE `ensure_indexes` creates anything. If any
         // index already exists at a different dim, fail fast — Moon's
