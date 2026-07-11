@@ -173,23 +173,38 @@ impl MiniMaxChat {
         Ok(Self { client, endpoint, api_key })
     }
 
-    /// Same retry policy as [`OllamaChat::chat`] (3 attempts, 2s/4s linear
-    /// backoff; empty completion counts as a failed attempt, not a result).
+    /// Rate-limit-aware retry. Transient 5xx/empty get the short 2s/4s linear
+    /// backoff (like [`OllamaChat::chat`]), but MiniMax's token-plan limit
+    /// (status 2062) is a PER-MINUTE budget: retrying it after 2s just burns
+    /// another rejection, and counting a throttled judge as a wrong answer
+    /// silently biases eval scores down (q89: 136×2062 → false 'counted miss').
+    /// So on a rate-limit signature we back off ~45s (a budget-reset window)
+    /// and allow more attempts before giving up. The final error still
+    /// propagates so the caller only counts a miss after genuine exhaustion.
     pub(crate) async fn chat(
         &self,
         model: &str,
         system: &str,
         user: &str,
     ) -> anyhow::Result<String> {
+        const MAX_ATTEMPTS: u32 = 6;
+        const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(45);
         let mut last_err = None;
-        for attempt in 1..=3u32 {
+        for attempt in 1..=MAX_ATTEMPTS {
             match self.chat_once(model, system, user).await {
                 Ok(s) if !s.is_empty() => return Ok(s),
                 Ok(_) => last_err = Some(anyhow::anyhow!("empty completion")),
                 Err(e) => last_err = Some(e),
             }
-            if attempt < 3 {
-                tokio::time::sleep(Duration::from_secs(2 * attempt as u64)).await;
+            if attempt < MAX_ATTEMPTS {
+                let rate_limited =
+                    last_err.as_ref().map(|e| is_rate_limited(&e.to_string())).unwrap_or(false);
+                let backoff = if rate_limited {
+                    RATE_LIMIT_BACKOFF
+                } else {
+                    Duration::from_secs(2 * attempt as u64)
+                };
+                tokio::time::sleep(backoff).await;
             }
         }
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("minimax chat failed")))
@@ -240,8 +255,33 @@ impl MiniMaxChat {
             .unwrap_or("")
             .trim()
             .to_string();
+        // A 2062 "Token Plan rate limit" comes back as HTTP 200 with
+        // `choices:null` and the reason buried in `base_resp` — returning a
+        // blank string here would let the caller's retry treat it as a generic
+        // "empty completion" (short backoff) and then count a THROTTLED judge as
+        // a wrong answer (q89: 136×2062 → false miss). Surface the base_resp
+        // status so the retry can recognise the rate limit and back off a full
+        // minute instead.
+        if content.is_empty()
+            && let Some(br) = v.get("base_resp")
+        {
+            let code = br.get("status_code").and_then(|c| c.as_i64()).unwrap_or(0);
+            if code != 0 {
+                let smsg = br.get("status_msg").and_then(|m| m.as_str()).unwrap_or("");
+                anyhow::bail!("minimax {model} status {code}: {smsg}");
+            }
+        }
         Ok(content)
     }
+}
+
+/// True iff a chat error carries MiniMax's token-plan rate-limit signature
+/// (status 2062). That limit is a PER-MINUTE budget, so [`MiniMaxChat::chat`]
+/// backs off ~a minute on a match instead of the short transient backoff — and
+/// the caller must never count a throttled judge as a wrong answer.
+fn is_rate_limited(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("2062") || m.contains("rate limit") || m.contains("token plan")
 }
 
 /// True iff `model` names a MiniMax model (case-insensitive substring), the
@@ -911,6 +951,61 @@ mod tests {
             "must send the user message, got: {received}"
         );
         assert!(received.contains("say hi"), "must send the user content, got: {received}");
+    }
+
+    #[test]
+    fn is_rate_limited_matches_2062_and_token_plan_signatures() {
+        assert!(is_rate_limited("minimax MiniMax-M3 status 2062: Token Plan rate limit reached"));
+        assert!(is_rate_limited("some RATE LIMIT hit"));
+        assert!(is_rate_limited("Token Plan exceeded"));
+        // Non-rate-limit transients must NOT trigger the long budget-reset backoff.
+        assert!(!is_rate_limited("empty completion"));
+        assert!(!is_rate_limited("minimax MiniMax-M3 HTTP 502: bad gateway"));
+        assert!(!is_rate_limited("connection reset by peer"));
+    }
+
+    /// A 2062 throttle arrives as HTTP 200 + `choices:null` with the reason in
+    /// `base_resp`. `chat_once` MUST surface that as an error carrying "2062",
+    /// never a blank `Ok("")` the retry can't distinguish from a genuine empty
+    /// answer — otherwise a rate-limited judge gets counted as a wrong answer
+    /// (the q89 false-miss that biased the graph A/B).
+    #[tokio::test]
+    async fn minimax_chat_once_surfaces_2062_rate_limit_not_blank_completion() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let _ = socket.read(&mut buf).await;
+                let body = br#"{"choices":null,"base_resp":{"status_code":2062,"status_msg":"Token Plan rate limit reached: Upgrade your Token Plan or switch to pay-as-you-go API usage."}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        let chat = MiniMaxChat::with_endpoint(
+            format!("http://{addr}"),
+            "sk-test-key".to_string(),
+            Duration::from_secs(5),
+        )
+        .expect("client");
+
+        let err = chat
+            .chat_once("MiniMax-M3", "", "hi")
+            .await
+            .expect_err("a 2062 throttle must surface as an error, not a blank Ok completion");
+        let msg = err.to_string();
+        assert!(msg.contains("2062"), "error must carry the 2062 status, got: {msg}");
+        assert!(is_rate_limited(&msg), "the surfaced error must classify as rate-limited");
     }
 
     /// Same design-for-failure property as the Ollama client's stall test:
