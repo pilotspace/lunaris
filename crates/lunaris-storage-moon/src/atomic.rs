@@ -76,6 +76,16 @@ pub(crate) async fn atomic_write(
 ) -> Result<Lsn, StorageError> {
     let mut typed = c.typed();
 
+    // Serialize the whole cross-store txn against any other `atomic_write` on
+    // this SAME physical connection. Moon's `active_cross_txn` is per-connection
+    // and `typed` shares one `MultiplexedConnection` across all clones, so two
+    // concurrent `TXN.BEGIN`s on it collide with "already in a cross-store
+    // transaction" (production: LongMemEval q89 under concurrent ingest). The
+    // permit is held across begin/ops/commit and released when this scope ends.
+    // Extraction (the expensive part of ingest) already ran before we got here,
+    // so this serializes only the millisecond-scale write, not the LLM calls.
+    let _txn_permit = c.txn_guard.lock().await;
+
     // 1) TXN.BEGIN — opens a Moon transaction on this connection.
     typed.txn_begin().await.map_err(moon_err)?;
 
