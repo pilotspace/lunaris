@@ -157,6 +157,7 @@ impl Lunaris {
                     episode,
                     token_counter,
                     bakeoff_config,
+                    graph_extract_per_session(),
                 )
                 .await?
             };
@@ -267,6 +268,82 @@ async fn publish_consolidate_event(
     }
 }
 
+/// Resolve graph-extraction granularity from the
+/// `LUNARIS_GRAPH_EXTRACT_GRANULARITY` env var. Read ONCE at the `ingest()`
+/// boundary and threaded down as a param so the hot ingest function stays
+/// env-free and unit-testable (mirrors `atomic.rs::snapshot_every_commit`).
+fn graph_extract_per_session() -> bool {
+    parse_graph_extract_granularity(std::env::var("LUNARIS_GRAPH_EXTRACT_GRANULARITY").ok().as_deref())
+}
+
+/// Pure parser for `LUNARIS_GRAPH_EXTRACT_GRANULARITY`. `None`/unset →
+/// `false` (per-chunk, the pre-existing default). `session`/`episode`/`doc`
+/// → `true` (one extraction call over the whole episode). `chunk`/`chunks`/
+/// empty → `false`. Garbage → `false` with a `warn!` — this knob controls
+/// remote token spend, so never silently flip it. Split out so it is
+/// unit-testable without mutating the process environment (edition 2024:
+/// `std::env::set_var` is `unsafe`, and this crate forbids it).
+fn parse_graph_extract_granularity(raw: Option<&str>) -> bool {
+    match raw {
+        None => false,
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "session" | "episode" | "doc" => true,
+            "chunk" | "chunks" | "" => false,
+            other => {
+                tracing::warn!(
+                    value = %other,
+                    "ignoring invalid LUNARIS_GRAPH_EXTRACT_GRANULARITY (want session|chunk); \
+                     defaulting to chunk (per-chunk extraction)"
+                );
+                false
+            }
+        },
+    }
+}
+
+/// Build the inputs handed to the graph [`Extractor`]. This is the
+/// cost/quality lever for graph ingest:
+///
+/// * `per_session == false` (default) — one [`ChunkInput`] PER CHUNK. The
+///   extractor makes one remote reasoning call per ~500-token chunk: maximal
+///   locality, but hundreds of calls per multi-session document (which
+///   saturates remote token-plan rate limits) and blind to relations that
+///   span a chunk boundary.
+/// * `per_session == true` — ONE [`ChunkInput`] over the whole episode text
+///   (`episode.content`). ~`#chunks`× fewer remote calls AND captures
+///   cross-turn relations within the session in a single pass. The chunk
+///   vectors used for RETRIEVAL are untouched — only what the extractor sees
+///   changes. The single input carries `episode_id` as its `chunk_id` (the
+///   episode IS the unit) and an empty `heading_path`. Empty `content` yields
+///   an empty vec so the extractor is skipped, matching the per-chunk path's
+///   empty-chunks behaviour.
+fn build_extract_inputs(
+    episode_id: Ulid,
+    episode_content: &str,
+    chunks: &[Chunk],
+    per_session: bool,
+) -> Vec<ChunkInput> {
+    if per_session {
+        if episode_content.is_empty() {
+            return Vec::new();
+        }
+        vec![ChunkInput {
+            chunk_id: episode_id,
+            text: episode_content.to_string(),
+            heading_path: Vec::new(),
+        }]
+    } else {
+        chunks
+            .iter()
+            .map(|c| ChunkInput {
+                chunk_id: c.id,
+                text: c.text.clone(),
+                heading_path: c.heading_path.clone(),
+            })
+            .collect()
+    }
+}
+
 /// The graph-ON ingest path. Steps:
 ///
 /// 1. Chunk markdown (reuse Plan 02-01 chunker via `lunaris_ingest::chunk_markdown`).
@@ -296,6 +373,7 @@ async fn ingest_episode_graph_on(
     episode: Episode,
     counter: std::sync::Arc<dyn TokenCounter + Send + Sync>,
     bakeoff_config: Option<Arc<BakoffConfig>>,
+    per_session_extract: bool,
 ) -> Result<Lsn, LunarisError> {
     // Step 1 + 2: chunk + embed.
     //
@@ -385,14 +463,10 @@ async fn ingest_episode_graph_on(
     // `instrument(span)`, this nested info_span automatically attaches as a
     // child via tracing-subscriber's span-list emission.
     let validated: ValidatedExtraction = if extractor.applies() {
-        let chunk_inputs: Vec<ChunkInput> = chunks
-            .iter()
-            .map(|c| ChunkInput {
-                chunk_id: c.id,
-                text: c.text.clone(),
-                heading_path: c.heading_path.clone(),
-            })
-            .collect();
+        // Granularity lever: per-chunk (default) vs per-session (one call over
+        // the whole episode). See `build_extract_inputs`.
+        let chunk_inputs: Vec<ChunkInput> =
+            build_extract_inputs(episode.id, &episode.content, &chunks, per_session_extract);
         let extract_span = tracing::info_span!(
             "lunaris.extract",
             correlation_id = tracing::field::Empty,
@@ -683,4 +757,66 @@ fn det_vec(text: &str, dim: usize) -> Vec<f32> {
         *x /= norm;
     }
     v
+}
+
+#[cfg(test)]
+mod graph_granularity_tests {
+    //! Per-session vs per-chunk graph-extraction granularity (the MiniMax
+    //! token-plan cost lever). `build_extract_inputs` is a pure function so
+    //! these prove the granularity WITHOUT a live model or mutating the
+    //! process environment.
+    use super::{build_extract_inputs, parse_graph_extract_granularity};
+    use lunaris_core::{Chunk, HlcClock, Scope};
+    use ulid::Ulid;
+
+    fn chunk(text: &str) -> Chunk {
+        let clock = HlcClock::new(1);
+        Chunk::new(Scope::dev(), Ulid::new(), text, 10, 0, vec!["h".into()], &clock)
+    }
+
+    #[test]
+    fn parse_granularity_maps_session_aliases_to_true_and_defaults_to_chunk() {
+        // per-session aliases
+        assert!(parse_graph_extract_granularity(Some("session")));
+        assert!(parse_graph_extract_granularity(Some(" Episode ")));
+        assert!(parse_graph_extract_granularity(Some("DOC")));
+        // per-chunk + unset + empty + garbage all stay false (per-chunk)
+        assert!(!parse_graph_extract_granularity(Some("chunk")));
+        assert!(!parse_graph_extract_granularity(Some("chunks")));
+        assert!(!parse_graph_extract_granularity(Some("")));
+        assert!(!parse_graph_extract_granularity(None));
+        assert!(!parse_graph_extract_granularity(Some("nonsense")));
+    }
+
+    #[test]
+    fn per_session_yields_one_whole_session_input_not_per_chunk() {
+        let eid = Ulid::new();
+        let content = "user: hi\n\nassistant: hello\n\nuser: bye";
+        // Even with THREE chunks present, per-session must collapse to ONE
+        // input carrying the full episode content (keyed by episode id).
+        let chunks = vec![chunk("user: hi"), chunk("assistant: hello"), chunk("user: bye")];
+        let inputs = build_extract_inputs(eid, content, &chunks, true);
+        assert_eq!(inputs.len(), 1, "per-session must emit exactly one extractor input");
+        assert_eq!(inputs[0].chunk_id, eid, "the single input is keyed by episode id");
+        assert_eq!(inputs[0].text, content, "the single input carries the whole session text");
+        assert!(inputs[0].heading_path.is_empty());
+    }
+
+    #[test]
+    fn per_session_empty_content_skips_extraction() {
+        let inputs = build_extract_inputs(Ulid::new(), "", &[], true);
+        assert!(inputs.is_empty(), "empty episode content must skip the extractor");
+    }
+
+    #[test]
+    fn per_chunk_yields_one_input_per_chunk_preserving_ids_and_text() {
+        let chunks = vec![chunk("alpha"), chunk("beta"), chunk("gamma")];
+        let inputs = build_extract_inputs(Ulid::new(), "alpha beta gamma", &chunks, false);
+        assert_eq!(inputs.len(), 3, "per-chunk must emit one input per chunk");
+        for (inp, ch) in inputs.iter().zip(chunks.iter()) {
+            assert_eq!(inp.chunk_id, ch.id);
+            assert_eq!(inp.text, ch.text);
+            assert_eq!(inp.heading_path, ch.heading_path);
+        }
+    }
 }
