@@ -367,6 +367,11 @@ fn build_extract_inputs(
 /// 7. After commit: publish one `__lunaris_verify__` message per
 ///    NeedsReview item (D-19 Phase 4 hook). Errors here are non-blocking —
 ///    `tracing::warn!` and continue. Ingest still returns `Ok(Lsn)`.
+// Internal helper that threads the ingest dependencies (storage, embedder,
+// graph handle, clock, episode, counter, bakeoff, granularity) — bundling
+// them into a struct would only relocate the plumbing. `per_session_extract`
+// (Phase-…: LUNARIS_GRAPH_EXTRACT_GRANULARITY) took it from 7 → 8 args.
+#[allow(clippy::too_many_arguments)]
 async fn ingest_episode_graph_on(
     storage: &dyn StoragePort,
     embedder: &dyn Embedder,
