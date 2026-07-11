@@ -273,7 +273,9 @@ async fn publish_consolidate_event(
 /// boundary and threaded down as a param so the hot ingest function stays
 /// env-free and unit-testable (mirrors `atomic.rs::snapshot_every_commit`).
 fn graph_extract_per_session() -> bool {
-    parse_graph_extract_granularity(std::env::var("LUNARIS_GRAPH_EXTRACT_GRANULARITY").ok().as_deref())
+    parse_graph_extract_granularity(
+        std::env::var("LUNARIS_GRAPH_EXTRACT_GRANULARITY").ok().as_deref(),
+    )
 }
 
 /// Pure parser for `LUNARIS_GRAPH_EXTRACT_GRANULARITY`. `None`/unset →
