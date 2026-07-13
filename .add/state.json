@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "claude-code-turnkey",
+  "active_task": "kv-embedding-slim",
   "active_milestone": "claude-code-flagship",
   "tasks": {
     "mq-typed-client": {
@@ -571,11 +571,11 @@
     "kv-embedding-slim": {
       "title": "Stop double-storing embeddings in KV hydration docs",
       "phase": "done",
-      "gate": "none",
+      "gate": "PASS",
       "milestone": "claude-code-flagship",
       "depends_on": [],
       "created": "2026-07-13T17:22:48+00:00",
-      "updated": "2026-07-13T17:51:16+00:00"
+      "updated": "2026-07-13T19:14:39+00:00"
     },
     "hook-recall-graph-hybrid": {
       "title": "Hook context inject serves graph+KV hybrid recall",
@@ -676,13 +676,13 @@
       "title": "Claude Code Flagship Memory",
       "goal": "A Claude Code session recalls prior-session memory at flagship quality \u2014 the graph+KV hybrid path that scored J=96% serving the production hook, filter-correct on every Moon retrieval surface, storage-lean at rest, installed in two commands",
       "stage": "production",
-      "status": "active",
+      "status": "done",
       "created": "2026-07-13T17:21:41+00:00",
-      "updated": "2026-07-13T17:21:41+00:00"
+      "updated": "2026-07-13T19:14:47+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-13T19:13:23+00:00",
+  "updated": "2026-07-13T19:14:47+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
