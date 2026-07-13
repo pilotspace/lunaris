@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "embed-accel-passthrough",
-  "active_milestone": null,
+  "active_task": "ft-navigate-filter-gap",
+  "active_milestone": "claude-code-flagship",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -159,12 +159,17 @@
     },
     "ft-navigate-filter-gap": {
       "title": "FT.NAVIGATE ignores DSL filters end-to-end (Navigate operator + Moon navigate.rs)",
-      "phase": "specify",
-      "gate": "none",
-      "milestone": null,
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "claude-code-flagship",
       "depends_on": [],
       "created": "2026-06-12T03:36:53+00:00",
-      "updated": "2026-06-12T03:36:53+00:00"
+      "updated": "2026-07-13T17:48:28+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "a6c860c7240753f6bc325a3b7e4aeb55",
+        "tests": {}
+      }
     },
     "moon-v031-xshard-bump": {
       "title": "Bump Moon to v0.3.1 (cross-shard read fast path) and verify Lunaris recall benefit",
@@ -562,6 +567,33 @@
           }
         ]
       }
+    },
+    "kv-embedding-slim": {
+      "title": "Stop double-storing embeddings in KV hydration docs",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "claude-code-flagship",
+      "depends_on": [],
+      "created": "2026-07-13T17:22:48+00:00",
+      "updated": "2026-07-13T17:22:48+00:00"
+    },
+    "hook-recall-graph-hybrid": {
+      "title": "Hook context inject serves graph+KV hybrid recall",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "claude-code-flagship",
+      "depends_on": [],
+      "created": "2026-07-13T17:22:49+00:00",
+      "updated": "2026-07-13T17:22:49+00:00"
+    },
+    "claude-code-turnkey": {
+      "title": "Two-command Claude Code memory install",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "claude-code-flagship",
+      "depends_on": [],
+      "created": "2026-07-13T17:22:49+00:00",
+      "updated": "2026-07-13T17:22:49+00:00"
     }
   },
   "milestones": {
@@ -588,10 +620,18 @@
       "status": "active",
       "created": "2026-06-14T16:00:38+00:00",
       "updated": "2026-06-14T16:00:38+00:00"
+    },
+    "claude-code-flagship": {
+      "title": "Claude Code Flagship Memory",
+      "goal": "A Claude Code session recalls prior-session memory at flagship quality \u2014 the graph+KV hybrid path that scored J=96% serving the production hook, filter-correct on every Moon retrieval surface, storage-lean at rest, installed in two commands",
+      "stage": "production",
+      "status": "active",
+      "created": "2026-07-13T17:21:41+00:00",
+      "updated": "2026-07-13T17:21:41+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-02T13:24:02+00:00",
+  "updated": "2026-07-13T17:48:28+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

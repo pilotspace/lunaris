@@ -137,6 +137,21 @@ impl Navigate {
 #[async_trait]
 impl Retriever for Navigate {
     async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
+        // ft-navigate-filter-gap contract v1 — Moon's FT.NAVIGATE has no
+        // filter surface, so a filtered query MUST NOT take the native path:
+        // it would silently ignore the filter and leak foreign hits via KNN
+        // seeds and BFS expansion alike. Degrade to the filter-enforcing
+        // vector path (Moon renders the filter server-side into the KNN
+        // query). The guard sits ABOVE the capability gate: no backend has a
+        // filtered navigate surface today. Trade-off: filtered recalls lose
+        // graph expansion until the Moon-side FT.NAVIGATE FILTER follow-on.
+        if ctx.query.filter.is_some() {
+            tracing::debug!(
+                index = %self.index,
+                "navigate: filter present — degraded to filtered vector_search (no graph expansion)"
+            );
+            return self.fallback_vector(ctx).await;
+        }
         if !ctx.storage.capabilities().graph_navigate_native {
             return self.fallback_vector(ctx).await;
         }

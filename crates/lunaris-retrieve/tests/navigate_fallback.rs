@@ -27,6 +27,9 @@ struct NavRecordingStorage {
     navigate_hits: Mutex<Vec<NavigateHit>>,
     vector_calls: Arc<AtomicUsize>,
     navigate_calls: Arc<AtomicUsize>,
+    /// ft-navigate-filter-gap contract v1 — records the Debug rendering of
+    /// the filter passed to each vector_search call (None = unfiltered call).
+    vector_filters: Mutex<Vec<Option<String>>>,
     /// Records the decay lambda passed to graph_traverse_decayed (None when
     /// called without decay; outer None = never called).
     decayed_calls: Mutex<Vec<Option<f64>>>,
@@ -53,11 +56,12 @@ impl StoragePort for NavRecordingStorage {
         _index: &str,
         _query: &[f32],
         _k: usize,
-        _filter: Option<&Filter>,
+        filter: Option<&Filter>,
         _as_of: Option<Hlc>,
         _rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
         self.vector_calls.fetch_add(1, Ordering::SeqCst);
+        self.vector_filters.lock().push(filter.map(|f| format!("{f:?}")));
         Ok(self.vector_hits.lock().clone())
     }
     async fn vector_navigate(
@@ -230,6 +234,57 @@ async fn navigate_invalid_params_fail_construction() {
         .with_hop_penalty(f64::NAN)
         .expect_err("NaN penalty rejected");
     assert!(format!("{err}").contains("navigate_invalid_hop_penalty"), "named code, got {err}");
+}
+
+/// ft-navigate-filter-gap contract v1 §2 scenario 1 — a filtered Navigate on
+/// a native backend must route to the filter-enforcing vector path: the guard
+/// sits ABOVE the capability gate, so vector_search receives the exact filter
+/// and vector_navigate is never called (reject: silent-ignore).
+#[tokio::test]
+async fn filtered_navigate_routes_to_filtered_vector_search() {
+    let rec = Arc::new(NavRecordingStorage::with_native(true));
+    *rec.vector_hits.lock() = vec![vh(b"a1", 0.9)];
+    // Would-be navigate hits: if the (buggy) native path ran, these surface.
+    *rec.navigate_hits.lock() = vec![nh(b"a1", 0.01, 0, 0.01), nh(b"foreign", 0.0, 1, 0.1)];
+    let mut ctx = ctx_for(rec.clone());
+    ctx.query.filter = Some(Filter::Eq { field: "source".into(), value: json!("alpha.md") });
+
+    let op = Navigate::new("entities", 5).with_hops(2).expect("valid hops");
+    let hits = op.retrieve(&ctx).await.expect("filtered navigate retrieves");
+
+    assert_eq!(
+        rec.navigate_calls.load(Ordering::SeqCst),
+        0,
+        "filter present -> vector_navigate must NOT run (it has no filter surface)"
+    );
+    assert_eq!(rec.vector_calls.load(Ordering::SeqCst), 1, "filtered vector fallback called once");
+    let filters = rec.vector_filters.lock().clone();
+    assert_eq!(filters.len(), 1);
+    let recorded = filters[0].as_deref().expect("vector_search must receive Some(filter)");
+    assert!(recorded.contains("alpha.md"), "the exact filter must reach the port; got {recorded}");
+    let ids: Vec<_> = hits.iter().map(|h| h.id.clone()).collect();
+    assert_eq!(ids, vec![b"a1".to_vec()], "hits come from the filtered vector path");
+}
+
+/// ft-navigate-filter-gap contract v1 §2 scenario 4 (regression pin) — the
+/// pre-existing capability-gated degradation keeps passing the filter through.
+#[tokio::test]
+async fn filtered_navigate_nonnative_keeps_filter() {
+    let rec = Arc::new(NavRecordingStorage::with_native(false));
+    *rec.vector_hits.lock() = vec![vh(b"v1", 0.9)];
+    let mut ctx = ctx_for(rec.clone());
+    ctx.query.filter = Some(Filter::Eq { field: "source".into(), value: json!("alpha.md") });
+
+    let op = Navigate::new("entities", 5).with_hops(2).expect("valid hops");
+    let _ = op.retrieve(&ctx).await.expect("non-native filtered navigate retrieves");
+
+    assert_eq!(rec.navigate_calls.load(Ordering::SeqCst), 0, "capability=false short-circuits");
+    let filters = rec.vector_filters.lock().clone();
+    assert_eq!(filters.len(), 1);
+    assert!(
+        filters[0].as_deref().is_some_and(|f| f.contains("alpha.md")),
+        "filter must reach vector_search on the non-native path; got {filters:?}"
+    );
 }
 
 /// §2 decay surface — Graph::anchored(...).with_decay(d) threads the decay
