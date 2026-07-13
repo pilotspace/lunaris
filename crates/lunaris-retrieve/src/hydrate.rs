@@ -26,8 +26,8 @@
 use std::collections::HashMap;
 
 use futures::stream::{self, StreamExt};
-use lunaris_core::keyspace::{chunk_key, episode_key};
-use lunaris_core::{Chunk, Episode, Hlc, HlcClock, LunarisError, Scope, StoragePort};
+use lunaris_core::keyspace::{chunk_key, episode_key, fact_key};
+use lunaris_core::{BiTemporal, Chunk, Episode, Hlc, HlcClock, LunarisError, Scope, StoragePort};
 use ulid::Ulid;
 
 use crate::types::{Hit, RawHit};
@@ -160,6 +160,139 @@ pub async fn hydrate(
             degraded: raw.degraded || initial_degraded,
             rerank_applied: raw.rerank_applied,
             source_op: raw.source_op,
+        })
+        .collect())
+}
+
+/// Per-hit resolution for [`hydrate_mixed`] — which at-rest row the id bytes
+/// resolved to. Facts carry the KV row's bi-temporal stamp (the at-rest
+/// `lunaris_extract::Fact` keeps validity as ISO strings, not `Hlc`).
+enum MixedResolved {
+    Chunk(RawHit, Chunk),
+    Fact(RawHit, lunaris_extract::Fact, BiTemporal),
+}
+
+/// Hydrate fused hybrid hits that may mix CHUNK ids and FACT ids
+/// (hook-recall-graph-hybrid, contract v1.1).
+///
+/// Resolution per hit, order-preserving:
+/// 1. chunk row at `keyspace::chunk_key` → byte-identical to [`hydrate`]
+///    semantics (chunk text + batched episode-source lookup + heading_path +
+///    the chunk's bi-temporal stamp);
+/// 2. else fact row at `keyspace::fact_key` → the at-rest
+///    `lunaris_extract::Fact` (heterogeneous read model): `text = fact_text`,
+///    `source = "fact:{predicate}"`, stamp from the KV row;
+/// 3. else the hit is DROPPED (mirrors the since-deleted-chunk skip).
+///
+/// `initial_degraded` ORs into every produced hit exactly as in [`hydrate`]
+/// (Plan 04-04 B-9 parity — the fact path must not hide backpressure flags).
+pub async fn hydrate_mixed(
+    storage: &dyn StoragePort,
+    scope: &Scope,
+    hits: Vec<RawHit>,
+    as_of: Option<Hlc>,
+    initial_degraded: bool,
+) -> Result<Vec<Hit>, LunarisError> {
+    let live_clock = HlcClock::new(0);
+    let snapshot = as_of.unwrap_or_else(|| live_clock.tick());
+
+    // First pass: resolve each id to a chunk row, else a fact row, else drop.
+    // Concurrent buffered fan-out, order-preserving (Plan 260610-f91 pattern).
+    let resolved: Vec<MixedResolved> = {
+        let results: Vec<Result<Option<MixedResolved>, LunarisError>> = stream::iter(hits)
+            .map(|raw| {
+                let scope = scope.clone();
+                async move {
+                    let ulid = match <[u8; 16]>::try_from(raw.id.as_slice()) {
+                        Ok(bytes) => Ulid::from_bytes(bytes),
+                        Err(_) => return Ok(None), // bytes don't decode — skip
+                    };
+                    if let Some(row) =
+                        storage.read_as_of(&scope, &chunk_key(&scope, ulid), snapshot).await?
+                        && let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value)
+                    {
+                        return Ok(Some(MixedResolved::Chunk(raw, chunk)));
+                    }
+                    if let Some(row) =
+                        storage.read_as_of(&scope, &fact_key(&scope, ulid), snapshot).await?
+                        && let Ok(fact) =
+                            serde_json::from_slice::<lunaris_extract::Fact>(&row.value)
+                    {
+                        return Ok(Some(MixedResolved::Fact(raw, fact, row.bt)));
+                    }
+                    Ok(None) // neither row exists at this snapshot — skip
+                }
+            })
+            .buffered(HYDRATE_CONCURRENCY)
+            .collect()
+            .await;
+        results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten().collect()
+    };
+
+    // Second pass: batched episode-source lookups for the CHUNK hits only
+    // (same shape as `hydrate`; storage errors propagate).
+    let unique_ep: Vec<Ulid> = {
+        let mut s = std::collections::HashSet::new();
+        for r in &resolved {
+            if let MixedResolved::Chunk(_, c) = r {
+                s.insert(c.episode_id);
+            }
+        }
+        s.into_iter().collect()
+    };
+    let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
+    let ep_results: Vec<Result<Option<(Ulid, String)>, LunarisError>> = stream::iter(unique_ep)
+        .map(|ep_id| {
+            let scope = scope.clone();
+            async move {
+                let key = episode_lookup_key(&scope, ep_id);
+                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
+                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                {
+                    return Ok(Some((ep_id, ep.source)));
+                }
+                Ok(None)
+            }
+        })
+        .buffer_unordered(HYDRATE_CONCURRENCY)
+        .collect()
+        .await;
+    for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
+        episode_sources.insert(entry.0, entry.1);
+    }
+
+    // Third pass: project to Hits.
+    Ok(resolved
+        .into_iter()
+        .map(|r| match r {
+            MixedResolved::Chunk(raw, chunk) => Hit {
+                id: raw.id,
+                episode_id: chunk.episode_id.to_bytes().to_vec(),
+                score: raw.score,
+                text: chunk.text,
+                source: episode_sources.get(&chunk.episode_id).cloned().unwrap_or_default(),
+                heading_path: chunk.heading_path,
+                valid_from: chunk.bt.valid.0,
+                valid_to: chunk.bt.valid.1,
+                degraded: raw.degraded || initial_degraded,
+                rerank_applied: raw.rerank_applied,
+                source_op: raw.source_op,
+            },
+            MixedResolved::Fact(raw, fact, bt) => Hit {
+                id: raw.id,
+                // Facts have no parent Episode; the provenance channel stays
+                // empty (documented "outside the main hydration path" case).
+                episode_id: Vec::new(),
+                score: raw.score,
+                text: fact.fact_text,
+                source: format!("fact:{}", fact.predicate),
+                heading_path: Vec::new(),
+                valid_from: bt.valid.0,
+                valid_to: bt.valid.1,
+                degraded: raw.degraded || initial_degraded,
+                rerank_applied: raw.rerank_applied,
+                source_op: raw.source_op,
+            },
         })
         .collect())
 }

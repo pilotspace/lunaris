@@ -45,7 +45,7 @@ pub mod service;
 pub mod types;
 
 pub use builder::RetrievalBuilder;
-pub use hydrate::{hydrate, partial_hydrate_text};
+pub use hydrate::{hydrate, hydrate_mixed, partial_hydrate_text};
 // W5 task 3: FT.AGGREGATE deterministic counting/grouping operator. NOT a
 // `Retriever` (see module docs) — re-exported at the crate root alongside
 // the other operator surfaces so recipes/MCP tools can

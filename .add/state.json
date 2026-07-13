@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "ft-navigate-filter-gap",
+  "active_task": "hook-recall-graph-hybrid",
   "active_milestone": "claude-code-flagship",
   "tasks": {
     "mq-typed-client": {
@@ -570,21 +570,47 @@
     },
     "kv-embedding-slim": {
       "title": "Stop double-storing embeddings in KV hydration docs",
-      "phase": "ground",
+      "phase": "done",
       "gate": "none",
       "milestone": "claude-code-flagship",
       "depends_on": [],
       "created": "2026-07-13T17:22:48+00:00",
-      "updated": "2026-07-13T17:22:48+00:00"
+      "updated": "2026-07-13T17:51:16+00:00"
     },
     "hook-recall-graph-hybrid": {
       "title": "Hook context inject serves graph+KV hybrid recall",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "claude-code-flagship",
       "depends_on": [],
       "created": "2026-07-13T17:22:49+00:00",
-      "updated": "2026-07-13T17:22:49+00:00"
+      "updated": "2026-07-13T18:58:32+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "56fdd95c4fd4bc2d411f77bbaa138b38",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-retrieve/src/hydrate.rs",
+          "crates/lunaris-retrieve/src/lib.rs",
+          "crates/lunaris-hook/src/context.rs",
+          "crates/lunaris-hook/Cargo.toml",
+          "crates/lunaris-hook/Cargo.lock",
+          "tmp/hook-recall-graph-hybrid.txt"
+        ],
+        "snapshot_md5": "c276cfae3fe845f91db12079eea15af8"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-13T18:56:23+00:00",
+            "reason": "scope_violation: task 'hook-recall-graph-hybrid' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-bench/target/lunaris-bench/corpus-100-08fa0b7380f93cb9.json \u00b7 crates/lunaris-bench/target/lunaris-bench/corpus-100-3ebba99c29f7b126.json \u00b7 crates/lunaris-bench/target/lunaris-bench/corpus-100-ff6c4c243f1e99ab.json \u00b7 crates/lunaris-bench/target/lunaris-bench/corpus-2-11fcce931f89a7a4-graph-on.json \u00b7 crates/lunaris-hook/src/context.rs (45450 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "claude-code-turnkey": {
       "title": "Two-command Claude Code memory install",
@@ -631,7 +657,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-13T17:48:28+00:00",
+  "updated": "2026-07-13T18:58:32+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
