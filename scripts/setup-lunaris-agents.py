@@ -14,8 +14,12 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -145,7 +149,28 @@ def main() -> int:
         action="store_true",
         help="Print target changes without writing files.",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Prove the installed Claude Code memory loop instead of writing "
+            "configs: session-A capture + session-B cross-session inject "
+            "through the exact installed hook commands (turnkey command 2)."
+        ),
+    )
+    parser.add_argument(
+        "--moon-autostart",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "During --verify, autostart the vendored Moon binary when the "
+            "storage URL is a local moon:// with nothing listening."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.verify:
+        return run_verify(args)
 
     if args.build_moon:
         ensure_moon_prereqs(args)
@@ -444,6 +469,219 @@ def render_claude_hook_entries(args: argparse.Namespace) -> dict[str, list[dict[
         "Stop": [capture, command(feedback_cmd)],
     }
     return {event: entries[event] for event in CLAUDE_HOOK_EVENTS}
+
+
+# ── turnkey --verify (ADD task claude-code-turnkey, contract v1) ──────────────
+#
+# Proves the INSTALLED memory loop end-to-end: a session-A UserPromptSubmit
+# capture through the adapter (→ lunaris-hook) followed by a session-B prompt
+# inject (→ lunaris-contextd) whose additionalContext must contain session A's
+# marker. Never writes settings; isolates itself behind a unique scope and a
+# private contextd socket; every subprocess carries a timeout so a dead
+# backend fails fast instead of hanging a fresh-machine operator.
+
+VERIFY_SETUP_HINT = "run: scripts/setup-lunaris-agents.py --agent claude --runner local"
+
+
+def verify_fail(stage: str, detail: str) -> int:
+    print(f"VERIFY FAIL: {stage} — {detail}")
+    return 1
+
+
+def run_verify(args: argparse.Namespace) -> int:
+    settings_path = Path(args.claude_settings)
+    if not settings_path.exists():
+        return verify_fail("settings", f"{settings_path} not found; {VERIFY_SETUP_HINT}")
+    try:
+        settings = json.loads(settings_path.read_text())
+    except json.JSONDecodeError as exc:
+        return verify_fail("settings", f"{settings_path} is not valid JSON ({exc}); {VERIFY_SETUP_HINT}")
+    if "lunaris" not in settings.get("mcpServers", {}):
+        return verify_fail("settings", f"mcpServers.lunaris missing in {settings_path}; {VERIFY_SETUP_HINT}")
+    if "UserPromptSubmit" not in settings.get("hooks", {}):
+        return verify_fail(
+            "settings",
+            f"hooks.UserPromptSubmit missing in {settings_path}; {VERIFY_SETUP_HINT} --hooks on",
+        )
+
+    storage_url = effective_storage_url(args)
+    storage_error = ensure_moon_running(args, storage_url)
+    if storage_error is not None:
+        return verify_fail("storage", storage_error)
+
+    if not HOOK_BIN.exists() or not CONTEXTD_BIN.exists():
+        return verify_fail(
+            "binaries",
+            "hook binaries missing; run: cargo build --release -p lunaris-hook",
+        )
+
+    scope = args.scope or "lunaris-verify"
+    marker = f"turnkey-{uuid.uuid4().hex[:12]}"
+    workdir = Path(tempfile.mkdtemp(prefix="lunaris-verify-"))
+    contextd_socket = workdir / "verify.sock"
+
+    env = os.environ.copy()
+    env.update(hook_env(args))
+    env["LUNARIS_HOOK_SCOPE"] = scope
+    env["LUNARIS_CONTEXTD_SOCKET"] = str(contextd_socket)
+
+    try:
+        # Amendment v1.1: a tool-result envelope — curation extracts
+        # `tool_response.output` verbatim to the snippet HEAD ("tool output:
+        # …"), so the marker survives the 260-char snippet cap regardless of
+        # checkout-path length (a prompt capture renders as raw envelope JSON
+        # whose alphabetical keys push the marker past the cap).
+        marker_output = (
+            f"verification marker {marker}: "
+            "the amber relay listens on port 4747 (lunaris turnkey check)"
+        )
+        capture_event = {
+            "hook_event_name": "PostToolUse",
+            "session_id": "verify-a",
+            "tool_name": "Bash",
+            "tool_input": {"command": "lunaris turnkey verification probe"},
+            # `output` rides at the TOP level: curation's trim-tolerant key
+            # extraction only sees top-level keys once the ingest scrubber has
+            # smart-quoted the stored JSON (nested tool_response lookups miss
+            # space-padded keys — recorded as a §7 follow-up), and top-level
+            # output renders as "tool output: <marker …>" at the snippet head.
+            "output": marker_output,
+            "tool_response": {"output": marker_output},
+            "cwd": os.getcwd(),
+        }
+        code, out, err = run_adapter("capture", capture_event, env)
+        if code != 0:
+            return verify_fail("capture", f"adapter capture exited {code}: {err.strip() or out.strip()}")
+        print(f"VERIFY PASS: capture (session verify-a wrote marker {marker} under scope {scope})")
+
+        inject_event = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "verify-b",
+            "prompt": f"what is the verification marker {marker} and which port does the amber relay use?",
+            "cwd": os.getcwd(),
+        }
+        # The adapter prints NOTHING when recall is empty — retry briefly so
+        # index visibility can never masquerade as a broken loop.
+        last = ""
+        for _ in range(10):
+            code, out, err = run_adapter("inject", inject_event, env)
+            last = out.strip() or err.strip()
+            if code == 0 and out.strip():
+                try:
+                    payload = json.loads(out.strip().splitlines()[-1])
+                except json.JSONDecodeError:
+                    payload = {}
+                context = str(
+                    payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+                )
+                if marker in context:
+                    print(
+                        "VERIFY PASS: cross-session inject "
+                        "(session verify-b saw session verify-a's memory in additionalContext)"
+                    )
+                    return 0
+            time.sleep(0.5)
+        return verify_fail(
+            "inject",
+            f"marker {marker} never surfaced in additionalContext; last output: {last[:400]!r}",
+        )
+    finally:
+        stop_verify_contextd(contextd_socket)
+
+
+def run_adapter(mode: str, event: dict[str, Any], env: dict[str, str]) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        [sys.executable, str(ADAPTER), "--target", "claude", "--mode", mode],
+        input=json.dumps(event, separators=(",", ":")),
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+        timeout=60,
+    )
+    return int(proc.returncode), proc.stdout, proc.stderr
+
+
+def ensure_moon_running(args: argparse.Namespace, storage_url: str | None) -> str | None:
+    """None when the storage tier is usable; otherwise the failure detail."""
+    if not storage_url or not storage_url.strip().lower().startswith("moon://"):
+        return None  # sqlite/memory need no listener
+    host, port = parse_moon_host_port(storage_url)
+    recipe = (
+        f"launch Moon: {args.moon_bin} --bind {host} --port {port} "
+        f"--dir {Path.home() / '.lunaris' / 'moon-data'} --protected-mode no"
+    )
+    if tcp_listening(host, port):
+        return None
+    local = host in {"127.0.0.1", "localhost", "::1"}
+    if args.moon_autostart and local and Path(args.moon_bin).exists():
+        data_dir = Path.home() / ".lunaris" / "moon-data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            [
+                str(args.moon_bin),
+                "--bind",
+                host,
+                "--port",
+                str(port),
+                "--dir",
+                str(data_dir),
+                "--protected-mode",
+                "no",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if tcp_listening(host, port):
+                print(f"moon autostarted at {storage_url} (data dir {data_dir})")
+                return None
+            time.sleep(0.1)
+        return f"moon autostart did not come up at {storage_url} within 5s; {recipe}"
+    return f"{storage_url} is not reachable; {recipe}"
+
+
+def parse_moon_host_port(url: str) -> tuple[str, int]:
+    rest = url.split("://", 1)[1] if "://" in url else url
+    rest = rest.split("/", 1)[0]
+    if ":" in rest:
+        host, port_str = rest.rsplit(":", 1)
+        try:
+            return host or "127.0.0.1", int(port_str)
+        except ValueError:
+            return host or "127.0.0.1", 6380
+    return rest or "127.0.0.1", 6380
+
+
+def tcp_listening(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+def stop_verify_contextd(contextd_socket: Path) -> None:
+    """Best-effort: terminate the contextd the adapter autostarted on the
+    verify-private socket so verify leaves no daemon behind."""
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", f"--socket {contextd_socket}"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        for line in proc.stdout.splitlines():
+            try:
+                os.kill(int(line.strip()), 15)
+            except (ValueError, OSError):
+                continue
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def write_file(path: Path, content: str, dry_run: bool) -> None:

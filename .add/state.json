@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "hook-recall-graph-hybrid",
+  "active_task": "claude-code-turnkey",
   "active_milestone": "claude-code-flagship",
   "tasks": {
     "mq-typed-client": {
@@ -614,12 +614,37 @@
     },
     "claude-code-turnkey": {
       "title": "Two-command Claude Code memory install",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "claude-code-flagship",
       "depends_on": [],
       "created": "2026-07-13T17:22:49+00:00",
-      "updated": "2026-07-13T17:22:49+00:00"
+      "updated": "2026-07-13T19:13:23+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "5e713ff2a35bda040399369d32802815",
+        "tests": {
+          "scripts/tests/test_turnkey_verify.py": "9e75dd59d5230b911dd245f6cf6cb51e"
+        }
+      },
+      "scope": {
+        "declared": [
+          "scripts/setup-lunaris-agents.py",
+          "docs/integration/claude-code.md",
+          "tmp/claude-code-turnkey.txt"
+        ],
+        "snapshot_md5": "00fbbcc7796e7bda09e493ca38904b6c"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-13T19:13:00+00:00",
+            "reason": "tamper_detected:contract_tampered",
+            "source": "tamper"
+          }
+        ]
+      }
     }
   },
   "milestones": {
@@ -657,7 +682,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-13T18:58:32+00:00",
+  "updated": "2026-07-13T19:13:23+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

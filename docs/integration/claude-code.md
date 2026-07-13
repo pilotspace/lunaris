@@ -12,6 +12,37 @@ durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 
 ---
 
+## Turnkey (two commands)
+
+From a fresh checkout to a memory-enabled Claude Code — capture on every
+lifecycle event plus cross-session recall injected into your context — in
+two commands:
+
+```sh
+# 1. Install: build the hook + MCP binaries and the vendored Moon server,
+#    write ~/.claude/settings.json (backed up to .bak first).
+scripts/setup-lunaris-agents.py --agent claude --runner local --build-moon
+
+# 2. Prove it: drives the EXACT installed hook commands through a
+#    session-A capture and a session-B prompt recall, autostarting Moon
+#    if nothing is listening. Prints two PASS lines and exits 0.
+scripts/setup-lunaris-agents.py --agent claude --verify
+```
+
+`--verify` output on success:
+
+```text
+VERIFY PASS: capture (session verify-a wrote marker … under scope lunaris-verify)
+VERIFY PASS: cross-session inject (session verify-b saw session verify-a's memory in additionalContext)
+```
+
+The proof is the production path, not a mock: session B's marker arrives
+through the same `lunaris-contextd` fused hybrid recall that serves a real
+`UserPromptSubmit` hook. Any failure names its stage (`settings` /
+`storage` / `binaries` / `capture` / `inject`) and exits non-zero without
+touching your settings. Moon autostart (local `moon://` only, data under
+`~/.lunaris/moon-data`) can be disabled with `--no-moon-autostart`.
+
 ## Quick Start (no Rust)
 
 No Rust toolchain required. Choose either path:
