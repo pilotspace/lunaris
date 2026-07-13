@@ -2,7 +2,7 @@
 
 slug: kv-embedding-slim · created: 2026-07-14 · stage: production
 autonomy: auto   <!-- inherited from the project default (PROJECT.md); explicit level: manual < conservative < auto (visible · overridable) — lower below if a high-risk task needs it, or run `add.py autonomy set`. -->
-phase: ground   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower the
      autonomy level to `manual` or `conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -167,3 +167,13 @@ the retry path (evidence: prod herd spikes)`). See the `add` skill's `deltas.md`
 What did this loop teach the foundation? One line each, tagged by competency
 (`DDD · SDD · UDD · TDD · ADD`), status `open`, with evidence. See the `add` skill's `deltas.md`.
 <!-- e.g.  - [DDD · open] the model missed multi-tenancy (evidence: scenario_x failed) -->
+
+---
+CLOSED 2026-07-14 as duplicate_goal (intake re-check during ground):
+the embedding double-store fix was ALREADY DELIVERED by moon-v051-perf-exploit W3 —
+Chunk/Entity/Fact::embedding + Community::summary_embedding all carry
+#[serde(default, skip_serializing)] (crates/lunaris-core/src/primitives.rs:91,148,234,289),
+extract::Fact never had an embedding field, and the regression pin
+crates/lunaris-core/tests/c_embedding_skip_serialize.rs is green (11/11, re-verified today).
+The project_moon_embedding_doc_redundancy memory that seeded this task was stale.
+No code change needed; no gate run (nothing to verify beyond the existing green pin).

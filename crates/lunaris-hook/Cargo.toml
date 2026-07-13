@@ -72,6 +72,9 @@ tokio                    = { workspace = true, features = ["process", "time", "i
 serde_json               = { workspace = true }
 lunaris-core             = { workspace = true }
 parking_lot              = { workspace = true }
+# hook-recall-graph-hybrid — recording-port shape pin + graph-ON fact seeding
+async-trait              = { workspace = true }
+lunaris-extract          = { workspace = true }
 # HOOK-05 idempotency integration test
 lunaris-storage-embedded = { workspace = true }
 sqlx                     = { workspace = true }

@@ -6,8 +6,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lunaris::{Lunaris, Query};
-use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort};
-use lunaris_retrieve::{RawHit, SourceOp, hydrate};
+use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder};
+use lunaris_retrieve::{
+    AndRetriever, FuseRrfRetriever, Keyword, QueryContext, RawHit, Retriever, SourceOp, Vector,
+    hydrate, hydrate_mixed,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
@@ -21,6 +24,28 @@ pub const DEFAULT_PROMPT_MIN_SCORE: f32 = 0.55;
 pub const DEFAULT_TOOL_MAX_HITS: usize = 3;
 pub const DEFAULT_TOOL_MAX_CHARS: usize = 900;
 pub const DEFAULT_TOOL_MIN_SCORE: f32 = 0.60;
+/// hook-recall-graph-hybrid contract v1: hard budget around the fused root's
+/// retrieve (`LUNARIS_CONTEXT_RECALL_TIMEOUT_MS` override). Embedding runs
+/// OUTSIDE this window — a cold GGUF load must not eat the recall budget.
+pub const DEFAULT_HYBRID_TIMEOUT_MS: u64 = 1500;
+
+/// The hook's hybrid recall root (hook-recall-graph-hybrid contract v1.1):
+///
+/// `Vector("chunks",k) ∧ Keyword::bm25("chunks",k) ∧ Vector("facts",k)
+///  ∧ Keyword::bm25("facts",k) → fuse_rrf(60)`
+///
+/// The facts BM25 leg is the reliable fact signal today — graph-ON ingest
+/// writes STUB fact embeddings (det_vec), so in the merged vector RRF group
+/// facts would starve at scale; `fact_text` is FT-indexed as `content` and
+/// ranks lexically. The vector facts leg stays wired for the real-fact-
+/// embeddings follow-on. Runs client-side RRF deterministically: a manually
+/// built `QueryContext::new` has `moon_storage = None`, so the Moon-native
+/// FT.HYBRID dispatch never fires here.
+pub fn hybrid_root(k: usize) -> FuseRrfRetriever {
+    let chunks = Vector::new("chunks", k).and(Keyword::bm25("chunks", k));
+    let facts = Vector::new("facts", k).and(Keyword::bm25("facts", k));
+    AndRetriever::new(Box::new(chunks), Box::new(facts)).fuse_rrf(60)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -309,7 +334,61 @@ impl ContextService {
         let mut query = Query::text(text);
         let candidate_k = max_hits.saturating_mul(4).max(max_hits).max(1);
         query.k = candidate_k;
+
+        // hook-recall-graph-hybrid contract v1: hybrid is the DEFAULT;
+        // `LUNARIS_CONTEXT_RECALL=vector` restores the legacy path exactly.
+        // ANY hybrid timeout/error/empty degrades to the legacy path below —
+        // a recall failure must never surface to the agent.
+        let recall_mode =
+            std::env::var("LUNARIS_CONTEXT_RECALL").unwrap_or_else(|_| "hybrid".to_owned());
         let started = Instant::now();
+        let mut hybrid_memories: Option<Vec<ContextMemory>> = None;
+        if recall_mode != "vector" {
+            match self.recall_hybrid_hot_path(&handle, scope, &query, candidate_k).await {
+                Ok(hits) if !hits.is_empty() => {
+                    // Fused candidates BYPASS the raw min_score cosine
+                    // threshold — RRF rank (Σ 1/(60+rank) ≈ 0.03-scale) is
+                    // the quality signal; 0.55 would annihilate every hit.
+                    // The keyword sidecar merge is SKIPPED: BM25 is already
+                    // a fused leg.
+                    let candidates: Vec<ContextMemory> = hits
+                        .into_iter()
+                        .map(|h| ContextMemory {
+                            episode_id: ulid_bytes_to_string(&h.id),
+                            source: h.source,
+                            score: h.score,
+                            snippet: scrub_and_trim(&h.text, 900),
+                        })
+                        .collect();
+                    hybrid_memories = Some(curate_context_memories_lossy(candidates, max_hits));
+                }
+                Ok(_) => {
+                    tracing::warn!(phase, "lunaris hybrid recall empty; legacy fallback used");
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        phase,
+                        err = %err,
+                        "lunaris hybrid recall failed; legacy fallback used"
+                    );
+                }
+            }
+        }
+        if let Some(memories) = hybrid_memories {
+            let recall_elapsed_ms = started.elapsed().as_millis();
+            if std::env::var("LUNARIS_CONTEXT_PROFILE").ok().as_deref() == Some("1") {
+                tracing::info!(
+                    phase,
+                    candidate_k,
+                    recall_elapsed_ms,
+                    "lunaris context recall hybrid hot path"
+                );
+            }
+            return self
+                .finish_recall(scope, phase, session_id, max_chars, tool_context, memories)
+                .await;
+        }
+
         let hits =
             self.recall_hot_path_with_keyword_fallback(&handle, scope, &query, candidate_k).await?;
         let recall_elapsed_ms = started.elapsed().as_millis();
@@ -400,6 +479,20 @@ impl ContextService {
             memories = curate_context_memories_lossy(keyword_candidates, max_hits);
         }
 
+        self.finish_recall(scope, phase, session_id, max_chars, tool_context, memories).await
+    }
+
+    /// Shared response tail for BOTH recall paths: empty short-circuit,
+    /// render, fire-and-forget injection trace.
+    async fn finish_recall(
+        &self,
+        scope: &Scope,
+        phase: &str,
+        session_id: Option<&str>,
+        max_chars: usize,
+        tool_context: Option<ToolContext>,
+        memories: Vec<ContextMemory>,
+    ) -> anyhow::Result<ContextResponse> {
         if memories.is_empty() {
             return Ok(ContextResponse::empty());
         }
@@ -422,6 +515,46 @@ impl ContextService {
             lsn: None,
             error: None,
         })
+    }
+
+    /// hook-recall-graph-hybrid contract v1.1 — the fused hybrid hot path.
+    ///
+    /// The query embedding comes from the hook's embed cache and is computed
+    /// OUTSIDE the timeout window (a cold GGUF load must not eat the recall
+    /// budget); the `QueryContext` gets it PRE-SEEDED, so the `StubEmbedder`
+    /// placeholder is provably never invoked (`embed_once` is
+    /// `get_or_try_init` on a set cell). Hydration is fact-aware
+    /// (`hydrate_mixed`): fact hits render as `text = fact_text`,
+    /// `source = "fact:{predicate}"`.
+    async fn recall_hybrid_hot_path(
+        &self,
+        handle: &Lunaris,
+        scope: &Scope,
+        query: &Query,
+        candidate_k: usize,
+    ) -> anyhow::Result<Vec<lunaris_retrieve::Hit>> {
+        let embedding = self.cached_query_embedding(handle, scope, &query.text).await?;
+        let ctx = QueryContext::new(
+            query.clone(),
+            scope.clone(),
+            Arc::new(StubEmbedder::new(embedding.len())),
+            handle.storage(),
+            handle.keyword(),
+        );
+        ctx.query_embedding
+            .set(embedding)
+            .map_err(|_| anyhow::anyhow!("query_embedding OnceCell already seeded"))?;
+
+        let timeout_ms = std::env::var("LUNARIS_CONTEXT_RECALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_HYBRID_TIMEOUT_MS);
+        let root = hybrid_root(candidate_k);
+        let raw_hits =
+            tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), root.retrieve(&ctx))
+                .await
+                .map_err(|_| anyhow::anyhow!("hybrid recall timed out after {timeout_ms}ms"))??;
+        Ok(hydrate_mixed(handle.storage().as_ref(), scope, raw_hits, query.as_of, false).await?)
     }
 
     async fn recall_vector_hot_path(

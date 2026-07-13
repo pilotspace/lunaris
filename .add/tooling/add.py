@@ -2906,8 +2906,13 @@ def _tripwire_divergence(root: Path, slug: str, tw: dict) -> list[str]:
 # CLI's own session-local lock/session files (e.g. `scheduled_tasks.lock`, gitignored,
 # `pid`/`acquiredAt` churn per session) — same class as `.serena`, tool bookkeeping with no
 # build signal, and it produced the identical false `scope_violation` this comment predicts.
+# "target" — cargo build output (root `target/`, NESTED crate-local ones like
+# `crates/lunaris-bench/target/`, and `vendor/moon/target/`): gitignored artifact
+# churn on every `cargo test` run, no build signal. It produced the identical
+# false `scope_violation` (45k "touches") AND the 20-minute snapshot walks this
+# comment's class predicts (hook-recall-graph-hybrid, 2026-07-14).
 _SCOPE_EXCLUDE_DIRS = (".git", ".add", "__pycache__", "node_modules", ".serena",
-                       ".next", "coverage", "test-results", ".claude")
+                       ".next", "coverage", "test-results", ".claude", "target")
 _SCOPE_EXCLUDE_FILES = (".DS_Store",)                  # plus *.pyc / *.tsbuildinfo by suffix
 _SCOPE_EXCLUDE_SUFFIXES = (".pyc", ".tsbuildinfo")
 

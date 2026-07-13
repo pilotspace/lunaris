@@ -2593,6 +2593,7 @@ name = "lunaris-hook"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "blake3",
  "bytes",
  "chrono",
@@ -2602,6 +2603,7 @@ dependencies = [
  "globset",
  "hex",
  "lunaris-core",
+ "lunaris-extract",
  "lunaris-ingest",
  "lunaris-memory",
  "lunaris-retrieve",
