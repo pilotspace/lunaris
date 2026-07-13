@@ -12,12 +12,24 @@
 //! pre-pin the connection with `TEMPORAL.SNAPSHOT_AT`; Moon's FT parser owns the
 //! temporal lookup for vector/keyword search.
 //!
-//! ## Filter algebra
+//! ## Filter algebra (ft-navigate-filter-gap contract v1.1, 2026-07-14)
 //!
-//! Phase 1 supports the v0 algebra (`Eq`, `StartsWith`, `And`, `Or`) translated into
-//! Moon's FT query DSL: `@field:value`, `@field:prefix*`, space-joined for AND, `|`
-//! for OR. Backends that don't support `FT.*` (e.g., Postgres) translate the same
-//! algebra into `WHERE ...`.
+//! Moon's FT.SEARCH inline filter grammar (`parse_filter_string`,
+//! vendor/moon ft_search/parse.rs) accepts ONLY space-joined
+//! `@field:{tag}` / `@field:[min max]` units — no parens, no `|` OR, no
+//! prefix-wildcard, no unescaping. The pre-v1.1 rendering
+//! (`({filter})=>[KNN…]` + backslash TAG escaping) was SILENTLY DROPPED by
+//! that parser (leading `(` aborts the parse — live-probed 2026-07-14).
+//!
+//! v1.1 semantics:
+//! - server-renderable subset (`chunks` index only — the sole index with
+//!   TAG/NUMERIC schema fields): And-composition of `Eq{source}` (raw,
+//!   single-token value) and `ValidTimeRange` — rendered space-joined with
+//!   NO parens and NO escaping (`render_knn_filter`).
+//! - everything else: over-fetch the KNN unfiltered (`k*4` clamped to
+//!   `[k, 1000]`) and post-filter client-side against `VectorHit.metadata`
+//!   (`filter_matches`), truncating to `k`. Unknown `Filter` variants are a
+//!   hard `StorageError::Backend` — never a silent drop.
 
 use lunaris_core::Scope;
 use lunaris_core::error::StorageError;
@@ -54,17 +66,65 @@ pub(crate) async fn vector_search(
         qbytes.extend_from_slice(&f.to_le_bytes());
     }
 
-    let filter_expr = filter.map(filter_to_moon).unwrap_or_else(|| "*".to_string());
     // Moon's FT.SEARCH KNN dialect requires the query to carry the full
     // `<filter>=>[KNN <k> @<field> $<param>]` form — Phase 1.5 used the SDK's
     // `search_raw` with bare filter, which Moon rejects with "invalid KNN
     // query syntax". The SDK's higher-level `search_opts` adds the KNN
     // wrapper but doesn't accept a filter expression. Compose the wrapper
     // here so the filter algebra still works. Live-measurement gap fix
-    // 2026-04-21.
-    let knn_query = format!("({filter_expr})=>[KNN {k} @vec $query]");
-    let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
-    parse_ft_search(reply, rerank, &per_scope_index)
+    // 2026-04-21; grammar corrected per contract v1.1 (see module rustdoc).
+    let Some(f) = filter else {
+        let knn_query = format!("*=>[KNN {k} @vec $query]");
+        let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
+        return parse_ft_search(reply, rerank, &per_scope_index);
+    };
+
+    // Server-side enforcement — only the chunks index declares the TAG /
+    // NUMERIC fields the inline grammar can resolve.
+    if index == "chunks"
+        && let Some(expr) = render_knn_filter(f)
+    {
+        let knn_query = format!("{expr}=>[KNN {k} @vec $query]");
+        let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
+        return parse_ft_search(reply, rerank, &per_scope_index);
+    }
+
+    // Post-filter path: over-fetch, evaluate against hit metadata, truncate.
+    // Recall (not correctness) degrades if >k*4 nearer-neighbours fail the
+    // filter — the documented v1.1 degradation.
+    let k_fetch = k.saturating_mul(4).clamp(k, 1000);
+    tracing::debug!(
+        index,
+        k,
+        k_fetch,
+        "vector_search: filter not server-renderable on Moon — over-fetch + client-side post-filter"
+    );
+    let knn_query = format!("*=>[KNN {k_fetch} @vec $query]");
+    let reply =
+        search_raw(c, &per_scope_index, &knn_query, &qbytes, k_fetch, rerank, as_of).await?;
+    let hits = parse_ft_search(reply, rerank, &per_scope_index)?;
+    // Moon's FT.SEARCH reply carries only score fields, not the stored hash —
+    // read each candidate's `meta` field lazily (in rank order, stopping at
+    // k matches) so the evaluator sees the same metadata `atomic_write` stored.
+    let mut typed = c.typed();
+    let mut out = Vec::with_capacity(k);
+    for mut h in hits {
+        if h.metadata.is_null() {
+            let key = format!("{per_scope_index}:{}", hex::encode(&h.id));
+            let raw: Option<Vec<u8>> =
+                typed.hget(key.as_bytes(), "meta").await.map_err(moon_err)?;
+            if let Some(bytes) = raw {
+                h.metadata = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            }
+        }
+        if filter_matches(f, &h.metadata)? {
+            out.push(h);
+            if out.len() == k {
+                break;
+            }
+        }
+    }
+    Ok(out)
 }
 
 async fn search_raw(
@@ -123,76 +183,80 @@ pub(crate) fn decode_key(key: &[u8], ft_index: &str) -> Option<Vec<u8>> {
 // command surface lands upstream, restore the helper from git history rather
 // than re-derive it.
 
-fn filter_to_moon(f: &Filter) -> String {
+/// Render a filter into Moon's FT.SEARCH inline grammar, or `None` when it
+/// cannot be expressed faithfully (contract v1.1).
+///
+/// The grammar (vendor/moon ft_search/parse.rs::parse_filter_string) accepts
+/// only space-joined `@field:{tag}` / `@field:[min max]` units: implicit AND,
+/// no parens, no `|` OR, no prefix-wildcard. TAG bytes are compared RAW —
+/// escaping backslashes match nothing. A brace value equal to `true`/`false`
+/// parses as BoolEq (not TagEq) and a multi-word value as full-text
+/// TextMatch, so both route to the post-filter path instead.
+fn render_knn_filter(f: &Filter) -> Option<String> {
     match f {
-        Filter::Eq { field, value } => {
-            if field == "source" {
-                // source is a TAG field on the chunks FT index (PERF-MOON-01).
-                // TAG syntax uses `{value}` braces. Special characters inside
-                // the value must be backslash-escaped per RediSearch TAG rules.
-                format!("@{field}:{{{}}}", ft_tag_escape(&json_to_moon_bare(value)))
-            } else {
-                format!("@{field}:{}", json_to_moon(value))
+        Filter::Eq { field, value } if field == "source" => {
+            let v = value.as_str()?;
+            if v.is_empty()
+                || v.contains(['{', '}', ' '])
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("false")
+            {
+                return None;
             }
-        }
-        Filter::StartsWith { field, prefix } => format!("@{field}:{prefix}*"),
-        Filter::And(xs) => {
-            format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" "))
-        }
-        Filter::Or(xs) => {
-            format!("({})", xs.iter().map(filter_to_moon).collect::<Vec<_>>().join(" | "))
+            Some(format!("@source:{{{v}}}"))
         }
         Filter::ValidTimeRange { after, before } => {
-            // RediSearch numeric range on `@valid_time`. Inline string render —
-            // no hlc_to_moon_score helper exists (verified 2026-04-22). None
-            // maps to -inf / +inf sentinels. The Moon FT schema on the `chunks`
-            // index declares `valid_time` NUMERIC (Plan 09.1-02 Task 2 landed
-            // SchemaField::Numeric("valid_time") in ensure_indexes).
+            // The chunks FT schema declares `valid_time` NUMERIC
+            // (SchemaField::Numeric in ensure_indexes). None maps to the
+            // -inf / +inf sentinels Moon's f64 parser accepts.
             let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
             let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
-            format!("@valid_time:[{lo} {hi}]")
+            Some(format!("@valid_time:[{lo} {hi}]"))
         }
-        // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New
-        // variants need explicit Moon-side rendering; until that lands,
-        // emit an unconstrained predicate and warn.
-        _ => {
-            tracing::warn!(
-                "unknown Filter variant in Moon vector path — emitting unconstrained predicate"
-            );
-            "*".to_string()
+        Filter::And(xs) if !xs.is_empty() => {
+            let parts: Option<Vec<String>> = xs.iter().map(render_knn_filter).collect();
+            Some(parts?.join(" "))
         }
+        _ => None,
     }
 }
 
-/// Return the bare string value WITHOUT quotes — TAG values must not be quoted.
-fn json_to_moon_bare(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        _ => format!("{v}"),
-    }
-}
-
-/// Escape RediSearch TAG special characters with backslash.
-/// Per RediSearch TAG rules: `,`, `.`, `{`, `}`, `\`, `:` must be escaped.
-fn ft_tag_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for ch in s.chars() {
-        if matches!(ch, ',' | '.' | '{' | '}' | '\\' | ':') {
-            out.push('\\');
+/// Client-side filter evaluation against a hit's `meta` JSON — the v1.1
+/// post-filter for shapes Moon's inline grammar cannot express. A filter
+/// variant this evaluator does not know is a hard error, never a silent
+/// drop (the exact failure mode v1.1 exists to eliminate).
+fn filter_matches(f: &Filter, meta: &serde_json::Value) -> Result<bool, StorageError> {
+    match f {
+        Filter::Eq { field, value } => Ok(meta.get(field) == Some(value)),
+        Filter::StartsWith { field, prefix } => Ok(meta
+            .get(field)
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.starts_with(prefix.as_str()))),
+        Filter::And(xs) => {
+            for x in xs {
+                if !filter_matches(x, meta)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         }
-        out.push(ch);
-    }
-    out
-}
-
-fn json_to_moon(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => format!("\"{s}\""),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        _ => format!("\"{v}\""),
+        Filter::Or(xs) => {
+            for x in xs {
+                if filter_matches(x, meta)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Filter::ValidTimeRange { after, before } => {
+            let Some(ms) = meta.get("valid_time_ms").and_then(|v| v.as_u64()) else {
+                return Ok(false);
+            };
+            Ok(after.is_none_or(|a| ms >= a.wall_ms) && before.is_none_or(|b| ms <= b.wall_ms))
+        }
+        other => Err(StorageError::Backend(format!(
+            "filter_unsupported_on_moon: no post-filter evaluation for {other:?}"
+        ))),
     }
 }
 
@@ -375,80 +439,138 @@ mod tests {
         ft_index_name(&scope, kind)
     }
 
-    /// Plan 15-01 Task 3 — source is a TAG field; TAG syntax uses `{value}`
-    /// braces. Dots inside the value must be backslash-escaped per RediSearch
-    /// TAG rules.
+    // ── ft-navigate-filter-gap contract v1.1 — render_knn_filter pins ──
+    // Moon's parse_filter_string compares TAG bytes RAW and aborts on a
+    // leading '(' — the renderer must emit unescaped, unparenthesized units.
+
     #[test]
-    fn filter_eq_renders_source_as_tag() {
+    fn render_source_tag_raw_no_parens_no_escaping() {
         let f = Filter::Eq { field: "source".into(), value: json!("notes.md") };
-        assert_eq!(filter_to_moon(&f), "@source:{notes\\.md}");
-    }
-
-    #[test]
-    fn filter_eq_renders_source_with_colon_as_tag() {
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@source:{notes.md}"));
         let f = Filter::Eq { field: "source".into(), value: json!("helios:fs/test") };
-        assert_eq!(filter_to_moon(&f), "@source:{helios\\:fs/test}");
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@source:{helios:fs/test}"));
     }
 
     #[test]
-    fn filter_eq_renders_non_source_as_text() {
+    fn render_rejects_values_the_grammar_misparses() {
+        // multi-word -> TextMatch semantics; braces -> parse ambiguity;
+        // true/false -> BoolEq. All must fall back to the post-filter path.
+        for v in ["two words", "br{ace", "br}ace", "true", "FALSE", ""] {
+            let f = Filter::Eq { field: "source".into(), value: json!(v) };
+            assert_eq!(render_knn_filter(&f), None, "value {v:?} must not server-render");
+        }
+    }
+
+    #[test]
+    fn render_non_source_eq_not_renderable() {
+        // Only `source` is a TAG field on the chunks index; @kind would be
+        // TagEq against a non-existent field (matches nothing = wrong).
         let f = Filter::Eq { field: "kind".into(), value: json!("episode") };
-        assert_eq!(filter_to_moon(&f), "@kind:\"episode\"");
+        assert_eq!(render_knn_filter(&f), None);
     }
 
     #[test]
-    fn filter_starts_with_renders() {
+    fn render_startswith_and_or_not_renderable() {
         let f = Filter::StartsWith { field: "source".into(), prefix: "helios:fs/".into() };
-        assert_eq!(filter_to_moon(&f), "@source:helios:fs/*");
-    }
-
-    #[test]
-    fn filter_and_or_combine() {
-        let f = Filter::And(vec![
-            Filter::Eq { field: "kind".into(), value: json!("episode") },
-            Filter::Or(vec![
-                Filter::Eq { field: "lang".into(), value: json!("en") },
-                Filter::Eq { field: "lang".into(), value: json!("fr") },
-            ]),
+        assert_eq!(render_knn_filter(&f), None, "grammar has no prefix-wildcard");
+        let f = Filter::Or(vec![
+            Filter::Eq { field: "source".into(), value: json!("a.md") },
+            Filter::Eq { field: "source".into(), value: json!("b.md") },
         ]);
-        let s = filter_to_moon(&f);
-        assert!(s.starts_with('('), "AND wraps in parens, got {s}");
-        assert!(s.contains("@kind:\"episode\""));
-        assert!(s.contains(" | "), "OR uses pipe, got {s}");
-    }
-
-    // Plan 09.1-02 Task 3 — ValidTimeRange rendering tests.
-    #[test]
-    fn filter_to_moon_valid_time_range_both_bounds() {
-        let f = Filter::ValidTimeRange {
-            after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
-            before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
-        };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[100 200]");
+        assert_eq!(render_knn_filter(&f), None, "grammar has no OR");
     }
 
     #[test]
-    fn filter_to_moon_valid_time_range_only_after() {
+    fn render_and_space_joins_without_parens() {
+        let f = Filter::And(vec![
+            Filter::Eq { field: "source".into(), value: json!("notes.md") },
+            Filter::ValidTimeRange {
+                after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
+                before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
+            },
+        ]);
+        assert_eq!(
+            render_knn_filter(&f).as_deref(),
+            Some("@source:{notes.md} @valid_time:[100 200]")
+        );
+    }
+
+    #[test]
+    fn render_and_with_unrenderable_child_is_none() {
+        let f = Filter::And(vec![
+            Filter::Eq { field: "source".into(), value: json!("notes.md") },
+            Filter::StartsWith { field: "source".into(), prefix: "x".into() },
+        ]);
+        assert_eq!(render_knn_filter(&f), None, "partial server-side enforcement would leak");
+    }
+
+    #[test]
+    fn render_valid_time_range_bounds() {
         let f = Filter::ValidTimeRange {
             after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
             before: None,
         };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[100 +inf]");
-    }
-
-    #[test]
-    fn filter_to_moon_valid_time_range_only_before() {
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[100 +inf]"));
         let f = Filter::ValidTimeRange {
             after: None,
             before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
         };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf 200]");
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[-inf 200]"));
+        let f = Filter::ValidTimeRange { after: None, before: None };
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[-inf +inf]"));
+    }
+
+    // ── contract v1.1 — filter_matches (client-side post-filter) pins ──
+
+    #[test]
+    fn matches_eq_on_metadata() {
+        let meta = json!({"source": "alpha.md", "name": "alpha"});
+        let f = Filter::Eq { field: "source".into(), value: json!("alpha.md") };
+        assert!(filter_matches(&f, &meta).unwrap());
+        let f = Filter::Eq { field: "source".into(), value: json!("beta.md") };
+        assert!(!filter_matches(&f, &meta).unwrap());
+        let f = Filter::Eq { field: "missing".into(), value: json!("x") };
+        assert!(!filter_matches(&f, &meta).unwrap(), "missing field never matches");
     }
 
     #[test]
-    fn filter_to_moon_valid_time_range_both_none() {
-        let f = Filter::ValidTimeRange { after: None, before: None };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf +inf]");
+    fn matches_startswith_and_or() {
+        let meta = json!({"source": "helios:fs/test.rs"});
+        let f = Filter::StartsWith { field: "source".into(), prefix: "helios:fs/".into() };
+        assert!(filter_matches(&f, &meta).unwrap());
+        let f = Filter::Or(vec![
+            Filter::Eq { field: "source".into(), value: json!("nope.md") },
+            Filter::StartsWith { field: "source".into(), prefix: "helios:".into() },
+        ]);
+        assert!(filter_matches(&f, &meta).unwrap());
+        let f = Filter::And(vec![
+            Filter::StartsWith { field: "source".into(), prefix: "helios:".into() },
+            Filter::Eq { field: "source".into(), value: json!("nope.md") },
+        ]);
+        assert!(!filter_matches(&f, &meta).unwrap());
+    }
+
+    #[test]
+    fn matches_valid_time_range_on_metadata() {
+        let meta = json!({"valid_time_ms": 150});
+        let f = Filter::ValidTimeRange {
+            after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
+            before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
+        };
+        assert!(filter_matches(&f, &meta).unwrap());
+        let f = Filter::ValidTimeRange {
+            after: Some(Hlc { wall_ms: 151, counter: 0, node_id: 0 }),
+            before: None,
+        };
+        assert!(!filter_matches(&f, &meta).unwrap());
+        assert!(
+            !filter_matches(
+                &Filter::ValidTimeRange { after: None, before: None },
+                &json!({"other": 1})
+            )
+            .unwrap(),
+            "no valid_time_ms in metadata -> conservatively excluded"
+        );
     }
 
     #[test]
