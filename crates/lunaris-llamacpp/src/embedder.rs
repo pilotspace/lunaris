@@ -30,8 +30,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::token::LlamaToken;
 
-use crate::worker::EncodeWorker;
+use crate::worker::{EncodeWorker, MAX_SEQS_PER_WINDOW, Priority};
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
 /// granite-embedding-311m output dimensionality — must agree with
@@ -148,7 +149,22 @@ impl LlamaCppEmbedder {
     /// Synchronous embed path — the async trait method wraps this in
     /// `spawn_blocking`. Tokenizes caller-side (the model handle is shared
     /// with the worker), encodes on the warm worker context, L2-normalizes.
+    ///
+    /// Interactive lane (recall queries): one encode job for the whole batch.
     pub fn embed_blocking(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LlamaCppEmbedderError> {
+        self.embed_blocking_prio(inputs, Priority::Interactive)
+    }
+
+    /// Priority-aware sync embed. `Interactive` submits the whole batch as one
+    /// job; `Background` splits it into window-sized jobs (≤ `budget` tokens and
+    /// ≤ `MAX_SEQS_PER_WINDOW` sequences each) so an interactive query can slip
+    /// in after one background window instead of the whole batch. Embeddings
+    /// are byte-identical across lanes — priority is scheduling only.
+    fn embed_blocking_prio(
+        &self,
+        inputs: &[&str],
+        priority: Priority,
+    ) -> Result<Vec<Vec<f32>>, LlamaCppEmbedderError> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
@@ -166,8 +182,68 @@ impl LlamaCppEmbedder {
             token_lists.push(tokens);
         }
 
-        let raw = inner.worker.encode(token_lists).map_err(LlamaCppEmbedderError::Llama)?;
-        Ok(raw.iter().map(|row| l2_normalize(row)).collect())
+        match priority {
+            Priority::Interactive => {
+                let raw = inner
+                    .worker
+                    .encode(token_lists, Priority::Interactive)
+                    .map_err(LlamaCppEmbedderError::Llama)?;
+                Ok(raw.iter().map(|row| l2_normalize(row)).collect())
+            }
+            Priority::Background => {
+                // Pack sequences into window-sized jobs so the worker yields to
+                // the Interactive lane between windows. Order is preserved: we
+                // split sequentially and concatenate results in order.
+                let mut out = Vec::with_capacity(token_lists.len());
+                let mut window: Vec<Vec<LlamaToken>> = Vec::new();
+                let mut used = 0usize;
+                for tokens in token_lists {
+                    let over_tokens = used + tokens.len() > inner.budget;
+                    let over_seqs = window.len() >= MAX_SEQS_PER_WINDOW;
+                    if !window.is_empty() && (over_tokens || over_seqs) {
+                        let raw = inner
+                            .worker
+                            .encode(std::mem::take(&mut window), Priority::Background)
+                            .map_err(LlamaCppEmbedderError::Llama)?;
+                        out.extend(raw.iter().map(|row| l2_normalize(row)));
+                        used = 0;
+                    }
+                    used += tokens.len();
+                    window.push(tokens);
+                }
+                if !window.is_empty() {
+                    let raw = inner
+                        .worker
+                        .encode(window, Priority::Background)
+                        .map_err(LlamaCppEmbedderError::Llama)?;
+                    out.extend(raw.iter().map(|row| l2_normalize(row)));
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// Async wrapper shared by both trait lanes: hop onto a blocking thread and
+    /// run the priority-aware sync path. `Interactive` for recall queries,
+    /// `Background` for ingest promotion.
+    async fn embed_batch_prio(
+        &self,
+        inputs: &[&str],
+        priority: Priority,
+    ) -> Result<Vec<Vec<f32>>, LunarisError> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
+        let me = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
+            let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+            me.embed_blocking_prio(&refs, priority).map_err(LunarisError::from)
+        })
+        .await
+        .map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("lunaris-llamacpp join: {e}")))
+        })?
     }
 }
 
@@ -183,19 +259,13 @@ impl Embedder for LlamaCppEmbedder {
     }
 
     async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
-        let owned: Vec<String> = inputs.iter().map(|s| (*s).to_string()).collect();
-        let me = self.clone();
-        tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>, LunarisError> {
-            let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-            me.embed_blocking(&refs).map_err(LunarisError::from)
-        })
-        .await
-        .map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("lunaris-llamacpp join: {e}")))
-        })?
+        self.embed_batch_prio(inputs, Priority::Interactive).await
+    }
+
+    /// Background lane: ingest promotion embeds via this so it never head-of-
+    /// line-blocks an interactive recall query on the shared worker context.
+    async fn embed_batch_lowpri(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        self.embed_batch_prio(inputs, Priority::Background).await
     }
 }
 

@@ -37,7 +37,7 @@ use lunaris_rerank::{RerankCandidate, Reranker};
 
 use crate::backend::shared_backend;
 use crate::gguf_head::{ClsHead, GgufHeadError};
-use crate::worker::EncodeWorker;
+use crate::worker::{EncodeWorker, Priority};
 
 /// bge-reranker-v2-m3 hidden size — the encoder's `n_embd` and the
 /// classification head's input width (verified at `open`).
@@ -195,7 +195,12 @@ impl LlamaCppReranker {
             token_lists.push(seq);
         }
 
-        let cls_rows = inner.worker.encode(token_lists).map_err(LlamaCppRerankerError::Llama)?;
+        // Rerank only ever serves interactive recall (no background reranking
+        // path exists), so it always rides the Interactive lane.
+        let cls_rows = inner
+            .worker
+            .encode(token_lists, Priority::Interactive)
+            .map_err(LlamaCppRerankerError::Llama)?;
         Ok(cls_rows.iter().map(|cls| head_score(&inner.head, cls)).collect())
     }
 }

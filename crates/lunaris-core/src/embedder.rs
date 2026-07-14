@@ -13,6 +13,16 @@ use crate::error::LunarisError;
 pub trait Embedder: Send + Sync + 'static {
     fn dim(&self) -> usize;
     async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError>;
+
+    /// Lower-priority batch embed for background/bulk work (e.g. ingest
+    /// promotion). Semantically identical to [`Embedder::embed_batch`] — same
+    /// vectors, same order — but signals the embedder may defer this batch
+    /// behind interactive recall queries. The default just delegates; only a
+    /// backend with an internal scheduler (the llama.cpp worker) overrides it
+    /// to ride a background lane so ingest never head-of-line-blocks recall.
+    async fn embed_batch_lowpri(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        self.embed_batch(inputs).await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -185,5 +195,29 @@ mod noop_tests {
         let out = e.embed_batch(&["x"]).await.unwrap();
         assert_eq!(out.len(), 1);
         assert!(out[0].is_empty());
+    }
+}
+
+#[cfg(test)]
+mod lowpri_default_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lowpri_defaults_to_embed_batch() {
+        // scenario: non-llamacpp embedders unaffected — an Embedder that does
+        // NOT override embed_batch_lowpri gets the default, byte-identical to
+        // embed_batch in value AND input order.
+        let e = StubEmbedder::new(768);
+        let inputs = ["alpha", "beta", "gamma"];
+        let hi = e.embed_batch(&inputs).await.unwrap();
+        let lo = e.embed_batch_lowpri(&inputs).await.unwrap();
+        assert_eq!(hi, lo, "default embed_batch_lowpri must byte-match embed_batch");
+    }
+
+    #[tokio::test]
+    async fn lowpri_empty_is_noop() {
+        // scenario: empty input is a no-op on both lanes.
+        let e = StubEmbedder::new(768);
+        assert!(e.embed_batch_lowpri(&[]).await.unwrap().is_empty());
     }
 }

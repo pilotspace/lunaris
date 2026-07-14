@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "mcp-embed-budget",
+  "active_task": "nonblocking-embedder-arch",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -1011,6 +1011,47 @@
         ],
         "snapshot_md5": "117d0b2d4727c25a069843d375a12ec6"
       }
+    },
+    "nonblocking-embedder-arch": {
+      "title": "Non-blocking embedder/reranker: separate latency classes so recall never head-of-line-blocks behind ingest",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T14:26:43+00:00",
+      "updated": "2026-07-14T14:58:54+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "44c3e30a76f464b8f7cb7e8aa28616e7",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-llamacpp/src/worker.rs",
+          "crates/lunaris-llamacpp/src/embedder.rs",
+          "crates/lunaris-llamacpp/src/reranker.rs",
+          "crates/lunaris-core/src/embedder.rs",
+          "crates/lunaris-hook/src/embed_promotion.rs",
+          "crates/lunaris-llamacpp/tests/",
+          "crates/lunaris/src/handle.rs"
+        ],
+        "snapshot_md5": "69eeccfb8151ef37c3bcfd426eede5e5"
+      },
+      "heal": {
+        "attempts": 2,
+        "history": [
+          {
+            "at": "2026-07-14T14:56:28+00:00",
+            "reason": "scope_violation: task 'nonblocking-embedder-arch' touched outside its declared \u00a75 Scope \u2014 crates/lunaris/src/handle.rs (1 total)",
+            "source": "scope"
+          },
+          {
+            "at": "2026-07-14T14:56:57+00:00",
+            "reason": "scope_violation: task 'nonblocking-embedder-arch' touched outside its declared \u00a75 Scope \u2014 crates/lunaris/src/handle.rs (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
     }
   },
   "milestones": {
@@ -1056,7 +1097,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T14:22:18+00:00",
+  "updated": "2026-07-14T14:58:54+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

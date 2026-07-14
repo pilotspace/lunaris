@@ -161,26 +161,18 @@ impl CachedEmbedder {
             misses: AtomicUsize::new(0),
         }
     }
-}
 
-impl std::fmt::Debug for CachedEmbedder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CachedEmbedder")
-            .field("dim", &self.inner.dim())
-            .field("cache_len", &self.cache.read().len())
-            .field("hits", &self.hits.load(Ordering::Relaxed))
-            .field("misses", &self.misses.load(Ordering::Relaxed))
-            .finish()
-    }
-}
-
-#[async_trait::async_trait]
-impl Embedder for CachedEmbedder {
-    fn dim(&self) -> usize {
-        self.inner.dim()
-    }
-
-    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+    /// Shared cache-then-embed path. `lowpri` selects the inner embedder's
+    /// background lane (`embed_batch_lowpri`) for cache misses so the wrapper
+    /// preserves the priority the caller asked for — without this forwarding,
+    /// ingest promotion would be silently upgraded to the interactive lane,
+    /// defeating the whole non-blocking design (every real embedder is wrapped
+    /// in a `CachedEmbedder`).
+    async fn embed_batch_with(
+        &self,
+        inputs: &[&str],
+        lowpri: bool,
+    ) -> Result<Vec<Vec<f32>>, LunarisError> {
         let mut out: Vec<Option<Vec<f32>>> = vec![None; inputs.len()];
         let mut missing: HashMap<String, Vec<usize>> = HashMap::new();
 
@@ -199,7 +191,11 @@ impl Embedder for CachedEmbedder {
         if !missing.is_empty() {
             let keys: Vec<String> = missing.keys().cloned().collect();
             let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
-            let embedded = self.inner.embed_batch(&refs).await?;
+            let embedded = if lowpri {
+                self.inner.embed_batch_lowpri(&refs).await?
+            } else {
+                self.inner.embed_batch(&refs).await?
+            };
             if embedded.len() != keys.len() {
                 return Err(LunarisError::Storage(StorageError::Backend(format!(
                     "cached embedder inner returned {} rows for {} inputs",
@@ -229,6 +225,32 @@ impl Embedder for CachedEmbedder {
                 })
             })
             .collect()
+    }
+}
+
+impl std::fmt::Debug for CachedEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedEmbedder")
+            .field("dim", &self.inner.dim())
+            .field("cache_len", &self.cache.read().len())
+            .field("hits", &self.hits.load(Ordering::Relaxed))
+            .field("misses", &self.misses.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for CachedEmbedder {
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        self.embed_batch_with(inputs, false).await
+    }
+
+    async fn embed_batch_lowpri(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        self.embed_batch_with(inputs, true).await
     }
 }
 
