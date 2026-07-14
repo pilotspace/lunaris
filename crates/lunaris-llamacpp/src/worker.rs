@@ -18,9 +18,10 @@
 //! Concurrent callers serialize through the channel — one context is the
 //! deliberate footprint contract (same design as llama.cpp's own server).
 
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
@@ -32,27 +33,133 @@ use crate::backend::shared_backend;
 
 /// Sequence-count ceiling per encode window — the context's `n_seq_max`.
 /// Windows flush at whichever ceiling hits first: token budget or this.
-const MAX_SEQS_PER_WINDOW: usize = 64;
+/// `pub(crate)` so the Background window-splitter (embedder) caps each
+/// submitted job to one real encode window.
+pub(crate) const MAX_SEQS_PER_WINDOW: usize = 64;
+
+/// Which lane a job rides. `Interactive` (recall queries) always drains before
+/// `Background` (ingest promotion) so an interactive embed never head-of-line-
+/// blocks behind a large background batch. Priority is SCHEDULING only — it
+/// never changes the embedding a job produces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Priority {
+    Interactive,
+    Background,
+}
+
+struct Lanes<T> {
+    high: VecDeque<T>,
+    low: VecDeque<T>,
+    /// Set once the worker is shutting down; `push` becomes a no-op (the item
+    /// is dropped so its caller's reply channel errors instead of hanging).
+    closed: bool,
+}
+
+/// Two-lane intake in front of the single encode context. std-only (no
+/// crossbeam — it's unvendored here and carries an active advisory): a
+/// `Mutex` over the two deques plus a `Condvar` for the blocking worker pop.
+/// The worker thread is plain sync code, so there is no lock-across-await.
+pub(crate) struct PriorityIntake<T> {
+    lanes: Mutex<Lanes<T>>,
+    cv: Condvar,
+}
+
+impl<T> PriorityIntake<T> {
+    pub(crate) fn new() -> Self {
+        Self {
+            lanes: Mutex::new(Lanes { high: VecDeque::new(), low: VecDeque::new(), closed: false }),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Enqueue `item` on its lane and wake the worker. Fire-and-forget: if the
+    /// intake is already closed the item is dropped (a closed worker would
+    /// never consume it — dropping lets the caller's reply channel error).
+    pub(crate) fn push(&self, priority: Priority, item: T) {
+        let mut lanes = self.lanes.lock().expect("intake mutex poisoned");
+        if lanes.closed {
+            return;
+        }
+        match priority {
+            Priority::Interactive => lanes.high.push_back(item),
+            Priority::Background => lanes.low.push_back(item),
+        }
+        drop(lanes);
+        self.cv.notify_one();
+    }
+
+    /// Non-blocking pop: Interactive lane first, then Background, else `None`.
+    pub(crate) fn try_pop(&self) -> Option<T> {
+        let mut lanes = self.lanes.lock().expect("intake mutex poisoned");
+        if let Some(item) = lanes.high.pop_front() {
+            return Some(item);
+        }
+        lanes.low.pop_front()
+    }
+
+    /// Block until a job is available (Interactive first) or the intake is
+    /// closed. Returns `None` only when closed AND both lanes are drained — the
+    /// worker's exit signal.
+    fn pop_blocking(&self) -> Option<T> {
+        let mut lanes = self.lanes.lock().expect("intake mutex poisoned");
+        loop {
+            if let Some(item) = lanes.high.pop_front() {
+                return Some(item);
+            }
+            if let Some(item) = lanes.low.pop_front() {
+                return Some(item);
+            }
+            if lanes.closed {
+                return None;
+            }
+            lanes = self.cv.wait(lanes).expect("intake mutex poisoned");
+        }
+    }
+
+    /// Signal no more work will be consumed; wake the worker so it can drain
+    /// and exit. Idempotent.
+    fn close(&self) {
+        let mut lanes = self.lanes.lock().expect("intake mutex poisoned");
+        lanes.closed = true;
+        drop(lanes);
+        self.cv.notify_all();
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.lanes.lock().expect("intake mutex poisoned").closed
+    }
+}
 
 struct Job {
     token_lists: Vec<Vec<LlamaToken>>,
     reply: mpsc::Sender<Result<Vec<Vec<f32>>, String>>,
 }
 
+/// Closes and drains the intake when the worker thread exits for ANY reason
+/// (normal return or panic unwind), so a job still queued has its reply channel
+/// dropped and its `encode()` caller gets an `Err` rather than blocking forever.
+struct DrainOnExit(Arc<PriorityIntake<Job>>);
+
+impl Drop for DrainOnExit {
+    fn drop(&mut self) {
+        self.0.close();
+        while self.0.try_pop().is_some() {}
+    }
+}
+
 pub(crate) struct EncodeWorker {
-    /// `Option` so `Drop` can hang up the channel before joining.
-    tx: Option<mpsc::Sender<Job>>,
+    intake: Arc<PriorityIntake<Job>>,
     handle: Option<std::thread::JoinHandle<()>>,
     created: Arc<AtomicUsize>,
 }
 
 impl Drop for EncodeWorker {
     fn drop(&mut self) {
-        // Hang up → worker's recv errors → it tears down context + model
-        // Arc; JOIN so process exit never races a thread still inside
-        // llama.cpp (observed as a SIGSEGV in test teardown when the
-        // thread was detached).
-        drop(self.tx.take());
+        // Close the intake → worker's `pop_blocking` returns None → it tears
+        // down context + model Arc; JOIN so process exit never races a thread
+        // still inside llama.cpp (observed as a SIGSEGV in test teardown when
+        // the thread was detached).
+        self.intake.close();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -69,7 +176,8 @@ impl EncodeWorker {
         n_threads: Option<i32>,
         thread_name: &str,
     ) -> Result<Self, String> {
-        let (tx, rx) = mpsc::channel::<Job>();
+        let intake = Arc::new(PriorityIntake::<Job>::new());
+        let intake_in_thread = Arc::clone(&intake);
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         let created = Arc::new(AtomicUsize::new(0));
         let created_in_thread = Arc::clone(&created);
@@ -77,6 +185,11 @@ impl EncodeWorker {
         let handle = std::thread::Builder::new()
             .name(thread_name.to_string())
             .spawn(move || {
+                // On ANY exit (normal or panic), close + drain the intake so
+                // queued jobs' reply senders drop and their callers get an Err
+                // rather than hanging on `reply_rx.recv()`.
+                let _drain = DrainOnExit(Arc::clone(&intake_in_thread));
+
                 let backend = match shared_backend() {
                     Ok(b) => b,
                     Err(e) => {
@@ -105,35 +218,40 @@ impl EncodeWorker {
                 let _ = ready_tx.send(Ok(()));
 
                 let mut batch = LlamaBatch::new(budget, MAX_SEQS_PER_WINDOW as i32);
-                while let Ok(job) = rx.recv() {
+                // Interactive lane drains before Background between jobs; a
+                // large background workload is pre-split into window-sized jobs
+                // by the caller, so a query slips in after one background
+                // window rather than the whole batch.
+                while let Some(job) = intake_in_thread.pop_blocking() {
                     let result = encode_all(&mut ctx, &mut batch, &job.token_lists, budget);
                     let _ = job.reply.send(result);
                 }
-                // Sender side hung up: handle dropped. Context, batch, and
-                // the model Arc clone drop here — full teardown.
+                // Intake closed + drained: context, batch, and the model Arc
+                // clone drop here — full teardown.
             })
             .map_err(|e| format!("spawn llama.cpp worker: {e}"))?;
 
         ready_rx
             .recv()
             .map_err(|_| "llama.cpp worker died before creating its context".to_string())??;
-        Ok(Self { tx: Some(tx), handle: Some(handle), created })
+        Ok(Self { intake, handle: Some(handle), created })
     }
 
-    /// Encode token lists → raw CLS-pooled embeddings, in input order.
+    /// Encode token lists → raw CLS-pooled embeddings, in input order, on the
+    /// given priority lane.
     pub(crate) fn encode(
         &self,
         token_lists: Vec<Vec<LlamaToken>>,
+        priority: Priority,
     ) -> Result<Vec<Vec<f32>>, String> {
         if token_lists.is_empty() {
             return Ok(Vec::new());
         }
+        if self.intake.is_closed() {
+            return Err("llama.cpp worker is gone".to_string());
+        }
         let (reply_tx, reply_rx) = mpsc::channel();
-        self.tx
-            .as_ref()
-            .expect("tx only vacated in Drop")
-            .send(Job { token_lists, reply: reply_tx })
-            .map_err(|_| "llama.cpp worker is gone".to_string())?;
+        self.intake.push(priority, Job { token_lists, reply: reply_tx });
         reply_rx.recv().map_err(|_| "llama.cpp worker died mid-encode".to_string())?
     }
 
@@ -194,4 +312,42 @@ fn flush(
     batch.clear();
     window.clear();
     Ok(())
+}
+
+#[cfg(test)]
+mod intake_tests {
+    // Scheduling logic is model-free: `PriorityIntake` orders jobs without any
+    // llama.cpp context, so these tests pin the interleave contract with no GGUF.
+    use super::{Priority, PriorityIntake};
+
+    #[test]
+    fn drains_high_before_low() {
+        // scenario: priority ordering under mixed submission — all Interactive
+        // jobs come out before any Background job, regardless of submit order.
+        let q: PriorityIntake<&'static str> = PriorityIntake::new();
+        q.push(Priority::Background, "low1");
+        q.push(Priority::Background, "low2");
+        q.push(Priority::Interactive, "high1");
+        q.push(Priority::Background, "low3");
+        let mut got = Vec::new();
+        while let Some(x) = q.try_pop() {
+            got.push(x);
+        }
+        assert_eq!(got, vec!["high1", "low1", "low2", "low3"]);
+    }
+
+    #[test]
+    fn fifo_within_each_lane() {
+        // No starvation reorder inside a lane: submit order is preserved.
+        let q: PriorityIntake<&'static str> = PriorityIntake::new();
+        q.push(Priority::Interactive, "a");
+        q.push(Priority::Interactive, "b");
+        q.push(Priority::Background, "x");
+        q.push(Priority::Background, "y");
+        assert_eq!(q.try_pop(), Some("a"));
+        assert_eq!(q.try_pop(), Some("b"));
+        assert_eq!(q.try_pop(), Some("x"));
+        assert_eq!(q.try_pop(), Some("y"));
+        assert_eq!(q.try_pop(), None);
+    }
 }

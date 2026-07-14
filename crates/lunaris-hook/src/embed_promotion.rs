@@ -194,7 +194,9 @@ async fn promote_batch(
     let mut promoted = 0usize;
     for (chunk_batch, source_batch) in chunks.chunks(batch_size).zip(sources.chunks(batch_size)) {
         let texts: Vec<&str> = chunk_batch.iter().map(|chunk| chunk.text.as_str()).collect();
-        let embeddings = handle.embedder().embed_batch(&texts).await?;
+        // Background lane: promotion must never head-of-line-block an
+        // interactive recall query on the shared embedder worker context.
+        let embeddings = handle.embedder().embed_batch_lowpri(&texts).await?;
         if embeddings.len() != chunk_batch.len() {
             anyhow::bail!(
                 "embed promotion returned {} rows for {} chunks",
@@ -291,5 +293,76 @@ mod tests {
 
         // Keep the import honest: the hot path uses NoopEmbedder before this event exists.
         assert_eq!(NoopEmbedder::default().dim(), 768);
+    }
+}
+
+#[cfg(test)]
+mod lowpri_routing_tests {
+    //! scenario: promotion uses the low-priority lane — promote_batch must route
+    //! its embed call through `embed_batch_lowpri` (Background), never
+    //! `embed_batch` (Interactive), so ingest never head-of-line-blocks recall.
+    use super::*;
+    use async_trait::async_trait;
+    use lunaris_core::{Chunk, Embedder, LunarisError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Embedder that records which lane was invoked. Overrides BOTH methods so
+    /// the two lanes are distinguishable (the default would make lowpri call
+    /// embed_batch, hiding the routing).
+    #[derive(Debug)]
+    struct RecordingEmbedder {
+        dim: usize,
+        hi: Arc<AtomicUsize>,
+        lo: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Embedder for RecordingEmbedder {
+        fn dim(&self) -> usize {
+            self.dim
+        }
+        async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+            self.hi.fetch_add(1, Ordering::SeqCst);
+            Ok(inputs.iter().map(|_| vec![0.0f32; self.dim]).collect())
+        }
+        async fn embed_batch_lowpri(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+            self.lo.fetch_add(1, Ordering::SeqCst);
+            Ok(inputs.iter().map(|_| vec![0.0f32; self.dim]).collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn promote_batch_routes_to_lowpri_lane() {
+        let hi = Arc::new(AtomicUsize::new(0));
+        let lo = Arc::new(AtomicUsize::new(0));
+        let embedder = Arc::new(RecordingEmbedder { dim: 768, hi: hi.clone(), lo: lo.clone() });
+        let handle = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+
+        let scope = Scope::new("test.lowpri").unwrap();
+        let clock = HlcClock::new(0);
+        let episode_id = Ulid::new();
+        let chunk = Chunk::new(scope.clone(), episode_id, "hello world", 2, 0, vec![], &clock);
+        let chunk_id = chunk.id;
+        let key = chunk_key(&scope, chunk_id);
+        let value = serde_json::to_vec(&chunk).unwrap();
+        handle.storage().atomic_write(&scope, &[WriteOp::KvPut { key, value }]).await.unwrap();
+
+        let event = EmbedPromotionEvent {
+            kind: "chunk_embed_requested".to_string(),
+            scope: scope.as_str().to_string(),
+            source: "codex:tool_call:post".to_string(),
+            episode_id: episode_id.to_string(),
+            chunk_ids: vec![chunk_id.to_string()],
+            created_at_ms: 0,
+        };
+
+        promote_batch(&handle, &scope, vec![event], 16).await.unwrap();
+
+        assert_eq!(
+            lo.load(Ordering::SeqCst),
+            1,
+            "promotion must use the low-priority (Background) lane"
+        );
+        assert_eq!(hi.load(Ordering::SeqCst), 0, "promotion must NOT use the interactive lane");
     }
 }
