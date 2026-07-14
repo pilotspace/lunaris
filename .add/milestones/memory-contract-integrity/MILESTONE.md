@@ -23,7 +23,7 @@ Out of scope: real fact embeddings / SourceOp weighting (ranking quality), embed
 
 ## Exit criteria
 
-- [ ] `memory.forget` (prefix AND episode_id) removes episodes under a real scope on live Moon; removed>0 and post-forget recall misses — verifier: red→green live test in task 1
-- [ ] Turnkey `--verify` passes with DEFAULT env on a cold box (no LUNARIS_CONTEXT_TIMEOUT_MS override) and leaves ZERO stray contextd processes — verifier: task 2 live proof + process-count assertion
-- [ ] Same dedupe_key twice on Moon → was_duplicate=true, one episode — verifier: task 3 discriminating test on live Moon
-- [ ] A captured `sk-ant-*` key and `password=…` value never appear in additionalContext — verifier: task 4 live capture→inject discriminator
+- [x] `memory.forget` (prefix AND episode_id) removes episodes under a real scope on live Moon; removed>0 and post-forget recall misses — verifier: red→green live test in task 1 · MET 2026-07-14: forget_scoped_moon.rs 5/5 green on live Moon + production proof (rebuilt lunaris-mcp on 6381 removed 1+3+1+4 deep-test episodes, sentinel no longer recalls)
+- [x] Turnkey `--verify` passes with DEFAULT env on a cold box (no LUNARIS_CONTEXT_TIMEOUT_MS override) and leaves ZERO stray contextd processes — verifier: task 2 live proof + process-count assertion · MET 2026-07-14: default-env `--verify` prints both PASS lines against Moon 6381 (re-proven post-turnkey-rework); cleanup stage asserts zero daemons on the verify socket (verify_socket_daemons)
+- [x] Same dedupe_key twice on Moon → was_duplicate=true, one episode — verifier: task 3 discriminating test on live Moon · MET 2026-07-14: moon_parity.rs dedupe_key_idempotent_on_moon (Fresh then Duplicate(prior LSN)) + scope-isolation pin, green on live Moon
+- [x] A captured `sk-ant-*` key and `password=…` value never appear in additionalContext — verifier: task 4 live capture→inject discriminator · MET 2026-07-14: live release-binary capture against Moon 6381 stored `<REDACTED:API_KEY>`/`<REDACTED:KV_SECRET>` with both raw secrets absent (secrets never reach storage, so inject cannot surface them), plus inject-side scrub_and_trim pin (inject_snippet_scrubs_stored_api_key) for pre-existing stored secrets
