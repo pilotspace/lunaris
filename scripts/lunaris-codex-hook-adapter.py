@@ -96,7 +96,66 @@ def main() -> int:
     return 0
 
 
+# Content fields that make a hook event worth persisting. `cwd` is deliberately
+# NOT here — every envelope carries it, so it is metadata, not signal.
+CAPTURE_CONTENT_FIELDS = (
+    "error",
+    "stderr",
+    "output",
+    "result",
+    "tool_response",
+    "toolResponse",
+    "tool_input",
+    "toolInput",
+    "message",
+    "content",
+    "prompt",
+    "command",
+    "patch",
+    "new_string",
+    "diff",
+)
+
+
+def _capture_gate_enabled() -> bool:
+    """The signal-gate is on unless LUNARIS_CONTEXT_CAPTURE_GATE=off (kill-switch)."""
+    return os.environ.get("LUNARIS_CONTEXT_CAPTURE_GATE", "on").strip().lower() != "off"
+
+
+def capture_has_signal(event: Any) -> bool:
+    """Fail-OPEN predicate: True = worth persisting as a durable memory.
+
+    Drops metadata-only envelopes ({cwd, duration_ms, permission_mode, prompt_id}
+    with no tool body) and LOW_VALUE_TOOLS ({pwd, date, ls}). Keeps anything that
+    carries a touched path or a non-empty content field. Any non-dict event or
+    unexpected error returns True — we never silently drop a capture on uncertainty.
+    """
+    try:
+        if not isinstance(event, dict):
+            return True  # fail open
+        if extract_tool_name(event).lower() in LOW_VALUE_TOOLS:
+            return False
+        # `cwd` is on every envelope; strip it so it is not mistaken for signal.
+        scan = {k: v for k, v in event.items() if k != "cwd"}
+        if extract_paths(scan):
+            return True
+        for key in CAPTURE_CONTENT_FIELDS:
+            value = event.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (dict, list)) and value:
+                return True
+        return False
+    except Exception:
+        return True  # fail open — capture on any uncertainty
+
+
 def run_capture(event: dict[str, Any]) -> int:
+    # Signal-gate: only high-value events become durable memories. A dropped
+    # event is success (return 0), never a non-zero hook exit that blocks the
+    # tool. Bypass with LUNARIS_CONTEXT_CAPTURE_GATE=off.
+    if _capture_gate_enabled() and not capture_has_signal(event):
+        return 0
     if env_enabled("LUNARIS_CONTEXT_CAPTURE_FAST", default=True):
         kind = compact_kind(event)
         if kind == "pretooluse":
