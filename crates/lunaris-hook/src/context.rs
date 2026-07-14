@@ -27,6 +27,14 @@ pub const DEFAULT_TOOL_MAX_CHARS: usize = 900;
 pub const DEFAULT_TOOL_MIN_SCORE: f32 = 0.60;
 pub const DEFAULT_DIGEST_MAX_HITS: usize = 8;
 pub const DEFAULT_DIGEST_MAX_CHARS: usize = 2000;
+/// Char budget for the scrub+snapshot of a recall hit BEFORE curation. Larger
+/// than the final 260-char curated snippet so `parse_jsonish` sees a WHOLE JSON
+/// envelope instead of a mid-object truncation — the 900-char cap silently
+/// defeated curation of large `codex:tool_call:post` wrappers (2026-07-14),
+/// forcing the lossy raw fallback. The scrubber still redacts secrets here; the
+/// curated summary is re-capped at 260 downstream, so client-facing size is
+/// unchanged.
+pub const CURATION_INPUT_CHARS: usize = 8000;
 /// hook-recall-graph-hybrid contract v1: hard budget around the fused root's
 /// retrieve (`LUNARIS_CONTEXT_RECALL_TIMEOUT_MS` override). Embedding runs
 /// OUTSIDE this window — a cold GGUF load must not eat the recall budget.
@@ -437,6 +445,10 @@ impl ContextService {
         // a recall failure must never surface to the agent.
         let recall_mode =
             std::env::var("LUNARIS_CONTEXT_RECALL").unwrap_or_else(|_| "hybrid".to_owned());
+        // PROMPT-phase injection excludes raw tool-call captures (they crowd out
+        // durable decisions/edits and render as low-signal execution logs);
+        // `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1` restores them.
+        let include_toolcalls = env_flag("LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS");
         let started = Instant::now();
         let mut hybrid_memories: Option<Vec<ContextMemory>> = None;
         if recall_mode != "vector" {
@@ -449,11 +461,12 @@ impl ContextService {
                     // a fused leg.
                     let candidates: Vec<ContextMemory> = hits
                         .into_iter()
+                        .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                         .map(|h| ContextMemory {
                             episode_id: ulid_bytes_to_string(&h.id),
                             source: h.source,
                             score: h.score,
-                            snippet: scrub_and_trim(&h.text, 900),
+                            snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
                         })
                         .collect();
                     hybrid_memories = Some(curate_context_memories_lossy(candidates, max_hits));
@@ -500,11 +513,12 @@ impl ContextService {
         let mut candidates: Vec<ContextMemory> = hits
             .into_iter()
             .filter(|h| h.score >= min_score)
+            .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
             .map(|h| ContextMemory {
                 episode_id: ulid_bytes_to_string(&h.id),
                 source: h.source,
                 score: h.score,
-                snippet: scrub_and_trim(&h.text, 900),
+                snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
             })
             .collect();
         let keyword_candidates: Vec<ContextMemory> = match self
@@ -518,11 +532,12 @@ impl ContextService {
                 keyword_hits
                     .into_iter()
                     .filter(|h| h.score >= min_score)
+                    .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                     .map(|h| ContextMemory {
                         episode_id: ulid_bytes_to_string(&h.id),
                         source: h.source,
                         score: h.score,
-                        snippet: scrub_and_trim(&h.text, 900),
+                        snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
                     })
                     .collect()
             }
@@ -565,11 +580,12 @@ impl ContextService {
             let keyword_candidates: Vec<ContextMemory> = keyword_hits
                 .into_iter()
                 .filter(|h| h.score >= min_score)
+                .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                 .map(|h| ContextMemory {
                     episode_id: ulid_bytes_to_string(&h.id),
                     source: h.source,
                     score: h.score,
-                    snippet: scrub_and_trim(&h.text, 900),
+                    snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
                 })
                 .collect();
             memories = curate_context_memories_lossy(keyword_candidates, max_hits);
@@ -1098,8 +1114,20 @@ fn curate_context_memories_lossy(
             if excluded_context_source(&memory.source) {
                 return None;
             }
-            let summary = summarize_memory_for_context(&memory.source, &memory.snippet)
-                .unwrap_or_else(|| single_line(&memory.snippet));
+            let summary = match summarize_memory_for_context(&memory.source, &memory.snippet) {
+                Some(summary) => summary,
+                None => {
+                    // Raw fallback: keep plain text, but NEVER dump an
+                    // unparseable JSON envelope into the injection (the
+                    // 2026-07-14 raw `{ " cwd " : ... [truncated]` noise).
+                    let line = single_line(&memory.snippet);
+                    let head = line.trim_start();
+                    if line.trim().is_empty() || head.starts_with('{') || head.starts_with('[') {
+                        return None;
+                    }
+                    line
+                }
+            };
             if summary.trim().is_empty() {
                 return None;
             }
@@ -1171,6 +1199,34 @@ fn excluded_context_source(source: &str) -> bool {
     )
 }
 
+/// True if `source` is a raw tool-call capture (as opposed to a durable
+/// decision/edit/prompt record). These envelopes are transient execution logs.
+fn is_toolcall_capture(source: &str) -> bool {
+    matches!(
+        source,
+        "codex:tool_call:pre"
+            | "codex:tool_call:post"
+            | "claude-code:pre_tool_use"
+            | "claude-code:post_tool_use"
+    )
+}
+
+/// Whether a hit from `source` is eligible for injection at `phase`.
+///
+/// Raw tool-call captures are excluded at the PROMPT phase (they crowd out
+/// durable decisions/edits and often render as low-signal execution logs),
+/// unless `include_toolcalls` restores them
+/// (`LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1`). Every other phase — notably
+/// `post_tool`, where a prior tool result IS on-topic — keeps them. Pure so the
+/// env read stays at the call site (tests need no `env::set_var`; the crate is
+/// `#![forbid(unsafe_code)]`).
+fn injectable_at_phase(phase: &str, source: &str, include_toolcalls: bool) -> bool {
+    if phase == "prompt" && !include_toolcalls && is_toolcall_capture(source) {
+        return false;
+    }
+    true
+}
+
 fn source_priority(source: &str) -> i32 {
     if source.starts_with("decision:") {
         90
@@ -1198,7 +1254,20 @@ fn summarize_memory_for_context(source: &str, text: &str) -> Option<String> {
         return summarize_json(source, &value);
     }
     let text = single_line(text);
-    if text.is_empty() || is_low_value_text(source, &text) { None } else { Some(text) }
+    // A JSON envelope that failed to parse (truncated mid-object, unknown
+    // wrapper shape) must NOT fall through as raw one-lined JSON — that is the
+    // 2026-07-14 `{ " cwd " : ... [truncated]` prompt-injection noise. Drop it;
+    // only genuine plain text survives the fallback.
+    let head = text.trim_start();
+    if text.is_empty()
+        || head.starts_with('{')
+        || head.starts_with('[')
+        || is_low_value_text(source, &text)
+    {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 fn is_low_value_text(source: &str, text: &str) -> bool {
@@ -1254,6 +1323,16 @@ fn env_usize_any(names: &[&str]) -> Option<usize> {
 
 fn env_f32_any(names: &[&str]) -> Option<f32> {
     names.iter().find_map(|name| std::env::var(name).ok()?.parse::<f32>().ok())
+}
+
+/// A boolean env toggle: set and equal to `1` / `true` (case-insensitive).
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            let value = value.trim();
+            value == "1" || value.eq_ignore_ascii_case("true")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1523,5 +1602,101 @@ mod tests {
         }];
 
         assert!(curate_context_memories(memories, 5).is_empty());
+    }
+
+    // --- inject-noise-cleanup (2026-07-14) -----------------------------------
+    // Live repro: prompt-phase injection dumped 5 raw `codex:tool_call:post`
+    // envelopes (score 0.03) rendered as mangled `{ " cwd " : ... [truncated]`
+    // because (a) the hybrid path uses the LOSSY curator which raw-renders when
+    // summarize returns None, and (b) tool-call captures crowd the prompt slots.
+
+    #[test]
+    fn lossy_drops_truncated_tool_call_envelope() {
+        // A codex:tool_call:post envelope truncated mid-object (exactly the
+        // scrub_and_trim(_,900) case) — parse_jsonish fails, so summarize
+        // returns None. The lossy curator MUST drop it, not raw-render it.
+        let mangled = "{ “ cwd ” : “ /Volumes/Games/tindang-repo/lunaris ” , “ duration_ms ” :29, “ effort ” :{ “ level ” : “ high ” }, “ hook_event_name ” : “ PostToolUse ” , “ prompt_id ” : “ 181dd9dc-83ed-4c31".into();
+        let memories = vec![
+            ContextMemory {
+                episode_id: "01HX000000000000000000000A".into(),
+                source: "codex:tool_call:post".into(),
+                score: 0.03,
+                snippet: mangled,
+            },
+            ContextMemory {
+                episode_id: "01HX000000000000000000000B".into(),
+                source: "codex:tool_call:post".into(),
+                score: 0.03,
+                snippet: "just a plain note about the build".into(),
+            },
+        ];
+
+        let curated = curate_context_memories_lossy(memories, 5);
+
+        assert!(
+            curated.iter().all(|m| !m.snippet.trim_start().starts_with('{')
+                && !m.snippet.trim_start().starts_with('[')),
+            "lossy curation must never emit raw JSON, got: {:?}",
+            curated.iter().map(|m| &m.snippet).collect::<Vec<_>>()
+        );
+        assert!(
+            curated.iter().any(|m| m.snippet.contains("plain note")),
+            "a non-envelope plain-text fallback must still survive"
+        );
+    }
+
+    #[test]
+    fn lossy_keeps_curated_decision_no_regression() {
+        // Decisions summarize (never hit the raw fallback) — the drop guard
+        // must not touch them.
+        let memories = vec![ContextMemory {
+            episode_id: "01HX000000000000000000000C".into(),
+            source: "decision:x".into(),
+            score: 0.03,
+            snippet: r#"{"decision":"share one embedder","rationale":"scope-independent GGUF"}"#
+                .into(),
+        }];
+
+        let curated = curate_context_memories_lossy(memories, 5);
+
+        assert_eq!(curated.len(), 1);
+        assert!(curated[0].snippet.starts_with("decision: share one embedder"));
+        assert!(!curated[0].snippet.contains('{'));
+    }
+
+    #[test]
+    fn injectable_at_phase_excludes_toolcalls_at_prompt() {
+        assert!(
+            !injectable_at_phase("prompt", "codex:tool_call:post", false),
+            "codex tool-call captures must be excluded from prompt injection"
+        );
+        assert!(
+            !injectable_at_phase("prompt", "claude-code:post_tool_use", false),
+            "claude-code tool captures must be excluded from prompt injection"
+        );
+        assert!(
+            injectable_at_phase("prompt", "decision:x", false),
+            "decisions must remain injectable at prompt phase"
+        );
+        assert!(
+            injectable_at_phase("prompt", "edit:y", false),
+            "edits must remain injectable at prompt phase"
+        );
+    }
+
+    #[test]
+    fn injectable_at_phase_keeps_toolcalls_post_tool() {
+        assert!(
+            injectable_at_phase("post_tool", "codex:tool_call:post", false),
+            "tool captures are on-topic at post_tool phase"
+        );
+    }
+
+    #[test]
+    fn injectable_at_phase_toggle_restores_toolcalls() {
+        assert!(
+            injectable_at_phase("prompt", "codex:tool_call:post", true),
+            "LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1 must restore tool captures at prompt phase"
+        );
     }
 }
