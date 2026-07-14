@@ -78,6 +78,39 @@ fn zero_bt() -> BiTemporal {
     BiTemporal { valid: (z, None), sys: (z, None) }
 }
 
+/// HOOK-05 idempotency sidecar lookup (ADD task moon-parity-honesty).
+///
+/// Reads the JSON [`Lsn`] stored at `keyspace::dedupe_key(scope, raw)`.
+/// A missing key or an unparseable value both resolve to `None` — the
+/// caller (`ingest_idempotent`) falls through to a fresh ingest, never
+/// errors the write path on sidecar corruption.
+pub(crate) async fn lookup_dedupe(
+    c: &MoonClient,
+    scope: &Scope,
+    raw: &str,
+) -> Result<Option<lunaris_core::storage::types::Lsn>, StorageError> {
+    let mut typed = c.typed();
+    let key = lunaris_core::keyspace::dedupe_key(scope, raw);
+    let value: Option<Vec<u8>> = typed.get(key).await.map_err(moon_err)?;
+    Ok(value.and_then(|b| serde_json::from_slice(&b).ok()))
+}
+
+/// HOOK-05 idempotency sidecar insert: `SET NX` — first writer wins, a
+/// concurrent replay can never clobber the prior LSN.
+pub(crate) async fn insert_dedupe(
+    c: &MoonClient,
+    scope: &Scope,
+    raw: &str,
+    lsn: lunaris_core::storage::types::Lsn,
+) -> Result<(), StorageError> {
+    let mut typed = c.typed();
+    let key = lunaris_core::keyspace::dedupe_key(scope, raw);
+    let payload = serde_json::to_vec(&lsn)
+        .map_err(|e| StorageError::Backend(format!("dedupe lsn serialize: {e}")))?;
+    let _first_writer: bool = typed.set_nx(key, payload).await.map_err(moon_err)?;
+    Ok(())
+}
+
 pub(crate) async fn scan_range<'a>(
     c: &'a MoonClient,
     _scope: &Scope,

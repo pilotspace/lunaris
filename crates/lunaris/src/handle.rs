@@ -1154,9 +1154,11 @@ impl<'a> ScopedLunaris<'a> {
     /// ## Trait-method approach (W6 fix)
     ///
     /// Uses `StoragePort::lookup_by_dedupe_key` / `insert_dedupe_key` trait methods
-    /// directly — no `as_any()` downcast. Moon and Postgres return `Ok(None)` from
-    /// the trait default, causing a safe fall-through to unconditional Fresh ingest
-    /// on those backends (documented v0.5 scope boundary: SQLite-only idempotency).
+    /// directly — no `as_any()` downcast. SQLite implements them natively; Moon
+    /// implements them via the `lunaris:{scope}:dedupe:{blake3}` KV sidecar with
+    /// SET-NX first-writer-wins (ADD task moon-parity-honesty — closed the former
+    /// "SQLite-only idempotency" v0.5 boundary). Postgres still returns `Ok(None)`
+    /// from the trait default, falling through to unconditional Fresh ingest.
     ///
     /// ## Post-commit race window (T-24-03-06)
     ///

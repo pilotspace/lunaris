@@ -57,6 +57,10 @@ fn sys_closed(bt: &BiTemporal) -> bool {
     bt.sys.1.is_some()
 }
 
+/// One episode-pass lookup result: `(episode_id, source, sys_closed)`, `None`
+/// when the row is missing or fails to deserialize.
+type EpisodeGateEntry = Option<(Ulid, String, bool)>;
+
 /// Hydrate a list of `RawHit`s into full `Hit`s.
 ///
 /// Looks up each chunk and its parent episode (batched per unique episode_id).
@@ -128,23 +132,22 @@ pub async fn hydrate(
     // though the chunk rows themselves stay sys-open (forget v0 stamps only
     // the `episode:` row).
     let mut episode_sources: HashMap<Ulid, (String, bool)> = HashMap::new();
-    let ep_results: Vec<Result<Option<(Ulid, String, bool)>, LunarisError>> =
-        stream::iter(unique_ep)
-            .map(|ep_id| {
-                let scope = scope.clone();
-                async move {
-                    let key = episode_lookup_key(&scope, ep_id);
-                    if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
-                        && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
-                    {
-                        return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
-                    }
-                    Ok(None)
+    let ep_results: Vec<Result<EpisodeGateEntry, LunarisError>> = stream::iter(unique_ep)
+        .map(|ep_id| {
+            let scope = scope.clone();
+            async move {
+                let key = episode_lookup_key(&scope, ep_id);
+                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
+                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                {
+                    return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
                 }
-            })
-            .buffer_unordered(HYDRATE_CONCURRENCY)
-            .collect()
-            .await;
+                Ok(None)
+            }
+        })
+        .buffer_unordered(HYDRATE_CONCURRENCY)
+        .collect()
+        .await;
     for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
         episode_sources.insert(entry.0, (entry.1, entry.2));
     }
@@ -273,23 +276,22 @@ pub async fn hydrate_mixed(
     // Map ep_id -> (source, sys_closed) — same gate as `hydrate`: a chunk
     // whose parent episode was forgotten must not hydrate.
     let mut episode_sources: HashMap<Ulid, (String, bool)> = HashMap::new();
-    let ep_results: Vec<Result<Option<(Ulid, String, bool)>, LunarisError>> =
-        stream::iter(unique_ep)
-            .map(|ep_id| {
-                let scope = scope.clone();
-                async move {
-                    let key = episode_lookup_key(&scope, ep_id);
-                    if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
-                        && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
-                    {
-                        return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
-                    }
-                    Ok(None)
+    let ep_results: Vec<Result<EpisodeGateEntry, LunarisError>> = stream::iter(unique_ep)
+        .map(|ep_id| {
+            let scope = scope.clone();
+            async move {
+                let key = episode_lookup_key(&scope, ep_id);
+                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
+                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                {
+                    return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
                 }
-            })
-            .buffer_unordered(HYDRATE_CONCURRENCY)
-            .collect()
-            .await;
+                Ok(None)
+            }
+        })
+        .buffer_unordered(HYDRATE_CONCURRENCY)
+        .collect()
+        .await;
     for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
         episode_sources.insert(entry.0, (entry.1, entry.2));
     }

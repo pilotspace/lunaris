@@ -139,7 +139,14 @@ pub(crate) async fn handle(
         q.filter = Some(Filter::StartsWith { field: "source".into(), prefix: prefix.clone() });
     }
 
-    // Optional bi-temporal as_of.
+    // Optional bi-temporal as_of — HONESTY GATE first (ADD task
+    // moon-parity-honesty): on a backend whose read paths ignore as_of
+    // (Moon reads current state only), silently accepting the parameter
+    // returns WRONG results dressed as a snapshot — the 2026-07-14 deep
+    // test got 2026 episodes back for `as_of=2020-01-01`. Refuse loudly.
+    if params.as_of.is_some() {
+        ensure_as_of_supported(&state.lunaris.storage().capabilities())?;
+    }
     if let Some(ts) = &params.as_of {
         q.as_of = Some(parse_rfc3339_to_hlc(ts)?);
     }
@@ -201,6 +208,63 @@ fn ulid_bytes_to_string(bytes: &[u8]) -> String {
         ulid::Ulid::from_bytes(arr).to_string()
     } else {
         String::new()
+    }
+}
+
+/// `as_of` honesty gate (ADD task moon-parity-honesty): refuse a point-in-time
+/// snapshot request on a backend whose read paths cannot honor it. A silent
+/// no-op here is worse than an error — the caller believes they got a
+/// historical view and acts on current-state data.
+fn ensure_as_of_supported(caps: &lunaris_core::StorageCapabilities) -> Result<(), ToolError> {
+    if caps.bi_temporal_native {
+        Ok(())
+    } else {
+        Err(ToolError::InvalidInput(
+            "as_of requires a bi-temporal backend; this backend reads current state only \
+             (Moon AS_OF parity is tracked as STORE-07) — drop as_of or use a bi-temporal \
+             backend"
+                .to_string(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod as_of_gate_tests {
+    use super::ensure_as_of_supported;
+    use lunaris_core::{CypherDialect, StorageCapabilities};
+
+    fn caps(bi_temporal_native: bool) -> StorageCapabilities {
+        StorageCapabilities {
+            bi_temporal_native,
+            graph_native: true,
+            rerank_native: true,
+            queue_native: true,
+            max_vector_dim: 768,
+            native_rrf: true,
+            max_scopes_recommended: 512,
+            cypher_dialect: CypherDialect::Legacy,
+            graph_decay_native: false,
+            graph_navigate_native: false,
+        }
+    }
+
+    /// §2 "as_of on Moon is refused loudly": Moon-shaped capabilities
+    /// (bi_temporal_native = false) must produce a typed InvalidInput that
+    /// names the gap — never a silent pass-through.
+    #[test]
+    fn as_of_rejected_on_non_bitemporal_backend() {
+        let err = ensure_as_of_supported(&caps(false))
+            .expect_err("non-bi-temporal caps must reject as_of");
+        let msg = format!("{err}");
+        assert!(msg.contains("bi-temporal"), "error must name the gap, got: {msg}");
+    }
+
+    /// §2 "as_of on embedded still works": bi-temporal-native capabilities
+    /// pass the gate untouched (the Wave A.1 snapshot test remains the
+    /// end-to-end witness).
+    #[test]
+    fn as_of_allowed_on_bitemporal_backend() {
+        ensure_as_of_supported(&caps(true)).expect("bi-temporal caps must pass");
     }
 }
 

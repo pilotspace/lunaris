@@ -164,14 +164,30 @@ impl WorkingMemory {
             .await
         {
             Ok(hits) => hits,
-            Err(err) if is_keyword_not_supported(&err) => {
-                self.lunaris
+            // Fresh scope: nothing was ever ingested, so the scope's FT index
+            // doesn't exist yet. An exact-key read on it means "not found",
+            // never an error (ADD task moon-parity-honesty).
+            Err(err) if is_ft_index_missing(&err) => return Ok(Vec::new()),
+            // Keyword leg unusable — either the backend has no keyword_search
+            // (embedded/sqlite) or Moon's FT analyzer reduced the KEY text to
+            // an empty query (stopword-like keys such as "state" were
+            // write-OK/read-IMPOSSIBLE before this arm). Retry vector-only:
+            // the Filter::Eq/StartsWith on `source` carries exactness, the
+            // query text is only a ranking signal here.
+            Err(err) if is_keyword_not_supported(&err) || is_ft_query_unusable(&err) => {
+                match self
+                    .lunaris
                     .recall()
                     .with_scope(self.scope.clone())
                     .with_root(Vector::new("chunks", DEFAULT_TOP_K * FANOUT))
                     .filter(filter.clone())
                     .execute(Query::text(query))
-                    .await?
+                    .await
+                {
+                    Ok(hits) => hits,
+                    Err(err) if is_ft_index_missing(&err) => return Ok(Vec::new()),
+                    Err(err) => return Err(err),
+                }
             }
             Err(err) => return Err(err),
         };
@@ -370,6 +386,35 @@ fn is_keyword_not_supported(err: &LunarisError) -> bool {
         err,
         LunarisError::Storage(StorageError::NotSupported(msg))
             if msg.contains("keyword_search") || msg.contains("keyword")
+    )
+}
+
+/// `true` when Moon's FT analyzer reduced the query text to nothing —
+/// `ERR empty query after analysis`. For an exact-key scratchpad read the
+/// query is the KEY string, so stopword-like keys ("state") hit this on
+/// every read; the Filter on `source` still identifies the row exactly, so
+/// the caller retries vector-only (ADD task moon-parity-honesty).
+///
+/// String-matched on `StorageError::Backend` by necessity — Moon surfaces FT
+/// errors as opaque RESP error text. Pinned by the live test
+/// `scratchpad_stopword_key_reads_back_moon` so wording drift is caught.
+fn is_ft_query_unusable(err: &LunarisError) -> bool {
+    matches!(
+        err,
+        LunarisError::Storage(StorageError::Backend(msg))
+            if msg.contains("empty query after analysis")
+    )
+}
+
+/// `true` when the scope's FT index does not exist yet (`unknown index`) —
+/// a brand-new scope with zero ingested rows. Reads resolve to "not found",
+/// never an error. Same string-match caveat as [`is_ft_query_unusable`];
+/// pinned by `scratchpad_read_fresh_scope_returns_none_moon`.
+fn is_ft_index_missing(err: &LunarisError) -> bool {
+    matches!(
+        err,
+        LunarisError::Storage(StorageError::Backend(msg))
+            if msg.contains("unknown index") || msg.contains("Unknown index")
     )
 }
 
