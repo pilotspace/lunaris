@@ -297,7 +297,7 @@ After tool calls, the block is smaller:
 <lunaris_memory_context phase="post_tool" tool="Read">
 Tool result may relate to these memories.
 
-- [source=codex:tool_call:post score=0.72 id=01...] Prior read/edit result...
+- [source=lunaris:tool_call:post score=0.72 id=01...] Prior read/edit result...
 </lunaris_memory_context>
 ```
 
@@ -347,11 +347,11 @@ Codex hooks capture tool activity automatically:
 
 | Tool phase | Source |
 |------------|--------|
-| pre tool call | `claude-code:pre_tool_use` through compatibility envelope |
-| post tool call | `claude-code:post_tool_use` through compatibility envelope |
-| sidecar tool capture | `codex:tool_call:pre` / `codex:tool_call:post` |
-| injection trace | `codex:memory_injection` |
-| turn feedback | `codex:turn_feedback` |
+| pre tool call | `lunaris:pre_tool_use` through compatibility envelope |
+| post tool call | `lunaris:post_tool_use` through compatibility envelope |
+| sidecar tool capture | `lunaris:tool_call:pre` / `lunaris:tool_call:post` |
+| injection trace | `lunaris:memory_injection` |
+| turn feedback | `lunaris:turn_feedback` |
 
 `Read`, `Edit`, `MultiEdit`, `Write`, and `Bash` are captured by default.
 When `LUNARIS_CONTEXT_CAPTURE_FAST=1`, Codex pre/post tool capture is sent to

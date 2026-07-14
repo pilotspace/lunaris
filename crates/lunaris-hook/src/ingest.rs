@@ -35,7 +35,7 @@ pub enum IngestError {
 pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
     let (source, content, meta) = match event {
         HookEvent::PreToolUse(p) => {
-            let source = "claude-code:pre_tool_use".to_string();
+            let source = "lunaris:pre_tool_use".to_string();
             let content =
                 format!("tool_input: {}", serde_json::to_string(&p.tool_input).unwrap_or_default());
             let meta = build_meta(
@@ -49,7 +49,7 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
             (source, content, meta)
         }
         HookEvent::PostToolUse(p) => {
-            let source = "claude-code:post_tool_use".to_string();
+            let source = "lunaris:post_tool_use".to_string();
             let content = format!(
                 "tool_input: {}\ntool_response: {}",
                 serde_json::to_string(&p.tool_input).unwrap_or_default(),
@@ -66,7 +66,7 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
             (source, content, meta)
         }
         HookEvent::Stop(p) => {
-            let source = "claude-code:stop".to_string();
+            let source = "lunaris:stop".to_string();
             let content = "stop event".to_string();
             let meta = build_meta(
                 &p.session_id,
@@ -79,7 +79,7 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
             (source, content, meta)
         }
         HookEvent::SessionStart(p) => {
-            let source = "claude-code:session_start".to_string();
+            let source = "lunaris:session_start".to_string();
             let content = "session_start event".to_string();
             let meta = build_meta(
                 &p.session_id,
@@ -92,7 +92,7 @@ pub fn build_episode(event: &HookEvent) -> Option<EpisodeBuilder> {
             (source, content, meta)
         }
         HookEvent::SessionEnd(p) => {
-            let source = "claude-code:session_end".to_string();
+            let source = "lunaris:session_end".to_string();
             let content = "session_end event".to_string();
             let mut meta = build_meta(
                 &p.session_id,
@@ -196,7 +196,7 @@ pub fn build_episode_parts_from_scrubbed(
             let transcript_path =
                 event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
             (
-                "claude-code:pre_tool_use".to_string(),
+                "lunaris:pre_tool_use".to_string(),
                 session_id,
                 tool_name,
                 event_id,
@@ -215,7 +215,7 @@ pub fn build_episode_parts_from_scrubbed(
             let transcript_path =
                 event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
             (
-                "claude-code:post_tool_use".to_string(),
+                "lunaris:post_tool_use".to_string(),
                 session_id,
                 tool_name,
                 event_id,
@@ -231,7 +231,7 @@ pub fn build_episode_parts_from_scrubbed(
                 event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
             let transcript_path =
                 event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
-            ("claude-code:stop".to_string(), session_id, None, event_id, cwd, transcript_path)
+            ("lunaris:stop".to_string(), session_id, None, event_id, cwd, transcript_path)
         }
         "SessionStart" => {
             let session_id =
@@ -241,14 +241,7 @@ pub fn build_episode_parts_from_scrubbed(
                 event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
             let transcript_path =
                 event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
-            (
-                "claude-code:session_start".to_string(),
-                session_id,
-                None,
-                event_id,
-                cwd,
-                transcript_path,
-            )
+            ("lunaris:session_start".to_string(), session_id, None, event_id, cwd, transcript_path)
         }
         "SessionEnd" => {
             let session_id =
@@ -259,14 +252,7 @@ pub fn build_episode_parts_from_scrubbed(
                 event_value.get("event_id").and_then(|v| v.as_str()).map(|s| s.to_owned());
             let transcript_path =
                 event_value.get("transcript_path").and_then(|v| v.as_str()).map(|s| s.to_owned());
-            (
-                "claude-code:session_end".to_string(),
-                session_id,
-                None,
-                event_id,
-                cwd,
-                transcript_path,
-            )
+            ("lunaris:session_end".to_string(), session_id, None, event_id, cwd, transcript_path)
         }
         other => {
             return Err(IngestError::UnknownEventKind(other.to_owned()));

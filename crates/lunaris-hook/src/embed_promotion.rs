@@ -275,7 +275,7 @@ mod tests {
     fn event_round_trips_from_receipt() {
         let scope = Scope::new("test.scope").unwrap();
         let clock = HlcClock::new(0);
-        let episode = Episode::new(scope.clone(), "codex:tool_call:post", "body", &clock);
+        let episode = Episode::new(scope.clone(), "lunaris:tool_call:post", "body", &clock);
         let chunk_id = Ulid::new();
         let receipt = IngestReceipt {
             lsn: lunaris_core::Lsn { wall_ms: 1, counter: 0 },
@@ -283,7 +283,7 @@ mod tests {
             chunk_ids: vec![chunk_id],
         };
 
-        let event = EmbedPromotionEvent::from_receipt(&scope, "codex:tool_call:post", &receipt);
+        let event = EmbedPromotionEvent::from_receipt(&scope, "lunaris:tool_call:post", &receipt);
         let bytes = serde_json::to_vec(&event).unwrap();
         let parsed = parse_event(&bytes).unwrap();
 
@@ -350,7 +350,7 @@ mod lowpri_routing_tests {
         let event = EmbedPromotionEvent {
             kind: "chunk_embed_requested".to_string(),
             scope: scope.as_str().to_string(),
-            source: "codex:tool_call:post".to_string(),
+            source: "lunaris:tool_call:post".to_string(),
             episode_id: episode_id.to_string(),
             chunk_ids: vec![chunk_id.to_string()],
             created_at_ms: 0,
