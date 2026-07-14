@@ -134,8 +134,10 @@ impl LunarisMcpServer {
     #[tool(
         name = "memory.recall",
         description = "Hybrid semantic + BM25 recall over durable memory. Returns up to k hits \
-                       (default k=5) as 200-char content preview snippets — NOT full episode text. \
-                       Each hit includes episode_id, source, content (truncated), score, and ingested_at. \
+                       (default k=5) as curated LLM-ready snippets (≤260 chars) — stored JSON envelopes \
+                       render as 'decision:'/'edit'/'tool output:'/'prompt:' summaries, NOT full episode text. \
+                       Pass raw=true for the uncurated stored bytes (200-char preview) when debugging. \
+                       Each hit includes episode_id, source, content, score, and ingested_at. \
                        IMPORTANT: first call in a session triggers GGUF embedder load (slow); subsequent calls are fast. \
                        Progressive-disclosure strategy: start with k=5 (cheap preview pass); if no useful hit found, \
                        widen: raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or set as_of \
@@ -351,7 +353,8 @@ impl ServerHandler for LunarisMcpServer {
                  1. memory.scratchpad_read / memory.scratchpad_grep — exact or prefix key lookup; returns full verbatim \
                  values; no model load; always try this first for known keys.\n\
                  2. memory.recall k=5 (default) — semantic + BM25 hybrid preview pass; first call triggers GGUF \
-                 embedder load (slow); returns 200-char content snippets with episode_id and score. If the snippet \
+                 embedder load (slow); returns curated LLM-ready snippets (≤260 chars; JSON envelopes summarized \
+                 as 'decision:'/'edit'/'tool output:'/'prompt:') with episode_id and score. If the snippet \
                  is sufficient, stop here.\n\
                  3. Widen recall — raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or \
                  pass as_of for a point-in-time snapshot. Use this tier only when the k=5 pass returns no useful hit.\n\
@@ -367,8 +370,9 @@ impl ServerHandler for LunarisMcpServer {
                  - memory.list_scopes — enumerate known scopes.\n\
                  - memory.scratchpad_consolidate — on-demand ACT-R drain; Moon backend only.\n\
                  \n\
-                 Note: recall returns 200-char preview snippets — not full episode content. There is no \
-                 fetch-full-episode tool; widen k or use scratchpad_read for full verbatim values."
+                 Note: recall returns curated preview snippets — not full episode content (raw=true gives \
+                 the uncurated stored bytes, 200-char cap). There is no fetch-full-episode tool; widen k or \
+                 use scratchpad_read for full verbatim values."
                     .to_string(),
             )
     }
