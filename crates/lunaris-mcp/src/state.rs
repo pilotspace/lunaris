@@ -192,7 +192,13 @@ impl AppState {
             storage = %storage_url,
             "opening lunaris engine",
         );
-        let lunaris = Lunaris::open(&storage_url).await?;
+        // MCP is a long-lived interactive daemon (like contextd): open with the
+        // shared small-budget "interactive" embedder so its llama.cpp context
+        // does not reserve the ~2.3 GB worst-case batch buffer. The embedder only
+        // sees ~500-token chunks + short queries, so the 1024 budget never
+        // truncates (LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS tunes it).
+        let embedder = lunaris::resolve_default_embedder().await?;
+        let lunaris = Lunaris::open_with_embedder(&storage_url, embedder).await?;
 
         // P-C (260609-dvi): install ActR consolidator; pipeline stays DISABLED so no
         // background worker is spawned — memory.scratchpad_consolidate is the SOLE
