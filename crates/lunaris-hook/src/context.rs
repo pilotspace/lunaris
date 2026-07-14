@@ -162,6 +162,16 @@ pub struct ContextService {
     storages: Arc<Mutex<HashMap<String, Arc<dyn StoragePort>>>>,
     embed_workers: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     query_embeddings: Arc<Mutex<HashMap<String, Vec<f32>>>>,
+    /// The GGUF embedder is scope-INDEPENDENT (identical model for every
+    /// scope), so it is loaded ONCE and shared across all per-scope handles via
+    /// `open_with_embedder`. Before this, `handle_for_scope` called
+    /// `Lunaris::open` per scope, each loading its own resident GGUF model —
+    /// 7.32 GB contextd RSS across 23 scopes (2026-07-14).
+    embedder: Arc<tokio::sync::OnceCell<Arc<dyn lunaris_core::Embedder>>>,
+    /// The BGE reranker is likewise scope-independent and was the OTHER half of
+    /// the per-scope RSS growth (~350 MB/scope loaded lazily on first rerank).
+    /// Shared once here and injected via `with_reranker`.
+    reranker: Arc<tokio::sync::OnceCell<Arc<dyn lunaris::Reranker>>>,
 }
 
 impl ContextService {
@@ -171,7 +181,24 @@ impl ContextService {
             storages: Arc::new(Mutex::new(HashMap::new())),
             embed_workers: Arc::new(Mutex::new(HashMap::new())),
             query_embeddings: Arc::new(Mutex::new(HashMap::new())),
+            embedder: Arc::new(tokio::sync::OnceCell::new()),
+            reranker: Arc::new(tokio::sync::OnceCell::new()),
         }
+    }
+
+    /// Resolve the process-shared embedder, loading the GGUF at most ONCE per
+    /// daemon (tokio `OnceCell` serializes init without holding a lock across
+    /// `.await`). Every per-scope handle reuses this same `Arc`.
+    pub async fn shared_embedder(&self) -> anyhow::Result<Arc<dyn lunaris_core::Embedder>> {
+        let embedder = self.embedder.get_or_try_init(lunaris::resolve_default_embedder).await?;
+        Ok(embedder.clone())
+    }
+
+    /// Resolve the process-shared reranker (lazy GGUF), loaded at most ONCE per
+    /// daemon and reused across every per-scope handle. See [`Self::shared_embedder`].
+    pub async fn shared_reranker(&self) -> anyhow::Result<Arc<dyn lunaris::Reranker>> {
+        let reranker = self.reranker.get_or_try_init(lunaris::resolve_default_reranker).await?;
+        Ok(reranker.clone())
     }
 
     pub async fn handle(&self, request: ContextRequest) -> ContextResponse {
@@ -357,7 +384,16 @@ impl ContextService {
         }
 
         let storage_url = crate::scope::resolve_storage_url(scope)?;
-        let handle = Arc::new(Lunaris::open(&storage_url).await?);
+        // Share the single process embedder AND reranker instead of loading a
+        // resident GGUF model of each per scope (the 7.32 GB contextd RSS leak,
+        // 2026-07-14). `open_with_embedder` would resolve its own (lazy)
+        // reranker; `with_reranker` swaps in the shared one before any rerank,
+        // so the per-scope lazy reranker is dropped unloaded.
+        let embedder = self.shared_embedder().await?;
+        let reranker = self.shared_reranker().await?;
+        let handle = Arc::new(
+            Lunaris::open_with_embedder(&storage_url, embedder).await?.with_reranker(reranker),
+        );
         let mut handles = self.handles.lock().await;
         Ok(handles.entry(key).or_insert(handle).clone())
     }
@@ -1223,6 +1259,39 @@ fn env_f32_any(names: &[&str]) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Memory-leak fix (2026-07-14): a long-lived contextd was caching one
+    /// `Arc<Lunaris>` PER SCOPE, each with its OWN resident GGUF embedder →
+    /// 7.32 GB RSS across 23 scopes. The embedder is scope-independent, so it
+    /// must be loaded ONCE and shared. This pins the load-once contract:
+    /// `shared_embedder()` returns the SAME `Arc` on every call (the OnceCell
+    /// value), so `handle_for_scope` can hand it to `open_with_embedder`
+    /// instead of loading a fresh model per scope. Runs on the NoopEmbedder
+    /// fallback (no GGUF artifact needed), so it is CI-safe.
+    #[tokio::test]
+    async fn shared_embedder_loads_once() {
+        let svc = ContextService::new();
+        let first = svc.shared_embedder().await.expect("embedder resolves");
+        let second = svc.shared_embedder().await.expect("embedder resolves");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "shared_embedder must return the same Arc on every call (load once)"
+        );
+    }
+
+    /// The BGE reranker (~350 MB/scope, loaded lazily on first rerank) was the
+    /// OTHER half of the per-scope RSS growth. It too must be shared: two calls
+    /// return the same `Arc` so every per-scope handle reuses one reranker.
+    #[tokio::test]
+    async fn shared_reranker_loads_once() {
+        let svc = ContextService::new();
+        let first = svc.shared_reranker().await.expect("reranker resolves");
+        let second = svc.shared_reranker().await.expect("reranker resolves");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "shared_reranker must return the same Arc on every call (load once)"
+        );
+    }
 
     /// P0 regression (2026-07-14): the daemon request path must resolve an
     /// unpinned request's scope from its `cwd`, NOT from the daemon's own
