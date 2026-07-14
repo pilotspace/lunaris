@@ -551,6 +551,142 @@ fn classify_indices(target: &ForgetTarget) -> Vec<IndexKind> {
 }
 
 // ---------------------------------------------------------------------------
+// Wave 1D — scope-aware forget pipeline (ADD task forget-scope-routing)
+// ---------------------------------------------------------------------------
+
+/// Scope-aware forget — the canonical pipeline behind
+/// [`crate::handle::ScopedLunaris::forget`].
+///
+/// Same behaviour matrix as the deprecated dev-scope path (soft-default /
+/// dry-run preview / hard-needs-token / one `atomic_write` per call / audit
+/// on every call), with every storage operation routed through the CALLER's
+/// scope: the Id fast path reads `keyspace::episode_key(scope, ulid)`, the
+/// Scope/Before scan walks `keyspace::scope_prefix(scope) + "episode:"`, and
+/// the write commits under `scope` — never `Scope::dev()`.
+///
+/// The 2026-07-14 live deep test proved the shim it replaces silently
+/// returned `rows_written = 0` under every real scope (both prefix and
+/// exact-ULID targets) because scan + write ran in the `_dev_` partition.
+pub(crate) async fn forget_scoped(
+    storage: &std::sync::Arc<dyn StoragePort>,
+    clock: &HlcClock,
+    scope: &lunaris_core::Scope,
+    request: ForgetRequest,
+) -> Result<ForgetReceipt, LunarisError> {
+    let target_kind = match &request.target {
+        ForgetTarget::Id(_) => "id",
+        ForgetTarget::Scope(_) => "scope",
+        ForgetTarget::Before(_) => "before",
+    };
+    let span = tracing::info_span!(
+        "lunaris.forget",
+        correlation_id = tracing::field::Empty,
+        target = %target_kind,
+        scope = %scope.as_str(),
+        hard = %request.options.hard,
+        dry_run = %request.options.dry_run,
+    );
+    async move {
+        // B-3: hard delete must carry a confirmation token (D-21 rail).
+        if request.options.hard && request.options.confirmation_token.is_none() {
+            return Err(LunarisError::Validate(ValidateError::ConfirmationRequired(
+                "hard-delete requires confirmation token from prior dry_run".into(),
+            )));
+        }
+
+        let matches = scan_matches_scoped(storage.as_ref(), scope, &request.target, clock).await?;
+
+        if request.options.dry_run {
+            let receipt = ForgetReceipt {
+                target: request.target.clone(),
+                indices_affected: classify_indices(&request.target),
+                rows_written: 0,
+                rows_deleted: 0,
+                audit_lsn: Lsn { wall_ms: 0, counter: 0 },
+                preview: true,
+            };
+            let audit_offset = publish_audit_event(storage, AuditEvent::Forget((&receipt).into()))
+                .await
+                .unwrap_or(0);
+            return Ok(ForgetReceipt {
+                audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 },
+                ..receipt
+            });
+        }
+
+        let ops: Vec<WriteOp> = if request.options.hard {
+            matches.iter().map(|m| WriteOp::KvDelete { key: m.key.clone() }).collect()
+        } else {
+            matches.iter().map(|m| build_soft_delete_op(m, clock)).collect::<Result<Vec<_>, _>>()?
+        };
+
+        // D-19: at most ONE atomic_write per forget call — under the REAL scope.
+        if !ops.is_empty() {
+            let _lsn = storage.atomic_write(scope, &ops).await.map_err(LunarisError::Storage)?;
+        }
+
+        let receipt = ForgetReceipt {
+            target: request.target.clone(),
+            indices_affected: classify_indices(&request.target),
+            rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
+            rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
+            audit_lsn: Lsn { wall_ms: 0, counter: 0 },
+            preview: false,
+        };
+        let audit_offset =
+            publish_audit_event(storage, AuditEvent::Forget((&receipt).into())).await.unwrap_or(0);
+        Ok(ForgetReceipt { audit_lsn: Lsn { wall_ms: audit_offset, counter: 0 }, ..receipt })
+    }
+    .instrument(span)
+    .await
+}
+
+/// Scope-aware twin of [`scan_matches`]: keys are minted via
+/// `lunaris_core::keyspace` (RC-1 — no local key formats) and every read
+/// runs under the caller's scope.
+async fn scan_matches_scoped(
+    storage: &dyn StoragePort,
+    scope: &lunaris_core::Scope,
+    target: &ForgetTarget,
+    clock: &HlcClock,
+) -> Result<Vec<ForgetMatch>, LunarisError> {
+    use futures::stream::StreamExt;
+
+    // OPS-01 fast path: single-target read_as_of on the canonical scoped key.
+    if let ForgetTarget::Id(ulid) = target {
+        let key = lunaris_core::keyspace::episode_key(scope, *ulid);
+        let now = clock.tick();
+        let row = storage.read_as_of(scope, &key, now).await.map_err(LunarisError::Storage)?;
+        return Ok(match row {
+            Some(r) => vec![ForgetMatch { key, payload: r.value.to_vec(), bt: r.bt }],
+            None => Vec::new(),
+        });
+    }
+
+    // OPS-02 / OPS-03: walk this scope's episode partition only. v0 walks the
+    // `episode:` kind; richer scope languages (chunk:, fact:, ...) are v1.
+    let prefix = format!("{}episode:", lunaris_core::keyspace::scope_prefix(scope)).into_bytes();
+
+    let mut stream =
+        storage.scan_range(scope, &prefix, None).await.map_err(LunarisError::Storage)?;
+    let mut out = Vec::new();
+    while let Some(item) = stream.next().await {
+        let (k, v) = item.map_err(LunarisError::Storage)?;
+        if matches_target(&k, &v, target) {
+            let now = clock.tick();
+            let row_opt =
+                storage.read_as_of(scope, &k, now).await.map_err(LunarisError::Storage)?;
+            let bt = row_opt
+                .as_ref()
+                .map(|r| r.bt)
+                .unwrap_or_else(|| BiTemporal { valid: (Hlc::ZERO, None), sys: (Hlc::ZERO, None) });
+            out.push(ForgetMatch { key: k.to_vec(), payload: v.to_vec(), bt });
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "kv-embedding-slim",
-  "active_milestone": "claude-code-flagship",
+  "active_task": "forget-scope-routing",
+  "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -645,6 +645,57 @@
           }
         ]
       }
+    },
+    "forget-scope-routing": {
+      "title": "Scope-aware forget pipeline (Wave 1D)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T03:41:24+00:00",
+      "updated": "2026-07-14T04:01:49+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "a1499ea83272916404554422bce483ec",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/src/forget.rs",
+          "crates/lunaris/src/handle.rs",
+          "crates/lunaris/tests/forget_scoped_moon.rs",
+          "crates/lunaris-retrieve/src/hydrate.rs",
+          "crates/lunaris-retrieve/tests/hydrate_sys_gate.rs"
+        ],
+        "snapshot_md5": "8ddb4dfef493b3a827d8ad8283bedf75"
+      }
+    },
+    "contextd-cold-start-lifecycle": {
+      "title": "Contextd cold-start lifecycle + verify cleanup",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T03:41:54+00:00",
+      "updated": "2026-07-14T03:41:54+00:00"
+    },
+    "moon-parity-honesty": {
+      "title": "Moon backend parity honesty (dedupe, as_of, scratchpad key read)",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T03:41:54+00:00",
+      "updated": "2026-07-14T03:41:54+00:00"
+    },
+    "scrub-and-curation-hardening": {
+      "title": "Scrubber set extension + curation nested-key tolerance",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T03:41:54+00:00",
+      "updated": "2026-07-14T03:41:54+00:00"
     }
   },
   "milestones": {
@@ -679,10 +730,18 @@
       "status": "done",
       "created": "2026-07-13T17:21:41+00:00",
       "updated": "2026-07-13T19:14:47+00:00"
+    },
+    "memory-contract-integrity": {
+      "title": "Memory Contract Integrity",
+      "goal": "",
+      "stage": "mvp",
+      "status": "active",
+      "created": "2026-07-14T03:41:44+00:00",
+      "updated": "2026-07-14T03:41:44+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-13T19:14:47+00:00",
+  "updated": "2026-07-14T04:01:49+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
