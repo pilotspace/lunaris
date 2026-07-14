@@ -112,9 +112,12 @@ class DocsLead(unittest.TestCase):
     """§2 scenario 4 — the docs page leads with the two commands."""
 
     def test_docs_lead_with_two_commands(self) -> None:
+        # Amended by ADD task `turnkey-moon-curl-install` (2026-07-14 user
+        # directive): command 1 no longer carries --build-moon — Moon is
+        # installed via the Moon repo's curl one-liner instead.
         text = DOCS.read_text()
         self.assertIn(
-            "setup-lunaris-agents.py --agent claude --runner local --build-moon",
+            "setup-lunaris-agents.py --agent claude --runner local\n",
             text,
             "command 1 (setup) missing from docs/integration/claude-code.md",
         )
