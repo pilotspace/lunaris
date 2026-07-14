@@ -102,6 +102,7 @@ def run_capture(event: dict[str, Any]) -> int:
         if kind == "pretooluse":
             payload = {
                 "type": "capture_tool_call",
+                "scope": hook_scope(),
                 "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
                 "session_id": session_id(event),
                 "tool": extract_tool_name(event),
@@ -112,6 +113,7 @@ def run_capture(event: dict[str, Any]) -> int:
         if kind == "posttooluse":
             payload = {
                 "type": "capture_tool_result",
+                "scope": hook_scope(),
                 "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
                 "session_id": session_id(event),
                 "tool": extract_tool_name(event),
@@ -146,6 +148,7 @@ def run_prompt_injection(event: dict[str, Any], target: str) -> int:
         return 0
     request = {
         "type": "recall_for_prompt",
+        "scope": hook_scope(),
         "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
         "session_id": session_id(event),
         "prompt": prompt,
@@ -170,6 +173,7 @@ def run_post_tool_injection(event: dict[str, Any], target: str) -> int:
         return 0
     payload = {
         "type": "capture_tool_result",
+        "scope": hook_scope(),
         "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
         "session_id": session_id(event),
         "tool": tool,
@@ -177,10 +181,11 @@ def run_post_tool_injection(event: dict[str, Any], target: str) -> int:
     }
     # Best effort extra capture. Existing lunaris-hook capture already runs in
     # post-tool mode, so this sidecar capture can fail silently.
-    contextd_request(payload, timeout_ms=80, autostart=True)
+    contextd_request(strip_none(payload), timeout_ms=80, autostart=True)
 
     request = {
         "type": "recall_after_tool",
+        "scope": hook_scope(),
         "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
         "session_id": session_id(event),
         "tool": tool,
@@ -218,6 +223,7 @@ def run_post_tool_injection(event: dict[str, Any], target: str) -> int:
 def run_feedback(event: dict[str, Any]) -> int:
     request = {
         "type": "turn_feedback",
+        "scope": hook_scope(),
         "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
         "session_id": session_id(event),
         "injected_memory_ids": event.get("injected_memory_ids") or [],
@@ -668,6 +674,17 @@ def env_float_any(*names: str) -> float | None:
         except ValueError:
             continue
     return None
+
+
+def hook_scope() -> str | None:
+    """The CALLER's scope, forwarded on every contextd request.
+
+    Without this, a long-lived contextd applies its own inherited
+    LUNARIS_HOOK_SCOPE to every request — cross-project scope bleed
+    (216 episodes landed in another project's partition, 2026-07-14).
+    Empty is treated as unset so Scope validation never sees "".
+    """
+    return os.environ.get("LUNARIS_HOOK_SCOPE") or None
 
 
 def strip_none(value: dict[str, Any]) -> dict[str, Any]:
