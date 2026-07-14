@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "inject-noise-cleanup",
+  "active_task": "contextd-embed-budget",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -971,6 +971,26 @@
         ],
         "snapshot_md5": "cda5fdee9319fd6a8c46051bfcb85cf1"
       }
+    },
+    "contextd-embed-budget": {
+      "title": "contextd embedder uses a small batch-token budget (1.1GB not 2.5GB)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T13:42:50+00:00",
+      "updated": "2026-07-14T13:53:09+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "3e9ce75d3c1133315ee3019174180bf7",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/src/handle.rs"
+        ],
+        "snapshot_md5": "594356fc4d2480bdedd082659d6141f8"
+      }
     }
   },
   "milestones": {
@@ -1016,7 +1036,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T13:15:43+00:00",
+  "updated": "2026-07-14T13:53:09+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

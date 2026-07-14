@@ -293,7 +293,7 @@ impl Lunaris {
     ///   `LUNARIS_EMBEDDER_OPENAI_URL` (OpenAI-compatible `/v1/embeddings`)
     ///   or `LUNARIS_EMBEDDER_OLLAMA_URL` to skip local inference entirely.
     pub async fn open(url: &str) -> Result<Self, LunarisError> {
-        let embedder = resolve_embedder().await?;
+        let embedder = resolve_embedder(embed_max_batch_tokens()).await?;
         Self::open_with_embedder(url, embedder).await
     }
 
@@ -1663,7 +1663,10 @@ fn embedder_dir() -> std::path::PathBuf {
 ///    at [`lunaris_core::NOOP_DEFAULT_DIM`] so the rest of the open path
 ///    completes (vector recall returns empty rows; operator sees the banner
 ///    and can stage the GGUF).
-async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
+// `max_batch_tokens` feeds only the llamacpp opts; a Tier-0 (no-inference)
+// build compiles that branch out, so the param is legitimately unused there.
+#[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, LunarisError> {
     // 0. llama.cpp GGUF embedder (cutover Phase B) — wins whenever the
     //    feature is compiled in AND the GGUF artifact is reachable
     //    (LUNARIS_EMBEDDER_GGUF, else the ~/.lunaris/models/ staged
@@ -1675,6 +1678,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
             let opts = lunaris_llamacpp::LlamaCppEmbedderOpts {
                 gguf_path: gguf_path.clone(),
                 n_gpu_layers: llamacpp_gpu_layers(),
+                max_batch_tokens,
                 ..Default::default()
             };
             // Weight load + context creation are synchronous — keep them off
@@ -1771,6 +1775,31 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
 }
 
+/// Parse a batch-token budget from an env value, falling back to `default` for
+/// any absent / empty / non-numeric / below-floor input. The `>= 16` floor
+/// mirrors the embedder's own `budget.max(16)` guard so a bogus env can never
+/// produce a degenerate llama context. Pure (env read stays in the wrappers) so
+/// tests need no `env::set_var` — the crate is edition-2024 where that is unsafe.
+fn parse_batch_tokens(raw: Option<String>, default: u32) -> u32 {
+    raw.and_then(|s| s.trim().parse::<u32>().ok()).filter(|&n| n >= 16).unwrap_or(default)
+}
+
+/// General-purpose embedder batch-token budget (`Lunaris::open`): default 4096,
+/// overridable via `LUNARIS_EMBED_MAX_BATCH_TOKENS`. Bench/ingest want a large
+/// window so long documents embed without truncation.
+fn embed_max_batch_tokens() -> u32 {
+    parse_batch_tokens(std::env::var("LUNARIS_EMBED_MAX_BATCH_TOKENS").ok(), 4096)
+}
+
+/// contextd (interactive) embedder batch-token budget: default 1024, overridable
+/// via `LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS`. A long-lived daemon that only
+/// embeds short hook captures does not need the 4096 throughput window, whose
+/// llama.cpp compute-buffer reservation cost ~2.5 GB (the 2026-07-14 contextd
+/// footprint); 1024 reserves ~1.1 GB with no truncation of real captures.
+fn context_embed_max_batch_tokens() -> u32 {
+    parse_batch_tokens(std::env::var("LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS").ok(), 1024)
+}
+
 /// Resolve the process-default embedder (the same llama.cpp GGUF → remote →
 /// Noop chain [`Lunaris::open`] uses internally), exposed so a long-lived host
 /// (e.g. `lunaris-contextd`) can load it ONCE and share the resulting
@@ -1778,7 +1807,7 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
 /// [`Lunaris::open_with_embedder`] — instead of loading a full resident GGUF
 /// model per scope (the 7.32 GB contextd RSS leak, 2026-07-14).
 pub async fn resolve_default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
-    resolve_embedder().await
+    resolve_embedder(context_embed_max_batch_tokens()).await
 }
 
 /// Resolve the NoopEmbedder fallback dim from [`EMBED_DIM_ENV_VAR`].
@@ -2179,6 +2208,42 @@ mod backend_resolution_tests {
             1,
             "second batch should be served entirely from cache"
         );
+    }
+
+    // contextd-embed-budget (2026-07-14): contextd's embedder llama.cpp context
+    // reserved ~2.5 GB because max_batch_tokens=4096 (the n_ubatch compute
+    // buffer). contextd only embeds short hook captures, so it uses a smaller
+    // budget (default 1024 → ~1.1 GB) while Lunaris::open keeps 4096.
+
+    #[test]
+    fn parse_batch_tokens_defaults_when_absent() {
+        assert_eq!(parse_batch_tokens(None, 1024), 1024);
+        assert_eq!(parse_batch_tokens(None, 4096), 4096);
+    }
+
+    #[test]
+    fn parse_batch_tokens_honors_numeric_override() {
+        assert_eq!(parse_batch_tokens(Some("2048".to_owned()), 1024), 2048);
+        assert_eq!(parse_batch_tokens(Some("  512 ".to_owned()), 1024), 512);
+    }
+
+    #[test]
+    fn parse_batch_tokens_falls_back_on_bogus() {
+        assert_eq!(parse_batch_tokens(Some(String::new()), 1024), 1024, "empty -> default");
+        assert_eq!(
+            parse_batch_tokens(Some("abc".to_owned()), 1024),
+            1024,
+            "non-numeric -> default"
+        );
+        assert_eq!(parse_batch_tokens(Some("8".to_owned()), 1024), 1024, "below the >=16 floor");
+    }
+
+    #[test]
+    fn context_budget_is_1024_general_is_4096_by_default() {
+        // Read-only: the test process does not set these env vars, so the
+        // wrappers return their defaults (no env::set_var — edition-2024 unsafe).
+        assert_eq!(context_embed_max_batch_tokens(), 1024);
+        assert_eq!(embed_max_batch_tokens(), 4096);
     }
 }
 
