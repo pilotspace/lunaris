@@ -598,6 +598,7 @@ mod tests {
                     source_prefix: Some("scratchpad/sess-ha-a/".into()),
                 }),
                 as_of: None,
+                raw: false,
             },
         )
         .await

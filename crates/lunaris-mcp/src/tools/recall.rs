@@ -3,11 +3,13 @@
 //! Wave 2.B: full implementation.
 //! - Lazy model stager (`ensure_staged`) on first call, not at server start.
 //! - `Query::text(query).k` + optional `Filter::StartsWith` + optional `as_of`.
-//! - Maps `Vec<Hit>` → `Vec<RecallHit>` with ≤ 200-char content snippet.
+//! - Maps `Vec<Hit>` → `Vec<RecallHit>` with a curated LLM-ready snippet
+//!   (`lunaris_core::snippet`, ≤ 260 chars) by default, or the raw stored
+//!   bytes (≤ 200 chars) when `raw: true`.
 
 use chrono::DateTime;
 use lunaris::Query;
-use lunaris_core::{Hlc, storage::types::Filter};
+use lunaris_core::{Hlc, snippet, storage::types::Filter};
 use lunaris_retrieve::{Keyword, Vector};
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +46,11 @@ pub(crate) struct RecallParams {
     /// Bi-temporal as-of time in RFC-3339 (default: latest).
     #[serde(default)]
     pub as_of: Option<String>,
+
+    /// Return raw stored bytes instead of the curated LLM-ready snippet
+    /// (default: false — curated).
+    #[serde(default)]
+    pub raw: bool,
 }
 
 fn default_k() -> usize {
@@ -57,7 +64,9 @@ pub(crate) struct RecallHit {
     pub episode_id: String,
     /// Logical source of the episode.
     pub source: String,
-    /// Text content of the recalled episode (≤ 200 chars).
+    /// Curated LLM-ready snippet of the recalled episode (≤ 260 chars;
+    /// JSON envelopes render as `decision:`/`edit`/`tool output:`/`prompt:`
+    /// summaries). With `raw: true`, the first 200 chars of stored bytes.
     pub content: String,
     /// Combined retrieval score ∈ [0, 1].
     pub score: f32,
@@ -99,7 +108,9 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 ///    Moon handles this as native HYBRID search when the backend supports it;
 ///    other keyword-capable backends use client-side RRF. Backends without a
 ///    keyword surface fall back narrowly to vector-only recall.
-/// 4. Map each `Hit` to `RecallHit` (content truncated at 200 chars).
+/// 4. Map each `Hit` to `RecallHit` — curated snippet by default (JSON
+///    envelopes summarized via `lunaris_core::snippet`, 260-char cap), raw
+///    200-char preview when `params.raw`.
 pub(crate) async fn handle(
     state: &AppState,
     params: RecallParams,
@@ -183,7 +194,15 @@ pub(crate) async fn handle(
         .take(k)
         .map(|h| {
             let episode_id = ulid_bytes_to_string(&h.id);
-            let content: String = h.text.chars().take(200).collect();
+            let content: String = if params.raw {
+                h.text.chars().take(200).collect()
+            } else {
+                snippet::trim_to_chars(
+                    &snippet::summarize(&h.source, &h.text)
+                        .unwrap_or_else(|| snippet::single_line(&h.text)),
+                    260,
+                )
+            };
             let ingested_at = hlc_to_rfc3339(&h.valid_from);
             RecallHit { episode_id, source: h.source, content, score: h.score, ingested_at }
         })
@@ -317,7 +336,13 @@ mod tests {
 
         let resp = handle(
             &state,
-            RecallParams { query: "chocolate".into(), k: 5, filters: None, as_of: None },
+            RecallParams {
+                query: "chocolate".into(),
+                k: 5,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
         )
         .await
         .unwrap();
@@ -326,6 +351,102 @@ mod tests {
         let top = &resp.hits[0];
         assert!(!top.episode_id.is_empty());
         assert!(!top.ingested_at.is_empty());
+    }
+
+    /// ADD task recall-llm-snippets (FROZEN @ v1): default hit content is the
+    /// curated LLM-ready summary, never the raw JSON envelope.
+    #[tokio::test]
+    async fn recall_curates_decision_snippet() {
+        let state = fresh_state("test-recall-curated").await;
+        let scoped = state.lunaris.scoped(state.scope.clone());
+
+        scoped
+            .ingest(EpisodeBuilder::new(
+                "decision:test-recall-curated",
+                r#"{"decision":"adopt launchd for Moon","rationale":"KeepAlive restarts on crash"}"#,
+            ))
+            .await
+            .unwrap();
+
+        let resp = handle(
+            &state,
+            RecallParams {
+                query: "launchd Moon".into(),
+                k: 5,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let top = &resp.hits[0];
+        assert!(
+            top.content.starts_with("decision: adopt launchd for Moon"),
+            "curated summary expected, got: {:?}",
+            top.content
+        );
+        assert!(top.content.contains("rationale: KeepAlive"), "rationale rides along");
+        assert!(!top.content.contains('{'), "no raw JSON in default content: {:?}", top.content);
+    }
+
+    /// raw=true restores the legacy 200-char raw preview for debugging.
+    #[tokio::test]
+    async fn recall_raw_param_returns_stored_bytes() {
+        let state = fresh_state("test-recall-raw").await;
+        let scoped = state.lunaris.scoped(state.scope.clone());
+
+        scoped
+            .ingest(EpisodeBuilder::new(
+                "decision:test-recall-raw",
+                r#"{"decision":"adopt launchd for Moon","rationale":"KeepAlive restarts on crash"}"#,
+            ))
+            .await
+            .unwrap();
+
+        let resp = handle(
+            &state,
+            RecallParams {
+                query: "launchd Moon".into(),
+                k: 5,
+                filters: None,
+                as_of: None,
+                raw: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            resp.hits[0].content.contains('{'),
+            "raw=true must return stored bytes, got: {:?}",
+            resp.hits[0].content
+        );
+    }
+
+    /// Plain-text episodes pass through as single-line text (no curation loss).
+    #[tokio::test]
+    async fn recall_plain_text_passthrough() {
+        let state = fresh_state("test-recall-plain").await;
+        let scoped = state.lunaris.scoped(state.scope.clone());
+
+        scoped.ingest(EpisodeBuilder::new("notes/a", "The cobalt gateway is CG-1.")).await.unwrap();
+
+        let resp = handle(
+            &state,
+            RecallParams {
+                query: "cobalt gateway".into(),
+                k: 5,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.hits[0].content, "The cobalt gateway is CG-1.");
     }
 
     /// Wave A.1: bi-temporal as_of snapshot. Ingest A, capture wall time, ingest
@@ -351,7 +472,13 @@ mod tests {
         // Recall with as_of = t_between: B was not ingested yet at that point.
         let resp = handle(
             &state,
-            RecallParams { query: "sky".into(), k: 5, filters: None, as_of: Some(t_between) },
+            RecallParams {
+                query: "sky".into(),
+                k: 5,
+                filters: None,
+                as_of: Some(t_between),
+                raw: false,
+            },
         )
         .await
         .unwrap();
@@ -388,6 +515,7 @@ mod tests {
                 k: 10,
                 filters: Some(RecallFilters { source_prefix: Some("notes/".into()) }),
                 as_of: None,
+                raw: false,
             },
         )
         .await
@@ -419,7 +547,13 @@ mod tests {
 
         let resp = handle(
             &state,
-            RecallParams { query: "shared marker".into(), k: 1, filters: None, as_of: None },
+            RecallParams {
+                query: "shared marker".into(),
+                k: 1,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
         )
         .await
         .unwrap();
