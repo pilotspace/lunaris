@@ -7,7 +7,7 @@
       "env": {
         "LUNARIS_MCP_LOG": "info,rmcp=warn",
         "LUNARIS_EMBEDDER_GGUF": "/Users/tindang/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf",
-        "LUNARIS_MCP_STORAGE": "moon://localhost:6380"
+        "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6381"
       }
     }
   }
