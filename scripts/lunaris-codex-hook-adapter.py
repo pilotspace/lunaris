@@ -40,6 +40,7 @@ LUNARIS_CONTEXTD = ROOT / "target" / "release" / "lunaris-contextd"
 KNOWN_DIRECT = {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
 PROMPT_EVENTS = {"userpromptsubmit", "userpromptexpansion"}
 POST_TOOL_EVENTS = {"posttooluse", "postcompact", "subagentstop"}
+SESSION_START_EVENTS = {"sessionstart"}
 LOW_VALUE_TOOLS = {"pwd", "date", "ls"}
 
 
@@ -47,7 +48,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
-        choices=("capture", "inject", "post-tool", "feedback", "auto"),
+        choices=("capture", "inject", "post-tool", "feedback", "session-start", "auto"),
         default=os.environ.get("LUNARIS_CODEX_HOOK_MODE", "capture"),
     )
     parser.add_argument(
@@ -83,6 +84,8 @@ def main() -> int:
         return run_post_tool_injection(event, args.target)
     if args.mode == "feedback":
         return run_feedback(event)
+    if args.mode == "session-start":
+        return run_session_digest(event, args.target)
     if args.mode == "auto":
         capture_code = run_capture(event)
         kind = compact_kind(event)
@@ -90,6 +93,8 @@ def main() -> int:
             inject_code = run_prompt_injection(event, args.target)
         elif kind in POST_TOOL_EVENTS:
             inject_code = run_post_tool_injection(event, args.target)
+        elif kind in SESSION_START_EVENTS:
+            inject_code = run_session_digest(event, args.target)
         else:
             inject_code = 0
         return capture_code if capture_code != 0 else inject_code
@@ -276,6 +281,34 @@ def run_post_tool_injection(event: dict[str, Any], target: str) -> int:
         or 300,
     )
     emit_context_response(response, target, claude_hook_event_name(event, "PostToolUse"))
+    return 0
+
+
+def run_session_digest(event: dict[str, Any], target: str) -> int:
+    """Inject a curated Lunaris digest of the scope's recent durable decisions
+    at session start — the single-source replacement for a MEMORY.md auto-load.
+
+    Design-for-failure: a digest is a nicety, never a gate. Any contextd error,
+    timeout, or empty result still exits 0 with no injection, so a cold or down
+    daemon can never block the session from starting.
+    """
+    request = {
+        "type": "session_digest",
+        "scope": hook_scope(),
+        "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
+        "session_id": session_id(event),
+        "max_hits": env_int_any("LUNARIS_CONTEXT_DIGEST_MAX_HITS"),
+        "max_chars": env_int_any("LUNARIS_CONTEXT_DIGEST_MAX_CHARS"),
+    }
+    try:
+        response = contextd_request(
+            strip_none(request),
+            timeout_ms=env_int_any("LUNARIS_CONTEXT_DIGEST_TIMEOUT_MS", "LUNARIS_CONTEXT_TIMEOUT_MS")
+            or 400,
+        )
+    except Exception:
+        return 0
+    emit_context_response(response, target, claude_hook_event_name(event, "SessionStart"))
     return 0
 
 
