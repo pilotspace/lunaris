@@ -892,7 +892,11 @@ fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<S
         Some(cwd) => cwd.to_path_buf(),
         None => std::env::current_dir()?,
     };
-    Ok(crate::scope::resolve(&cwd_buf)?)
+    // Env-IGNORING: a long-lived daemon inherits LUNARIS_HOOK_SCOPE at birth;
+    // honoring it here stamps that scope onto every project's unpinned request
+    // (P0 cross-project bleed, 2026-07-14). Explicit request scope is handled
+    // above; unpinned requests derive purely from cwd.
+    Ok(crate::scope::resolve_no_env(&cwd_buf)?)
 }
 
 pub fn default_socket_path() -> anyhow::Result<PathBuf> {
@@ -1121,6 +1125,64 @@ fn env_f32_any(names: &[&str]) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P0 regression (2026-07-14): the daemon request path must resolve an
+    /// unpinned request's scope from its `cwd`, NOT from the daemon's own
+    /// birth-time `LUNARIS_HOOK_SCOPE` env. A long-lived contextd born under
+    /// `cc-hook-e2e` was stamping that scope onto every project's captures.
+    ///
+    /// The crate is `#![forbid(unsafe_code)]`, so the env override (which is
+    /// `unsafe` to mutate in Rust 2024) can't be exercised at runtime here.
+    /// Instead this pins the fix at the source: `resolve_scope` MUST derive
+    /// unpinned scopes via the env-ignoring `scope::resolve_no_env`, never the
+    /// env-reading `scope::resolve`. The behavioral half (override=None derives
+    /// from cwd) is covered by `resolve_with_path_none_override_derives_from_cwd`.
+    #[test]
+    fn resolve_scope_daemon_path_uses_env_ignoring_resolver() {
+        let src = include_str!("context.rs");
+        let body = src
+            .split("fn resolve_scope(")
+            .nth(1)
+            .expect("resolve_scope must exist")
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("scope::resolve_no_env("),
+            "resolve_scope must derive unpinned scopes via scope::resolve_no_env"
+        );
+        assert!(
+            !body.contains("scope::resolve(&cwd_buf)"),
+            "resolve_scope must NOT use the env-reading scope::resolve for daemon requests"
+        );
+    }
+
+    /// Mechanism: with no override the scope is derived from cwd; an explicit
+    /// override wins. `resolve_no_env` is exactly `override_ == None`.
+    #[test]
+    fn resolve_with_path_none_override_derives_from_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let scopes = tmp.path().join("scopes.json");
+        let derived =
+            crate::scope::resolve_with_path(tmp.path(), &scopes, None).expect("derive from cwd");
+        assert!(
+            derived.as_str().starts_with("cwd_") || derived.as_str().starts_with("git_"),
+            "override=None must derive from cwd, got {}",
+            derived.as_str()
+        );
+        let pinned =
+            crate::scope::resolve_with_path(tmp.path(), &scopes, Some("proj-pin")).unwrap();
+        assert_eq!(pinned.as_str(), "proj-pin", "an explicit override still wins");
+        assert_ne!(derived.as_str(), pinned.as_str());
+    }
+
+    /// An EXPLICIT request scope is still honored verbatim (per-project pin).
+    #[test]
+    fn resolve_scope_honors_explicit_request_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let scope = resolve_scope(Some(tmp.path()), Some("proj-explicit")).unwrap();
+        assert_eq!(scope.as_str(), "proj-explicit");
+    }
 
     #[test]
     fn render_prompt_context_is_bounded_and_excludes_raw_layout_noise() {
