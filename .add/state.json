@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "moon-parity-honesty",
+  "active_task": "turnkey-moon-curl-install",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -741,6 +741,42 @@
       "depends_on": [],
       "created": "2026-07-14T03:41:54+00:00",
       "updated": "2026-07-14T03:41:54+00:00"
+    },
+    "turnkey-moon-curl-install": {
+      "title": "Turnkey requires curl-installed Moon (Moon-only)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T04:33:38+00:00",
+      "updated": "2026-07-14T04:43:59+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "147b5968d03d37ef87570d6ea0d50a3e",
+        "tests": {
+          "scripts/tests/test_turnkey_moon_only.py": "5122b5569b686cbb3a9c267dbc638c1d"
+        }
+      },
+      "scope": {
+        "declared": [
+          "scripts/setup-lunaris-agents.py",
+          "scripts/tests/test_turnkey_moon_only.py",
+          "scripts/tests/test_turnkey_verify.py",
+          "docs/integration/claude-code.md",
+          "README.md"
+        ],
+        "snapshot_md5": "cc56d255702124677d06b638dbbf8115"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-14T04:43:09+00:00",
+            "reason": "scope_violation: task 'turnkey-moon-curl-install' touched outside its declared \u00a75 Scope \u2014 README.md (1 total)",
+            "source": "scope"
+          }
+        ]
+      }
     }
   },
   "milestones": {
@@ -786,7 +822,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T04:29:47+00:00",
+  "updated": "2026-07-14T04:43:59+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

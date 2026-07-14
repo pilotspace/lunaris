@@ -31,6 +31,7 @@ HOOK_BIN = ROOT / "target" / "release" / "lunaris-hook"
 CONTEXTD_BIN = ROOT / "target" / "release" / "lunaris-contextd"
 MOON_MANIFEST = ROOT / "vendor" / "moon" / "Cargo.toml"
 MOON_BIN = ROOT / "vendor" / "moon" / "target" / "release" / "moon"
+MOON_CURL_INSTALL = "curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh"
 DEFAULT_GGUF = Path.home() / ".lunaris" / "models" / "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
 DEFAULT_MOON_URL = "moon://127.0.0.1:6380"
 
@@ -113,7 +114,7 @@ def main() -> int:
         "--storage-backend",
         choices=("moon", "sqlite"),
         default="moon",
-        help="Default storage backend when --storage-url is omitted.",
+        help="Storage backend. Lunaris turnkey is Moon-only; 'sqlite' is rejected.",
     )
     parser.add_argument(
         "--moon-url",
@@ -131,14 +132,18 @@ def main() -> int:
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "Build the vendored Moon server in release mode with default features: "
-            "mq, graph, and text-index."
+            "DEPRECATED (prefer the Moon curl installer): build the vendored Moon "
+            "server in release mode with default features: mq, graph, and text-index."
         ),
     )
     parser.add_argument(
         "--moon-bin",
         default=str(MOON_BIN),
-        help="Expected Moon server binary path after --build-moon.",
+        help=(
+            "Explicit Moon server binary path. Default resolution: `moon` on PATH, "
+            "then ~/.local/bin/moon (curl installer target), then the vendored "
+            "build artifact."
+        ),
     )
     parser.add_argument(
         "--scope",
@@ -170,11 +175,33 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.storage_backend != "moon":
+        print(
+            f"Lunaris is Moon-only: --storage-backend {args.storage_backend} is "
+            f"not supported. Install Moon first:\n  {MOON_CURL_INSTALL}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if args.build_moon:
+        print(
+            "warning: --build-moon is deprecated; install Moon with the curl "
+            f"installer instead:\n  {MOON_CURL_INSTALL}",
+            file=sys.stderr,
+        )
+
     if args.verify:
         return run_verify(args)
 
     if args.build_moon:
         ensure_moon_prereqs(args)
+    resolved_moon = resolve_moon_bin(args)
+    if resolved_moon is None and not args.build_moon:
+        print(
+            "No Moon binary found (--moon-bin, PATH, ~/.local/bin/moon, vendored "
+            f"build). Lunaris is Moon-only — install Moon first:\n  {MOON_CURL_INSTALL}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     if args.hooks == "on":
         ensure_hook_prereqs(args)
 
@@ -195,8 +222,39 @@ def main() -> int:
     else:
         print("- Hooks: skipped")
     if args.build_moon:
-        print(f"- Moon: built at {args.moon_bin}")
+        print(f"- Moon: built at {args.moon_bin} (deprecated; prefer: {MOON_CURL_INSTALL})")
+    elif resolved_moon is not None:
+        print(f"- Moon: using {resolved_moon}")
     return 0
+
+
+def resolve_moon_bin(args: argparse.Namespace) -> Path | None:
+    """Resolve the Moon server binary.
+
+    Order: explicit --moon-bin (hard error when missing — an explicit path is
+    trusted, never silently fallen through), `moon` on PATH, the curl
+    installer's ~/.local/bin/moon (often not on PATH in hook/CI shells), then
+    the vendored build artifact.
+    """
+    if args.moon_bin != str(MOON_BIN):
+        explicit = Path(args.moon_bin)
+        if explicit.exists():
+            return explicit
+        print(
+            f"--moon-bin {explicit} does not exist. Install Moon first:\n"
+            f"  {MOON_CURL_INSTALL}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    on_path = shutil.which("moon")
+    if on_path:
+        return Path(on_path)
+    local_bin = Path.home() / ".local" / "bin" / "moon"
+    if local_bin.exists():
+        return local_bin
+    if MOON_BIN.exists():
+        return MOON_BIN
+    return None
 
 
 def ensure_moon_prereqs(args: argparse.Namespace) -> None:
@@ -622,19 +680,29 @@ def ensure_moon_running(args: argparse.Namespace, storage_url: str | None) -> st
     if not storage_url or not storage_url.strip().lower().startswith("moon://"):
         return None  # sqlite/memory need no listener
     host, port = parse_moon_host_port(storage_url)
-    recipe = (
-        f"launch Moon: {args.moon_bin} --bind {host} --port {port} "
-        f"--dir {Path.home() / '.lunaris' / 'moon-data'} --protected-mode no"
-    )
+    try:
+        moon_bin = resolve_moon_bin(args)
+    except SystemExit:
+        return (
+            f"--moon-bin {args.moon_bin} does not exist; install Moon: "
+            f"{MOON_CURL_INSTALL}"
+        )
+    if moon_bin is None:
+        recipe = f"no Moon binary found; install Moon: {MOON_CURL_INSTALL}"
+    else:
+        recipe = (
+            f"launch Moon: {moon_bin} --bind {host} --port {port} "
+            f"--dir {Path.home() / '.lunaris' / 'moon-data'} --protected-mode no"
+        )
     if tcp_listening(host, port):
         return None
     local = host in {"127.0.0.1", "localhost", "::1"}
-    if args.moon_autostart and local and Path(args.moon_bin).exists():
+    if args.moon_autostart and local and moon_bin is not None:
         data_dir = Path.home() / ".lunaris" / "moon-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(
             [
-                str(args.moon_bin),
+                str(moon_bin),
                 "--bind",
                 host,
                 "--port",

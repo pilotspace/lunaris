@@ -70,8 +70,8 @@ zero-config **per-scope SQLite** store — recall works out of the box via
 brute-force cosine, no external process. Point `LUNARIS_MCP_STORAGE` at
 Moon (`moon://127.0.0.1:6380`) or Postgres for HNSW-class latency beyond
 ~10k vectors per scope. The `setup-lunaris-agents.py` repo path instead
-defaults its agent config to Moon (the lifecycle hooks use Moon's queues
-for background embedding; pass `--storage-backend sqlite` to opt out). A
+is Moon-only for its agent config (the lifecycle hooks use Moon's queues
+for background embedding; install Moon via the Moon repo's curl one-liner). A
 source build with `--features embedded-moon` auto-launches an in-process
 Moon — an opt-in, not the published-binary default. First ingest stages
 the embedder weights once (lazy GGUF download).

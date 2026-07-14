@@ -2,8 +2,9 @@
 
 Status: stdio MCP plus lifecycle hooks and context injection. A plain
 `npx`/`uvx`/`cargo install` MCP install defaults to per-scope SQLite; the
-`setup-lunaris-agents.py` agent setup defaults to Moon-backed storage (its
-hooks need Moon's queues), with a SQLite opt-out. Eleven tools live — seven
+`setup-lunaris-agents.py` agent setup is **Moon-only** (its hooks need
+Moon's queues) and expects Moon installed via the Moon repo's curl
+installer. Eleven tools live — seven
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
 `memory.status`) plus four working-memory scratchpad tools
@@ -16,18 +17,28 @@ durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 
 From a fresh checkout to a memory-enabled Claude Code — capture on every
 lifecycle event plus cross-session recall injected into your context — in
-two commands:
+two commands (plus a one-time Moon install):
 
 ```sh
-# 1. Install: build the hook + MCP binaries and the vendored Moon server,
+# 0. One-time: install the Moon server (lands in ~/.local/bin/moon).
+#    Pin a version / target dir: VERSION=v0.6.0 INSTALL_DIR=/usr/local/bin sh install.sh
+curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+
+# 1. Install: build the hook + MCP binaries, point Claude Code at Moon,
 #    write ~/.claude/settings.json (backed up to .bak first).
-scripts/setup-lunaris-agents.py --agent claude --runner local --build-moon
+scripts/setup-lunaris-agents.py --agent claude --runner local
 
 # 2. Prove it: drives the EXACT installed hook commands through a
 #    session-A capture and a session-B prompt recall, autostarting Moon
 #    if nothing is listening. Prints two PASS lines and exits 0.
 scripts/setup-lunaris-agents.py --agent claude --verify
 ```
+
+Setup resolves the Moon binary in order: explicit `--moon-bin`, `moon` on
+PATH, `~/.local/bin/moon` (the curl installer's target), then the vendored
+`vendor/moon/target/release/moon` build artifact. With no binary found it
+exits with the curl one-liner above — Lunaris agent setup is Moon-only, and
+`--storage-backend sqlite` is rejected.
 
 `--verify` output on success:
 
@@ -60,12 +71,11 @@ No Rust toolchain required. Choose either path:
 From a Lunaris checkout:
 
 ```sh
+# One-time Moon install (the setup below requires a Moon binary).
+curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+
 # Verified local checkout setup.
 scripts/setup-lunaris-agents.py --agent claude --runner local
-
-# Also build the vendored Moon server with its default feature set
-# (mq + graph + text-index default) for moon://127.0.0.1:6380.
-scripts/setup-lunaris-agents.py --agent claude --runner local --build-moon
 
 # Packaged MCP runner modes, once the PyPI/npm packages are published.
 scripts/setup-lunaris-agents.py --agent claude --runner uvx
@@ -78,8 +88,9 @@ scripts/setup-lunaris-agents.py --agent claude --runner local --dry-run
 The script writes `mcpServers.lunaris`, installs the same Lunaris feature set
 used by Codex where Claude Code supports it, and creates
 `~/.claude/settings.json.bak` before writing. Use `--hooks off` for MCP-only
-setup. Add `--build-moon` to compile the vendored Moon release binary. Moon
-default feature set enables `mq`, graph, and text-index support.
+setup. `--build-moon` (deprecated — prefer the curl installer) still compiles
+the vendored Moon release binary as a dev fallback. Moon's default feature
+set enables `mq`, graph, and text-index support.
 
 Installed Claude Code hooks:
 
@@ -110,8 +121,9 @@ By default the script points Claude Code at Moon:
 }
 ```
 
-Keep Moon running at that URL, pass `--moon-url moon://host:port`, or choose
-`--storage-backend sqlite` for per-scope SQLite.
+Keep Moon running at that URL or pass `--moon-url moon://host:port`. The
+agent setup is Moon-only; `--storage-backend sqlite` is rejected with the
+curl install hint.
 
 ### Via npm / npx
 
