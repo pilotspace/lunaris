@@ -122,6 +122,26 @@ pub fn resolve(cwd: &Path) -> Result<Scope, ScopeResolveError> {
     resolve_with(cwd, &store, override_.as_deref())
 }
 
+/// Resolve the scope for a **daemon request**. Unlike [`resolve`], this ignores
+/// the process's own `LUNARIS_HOOK_SCOPE` env var.
+///
+/// A long-lived `contextd` inherits `LUNARIS_HOOK_SCOPE` at *birth*; honoring it
+/// for request handling stamps that one scope onto every project's unpinned
+/// request — the P0 cross-project scope bleed observed 2026-07-14 (a daemon born
+/// under `cc-hook-e2e` swallowed captures from every repo). The caller
+/// (`context::resolve_scope`) applies any *explicit* request scope BEFORE this;
+/// here we derive purely from `cwd`. `LUNARIS_SCOPES_FILE` is still honored — it
+/// is a storage location, not a scope-identity override.
+pub fn resolve_no_env(cwd: &Path) -> Result<Scope, ScopeResolveError> {
+    let scopes_path = if let Ok(p) = std::env::var("LUNARIS_SCOPES_FILE") {
+        PathBuf::from(p)
+    } else {
+        scopes_file_path()?
+    };
+    let store = JsonScopesFileStore { path: scopes_path };
+    resolve_with(cwd, &store, None)
+}
+
 /// Testable variant — accepts explicit scopes_path + override for test isolation.
 pub fn resolve_with_path(
     cwd: &Path,
