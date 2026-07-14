@@ -2,13 +2,19 @@
 //!
 //! Built-in scrubber set (closed, auditable — no runtime configuration):
 //!
-//! | Kind       | Pattern                                              | Replacement           |
-//! |------------|------------------------------------------------------|-----------------------|
-//! | `ENV_KEY`  | `[A-Z_][A-Z0-9_]{2,31}=[^\s\n]{4,}`                 | `<REDACTED:ENV_KEY>`  |
-//! | `AWS_KEY`  | `AKIA[0-9A-Z]{16}`                                   | `<REDACTED:AWS_KEY>`  |
-//! | `GH_TOKEN` | `gh[pousx]_[A-Za-z0-9_]{36}`                         | `<REDACTED:GH_TOKEN>` |
-//! | `SSH_KEY`  | `-----BEGIN [A-Z ]+ PRIVATE KEY-----`                 | `<REDACTED:SSH_KEY>`  |
-//! | `JWT`      | `eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+` | `<REDACTED:JWT>` |
+//! | Kind          | Pattern                                              | Replacement              |
+//! |---------------|------------------------------------------------------|--------------------------|
+//! | `ENV_KEY`     | `[A-Z_][A-Z0-9_]{2,31}=[^\s\n]{4,}`                 | `<REDACTED:ENV_KEY>`     |
+//! | `AWS_KEY`     | `AKIA[0-9A-Z]{16}`                                   | `<REDACTED:AWS_KEY>`     |
+//! | `GH_TOKEN`    | `gh[pousx]_[A-Za-z0-9_]{36}`                         | `<REDACTED:GH_TOKEN>`    |
+//! | `SSH_KEY`     | `-----BEGIN [A-Z ]+ PRIVATE KEY-----`                 | `<REDACTED:SSH_KEY>`     |
+//! | `JWT`         | `eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+` | `<REDACTED:JWT>`      |
+//! | `API_KEY`     | `sk-(?:ant-)?[A-Za-z0-9_\-]{16,}`                    | `<REDACTED:API_KEY>`     |
+//! | `SLACK_TOKEN` | `xox[baprs]-[A-Za-z0-9\-]{10,}`                      | `<REDACTED:SLACK_TOKEN>` |
+//! | `GITLAB_PAT`  | `glpat-[A-Za-z0-9_\-]{20}`                           | `<REDACTED:GITLAB_PAT>`  |
+//! | `GCP_KEY`     | `AIza[0-9A-Za-z_\-]{35}`                             | `<REDACTED:GCP_KEY>`     |
+//! | `KV_SECRET`   | `(?i)\b(?:password|passwd|pwd|secret|token|api[_-]?key)["']?\s*[=:]\s*["']?[^\s"']{4,}` | `<REDACTED:KV_SECRET>` |
+//! | `BEARER`      | `(?i)\bbearer\s+[A-Za-z0-9\-._~+/]{16,}=*`           | `<REDACTED:BEARER>`      |
 //!
 //! User patterns (from `~/.lunaris/hook-policy.toml`) are **added on top**.
 //! Built-ins always run regardless of user config.
@@ -43,7 +49,7 @@ use crate::policy::HookPolicy;
 /// Patterns exceeding this are skipped with a warn log (T-24-02-01 ReDoS guard).
 const MAX_PATTERN_LEN: usize = 256;
 
-/// Raw (pattern, replacement) pairs for the five built-in secret kinds.
+/// Raw (pattern, replacement) pairs for the eleven built-in secret kinds.
 /// Each entry is a linear-time regex — verified manually and in the test suite.
 static BUILTIN_RAW: &[(&str, &str)] = &[
     // ENV_KEY: matches KEY=VALUE lines where value is ≥4 non-whitespace chars.
@@ -56,6 +62,24 @@ static BUILTIN_RAW: &[(&str, &str)] = &[
     (r"-----BEGIN [A-Z ]+ PRIVATE KEY-----", "<REDACTED:SSH_KEY>"),
     // JWT: three Base64URL segments separated by dots, starting with eyJ (JSON header).
     (r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "<REDACTED:JWT>"),
+    // API_KEY: Anthropic (sk-ant-…) and generic sk-… secret keys (OpenAI et al.).
+    (r"sk-(?:ant-)?[A-Za-z0-9_\-]{16,}", "<REDACTED:API_KEY>"),
+    // SLACK_TOKEN: bot/app/user/refresh/legacy Slack tokens (xoxb-, xoxa-, xoxp-, xoxr-, xoxs-).
+    (r"xox[baprs]-[A-Za-z0-9\-]{10,}", "<REDACTED:SLACK_TOKEN>"),
+    // GITLAB_PAT: GitLab personal access tokens.
+    (r"glpat-[A-Za-z0-9_\-]{20}", "<REDACTED:GITLAB_PAT>"),
+    // GCP_KEY: Google Cloud API keys (AIza + 35 token chars).
+    (r"AIza[0-9A-Za-z_\-]{35}", "<REDACTED:GCP_KEY>"),
+    // KV_SECRET: case-insensitive password/secret/token assignments in shell,
+    // JSON, or YAML form. Broad by design — same over-redaction posture as
+    // ENV_KEY (a `token: value` config line redacts; that costs readability,
+    // never a leak). Word-anchored so `max_tokens: 4096` survives.
+    (
+        r#"(?i)\b(?:password|passwd|pwd|secret|token|api[_-]?key)["']?\s*[=:]\s*["']?[^\s"']{4,}"#,
+        "<REDACTED:KV_SECRET>",
+    ),
+    // BEARER: Authorization bearer values (≥16 token68 chars, optional = padding).
+    (r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/]{16,}=*", "<REDACTED:BEARER>"),
 ];
 
 /// A compiled scrubber engine.
@@ -70,7 +94,7 @@ pub struct ScrubEngine {
 }
 
 impl ScrubEngine {
-    /// Compile the five built-in rules.
+    /// Compile the eleven built-in rules.
     fn builtin_rules() -> Vec<(Regex, String)> {
         BUILTIN_RAW
             .iter()

@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "turnkey-moon-curl-install",
+  "active_task": "scrub-and-curation-hardening",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -735,12 +735,36 @@
     },
     "scrub-and-curation-hardening": {
       "title": "Scrubber set extension + curation nested-key tolerance",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-contract-integrity",
       "depends_on": [],
       "created": "2026-07-14T03:41:54+00:00",
-      "updated": "2026-07-14T03:41:54+00:00"
+      "updated": "2026-07-14T04:58:00+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "0b4edf9e610c9d327bea5570b1d35809",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-hook/src/scrub.rs",
+          "crates/lunaris-hook/src/context.rs",
+          "crates/lunaris-hook/tests/scrubber_byte_identical.rs",
+          "docs/integration/hooks.md"
+        ],
+        "snapshot_md5": "1e6779d2aade8dfad7ce8355c133b7ab"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-14T04:57:23+00:00",
+            "reason": "scope_violation: task 'scrub-and-curation-hardening' touched outside its declared \u00a75 Scope \u2014 vendor/moon/benches/compact_key.rs \u00b7 vendor/moon/benches/dispatch_baseline.rs \u00b7 vendor/moon/benches/fastscan_bench.rs \u00b7 vendor/moon/benches/fwht_bench.rs \u00b7 vendor/moon/benches/get_hotpath.rs (530 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "turnkey-moon-curl-install": {
       "title": "Turnkey requires curl-installed Moon (Moon-only)",
@@ -816,13 +840,13 @@
       "title": "Memory Contract Integrity",
       "goal": "",
       "stage": "mvp",
-      "status": "active",
+      "status": "done",
       "created": "2026-07-14T03:41:44+00:00",
-      "updated": "2026-07-14T03:41:44+00:00"
+      "updated": "2026-07-14T04:59:07+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T04:43:59+00:00",
+  "updated": "2026-07-14T04:59:07+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

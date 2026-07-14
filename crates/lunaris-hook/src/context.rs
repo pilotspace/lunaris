@@ -1067,15 +1067,18 @@ fn parse_jsonish(text: &str) -> Option<Value> {
 
 fn summarize_memory_json(source: &str, value: &Value) -> Option<String> {
     let object = value.as_object()?;
-    if object.contains_key("codex_payload") {
-        return summarize_codex_payload(source, object.get("codex_payload")?);
+    // Nested lookups mirror string_field's trim-tolerance: smart-quote-scrubbed
+    // episodes reparse with space-padded keys (`" tool_response "`), and an
+    // exact `get` would drop the whole payload.
+    if let Some(codex_payload) = object_field(object, "codex_payload") {
+        return summarize_codex_payload(source, codex_payload);
     }
-    if let Some(tool_input) = object.get("tool_input")
+    if let Some(tool_input) = object_field(object, "tool_input")
         && let Some(summary) = summarize_memory_json(source, tool_input)
     {
         return Some(summary);
     }
-    if let Some(tool_response) = object.get("tool_response")
+    if let Some(tool_response) = object_field(object, "tool_response")
         && let Some(summary) = summarize_memory_json(source, tool_response)
     {
         return Some(summary);
@@ -1144,6 +1147,10 @@ fn summarize_codex_payload(source: &str, value: &Value) -> Option<String> {
         (None, None, Some(output)) => Some(format!("tool output: {}", trim_to_chars(output, 200))),
         _ => None,
     }
+}
+
+fn object_field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
+    object.iter().find(|(key, _)| key.trim() == name).map(|(_, value)| value)
 }
 
 fn string_field<'a>(object: &'a Map<String, Value>, names: &[&str]) -> Option<&'a str> {
@@ -1298,6 +1305,38 @@ mod tests {
 
         assert_eq!(curated.len(), 1);
         assert_eq!(curated[0].snippet, "tool output: Moon storage shared");
+    }
+
+    #[test]
+    fn curation_resolves_nested_smart_quote_tool_response() {
+        // Space-padded keys survive the smart-quote reparse — the NESTED
+        // object lookups must be as trim-tolerant as string_field, or the
+        // whole payload summarizes to None (2026-07-14 deep-test bug; the
+        // verify envelope's top-level `output` copy was the workaround).
+        let memories = vec![ContextMemory {
+            episode_id: "01HX0000000000000000000006".into(),
+            source: "claude-code:post_tool_use".into(),
+            score: 0.80,
+            snippet: "{ “ tool_response ” : { “ output ” : “ Moon relay ok ” } }".into(),
+        }];
+
+        let curated = curate_context_memories(memories, 5);
+
+        assert_eq!(curated.len(), 1);
+        assert_eq!(curated[0].snippet, "tool output: Moon relay ok");
+    }
+
+    #[test]
+    fn inject_snippet_scrubs_stored_api_key() {
+        // Defense-in-depth: a secret that reached storage before the scrubber
+        // knew its shape must still be redacted on the way into
+        // additionalContext.
+        let rendered = scrub_and_trim("the key is sk-ant-api03-AbCd1234EfGh5678IjKl", 900);
+        assert!(
+            rendered.contains("<REDACTED:API_KEY>"),
+            "inject-side scrub must redact stored API keys, got: {rendered:?}"
+        );
+        assert!(!rendered.contains("sk-ant-"), "raw key must never render, got: {rendered:?}");
     }
 
     #[test]
