@@ -1126,6 +1126,13 @@ fn summarize_memory_json(source: &str, value: &Value) -> Option<String> {
     if let Some(command) = command {
         return Some(format!("command: {}", trim_to_chars(command, 200)));
     }
+    // Prompt captures carry their payload in `prompt` — without this branch a
+    // recalled UserPromptSubmit episode renders as raw envelope JSON and the
+    // snippet cap truncates before the payload. Lowest priority: any tool
+    // path/output/command summary above wins.
+    if let Some(prompt) = string_field(object, &["prompt"]) {
+        return Some(format!("prompt: {}", trim_to_chars(prompt, 220)));
+    }
     None
 }
 
@@ -1324,6 +1331,46 @@ mod tests {
 
         assert_eq!(curated.len(), 1);
         assert_eq!(curated[0].snippet, "tool output: Moon relay ok");
+    }
+
+    #[test]
+    fn curation_summarizes_prompt_capture_envelope() {
+        // Live repro 2026-07-14 (full Claude Code test): a captured
+        // UserPromptSubmit envelope was the TOP recall hit but rendered as raw
+        // sanitized JSON, truncating before the payload — prompt events need
+        // their own summarize branch.
+        let memories = vec![ContextMemory {
+            episode_id: "01HX0000000000000000000007".into(),
+            source: "claude-code:pre_tool_use".into(),
+            score: 0.80,
+            snippet: "{ “ codex_hook_event_name ” : “ UserPromptSubmit ” , “ codex_payload ” :{ “ cwd ” : “ /tmp ” , “ hook_event_name ” : “ UserPromptSubmit ” , “ prompt ” : “ the crimson beacon marker is XR-9913 on port 5252 ” } }".into(),
+        }];
+
+        let curated = curate_context_memories(memories, 5);
+
+        assert_eq!(curated.len(), 1);
+        assert!(
+            curated[0].snippet.starts_with("prompt: "),
+            "prompt envelope must summarize, got: {:?}",
+            curated[0].snippet
+        );
+        assert!(curated[0].snippet.contains("XR-9913"), "payload must survive the snippet cap");
+        assert!(!curated[0].snippet.contains('{'), "no raw JSON in the snippet");
+    }
+
+    #[test]
+    fn curation_tool_output_wins_over_prompt() {
+        let memories = vec![ContextMemory {
+            episode_id: "01HX0000000000000000000008".into(),
+            source: "claude-code:post_tool_use".into(),
+            score: 0.80,
+            snippet: r#"{"output": "deploy ok", "prompt": "ignore me"}"#.into(),
+        }];
+
+        let curated = curate_context_memories(memories, 5);
+
+        assert_eq!(curated.len(), 1);
+        assert_eq!(curated[0].snippet, "tool output: deploy ok");
     }
 
     #[test]

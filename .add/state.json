@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "scrub-and-curation-hardening",
+  "active_task": "curation-prompt-snippet",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -801,6 +801,26 @@
           }
         ]
       }
+    },
+    "curation-prompt-snippet": {
+      "title": "Curation extracts prompt field from captured prompt events",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T05:23:29+00:00",
+      "updated": "2026-07-14T05:27:25+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "aa1b57175a782c5785f4d7d6f9dfa599",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-hook/src/context.rs"
+        ],
+        "snapshot_md5": "9911be6af99b2a27648638d6adacd085"
+      }
     }
   },
   "milestones": {
@@ -846,7 +866,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T04:59:07+00:00",
+  "updated": "2026-07-14T05:27:25+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
