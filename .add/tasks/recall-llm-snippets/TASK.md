@@ -163,4 +163,9 @@ Watch: curated-render fallback rate (None → single_line) as a proxy for uncove
 
 ### Spec delta
 
+- [open] **Embedded-double-quote envelopes always fall back to raw single_line** — observed on the FIRST dogfood recall (2026-07-14, scope git_c5419ed101f6f35b): a record_decision whose rationale contained `"Curated by default + raw param"` (real double quotes). The ingest sanitizer smart-quotes ALL `"`, and `parse_jsonish`'s blind `“”→"` reversal re-breaks the inner string → invalid JSON → summarize None → single_line fallback (graceful, but un-curated). Pre-existing in the hook path too (same code). Candidate fixes for a follow-up task: escape inner quotes at record_decision/record_edit write time (JSON-encode before sanitize), or a quote-aware reparse that only reverses smart quotes adjacent to JSON structural chars. Improves: TDD (the scenario suite lacked an inner-quote envelope case).
+- [open] **recall on a never-ingested scope errors `unknown index`** instead of returning empty hits (Moon hybrid_search surfaces the raw redis error; the WorkingMemory::find unknown-index→Ok(empty) arm from 133c3dc does not cover the recall DSL path). First-run UX bug for fresh scopes. Improves: SDD.
+
 ### Competency deltas
+
+- [open] ADD: amending §5 Scope alone does not clear a scope_violation — the engine snapshots scope at build ENTRY; recovery is `phase tests` → advance ×2 → gate. Improves: ADD.
