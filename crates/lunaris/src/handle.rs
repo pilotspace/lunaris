@@ -1244,24 +1244,27 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.recall().with_scope(self.scope.clone()).execute(query).await
     }
 
-    /// Forget primitive bound to the wrapper's scope. **P0 #1 Wave 2:** this
-    /// is the canonical entry point superseding the deprecated
-    /// [`Lunaris::forget`]. Today it delegates to the underlying handle's
-    /// implementation — the per-scope storage routing (so the call honours
-    /// `self.scope` instead of `Scope::dev()`) is tracked as a v0.3 debt
-    /// item in `docs/v0.3-known-debt.md`. The deprecation + canonical API
-    /// surface lands here so external adopters can migrate today; the
-    /// internal routing flips under the hood when the Wave 1D forget
-    /// pipeline ships.
+    /// Forget primitive bound to the wrapper's scope — the canonical entry
+    /// point superseding the deprecated [`Lunaris::forget`].
+    ///
+    /// Wave 1D (ADD task forget-scope-routing, 2026-07-14): the per-scope
+    /// storage routing is REAL — scan, read, and the single `atomic_write`
+    /// all run under `self.scope`. The former shim delegated to the
+    /// `Scope::dev()`-hard-coded pipeline and silently returned
+    /// `rows_written = 0` for every real scope (proved live on Moon in the
+    /// 2026-07-14 deep test). Soft-deleted rows are hidden from recall by
+    /// the hydrate sys-gate (`lunaris_retrieve::hydrate`).
     pub async fn forget(
         &self,
         request: impl Into<crate::forget::ForgetRequest>,
     ) -> Result<crate::forget::ForgetReceipt, LunarisError> {
-        // scope-dev-allowed: scoped-forget-shim — delegates to the
-        // deprecated bare path until the Wave 1D scope-aware forget
-        // pipeline replaces the body (tracked in docs/v0.3-known-debt.md).
-        #[allow(deprecated)]
-        self.engine.forget(request).await
+        crate::forget::forget_scoped(
+            &self.engine.storage,
+            &self.engine.clock,
+            &self.scope,
+            request.into(),
+        )
+        .await
     }
 
     /// Return a [`lunaris_retrieve::RetrievalBuilder`] bound to the engine's

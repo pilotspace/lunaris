@@ -49,6 +49,14 @@ fn episode_lookup_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     episode_key(scope, id)
 }
 
+/// Sys-closed = logically deleted for current reads (ADD task
+/// forget-scope-routing). `ScopedLunaris::forget` soft-deletes by stamping
+/// `bt.sys.1`; supersede/invalidate stamp the same tuple — either way the row
+/// is no longer current and MUST NOT hydrate.
+fn sys_closed(bt: &BiTemporal) -> bool {
+    bt.sys.1.is_some()
+}
+
 /// Hydrate a list of `RawHit`s into full `Hit`s.
 ///
 /// Looks up each chunk and its parent episode (batched per unique episode_id).
@@ -87,6 +95,9 @@ pub async fn hydrate(
                                 Ok(c) => c,
                                 Err(_) => return Ok(None),
                             };
+                            if sys_closed(&chunk.bt) {
+                                return Ok(None); // soft-deleted chunk row — skip
+                            }
                             Ok(Some((raw, chunk)))
                         }
                         None => Ok(None), // chunk no longer exists at this snapshot — skip
@@ -112,30 +123,38 @@ pub async fn hydrate(
     // Plan 260610-f91: concurrent fan-out for episode lookups. Storage errors
     // PROPAGATE (matching the pre-fan-out `.await?` contract); only missing
     // rows and deserialize failures are skipped.
-    let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
-    let ep_results: Vec<Result<Option<(Ulid, String)>, LunarisError>> = stream::iter(unique_ep)
-        .map(|ep_id| {
-            let scope = scope.clone();
-            async move {
-                let key = episode_lookup_key(&scope, ep_id);
-                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
-                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
-                {
-                    return Ok(Some((ep_id, ep.source)));
+    // Map ep_id -> (source, sys_closed). A sys-closed parent episode means the
+    // episode was forgotten/invalidated — its chunks MUST NOT hydrate even
+    // though the chunk rows themselves stay sys-open (forget v0 stamps only
+    // the `episode:` row).
+    let mut episode_sources: HashMap<Ulid, (String, bool)> = HashMap::new();
+    let ep_results: Vec<Result<Option<(Ulid, String, bool)>, LunarisError>> =
+        stream::iter(unique_ep)
+            .map(|ep_id| {
+                let scope = scope.clone();
+                async move {
+                    let key = episode_lookup_key(&scope, ep_id);
+                    if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
+                        && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                    {
+                        return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
+                    }
+                    Ok(None)
                 }
-                Ok(None)
-            }
-        })
-        .buffer_unordered(HYDRATE_CONCURRENCY)
-        .collect()
-        .await;
+            })
+            .buffer_unordered(HYDRATE_CONCURRENCY)
+            .collect()
+            .await;
     for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
-        episode_sources.insert(entry.0, entry.1);
+        episode_sources.insert(entry.0, (entry.1, entry.2));
     }
 
-    // Third pass: project to Hits.
+    // Third pass: project to Hits, dropping chunks whose parent episode is
+    // sys-closed (forgotten). Missing episodes stay tolerated (empty source)
+    // — pre-existing behaviour for orphaned chunks.
     Ok(chunks
         .into_iter()
+        .filter(|(_, chunk)| !matches!(episode_sources.get(&chunk.episode_id), Some((_, true))))
         .map(|(raw, chunk)| Hit {
             id: raw.id,
             // In-process provenance: lets exact-key callers (e.g.
@@ -145,7 +164,10 @@ pub async fn hydrate(
             episode_id: chunk.episode_id.to_bytes().to_vec(),
             score: raw.score,
             text: chunk.text,
-            source: episode_sources.get(&chunk.episode_id).cloned().unwrap_or_default(),
+            source: episode_sources
+                .get(&chunk.episode_id)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_default(),
             heading_path: chunk.heading_path,
             valid_from: chunk.bt.valid.0,
             valid_to: chunk.bt.valid.1,
@@ -211,6 +233,9 @@ pub async fn hydrate_mixed(
                         storage.read_as_of(&scope, &chunk_key(&scope, ulid), snapshot).await?
                         && let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value)
                     {
+                        if sys_closed(&chunk.bt) {
+                            return Ok(None); // soft-deleted chunk row — skip
+                        }
                         return Ok(Some(MixedResolved::Chunk(raw, chunk)));
                     }
                     if let Some(row) =
@@ -218,6 +243,11 @@ pub async fn hydrate_mixed(
                         && let Ok(fact) =
                             serde_json::from_slice::<lunaris_extract::Fact>(&row.value)
                     {
+                        // The at-rest Fact payload carries no `bt` — the gate
+                        // rides the KV Row's bi-temporal stamp.
+                        if sys_closed(&row.bt) {
+                            return Ok(None); // soft-deleted fact row — skip
+                        }
                         return Ok(Some(MixedResolved::Fact(raw, fact, row.bt)));
                     }
                     Ok(None) // neither row exists at this snapshot — skip
@@ -240,37 +270,49 @@ pub async fn hydrate_mixed(
         }
         s.into_iter().collect()
     };
-    let mut episode_sources: HashMap<Ulid, String> = HashMap::new();
-    let ep_results: Vec<Result<Option<(Ulid, String)>, LunarisError>> = stream::iter(unique_ep)
-        .map(|ep_id| {
-            let scope = scope.clone();
-            async move {
-                let key = episode_lookup_key(&scope, ep_id);
-                if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
-                    && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
-                {
-                    return Ok(Some((ep_id, ep.source)));
+    // Map ep_id -> (source, sys_closed) — same gate as `hydrate`: a chunk
+    // whose parent episode was forgotten must not hydrate.
+    let mut episode_sources: HashMap<Ulid, (String, bool)> = HashMap::new();
+    let ep_results: Vec<Result<Option<(Ulid, String, bool)>, LunarisError>> =
+        stream::iter(unique_ep)
+            .map(|ep_id| {
+                let scope = scope.clone();
+                async move {
+                    let key = episode_lookup_key(&scope, ep_id);
+                    if let Some(row) = storage.read_as_of(&scope, &key, snapshot).await?
+                        && let Ok(ep) = serde_json::from_slice::<Episode>(&row.value)
+                    {
+                        return Ok(Some((ep_id, ep.source, sys_closed(&ep.bt))));
+                    }
+                    Ok(None)
                 }
-                Ok(None)
-            }
-        })
-        .buffer_unordered(HYDRATE_CONCURRENCY)
-        .collect()
-        .await;
+            })
+            .buffer_unordered(HYDRATE_CONCURRENCY)
+            .collect()
+            .await;
     for entry in ep_results.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().flatten() {
-        episode_sources.insert(entry.0, entry.1);
+        episode_sources.insert(entry.0, (entry.1, entry.2));
     }
 
-    // Third pass: project to Hits.
+    // Third pass: project to Hits, dropping chunks of sys-closed episodes.
     Ok(resolved
         .into_iter()
+        .filter(|r| match r {
+            MixedResolved::Chunk(_, chunk) => {
+                !matches!(episode_sources.get(&chunk.episode_id), Some((_, true)))
+            }
+            MixedResolved::Fact(..) => true, // fact rows gated at resolution
+        })
         .map(|r| match r {
             MixedResolved::Chunk(raw, chunk) => Hit {
                 id: raw.id,
                 episode_id: chunk.episode_id.to_bytes().to_vec(),
                 score: raw.score,
                 text: chunk.text,
-                source: episode_sources.get(&chunk.episode_id).cloned().unwrap_or_default(),
+                source: episode_sources
+                    .get(&chunk.episode_id)
+                    .map(|(s, _)| s.clone())
+                    .unwrap_or_default(),
                 heading_path: chunk.heading_path,
                 valid_from: chunk.bt.valid.0,
                 valid_to: chunk.bt.valid.1,
