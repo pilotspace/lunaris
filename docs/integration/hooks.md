@@ -294,21 +294,28 @@ runs before scrubbing so secrets in the elided middle are never stored.
 
 ## Secret scrubber (HOOK-04)
 
-All five built-in scrubber patterns run on every captured event's content.
+All eleven built-in scrubber patterns run on every captured event's content.
 They cannot be disabled — the scrubber set is closed and auditable.
 
 | Kind | Pattern | Replacement |
 |------|---------|-------------|
 | `ENV_KEY` | Lines matching `^[A-Z_]+=.*` in `.env`-style content | `<REDACTED:ENV_KEY>` |
 | `AWS_KEY` | `AKIA[0-9A-Z]{16}` | `<REDACTED:AWS_KEY>` |
-| `GH_TOKEN` | `gh[pos]_[A-Za-z0-9]{36,}` | `<REDACTED:GH_TOKEN>` |
+| `GH_TOKEN` | `gh[pousx]_[A-Za-z0-9_]{36}` | `<REDACTED:GH_TOKEN>` |
 | `SSH_KEY` | `-----BEGIN .* PRIVATE KEY-----` blocks | `<REDACTED:SSH_KEY>` |
-| `JWT` | `eyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}` | `<REDACTED:JWT>` |
+| `JWT` | `eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` | `<REDACTED:JWT>` |
+| `API_KEY` | `sk-(?:ant-)?[A-Za-z0-9_\-]{16,}` (Anthropic, OpenAI, …) | `<REDACTED:API_KEY>` |
+| `SLACK_TOKEN` | `xox[baprs]-[A-Za-z0-9\-]{10,}` | `<REDACTED:SLACK_TOKEN>` |
+| `GITLAB_PAT` | `glpat-[A-Za-z0-9_\-]{20}` | `<REDACTED:GITLAB_PAT>` |
+| `GCP_KEY` | `AIza[0-9A-Za-z_\-]{35}` | `<REDACTED:GCP_KEY>` |
+| `KV_SECRET` | case-insensitive `password`/`passwd`/`pwd`/`secret`/`token`/`api_key` followed by `=` or `:` and a ≥4-char value (shell, JSON, or YAML form) | `<REDACTED:KV_SECRET>` |
+| `BEARER` | `(?i)bearer <token ≥16 chars>` | `<REDACTED:BEARER>` |
 
-> **False-positive risk:** The ENV_KEY pattern can match shell variables in
-> Bash tool output. If you frequently capture bash commands that export
-> variables, review the scrubber output. You can add a custom pattern to handle
-> false positives via the TOML policy file (see below).
+> **False-positive risk:** The ENV_KEY and KV_SECRET patterns are broad by
+> design — a benign `token: <value>` config line redacts (word-anchored, so
+> `max_tokens: 4096` survives). Over-redaction costs readability, never a
+> leak; that is the HOOK-04 posture. Review scrubber output if you capture
+> config-heavy tool results.
 
 ---
 
@@ -322,10 +329,9 @@ are **additive only** — built-in deny patterns and scrubbers always run.
 # Schema: v0 (Lunaris 0.5)
 
 [scrubbers.custom]
-# Add patterns to redact beyond the five built-ins.
+# Add patterns to redact beyond the eleven built-ins.
 patterns = [
   { name = "internal_secret", pattern = "INT_SECRET_[A-Z0-9]{32}", redact_as = "<REDACTED:INTERNAL>" },
-  { name = "api_key", pattern = "sk-[A-Za-z0-9]{40,}", redact_as = "<REDACTED:API_KEY>" },
 ]
 
 [filters.paths]
@@ -585,7 +591,7 @@ tools and async capture available.
 
 ## Security considerations
 
-- **Scrubber is additive, not configurable off.** The five built-in patterns
+- **Scrubber is additive, not configurable off.** The eleven built-in patterns
   always run. This is intentional: a typo in `hook-policy.toml` can never
   silently disable AWS-key or JWT redaction.
 - **Built-in path deny list is not overridable.** `**/.env`, `**/id_rsa*`,
