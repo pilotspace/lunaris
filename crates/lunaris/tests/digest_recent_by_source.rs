@@ -164,7 +164,7 @@ async fn recency_order_keeps_most_recent_decisions() {
         episode_row(&s, d1, "decision:proj", "d1 body"),
         episode_row(&s, d2, "decision:proj", "d2 body"),
         episode_row(&s, d3, "decision:proj", "d3 body"),
-        episode_row(&s, other, "codex:tool_call:post", "noise"),
+        episode_row(&s, other, "lunaris:tool_call:post", "noise"),
     ]);
 
     let out = recent_by_source(&storage, &s, &["decision:".to_owned()], 2).await.expect("scan ok");

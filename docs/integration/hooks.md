@@ -200,7 +200,7 @@ Tool result may relate to these memories.
 </lunaris_memory_context>
 ```
 
-`codex:memory_injection` episodes are written as traces but excluded from
+`lunaris:memory_injection` episodes are written as traces but excluded from
 future injection recall to avoid self-reinforcing context loops.
 
 ---
@@ -223,10 +223,10 @@ queries surface both.
 
 | Event | Episode source | Captured content |
 |-------|---------------|-----------------|
-| `PreToolUse` | `claude-code:pre_tool_use` | `tool_input` JSON |
-| `PostToolUse` | `claude-code:post_tool_use` | `tool_response` JSON |
-| `Stop` | `claude-code:stop` | *(no content — boundary marker)* |
-| `SessionStart` | `claude-code:session_start` | *(no content — boundary marker)* |
+| `PreToolUse` | `lunaris:pre_tool_use` | `tool_input` JSON |
+| `PostToolUse` | `lunaris:post_tool_use` | `tool_response` JSON |
+| `Stop` | `lunaris:stop` | *(no content — boundary marker)* |
+| `SessionStart` | `lunaris:session_start` | *(no content — boundary marker)* |
 | *(any other)* | *(no Episode written)* | exits 0 (forward-compat no-op) |
 
 Unknown event kinds exit 0 intentionally. This ensures forward compatibility

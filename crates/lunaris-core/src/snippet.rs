@@ -85,7 +85,7 @@ pub fn summarize_json(source: &str, value: &Value) -> Option<String> {
             let prefix = if old_string.is_some() { "edit" } else { "tool input" };
             return Some(format!("{prefix} {path}: {}", trim_to_chars(new_string, 180)));
         }
-        if source == "claude-code:pre_tool_use" || source == "codex:tool_call:pre" {
+        if source == "lunaris:pre_tool_use" || source == "lunaris:tool_call:pre" {
             return None;
         }
         return Some(format!("tool touched {path}"));
@@ -171,13 +171,33 @@ mod tests {
     fn smart_quote_codex_prompt_renders() {
         let content = "{ “ codex_hook_event_name ” : “ UserPromptSubmit ” , “ codex_payload ” :{ “ prompt ” : “ marker XR-1 ” } }";
         let rendered =
-            summarize("claude-code:pre_tool_use", content).expect("prompt envelope must summarize");
+            summarize("lunaris:pre_tool_use", content).expect("prompt envelope must summarize");
         assert_eq!(rendered, "prompt: marker XR-1");
     }
 
     #[test]
     fn non_json_returns_none() {
         assert!(summarize("notes/a", "The cobalt gateway is CG-1.").is_none());
+    }
+
+    #[test]
+    fn lunaris_prompt_prefix_curates() {
+        // hook-source-prefix-lunaris: the pre-tool path-only drop and the
+        // prompt-envelope rendering must recognize the new lunaris: prefix.
+        let path_only = r#"{"tool_input":{"file_path":"/tmp/x.rs"}}"#;
+        assert!(
+            summarize("lunaris:tool_call:pre", path_only).is_none(),
+            "path-only pre-tool envelope must drop under lunaris:tool_call:pre"
+        );
+        assert!(
+            summarize("lunaris:pre_tool_use", path_only).is_none(),
+            "path-only pre-tool envelope must drop under lunaris:pre_tool_use"
+        );
+        let prompt = "{ “ prompt ” : “ marker QZ-9 ” }";
+        assert_eq!(
+            summarize("lunaris:pre_tool_use", prompt).expect("prompt envelope must summarize"),
+            "prompt: marker QZ-9"
+        );
     }
 
     #[test]

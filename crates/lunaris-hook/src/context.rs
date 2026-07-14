@@ -319,12 +319,18 @@ impl ContextService {
             }
             ContextRequest::CaptureToolCall { cwd, scope, session_id, tool, payload } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
-                self.spawn_capture_tool(&scope, "codex:tool_call:pre", session_id, tool, payload);
+                self.spawn_capture_tool(&scope, "lunaris:tool_call:pre", session_id, tool, payload);
                 Ok(ContextResponse::empty())
             }
             ContextRequest::CaptureToolResult { cwd, scope, session_id, tool, payload } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
-                self.spawn_capture_tool(&scope, "codex:tool_call:post", session_id, tool, payload);
+                self.spawn_capture_tool(
+                    &scope,
+                    "lunaris:tool_call:post",
+                    session_id,
+                    tool,
+                    payload,
+                );
                 Ok(ContextResponse::empty())
             }
             ContextRequest::TurnFeedback {
@@ -857,7 +863,7 @@ impl ContextService {
             "injected_memory_ids".into(),
             Value::Array(injected_memory_ids.into_iter().map(Value::String).collect()),
         );
-        let lsn = self.capture_lightweight(scope, "codex:turn_feedback", content, meta).await?;
+        let lsn = self.capture_lightweight(scope, "lunaris:turn_feedback", content, meta).await?;
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
@@ -883,7 +889,7 @@ impl ContextService {
             "memory injection {injection_id}\nphase: {phase}\nmemory_ids: {}",
             memory_ids.join(",")
         );
-        self.capture_lightweight(scope, "codex:memory_injection", content, meta).await?;
+        self.capture_lightweight(scope, "lunaris:memory_injection", content, meta).await?;
         Ok(())
     }
 
@@ -1192,10 +1198,10 @@ pub async fn build_digest(
 fn excluded_context_source(source: &str) -> bool {
     matches!(
         source,
-        "codex:memory_injection"
-            | "codex:turn_feedback"
-            | "claude-code:session_start"
-            | "claude-code:stop"
+        "lunaris:memory_injection"
+            | "lunaris:turn_feedback"
+            | "lunaris:session_start"
+            | "lunaris:stop"
     )
 }
 
@@ -1204,10 +1210,10 @@ fn excluded_context_source(source: &str) -> bool {
 fn is_toolcall_capture(source: &str) -> bool {
     matches!(
         source,
-        "codex:tool_call:pre"
-            | "codex:tool_call:post"
-            | "claude-code:pre_tool_use"
-            | "claude-code:post_tool_use"
+        "lunaris:tool_call:pre"
+            | "lunaris:tool_call:post"
+            | "lunaris:pre_tool_use"
+            | "lunaris:post_tool_use"
     )
 }
 
@@ -1232,13 +1238,13 @@ fn source_priority(source: &str) -> i32 {
         90
     } else if source.starts_with("edit:") {
         85
-    } else if source == "codex:tool_call:post" {
+    } else if source == "lunaris:tool_call:post" {
         75
-    } else if source == "claude-code:post_tool_use" {
+    } else if source == "lunaris:post_tool_use" {
         70
-    } else if source == "codex:tool_call:pre" {
+    } else if source == "lunaris:tool_call:pre" {
         55
-    } else if source == "claude-code:pre_tool_use" {
+    } else if source == "lunaris:pre_tool_use" {
         45
     } else {
         50
@@ -1271,7 +1277,7 @@ fn summarize_memory_for_context(source: &str, text: &str) -> Option<String> {
 }
 
 fn is_low_value_text(source: &str, text: &str) -> bool {
-    source == "claude-code:pre_tool_use"
+    source == "lunaris:pre_tool_use"
         && text.contains("file_path")
         && !text.contains("new_string")
         && !text.contains("old_string")
@@ -1484,13 +1490,13 @@ mod tests {
         let memories = vec![
             ContextMemory {
                 episode_id: "01HX0000000000000000000001".into(),
-                source: "claude-code:pre_tool_use".into(),
+                source: "lunaris:pre_tool_use".into(),
                 score: 0.99,
                 snippet: r#"{"file_path":"README.md"}"#.into(),
             },
             ContextMemory {
                 episode_id: "01HX0000000000000000000002".into(),
-                source: "claude-code:pre_tool_use".into(),
+                source: "lunaris:pre_tool_use".into(),
                 score: 0.80,
                 snippet: r#"{"file_path":"scripts/setup-lunaris-agents.py","old_string":"sqlite default","new_string":"Moon storage shared"}"#.into(),
             },
@@ -1509,7 +1515,7 @@ mod tests {
     fn curation_tolerates_scrubbed_smart_quote_json() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000004".into(),
-            source: "claude-code:post_tool_use".into(),
+            source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: "{ “ output ” : “ Moon storage shared ” , “ success ” :true}".into(),
         }];
@@ -1528,7 +1534,7 @@ mod tests {
         // verify envelope's top-level `output` copy was the workaround).
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000006".into(),
-            source: "claude-code:post_tool_use".into(),
+            source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: "{ “ tool_response ” : { “ output ” : “ Moon relay ok ” } }".into(),
         }];
@@ -1547,7 +1553,7 @@ mod tests {
         // their own summarize branch.
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000007".into(),
-            source: "claude-code:pre_tool_use".into(),
+            source: "lunaris:pre_tool_use".into(),
             score: 0.80,
             snippet: "{ “ codex_hook_event_name ” : “ UserPromptSubmit ” , “ codex_payload ” :{ “ cwd ” : “ /tmp ” , “ hook_event_name ” : “ UserPromptSubmit ” , “ prompt ” : “ the crimson beacon marker is XR-9913 on port 5252 ” } }".into(),
         }];
@@ -1568,7 +1574,7 @@ mod tests {
     fn curation_tool_output_wins_over_prompt() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000008".into(),
-            source: "claude-code:post_tool_use".into(),
+            source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: r#"{"output": "deploy ok", "prompt": "ignore me"}"#.into(),
         }];
@@ -1596,7 +1602,7 @@ mod tests {
     fn curation_excludes_injection_traces() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000003".into(),
-            source: "codex:memory_injection".into(),
+            source: "lunaris:memory_injection".into(),
             score: 1.0,
             snippet: "memory injection".into(),
         }];
@@ -1619,13 +1625,13 @@ mod tests {
         let memories = vec![
             ContextMemory {
                 episode_id: "01HX000000000000000000000A".into(),
-                source: "codex:tool_call:post".into(),
+                source: "lunaris:tool_call:post".into(),
                 score: 0.03,
                 snippet: mangled,
             },
             ContextMemory {
                 episode_id: "01HX000000000000000000000B".into(),
-                source: "codex:tool_call:post".into(),
+                source: "lunaris:tool_call:post".into(),
                 score: 0.03,
                 snippet: "just a plain note about the build".into(),
             },
@@ -1667,11 +1673,11 @@ mod tests {
     #[test]
     fn injectable_at_phase_excludes_toolcalls_at_prompt() {
         assert!(
-            !injectable_at_phase("prompt", "codex:tool_call:post", false),
+            !injectable_at_phase("prompt", "lunaris:tool_call:post", false),
             "codex tool-call captures must be excluded from prompt injection"
         );
         assert!(
-            !injectable_at_phase("prompt", "claude-code:post_tool_use", false),
+            !injectable_at_phase("prompt", "lunaris:post_tool_use", false),
             "claude-code tool captures must be excluded from prompt injection"
         );
         assert!(
@@ -1687,7 +1693,7 @@ mod tests {
     #[test]
     fn injectable_at_phase_keeps_toolcalls_post_tool() {
         assert!(
-            injectable_at_phase("post_tool", "codex:tool_call:post", false),
+            injectable_at_phase("post_tool", "lunaris:tool_call:post", false),
             "tool captures are on-topic at post_tool phase"
         );
     }
@@ -1695,8 +1701,46 @@ mod tests {
     #[test]
     fn injectable_at_phase_toggle_restores_toolcalls() {
         assert!(
-            injectable_at_phase("prompt", "codex:tool_call:post", true),
+            injectable_at_phase("prompt", "lunaris:tool_call:post", true),
             "LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS=1 must restore tool captures at prompt phase"
         );
+    }
+
+    // --- hook-source-prefix-lunaris: the new unified `lunaris:` namespace ---
+
+    #[test]
+    fn lunaris_toolcall_prefix_recognized() {
+        // scenario: tool-call capture recognized under the new prefix — both
+        // suffix styles (codex-origin tool_call:post, cc-origin post_tool_use)
+        // now live under lunaris: and must be recognized in lock-step.
+        assert!(is_toolcall_capture("lunaris:tool_call:post"));
+        assert!(is_toolcall_capture("lunaris:tool_call:pre"));
+        assert!(is_toolcall_capture("lunaris:post_tool_use"));
+        assert!(is_toolcall_capture("lunaris:pre_tool_use"));
+        // still excluded from prompt phase, still kept at post_tool
+        assert!(!injectable_at_phase("prompt", "lunaris:tool_call:post", false));
+        assert!(!injectable_at_phase("prompt", "lunaris:post_tool_use", false));
+        assert!(injectable_at_phase("post_tool", "lunaris:tool_call:post", false));
+        assert!(injectable_at_phase("prompt", "lunaris:tool_call:post", true));
+    }
+
+    #[test]
+    fn lunaris_source_priority_order_preserved() {
+        // scenario: source priority order preserved under the new prefix.
+        assert_eq!(source_priority("lunaris:tool_call:post"), 75);
+        assert_eq!(source_priority("lunaris:tool_call:pre"), 55);
+        assert_eq!(source_priority("lunaris:post_tool_use"), 70);
+        assert_eq!(source_priority("lunaris:pre_tool_use"), 45);
+        assert!(source_priority("decision:x") > source_priority("lunaris:tool_call:post"));
+        assert!(source_priority("edit:y") > source_priority("lunaris:tool_call:post"));
+    }
+
+    #[test]
+    fn lunaris_excluded_sources_recognized() {
+        // scenario: session/injection sources still excluded from context.
+        assert!(excluded_context_source("lunaris:memory_injection"));
+        assert!(excluded_context_source("lunaris:turn_feedback"));
+        assert!(excluded_context_source("lunaris:session_start"));
+        assert!(excluded_context_source("lunaris:stop"));
     }
 }

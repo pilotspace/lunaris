@@ -140,7 +140,7 @@ impl LunarisMcpServer {
                        Each hit includes episode_id, source, content, score, and ingested_at. \
                        IMPORTANT: first call in a session triggers GGUF embedder load (slow); subsequent calls are fast. \
                        Progressive-disclosure strategy: start with k=5 (cheap preview pass); if no useful hit found, \
-                       widen: raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or set as_of \
+                       widen: raise k, add filters.source_prefix ('decision:', 'edit:', 'lunaris:'), or set as_of \
                        for a bi-temporal point-in-time snapshot. as_of requires a bi-temporal backend (SQLite yes, \
                        Moon not yet) — on a non-bi-temporal backend the call errors instead of silently returning \
                        current-state data. SQLite backend falls back to vector-only (no BM25)."
@@ -356,7 +356,7 @@ impl ServerHandler for LunarisMcpServer {
                  embedder load (slow); returns curated LLM-ready snippets (≤260 chars; JSON envelopes summarized \
                  as 'decision:'/'edit'/'tool output:'/'prompt:') with episode_id and score. If the snippet \
                  is sufficient, stop here.\n\
-                 3. Widen recall — raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or \
+                 3. Widen recall — raise k, add filters.source_prefix ('decision:', 'edit:', 'lunaris:'), or \
                  pass as_of for a point-in-time snapshot. Use this tier only when the k=5 pass returns no useful hit.\n\
                  \n\
                  STORE (choose by lifetime):\n\
