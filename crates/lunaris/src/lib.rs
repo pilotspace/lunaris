@@ -78,7 +78,9 @@ pub use digest::recent_by_source;
 pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
-pub use handle::{IngestKind, Lunaris, ScopedLunaris};
+pub use handle::{
+    IngestKind, Lunaris, ScopedLunaris, resolve_default_embedder, resolve_default_reranker,
+};
 // Phase 23 — agent-facing structured-ingest public surface.
 pub use structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`

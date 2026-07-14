@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "session-start-digest",
+  "active_task": "contextd-shared-embedder",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -930,6 +930,27 @@
         ],
         "snapshot_md5": "97a15143805281aaa5e9b02ede574cf8"
       }
+    },
+    "contextd-shared-embedder": {
+      "title": "contextd shares one embedder across all scope handles (fix per-scope GGUF memory blowup)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T12:36:33+00:00",
+      "updated": "2026-07-14T12:57:31+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "46bbdce9319acf67866d435ea6a5199b",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/src/handle.rs",
+          "crates/lunaris/src/lib.rs"
+        ],
+        "snapshot_md5": "d41f22dde2e26a098388cd256e997990"
+      }
     }
   },
   "milestones": {
@@ -975,7 +996,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T12:10:53+00:00",
+  "updated": "2026-07-14T12:57:31+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

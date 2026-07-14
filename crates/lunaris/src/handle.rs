@@ -1771,6 +1771,16 @@ async fn resolve_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
     Ok(Arc::new(lunaris_core::NoopEmbedder::new(dim)) as Arc<dyn Embedder>)
 }
 
+/// Resolve the process-default embedder (the same llama.cpp GGUF → remote →
+/// Noop chain [`Lunaris::open`] uses internally), exposed so a long-lived host
+/// (e.g. `lunaris-contextd`) can load it ONCE and share the resulting
+/// `Arc<dyn Embedder>` across many per-scope [`Lunaris`] handles via
+/// [`Lunaris::open_with_embedder`] — instead of loading a full resident GGUF
+/// model per scope (the 7.32 GB contextd RSS leak, 2026-07-14).
+pub async fn resolve_default_embedder() -> Result<Arc<dyn Embedder>, LunarisError> {
+    resolve_embedder().await
+}
+
 /// Resolve the NoopEmbedder fallback dim from [`EMBED_DIM_ENV_VAR`].
 fn resolve_embed_dim() -> usize {
     static LOG_ONCE: OnceLock<()> = OnceLock::new();
@@ -1855,6 +1865,17 @@ async fn resolve_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
         );
     });
     Ok(Arc::new(NoopReranker) as Arc<dyn Reranker>)
+}
+
+/// Resolve the process-default reranker (the same lazy llama.cpp GGUF → Noop
+/// chain [`Lunaris::open`] uses), exposed alongside [`resolve_default_embedder`]
+/// so a long-lived host can load it ONCE and share the `Arc<dyn Reranker>`
+/// across per-scope handles via [`Lunaris::with_reranker`]. Like the embedder,
+/// the reranker model is scope-independent; a per-scope reranker was the other
+/// half of the 7.32 GB contextd RSS growth (2026-07-14). The returned reranker
+/// is lazy — its GGUF still loads on the first `rerank()`, now exactly once.
+pub async fn resolve_default_reranker() -> Result<Arc<dyn Reranker>, LunarisError> {
+    resolve_reranker().await
 }
 
 /// Plan 03-03: Construct the default extractor for [`Lunaris::open`].
