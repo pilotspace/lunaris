@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "curation-prompt-snippet",
+  "active_task": "contextd-scope-forwarding",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -821,6 +821,29 @@
         ],
         "snapshot_md5": "9911be6af99b2a27648638d6adacd085"
       }
+    },
+    "contextd-scope-forwarding": {
+      "title": "Adapter forwards caller scope to contextd (cross-project isolation)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T06:04:28+00:00",
+      "updated": "2026-07-14T06:08:39+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "4f645570dde74d7644d3b1d324e7296c",
+        "tests": {
+          "scripts/tests/test_contextd_scope_forwarding.py": "fe09b57dbc24f3b53bd4668a387b1280"
+        }
+      },
+      "scope": {
+        "declared": [
+          "scripts/lunaris-codex-hook-adapter.py",
+          "scripts/tests/test_contextd_scope_forwarding.py"
+        ],
+        "snapshot_md5": "fc9b329344cfc853c8bb285e239c7b47"
+      }
     }
   },
   "milestones": {
@@ -866,7 +889,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T05:27:25+00:00",
+  "updated": "2026-07-14T06:08:39+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
