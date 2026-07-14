@@ -233,9 +233,19 @@ def contextd_request(request: dict[str, Any], timeout_ms: int, autostart: bool =
         or (Path.home() / ".lunaris" / "codex-contextd.sock")
     )
     payload = json.dumps(request, separators=(",", ":")).encode("utf-8")
-    deadline = time.monotonic() + (timeout_ms / 1000.0)
-    if autostart and not contextd_healthy(socket_path, timeout_ms=30):
+
+    # Cold-start budget (ADD task contextd-cold-start-lifecycle): when THIS
+    # call has to start the daemon, the first request also pays the lazy GGUF
+    # embedder load — seconds, not the warm-path milliseconds. The old code
+    # computed the deadline BEFORE the spawn, so the default 300ms could never
+    # cover a cold start and the first prompt after boot silently got zero
+    # memories. A warm daemon keeps the caller's timeout_ms unchanged.
+    cold = autostart and not contextd_healthy(socket_path, timeout_ms=30)
+    if cold:
         start_contextd(socket_path)
+        cold_ms = env_int_any("LUNARIS_CONTEXT_COLD_TIMEOUT_MS") or 15000
+        timeout_ms = max(timeout_ms, cold_ms)
+    deadline = time.monotonic() + (timeout_ms / 1000.0)
 
     last_error: Exception | None = None
     while time.monotonic() < deadline:
@@ -267,6 +277,23 @@ def contextd_request(request: dict[str, Any], timeout_ms: int, autostart: bool =
     return {}
 
 
+def socket_owner_alive(socket_path: Path) -> bool:
+    """True when any live process's argv references `socket_path` — the
+    mid-load daemon shape (holds the socket, can't answer health yet)."""
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", str(socket_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    own = str(os.getpid())
+    return any(line.strip() and line.strip() != own for line in proc.stdout.splitlines())
+
+
 def start_contextd(socket_path: Path) -> None:
     if os.environ.get("LUNARIS_CONTEXTD_AUTOSTART", "1") in {"0", "false", "False"}:
         return
@@ -279,6 +306,15 @@ def start_contextd(socket_path: Path) -> None:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             prune_contextd_duplicates(socket_path)
             if contextd_healthy(socket_path, timeout_ms=50):
+                return
+            # Liveness guard (ADD task contextd-cold-start-lifecycle): a
+            # daemon that is mid-GGUF-load holds the socket but cannot answer
+            # health. Unlinking its socket and spawning a duplicate here was
+            # the cold-start restart storm (5 leaked daemons / 2 verify runs
+            # in the 2026-07-14 deep test). If ANY live process references
+            # this socket path, leave it alone — the caller's cold-start
+            # budget rides out the load.
+            if socket_path.exists() and socket_owner_alive(socket_path):
                 return
             if socket_path.exists():
                 try:

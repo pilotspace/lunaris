@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "forget-scope-routing",
+  "active_task": "contextd-cold-start-lifecycle",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -672,12 +672,28 @@
     },
     "contextd-cold-start-lifecycle": {
       "title": "Contextd cold-start lifecycle + verify cleanup",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-contract-integrity",
       "depends_on": [],
       "created": "2026-07-14T03:41:54+00:00",
-      "updated": "2026-07-14T03:41:54+00:00"
+      "updated": "2026-07-14T04:09:32+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "163480b15c23510a29ef960d15b55027",
+        "tests": {
+          "scripts/tests/test_contextd_lifecycle.py": "7e9c208e9448978d89f896b52fbc161f"
+        }
+      },
+      "scope": {
+        "declared": [
+          "scripts/lunaris-codex-hook-adapter.py",
+          "scripts/setup-lunaris-agents.py",
+          "scripts/tests/test_contextd_lifecycle.py",
+          "docs/integration/claude-code.md"
+        ],
+        "snapshot_md5": "fc7c2c32f56c3743305b73642ecf25ec"
+      }
     },
     "moon-parity-honesty": {
       "title": "Moon backend parity honesty (dedupe, as_of, scratchpad key read)",
@@ -741,7 +757,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T04:01:49+00:00",
+  "updated": "2026-07-14T04:09:32+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
