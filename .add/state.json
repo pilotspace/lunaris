@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "capture-signal-gate",
+  "active_task": "session-start-digest",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -907,6 +907,29 @@
         ],
         "snapshot_md5": "06b3e0a893f1a0c04806517dade1edd1"
       }
+    },
+    "session-start-digest": {
+      "title": "SessionStart injects a curated Lunaris digest of the scope's recent durable decisions (replaces MEMORY.md auto-load)",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-14T11:11:46+00:00",
+      "updated": "2026-07-14T12:10:53+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "d6920e092e3eb082c11dc46f3111942b",
+        "tests": {
+          "scripts/tests/test_session_digest.py": "742bfc039a81ed0d56669c8d96efa4f0"
+        }
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/src/digest.rs",
+          "crates/lunaris/src/lib.rs"
+        ],
+        "snapshot_md5": "97a15143805281aaa5e9b02ede574cf8"
+      }
     }
   },
   "milestones": {
@@ -952,7 +975,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T11:11:05+00:00",
+  "updated": "2026-07-14T12:10:53+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

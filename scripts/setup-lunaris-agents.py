@@ -544,24 +544,30 @@ def render_claude_hook_entries(args: argparse.Namespace) -> dict[str, list[dict[
     inject_cmd = f"{prefix}{adapter} --target claude --mode inject"
     post_tool_cmd = f"{prefix}{adapter} --target claude --mode post-tool"
     feedback_cmd = f"{prefix}{adapter} --target claude --mode feedback"
+    digest_cmd = f"{prefix}{adapter} --target claude --mode session-start"
 
     # Every Lunaris hook carries a timeout so a contextd cold-start (or a
-    # wedged daemon) cannot block the Claude Code turn indefinitely. Capture
-    # is fire-and-fast (3s); the blocking recall/feedback legs get 5s.
+    # wedged daemon) cannot block the Claude Code turn indefinitely. Capture is
+    # fire-and-fast (3s). The recall legs (inject / post-tool) trigger the lazy
+    # GGUF embedder load on the FIRST prompt after boot, which can exceed a 5s
+    # budget and get the injection discarded — so they get 12s / 10s to survive
+    # a cold start (warm-path recall still returns in ms). The SessionStart
+    # digest needs NO embedder (a pure scan + snippet render) but still pays a
+    # cold daemon spawn, so it gets 8s; feedback stays 5s (fire-and-forget).
     def command(cmd: str, timeout: int = 5) -> dict[str, Any]:
         return {"type": "command", "command": cmd, "timeout": timeout}
 
     capture = command(capture_cmd, timeout=3)
     entries: dict[str, list[dict[str, Any]]] = {
-        "SessionStart": [capture],
-        "UserPromptSubmit": [capture, command(inject_cmd)],
-        "UserPromptExpansion": [capture, command(inject_cmd)],
+        "SessionStart": [capture, command(digest_cmd, timeout=8)],
+        "UserPromptSubmit": [capture, command(inject_cmd, timeout=12)],
+        "UserPromptExpansion": [capture, command(inject_cmd, timeout=12)],
         "PreToolUse": [capture],
-        "PostToolUse": [capture, command(post_tool_cmd)],
+        "PostToolUse": [capture, command(post_tool_cmd, timeout=10)],
         "PreCompact": [capture],
         "PostCompact": [capture],
         "SubagentStart": [capture],
-        "SubagentStop": [capture, command(post_tool_cmd)],
+        "SubagentStop": [capture, command(post_tool_cmd, timeout=10)],
         "Stop": [capture, command(feedback_cmd)],
     }
     return {event: entries[event] for event in CLAUDE_HOOK_EVENTS}

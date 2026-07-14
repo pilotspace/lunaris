@@ -31,6 +31,7 @@ pub mod consolidator_pipeline;
 // RFC 0001 Wave 1D — EpisodeBuilder lives here (NOT in lunaris-core) so
 // `into_episode` can be `pub(crate)`, enforcing that only ScopedLunaris::ingest
 // can stamp a scope onto an episode.
+pub mod digest;
 pub mod episode_builder;
 pub mod forget;
 pub mod graph_pipeline;
@@ -73,6 +74,7 @@ pub use audit::{AUDIT_TOPIC, AuditEvent, publish_audit_event};
 pub use consolidator_pipeline::{
     ConsolidatorPipelineHandle, ENABLED_ENV_VAR as CONSOLIDATE_ENABLED_ENV_VAR,
 };
+pub use digest::recent_by_source;
 pub use episode_builder::EpisodeBuilder;
 pub use forget::{ForgetConfirmation, ForgetReceipt, ForgetTarget, IndexKind, ScopeSpec};
 pub use graph_pipeline::{ENABLED_ENV_VAR as GRAPH_ENABLED_ENV_VAR, GraphPipelineHandle};
