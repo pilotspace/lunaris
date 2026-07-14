@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "contextd-cold-start-lifecycle",
+  "active_task": "moon-parity-honesty",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -697,12 +697,41 @@
     },
     "moon-parity-honesty": {
       "title": "Moon backend parity honesty (dedupe, as_of, scratchpad key read)",
-      "phase": "ground",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-contract-integrity",
       "depends_on": [],
       "created": "2026-07-14T03:41:54+00:00",
-      "updated": "2026-07-14T03:41:54+00:00"
+      "updated": "2026-07-14T04:29:47+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "1a172c3f2bf1b508918bf3eee4928930",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/keyspace.rs",
+          "crates/lunaris-storage-moon/src/lib.rs",
+          "crates/lunaris-storage-moon/src/kv.rs",
+          "crates/lunaris/src/primitives/working_memory.rs",
+          "crates/lunaris/src/handle.rs",
+          "crates/lunaris/tests/moon_parity.rs",
+          "crates/lunaris-mcp/src/tools/recall.rs",
+          "crates/lunaris-mcp/src/main.rs",
+          "crates/lunaris-retrieve/src/hydrate.rs"
+        ],
+        "snapshot_md5": "edaffcdcdb2d4f62398feba9e086fe7a"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-14T04:29:16+00:00",
+            "reason": "scope_violation: task 'moon-parity-honesty' touched outside its declared \u00a75 Scope \u2014 crates/lunaris-retrieve/src/hydrate.rs \u00b7 crates/lunaris/src/handle.rs (2 total)",
+            "source": "scope"
+          }
+        ]
+      }
     },
     "scrub-and-curation-hardening": {
       "title": "Scrubber set extension + curation nested-key tolerance",
@@ -757,7 +786,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T04:09:32+00:00",
+  "updated": "2026-07-14T04:29:47+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

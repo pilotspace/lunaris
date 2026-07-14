@@ -319,6 +319,27 @@ impl StoragePort for MoonStorage {
         crate::kv::read_as_of(&self.client, scope, key, as_of).await
     }
 
+    /// HOOK-05 idempotency sidecar (ADD task moon-parity-honesty): closes the
+    /// documented "SQLite-only idempotency" v0.5 boundary for Moon — the
+    /// trait-default `Ok(None)` fall-through minted duplicate episodes for
+    /// every replayed dedupe key (proved live 2026-07-14).
+    async fn lookup_by_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+    ) -> Result<Option<Lsn>, StorageError> {
+        crate::kv::lookup_dedupe(&self.client, scope, dedupe_key).await
+    }
+
+    async fn insert_dedupe_key(
+        &self,
+        scope: &Scope,
+        dedupe_key: &str,
+        lsn: Lsn,
+    ) -> Result<(), StorageError> {
+        crate::kv::insert_dedupe(&self.client, scope, dedupe_key, lsn).await
+    }
+
     async fn publish(
         &self,
         scope: &Scope,

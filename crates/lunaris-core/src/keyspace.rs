@@ -142,6 +142,20 @@ pub fn doctree_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     format!("{}doctree:{id}", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for an idempotency sidecar entry (HOOK-05):
+/// `lunaris:{scope}:dedupe:{blake3_hex(raw)}`.
+///
+/// `raw` is arbitrary caller-supplied data (any opaque string) — it is
+/// blake3-hashed rather than spliced so it can never alias the
+/// `lunaris:{scope}:{kind}:{ulid}` format regardless of content
+/// (ADD task moon-parity-honesty — closes the "SQLite-only idempotency"
+/// v0.5 boundary for Moon).
+#[inline]
+pub fn dedupe_key(scope: &Scope, raw: &str) -> Vec<u8> {
+    let hash = blake3::hash(raw.as_bytes());
+    format!("{}dedupe:{}", scope_prefix(scope), hash.to_hex()).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Scoped primitive scan-prefix helpers
 // ---------------------------------------------------------------------------

@@ -139,7 +139,9 @@ impl LunarisMcpServer {
                        IMPORTANT: first call in a session triggers GGUF embedder load (slow); subsequent calls are fast. \
                        Progressive-disclosure strategy: start with k=5 (cheap preview pass); if no useful hit found, \
                        widen: raise k, add filters.source_prefix ('decision:', 'edit:', 'claude-code:'), or set as_of \
-                       for a bi-temporal point-in-time snapshot. SQLite backend falls back to vector-only (no BM25)."
+                       for a bi-temporal point-in-time snapshot. as_of requires a bi-temporal backend (SQLite yes, \
+                       Moon not yet) — on a non-bi-temporal backend the call errors instead of silently returning \
+                       current-state data. SQLite backend falls back to vector-only (no BM25)."
     )]
     async fn recall(
         &self,
@@ -193,7 +195,8 @@ impl LunarisMcpServer {
         description = "Record an architectural or scoping decision as a durable, structured episode \
                        with source='decision:<scope>'. The source prefix enables targeted retrieval: pass \
                        filters.source_prefix='decision:' to memory.recall to surface only decision records. \
-                       Accepts optional dedupe_key for replay-safe idempotency (hook pipeline integration). \
+                       Accepts optional dedupe_key for replay-safe idempotency (hook pipeline integration; \
+                       enforced on SQLite and Moon — Postgres falls through to a fresh write). \
                        Stores content as JSON with decision, rationale, alternatives, and tags fields."
     )]
     async fn record_decision(
@@ -218,7 +221,8 @@ impl LunarisMcpServer {
                        The source prefix enables targeted retrieval: pass filters.source_prefix='edit:' to \
                        memory.recall to surface only edit records. The path metadata field enables future \
                        path-filter queries (filters.source_prefix='edit:' combined with k widen). \
-                       Accepts optional dedupe_key for replay-safe idempotency."
+                       Accepts optional dedupe_key for replay-safe idempotency (enforced on SQLite and Moon — \
+                       Postgres falls through to a fresh write)."
     )]
     async fn record_edit(
         &self,
