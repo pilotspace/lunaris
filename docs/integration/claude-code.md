@@ -39,9 +39,17 @@ VERIFY PASS: cross-session inject (session verify-b saw session verify-a's memor
 The proof is the production path, not a mock: session B's marker arrives
 through the same `lunaris-contextd` fused hybrid recall that serves a real
 `UserPromptSubmit` hook. Any failure names its stage (`settings` /
-`storage` / `binaries` / `capture` / `inject`) and exits non-zero without
-touching your settings. Moon autostart (local `moon://` only, data under
-`~/.lunaris/moon-data`) can be disabled with `--no-moon-autostart`.
+`storage` / `binaries` / `capture` / `inject` / `cleanup`) and exits
+non-zero without touching your settings. Moon autostart (local `moon://`
+only, data under `~/.lunaris/moon-data`) can be disabled with
+`--no-moon-autostart`; verify terminates its private contextd on exit and
+fails the `cleanup` stage if a daemon survives.
+
+Cold starts are budgeted: when a hook call has to launch `lunaris-contextd`
+itself, the first request extends its deadline to
+`LUNARIS_CONTEXT_COLD_TIMEOUT_MS` (default `15000`) so the lazy GGUF
+embedder load cannot silently swallow the first prompt's recall. Warm
+requests keep the regular `LUNARIS_CONTEXT_TIMEOUT_MS` (default `300`).
 
 ## Quick Start (no Rust)
 

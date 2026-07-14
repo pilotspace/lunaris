@@ -14,6 +14,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -561,8 +562,12 @@ def run_verify(args: argparse.Namespace) -> int:
             "cwd": os.getcwd(),
         }
         # The adapter prints NOTHING when recall is empty — retry briefly so
-        # index visibility can never masquerade as a broken loop.
+        # index visibility can never masquerade as a broken loop. The FIRST
+        # attempt rides the adapter's cold-start budget (the daemon it spawns
+        # loads the GGUF embedder inside the extended first-call deadline), so
+        # no LUNARIS_CONTEXT_TIMEOUT_MS override is needed.
         last = ""
+        injected = False
         for _ in range(10):
             code, out, err = run_adapter("inject", inject_event, env)
             last = out.strip() or err.strip()
@@ -579,14 +584,24 @@ def run_verify(args: argparse.Namespace) -> int:
                         "VERIFY PASS: cross-session inject "
                         "(session verify-b saw session verify-a's memory in additionalContext)"
                     )
-                    return 0
+                    injected = True
+                    break
             time.sleep(0.5)
+    finally:
+        stop_verify_contextd(contextd_socket)
+
+    if not injected:
         return verify_fail(
             "inject",
             f"marker {marker} never surfaced in additionalContext; last output: {last[:400]!r}",
         )
-    finally:
-        stop_verify_contextd(contextd_socket)
+    strays = verify_socket_daemons(contextd_socket)
+    if strays:
+        return verify_fail(
+            "cleanup",
+            f"contextd still alive on the verify socket after shutdown: pids {strays}",
+        )
+    return 0
 
 
 def run_adapter(mode: str, event: dict[str, Any], env: dict[str, str]) -> tuple[int, str, str]:
@@ -665,23 +680,83 @@ def tcp_listening(host: str, port: int) -> bool:
 
 
 def stop_verify_contextd(contextd_socket: Path) -> None:
-    """Best-effort: terminate the contextd the adapter autostarted on the
-    verify-private socket so verify leaves no daemon behind."""
+    """Terminate the contextd the adapter autostarted on the verify-private
+    socket so verify leaves no daemon behind: SIGTERM, ≤2s grace, SIGKILL
+    survivors.
+
+    The pgrep pattern MUST NOT start with a dash — the previous
+    `pgrep -f "--socket {path}"` was parsed by pgrep as a FLAG (exit 2,
+    swallowed by check=False), so every --verify run silently leaked one
+    GGUF-loaded daemon (2026-07-14 deep test: 5 strays from 2 runs). The
+    socket path alone is a per-run tmpdir — unique enough to anchor on.
+    """
     try:
         proc = subprocess.run(
-            ["pgrep", "-f", f"--socket {contextd_socket}"],
+            ["pgrep", "-f", str(contextd_socket)],
             text=True,
             capture_output=True,
             check=False,
             timeout=10,
         )
+        pids = []
+        own = os.getpid()
         for line in proc.stdout.splitlines():
             try:
-                os.kill(int(line.strip()), 15)
-            except (ValueError, OSError):
+                pid = int(line.strip())
+            except ValueError:
+                continue
+            if pid != own:
+                pids.append(pid)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                continue
+        deadline = time.monotonic() + 2.0
+        remaining = list(pids)
+        while remaining and time.monotonic() < deadline:
+            still = []
+            for pid in remaining:
+                try:
+                    os.kill(pid, 0)
+                    still.append(pid)
+                except OSError:
+                    continue
+            remaining = still
+            if remaining:
+                time.sleep(0.05)
+        for pid in remaining:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
                 continue
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+def verify_socket_daemons(contextd_socket: Path) -> list[int]:
+    """PIDs of processes whose argv references the verify socket (post-cleanup
+    leak check for the VERIFY FAIL: cleanup stage)."""
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", str(contextd_socket)],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    own = os.getpid()
+    pids = []
+    for line in proc.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid != own:
+            pids.append(pid)
+    return pids
 
 
 def write_file(path: Path, content: str, dry_run: bool) -> None:
