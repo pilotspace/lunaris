@@ -495,15 +495,49 @@ def update_claude(path: Path, args: argparse.Namespace, mcp: dict[str, Any]) -> 
     env = mcp_env(args, hook_env=False)
     if env:
         data["mcpServers"]["lunaris"]["env"] = env
+    # Merge — never clobber. A machine may already carry unrelated hooks
+    # (GSD guards, ruff/eslint, commit validators). Replacing each event
+    # array wholesale silently wiped them; instead we strip only prior
+    # Lunaris groups (idempotency) and preserve everyone else's.
+    existing_hooks = data.get("hooks", {})
     if args.hooks == "on":
-        data.setdefault("hooks", {})
+        merged = dict(existing_hooks)
         for event, hooks in render_claude_hook_entries(args).items():
-            data["hooks"][event] = [{"matcher": "", "hooks": hooks}]
+            preserved = _strip_lunaris_hook_groups(merged.get(event, []))
+            preserved.append({"matcher": "", "hooks": hooks})
+            merged[event] = preserved
+        data["hooks"] = merged
+    elif existing_hooks:
+        # --hooks off is a clean uninstall: drop Lunaris groups, keep the rest.
+        data["hooks"] = {
+            event: kept
+            for event, groups in existing_hooks.items()
+            if (kept := _strip_lunaris_hook_groups(groups))
+        }
     final = json.dumps(data, indent=2, sort_keys=True) + "\n"
     write_file(path, final, args.dry_run)
 
 
-def render_claude_hook_entries(args: argparse.Namespace) -> dict[str, list[dict[str, str]]]:
+LUNARIS_HOOK_MARKER = ADAPTER.name  # "lunaris-codex-hook-adapter.py"
+
+
+def _is_lunaris_hook_command(hook: Any) -> bool:
+    return isinstance(hook, dict) and LUNARIS_HOOK_MARKER in str(hook.get("command", ""))
+
+
+def _strip_lunaris_hook_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop Lunaris commands from each matcher-group; keep groups that still
+    hold non-Lunaris hooks. Makes re-installs idempotent and preserves any
+    third-party hooks that happened to share an event."""
+    cleaned: list[dict[str, Any]] = []
+    for group in groups:
+        kept = [h for h in group.get("hooks", []) if not _is_lunaris_hook_command(h)]
+        if kept:
+            cleaned.append({**group, "hooks": kept})
+    return cleaned
+
+
+def render_claude_hook_entries(args: argparse.Namespace) -> dict[str, list[dict[str, Any]]]:
     adapter = shlex.quote(str(ADAPTER))
     prefix = env_prefix(hook_env(args))
     capture_cmd = f"{prefix}{adapter} --target claude --mode capture"
@@ -511,11 +545,14 @@ def render_claude_hook_entries(args: argparse.Namespace) -> dict[str, list[dict[
     post_tool_cmd = f"{prefix}{adapter} --target claude --mode post-tool"
     feedback_cmd = f"{prefix}{adapter} --target claude --mode feedback"
 
-    def command(cmd: str) -> dict[str, str]:
-        return {"type": "command", "command": cmd}
+    # Every Lunaris hook carries a timeout so a contextd cold-start (or a
+    # wedged daemon) cannot block the Claude Code turn indefinitely. Capture
+    # is fire-and-fast (3s); the blocking recall/feedback legs get 5s.
+    def command(cmd: str, timeout: int = 5) -> dict[str, Any]:
+        return {"type": "command", "command": cmd, "timeout": timeout}
 
-    capture = command(capture_cmd)
-    entries: dict[str, list[dict[str, str]]] = {
+    capture = command(capture_cmd, timeout=3)
+    entries: dict[str, list[dict[str, Any]]] = {
         "SessionStart": [capture],
         "UserPromptSubmit": [capture, command(inject_cmd)],
         "UserPromptExpansion": [capture, command(inject_cmd)],
