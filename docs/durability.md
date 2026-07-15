@@ -117,6 +117,15 @@ done
 
 > **Do not use `BGSAVE` for this.** `BGSAVE` writes `<dir>/dump.rdb`, which is a separate artefact that does NOT participate in AOF replay. Only `BGREWRITEAOF` produces the `appendonlydir/moon.aof.<N>.base.rdb` that Moon's recovery chain needs.
 
+### 2.2b Post-replay ranking permutation (measurement gotcha, not a durability issue)
+
+After a restart the FT/HNSW index is rebuilt from replayed HSETs, whose
+insertion order can differ from the original — near-tie hits may come back
+in a different ORDER even though the recalled SET is byte-identical
+(observed on v0.7.1, 2026-07-15; the recovery harness asserts set identity
+and prints an `order-drift` note when this happens). Downstream rerankers
+absorb this; don't write tests that assert exact post-restart hit order.
+
 ### 2.3 FT index lag (measurement gotcha, not a durability issue)
 
 `await kb.ingest(...)` returns after the atomic envelope is ACKed. But Moon's FT index `num_docs` can lag the underlying HSETs by a few hundred milliseconds while the index materialises. If you snapshot `FT.INFO chunks` immediately after the last ingest and then crash, post-recovery `num_docs` can appear higher than the pre-crash snapshot — because the index caught up during the interim.
