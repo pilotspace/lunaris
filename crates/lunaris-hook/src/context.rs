@@ -1564,6 +1564,77 @@ mod tests {
         }
     }
 
+    /// scratchpad-proxiable: a scratchpad_write followed by a scratchpad_read,
+    /// both through the daemon's `handle_memory`, returns the verbatim value —
+    /// proving the four scratchpad ops now cross the socket and run on the warm
+    /// per-scope handle (the same shared handlers the mcp fallback uses). This
+    /// is what lets a socket-mode mcp avoid opening a second engine for them.
+    #[tokio::test]
+    async fn handle_memory_scratchpad_write_then_read_round_trip() {
+        let (svc, scope) = service_with_seeded_scope("test-mem-sp-rt").await;
+
+        let write = svc
+            .handle_memory(MemoryRequest::ScratchpadWrite {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::scratchpad_write::ScratchpadWriteParams {
+                    key: "warm-key".to_owned(),
+                    value: serde_json::json!({"answer": 42}),
+                    namespace: None,
+                },
+            })
+            .await;
+        match &write {
+            MemoryResponse::Ok { data } => {
+                assert!(
+                    data.get("lsn").and_then(|l| l.as_str()).is_some(),
+                    "write DTO must carry lsn"
+                );
+            }
+            MemoryResponse::Err { code, message } => {
+                panic!("scratchpad_write errored: {code} / {message}")
+            }
+        }
+
+        let read = svc
+            .handle_memory(MemoryRequest::ScratchpadRead {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::scratchpad_read::ScratchpadReadParams {
+                    key: "warm-key".to_owned(),
+                    namespace: None,
+                },
+            })
+            .await;
+        match read {
+            MemoryResponse::Ok { data } => {
+                assert_eq!(data.get("found").and_then(|f| f.as_bool()), Some(true));
+                assert_eq!(data.get("value"), Some(&serde_json::json!({"answer": 42})));
+            }
+            MemoryResponse::Err { code, message } => {
+                panic!("scratchpad_read errored: {code} / {message}")
+            }
+        }
+    }
+
+    /// scratchpad-proxiable: a handover over the socket is INFALLIBLE — on a
+    /// memory:// warm handle (no native queue) it returns Ok with an advisory
+    /// skip status, never an `Err`. The mcp caller relies on this to warn-and-
+    /// continue without failing the triggering scratchpad op.
+    #[tokio::test]
+    async fn handle_memory_scratchpad_handover_is_ok_and_skips() {
+        let (svc, scope) = service_with_seeded_scope("test-mem-sp-handover").await;
+        let resp = svc
+            .handle_memory(MemoryRequest::ScratchpadHandover { scope: scope.as_str().to_owned() })
+            .await;
+        match resp {
+            MemoryResponse::Ok { data } => {
+                assert_eq!(data.get("status").and_then(|s| s.as_str()), Some("skipped_no_queue"));
+            }
+            MemoryResponse::Err { code, message } => {
+                panic!("handover must never error: {code} / {message}")
+            }
+        }
+    }
+
     /// An empty scope string is a `scope_required` fault — never a silent
     /// fall-through to a default/daemon scope (the P0 cross-project-bleed class).
     #[tokio::test]
