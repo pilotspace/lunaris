@@ -254,6 +254,7 @@ Watch: handover skip rate (socket failures), Direct-fallback rate on scratchpad 
 
 ### Spec delta
 - [SPEC · open] once scratchpad proxies, a pure-socket mcp needs NO local engine — the deferred lazy-embedder / skip-engine-open task can finally land (evidence: this task removes the last engine-coupled tool group).
+- [SPEC · resolved] P0 socket-framing: the proxy MUST frame `MemoryRequest` as `{"type":"memory", ...}` (contextd decodes a `type`-tagged `ContextRequest`). Codified as `protocol::encode_socket_request`; fixed in commit ee91a92. Applies to the PR #56 engine ops too — the socket path was dead for ALL memory ops before this.
 
 ### Competency deltas
-- (fill at observe)
+- [TDD · open] A verify gate that passes on unit tests alone can still ship a dead integration seam. Both the proxy fake-server (speaks the response type directly) and the in-process `handle_memory` tests bypassed the real `proxy encode → contextd decode` wire — the bug only surfaced under a real-binary Moon-only E2E (independent raw contextd read = the discriminator). Lesson: a cross-process transport change needs at least one test that exercises the actual encode+decode across the real boundary, not two half-mocked halves. Regression guard added: `proxy_frame_decodes_as_context_request`.
