@@ -1,6 +1,6 @@
 """End-to-end crash-recovery test for Lunaris + Moon.
 
-Exercises three failure modes and verifies post-recovery state:
+Exercises four failure modes and verifies post-recovery state:
 
   1. Moon hard-kill (SIGKILL) + AOF replay
      - Ingest N docs, capture a recall snapshot
@@ -18,14 +18,25 @@ Exercises three failure modes and verifies post-recovery state:
      - After (1)'s recovery, issue fresh ingests; assert the new docs
        are searchable alongside the replayed ones.
 
+  4. Upgrade replay (#69 guard, moon-v070-bump) — `--upgrade-replay`
+     - OLD binary writes raw KV + bi-temporal + graph + MQ + temporal probes
+     - SIGKILL; NEW binary restarts on the same data dir
+     - Assert every plane replays intact (raw redis only — no SDK/embedder)
+
+TEST 1 additionally writes the same plane probes pre-kill and verifies them
+post-restart (the #69-protected MQ/temporal planes were previously unprobed).
+
 Usage:
   LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
     uv run --with datasets --with python-ulid --with redis \
       python scripts/test-recovery.py [--docs 200]
+  python scripts/test-recovery.py --upgrade-replay \
+    [--old-bin ~/.lunaris/bin/moon] [--new-bin vendor/moon/target/release/moon]
 
-Prereqs:
-  - Ollama with embeddinggemma:300m pulled
-  - Moon release binary at ../moon/target/release/moon
+Prereqs (TESTs 1-3 only; TEST 4 needs just `redis` + the two binaries):
+  - lunaris Python SDK importable (maturin develop --uv -m crates/lunaris-py/Cargo.toml)
+  - embedder GGUF at ~/.lunaris/models/ (granite-embedding-311m Q4_K_M)
+  - Moon release binary at ../moon/target/release/moon (override: LUNARIS_TEST_MOON_BIN)
   - No other process on port 6380
   - Writable target/moon-data-recovery/ next to this script's CWD
 """
@@ -42,12 +53,21 @@ import sys
 import time
 from pathlib import Path
 
-import lunaris
 import redis  # type: ignore[import-not-found]
-from lunaris.documentary import DocumentKnowledgeBase
+
+# NOTE: `lunaris` + `DocumentKnowledgeBase` are imported lazily inside the
+# tests that need them (TEST 1-3) so the raw-command `--upgrade-replay` leg
+# runs without the Python SDK installed (moon-v070-bump).
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MOON_BIN = REPO_ROOT.parent / "moon" / "target" / "release" / "moon"
+# Default: sibling moon repo. Override with LUNARIS_TEST_MOON_BIN (e.g. the
+# vendored release binary) so TESTs 1-3 exercise the pinned Moon version.
+MOON_BIN = Path(
+    os.environ.get(
+        "LUNARIS_TEST_MOON_BIN",
+        REPO_ROOT.parent / "moon" / "target" / "release" / "moon",
+    )
+)
 MOON_DATA = REPO_ROOT / "target" / "moon-data-recovery"
 MOON_LOG = REPO_ROOT / "target" / "moon-data-recovery-launch.log"
 MOON_PORT = 6380
@@ -76,7 +96,7 @@ def stop_any_moon() -> None:
     time.sleep(0.3)
 
 
-def start_moon(*, wipe: bool) -> subprocess.Popen:
+def start_moon(*, wipe: bool, moon_bin: Path | None = None) -> subprocess.Popen:
     if wipe:
         if MOON_DATA.exists():
             shutil.rmtree(MOON_DATA)
@@ -86,7 +106,7 @@ def start_moon(*, wipe: bool) -> subprocess.Popen:
     # refuses to replay an AOF incr against an empty state ("AOF base RDB
     # missing") — confirmed 2026-04-23 by killing before the first snapshot.
     cmd = [
-        str(MOON_BIN),
+        str(moon_bin or MOON_BIN),
         "--bind",
         "127.0.0.1",
         "--port",
@@ -103,6 +123,11 @@ def start_moon(*, wipe: bool) -> subprocess.Popen:
         "always",
         "--save",
         "1 1",
+        # This dev box runs >90% disk-used; without this the diskfull guard
+        # pauses write-flagged commands (incl. MQ POP delivery-state writes)
+        # mid-test and masquerades as data loss (found 2026-07-15).
+        "--disk-free-min-pct",
+        "1",
     ]
     log_f = open(MOON_LOG, "ab")
     p = subprocess.Popen(cmd, stdout=log_f, stderr=log_f)
@@ -116,6 +141,241 @@ def start_moon(*, wipe: bool) -> subprocess.Popen:
             pass
         time.sleep(0.1)
     raise RuntimeError("moon failed to come up within 8 s")
+
+
+MQ_PROBE_TOPIC = "recovery-probe-mq"
+MQ_PROBE_PAYLOADS = [b"mq-probe-1", b"mq-probe-2", b"mq-probe-3"]
+KV_PROBE_KEY = "recovery-probe:kv"
+BT_PROBE_KEY = "recovery-probe:bt"
+GRAPH_PROBE_NAME = "recovery-probe-graph"
+
+
+def force_aof_anchor(r: redis.Redis) -> None:
+    """Force an AOF base RDB snapshot so replay has an anchor.
+
+    BGSAVE alone does NOT create the AOF base that replay needs; Moon
+    requires BGREWRITEAOF which rotates the AOF seq + writes a new
+    `moon.aof.<N>.base.rdb`. Poll for the file on disk since Moon's
+    LASTSAVE doesn't return a usable integer (live-measurement finding
+    2026-04-23).
+    """
+    aof_dir = MOON_DATA / "appendonlydir"
+    try:
+        r.execute_command("BGREWRITEAOF")
+        t_bg = time.perf_counter()
+        base_rdbs_before = set(aof_dir.glob("*.base.rdb"))
+        while time.perf_counter() - t_bg < 15.0:
+            base_rdbs_after = set(aof_dir.glob("*.base.rdb"))
+            new = base_rdbs_after - base_rdbs_before
+            if new:
+                base = next(iter(new))
+                if base.stat().st_size > 0:
+                    print(
+                        f"  BGREWRITEAOF produced {base.name} "
+                        f"({base.stat().st_size} bytes) in "
+                        f"{time.perf_counter() - t_bg:.2f} s"
+                    )
+                    break
+            time.sleep(0.1)
+        else:
+            print("  WARN: no new base.rdb within 15 s — recovery may fail")
+    except Exception as e:
+        print(f"  WARN: BGREWRITEAOF failed: {e}")
+
+
+def temporal_smoke() -> None:
+    """TEMPORAL.SNAPSHOT_AT pin smoke on a THROWAWAY connection.
+
+    The snapshot pin is per-connection, so a dedicated connection keeps the
+    caller's connection in live mode. The arg-less `TEMPORAL.INVALIDATE`
+    release only exists on v0.7+ — on older servers dropping the connection
+    releases the pin, so a signature error there is tolerated.
+    """
+    rt = redis.Redis(host="127.0.0.1", port=MOON_PORT, socket_timeout=2)
+    rt.execute_command("TEMPORAL.SNAPSHOT_AT")
+    try:
+        rt.execute_command("TEMPORAL.INVALIDATE")
+    except redis.exceptions.ResponseError as e:
+        print(f"  note: TEMPORAL.INVALIDATE not arg-less on this server ({e}); pin released via close")
+    rt.close()
+
+
+def plane_probe_write(r: redis.Redis) -> dict:
+    """Write MQ + temporal(+KV/graph) probe state — the #69-protected planes.
+
+    MQ: push 3 messages, pop+ACK the first (creates consumed-offset state that
+    the WAL must carry — moon-v070-bump). Temporal: a Lunaris-shaped hash with
+    `v`+`bt` fields (what `read_as_of` HMGETs) + a TEMPORAL.SNAPSHOT_AT/
+    INVALIDATE smoke. Graph: one GRAPH.ADDNODE (the only write path that
+    registers key_to_node — see lunaris-storage-moon/src/atomic.rs).
+    Returns the expected post-restart state for plane_probe_verify.
+    """
+    expected: dict = {}
+    r.set(KV_PROBE_KEY, "kv-v1")
+    expected["kv"] = b"kv-v1"
+    r.hset(BT_PROBE_KEY, mapping={"v": "fact-v1", "bt": '{"vt":1752537600000,"tt":1752537600000}'})
+    expected["bt"] = {b"v": b"fact-v1", b"bt": b'{"vt":1752537600000,"tt":1752537600000}'}
+    # Queues must be declared durable before PUSH ("stream is not a durable
+    # queue" otherwise) — mirrors MqClient::create.
+    r.execute_command("MQ", "CREATE", MQ_PROBE_TOPIC)
+    for p in MQ_PROBE_PAYLOADS:
+        r.execute_command("MQ", "PUSH", MQ_PROBE_TOPIC, "body", p)
+    popped = r.execute_command("MQ", "POP", MQ_PROBE_TOPIC, "COUNT", 1)
+    # Reply: array of [id, body-ish fields]; ACK the first entry id.
+    try:
+        first_id = popped[0][0] if popped and isinstance(popped[0], (list, tuple)) else popped[0]
+        if isinstance(first_id, bytes):
+            first_id = first_id.decode()
+        r.execute_command("MQ", "ACK", MQ_PROBE_TOPIC, first_id)
+        expected["mq_acked"] = True
+    except Exception as e:  # noqa: BLE001 — probe stays best-effort on shape drift
+        print(f"  WARN: MQ pop/ack probe shape drift: {e}")
+        expected["mq_acked"] = False
+    expected["mq_remaining"] = MQ_PROBE_PAYLOADS[1:] if expected["mq_acked"] else MQ_PROBE_PAYLOADS
+    try:
+        r.execute_command("GRAPH.CREATE", GRAPH_PROBE_NAME)
+        node_id = r.execute_command("GRAPH.ADDNODE", GRAPH_PROBE_NAME, "ProbeNode", "_key", "probe:1")
+        r.execute_command(
+            "GRAPH.QUERY",
+            GRAPH_PROBE_NAME,
+            f"MATCH (n:ProbeNode) WHERE id(n) = {int(node_id)} SET n.id = 'probe-1' RETURN n",
+        )
+        expected["graph_nodes"] = 1
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN: graph probe write failed: {e}")
+        expected["graph_nodes"] = None
+    temporal_smoke()
+    return expected
+
+
+def _entry_body(entry) -> bytes | None:
+    """Extract the `body` field from a stream/MQ entry.
+
+    redis-py decodes XRANGE entries as `(id, {field: value})`; MQ POP replies
+    arrive as nested arrays. Handle both.
+    """
+    if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+        return None
+    fields = entry[1]
+    if isinstance(fields, dict):
+        v = fields.get(b"body", fields.get("body"))
+        return v if isinstance(v, (bytes, type(None))) else str(v).encode()
+    flat = [x for x in entry if isinstance(x, (bytes, str))]
+    for i, f in enumerate(flat):
+        if f in (b"body", "body") and i + 1 < len(flat):
+            v = flat[i + 1]
+            return v if isinstance(v, bytes) else v.encode()
+    if isinstance(fields, (list, tuple)):
+        for i in range(0, len(fields) - 1, 2):
+            if fields[i] in (b"body", "body"):
+                v = fields[i + 1]
+                return v if isinstance(v, bytes) else v.encode()
+    return None
+
+
+def wait_plane_replay(r: redis.Redis, n_entries: int, timeout_s: float = 10.0) -> None:
+    """Moon replays the MQ WAL plane ASYNCHRONOUSLY after the port accepts
+    connections (`moon::shard::shared_databases` logs it post-start) — verify
+    too early and the stream looks empty (raced 2026-07-15). Poll XLEN until
+    the expected entries land or the timeout expires.
+    """
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < timeout_s:
+        try:
+            if int(r.execute_command("XLEN", MQ_PROBE_TOPIC)) >= n_entries:
+                print(f"  MQ plane replay settled in {time.perf_counter() - t0:.2f} s")
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+    print(f"  WARN: MQ plane replay did not settle within {timeout_s} s")
+
+
+def plane_probe_verify(r: redis.Redis, expected: dict) -> bool:
+    """Assert the plane_probe_write state survived a restart/upgrade replay."""
+    ok = True
+    wait_plane_replay(r, len(MQ_PROBE_PAYLOADS))
+    ok &= assert_equal("KV probe value", expected["kv"], r.get(KV_PROBE_KEY))
+    ok &= assert_equal("bi-temporal hash (v+bt fields)", expected["bt"], r.hgetall(BT_PROBE_KEY))
+    # MQ plane, two guarantees asserted (moon-v070-bump, 2026-07-15):
+    #   1. ENTRY durability — every pushed payload is still in the stream
+    #      (XRANGE), byte-identical and in order.
+    #   2. OPERATIONAL self-heal — after the idempotent re-CREATE that
+    #      Lunaris's publish path always issues, PUSH+POP work again.
+    # NOT asserted (known Moon gap ≤0.7.1, pre-existing at the old pin —
+    # verified v0.6.0→v0.6.0 baseline 2026-07-15): the consumer delivery
+    # cursor / PEL is not replayed, so pre-restart backlog is not
+    # REDELIVERED even though the entries survive. Tracked as an upstream
+    # Moon issue; Tier-2 WAIT-durable ingest must not assume redelivery.
+    try:
+        raw = r.execute_command("XRANGE", MQ_PROBE_TOPIC, "-", "+")
+        stream_bodies = [_entry_body(e) for e in (raw or [])]
+        stream_bodies = [b for b in stream_bodies if b is not None]
+        ok &= assert_equal(
+            "MQ stream entries survive (XRANGE)",
+            MQ_PROBE_PAYLOADS,
+            stream_bodies[: len(MQ_PROBE_PAYLOADS)],
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"    [FAIL] MQ XRANGE probe errored: {e}")
+        ok = False
+    try:
+        r.execute_command("MQ", "CREATE", MQ_PROBE_TOPIC)  # idempotent, mirrors publish()
+        r.execute_command("MQ", "PUSH", MQ_PROBE_TOPIC, "body", b"mq-probe-postrestart")
+        popped: list[bytes] = []
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 3.0:  # delivery visibility can lag the push post-replay
+            raw = r.execute_command("MQ", "POP", MQ_PROBE_TOPIC, "COUNT", 10)
+            popped.extend(b for b in (_entry_body(e) for e in (raw or [])) if b is not None)
+            if b"mq-probe-postrestart" in popped:
+                break
+            time.sleep(0.2)
+        ok &= assert_equal(
+            "MQ self-heal: post-restart push is consumable", True, b"mq-probe-postrestart" in popped
+        )
+        redelivered = [p for p in popped if p in expected["mq_remaining"]]
+        if redelivered:
+            print(f"    note: pre-restart backlog WAS redelivered ({redelivered}) — Moon fixed the cursor gap")
+        else:
+            print(
+                "    WARN(known-gap): pre-restart un-ACKed backlog not redelivered "
+                f"(expected-if-fixed: {expected['mq_remaining']}) — entries survive in the stream "
+                "but the delivery cursor does not replay (Moon ≤0.7.1, pre-existing at v0.6.0)"
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"    [FAIL] MQ self-heal probe errored: {e}")
+        ok = False
+    if expected.get("graph_nodes") is not None:
+        try:
+            res = r.execute_command(
+                "GRAPH.QUERY", GRAPH_PROBE_NAME, "MATCH (n:ProbeNode) WHERE n.id = 'probe-1' RETURN count(n)"
+            )
+
+            def leaves(v):  # header row comes first — find the first int-like leaf
+                if isinstance(v, (list, tuple)):
+                    for x in v:
+                        yield from leaves(x)
+                else:
+                    yield v
+
+            count = None
+            for leaf in leaves(res):
+                try:
+                    count = int(leaf)
+                    break
+                except (TypeError, ValueError):
+                    continue
+            ok &= assert_equal("graph probe node count", expected["graph_nodes"], count)
+        except Exception as e:  # noqa: BLE001
+            print(f"    [FAIL] graph probe query errored: {e}")
+            ok = False
+    try:
+        temporal_smoke()
+        ok &= assert_equal("TEMPORAL.SNAPSHOT_AT smoke", True, True)
+    except Exception as e:  # noqa: BLE001
+        print(f"    [FAIL] temporal smoke errored: {e}")
+        ok = False
+    return ok
 
 
 def snapshot(r: redis.Redis) -> dict:
@@ -145,6 +405,8 @@ async def ingest_and_sample(
 
     probe_results[i] is the list of hit texts (ordered) for queries[i].
     """
+    import lunaris
+    from lunaris.documentary import DocumentKnowledgeBase
     from datasets import load_dataset
     from collections import OrderedDict
 
@@ -187,6 +449,9 @@ async def ingest_and_sample(
 async def replay_probes(
     queries: list[tuple[str, list[str], str]]
 ) -> list[list[str]]:
+    import lunaris
+    from lunaris.documentary import DocumentKnowledgeBase
+
     handle = await lunaris.open(MOON_URL)
     kb = DocumentKnowledgeBase.new(handle, SOURCE_PREFIX)
     out: list[list[str]] = []
@@ -223,34 +488,10 @@ async def test_moon_kill(n_docs: int) -> bool:
     # run while index was still growing.
     probes_before = await replay_probes(queries)
 
-    # Phase B — force an AOF base RDB snapshot so replay has an anchor.
-    # BGSAVE alone does NOT create the AOF base that replay needs; Moon
-    # requires BGREWRITEAOF which rotates the AOF seq + writes a new
-    # `moon.aof.<N>.base.rdb`. Poll for the file on disk since Moon's
-    # LASTSAVE doesn't return a usable integer (live-measurement finding
-    # 2026-04-23).
-    aof_dir = MOON_DATA / "appendonlydir"
-    try:
-        r.execute_command("BGREWRITEAOF")
-        t_bg = time.perf_counter()
-        base_rdbs_before = set(aof_dir.glob("*.base.rdb"))
-        while time.perf_counter() - t_bg < 15.0:
-            base_rdbs_after = set(aof_dir.glob("*.base.rdb"))
-            new = base_rdbs_after - base_rdbs_before
-            if new:
-                base = next(iter(new))
-                if base.stat().st_size > 0:
-                    print(
-                        f"  BGREWRITEAOF produced {base.name} "
-                        f"({base.stat().st_size} bytes) in "
-                        f"{time.perf_counter() - t_bg:.2f} s"
-                    )
-                    break
-            time.sleep(0.1)
-        else:
-            print("  WARN: no new base.rdb within 15 s — recovery may fail")
-    except Exception as e:
-        print(f"  WARN: BGREWRITEAOF failed: {e}")
+    # Phase B — probe the #69-protected planes, then force the AOF anchor.
+    plane_expected = plane_probe_write(r)
+    print(f"  plane probes written: {list(plane_expected)}")
+    force_aof_anchor(r)
     print(f"  SIGKILL moon pid={moon_proc.pid}...")
     os.kill(moon_proc.pid, signal.SIGKILL)
     moon_proc.wait(timeout=5)
@@ -283,6 +524,58 @@ async def test_moon_kill(n_docs: int) -> bool:
         all_ok &= assert_equal(
             f"probe {i} top-10 text identity ({q[2][:40]}...)", a, b
         )
+    print("\n  ── plane probes (MQ · temporal · graph · KV) ──")
+    all_ok &= plane_probe_verify(r2, plane_expected)
+    return all_ok
+
+
+async def test_upgrade_replay(old_bin: Path, new_bin: Path, anchor: bool = True) -> bool:
+    """#69 guard: a data dir written by the OLD Moon binary must replay intact
+    under the NEW (v0.7.1) binary — MQ + temporal history included.
+
+    Raw-command probes only (no embedder / datasets needed) so this leg runs
+    self-contained: KV string · bi-temporal hash · graph node · MQ backlog
+    with a consumed (ACKed) head · TEMPORAL smoke.
+    """
+    print("\n════════════ TEST 4 — v0.6→v0.7.1 upgrade replay (#69) ════════════")
+    print(f"  old binary: {old_bin}")
+    print(f"  new binary: {new_bin}")
+    for b, name in ((old_bin, "old"), (new_bin, "new")):
+        if not b.exists():
+            print(f"  SKIP: {name} binary missing at {b}")
+            return False
+
+    stop_any_moon()
+    old_proc = start_moon(wipe=True, moon_bin=old_bin)
+    r = redis.Redis(host="127.0.0.1", port=MOON_PORT)
+    old_version = (r.info("server").get("moon_version") or "?")
+    print(f"  old moon up pid={old_proc.pid} version={old_version}")
+
+    expected = plane_probe_write(r)
+    dbsize_before = r.dbsize()
+    if anchor:
+        force_aof_anchor(r)
+    else:
+        print("  --no-anchor: skipping BGREWRITEAOF (isolates rewriter-drops-MQ)")
+        time.sleep(1.5)  # let --save "1 1" cut its own base if it wants to
+    print(f"  SIGKILL old moon pid={old_proc.pid}...")
+    os.kill(old_proc.pid, signal.SIGKILL)
+    old_proc.wait(timeout=5)
+    time.sleep(0.5)
+
+    print("  starting NEW binary on the old data dir (upgrade replay)...")
+    t0 = time.perf_counter()
+    new_proc = start_moon(wipe=False, moon_bin=new_bin)
+    print(f"  new moon up in {time.perf_counter() - t0:.2f} s, pid={new_proc.pid}")
+    r2 = redis.Redis(host="127.0.0.1", port=MOON_PORT)
+    new_version = (r2.info("server").get("moon_version") or "?")
+    print(f"  new moon version={new_version}")
+
+    all_ok = True
+    all_ok &= assert_equal("dbsize across upgrade", dbsize_before, r2.dbsize())
+    all_ok &= plane_probe_verify(r2, expected)
+    if old_version == new_version:
+        print(f"  WARN: old and new report the same version ({old_version}) — not a real upgrade")
     return all_ok
 
 
@@ -370,6 +663,9 @@ asyncio.run(main())
         f"chunks_num_docs >= {ingested}", True, isinstance(cnum, int) and cnum >= ingested
     )
     # Now verify recall still works (FT.SEARCH not broken by the kill).
+    import lunaris
+    from lunaris.documentary import DocumentKnowledgeBase
+
     h = await lunaris.open(MOON_URL)
     kb = DocumentKnowledgeBase.new(h, SOURCE_PREFIX)
     try:
@@ -386,6 +682,9 @@ asyncio.run(main())
 async def test_write_after_restart(n_docs: int) -> bool:
     """After TEST 1 left Moon recovered, write fresh data + verify searchable."""
     print("\n════════════ TEST 3 — Writes after restart ════════════")
+    import lunaris
+    from lunaris.documentary import DocumentKnowledgeBase
+
     h = await lunaris.open(MOON_URL)
     kb = DocumentKnowledgeBase.new(h, SOURCE_PREFIX + "post-restart/")
     body = (
@@ -403,7 +702,37 @@ async def test_write_after_restart(n_docs: int) -> bool:
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--docs", type=int, default=200)
+    ap.add_argument(
+        "--upgrade-replay",
+        action="store_true",
+        help="run ONLY the #69 old-binary→new-binary upgrade-replay test (raw probes, no embedder)",
+    )
+    ap.add_argument(
+        "--old-bin",
+        type=Path,
+        default=Path.home() / ".lunaris" / "bin" / "moon",
+        help="OLD Moon binary that writes the pre-upgrade data dir",
+    )
+    ap.add_argument(
+        "--new-bin",
+        type=Path,
+        default=REPO_ROOT / "vendor" / "moon" / "target" / "release" / "moon",
+        help="NEW Moon binary that must replay the old data dir intact",
+    )
+    ap.add_argument(
+        "--no-anchor",
+        action="store_true",
+        help="upgrade-replay only: skip the BGREWRITEAOF anchor before the kill",
+    )
     args = ap.parse_args()
+
+    if args.upgrade_replay:
+        ok = await test_upgrade_replay(args.old_bin, args.new_bin, anchor=not args.no_anchor)
+        print("\n════════════ SUMMARY ════════════")
+        print(f"  upgrade_replay            {'PASS' if ok else 'FAIL'}")
+        print()
+        print(json.dumps({"upgrade_replay": ok}, indent=2))
+        sys.exit(0 if ok else 1)
 
     if not MOON_BIN.exists():
         print(f"moon binary not found at {MOON_BIN}", file=sys.stderr)
