@@ -454,24 +454,32 @@ mod tests {
             _embedded_moon: None, // guard owned separately for this test
         };
 
-        // write then read
-        let write_params = crate::tools::scratchpad_write::ScratchpadWriteParams {
+        // write then read (shared handlers; namespace resolved here as None → default)
+        let write_params = lunaris_memory_service::scratchpad_write::ScratchpadWriteParams {
             key: "hello".into(),
             value: serde_json::json!("world"),
             namespace: None,
         };
-        let write_resp = crate::tools::scratchpad_write::handle(&app_state, write_params)
-            .await
-            .expect("scratchpad_write must succeed");
+        let write_resp = lunaris_memory_service::scratchpad_write::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            write_params,
+        )
+        .await
+        .expect("scratchpad_write must succeed");
         assert!(!write_resp.lsn.is_empty());
 
-        let read_params = crate::tools::scratchpad_read::ScratchpadReadParams {
+        let read_params = lunaris_memory_service::scratchpad_read::ScratchpadReadParams {
             key: "hello".into(),
             namespace: None,
         };
-        let read_resp = crate::tools::scratchpad_read::handle(&app_state, read_params)
-            .await
-            .expect("scratchpad_read must succeed");
+        let read_resp = lunaris_memory_service::scratchpad_read::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            read_params,
+        )
+        .await
+        .expect("scratchpad_read must succeed");
 
         assert!(read_resp.found, "key written to Moon must be found on read");
         assert_eq!(
@@ -495,6 +503,9 @@ mod tests {
     async fn embedded_moon_session_handover_rotates_and_drains() {
         use lunaris::Lunaris;
         use lunaris_core::{Scope, StubEmbedder};
+
+        use crate::proxy::MemoryProxy;
+        use crate::tools::staging::resolve_namespace_session_aware;
 
         crate::tools::staging::skip_stage_for_tests();
         let _seam = crate::session_pad::lock_test_seam().await;
@@ -538,14 +549,25 @@ mod tests {
         write_marker("sess-ha-a");
         crate::session_pad::set_sessions_file_for_tests(Some(marker.clone()));
 
+        // Direct-only proxy: the handover fires THROUGH the proxy but, with no
+        // socket, runs on THIS app_state.lunaris — the same engine that holds
+        // the pad. This mirrors exactly what the `#[tool]` methods do: resolve
+        // the session-aware namespace (which triggers the handover) then call
+        // the shared handler with the resolved namespace.
+        let proxy = MemoryProxy::direct_only_for_test();
+
         // A writes two keys under its (default) pad — two consolidate events enqueued.
         for (k, v) in [("plan", "ship the handover"), ("blocker", "none")] {
-            crate::tools::scratchpad_write::handle(
-                &app_state,
-                crate::tools::scratchpad_write::ScratchpadWriteParams {
+            let ns = resolve_namespace_session_aware(&proxy, &app_state, None)
+                .await
+                .expect("session-A namespace resolution must succeed");
+            lunaris_memory_service::scratchpad_write::handle(
+                &app_state.lunaris,
+                &app_state.scope,
+                lunaris_memory_service::scratchpad_write::ScratchpadWriteParams {
                     key: k.into(),
                     value: serde_json::json!(v),
-                    namespace: None,
+                    namespace: Some(ns),
                 },
             )
             .await
@@ -555,13 +577,17 @@ mod tests {
         // Switch: marker flips to session B.
         write_marker("sess-ha-b");
 
-        // B's first default read: new pad must be EMPTY (rotation) and the
-        // handover consolidate fires inside the call (whole-scope drain).
-        let read_resp = crate::tools::scratchpad_read::handle(
-            &app_state,
-            crate::tools::scratchpad_read::ScratchpadReadParams {
+        // B's first default resolution triggers the whole-scope handover drain
+        // (through the proxy → this engine), then serves B's fresh (empty) pad.
+        let b_ns = resolve_namespace_session_aware(&proxy, &app_state, None)
+            .await
+            .expect("session-B namespace resolution (fires handover) must succeed");
+        let read_resp = lunaris_memory_service::scratchpad_read::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            lunaris_memory_service::scratchpad_read::ScratchpadReadParams {
                 key: "plan".into(),
-                namespace: None,
+                namespace: Some(b_ns),
             },
         )
         .await
@@ -575,9 +601,12 @@ mod tests {
         // Drain proof: the explicit consolidate now finds NOTHING — the
         // handover already consumed A's pending events. (Without the
         // handover this drains the two enqueued events instead.)
-        let consolidate_resp = crate::tools::scratchpad_consolidate::handle(
-            &app_state,
-            crate::tools::scratchpad_consolidate::ScratchpadConsolidateParams { namespace: None },
+        let consolidate_resp = lunaris_memory_service::scratchpad_consolidate::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            lunaris_memory_service::scratchpad_consolidate::ScratchpadConsolidateParams {
+                namespace: None,
+            },
         )
         .await
         .expect("explicit consolidate must succeed");
@@ -589,12 +618,13 @@ mod tests {
         );
 
         // Contracted: A's facts surface in long-term recall after handover.
-        let recall_resp = crate::tools::recall::handle(
-            &app_state,
-            crate::tools::recall::RecallParams {
+        let recall_resp = lunaris_memory_service::recall::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            lunaris_memory_service::recall::RecallParams {
                 query: "ship the handover".into(),
                 k: 5,
-                filters: Some(crate::tools::recall::RecallFilters {
+                filters: Some(lunaris_memory_service::recall::RecallFilters {
                     source_prefix: Some("scratchpad/sess-ha-a/".into()),
                 }),
                 as_of: None,
@@ -609,9 +639,10 @@ mod tests {
         );
 
         // Nothing destroyed: A's pad stays readable under its explicit namespace.
-        let a_read = crate::tools::scratchpad_read::handle(
-            &app_state,
-            crate::tools::scratchpad_read::ScratchpadReadParams {
+        let a_read = lunaris_memory_service::scratchpad_read::handle(
+            &app_state.lunaris,
+            &app_state.scope,
+            lunaris_memory_service::scratchpad_read::ScratchpadReadParams {
                 key: "plan".into(),
                 namespace: Some("scratchpad/sess-ha-a/".into()),
             },

@@ -62,143 +62,139 @@ pub(crate) async fn maybe_ensure_staged() -> Result<(), ToolError> {
         .map(|_| ())
 }
 
-// ── Namespace validator ───────────────────────────────────────────────────────
+// ── Session-aware namespace resolution ─────────────────────────────────────────
+//
+// The namespace VALIDATOR + plain resolver now live in the shared crate
+// (`lunaris_memory_service::namespace`) alongside the scratchpad handlers. Only
+// the SESSION-aware resolution stays here: it reads the sessions.json marker,
+// which is client-machine state maintained by lunaris-hook next to this mcp
+// process (contextd has no marker), so it is inherently a caller concern.
 
-/// Validate a caller-supplied namespace string.
+/// Session-aware namespace resolution (scratchpad-proxiable task) — used by the
+/// scratchpad_write / scratchpad_read / scratchpad_grep `#[tool]` methods.
 ///
-/// Namespace shapes the `scope_prefix` passed to `WorkingMemory::new`.
-/// It is NOT a security boundary (scope is — bound at startup), but it
-/// MUST NOT contain `:` to prevent source-key byte-aliasing across namespaces
-/// (same rationale as `Scope::new`'s v0.2.1 alphabet tightening).
-///
-/// Allowed: `[A-Za-z0-9_\-./]`, length 1..=128.
-/// Default when `Option::None` is supplied by caller: `"scratchpad/"`.
-// Used by scratchpad_write, scratchpad_read, scratchpad_grep (added in T2/T3).
-#[allow(dead_code)]
-pub(crate) fn validate_namespace(ns: &str) -> Result<(), ToolError> {
-    if ns.is_empty() || ns.len() > 128 {
-        return Err(ToolError::InvalidInput(
-            "namespace must be 1..=128 chars of [A-Za-z0-9_\\-./]; ':' is not allowed to prevent source-key aliasing".into(),
-        ));
-    }
-    for c in ns.chars() {
-        if !matches!(c, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '-' | '.' | '/') {
-            return Err(ToolError::InvalidInput(
-                "namespace must be 1..=128 chars of [A-Za-z0-9_\\-./]; ':' is not allowed to prevent source-key aliasing".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Resolve the namespace from an optional wire value, validate it, and return it.
-/// Returns "scratchpad/" if `None`. Returns `Err` if the supplied value fails validation.
-// Used by scratchpad_consolidate (explicit-namespace tool semantics).
-#[allow(dead_code)]
-pub(crate) fn resolve_namespace(ns: Option<String>) -> Result<String, ToolError> {
-    match ns {
-        None => Ok("scratchpad/".to_owned()),
-        Some(s) => {
-            validate_namespace(&s)?;
-            Ok(s)
-        }
-    }
-}
-
-/// Session-aware namespace resolution (scratchpad-handover task) — used by
-/// scratchpad_write / scratchpad_read / scratchpad_grep.
-///
-/// An EXPLICIT namespace wins verbatim (validated, byte-identical to
-/// [`resolve_namespace`] semantics — the session logic never touches it).
-/// With `None`, the default follows the sessions.json marker that
-/// lunaris-hook maintains: `scratchpad/{active_session_id}/` when a marker
-/// names an active session for this scope, `scratchpad/` otherwise
+/// An EXPLICIT namespace wins verbatim (validated via the shared validator; the
+/// session logic never touches it). With `None`, the default follows the
+/// sessions.json marker that lunaris-hook maintains: `scratchpad/{active_session_id}/`
+/// when a marker names an active session for this scope, `scratchpad/` otherwise
 /// (back-compat when the hook is not installed).
 ///
-/// When the active session CHANGED since this process last served a pad
-/// (or on the first call after a restart with a marker present), the
-/// previous session's pending events are first consolidated via the guarded
-/// whole-scope drain — warn-and-continue, never an error on this call.
+/// When the active session CHANGED since this process last served a pad (or on
+/// the first call after a restart with a marker present), the previous session's
+/// pending events are first consolidated by firing a `ScratchpadHandover`
+/// THROUGH the proxy — so the whole-scope drain runs on the warm engine that
+/// owns the pad (contextd over the socket, or the direct-open fallback), NOT a
+/// second local engine. Warn-and-continue: a handover dispatch failure NEVER
+/// errors this call (the marker flag is already cleared by
+/// `take_pending_handover_at`, and the drain is retried at the next switch).
 pub(crate) async fn resolve_namespace_session_aware(
+    proxy: &crate::proxy::MemoryProxy,
     state: &crate::state::AppState,
     ns: Option<String>,
 ) -> Result<String, ToolError> {
     if let Some(s) = ns {
-        validate_namespace(&s)?;
+        lunaris_memory_service::namespace::validate(&s)
+            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
         return Ok(s);
     }
     let path = crate::session_pad::sessions_file_path();
     let scope = state.scope.as_str();
     if crate::session_pad::take_pending_handover_at(&path, scope) {
-        crate::tools::scratchpad_consolidate::run_handover_consolidate(state).await;
+        let req = lunaris_memory_service::protocol::MemoryRequest::ScratchpadHandover {
+            scope: scope.to_owned(),
+        };
+        if let Err(e) = proxy.dispatch(state, req).await {
+            tracing::warn!(
+                scope,
+                err = ?e,
+                "session handover dispatch failed — previous pad carries forward, \
+                 retrying at the next switch",
+            );
+        }
     }
     let active = crate::session_pad::active_session_at(&path, scope);
     Ok(crate::session_pad::default_namespace(active.as_deref()))
 }
 
-// The keyword-NotSupported classifier now lives in `lunaris_memory_service`
-// (the recall handler moved there); the scratchpad handlers that remain here
-// do not use it.
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
+//
+// The namespace VALIDATOR tests moved with the validator to the shared crate
+// (`lunaris_memory_service::namespace`). What remains here is the mcp-side
+// SESSION-aware resolution: explicit-namespace validation + the marker-driven
+// per-session default (with the handover firing THROUGH the proxy).
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use lunaris::Lunaris;
+    use lunaris_core::{Scope, StubEmbedder};
+    use serde_json::json;
+
     use super::*;
+    use crate::proxy::MemoryProxy;
+    use crate::state::AppState;
 
-    // ── validate_namespace ────────────────────────────────────────────────────
-
-    #[test]
-    fn valid_namespace_scratchpad_slash() {
-        assert!(validate_namespace("scratchpad/").is_ok());
+    async fn fresh_state(scope_name: &str) -> AppState {
+        skip_stage_for_tests();
+        let embedder = Arc::new(StubEmbedder::new(768));
+        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let scope = Scope::new(scope_name).unwrap();
+        AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
+        }
     }
 
-    #[test]
-    fn valid_namespace_single_char() {
-        assert!(validate_namespace("a").is_ok());
-    }
+    /// An EXPLICIT namespace is validated via the shared validator and returned
+    /// verbatim — the session marker is never consulted. A `:` is rejected.
+    #[tokio::test]
+    async fn explicit_namespace_wins_and_colon_rejected() {
+        let state = fresh_state("test-staging-explicit").await;
+        let proxy = MemoryProxy::direct_only_for_test();
 
-    #[test]
-    fn valid_namespace_path_with_underscores_and_dots() {
-        assert!(validate_namespace("path/with-underscores_and.dots/").is_ok());
-    }
+        let ok = resolve_namespace_session_aware(&proxy, &state, Some("notes/".into()))
+            .await
+            .expect("valid explicit namespace passes through");
+        assert_eq!(ok, "notes/");
 
-    #[test]
-    fn valid_namespace_128_chars() {
-        let s = "a".repeat(128);
-        assert!(validate_namespace(&s).is_ok());
-    }
-
-    #[test]
-    fn invalid_namespace_empty() {
-        assert!(validate_namespace("").is_err());
-    }
-
-    #[test]
-    fn invalid_namespace_129_chars() {
-        let s = "a".repeat(129);
-        let err = validate_namespace(&s).unwrap_err();
-        let msg = err.to_string();
+        let bad = resolve_namespace_session_aware(&proxy, &state, Some("a:b".into())).await;
         assert!(
-            msg.contains("128") || msg.contains("1..=128"),
-            "expected length mention; got: {msg}"
+            matches!(bad, Err(ToolError::InvalidInput(_))),
+            "explicit namespace with ':' must be rejected; got: {bad:?}"
         );
     }
 
-    #[test]
-    fn invalid_namespace_colon() {
-        let err = validate_namespace("a:b").unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains(':') || msg.contains("aliasing"), "expected ':' mention; got: {msg}");
-    }
+    /// scratchpad-proxiable: with a sessions.json marker naming an active
+    /// session, the DEFAULT namespace (ns=None) becomes the per-session pad.
+    /// The handover fires THROUGH the proxy (Direct-only here → guard-skips on
+    /// memory://) and must NOT error the resolution.
+    #[tokio::test]
+    async fn default_namespace_follows_session_marker_via_proxy() {
+        let _seam = crate::session_pad::lock_test_seam().await;
 
-    #[test]
-    fn invalid_namespace_space() {
-        assert!(validate_namespace("has space").is_err());
-    }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let marker = tmp.path().join("sessions.json");
+        let body = json!({
+            "test-staging-session": { "active_session_id": "sess-77", "ended": false,
+                                      "updated_at": "2026-06-11T00:00:00Z" }
+        });
+        std::fs::write(&marker, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
+        crate::session_pad::set_sessions_file_for_tests(Some(marker.clone()));
 
-    #[test]
-    fn invalid_namespace_at_sign() {
-        assert!(validate_namespace("has@at").is_err());
+        let state = fresh_state("test-staging-session").await;
+        let proxy = MemoryProxy::direct_only_for_test();
+
+        let ns = resolve_namespace_session_aware(&proxy, &state, None)
+            .await
+            .expect("session-aware default resolution must not error");
+        assert_eq!(
+            ns, "scratchpad/sess-77/",
+            "default namespace with a marker present must be the per-session pad"
+        );
+
+        crate::session_pad::set_sessions_file_for_tests(None);
     }
 }

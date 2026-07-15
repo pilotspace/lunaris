@@ -29,8 +29,9 @@ mod embedded_moon;
 // sessions.json marker lunaris-hook maintains (scratchpad-handover task).
 mod session_pad;
 // Socket-first proxy to lunaris-contextd with direct-open fallback
-// (contextd-mcp-merge). Routes the 6 engine ops to the warm daemon; on
-// transport failure the circuit-breaker flips to the identical shared handler.
+// (contextd-mcp-merge + scratchpad-proxiable). Routes the 6 engine ops AND the
+// 4 scratchpad ops (+ session handover) to the warm daemon; on transport
+// failure the circuit-breaker flips to the identical shared handler.
 mod proxy;
 mod tools;
 
@@ -53,16 +54,15 @@ use lunaris_memory_service::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
-    status::{StatusParams, StatusResponse},
-};
-// Scratchpad + list_scopes stay local to mcp (session_pad / registry coupling).
-use crate::tools::{
-    list_scopes::{ListScopesParams, ListScopesResponse},
     scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
     scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
     scratchpad_write::{ScratchpadWriteParams, ScratchpadWriteResponse},
+    status::{StatusParams, StatusResponse},
 };
+// list_scopes stays local to mcp (registry coupling). Scratchpad ops now proxy
+// like the engine ops, but their session-aware namespace is resolved mcp-side.
+use crate::tools::list_scopes::{ListScopesParams, ListScopesResponse};
 
 // Alias for the JSON wrapper so tool method signatures stay concise.
 use rmcp::handler::server::wrapper::Json;
@@ -317,12 +317,22 @@ impl LunarisMcpServer {
     )]
     async fn scratchpad_write(
         &self,
-        Parameters(params): Parameters<ScratchpadWriteParams>,
+        Parameters(mut params): Parameters<ScratchpadWriteParams>,
     ) -> Result<Json<ScratchpadWriteResponse>, rmcp::ErrorData> {
-        tools::scratchpad_write::handle(&self.state, params)
-            .await
-            .map(Json)
-            .map_err(rmcp::ErrorData::from)
+        // Resolve the session-aware namespace mcp-side (reads the sessions.json
+        // marker; may fire a handover THROUGH the proxy), then route the write
+        // through the proxy so it lands on contextd's warm engine.
+        let ns = tools::staging::resolve_namespace_session_aware(
+            &self.proxy,
+            &self.state,
+            params.namespace,
+        )
+        .await
+        .map_err(rmcp::ErrorData::from)?;
+        params.namespace = Some(ns);
+        let req =
+            MemoryRequest::ScratchpadWrite { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Read a single key from the agent scratchpad.
@@ -340,12 +350,19 @@ impl LunarisMcpServer {
     )]
     async fn scratchpad_read(
         &self,
-        Parameters(params): Parameters<ScratchpadReadParams>,
+        Parameters(mut params): Parameters<ScratchpadReadParams>,
     ) -> Result<Json<ScratchpadReadResponse>, rmcp::ErrorData> {
-        tools::scratchpad_read::handle(&self.state, params)
-            .await
-            .map(Json)
-            .map_err(rmcp::ErrorData::from)
+        let ns = tools::staging::resolve_namespace_session_aware(
+            &self.proxy,
+            &self.state,
+            params.namespace,
+        )
+        .await
+        .map_err(rmcp::ErrorData::from)?;
+        params.namespace = Some(ns);
+        let req =
+            MemoryRequest::ScratchpadRead { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Grep scratchpad entries by key prefix pattern.
@@ -358,12 +375,19 @@ impl LunarisMcpServer {
     )]
     async fn scratchpad_grep(
         &self,
-        Parameters(params): Parameters<ScratchpadGrepParams>,
+        Parameters(mut params): Parameters<ScratchpadGrepParams>,
     ) -> Result<Json<ScratchpadGrepResponse>, rmcp::ErrorData> {
-        tools::scratchpad_grep::handle(&self.state, params)
-            .await
-            .map(Json)
-            .map_err(rmcp::ErrorData::from)
+        let ns = tools::staging::resolve_namespace_session_aware(
+            &self.proxy,
+            &self.state,
+            params.namespace,
+        )
+        .await
+        .map_err(rmcp::ErrorData::from)?;
+        params.namespace = Some(ns);
+        let req =
+            MemoryRequest::ScratchpadGrep { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// On-demand ACT-R consolidation drain for the scratchpad.
@@ -384,10 +408,12 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<ScratchpadConsolidateParams>,
     ) -> Result<Json<ScratchpadConsolidateResponse>, rmcp::ErrorData> {
-        tools::scratchpad_consolidate::handle(&self.state, params)
-            .await
-            .map(Json)
-            .map_err(rmcp::ErrorData::from)
+        // No session resolution: consolidate has explicit-namespace semantics.
+        let req = MemoryRequest::ScratchpadConsolidate {
+            scope: self.state.scope.as_str().to_owned(),
+            params,
+        };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 }
 

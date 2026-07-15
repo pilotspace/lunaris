@@ -88,7 +88,11 @@ mod tests {
         let resp = handle(
             &lunaris,
             &scope,
-            ScratchpadWriteParams { key: "task".into(), value: json!("do the thing"), namespace: None },
+            ScratchpadWriteParams {
+                key: "task".into(),
+                value: json!("do the thing"),
+                namespace: None,
+            },
         )
         .await
         .unwrap();
@@ -112,7 +116,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(resp.lsn.split(':').count(), 2, "lsn must be wall_ms:counter; got: {}", resp.lsn);
+        assert_eq!(
+            resp.lsn.split(':').count(),
+            2,
+            "lsn must be wall_ms:counter; got: {}",
+            resp.lsn
+        );
     }
 
     #[tokio::test]
@@ -121,7 +130,11 @@ mod tests {
         let result = handle(
             &lunaris,
             &scope,
-            ScratchpadWriteParams { key: "k".into(), value: json!(1), namespace: Some("bad:ns".into()) },
+            ScratchpadWriteParams {
+                key: "k".into(),
+                value: json!(1),
+                namespace: Some("bad:ns".into()),
+            },
         )
         .await;
         assert!(
@@ -136,7 +149,11 @@ mod tests {
         let result = handle(
             &lunaris,
             &scope,
-            ScratchpadWriteParams { key: "k".into(), value: json!(1), namespace: Some(String::new()) },
+            ScratchpadWriteParams {
+                key: "k".into(),
+                value: json!(1),
+                namespace: Some(String::new()),
+            },
         )
         .await;
         assert!(

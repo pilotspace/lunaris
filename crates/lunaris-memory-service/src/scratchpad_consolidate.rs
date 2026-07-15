@@ -60,11 +60,21 @@ impl ScratchpadConsolidateResponse {
     }
     /// `status: "unsupported_backend"` — backend has no native queue (guard 1).
     fn unsupported_backend(message: impl Into<String>) -> Self {
-        Self { status: "unsupported_backend".into(), promotions: 0, archives: 0, message: Some(message.into()) }
+        Self {
+            status: "unsupported_backend".into(),
+            promotions: 0,
+            archives: 0,
+            message: Some(message.into()),
+        }
     }
     /// `status: "worker_conflict"` — background worker is live (guard 2).
     fn worker_conflict(message: impl Into<String>) -> Self {
-        Self { status: "worker_conflict".into(), promotions: 0, archives: 0, message: Some(message.into()) }
+        Self {
+            status: "worker_conflict".into(),
+            promotions: 0,
+            archives: 0,
+            message: Some(message.into()),
+        }
     }
     /// `status: "timeout"` — drain exceeded the hard wall-clock cap (guard 3).
     fn timeout(message: impl Into<String>) -> Self {
@@ -162,7 +172,9 @@ mod tests {
     #[tokio::test]
     async fn guard_queue_native_false_returns_unsupported_backend() {
         let (lunaris, scope) = fresh_memory("test-cons-gate").await;
-        let resp = handle(&lunaris, &scope, ScratchpadConsolidateParams { namespace: None }).await.unwrap();
+        let resp = handle(&lunaris, &scope, ScratchpadConsolidateParams { namespace: None })
+            .await
+            .unwrap();
         assert_eq!(
             resp.status, "unsupported_backend",
             "memory:// must return unsupported_backend; got: {resp:?}"

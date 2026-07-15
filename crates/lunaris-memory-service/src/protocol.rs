@@ -39,20 +39,48 @@ pub const CONTEXTD_SOCKET_ENV: &str = "LUNARIS_CONTEXTD_SOCKET";
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MemoryRequest {
-    Ingest { scope: String, params: crate::ingest::IngestParams },
-    Recall { scope: String, params: crate::recall::RecallParams },
-    Forget { scope: String, params: crate::forget::ForgetParams },
-    RecordDecision { scope: String, params: crate::record_decision::RecordDecisionParams },
-    RecordEdit { scope: String, params: crate::record_edit::RecordEditParams },
-    Status { scope: String },
-    ScratchpadWrite { scope: String, params: crate::scratchpad_write::ScratchpadWriteParams },
-    ScratchpadRead { scope: String, params: crate::scratchpad_read::ScratchpadReadParams },
-    ScratchpadGrep { scope: String, params: crate::scratchpad_grep::ScratchpadGrepParams },
+    Ingest {
+        scope: String,
+        params: crate::ingest::IngestParams,
+    },
+    Recall {
+        scope: String,
+        params: crate::recall::RecallParams,
+    },
+    Forget {
+        scope: String,
+        params: crate::forget::ForgetParams,
+    },
+    RecordDecision {
+        scope: String,
+        params: crate::record_decision::RecordDecisionParams,
+    },
+    RecordEdit {
+        scope: String,
+        params: crate::record_edit::RecordEditParams,
+    },
+    Status {
+        scope: String,
+    },
+    ScratchpadWrite {
+        scope: String,
+        params: crate::scratchpad_write::ScratchpadWriteParams,
+    },
+    ScratchpadRead {
+        scope: String,
+        params: crate::scratchpad_read::ScratchpadReadParams,
+    },
+    ScratchpadGrep {
+        scope: String,
+        params: crate::scratchpad_grep::ScratchpadGrepParams,
+    },
     ScratchpadConsolidate {
         scope: String,
         params: crate::scratchpad_consolidate::ScratchpadConsolidateParams,
     },
-    ScratchpadHandover { scope: String },
+    ScratchpadHandover {
+        scope: String,
+    },
 }
 
 impl MemoryRequest {
@@ -201,11 +229,17 @@ mod tests {
     fn needs_embedder_covers_read_and_grep_only() {
         let read = MemoryRequest::ScratchpadRead {
             scope: "s".into(),
-            params: crate::scratchpad_read::ScratchpadReadParams { key: "k".into(), namespace: None },
+            params: crate::scratchpad_read::ScratchpadReadParams {
+                key: "k".into(),
+                namespace: None,
+            },
         };
         let grep = MemoryRequest::ScratchpadGrep {
             scope: "s".into(),
-            params: crate::scratchpad_grep::ScratchpadGrepParams { pattern: "".into(), namespace: None },
+            params: crate::scratchpad_grep::ScratchpadGrepParams {
+                pattern: "".into(),
+                namespace: None,
+            },
         };
         let write = MemoryRequest::ScratchpadWrite {
             scope: "s".into(),
@@ -229,7 +263,10 @@ mod tests {
 
     #[test]
     fn op_labels_for_scratchpad_variants() {
-        assert_eq!(MemoryRequest::ScratchpadHandover { scope: "s".into() }.op(), "scratchpad_handover");
+        assert_eq!(
+            MemoryRequest::ScratchpadHandover { scope: "s".into() }.op(),
+            "scratchpad_handover"
+        );
     }
 
     /// scratchpad_write then scratchpad_read, both THROUGH dispatch — proves the
@@ -249,7 +286,10 @@ mod tests {
 
         let read = MemoryRequest::ScratchpadRead {
             scope: scope.as_str().into(),
-            params: crate::scratchpad_read::ScratchpadReadParams { key: "proto-key".into(), namespace: None },
+            params: crate::scratchpad_read::ScratchpadReadParams {
+                key: "proto-key".into(),
+                namespace: None,
+            },
         };
         let data = dispatch(&lunaris, &scope, read).await.unwrap();
         assert_eq!(data.get("found").and_then(|f| f.as_bool()), Some(true));
