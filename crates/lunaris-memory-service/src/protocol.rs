@@ -24,6 +24,36 @@ use crate::ServiceError;
 /// on one path without either depending on the other's crate.
 pub const CONTEXTD_SOCKET_ENV: &str = "LUNARIS_CONTEXTD_SOCKET";
 
+/// contextd multiplexes hook ops and memory ops on ONE socket via an
+/// internally-tagged `type` field on its `ContextRequest` enum. A
+/// `MemoryRequest` therefore crosses the wire as
+/// `{"type":"memory", <flattened MemoryRequest>}` — the bare `MemoryRequest`
+/// JSON PLUS this discriminator. These two constants + [`encode_socket_request`]
+/// keep the framing here so the mcp proxy can frame a request WITHOUT depending
+/// on `lunaris-hook` (which owns `ContextRequest`). Kept in lock-step by the
+/// wire round-trip test in `lunaris-hook` (`proxy_frame_decodes_as_context_request`).
+pub const SOCKET_KIND_FIELD: &str = "type";
+/// The `ContextRequest` `type` value that selects the memory-op channel.
+pub const SOCKET_KIND_MEMORY: &str = "memory";
+
+/// Frame a [`MemoryRequest`] for the contextd unix socket.
+///
+/// Emits the request's own fields plus the `type: "memory"` discriminator
+/// contextd's `ContextRequest` decode requires. WITHOUT this tag contextd
+/// rejects the frame (`missing field \`type\``) and closes the connection — the
+/// mcp proxy then reads an empty reply, trips its breaker, and silently falls
+/// back to Direct, defeating the warm-engine path this whole design exists for.
+pub fn encode_socket_request(req: &MemoryRequest) -> Result<Vec<u8>, serde_json::Error> {
+    let mut v = serde_json::to_value(req)?;
+    // `MemoryRequest` always serializes to a JSON object (it is itself an
+    // internally-tagged enum), so this insert is total; the fallback re-encodes
+    // the untagged value rather than panicking on the theoretical non-object.
+    if let Value::Object(map) = &mut v {
+        map.insert(SOCKET_KIND_FIELD.to_owned(), Value::String(SOCKET_KIND_MEMORY.to_owned()));
+    }
+    serde_json::to_vec(&v)
+}
+
 /// Engine-op request mirroring the `memory.*` MCP tools.
 ///
 /// The six stateless engine ops PLUS the four scratchpad ops and the session
