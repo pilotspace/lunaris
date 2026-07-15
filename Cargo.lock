@@ -2606,6 +2606,7 @@ dependencies = [
  "lunaris-extract",
  "lunaris-ingest",
  "lunaris-memory",
+ "lunaris-memory-service",
  "lunaris-retrieve",
  "lunaris-storage-embedded",
  "parking_lot",
