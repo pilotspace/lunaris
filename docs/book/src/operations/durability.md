@@ -136,6 +136,29 @@ workaround in tests is to `sleep` 1–2 s before taking the "pre-crash"
 snapshot. In production you don't need to do anything — the data is durable
 either way.
 
+### 3.4 WAL v3 + upgrade safety (Moon v0.7.0/v0.7.1)
+
+The Moon v0.7.1 bump (2026-07-15) hardens the per-shard WAL to **WAL v3**:
+a WAL record now commits durably as a whole or is discarded on replay
+(atomic durable writes), and the FT term dictionary is persisted with the
+WAL instead of rebuilt best-effort after a crash. The upgrade-safety fix
+(#69, `segment_plane_scan`) matters most: v0.6.0 wrote MQ and temporal
+plane records in a nested framing that v0.7's plane scan initially skipped —
+without the fix, a v0.6→v0.7 restart would silently drop MQ backlog + PEL
+state and temporal history. Lunaris pins this with a dedicated harness leg:
+
+```bash
+python scripts/test-recovery.py --upgrade-replay \
+  --old-bin ~/.lunaris/bin/moon \
+  --new-bin vendor/moon/target/release/moon
+```
+
+The v0.7.1 patch also fixes the SQ8 code-size mis-dispatch CPU error-storm
+(#73 — relevant if you run Lunaris's opt-in SQ8 quantization) and makes
+replica TTL expiry deterministic (#71 — relative expiries are rewritten to
+absolute deadlines before entering the durable log, so an AOF replay
+reproduces the master's expiry instant instead of restarting the countdown).
+
 ## 4. Recovery procedure
 
 ### 4.1 Moon process crashed (kill-9, OOM, power loss)
