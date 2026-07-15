@@ -1125,17 +1125,17 @@
     },
     "moon-v070-bump": {
       "title": "Bump vendored Moon to v0.7.0 (durability hardening + #69 upgrade safety)",
-      "phase": "build",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "moon-v070-exploit",
       "depends_on": [],
       "created": "2026-07-15T11:29:19+00:00",
-      "updated": "2026-07-15T15:04:03+00:00",
+      "updated": "2026-07-15T18:27:17+00:00",
       "flag_verified": true,
       "tripwire": {
         "contract_md5": "97fb87ff02af68712702c7dc87c13eeb",
         "tests": {
-          ".add/tasks/moon-v070-bump/tests/test_bump_contract.py": "991db46a7094ea25235a08fe06d800ed"
+          ".add/tasks/moon-v070-bump/tests/test_bump_contract.py": "0b335774a3c0a7ab1234136ac982e052"
         }
       },
       "scope": {
@@ -1147,7 +1147,17 @@
           "docs/book/src/operations/durability.md",
           ".add/tasks/moon-v070-bump/src/"
         ],
-        "snapshot_md5": "01e27f1edcb4d8dcad47aa02d762d131"
+        "snapshot_md5": "06f6ce54a0f7afcf97102d64a197f6c5"
+      },
+      "heal": {
+        "attempts": 1,
+        "history": [
+          {
+            "at": "2026-07-15T18:26:53+00:00",
+            "reason": "tamper_detected:build_tampered:.add/tasks/moon-v070-bump/tests/test_bump_contract.py",
+            "source": "tamper"
+          }
+        ]
       }
     }
   },
@@ -1202,7 +1212,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T15:04:03+00:00",
+  "updated": "2026-07-15T18:27:17+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
