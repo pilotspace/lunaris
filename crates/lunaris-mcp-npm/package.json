@@ -1,6 +1,6 @@
 {
   "name": "@pilotspace/lunaris-mcp",
-  "version": "0.3.0",
+  "version": "0.6.0-rc.1",
   "type": "module",
   "description": "Lunaris MCP server — no Rust toolchain required. Downloads a prebuilt native binary on install.",
   "main": "bin/wrapper.js",
@@ -19,9 +19,17 @@
     "manifest.json",
     "README.md"
   ],
-  "keywords": ["mcp", "lunaris", "memory", "agent", "claude-code"],
+  "keywords": [
+    "mcp",
+    "lunaris",
+    "memory",
+    "agent",
+    "claude-code"
+  ],
   "license": "Apache-2.0",
-  "author": {"name": "Lunaris Authors"},
+  "author": {
+    "name": "Lunaris Authors"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/pilotspace/lunaris"
