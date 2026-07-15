@@ -5,15 +5,17 @@
 //! `atomic_write` directly. `grep -c 'atomic_write'
 //! crates/lunaris-mcp/src/tools/ingest.rs` must return 0.
 //!
-//! The scope comes from `AppState::scope`, which is bound at server startup.
+//! The `scope` argument is the partition key, bound by the caller (mcp binds it
+//! at startup; contextd resolves it per connection).
 //! Wire payloads cannot supply or override the scope — CLAUDE.md DTO discipline.
 
 use chrono::{DateTime, Utc};
 use lunaris::{EpisodeBuilder, IngestKind};
 use serde::{Deserialize, Serialize};
 
-use crate::state::AppState;
-use crate::tools::ToolError;
+use crate::ServiceError;
+use lunaris::Lunaris;
+use lunaris_core::Scope;
 
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
@@ -23,7 +25,7 @@ use crate::tools::ToolError;
 /// The scope field is absent by design — it is bound at server startup.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct IngestParams {
+pub struct IngestParams {
     /// Logical origin of the observation (e.g. "helios/task-planner", "user").
     pub source: String,
 
@@ -55,7 +57,7 @@ pub(crate) struct IngestParams {
 /// `lsn` is the log-sequence number of the committed write, formatted as
 /// `"{wall_ms}:{counter}"`. Callers may use it as an opaque ordering handle.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct IngestResponse {
+pub struct IngestResponse {
     /// Log-sequence number of the committed ingest (wall_ms:counter).
     pub lsn: String,
 
@@ -77,17 +79,18 @@ pub(crate) struct IngestResponse {
 ///    If the key was already seen, return the prior LSN with `was_duplicate=true`.
 /// 4. If `dedupe_key` is absent: delegate to `ScopedLunaris::ingest` (the single
 ///    `atomic_write` call — INGEST-04). Return with `was_duplicate=false`.
-pub(crate) async fn handle(
-    state: &AppState,
+pub async fn handle(
+    lunaris: &Lunaris,
+    scope: &Scope,
     params: IngestParams,
-) -> Result<IngestResponse, ToolError> {
+) -> Result<IngestResponse, ServiceError> {
     // Parse t_ref before touching the engine — fail fast on bad input.
     let t_ref: Option<DateTime<Utc>> = params
         .t_ref
         .as_deref()
         .map(|s| {
             DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).map_err(|e| {
-                ToolError::InvalidInput(format!("t_ref is not a valid RFC-3339 timestamp: {e}"))
+                ServiceError::InvalidInput(format!("t_ref is not a valid RFC-3339 timestamp: {e}"))
             })
         })
         .transpose()?;
@@ -103,8 +106,8 @@ pub(crate) async fn handle(
         builder = builder.metadata(meta);
     }
 
-    // Re-derive ScopedLunaris per call — never store it in AppState.
-    let scoped = state.lunaris.scoped(state.scope.clone());
+    // Re-derive ScopedLunaris per call — never cache it across calls.
+    let scoped = lunaris.scoped(scope.clone());
 
     if let Some(ref key) = params.dedupe_key {
         // HOOK-05 idempotent path: check dedupe key before writing.
@@ -113,7 +116,7 @@ pub(crate) async fn handle(
         let was_duplicate = matches!(kind, IngestKind::Duplicate(_));
 
         tracing::debug!(
-            scope    = state.scope.as_str(),
+            scope    = scope.as_str(),
             lsn      = %lsn,
             dedupe   = %key,
             duplicate = was_duplicate,
@@ -127,7 +130,7 @@ pub(crate) async fn handle(
         let lsn = scoped.ingest(builder).await?;
 
         tracing::debug!(
-            scope = state.scope.as_str(),
+            scope = scope.as_str(),
             lsn   = %lsn,
             "memory.ingest committed",
         );

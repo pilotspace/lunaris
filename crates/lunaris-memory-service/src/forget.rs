@@ -6,16 +6,17 @@
 //! - `source_prefix` → [`ForgetTarget::Scope`]`(`[`ScopeSpec::BySource`]`(prefix))`
 //! - `episode_id`    → [`ForgetTarget::Id`]`(ulid)` (OPS-01 fast path)
 //!
-//! Both set / neither set → `ToolError::InvalidInput` (ambiguous / missing).
+//! Both set / neither set → `ServiceError::InvalidInput` (ambiguous / missing).
 //!
-//! The scope bound on [`AppState`] is the **only** partition key; the wire DTO
+//! The `scope` argument is the **only** partition key; the wire DTO
 //! intentionally carries no `scope` or `tenant` field (CLAUDE.md DTO discipline).
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::state::AppState;
-use crate::tools::ToolError;
+use crate::ServiceError;
+use lunaris::Lunaris;
+use lunaris_core::Scope;
 
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ use crate::tools::ToolError;
 /// `InvalidInput` (missing target).
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ForgetTarget {
+pub struct ForgetTarget {
     /// Forget all episodes whose source starts with this prefix.
     ///
     /// Must be non-empty; an empty prefix would match every episode in the
@@ -42,14 +43,14 @@ pub(crate) struct ForgetTarget {
 /// Input parameters for `memory.forget`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ForgetParams {
+pub struct ForgetParams {
     /// What to delete.
     pub target: ForgetTarget,
 }
 
 /// Output of a successful `memory.forget` call.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct ForgetResponse {
+pub struct ForgetResponse {
     /// Number of episodes logically removed.
     ///
     /// For the default soft-delete path this equals `rows_written` from the
@@ -71,15 +72,16 @@ pub(crate) struct ForgetResponse {
 /// | Some(_)         | Some(_)      | `InvalidInput` — ambiguous             |
 /// | None            | None         | `InvalidInput` — missing               |
 ///
-/// The scope comes exclusively from `state.scope` (bound at startup).
+/// The scope comes exclusively from `scope` (bound at startup).
 /// Cross-scope forgets are impossible by type.
-pub(crate) async fn handle(
-    state: &AppState,
+pub async fn handle(
+    lunaris: &Lunaris,
+    scope: &Scope,
     params: ForgetParams,
-) -> Result<ForgetResponse, ToolError> {
+) -> Result<ForgetResponse, ServiceError> {
     let engine_target = build_target(params.target)?;
 
-    let scoped = state.lunaris.scoped(state.scope.clone());
+    let scoped = lunaris.scoped(scope.clone());
     let receipt = scoped.forget(engine_target).await?;
 
     // Soft-delete (default) populates rows_written; hard-delete populates
@@ -87,7 +89,7 @@ pub(crate) async fn handle(
     // rows_deleted is always 0 here. Sum both to be defensive.
     let removed = receipt.rows_written + receipt.rows_deleted;
 
-    tracing::debug!(scope = state.scope.as_str(), removed = removed, "memory.forget committed",);
+    tracing::debug!(scope = scope.as_str(), removed = removed, "memory.forget committed",);
 
     Ok(ForgetResponse { removed })
 }
@@ -96,15 +98,15 @@ pub(crate) async fn handle(
 
 /// Map the wire `ForgetTarget` DTO to the engine's [`lunaris::ForgetTarget`].
 ///
-/// Validation rules (all return `ToolError::InvalidInput`):
+/// Validation rules (all return `ServiceError::InvalidInput`):
 /// - Both fields set → ambiguous.
 /// - Neither field set → missing target.
 /// - `source_prefix` is empty string → footgun guard.
 /// - `episode_id` is not a valid ULID string → parse error surfaced.
-fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ToolError> {
+fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ServiceError> {
     match (dto.source_prefix, dto.episode_id) {
         // Both set — ambiguous; reject.
-        (Some(_), Some(_)) => Err(ToolError::InvalidInput(
+        (Some(_), Some(_)) => Err(ServiceError::InvalidInput(
             "forget target must set exactly one of source_prefix or episode_id, not both"
                 .to_string(),
         )),
@@ -112,7 +114,7 @@ fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ToolError> {
         // source_prefix path — OPS-02 BySource prefix match.
         (Some(prefix), None) => {
             if prefix.is_empty() {
-                return Err(ToolError::InvalidInput(
+                return Err(ServiceError::InvalidInput(
                     "source_prefix must be non-empty (an empty prefix would match every episode)"
                         .to_string(),
                 ));
@@ -123,7 +125,7 @@ fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ToolError> {
         // episode_id path — OPS-01 single-target fast path.
         (None, Some(id_str)) => {
             let ulid = id_str.parse::<Ulid>().map_err(|e| {
-                ToolError::InvalidInput(format!(
+                ServiceError::InvalidInput(format!(
                     "episode_id is not a valid ULID: {e} (got {id_str:?})"
                 ))
             })?;
@@ -131,7 +133,7 @@ fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ToolError> {
         }
 
         // Neither set — missing target.
-        (None, None) => Err(ToolError::InvalidInput(
+        (None, None) => Err(ServiceError::InvalidInput(
             "forget target requires either source_prefix or episode_id".to_string(),
         )),
     }
@@ -142,37 +144,30 @@ fn build_target(dto: ForgetTarget) -> Result<lunaris::ForgetTarget, ToolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lunaris::EpisodeBuilder;
+    use lunaris::{EpisodeBuilder, Lunaris};
     use lunaris_core::Scope;
-    use std::sync::Arc;
 
-    async fn make_state() -> AppState {
-        let lunaris =
-            lunaris::Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+    async fn make_engine() -> (Lunaris, Scope) {
+        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
         // Use Scope::dev() so the shim in ScopedLunaris::forget (which routes
         // through the deprecated Lunaris::forget hard-coded to Scope::dev()
         // until Wave 1D) actually finds the episodes we ingest.
         // CLAUDE.md: Scope::dev() is a migration crutch permitted in tests.
         let scope = Scope::dev();
-        AppState {
-            lunaris: Arc::new(lunaris),
-            scope,
-            #[cfg(feature = "embedded-moon")]
-            _embedded_moon: None,
-        }
+        (lunaris, scope)
     }
 
     // ── Validation-only tests (no storage round-trip) ─────────────────────────
 
     #[tokio::test]
     async fn no_target_fields_returns_invalid_input() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
         let params =
             ForgetParams { target: ForgetTarget { source_prefix: None, episode_id: None } };
-        let err = handle(&state, params).await.unwrap_err();
-        assert!(matches!(err, ToolError::InvalidInput(_)), "expected InvalidInput, got {err:?}");
+        let err = handle(&lunaris, &scope, params).await.unwrap_err();
+        assert!(matches!(err, ServiceError::InvalidInput(_)), "expected InvalidInput, got {err:?}");
         // Message must be informative.
-        if let ToolError::InvalidInput(msg) = err {
+        if let ServiceError::InvalidInput(msg) = err {
             assert!(
                 msg.contains("source_prefix") || msg.contains("episode_id"),
                 "error message should mention the missing fields: {msg}"
@@ -182,35 +177,35 @@ mod tests {
 
     #[tokio::test]
     async fn both_fields_set_returns_invalid_input() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
         let params = ForgetParams {
             target: ForgetTarget {
                 source_prefix: Some("src:notes/".to_string()),
                 episode_id: Some("01HZZZZZZZZZZZZZZZZZZZZZZZ".to_string()),
             },
         };
-        let err = handle(&state, params).await.unwrap_err();
+        let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
-            matches!(err, ToolError::InvalidInput(_)),
+            matches!(err, ServiceError::InvalidInput(_)),
             "expected InvalidInput for ambiguous target, got {err:?}"
         );
     }
 
     #[tokio::test]
     async fn invalid_ulid_returns_invalid_input() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
         let params = ForgetParams {
             target: ForgetTarget {
                 source_prefix: None,
                 episode_id: Some("not-a-ulid".to_string()),
             },
         };
-        let err = handle(&state, params).await.unwrap_err();
+        let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
-            matches!(err, ToolError::InvalidInput(_)),
+            matches!(err, ServiceError::InvalidInput(_)),
             "expected InvalidInput for bad ULID, got {err:?}"
         );
-        if let ToolError::InvalidInput(msg) = err {
+        if let ServiceError::InvalidInput(msg) = err {
             assert!(
                 msg.contains("ULID") || msg.contains("ulid"),
                 "message should mention ULID: {msg}"
@@ -220,16 +215,16 @@ mod tests {
 
     #[tokio::test]
     async fn empty_source_prefix_returns_invalid_input() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
         let params = ForgetParams {
             target: ForgetTarget { source_prefix: Some(String::new()), episode_id: None },
         };
-        let err = handle(&state, params).await.unwrap_err();
+        let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
-            matches!(err, ToolError::InvalidInput(_)),
+            matches!(err, ServiceError::InvalidInput(_)),
             "expected InvalidInput for empty source_prefix, got {err:?}"
         );
-        if let ToolError::InvalidInput(msg) = err {
+        if let ServiceError::InvalidInput(msg) = err {
             assert!(
                 msg.contains("empty") || msg.contains("non-empty"),
                 "message should explain the empty prefix guard: {msg}"
@@ -257,11 +252,11 @@ mod tests {
 
     #[tokio::test]
     async fn forget_by_source_prefix_handler_dispatches_without_error() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
 
         // Ingest one episode so the engine has state; the handler must not error
         // regardless of whether the shim finds the episode.
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let scoped = lunaris.scoped(scope.clone());
         scoped.ingest(EpisodeBuilder::new("src:notes/a", "note a")).await.unwrap();
 
         let params = ForgetParams {
@@ -270,20 +265,21 @@ mod tests {
                 episode_id: None,
             },
         };
-        // The handler must succeed (no ToolError). The removed count reflects
+        // The handler must succeed (no ServiceError). The removed count reflects
         // the shim's behaviour — we only check it is a valid u64 (not a type
         // mismatch or panic).
-        let resp = handle(&state, params).await.expect("source_prefix dispatch must not error");
+        let resp =
+            handle(&lunaris, &scope, params).await.expect("source_prefix dispatch must not error");
         let _ = resp.removed; // type-check: must be u64
     }
 
     #[tokio::test]
     async fn forget_by_episode_id_handler_dispatches_without_error() {
-        let state = make_state().await;
+        let (lunaris, scope) = make_engine().await;
 
         // Ingest with a known ULID so build_target maps to ForgetTarget::Id.
         let known_ulid = ulid::Ulid::new();
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let scoped = lunaris.scoped(scope.clone());
         scoped
             .ingest(EpisodeBuilder::new("src:ep-delete", "delete me").id(known_ulid))
             .await
@@ -293,7 +289,8 @@ mod tests {
             target: ForgetTarget { source_prefix: None, episode_id: Some(known_ulid.to_string()) },
         };
         // ForgetTarget::Id path — exercises the ULID parse → engine dispatch.
-        let resp = handle(&state, params).await.expect("episode_id dispatch must not error");
+        let resp =
+            handle(&lunaris, &scope, params).await.expect("episode_id dispatch must not error");
         let _ = resp.removed; // type-check: must be u64
     }
 }

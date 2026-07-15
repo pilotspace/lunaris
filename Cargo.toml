@@ -52,6 +52,7 @@ members = [
   # via the official rmcp 1.7 stdio transport. Zero tools at Wave 0; tool
   # handlers (memory.ingest, .recall, .forget, .list_scopes) land in Wave 2.
   "crates/lunaris-mcp",
+  "crates/lunaris-memory-service",
   # v0.5 Wave B — hook adapter binary that captures Claude Code lifecycle events
   # into Lunaris memory. Reads a single hook envelope from stdin, derives scope
   # from cwd+git remote (same algorithm as lunaris-mcp), writes one Episode via
@@ -113,6 +114,7 @@ lunaris-ingest            = { path = "crates/lunaris-ingest",            version
 lunaris-retrieve          = { path = "crates/lunaris-retrieve",          version = "0.5.0", default-features = false }
 lunaris-recipes           = { path = "crates/lunaris-recipes",           version = "0.5.0", default-features = false }
 lunaris-server            = { path = "crates/lunaris-server",            version = "0.5.0", default-features = false }
+lunaris-memory-service    = { path = "crates/lunaris-memory-service",    version = "0.5.0" }
 lunaris-bench             = { path = "crates/lunaris-bench",             version = "0.5.0", default-features = false }
 lunaris-conformance       = { path = "crates/lunaris-conformance",       version = "0.5.0", default-features = false }
 lunaris-codegen           = { path = "crates/lunaris-codegen",           version = "0.5.0", default-features = false }

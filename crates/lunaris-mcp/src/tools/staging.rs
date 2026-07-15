@@ -9,7 +9,6 @@
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use lunaris_core::{LunarisError, StorageError};
 use tokio::sync::OnceCell;
 
 use crate::model_stager::{ModelKind, StageError, ensure_staged};
@@ -137,20 +136,9 @@ pub(crate) async fn resolve_namespace_session_aware(
     Ok(crate::session_pad::default_namespace(active.as_deref()))
 }
 
-// ── Keyword NotSupported helper ───────────────────────────────────────────────
-
-/// Return `true` when `err` is a `StorageError::NotSupported` from the keyword branch.
-///
-/// Used by recall, scratchpad_read, and scratchpad_grep to detect the embedded/sqlite
-/// backend returning NotSupported for keyword_search (FTS5 BM25 not yet implemented).
-/// Callers catch this and retry with a vector-only plan.
-pub(crate) fn is_keyword_not_supported(err: &LunarisError) -> bool {
-    matches!(
-        err,
-        LunarisError::Storage(StorageError::NotSupported(msg))
-            if msg.contains("keyword_search") || msg.contains("keyword")
-    )
-}
+// The keyword-NotSupported classifier now lives in `lunaris_memory_service`
+// (the recall handler moved there); the scratchpad handlers that remain here
+// do not use it.
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -212,24 +200,5 @@ mod tests {
     #[test]
     fn invalid_namespace_at_sign() {
         assert!(validate_namespace("has@at").is_err());
-    }
-
-    // ── is_keyword_not_supported ──────────────────────────────────────────────
-
-    #[test]
-    fn keyword_not_supported_true_for_keyword_search_message() {
-        let err = LunarisError::Storage(StorageError::NotSupported(
-            "embedded backend: keyword_search not yet implemented (FTS5 BM25 pending)",
-        ));
-        assert!(is_keyword_not_supported(&err));
-    }
-
-    #[test]
-    fn keyword_not_supported_false_for_other_storage_error() {
-        // Use a different NotSupported message that does NOT contain "keyword"
-        let err = LunarisError::Storage(StorageError::NotSupported(
-            "embedded backend: subscribe not yet implemented",
-        ));
-        assert!(!is_keyword_not_supported(&err));
     }
 }
