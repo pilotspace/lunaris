@@ -1082,12 +1082,28 @@
     },
     "contextd-mcp-merge": {
       "title": "Unify contextd+mcp: one warm engine, thin MCP stdio proxy",
-      "phase": "tests",
+      "phase": "verify",
       "gate": "none",
       "milestone": "memory-contract-integrity",
       "depends_on": [],
       "created": "2026-07-15T03:13:34+00:00",
-      "updated": "2026-07-15T03:23:03+00:00"
+      "updated": "2026-07-15T05:18:54+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "37870c66f89b5a63c3c0e3fe9e5a25fe",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-mcp/src/main.rs",
+          "crates/lunaris-mcp/src/",
+          "crates/lunaris-hook/src/context.rs",
+          "crates/lunaris-hook/src/contextd.rs",
+          "crates/lunaris-mcp/tests/",
+          "crates/lunaris-hook/tests/"
+        ],
+        "snapshot_md5": "5b3ab0edc43aa8bf0e910fc0c017626b"
+      }
     }
   },
   "milestones": {
@@ -1133,7 +1149,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T03:23:03+00:00",
+  "updated": "2026-07-15T05:18:54+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

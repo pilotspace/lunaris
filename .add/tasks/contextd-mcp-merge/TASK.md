@@ -2,7 +2,7 @@
 
 slug: contextd-mcp-merge · created: 2026-07-15 · stage: production · risk: high · sensitivity: architecture
 autonomy: conservative   <!-- lowered from auto: high-risk architectural change (new critical shared dependency + security trust-boundary shift); verify must gate on a human, completion is not auto. -->
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: verify   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower the
      autonomy level to `manual` or `conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
