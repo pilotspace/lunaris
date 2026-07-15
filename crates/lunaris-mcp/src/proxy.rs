@@ -243,15 +243,49 @@ fn env_usize(key: &str) -> Option<usize> {
 mod tests {
     use super::*;
 
+    use std::sync::Arc;
+
+    use lunaris::Lunaris;
+    use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_memory_service::ingest::IngestParams;
+    use lunaris_memory_service::recall::RecallParams;
+
+    use crate::state::AppState;
+
     /// Deterministic constructor (no env / fs) for state-machine tests.
     fn proxy_for_test(breaker_n: usize, initial_route: u8) -> MemoryProxy {
+        proxy_for_test_with_socket(breaker_n, initial_route, None)
+    }
+
+    /// As [`proxy_for_test`] but with an explicit socket path (e.g. a
+    /// nonexistent one to exercise the connect-refused fallback).
+    fn proxy_for_test_with_socket(
+        breaker_n: usize,
+        initial_route: u8,
+        socket_path: Option<PathBuf>,
+    ) -> MemoryProxy {
         MemoryProxy {
-            socket_path: None,
+            socket_path,
             route: AtomicU8::new(initial_route),
             error_count: AtomicUsize::new(0),
-            connect_timeout: Duration::from_millis(DEFAULT_CONNECT_MS),
+            // Keep the connect budget tiny so a dead-socket test does not wait.
+            connect_timeout: Duration::from_millis(100),
             breaker_n,
             fallback_logged: Once::new(),
+        }
+    }
+
+    /// In-process AppState (memory:// + StubEmbedder, no GGUF) for the direct
+    /// fallback path.
+    async fn fresh_state(scope_name: &str) -> AppState {
+        let embedder = Arc::new(StubEmbedder::new(768));
+        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let scope = Scope::new(scope_name).unwrap();
+        AppState {
+            lunaris: Arc::new(lunaris),
+            scope,
+            #[cfg(feature = "embedded-moon")]
+            _embedded_moon: None,
         }
     }
 
@@ -308,5 +342,122 @@ mod tests {
         assert_eq!(engine.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
         let unknown = app_code_to_rmcp("unknown_index", "index missing");
         assert_eq!(unknown.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+    }
+
+    // ── Batch 4: failure-model + parity ───────────────────────────────────────
+
+    /// contextd-DOWN: a Socket-first proxy whose socket does not exist must fall
+    /// back to the direct engine and still return a valid DTO — and latch the
+    /// route to Direct. This is the "mcp keeps working when the daemon is gone"
+    /// guarantee at the heart of the fallback design.
+    #[tokio::test]
+    async fn contextd_down_falls_back_to_direct_and_serves_the_call() {
+        let state = fresh_state("test-proxy-fallback").await;
+        // A nonexistent socket → connect refused → transport strike → Direct.
+        let dead = PathBuf::from("/nonexistent/lunaris-contextd-does-not-exist.sock");
+        let proxy = proxy_for_test_with_socket(1, ROUTE_SOCKET, Some(dead));
+
+        let req = MemoryRequest::Ingest {
+            scope: state.scope.as_str().to_owned(),
+            params: IngestParams {
+                source: "test/src".to_owned(),
+                content: "fallback works".to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+        let data = proxy.dispatch(&state, req).await.expect("direct fallback must serve the call");
+        assert!(data.get("lsn").and_then(|l| l.as_str()).is_some(), "ingest DTO must carry lsn");
+        assert_eq!(
+            proxy.route.load(Ordering::Relaxed),
+            ROUTE_DIRECT,
+            "a dead socket must latch the route to Direct"
+        );
+    }
+
+    /// PARITY: the proxy's direct fallback returns byte-identical JSON to a bare
+    /// `protocol::dispatch` on the same engine. Because contextd's socket path
+    /// ALSO calls `protocol::dispatch`, this proves the two surfaces cannot
+    /// diverge — the safety rule this whole task exists to enforce.
+    #[tokio::test]
+    async fn direct_fallback_is_byte_identical_to_bare_dispatch() {
+        // Recall touches the embedder on the direct path — skip the GGUF stage.
+        crate::tools::staging::skip_stage_for_tests();
+        let state = fresh_state("test-proxy-parity").await;
+
+        // Seed one episode through the proxy (socket down → direct).
+        let dead = PathBuf::from("/nonexistent/parity.sock");
+        let proxy = proxy_for_test_with_socket(1, ROUTE_SOCKET, Some(dead));
+        let ingest = MemoryRequest::Ingest {
+            scope: state.scope.as_str().to_owned(),
+            params: IngestParams {
+                source: "test/src".to_owned(),
+                content: "chocolate cake recipe with cocoa".to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+        proxy.dispatch(&state, ingest).await.expect("seed ingest");
+
+        let recall_params = || RecallParams {
+            query: "chocolate".to_owned(),
+            k: 5,
+            filters: None,
+            as_of: None,
+            raw: false,
+        };
+        // (a) via the proxy's direct fallback.
+        let via_proxy = proxy
+            .dispatch(
+                &state,
+                MemoryRequest::Recall {
+                    scope: state.scope.as_str().to_owned(),
+                    params: recall_params(),
+                },
+            )
+            .await
+            .expect("proxy recall");
+        // (b) via the bare shared dispatch — the exact fn contextd's socket path runs.
+        let via_dispatch = lunaris_memory_service::protocol::dispatch(
+            &state.lunaris,
+            &state.scope,
+            MemoryRequest::Recall {
+                scope: state.scope.as_str().to_owned(),
+                params: recall_params(),
+            },
+        )
+        .await
+        .expect("bare dispatch recall");
+
+        assert_eq!(
+            via_proxy, via_dispatch,
+            "proxy direct fallback must be byte-identical to bare protocol::dispatch"
+        );
+        let hits = via_proxy.get("hits").and_then(|h| h.as_array()).expect("hits");
+        assert!(!hits.is_empty(), "parity recall must find the seeded episode");
+    }
+
+    /// T-25-01-01: the external MCP wire cannot inject a partition `scope`. The
+    /// engine Params DTOs carry `#[serde(deny_unknown_fields)]` and no scope
+    /// field, so a smuggled `scope` is rejected at deserialization — the scope
+    /// is bound at startup and threaded server-side only (via MemoryRequest,
+    /// which the client never fills from the wire).
+    #[test]
+    fn wire_payload_cannot_smuggle_a_scope_field() {
+        let smuggled = serde_json::json!({
+            "source": "attacker",
+            "content": "payload",
+            "scope": "victim-scope"
+        });
+        let parsed = serde_json::from_value::<IngestParams>(smuggled);
+        assert!(parsed.is_err(), "deny_unknown_fields must reject a wire-injected scope");
+
+        let smuggled_recall = serde_json::json!({ "query": "q", "scope": "victim-scope" });
+        assert!(
+            serde_json::from_value::<RecallParams>(smuggled_recall).is_err(),
+            "recall DTO must also reject a wire-injected scope"
+        );
     }
 }
