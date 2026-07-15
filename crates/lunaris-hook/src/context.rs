@@ -1519,6 +1519,68 @@ mod tests {
         }
     }
 
+    /// WIRE round-trip: the bytes the mcp proxy actually puts on the socket
+    /// (`protocol::encode_socket_request`) MUST decode as `ContextRequest::Memory`
+    /// on the contextd side. This is the exact `proxy encode → contextd decode`
+    /// path that the proxy's own fake-server tests (which speak `MemoryResponse`
+    /// directly) and the `handle_memory` tests (which build the enum in-process)
+    /// both bypass — a bare `MemoryRequest` frame lacks the `type` tag and
+    /// contextd rejects it ("missing field `type`"), so every socket call
+    /// silently fell back to Direct until this was fixed.
+    #[test]
+    fn proxy_frame_decodes_as_context_request() {
+        use lunaris_memory_service::protocol::encode_socket_request;
+
+        // scratchpad op
+        let sp = MemoryRequest::ScratchpadWrite {
+            scope: "git_deadbeef".to_owned(),
+            params: lunaris_memory_service::scratchpad_write::ScratchpadWriteParams {
+                key: "k".to_owned(),
+                value: serde_json::json!(1),
+                namespace: Some("scratchpad/".to_owned()),
+            },
+        };
+        let bytes = encode_socket_request(&sp).expect("encode");
+        match serde_json::from_slice::<ContextRequest>(&bytes).expect("decode as ContextRequest") {
+            ContextRequest::Memory(MemoryRequest::ScratchpadWrite { scope, params }) => {
+                assert_eq!(scope, "git_deadbeef");
+                assert_eq!(params.key, "k");
+                assert_eq!(params.namespace.as_deref(), Some("scratchpad/"));
+            }
+            other => panic!("expected Memory(ScratchpadWrite), got {other:?}"),
+        }
+
+        // engine op (proves the fix covers the PR #56 ops too)
+        let ing = MemoryRequest::Ingest {
+            scope: "git_deadbeef".to_owned(),
+            params: lunaris_memory_service::ingest::IngestParams {
+                source: "s".to_owned(),
+                content: "c".to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+        let bytes = encode_socket_request(&ing).expect("encode");
+        match serde_json::from_slice::<ContextRequest>(&bytes).expect("decode") {
+            ContextRequest::Memory(MemoryRequest::Ingest { scope, params }) => {
+                assert_eq!(scope, "git_deadbeef");
+                assert_eq!(params.source, "s");
+            }
+            other => panic!("expected Memory(Ingest), got {other:?}"),
+        }
+
+        // handover (no params)
+        let ho = MemoryRequest::ScratchpadHandover { scope: "git_deadbeef".to_owned() };
+        let bytes = encode_socket_request(&ho).expect("encode");
+        match serde_json::from_slice::<ContextRequest>(&bytes).expect("decode") {
+            ContextRequest::Memory(MemoryRequest::ScratchpadHandover { scope }) => {
+                assert_eq!(scope, "git_deadbeef");
+            }
+            other => panic!("expected Memory(ScratchpadHandover), got {other:?}"),
+        }
+    }
+
     /// The single-source-of-truth contract: an ingest through `handle_memory`
     /// followed by a recall through `handle_memory` returns the ingested
     /// episode — the SAME `lunaris_memory_service` handlers the mcp fallback

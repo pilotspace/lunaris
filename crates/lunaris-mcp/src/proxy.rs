@@ -160,8 +160,11 @@ impl MemoryProxy {
             .socket_path
             .as_ref()
             .ok_or_else(|| SocketErr::Transport("no contextd socket configured".to_owned()))?;
-        let bytes =
-            serde_json::to_vec(req).map_err(|e| SocketErr::Transport(format!("encode: {e}")))?;
+        // MUST frame as `{"type":"memory", ...}` — contextd decodes a
+        // `ContextRequest` (internally tagged on `type`) and rejects a bare
+        // MemoryRequest ("missing field `type`"). See encode_socket_request.
+        let bytes = lunaris_memory_service::protocol::encode_socket_request(req)
+            .map_err(|e| SocketErr::Transport(format!("encode: {e}")))?;
 
         let mut stream =
             match tokio::time::timeout(self.connect_timeout, UnixStream::connect(path)).await {
