@@ -3,8 +3,9 @@
 Status: alpha. Complements `docs/guide.md`. Baseline claims validated against
 live Moon on 2026-04-23 — rerun `scripts/test-recovery.py` to re-verify. §2.1,
 §2.4, §2.5 updated 2026-07-10 for the Moon v0.5.1+ substrate bump
-(moon-v051-perf-exploit, `vendor/moon` @ `c9508066`); the SDK
-(`moondb 0.2.1`) is API-identical across the bump, so every change below is
+(moon-v051-perf-exploit, `vendor/moon` @ `c9508066`); §2.7 added 2026-07-15
+for the Moon v0.7.1 bump (moon-v070-bump, `vendor/moon` @ `4161cdc`). The SDK
+(`moondb 0.2.1`) is API-identical across both bumps, so every change below is
 server-side behavior, not a Lunaris wire-format change.
 
 Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
@@ -207,6 +208,50 @@ the diskfull guard, DEL/UNLINK/EXPIRE/FLUSHALL are write-flagged and blocked
 too (no allowlist). Set to `0` to disable. Embedded-Moon does not override
 this flag, so it inherits the 95% default — verified by
 `embedded_moon::tests::server_config_new_v051_flags_have_sane_defaults`.
+
+### 2.7 WAL v3 — atomic durable writes, FTS term-dict durability, upgrade safety (v0.7.0/v0.7.1)
+
+The Moon v0.7.1 bump (`vendor/moon` @ `4161cdc`, 2026-07-15) hardens the
+per-shard WAL to **WAL v3** and closes the upgrade-replay hole that mattered
+most to Lunaris:
+
+- **Atomic durable writes.** A WAL v3 record either commits durably as a
+  whole or is discarded on replay — the same all-or-nothing property
+  Lunaris's single-`atomic_write` ingest envelope (INGEST-04) already
+  depends on at the AOF layer now also holds at the WAL layer.
+- **FTS term-dictionary durability.** The FT term dictionary is persisted
+  with the WAL instead of being rebuilt best-effort, removing a
+  keyword-recall regression window after hard crashes.
+- **#69 upgrade safety (`segment_plane_scan`).** v0.6.0 wrote MQ and
+  temporal plane records inside a nested-Command framing; v0.7's plane scan
+  initially skipped them, which would have silently dropped **MQ backlog +
+  PEL state and temporal history** on a v0.6→v0.7 restart. The v0.7.1
+  binary unwraps the nested framing — and Lunaris pins this with a
+  dedicated harness leg:
+
+  ```bash
+  # old binary writes KV+graph+MQ+temporal probes, v0.7.1 replays the dir
+  python scripts/test-recovery.py --upgrade-replay \
+    --old-bin ~/.lunaris/bin/moon \
+    --new-bin vendor/moon/target/release/moon
+  ```
+
+- **v0.7.1 patch notes.** (a) SQ8/TQ code-size mis-dispatch fix (#73): on
+  SQ8-quantized indexes (Lunaris's opt-in `LUNARIS_MOON_QUANT=sq8` config)
+  the memory-accounting hot path logged an error per call and pegged a CPU
+  core; v0.7.1 computes the true SQ8 layout and latches the error log.
+  (b) Deterministic replica TTL (#71): relative expiries are rewritten to
+  absolute deadlines before entering the durable log / replication stream,
+  and replicas no longer run their own expiry sweeps — an AOF replay after
+  restart now reproduces the master's expiry *instant* instead of
+  restarting the countdown. Both matter for the roadmapped replica
+  read-split (Tier 3).
+
+The kill-9 recovery harness (`scripts/test-recovery.py`) also gained
+raw-command **MQ + temporal plane probes** in TEST 1 — previously only KV,
+FT indices, and recall identity were asserted across a crash; now an
+un-ACKed MQ backlog (with a consumed head) and a bi-temporal `v`+`bt` hash
+must replay byte-identically too.
 
 ---
 
