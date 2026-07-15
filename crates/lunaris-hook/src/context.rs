@@ -115,6 +115,97 @@ pub enum ContextRequest {
         source_prefixes: Option<Vec<String>>,
     },
     Health,
+    /// Engine-op umbrella (contextd-mcp-merge). The local peer (the thin
+    /// `lunaris-mcp` proxy) delegates the stateless engine tools here so a
+    /// single warm daemon owns the resident GGUF + per-scope handle cache.
+    /// Framing is UNCHANGED (one JSON request/response, connection-per-call);
+    /// the response is a [`MemoryResponse`], NOT a [`ContextResponse`], so the
+    /// connection layer serializes this arm through [`ContextService::handle_memory`]
+    /// rather than [`ContextService::handle`].
+    Memory(MemoryRequest),
+}
+
+/// Engine-op request mirroring the stateless `memory.*` MCP tools.
+///
+/// Only the SIX engine ops cross the socket — the session/registry-coupled
+/// tools (`scratchpad_*`, `list_scopes`) are served locally by the mcp server
+/// and never proxied (they bind to per-session state the daemon does not hold).
+/// Each variant carries an explicit `scope` (trusted local-peer model, §3
+/// FROZEN @ v1): the 0700 user socket is the trust boundary, so the daemon
+/// honors the peer-supplied scope string verbatim. `params` reuses the shared
+/// crate's wire DTOs so contextd and the mcp fallback deserialize identically.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum MemoryRequest {
+    Ingest {
+        scope: String,
+        params: lunaris_memory_service::ingest::IngestParams,
+    },
+    Recall {
+        scope: String,
+        params: lunaris_memory_service::recall::RecallParams,
+    },
+    Forget {
+        scope: String,
+        params: lunaris_memory_service::forget::ForgetParams,
+    },
+    RecordDecision {
+        scope: String,
+        params: lunaris_memory_service::record_decision::RecordDecisionParams,
+    },
+    RecordEdit {
+        scope: String,
+        params: lunaris_memory_service::record_edit::RecordEditParams,
+    },
+    Status {
+        scope: String,
+    },
+}
+
+/// Engine-op response: the tool's own DTO as JSON on success, a tool-native
+/// error `code` (plus a human `message`) on failure. The mcp proxy parses this
+/// off the socket and re-wraps `data` into the matching rmcp `Json<T>` DTO, or
+/// maps `code` back to an `rmcp::ErrorData`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum MemoryResponse {
+    Ok { data: Value },
+    Err { code: String, message: String },
+}
+
+/// Internal error carrier for the memory dispatch — classifies a failure into
+/// a stable wire `code` before it becomes a [`MemoryResponse::Err`].
+struct MemoryError {
+    code: &'static str,
+    message: String,
+}
+
+impl MemoryError {
+    fn scope_required(detail: impl Into<String>) -> Self {
+        Self { code: "scope_required", message: detail.into() }
+    }
+    fn storage_unavailable(detail: impl Into<String>) -> Self {
+        Self { code: "storage_unavailable", message: detail.into() }
+    }
+    /// Map a shared-service error to a wire code. `InvalidInput` is a caller
+    /// fault (`invalid_input`); an engine error is classified by message —
+    /// a missing FT index surfaces as `unknown_index` (the mcp-observed Moon
+    /// error when a scope was never ingested), everything else `engine_error`.
+    fn from_service(err: lunaris_memory_service::ServiceError) -> Self {
+        use lunaris_memory_service::ServiceError;
+        match err {
+            ServiceError::InvalidInput(msg) => Self { code: "invalid_input", message: msg },
+            ServiceError::LunarisEngine(inner) => {
+                let message = inner.to_string();
+                let code = if message.contains("unknown index") {
+                    "unknown_index"
+                } else {
+                    "engine_error"
+                };
+                Self { code, message }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -219,6 +310,14 @@ impl ContextService {
     async fn handle_inner(&self, request: ContextRequest) -> anyhow::Result<ContextResponse> {
         match request {
             ContextRequest::Health => Ok(ContextResponse::empty()),
+            // Memory ops use a distinct response channel ([`MemoryResponse`]),
+            // so the connection layer routes them through `handle_memory` BEFORE
+            // reaching here. This arm is a defensive guard for a direct
+            // `handle(Memory(..))` call (e.g. a test) — it never fires on the
+            // real socket path.
+            ContextRequest::Memory(_) => Err(anyhow::anyhow!(
+                "memory requests must be dispatched via ContextService::handle_memory"
+            )),
             ContextRequest::RecallForPrompt {
                 cwd,
                 scope,
@@ -389,6 +488,90 @@ impl ContextService {
                 .await
             }
         }
+    }
+
+    /// Dispatch an engine-op ([`MemoryRequest`]) through the warm per-scope
+    /// handle cache, returning a [`MemoryResponse`]. This is the contextd half
+    /// of the contextd-mcp-merge single-source-of-truth: it calls the EXACT
+    /// same `lunaris_memory_service::*::handle` functions the mcp direct-open
+    /// fallback uses, so the two paths cannot diverge.
+    pub async fn handle_memory(&self, request: MemoryRequest) -> MemoryResponse {
+        match self.handle_memory_inner(request).await {
+            Ok(data) => MemoryResponse::Ok { data },
+            Err(err) => MemoryResponse::Err { code: err.code.to_owned(), message: err.message },
+        }
+    }
+
+    async fn handle_memory_inner(&self, request: MemoryRequest) -> Result<Value, MemoryError> {
+        // Every variant carries an explicit scope (trusted local peer). Resolve
+        // it to the validated newtype first — an empty/invalid string is a
+        // scope_required fault, never a silent fall-through to a default scope.
+        let scope_str = memory_request_scope(&request);
+        let scope = Scope::new(scope_str).map_err(|e| {
+            MemoryError::scope_required(format!("invalid scope {scope_str:?}: {e}"))
+        })?;
+
+        // Warm handle (resident GGUF + per-scope cache). A storage-open failure
+        // is the classic fallback trigger — surface it as storage_unavailable so
+        // the mcp proxy can decide to serve the call itself.
+        let handle = self
+            .handle_for_scope(&scope)
+            .await
+            .map_err(|e| MemoryError::storage_unavailable(e.to_string()))?;
+
+        // Dispatch to the shared handler and serialize its DTO to JSON. Staging
+        // is not needed here: `handle_for_scope` already resolved the shared
+        // resident embedder, so the recall path meets a ready engine.
+        match request {
+            MemoryRequest::Ingest { params, .. } => {
+                let dto = lunaris_memory_service::ingest::handle(&handle, &scope, params)
+                    .await
+                    .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+            MemoryRequest::Recall { params, .. } => {
+                let dto = lunaris_memory_service::recall::handle(&handle, &scope, params)
+                    .await
+                    .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+            MemoryRequest::Forget { params, .. } => {
+                let dto = lunaris_memory_service::forget::handle(&handle, &scope, params)
+                    .await
+                    .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+            MemoryRequest::RecordDecision { params, .. } => {
+                let dto = lunaris_memory_service::record_decision::handle(&handle, &scope, params)
+                    .await
+                    .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+            MemoryRequest::RecordEdit { params, .. } => {
+                let dto = lunaris_memory_service::record_edit::handle(&handle, &scope, params)
+                    .await
+                    .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+            MemoryRequest::Status { .. } => {
+                let dto = lunaris_memory_service::status::handle(
+                    &handle,
+                    &scope,
+                    lunaris_memory_service::status::StatusParams {},
+                )
+                .await
+                .map_err(MemoryError::from_service)?;
+                to_value_or_engine_error(&dto)
+            }
+        }
+    }
+
+    /// Test seam: preload the per-scope handle cache with an in-process engine
+    /// so `handle_memory` dispatch can be exercised without resolving a real
+    /// storage URL from the environment. Production code never calls this.
+    #[cfg(test)]
+    pub(crate) async fn insert_handle_for_test(&self, scope: &Scope, handle: Arc<Lunaris>) {
+        self.handles.lock().await.insert(scope.as_str().to_owned(), handle);
     }
 
     async fn handle_for_scope(&self, scope: &Scope) -> anyhow::Result<Arc<Lunaris>> {
@@ -999,6 +1182,30 @@ struct ToolContext {
     paths: Option<Vec<String>>,
 }
 
+/// Borrow the peer-supplied scope string out of any [`MemoryRequest`] variant.
+/// Every variant carries `scope` (required by type), so this never returns
+/// empty by construction — but an empty *string* is still rejected downstream
+/// by `Scope::new` as `scope_required`.
+fn memory_request_scope(request: &MemoryRequest) -> &str {
+    match request {
+        MemoryRequest::Ingest { scope, .. }
+        | MemoryRequest::Recall { scope, .. }
+        | MemoryRequest::Forget { scope, .. }
+        | MemoryRequest::RecordDecision { scope, .. }
+        | MemoryRequest::RecordEdit { scope, .. }
+        | MemoryRequest::Status { scope, .. } => scope,
+    }
+}
+
+/// Serialize a tool DTO to JSON, mapping the (near-impossible) serialization
+/// failure to an `engine_error` rather than panicking on the socket path.
+fn to_value_or_engine_error<T: Serialize>(dto: &T) -> Result<Value, MemoryError> {
+    serde_json::to_value(dto).map_err(|e| MemoryError {
+        code: "engine_error",
+        message: format!("response serialization failed: {e}"),
+    })
+}
+
 fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<Scope> {
     if let Some(scope) = explicit
         && !scope.is_empty()
@@ -1375,6 +1582,138 @@ mod tests {
         assert!(
             Arc::ptr_eq(&first, &second),
             "shared_reranker must return the same Arc on every call (load once)"
+        );
+    }
+
+    // ── contextd-mcp-merge batch 2: Memory(..) engine-op dispatch ─────────────
+
+    use std::sync::Arc as StdArc;
+
+    /// Build an in-process engine (memory:// + StubEmbedder, no GGUF) and
+    /// preload it into the service's per-scope handle cache under `scope_name`,
+    /// so `handle_memory` dispatches against it without touching real storage.
+    async fn service_with_seeded_scope(scope_name: &str) -> (ContextService, Scope) {
+        let svc = ContextService::new();
+        let scope = Scope::new(scope_name).unwrap();
+        let embedder = StdArc::new(StubEmbedder::new(768));
+        let handle = StdArc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        svc.insert_handle_for_test(&scope, handle).await;
+        (svc, scope)
+    }
+
+    /// The socket protocol must decode the new umbrella variant: a
+    /// `{"type":"memory","op":"recall",...}` frame parses to
+    /// `ContextRequest::Memory(MemoryRequest::Recall { .. })` with the nested
+    /// params intact. This is the wire contract the mcp proxy encodes against.
+    #[test]
+    fn context_request_decodes_memory_recall_frame() {
+        let raw = serde_json::json!({
+            "type": "memory",
+            "op": "recall",
+            "scope": "git_deadbeef",
+            "params": { "query": "chocolate", "k": 3 }
+        });
+        let req: ContextRequest = serde_json::from_value(raw).expect("memory frame must decode");
+        match req {
+            ContextRequest::Memory(MemoryRequest::Recall { scope, params }) => {
+                assert_eq!(scope, "git_deadbeef");
+                assert_eq!(params.query, "chocolate");
+                assert_eq!(params.k, 3);
+            }
+            other => panic!("expected Memory(Recall), got {other:?}"),
+        }
+    }
+
+    /// The single-source-of-truth contract: an ingest through `handle_memory`
+    /// followed by a recall through `handle_memory` returns the ingested
+    /// episode — the SAME `lunaris_memory_service` handlers the mcp fallback
+    /// uses, driven by the daemon's warm handle.
+    #[tokio::test]
+    async fn handle_memory_ingest_then_recall_round_trip() {
+        let (svc, scope) = service_with_seeded_scope("test-mem-rt").await;
+
+        let ingest = svc
+            .handle_memory(MemoryRequest::Ingest {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::ingest::IngestParams {
+                    source: "test/src".to_owned(),
+                    content: "chocolate cake recipe with cocoa".to_owned(),
+                    t_ref: None,
+                    metadata: None,
+                    dedupe_key: None,
+                },
+            })
+            .await;
+        assert!(matches!(ingest, MemoryResponse::Ok { .. }), "ingest failed: {ingest:?}");
+
+        let recall = svc
+            .handle_memory(MemoryRequest::Recall {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::recall::RecallParams {
+                    query: "chocolate".to_owned(),
+                    k: 5,
+                    filters: None,
+                    as_of: None,
+                    raw: false,
+                },
+            })
+            .await;
+        match recall {
+            MemoryResponse::Ok { data } => {
+                let hits = data.get("hits").and_then(|h| h.as_array()).expect("hits array");
+                assert!(!hits.is_empty(), "expected at least one recall hit, got {data}");
+            }
+            MemoryResponse::Err { code, message } => {
+                panic!("recall errored: {code} / {message}")
+            }
+        }
+    }
+
+    /// An empty scope string is a `scope_required` fault — never a silent
+    /// fall-through to a default/daemon scope (the P0 cross-project-bleed class).
+    #[tokio::test]
+    async fn handle_memory_empty_scope_is_scope_required() {
+        let svc = ContextService::new();
+        let resp = svc.handle_memory(MemoryRequest::Status { scope: String::new() }).await;
+        match resp {
+            MemoryResponse::Err { code, .. } => assert_eq!(code, "scope_required"),
+            MemoryResponse::Ok { data } => panic!("expected scope_required, got Ok({data})"),
+        }
+    }
+
+    /// Status dispatch returns the tool's own DTO (queue-health shape) as JSON
+    /// through the memory channel.
+    #[tokio::test]
+    async fn handle_memory_status_returns_backend_dto() {
+        let (svc, scope) = service_with_seeded_scope("test-mem-status").await;
+        let resp =
+            svc.handle_memory(MemoryRequest::Status { scope: scope.as_str().to_owned() }).await;
+        match resp {
+            MemoryResponse::Ok { data } => {
+                assert_eq!(data.get("scope").and_then(|s| s.as_str()), Some("test-mem-status"));
+                assert!(data.get("queues").and_then(|q| q.as_array()).is_some(), "queues DTO");
+            }
+            MemoryResponse::Err { code, message } => panic!("status errored: {code} / {message}"),
+        }
+    }
+
+    /// A direct `handle(Memory(..))` (bypassing the connection-layer intercept)
+    /// must NOT silently succeed — the defensive arm routes it to an error so a
+    /// mis-wired caller cannot get a `ContextResponse`-shaped answer for an
+    /// engine op.
+    #[tokio::test]
+    async fn handle_rejects_memory_variant_directly() {
+        let svc = ContextService::new();
+        let resp = svc
+            .handle(ContextRequest::Memory(MemoryRequest::Status {
+                scope: "test-mem-x".to_owned(),
+            }))
+            .await;
+        assert!(!resp.ok, "direct handle() of a Memory variant must be an error");
+        assert!(
+            resp.error.as_deref().unwrap_or_default().contains("handle_memory"),
+            "error should point at handle_memory, got {:?}",
+            resp.error
         );
     }
 

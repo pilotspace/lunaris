@@ -69,11 +69,18 @@ async fn handle_connection(
     mut stream: UnixStream,
     service: lunaris_hook::context::ContextService,
 ) -> anyhow::Result<()> {
+    use lunaris_hook::context::ContextRequest;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).await?;
-    let request: lunaris_hook::context::ContextRequest = serde_json::from_slice(&buf)?;
-    let response = service.handle(request).await;
-    let bytes = serde_json::to_vec(&response)?;
+    let request: ContextRequest = serde_json::from_slice(&buf)?;
+    // Memory ops answer on a distinct response channel (MemoryResponse — the
+    // tool's own DTO), so they serialize through `handle_memory`; every other
+    // (hook) variant answers with a ContextResponse via `handle`. Framing is
+    // identical for both: one JSON response, connection-per-call.
+    let bytes = match request {
+        ContextRequest::Memory(mem) => serde_json::to_vec(&service.handle_memory(mem).await)?,
+        other => serde_json::to_vec(&service.handle(other).await)?,
+    };
     stream.write_all(&bytes).await?;
     stream.shutdown().await?;
     Ok(())

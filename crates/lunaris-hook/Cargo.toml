@@ -29,6 +29,9 @@ lunaris      = { workspace = true, features = ["llamacpp"] }
 lunaris-core = { workspace = true }
 lunaris-ingest = { workspace = true }
 lunaris-retrieve = { workspace = true }
+# Shared engine-op handlers — contextd's Memory(..) dispatch calls the SAME
+# functions the lunaris-mcp direct-open fallback uses (single source of truth).
+lunaris-memory-service = { workspace = true }
 
 # CLI
 clap = { workspace = true, features = ["derive", "env"] }
