@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "scratchpad-proxiable",
-  "active_milestone": "memory-contract-integrity",
+  "active_task": "moon-v070-bump",
+  "active_milestone": "moon-v070-exploit",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -1122,6 +1122,33 @@
         "declared": [],
         "snapshot_md5": "dba21dc93a5a4d16fe6c389f130306ba"
       }
+    },
+    "moon-v070-bump": {
+      "title": "Bump vendored Moon to v0.7.0 (durability hardening + #69 upgrade safety)",
+      "phase": "build",
+      "gate": "none",
+      "milestone": "moon-v070-exploit",
+      "depends_on": [],
+      "created": "2026-07-15T11:29:19+00:00",
+      "updated": "2026-07-15T15:04:03+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "97fb87ff02af68712702c7dc87c13eeb",
+        "tests": {
+          ".add/tasks/moon-v070-bump/tests/test_bump_contract.py": "991db46a7094ea25235a08fe06d800ed"
+        }
+      },
+      "scope": {
+        "declared": [
+          "vendor/moon/",
+          "vendor/moon/Cargo.lock",
+          "scripts/test-recovery.py",
+          "docs/durability.md",
+          "docs/book/src/operations/durability.md",
+          ".add/tasks/moon-v070-bump/src/"
+        ],
+        "snapshot_md5": "01e27f1edcb4d8dcad47aa02d762d131"
+      }
     }
   },
   "milestones": {
@@ -1164,10 +1191,18 @@
       "status": "done",
       "created": "2026-07-14T03:41:44+00:00",
       "updated": "2026-07-14T04:59:07+00:00"
+    },
+    "moon-v070-exploit": {
+      "title": "Moon v0.7.0 Exploitation Wave",
+      "goal": "Strengthen Lunaris's provable-atomicity contract by adopting Moon 0.7.0's WAL v3 durability hardening and crossing the #69 MQ/temporal upgrade-safety fix, without regressing the sub-25ms recall or read-your-writes guarantees.",
+      "stage": "production",
+      "status": "active",
+      "created": "2026-07-15T11:27:39+00:00",
+      "updated": "2026-07-15T11:27:39+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T06:55:17+00:00",
+  "updated": "2026-07-15T15:04:03+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
