@@ -2,7 +2,7 @@
 
 slug: scratchpad-proxiable · created: 2026-07-15 · stage: production
 autonomy: conservative   <!-- lowered from auto: this is a wire-protocol + trust-boundary change; verify gates on the human -->
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 sensitivity: architecture,security   <!-- new socket wire variants + scope/namespace trust boundary -->
 
 > One file = one task. Fill sections top-to-bottom; the `add` skill drives each phase.
@@ -175,6 +175,15 @@ Trust boundary (UNCHANGED from v1): contextd trusts the local 0700-socket peer's
 
 Status: FROZEN @ v1 — approved by Tin Dang (2026-07-15)
 
+Least-sure flag surfaced at freeze: [contract] handover-across-socket at-most-once — splitting
+detection (mcp marker) from the drain (contextd) could orphan a pad if the socket fails after the
+marker flag is already cleared. Mitigation held: same warn-and-continue posture as today's in-process
+path (`take_pending_handover_at` still clears only on read); the only change is the drain runs on the
+warm engine over the socket. Same at-most-once semantics; orphaned events stay in the pad (un-promoted),
+retried at the next switch — not data loss. Second [spec] flag: `needs_embedder` MUST include
+ScratchpadRead/Grep (fused Vector+Keyword plan) or Direct-fallback read/grep fail to stage — confirmed
+by the existing `maybe_ensure_staged()` at the top of both handlers, now encoded in `needs_embedder`.
+
 ---
 
 ## 4 · TESTS — failing-first suite (red) ▸ docs/06-step-4-tests.md
@@ -215,22 +224,27 @@ Constraints: do NOT change any test or the contract; namespace `:`-rejection pre
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [ ] all tests pass
-- [ ] coverage did not decrease
-- [ ] no test or contract was altered during build
-- [ ] the green was EARNED (adversarial refute-read of the parity + fallback tests)
-- [ ] handover warn-and-continue: a failed handover dispatch does not error the scratchpad op (timing/failure test)
-- [ ] no wire scope-override path (deny_unknown_fields on all 4 scratchpad Params)
-- [ ] layering: no rmcp in lunaris-memory-service; staging stays a caller concern
-- [ ] a person reviewed and approved the change
+- [x] all tests pass — shared 49 (44 batch-1 + 5 protocol); mcp default staging 2 / proxy 7 / session_pad 5; contextd handle_memory 5; embedded-moon on a REAL Moon: round-trip, session-handover-rotates-and-drains (crux), consolidate guard2/guard3/wired, bootstrap-launches-moon — all green.
+- [x] coverage did not decrease — every moved handler test relocated (write 4, read 3, grep 3, namespace 12, consolidate 2 non-Moon + 3 Moon); +5 protocol, +3 proxy scratchpad, +2 staging, +2 contextd.
+- [x] no test or contract was altered during build — frozen §3 unchanged; only NEW tests added + moved verbatim.
+- [x] the green was EARNED — parity test asserts byte-identical Direct==bare dispatch; handover crux test is discriminating (drain finds 0 ⟺ handover ran; "without the handover this drains the two enqueued events"); consolidate wired test seeds under the REAL scope (scope-dev discriminator).
+- [x] handover warn-and-continue — handover::handle is infallible (always Ok, advisory status); `handle_memory_scratchpad_handover_is_ok_and_skips` proves Ok on no-queue; `resolve_namespace_session_aware` logs+swallows a proxy.dispatch error, never propagates.
+- [x] no wire scope-override path — deny_unknown_fields on all 4 scratchpad Params; `wire_payload_cannot_smuggle_a_scope_field` (proxy) + `params_reject_smuggled_scope` (shared) green.
+- [x] layering — lunaris-memory-service has NO rmcp dep (ServiceError→rmcp maps at the mcp boundary); staging (model-stage + session marker) stays mcp-side; clippy `-D warnings --all-targets` clean on all 3 crates.
+- [ ] a person reviewed and approved the change — THIS GATE.
 
 ### Build expectations
-- [ ] socket-mode scratchpad_write opens NO second engine — confirmed by contextd integration test + no embedder-stage log on the write path
-- [ ] scratchpad handle bodies exist ONLY in lunaris-memory-service — confirmed by `grep -rn 'WorkingMemory::new' crates/lunaris-mcp/src/tools` returning nothing for the moved handlers
+- [x] socket-mode scratchpad_write opens NO second engine — `handle_memory_scratchpad_write_then_read_round_trip` runs the op on contextd's warm per-scope handle; write's `needs_embedder=false` so the Direct path never stages either.
+- [x] scratchpad handle bodies exist ONLY in lunaris-memory-service — `crates/lunaris-mcp/src/tools/scratchpad_{write,read,grep}.rs` deleted; `grep WorkingMemory::new crates/lunaris-mcp/src` returns nothing.
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Reviewed by: Tin Dang · date: 2026-07-15
+Evidence: shared 49 + mcp-default 14 + contextd 5 + embedded-moon (real Moon) all green; parity
+byte-identical; clippy -D warnings --all-targets clean on all 3 crates; frozen §3 unaltered.
+Residual [contract] flag (handover at-most-once) mitigated to the prior in-process posture and
+exercised green by the session-handover-rotates-and-drains Moon test. Security: deny_unknown_fields
++ two smuggle-reject tests; trust boundary unchanged from v1.
 
 ---
 

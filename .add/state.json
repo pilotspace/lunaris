@@ -1107,12 +1107,21 @@
     },
     "scratchpad-proxiable": {
       "title": "Make scratchpad ops proxiable: extract to shared crate + route through contextd",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "memory-contract-integrity",
       "depends_on": [],
       "created": "2026-07-15T05:52:02+00:00",
-      "updated": "2026-07-15T06:00:28+00:00"
+      "updated": "2026-07-15T06:55:17+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "83cbfbaa968c15c41d60d53edf2854c2",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [],
+        "snapshot_md5": "dba21dc93a5a4d16fe6c389f130306ba"
+      }
     }
   },
   "milestones": {
@@ -1158,7 +1167,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T06:00:28+00:00",
+  "updated": "2026-07-15T06:55:17+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
