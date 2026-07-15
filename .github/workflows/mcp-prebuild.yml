@@ -187,7 +187,15 @@ jobs:
           # The version field in package.json is already correct per the release commit.
           # The manifest.json on disk now has real hashes (previous step).
           npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
-          npm publish --access public
+          # Pre-release versions (e.g. 0.6.0-rc.1) route to the 'next' dist-tag
+          # so `npx @pilotspace/lunaris-mcp` / `npm i` never default to an RC.
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in
+            *-*) DIST_TAG="next" ;;
+            *)   DIST_TAG="latest" ;;
+          esac
+          echo "publishing @pilotspace/lunaris-mcp@$VERSION under dist-tag '$DIST_TAG'"
+          npm publish --access public --tag "$DIST_TAG"
 
   build-wheel:
     name: wheel ${{ matrix.target }} on ${{ matrix.os }}
