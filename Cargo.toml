@@ -80,7 +80,7 @@ exclude = [
 ]
 
 [workspace.package]
-version      = "0.5.0"
+version      = "0.6.0-rc.1"
 edition      = "2024"
 rust-version = "1.94"
 license      = "Apache-2.0"
@@ -98,28 +98,28 @@ publish      = false
 # in via `features = ["llamacpp", ...]` without colliding with cargo's
 # rule that disallows downstream `default-features = false` when the
 # workspace entry leaves defaults enabled.
-lunaris                   = { path = "crates/lunaris",                   version = "0.5.0", default-features = false, package = "lunaris-memory" }
-lunaris-core              = { path = "crates/lunaris-core",              version = "0.5.0" }
-lunaris-storage-moon      = { path = "crates/lunaris-storage-moon",      version = "0.5.0", default-features = false }
-lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres",  version = "0.5.0", default-features = false }
-lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded",  version = "0.5.0", default-features = false }
-lunaris-embed-remote      = { path = "crates/lunaris-embed-remote",      version = "0.5.0", default-features = false }
-lunaris-llamacpp          = { path = "crates/lunaris-llamacpp",          version = "0.5.0", default-features = false }
-lunaris-rerank            = { path = "crates/lunaris-rerank",            version = "0.5.0", default-features = false }
-lunaris-extract           = { path = "crates/lunaris-extract",           version = "0.5.0", default-features = false }
-lunaris-llm               = { path = "crates/lunaris-llm",               version = "0.5.0", default-features = false }
-lunaris-verify            = { path = "crates/lunaris-verify",            version = "0.5.0", default-features = false }
-lunaris-consolidate       = { path = "crates/lunaris-consolidate",       version = "0.5.0", default-features = false }
-lunaris-ingest            = { path = "crates/lunaris-ingest",            version = "0.5.0", default-features = false }
-lunaris-retrieve          = { path = "crates/lunaris-retrieve",          version = "0.5.0", default-features = false }
-lunaris-recipes           = { path = "crates/lunaris-recipes",           version = "0.5.0", default-features = false }
-lunaris-server            = { path = "crates/lunaris-server",            version = "0.5.0", default-features = false }
-lunaris-memory-service    = { path = "crates/lunaris-memory-service",    version = "0.5.0" }
-lunaris-bench             = { path = "crates/lunaris-bench",             version = "0.5.0", default-features = false }
-lunaris-conformance       = { path = "crates/lunaris-conformance",       version = "0.5.0", default-features = false }
-lunaris-codegen           = { path = "crates/lunaris-codegen",           version = "0.5.0", default-features = false }
-lunaris-py                = { path = "crates/lunaris-py",                version = "0.5.0", default-features = false }
-lunaris-ts                = { path = "crates/lunaris-ts",                version = "0.5.0", default-features = false }
+lunaris                   = { path = "crates/lunaris", version = "0.6.0-rc.1", default-features = false, package = "lunaris-memory" }
+lunaris-core              = { path = "crates/lunaris-core", version = "0.6.0-rc.1" }
+lunaris-storage-moon      = { path = "crates/lunaris-storage-moon", version = "0.6.0-rc.1", default-features = false }
+lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres", version = "0.6.0-rc.1", default-features = false }
+lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded", version = "0.6.0-rc.1", default-features = false }
+lunaris-embed-remote      = { path = "crates/lunaris-embed-remote", version = "0.6.0-rc.1", default-features = false }
+lunaris-llamacpp          = { path = "crates/lunaris-llamacpp", version = "0.6.0-rc.1", default-features = false }
+lunaris-rerank            = { path = "crates/lunaris-rerank", version = "0.6.0-rc.1", default-features = false }
+lunaris-extract           = { path = "crates/lunaris-extract", version = "0.6.0-rc.1", default-features = false }
+lunaris-llm               = { path = "crates/lunaris-llm", version = "0.6.0-rc.1", default-features = false }
+lunaris-verify            = { path = "crates/lunaris-verify", version = "0.6.0-rc.1", default-features = false }
+lunaris-consolidate       = { path = "crates/lunaris-consolidate", version = "0.6.0-rc.1", default-features = false }
+lunaris-ingest            = { path = "crates/lunaris-ingest", version = "0.6.0-rc.1", default-features = false }
+lunaris-retrieve          = { path = "crates/lunaris-retrieve", version = "0.6.0-rc.1", default-features = false }
+lunaris-recipes           = { path = "crates/lunaris-recipes", version = "0.6.0-rc.1", default-features = false }
+lunaris-server            = { path = "crates/lunaris-server", version = "0.6.0-rc.1", default-features = false }
+lunaris-memory-service    = { path = "crates/lunaris-memory-service", version = "0.6.0-rc.1" }
+lunaris-bench             = { path = "crates/lunaris-bench", version = "0.6.0-rc.1", default-features = false }
+lunaris-conformance       = { path = "crates/lunaris-conformance", version = "0.6.0-rc.1", default-features = false }
+lunaris-codegen           = { path = "crates/lunaris-codegen", version = "0.6.0-rc.1", default-features = false }
+lunaris-py                = { path = "crates/lunaris-py", version = "0.6.0-rc.1", default-features = false }
+lunaris-ts                = { path = "crates/lunaris-ts", version = "0.6.0-rc.1", default-features = false }
 
 # async runtime
 tokio          = { version = "1", features = ["full"] }
