@@ -15,6 +15,7 @@ use thiserror::Error;
 
 pub mod forget;
 pub mod ingest;
+pub mod protocol;
 pub mod recall;
 pub mod record_decision;
 pub mod record_edit;

@@ -8,6 +8,7 @@ use std::time::Instant;
 use lunaris::{Lunaris, Query, recent_by_source};
 use lunaris_core::snippet::{parse_jsonish, single_line, summarize, summarize_json, trim_to_chars};
 use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder};
+use lunaris_memory_service::protocol::{MemoryRequest, MemoryResponse};
 use lunaris_retrieve::{
     AndRetriever, FuseRrfRetriever, Keyword, QueryContext, RawHit, Retriever, SourceOp, Vector,
     hydrate, hydrate_mixed,
@@ -122,55 +123,11 @@ pub enum ContextRequest {
     /// the response is a [`MemoryResponse`], NOT a [`ContextResponse`], so the
     /// connection layer serializes this arm through [`ContextService::handle_memory`]
     /// rather than [`ContextService::handle`].
+    ///
+    /// `MemoryRequest` / `MemoryResponse` live in `lunaris_memory_service::protocol`
+    /// (the transport-neutral shared crate) so contextd and the mcp proxy share
+    /// one definition without either depending on the other's crate.
     Memory(MemoryRequest),
-}
-
-/// Engine-op request mirroring the stateless `memory.*` MCP tools.
-///
-/// Only the SIX engine ops cross the socket — the session/registry-coupled
-/// tools (`scratchpad_*`, `list_scopes`) are served locally by the mcp server
-/// and never proxied (they bind to per-session state the daemon does not hold).
-/// Each variant carries an explicit `scope` (trusted local-peer model, §3
-/// FROZEN @ v1): the 0700 user socket is the trust boundary, so the daemon
-/// honors the peer-supplied scope string verbatim. `params` reuses the shared
-/// crate's wire DTOs so contextd and the mcp fallback deserialize identically.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum MemoryRequest {
-    Ingest {
-        scope: String,
-        params: lunaris_memory_service::ingest::IngestParams,
-    },
-    Recall {
-        scope: String,
-        params: lunaris_memory_service::recall::RecallParams,
-    },
-    Forget {
-        scope: String,
-        params: lunaris_memory_service::forget::ForgetParams,
-    },
-    RecordDecision {
-        scope: String,
-        params: lunaris_memory_service::record_decision::RecordDecisionParams,
-    },
-    RecordEdit {
-        scope: String,
-        params: lunaris_memory_service::record_edit::RecordEditParams,
-    },
-    Status {
-        scope: String,
-    },
-}
-
-/// Engine-op response: the tool's own DTO as JSON on success, a tool-native
-/// error `code` (plus a human `message`) on failure. The mcp proxy parses this
-/// off the socket and re-wraps `data` into the matching rmcp `Json<T>` DTO, or
-/// maps `code` back to an `rmcp::ErrorData`.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum MemoryResponse {
-    Ok { data: Value },
-    Err { code: String, message: String },
 }
 
 /// Internal error carrier for the memory dispatch — classifies a failure into
@@ -506,9 +463,8 @@ impl ContextService {
         // Every variant carries an explicit scope (trusted local peer). Resolve
         // it to the validated newtype first — an empty/invalid string is a
         // scope_required fault, never a silent fall-through to a default scope.
-        let scope_str = memory_request_scope(&request);
-        let scope = Scope::new(scope_str).map_err(|e| {
-            MemoryError::scope_required(format!("invalid scope {scope_str:?}: {e}"))
+        let scope = Scope::new(request.scope()).map_err(|e| {
+            MemoryError::scope_required(format!("invalid scope {:?}: {e}", request.scope()))
         })?;
 
         // Warm handle (resident GGUF + per-scope cache). A storage-open failure
@@ -519,51 +475,14 @@ impl ContextService {
             .await
             .map_err(|e| MemoryError::storage_unavailable(e.to_string()))?;
 
-        // Dispatch to the shared handler and serialize its DTO to JSON. Staging
-        // is not needed here: `handle_for_scope` already resolved the shared
-        // resident embedder, so the recall path meets a ready engine.
-        match request {
-            MemoryRequest::Ingest { params, .. } => {
-                let dto = lunaris_memory_service::ingest::handle(&handle, &scope, params)
-                    .await
-                    .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-            MemoryRequest::Recall { params, .. } => {
-                let dto = lunaris_memory_service::recall::handle(&handle, &scope, params)
-                    .await
-                    .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-            MemoryRequest::Forget { params, .. } => {
-                let dto = lunaris_memory_service::forget::handle(&handle, &scope, params)
-                    .await
-                    .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-            MemoryRequest::RecordDecision { params, .. } => {
-                let dto = lunaris_memory_service::record_decision::handle(&handle, &scope, params)
-                    .await
-                    .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-            MemoryRequest::RecordEdit { params, .. } => {
-                let dto = lunaris_memory_service::record_edit::handle(&handle, &scope, params)
-                    .await
-                    .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-            MemoryRequest::Status { .. } => {
-                let dto = lunaris_memory_service::status::handle(
-                    &handle,
-                    &scope,
-                    lunaris_memory_service::status::StatusParams {},
-                )
-                .await
-                .map_err(MemoryError::from_service)?;
-                to_value_or_engine_error(&dto)
-            }
-        }
+        // Delegate to the SHARED variant→handler dispatch — the exact same
+        // `lunaris_memory_service::protocol::dispatch` the mcp direct-open
+        // fallback calls, so the two surfaces cannot diverge. Staging is not
+        // needed here: `handle_for_scope` already resolved the shared resident
+        // embedder, so the recall path meets a ready engine.
+        lunaris_memory_service::protocol::dispatch(&handle, &scope, request)
+            .await
+            .map_err(MemoryError::from_service)
     }
 
     /// Test seam: preload the per-scope handle cache with an in-process engine
@@ -1180,30 +1099,6 @@ impl Default for ContextService {
 struct ToolContext {
     tool: Option<String>,
     paths: Option<Vec<String>>,
-}
-
-/// Borrow the peer-supplied scope string out of any [`MemoryRequest`] variant.
-/// Every variant carries `scope` (required by type), so this never returns
-/// empty by construction — but an empty *string* is still rejected downstream
-/// by `Scope::new` as `scope_required`.
-fn memory_request_scope(request: &MemoryRequest) -> &str {
-    match request {
-        MemoryRequest::Ingest { scope, .. }
-        | MemoryRequest::Recall { scope, .. }
-        | MemoryRequest::Forget { scope, .. }
-        | MemoryRequest::RecordDecision { scope, .. }
-        | MemoryRequest::RecordEdit { scope, .. }
-        | MemoryRequest::Status { scope, .. } => scope,
-    }
-}
-
-/// Serialize a tool DTO to JSON, mapping the (near-impossible) serialization
-/// failure to an `engine_error` rather than panicking on the socket path.
-fn to_value_or_engine_error<T: Serialize>(dto: &T) -> Result<Value, MemoryError> {
-    serde_json::to_value(dto).map_err(|e| MemoryError {
-        code: "engine_error",
-        message: format!("response serialization failed: {e}"),
-    })
 }
 
 fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<Scope> {

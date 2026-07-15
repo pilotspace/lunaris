@@ -27,7 +27,7 @@ use lunaris_core::Scope;
 /// strings stored as-is in the content body. Downstream callers rendering these values
 /// MUST treat them as untrusted (could contain secrets if the caller passes them without
 /// scrubbing). The `deny_unknown_fields` attribute blocks payload-smuggling (T-25-02-01).
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordEditParams {
     /// The file path that was edited (stored in metadata for filter-by-path queries).
@@ -57,7 +57,7 @@ pub struct RecordEditParams {
 ///
 /// `lsn` is the log-sequence number of the committed write, formatted as
 /// `"{wall_ms}:{counter}"`. Callers may use it as an opaque ordering handle.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecordEditResponse {
     /// Log-sequence number of the committed write (wall_ms:counter).
     pub lsn: String,

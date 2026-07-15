@@ -28,6 +28,10 @@ mod embedded_moon;
 // Per-session scratchpad resolution + handover tracking — reads the
 // sessions.json marker lunaris-hook maintains (scratchpad-handover task).
 mod session_pad;
+// Socket-first proxy to lunaris-contextd with direct-open fallback
+// (contextd-mcp-merge). Routes the 6 engine ops to the warm daemon; on
+// transport failure the circuit-breaker flips to the identical shared handler.
+mod proxy;
 mod tools;
 
 use clap::Parser;
@@ -42,6 +46,7 @@ use rmcp::{
 use crate::state::AppState;
 // Engine-op DTOs now live in the transport-neutral shared crate
 // (lunaris-memory-service), called by BOTH this mcp server and contextd.
+use lunaris_memory_service::protocol::MemoryRequest;
 use lunaris_memory_service::{
     forget::{ForgetParams, ForgetResponse},
     ingest::{IngestParams, IngestResponse},
@@ -95,12 +100,20 @@ struct Cli {
 #[derive(Clone)]
 struct LunarisMcpServer {
     state: AppState,
+    /// Socket-first proxy to lunaris-contextd with direct-open fallback. Shared
+    /// (`Arc`) so the per-session route/breaker state is one instance across the
+    /// cloned handler the rmcp router hands to each request.
+    proxy: std::sync::Arc<proxy::MemoryProxy>,
     tool_router: ToolRouter<Self>,
 }
 
 impl LunarisMcpServer {
     fn new(state: AppState) -> Self {
-        Self { state, tool_router: Self::lunaris_tool_router() }
+        Self {
+            state,
+            proxy: std::sync::Arc::new(proxy::MemoryProxy::new()),
+            tool_router: Self::lunaris_tool_router(),
+        }
     }
 }
 
@@ -119,6 +132,18 @@ fn map_service_error(e: lunaris_memory_service::ServiceError) -> rmcp::ErrorData
         }
         ServiceError::InvalidInput(msg) => rmcp::ErrorData::invalid_params(msg, None),
     }
+}
+
+/// Decode the proxy's JSON `data` back into a tool's rmcp response DTO. The
+/// socket path returns the daemon's DTO as `serde_json::Value`; the direct
+/// path serializes its own DTO to the same shape — so both routes re-hydrate
+/// through here into the exact `Json<R>` the `#[tool]` method promises.
+fn decode_dto<R: serde::de::DeserializeOwned>(
+    data: serde_json::Value,
+) -> Result<Json<R>, rmcp::ErrorData> {
+    serde_json::from_value(data)
+        .map(Json)
+        .map_err(|e| rmcp::ErrorData::internal_error(format!("proxy DTO decode failed: {e}"), None))
 }
 
 // ── Tool registration ─────────────────────────────────────────────────────────
@@ -146,10 +171,8 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<IngestParams>,
     ) -> Result<Json<IngestResponse>, rmcp::ErrorData> {
-        lunaris_memory_service::ingest::handle(&self.state.lunaris, &self.state.scope, params)
-            .await
-            .map(Json)
-            .map_err(map_service_error)
+        let req = MemoryRequest::Ingest { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Recall memories relevant to a query.
@@ -174,14 +197,11 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecallParams>,
     ) -> Result<Json<RecallResponse>, rmcp::ErrorData> {
-        // Staging is a CALLER concern (lifted out of the shared handler): the
-        // embedder GGUF must be on disk before the first recall touches vector
-        // search. contextd stages at warm-up; the mcp server stages lazily here.
-        tools::staging::maybe_ensure_staged().await.map_err(rmcp::ErrorData::from)?;
-        lunaris_memory_service::recall::handle(&self.state.lunaris, &self.state.scope, params)
-            .await
-            .map(Json)
-            .map_err(map_service_error)
+        // Staging is deferred to the proxy's DIRECT path only: when the socket
+        // path serves the recall, contextd's warm handle already staged the
+        // embedder, so the mcp server must not download the GGUF needlessly.
+        let req = MemoryRequest::Recall { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Forget memories by source prefix or episode ID.
@@ -197,10 +217,8 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<ForgetParams>,
     ) -> Result<Json<ForgetResponse>, rmcp::ErrorData> {
-        lunaris_memory_service::forget::handle(&self.state.lunaris, &self.state.scope, params)
-            .await
-            .map(Json)
-            .map_err(map_service_error)
+        let req = MemoryRequest::Forget { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// List all known memory scopes.
@@ -240,14 +258,9 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecordDecisionParams>,
     ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
-        lunaris_memory_service::record_decision::handle(
-            &self.state.lunaris,
-            &self.state.scope,
-            params,
-        )
-        .await
-        .map(Json)
-        .map_err(map_service_error)
+        let req =
+            MemoryRequest::RecordDecision { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Record a file edit into agent memory.
@@ -269,10 +282,8 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecordEditParams>,
     ) -> Result<Json<RecordEditResponse>, rmcp::ErrorData> {
-        lunaris_memory_service::record_edit::handle(&self.state.lunaris, &self.state.scope, params)
-            .await
-            .map(Json)
-            .map_err(map_service_error)
+        let req = MemoryRequest::RecordEdit { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Report backend capabilities and queue health for the bound scope.
@@ -285,12 +296,10 @@ impl LunarisMcpServer {
     )]
     async fn status(
         &self,
-        Parameters(params): Parameters<StatusParams>,
+        Parameters(_params): Parameters<StatusParams>,
     ) -> Result<Json<StatusResponse>, rmcp::ErrorData> {
-        lunaris_memory_service::status::handle(&self.state.lunaris, &self.state.scope, params)
-            .await
-            .map(Json)
-            .map_err(map_service_error)
+        let req = MemoryRequest::Status { scope: self.state.scope.as_str().to_owned() };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
     /// Write a key-value pair to the agent scratchpad.

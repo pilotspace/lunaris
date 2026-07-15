@@ -23,7 +23,7 @@ use lunaris_core::Scope;
 ///
 /// `#[serde(deny_unknown_fields)]` is mandatory (CLAUDE.md §HTTP DTO discipline).
 /// The scope field is absent by design — it is bound at server startup.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IngestParams {
     /// Logical origin of the observation (e.g. "helios/task-planner", "user").
@@ -56,7 +56,7 @@ pub struct IngestParams {
 ///
 /// `lsn` is the log-sequence number of the committed write, formatted as
 /// `"{wall_ms}:{counter}"`. Callers may use it as an opaque ordering handle.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestResponse {
     /// Log-sequence number of the committed ingest (wall_ms:counter).
     pub lsn: String,

@@ -21,7 +21,7 @@ use lunaris_core::Scope;
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
 /// Optional filters for `memory.recall`.
-#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecallFilters {
     /// Only return memories whose source starts with this prefix.
@@ -30,7 +30,7 @@ pub struct RecallFilters {
 }
 
 /// Input parameters for `memory.recall`.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecallParams {
     /// Natural-language query to recall memories for.
@@ -59,7 +59,7 @@ fn default_k() -> usize {
 }
 
 /// A single recalled memory hit.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallHit {
     /// Episode ID (ULID string).
     pub episode_id: String,
@@ -76,7 +76,7 @@ pub struct RecallHit {
 }
 
 /// Output of a successful `memory.recall` call.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallResponse {
     /// Ordered list of recalled memories (highest score first).
     pub hits: Vec<RecallHit>,
