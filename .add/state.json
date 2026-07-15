@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "contextd-mcp-merge",
+  "active_task": "scratchpad-proxiable",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -1104,6 +1104,15 @@
         ],
         "snapshot_md5": "5b3ab0edc43aa8bf0e910fc0c017626b"
       }
+    },
+    "scratchpad-proxiable": {
+      "title": "Make scratchpad ops proxiable: extract to shared crate + route through contextd",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-15T05:52:02+00:00",
+      "updated": "2026-07-15T06:00:28+00:00"
     }
   },
   "milestones": {
@@ -1149,7 +1158,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T05:37:22+00:00",
+  "updated": "2026-07-15T06:00:28+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

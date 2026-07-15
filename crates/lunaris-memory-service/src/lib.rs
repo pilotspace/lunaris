@@ -14,11 +14,17 @@ use lunaris_core::{LunarisError, StorageError};
 use thiserror::Error;
 
 pub mod forget;
+pub mod handover;
 pub mod ingest;
+pub mod namespace;
 pub mod protocol;
 pub mod recall;
 pub mod record_decision;
 pub mod record_edit;
+pub mod scratchpad_consolidate;
+pub mod scratchpad_grep;
+pub mod scratchpad_read;
+pub mod scratchpad_write;
 pub mod status;
 
 /// Tool-layer error. The `lunaris-mcp` boundary converts this into
