@@ -22,7 +22,7 @@ use lunaris_core::Scope;
 /// `#[serde(deny_unknown_fields)]` is mandatory (CLAUDE.md §HTTP DTO discipline).
 /// The scope field is absent by design — it is bound at server startup and cannot
 /// be overridden by the wire payload (T-25-01-01 threat mitigation).
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordDecisionParams {
     /// The decision that was made.
@@ -52,7 +52,7 @@ pub struct RecordDecisionParams {
 ///
 /// `lsn` is the log-sequence number of the committed write, formatted as
 /// `"{wall_ms}:{counter}"`. Callers may use it as an opaque ordering handle.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecordDecisionResponse {
     /// Log-sequence number of the committed write (wall_ms:counter).
     pub lsn: String,

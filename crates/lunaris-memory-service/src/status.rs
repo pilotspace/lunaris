@@ -15,7 +15,7 @@ const EMBED_QUEUE_TOPIC: &str = "__lunaris_embed__";
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StatusParams {}
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct QueueStatus {
     pub topic: String,
     pub available: bool,
@@ -23,7 +23,7 @@ pub struct QueueStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusResponse {
     pub scope: String,
     pub queue_native: bool,

@@ -25,7 +25,7 @@ use lunaris_core::Scope;
 /// Exactly one field must be set. If both are set the handler returns
 /// `InvalidInput` (ambiguous target). If neither is set the handler returns
 /// `InvalidInput` (missing target).
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForgetTarget {
     /// Forget all episodes whose source starts with this prefix.
@@ -41,7 +41,7 @@ pub struct ForgetTarget {
 }
 
 /// Input parameters for `memory.forget`.
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForgetParams {
     /// What to delete.
@@ -49,7 +49,7 @@ pub struct ForgetParams {
 }
 
 /// Output of a successful `memory.forget` call.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ForgetResponse {
     /// Number of episodes logically removed.
     ///
