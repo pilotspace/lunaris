@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "hook-source-prefix-lunaris",
+  "active_task": "contextd-mcp-merge",
   "active_milestone": "memory-contract-integrity",
   "tasks": {
     "mq-typed-client": {
@@ -1079,6 +1079,15 @@
         ],
         "snapshot_md5": "8d4324457080eb61b75eed74a1a01271"
       }
+    },
+    "contextd-mcp-merge": {
+      "title": "Unify contextd+mcp: one warm engine, thin MCP stdio proxy",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "memory-contract-integrity",
+      "depends_on": [],
+      "created": "2026-07-15T03:13:34+00:00",
+      "updated": "2026-07-15T03:23:03+00:00"
     }
   },
   "milestones": {
@@ -1124,7 +1133,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-14T16:14:26+00:00",
+  "updated": "2026-07-15T03:23:03+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
