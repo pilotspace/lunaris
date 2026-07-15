@@ -188,11 +188,20 @@ jobs:
         run: |
           set -uo pipefail
           npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
+          # Pre-release versions (a semver pre-release component, e.g.
+          # 0.6.0-rc.1) must NOT land on the 'latest' dist-tag or `npm i`
+          # would default to an RC. Route them to 'next'; stable → 'latest'.
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in
+            *-*) DIST_TAG="next" ;;
+            *)   DIST_TAG="latest" ;;
+          esac
+          echo "publishing @pilotspace/lunaris@$VERSION under dist-tag '$DIST_TAG'"
           for d in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
             echo "--- @pilotspace/lunaris-$d ---"
-            (cd "npm/$d" && npm publish --access public) \
+            (cd "npm/$d" && npm publish --access public --tag "$DIST_TAG") \
               || echo "::warning::npm/$d publish skipped (already published?)"
           done
           echo "--- @pilotspace/lunaris (main) ---"
-          npm publish --access public \
+          npm publish --access public --tag "$DIST_TAG" \
             || echo "::warning::@pilotspace/lunaris main publish skipped (already published?)"
