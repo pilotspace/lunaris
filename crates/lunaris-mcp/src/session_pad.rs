@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(default_namespace(None), "scratchpad/");
         // Sanitized hook ids are namespace-legal by construction; the shape
         // must pass the MCP namespace validator.
-        crate::tools::staging::validate_namespace(&default_namespace(Some("a-b.c_d")))
+        lunaris_memory_service::namespace::validate(&default_namespace(Some("a-b.c_d")))
             .expect("per-session namespace must satisfy the validator");
     }
 

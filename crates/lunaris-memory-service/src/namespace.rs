@@ -81,7 +81,10 @@ mod tests {
     fn invalid_namespace_129_chars() {
         let s = "a".repeat(129);
         let msg = validate(&s).unwrap_err().to_string();
-        assert!(msg.contains("128") || msg.contains("1..=128"), "expected length mention; got: {msg}");
+        assert!(
+            msg.contains("128") || msg.contains("1..=128"),
+            "expected length mention; got: {msg}"
+        );
     }
 
     #[test]

@@ -353,8 +353,12 @@ mod tests {
     #[cfg(feature = "embedded-moon")]
     #[tokio::test]
     async fn bootstrap_launches_moon_not_sqlite_fallback() {
-        use crate::tools::scratchpad_read::{ScratchpadReadParams, handle as read_handle};
-        use crate::tools::scratchpad_write::{ScratchpadWriteParams, handle as write_handle};
+        use lunaris_memory_service::scratchpad_read::{
+            ScratchpadReadParams, handle as read_handle,
+        };
+        use lunaris_memory_service::scratchpad_write::{
+            ScratchpadWriteParams, handle as write_handle,
+        };
 
         // best-effort cleanup: remove any stale .lunaris-moon from a previous run
         let _ = std::fs::remove_dir_all("./.lunaris-moon");
@@ -372,7 +376,8 @@ mod tests {
 
         // Round-trip through the production-constructed state to prove the path is live
         let write_resp = write_handle(
-            &state,
+            &state.lunaris,
+            &state.scope,
             ScratchpadWriteParams {
                 key: "bootstrap-wired".into(),
                 value: serde_json::json!("ok"),
@@ -384,7 +389,8 @@ mod tests {
         assert!(!write_resp.lsn.is_empty(), "write response lsn must be non-empty");
 
         let read_resp = read_handle(
-            &state,
+            &state.lunaris,
+            &state.scope,
             ScratchpadReadParams { key: "bootstrap-wired".into(), namespace: None },
         )
         .await

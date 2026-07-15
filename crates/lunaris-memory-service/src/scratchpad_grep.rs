@@ -80,7 +80,13 @@ mod tests {
         (lunaris, scope)
     }
 
-    async fn write_key(lunaris: &Arc<Lunaris>, scope: &Scope, key: &str, value: serde_json::Value, namespace: &str) {
+    async fn write_key(
+        lunaris: &Arc<Lunaris>,
+        scope: &Scope,
+        key: &str,
+        value: serde_json::Value,
+        namespace: &str,
+    ) {
         scratchpad_write::handle(
             lunaris,
             scope,
@@ -108,9 +114,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(resp.entries.len() >= 2, "grep must return >=2 entries; got: {}", resp.entries.len());
+        assert!(
+            resp.entries.len() >= 2,
+            "grep must return >=2 entries; got: {}",
+            resp.entries.len()
+        );
         let sources: Vec<&str> = resp.entries.iter().map(|e| e.source.as_str()).collect();
-        assert!(sources.iter().any(|s| s.contains("alpha")), "must include alpha; got: {sources:?}");
+        assert!(
+            sources.iter().any(|s| s.contains("alpha")),
+            "must include alpha; got: {sources:?}"
+        );
         assert!(sources.iter().any(|s| s.contains("beta")), "must include beta; got: {sources:?}");
     }
 

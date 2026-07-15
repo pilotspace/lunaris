@@ -1,7 +1,7 @@
 //! Socket-first proxy to `lunaris-contextd` with direct-open fallback.
 //!
-//! contextd-mcp-merge batch 3. Each engine `#[tool]` builds a
-//! [`MemoryRequest`] and hands it here. The proxy is Socket-first: it forwards
+//! contextd-mcp-merge + scratchpad-proxiable. Each engine + scratchpad `#[tool]`
+//! builds a [`MemoryRequest`] and hands it here. The proxy is Socket-first: it forwards
 //! the request to the warm daemon over its unix socket (connection-per-call,
 //! matching the daemon's framing) and returns the daemon's DTO. When the
 //! socket is unreachable it trips a circuit breaker after N strikes and serves
@@ -84,6 +84,21 @@ impl MemoryProxy {
             error_count: AtomicUsize::new(0),
             connect_timeout: Duration::from_millis(connect_ms),
             breaker_n: breaker_n.max(1),
+            fallback_logged: Once::new(),
+        }
+    }
+
+    /// Direct-only proxy for cross-module tests (no socket, never routes out).
+    /// Used by `tools::staging` tests that exercise session-aware namespace
+    /// resolution without depending on a live contextd socket on the host.
+    #[cfg(test)]
+    pub(crate) fn direct_only_for_test() -> Self {
+        Self {
+            socket_path: None,
+            route: AtomicU8::new(ROUTE_DIRECT),
+            error_count: AtomicUsize::new(0),
+            connect_timeout: Duration::from_millis(DEFAULT_CONNECT_MS),
+            breaker_n: 1,
             fallback_logged: Once::new(),
         }
     }

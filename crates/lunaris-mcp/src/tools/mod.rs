@@ -7,23 +7,26 @@
 //! ## Tool surface
 //!
 //! The six ENGINE-op handlers (`ingest`, `recall`, `forget`, `record_decision`,
-//! `record_edit`, `status`) were lifted to the transport-neutral
-//! `lunaris-memory-service` crate so `lunaris-contextd` shares one definition.
-//! Only the session/registry-coupled handlers remain local here:
+//! `record_edit`, `status`) AND the four scratchpad handlers were lifted to the
+//! transport-neutral `lunaris-memory-service` crate so `lunaris-contextd` shares
+//! one definition and the scratchpad ops proxy like the engine ops
+//! (scratchpad-proxiable task). What remains local here:
 //!
-//! | Tool                           | Wave | Status           |
-//! |--------------------------------|------|------------------|
-//! | `memory.list_scopes`           | 2.C  | local (registry) |
-//! | `memory.scratchpad_write`      | qqb  | local (session)  |
-//! | `memory.scratchpad_read`       | qqb  | local (session)  |
-//! | `memory.scratchpad_grep`       | qqb  | local (session)  |
-//! | `memory.scratchpad_consolidate`| dvi  | local (session)  |
+//! | Tool                           | Local because…                          |
+//! |--------------------------------|-----------------------------------------|
+//! | `memory.list_scopes`           | storage-registry coupling               |
+//! | `staging`                      | model-stage seam + session-aware ns     |
+//! | `scratchpad_consolidate` (mod) | Moon-backed integration tests only      |
+//!
+//! The scratchpad `#[tool]` methods in `main.rs` resolve the session-aware
+//! namespace via `staging::resolve_namespace_session_aware` (reads the local
+//! sessions.json marker; fires the handover THROUGH the proxy) and then route
+//! the op through the proxy to contextd's warm engine.
 
 pub(crate) mod list_scopes;
+/// Moon-backed `scratchpad_consolidate` integration tests (test-only module; the
+/// handler moved to `lunaris_memory_service::scratchpad_consolidate`).
 pub(crate) mod scratchpad_consolidate;
-pub(crate) mod scratchpad_grep;
-pub(crate) mod scratchpad_read;
-pub(crate) mod scratchpad_write;
 pub(crate) mod staging;
 
 // ── Shared error type ─────────────────────────────────────────────────────────
