@@ -2692,6 +2692,7 @@ dependencies = [
  "lunaris-consolidate",
  "lunaris-core",
  "lunaris-memory",
+ "lunaris-memory-service",
  "lunaris-retrieve",
  "moon",
  "parking_lot",
@@ -2747,6 +2748,26 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
+]
+
+[[package]]
+name = "lunaris-memory-service"
+version = "0.5.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "lunaris-consolidate",
+ "lunaris-core",
+ "lunaris-memory",
+ "lunaris-retrieve",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "ulid",
 ]
 
 [[package]]

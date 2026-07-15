@@ -4,17 +4,19 @@ use lunaris_core::StoragePort;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{state::AppState, tools::ToolError};
+use crate::ServiceError;
+use lunaris::Lunaris;
+use lunaris_core::Scope;
 
 const VERIFY_QUEUE_TOPIC: &str = "__lunaris_verify__";
 const CONSOLIDATE_QUEUE_TOPIC: &str = "__lunaris_consolidate__";
 const EMBED_QUEUE_TOPIC: &str = "__lunaris_embed__";
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct StatusParams {}
+pub struct StatusParams {}
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct QueueStatus {
+pub struct QueueStatus {
     pub topic: String,
     pub available: bool,
     pub depth: Option<u64>,
@@ -22,7 +24,7 @@ pub(crate) struct QueueStatus {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct StatusResponse {
+pub struct StatusResponse {
     pub scope: String,
     pub queue_native: bool,
     pub graph_native: bool,
@@ -34,17 +36,18 @@ pub(crate) struct StatusResponse {
     pub queues: Vec<QueueStatus>,
 }
 
-pub(crate) async fn handle(
-    state: &AppState,
+pub async fn handle(
+    lunaris: &Lunaris,
+    scope: &Scope,
     _params: StatusParams,
-) -> Result<StatusResponse, ToolError> {
-    let storage = state.lunaris.storage();
+) -> Result<StatusResponse, ServiceError> {
+    let storage = lunaris.storage();
     let caps = storage.capabilities();
     let queues = if caps.queue_native {
         vec![
-            queue_status(storage.as_ref(), &state.scope, EMBED_QUEUE_TOPIC).await,
-            queue_status(storage.as_ref(), &state.scope, VERIFY_QUEUE_TOPIC).await,
-            queue_status(storage.as_ref(), &state.scope, CONSOLIDATE_QUEUE_TOPIC).await,
+            queue_status(storage.as_ref(), scope, EMBED_QUEUE_TOPIC).await,
+            queue_status(storage.as_ref(), scope, VERIFY_QUEUE_TOPIC).await,
+            queue_status(storage.as_ref(), scope, CONSOLIDATE_QUEUE_TOPIC).await,
         ]
     } else {
         vec![
@@ -70,7 +73,7 @@ pub(crate) async fn handle(
     };
 
     Ok(StatusResponse {
-        scope: state.scope.as_str().to_string(),
+        scope: scope.as_str().to_string(),
         queue_native: caps.queue_native,
         graph_native: caps.graph_native,
         rerank_native: caps.rerank_native,
@@ -122,14 +125,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = AppState {
-            lunaris: Arc::new(lunaris),
-            scope: Scope::new("mcp-status-test").unwrap(),
-            #[cfg(feature = "embedded-moon")]
-            _embedded_moon: None,
-        };
+        let scope = Scope::new("mcp-status-test").unwrap();
 
-        let response = handle(&state, StatusParams {}).await.unwrap();
+        let response = handle(&lunaris, &scope, StatusParams {}).await.unwrap();
 
         assert!(!response.queue_native);
         assert_eq!(response.queues.len(), 3);

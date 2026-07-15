@@ -1,0 +1,39 @@
+[package]
+name             = "lunaris-memory-service"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+repository.workspace   = true
+publish          = false
+
+description = "Lunaris memory-engine tool handlers — transport-neutral, shared by lunaris-mcp (proxy + fallback) and lunaris-contextd (warm engine)"
+
+[dependencies]
+# Engine + core types. Transport-NEUTRAL: no rmcp here (the mcp boundary keeps
+# the ToolError->rmcp::ErrorData conversion). Model staging is a CALLER concern.
+lunaris          = { workspace = true, features = ["llamacpp"] }
+lunaris-core     = { workspace = true }
+lunaris-retrieve = { workspace = true }
+
+tracing    = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+# JSON Schema derives on the Params/Response DTOs (rmcp resolves these by crate
+# name via the #[tool] macro in lunaris-mcp; pinned to match rmcp 1.7's schemars).
+schemars = { version = "1.0", features = ["chrono04"] }
+
+# DTO field parsing: RFC-3339 t_ref (ingest/record) + ULID (forget).
+chrono = { workspace = true }
+ulid   = { workspace = true }
+
+[dev-dependencies]
+tokio        = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+lunaris-core = { workspace = true }
+lunaris-consolidate = { workspace = true }
+futures      = { workspace = true }
+# status.rs test opens a real sqlite:// file to assert non-native-queue behaviour.
+tempfile     = "3"

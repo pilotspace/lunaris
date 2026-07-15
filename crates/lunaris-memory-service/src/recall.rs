@@ -13,16 +13,17 @@ use lunaris_core::{Hlc, snippet, storage::types::Filter};
 use lunaris_retrieve::{Keyword, Vector};
 use serde::{Deserialize, Serialize};
 
-use crate::state::AppState;
-use crate::tools::ToolError;
-use crate::tools::staging::{is_keyword_not_supported, maybe_ensure_staged};
+use crate::ServiceError;
+use crate::is_keyword_not_supported;
+use lunaris::Lunaris;
+use lunaris_core::Scope;
 
 // ── Wire DTOs ─────────────────────────────────────────────────────────────────
 
 /// Optional filters for `memory.recall`.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RecallFilters {
+pub struct RecallFilters {
     /// Only return memories whose source starts with this prefix.
     #[serde(default)]
     pub source_prefix: Option<String>,
@@ -31,7 +32,7 @@ pub(crate) struct RecallFilters {
 /// Input parameters for `memory.recall`.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RecallParams {
+pub struct RecallParams {
     /// Natural-language query to recall memories for.
     pub query: String,
 
@@ -59,7 +60,7 @@ fn default_k() -> usize {
 
 /// A single recalled memory hit.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct RecallHit {
+pub struct RecallHit {
     /// Episode ID (ULID string).
     pub episode_id: String,
     /// Logical source of the episode.
@@ -76,18 +77,18 @@ pub(crate) struct RecallHit {
 
 /// Output of a successful `memory.recall` call.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub(crate) struct RecallResponse {
+pub struct RecallResponse {
     /// Ordered list of recalled memories (highest score first).
     pub hits: Vec<RecallHit>,
 }
 
 // ── Hlc helpers ──────────────────────────────────────────────────────────────
 
-fn parse_rfc3339_to_hlc(s: &str) -> Result<Hlc, ToolError> {
+fn parse_rfc3339_to_hlc(s: &str) -> Result<Hlc, ServiceError> {
     let dt = DateTime::parse_from_rfc3339(s)
-        .map_err(|e| ToolError::InvalidInput(format!("as_of is not valid RFC-3339: {e}")))?;
+        .map_err(|e| ServiceError::InvalidInput(format!("as_of is not valid RFC-3339: {e}")))?;
     let wall_ms = u64::try_from(dt.timestamp_millis())
-        .map_err(|_| ToolError::InvalidInput("as_of timestamp predates Unix epoch".into()))?;
+        .map_err(|_| ServiceError::InvalidInput("as_of timestamp predates Unix epoch".into()))?;
     Ok(Hlc { wall_ms, counter: 0, node_id: 0 })
 }
 
@@ -99,8 +100,8 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 
 /// Execute `memory.recall`.
 ///
-/// 1. Stage the embedder GGUF via `model_stager::ensure_staged` (lazy — once
-///    per process; stderr-only progress bar; bypassed in tests).
+/// 1. Assume a ready embedder — staging is a CALLER concern (the mcp `#[tool]`
+///    wrapper stages lazily; contextd stages at warm-up).
 /// 2. Build `Query::text(query)` with optional `k`, `Filter::StartsWith`, and
 ///    `as_of` bi-temporal snapshot.
 /// 3. Execute the canonical hybrid plan:
@@ -111,13 +112,15 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 /// 4. Map each `Hit` to `RecallHit` — curated snippet by default (JSON
 ///    envelopes summarized via `lunaris_core::snippet`, 260-char cap), raw
 ///    200-char preview when `params.raw`.
-pub(crate) async fn handle(
-    state: &AppState,
+pub async fn handle(
+    lunaris: &Lunaris,
+    scope: &Scope,
     params: RecallParams,
-) -> Result<RecallResponse, ToolError> {
-    // Lazy model stager — first recall pays download or sha verification cost.
-    // Subsequent recalls skip this process-stable check.
-    maybe_ensure_staged().await?;
+) -> Result<RecallResponse, ServiceError> {
+    // NOTE: model staging is a CALLER concern (lifted out of the shared engine
+    // handler). The mcp `#[tool]` wrapper calls `maybe_ensure_staged()` before
+    // delegating here; contextd stages once at warm-up. This handler assumes a
+    // ready engine.
 
     // Empty query → empty hits (not an error).
     if params.query.is_empty() {
@@ -156,14 +159,14 @@ pub(crate) async fn handle(
     // returns WRONG results dressed as a snapshot — the 2026-07-14 deep
     // test got 2026 episodes back for `as_of=2020-01-01`. Refuse loudly.
     if params.as_of.is_some() {
-        ensure_as_of_supported(&state.lunaris.storage().capabilities())?;
+        ensure_as_of_supported(&lunaris.storage().capabilities())?;
     }
     if let Some(ts) = &params.as_of {
         q.as_of = Some(parse_rfc3339_to_hlc(ts)?);
     }
 
     // Execute — ScopedLunaris::recall threads the bound scope through.
-    let scoped = state.lunaris.scoped(state.scope.clone());
+    let scoped = lunaris.scoped(scope.clone());
     let root = Vector::new("chunks", candidate_k)
         .and(Keyword::bm25("chunks", candidate_k))
         .fuse_rrf(60)
@@ -172,7 +175,7 @@ pub(crate) async fn handle(
         Ok(hits) => hits,
         Err(err) if is_keyword_not_supported(&err) => {
             tracing::debug!(
-                scope = state.scope.as_str(),
+                scope = scope.as_str(),
                 "memory.recall keyword branch unsupported; falling back to vector-only"
             );
             scoped
@@ -180,9 +183,9 @@ pub(crate) async fn handle(
                 .with_root(Vector::new("chunks", candidate_k))
                 .execute(q)
                 .await
-                .map_err(ToolError::LunarisEngine)?
+                .map_err(ServiceError::LunarisEngine)?
         }
-        Err(err) => return Err(ToolError::LunarisEngine(err)),
+        Err(err) => return Err(ServiceError::LunarisEngine(err)),
     };
 
     // Map hits to wire DTO with explicit type so the collector infers correctly.
@@ -209,7 +212,7 @@ pub(crate) async fn handle(
         .collect();
 
     tracing::debug!(
-        scope = state.scope.as_str(),
+        scope = scope.as_str(),
         k = k,
         candidate_k = candidate_k,
         hits = recall_hits.len(),
@@ -234,11 +237,11 @@ fn ulid_bytes_to_string(bytes: &[u8]) -> String {
 /// snapshot request on a backend whose read paths cannot honor it. A silent
 /// no-op here is worse than an error — the caller believes they got a
 /// historical view and acts on current-state data.
-fn ensure_as_of_supported(caps: &lunaris_core::StorageCapabilities) -> Result<(), ToolError> {
+fn ensure_as_of_supported(caps: &lunaris_core::StorageCapabilities) -> Result<(), ServiceError> {
     if caps.bi_temporal_native {
         Ok(())
     } else {
-        Err(ToolError::InvalidInput(
+        Err(ServiceError::InvalidInput(
             "as_of requires a bi-temporal backend; this backend reads current state only \
              (Moon AS_OF parity is tracked as STORE-07) — drop as_of or use a bi-temporal \
              backend"
@@ -293,28 +296,22 @@ mod as_of_gate_tests {
 mod tests {
     use std::sync::Arc;
 
+    use super::*;
     use lunaris::{EpisodeBuilder, Lunaris};
     use lunaris_core::{Scope, StubEmbedder};
-
-    use super::*;
-    use crate::state::AppState;
 
     /// Construct an in-process Lunaris handle with `StubEmbedder` (deterministic
     /// 768-d vectors) backed by SQLite `memory://`. StubEmbedder produces
     /// deterministic non-zero vectors so vector recall returns real ranked hits
     /// rather than the zero-vector NoopEmbedder which returns nothing.
-    async fn fresh_state(scope_name: &str) -> AppState {
-        // Bypass the 253 MB HF download in tests — StubEmbedder provides recall.
-        crate::tools::staging::skip_stage_for_tests();
+    async fn make_engine(scope_name: &str) -> (Lunaris, Scope) {
+        // No staging needed — the handler no longer stages (that is a CALLER
+        // concern, lifted to the mcp/contextd boundary). StubEmbedder provides
+        // deterministic recall without the 253 MB HF download.
         let embedder = Arc::new(StubEmbedder::new(768));
         let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
         let scope = Scope::new(scope_name).unwrap();
-        AppState {
-            lunaris: Arc::new(lunaris),
-            scope,
-            #[cfg(feature = "embedded-moon")]
-            _embedded_moon: None,
-        }
+        (lunaris, scope)
     }
 
     /// Wave A.1: brute-force cosine `vector_search` ships in the embedded
@@ -326,8 +323,8 @@ mod tests {
     /// 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
     async fn ingest_then_recall_round_trip() {
-        let state = fresh_state("test-recall-rt").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-rt").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped
             .ingest(EpisodeBuilder::new("test/src", "chocolate cake recipe with cocoa"))
@@ -335,7 +332,8 @@ mod tests {
             .unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "chocolate".into(),
                 k: 5,
@@ -357,8 +355,8 @@ mod tests {
     /// curated LLM-ready summary, never the raw JSON envelope.
     #[tokio::test]
     async fn recall_curates_decision_snippet() {
-        let state = fresh_state("test-recall-curated").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-curated").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped
             .ingest(EpisodeBuilder::new(
@@ -369,7 +367,8 @@ mod tests {
             .unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "launchd Moon".into(),
                 k: 5,
@@ -394,8 +393,8 @@ mod tests {
     /// raw=true restores the legacy 200-char raw preview for debugging.
     #[tokio::test]
     async fn recall_raw_param_returns_stored_bytes() {
-        let state = fresh_state("test-recall-raw").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-raw").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped
             .ingest(EpisodeBuilder::new(
@@ -406,7 +405,8 @@ mod tests {
             .unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "launchd Moon".into(),
                 k: 5,
@@ -428,13 +428,14 @@ mod tests {
     /// Plain-text episodes pass through as single-line text (no curation loss).
     #[tokio::test]
     async fn recall_plain_text_passthrough() {
-        let state = fresh_state("test-recall-plain").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-plain").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped.ingest(EpisodeBuilder::new("notes/a", "The cobalt gateway is CG-1.")).await.unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "cobalt gateway".into(),
                 k: 5,
@@ -456,8 +457,8 @@ mod tests {
     /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
     async fn as_of_time_travel_proves_bi_temporal() {
-        let state = fresh_state("test-recall-bt").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-bt").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         // Ingest fact A, capture wall time between the two ingests.
         scoped.ingest(EpisodeBuilder::new("bt/src", "the sky is blue")).await.unwrap();
@@ -471,7 +472,8 @@ mod tests {
 
         // Recall with as_of = t_between: B was not ingested yet at that point.
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "sky".into(),
                 k: 5,
@@ -501,15 +503,16 @@ mod tests {
     /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
     #[tokio::test]
     async fn source_prefix_filter_excludes_others() {
-        let state = fresh_state("test-recall-filter").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-filter").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped.ingest(EpisodeBuilder::new("notes/a", "note alpha content")).await.unwrap();
         scoped.ingest(EpisodeBuilder::new("notes/b", "note beta content")).await.unwrap();
         scoped.ingest(EpisodeBuilder::new("other/c", "other content entirely")).await.unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "note content".into(),
                 k: 10,
@@ -538,15 +541,16 @@ mod tests {
 
     #[tokio::test]
     async fn recall_enforces_k_after_hydration() {
-        let state = fresh_state("test-recall-k-cap").await;
-        let scoped = state.lunaris.scoped(state.scope.clone());
+        let (lunaris, scope) = make_engine("test-recall-k-cap").await;
+        let scoped = lunaris.scoped(scope.clone());
 
         scoped.ingest(EpisodeBuilder::new("cap/a", "shared marker alpha")).await.unwrap();
         scoped.ingest(EpisodeBuilder::new("cap/b", "shared marker beta")).await.unwrap();
         scoped.ingest(EpisodeBuilder::new("cap/c", "shared marker gamma")).await.unwrap();
 
         let resp = handle(
-            &state,
+            &lunaris,
+            &scope,
             RecallParams {
                 query: "shared marker".into(),
                 k: 1,

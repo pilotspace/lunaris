@@ -32,6 +32,9 @@ rmcp = { version = "1.7", features = ["transport-io"] }
 lunaris      = { workspace = true, features = ["llamacpp"] }
 lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
+# Shared transport-neutral engine-op handlers (ingest/recall/forget/record_*/
+# status) — one definition, called here and from lunaris-contextd.
+lunaris-memory-service = { workspace = true }
 
 # CLI + observability
 clap               = { workspace = true, features = ["derive", "env"] }

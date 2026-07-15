@@ -40,18 +40,23 @@ use rmcp::{
 };
 
 use crate::state::AppState;
-use crate::tools::{
+// Engine-op DTOs now live in the transport-neutral shared crate
+// (lunaris-memory-service), called by BOTH this mcp server and contextd.
+use lunaris_memory_service::{
     forget::{ForgetParams, ForgetResponse},
     ingest::{IngestParams, IngestResponse},
-    list_scopes::{ListScopesParams, ListScopesResponse},
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    status::{StatusParams, StatusResponse},
+};
+// Scratchpad + list_scopes stay local to mcp (session_pad / registry coupling).
+use crate::tools::{
+    list_scopes::{ListScopesParams, ListScopesResponse},
     scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
     scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
     scratchpad_write::{ScratchpadWriteParams, ScratchpadWriteResponse},
-    status::{StatusParams, StatusResponse},
 };
 
 // Alias for the JSON wrapper so tool method signatures stay concise.
@@ -99,6 +104,23 @@ impl LunarisMcpServer {
     }
 }
 
+/// Map a shared-service error into an rmcp wire error.
+///
+/// The orphan rule forbids `impl From<ServiceError> for rmcp::ErrorData`
+/// (both types are foreign to this crate), so the conversion lives here as a
+/// free function. Mirrors the local `ToolError -> ErrorData` mapping:
+/// engine failures are internal errors; input-validation failures are
+/// invalid-params.
+fn map_service_error(e: lunaris_memory_service::ServiceError) -> rmcp::ErrorData {
+    use lunaris_memory_service::ServiceError;
+    match e {
+        ServiceError::LunarisEngine(inner) => {
+            rmcp::ErrorData::internal_error(inner.to_string(), None)
+        }
+        ServiceError::InvalidInput(msg) => rmcp::ErrorData::invalid_params(msg, None),
+    }
+}
+
 // ── Tool registration ─────────────────────────────────────────────────────────
 //
 // `#[tool_router]` generates `Self::lunaris_tool_router() -> ToolRouter<Self>`
@@ -124,7 +146,10 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<IngestParams>,
     ) -> Result<Json<IngestResponse>, rmcp::ErrorData> {
-        tools::ingest::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+        lunaris_memory_service::ingest::handle(&self.state.lunaris, &self.state.scope, params)
+            .await
+            .map(Json)
+            .map_err(map_service_error)
     }
 
     /// Recall memories relevant to a query.
@@ -149,7 +174,14 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecallParams>,
     ) -> Result<Json<RecallResponse>, rmcp::ErrorData> {
-        tools::recall::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+        // Staging is a CALLER concern (lifted out of the shared handler): the
+        // embedder GGUF must be on disk before the first recall touches vector
+        // search. contextd stages at warm-up; the mcp server stages lazily here.
+        tools::staging::maybe_ensure_staged().await.map_err(rmcp::ErrorData::from)?;
+        lunaris_memory_service::recall::handle(&self.state.lunaris, &self.state.scope, params)
+            .await
+            .map(Json)
+            .map_err(map_service_error)
     }
 
     /// Forget memories by source prefix or episode ID.
@@ -165,7 +197,10 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<ForgetParams>,
     ) -> Result<Json<ForgetResponse>, rmcp::ErrorData> {
-        tools::forget::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+        lunaris_memory_service::forget::handle(&self.state.lunaris, &self.state.scope, params)
+            .await
+            .map(Json)
+            .map_err(map_service_error)
     }
 
     /// List all known memory scopes.
@@ -205,10 +240,14 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecordDecisionParams>,
     ) -> Result<Json<RecordDecisionResponse>, rmcp::ErrorData> {
-        tools::record_decision::handle(&self.state, params)
-            .await
-            .map(Json)
-            .map_err(rmcp::ErrorData::from)
+        lunaris_memory_service::record_decision::handle(
+            &self.state.lunaris,
+            &self.state.scope,
+            params,
+        )
+        .await
+        .map(Json)
+        .map_err(map_service_error)
     }
 
     /// Record a file edit into agent memory.
@@ -230,10 +269,10 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<RecordEditParams>,
     ) -> Result<Json<RecordEditResponse>, rmcp::ErrorData> {
-        tools::record_edit::handle(&self.state, params)
+        lunaris_memory_service::record_edit::handle(&self.state.lunaris, &self.state.scope, params)
             .await
             .map(Json)
-            .map_err(rmcp::ErrorData::from)
+            .map_err(map_service_error)
     }
 
     /// Report backend capabilities and queue health for the bound scope.
@@ -248,7 +287,10 @@ impl LunarisMcpServer {
         &self,
         Parameters(params): Parameters<StatusParams>,
     ) -> Result<Json<StatusResponse>, rmcp::ErrorData> {
-        tools::status::handle(&self.state, params).await.map(Json).map_err(rmcp::ErrorData::from)
+        lunaris_memory_service::status::handle(&self.state.lunaris, &self.state.scope, params)
+            .await
+            .map(Json)
+            .map_err(map_service_error)
     }
 
     /// Write a key-value pair to the agent scratchpad.

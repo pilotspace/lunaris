@@ -6,32 +6,25 @@
 //!
 //! ## Tool surface
 //!
+//! The six ENGINE-op handlers (`ingest`, `recall`, `forget`, `record_decision`,
+//! `record_edit`, `status`) were lifted to the transport-neutral
+//! `lunaris-memory-service` crate so `lunaris-contextd` shares one definition.
+//! Only the session/registry-coupled handlers remain local here:
+//!
 //! | Tool                           | Wave | Status           |
 //! |--------------------------------|------|------------------|
-//! | `memory.ingest`                | 2.A  | implemented      |
-//! | `memory.recall`                | 2.B  | implemented      |
-//! | `memory.forget`                | 2.C  | implemented      |
-//! | `memory.list_scopes`           | 2.C  | implemented      |
-//! | `memory.record_decision`       | 25   | implemented      |
-//! | `memory.record_edit`           | 25   | implemented      |
-//! | `memory.status`                | 26   | implemented      |
-//! | `memory.scratchpad_write`      | qqb  | implemented      |
-//! | `memory.scratchpad_read`       | qqb  | implemented      |
-//! | `memory.scratchpad_grep`       | qqb  | implemented      |
-//! | `memory.scratchpad_consolidate`| dvi  | implemented      |
+//! | `memory.list_scopes`           | 2.C  | local (registry) |
+//! | `memory.scratchpad_write`      | qqb  | local (session)  |
+//! | `memory.scratchpad_read`       | qqb  | local (session)  |
+//! | `memory.scratchpad_grep`       | qqb  | local (session)  |
+//! | `memory.scratchpad_consolidate`| dvi  | local (session)  |
 
-pub(crate) mod forget;
-pub(crate) mod ingest;
 pub(crate) mod list_scopes;
-pub(crate) mod recall;
-pub(crate) mod record_decision;
-pub(crate) mod record_edit;
 pub(crate) mod scratchpad_consolidate;
 pub(crate) mod scratchpad_grep;
 pub(crate) mod scratchpad_read;
 pub(crate) mod scratchpad_write;
 pub(crate) mod staging;
-pub(crate) mod status;
 
 // ── Shared error type ─────────────────────────────────────────────────────────
 
