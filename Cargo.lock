@@ -2704,8 +2704,6 @@ dependencies = [
  "lunaris-memory",
  "lunaris-memory-service",
  "lunaris-retrieve",
- "moon",
- "parking_lot",
  "reqwest 0.13.2",
  "rmcp",
  "schemars",
@@ -2764,12 +2762,17 @@ dependencies = [
 name = "lunaris-memory-service"
 version = "0.6.0-rc.1"
 dependencies = [
+ "anyhow",
  "chrono",
+ "clap",
+ "dirs",
  "futures",
  "lunaris-consolidate",
  "lunaris-core",
  "lunaris-memory",
  "lunaris-retrieve",
+ "moon",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",

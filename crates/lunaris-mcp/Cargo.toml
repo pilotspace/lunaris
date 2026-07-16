@@ -7,8 +7,9 @@ license.workspace      = true
 authors.workspace      = true
 repository.workspace   = true
 # lunaris-mcp ships as a prebuilt binary via mcp-prebuild.yml.
-# The moon_server path dep (optional, feature-gated) would break `cargo publish`;
-# set publish=false to prevent accidental crate publication.
+# The embedded-moon feature pulls a vendor path dep (via lunaris-memory-service,
+# itself publish=false) that would break `cargo publish`; set publish=false to
+# prevent accidental crate publication.
 publish          = false
 
 description = "Lunaris memory engine — MCP server for Claude Code, Codex, and other MCP-native agents"
@@ -75,23 +76,13 @@ futures-util = "0.3"
 # needs it). ProgressDrawTarget::stderr() is the invariant — never stdout().
 indicatif    = "0.17"
 
-# Optional: in-process Moon server for the `embedded-moon` feature.
-# Aliased as moon_server to avoid colliding with the workspace moondb→moon alias.
-# default-features = false; we pull only what the embedded server path needs.
-# NOT in `default = [...]` — must be opted in explicitly.
-moon_server = { path = "../../vendor/moon", package = "moon", default-features = false, features = ["runtime-tokio", "graph", "text-index"], optional = true }
-
-# parking_lot::Mutex used by EmbeddedMoonGuard (embedded-moon feature).
-# Workspace version (0.12) — must be a direct dep since lunaris-mcp links it
-# explicitly in embedded_moon.rs.  Optional so the default (no-feature) binary
-# doesn't pull it in.
-parking_lot = { workspace = true, optional = true }
-
 [features]
 # embedded-moon: bundle an in-process Moon server inside lunaris-mcp.
-# Requires cmake/clang (aws-lc-rs) and a C compiler (mlua vendored Lua).
-# Gated so CI builds without C toolchain still pass under the default feature set.
-embedded-moon = ["dep:moon_server", "dep:parking_lot"]
+# The launcher lives in lunaris-memory-service::embedded_moon (ONE definition,
+# shared with lunaris-contextd); this feature just forwards. Requires
+# cmake/clang (aws-lc-rs) and a C compiler (mlua vendored Lua). NOT in
+# `default = [...]` — CI builds without a C toolchain must still pass.
+embedded-moon = ["lunaris-memory-service/embedded-moon"]
 
 [dev-dependencies]
 # placeholder — Wave 2/3 integration tests add real deps

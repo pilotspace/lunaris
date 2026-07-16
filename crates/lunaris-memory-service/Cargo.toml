@@ -34,6 +34,36 @@ schemars = { version = "1.0", features = ["chrono04"] }
 chrono = { workspace = true }
 ulid   = { workspace = true }
 
+# Optional: in-process Moon server for the `embedded-moon` feature (promoted
+# here from lunaris-mcp so lunaris-contextd shares ONE launcher definition).
+# Aliased as moon_server to avoid colliding with the workspace moondb→moon alias.
+# The path dep (optional, feature-gated) would break `cargo publish`; this
+# crate is publish = false so that is moot here.
+moon_server = { path = "../../vendor/moon", package = "moon", default-features = false, features = ["runtime-tokio", "graph", "text-index"], optional = true }
+# parking_lot::Mutex used by EmbeddedMoonGuard (embedded-moon feature).
+parking_lot = { workspace = true, optional = true }
+anyhow      = { workspace = true, optional = true }
+dirs        = { workspace = true, optional = true }
+# clap::Parser in scope for ServerConfig::parse_from([]) — the clap-defaults
+# footgun workaround documented on launch_embedded_moon.
+clap        = { workspace = true, features = ["derive"], optional = true }
+
+[features]
+# embedded-moon: bundle an in-process Moon server. NEVER in default — the
+# workspace build / CI clippy must not compile the moon server (CLAUDE.md
+# invariant, mirrors lunaris-mcp). Adds the tokio surface the launcher needs
+# (TcpListener/TcpStream readiness probe + spawn).
+embedded-moon = [
+    "dep:moon_server",
+    "dep:parking_lot",
+    "dep:anyhow",
+    "dep:dirs",
+    "dep:clap",
+    "tokio/net",
+    "tokio/io-util",
+    "tokio/rt",
+]
+
 [dev-dependencies]
 tokio        = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 lunaris-core = { workspace = true }

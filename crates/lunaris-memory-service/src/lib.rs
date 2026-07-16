@@ -13,6 +13,12 @@
 use lunaris_core::{LunarisError, StorageError};
 use thiserror::Error;
 
+// In-process Moon server launcher — ONE definition shared by lunaris-mcp and
+// lunaris-contextd. Feature-gated: `embedded-moon` is NEVER in default
+// (CLAUDE.md invariant — workspace builds must not compile the moon server).
+#[cfg(feature = "embedded-moon")]
+pub mod embedded_moon;
+
 pub mod forget;
 pub mod handover;
 pub mod ingest;
