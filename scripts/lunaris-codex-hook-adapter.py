@@ -196,13 +196,22 @@ def run_capture(event: dict[str, Any]) -> int:
     if "LUNARIS_STORE_URL" not in env and "LUNARIS_MCP_STORAGE" in env:
         env["LUNARIS_STORE_URL"] = env["LUNARIS_MCP_STORAGE"]
 
-    proc = subprocess.run(
-        [str(LUNARIS_HOOK)],
-        input=json.dumps(envelope, separators=(",", ":")).encode("utf-8"),
-        cwd=str(cwd),
-        env=env,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            [str(LUNARIS_HOOK)],
+            input=json.dumps(envelope, separators=(",", ":")).encode("utf-8"),
+            cwd=str(cwd),
+            env=env,
+            check=False,
+        )
+    except FileNotFoundError:
+        # Fail-open, matching the hook binary's own contract: a wiped/stale
+        # build dir must degrade to "no capture", never spam the agent with a
+        # traceback on every prompt (seen 2026-07-17 after a disk-full purge
+        # emptied target/release/). One quiet stderr line for the operator.
+        print(f"lunaris-hook binary missing at {LUNARIS_HOOK}; capture skipped "
+              "(rebuild: cargo build --release -p lunaris-hook)", file=sys.stderr)
+        return 0
     return int(proc.returncode)
 
 
@@ -432,15 +441,22 @@ def spawn_contextd(socket_path: Path) -> None:
     default_gguf = Path.home() / ".lunaris" / "models" / "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
     if "LUNARIS_EMBEDDER_GGUF" not in env and default_gguf.exists():
         env["LUNARIS_EMBEDDER_GGUF"] = str(default_gguf)
-    subprocess.Popen(
-        [str(LUNARIS_CONTEXTD), "--socket", str(socket_path)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=str(ROOT),
-        env=env,
-        start_new_session=True,
-    )
+    try:
+        subprocess.Popen(
+            [str(LUNARIS_CONTEXTD), "--socket", str(socket_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(ROOT),
+            env=env,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        # Fail-open: a wiped/stale build dir means no warm sidecar this turn,
+        # never a traceback (injection callers already tolerate a dead socket).
+        print(f"lunaris-contextd binary missing at {LUNARIS_CONTEXTD}; sidecar "
+              "autostart skipped (rebuild: cargo build --release -p lunaris-hook)",
+              file=sys.stderr)
 
 
 def contextd_healthy(socket_path: Path, timeout_ms: int) -> bool:
