@@ -466,6 +466,9 @@ future invocations for the session.
 | `LUNARIS_RERANKER_DIR` | *(system cache)* | Override reranker weights directory |
 | `LUNARIS_CONTEXTD_SOCKET` | `~/.lunaris/codex-contextd.sock` | Unix socket for Codex context sidecar |
 | `LUNARIS_CONTEXTD_AUTOSTART` | `1` | Adapter autostarts sidecar when socket is absent |
+| `LUNARIS_CONTEXTD_EMBEDDED_MOON` | `1` (embedded-moon builds) | Set to `0` to skip the in-process Moon launch |
+| `LUNARIS_CONTEXTD_MOON_DIR` | `~/.lunaris/contextd-moon-data` | Data dir for the embedded Moon |
+| `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | TCP liveness-probe budget for the contextd Moon discovery file |
 | `LUNARIS_CONTEXT_CAPTURE_FAST` | `1` | Route Codex pre/post tool capture through warm `lunaris-contextd` instead of spawning `lunaris-hook` |
 | `LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS` | `120` | Best-effort sidecar capture wait budget |
 | `LUNARIS_CONTEXT_ENABLED` | `1` | Set to `0` to disable context injection |
@@ -488,6 +491,37 @@ still accepted as compatibility aliases, but new Codex and Claude Code
 installations should use the shared `LUNARIS_CONTEXT_*` names.
 
 ---
+
+## Unified storage: contextd's embedded Moon
+
+When `lunaris-contextd` is built with `--features embedded-moon`, it bundles
+the Moon storage kernel **in-process** — one daemon, one store, no separate
+Moon service to manage. On startup contextd:
+
+1. launches Moon on a random free loopback port (RESP readiness-probed), and
+2. advertises it by writing `moon://127.0.0.1:<port>` to
+   `~/.lunaris/contextd-moon.url`.
+
+Every storage resolver — the warm contextd engine *and* each one-shot
+`lunaris-hook` invocation — resolves in the same priority order:
+
+1. `LUNARIS_STORE_URL` (explicit operator override, always wins; contextd
+   skips the embedded launch entirely when it is set),
+2. the discovery file, **liveness-probed** with a short TCP connect (default
+   25 ms, `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`) — a stale file left by a
+   crashed contextd fails the probe and is ignored,
+3. per-scope SQLite (`~/.lunaris/<scope>.db`), the zero-daemon fallback.
+
+Because both binaries walk the same ladder, captures from the warm daemon and
+from one-shot hooks always land in the same store. If the embedded Moon fails
+to launch (or its URL cannot be advertised), contextd logs a warning and
+serves from per-scope SQLite — it always starts. Opt out at runtime with
+`LUNARIS_CONTEXTD_EMBEDDED_MOON=0`; the data dir defaults to
+`~/.lunaris/contextd-moon-data` (`LUNARIS_CONTEXTD_MOON_DIR`).
+
+Builds without the feature behave exactly as before — the discovery step is
+always compiled into the resolver, but with no contextd writing the file it
+falls straight through.
 
 ## Troubleshooting / FAQ
 

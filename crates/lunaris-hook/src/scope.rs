@@ -152,22 +152,145 @@ pub fn resolve_with_path(
     resolve_with(cwd, &store, override_)
 }
 
-/// Derive the SQLite storage URL for the given scope.
+/// Derive the storage URL for the given scope.
 ///
-/// Priority (W5 + W7 fix):
+/// Priority (W5 + W7 fix + contextd embedded-moon unification):
 /// 1. `LUNARIS_STORE_URL` env var — shared with lunaris-mcp naming convention,
 ///    passed verbatim. Replaces the former LUNARIS_HOOK_STORAGE alias.
-/// 2. `sqlite:///<HOME>/.lunaris/<scope>.db` — per-scope partition, mirrors
+/// 2. contextd's embedded Moon, discovered via `~/.lunaris/contextd-moon.url`
+///    and liveness-probed (see [`discover_contextd_moon`]). This is what keeps
+///    the ONE-SHOT hook binary and the contextd daemon writing to the SAME
+///    store when contextd bundles Moon in-process — without it the hook's
+///    direct open would split-brain into per-scope SQLite while contextd
+///    captures land in Moon.
+/// 3. `sqlite:///<HOME>/.lunaris/<scope>.db` — per-scope partition, mirrors
 ///    `lunaris-mcp/src/state.rs::resolve_storage_url` exactly.
 ///
-/// Both binaries derive identical scopes for the same repo, so they naturally
-/// read/write the same `<scope>.db` file without any extra coordination.
+/// Both binaries derive identical scopes for the same repo AND resolve through
+/// this same function, so they naturally converge on one store per priority
+/// level without extra coordination.
 pub fn resolve_storage_url(scope: &Scope) -> Result<String, ScopeResolveError> {
     if let Ok(url) = std::env::var("LUNARIS_STORE_URL") {
         return Ok(url);
     }
     let home = dirs::home_dir().ok_or(ScopeResolveError::NoHome)?;
-    let dir = home.join(".lunaris");
-    std::fs::create_dir_all(&dir).map_err(ScopeResolveError::Io)?;
-    Ok(format!("sqlite://{}", dir.join(format!("{}.db", scope.as_str())).display()))
+    let lunaris_dir = home.join(".lunaris");
+    resolve_storage_url_at(scope, &lunaris_dir)
+}
+
+/// Testable body of [`resolve_storage_url`] — takes the `~/.lunaris` dir
+/// explicitly so tests can point it at a tempdir (no env mutation: `set_var`
+/// is `unsafe fn` in edition 2024 and this crate forbids unsafe). The env
+/// override stays in the public wrapper.
+pub fn resolve_storage_url_at(
+    scope: &Scope,
+    lunaris_dir: &Path,
+) -> Result<String, ScopeResolveError> {
+    if let Some(url) = discover_contextd_moon(&lunaris_dir.join(CONTEXTD_MOON_URL_FILE)) {
+        return Ok(url);
+    }
+    std::fs::create_dir_all(lunaris_dir).map_err(ScopeResolveError::Io)?;
+    Ok(format!("sqlite://{}", lunaris_dir.join(format!("{}.db", scope.as_str())).display()))
+}
+
+/// Discovery-file name under `~/.lunaris`. Written by `lunaris-contextd` when
+/// its embedded Moon is ready (feature `embedded-moon`); read by EVERY
+/// resolver, feature or not — a missing file simply falls through.
+pub const CONTEXTD_MOON_URL_FILE: &str = "contextd-moon.url";
+
+/// Read the contextd embedded-Moon discovery file and liveness-probe the
+/// advertised endpoint. Returns `Some("moon://…")` only when the endpoint
+/// accepts a TCP connect within the probe budget (default 25ms, override
+/// `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`); a stale file left by a dead contextd
+/// fails the probe and falls through to SQLite — the hook must NEVER hang or
+/// error on somebody else's leftovers (fail-open, matches the hook's
+/// fail-open contract everywhere else).
+///
+/// The probe proves TCP accept, not RESP — the full PING readiness check
+/// belongs to the launcher at startup. A foreign process squatting the exact
+/// ephemeral port contextd advertised AND contextd being dead is the residual
+/// window; `Lunaris::open` fails loudly in that case rather than corrupting.
+fn discover_contextd_moon(url_file: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(url_file).ok()?;
+    let url = raw.trim();
+    let addr = url.strip_prefix("moon://")?;
+    let sock: std::net::SocketAddr = addr.parse().ok()?;
+    let timeout_ms = std::env::var("LUNARIS_MOON_DISCOVERY_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(25);
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+    std::net::TcpStream::connect_timeout(&sock, timeout).ok()?;
+    Some(url.to_string())
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    fn scope() -> Scope {
+        Scope::new("test-discovery-scope").unwrap()
+    }
+
+    #[test]
+    fn no_discovery_file_falls_through_to_sqlite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert!(
+            url.starts_with("sqlite://") && url.ends_with("test-discovery-scope.db"),
+            "absent discovery file must yield per-scope sqlite, got: {url}"
+        );
+    }
+
+    #[test]
+    fn live_discovery_endpoint_wins_over_sqlite() {
+        // A real listener stands in for contextd's embedded Moon: the probe
+        // only checks TCP accept.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(CONTEXTD_MOON_URL_FILE),
+            format!("moon://127.0.0.1:{port}\n"),
+        )
+        .unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert_eq!(
+            url,
+            format!("moon://127.0.0.1:{port}"),
+            "live discovery endpoint must be preferred over sqlite"
+        );
+    }
+
+    #[test]
+    fn stale_discovery_file_falls_through_to_sqlite() {
+        // Bind then DROP the listener — the advertised port is dead, exactly
+        // like a discovery file left behind by a crashed contextd.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(CONTEXTD_MOON_URL_FILE),
+            format!("moon://127.0.0.1:{port}\n"),
+        )
+        .unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert!(
+            url.starts_with("sqlite://"),
+            "dead discovery endpoint must fall through to sqlite, got: {url}"
+        );
+    }
+
+    #[test]
+    fn garbage_discovery_file_falls_through_to_sqlite() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "redis://not-a-moon-url:abc\n")
+            .unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert!(
+            url.starts_with("sqlite://"),
+            "unparseable discovery file must fall through to sqlite, got: {url}"
+        );
+    }
 }

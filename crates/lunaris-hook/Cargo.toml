@@ -73,6 +73,14 @@ toml  = { workspace = true }
 # #[async_trait] desugaring the traits are declared with.
 async-trait = { workspace = true }
 
+[features]
+# embedded-moon: lunaris-contextd bundles an in-process Moon server (ONE
+# unified processor) and advertises it via ~/.lunaris/contextd-moon.url.
+# Forwards to the shared launcher in lunaris-memory-service. NEVER in
+# default — the workspace build / CI clippy must not compile the moon
+# server (CLAUDE.md invariant, mirrors lunaris-mcp).
+embedded-moon = ["lunaris-memory-service/embedded-moon"]
+
 [dev-dependencies]
 tempfile                 = "3"
 tokio                    = { workspace = true, features = ["process", "time", "io-util"] }
