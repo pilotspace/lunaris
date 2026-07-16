@@ -38,8 +38,36 @@ Gate dirs: ~/.lunaris/g8-dashtable-gate (+ g8-run-b working copy).
   (bare `python` not on PATH); post-restart 2s settle for apples-to-apples
   probes; both committed with the bump.
 
-## Pending
-- G3 workspace test battery, G4 clippy --workspace --all-targets
-  -D warnings, G5 lunaris-mcp --features embedded-moon: in flight.
-- G1/G2/G9 contract battery: green except gitlink_pinned_v080_fix
-  (flips at commit).
+## G3 — workspace test battery
+**PASS** (2026-07-17, split across three runs after a Metal-wedge abort):
+- G3 main run: 89 suites green before `context_reuse` hit the known
+  Metal-wedge family (36 min system-time spin) → SIGKILL, cargo aborted
+  the remainder.
+- G3b (package-scoped continuation, LUNARIS_DEVICE=cpu): 9 suites green.
+- G3c (`--no-fail-fast` remainder: lunaris-memory, memory-service,
+  recipes, rerank, retrieve, server, storage-*, verify, xtask): rc=0,
+  132 suite-result lines, zero failures.
+- `cold_start_under_500ms` flaked once under full build load (711 ms);
+  solo retry PASS (and it passed in G5 earlier). Environmental, not a
+  regression.
+
+## G4 — clippy --workspace --all-targets -D warnings
+**PASS** (2026-07-16). Definitive bare run rc=0 (an earlier pipe-masked
+rc was discarded).
+
+## G5 — lunaris-mcp --features embedded-moon
+**PASS** (2026-07-16). 42+5 suites green; one earlier failure reproduced
+as a stray leftover moon process (environmental), clean rerun green.
+
+## SDK zero-vector follow-up (from G6 finding)
+Fixed IN this branch (`83411fa`): both SDK crates now forward
+`lunaris/llamacpp` + GPU features; 4-test manifest guard
+(`sdk_feature_forwarding.rs`) proven red→green; rebuilt wheel gives real
+semantic ranking from default `open()` (Tesla 0.248 / Warsaw 0.128 /
+Super Bowl 0.375). Guard re-verified green post-commit. Full
+`test-recovery.py` TEST 1 rerun with the fixed wheel deferred (first
+attempt SIGBUS'd under G3 memory pressure) — tracked as follow-up.
+
+## G1/G2/G9 — contract battery
+**PASS** (2026-07-16, post-commit): 9/9 including
+gitlink_pinned_v080_fix (flipped green at commit `c95ec46`).
