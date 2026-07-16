@@ -70,7 +70,10 @@ MOON_BIN = Path(
 )
 MOON_DATA = REPO_ROOT / "target" / "moon-data-recovery"
 MOON_LOG = REPO_ROOT / "target" / "moon-data-recovery-launch.log"
-MOON_PORT = 6380
+# Overridable: 6380 collides with OrbStack's forwarded ai-proxy Redis on this
+# host (*:6380 wildcard bind can capture 127.0.0.1 clients and answer
+# `unknown command 'MQ'` for Moon-only probes — observed 2026-07-16).
+MOON_PORT = int(os.environ.get("LUNARIS_TEST_MOON_PORT", "6380"))
 MOON_URL = f"moon://127.0.0.1:{MOON_PORT}"
 SOURCE_PREFIX = "hf-squad-recovery/"
 
@@ -520,6 +523,15 @@ async def test_moon_kill(n_docs: int) -> bool:
     snap_after = snapshot(r2)
     print(f"  post-restart: {snap_after}")
 
+    # Same 2 s settle as the pre-crash leg so the comparison stays
+    # apples-to-apples. NOTE (2026-07-16): probe set-identity is only
+    # meaningful when the py wheel embeds real vectors. A wheel whose
+    # `llamacpp` feature does not forward to the umbrella crate
+    # (crates/lunaris-py/Cargo.toml) silently NoopEmbeds to zero vectors;
+    # the probes then measure HNSW tie-break order, which legitimately
+    # permutes across an AOF-replay rebuild → false FAIL on ANY Moon
+    # version (A/B-verified identical on v0.7.1 and v0.8.0).
+    await asyncio.sleep(2.0)
     probes_after = await replay_probes(queries)
 
     print("\n  ── assertions ──")
@@ -638,7 +650,7 @@ asyncio.run(main())
 """
     env = dict(os.environ, LUNARIS_TEST_MOON_URL=MOON_URL)
     proc = subprocess.Popen(
-        ["python", "-c", script],
+        [sys.executable, "-c", script],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,

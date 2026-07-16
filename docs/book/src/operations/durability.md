@@ -159,6 +159,21 @@ replica TTL expiry deterministic (#71 — relative expiries are rewritten to
 absolute deadlines before entering the durable log, so an AOF replay
 reproduces the master's expiry instant instead of restarting the countdown).
 
+### 3.5 One Storage Kernel GA (Moon v0.8.0)
+
+The v0.8.0 bump (2026-07-16, pinned at the post-release main commit
+`e41aa671`) graduates this to **kill-9-lossless on every plane**, with
+upstream's own scheduled crash-matrix CI (#352) now covering KV, vector,
+graph, MQ, and temporal recovery. Two fixes matter operationally:
+GraphUnion auto-merges rejected by the recall gate now **back off
+exponentially** (#353) instead of livelocking the CPU and — through the
+unflushed-segment stall guard — pausing writes after a restart; and the
+pinned commit carries the DashTable split-retry fix (Moon PR #351) for a
+deterministic recovery panic on hash-skewed checkpoint loads (the reason
+the pin is a main SHA rather than the bare 0.8.0 tag). Disk-offload also
+hardened: truthful `used_memory` under offload (#349) and batched spill
+segments (#350).
+
 ## 4. Recovery procedure
 
 ### 4.1 Moon process crashed (kill-9, OOM, power loss)
