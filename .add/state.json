@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "moon-v070-bump",
+  "active_task": "moon-v080-bump",
   "active_milestone": "moon-v070-exploit",
   "tasks": {
     "mq-typed-client": {
@@ -1159,6 +1159,32 @@
           }
         ]
       }
+    },
+    "moon-v080-bump": {
+      "title": "Bump vendored Moon v0.7.1 \u2192 v0.8.0(+dashtable fix): One Storage Kernel GA \u2014 kill-9-lossless planes + GraphUnion merge backoff",
+      "phase": "build",
+      "gate": "none",
+      "milestone": "moon-v070-exploit",
+      "depends_on": [],
+      "created": "2026-07-16T06:17:40+00:00",
+      "updated": "2026-07-16T06:24:06+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "c11f67600f441332232ec0a6c11d75cc",
+        "tests": {
+          ".add/tasks/moon-v080-bump/tests/test_bump_contract.py": "f7d3c581609ad1d6fe306af6c07fba2b"
+        }
+      },
+      "scope": {
+        "declared": [
+          "vendor/moon/",
+          "vendor/moon/Cargo.lock",
+          "docs/durability.md",
+          "docs/book/src/operations/durability.md",
+          "tmp/"
+        ],
+        "snapshot_md5": "e81f6d93fe9f3a18b75d193f8391dc2f"
+      }
     }
   },
   "milestones": {
@@ -1212,7 +1238,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-15T18:27:17+00:00",
+  "updated": "2026-07-16T06:24:06+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

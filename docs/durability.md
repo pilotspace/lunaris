@@ -4,9 +4,11 @@ Status: alpha. Complements `docs/guide.md`. Baseline claims validated against
 live Moon on 2026-04-23 — rerun `scripts/test-recovery.py` to re-verify. §2.1,
 §2.4, §2.5 updated 2026-07-10 for the Moon v0.5.1+ substrate bump
 (moon-v051-perf-exploit, `vendor/moon` @ `c9508066`); §2.7 added 2026-07-15
-for the Moon v0.7.1 bump (moon-v070-bump, `vendor/moon` @ `4161cdc`). The SDK
-(`moondb 0.2.1`) is API-identical across both bumps, so every change below is
-server-side behavior, not a Lunaris wire-format change.
+for the Moon v0.7.1 bump (moon-v070-bump, `vendor/moon` @ `4161cdc`); §2.8
+added 2026-07-16 for the Moon v0.8.0 bump (moon-v080-bump, `vendor/moon` @
+`e41aa671` = 0.8.0 + PR #351). The SDK (`moondb 0.2.1`) is API-identical
+across all three bumps, so every change below is server-side behavior, not a
+Lunaris wire-format change.
 
 Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
 
@@ -261,6 +263,38 @@ raw-command **MQ + temporal plane probes** in TEST 1 — previously only KV,
 FT indices, and recall identity were asserted across a crash; now an
 un-ACKed MQ backlog (with a consumed head) and a bi-temporal `v`+`bt` hash
 must replay byte-identically too.
+
+### 2.8 One Storage Kernel GA — kill-9-lossless on every plane (v0.8.0)
+
+The Moon v0.8.0 bump (`vendor/moon` @ `e41aa671` = tag 0.8.0 + PR #351,
+2026-07-16) graduates the WAL v3 work to **One Storage Kernel GA**: every
+plane (KV, vector, graph, MQ, temporal) is now covered by upstream's own
+scheduled **crash-matrix CI** (#352), complementing the Lunaris harness.
+What the bump carries for Lunaris:
+
+- **GraphUnion merge backoff (#353).** Rejected auto-merges (recall below
+  `MERGE_RECALL_TOLERANCE`) now back off exponentially instead of retrying
+  the same segment pairs forever. This cures the abort-merge CPU livelock
+  observed live on this host 2026-07-14→16 (continuous
+  `merge recall < tolerance` warns, and — combined with the MA1 global
+  segment-count stall guard — a post-restart total write refusal). With
+  #353 the `--max-unflushed-immutable-segments 4096` operator override
+  should become unnecessary; verify the backlog drains before retiring it.
+- **DashTable recovery-panic fix (PR #351 — why the pin is a main SHA,
+  not the tag).** Stock v0.8.0 still carries the
+  `double NeedsSplit after split_segment` unreachable: loading a large
+  shard checkpoint (`shard-0.rrdshard`) with hash-skewed keys panicked
+  deterministically and crash-looped the daemon 119× on this host. The
+  pinned commit adds a split-retry loop (parity with `insert`); the
+  regression test + the quarantined production checkpoint both prove it.
+- **Disk-offload hardening (#349/#350).** `used_memory` is truthful under
+  disk-offload (RSS→logical ledger) and spill segments batch (~129× fewer
+  heap files) — both directly relevant on disk-starved hosts like this one.
+
+Upgrade validation for this bump: the `--upgrade-replay` leg runs
+v0.7.1-stock as the writer and the v0.8 binary as the replayer (all five
+planes), plus a poisoned-checkpoint boot gate (`dashtable_regression`)
+against the quarantined 2026-07-16 state.
 
 ---
 
