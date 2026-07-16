@@ -246,14 +246,42 @@ impl ContextService {
     /// daemon (tokio `OnceCell` serializes init without holding a lock across
     /// `.await`). Every per-scope handle reuses this same `Arc`.
     pub async fn shared_embedder(&self) -> anyhow::Result<Arc<dyn lunaris_core::Embedder>> {
-        let embedder = self.embedder.get_or_try_init(lunaris::resolve_default_embedder).await?;
+        let embedder = self
+            .embedder
+            .get_or_try_init(|| async {
+                // Watchdog wrap (2026-07-16 wedge incident): a Metal command
+                // buffer that never completes leaves ggml's pool spinning at
+                // ~4 cores forever and cannot be cancelled — bound every call
+                // and exit(70) on consecutive timeouts so hooks respawn a
+                // fresh daemon. See `watchdog.rs`.
+                let inner = lunaris::resolve_default_embedder().await?;
+                Ok::<_, lunaris_core::LunarisError>(Arc::new(
+                    crate::watchdog::WatchdogEmbedder::new(
+                        inner,
+                        Arc::new(crate::watchdog::ExitPolicy),
+                    ),
+                )
+                    as Arc<dyn lunaris_core::Embedder>)
+            })
+            .await?;
         Ok(embedder.clone())
     }
 
     /// Resolve the process-shared reranker (lazy GGUF), loaded at most ONCE per
     /// daemon and reused across every per-scope handle. See [`Self::shared_embedder`].
     pub async fn shared_reranker(&self) -> anyhow::Result<Arc<dyn lunaris::Reranker>> {
-        let reranker = self.reranker.get_or_try_init(lunaris::resolve_default_reranker).await?;
+        let reranker = self
+            .reranker
+            .get_or_try_init(|| async {
+                let inner = lunaris::resolve_default_reranker().await?;
+                Ok::<_, lunaris_core::LunarisError>(Arc::new(
+                    crate::watchdog::WatchdogReranker::new(
+                        inner,
+                        Arc::new(crate::watchdog::ExitPolicy),
+                    ),
+                ) as Arc<dyn lunaris::Reranker>)
+            })
+            .await?;
         Ok(reranker.clone())
     }
 
