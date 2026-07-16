@@ -51,7 +51,12 @@ napi-build          = { workspace = true }
 # runtime (cutover decision — llama.cpp for all devices). Tier-0 builds opt
 # out via `napi build --no-default-features`.
 default = ["llamacpp"]
-llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
+# MUST forward "lunaris/llamacpp": the umbrella crate is imported with
+# `default-features = false`, and in a standalone `napi build` nothing
+# else enables it — `Lunaris::open()` then silently resolves NoopEmbedder
+# (zero vectors). Workspace builds mask this via feature unification, so
+# only the package-scoped build-graph test catches it (found 2026-07-16).
+llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp", "lunaris/llamacpp"]
 # Plan 08-03 BLOCKER 3+4 resolution — conformance helpers
 # (`conformanceFixtureEpisodes`, `scanKvPrefix`) compile only under this
 # feature. Production npm packages do NOT enable it. The Plan 08-01
@@ -68,9 +73,9 @@ bindings-it = ["dep:lunaris-conformance"]
 
 # GPU offload for the llama.cpp runtime — enabled per-target by the npm
 # prebuild matrix (Phase D).
-metal = ["llamacpp", "lunaris-llamacpp/metal"]
-cuda  = ["llamacpp", "lunaris-llamacpp/cuda"]
-vulkan = ["llamacpp", "lunaris-llamacpp/vulkan"]
+metal = ["llamacpp", "lunaris-llamacpp/metal", "lunaris/metal"]
+cuda  = ["llamacpp", "lunaris-llamacpp/cuda", "lunaris/cuda"]
+vulkan = ["llamacpp", "lunaris-llamacpp/vulkan", "lunaris/vulkan"]
 
 [package.metadata.docs.rs]
 # lunaris-ts is a cdylib — docs.rs doesn't build napi-rs extension modules,
