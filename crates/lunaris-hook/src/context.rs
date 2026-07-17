@@ -2429,6 +2429,10 @@ mod tests {
             // activation-ledger-focused test; the counters themselves are
             // pinned by `injection_trace_carries_token_counters` below.
             42,
+            // engram-soul-loop task 5 (git-anchoring) — no cwd for this
+            // activation-ledger-focused test; git_head stamping is covered
+            // by the dedicated git-anchor tests below.
+            None,
         )
         .await
         .expect("trace_injection must succeed");
@@ -2544,6 +2548,10 @@ mod tests {
                 vec![],
                 None,
                 Some(path.to_string_lossy().into_owned()),
+                // engram-soul-loop task 5 (git-anchoring) — no cwd for this
+                // pre-existing citation-detector test; git_head stamping is
+                // covered by `feedback_capture_carries_git_head` below.
+                None,
             )
             .await
             .expect("capture_feedback must succeed");
@@ -2611,7 +2619,7 @@ mod tests {
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
         let resp = svc
-            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None)
+            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None, None)
             .await
             .expect("capture_feedback must fail open, not error");
         assert!(resp.lsn.is_some());
@@ -2642,6 +2650,10 @@ mod tests {
                 vec![],
                 None,
                 Some(path.to_string_lossy().into_owned()),
+                // engram-soul-loop task 5 (git-anchoring) — no cwd for this
+                // pre-existing citation-detector test; git_head stamping is
+                // covered by `feedback_capture_carries_git_head` below.
+                None,
             )
             .await
             .expect("capture_feedback must succeed");
@@ -2807,6 +2819,10 @@ mod tests {
                 vec![],
                 None,
                 Some(path.to_string_lossy().into_owned()),
+                // engram-soul-loop task 5 (git-anchoring) — no cwd for this
+                // pre-existing citation-detector test; git_head stamping is
+                // covered by `feedback_capture_carries_git_head` below.
+                None,
             )
             .await
             .expect("activation write failure must not fail capture_feedback");
@@ -2883,7 +2899,7 @@ mod tests {
         let memory_id_set: Vec<String> = memories.iter().map(|m| m.episode_id.clone()).collect();
 
         let resp = svc
-            .finish_recall(&scope, "prompt", None, DEFAULT_PROMPT_MAX_CHARS, None, memories)
+            .finish_recall(&scope, "prompt", None, DEFAULT_PROMPT_MAX_CHARS, None, memories, None)
             .await
             .expect("finish_recall must succeed");
         let expected_chars = resp.rendered_context.len();
@@ -2942,6 +2958,10 @@ mod tests {
                 vec![],
                 None,
                 Some(path.to_string_lossy().into_owned()),
+                // engram-soul-loop task 5 (git-anchoring) — no cwd for this
+                // pre-existing citation-detector test; git_head stamping is
+                // covered by `feedback_capture_carries_git_head` below.
+                None,
             )
             .await
             .expect("capture_feedback must succeed");
@@ -2977,7 +2997,7 @@ mod tests {
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
         let resp = svc
-            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None)
+            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None, None)
             .await
             .expect("capture_feedback must fail open, not error");
         assert!(resp.lsn.is_some());
@@ -2991,5 +3011,230 @@ mod tests {
             meta.get("transcript_stats").is_none(),
             "transcript_stats must be absent when the detector was skipped, got {meta:?}"
         );
+    }
+
+    // ── engram-soul-loop task 5 — git anchoring ────────────────────────────
+    //
+    // `.add/tasks/git-anchoring/TASK.md` §3 CONTRACT: every capture that
+    // resolves a cwd inside a git repo stamps `meta.git_head`; a
+    // `capture_tool` call whose wire `paths` is `Some(non-empty)` additionally
+    // stamps `meta.files`. Both are additive — every pre-existing meta key
+    // stays exactly as before (proven inline by each test below).
+
+    /// A fresh temp git repo with one empty commit, so `git rev-parse HEAD`
+    /// resolves deterministically. Mirrors `git_anchor::tests::init_temp_repo`
+    /// — duplicated here (rather than shared via a pub(crate) export) since
+    /// the two test modules exercise different layers (the resolver itself
+    /// vs. the capture pipeline that calls it).
+    fn init_temp_git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git init must run — this box has git installed per §0 GROUND");
+        assert!(status.success(), "git init failed");
+        let status = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "x",
+            ])
+            .current_dir(dir.path())
+            .status()
+            .expect("git commit must run");
+        assert!(status.success(), "git commit --allow-empty failed");
+        dir
+    }
+
+    fn git_head_via_cli(cwd: &Path) -> String {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(cwd)
+            .output()
+            .expect("git rev-parse HEAD must run");
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Scenario 1: a `capture_tool_result` request with `cwd` inside a git
+    /// repo AND a non-empty `paths` list lands an episode whose meta carries
+    /// BOTH `git_head` (the repo's real HEAD) and `files` (the wire paths),
+    /// with every pre-existing meta key (`session_id`, `tool_name`,
+    /// `capture_kind`) unchanged. Drives the REAL dispatch
+    /// (`ContextService::handle`), not `capture_tool` directly, so the test
+    /// proves the cwd is actually threaded end-to-end from the wire request.
+    #[tokio::test]
+    async fn tool_capture_stamps_head_and_files() {
+        let (svc, scope) = service_with_seeded_scope("test-git-anchor-tool").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let repo = init_temp_git_repo();
+        let expected_head = git_head_via_cli(repo.path());
+
+        let resp = svc
+            .handle(ContextRequest::CaptureToolResult {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-git-anchor".to_owned()),
+                tool: Some("Edit".to_owned()),
+                payload: serde_json::json!({"tool_name": "Edit"}),
+                paths: Some(vec!["src/lib.rs".to_owned()]),
+            })
+            .await;
+        assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
+
+        let storage = handle.storage();
+        let meta = wait_for_episode_metadata(storage.as_ref(), &scope, "lunaris:tool_call:post")
+            .await
+            .expect("lunaris:tool_call:post episode must land");
+
+        assert_eq!(
+            meta.get("git_head").and_then(|v| v.as_str()),
+            Some(expected_head.as_str()),
+            "meta.git_head must equal the repo's real HEAD, got {meta:?}"
+        );
+        let files: Vec<String> = meta
+            .get("files")
+            .and_then(|v| v.as_array())
+            .expect("meta.files must be present")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(files, vec!["src/lib.rs".to_owned()]);
+
+        // Pre-existing meta keys are unchanged.
+        assert_eq!(meta.get("capture_kind").and_then(|v| v.as_str()), Some("lunaris:tool_call:post"));
+        assert_eq!(meta.get("tool_name").and_then(|v| v.as_str()), Some("Edit"));
+        assert_eq!(meta.get("session_id").and_then(|v| v.as_str()), Some("sess-git-anchor"));
+    }
+
+    /// Scenario 2: a `capture_tool_call` whose `cwd` is a plain (non-repo)
+    /// temp dir, with no `paths` on the wire, must land an episode whose
+    /// meta carries NEITHER `git_head` NOR `files` — and still succeeds.
+    #[tokio::test]
+    async fn capture_without_repo_omits_keys() {
+        let (svc, scope) = service_with_seeded_scope("test-git-anchor-no-repo").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let plain_dir = tempfile::tempdir().expect("tempdir");
+
+        let resp = svc
+            .handle(ContextRequest::CaptureToolCall {
+                cwd: Some(plain_dir.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                tool: Some("Read".to_owned()),
+                payload: serde_json::json!({"tool_name": "Read"}),
+                paths: None,
+            })
+            .await;
+        assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
+
+        let storage = handle.storage();
+        let meta = wait_for_episode_metadata(storage.as_ref(), &scope, "lunaris:tool_call:pre")
+            .await
+            .expect("lunaris:tool_call:pre episode must land");
+
+        assert!(meta.get("git_head").is_none(), "non-repo capture must carry NO git_head, got {meta:?}");
+        assert!(meta.get("files").is_none(), "capture with no wire paths must carry NO files, got {meta:?}");
+    }
+
+    /// Scenario 3: a capture whose `cwd` IS a git repo but whose wire `paths`
+    /// is absent stamps `git_head` alone — `files` stays absent (never an
+    /// empty array).
+    #[tokio::test]
+    async fn paths_absent_omits_files() {
+        let (svc, scope) = service_with_seeded_scope("test-git-anchor-no-paths").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let repo = init_temp_git_repo();
+        let expected_head = git_head_via_cli(repo.path());
+
+        let resp = svc
+            .handle(ContextRequest::CaptureToolCall {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                tool: Some("Read".to_owned()),
+                payload: serde_json::json!({"tool_name": "Read"}),
+                paths: None,
+            })
+            .await;
+        assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
+
+        let storage = handle.storage();
+        let meta = wait_for_episode_metadata(storage.as_ref(), &scope, "lunaris:tool_call:pre")
+            .await
+            .expect("lunaris:tool_call:pre episode must land");
+
+        assert_eq!(meta.get("git_head").and_then(|v| v.as_str()), Some(expected_head.as_str()));
+        assert!(meta.get("files").is_none(), "absent wire paths must carry NO files key, got {meta:?}");
+    }
+
+    /// Scenario 5: a `turn_feedback` capture with `cwd` inside a git repo
+    /// carries `git_head` too, and task-3's detector/verdicts behavior stays
+    /// unchanged (`detector: "skipped_no_transcript"` here, same as the
+    /// pre-existing `feedback_pass_fail_open_no_transcript` test).
+    #[tokio::test]
+    async fn feedback_capture_carries_git_head() {
+        let (svc, scope) = service_with_seeded_scope("test-git-anchor-feedback").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let repo = init_temp_git_repo();
+        let expected_head = git_head_via_cli(repo.path());
+
+        let resp = svc
+            .capture_feedback(
+                &scope,
+                Some("sess-git-fb".to_owned()),
+                vec![],
+                None,
+                None,
+                Some(repo.path()),
+            )
+            .await
+            .expect("capture_feedback must fail open, not error");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(meta.get("git_head").and_then(|v| v.as_str()), Some(expected_head.as_str()));
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("skipped_no_transcript"));
+        assert_eq!(meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()), Some(0));
+    }
+
+    /// Scenario 6: an old-adapter wire frame for `capture_tool_call` that
+    /// never carried the `paths` key must still decode — `#[serde(default)]`
+    /// keeps the field optional so a not-yet-upgraded adapter never breaks.
+    #[test]
+    fn old_wire_without_paths_decodes() {
+        let raw = serde_json::json!({
+            "type": "capture_tool_call",
+            "cwd": "/tmp",
+            "scope": "s",
+            "session_id": "sess",
+            "tool": "Read",
+            "payload": {"a": 1}
+        });
+        let req: ContextRequest =
+            serde_json::from_value(raw).expect("old wire without paths must decode");
+        match req {
+            ContextRequest::CaptureToolCall { paths, .. } => {
+                assert_eq!(paths, None, "an absent wire paths key must decode to None")
+            }
+            other => panic!("expected CaptureToolCall, got {other:?}"),
+        }
     }
 }

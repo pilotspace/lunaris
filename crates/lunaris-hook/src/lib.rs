@@ -12,6 +12,7 @@ pub mod dedupe;
 pub(crate) mod embed_promotion;
 pub mod envelope;
 pub mod filter;
+pub(crate) mod git_anchor;
 pub mod handover;
 pub mod ingest;
 pub mod policy;
