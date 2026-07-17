@@ -32,6 +32,7 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::token::LlamaToken;
 
+use crate::teardown::EngineCell;
 use crate::worker::{EncodeWorker, MAX_SEQS_PER_WINDOW, Priority};
 use lunaris_core::{Embedder, LunarisError, StorageError};
 
@@ -76,6 +77,12 @@ pub enum LlamaCppEmbedderError {
 
     #[error("model reports n_embd={0}, expected {GRANITE_R2_DIM} (wrong GGUF?)")]
     WrongDim(i32),
+
+    #[error(
+        "embedder engine closed — process inference teardown already ran \
+         (shutdown_all_inference, normally the host's atexit hook)"
+    )]
+    Closed,
 }
 
 impl From<LlamaCppEmbedderError> for LunarisError {
@@ -92,17 +99,20 @@ struct Inner {
     budget: usize,
 }
 
-/// llama.cpp-backed embedder. Cheap to clone — heavy state behind `Arc`.
+/// llama.cpp-backed embedder. Cheap to clone — heavy state behind `Arc`,
+/// parked in a takeable [`EngineCell`] so process-wide inference teardown
+/// (`crate::shutdown_all_inference`, exit-time Metal safety) can free the
+/// model + worker even when a host runtime leaks this handle.
 #[derive(Clone)]
 pub struct LlamaCppEmbedder {
-    inner: Arc<Inner>,
+    cell: Arc<EngineCell<Inner>>,
 }
 
 impl std::fmt::Debug for LlamaCppEmbedder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlamaCppEmbedder")
             .field("dim", &GRANITE_R2_DIM)
-            .field("budget", &self.inner.budget)
+            .field("budget", &self.cell.get().map(|i| i.budget))
             .finish()
     }
 }
@@ -137,13 +147,20 @@ impl LlamaCppEmbedder {
             "lunaris-llamacpp-embed",
         )
         .map_err(LlamaCppEmbedderError::Llama)?;
-        Ok(Self { inner: Arc::new(Inner { model, worker, budget }) })
+        Ok(Self { cell: EngineCell::new(Arc::new(Inner { model, worker, budget })) })
+    }
+
+    /// Live inner, or [`LlamaCppEmbedderError::Closed`] once process
+    /// inference teardown has run.
+    fn inner(&self) -> Result<Arc<Inner>, LlamaCppEmbedderError> {
+        self.cell.get().ok_or(LlamaCppEmbedderError::Closed)
     }
 
     /// How many llama.cpp contexts this handle has ever created — exactly 1
     /// (the A2 warm-context contract; see `tests/context_reuse.rs`).
+    /// 0 after process inference teardown.
     pub fn contexts_created(&self) -> usize {
-        self.inner.worker.contexts_created()
+        self.cell.get().map(|i| i.worker.contexts_created()).unwrap_or(0)
     }
 
     /// Synchronous embed path — the async trait method wraps this in
@@ -168,7 +185,7 @@ impl LlamaCppEmbedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
-        let inner = &*self.inner;
+        let inner = self.inner()?;
 
         // Tokenize everything up front (cheap), truncating each input to the
         // window budget so a single long document can always form a window.
