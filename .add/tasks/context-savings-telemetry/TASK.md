@@ -2,7 +2,7 @@
 
 slug: context-savings-telemetry · created: 2026-07-17 · stage: production
 autonomy: auto
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > Milestone engram-soul-loop task 10 (added 2026-07-17, Tin "yes"): make the
 > window-context saving MEASURABLE, not argued. Rides task 3's transcript
