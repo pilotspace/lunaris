@@ -100,7 +100,7 @@ struct Inner {
 }
 
 /// llama.cpp-backed embedder. Cheap to clone — heavy state behind `Arc`,
-/// parked in a takeable [`EngineCell`] so process-wide inference teardown
+/// parked in a takeable `EngineCell` so process-wide inference teardown
 /// (`crate::shutdown_all_inference`, exit-time Metal safety) can free the
 /// model + worker even when a host runtime leaks this handle.
 #[derive(Clone)]

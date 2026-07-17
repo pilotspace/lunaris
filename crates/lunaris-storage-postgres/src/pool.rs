@@ -62,7 +62,7 @@ impl PgClient {
 
     /// Read-only check (safe for a non-DDL app role): are all embedded
     /// migrations already applied at `url`? `false` when the schema is missing
-    /// or behind; used by [`crate::PostgresStorage::connect_or_hint`] to turn a
+    /// or behind; used by `crate::PostgresStorage::connect_or_hint` to turn a
     /// permission error into an actionable "run `lunaris-server migrate`" hint.
     pub async fn schema_is_current(url: &str) -> Result<bool, StorageError> {
         let pool = PgPoolOptions::new().max_connections(1).connect(url).await.map_err(sqlx_err)?;

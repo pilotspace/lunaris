@@ -5,19 +5,19 @@
 //! PyO3 host crate `lunaris-py` that Plan 08-02 landed. The module is split
 //! across:
 //!
-//! - [`generated`] — codegen-managed file; DO NOT EDIT. Regenerate via
+//! - `generated` — codegen-managed file; DO NOT EDIT. Regenerate via
 //!   `cargo run -p lunaris-codegen -- --emit ts` and re-copy to
 //!   `crates/lunaris-ts/src/generated.rs`.
-//! - [`errors`] — `napi_err` translator that every generated `.map_err(napi_err)`
+//! - `errors` — `napi_err` translator that every generated `.map_err(napi_err)`
 //!   call site uses to lift `LunarisError` into a coarse-coded
 //!   `napi::Error(status=GenericFailure, reason="CODE: message")`.
-//! - [`dsl`] — TS-facing ergonomics for the retrieve DSL; camelCase
+//! - `dsl` — TS-facing ergonomics for the retrieve DSL; camelCase
 //!   aliases (`fuseRrf`, `asOf`) and the `filter(pred)` / `filterStr(s)`
 //!   split that the codegen-emitted surface shape doesn't cover.
-//! - [`toggles`] — three-surface (code + env + config) wrappers for
+//! - `toggles` — three-surface (code + env + config) wrappers for
 //!   [`lunaris::GraphPipelineHandle`] and
 //!   [`lunaris::ConsolidatorPipelineHandle`].
-//! - [`conformance`] — feature-gated (`bindings-it`) handwritten helpers
+//! - `conformance` — feature-gated (`bindings-it`) handwritten helpers
 //!   consumed by Plan 08-04. NOT codegen-managed. Exposes exactly two
 //!   helpers: `conformanceFixtureEpisodes` + `scanKvPrefix`. Revision 2
 //!   intentionally omits `withZeroEmbedder` / `withClockSeed`.

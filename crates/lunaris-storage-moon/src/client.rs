@@ -35,14 +35,14 @@ pub const DEFAULT_MOON_PORT: u16 = 6380;
 /// -perf-exploit W1-1): Moon's int8 symmetric SIMD ADC + exact f16 rerank
 /// sidecar (HQ-1) makes SQ8 both higher-recall AND ~2.15× faster per
 /// candidate than the old TQ4 default at 768-d (our production dim) — see
-/// `vendor/moon/CHANGELOG.md` [Unreleased]. [`Quantization::Tq4`] remains
+/// `vendor/moon/CHANGELOG.md` \[Unreleased\]. [`Quantization::Tq4`] remains
 /// available as the RSS-constrained escape hatch (~452 B/vec vs SQ8's
 /// ~900 B/vec + 2·dim f16 sidecar).
 ///
 /// Override per handle via the `?quant=<q>` URL parameter
 /// (`moon://host:port?quant=tq4`); every index the handle creates —
 /// legacy global AND per-scope — inherits the choice. Omitting `?quant=`
-/// resolves to `Sq8` via [`resolve_quantization`], not the bare SDK
+/// resolves to `Sq8` via `resolve_quantization`, not the bare SDK
 /// creation path — see that function's doc for the historical `None`
 /// (typed-SDK, whatever Moon's own default is) escape valve, which is no
 /// longer reachable through the public URL grammar.
@@ -209,7 +209,7 @@ pub struct MoonClient {
     /// `MoonStorage::create_scope_indexes` via `self.client.dim`).
     pub dim: usize,
     /// Effective FT quantization tier this handle creates indices at —
-    /// resolved by [`resolve_quantization`] from the `?quant=...` query
+    /// resolved by `resolve_quantization` from the `?quant=...` query
     /// param. Always `Some` since v0.5.1 (defaults to
     /// [`DEFAULT_QUANTIZATION`] when `?quant=` is absent); routes BOTH
     /// index-creation sites (legacy global `ensure_indexes` + per-scope
@@ -219,7 +219,7 @@ pub struct MoonClient {
     /// Optional `EF_RUNTIME` HNSW search-beam-width override from the
     /// `?ef=...` query param (moon-v051-perf-exploit W1-2). `None` (the
     /// default) leaves Moon's saturation-gated adaptive ef in charge —
-    /// see [`parse_ef_runtime`] for the rationale against a hardcoded
+    /// see `parse_ef_runtime` for the rationale against a hardcoded
     /// default. Sticky at `FT.CREATE` time, like `quantization`.
     pub ef_runtime: Option<u32>,
     /// The typed `moon-client` SDK handle. Cheap to clone.
@@ -573,7 +573,7 @@ pub(crate) async fn create_lunaris_index(
     create_lunaris_index_named_ef(typed, kind, kind, prefix, dim, quant, ef).await
 }
 
-/// Full implementation behind [`create_lunaris_index`] (legacy global site)
+/// Full implementation behind `create_lunaris_index` (legacy global site)
 /// and `lib.rs::create_scope_indexes` (per-scope site) — decouples the FT
 /// index `name` from the schema-selecting `kind`. Both creation sites thread
 /// the handle's `?quant=`/`?ef=` choices through here so they can never

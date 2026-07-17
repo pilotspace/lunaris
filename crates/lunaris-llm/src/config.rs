@@ -7,7 +7,7 @@
 //!
 //! 1. `LUNARIS_{P}_PROVIDER` / `LUNARIS_{P}_MODEL` (per-pipeline override)
 //! 2. `LUNARIS_LLM_PROVIDER`  / `LUNARIS_LLM_MODEL`  (workspace default)
-//! 3. The hard-coded default for that pipeline ([`Pipeline::default_model`]).
+//! 3. The hard-coded default for that pipeline (`Pipeline::default_model`).
 //!
 //! ## Config file
 //!

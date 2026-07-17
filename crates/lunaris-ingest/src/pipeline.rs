@@ -16,7 +16,7 @@
 //!
 //! ## INGEST-04 single-call invariant
 //!
-//! The one executable write call lives in [`assemble_and_write`].  All public
+//! The one executable write call lives in `assemble_and_write`.  All public
 //! entry points — [`ingest_episode`], [`ingest_episode_with_counter`], and
 //! [`ingest_episode_with_bakeoff`] — funnel through that helper.  No other
 //! function in this file may call `storage.atomic_write`.
@@ -123,7 +123,7 @@ struct AssembleReceipt {
 /// 3. Construct typed [`Chunk`]s from drafts + embeddings.
 /// 4. Build `Vec<WriteOp>`: one `KvPut` for the Episode + per-chunk
 ///    `KvPut` (chunk JSON) + `VectorUpsert` (chunk embedding + metadata).
-/// 5. Issue a single atomic write via [`assemble_and_write`]. Return the [`Lsn`].
+/// 5. Issue a single atomic write via `assemble_and_write`. Return the [`Lsn`].
 ///
 /// Returns `Lsn::ZERO`-ish patterns are never returned because Phase 1 backends
 /// always issue a positive HLC at commit time; callers may still treat
@@ -169,7 +169,7 @@ pub async fn ingest_episode_with_receipt<S: StoragePort + ?Sized>(
 /// [`ingest_episode`].
 ///
 /// All invariants of [`ingest_episode`] hold unchanged:
-/// - INGEST-04: exactly ONE write call (delegated to [`assemble_and_write`]).
+/// - INGEST-04: exactly ONE write call (delegated to `assemble_and_write`).
 /// - Embedding batch fallback (INGEST-02) is unchanged.
 /// - The returned [`Lsn`] is the commit timestamp from the storage backend.
 pub async fn ingest_episode_with_counter<S: StoragePort + ?Sized>(
@@ -555,7 +555,7 @@ async fn embed_summaries_per_item(
 /// 2. Uses the winner's **pre-computed embeddings** directly (SINGLE-PASS).
 ///    No additional `embed_batch` call is made for the winner's chunks.
 /// 3. Passes the structural heading records (from the bake-off) to the DocTree.
-/// 4. Delegates to [`assemble_and_write`] for WriteOp assembly and the single
+/// 4. Delegates to `assemble_and_write` for WriteOp assembly and the single
 ///    atomic write (INGEST-04). Note: `assemble_and_write` makes one additional
 ///    `embed_batch` call for community summaries (Phase-30 B1) — this is not a
 ///    SINGLE-PASS violation because community summary texts are new, not re-embeddings

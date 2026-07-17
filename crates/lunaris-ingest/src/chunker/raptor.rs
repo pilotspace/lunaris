@@ -22,7 +22,7 @@
 //!
 //! Deferral rationale: propagating `source_byte_span` onto `Chunk` requires a core primitive
 //! schema change plus a units reconciliation (`source_byte_span` is bytes; `TocNode.char_span`
-//! is chars). Deferred to a future phase. See `TODO(phase-future)` in [`assign_leaf`].
+//! is chars). Deferred to a future phase. See `TODO(phase-future)` in `assign_leaf`.
 //!
 //! ## INGEST-04 compliance
 //!
@@ -33,7 +33,7 @@
 //!
 //! `Community.summary_embedding` is NEVER set in this module.
 //! Summary text is initialised to `String::new()` as a placeholder;
-//! the caller (Plan 03 wiring) fills it via [`ExtractiveSummarizer`] before
+//! the caller (Plan 03 wiring) fills it via `ExtractiveSummarizer` before
 //! the `atomic_write` call.
 //!
 //! ## Line-count budget
@@ -93,7 +93,7 @@ pub fn raptor_community_id(
 /// - **Ultimate fallback**: `heading_path` empty → assign to `doctree.roots[0]`.
 ///
 /// Note: byte-containment for non-structural bake-off winners is **not implemented**
-/// in Phase 29. See [`assign_leaf`] and the module-level doc for the deferral rationale.
+/// in Phase 29. See `assign_leaf` and the module-level doc for the deferral rationale.
 pub fn build_raptor_tree(
     doctree: &DocTree,
     chunks: &[Chunk],

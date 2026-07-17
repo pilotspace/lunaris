@@ -12,7 +12,7 @@
 //! KV prefix with a CLIENT-SIDE source-prefix match — embedding-free,
 //! handle-free, and identical on every backend.
 //!
-//! Flag-resolution note (2026-06-12, ⚠ [contract] from the freeze): the
+//! Flag-resolution note (2026-06-12, ⚠ \[contract\] from the freeze): the
 //! contracted keyword_search route is IMPOSSIBLE on live Moon — the FT text
 //! parser resolves `@field:` against TEXT fields only, so the `source` TAG
 //! declared by PERF-MOON-01 is unsearchable (`ERR unknown field 'source'`,

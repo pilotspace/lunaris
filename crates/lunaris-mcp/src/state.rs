@@ -72,7 +72,7 @@ pub(crate) enum BootstrapError {
 /// Env var that bypasses the embedder health probe in `AppState::bootstrap`.
 ///
 /// When set to any non-empty value, [`probe_embedder_health`] is skipped and
-/// the server starts even if the embedder resolves to [`NoopEmbedder`]. This
+/// the server starts even if the embedder resolves to `NoopEmbedder`. This
 /// is an **operator / test escape hatch only** — recall returns empty hits
 /// when the embedder is a noop. Production deployments must NOT set this.
 ///
@@ -109,7 +109,7 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    /// Build `AppState` from CLI arguments. Delegates to [`bootstrap_inner`] with
+    /// Build `AppState` from CLI arguments. Delegates to `bootstrap_inner` with
     /// `skip_probe = false`.
     ///
     /// Steps:

@@ -107,8 +107,8 @@ impl ScopeStore for JsonScopesFileStore {
 ///
 /// Precedence:
 /// 1. `LUNARIS_HOOK_SCOPE` env var (override).
-/// 2. `cwd + git remote.origin.url + branch` → blake3 → "git_<hex16>".
-/// 3. Canonical cwd → blake3 → "cwd_<hex16>".
+/// 2. `cwd + git remote.origin.url + branch` → blake3 → "`git_<hex16>`".
+/// 3. Canonical cwd → blake3 → "`cwd_<hex16>`".
 ///
 /// Writes to `~/.lunaris/scopes.json` (or `LUNARIS_SCOPES_FILE` override).
 pub fn resolve(cwd: &Path) -> Result<Scope, ScopeResolveError> {
@@ -158,7 +158,7 @@ pub fn resolve_with_path(
 /// 1. `LUNARIS_STORE_URL` env var — shared with lunaris-mcp naming convention,
 ///    passed verbatim. Replaces the former LUNARIS_HOOK_STORAGE alias.
 /// 2. contextd's embedded Moon, discovered via `~/.lunaris/contextd-moon.url`
-///    and liveness-probed (see [`discover_contextd_moon`]). This is what keeps
+///    and liveness-probed (see `discover_contextd_moon`). This is what keeps
 ///    the ONE-SHOT hook binary and the contextd daemon writing to the SAME
 ///    store when contextd bundles Moon in-process — without it the hook's
 ///    direct open would split-brain into per-scope SQLite while contextd

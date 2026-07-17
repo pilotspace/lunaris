@@ -20,7 +20,7 @@ use lunaris_core::LunarisError;
 
 /// Opaque container around a resolved [`lunaris_rerank::Reranker`]. Constructed
 /// via the `#[napi(factory)]` methods; consumed by
-/// [`crate::Lunaris::withReranker`].
+/// `crate::Lunaris::withReranker`.
 #[napi]
 pub struct RerankerConfig {
     pub(crate) inner: Arc<dyn Reranker>,

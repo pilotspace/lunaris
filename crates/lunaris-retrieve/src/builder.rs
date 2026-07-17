@@ -219,7 +219,7 @@ impl RetrievalBuilder {
 
     /// W5 task 1: wrap the current root with a [`crate::RerankRetriever`]
     /// configured with an abstention gate. Hits scoring below `min_score`
-    /// on the cross-encoder's sigmoid output (∈ [0,1] for
+    /// on the cross-encoder's sigmoid output (∈ `[0,1]` for
     /// `bge-reranker-v2-m3`) are dropped instead of being returned as
     /// "best of the worst" — an empty result is a legitimate abstention
     /// signal. Uses the default top-in ([`crate::DEFAULT_RERANK_TOP_IN`]);

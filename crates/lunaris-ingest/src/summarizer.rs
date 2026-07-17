@@ -7,7 +7,7 @@
 //!   This is the path that executes in autonomous/no-weights mode (same lesson
 //!   as Phase 28 META-03: the extractive path is the live path).
 //!
-//! - [`LlmSummarizer`] — wraps `Arc<dyn LlmBackend>`. Gated behind the
+//! - `LlmSummarizer` — wraps `Arc<dyn LlmBackend>`. Gated behind the
 //!   `llm-summarizer` feature so default `cargo build -p lunaris-ingest` does
 //!   NOT require LLM weights. Falls back to extractive on backend error (D3).
 //!

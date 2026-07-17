@@ -190,7 +190,7 @@ impl Lunaris {
     /// EntityId-determinism guarantee.
     ///
     /// This entry point bypasses the LLM extractor entirely and writes the
-    /// graph directly from the caller's [`StructuredIngest`] payload.
+    /// graph directly from the caller's `StructuredIngest` payload.
     /// **Always** writes the graph regardless of
     /// `LUNARIS_GRAPH_ENABLED` / `graph_pipeline().is_enabled()` — agents
     /// explicitly supplied entities, so the toggle does not gate them.

@@ -80,7 +80,7 @@ struct Cli {
     #[arg(long, env = "LUNARIS_MCP_SCOPE")]
     scope: Option<String>,
 
-    /// Storage URL (default: sqlite:///<HOME>/.lunaris/<scope>.db).
+    /// Storage URL (default: sqlite:///`<HOME>`/.lunaris/`<scope>`.db).
     #[arg(long, env = "LUNARIS_MCP_STORAGE")]
     storage: Option<String>,
 

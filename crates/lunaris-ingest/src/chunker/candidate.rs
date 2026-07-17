@@ -2,7 +2,7 @@
 //!
 //! ## Architecture
 //!
-//! The bake-off runs [`MAX_BAKEOFF_CANDIDATES`] candidate chunk lists through
+//! The bake-off runs `MAX_BAKEOFF_CANDIDATES` candidate chunk lists through
 //! [`run_bakeoff`], which:
 //! 1. Collects up to `max_candidates` `Vec<ChunkDraft>` from the generators,
 //!    dropping any that `Err` (logged via `tracing::warn!`).
@@ -147,7 +147,7 @@ impl CandidateGenerator for StructuralGenerator {
 /// Splits the source into chunks by finding local minima in the cosine
 /// similarity between adjacent unit embeddings.
 ///
-/// A boundary is placed between unit[i] and unit[i+1] when
+/// A boundary is placed between `unit[i]` and `unit[i+1]` when
 /// `cosine(unit[i], unit[i+1]) < threshold`, indicating a semantic shift.
 #[derive(Debug, Clone)]
 pub struct SemanticBreakpointGenerator {

@@ -961,7 +961,7 @@ impl Lunaris {
     }
 
     /// Cross-scope enumeration — pass-through to
-    /// [`StoragePort::list_scopes`](lunaris_core::StoragePort::list_scopes).
+    /// [`StoragePort::list_scopes`].
     ///
     /// Returns a paginated [`ScopePage`](lunaris_core::ScopePage) of scopes
     /// known to the underlying backend, optionally filtered by `prefix`. The

@@ -1,7 +1,7 @@
 //! Plan 05-01 — `GET /healthz` (D-03). No auth, no rate-limit.
 //!
 //! observability-rollout-maturity: the handler now PROBES storage liveness via
-//! [`Lunaris::health_check`] and answers **503** when the probe fails, so the
+//! `Lunaris::health_check` and answers **503** when the probe fails, so the
 //! 5%→100% rollout auto-cutback can key on EITHER the HTTP status OR the
 //! `{ok:false}` body. A healthy probe answers 200 `{ok:true, version}`.
 

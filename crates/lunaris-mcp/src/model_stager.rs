@@ -214,7 +214,7 @@ pub(crate) async fn ensure_staged(kind: ModelKind) -> Result<PathBuf, StageError
 /// Testable variant of [`ensure_staged`] that accepts an explicit `models_dir`,
 /// `base_url`, and `expected_sha`.
 ///
-/// Tests pass a [`wiremock`] server URI as `base_url` and the SHA-256 of their
+/// Tests pass a `wiremock` server URI as `base_url` and the SHA-256 of their
 /// synthetic payload as `expected_sha`, so no real network calls are made and
 /// sha verification is exercised end-to-end against realistic data. Mirrors the
 /// `scope_resolver::resolve_with` injection-point pattern.

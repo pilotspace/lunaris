@@ -153,7 +153,7 @@ pub struct CloudApiExtractorOpts {
     /// for such models.
     pub max_tokens: u32,
     /// Max per-chunk extraction calls in flight (order-preserving; see
-    /// [`DEFAULT_EXTRACT_CONCURRENCY`] for the measured rationale). 1 =
+    /// `DEFAULT_EXTRACT_CONCURRENCY` for the measured rationale). 1 =
     /// the historical strictly-serial loop.
     pub concurrency: usize,
     /// Base URL for [`CloudProvider::OpenAiCompat`]; ignored by the

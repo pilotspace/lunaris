@@ -677,7 +677,7 @@ impl CodeRepoMemory {
     }
 }
 
-/// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>.
+/// Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + `TemporalQuery<Documents>`.
 #[napi]
 pub struct TimelineReconstruction {
     #[allow(dead_code)]
