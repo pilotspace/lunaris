@@ -36,6 +36,8 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+// ADD task activation-ledger — persistent activation-ledger read seam.
+pub mod boost_provider;
 pub mod builder;
 pub mod fusion;
 pub mod hydrate;
@@ -44,6 +46,7 @@ pub mod planner;
 pub mod service;
 pub mod types;
 
+pub use boost_provider::{BoostProvider, LedgerBoostProvider};
 pub use builder::RetrievalBuilder;
 pub use hydrate::{hydrate, hydrate_mixed, partial_hydrate_text};
 // W5 task 3: FT.AGGREGATE deterministic counting/grouping operator. NOT a

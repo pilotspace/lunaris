@@ -32,11 +32,15 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use lunaris_consolidate::Consolidator;
 use lunaris_core::{
     Embedder, HlcClock, KeywordPort, Lsn, LunarisError, Scope, StorageError, StoragePort,
 };
+// ADD task activation-ledger — persistent per-memory activation ledger types.
+use lunaris_core::activation::RefSignal;
+use lunaris_core::keyspace::activation_key;
 use lunaris_ingest::{BakoffConfig, TokenCounter, make_token_counter};
 use ulid::Ulid;
 
@@ -1503,6 +1507,88 @@ impl<'a> ScopedLunaris<'a> {
         );
 
         Ok(output)
+    }
+
+    /// ADD task activation-ledger — record usage signals into the
+    /// persistent per-memory activation ledger.
+    ///
+    /// Read-modify-write of every DISTINCT id touched by `signals`: for each
+    /// id, reads the existing `ActivationRecord` at
+    /// `lunaris_core::keyspace::activation_key(scope, id)` (or starts from
+    /// `ActivationRecord::default()` when none exists, or when the existing
+    /// row is corrupt — a malformed stored record must not block new
+    /// reinforcement), applies every signal for that id in input order via
+    /// `ActivationRecord::apply`, and commits ALL touched records in exactly
+    /// ONE `atomic_write` (mirrors D-11 — one atomic write per logical batch).
+    ///
+    /// ## Best-effort contract
+    ///
+    /// This method itself SURFACES storage errors (`Result::Err`) rather
+    /// than swallowing them — it is a library primitive, not a turn-path
+    /// caller. Callers on the agent-turn / injection path (e.g.
+    /// `lunaris-hook::trace_injection`) MUST log-and-continue on `Err`: a
+    /// reinforcement-signal failure must never fail the agent's turn (same
+    /// contract as `apply_reflect_invalidate` / `apply_reflect_boost`).
+    pub async fn record_activation_refs(&self, signals: &[RefSignal]) -> Result<(), LunarisError> {
+        if signals.is_empty() {
+            return Ok(());
+        }
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let read_at = self.engine.clock.tick();
+
+        // Group signals by id, preserving first-seen order for a
+        // deterministic WriteOp ordering in the batch.
+        let mut order: Vec<Ulid> = Vec::new();
+        let mut by_id: HashMap<Ulid, Vec<RefSignal>> = HashMap::new();
+        for s in signals {
+            by_id
+                .entry(s.id)
+                .or_insert_with(|| {
+                    order.push(s.id);
+                    Vec::new()
+                })
+                .push(*s);
+        }
+
+        let mut ops: Vec<lunaris_core::WriteOp> = Vec::with_capacity(order.len());
+        for id in order {
+            let key = activation_key(&self.scope, id);
+            let mut record = match self
+                .engine
+                .storage
+                .read_as_of(&self.scope, &key, read_at)
+                .await
+                .map_err(LunarisError::Storage)?
+            {
+                Some(row) => {
+                    serde_json::from_slice::<lunaris_core::activation::ActivationRecord>(&row.value)
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                err = %e,
+                                %id,
+                                scope = self.scope.as_str(),
+                                "activation_ledger_corrupt_record_reseeded"
+                            );
+                            lunaris_core::activation::ActivationRecord::default()
+                        })
+                }
+                None => lunaris_core::activation::ActivationRecord::default(),
+            };
+            for s in &by_id[&id] {
+                record.apply(s, now);
+            }
+            let value = serde_json::to_vec(&record).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "activation_ledger_serialize_failed: {e}"
+                )))
+            })?;
+            ops.push(lunaris_core::WriteOp::KvPut { key, value });
+        }
+
+        // Mirrors D-11: exactly ONE atomic_write for the whole batch.
+        self.engine.storage.atomic_write(&self.scope, &ops).await.map_err(LunarisError::Storage)?;
+        Ok(())
     }
 }
 

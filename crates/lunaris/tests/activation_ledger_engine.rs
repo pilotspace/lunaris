@@ -64,7 +64,9 @@ impl LedgerTestStorage {
 impl StoragePort for LedgerTestStorage {
     async fn atomic_write(&self, _scope: &Scope, ops: &[WriteOp]) -> Result<Lsn, StorageError> {
         if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(StorageError::Backend("ledger_test_storage: forced atomic_write failure".into()));
+            return Err(StorageError::Backend(
+                "ledger_test_storage: forced atomic_write failure".into(),
+            ));
         }
         {
             let mut rows = self.rows.lock();
@@ -72,7 +74,11 @@ impl StoragePort for LedgerTestStorage {
                 if let WriteOp::KvPut { key, value } = op {
                     rows.insert(
                         key.clone(),
-                        Row { key: key.clone(), value: value.clone().into(), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) },
+                        Row {
+                            key: key.clone(),
+                            value: value.clone().into(),
+                            bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+                        },
                     );
                 }
             }
@@ -81,11 +87,22 @@ impl StoragePort for LedgerTestStorage {
         Ok(Lsn { wall_ms: 1, counter: self.write_batches.lock().len() as u32 })
     }
 
-    async fn read_as_of(&self, _scope: &Scope, key: &[u8], _t: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        _scope: &Scope,
+        key: &[u8],
+        _t: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
         Ok(self.rows.lock().get(key).cloned())
     }
 
-    async fn publish(&self, _s: &Scope, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _t: &str,
+        _p: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
         Ok(0)
     }
 
@@ -103,7 +120,12 @@ impl StoragePort for LedgerTestStorage {
         Ok(self.fixed_hits.lock().clone())
     }
 
-    async fn graph_traverse(&self, _s: &Scope, _q: &CypherQuery, _t: Option<Hlc>) -> Result<GraphResult, StorageError> {
+    async fn graph_traverse(
+        &self,
+        _s: &Scope,
+        _q: &CypherQuery,
+        _t: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
         Ok(GraphResult::default())
     }
 
@@ -152,7 +174,14 @@ fn stub_embedding() -> Vec<f32> {
     vec![1.0, 0.0, 0.0, 0.0]
 }
 
-fn seed_chunk(storage: &LedgerTestStorage, scope: &Scope, chunk_id: Ulid, ep_id: Ulid, text: &str, clock: &HlcClock) {
+fn seed_chunk(
+    storage: &LedgerTestStorage,
+    scope: &Scope,
+    chunk_id: Ulid,
+    ep_id: Ulid,
+    text: &str,
+    clock: &HlcClock,
+) {
     let chunk = Chunk {
         id: chunk_id,
         scope: scope.clone(),
@@ -175,7 +204,12 @@ fn seed_chunk(storage: &LedgerTestStorage, scope: &Scope, chunk_id: Ulid, ep_id:
 }
 
 fn vector_hit(id: Ulid, score: f32) -> VectorHit {
-    VectorHit { id: id.to_bytes().to_vec(), score, rerank_applied: false, metadata: serde_json::Value::Null }
+    VectorHit {
+        id: id.to_bytes().to_vec(),
+        score,
+        rerank_applied: false,
+        metadata: serde_json::Value::Null,
+    }
 }
 
 fn make_handle(storage: Arc<LedgerTestStorage>) -> Lunaris {
@@ -199,7 +233,11 @@ async fn record_refs_upserts_and_batches_one_atomic_write() {
 
     // First signal: weak, turn-grain.
     scoped
-        .record_activation_refs(&[RefSignal { id: id_m, grain: Grain::Turn, strength: Strength::Weak }])
+        .record_activation_refs(&[RefSignal {
+            id: id_m,
+            grain: Grain::Turn,
+            strength: Strength::Weak,
+        }])
         .await
         .expect("first record_activation_refs must succeed");
     assert_eq!(storage.write_count(), 1, "first flush is one atomic_write");
@@ -217,7 +255,11 @@ async fn record_refs_upserts_and_batches_one_atomic_write() {
 
     // Second signal for the SAME id: strong, tool_call-grain — updates in place.
     scoped
-        .record_activation_refs(&[RefSignal { id: id_m, grain: Grain::ToolCall, strength: Strength::Strong }])
+        .record_activation_refs(&[RefSignal {
+            id: id_m,
+            grain: Grain::ToolCall,
+            strength: Strength::Strong,
+        }])
         .await
         .expect("second record_activation_refs must succeed");
     assert_eq!(storage.write_count(), 2, "second flush is a second atomic_write");
@@ -227,7 +269,10 @@ async fn record_refs_upserts_and_batches_one_atomic_write() {
     assert_eq!(rec2.n, 2, "n increments");
     assert_eq!(rec2.weighted, 4.0, "weighted = weak(1.0) + strong(3.0)");
     assert_eq!(rec2.first_ref_wall, first_wall, "first_ref_wall unchanged");
-    assert!(rec2.last_ref_wall >= first_wall, "last_ref_wall advances (or ties under a fast clock)");
+    assert!(
+        rec2.last_ref_wall >= first_wall,
+        "last_ref_wall advances (or ties under a fast clock)"
+    );
     assert_eq!(rec2.last_grain, Grain::ToolCall);
     assert_eq!(rec2.last_strength, Strength::Strong);
 
@@ -262,7 +307,8 @@ async fn reinforced_memory_outranks_across_handles() {
 
     // B ranks first pre-boost (equal scores, B returned first) so any flip
     // to A is explained ONLY by the persisted activation ledger.
-    let storage = Arc::new(LedgerTestStorage::new(vec![vector_hit(id_b, 0.80), vector_hit(id_a, 0.80)]));
+    let storage =
+        Arc::new(LedgerTestStorage::new(vec![vector_hit(id_b, 0.80), vector_hit(id_a, 0.80)]));
     seed_chunk(&storage, &scope, id_a, ep, "chunk A", &clock);
     seed_chunk(&storage, &scope, id_b, ep, "chunk B", &clock);
 
@@ -285,7 +331,8 @@ async fn reinforced_memory_outranks_across_handles() {
     let handle2 = make_handle(storage.clone());
     let scoped2 = handle2.scoped(scope.clone());
 
-    let provider: Arc<dyn BoostProvider> = Arc::new(LedgerBoostProvider::new(storage.clone() as Arc<dyn StoragePort>));
+    let provider: Arc<dyn BoostProvider> =
+        Arc::new(LedgerBoostProvider::new(storage.clone() as Arc<dyn StoragePort>));
     let hits = scoped2
         .dsl()
         .with_root(Vector::new("chunks", 30))
@@ -295,7 +342,10 @@ async fn reinforced_memory_outranks_across_handles() {
         .expect("recall with ledger provider must succeed");
 
     assert_eq!(hits.len(), 2);
-    assert_eq!(hits[0].text, "chunk A", "A's persisted activation must outrank equal-similarity B: {hits:#?}");
+    assert_eq!(
+        hits[0].text, "chunk A",
+        "A's persisted activation must outrank equal-similarity B: {hits:#?}"
+    );
 
     // Without the provider wired, the pre-boost order (B first) is preserved.
     let hits_unwired =
@@ -321,7 +371,8 @@ async fn corrupt_record_recall_still_ok() {
 
     let handle = make_handle(storage.clone());
     let scoped = handle.scoped(scope.clone());
-    let provider: Arc<dyn BoostProvider> = Arc::new(LedgerBoostProvider::new(storage.clone() as Arc<dyn StoragePort>));
+    let provider: Arc<dyn BoostProvider> =
+        Arc::new(LedgerBoostProvider::new(storage.clone() as Arc<dyn StoragePort>));
 
     let hits = scoped
         .dsl()
@@ -332,7 +383,11 @@ async fn corrupt_record_recall_still_ok() {
         .expect("recall must return Ok even with a corrupt ledger row");
 
     assert_eq!(hits.len(), 1);
-    assert!((hits[0].score - 0.55).abs() < 1e-6, "corrupt record must not change the hit's score; got {}", hits[0].score);
+    assert!(
+        (hits[0].score - 0.55).abs() < 1e-6,
+        "corrupt record must not change the hit's score; got {}",
+        hits[0].score
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +405,11 @@ async fn ledger_write_failure_does_not_error_turn_path() {
     let scoped = handle.scoped(scope.clone());
 
     let result = scoped
-        .record_activation_refs(&[RefSignal { id: Ulid::new(), grain: Grain::Turn, strength: Strength::Weak }])
+        .record_activation_refs(&[RefSignal {
+            id: Ulid::new(),
+            grain: Grain::Turn,
+            strength: Strength::Weak,
+        }])
         .await;
     assert!(
         result.is_err(),
