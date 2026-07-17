@@ -1538,7 +1538,13 @@ fn excluded_context_source(source: &str) -> bool {
     // match let their feedback/injection records leak back into prompt
     // injections (engram-soul-loop task 1).
     let kind = source.split_once(':').map(|(_, k)| k).unwrap_or(source);
-    matches!(kind, "memory_injection" | "turn_feedback" | "session_start" | "stop")
+    // "memory_feedback" (engram-soul-loop task 4): the memory.feedback audit
+    // episode is a reasoned vote record for the dream pass, not on-topic
+    // prompt context — same rationale as turn_feedback/memory_injection.
+    matches!(
+        kind,
+        "memory_injection" | "turn_feedback" | "session_start" | "stop" | "memory_feedback"
+    )
 }
 
 /// True if `source` is a raw tool-call capture (as opposed to a durable
