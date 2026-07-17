@@ -25,6 +25,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -155,6 +156,28 @@ def capture_has_signal(event: Any) -> bool:
         return True  # fail open — capture on any uncertainty
 
 
+_GIT_COMMIT_RE = re.compile(r"\bgit\s+commit\b")
+
+
+def command_is_git_commit(event: dict[str, Any]) -> bool:
+    """True if the tool-call command text is a `git commit` invocation.
+
+    Engram-soul-loop task 6 (staleness-pass, `.add/tasks/staleness-pass/TASK.md`
+    §3 CONTRACT): the posttooluse fast path uses this to flag captures that
+    should spawn the shared verify-agenda sweep. Checks both the
+    Claude-shape (`tool_input.command`) and the Codex camelCase shape
+    (`toolInput.command`); fails open (False) on any non-dict/missing shape.
+    """
+    for field in ("tool_input", "toolInput"):
+        tool_input = event.get(field)
+        if not isinstance(tool_input, dict):
+            continue
+        command = tool_input.get("command")
+        if isinstance(command, str) and _GIT_COMMIT_RE.search(command):
+            return True
+    return False
+
+
 def run_capture(event: dict[str, Any]) -> int:
     # Signal-gate: only high-value events become durable memories. A dropped
     # event is success (return 0), never a non-zero hook exit that blocks the
@@ -188,6 +211,9 @@ def run_capture(event: dict[str, Any]) -> int:
                 # git-anchoring (engram-soul-loop task 5): forward the touched
                 # paths so the server can stamp meta.files on this capture.
                 "paths": extract_paths(event) or None,
+                # staleness-pass (engram-soul-loop task 6): flag commit-shaped
+                # captures so the server spawns the shared verify-agenda sweep.
+                "commit": command_is_git_commit(event) or None,
             }
             contextd_request(strip_none(payload), timeout_ms=env_int_any("LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS") or 120)
             return 0

@@ -16,8 +16,8 @@ use futures::stream::{self, BoxStream, StreamExt};
 use lunaris::{Lunaris, VerifyAgendaEntry};
 use lunaris_core::keyspace::verify_agenda_key;
 use lunaris_core::{
-    BiTemporal, CypherDialect, CypherQuery, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg,
-    Row, Scope, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
+    BiTemporal, CypherDialect, CypherQuery, Filter, GraphResult, Hlc, HlcClock, Lsn, QueueMsg, Row,
+    Scope, StorageCapabilities, StorageError, StoragePort, VectorHit, WriteOp,
 };
 use parking_lot::Mutex;
 use ulid::Ulid;
@@ -153,7 +153,12 @@ fn make_handle(storage: Arc<AgendaTestStorage>) -> Lunaris {
     Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock)
 }
 
-fn entry(episode_id: Ulid, anchor_head: &str, current_head: &str, files: &[&str]) -> VerifyAgendaEntry {
+fn entry(
+    episode_id: Ulid,
+    anchor_head: &str,
+    current_head: &str,
+    files: &[&str],
+) -> VerifyAgendaEntry {
     VerifyAgendaEntry {
         episode_id,
         anchor_head: anchor_head.to_owned(),
@@ -232,7 +237,10 @@ async fn second_upsert_preserves_first_seen_updates_last_seen() {
     let key = verify_agenda_key(&scope, id);
     let row = storage.rows.lock().get(&key).cloned().expect("agenda row must exist");
     let stored: VerifyAgendaEntry = serde_json::from_slice(&row.value).unwrap();
-    assert_eq!(stored.first_seen_ms, 1_000, "first_seen_ms must be preserved across the RMW upsert");
+    assert_eq!(
+        stored.first_seen_ms, 1_000,
+        "first_seen_ms must be preserved across the RMW upsert"
+    );
     assert_eq!(stored.last_seen_ms, 9_999, "last_seen_ms must reflect the new upsert value");
     assert_eq!(stored.current_head, head2, "current_head must reflect the new upsert value");
 }

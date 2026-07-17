@@ -237,6 +237,37 @@ pub fn doctree_prefix(scope: &Scope) -> Vec<u8> {
     format!("{}doctree:", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for a verify-agenda entry (engram-soul-loop task 6,
+/// staleness-pass): `lunaris:{scope}:verify_agenda:{ulid}`.
+///
+/// The agenda entry's ULID IS the anchored episode's ULID — a natural
+/// idempotent key (one agenda row per stale-anchored episode, RMW-upserted
+/// by `ScopedLunaris::upsert_verify_agenda`).
+///
+/// # Examples
+///
+/// ```
+/// use lunaris_core::{Scope, keyspace::verify_agenda_key};
+/// use ulid::Ulid;
+/// let scope = Scope::new("_dev_").unwrap();
+/// let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
+/// assert_eq!(
+///     verify_agenda_key(&scope, id),
+///     b"lunaris:_dev_:verify_agenda:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+/// );
+/// ```
+#[inline]
+pub fn verify_agenda_key(scope: &Scope, id: Ulid) -> Vec<u8> {
+    format!("{}verify_agenda:{id}", scope_prefix(scope)).into_bytes()
+}
+
+/// Scan prefix for verify-agenda entries under `scope`:
+/// `lunaris:{scope}:verify_agenda:`.
+#[inline]
+pub fn verify_agenda_prefix(scope: &Scope) -> Vec<u8> {
+    format!("{}verify_agenda:", scope_prefix(scope)).into_bytes()
+}
+
 // ---------------------------------------------------------------------------
 // Reverse parse: extract a scope from a `lunaris:{scope}:{kind}:{ulid}` key
 // ---------------------------------------------------------------------------

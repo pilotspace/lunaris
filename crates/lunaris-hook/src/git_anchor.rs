@@ -3,7 +3,7 @@
 //! (`meta.git_head`). Fail-open everywhere: any git failure yields `None`
 //! and never delays a capture beyond the 300ms subprocess cap.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -109,6 +109,77 @@ fn record_resolve_call_for_test(cwd: &Path) {
 #[cfg(test)]
 pub(crate) fn resolve_calls_for_test(cwd: &Path) -> usize {
     RESOLVE_CALLS.lock().get(cwd).copied().unwrap_or(0)
+}
+
+// ── engram-soul-loop task 6 (staleness-pass) — changed-files diff ─────────
+//
+// `.add/tasks/staleness-pass/TASK.md` §3 CONTRACT: `git diff --name-only
+// <anchor>..HEAD`, same fail-open/timeout/caching pattern as
+// `head_for_cwd` above, keyed by `(canonical cwd, anchor_head)`.
+
+/// Hard cap on distinct anchor diffs resolved per sweep call site (§1 Must
+/// / Reject: "at most 8 DISTINCT anchor diffs resolved per sweep call
+/// site — excess anchors skipped fail-open, caught next sweep").
+pub(crate) const MAX_ANCHOR_DIFFS_PER_SWEEP: usize = 8;
+
+/// `(seen_at, resolved_changed_files)` — mirrors `CacheEntry` above.
+type DiffCacheEntry = (Instant, Option<HashSet<String>>);
+
+static DIFF_CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), DiffCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Resolve `git diff --name-only <anchor>..HEAD` for `cwd`, TTL-cached per
+/// canonicalized `(cwd, anchor)` pair. Returns `None` on ANY failure: no
+/// repo, no `git` binary, non-zero exit, non-utf8 output, or timeout —
+/// never an `Err`, so callers (staleness assessment, the verify-agenda
+/// sweep) can fail open to "not stale" rather than ever surfacing a git
+/// failure.
+///
+/// Lock discipline: identical to [`head_for_cwd`] — the cache lock is
+/// never held across the subprocess `.await`.
+pub(crate) async fn changed_files_since(cwd: &Path, anchor: &str) -> Option<HashSet<String>> {
+    let canon = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let key = (canon, anchor.to_owned());
+
+    {
+        let cache = DIFF_CACHE.lock();
+        if let Some((seen, value)) = cache.get(&key)
+            && seen.elapsed() < TTL
+        {
+            return value.clone();
+        }
+        // guard dropped here — never held across the subprocess await below
+    }
+
+    let resolved = resolve_diff(&key.0, anchor).await;
+
+    let mut cache = DIFF_CACHE.lock();
+    if cache.len() > CAP {
+        let now = Instant::now();
+        cache.retain(|_, (seen, _)| now.duration_since(*seen) < TTL);
+    }
+    cache.insert(key, (Instant::now(), resolved.clone()));
+    resolved
+}
+
+/// Spawn `git diff --name-only <anchor>..HEAD` in `cwd` under the same hard
+/// 300ms cap as [`resolve_head`]. Any failure mode collapses to `None`.
+async fn resolve_diff(cwd: &Path, anchor: &str) -> Option<HashSet<String>> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("diff")
+        .arg("--name-only")
+        .arg(format!("{anchor}..HEAD"))
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+
+    let output = tokio::time::timeout(SUBPROCESS_TIMEOUT, cmd.output()).await.ok()?.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    Some(text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect())
 }
 
 #[cfg(test)]
