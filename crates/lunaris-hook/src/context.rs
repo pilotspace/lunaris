@@ -3315,4 +3315,548 @@ mod tests {
             other => panic!("expected CaptureToolCall, got {other:?}"),
         }
     }
+
+    // ── engram-soul-loop task 6 — staleness-pass + verify-agenda ──────────
+    // `.add/tasks/staleness-pass/TASK.md` §2 SCENARIOS / §4 TESTS.
+
+    /// Seed an episode directly through the ingest pipeline (`NoopEmbedder`
+    /// — vector search is not exercised by these tests) with an explicit
+    /// `git_head` / `files` anchor stamped in its metadata. Deliberately
+    /// bypasses `capture_tool` / `capture_lightweight`: those resolve
+    /// `head_for_cwd(cwd)` AT CALL TIME and would populate the git_anchor
+    /// TTL cache with whatever HEAD the repo is at THEN — poisoning the
+    /// cache for a test that moves the repo to a later commit afterward and
+    /// expects a FRESH `head_for_cwd` resolution.
+    async fn seed_anchored_episode(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+        source: &str,
+        content: &str,
+        git_head: Option<&str>,
+        files: Option<&[&str]>,
+    ) -> ulid::Ulid {
+        let clock = HlcClock::new(0);
+        let mut episode =
+            Episode::new(scope.clone(), source.to_owned(), content.to_owned(), &clock);
+        let mut meta = Map::new();
+        if let Some(head) = git_head {
+            meta.insert("git_head".into(), Value::String(head.to_owned()));
+        }
+        if let Some(files) = files {
+            meta.insert(
+                "files".into(),
+                Value::Array(files.iter().map(|f| Value::String((*f).to_string())).collect()),
+            );
+        }
+        episode.metadata = meta;
+        let embedder = NoopEmbedder::default();
+        let receipt =
+            lunaris_ingest::ingest_episode_with_receipt(storage, &embedder, &clock, episode)
+                .await
+                .expect("seed episode ingest must succeed");
+        receipt.episode_id
+    }
+
+    /// Poll the scope's `verify_agenda:` KV for `episode_id`'s entry —
+    /// mirrors `wait_for_episode_metadata`'s budget: the sweep is a
+    /// fire-and-forget `tokio::spawn`, so the write is not guaranteed to
+    /// have landed the instant the dispatching call returns.
+    async fn wait_for_verify_agenda_entry(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+        episode_id: ulid::Ulid,
+    ) -> Option<serde_json::Value> {
+        let key = lunaris_core::keyspace::verify_agenda_key(scope, episode_id);
+        let clock = HlcClock::new(0);
+        for _ in 0..50 {
+            if let Ok(Some(row)) = storage.read_as_of(scope, &key, clock.tick()).await
+                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&row.value)
+            {
+                return Some(v);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        None
+    }
+
+    fn git_commit_all(dir: &Path, msg: &str) {
+        let status = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(dir)
+            .status()
+            .expect("git add must run");
+        assert!(status.success(), "git add failed");
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", msg])
+            .current_dir(dir)
+            .status()
+            .expect("git commit must run");
+        assert!(status.success(), "git commit failed");
+    }
+
+    /// EXIT CRITERION (milestone engram-soul-loop task 6): editing a file
+    /// that a memory anchors to visibly decays + ⚠-banners that memory in
+    /// the next inject — driven end-to-end through the REAL prompt recall
+    /// dispatch (`ContextRequest::RecallForPrompt` -> `recall_and_trace` ->
+    /// `finish_recall`), not a hand-built call to `finish_recall`. Also
+    /// proves the stale-marked rendered line still round-trips through
+    /// `transcript::parse_injection_line` (the citation detector's line
+    /// parser must keep extracting `id=` after the marker is appended).
+    #[tokio::test]
+    async fn stale_memory_decays_and_banners_via_real_recall_path() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-exit-criterion").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+
+        let query_text = "granite embedder resolves llamacpp end to end";
+        let mut metadata = Map::new();
+        metadata.insert("git_head".into(), Value::String(anchor_head.clone()));
+        metadata.insert("files".into(), Value::Array(vec![Value::String("src/lib.rs".into())]));
+        let ingest = svc
+            .handle_memory(MemoryRequest::Ingest {
+                scope: scope.as_str().to_owned(),
+                params: lunaris_memory_service::ingest::IngestParams {
+                    source: "decision:git-anchor-exit".to_owned(),
+                    content: query_text.to_owned(),
+                    t_ref: None,
+                    metadata: Some(metadata),
+                    dedupe_key: None,
+                },
+            })
+            .await;
+        assert!(matches!(ingest, MemoryResponse::Ok { .. }), "seed ingest failed: {ingest:?}");
+
+        // Move HEAD: edit the anchored file and commit — the memory's
+        // anchor is now stale.
+        std::fs::create_dir_all(repo.path().join("src")).expect("mkdir src");
+        std::fs::write(repo.path().join("src/lib.rs"), "fn main() {}").expect("write lib.rs");
+        git_commit_all(repo.path(), "touch lib.rs");
+
+        let resp = svc
+            .handle(ContextRequest::RecallForPrompt {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-stale-exit".to_owned()),
+                prompt: query_text.to_owned(),
+                max_hits: Some(5),
+                max_chars: None,
+                min_score: Some(0.0),
+            })
+            .await;
+        assert!(resp.ok, "recall dispatch must succeed: {:?}", resp.error);
+        assert!(!resp.memories.is_empty(), "the seeded memory must be recalled");
+
+        let hit = resp
+            .memories
+            .iter()
+            .find(|m| m.source == "decision:git-anchor-exit")
+            .expect("seeded memory must be present in the recall");
+        assert!(hit.stale, "the anchored memory must be flagged stale after src/lib.rs moved");
+        assert!(
+            hit.score > 0.60 && hit.score < 0.75,
+            "score must be decayed by STALE_DECAY (~0.7x an ~1.0 exact-match score), got {}",
+            hit.score
+        );
+
+        assert!(
+            resp.rendered_context.contains("⚠ code-changed"),
+            "rendered block must banner the stale memory, got: {}",
+            resp.rendered_context
+        );
+
+        let stale_line = resp
+            .rendered_context
+            .lines()
+            .find(|l| l.contains("⚠ code-changed"))
+            .expect("a stale-marked line must be present");
+        let parsed = crate::transcript::parse_injection_line(stale_line, "prompt", None)
+            .expect("the stale line must still parse — the marker must not break id= extraction");
+        assert_eq!(
+            parsed.id.to_string(),
+            hit.episode_id,
+            "parse_injection_line must extract the SAME episode id from the stale line"
+        );
+    }
+
+    /// `finish_recall` must RE-SORT the curated list after applying the
+    /// stale decay: a same-priority fresh memory that scored BELOW the
+    /// stale one pre-decay must rank ABOVE it once the stale one decays.
+    #[tokio::test]
+    async fn finish_recall_resorts_after_stale_decay() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-resort").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+        std::fs::write(repo.path().join("touched.rs"), "fn a(){}").expect("write touched.rs");
+        git_commit_all(repo.path(), "touch touched.rs");
+
+        let stale_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:stale-anchor",
+            "stale content",
+            Some(&anchor_head),
+            Some(&["touched.rs"]),
+        )
+        .await;
+        let fresh_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:fresh-anchor",
+            "fresh content",
+            None,
+            None,
+        )
+        .await;
+
+        let memories = vec![
+            ContextMemory {
+                episode_id: stale_id.to_string(),
+                stale: false,
+                source: "decision:stale-anchor".into(),
+                score: 1.0,
+                snippet: "stale content".into(),
+            },
+            ContextMemory {
+                episode_id: fresh_id.to_string(),
+                stale: false,
+                source: "decision:fresh-anchor".into(),
+                score: 0.9,
+                snippet: "fresh content".into(),
+            },
+        ];
+
+        let resp = svc
+            .finish_recall(
+                &scope,
+                "prompt",
+                None,
+                DEFAULT_PROMPT_MAX_CHARS,
+                None,
+                memories,
+                Some(repo.path()),
+            )
+            .await
+            .expect("finish_recall must succeed");
+
+        assert_eq!(resp.memories.len(), 2);
+        assert_eq!(
+            resp.memories[0].episode_id,
+            fresh_id.to_string(),
+            "the fresh 0.9 memory must rank first once the stale 1.0 memory decays to 0.7: {:?}",
+            resp.memories
+        );
+        assert!((resp.memories[0].score - 0.9).abs() < 1e-6);
+        assert!(!resp.memories[0].stale);
+        assert_eq!(resp.memories[1].episode_id, stale_id.to_string());
+        assert!(resp.memories[1].stale);
+        assert!((resp.memories[1].score - 0.7).abs() < 1e-4, "got {}", resp.memories[1].score);
+    }
+
+    /// An anchored memory whose anchored file is NOT part of the diff stays
+    /// fresh, and its rendered line carries NO stale marker — structurally
+    /// byte-identical to the pre-task-6 render (no `⚠` token inserted
+    /// between `id=<id>` and the closing `]`).
+    #[tokio::test]
+    async fn anchored_but_untouched_file_stays_fresh() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-untouched-fresh").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+        // Move HEAD, but touch a DIFFERENT file than the one this memory anchors.
+        std::fs::write(repo.path().join("unrelated.rs"), "fn b(){}").expect("write");
+        git_commit_all(repo.path(), "touch unrelated.rs");
+
+        let id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:untouched-anchor",
+            "untouched content",
+            Some(&anchor_head),
+            Some(&["src/lib.rs"]),
+        )
+        .await;
+
+        let memories = vec![ContextMemory {
+            episode_id: id.to_string(),
+            stale: false,
+            source: "decision:untouched-anchor".into(),
+            score: 0.77,
+            snippet: "untouched content".into(),
+        }];
+
+        let resp = svc
+            .finish_recall(
+                &scope,
+                "prompt",
+                None,
+                DEFAULT_PROMPT_MAX_CHARS,
+                None,
+                memories,
+                Some(repo.path()),
+            )
+            .await
+            .expect("finish_recall must succeed");
+
+        assert!(!resp.memories[0].stale, "the untouched anchor must stay fresh");
+        assert!((resp.memories[0].score - 0.77).abs() < 1e-6, "score must be untouched");
+        assert!(
+            !resp.rendered_context.contains('⚠'),
+            "a fresh render must carry no stale marker at all, got: {}",
+            resp.rendered_context
+        );
+        let expected_tail = format!("id={}] untouched content", id);
+        assert!(
+            resp.rendered_context.contains(&expected_tail),
+            "fresh line must be structurally byte-identical to the pre-task-6 form \
+             (`id=<id>] <snippet>`, no marker), got: {}",
+            resp.rendered_context
+        );
+    }
+
+    /// Fail-open: no `cwd` means HEAD cannot be resolved, so EVERY memory —
+    /// including one carrying a real (would-be-stale) anchor — renders
+    /// fresh, and the call still succeeds.
+    #[tokio::test]
+    async fn finish_recall_without_cwd_stays_fresh() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-no-cwd").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:no-cwd",
+            "content x",
+            Some(&"a".repeat(40)),
+            Some(&["src/lib.rs"]),
+        )
+        .await;
+        let memories = vec![ContextMemory {
+            episode_id: id.to_string(),
+            stale: false,
+            source: "decision:no-cwd".into(),
+            score: 0.9,
+            snippet: "content x".into(),
+        }];
+
+        let resp = svc
+            .finish_recall(&scope, "prompt", None, DEFAULT_PROMPT_MAX_CHARS, None, memories, None)
+            .await
+            .expect("finish_recall must succeed even without cwd");
+        assert!(resp.ok);
+        assert!(!resp.memories[0].stale, "no cwd -> HEAD unresolvable -> fail open to fresh");
+        assert!((resp.memories[0].score - 0.9).abs() < 1e-6, "score must be untouched");
+    }
+
+    /// The SessionDigest arm, after `build_digest`, sweeps the scope's
+    /// anchored episodes and upserts a `verify_agenda` entry for the
+    /// stale-anchored one only; the fresh-anchored (untouched-file) episode
+    /// gets none. A second digest run preserves `first_seen_ms`.
+    #[tokio::test]
+    async fn session_digest_writes_verify_agenda_and_preserves_first_seen() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-digest-agenda").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+        std::fs::write(repo.path().join("a.txt"), "touched").expect("write a.txt");
+        git_commit_all(repo.path(), "touch a.txt");
+        let current_head = git_head_via_cli(repo.path());
+
+        let stale_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "edit:digest-stale",
+            "stale digest content",
+            Some(&anchor_head),
+            Some(&["a.txt"]),
+        )
+        .await;
+        let fresh_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "edit:digest-fresh",
+            "fresh digest content",
+            Some(&anchor_head),
+            Some(&["b.txt"]),
+        )
+        .await;
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-digest".to_owned()),
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: Some(vec!["__none__:".to_owned()]),
+            })
+            .await;
+        assert!(resp.ok, "digest dispatch must succeed: {:?}", resp.error);
+
+        let entry = wait_for_verify_agenda_entry(storage.as_ref(), &scope, stale_id)
+            .await
+            .expect("verify_agenda entry must land for the stale-anchored episode");
+        assert_eq!(entry.get("anchor_head").and_then(|v| v.as_str()), Some(anchor_head.as_str()));
+        assert_eq!(entry.get("current_head").and_then(|v| v.as_str()), Some(current_head.as_str()));
+        let files = entry.get("files").and_then(|v| v.as_array()).expect("files array present");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].as_str(), Some("a.txt"));
+        assert_eq!(entry.get("v").and_then(|v| v.as_u64()), Some(1));
+        let first_seen =
+            entry.get("first_seen_ms").and_then(|v| v.as_u64()).expect("first_seen_ms present");
+
+        let fresh_entry = wait_for_verify_agenda_entry(storage.as_ref(), &scope, fresh_id).await;
+        assert!(
+            fresh_entry.is_none(),
+            "the fresh-anchored (untouched-file) episode must NOT get an agenda entry, got {fresh_entry:?}"
+        );
+
+        // Second digest run — the upsert must preserve first_seen_ms.
+        let resp2 = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-digest-2".to_owned()),
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: Some(vec!["__none__:".to_owned()]),
+            })
+            .await;
+        assert!(resp2.ok);
+
+        let updated = wait_for_verify_agenda_entry(storage.as_ref(), &scope, stale_id)
+            .await
+            .expect("agenda entry must still exist after the second digest");
+        assert_eq!(
+            updated.get("first_seen_ms").and_then(|v| v.as_u64()),
+            Some(first_seen),
+            "first_seen_ms must be preserved across the second (upsert) sweep"
+        );
+    }
+
+    /// A `capture_tool_result` request whose wire `commit` is `true` spawns
+    /// the SAME agenda sweep as the SessionDigest arm — a stale-anchored
+    /// episode gets a `verify_agenda` entry after settling.
+    #[tokio::test]
+    async fn commit_capture_spawns_agenda_sweep() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-commit-capture").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+        std::fs::write(repo.path().join("c.txt"), "x").expect("write c.txt");
+        git_commit_all(repo.path(), "touch c.txt");
+
+        let stale_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "edit:commit-capture",
+            "commit capture content",
+            Some(&anchor_head),
+            Some(&["c.txt"]),
+        )
+        .await;
+
+        let resp = svc
+            .handle(ContextRequest::CaptureToolResult {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-commit-capture".to_owned()),
+                tool: Some("Bash".to_owned()),
+                payload: serde_json::json!({"tool_input": {"command": "git commit -m x"}}),
+                paths: None,
+                commit: true,
+            })
+            .await;
+        assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
+
+        let entry = wait_for_verify_agenda_entry(storage.as_ref(), &scope, stale_id)
+            .await
+            .expect("a commit:true capture must spawn the SAME agenda sweep as the digest arm");
+        assert_eq!(entry.get("anchor_head").and_then(|v| v.as_str()), Some(anchor_head.as_str()));
+    }
+
+    /// A `capture_tool_result` request whose wire `commit` is absent (or
+    /// `false`) must NOT spawn the agenda sweep.
+    #[tokio::test]
+    async fn non_commit_capture_does_not_spawn_sweep() {
+        let (svc, scope) = service_with_seeded_scope("test-stale-non-commit-capture").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let repo = init_temp_git_repo();
+        let anchor_head = git_head_via_cli(repo.path());
+        std::fs::write(repo.path().join("d.txt"), "x").expect("write d.txt");
+        git_commit_all(repo.path(), "touch d.txt");
+
+        let stale_id = seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "edit:non-commit-capture",
+            "non commit capture content",
+            Some(&anchor_head),
+            Some(&["d.txt"]),
+        )
+        .await;
+
+        let resp = svc
+            .handle(ContextRequest::CaptureToolResult {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-non-commit-capture".to_owned()),
+                tool: Some("Bash".to_owned()),
+                payload: serde_json::json!({"tool_input": {"command": "git log"}}),
+                paths: None,
+                commit: false,
+            })
+            .await;
+        assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
+
+        // Give a would-be sweep a real chance to land, then assert it didn't.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let key = lunaris_core::keyspace::verify_agenda_key(&scope, stale_id);
+        let clock = HlcClock::new(0);
+        let row = storage.read_as_of(&scope, &key, clock.tick()).await.expect("read must not error");
+        assert!(row.is_none(), "commit:false must never spawn the agenda sweep, got {row:?}");
+    }
+
+    /// Old-wire compat: a `capture_tool_result` frame that never carried the
+    /// `commit` key must still decode — `#[serde(default)]` keeps the field
+    /// optional so a not-yet-upgraded adapter never breaks.
+    #[test]
+    fn old_wire_capture_tool_result_without_commit_decodes() {
+        let raw = serde_json::json!({
+            "type": "capture_tool_result",
+            "cwd": "/tmp",
+            "scope": "s",
+            "session_id": "sess",
+            "tool": "Bash",
+            "payload": {"a": 1}
+        });
+        let req: ContextRequest =
+            serde_json::from_value(raw).expect("old wire without commit must decode");
+        match req {
+            ContextRequest::CaptureToolResult { commit, .. } => {
+                assert!(!commit, "an absent wire commit key must decode to false")
+            }
+            other => panic!("expected CaptureToolResult, got {other:?}"),
+        }
+    }
 }
