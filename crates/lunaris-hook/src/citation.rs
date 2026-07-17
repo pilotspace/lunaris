@@ -4,7 +4,8 @@
 //! [`crate::transcript::TurnTranscript`] into a per-memory [`MemoryVerdict`]
 //! list. A memory is `cited` when its injected snippet shares at least one
 //! *distinctive* n-gram (`N_GRAM` lowercased alnum tokens, stopword-filtered;
-//! "distinctive" = the n-gram occurs in exactly ONE injected snippet) with
+//! "distinctive" = the n-gram occurs in exactly ONE memory's snippets —
+//! same-id re-injections merge before counting) with
 //! the turn's final assistant message. A `post_tool` injection whose
 //! attached tool call succeeded (`is_error == Some(false)`) upgrades to a
 //! `ToolCall`-grain citation regardless of text overlap; a failed or
@@ -50,12 +51,22 @@ pub fn grade_injections(t: &TurnTranscript) -> Vec<MemoryVerdict> {
     let injection_ngrams: Vec<HashSet<String>> =
         t.injections.iter().map(|m| ngrams(&tokenize(&m.snippet))).collect();
 
-    // "Distinctive" = occurs in exactly one injected snippet, counted across
-    // ALL injections in this transcript (not per-memory).
+    // "Distinctive" = occurs in the snippets of exactly one MEMORY.
+    // Same-id occurrences merge before counting: distinctiveness exists to
+    // discriminate between memories, so a memory injected twice in one turn
+    // (prompt recall + post_tool re-surface) must not demote its own
+    // n-grams to non-distinctive.
+    let mut ngrams_by_id: HashMap<Ulid, HashSet<&str>> = HashMap::new();
+    for (i, mem) in t.injections.iter().enumerate() {
+        ngrams_by_id
+            .entry(mem.id)
+            .or_default()
+            .extend(injection_ngrams[i].iter().map(String::as_str));
+    }
     let mut ngram_snippet_counts: HashMap<&str, u32> = HashMap::new();
-    for set in &injection_ngrams {
+    for set in ngrams_by_id.values() {
         for ng in set {
-            *ngram_snippet_counts.entry(ng.as_str()).or_insert(0) += 1;
+            *ngram_snippet_counts.entry(ng).or_insert(0) += 1;
         }
     }
 
@@ -260,6 +271,39 @@ mod tests {
         assert_eq!(verdicts.len(), 1, "same id injected twice must grade once");
         assert_eq!(verdicts[0].verdict, Verdict::Cited);
         assert_eq!(verdicts[0].grain, Grain::ToolCall);
+    }
+
+    #[test]
+    fn reinjected_memory_stays_text_citable() {
+        // The same memory injected TWICE (prompt recall + post_tool
+        // re-surface — common in real sessions) must not demote its own
+        // n-grams to non-distinctive: distinctiveness discriminates BETWEEN
+        // memories, so same-id snippet sets merge before counting.
+        let id = ulid(7);
+        let snippet = "the granite embedder resolves llamacpp inference correctly on cold start";
+        let t = TurnTranscript {
+            injections: vec![
+                mem(id, snippet, "prompt", None),
+                mem(id, snippet, "post_tool", Some("tool-7")),
+            ],
+            tool_outcomes: vec![ToolOutcome {
+                tool_use_id: "tool-7".to_owned(),
+                is_error: Some(true),
+            }],
+            final_assistant_text:
+                "Confirmed: the granite embedder resolves llamacpp inference correctly on cold start."
+                    .to_owned(),
+            session_ids_seen: HashSet::new(),
+        };
+
+        let verdicts = grade_injections(&t);
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(
+            verdicts[0].verdict,
+            Verdict::Cited,
+            "re-injecting the same memory must not make it un-citable"
+        );
+        assert_eq!(verdicts[0].grain, Grain::Turn);
     }
 
     #[test]

@@ -1024,8 +1024,22 @@ impl ContextService {
         // `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
         transcript_path: Option<String>,
     ) -> anyhow::Result<ContextResponse> {
-        let (verdicts, detector) =
-            grade_turn_feedback(session_id.as_deref(), transcript_path.as_deref());
+        // spawn_blocking: the grader does synchronous file IO (up to the
+        // tail budget, 4 MiB default) — keep it off the async turn path's
+        // worker threads. A join failure (grader panic) fails open like
+        // every other detector failure.
+        let (verdicts, detector) = {
+            let session_id = session_id.clone();
+            let transcript_path = transcript_path.clone();
+            tokio::task::spawn_blocking(move || {
+                grade_turn_feedback(session_id.as_deref(), transcript_path.as_deref())
+            })
+            .await
+            .unwrap_or_else(|err| {
+                tracing::warn!(err = %err, "citation_detector_join_failed");
+                (Vec::new(), "skipped_detector_error")
+            })
+        };
 
         let content = format!(
             "turn feedback\ninjected_memory_ids: {}\noutcome: {}\ndetector: {detector}",
