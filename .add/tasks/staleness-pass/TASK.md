@@ -2,7 +2,7 @@
 
 slug: staleness-pass · created: 2026-07-17 · stage: production
 autonomy: auto
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > Milestone engram-soul-loop task 6: diff memory git-anchors (task 5's
 > meta.git_head/files) vs current HEAD → verify-agenda entries; decay +
