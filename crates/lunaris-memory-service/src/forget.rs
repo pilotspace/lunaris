@@ -1,10 +1,10 @@
 //! `memory.forget` — delete memories by source prefix or episode ID.
 //!
-//! Delegates to [`ScopedLunaris::forget`] with a [`lunaris::ForgetTarget`]
+//! Delegates to `ScopedLunaris::forget` with a [`lunaris::ForgetTarget`]
 //! derived from the wire DTO. Two mutually-exclusive target fields:
 //!
-//! - `source_prefix` → [`ForgetTarget::Scope`]`(`[`ScopeSpec::BySource`]`(prefix))`
-//! - `episode_id`    → [`ForgetTarget::Id`]`(ulid)` (OPS-01 fast path)
+//! - `source_prefix` → `ForgetTarget::Scope`(`ScopeSpec::BySource`(prefix))
+//! - `episode_id`    → `ForgetTarget::Id`(ulid) (OPS-01 fast path)
 //!
 //! Both set / neither set → `ServiceError::InvalidInput` (ambiguous / missing).
 //!

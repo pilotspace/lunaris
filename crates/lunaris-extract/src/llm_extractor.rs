@@ -13,7 +13,7 @@
 //!
 //! ## Coexistence with the legacy impls
 //!
-//! The pre-existing [`crate::CandleGemma3_4B`] / [`crate::OllamaExtractor`]
+//! The pre-existing `crate::CandleGemma3_4B` / [`crate::OllamaExtractor`]
 //! / [`crate::CloudApiExtractor`] are **unchanged** by this commit. They
 //! remain the documented v0.2 backends and continue to load the same
 //! weights / hit the same endpoints. This adapter is *additive*: new

@@ -16,7 +16,7 @@
 //! ## Why typed `scan_page::<T>` (not `serde_json::Value`)
 //!
 //! The browse handler deserializes into the concrete primitive type so a
-//! fact-prefixed row whose value is valid JSON but NOT a [`Fact`] surfaces as
+//! fact-prefixed row whose value is valid JSON but NOT a `Fact` surfaces as
 //! `corrupt_row` (500), per the frozen contract — a `Value` target would accept
 //! any JSON and silently hide the corruption. The deserialized `Page<T>.items`
 //! are re-serialized to the full primitive JSON for the response body.

@@ -86,7 +86,7 @@ async fn scan_communities(
 /// Run the RAPTOR idempotency suite against a single storage backend.
 ///
 /// Ingests a 3-heading document twice and verifies that the Community
-/// node-ID set (BTreeSet<Ulid>) is unchanged after re-ingest.
+/// node-ID set (`BTreeSet<Ulid>`) is unchanged after re-ingest.
 ///
 /// # NOTE on MVCC behaviour
 ///

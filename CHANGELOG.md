@@ -60,6 +60,10 @@ inside `lunaris-contextd`, and bumps the vendored Moon to v0.8.0.
 
 ### CI / build
 
+- Workspace rustdoc warnings zeroed out (58 sites) and
+  `release-preflight.sh` refreshed for the post-v0.6 publish set; the
+  three v0.6-era publishable crates (`lunaris-llamacpp`,
+  `lunaris-embed-remote`, `lunaris-llm`) now ship READMEs.
 - npm pre-release publishes route to the `next` dist-tag.
 - The eval-gauntlet workflow is `workflow_dispatch`-only while the
   self-hosted runner pool is empty (a guard test pins the trigger set).

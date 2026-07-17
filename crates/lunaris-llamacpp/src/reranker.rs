@@ -100,7 +100,7 @@ struct Inner {
 
 /// llama.cpp-backed cross-encoder reranker. Cheap to clone — heavy state
 /// behind `Arc`; one warm worker context, same rationale as the embedder.
-/// Parked in a takeable [`EngineCell`] for process-wide inference teardown
+/// Parked in a takeable `EngineCell` for process-wide inference teardown
 /// (`crate::shutdown_all_inference`, exit-time Metal safety).
 #[derive(Clone)]
 pub struct LlamaCppReranker {

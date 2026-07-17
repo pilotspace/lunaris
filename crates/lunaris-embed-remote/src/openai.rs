@@ -13,12 +13,12 @@
 //! ## Design for failure (CLAUDE.md)
 //!
 //! - **Timeout**: 10s per request (reqwest client-level).
-//! - **Retries**: up to [`MAX_ATTEMPTS`] with exponential backoff on transient
+//! - **Retries**: up to `MAX_ATTEMPTS` with exponential backoff on transient
 //!   failures (transport errors, HTTP 429, HTTP 5xx). 4xx / parse / shape
 //!   errors are fatal and never retried (retrying a bad request just burns the
 //!   budget and hammers the server).
-//! - **Circuit breaker**: [`Breaker`] opens after [`BREAKER_THRESHOLD`]
-//!   consecutive request failures and fast-fails for [`BREAKER_COOLDOWN`],
+//! - **Circuit breaker**: `Breaker` opens after `BREAKER_THRESHOLD`
+//!   consecutive request failures and fast-fails for `BREAKER_COOLDOWN`,
 //!   then half-opens for a single trial. Keeps a wedged endpoint from stalling
 //!   every recall with the full timeout×retry ladder.
 //! - **Rollback**: embeddings are validated for row-count and per-row dimension

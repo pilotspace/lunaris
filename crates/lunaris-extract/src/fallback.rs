@@ -185,7 +185,7 @@ pub fn is_transient(err: &LunarisError) -> bool {
 }
 
 /// Wrap a real extractor with the production fallback floor: a
-/// [`FallbackExtractor`] whose fallback is [`NoopExtractor`]. This is the seam
+/// [`FallbackExtractor`] whose fallback is `NoopExtractor`. This is the seam
 /// `Lunaris::open`'s `default_extractor` calls so the cache-hit extractor is
 /// breaker-guarded — a transient primary failure degrades to empty extraction
 /// (graph extraction off for that episode) instead of failing ingest, while a

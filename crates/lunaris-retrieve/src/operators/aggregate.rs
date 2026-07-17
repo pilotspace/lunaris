@@ -49,7 +49,7 @@
 //! `@field:{value}` (TAG exact match) or `@field:[lo hi]` (NUMERIC range).
 //! Composing `And`/`Or` here would require Moon's top-level `FILTER` stage,
 //! which is parsed-but-NO-OP server-side in v1 (I11/AGG-02) — so
-//! [`filter_to_aggregate_query`] hard-errors on unsupported filter shapes
+//! `filter_to_aggregate_query` hard-errors on unsupported filter shapes
 //! rather than silently dropping a constraint. An operator whose entire
 //! purpose is a trustworthy number must never quietly loosen its filter.
 //!

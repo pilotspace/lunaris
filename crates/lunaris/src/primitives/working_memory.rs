@@ -100,7 +100,7 @@ impl WorkingMemory {
     /// Recovers the VERBATIM value from the parent Episode `content`, NOT from
     /// the lossy chunk `text` (the markdown chunker's smart-punctuation pass
     /// rewrites quotes / dashes and corrupts JSON values — see
-    /// [`Self::recover_value`]).
+    /// `Self::recover_value`).
     pub async fn read(&self, k: &str) -> Result<Option<serde_json::Value>, LunarisError> {
         let filter = Filter::Eq {
             field: "source".into(),
@@ -114,7 +114,7 @@ impl WorkingMemory {
 
     /// Return all `(source, value)` pairs whose `source` starts with
     /// `{scope_prefix}{pattern}`. Values are recovered verbatim from the
-    /// parent Episode `content` (see [`Self::recover_value`]).
+    /// parent Episode `content` (see `Self::recover_value`).
     pub async fn grep(
         &self,
         pattern: &str,

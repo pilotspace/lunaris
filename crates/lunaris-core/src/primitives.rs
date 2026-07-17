@@ -89,7 +89,7 @@ pub struct Chunk {
     /// serialize-side change — never a breaking wire format change.
     #[serde(default, skip_serializing)]
     pub embedding: Option<Vec<f32>>,
-    /// Optional link to the nearest parent [`TocNode`] in the document tree.
+    /// Optional link to the nearest parent `TocNode` in the document tree.
     ///
     /// `None` in Phase 27 (field + migration + serde-compat delivered here;
     /// full parent wiring — setting a non-None value — lands in Phase 29).

@@ -2,7 +2,7 @@
 //!
 //! A [`DocTree`] captures the heading hierarchy of a markdown document as a
 //! navigable tree of [`TocNode`]s. One DocTree is produced per ingest Episode
-//! and persisted as a single [`WriteOp::KvPut`] inside the same atomic write
+//! and persisted as a single `WriteOp::KvPut` inside the same atomic write
 //! as the chunks (INGEST-04 preserved).
 //!
 //! ## No-heading documents

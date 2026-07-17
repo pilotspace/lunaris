@@ -87,7 +87,7 @@ impl RerankRetriever {
     /// than grounding a wrong answer on a low-relevance hit.
     ///
     /// `min_score` is compared against the cross-encoder's raw sigmoid
-    /// output ∈ [0,1] (`bge-reranker-v2-m3`). The gate is skipped entirely
+    /// output ∈ `[0,1]` (`bge-reranker-v2-m3`). The gate is skipped entirely
     /// when the configured [`Reranker::applies`] is `false` (the
     /// `NoopReranker` degraded-fallback path) — see `retrieve()` for why.
     ///

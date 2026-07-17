@@ -12,7 +12,7 @@ use lunaris_core::LunarisError;
 
 use crate::{RerankCandidate, Reranker};
 
-/// NO-OP reranker. Used as the default fallback when [`crate::BgeRerankerV2M3`]
+/// NO-OP reranker. Used as the default fallback when `crate::BgeRerankerV2M3`
 /// weights are missing. Production code wires this via
 /// `Lunaris::open(url)` automatically when the cache is empty.
 #[derive(Debug, Clone, Copy, Default)]

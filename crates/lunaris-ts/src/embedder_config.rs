@@ -23,7 +23,7 @@ use lunaris_core::LunarisError;
 
 /// Opaque container around a resolved [`lunaris_core::Embedder`]. Constructed
 /// via one of the `#[napi(factory)]` methods; consumed by
-/// [`crate::Lunaris::withEmbedder`].
+/// `crate::Lunaris::withEmbedder`.
 #[napi]
 pub struct EmbedderConfig {
     pub(crate) inner: Arc<dyn Embedder>,
