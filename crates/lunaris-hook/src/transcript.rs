@@ -332,6 +332,18 @@ mod tests {
         assert!(!transcript.final_assistant_text.is_empty());
     }
 
+    /// engram-soul-loop task 10 — `TurnTranscript::file_bytes` must carry the
+    /// on-disk file size `read_turn_transcript` already reads via
+    /// `metadata().len()` today (and currently discards).
+    #[test]
+    fn transcript_reader_reports_file_bytes() {
+        let path = fixture_path("transcript_citation.jsonl");
+        let expected = std::fs::metadata(&path).expect("fixture metadata must read").len();
+        let transcript =
+            read_turn_transcript(&path, DEFAULT_TAIL_BYTES).expect("fixture must read");
+        assert_eq!(transcript.file_bytes, expected);
+    }
+
     #[test]
     fn missing_file_is_an_io_error() {
         let path = std::path::Path::new("/nonexistent/path/does-not-exist.jsonl");
