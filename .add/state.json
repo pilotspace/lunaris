@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "git-anchoring",
+  "active_task": "staleness-pass",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1324,6 +1324,15 @@
         ],
         "snapshot_md5": "1ce09237518a796849595e84641e61b9"
       }
+    },
+    "staleness-pass": {
+      "title": "Staleness Pass",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T16:27:13+00:00",
+      "updated": "2026-07-17T16:29:34+00:00"
     }
   },
   "milestones": {
@@ -1385,7 +1394,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T16:01:01+00:00",
+  "updated": "2026-07-17T16:29:34+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
