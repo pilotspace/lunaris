@@ -25,6 +25,7 @@ authors.workspace      = true
 
 publish     = true
 description = "Pluggable LLM-backend abstraction shared by lunaris-extract and lunaris-verify"
+readme       = "README.md"
 repository.workspace = true
 keywords    = ["agent", "memory", "llm"]
 categories  = ["asynchronous"]

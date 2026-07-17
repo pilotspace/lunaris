@@ -125,7 +125,7 @@ else
   # Only fail if a PUBLISHABLE crate emits warnings. lunaris-codegen /
   # lunaris-conformance / lunaris-bench / lunaris-ts are internal-only.
   doc_out=$(cargo doc --workspace --no-deps 2>&1)
-  bad=$(echo "$doc_out" | grep -E "^warning: \`(lunaris|lunaris-core|lunaris-storage-postgres|lunaris-storage-moon|lunaris-embed|lunaris-rerank|lunaris-extract|lunaris-verify|lunaris-consolidate|lunaris-ingest|lunaris-retrieve)\` \(lib doc\)" || true)
+  bad=$(echo "$doc_out" | grep -E "^warning: \`(lunaris-memory|lunaris-core|lunaris-storage-postgres|lunaris-storage-moon|lunaris-storage-embedded|lunaris-llamacpp|lunaris-embed-remote|lunaris-llm|lunaris-rerank|lunaris-extract|lunaris-verify|lunaris-consolidate|lunaris-ingest|lunaris-retrieve|lunaris-hook)\` \(lib doc\)" || true)
   if [[ -n "$bad" ]]; then
     record "06_cargo_doc" "FAIL" "publishable crate rustdoc warnings"
   else
@@ -154,9 +154,10 @@ fi
 # 9. Per-crate manifest hygiene
 HYGIENE_CRATES=(
   lunaris-core lunaris-storage-postgres lunaris-storage-moon
-  lunaris-embed lunaris-rerank lunaris-extract
+  lunaris-storage-embedded lunaris-llamacpp lunaris-embed-remote
+  lunaris-llm lunaris-rerank lunaris-extract
   lunaris-verify lunaris-consolidate lunaris-ingest
-  lunaris-retrieve lunaris
+  lunaris-retrieve lunaris-hook lunaris
 )
 missing=""
 for c in "${HYGIENE_CRATES[@]}"; do
@@ -181,7 +182,7 @@ fi
 # version (cargo metadata is the source of truth post-resolution).
 ws_ver=$(awk '/\[workspace.package\]/{flag=1; next} /^\[/{flag=0} flag && /^version/{gsub(/[" ]/,""); split($0,a,"="); print a[2]; exit}' Cargo.toml)
 umbrella_ver=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="lunaris"))')
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((p["version"] for p in d["packages"] if p["name"]=="lunaris-memory"), "NOT-FOUND"))')
 if [[ -n "$ws_ver" && "$umbrella_ver" == "$ws_ver" ]]; then
   record "10_version_parity" "PASS" "$ws_ver"
 else
