@@ -21,7 +21,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
-use lunaris_core::storage::types::{CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp};
+use lunaris_core::storage::types::{
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
+};
 use lunaris_core::{
     BiTemporal, Embedder, Hlc, HlcClock, Scope, StorageCapabilities, StorageError, StoragePort,
     StubEmbedder,
@@ -97,14 +99,28 @@ impl StoragePort for RecordingStorage {
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
         if let Some(v) = self.chunks_by_key.lock().get(key).cloned() {
-            return Ok(Some(Row { key: key.to_vec(), value: Bytes::from(v), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) }));
+            return Ok(Some(Row {
+                key: key.to_vec(),
+                value: Bytes::from(v),
+                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+            }));
         }
         if let Some(v) = self.episodes_by_key.lock().get(key).cloned() {
-            return Ok(Some(Row { key: key.to_vec(), value: Bytes::from(v), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) }));
+            return Ok(Some(Row {
+                key: key.to_vec(),
+                value: Bytes::from(v),
+                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+            }));
         }
         Ok(None)
     }
-    async fn publish(&self, _s: &Scope, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _t: &str,
+        _p: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
         Err(StorageError::NotSupported("RecordingStorage::publish"))
     }
     async fn subscribe(
@@ -148,10 +164,17 @@ impl KeywordPort for RecordingStorage {
 }
 
 fn vh(id: Ulid, score: f32) -> VectorHit {
-    VectorHit { id: id.to_bytes().to_vec(), score, rerank_applied: false, metadata: serde_json::json!({}) }
+    VectorHit {
+        id: id.to_bytes().to_vec(),
+        score,
+        rerank_applied: false,
+        metadata: serde_json::json!({}),
+    }
 }
 
-fn build_parts(rec: Arc<RecordingStorage>) -> (Arc<dyn StoragePort>, Arc<dyn KeywordPort>, Arc<dyn Embedder>) {
+fn build_parts(
+    rec: Arc<RecordingStorage>,
+) -> (Arc<dyn StoragePort>, Arc<dyn KeywordPort>, Arc<dyn Embedder>) {
     let storage: Arc<dyn StoragePort> = rec.clone();
     let keyword: Arc<dyn KeywordPort> = rec.clone();
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
@@ -205,8 +228,15 @@ async fn provider_prior_flips_equal_similarity_order() {
     let hits = builder.execute(Query::text("q")).await.unwrap();
 
     assert_eq!(hits.len(), 2);
-    assert_eq!(hits[0].text, "chunk A", "A's provider prior must flip the pre-boost tie: {hits:#?}");
-    assert!((hits[0].score - 0.90).abs() < 1e-5, "A.score must be 0.80 + 0.10 prior; got {}", hits[0].score);
+    assert_eq!(
+        hits[0].text, "chunk A",
+        "A's provider prior must flip the pre-boost tie: {hits:#?}"
+    );
+    assert!(
+        (hits[0].score - 0.90).abs() < 1e-5,
+        "A.score must be 0.80 + 0.10 prior; got {}",
+        hits[0].score
+    );
 }
 
 /// Scenario 6 — provider prior AND LRU delta compose on the SAME hit: the
@@ -227,8 +257,9 @@ async fn provider_and_lru_compose_prior_then_delta() {
     prior.insert(id_a, 0.10_f32);
     let provider = Arc::new(FixedProvider { out: prior, calls: Arc::new(AtomicUsize::new(0)) });
 
-    let boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>> =
-        Arc::new(parking_lot::RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(8).unwrap())));
+    let boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>> = Arc::new(
+        parking_lot::RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(8).unwrap())),
+    );
     boost_cache.write().put((scope.clone(), id_a), 0.25_f32);
 
     let builder = RetrievalBuilder::new(storage, keyword, embedder)
@@ -274,5 +305,9 @@ async fn provider_read_is_one_batched_call() {
     let hits = builder.execute(Query::text("q")).await.unwrap();
 
     assert_eq!(hits.len(), 5);
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "priors() must be called exactly once per execute()");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "priors() must be called exactly once per execute()"
+    );
 }

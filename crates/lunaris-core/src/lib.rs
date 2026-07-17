@@ -2,6 +2,10 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+// ADD task activation-ledger — persistent per-memory activation ledger
+// (record shape + read-time recompute math). Lives here (not in a caller
+// crate) per RC-1: shared data types belong in lunaris-core.
+pub mod activation;
 pub mod audit;
 pub mod bitemporal;
 // RFC 0007 §3.2 — per-provider circuit breaker (Closed → Open → HalfOpen).

@@ -142,6 +142,41 @@ pub fn doctree_key(scope: &Scope, id: Ulid) -> Vec<u8> {
     format!("{}doctree:{id}", scope_prefix(scope)).into_bytes()
 }
 
+/// KV key for a persistent per-memory activation-ledger record:
+/// `lunaris:{scope}:activation:{ulid}` (ADD task activation-ledger).
+///
+/// `id` is the referenced MEMORY's ulid (chunk / fact / entity / episode —
+/// whatever primitive the reference signal names), not a ledger-owned id:
+/// there is exactly one activation record per `(scope, memory-ulid)`.
+///
+/// # Examples
+///
+/// ```
+/// use lunaris_core::{Scope, keyspace::activation_key};
+/// use ulid::Ulid;
+/// let scope = Scope::new("_dev_").unwrap();
+/// let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
+/// assert_eq!(
+///     activation_key(&scope, id),
+///     b"lunaris:_dev_:activation:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+/// );
+/// ```
+#[inline]
+pub fn activation_key(scope: &Scope, id: Ulid) -> Vec<u8> {
+    format!("{}activation:{id}", scope_prefix(scope)).into_bytes()
+}
+
+/// Scan prefix for activation-ledger records under `scope`:
+/// `lunaris:{scope}:activation:`. Used by the ACT-R full-scope tick
+/// ([`crate::activation`]'s consumers in `lunaris-consolidate`) and by the
+/// batched read-time boost provider in `lunaris-retrieve` — `StoragePort`
+/// has no native point-MGET primitive, so a single `scan_range` call over
+/// this prefix is the one-round-trip primitive both use.
+#[inline]
+pub fn activation_prefix(scope: &Scope) -> Vec<u8> {
+    format!("{}activation:", scope_prefix(scope)).into_bytes()
+}
+
 /// KV key for an idempotency sidecar entry (HOOK-05):
 /// `lunaris:{scope}:dedupe:{blake3_hex(raw)}`.
 ///

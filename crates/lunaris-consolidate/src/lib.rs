@@ -49,13 +49,17 @@ use async_trait::async_trait;
 use lunaris_core::{LunarisError, StoragePort};
 
 pub mod act_r;
+// ADD task activation-ledger — persistent activation-ledger reference source
+// for the ACT-R consolidator tick.
+pub mod ledger_reference_source;
 pub mod leiden;
 pub mod noop;
 pub mod supervisor;
 pub mod types;
 pub mod worker;
 
-pub use act_r::{ActRConsolidator, ActRScorer};
+pub use act_r::{ActRConsolidator, ActRScorer, synthesize_fact_id_from_episode};
+pub use ledger_reference_source::LedgerReferenceSource;
 pub use leiden::{CommunityAssignment, GraphSnapshot, leiden_pass};
 pub use noop::NoopConsolidator;
 pub use supervisor::{

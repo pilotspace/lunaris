@@ -4,12 +4,12 @@
 //! Pure-data tests: no storage, no async. `ActivationRecord::apply` /
 //! `::activation` are exercised directly per the frozen §3 CONTRACT.
 
+use lunaris_core::Scope;
 use lunaris_core::activation::{
     ActivationRecord, BOOST_CAP, Grain, RefSignal, Strength, WEIGHT_STRONG, WEIGHT_WEAK,
     boost_prior,
 };
 use lunaris_core::keyspace::activation_key;
-use lunaris_core::Scope;
 use ulid::Ulid;
 
 /// Scenario 1 — "reference signal upserts one summary record": a weak

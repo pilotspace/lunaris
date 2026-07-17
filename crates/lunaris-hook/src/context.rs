@@ -530,7 +530,11 @@ impl ContextService {
     /// lazily-resolved `storage_for_scope` entry would be two independent
     /// `memory://` databases. Production code never calls this.
     #[cfg(test)]
-    pub(crate) async fn insert_storage_for_test(&self, scope: &Scope, storage: Arc<dyn StoragePort>) {
+    pub(crate) async fn insert_storage_for_test(
+        &self,
+        scope: &Scope,
+        storage: Arc<dyn StoragePort>,
+    ) {
         self.storages.lock().await.insert(scope.as_str().to_owned(), storage);
     }
 
@@ -1033,6 +1037,35 @@ impl ContextService {
             memory_ids.join(",")
         );
         self.capture_lightweight(scope, "lunaris:memory_injection", content, meta).await?;
+
+        // ADD task activation-ledger — production writer v1: every injected
+        // memory id gets a weak turn-grain activation ref. Best-effort: a
+        // reinforcement failure must NEVER fail the injection trace (same
+        // contract as `apply_reflect_invalidate` / `apply_reflect_boost`).
+        let signals: Vec<lunaris_core::activation::RefSignal> = memory_ids
+            .iter()
+            .filter_map(|s| ulid::Ulid::from_string(s).ok())
+            .map(|id| lunaris_core::activation::RefSignal {
+                id,
+                grain: lunaris_core::activation::Grain::Turn,
+                strength: lunaris_core::activation::Strength::Weak,
+            })
+            .collect();
+        if !signals.is_empty() {
+            match self.handle_for_scope(scope).await {
+                Ok(handle) => {
+                    if let Err(err) =
+                        handle.scoped(scope.clone()).record_activation_refs(&signals).await
+                    {
+                        tracing::warn!(err = %err, injection_id, "activation_ledger_record_refs_failed");
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(err = %err, injection_id, "activation_ledger_handle_resolve_failed");
+                }
+            }
+        }
+
         Ok(())
     }
 

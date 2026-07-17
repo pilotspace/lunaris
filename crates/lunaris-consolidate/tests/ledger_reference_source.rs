@@ -10,7 +10,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
-use lunaris_consolidate::{ActRConsolidator, LedgerReferenceSource, synthesize_fact_id_from_episode};
+use lunaris_consolidate::{
+    ActRConsolidator, LedgerReferenceSource, synthesize_fact_id_from_episode,
+};
 use lunaris_core::activation::{ActivationRecord, Grain, RefSignal};
 use lunaris_core::keyspace::activation_key;
 use lunaris_core::{
@@ -49,7 +51,12 @@ impl StoragePort for ScanOnlyStorage {
     ) -> Result<Vec<VectorHit>, StorageError> {
         unimplemented!("not exercised by this test")
     }
-    async fn graph_traverse(&self, _s: &Scope, _q: &CypherQuery, _t: Option<Hlc>) -> Result<GraphResult, StorageError> {
+    async fn graph_traverse(
+        &self,
+        _s: &Scope,
+        _q: &CypherQuery,
+        _t: Option<Hlc>,
+    ) -> Result<GraphResult, StorageError> {
         unimplemented!("not exercised by this test")
     }
     async fn scan_range(
@@ -66,10 +73,21 @@ impl StoragePort for ScanOnlyStorage {
             .collect();
         Ok(stream::iter(matches).boxed())
     }
-    async fn read_as_of(&self, _s: &Scope, _key: &[u8], _t: Hlc) -> Result<Option<Row<Bytes>>, StorageError> {
+    async fn read_as_of(
+        &self,
+        _s: &Scope,
+        _key: &[u8],
+        _t: Hlc,
+    ) -> Result<Option<Row<Bytes>>, StorageError> {
         unimplemented!("not exercised by this test")
     }
-    async fn publish(&self, _s: &Scope, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _t: &str,
+        _p: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
         unimplemented!("not exercised by this test")
     }
     async fn subscribe(
@@ -116,7 +134,11 @@ async fn act_r_tick_promotes_from_ledger_refs() {
     let mut heavy = ActivationRecord::default();
     for _ in 0..20 {
         heavy.apply(
-            &RefSignal { id: heavy_id, grain: Grain::Turn, strength: lunaris_core::activation::Strength::Strong },
+            &RefSignal {
+                id: heavy_id,
+                grain: Grain::Turn,
+                strength: lunaris_core::activation::Strength::Strong,
+            },
             now - 1,
         );
     }
@@ -128,14 +150,21 @@ async fn act_r_tick_promotes_from_ledger_refs() {
     let old_id = Ulid::new();
     let mut old = ActivationRecord::default();
     old.apply(
-        &RefSignal { id: old_id, grain: Grain::Turn, strength: lunaris_core::activation::Strength::Weak },
+        &RefSignal {
+            id: old_id,
+            grain: Grain::Turn,
+            strength: lunaris_core::activation::Strength::Weak,
+        },
         now - 3600,
     );
     storage.seed(activation_key(&scope, old_id), &old);
 
     let source = LedgerReferenceSource::new(storage.clone() as Arc<dyn StoragePort>);
     let consolidator = ActRConsolidator::default();
-    let report = consolidator.tick_from_ledger(&source, &scope, now).await.expect("tick_from_ledger must succeed");
+    let report = consolidator
+        .tick_from_ledger(&source, &scope, now)
+        .await
+        .expect("tick_from_ledger must succeed");
 
     assert!(
         report.promotions.iter().any(|p| p.episode_id == heavy_id),

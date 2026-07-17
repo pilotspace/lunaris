@@ -17,7 +17,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
 use lunaris_core::storage::keyword::{KeywordHit, KeywordPort};
-use lunaris_core::storage::types::{CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp};
+use lunaris_core::storage::types::{
+    CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
+};
 use lunaris_core::{
     BiTemporal, Embedder, Hlc, HlcClock, Scope, StorageCapabilities, StorageError, StoragePort,
     StubEmbedder,
@@ -89,14 +91,28 @@ impl StoragePort for RecordingStorage {
         _as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
         if let Some(v) = self.chunks_by_key.lock().get(key).cloned() {
-            return Ok(Some(Row { key: key.to_vec(), value: Bytes::from(v), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) }));
+            return Ok(Some(Row {
+                key: key.to_vec(),
+                value: Bytes::from(v),
+                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+            }));
         }
         if let Some(v) = self.episodes_by_key.lock().get(key).cloned() {
-            return Ok(Some(Row { key: key.to_vec(), value: Bytes::from(v), bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO) }));
+            return Ok(Some(Row {
+                key: key.to_vec(),
+                value: Bytes::from(v),
+                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+            }));
         }
         Ok(None)
     }
-    async fn publish(&self, _s: &Scope, _t: &str, _p: u16, _payload: Bytes) -> Result<u64, StorageError> {
+    async fn publish(
+        &self,
+        _s: &Scope,
+        _t: &str,
+        _p: u16,
+        _payload: Bytes,
+    ) -> Result<u64, StorageError> {
         Err(StorageError::NotSupported("RecordingStorage::publish"))
     }
     async fn subscribe(
@@ -140,7 +156,12 @@ impl KeywordPort for RecordingStorage {
 }
 
 fn vh(id: Ulid, score: f32) -> VectorHit {
-    VectorHit { id: id.to_bytes().to_vec(), score, rerank_applied: false, metadata: serde_json::json!({}) }
+    VectorHit {
+        id: id.to_bytes().to_vec(),
+        score,
+        rerank_applied: false,
+        metadata: serde_json::json!({}),
+    }
 }
 
 /// A builder that only wires `with_boost_cache` (the pre-existing Phase 14.2
@@ -165,8 +186,9 @@ async fn no_provider_wired_is_byte_identical() {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
 
     // Empty boost cache: present (wired) but carries no entries for these ids.
-    let boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>> =
-        Arc::new(parking_lot::RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(8).unwrap())));
+    let boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>> = Arc::new(
+        parking_lot::RwLock::new(lru::LruCache::new(std::num::NonZeroUsize::new(8).unwrap())),
+    );
 
     let builder = RetrievalBuilder::new(storage, keyword, embedder)
         .with_scope(scope)
@@ -176,6 +198,14 @@ async fn no_provider_wired_is_byte_identical() {
 
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].text, "chunk A", "raw vector order preserved: A(0.90) before B(0.80)");
-    assert!((hits[0].score - 0.90).abs() < 1e-6, "A.score must be untouched at 0.90; got {}", hits[0].score);
-    assert!((hits[1].score - 0.80).abs() < 1e-6, "B.score must be untouched at 0.80; got {}", hits[1].score);
+    assert!(
+        (hits[0].score - 0.90).abs() < 1e-6,
+        "A.score must be untouched at 0.90; got {}",
+        hits[0].score
+    );
+    assert!(
+        (hits[1].score - 0.80).abs() < 1e-6,
+        "B.score must be untouched at 0.80; got {}",
+        hits[1].score
+    );
 }

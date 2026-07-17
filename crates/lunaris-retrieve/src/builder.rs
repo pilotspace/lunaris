@@ -94,6 +94,13 @@ pub struct RetrievalBuilder {
     /// without going through `Lunaris::recall()`).
     #[allow(clippy::type_complexity)]
     pub(crate) boost_cache: Option<Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>>>,
+    /// ADD task activation-ledger — optional persistent activation-ledger
+    /// boost source. When `Some`, `execute()` calls `provider.priors(..)`
+    /// ONCE (a single batched storage read) after hydrate and adds the
+    /// returned prior to each matching hit's score, BEFORE the (unchanged)
+    /// `boost_cache` LRU delta pass. `None` (the default) disables this
+    /// pass entirely — no behavior change for callers that never opt in.
+    pub(crate) boost_provider: Option<Arc<dyn crate::boost_provider::BoostProvider>>,
 }
 
 impl RetrievalBuilder {
@@ -121,6 +128,7 @@ impl RetrievalBuilder {
             initial_degraded: false,
             recency_config: None,
             boost_cache: None,
+            boost_provider: None,
         }
     }
 
@@ -323,6 +331,21 @@ impl RetrievalBuilder {
         self
     }
 
+    /// ADD task activation-ledger — wire a persistent [`crate::boost_provider::BoostProvider`]
+    /// into this builder's post-hydrate boost pass.
+    ///
+    /// NOT called by default `Lunaris::recall()` (frozen contract: opt-in
+    /// only, so the sub-25ms core recall path cannot regress for existing
+    /// callers). Composes with [`Self::with_boost_cache`] — the provider's
+    /// prior applies first, the LRU delta applies after, unchanged.
+    pub fn with_boost_provider(
+        mut self,
+        provider: Arc<dyn crate::boost_provider::BoostProvider>,
+    ) -> Self {
+        self.boost_provider = Some(provider);
+        self
+    }
+
     /// Run the tree and hydrate. Terminal — consumes the builder.
     pub async fn execute(mut self, mut query: Query) -> Result<Vec<Hit>, LunarisError> {
         // P0 #1 Wave 2 — warn when the builder is still seeded with the
@@ -384,6 +407,10 @@ impl RetrievalBuilder {
         // Phase 14.2: snapshot the boost cache Arc BEFORE moving self into
         // the QueryContext. None = boost pass disabled.
         let boost_cache = self.boost_cache.take();
+        // ADD task activation-ledger: snapshot the boost provider Arc BEFORE
+        // moving self into the QueryContext. None = provider pass disabled
+        // (the default — see `with_boost_provider` doc).
+        let boost_provider = self.boost_provider.take();
         let ctx = match self.moon_storage.clone() {
             Some(moon) => QueryContext::with_moon(
                 query,
@@ -413,6 +440,32 @@ impl RetrievalBuilder {
                 Hlc::from_parts(wall_ms, 0, 0)
             });
             rescore_recency(&mut hits, now, &cfg);
+        }
+
+        // ADD task activation-ledger: post-hydrate PERSISTENT boost-provider
+        // pass. Runs BEFORE the (untouched) Phase 14.2 LRU pass below so the
+        // two compose as "provider prior, then LRU delta" per the frozen
+        // contract. A single batched `provider.priors(..)` call covers the
+        // whole hit set — never one read per hit.
+        if let Some(provider) = boost_provider {
+            let ids: Vec<Ulid> = hits
+                .iter()
+                .filter_map(|h| <[u8; 16]>::try_from(h.id.as_slice()).ok().map(Ulid::from_bytes))
+                .collect();
+            if !ids.is_empty() {
+                let priors = provider.priors(&ctx.scope, &ids).await;
+                if !priors.is_empty() {
+                    for hit in &mut hits {
+                        if let Ok(arr) = <[u8; 16]>::try_from(hit.id.as_slice()) {
+                            let id = Ulid::from_bytes(arr);
+                            if let Some(&prior) = priors.get(&id) {
+                                hit.score += prior;
+                            }
+                        }
+                    }
+                    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+                }
+            }
         }
 
         // Phase 14.2: post-hydrate boost pass.

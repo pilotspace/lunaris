@@ -132,7 +132,13 @@ impl Default for ActRScorer {
 /// Namespace constant (`"lunaris-consolidate::episode-fact::"`) guarantees
 /// the synthesized IDs never collide with triple-derived `FactId`s from the
 /// extractor pipeline — the two hash inputs share no prefix.
-fn synthesize_fact_id_from_episode(episode_id: Ulid) -> FactId {
+/// ADD task activation-ledger: widened to `pub` (was private) so
+/// `LedgerReferenceSource`-driven ticks and their tests can compute the
+/// SAME deterministic `FactId` for a memory ulid that
+/// [`ActRConsolidator::classify_episode`] uses for an episode-event-driven
+/// promotion/archive. No behavior change — the hash scheme and namespace
+/// constant are unchanged.
+pub fn synthesize_fact_id_from_episode(episode_id: Ulid) -> FactId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"lunaris-consolidate::episode-fact::");
     hasher.update(&episode_id.to_bytes());
@@ -224,6 +230,52 @@ impl ActRConsolidator {
         } else {
             EpisodeDecision::Noop
         }
+    }
+
+    /// ADD task activation-ledger — scenario 8: "ACT-R worker reads ledger
+    /// references." Classifies EVERY activation-ledger record in `scope`
+    /// into promote / archive / noop using the ledger's own read-time
+    /// recompute ([`lunaris_core::activation::ActivationRecord::activation`])
+    /// as the reference signal, instead of grouping `ConsolidateEvent`
+    /// write-frequency events. Produces the SAME [`ConsolidationReport`]
+    /// shape as [`Self::consolidate`] so downstream audit-emit wiring
+    /// (`AuditEvent::ConsolidatorPromotion` / `::ConsolidatorArchive`) is
+    /// unchanged regardless of which reference source fed the tick.
+    ///
+    /// `now_secs` is caller-supplied (unix seconds) rather than sampled
+    /// internally so tests are deterministic — mirrors
+    /// [`Self::classify_episode`]'s `now_secs` parameter.
+    ///
+    /// Iteration is sorted by ulid bytes for the same determinism reason
+    /// `consolidate` sorts by episode_id (stable output ordering across runs).
+    pub async fn tick_from_ledger(
+        &self,
+        source: &crate::ledger_reference_source::LedgerReferenceSource,
+        scope: &lunaris_core::Scope,
+        now_secs: u64,
+    ) -> Result<ConsolidationReport, LunarisError> {
+        let mut records = source.scan(scope).await?;
+        records.sort_by_key(|(id, _)| id.to_bytes());
+
+        let mut report = ConsolidationReport::default();
+        for (id, record) in records {
+            let activation = record.activation(now_secs, self.scorer.config().decay);
+            let fact_id = synthesize_fact_id_from_episode(id);
+            if self.scorer.should_promote(activation) {
+                report.promotions.push(PromotionEvent {
+                    episode_id: id,
+                    fact_id,
+                    activation_score: activation,
+                });
+            } else if self.scorer.should_archive(activation) {
+                report.archives.push(ArchiveEvent {
+                    fact_id,
+                    final_activation: activation,
+                    moved_to: "cold_storage".to_string(),
+                });
+            }
+        }
+        Ok(report)
     }
 }
 
