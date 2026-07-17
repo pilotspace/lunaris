@@ -24,7 +24,9 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::Value;
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 
 use lunaris_memory_service::protocol::{CONTEXTD_SOCKET_ENV, MemoryRequest, MemoryResponse};
@@ -68,7 +70,10 @@ enum SocketErr {
 
 impl MemoryProxy {
     pub(crate) fn new() -> Self {
-        let socket_path = resolve_socket_path();
+        // contextd speaks a unix socket; on non-unix targets the socket leg
+        // does not exist, so the proxy is Direct-only from construction
+        // (no futile strikes, no breaker latency).
+        let socket_path = if cfg!(unix) { resolve_socket_path() } else { None };
         // Socket-first ONLY when the socket file already exists — otherwise skip
         // futile connect attempts on hosts where contextd is not deployed. A
         // daemon that dies mid-session is still caught by the breaker below.
@@ -155,6 +160,11 @@ impl MemoryProxy {
     }
 
     /// One connection-per-call round trip to contextd.
+    ///
+    /// Windows note: contextd speaks a unix socket, so the socket leg only
+    /// exists on unix targets; the `#[cfg(not(unix))]` twin below keeps
+    /// `dispatch` compiling (and Direct-only, see `new()`) everywhere else.
+    #[cfg(unix)]
     async fn try_socket(&self, req: &MemoryRequest) -> Result<Value, SocketErr> {
         let path = self
             .socket_path
@@ -202,6 +212,16 @@ impl MemoryProxy {
             MemoryResponse::Ok { data } => Ok(data),
             MemoryResponse::Err { code, message } => Err(SocketErr::App { code, message }),
         }
+    }
+
+    /// Non-unix twin of `try_socket`: unreachable in practice (`new()` builds
+    /// Direct-only off-unix so the route never starts at Socket), but it must
+    /// exist for `dispatch` to compile on Windows targets.
+    #[cfg(not(unix))]
+    async fn try_socket(&self, _req: &MemoryRequest) -> Result<Value, SocketErr> {
+        Err(SocketErr::Transport(
+            "contextd unix socket is not supported on this platform".to_owned(),
+        ))
     }
 
     /// Direct-open fallback — the identical shared dispatch the daemon runs,
