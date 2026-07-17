@@ -2,7 +2,7 @@
 
 slug: memory-feedback-tool · created: 2026-07-17 · stage: production
 autonomy: auto
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > Milestone engram-soul-loop task 4: explicit ± feedback with reason; flat
 > DTO; roster test bump to 12. The third reinforcement writer (after

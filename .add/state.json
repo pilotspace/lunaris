@@ -1287,12 +1287,23 @@
     },
     "memory-feedback-tool": {
       "title": "Memory Feedback Tool",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-17T13:49:53+00:00",
-      "updated": "2026-07-17T13:53:41+00:00"
+      "updated": "2026-07-17T14:39:33+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "b1628d59f7285af3908abad613b4641a",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/activation.rs"
+        ],
+        "snapshot_md5": "217a26b6def52b4fa1cc0faccb05727c"
+      }
     }
   },
   "milestones": {
@@ -1354,7 +1365,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T13:53:41+00:00",
+  "updated": "2026-07-17T14:39:33+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
