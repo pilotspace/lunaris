@@ -323,12 +323,17 @@ def run_session_digest(event: dict[str, Any], target: str) -> int:
 
 
 def run_feedback(event: dict[str, Any]) -> int:
+    # citation-detector (engram-soul-loop task 3): forward transcript_path so
+    # the server-side Stop-time detector can parse it; the raw event never
+    # actually carries injected_memory_ids in production (dead read, per
+    # .add/tasks/citation-detector/TASK.md §0 GROUND) — the server now
+    # derives per-memory verdicts from the transcript instead.
     request = {
         "type": "turn_feedback",
         "scope": hook_scope(),
         "cwd": str(event.get("cwd") or event.get("current_working_directory") or os.getcwd()),
         "session_id": session_id(event),
-        "injected_memory_ids": event.get("injected_memory_ids") or [],
+        "transcript_path": event.get("transcript_path"),
         "outcome": extract_feedback(event),
     }
     contextd_request(strip_none(request), timeout_ms=80)
