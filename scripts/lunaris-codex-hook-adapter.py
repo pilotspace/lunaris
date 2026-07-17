@@ -171,6 +171,9 @@ def run_capture(event: dict[str, Any]) -> int:
                 "session_id": session_id(event),
                 "tool": extract_tool_name(event),
                 "payload": event,
+                # git-anchoring (engram-soul-loop task 5): forward the touched
+                # paths so the server can stamp meta.files on this capture.
+                "paths": extract_paths(event) or None,
             }
             contextd_request(strip_none(payload), timeout_ms=env_int_any("LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS") or 120)
             return 0
@@ -182,6 +185,9 @@ def run_capture(event: dict[str, Any]) -> int:
                 "session_id": session_id(event),
                 "tool": extract_tool_name(event),
                 "payload": event,
+                # git-anchoring (engram-soul-loop task 5): forward the touched
+                # paths so the server can stamp meta.files on this capture.
+                "paths": extract_paths(event) or None,
             }
             contextd_request(strip_none(payload), timeout_ms=env_int_any("LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS") or 120)
             return 0
