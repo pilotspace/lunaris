@@ -55,12 +55,11 @@ fn resolve_ingest_batch_size(raw: Option<&str>) -> usize {
     requested.max(INGEST_EMBED_BATCH_SIZE)
 }
 
-/// Effective ingest-driver batch, reading `LUNARIS_EMBED_BATCH` once + caching.
+/// Effective ingest-driver batch, re-reading `LUNARIS_EMBED_BATCH` per call.
+/// Deliberately uncached (issue #49): long-running daemons must observe env
+/// updates, and one env read per embed batch is noise next to the embed call.
 fn ingest_embed_batch_size() -> usize {
-    static CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHE.get_or_init(|| {
-        resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref())
-    })
+    resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref())
 }
 
 /// Hard cap (in bytes) on a community summary before it is stored AND embedded.
@@ -655,6 +654,24 @@ mod tests {
     fn ingest_batch_falls_back_on_garbage() {
         assert_eq!(resolve_ingest_batch_size(Some("0")), INGEST_EMBED_BATCH_SIZE);
         assert_eq!(resolve_ingest_batch_size(Some("xyz")), INGEST_EMBED_BATCH_SIZE);
+    }
+
+    #[test]
+    fn ingest_batch_env_is_not_cached_forever() {
+        // Issue #49: a once-init static froze the first LUNARIS_EMBED_BATCH read for
+        // the process lifetime, so long-running daemons (contextd, mcp,
+        // server) never observed config updates. The crate is
+        // #![forbid(unsafe_code)], so a set_var-based behavioral test is not
+        // writable here — pin the invariant structurally instead (the
+        // eval_workflow_guard precedent): the env read must stay uncached.
+        let src = include_str!("pipeline.rs");
+        // Split needle so this test's own source never matches itself.
+        let needle = concat!("Once", "Lock");
+        assert!(
+            !src.contains(needle),
+            "ingest_embed_batch_size must re-read LUNARIS_EMBED_BATCH on \
+             every call — no process-lifetime cache (issue #49)"
+        );
     }
 
     #[test]
