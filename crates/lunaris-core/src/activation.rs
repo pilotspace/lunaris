@@ -38,6 +38,11 @@ pub enum Strength {
     #[default]
     Weak,
     Strong,
+    /// engram-soul-loop task 4 (RED commit): variant declared so downstream
+    /// crates (`lunaris-memory-service::feedback`) can reference the shape.
+    /// `weight_for`'s arm is a placeholder — GREEN wires the real
+    /// `WEIGHT_STRONG_NEGATIVE` weight and the `apply()` floor.
+    StrongNegative,
 }
 
 /// Weight contributed by a `Strength::Weak` signal (e.g. a prompt-context
@@ -155,6 +160,9 @@ fn weight_for(s: Strength) -> f64 {
     match s {
         Strength::Weak => WEIGHT_WEAK,
         Strength::Strong => WEIGHT_STRONG,
+        // RED commit placeholder (engram-soul-loop task 4): the real
+        // -3.0 weight + apply() floor land in the GREEN commit.
+        Strength::StrongNegative => 0.0,
     }
 }
 
@@ -194,5 +202,55 @@ mod tests {
             assert!(boost_prior(a) <= BOOST_CAP);
             assert!(boost_prior(a) >= 0.0);
         }
+    }
+
+    // ── engram-soul-loop task 4 — memory.feedback: Strength::StrongNegative ──
+
+    /// §3 CONTRACT: `weighted = (weighted + weight_for(s)).max(0.0)`. A weak
+    /// ref (1.0) followed by a strong-negative ref (-3.0) must floor at 0.0,
+    /// never go negative — and `last_strength` must serde round-trip through
+    /// the new `"strong_negative"` wire value.
+    #[test]
+    fn strong_negative_weight_and_floor() {
+        let mut r = ActivationRecord::default();
+        r.apply(&RefSignal { id: Ulid::nil(), grain: Grain::Turn, strength: Strength::Weak }, 100);
+        assert_eq!(r.weighted, WEIGHT_WEAK);
+
+        r.apply(
+            &RefSignal { id: Ulid::nil(), grain: Grain::Turn, strength: Strength::StrongNegative },
+            200,
+        );
+        assert_eq!(r.weighted, 0.0, "1.0 + (-3.0) must floor at 0.0, not go negative");
+        assert_eq!(r.n, 2);
+        assert_eq!(r.last_strength, Strength::StrongNegative);
+        assert_eq!(WEIGHT_STRONG_NEGATIVE, -3.0);
+
+        let json = serde_json::to_string(&r.last_strength).unwrap();
+        assert_eq!(json, "\"strong_negative\"");
+        let back: Strength = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Strength::StrongNegative);
+    }
+
+    /// A record persisted before `StrongNegative` existed (last_strength
+    /// `"weak"` / `"strong"` only) must still decode cleanly now that a
+    /// third variant exists — adding a variant must never break old data at
+    /// rest (§1 assumption).
+    #[test]
+    fn old_activation_record_without_strong_negative_still_decodes() {
+        let raw = r#"{"n":1,"weighted":3.0,"first_ref_wall":1,"last_ref_wall":1,"last_grain":"turn","last_strength":"strong","v":1}"#;
+        let record: ActivationRecord = serde_json::from_str(raw).unwrap();
+        assert_eq!(record.last_strength, Strength::Strong);
+        assert_eq!(record.weighted, 3.0);
+    }
+
+    /// Existing Weak/Strong apply math stays byte-identical after the new
+    /// variant lands — no floor kicks in when the sum never goes negative.
+    #[test]
+    fn weak_and_strong_apply_math_unchanged() {
+        let mut r = ActivationRecord::default();
+        r.apply(&RefSignal { id: Ulid::nil(), grain: Grain::Turn, strength: Strength::Weak }, 1);
+        assert_eq!(r.weighted, 1.0);
+        r.apply(&RefSignal { id: Ulid::nil(), grain: Grain::Turn, strength: Strength::Strong }, 2);
+        assert_eq!(r.weighted, 4.0);
     }
 }
