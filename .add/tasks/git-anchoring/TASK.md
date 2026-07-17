@@ -2,7 +2,7 @@
 
 slug: git-anchoring · created: 2026-07-17 · stage: production
 autonomy: auto
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > Milestone engram-soul-loop task 5: contextd stamps `git_head` + `files[]`
 > metadata on every capture so the task-6 staleness pass can diff anchors
