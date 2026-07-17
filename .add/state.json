@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "memory-feedback-tool",
+  "active_task": "git-anchoring",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1304,6 +1304,15 @@
         ],
         "snapshot_md5": "217a26b6def52b4fa1cc0faccb05727c"
       }
+    },
+    "git-anchoring": {
+      "title": "Git Anchoring",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T15:06:34+00:00",
+      "updated": "2026-07-17T15:08:29+00:00"
     }
   },
   "milestones": {
@@ -1365,7 +1374,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T14:39:33+00:00",
+  "updated": "2026-07-17T15:08:29+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
