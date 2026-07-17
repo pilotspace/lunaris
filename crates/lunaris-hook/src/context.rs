@@ -1326,13 +1326,13 @@ pub async fn build_digest(
 }
 
 fn excluded_context_source(source: &str) -> bool {
-    matches!(
-        source,
-        "lunaris:memory_injection"
-            | "lunaris:turn_feedback"
-            | "lunaris:session_start"
-            | "lunaris:stop"
-    )
+    // Kind-match (text after the first `:`), NOT full-literal: episodes
+    // stored before the hook-source-prefix-lunaris rename (2026-07-14)
+    // carry `codex:*` sources at rest forever, and an exact `lunaris:*`
+    // match let their feedback/injection records leak back into prompt
+    // injections (engram-soul-loop task 1).
+    let kind = source.split_once(':').map(|(_, k)| k).unwrap_or(source);
+    matches!(kind, "memory_injection" | "turn_feedback" | "session_start" | "stop")
 }
 
 /// True if `source` is a raw tool-call capture (as opposed to a durable
@@ -2132,10 +2132,25 @@ mod tests {
 
     #[test]
     fn lunaris_excluded_sources_recognized() {
-        // scenario: session/injection sources still excluded from context.
-        assert!(excluded_context_source("lunaris:memory_injection"));
-        assert!(excluded_context_source("lunaris:turn_feedback"));
-        assert!(excluded_context_source("lunaris:session_start"));
-        assert!(excluded_context_source("lunaris:stop"));
+        // scenario: all four lifecycle kinds excluded for both origin
+        // prefixes — pre-rename (hook-source-prefix-lunaris, 2026-07-14)
+        // episodes carry `codex:*` at rest forever, and an exact-literal
+        // match let their feedback records leak into prompt injections.
+        for origin in ["lunaris", "codex"] {
+            for kind in ["memory_injection", "turn_feedback", "session_start", "stop"] {
+                assert!(
+                    excluded_context_source(&format!("{origin}:{kind}")),
+                    "{origin}:{kind} must be excluded from context injection"
+                );
+            }
+        }
+        // scenario: non-lifecycle sources stay injectable — exclusion must
+        // not widen past lifecycle kinds (that would silently empty
+        // injections); tool-call injectability stays governed elsewhere.
+        for source in
+            ["lunaris:tool_call:post", "codex:tool_call:post", "decision:x", "edit:y", "stopwatch"]
+        {
+            assert!(!excluded_context_source(source), "{source} must stay injectable");
+        }
     }
 }

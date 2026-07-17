@@ -1,8 +1,8 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "moon-v080-bump",
-  "active_milestone": "moon-v070-exploit",
+  "active_task": "feedback-exclusion-fix",
+  "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
       "title": "Typed moondb MqClient adoption in lunaris-storage-moon queue path",
@@ -1203,6 +1203,26 @@
           }
         ]
       }
+    },
+    "feedback-exclusion-fix": {
+      "title": "Suffix-match excluded_context_source so legacy codex:* feedback stops leaking into prompt injections",
+      "phase": "done",
+      "gate": "PASS",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T05:31:12+00:00",
+      "updated": "2026-07-17T05:38:42+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "b4345c80ccb43581eaa907c4bb407c61",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-hook/src/context.rs"
+        ],
+        "snapshot_md5": "901874b437baced6e4edc92931bfe60c"
+      }
     }
   },
   "milestones": {
@@ -1253,10 +1273,18 @@
       "status": "active",
       "created": "2026-07-15T11:27:39+00:00",
       "updated": "2026-07-15T11:27:39+00:00"
+    },
+    "engram-soul-loop": {
+      "title": "Engram Soul Loop",
+      "goal": "Close the memory loop from capture->store->recall into capture->distill->ground->recall->reinforce->decay/invalidate: reinforcement signals, git-grounded re-verify, and harness-driven dreaming, so memory improves with project age instead of rotting",
+      "stage": "production",
+      "status": "active",
+      "created": "2026-07-17T05:31:12+00:00",
+      "updated": "2026-07-17T05:31:12+00:00"
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-16T17:29:02+00:00",
+  "updated": "2026-07-17T05:38:42+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
