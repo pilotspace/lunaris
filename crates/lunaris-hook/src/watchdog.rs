@@ -247,23 +247,69 @@ mod tests {
         );
     }
 
+    /// Hangs or succeeds per call, controlled by a shared switch — lets one
+    /// watchdog instance experience timeout → success → timeout.
+    struct SwitchableEmbedder {
+        hang: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl Embedder for SwitchableEmbedder {
+        fn dim(&self) -> usize {
+            4
+        }
+        async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+            if self.hang.load(Ordering::Relaxed) {
+                std::future::pending().await
+            } else {
+                Ok(inputs.iter().map(|_| vec![0.0; 4]).collect())
+            }
+        }
+    }
+
     #[tokio::test]
     async fn success_resets_the_consecutive_counter() {
+        // Discriminating sequence ON ONE INSTANCE (threshold = 2):
+        // timeout (1) → success (reset to 0) → timeout (1, must NOT trip —
+        // without the reset this would be the 2nd consecutive and trip early)
+        // → timeout (2, trips). A broken reset fails at the third step.
         let policy = Arc::new(RecordingPolicy::default());
-        // Alternate wedged and healthy through two watchdogs sharing a policy is
-        // awkward; instead: one timeout, then a healthy call via a fresh inner,
-        // then confirm the counter restarts (no trip on the next timeout).
+        let inner = Arc::new(SwitchableEmbedder { hang: std::sync::atomic::AtomicBool::new(true) });
+        let dog = tiny_watchdog(inner.clone(), policy.clone());
+
+        assert!(dog.embed_batch(&["a"]).await.is_err(), "first call times out");
+
+        inner.hang.store(false, Ordering::Relaxed);
+        assert!(dog.embed_batch(&["b"]).await.is_ok(), "second call succeeds");
+
+        inner.hang.store(true, Ordering::Relaxed);
+        assert!(dog.embed_batch(&["c"]).await.is_err(), "third call times out");
+        assert!(
+            policy.trips.lock().unwrap().is_empty(),
+            "timeout after a success is consecutive #1, not #2 — reset must have cleared the counter"
+        );
+
+        assert!(dog.embed_batch(&["d"]).await.is_err(), "fourth call times out");
+        assert_eq!(
+            policy.trips.lock().unwrap().as_slice(),
+            &[2],
+            "second consecutive timeout after the reset trips"
+        );
+    }
+
+    #[tokio::test]
+    async fn per_wrapper_counters_are_isolated() {
+        let policy = Arc::new(RecordingPolicy::default());
         let dog = tiny_watchdog(Arc::new(WedgedEmbedder), policy.clone());
-        assert!(dog.embed_batch(&["a"]).await.is_err());
-
         let healthy = tiny_watchdog(Arc::new(HealthyEmbedder), policy.clone());
-        assert!(healthy.embed_batch(&["b"]).await.is_ok());
 
-        // Counter on `dog` is 1; a healthy result on `dog` itself must reset it.
-        // WedgedEmbedder never succeeds, so assert reset via the healthy wrapper:
-        // its counter went 0 → success keeps it 0 → a later single timeout on
-        // `dog` (counter 1 → 2) trips, proving per-wrapper isolation meanwhile.
+        assert!(dog.embed_batch(&["a"]).await.is_err());
+        assert!(healthy.embed_batch(&["b"]).await.is_ok());
         assert!(dog.embed_batch(&["c"]).await.is_err());
-        assert_eq!(policy.trips.lock().unwrap().as_slice(), &[2]);
+        assert_eq!(
+            policy.trips.lock().unwrap().as_slice(),
+            &[2],
+            "healthy wrapper's success must not reset the wedged wrapper's counter"
+        );
     }
 }

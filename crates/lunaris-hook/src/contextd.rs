@@ -116,8 +116,11 @@ async fn launch_unified_moon() -> Option<lunaris_memory_service::embedded_moon::
         tracing::info!("LUNARIS_STORE_URL set — skipping embedded Moon launch");
         return None;
     }
-    if std::env::var("LUNARIS_CONTEXTD_EMBEDDED_MOON").as_deref() == Ok("0") {
-        tracing::info!("LUNARIS_CONTEXTD_EMBEDDED_MOON=0 — skipping embedded Moon launch");
+    if matches!(
+        std::env::var("LUNARIS_CONTEXTD_EMBEDDED_MOON").as_deref(),
+        Ok("0") | Ok("false") | Ok("False")
+    ) {
+        tracing::info!("LUNARIS_CONTEXTD_EMBEDDED_MOON disabled — skipping embedded Moon launch");
         return None;
     }
     let lunaris_dir = match dirs::home_dir() {
