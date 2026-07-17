@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "feedback-exclusion-fix",
+  "active_task": "activation-ledger",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1223,6 +1223,15 @@
         ],
         "snapshot_md5": "901874b437baced6e4edc92931bfe60c"
       }
+    },
+    "activation-ledger": {
+      "title": "Activation Ledger",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T08:02:43+00:00",
+      "updated": "2026-07-17T08:08:57+00:00"
     }
   },
   "milestones": {
@@ -1284,7 +1293,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T05:38:42+00:00",
+  "updated": "2026-07-17T08:08:57+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

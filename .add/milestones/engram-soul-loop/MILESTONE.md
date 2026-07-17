@@ -29,6 +29,19 @@ C (harness-driven dreaming) in one milestone — Tin picked the full loop.
   piggyback. All configurable.
 - **Sequencing**: sdk-llamacpp-feature-forwarding task ships first, then this
   milestone, then contextd embedded-moon.
+- **Credit grain (amended 2026-07-17, interview x3)**: v1 reinforcement adds a
+  tool-call-level outcome signal on top of turn-level citation — post_tool
+  captures already carry success/exit info; the citation detector stamps
+  injected-memory ids onto the turn's tool calls and upgrades to strong+ only
+  when the fed tool call succeeded. Ledger schema carries a per-signal
+  `grain` field (turn|tool_call|node) from day one.
+- **ATG / procedural memory (decided 2026-07-17, arXiv 2607.01942)**: Lunaris
+  is the **memory substrate only** for task-graph planners — store
+  decompositions + node outcomes via ingest_structured, distill successful
+  plans in the dream pass. NO planner/executor inside Lunaris. Lands as a
+  follow-on `procedural-memory` milestone AFTER this one (plan records are
+  worthless without activation + outcome grading); the only v1 touch is
+  keeping task 8's distill-kind enum extensible for a future `procedure` kind.
 
 ## Grounding (verified in code 2026-07-16 — do not re-derive)
 
@@ -69,11 +82,19 @@ C (harness-driven dreaming) in one milestone — Tin picked the full loop.
    wall). Writers: injection trace (weak), citation detector (strong),
    `memory.feedback` (strong ±). Readers: recall re-rank prior via the
    existing `with_boost_cache` seam (persistent provider replaces the LRU);
-   ACT-R promote/archive worker reads the same ledger.
+   ACT-R promote/archive worker reads the same ledger. AMENDED
+   (2026-07-17): each reference entry carries a `grain` discriminator
+   (`turn|tool_call|node` — `node` reserved for the procedural-memory
+   follow-on) so finer credit needs no schema migration.
 3. **citation-detector**: Stop-hook mechanically diffs injected snippet
    n-grams vs the turn's final assistant message (transcript_path from the
    Stop payload) → per-memory cited/uncited → TurnFeedback upgrade
-   (per-memory verdicts, not just id list).
+   (per-memory verdicts, not just id list). AMENDED (2026-07-17): also
+   emit tool-call-grain signals — attribute injected-memory ids to the
+   turn's tool calls (transcript order) and grade strong+ only when the
+   fed tool call succeeded (post_tool success/exit already captured);
+   failed-tool-call feds stay weak. Ledger writes carry
+   `grain: turn|tool_call` accordingly.
 4. **memory.feedback MCP tool**: explicit ± with reason; flat DTO; roster
    test bump to 12.
 5. **git-anchoring**: contextd stamps `git_head` + `files[]` metadata on
