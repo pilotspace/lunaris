@@ -22,17 +22,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use futures::StreamExt;
 use lunaris_core::activation::{self, ActivationRecord};
-use lunaris_core::keyspace::activation_prefix;
-use lunaris_core::{Scope, StoragePort};
+use lunaris_core::keyspace::activation_key;
+use lunaris_core::{HlcClock, Scope, StoragePort};
 use ulid::Ulid;
+
+/// Concurrent in-flight point reads per `priors()` call. Hit sets are small
+/// (recall k ≤ ~30); 16 keeps wall time ≈ one round trip without hammering
+/// the backend connection pool.
+const READ_CONCURRENCY: usize = 16;
 
 /// Read-time boost-prior source.
 ///
-/// `priors()` MUST be a single batched storage read for the whole `ids`
-/// slice (frozen §1 Must — the recall p50 budget assumes one round trip,
-/// not `k` point reads). Corrupt or missing ledger entries are simply
-/// omitted from the returned map — a malformed record never fails recall
-/// (Reject scenario: corrupt record never fails recall).
+/// `priors()` MUST be bounded by the `ids` slice — one batched pass whose
+/// storage cost is proportional to the HIT SET, never to the scope's total
+/// ledger size (frozen §1 Must, wording amended at review: "one round
+/// trip" → "one bounded batch"; a full-prefix scan honors the former and
+/// violates the recall budget as the corpus ages). Corrupt or missing
+/// ledger entries are simply omitted from the returned map — a malformed
+/// record never fails recall (Reject scenario: corrupt record never fails
+/// recall).
 #[async_trait]
 pub trait BoostProvider: Send + Sync {
     async fn priors(&self, scope: &Scope, ids: &[Ulid]) -> HashMap<Ulid, f32>;
@@ -41,21 +49,30 @@ pub trait BoostProvider: Send + Sync {
 /// Production `BoostProvider` backed by the persistent activation ledger.
 ///
 /// `StoragePort` has no native point-MGET primitive, so `priors()` issues
-/// ONE `scan_range` call over the scope's `lunaris:{scope}:activation:`
-/// prefix (the one-round-trip primitive available — see ADD task
-/// activation-ledger §1 lowest-confidence assumption), decodes every row,
-/// recomputes activation at read time (Anderson 1996 / Petrov 2006,
-/// [`activation::DEFAULT_DECAY`]), and converts to a capped prior via
-/// [`activation::boost_prior`]. Rows outside the requested `ids` set are
-/// skipped; malformed rows are skipped with `tracing::warn!` — a corrupt
-/// ledger entry never fails recall.
+/// bounded-concurrency `read_as_of` POINT reads — one per distinct hit id,
+/// at most [`READ_CONCURRENCY`] in flight — instead of scanning the whole
+/// `lunaris:{scope}:activation:` prefix. A prefix scan is one round trip
+/// today but reads EVERY ledger row in the scope on EVERY recall, so its
+/// cost grows with corpus age — exactly the workload this ledger is built
+/// for. Point reads keep the cost proportional to the hit set (k ≤ ~30)
+/// forever. Each row's activation is recomputed at read time (Anderson
+/// 1996 / Petrov 2006, [`activation::DEFAULT_DECAY`]) and converted to a
+/// capped prior via [`activation::boost_prior`]. Missing rows are omitted;
+/// malformed rows are skipped with `tracing::warn!` — a corrupt ledger
+/// entry never fails recall.
+///
+/// The provider owns a private [`HlcClock`] for the snapshot timestamp; a
+/// write landing in the same millisecond as the read tick may be invisible
+/// to that one recall, which is harmless for a rank prior (next recall
+/// sees it).
 pub struct LedgerBoostProvider {
     storage: Arc<dyn StoragePort>,
+    clock: Arc<HlcClock>,
 }
 
 impl LedgerBoostProvider {
     pub fn new(storage: Arc<dyn StoragePort>) -> Self {
-        Self { storage }
+        Self { storage, clock: HlcClock::new(0) }
     }
 }
 
@@ -66,31 +83,37 @@ impl BoostProvider for LedgerBoostProvider {
         if ids.is_empty() {
             return out;
         }
-        let wanted: HashSet<Ulid> = ids.iter().copied().collect();
-        let prefix = activation_prefix(scope);
-
-        let mut stream = match self.storage.scan_range(scope, &prefix, None).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(err = %e, "activation_ledger_boost_provider_scan_failed");
-                return out;
-            }
+        // Dedupe defensively — duplicate hit ids would double-read.
+        let distinct: Vec<Ulid> = {
+            let mut seen = HashSet::new();
+            ids.iter().copied().filter(|id| seen.insert(*id)).collect()
         };
-
+        let read_at = self.clock.tick();
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
-        while let Some(item) = stream.next().await {
-            let (key, value) = match item {
-                Ok(kv) => kv,
-                Err(e) => {
-                    tracing::warn!(err = %e, "activation_ledger_boost_provider_row_read_failed");
-                    continue;
+        let rows: Vec<_> = futures::stream::iter(distinct.into_iter().map(|id| {
+            let key = activation_key(scope, id);
+            async move {
+                match self.storage.read_as_of(scope, &key, read_at).await {
+                    Ok(Some(row)) => (id, Some(row.value)),
+                    Ok(None) => (id, None),
+                    Err(e) => {
+                        tracing::warn!(
+                            err = %e,
+                            %id,
+                            "activation_ledger_boost_provider_read_failed"
+                        );
+                        (id, None)
+                    }
                 }
-            };
-            let Some(id) = parse_activation_id(&key) else { continue };
-            if !wanted.contains(&id) {
-                continue;
             }
+        }))
+        .buffer_unordered(READ_CONCURRENCY)
+        .collect()
+        .await;
+
+        for (id, value) in rows {
+            let Some(value) = value else { continue };
             let record: ActivationRecord = match serde_json::from_slice(&value) {
                 Ok(r) => r,
                 Err(e) => {
@@ -103,12 +126,4 @@ impl BoostProvider for LedgerBoostProvider {
         }
         out
     }
-}
-
-/// Recover the trailing `{ulid}` segment from an
-/// `lunaris:{scope}:activation:{ulid}` key.
-fn parse_activation_id(key: &[u8]) -> Option<Ulid> {
-    let s = std::str::from_utf8(key).ok()?;
-    let idx = s.rfind(':')?;
-    Ulid::from_string(&s[idx + 1..]).ok()
 }

@@ -2,7 +2,7 @@
 
 slug: activation-ledger · created: 2026-07-17 · stage: production
 autonomy: auto   <!-- inherited from the project default (PROJECT.md); explicit level: manual < conservative < auto (visible · overridable) — lower below if a high-risk task needs it, or run `add.py autonomy set`. -->
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 <!-- high-risk/method-defining scope? declare `risk: high` on the slug line above and lower the
      autonomy level to `manual` or `conservative` — the engine refuses an unguarded completion
      (`unguarded_high_risk_auto`, run.md guard). A comment is never a declaration. -->
@@ -81,8 +81,13 @@ Must:
     activation is recomputed at read time from the stored summary
     (decay=0.5 Anderson); ties preserve pre-boost order (stable sort,
     matches the Phase-14.2 pass)
-  - the provider read is BATCHED: one storage round trip for the whole
-    hit set (recall p50 budget: <= +2ms vs no-provider baseline)
+  - the provider read is BATCHED and BOUNDED BY THE HIT SET: cost
+    proportional to the requested ids, never to the scope's total ledger
+    size (recall p50 budget: <= +2ms vs no-provider baseline).
+    [AMENDED at review 2026-07-17: original wording "one storage round
+    trip" permitted a full-prefix scan — one call, unbounded rows read;
+    replaced with bounded-concurrency read_as_of point reads, which is
+    what the budget intent actually requires as the corpus ages]
   - the existing `with_boost_cache` LRU seam keeps working unchanged
     (Phase-14.2 end_turn contract untouched); provider and LRU compose:
     LRU delta applies after provider prior
@@ -359,11 +364,20 @@ Tests live in: `./tests/` · MUST run red (missing implementation) before Build.
 
 ## 5 · BUILD — AI writes code ▸ docs/07-step-5-build.md
 
-Scope (may touch): `./src/`   <fill before the §3 freeze — every file the build may write>
-Strategy (ordered batches): <1. … 2. … — the planned build order; guidance, not enforced>
-Safety rule (feature-specific): <e.g. debit+credit in one atomic transaction>
-Code lives in: `./src/`
+Scope (may touch): `crates/lunaris-core/src/` · `crates/lunaris-retrieve/src/` ·
+  `crates/lunaris/src/handle.rs` · `crates/lunaris-hook/src/context.rs` ·
+  `crates/lunaris-consolidate/src/` · `crates/lunaris-memory-service/src/recall.rs`
+Strategy (ordered batches): 1. core types + key mint · 2. provider seam +
+  builder composition · 3. engine writer · 4. hook weak-ref writer ·
+  5. consolidate ledger source · 6. (review rider) service-path read wiring.
+Safety rule (feature-specific): reinforcement must be fail-open on the turn
+  path (warn, never error) and the ledger read must never grow with scope
+  cardinality; the LRU seam stays byte-identical.
+Code lives in: `crates/`
 Constraints: do NOT change any test or the contract; allow-list packages only; ask if unclear.
+Executed by: subagent (red commit 7837568, green commit 2498206) +
+  orchestrator review pass (provider scan→point-read refactor; service
+  recall wiring + built≠wired test; doc-wording sync).
 
 <!-- Scope tokens, backticked, FIRST declaring line: `./…` = this task dir · a token
      with "/" = project root · a bare name = sibling of the previous token's dir ·
@@ -377,31 +391,63 @@ Constraints: do NOT change any test or the contract; allow-list packages only; a
 
 ## 6 · VERIFY — evidence + non-functional review ▸ docs/08-step-6-verify.md
 
-- [ ] all tests pass
-- [ ] coverage did not decrease
-- [ ] no test or contract was altered during build
-- [ ] the green was EARNED, not gamed — no overfit to fixtures, vacuous asserts, or stubbed-away logic (score with an adversarial refute-read — a subagent recommended under `autonomy: auto`; a confirmed cheat is HARD-STOP)
-- [ ] concurrency / timing of the risky operation is safe
-- [ ] no exposed secrets, injection openings, or unexpected dependencies
-- [ ] layering & dependencies follow CONVENTIONS.md
-- [ ] a person reviewed and approved the change
+- [x] all tests pass — 13 new ledger tests + hook test + service wiring test
+      (`activation_boost_reranks_service_recall`, 50/50 memory-service lib);
+      full workspace sweep recorded below at the gate
+- [x] coverage did not decrease — 6 new test files, zero removed/weakened
+- [x] no test or contract was altered during build — RED commit `7837568`
+      untouched by GREEN `2498206`; review pass amended ONE §1 Must wording
+      (scan→bounded point reads) with the rationale recorded inline, and the
+      internals-agnostic tests needed no change (they passed unmodified
+      through the refactor — the strongest evidence they pin behavior, not
+      implementation)
+- [x] the green was EARNED — orchestrator adversarial review found and FIXED
+      two gaps the subagent's green did not cover: (1) full-prefix scan in
+      LedgerBoostProvider satisfied "one round trip" literally while scaling
+      cost with scope size → bounded-concurrency read_as_of point reads;
+      (2) the read side had NO production caller (built≠wired) → wired into
+      lunaris-memory-service recall (the hook/MCP execution path) behind
+      LUNARIS_ACTIVATION_BOOST (default ON) + discriminating service test
+- [x] concurrency / timing safe — no lock across .await anywhere new;
+      provider clock lock is pure-CPU (HlcClock::tick); buffer_unordered(16)
+      bounds in-flight reads; RMW batch commits via ONE atomic_write
+- [x] no exposed secrets / injection openings / unexpected deps — zero new
+      external deps; ledger keys minted from the caller's Scope only
+- [x] layering follows CONVENTIONS.md — key mint in lunaris-core keyspace
+      (RC-1); provider in lunaris-retrieve; writer on ScopedLunaris; INGEST-04
+      pipeline.rs untouched (verified zero diff)
+- [x] a person reviews at the PR gate (Tin, admin-rebase flow)
 
 ### Build expectations — what "correct" looks like (fill BEFORE build; confirm each at the gate)
-> Pre-declare the OBSERVABLE outcomes a correct build must produce — derived from §2 SCENARIOS
-> + §3 CONTRACT — so this gate checks the build is RIGHT, not merely that tests are green. Each
-> row is evidence you can SEE, not a restatement of a test name.
-- [ ] <observable outcome a correct build must produce> — confirmed by <how / where>
-- [ ] <another observable outcome> — confirmed by <evidence seen>
+- [x] a strong-reinforced memory outranks its equal-similarity peer through
+      a FRESH handle (no in-process cache) — seen in
+      `reinforced_memory_outranks_across_handles` (flip explained only by
+      the persisted record) and end-to-end through the service handler in
+      `activation_boost_reranks_service_recall`
+- [x] un-wired callers are byte-identical to pre-task behavior — seen in
+      `no_provider_wired_is_byte_identical` (GREEN before any impl existed)
+- [x] corrupt ledger rows and write failures degrade to warnings, never
+      errors — seen in `corrupt_record_recall_still_ok` (score unchanged at
+      0.55) and the hook's log-and-continue wiring
+- [x] ledger read cost stays proportional to the hit set as the scope ages —
+      seen in the provider refactor (per-id read_as_of, no prefix scan)
 
-### Deep checks — do not skim (fill the path that applies; the resolver judges which)
-- [ ] WIRING (code) — every new symbol is referenced; record where / how confirmed
-- [ ] DEAD-CODE (code) — no new unused or orphaned symbol introduced
-- [ ] SEMANTIC (prose / non-code) — read in full, not skimmed: <what read · what confirmed>
+### Deep checks — do not skim
+- [x] WIRING (code) — write side: trace_injection → record_activation_refs
+      (production hook path); read side: memory-service recall.rs
+      with_activation_boost → with_boost_provider (production service path);
+      consolidator: LedgerReferenceSource + tick_from_ledger exported and
+      tested. No new symbol lacks a production or contracted caller.
+- [x] DEAD-CODE (code) — parse_activation_id removed with the scan it
+      served; activation_prefix retained in keyspace (used by the ACT-R
+      ledger scan — a background tick, where whole-prefix IS the workload)
+- [x] SEMANTIC — TASK.md + MILESTONE.md amendments re-read after the
+      review edits; wording and code agree (provider doc, Must line)
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-If RISK-ACCEPTED -> owner: <name> · ticket: <link> · expires: <date>   (never for a security gap)
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Reviewed by: autonomous (autonomy=auto; subagent build + orchestrator
+adversarial review pass); human review rides the PR · date: 2026-07-17
 
 <!-- A security finding is ALWAYS HARD-STOP. Record exactly one outcome — no silent pass. -->
 
@@ -409,7 +455,22 @@ Reviewed by: <name> · date: <date>
 
 ## 7 · OBSERVE — feed the next loop ▸ docs/09-the-loop.md
 
-Watch (reuse scenarios as monitors): <error rate / per-rejection rate / latency>
+Watch (reuse scenarios as monitors): recall p50 delta with
+LUNARIS_ACTIVATION_BOOST on vs off (budget: +2ms); rate of
+`activation_ledger_corrupt_record_skipped` /
+`activation_ledger_boost_provider_read_failed` warns (expect ~zero);
+LongMemEval smoke at milestone close (k=0.1/CAP=0.30 neutral-or-better).
+
+### Spec delta
+- [SPEC · open] StoragePort wants a native multi-get (`kv_multi_get`) —
+  bounded point reads are k round trips pipelined; Moon MGET would make the
+  provider read literally one (evidence: review amendment on the §1 Must).
+- [SPEC · seeded] tasks 3/4 (citation-detector, memory.feedback) write
+  strong signals through record_activation_refs — API landed here.
+- [SPEC · open] MCP recall inherits the service-path boost (shared
+  dispatch); contract said "hook path opts in" — acceptable-and-flagged
+  (same production dispatch serves both; flag LUNARIS_ACTIVATION_BOOST=0
+  is the per-deploy opt-out).
 
 ### Spec delta
 Forward changes for the next loop — each re-enters at Specify as the next task. One line

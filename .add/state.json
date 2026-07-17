@@ -1226,12 +1226,24 @@
     },
     "activation-ledger": {
       "title": "Activation Ledger",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-17T08:02:43+00:00",
-      "updated": "2026-07-17T08:08:57+00:00"
+      "updated": "2026-07-17T09:47:15+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "e98e383c447c8e93015549578349d9b1",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/",
+          "crates/lunaris-retrieve/src/"
+        ],
+        "snapshot_md5": "f814cffd3bc54764493858e95b39e572"
+      }
     }
   },
   "milestones": {
@@ -1293,7 +1305,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T08:08:57+00:00",
+  "updated": "2026-07-17T09:47:15+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
