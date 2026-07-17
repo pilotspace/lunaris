@@ -33,7 +33,12 @@ MOON_MANIFEST = ROOT / "vendor" / "moon" / "Cargo.toml"
 MOON_BIN = ROOT / "vendor" / "moon" / "target" / "release" / "moon"
 MOON_CURL_INSTALL = "curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh"
 DEFAULT_GGUF = Path.home() / ".lunaris" / "models" / "granite-embedding-311m-multilingual-r2.Q4_K_M.gguf"
-DEFAULT_MOON_URL = "moon://127.0.0.1:6380"
+# 6381, NOT 6380: the Moon launchd agent listens on 6381; on the reference
+# box 6380 is an unrelated ai-proxy Redis that happily answers RESP PING, so
+# a 6380 default silently wrote memory into the wrong service (2026-07-14
+# hooks deep-test finding). ensure_moon_running additionally verifies the
+# endpoint actually speaks Moon (FT._LIST) before accepting it.
+DEFAULT_MOON_URL = "moon://127.0.0.1:6381"
 
 CODEX_HOOK_EVENTS = [
     "session_start",
@@ -738,7 +743,14 @@ def ensure_moon_running(args: argparse.Namespace, storage_url: str | None) -> st
             f"--dir {Path.home() / '.lunaris' / 'moon-data'} --protected-mode no"
         )
     if tcp_listening(host, port):
-        return None
+        if endpoint_speaks_moon(host, port):
+            return None
+        return (
+            f"{storage_url} answers RESP but rejects FT._LIST — that port is "
+            "another Redis-speaking service (a proxy/cache?), NOT Moon. "
+            "Refusing to write memory into it. Point --storage-url/--moon-url "
+            f"at a real Moon, or {recipe}"
+        )
     local = host in {"127.0.0.1", "localhost", "::1"}
     if args.moon_autostart and local and moon_bin is not None:
         data_dir = Path.home() / ".lunaris" / "moon-data"
@@ -778,14 +790,36 @@ def parse_moon_host_port(url: str) -> tuple[str, int]:
         try:
             return host or "127.0.0.1", int(port_str)
         except ValueError:
-            return host or "127.0.0.1", 6380
-    return rest or "127.0.0.1", 6380
+            return host or "127.0.0.1", 6381
+    return rest or "127.0.0.1", 6381
 
 
 def tcp_listening(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=1.0):
             return True
+    except OSError:
+        return False
+
+
+def endpoint_speaks_moon(host: str, port: int, timeout: float = 1.5) -> bool:
+    """True when the endpoint answers RESP PING *and* Moon-native FT._LIST.
+
+    Liveness alone (TCP connect, even PING/+PONG) cannot tell Moon apart from
+    any other Redis-speaking service — the exact failure mode that sent
+    memory into an ai-proxy Redis on 6380. FT._LIST is read-only, arity 1,
+    and unknown to plain Redis, so an `-ERR unknown command` reply means
+    "this is not Moon".
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as conn:
+            conn.settimeout(timeout)
+            conn.sendall(b"*1\r\n$4\r\nPING\r\n")
+            if not conn.recv(64).startswith(b"+PONG"):
+                return False
+            conn.sendall(b"*1\r\n$8\r\nFT._LIST\r\n")
+            reply = conn.recv(64)
+            return bool(reply) and not reply.startswith(b"-")
     except OSError:
         return False
 
