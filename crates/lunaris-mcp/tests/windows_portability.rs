@@ -25,14 +25,11 @@ fn unix_socket_imports_are_cfg_gated() {
             || t.starts_with("use tokio::io::{AsyncReadExt")
         {
             found += 1;
-            let prev = lines[..i]
-                .iter()
-                .rev()
-                .map(|l| l.trim())
-                .find(|l| !l.is_empty())
-                .unwrap_or("");
+            let prev =
+                lines[..i].iter().rev().map(|l| l.trim()).find(|l| !l.is_empty()).unwrap_or("");
             assert_eq!(
-                prev, "#[cfg(unix)]",
+                prev,
+                "#[cfg(unix)]",
                 "unix-only import at proxy.rs line {} must be #[cfg(unix)]-gated \
                  (Windows E0432 regression): `{t}`",
                 i + 1
