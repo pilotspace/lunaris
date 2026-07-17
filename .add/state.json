@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "activation-ledger",
+  "active_task": "citation-detector",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1244,6 +1244,15 @@
         ],
         "snapshot_md5": "f814cffd3bc54764493858e95b39e572"
       }
+    },
+    "citation-detector": {
+      "title": "Citation Detector",
+      "phase": "ground",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T10:18:20+00:00",
+      "updated": "2026-07-17T10:18:20+00:00"
     }
   },
   "milestones": {
@@ -1305,7 +1314,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T09:47:15+00:00",
+  "updated": "2026-07-17T10:18:20+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",

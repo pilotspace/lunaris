@@ -115,6 +115,16 @@ C (harness-driven dreaming) in one milestone — Tin picked the full loop.
    Stop hook computes agenda size, SessionStart injects the nudge line when
    over threshold. Cron + piggyback modes behind env flags (v2, doc-only
    stubs acceptable at exit).
+10. **context-savings-telemetry** (added 2026-07-17, Tin yes): make the
+    window-context saving MEASURABLE, not argued. (a) injection side:
+    stamp injected-snippet token counts (chars/4 heuristic) into the
+    existing `lunaris:memory_injection` trace meta; (b) Stop side: ride
+    task 3's transcript pass — record turn transcript size + tool-call
+    count into the TurnFeedback meta; (c) a small aggregation surface
+    (script or Memory Inspector panel): per-scope "injected tokens vs
+    turn tokens vs cited rate". Recall-on/off A/B session comparison is
+    the eval-harness follow-up, NOT in scope here. Sequencing: after or
+    with task 3 (shared transcript reader), before the dream wave.
 
 ## Exit criteria
 
