@@ -7,7 +7,9 @@ use std::time::Instant;
 
 use lunaris::{Lunaris, Query, recent_by_source};
 use lunaris_core::snippet::{parse_jsonish, single_line, summarize, summarize_json, trim_to_chars};
-use lunaris_core::{Episode, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder};
+use lunaris_core::{
+    Chunk, Episode, Hlc, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder,
+};
 use lunaris_memory_service::protocol::{MemoryRequest, MemoryResponse};
 use lunaris_retrieve::{
     AndRetriever, FuseRrfRetriever, Keyword, QueryContext, RawHit, Retriever, SourceOp, Vector,
@@ -104,6 +106,13 @@ pub enum ContextRequest {
         /// See `CaptureToolCall.paths` above.
         #[serde(default)]
         paths: Option<Vec<String>>,
+        /// engram-soul-loop task 6 (staleness-pass) — the adapter's
+        /// `run_capture` posttooluse fast path sets this `true` when the
+        /// captured command text matches a standalone `git commit` token
+        /// sequence. `#[serde(default)]` keeps a pre-task-6 adapter wire
+        /// (no `commit` key) decoding to `false` exactly as before.
+        #[serde(default)]
+        commit: bool,
     },
     TurnFeedback {
         cwd: Option<PathBuf>,
@@ -194,6 +203,13 @@ pub struct ContextMemory {
     pub source: String,
     pub score: f32,
     pub snippet: String,
+    /// engram-soul-loop task 6 (staleness-pass): `true` when this memory's
+    /// git anchor (`meta.git_head` + `meta.files`) has drifted from the
+    /// current HEAD — set by `finish_recall`'s post-curation assessment.
+    /// `#[serde(default)]` keeps a pre-task-6 wire decode (if this type is
+    /// ever deserialized) defaulting to `false`.
+    #[serde(default)]
+    pub stale: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -439,8 +455,22 @@ impl ContextService {
                 );
                 Ok(ContextResponse::empty())
             }
-            ContextRequest::CaptureToolResult { cwd, scope, session_id, tool, payload, paths } => {
+            ContextRequest::CaptureToolResult {
+                cwd,
+                scope,
+                session_id,
+                tool,
+                payload,
+                paths,
+                commit,
+            } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
+                // engram-soul-loop task 6 (staleness-pass): a commit-shaped
+                // capture spawns the SAME agenda sweep the SessionDigest arm
+                // runs — fire-and-forget, never delays this capture.
+                if commit && let Some(cwd) = cwd.clone() {
+                    self.spawn_agenda_sweep(&scope, cwd);
+                }
                 self.spawn_capture_tool(
                     &scope,
                     "lunaris:tool_call:post",
@@ -506,6 +536,12 @@ impl ContextService {
                             return Ok(ContextResponse::empty());
                         }
                     };
+                // engram-soul-loop task 6 (staleness-pass): after
+                // build_digest, sweep the scope's anchored episodes for
+                // staleness — fire-and-forget, never delays this response.
+                if let Some(cwd) = cwd.clone() {
+                    self.spawn_agenda_sweep(&scope, cwd);
+                }
                 self.finish_recall(
                     &scope,
                     "session_start",
@@ -663,6 +699,7 @@ impl ContextService {
                         .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                         .map(|h| ContextMemory {
                             episode_id: ulid_bytes_to_string(&h.id),
+                            stale: false,
                             source: h.source,
                             score: h.score,
                             snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
@@ -715,6 +752,7 @@ impl ContextService {
             .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
             .map(|h| ContextMemory {
                 episode_id: ulid_bytes_to_string(&h.id),
+                stale: false,
                 source: h.source,
                 score: h.score,
                 snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
@@ -734,6 +772,7 @@ impl ContextService {
                     .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                     .map(|h| ContextMemory {
                         episode_id: ulid_bytes_to_string(&h.id),
+                        stale: false,
                         source: h.source,
                         score: h.score,
                         snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
@@ -782,6 +821,7 @@ impl ContextService {
                 .filter(|h| injectable_at_phase(phase, &h.source, include_toolcalls))
                 .map(|h| ContextMemory {
                     episode_id: ulid_bytes_to_string(&h.id),
+                    stale: false,
                     source: h.source,
                     score: h.score,
                     snippet: scrub_and_trim(&h.text, CURATION_INPUT_CHARS),
@@ -810,6 +850,13 @@ impl ContextService {
             return Ok(ContextResponse::empty());
         }
 
+        // engram-soul-loop task 6 (staleness-pass) — post-curation
+        // staleness assessment: decays + banners any curated memory whose
+        // git anchor has drifted, then re-sorts. Fail-open by construction
+        // (see `assess_staleness`'s doc comment) — never turns this
+        // recall into an error.
+        let memories = self.assess_staleness(scope, memories, cwd).await;
+
         let injection_id = ulid::Ulid::new().to_string();
         let rendered_context = render_context(phase, tool_context.as_ref(), &memories, max_chars);
         self.spawn_trace_injection(
@@ -830,6 +877,152 @@ impl ContextService {
             lsn: None,
             error: None,
         })
+    }
+
+    /// engram-soul-loop task 6 (staleness-pass) — post-curation staleness
+    /// assessment for the FINAL curated list (already ≤ `max_hits`).
+    ///
+    /// Resolves HEAD once via `git_anchor::head_for_cwd(cwd)`, then reads
+    /// each curated memory's episode doc via ONE `read_as_of` point read
+    /// (`keyspace::episode_key`) — bounded by the curated list size, never
+    /// a second full-episode scan on the recall path (§1 Reject). Anchor
+    /// diffs (`git_anchor::changed_files_since`) are pre-resolved for every
+    /// DISTINCT anchor head found so `staleness::assess`'s closure stays
+    /// synchronous/pure. On stale: sets `stale = true` and decays
+    /// `score *= staleness::STALE_DECAY`, then re-sorts the list by the
+    /// SAME ordering criteria `curate_context_memories` uses so the decay
+    /// is reflected in render order.
+    ///
+    /// ANY failure — no `cwd`, an unresolvable HEAD, a storage error, a
+    /// corrupt/missing episode row, or unparsable metadata — leaves that
+    /// memory (or every memory, if HEAD itself is unresolvable) exactly as
+    /// curated: fresh, undecayed. Staleness assessment must never fail or
+    /// block the inject.
+    /// Point-read an `episode:` row and decode its `metadata` map. Returns
+    /// `None` on any miss/decode failure (fail-open — staleness assessment
+    /// is best-effort, never blocks recall).
+    async fn read_episode_metadata(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+        id: ulid::Ulid,
+        read_at: Hlc,
+    ) -> Option<Map<String, Value>> {
+        let key = lunaris_core::keyspace::episode_key(scope, id);
+        match storage.read_as_of(scope, &key, read_at).await {
+            Ok(Some(row)) => {
+                serde_json::from_slice::<Episode>(&row.value).ok().map(|ep| ep.metadata)
+            }
+            Ok(None) => None,
+            Err(err) => {
+                tracing::debug!(err = %err, "staleness assessment: episode read failed");
+                None
+            }
+        }
+    }
+
+    async fn assess_staleness(
+        &self,
+        scope: &Scope,
+        mut memories: Vec<ContextMemory>,
+        cwd: Option<&Path>,
+    ) -> Vec<ContextMemory> {
+        let Some(cwd) = cwd else {
+            return memories;
+        };
+        let Some(current_head) = crate::git_anchor::head_for_cwd(cwd).await else {
+            return memories;
+        };
+        let storage = match self.storage_for_scope(scope).await {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::debug!(err = %err, "staleness assessment: storage open failed");
+                return memories;
+            }
+        };
+
+        let clock = HlcClock::new(0);
+        let read_at = clock.tick();
+
+        // Bounded point-reads: one per curated memory in the common case
+        // (≤ max_hits), rising to two for hot-path candidates whose
+        // `ContextMemory.episode_id` is actually the underlying CHUNK's own
+        // ulid (see `recall_and_trace`'s `h.id`-based candidate mapping —
+        // pre-existing, out of this task's scope to rename). We try the
+        // direct episode read first (covers `build_digest`-sourced entries,
+        // which stamp the real `Episode::id`); only on a miss do we fall
+        // back to a chunk read to recover the true parent `episode_id` and
+        // re-resolve. Flagged as a deviation from the contract's literal
+        // "one read per memory" framing in the task report.
+        let mut metas: Vec<Option<Map<String, Value>>> = Vec::with_capacity(memories.len());
+        for memory in &memories {
+            let meta = match ulid::Ulid::from_string(&memory.episode_id) {
+                Ok(id) => match Self::read_episode_metadata(storage.as_ref(), scope, id, read_at)
+                    .await
+                {
+                    Some(meta) => Some(meta),
+                    None => match storage
+                        .read_as_of(scope, &lunaris_core::keyspace::chunk_key(scope, id), read_at)
+                        .await
+                    {
+                        Ok(Some(row)) => match serde_json::from_slice::<Chunk>(&row.value) {
+                            Ok(chunk) => {
+                                Self::read_episode_metadata(
+                                    storage.as_ref(),
+                                    scope,
+                                    chunk.episode_id,
+                                    read_at,
+                                )
+                                .await
+                            }
+                            Err(err) => {
+                                tracing::debug!(err = %err, "staleness assessment: chunk decode failed");
+                                None
+                            }
+                        },
+                        Ok(None) => None,
+                        Err(err) => {
+                            tracing::debug!(err = %err, "staleness assessment: chunk read failed");
+                            None
+                        }
+                    },
+                },
+                Err(err) => {
+                    tracing::debug!(err = %err, id = %memory.episode_id, "staleness assessment: id parse failed");
+                    None
+                }
+            };
+            metas.push(meta);
+        }
+
+        // Pre-resolve every DISTINCT anchor diff up front so `assess`'s
+        // closure below stays a synchronous lookup.
+        let mut distinct_heads: Vec<String> = Vec::new();
+        for meta in metas.iter().flatten() {
+            if let Some(head) = meta.get("git_head").and_then(Value::as_str)
+                && head != current_head
+                && !distinct_heads.iter().any(|h| h == head)
+            {
+                distinct_heads.push(head.to_owned());
+            }
+        }
+        let mut diffs: HashMap<String, Option<HashSet<String>>> = HashMap::new();
+        for head in &distinct_heads {
+            let resolved = crate::git_anchor::changed_files_since(cwd, head).await;
+            diffs.insert(head.clone(), resolved);
+        }
+
+        for (memory, meta) in memories.iter_mut().zip(metas.iter()) {
+            let Some(meta) = meta else { continue };
+            let changed_lookup = |head: &str| diffs.get(head).cloned().flatten();
+            let verdict = crate::staleness::assess(meta, &current_head, &changed_lookup);
+            if verdict.stale {
+                memory.stale = true;
+                memory.score *= crate::staleness::STALE_DECAY;
+            }
+        }
+
+        resort_curated(&mut memories);
+        memories
     }
 
     /// hook-recall-graph-hybrid contract v1.1 — the fused hybrid hot path.
@@ -1052,6 +1245,25 @@ impl ContextService {
                 .await
             {
                 tracing::debug!(err = %err, "lunaris tool capture write failed");
+            }
+        });
+    }
+
+    /// engram-soul-loop task 6 (staleness-pass) — fire-and-forget verify-
+    /// agenda sweep, shared by the `SessionDigest` arm and a `commit:true`
+    /// `CaptureToolResult`. Resolves the scope's warm handle inside the
+    /// spawned task; a handle-resolve failure degrades to "no sweep" (the
+    /// same fail-open contract `staleness::sweep_and_upsert` itself keeps
+    /// for every git/storage failure past this point).
+    fn spawn_agenda_sweep(&self, scope: &Scope, cwd: PathBuf) {
+        let service = self.clone();
+        let scope = scope.clone();
+        tokio::spawn(async move {
+            match service.handle_for_scope(&scope).await {
+                Ok(handle) => crate::staleness::sweep_and_upsert(&handle, &scope, &cwd).await,
+                Err(err) => {
+                    tracing::debug!(err = %err, "verify_agenda sweep: handle resolve failed")
+                }
             }
         });
     }
@@ -1470,12 +1682,36 @@ fn render_context(
         out.push_str(&format!("{:.2}", memory.score));
         out.push_str(" id=");
         out.push_str(&memory.episode_id);
+        // engram-soul-loop task 6 (staleness-pass) — the marker is a
+        // SEPARATE whitespace-delimited token appended AFTER `id=<id>`,
+        // never spliced into it: `transcript::parse_injection_line` finds
+        // `id=` by splitting the header on whitespace, so this ordering is
+        // load-bearing (frozen contract note: "the appended marker must
+        // not break id= extraction").
+        if memory.stale {
+            out.push_str(" ⚠ code-changed");
+        }
         out.push_str("] ");
         out.push_str(&single_line(&memory.snippet));
         out.push('\n');
     }
     out.push_str("</lunaris_memory_context>");
     trim_to_chars(&out, max_chars)
+}
+
+/// engram-soul-loop task 6 (staleness-pass) — re-sort an ALREADY-curated
+/// list by the exact same ordering criteria `curate_context_memories` /
+/// `curate_context_memories_lossy` use (priority desc, score desc,
+/// episode_id asc). Used post-decay so a stale memory's lowered score is
+/// reflected in render order without re-running curation (dedupe / source
+/// filtering must not re-apply to an already-final list).
+fn resort_curated(memories: &mut [ContextMemory]) {
+    memories.sort_by(|a, b| {
+        source_priority(&b.source)
+            .cmp(&source_priority(&a.source))
+            .then_with(|| b.score.total_cmp(&a.score))
+            .then_with(|| a.episode_id.cmp(&b.episode_id))
+    });
 }
 
 fn curate_context_memories(candidates: Vec<ContextMemory>, max_hits: usize) -> Vec<ContextMemory> {
@@ -1589,6 +1825,7 @@ pub async fn build_digest(
                 summarize(&ep.source, &ep.content).unwrap_or_else(|| single_line(&ep.content));
             ContextMemory {
                 episode_id: ep.id.to_string(),
+                stale: false,
                 source: ep.source,
                 score: 1.0,
                 snippet: trim_to_chars(&curated, 260),
@@ -2113,6 +2350,7 @@ mod tests {
     fn render_prompt_context_is_bounded_and_excludes_raw_layout_noise() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000000".into(),
+            stale: false,
             source: "decision:test".into(),
             score: 0.84,
             snippet: "line one\nline two".into(),
@@ -2129,6 +2367,7 @@ mod tests {
     fn render_session_start_context_marks_digest_phase() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000000".into(),
+            stale: false,
             source: "decision:test".into(),
             score: 1.0,
             snippet: "decision: stop maintaining MEMORY.md".into(),
@@ -2145,6 +2384,7 @@ mod tests {
     fn render_post_tool_context_marks_tool_phase() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000000".into(),
+            stale: false,
             source: "edit:test".into(),
             score: 0.71,
             snippet: "prior edit".into(),
@@ -2163,12 +2403,14 @@ mod tests {
         let memories = vec![
             ContextMemory {
                 episode_id: "01HX0000000000000000000001".into(),
+                stale: false,
                 source: "lunaris:pre_tool_use".into(),
                 score: 0.99,
                 snippet: r#"{"file_path":"README.md"}"#.into(),
             },
             ContextMemory {
                 episode_id: "01HX0000000000000000000002".into(),
+                stale: false,
                 source: "lunaris:pre_tool_use".into(),
                 score: 0.80,
                 snippet: r#"{"file_path":"scripts/setup-lunaris-agents.py","old_string":"sqlite default","new_string":"Moon storage shared"}"#.into(),
@@ -2188,6 +2430,7 @@ mod tests {
     fn curation_tolerates_scrubbed_smart_quote_json() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000004".into(),
+            stale: false,
             source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: "{ “ output ” : “ Moon storage shared ” , “ success ” :true}".into(),
@@ -2207,6 +2450,7 @@ mod tests {
         // verify envelope's top-level `output` copy was the workaround).
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000006".into(),
+            stale: false,
             source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: "{ “ tool_response ” : { “ output ” : “ Moon relay ok ” } }".into(),
@@ -2226,6 +2470,7 @@ mod tests {
         // their own summarize branch.
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000007".into(),
+            stale: false,
             source: "lunaris:pre_tool_use".into(),
             score: 0.80,
             snippet: "{ “ codex_hook_event_name ” : “ UserPromptSubmit ” , “ codex_payload ” :{ “ cwd ” : “ /tmp ” , “ hook_event_name ” : “ UserPromptSubmit ” , “ prompt ” : “ the crimson beacon marker is XR-9913 on port 5252 ” } }".into(),
@@ -2247,6 +2492,7 @@ mod tests {
     fn curation_tool_output_wins_over_prompt() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000008".into(),
+            stale: false,
             source: "lunaris:post_tool_use".into(),
             score: 0.80,
             snippet: r#"{"output": "deploy ok", "prompt": "ignore me"}"#.into(),
@@ -2275,6 +2521,7 @@ mod tests {
     fn curation_excludes_injection_traces() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000003".into(),
+            stale: false,
             source: "lunaris:memory_injection".into(),
             score: 1.0,
             snippet: "memory injection".into(),
@@ -2302,6 +2549,7 @@ mod tests {
     fn feedback_kind_never_prompt_injects() {
         let memories = vec![ContextMemory {
             episode_id: "01HX0000000000000000000004".into(),
+            stale: false,
             source: "lunaris:memory_feedback".into(),
             score: 1.0,
             snippet: "positive feedback: used verbatim".into(),
@@ -2332,12 +2580,14 @@ mod tests {
         let memories = vec![
             ContextMemory {
                 episode_id: "01HX000000000000000000000A".into(),
+                stale: false,
                 source: "lunaris:tool_call:post".into(),
                 score: 0.03,
                 snippet: mangled,
             },
             ContextMemory {
                 episode_id: "01HX000000000000000000000B".into(),
+                stale: false,
                 source: "lunaris:tool_call:post".into(),
                 score: 0.03,
                 snippet: "just a plain note about the build".into(),
@@ -2364,6 +2614,7 @@ mod tests {
         // must not touch them.
         let memories = vec![ContextMemory {
             episode_id: "01HX000000000000000000000C".into(),
+            stale: false,
             source: "decision:x".into(),
             score: 0.03,
             snippet: r#"{"decision":"share one embedder","rationale":"scope-independent GGUF"}"#
@@ -2951,12 +3202,14 @@ mod tests {
         let memories = vec![
             ContextMemory {
                 episode_id: ulid::Ulid::new().to_string(),
+                stale: false,
                 source: "decision:x".to_owned(),
                 score: 0.9,
                 snippet: "granite embedder resolves llamacpp end to end".to_owned(),
             },
             ContextMemory {
                 episode_id: ulid::Ulid::new().to_string(),
+                stale: false,
                 source: "decision:y".to_owned(),
                 score: 0.8,
                 snippet: "second memory snippet for counting injected tokens".to_owned(),
@@ -3152,6 +3405,7 @@ mod tests {
                 tool: Some("Edit".to_owned()),
                 payload: serde_json::json!({"tool_name": "Edit"}),
                 paths: Some(vec!["src/lib.rs".to_owned()]),
+                commit: false,
             })
             .await;
         assert!(resp.ok, "capture dispatch must succeed: {:?}", resp.error);
@@ -3833,7 +4087,8 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let key = lunaris_core::keyspace::verify_agenda_key(&scope, stale_id);
         let clock = HlcClock::new(0);
-        let row = storage.read_as_of(&scope, &key, clock.tick()).await.expect("read must not error");
+        let row =
+            storage.read_as_of(&scope, &key, clock.tick()).await.expect("read must not error");
         assert!(row.is_none(), "commit:false must never spawn the agenda sweep, got {row:?}");
     }
 

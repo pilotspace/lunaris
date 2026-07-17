@@ -41,7 +41,10 @@ use lunaris_core::{
 // ADD task activation-ledger — persistent per-memory activation ledger types.
 use lunaris_core::activation::RefSignal;
 use lunaris_core::keyspace::activation_key;
+// engram-soul-loop task 6 (staleness-pass) — verify-agenda keyspace helper.
+use lunaris_core::keyspace::verify_agenda_key;
 use lunaris_ingest::{BakoffConfig, TokenCounter, make_token_counter};
+use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::episode_builder::EpisodeBuilder;
@@ -1590,6 +1593,86 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.storage.atomic_write(&self.scope, &ops).await.map_err(LunarisError::Storage)?;
         Ok(())
     }
+
+    /// engram-soul-loop task 6 (staleness-pass) — RMW upsert of verify-
+    /// agenda entries.
+    ///
+    /// For each entry, reads the existing row at
+    /// `lunaris_core::keyspace::verify_agenda_key(scope, entry.episode_id)`
+    /// (if any) and preserves its `first_seen_ms` (a missing or corrupt
+    /// existing row falls back to the caller-supplied `first_seen_ms` —
+    /// a malformed stored agenda row must not block a fresh upsert), then
+    /// commits every touched entry in exactly ONE `atomic_write` (mirrors
+    /// [`Self::record_activation_refs`] / D-11: one atomic write per
+    /// logical batch). An empty `entries` slice is a no-op — no
+    /// `atomic_write` call at all.
+    pub async fn upsert_verify_agenda(
+        &self,
+        entries: &[VerifyAgendaEntry],
+    ) -> Result<(), LunarisError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let read_at = self.engine.clock.tick();
+        let mut ops: Vec<lunaris_core::WriteOp> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let key = verify_agenda_key(&self.scope, entry.episode_id);
+            let first_seen_ms = match self
+                .engine
+                .storage
+                .read_as_of(&self.scope, &key, read_at)
+                .await
+                .map_err(LunarisError::Storage)?
+            {
+                Some(row) => serde_json::from_slice::<VerifyAgendaEntry>(&row.value)
+                    .map(|existing| existing.first_seen_ms)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            err = %e,
+                            episode_id = %entry.episode_id,
+                            scope = self.scope.as_str(),
+                            "verify_agenda_corrupt_record_reseeded"
+                        );
+                        entry.first_seen_ms
+                    }),
+                None => entry.first_seen_ms,
+            };
+
+            let mut merged = entry.clone();
+            merged.first_seen_ms = first_seen_ms;
+            let value = serde_json::to_vec(&merged).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "verify_agenda_serialize_failed: {e}"
+                )))
+            })?;
+            ops.push(lunaris_core::WriteOp::KvPut { key, value });
+        }
+
+        // Mirrors D-11: exactly ONE atomic_write for the whole batch.
+        self.engine.storage.atomic_write(&self.scope, &ops).await.map_err(LunarisError::Storage)?;
+        Ok(())
+    }
+}
+
+/// engram-soul-loop task 6 (staleness-pass) — one verify-agenda entry
+/// (`.add/tasks/staleness-pass/TASK.md` §3 CONTRACT, task-7 wire shape —
+/// KEEP STABLE, the MCP `verify_agenda` / `resolve` tools consume this
+/// exact JSON shape).
+///
+/// `episode_id` doubles as the KV key's ULID
+/// ([`lunaris_core::keyspace::verify_agenda_key`]) — one agenda row per
+/// stale-anchored episode, RMW-upserted by
+/// [`ScopedLunaris::upsert_verify_agenda`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyAgendaEntry {
+    pub episode_id: Ulid,
+    pub anchor_head: String,
+    pub current_head: String,
+    pub files: Vec<String>,
+    pub first_seen_ms: u64,
+    pub last_seen_ms: u64,
+    pub v: u32,
 }
 
 // ── llama.cpp-only cutover: embedder + reranker resolution ────────────────────

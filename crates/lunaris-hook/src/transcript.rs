@@ -245,7 +245,13 @@ fn extract_phase(content_text: &str) -> String {
 /// Returns `None` on any shape mismatch (missing `id=`, malformed ULID, no
 /// `]` delimiter) — the caller skips the line and keeps the rest of the
 /// block (§1 Reject).
-fn parse_injection_line(
+///
+/// `pub(crate)` (engram-soul-loop task 6, staleness-pass): a stale-marked
+/// line appends `⚠ code-changed` inside the bracket header
+/// (`context.rs::render_context`); `context.rs`'s exit-criterion test needs
+/// to prove the marker does not break `id=` extraction, so this parser is
+/// exposed crate-wide rather than kept `context.rs`-module-private.
+pub(crate) fn parse_injection_line(
     line: &str,
     phase: &str,
     tool_use_id: Option<String>,
