@@ -2211,6 +2211,40 @@ mod tests {
         assert!(curate_context_memories(memories, 5).is_empty());
     }
 
+    // ── engram-soul-loop task 4 — memory.feedback audit episodes must never
+    //    leak into prompt-phase context injection (the task-1 codex-leak
+    //    lesson: a new always-excluded capture kind must be added to
+    //    `excluded_context_source` or it renders straight into the prompt).
+
+    /// Seed a `lunaris:memory_feedback` episode and run it through the SAME
+    /// curation + render steps the prompt-phase recall path uses
+    /// (`curate_context_memories` then `render_context`). The rendered
+    /// `<lunaris_memory_context>` block must contain no trace of it.
+    ///
+    /// Plain-text snippet (not a JSON envelope) — deliberately mirrors
+    /// `curation_excludes_injection_traces` so the ONLY thing that can drop
+    /// this hit is `excluded_context_source`, not the unrelated
+    /// unparseable-JSON drop guard (inject-noise-cleanup). A JSON-shaped
+    /// snippet would make this test pass for the wrong reason.
+    #[test]
+    fn feedback_kind_never_prompt_injects() {
+        let memories = vec![ContextMemory {
+            episode_id: "01HX0000000000000000000004".into(),
+            source: "lunaris:memory_feedback".into(),
+            score: 1.0,
+            snippet: "positive feedback: used verbatim".into(),
+        }];
+
+        let curated = curate_context_memories(memories, 5);
+        assert!(curated.is_empty(), "memory_feedback episodes must never survive curation");
+
+        let rendered = render_context("prompt", None, &curated, 4_000);
+        assert!(
+            !rendered.contains("memory_feedback") && !rendered.contains("used verbatim"),
+            "rendered prompt context leaked a feedback episode: {rendered:?}"
+        );
+    }
+
     // --- inject-noise-cleanup (2026-07-14) -----------------------------------
     // Live repro: prompt-phase injection dumped 5 raw `codex:tool_call:post`
     // envelopes (score 0.03) rendered as mangled `{ " cwd " : ... [truncated]`
