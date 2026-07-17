@@ -81,10 +81,64 @@ pub struct TurnTranscript {
 /// the read (fail-open per §1 Reject). Returns `Err` only for the
 /// file-level I/O failure (missing file, permission denied, ...) — the
 /// caller maps that to `detector: "skipped_no_transcript"`.
-pub fn read_turn_transcript(_path: &Path, _tail_bytes: u64) -> std::io::Result<TurnTranscript> {
-    // RED-phase stub (engram-soul-loop task 3): implementation lands in the
-    // GREEN commit. See `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
-    unimplemented!("read_turn_transcript: RED phase stub, implemented in the GREEN commit")
+pub fn read_turn_transcript(path: &Path, tail_bytes: u64) -> std::io::Result<TurnTranscript> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let start = len.saturating_sub(tail_bytes);
+    let discard_first_line = start > 0;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start))?;
+    }
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    // Lossy: a mid-file seek can land inside a multi-byte UTF-8 sequence.
+    // The lenient per-line parse below simply drops the (at most one)
+    // affected line rather than erroring the whole read.
+    let text = String::from_utf8_lossy(&bytes);
+
+    let mut transcript = TurnTranscript::default();
+    let mut last_assistant_text: Option<String> = None;
+
+    for (idx, raw_line) in text.lines().enumerate() {
+        if idx == 0 && discard_first_line {
+            continue;
+        }
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(kind) = value.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        if let Some(session_id) = entry_session_id(&value) {
+            transcript.session_ids_seen.insert(session_id.to_owned());
+        }
+
+        match kind {
+            "attachment" => {
+                if let Some(attachment) = value.get("attachment") {
+                    parse_attachment(attachment, &mut transcript.injections);
+                }
+            }
+            "assistant" => {
+                if let Some(text) = extract_assistant_text(&value) {
+                    last_assistant_text = Some(text);
+                }
+            }
+            "user" => {
+                extract_tool_outcomes(&value, &mut transcript.tool_outcomes);
+            }
+            _ => {}
+        }
+    }
+
+    transcript.final_assistant_text = last_assistant_text.unwrap_or_default();
+    Ok(transcript)
 }
 
 /// `sessionId` (real transcript field, camelCase) with a `session_id`
@@ -220,9 +274,8 @@ mod tests {
 
         // 4 injections: 2 prompt-phase (M1/M2), 2 post_tool-phase (M3/M4).
         assert_eq!(transcript.injections.len(), 4, "{:?}", transcript.injections);
-        let by_snippet_has = |needle: &str| {
-            transcript.injections.iter().any(|m| m.snippet.contains(needle))
-        };
+        let by_snippet_has =
+            |needle: &str| transcript.injections.iter().any(|m| m.snippet.contains(needle));
         assert!(by_snippet_has("granite embedder resolves llamacpp"));
         assert!(by_snippet_has("coffee brewing"));
         assert!(by_snippet_has("git commit created successfully"));
@@ -312,7 +365,7 @@ mod tests {
             "sessionId": "sess-tail",
             "attachment": {
                 "type": "hook_additional_context",
-                "content": ["<lunaris_memory_context phase=\"prompt\">\n- [source=decision:x score=0.9 id=01HX00000000000000000000TL] tail marker snippet\n</lunaris_memory_context>"],
+                "content": ["<lunaris_memory_context phase=\"prompt\">\n- [source=decision:x score=0.9 id=01HX00000000000000000000TA] tail marker snippet\n</lunaris_memory_context>"],
                 "hookName": "UserPromptSubmit",
                 "toolUseID": "hook-tail",
                 "hookEvent": "UserPromptSubmit",

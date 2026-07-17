@@ -100,6 +100,12 @@ pub enum ContextRequest {
         cwd: Option<PathBuf>,
         scope: Option<String>,
         session_id: Option<String>,
+        /// Legacy field — the raw hook event never actually carried this key
+        /// (dead read on the adapter side, per
+        /// `.add/tasks/citation-detector/TASK.md` §0 GROUND), so the
+        /// citation-detector adapter update stops sending it.
+        /// `#[serde(default)]` keeps decoding for any caller that still does.
+        #[serde(default)]
         injected_memory_ids: Vec<String>,
         outcome: Option<String>,
         /// Stop-time citation detector (engram-soul-loop task 3, additive —
@@ -1012,13 +1018,17 @@ impl ContextService {
         session_id: Option<String>,
         injected_memory_ids: Vec<String>,
         outcome: Option<String>,
-        // RED-phase stub (engram-soul-loop task 3): the citation detector
-        // wiring lands in the GREEN commit. See
+        // engram-soul-loop task 3 — Stop-time citation detector. `None`, an
+        // unreadable path, or a session mismatch all fail open to an empty
+        // verdict list + a `detector: skipped_<reason>` meta row; see
         // `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
-        _transcript_path: Option<String>,
+        transcript_path: Option<String>,
     ) -> anyhow::Result<ContextResponse> {
+        let (verdicts, detector) =
+            grade_turn_feedback(session_id.as_deref(), transcript_path.as_deref());
+
         let content = format!(
-            "turn feedback\ninjected_memory_ids: {}\noutcome: {}",
+            "turn feedback\ninjected_memory_ids: {}\noutcome: {}\ndetector: {detector}",
             injected_memory_ids.join(","),
             outcome.unwrap_or_else(|| "unknown".to_string())
         );
@@ -1030,7 +1040,44 @@ impl ContextService {
             "injected_memory_ids".into(),
             Value::Array(injected_memory_ids.into_iter().map(Value::String).collect()),
         );
+        meta.insert("detector".into(), Value::String(detector.to_owned()));
+        meta.insert(
+            "verdicts".into(),
+            Value::Array(
+                verdicts.iter().map(|v| serde_json::to_value(v).unwrap_or(Value::Null)).collect(),
+            ),
+        );
         let lsn = self.capture_lightweight(scope, "lunaris:turn_feedback", content, meta).await?;
+
+        // Strong activation refs for cited / tool-call-graded memories only —
+        // an uncited/unattributed injection already carries its weak ref
+        // from inject time (trace_injection) and must not be double-counted
+        // here. Best-effort: log-and-continue on failure, same contract as
+        // trace_injection's activation write.
+        let signals: Vec<lunaris_core::activation::RefSignal> = verdicts
+            .iter()
+            .filter(|v| v.verdict == crate::citation::Verdict::Cited)
+            .map(|v| lunaris_core::activation::RefSignal {
+                id: v.id,
+                grain: v.grain,
+                strength: lunaris_core::activation::Strength::Strong,
+            })
+            .collect();
+        if !signals.is_empty() {
+            match self.handle_for_scope(scope).await {
+                Ok(handle) => {
+                    if let Err(err) =
+                        handle.scoped(scope.clone()).record_activation_refs(&signals).await
+                    {
+                        tracing::warn!(err = %err, "citation_detector_record_refs_failed");
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(err = %err, "citation_detector_handle_resolve_failed");
+                }
+            }
+        }
+
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
@@ -1210,6 +1257,41 @@ fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<S
     // (P0 cross-project bleed, 2026-07-14). Explicit request scope is handled
     // above; unpinned requests derive purely from cwd.
     Ok(crate::scope::resolve_no_env(&cwd_buf)?)
+}
+
+/// engram-soul-loop task 3 — Stop-time citation detector glue: read the
+/// turn's transcript (tail-bounded), guard against a resumed-session path
+/// reuse, and grade the injections. Fail-open at every step per §1 Reject:
+/// a missing/unreadable/foreign transcript or a session mismatch returns
+/// an empty verdict list with the matching `detector: skipped_<reason>`
+/// tag rather than propagating an error up the turn path.
+fn grade_turn_feedback(
+    session_id: Option<&str>,
+    transcript_path: Option<&str>,
+) -> (Vec<crate::citation::MemoryVerdict>, &'static str) {
+    let Some(path) = transcript_path else {
+        return (Vec::new(), "skipped_no_transcript");
+    };
+    let tail_bytes = std::env::var("LUNARIS_TRANSCRIPT_TAIL_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(crate::transcript::DEFAULT_TAIL_BYTES);
+    let transcript = match crate::transcript::read_turn_transcript(Path::new(path), tail_bytes) {
+        Ok(t) => t,
+        Err(err) => {
+            tracing::debug!(err = %err, path, "citation_detector_transcript_read_failed");
+            return (Vec::new(), "skipped_no_transcript");
+        }
+    };
+
+    if let Some(session_id) = session_id
+        && !transcript.session_ids_seen.is_empty()
+        && !transcript.session_ids_seen.contains(session_id)
+    {
+        return (Vec::new(), "skipped_session_mismatch");
+    }
+
+    (crate::citation::grade_injections(&transcript), "ok")
 }
 
 pub fn default_socket_path() -> anyhow::Result<PathBuf> {
@@ -2437,10 +2519,7 @@ mod tests {
             .await
             .expect("turn_feedback episode must exist");
         assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("skipped_no_transcript"));
-        assert_eq!(
-            meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()),
-            Some(0)
-        );
+        assert_eq!(meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()), Some(0));
     }
 
     /// A transcript whose session ids differ from the request's `session_id`
@@ -2470,14 +2549,8 @@ mod tests {
         let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
             .await
             .expect("turn_feedback episode must exist");
-        assert_eq!(
-            meta.get("detector").and_then(|d| d.as_str()),
-            Some("skipped_session_mismatch")
-        );
-        assert_eq!(
-            meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()),
-            Some(0)
-        );
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("skipped_session_mismatch"));
+        assert_eq!(meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()), Some(0));
         assert!(activation_record_exists(storage.as_ref(), &scope, fixture_m1()).await.is_none());
     }
 
@@ -2542,7 +2615,10 @@ mod tests {
             prefix: &[u8],
             as_of: Option<lunaris_core::Hlc>,
         ) -> Result<
-            futures::stream::BoxStream<'_, Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>>,
+            futures::stream::BoxStream<
+                '_,
+                Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+            >,
             lunaris_core::StorageError,
         > {
             self.inner.scan_range(scope, prefix, as_of).await
@@ -2574,7 +2650,10 @@ mod tests {
             topic: &str,
             partition: u16,
         ) -> Result<
-            futures::stream::BoxStream<'static, Result<lunaris_core::QueueMsg, lunaris_core::StorageError>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+            >,
             lunaris_core::StorageError,
         > {
             self.inner.subscribe(scope, group, topic, partition).await

@@ -43,10 +43,69 @@ pub struct MemoryVerdict {
 /// Grade every injection in `t` into a de-duplicated (one row per memory
 /// id) [`MemoryVerdict`] list, in first-seen order. Pure — takes no clock,
 /// no storage, no network; deterministic for a given `TurnTranscript`.
-pub fn grade_injections(_t: &TurnTranscript) -> Vec<MemoryVerdict> {
-    // RED-phase stub (engram-soul-loop task 3): implementation lands in the
-    // GREEN commit. See `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
-    unimplemented!("grade_injections: RED phase stub, implemented in the GREEN commit")
+pub fn grade_injections(t: &TurnTranscript) -> Vec<MemoryVerdict> {
+    let final_ngrams = ngrams(&tokenize(&t.final_assistant_text));
+
+    // Per-injection n-gram sets, positionally aligned with `t.injections`.
+    let injection_ngrams: Vec<HashSet<String>> =
+        t.injections.iter().map(|m| ngrams(&tokenize(&m.snippet))).collect();
+
+    // "Distinctive" = occurs in exactly one injected snippet, counted across
+    // ALL injections in this transcript (not per-memory).
+    let mut ngram_snippet_counts: HashMap<&str, u32> = HashMap::new();
+    for set in &injection_ngrams {
+        for ng in set {
+            *ngram_snippet_counts.entry(ng.as_str()).or_insert(0) += 1;
+        }
+    }
+
+    // tool_use_id -> is_error, last-write-wins if a transcript somehow
+    // carries duplicate tool_result rows for the same id.
+    let outcomes: HashMap<&str, Option<bool>> =
+        t.tool_outcomes.iter().map(|o| (o.tool_use_id.as_str(), o.is_error)).collect();
+
+    // rank: higher wins the per-id "best verdict" dedupe.
+    // 2 = Cited/ToolCall (tool success), 1 = Cited/Turn (text match),
+    // 0 = Uncited/Turn.
+    let mut best: HashMap<Ulid, (u8, MemoryVerdict)> = HashMap::new();
+    let mut order: Vec<Ulid> = Vec::new();
+
+    for (i, mem) in t.injections.iter().enumerate() {
+        let tool_success = matches!(
+            mem.tool_use_id.as_deref().map(|id| outcomes.get(id).copied().flatten()),
+            Some(Some(false))
+        );
+
+        let text_cited = injection_ngrams[i].iter().any(|ng| {
+            ngram_snippet_counts.get(ng.as_str()).copied() == Some(1) && final_ngrams.contains(ng)
+        });
+
+        let (verdict, grain, rank) = if tool_success {
+            (Verdict::Cited, Grain::ToolCall, 2u8)
+        } else if text_cited {
+            (Verdict::Cited, Grain::Turn, 1u8)
+        } else {
+            (Verdict::Uncited, Grain::Turn, 0u8)
+        };
+
+        let candidate =
+            MemoryVerdict { id: mem.id, verdict, grain, tool_use_id: mem.tool_use_id.clone() };
+
+        match best.get_mut(&mem.id) {
+            Some((best_rank, best_verdict)) => {
+                if rank > *best_rank {
+                    *best_rank = rank;
+                    *best_verdict = candidate;
+                }
+            }
+            None => {
+                order.push(mem.id);
+                best.insert(mem.id, (rank, candidate));
+            }
+        }
+    }
+
+    order.into_iter().filter_map(|id| best.remove(&id).map(|(_, v)| v)).collect()
 }
 
 /// Lowercase alnum tokenization with a small closed stopword set.
@@ -71,12 +130,12 @@ fn ngrams(tokens: &[String]) -> HashSet<String> {
 const STOPWORDS: &[&str] = &[
     "a", "an", "and", "the", "is", "are", "was", "were", "be", "been", "being", "to", "of", "in",
     "on", "at", "for", "with", "by", "from", "as", "that", "this", "these", "those", "it", "its",
-    "but", "or", "not", "no", "do", "does", "did", "has", "have", "had", "will", "would",
-    "should", "can", "could", "may", "might", "must", "shall", "i", "you", "he", "she", "we",
-    "they", "them", "his", "her", "their", "our", "your", "my", "me", "him", "us", "than", "then",
-    "so", "if", "into", "about", "over", "under", "before", "after", "up", "down", "out", "off",
-    "again", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
-    "few", "more", "most", "other", "some", "such", "only", "own", "same", "too", "very", "just",
+    "but", "or", "not", "no", "do", "does", "did", "has", "have", "had", "will", "would", "should",
+    "can", "could", "may", "might", "must", "shall", "i", "you", "he", "she", "we", "they", "them",
+    "his", "her", "their", "our", "your", "my", "me", "him", "us", "than", "then", "so", "if",
+    "into", "about", "over", "under", "before", "after", "up", "down", "out", "off", "again",
+    "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few",
+    "more", "most", "other", "some", "such", "only", "own", "same", "too", "very", "just",
 ];
 
 fn is_stopword(token: &str) -> bool {
@@ -157,7 +216,11 @@ mod tests {
         assert_eq!(v3.tool_use_id.as_deref(), Some("tool-3"));
         assert_eq!(v4.verdict, Verdict::Uncited);
         assert_eq!(v4.grain, Grain::Turn);
-        assert_eq!(v4.tool_use_id.as_deref(), Some("tool-4"), "uncited row still records tool_use_id");
+        assert_eq!(
+            v4.tool_use_id.as_deref(),
+            Some("tool-4"),
+            "uncited row still records tool_use_id"
+        );
     }
 
     #[test]
