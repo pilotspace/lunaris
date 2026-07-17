@@ -7,10 +7,12 @@
 //!   (`lunaris_core::snippet`, ≤ 260 chars) by default, or the raw stored
 //!   bytes (≤ 200 chars) when `raw: true`.
 
+use std::sync::Arc;
+
 use chrono::DateTime;
 use lunaris::Query;
 use lunaris_core::{Hlc, snippet, storage::types::Filter};
-use lunaris_retrieve::{Keyword, Vector};
+use lunaris_retrieve::{Keyword, LedgerBoostProvider, RetrievalBuilder, Vector};
 use serde::{Deserialize, Serialize};
 
 use crate::ServiceError;
@@ -171,22 +173,25 @@ pub async fn handle(
         .and(Keyword::bm25("chunks", candidate_k))
         .fuse_rrf(60)
         .top(candidate_k);
-    let hits = match scoped.dsl().with_root(root).execute(q.clone()).await {
-        Ok(hits) => hits,
-        Err(err) if is_keyword_not_supported(&err) => {
-            tracing::debug!(
-                scope = scope.as_str(),
-                "memory.recall keyword branch unsupported; falling back to vector-only"
-            );
-            scoped
-                .dsl()
-                .with_root(Vector::new("chunks", candidate_k))
+    let hits =
+        match with_activation_boost(scoped.dsl().with_root(root), lunaris).execute(q.clone()).await
+        {
+            Ok(hits) => hits,
+            Err(err) if is_keyword_not_supported(&err) => {
+                tracing::debug!(
+                    scope = scope.as_str(),
+                    "memory.recall keyword branch unsupported; falling back to vector-only"
+                );
+                with_activation_boost(
+                    scoped.dsl().with_root(Vector::new("chunks", candidate_k)),
+                    lunaris,
+                )
                 .execute(q)
                 .await
                 .map_err(ServiceError::LunarisEngine)?
-        }
-        Err(err) => return Err(ServiceError::LunarisEngine(err)),
-    };
+            }
+            Err(err) => return Err(ServiceError::LunarisEngine(err)),
+        };
 
     // Map hits to wire DTO with explicit type so the collector infers correctly.
     let recall_hits: Vec<RecallHit> = hits
@@ -220,6 +225,19 @@ pub async fn handle(
     );
 
     Ok(RecallResponse { hits: recall_hits })
+}
+
+/// ADD task activation-ledger — wire the persistent activation-ledger prior
+/// into the SERVICE recall path (the path the hook and MCP tools actually
+/// execute; built≠wired). Opt-out via `LUNARIS_ACTIVATION_BOOST=0`; the
+/// default SDK `Lunaris::recall()` / `.dsl()` surfaces stay unwired per the
+/// frozen contract, so library consumers are untouched.
+fn with_activation_boost(builder: RetrievalBuilder, lunaris: &Lunaris) -> RetrievalBuilder {
+    let enabled = std::env::var("LUNARIS_ACTIVATION_BOOST").map(|v| v != "0").unwrap_or(true);
+    if !enabled {
+        return builder;
+    }
+    builder.with_boost_provider(Arc::new(LedgerBoostProvider::new(lunaris.storage())))
 }
 
 /// Convert a 16-byte ULID to its canonical 26-char string representation.
@@ -349,6 +367,56 @@ mod tests {
         let top = &resp.hits[0];
         assert!(!top.episode_id.is_empty());
         assert!(!top.ingested_at.is_empty());
+    }
+
+    /// ADD task activation-ledger — built≠wired proof for the SERVICE recall
+    /// path: a strong-reinforced memory must outrank its equal-similarity
+    /// peer through `handle()` itself (the exact path the hook / MCP tools
+    /// execute), not just through an explicitly-wired test builder.
+    #[tokio::test]
+    async fn activation_boost_reranks_service_recall() {
+        use lunaris_core::activation::{Grain, RefSignal, Strength};
+
+        let (lunaris, scope) = make_engine("test-recall-actboost").await;
+        let scoped = lunaris.scoped(scope.clone());
+
+        // Two distinct episodes with IDENTICAL content → identical vectors
+        // (StubEmbedder is deterministic per text) and identical BM25.
+        for _ in 0..2 {
+            scoped
+                .ingest(EpisodeBuilder::new("test/src", "granite embedding activation corpus"))
+                .await
+                .unwrap();
+        }
+
+        let params = || RecallParams {
+            query: "granite activation corpus".into(),
+            k: 2,
+            filters: None,
+            as_of: None,
+            raw: false,
+        };
+        let base = handle(&lunaris, &scope, params()).await.unwrap();
+        assert_eq!(base.hits.len(), 2, "need both equal-similarity hits: {base:?}");
+        let loser = base.hits[1].episode_id.clone();
+
+        // Strong-reinforce the CURRENTLY-SECOND hit; only the ledger prior
+        // can explain a flip.
+        let id = ulid::Ulid::from_string(&loser).unwrap();
+        scoped
+            .record_activation_refs(&[
+                RefSignal { id, grain: Grain::Turn, strength: Strength::Strong },
+                RefSignal { id, grain: Grain::ToolCall, strength: Strength::Strong },
+            ])
+            .await
+            .unwrap();
+
+        let after = handle(&lunaris, &scope, params()).await.unwrap();
+        assert_eq!(
+            after.hits[0].episode_id, loser,
+            "reinforced memory must outrank its equal-similarity peer through \
+             the service recall path (LUNARIS_ACTIVATION_BOOST default-on): {after:?}"
+        );
     }
 
     /// ADD task recall-llm-snippets (FROZEN @ v1): default hit content is the
