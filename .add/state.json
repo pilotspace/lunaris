@@ -1247,12 +1247,23 @@
     },
     "citation-detector": {
       "title": "Citation Detector",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-17T10:18:20+00:00",
-      "updated": "2026-07-17T10:26:06+00:00"
+      "updated": "2026-07-17T12:40:11+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "52368d86887a342c260fcaf8d5a52b0f",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          ".add/tasks/citation-detector/src/"
+        ],
+        "snapshot_md5": "3f5e58eb55035c89afb867a0cbf47844"
+      }
     }
   },
   "milestones": {
@@ -1314,7 +1325,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T10:26:06+00:00",
+  "updated": "2026-07-17T12:40:11+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
