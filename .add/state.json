@@ -1327,12 +1327,23 @@
     },
     "staleness-pass": {
       "title": "Staleness Pass",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-17T16:27:13+00:00",
-      "updated": "2026-07-17T16:29:34+00:00"
+      "updated": "2026-07-17T18:01:00+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "3b85d915473592cbab4ffba26017b0e4",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris-core/src/keyspace.rs"
+        ],
+        "snapshot_md5": "4e11ee9ccacb1ec8f787f7e23715942e"
+      }
     }
   },
   "milestones": {
@@ -1394,7 +1405,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T16:29:34+00:00",
+  "updated": "2026-07-17T18:01:00+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
