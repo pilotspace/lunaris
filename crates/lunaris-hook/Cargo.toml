@@ -55,6 +55,9 @@ tracing-subscriber = { workspace = true }
 blake3 = { workspace = true }
 dirs   = { workspace = true }
 
+# git_anchor.rs — TTL cache lock (UNSAFE_POLICY: parking_lot over std::sync::*Lock)
+parking_lot = { workspace = true }
+
 # HOOK-05 — hex encoding of blake3 dedupe keys
 hex = { workspace = true }
 
@@ -86,7 +89,6 @@ tempfile                 = "3"
 tokio                    = { workspace = true, features = ["process", "time", "io-util"] }
 serde_json               = { workspace = true }
 lunaris-core             = { workspace = true }
-parking_lot              = { workspace = true }
 # hook-recall-graph-hybrid — recording-port shape pin + graph-ON fact seeding
 async-trait              = { workspace = true }
 lunaris-extract          = { workspace = true }

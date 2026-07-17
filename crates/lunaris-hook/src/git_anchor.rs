@@ -2,13 +2,114 @@
 //! for a capture's cwd so every episode can carry a verifiable code anchor
 //! (`meta.git_head`). Fail-open everywhere: any git failure yields `None`
 //! and never delays a capture beyond the 300ms subprocess cap.
-//!
-//! RED-phase placeholder (`.add/tasks/git-anchoring/TASK.md` §4 TESTS): the
-//! production `head_for_cwd` / cache / `ttl_cache_len` land in the GREEN
-//! commit. Until then this module has no non-test items, so `cargo build`
-//! still succeeds (an empty module) but `cargo test -p lunaris-hook` fails to
-//! compile this file's test suite — the sanctioned "missing-module compile
-//! error" RED evidence for a brand-new module (contract freeze note).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
+
+/// Cache entry TTL (`.add/tasks/git-anchoring/TASK.md` §3 CONTRACT). Freeze
+/// note: this is a guess; correctness is unaffected — HEAD staleness within
+/// this window is indistinguishable from a capture-time race anyway.
+const TTL: Duration = Duration::from_secs(5);
+/// Opportunistic prune threshold — bounds unbounded per-cwd growth without a
+/// background sweeper (§1 Reject: "unbounded cache growth -> forbidden").
+const CAP: usize = 64;
+/// Hard subprocess cap: a hung/slow `git` must never delay a capture beyond
+/// this (§1 Reject: a git failure must never surface as a capture error, and
+/// must never block beyond this bound).
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// `(seen_at, resolved_head)` — the contract's frozen cache value shape.
+type CacheEntry = (Instant, Option<String>);
+
+static CACHE: LazyLock<Mutex<HashMap<PathBuf, CacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Resolve `git rev-parse HEAD` for `cwd`, TTL-cached per canonicalized path.
+/// Returns `None` on ANY failure: no repo, no `git` binary, non-zero exit,
+/// non-hex output, or timeout — never an `Err`, so callers can stamp
+/// `meta.git_head` without ever failing the capture.
+///
+/// Lock discipline (UNSAFE_POLICY / workspace convention): the cache lock is
+/// NEVER held across the subprocess `.await`. The fast path checks and drops
+/// the guard before any `.await`; the slow path resolves with no lock held,
+/// then re-locks only to insert.
+pub(crate) async fn head_for_cwd(cwd: &Path) -> Option<String> {
+    let key = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+
+    {
+        let cache = CACHE.lock();
+        if let Some((seen, value)) = cache.get(&key)
+            && seen.elapsed() < TTL
+        {
+            return value.clone();
+        }
+        // guard dropped here — never held across the subprocess await below
+    }
+
+    let resolved = resolve_head(&key).await;
+
+    let mut cache = CACHE.lock();
+    if cache.len() > CAP {
+        let now = Instant::now();
+        cache.retain(|_, (seen, _)| now.duration_since(*seen) < TTL);
+    }
+    cache.insert(key, (Instant::now(), resolved.clone()));
+    resolved
+}
+
+/// Spawn `git rev-parse HEAD` in `cwd` under a hard 300ms cap. Any failure
+/// mode (spawn error, timeout, non-zero exit, non-utf8, non-40-hex output)
+/// collapses to `None` — this fn never panics and never propagates an error.
+async fn resolve_head(cwd: &Path) -> Option<String> {
+    #[cfg(test)]
+    record_resolve_call_for_test(cwd);
+
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+
+    let output = tokio::time::timeout(SUBPROCESS_TIMEOUT, cmd.output()).await.ok()?.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    let is_40_hex = trimmed.len() == 40 && trimmed.bytes().all(|b| b.is_ascii_hexdigit());
+    if is_40_hex { Some(trimmed.to_owned()) } else { None }
+}
+
+/// Test seam (`.add/tasks/git-anchoring/TASK.md` §3 CONTRACT): current cache
+/// size, observable for TTL/prune assertions.
+#[cfg(test)]
+pub(crate) fn ttl_cache_len() -> usize {
+    CACHE.lock().len()
+}
+
+/// Test-only per-key subprocess invocation counter — deterministic proof
+/// that a within-TTL `head_for_cwd` call skips `resolve_head` entirely,
+/// immune to unrelated tests hammering the SAME process-wide `CACHE` static
+/// concurrently on their OWN (distinct tempdir) keys.
+#[cfg(test)]
+static RESOLVE_CALLS: LazyLock<Mutex<HashMap<PathBuf, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[cfg(test)]
+fn record_resolve_call_for_test(cwd: &Path) {
+    *RESOLVE_CALLS.lock().entry(cwd.to_path_buf()).or_insert(0) += 1;
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_calls_for_test(cwd: &Path) -> usize {
+    RESOLVE_CALLS.lock().get(cwd).copied().unwrap_or(0)
+}
 
 #[cfg(test)]
 mod tests {
@@ -71,7 +172,10 @@ mod tests {
     async fn none_outside_repo() {
         let dir = tempfile::tempdir().expect("tempdir");
         let resolved = head_for_cwd(dir.path()).await;
-        assert!(resolved.is_none(), "a plain (non-repo) cwd must resolve to None, got {resolved:?}");
+        assert!(
+            resolved.is_none(),
+            "a plain (non-repo) cwd must resolve to None, got {resolved:?}"
+        );
     }
 
     /// A second `head_for_cwd` call for the SAME cwd inside the 5s TTL must

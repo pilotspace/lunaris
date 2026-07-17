@@ -88,6 +88,12 @@ pub enum ContextRequest {
         session_id: Option<String>,
         tool: Option<String>,
         payload: Value,
+        /// engram-soul-loop task 5 (git-anchoring) — paths touched by this
+        /// tool call, forwarded verbatim from the adapter's `extract_paths`.
+        /// `#[serde(default)]` keeps a pre-upgrade adapter's wire (no
+        /// `paths` key) decoding exactly as before.
+        #[serde(default)]
+        paths: Option<Vec<String>>,
     },
     CaptureToolResult {
         cwd: Option<PathBuf>,
@@ -95,6 +101,9 @@ pub enum ContextRequest {
         session_id: Option<String>,
         tool: Option<String>,
         payload: Value,
+        /// See `CaptureToolCall.paths` above.
+        #[serde(default)]
+        paths: Option<Vec<String>>,
     },
     TurnFeedback {
         cwd: Option<PathBuf>,
@@ -360,6 +369,7 @@ impl ContextService {
                     max_chars,
                     min_score,
                     None,
+                    cwd.as_deref(),
                 )
                 .await
             }
@@ -412,15 +422,24 @@ impl ContextService {
                     max_chars,
                     min_score,
                     Some(tool_context),
+                    cwd.as_deref(),
                 )
                 .await
             }
-            ContextRequest::CaptureToolCall { cwd, scope, session_id, tool, payload } => {
+            ContextRequest::CaptureToolCall { cwd, scope, session_id, tool, payload, paths } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
-                self.spawn_capture_tool(&scope, "lunaris:tool_call:pre", session_id, tool, payload);
+                self.spawn_capture_tool(
+                    &scope,
+                    "lunaris:tool_call:pre",
+                    session_id,
+                    tool,
+                    payload,
+                    paths,
+                    cwd,
+                );
                 Ok(ContextResponse::empty())
             }
-            ContextRequest::CaptureToolResult { cwd, scope, session_id, tool, payload } => {
+            ContextRequest::CaptureToolResult { cwd, scope, session_id, tool, payload, paths } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
                 self.spawn_capture_tool(
                     &scope,
@@ -428,6 +447,8 @@ impl ContextService {
                     session_id,
                     tool,
                     payload,
+                    paths,
+                    cwd,
                 );
                 Ok(ContextResponse::empty())
             }
@@ -446,6 +467,7 @@ impl ContextService {
                     injected_memory_ids,
                     outcome,
                     transcript_path,
+                    cwd.as_deref(),
                 )
                 .await
             }
@@ -491,6 +513,7 @@ impl ContextService {
                     max_chars,
                     None,
                     memories,
+                    cwd.as_deref(),
                 )
                 .await
             }
@@ -604,6 +627,7 @@ impl ContextService {
         max_chars: usize,
         min_score: f32,
         tool_context: Option<ToolContext>,
+        cwd: Option<&Path>,
     ) -> anyhow::Result<ContextResponse> {
         if text.trim().is_empty() {
             return Ok(ContextResponse::empty());
@@ -669,7 +693,7 @@ impl ContextService {
                 );
             }
             return self
-                .finish_recall(scope, phase, session_id, max_chars, tool_context, memories)
+                .finish_recall(scope, phase, session_id, max_chars, tool_context, memories, cwd)
                 .await;
         }
 
@@ -766,11 +790,12 @@ impl ContextService {
             memories = curate_context_memories_lossy(keyword_candidates, max_hits);
         }
 
-        self.finish_recall(scope, phase, session_id, max_chars, tool_context, memories).await
+        self.finish_recall(scope, phase, session_id, max_chars, tool_context, memories, cwd).await
     }
 
     /// Shared response tail for BOTH recall paths: empty short-circuit,
     /// render, fire-and-forget injection trace.
+    #[allow(clippy::too_many_arguments)]
     async fn finish_recall(
         &self,
         scope: &Scope,
@@ -779,6 +804,7 @@ impl ContextService {
         max_chars: usize,
         tool_context: Option<ToolContext>,
         memories: Vec<ContextMemory>,
+        cwd: Option<&Path>,
     ) -> anyhow::Result<ContextResponse> {
         if memories.is_empty() {
             return Ok(ContextResponse::empty());
@@ -793,6 +819,7 @@ impl ContextService {
             session_id.map(str::to_owned),
             memories.iter().map(|m| m.episode_id.clone()).collect(),
             rendered_context.len(),
+            cwd.map(Path::to_path_buf),
         );
 
         Ok(ContextResponse {
@@ -973,6 +1000,7 @@ impl ContextService {
         Ok(embedding)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn capture_tool(
         &self,
         scope: &Scope,
@@ -980,6 +1008,10 @@ impl ContextService {
         session_id: Option<String>,
         tool: Option<String>,
         payload: Value,
+        // engram-soul-loop task 5 (git-anchoring) — wire paths (adapter's
+        // extract_paths); stamped as meta.files when Some(non-empty).
+        paths: Option<Vec<String>>,
+        cwd: Option<&Path>,
     ) -> anyhow::Result<ContextResponse> {
         let content = summarize_json_payload(&payload, 4000);
         let mut meta = Map::new();
@@ -990,10 +1022,17 @@ impl ContextService {
             meta.insert("tool_name".into(), Value::String(tool));
         }
         meta.insert("capture_kind".into(), Value::String(source.to_owned()));
-        let lsn = self.capture_lightweight(scope, source, content, meta).await?;
+        if let Some(paths) = paths.filter(|p| !p.is_empty()) {
+            meta.insert(
+                "files".into(),
+                Value::Array(paths.into_iter().map(Value::String).collect()),
+            );
+        }
+        let lsn = self.capture_lightweight(scope, source, content, meta, cwd).await?;
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_capture_tool(
         &self,
         scope: &Scope,
@@ -1001,18 +1040,23 @@ impl ContextService {
         session_id: Option<String>,
         tool: Option<String>,
         payload: Value,
+        paths: Option<Vec<String>>,
+        cwd: Option<PathBuf>,
     ) {
         let service = self.clone();
         let scope = scope.clone();
         let source = source.to_owned();
         tokio::spawn(async move {
-            if let Err(err) = service.capture_tool(&scope, &source, session_id, tool, payload).await
+            if let Err(err) = service
+                .capture_tool(&scope, &source, session_id, tool, payload, paths, cwd.as_deref())
+                .await
             {
                 tracing::debug!(err = %err, "lunaris tool capture write failed");
             }
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn capture_feedback(
         &self,
         scope: &Scope,
@@ -1024,6 +1068,9 @@ impl ContextService {
         // verdict list + a `detector: skipped_<reason>` meta row; see
         // `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
         transcript_path: Option<String>,
+        // engram-soul-loop task 5 (git-anchoring) — stamps meta.git_head
+        // when resolvable; see `capture_lightweight`.
+        cwd: Option<&Path>,
     ) -> anyhow::Result<ContextResponse> {
         // spawn_blocking: the grader does synchronous file IO (up to the
         // tail budget, 4 MiB default) — keep it off the async turn path's
@@ -1071,7 +1118,8 @@ impl ContextService {
         {
             meta.insert("transcript_stats".into(), value);
         }
-        let lsn = self.capture_lightweight(scope, "lunaris:turn_feedback", content, meta).await?;
+        let lsn =
+            self.capture_lightweight(scope, "lunaris:turn_feedback", content, meta, cwd).await?;
 
         // Strong activation refs for cited / tool-call-graded memories only —
         // an uncited/unattributed injection already carries its weak ref
@@ -1105,6 +1153,7 @@ impl ContextService {
         Ok(ContextResponse { lsn: Some(lsn), ..ContextResponse::empty() })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn trace_injection(
         &self,
         scope: &Scope,
@@ -1116,6 +1165,9 @@ impl ContextService {
         // `finish_recall` spawn site: the REAL injected payload size, not a
         // value recomputed here from `memory_ids`.
         injected_chars: usize,
+        // engram-soul-loop task 5 (git-anchoring) — stamps meta.git_head
+        // when resolvable; see `capture_lightweight`.
+        cwd: Option<&Path>,
     ) -> anyhow::Result<()> {
         let mut meta = Map::new();
         meta.insert("injection_id".into(), Value::String(injection_id.to_owned()));
@@ -1133,7 +1185,7 @@ impl ContextService {
             "memory injection {injection_id}\nphase: {phase}\nmemory_ids: {}",
             memory_ids.join(",")
         );
-        self.capture_lightweight(scope, "lunaris:memory_injection", content, meta).await?;
+        self.capture_lightweight(scope, "lunaris:memory_injection", content, meta, cwd).await?;
 
         // ADD task activation-ledger — production writer v1: every injected
         // memory id gets a weak turn-grain activation ref. Best-effort: a
@@ -1166,16 +1218,27 @@ impl ContextService {
         Ok(())
     }
 
+    /// The SINGLE choke point every capture goes through (`capture_tool`,
+    /// `trace_injection`, `capture_feedback`). `cwd` is engram-soul-loop
+    /// task 5 (git-anchoring): when `Some` and the repo HEAD resolves, it
+    /// stamps `meta.git_head` — fail-open, never delays or fails the
+    /// capture beyond `git_anchor`'s own 300ms subprocess cap.
     async fn capture_lightweight(
         &self,
         scope: &Scope,
         source: &str,
         content: String,
-        metadata: Map<String, Value>,
+        mut metadata: Map<String, Value>,
+        cwd: Option<&Path>,
     ) -> anyhow::Result<Lsn> {
         let storage = self.storage_for_scope(scope).await?;
         let clock = HlcClock::new(0);
         let mut episode = Episode::new(scope.clone(), source.to_owned(), content, &clock);
+        if let Some(cwd) = cwd
+            && let Some(head) = crate::git_anchor::head_for_cwd(cwd).await
+        {
+            metadata.insert("git_head".into(), Value::String(head));
+        }
         episode.metadata = metadata;
         let embedder = NoopEmbedder::default();
         let receipt = lunaris_ingest::ingest_episode_with_receipt(
@@ -1238,6 +1301,7 @@ impl ContextService {
         workers.insert(worker_key, handle);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_trace_injection(
         &self,
         scope: &Scope,
@@ -1246,6 +1310,7 @@ impl ContextService {
         session_id: Option<String>,
         memory_ids: Vec<String>,
         injected_chars: usize,
+        cwd: Option<PathBuf>,
     ) {
         let service = self.clone();
         let scope = scope.clone();
@@ -1259,6 +1324,7 @@ impl ContextService {
                     session_id.as_deref(),
                     memory_ids,
                     injected_chars,
+                    cwd.as_deref(),
                 )
                 .await
             {
@@ -3110,7 +3176,10 @@ mod tests {
         assert_eq!(files, vec!["src/lib.rs".to_owned()]);
 
         // Pre-existing meta keys are unchanged.
-        assert_eq!(meta.get("capture_kind").and_then(|v| v.as_str()), Some("lunaris:tool_call:post"));
+        assert_eq!(
+            meta.get("capture_kind").and_then(|v| v.as_str()),
+            Some("lunaris:tool_call:post")
+        );
         assert_eq!(meta.get("tool_name").and_then(|v| v.as_str()), Some("Edit"));
         assert_eq!(meta.get("session_id").and_then(|v| v.as_str()), Some("sess-git-anchor"));
     }
@@ -3143,8 +3212,14 @@ mod tests {
             .await
             .expect("lunaris:tool_call:pre episode must land");
 
-        assert!(meta.get("git_head").is_none(), "non-repo capture must carry NO git_head, got {meta:?}");
-        assert!(meta.get("files").is_none(), "capture with no wire paths must carry NO files, got {meta:?}");
+        assert!(
+            meta.get("git_head").is_none(),
+            "non-repo capture must carry NO git_head, got {meta:?}"
+        );
+        assert!(
+            meta.get("files").is_none(),
+            "capture with no wire paths must carry NO files, got {meta:?}"
+        );
     }
 
     /// Scenario 3: a capture whose `cwd` IS a git repo but whose wire `paths`
@@ -3177,7 +3252,10 @@ mod tests {
             .expect("lunaris:tool_call:pre episode must land");
 
         assert_eq!(meta.get("git_head").and_then(|v| v.as_str()), Some(expected_head.as_str()));
-        assert!(meta.get("files").is_none(), "absent wire paths must carry NO files key, got {meta:?}");
+        assert!(
+            meta.get("files").is_none(),
+            "absent wire paths must carry NO files key, got {meta:?}"
+        );
     }
 
     /// Scenario 5: a `turn_feedback` capture with `cwd` inside a git repo
