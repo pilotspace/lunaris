@@ -5,6 +5,67 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## Unreleased
 
+## [0.6.0-rc.2] — 2026-07-17
+
+Second release candidate — fixes two P0-class SDK defects found while
+re-validating rc.1 (silent zero-vector recall in the shipped wheels/binaries,
+and a deterministic crash at Python process exit), unifies the Moon processor
+inside `lunaris-contextd`, and bumps the vendored Moon to v0.8.0.
+
+### Fixed
+
+- **SDK zero-vector P0 (PR #61, `48ec406`)** — `lunaris-py` / `lunaris-ts`
+  never forwarded the `llamacpp` (and `metal`/`cuda`/`vulkan`) features to the
+  umbrella `lunaris` crate, so every shipped wheel / `.node` binary silently
+  fell back to `NoopEmbedder`: default `open()` returned all-zero vectors and
+  hybrid recall ranked by BM25 + tie-break only. Both manifests now forward
+  the features, pinned by a manifest guard
+  (`crates/lunaris-core/tests/sdk_feature_forwarding.rs`) and proven at
+  runtime (real semantic scores; recovery TESTs 1–3 pass on the fixed wheel).
+- **Python exit crash (PR #64)** — any Python worker that loaded the
+  llama.cpp embedder aborted with SIGABRT at normal process exit
+  (`GGML_ASSERT([rsets->data count] == 0)` in ggml-metal's static
+  destructor). `lunaris-llamacpp` now parks engine state in a takeable
+  teardown registry; the Python package auto-registers
+  `shutdown_inference()` with `atexit`, so Metal buffers are freed before
+  C++ static destructors run. Post-teardown calls return a typed `Closed`
+  error. A subprocess regression test asserts exit code 0 after a real embed.
+- **Legacy `codex:*` feedback leak (PR #65)** — `excluded_context_source`
+  exact-matched the four `lunaris:*` lifecycle literals only, so episodes
+  stored before the 2026-07-14 source-prefix rename leaked
+  `codex:turn_feedback` / `codex:memory_injection` records into prompt
+  injections. The predicate now matches the lifecycle kind for any origin
+  prefix; negatives pin that `tool_call` / `decision` / `edit` sources stay
+  injectable.
+- **Installer Moon identity probe (PR #63)** — `setup-lunaris-agents.py`
+  defaulted to port 6380 (the ai-proxy Redis on some boxes); it now defaults
+  to 6381 and verifies the endpoint actually speaks Moon (PING + `FT._LIST`)
+  before wiring hooks, rejecting a foreign Redis with an actionable error.
+- **`LUNARIS_EMBED_BATCH` no longer latched forever (PR #63, closes #49)** —
+  the ingest batch-size env override is re-read on every call instead of
+  cached in a once-init static.
+- **Codex adapter fail-open (`2e475b7`)** — missing hook binaries no longer
+  hard-fail the codex adapter.
+- **Inference watchdog (`0deb6c4`)** — wedged Metal embeds are bounded; the
+  hook exits 70 to self-heal instead of hanging the session.
+
+### Changed
+
+- **contextd embedded-Moon unification (PR #62)** — the Moon processor now
+  runs inside the `lunaris-contextd` process (discovery file + loopback-only
+  RESP-PING probe); the hook path no longer needs a separately launched Moon.
+- **Vendored Moon v0.7.1 → v0.8.0** (plus the dashtable recovery fix); the
+  recovery harness now probes the MQ / temporal / graph planes and the #69
+  upgrade-replay mode.
+
+### CI / build
+
+- npm pre-release publishes route to the `next` dist-tag.
+- The eval-gauntlet workflow is `workflow_dispatch`-only while the
+  self-hosted runner pool is empty (a guard test pins the trigger set).
+- deps: crossbeam-epoch 0.9.20 (RUSTSEC-2026-0204), spin 0.9.9 (yanked
+  upstream).
+
 ## [0.6.0-rc.1] — 2026-07-15
 
 First release candidate for 0.6.0 — the **llama.cpp-only inference cutover**

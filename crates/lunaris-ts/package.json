@@ -1,6 +1,6 @@
 {
   "name": "@pilotspace/lunaris",
-  "version": "0.6.0-rc.1",
+  "version": "0.6.0-rc.2",
   "description": "Lunaris — agent memory engine (TypeScript bindings, napi-rs 3.x).",
   "main": "index.js",
   "types": "index.d.ts",
