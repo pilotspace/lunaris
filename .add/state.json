@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "context-savings-telemetry",
+  "active_task": "memory-feedback-tool",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1284,6 +1284,15 @@
         ],
         "snapshot_md5": "9210735147c17a4c229ed9b5c9c4f47a"
       }
+    },
+    "memory-feedback-tool": {
+      "title": "Memory Feedback Tool",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-17T13:49:53+00:00",
+      "updated": "2026-07-17T13:53:41+00:00"
     }
   },
   "milestones": {
@@ -1345,7 +1354,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T13:33:38+00:00",
+  "updated": "2026-07-17T13:53:41+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
