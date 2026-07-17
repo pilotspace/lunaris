@@ -521,6 +521,19 @@ impl ContextService {
         self.handles.lock().await.insert(scope.as_str().to_owned(), handle);
     }
 
+    /// Test seam (ADD task activation-ledger): preload the per-scope
+    /// `storage_for_scope` cache so `capture_lightweight` (used by
+    /// `trace_injection` / `capture_feedback` / `capture_tool`) and
+    /// `handle_for_scope`'s engine observe the SAME backing store in tests —
+    /// mirrors production, where both caches resolve the same persistent
+    /// URL. Without this, a test-seeded `handle_for_scope` entry and a
+    /// lazily-resolved `storage_for_scope` entry would be two independent
+    /// `memory://` databases. Production code never calls this.
+    #[cfg(test)]
+    pub(crate) async fn insert_storage_for_test(&self, scope: &Scope, storage: Arc<dyn StoragePort>) {
+        self.storages.lock().await.insert(scope.as_str().to_owned(), storage);
+    }
+
     async fn handle_for_scope(&self, scope: &Scope) -> anyhow::Result<Arc<Lunaris>> {
         let key = scope.as_str().to_owned();
         if let Some(existing) = self.handles.lock().await.get(&key).cloned() {
@@ -2152,5 +2165,70 @@ mod tests {
         {
             assert!(!excluded_context_source(source), "{source} must stay injectable");
         }
+    }
+
+    // ── ADD task activation-ledger — scenario 7: hook injection emits weak
+    //    refs on the production path ─────────────────────────────────────
+
+    /// `trace_injection` must, after its `lunaris:memory_injection` capture
+    /// succeeds, emit a weak turn-grain activation ref for every injected
+    /// memory id via the engine's `record_activation_refs`. Uses
+    /// `insert_storage_for_test` so `handle_for_scope` (the ledger writer)
+    /// and `storage_for_scope` (the capture writer) observe the SAME
+    /// backing store — otherwise two independent `memory://` databases
+    /// would make this test unable to observe either write.
+    #[tokio::test]
+    async fn trace_injection_emits_weak_activation_refs() {
+        let (svc, scope) = service_with_seeded_scope("test-activation-inject").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let id1 = ulid::Ulid::new();
+        let id2 = ulid::Ulid::new();
+
+        svc.trace_injection(
+            &scope,
+            "inj-1",
+            "prompt",
+            None,
+            vec![id1.to_string(), id2.to_string()],
+        )
+        .await
+        .expect("trace_injection must succeed");
+
+        let storage = handle.storage();
+        let clock = HlcClock::new(0);
+        for id in [id1, id2] {
+            let key = lunaris_core::keyspace::activation_key(&scope, id);
+            let row = storage
+                .read_as_of(&scope, &key, clock.tick())
+                .await
+                .expect("read_as_of must not error")
+                .unwrap_or_else(|| panic!("activation record must exist for {id}"));
+            let record: lunaris_core::activation::ActivationRecord =
+                serde_json::from_slice(&row.value).expect("activation record must decode");
+            assert_eq!(record.n, 1);
+            assert_eq!(record.last_grain, lunaris_core::activation::Grain::Turn);
+            assert_eq!(record.last_strength, lunaris_core::activation::Strength::Weak);
+        }
+
+        // Capture unchanged: the `lunaris:memory_injection` episode was
+        // still written exactly as before — scan the scope's episode
+        // prefix and confirm one matches that source.
+        use futures::StreamExt;
+        let mut stream = storage
+            .scan_range(&scope, &lunaris_core::keyspace::episode_prefix(&scope), None)
+            .await
+            .expect("scan_range must not error");
+        let mut found_injection_capture = false;
+        while let Some(item) = stream.next().await {
+            let (_, value) = item.expect("row read must not error");
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&value)
+                && v.get("source").and_then(|s| s.as_str()) == Some("lunaris:memory_injection")
+            {
+                found_injection_capture = true;
+            }
+        }
+        assert!(found_injection_capture, "lunaris:memory_injection capture must still be written");
     }
 }
