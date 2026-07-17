@@ -89,6 +89,10 @@ pub enum MemoryRequest {
         scope: String,
         params: crate::record_edit::RecordEditParams,
     },
+    Feedback {
+        scope: String,
+        params: crate::feedback::FeedbackParams,
+    },
     Status {
         scope: String,
     },
@@ -124,6 +128,7 @@ impl MemoryRequest {
             | MemoryRequest::Forget { scope, .. }
             | MemoryRequest::RecordDecision { scope, .. }
             | MemoryRequest::RecordEdit { scope, .. }
+            | MemoryRequest::Feedback { scope, .. }
             | MemoryRequest::Status { scope, .. }
             | MemoryRequest::ScratchpadWrite { scope, .. }
             | MemoryRequest::ScratchpadRead { scope, .. }
@@ -141,6 +146,7 @@ impl MemoryRequest {
             MemoryRequest::Forget { .. } => "forget",
             MemoryRequest::RecordDecision { .. } => "record_decision",
             MemoryRequest::RecordEdit { .. } => "record_edit",
+            MemoryRequest::Feedback { .. } => "feedback",
             MemoryRequest::Status { .. } => "status",
             MemoryRequest::ScratchpadWrite { .. } => "scratchpad_write",
             MemoryRequest::ScratchpadRead { .. } => "scratchpad_read",
@@ -206,6 +212,9 @@ pub async fn dispatch(
         }
         MemoryRequest::RecordEdit { params, .. } => {
             to_value(crate::record_edit::handle(lunaris, scope, params).await?)
+        }
+        MemoryRequest::Feedback { params, .. } => {
+            to_value(crate::feedback::handle(lunaris, scope, params).await?)
         }
         MemoryRequest::Status { .. } => {
             to_value(crate::status::handle(lunaris, scope, crate::status::StatusParams {}).await?)

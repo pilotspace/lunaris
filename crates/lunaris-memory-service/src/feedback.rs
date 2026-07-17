@@ -139,14 +139,78 @@ struct FeedbackPayload<'a> {
 ///    ledger failure degrades to `activation_applied: false` — the episode
 ///    already landed, so this handler never returns `Err` past this point.
 pub async fn handle(
-    _lunaris: &Lunaris,
-    _scope: &Scope,
-    _params: FeedbackParams,
+    lunaris: &Lunaris,
+    scope: &Scope,
+    params: FeedbackParams,
 ) -> Result<FeedbackResponse, ServiceError> {
-    // RED commit (engram-soul-loop task 4): behavior lands in the GREEN
-    // commit. This stub exists only so the DTO shapes above are exercised
-    // by the tests below and the crate compiles.
-    todo!("memory.feedback::handle — implemented in the GREEN commit")
+    let memory_id = Ulid::from_string(&params.memory_id)
+        .map_err(|_| ServiceError::InvalidInput("invalid memory_id".into()))?;
+    let reason = params.reason.trim();
+    if reason.is_empty() {
+        return Err(ServiceError::InvalidInput("reason required".into()));
+    }
+
+    let payload =
+        FeedbackPayload { memory_id: &params.memory_id, sentiment: params.sentiment, reason };
+    let content = serde_json::to_string(&payload)
+        .map_err(|e| ServiceError::InvalidInput(format!("serialize feedback payload: {e}")))?;
+
+    let mut meta = serde_json::Map::new();
+    meta.insert("kind".into(), serde_json::Value::String("feedback".into()));
+    meta.insert(
+        "sentiment".into(),
+        serde_json::Value::String(params.sentiment.as_str().to_owned()),
+    );
+    meta.insert("memory_id".into(), serde_json::Value::String(params.memory_id.clone()));
+
+    let mut builder = EpisodeBuilder::new(FEEDBACK_SOURCE, content);
+    builder = builder.metadata(meta);
+
+    // Re-derive ScopedLunaris per call — never cache it across calls.
+    let scoped = lunaris.scoped(scope.clone());
+
+    let (lsn, was_duplicate) = if let Some(ref key) = params.dedupe_key {
+        // HOOK-05 idempotent path: check dedupe key before writing.
+        // INGEST-04: the single atomic_write lives inside ingest_idempotent -> ingest.
+        let (lsn, kind) = scoped.ingest_idempotent(builder, key).await?;
+        (lsn, matches!(kind, IngestKind::Duplicate(_)))
+    } else {
+        // INGEST-04: the single atomic_write lives inside ScopedLunaris::ingest.
+        (scoped.ingest(builder).await?, false)
+    };
+
+    // Replay must not double-count (§3 CONTRACT): a dedupe hit skips the
+    // ledger signal entirely rather than re-applying it.
+    let activation_applied = if was_duplicate {
+        false
+    } else {
+        let signal =
+            RefSignal { id: memory_id, grain: Grain::Turn, strength: params.sentiment.strength() };
+        match scoped.record_activation_refs(&[signal]).await {
+            Ok(()) => true,
+            Err(e) => {
+                // The episode already landed — a ledger write failure is a
+                // best-effort degradation, never an error past this point.
+                tracing::warn!(
+                    err = %e,
+                    scope = scope.as_str(),
+                    memory_id = %memory_id,
+                    "memory.feedback activation write failed — episode already durable, degrading",
+                );
+                false
+            }
+        }
+    };
+
+    tracing::debug!(
+        scope = scope.as_str(),
+        lsn = %lsn,
+        was_duplicate,
+        activation_applied,
+        "memory.feedback committed",
+    );
+
+    Ok(FeedbackResponse { lsn: lsn.to_string(), was_duplicate, activation_applied })
 }
 
 #[cfg(test)]
@@ -166,7 +230,11 @@ mod tests {
         (lunaris, scope)
     }
 
-    async fn read_activation(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> Option<ActivationRecord> {
+    async fn read_activation(
+        lunaris: &Lunaris,
+        scope: &Scope,
+        id: Ulid,
+    ) -> Option<ActivationRecord> {
         let key = lunaris_core::keyspace::activation_key(scope, id);
         let clock = lunaris_core::HlcClock::new(0);
         lunaris
@@ -304,7 +372,8 @@ mod tests {
             reason: "   ".into(),
             dedupe_key: None,
         };
-        let err = handle(&lunaris, &scope, params).await.expect_err("empty reason must be rejected");
+        let err =
+            handle(&lunaris, &scope, params).await.expect_err("empty reason must be rejected");
         assert!(matches!(err, ServiceError::InvalidInput(_)));
         assert_eq!(scope_episode_total(&lunaris, &scope).await, 0);
     }
@@ -354,9 +423,13 @@ mod tests {
             reason: "used verbatim".into(),
             dedupe_key: None,
         };
-        let resp = handle(&lunaris, &scope, params).await.expect("episode write must still succeed");
+        let resp =
+            handle(&lunaris, &scope, params).await.expect("episode write must still succeed");
         assert!(!resp.lsn.is_empty());
-        assert!(!resp.activation_applied, "activation write failure must degrade honestly, not error");
+        assert!(
+            !resp.activation_applied,
+            "activation write failure must degrade honestly, not error"
+        );
         assert_eq!(feedback_episode_count(&lunaris, &scope).await, 1);
     }
 

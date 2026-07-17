@@ -2,8 +2,9 @@
 //!
 //! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
 //! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-//! `memory.status`, `memory.scratchpad_write`, `memory.scratchpad_read`,
-//! `memory.scratchpad_grep`, and `memory.scratchpad_consolidate`.
+//! `memory.feedback`, `memory.status`, `memory.scratchpad_write`,
+//! `memory.scratchpad_read`, `memory.scratchpad_grep`, and
+//! `memory.scratchpad_consolidate`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -49,6 +50,7 @@ use crate::state::AppState;
 // (lunaris-memory-service), called by BOTH this mcp server and contextd.
 use lunaris_memory_service::protocol::MemoryRequest;
 use lunaris_memory_service::{
+    feedback::{FeedbackParams, FeedbackResponse},
     forget::{ForgetParams, ForgetResponse},
     ingest::{IngestParams, IngestResponse},
     recall::{RecallParams, RecallResponse},
@@ -286,6 +288,37 @@ impl LunarisMcpServer {
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 
+    /// Record explicit ± feedback on a specific memory, with a reason.
+    ///
+    /// Writes a STRONG reinforcement signal to the activation ledger
+    /// (`Strong` for positive, `StrongNegative` for negative) via
+    /// `record_activation_refs` — this moves the memory's recall ranking
+    /// NOW, visible on the next `memory.recall` through the ledger's
+    /// `boost_prior`. It also writes a durable, reasoned audit episode with
+    /// `source='lunaris:memory_feedback'` for the background dream/
+    /// consolidation pass to read later. Accepts an optional `dedupe_key`
+    /// for replay-safe idempotency (HOOK-05 path); a dedupe replay returns
+    /// the prior LSN and skips the ledger signal so a replay never
+    /// double-counts a vote.
+    #[tool(
+        name = "memory.feedback",
+        description = "Record explicit ± human/agent feedback on a specific memory (by memory_id) with \
+                       a required reason. Writes a STRONG reinforcement signal to the activation ledger \
+                       (positive -> Strong, negative -> StrongNegative) that moves the memory's recall \
+                       ranking immediately — visible on the next memory.recall. Also writes a durable, \
+                       reasoned audit episode (source='lunaris:memory_feedback') consumed by the \
+                       background dream/consolidation pass. Accepts optional dedupe_key for replay-safe \
+                       idempotency; a dedupe replay returns the prior LSN and does not double-count the \
+                       ledger signal."
+    )]
+    async fn feedback(
+        &self,
+        Parameters(params): Parameters<FeedbackParams>,
+    ) -> Result<Json<FeedbackResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Feedback { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
     /// Report backend capabilities and queue health for the bound scope.
     #[tool(
         name = "memory.status",
@@ -441,6 +474,11 @@ impl ServerHandler for LunarisMcpServer {
                  - memory.record_decision / memory.record_edit — structured provenance; source prefix enables \
                  targeted recall later (filters.source_prefix='decision:' recalls only decisions).\n\
                  - memory.scratchpad_write — ephemeral working state (key-value); fast; not semantically indexed.\n\
+                 \n\
+                 REINFORCE:\n\
+                 - memory.feedback — explicit ± vote on a specific memory_id with a required reason; moves \
+                 recall ranking now via the activation ledger and leaves an audit trail for the background \
+                 dream pass.\n\
                  \n\
                  DIAGNOSTICS (not for content retrieval):\n\
                  - memory.status — backend capabilities and queue health.\n\

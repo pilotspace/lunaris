@@ -38,10 +38,12 @@ pub enum Strength {
     #[default]
     Weak,
     Strong,
-    /// engram-soul-loop task 4 (RED commit): variant declared so downstream
-    /// crates (`lunaris-memory-service::feedback`) can reference the shape.
-    /// `weight_for`'s arm is a placeholder — GREEN wires the real
-    /// `WEIGHT_STRONG_NEGATIVE` weight and the `apply()` floor.
+    /// engram-soul-loop task 4 — an explicit NEGATIVE human/agent vote
+    /// (`memory.feedback` with `sentiment: negative`). Declared as its own
+    /// variant (not a negated `Strong`) so the ledger's `last_strength`
+    /// field records the writer's DECLARATION verbatim, same as every other
+    /// variant (§1 Must — "the ledger stores it verbatim; it does not
+    /// judge").
     StrongNegative,
 }
 
@@ -52,6 +54,12 @@ pub const WEIGHT_WEAK: f64 = 1.0;
 /// positive feedback, or a successful tool call fed from the memory) to
 /// `ActivationRecord::weighted`.
 pub const WEIGHT_STRONG: f64 = 3.0;
+/// Weight contributed by a `Strength::StrongNegative` signal (explicit
+/// negative `memory.feedback`) to `ActivationRecord::weighted`. Negative by
+/// design — `ActivationRecord::apply` floors the running sum at `0.0` so a
+/// downvote can never push a memory's activation below the neutral
+/// baseline, only toward it.
+pub const WEIGHT_STRONG_NEGATIVE: f64 = -3.0;
 
 /// Slope of the boost-prior curve — `k` in `k * ln(1 + activation)`. Tuned
 /// so the maximum prior stays on the same scale as the existing Phase-14.2
@@ -122,7 +130,10 @@ impl ActivationRecord {
     /// Upsert math: apply one reference signal at unix-seconds `now`.
     ///
     /// - `n` increments by 1.
-    /// - `weighted` accumulates `weight(s.strength)` (weak=1.0, strong=3.0).
+    /// - `weighted` accumulates `weight(s.strength)` (weak=1.0, strong=3.0,
+    ///   strong_negative=-3.0), then FLOORS at `0.0` — a run of negative
+    ///   feedback can drive a memory's ledger weight to neutral but never
+    ///   negative (§3 CONTRACT: `weighted = (weighted + weight_for(s)).max(0.0)`).
     /// - `first_ref_wall` is set to `now` ONLY on the first-ever apply
     ///   (`n == 0` before this call) and never changes afterward.
     /// - `last_ref_wall` / `last_grain` / `last_strength` always take the
@@ -132,7 +143,7 @@ impl ActivationRecord {
             self.first_ref_wall = now;
         }
         self.n = self.n.saturating_add(1);
-        self.weighted += weight_for(s.strength);
+        self.weighted = (self.weighted + weight_for(s.strength)).max(0.0);
         self.last_ref_wall = now;
         self.last_grain = s.grain;
         self.last_strength = s.strength;
@@ -160,9 +171,7 @@ fn weight_for(s: Strength) -> f64 {
     match s {
         Strength::Weak => WEIGHT_WEAK,
         Strength::Strong => WEIGHT_STRONG,
-        // RED commit placeholder (engram-soul-loop task 4): the real
-        // -3.0 weight + apply() floor land in the GREEN commit.
-        Strength::StrongNegative => 0.0,
+        Strength::StrongNegative => WEIGHT_STRONG_NEGATIVE,
     }
 }
 
