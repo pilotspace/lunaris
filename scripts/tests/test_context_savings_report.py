@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -154,6 +155,24 @@ class ModuleIsReadOnly(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             module.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
+
+
+class DefaultEndpoint(unittest.TestCase):
+    """--host/--port default from LUNARIS_TEST_MOON_URL (the sibling-script
+    convention, e.g. bench-dialog-chat.py), else 127.0.0.1:6380."""
+
+    def test_env_url_overrides_default(self) -> None:
+        module = load_module()
+        with unittest.mock.patch.dict(
+            "os.environ", {"LUNARIS_TEST_MOON_URL": "moon://10.0.0.5:6381"}
+        ):
+            self.assertEqual(module.default_moon_endpoint(), ("10.0.0.5", 6381))
+
+    def test_fallback_without_env(self) -> None:
+        module = load_module()
+        with unittest.mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("LUNARIS_TEST_MOON_URL", None)
+            self.assertEqual(module.default_moon_endpoint(), ("127.0.0.1", 6380))
 
 
 if __name__ == "__main__":
