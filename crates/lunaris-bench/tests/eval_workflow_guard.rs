@@ -27,6 +27,29 @@ fn gauntlet_workflow_has_no_phantom_moon_service() {
 }
 
 #[test]
+fn gauntlet_workflow_is_dispatch_only_while_runner_pool_is_empty() {
+    let yml = workflow_src();
+    // 2026-07-17: the repo has ZERO registered self-hosted runners — the
+    // `llm-weights-cached` pool's only other consumer (llm-gates.yml) was
+    // deleted in the candle cutover (3856bbb), and every push/PR trigger
+    // since fails at dispatch in 0s (red on every push = alarm fatigue).
+    // Until a weights-cached runner is registered again, the gauntlet must
+    // be manual-dispatch only. When the runner returns, restore the
+    // push/pull_request triggers AND flip these assertions.
+    assert!(yml.contains("workflow_dispatch"), "eval-gauntlet.yml must stay manually dispatchable");
+    assert!(
+        !yml.contains("\n  push:"),
+        "eval-gauntlet.yml must not auto-trigger on push while no \
+         llm-weights-cached runner is registered (0s dispatch failure)"
+    );
+    assert!(
+        !yml.contains("\n  pull_request:"),
+        "eval-gauntlet.yml must not auto-trigger on pull_request while no \
+         llm-weights-cached runner is registered (0s dispatch failure)"
+    );
+}
+
+#[test]
 fn gauntlet_workflow_targets_the_weights_cached_runner() {
     let yml = workflow_src();
     // Must: real J/F1 numbers need cached model weights → the self-hosted

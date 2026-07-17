@@ -23,10 +23,15 @@
 #   managed Lunaris cluster.
 
 name: Eval Gauntlet
+# DISPATCH-ONLY since 2026-07-17: the repo has zero registered self-hosted
+# runners — the `llm-weights-cached` pool's only other consumer
+# (llm-gates.yml) was deleted in the candle cutover (3856bbb), and every
+# push/PR trigger failed at dispatch in 0s for a week. Restore the
+#   push: {branches: [main]} / pull_request:
+# triggers when a weights-cached runner is registered again, and flip the
+# pinned assertions in crates/lunaris-bench/tests/eval_workflow_guard.rs
+# (gauntlet_workflow_is_dispatch_only_while_runner_pool_is_empty).
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
