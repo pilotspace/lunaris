@@ -126,6 +126,27 @@ pub(crate) use generated::{
 /// `Lunaris` / `Vector` / `Keyword` / `Graph` / `RetrievalBuilder` /
 /// `GraphPipelineHandle` / `ConsolidatorPipelineHandle` classes so
 /// existing callers are unchanged.
+/// Free every live llama.cpp inference engine (model weights + warm context
+/// + worker thread), process-wide. Idempotent; returns how many engines were
+/// freed. `lunaris/__init__.py` registers this with Python's `atexit` so the
+/// process never reaches ggml-metal's exit-time residency-set assertion with
+/// live buffers (SIGABRT/134 after all work succeeded — the 2026-07-17
+/// Python-worker crash). Safe to call explicitly for an early release.
+#[pyfunction]
+fn shutdown_inference(py: Python<'_>) -> usize {
+    #[cfg(feature = "llamacpp")]
+    {
+        // detach (pyo3 0.29's allow_threads): teardown joins encode worker
+        // threads — never hold the GIL across a join.
+        py.detach(lunaris_llamacpp::shutdown_all_inference)
+    }
+    #[cfg(not(feature = "llamacpp"))]
+    {
+        let _ = py;
+        0
+    }
+}
+
 #[pymodule]
 fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Root-module codegen classes — Phase 8 surface
@@ -168,6 +189,9 @@ fn lunaris(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     #[cfg(feature = "bindings-it")]
     conformance::register(py, m)?;
+
+    // Exit-time Metal safety — registered with `atexit` by `__init__.py`.
+    m.add_function(wrap_pyfunction!(shutdown_inference, m)?)?;
 
     m.setattr("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

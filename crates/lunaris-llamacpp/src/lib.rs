@@ -21,6 +21,8 @@ mod gguf_head;
 #[cfg(feature = "llamacpp")]
 mod reranker;
 #[cfg(feature = "llamacpp")]
+mod teardown;
+#[cfg(feature = "llamacpp")]
 mod worker;
 
 #[cfg(feature = "llamacpp")]
@@ -29,3 +31,5 @@ pub use embedder::{LlamaCppEmbedder, LlamaCppEmbedderError, LlamaCppEmbedderOpts
 pub use gguf_head::GgufHeadError;
 #[cfg(feature = "llamacpp")]
 pub use reranker::{LlamaCppReranker, LlamaCppRerankerError, LlamaCppRerankerOpts};
+#[cfg(feature = "llamacpp")]
+pub use teardown::shutdown_all_inference;

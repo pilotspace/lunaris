@@ -41,6 +41,9 @@ from .lunaris import (  # type: ignore[attr-defined]
     # Phase 21 Plan 21-01 — SDK custom embedder + reranker config.
     EmbedderConfig,
     RerankerConfig,
+    # Exit-time Metal safety — frees every llama.cpp engine (model + context
+    # + worker thread) before C++ static destructors run at process exit.
+    shutdown_inference,
 )
 from .dsl import Vector, Keyword, Graph, RetrievalBuilder, open
 from .toggles import (
@@ -77,6 +80,18 @@ _RustLunaris.scoped = lambda self, scope: _lunaris_scoped(self, scope)  # type: 
 
 Lunaris = _RustLunaris  # Public re-export under the ergonomic name.
 
+# Exit-time Metal safety: CPython does NOT guarantee finalization of every
+# object at interpreter shutdown, and the Rust side keeps process-global
+# handle state — so llama.cpp model buffers can still be alive when C++
+# static destructors run inside `exit()`. ggml-metal ASSERTS its residency
+# sets are empty at that point and ABORTS the process (SIGABRT, exit 134)
+# AFTER all user work succeeded. Python atexit handlers run before those
+# destructors, so freeing every engine here makes normal exits clean.
+# Explicit early release is also fine: `lunaris.shutdown_inference()`.
+import atexit as _atexit
+_atexit.register(shutdown_inference)
+del _atexit
+
 __all__ = [
     "open",
     "Lunaris",
@@ -97,4 +112,6 @@ __all__ = [
     # Phase 21 Plan 21-01 — SDK custom embedder + reranker config.
     "EmbedderConfig",
     "RerankerConfig",
+    # Exit-time Metal safety (auto-registered with atexit on import).
+    "shutdown_inference",
 ]

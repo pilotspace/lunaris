@@ -37,6 +37,7 @@ use lunaris_rerank::{RerankCandidate, Reranker};
 
 use crate::backend::shared_backend;
 use crate::gguf_head::{ClsHead, GgufHeadError};
+use crate::teardown::EngineCell;
 use crate::worker::{EncodeWorker, Priority};
 
 /// bge-reranker-v2-m3 hidden size — the encoder's `n_embd` and the
@@ -75,6 +76,11 @@ pub enum LlamaCppRerankerError {
     Head(#[from] GgufHeadError),
     #[error("llama.cpp: {0}")]
     Llama(String),
+    #[error(
+        "reranker engine closed — process inference teardown already ran \
+         (shutdown_all_inference, normally the host's atexit hook)"
+    )]
+    Closed,
 }
 
 impl From<LlamaCppRerankerError> for LunarisError {
@@ -94,16 +100,18 @@ struct Inner {
 
 /// llama.cpp-backed cross-encoder reranker. Cheap to clone — heavy state
 /// behind `Arc`; one warm worker context, same rationale as the embedder.
+/// Parked in a takeable [`EngineCell`] for process-wide inference teardown
+/// (`crate::shutdown_all_inference`, exit-time Metal safety).
 #[derive(Clone)]
 pub struct LlamaCppReranker {
-    inner: Arc<Inner>,
+    cell: Arc<EngineCell<Inner>>,
 }
 
 impl std::fmt::Debug for LlamaCppReranker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LlamaCppReranker")
             .field("dim", &BGE_RERANKER_DIM)
-            .field("budget", &self.inner.budget)
+            .field("budget", &self.cell.get().map(|i| i.budget))
             .finish()
     }
 }
@@ -142,13 +150,20 @@ impl LlamaCppReranker {
             "lunaris-llamacpp-rerank",
         )
         .map_err(LlamaCppRerankerError::Llama)?;
-        Ok(Self { inner: Arc::new(Inner { model, worker, head, budget }) })
+        Ok(Self { cell: EngineCell::new(Arc::new(Inner { model, worker, head, budget })) })
+    }
+
+    /// Live inner, or [`LlamaCppRerankerError::Closed`] once process
+    /// inference teardown has run.
+    fn inner(&self) -> Result<Arc<Inner>, LlamaCppRerankerError> {
+        self.cell.get().ok_or(LlamaCppRerankerError::Closed)
     }
 
     /// How many llama.cpp contexts this handle has ever created — exactly 1
     /// (the A2 warm-context contract; see `tests/context_reuse.rs`).
+    /// 0 after process inference teardown.
     pub fn contexts_created(&self) -> usize {
-        self.inner.worker.contexts_created()
+        self.cell.get().map(|i| i.worker.contexts_created()).unwrap_or(0)
     }
 
     /// Synchronous scoring path — sigmoid score per doc, in INPUT order.
@@ -161,7 +176,7 @@ impl LlamaCppReranker {
         if docs.is_empty() {
             return Ok(Vec::new());
         }
-        let inner = &*self.inner;
+        let inner = self.inner()?;
         let budget = inner.budget;
 
         let bos = inner.model.token_bos();
