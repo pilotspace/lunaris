@@ -792,6 +792,7 @@ impl ContextService {
             phase,
             session_id.map(str::to_owned),
             memories.iter().map(|m| m.episode_id.clone()).collect(),
+            rendered_context.len(),
         );
 
         Ok(ContextResponse {
@@ -1028,7 +1029,7 @@ impl ContextService {
         // tail budget, 4 MiB default) — keep it off the async turn path's
         // worker threads. A join failure (grader panic) fails open like
         // every other detector failure.
-        let (verdicts, detector) = {
+        let (verdicts, detector, transcript_stats) = {
             let session_id = session_id.clone();
             let transcript_path = transcript_path.clone();
             tokio::task::spawn_blocking(move || {
@@ -1037,7 +1038,7 @@ impl ContextService {
             .await
             .unwrap_or_else(|err| {
                 tracing::warn!(err = %err, "citation_detector_join_failed");
-                (Vec::new(), "skipped_detector_error")
+                (Vec::new(), "skipped_detector_error", None)
             })
         };
 
@@ -1061,6 +1062,15 @@ impl ContextService {
                 verdicts.iter().map(|v| serde_json::to_value(v).unwrap_or(Value::Null)).collect(),
             ),
         );
+        // engram-soul-loop task 10(b) — additive only: absent whenever the
+        // detector was skipped, and a serialization failure (should never
+        // happen for this all-primitive struct) degrades to "absent" rather
+        // than failing the capture (fail-open per §1 Reject).
+        if let Some(stats) = transcript_stats
+            && let Ok(value) = serde_json::to_value(&stats)
+        {
+            meta.insert("transcript_stats".into(), value);
+        }
         let lsn = self.capture_lightweight(scope, "lunaris:turn_feedback", content, meta).await?;
 
         // Strong activation refs for cited / tool-call-graded memories only —
@@ -1102,6 +1112,10 @@ impl ContextService {
         phase: &str,
         session_id: Option<&str>,
         memory_ids: Vec<String>,
+        // engram-soul-loop task 10(a) — `rendered_context.len()` at the
+        // `finish_recall` spawn site: the REAL injected payload size, not a
+        // value recomputed here from `memory_ids`.
+        injected_chars: usize,
     ) -> anyhow::Result<()> {
         let mut meta = Map::new();
         meta.insert("injection_id".into(), Value::String(injection_id.to_owned()));
@@ -1113,6 +1127,8 @@ impl ContextService {
             "memory_ids".into(),
             Value::Array(memory_ids.iter().cloned().map(Value::String).collect()),
         );
+        meta.insert("injected_chars".into(), Value::from(injected_chars));
+        meta.insert("injected_tokens_est".into(), Value::from(injected_chars / 4));
         let content = format!(
             "memory injection {injection_id}\nphase: {phase}\nmemory_ids: {}",
             memory_ids.join(",")
@@ -1229,13 +1245,21 @@ impl ContextService {
         phase: &str,
         session_id: Option<String>,
         memory_ids: Vec<String>,
+        injected_chars: usize,
     ) {
         let service = self.clone();
         let scope = scope.clone();
         let phase = phase.to_owned();
         tokio::spawn(async move {
             if let Err(err) = service
-                .trace_injection(&scope, &injection_id, &phase, session_id.as_deref(), memory_ids)
+                .trace_injection(
+                    &scope,
+                    &injection_id,
+                    &phase,
+                    session_id.as_deref(),
+                    memory_ids,
+                    injected_chars,
+                )
                 .await
             {
                 tracing::debug!(err = %err, "lunaris context injection trace write failed");
@@ -1282,9 +1306,9 @@ fn resolve_scope(cwd: Option<&Path>, explicit: Option<&str>) -> anyhow::Result<S
 fn grade_turn_feedback(
     session_id: Option<&str>,
     transcript_path: Option<&str>,
-) -> (Vec<crate::citation::MemoryVerdict>, &'static str) {
+) -> (Vec<crate::citation::MemoryVerdict>, &'static str, Option<TranscriptStats>) {
     let Some(path) = transcript_path else {
-        return (Vec::new(), "skipped_no_transcript");
+        return (Vec::new(), "skipped_no_transcript", None);
     };
     let tail_bytes = std::env::var("LUNARIS_TRANSCRIPT_TAIL_BYTES")
         .ok()
@@ -1294,7 +1318,7 @@ fn grade_turn_feedback(
         Ok(t) => t,
         Err(err) => {
             tracing::debug!(err = %err, path, "citation_detector_transcript_read_failed");
-            return (Vec::new(), "skipped_no_transcript");
+            return (Vec::new(), "skipped_no_transcript", None);
         }
     };
 
@@ -1302,10 +1326,30 @@ fn grade_turn_feedback(
         && !transcript.session_ids_seen.is_empty()
         && !transcript.session_ids_seen.contains(session_id)
     {
-        return (Vec::new(), "skipped_session_mismatch");
+        return (Vec::new(), "skipped_session_mismatch", None);
     }
 
-    (crate::citation::grade_injections(&transcript), "ok")
+    // engram-soul-loop task 10(b) — derived from the SAME `TurnTranscript`
+    // `grade_injections` is about to consume below; no second file read.
+    let stats = TranscriptStats {
+        file_bytes: transcript.file_bytes,
+        tool_call_count: transcript.tool_outcomes.len(),
+        final_text_chars: transcript.final_assistant_text.chars().count(),
+    };
+
+    (crate::citation::grade_injections(&transcript), "ok", Some(stats))
+}
+
+/// engram-soul-loop task 10(b) — transcript-derived stats stamped onto the
+/// `lunaris:turn_feedback` capture's `transcript_stats` meta key whenever the
+/// citation detector actually ran (`detector == "ok"`). The contract permits
+/// this struct as the collapsed form of `grade_turn_feedback`'s third return
+/// slot (`.add/tasks/context-savings-telemetry/TASK.md` §3 CONTRACT).
+#[derive(Debug, Clone, Serialize)]
+struct TranscriptStats {
+    file_bytes: u64,
+    tool_call_count: usize,
+    final_text_chars: usize,
 }
 
 pub fn default_socket_path() -> anyhow::Result<PathBuf> {

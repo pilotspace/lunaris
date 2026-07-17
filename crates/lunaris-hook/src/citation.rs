@@ -190,6 +190,7 @@ mod tests {
                 "I confirmed the granite embedder resolves llamacpp inference correctly on cold start machines."
                     .to_owned(),
             session_ids_seen: HashSet::new(),
+            file_bytes: 0,
         };
 
         let verdicts = grade_injections(&t);
@@ -217,6 +218,7 @@ mod tests {
             ],
             final_assistant_text: "Done, unrelated wrap-up text.".to_owned(),
             session_ids_seen: HashSet::new(),
+            file_bytes: 0,
         };
 
         let verdicts = grade_injections(&t);
@@ -242,6 +244,7 @@ mod tests {
             tool_outcomes: vec![ToolOutcome { tool_use_id: "tool-5".to_owned(), is_error: None }],
             final_assistant_text: "Completely different final answer text.".to_owned(),
             session_ids_seen: HashSet::new(),
+            file_bytes: 0,
         };
         let verdicts = grade_injections(&t);
         assert_eq!(verdicts[0].verdict, Verdict::Uncited);
@@ -265,6 +268,7 @@ mod tests {
             }],
             final_assistant_text: "Some other final text unrelated to the snippet.".to_owned(),
             session_ids_seen: HashSet::new(),
+            file_bytes: 0,
         };
 
         let verdicts = grade_injections(&t);
@@ -294,6 +298,7 @@ mod tests {
                 "Confirmed: the granite embedder resolves llamacpp inference correctly on cold start."
                     .to_owned(),
             session_ids_seen: HashSet::new(),
+            file_bytes: 0,
         };
 
         let verdicts = grade_injections(&t);

@@ -68,6 +68,11 @@ pub struct TurnTranscript {
     pub tool_outcomes: Vec<ToolOutcome>,
     pub final_assistant_text: String,
     pub session_ids_seen: HashSet<String>,
+    /// engram-soul-loop task 10 — on-disk size of the transcript file this
+    /// was parsed from (`metadata().len()`, already fetched by
+    /// `read_turn_transcript` for the tail-seek math). Default `0` for any
+    /// caller that builds a `TurnTranscript` without a real file behind it.
+    pub file_bytes: u64,
 }
 
 /// Read the trailing `tail_bytes` of the transcript at `path` and parse it
@@ -97,7 +102,7 @@ pub fn read_turn_transcript(path: &Path, tail_bytes: u64) -> std::io::Result<Tur
     // affected line rather than erroring the whole read.
     let text = String::from_utf8_lossy(&bytes);
 
-    let mut transcript = TurnTranscript::default();
+    let mut transcript = TurnTranscript { file_bytes: len, ..TurnTranscript::default() };
     let mut last_assistant_text: Option<String> = None;
 
     for (idx, raw_line) in text.lines().enumerate() {
