@@ -204,12 +204,13 @@ def run_capture(event: dict[str, Any]) -> int:
             env=env,
             check=False,
         )
-    except FileNotFoundError:
+    except OSError as err:
         # Fail-open, matching the hook binary's own contract: a wiped/stale
         # build dir must degrade to "no capture", never spam the agent with a
         # traceback on every prompt (seen 2026-07-17 after a disk-full purge
-        # emptied target/release/). One quiet stderr line for the operator.
-        print(f"lunaris-hook binary missing at {LUNARIS_HOOK}; capture skipped "
+        # emptied target/release/). OSError covers the whole failure class:
+        # missing, non-executable, wrong-arch. One stderr line for the operator.
+        print(f"lunaris-hook unrunnable at {LUNARIS_HOOK} ({err}); capture skipped "
               "(rebuild: cargo build --release -p lunaris-hook)", file=sys.stderr)
         return 0
     return int(proc.returncode)
@@ -451,10 +452,10 @@ def spawn_contextd(socket_path: Path) -> None:
             env=env,
             start_new_session=True,
         )
-    except FileNotFoundError:
+    except OSError as err:
         # Fail-open: a wiped/stale build dir means no warm sidecar this turn,
         # never a traceback (injection callers already tolerate a dead socket).
-        print(f"lunaris-contextd binary missing at {LUNARIS_CONTEXTD}; sidecar "
+        print(f"lunaris-contextd unrunnable at {LUNARIS_CONTEXTD} ({err}); sidecar "
               "autostart skipped (rebuild: cargo build --release -p lunaris-hook)",
               file=sys.stderr)
 

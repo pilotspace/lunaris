@@ -199,29 +199,50 @@ pub fn resolve_storage_url_at(
 pub const CONTEXTD_MOON_URL_FILE: &str = "contextd-moon.url";
 
 /// Read the contextd embedded-Moon discovery file and liveness-probe the
-/// advertised endpoint. Returns `Some("moon://…")` only when the endpoint
-/// accepts a TCP connect within the probe budget (default 25ms, override
-/// `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`); a stale file left by a dead contextd
-/// fails the probe and falls through to SQLite — the hook must NEVER hang or
-/// error on somebody else's leftovers (fail-open, matches the hook's
-/// fail-open contract everywhere else).
+/// advertised endpoint. Returns `Some("moon://…")` only when:
+/// - the address is LOOPBACK (contextd only ever advertises 127.0.0.1 —
+///   a discovery file pointing anywhere else is treated as tampered and
+///   ignored, so it can never redirect captures off-host), and
+/// - the endpoint answers a real RESP `PING` with `+PONG` within the probe
+///   budget (default 25ms, override `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`;
+///   `0` errors the connect, i.e. skips discovery entirely — documented
+///   escape hatch, not a crash: `connect_timeout` returns `InvalidInput`
+///   for a zero duration).
 ///
-/// The probe proves TCP accept, not RESP — the full PING readiness check
-/// belongs to the launcher at startup. A foreign process squatting the exact
-/// ephemeral port contextd advertised AND contextd being dead is the residual
-/// window; `Lunaris::open` fails loudly in that case rather than corrupting.
+/// The PING (not a bare TCP connect) matters because the discovery file is
+/// never cleaned up: after contextd dies, the OS will eventually reassign
+/// its ephemeral port to some unrelated process. A random listener accepts
+/// TCP but does not answer `+PONG`, so the probe fails and we fall through
+/// to SQLite. A stale/garbage/unwritable file behaves the same — the hook
+/// must NEVER hang or error on somebody else's leftovers (fail-open,
+/// matching the hook's contract everywhere else).
 fn discover_contextd_moon(url_file: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(url_file).ok()?;
     let url = raw.trim();
     let addr = url.strip_prefix("moon://")?;
     let sock: std::net::SocketAddr = addr.parse().ok()?;
+    if !sock.ip().is_loopback() {
+        return None;
+    }
     let timeout_ms = std::env::var("LUNARIS_MOON_DISCOVERY_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(25);
     let timeout = std::time::Duration::from_millis(timeout_ms);
-    std::net::TcpStream::connect_timeout(&sock, timeout).ok()?;
-    Some(url.to_string())
+    let probe = || -> std::io::Result<bool> {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect_timeout(&sock, timeout)?;
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
+        stream.write_all(b"*1\r\n$4\r\nPING\r\n")?;
+        let mut buf = [0u8; 7]; // "+PONG\r\n"
+        stream.read_exact(&mut buf)?;
+        Ok(buf.starts_with(b"+PONG"))
+    };
+    match probe() {
+        Ok(true) => Some(url.to_string()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -242,12 +263,29 @@ mod discovery_tests {
         );
     }
 
-    #[test]
-    fn live_discovery_endpoint_wins_over_sqlite() {
-        // A real listener stands in for contextd's embedded Moon: the probe
-        // only checks TCP accept.
+    /// Minimal RESP responder standing in for contextd's embedded Moon:
+    /// accepts one connection and answers `+PONG` to anything.
+    fn spawn_pong_listener() -> (std::net::TcpListener, u16) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    fn answer_pong(listener: std::net::TcpListener) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 64];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"+PONG\r\n");
+            }
+        })
+    }
+
+    #[test]
+    fn live_discovery_endpoint_wins_over_sqlite() {
+        let (listener, port) = spawn_pong_listener();
+        let responder = answer_pong(listener);
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join(CONTEXTD_MOON_URL_FILE),
@@ -258,7 +296,53 @@ mod discovery_tests {
         assert_eq!(
             url,
             format!("moon://127.0.0.1:{port}"),
-            "live discovery endpoint must be preferred over sqlite"
+            "live PONG-answering endpoint must be preferred over sqlite"
+        );
+        responder.join().unwrap();
+    }
+
+    #[test]
+    fn tcp_accept_without_pong_falls_through_to_sqlite() {
+        // A foreign process on contextd's reused ephemeral port accepts TCP
+        // but does not speak RESP — discovery must reject it (this is why
+        // the probe is a PING, not a bare connect: the discovery file is
+        // never cleaned up after contextd dies).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let silent = std::thread::spawn(move || {
+            // Accept, read, answer garbage — never +PONG.
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 64];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n");
+            }
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(CONTEXTD_MOON_URL_FILE),
+            format!("moon://127.0.0.1:{port}\n"),
+        )
+        .unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert!(
+            url.starts_with("sqlite://"),
+            "a non-RESP listener must not be trusted as the embedded Moon, got: {url}"
+        );
+        silent.join().unwrap();
+    }
+
+    #[test]
+    fn non_loopback_discovery_address_is_rejected() {
+        // contextd only ever advertises 127.0.0.1 — a discovery file pointing
+        // off-host is tampered/corrupt and must never redirect captures.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "moon://192.0.2.10:6379\n")
+            .unwrap();
+        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+        assert!(
+            url.starts_with("sqlite://"),
+            "non-loopback discovery address must fall through to sqlite, got: {url}"
         );
     }
 
