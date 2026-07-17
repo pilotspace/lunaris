@@ -102,6 +102,14 @@ pub enum ContextRequest {
         session_id: Option<String>,
         injected_memory_ids: Vec<String>,
         outcome: Option<String>,
+        /// Stop-time citation detector (engram-soul-loop task 3, additive —
+        /// `#[serde(default)]` so an old adapter that never sends this key
+        /// keeps decoding). Path to the turn's transcript JSONL; the
+        /// detector parses it to grade injected memories into
+        /// cited/uncited verdicts. `None`/unreadable degrades to
+        /// `detector: "skipped_no_transcript"` (fail-open).
+        #[serde(default)]
+        transcript_path: Option<String>,
     },
     /// SessionStart digest — a recency-ordered, source-filtered recall of the
     /// scope's durable decisions, curated and rendered for injection at session
@@ -423,9 +431,17 @@ impl ContextService {
                 session_id,
                 injected_memory_ids,
                 outcome,
+                transcript_path,
             } => {
                 let scope = resolve_scope(cwd.as_deref(), scope.as_deref())?;
-                self.capture_feedback(&scope, session_id, injected_memory_ids, outcome).await
+                self.capture_feedback(
+                    &scope,
+                    session_id,
+                    injected_memory_ids,
+                    outcome,
+                    transcript_path,
+                )
+                .await
             }
             ContextRequest::SessionDigest {
                 cwd,
@@ -996,6 +1012,10 @@ impl ContextService {
         session_id: Option<String>,
         injected_memory_ids: Vec<String>,
         outcome: Option<String>,
+        // RED-phase stub (engram-soul-loop task 3): the citation detector
+        // wiring lands in the GREEN commit. See
+        // `.add/tasks/citation-detector/TASK.md` §3 CONTRACT.
+        _transcript_path: Option<String>,
     ) -> anyhow::Result<ContextResponse> {
         let content = format!(
             "turn feedback\ninjected_memory_ids: {}\noutcome: {}",
@@ -2263,5 +2283,357 @@ mod tests {
             }
         }
         assert!(found_injection_capture, "lunaris:memory_injection capture must still be written");
+    }
+
+    // ── engram-soul-loop task 3 — Stop-time citation detector ─────────────
+
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")).join(name)
+    }
+
+    /// Scan the scope's episode prefix and return the `metadata` object of
+    /// the (single, in these tests) `lunaris:turn_feedback` episode.
+    async fn find_turn_feedback_metadata(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+    ) -> Option<serde_json::Value> {
+        use futures::StreamExt;
+        let mut stream = storage
+            .scan_range(scope, &lunaris_core::keyspace::episode_prefix(scope), None)
+            .await
+            .expect("scan_range must not error");
+        let mut found = None;
+        while let Some(item) = stream.next().await {
+            let (_, value) = item.expect("row read must not error");
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&value)
+                && v.get("source").and_then(|s| s.as_str()) == Some("lunaris:turn_feedback")
+            {
+                found = v.get("metadata").cloned();
+            }
+        }
+        found
+    }
+
+    async fn activation_record_exists(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+        id: ulid::Ulid,
+    ) -> Option<lunaris_core::activation::ActivationRecord> {
+        let clock = HlcClock::new(0);
+        let key = lunaris_core::keyspace::activation_key(scope, id);
+        storage
+            .read_as_of(scope, &key, clock.tick())
+            .await
+            .expect("read_as_of must not error")
+            .map(|row| serde_json::from_slice(&row.value).expect("activation record must decode"))
+    }
+
+    /// Fixture ULIDs baked into `tests/fixtures/transcript_citation.jsonl`
+    /// (see `scripts` used to generate it / `transcript.rs` unit tests).
+    fn fixture_m1() -> ulid::Ulid {
+        ulid::Ulid::from_string("01HX00000000000000000000M1").unwrap()
+    }
+    fn fixture_m2() -> ulid::Ulid {
+        ulid::Ulid::from_string("01HX00000000000000000000M2").unwrap()
+    }
+    fn fixture_m3() -> ulid::Ulid {
+        ulid::Ulid::from_string("01HX00000000000000000000M3").unwrap()
+    }
+    fn fixture_m4() -> ulid::Ulid {
+        ulid::Ulid::from_string("01HX00000000000000000000M4").unwrap()
+    }
+
+    /// End-to-end on the fixture: M1 (prompt, text-cited) and M3 (post_tool,
+    /// successful tool outcome) must both land Strong activation refs and a
+    /// `verdicts` meta row; M2/M4 must gain no strong ref.
+    #[tokio::test]
+    async fn feedback_pass_writes_verdicts_and_strong_refs() {
+        let (svc, scope) = service_with_seeded_scope("test-citation-e2e").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let path = fixture_path("transcript_citation.jsonl");
+        let resp = svc
+            .capture_feedback(
+                &scope,
+                Some("sess-citation-1".to_owned()),
+                vec![],
+                None,
+                Some(path.to_string_lossy().into_owned()),
+            )
+            .await
+            .expect("capture_feedback must succeed");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("ok"));
+        let verdicts = meta.get("verdicts").and_then(|v| v.as_array()).expect("verdicts array");
+        assert_eq!(verdicts.len(), 4, "{verdicts:?}");
+
+        let verdict_for = |id: ulid::Ulid| {
+            verdicts
+                .iter()
+                .find(|v| v.get("id").and_then(|i| i.as_str()) == Some(id.to_string().as_str()))
+                .unwrap_or_else(|| panic!("verdict row for {id} must exist, got {verdicts:?}"))
+        };
+        let m1_row = verdict_for(fixture_m1());
+        assert_eq!(m1_row.get("verdict").and_then(|v| v.as_str()), Some("cited"));
+        assert_eq!(m1_row.get("grain").and_then(|v| v.as_str()), Some("turn"));
+
+        let m2_row = verdict_for(fixture_m2());
+        assert_eq!(m2_row.get("verdict").and_then(|v| v.as_str()), Some("uncited"));
+
+        let m3_row = verdict_for(fixture_m3());
+        assert_eq!(m3_row.get("verdict").and_then(|v| v.as_str()), Some("cited"));
+        assert_eq!(m3_row.get("grain").and_then(|v| v.as_str()), Some("tool_call"));
+
+        let m4_row = verdict_for(fixture_m4());
+        assert_eq!(m4_row.get("verdict").and_then(|v| v.as_str()), Some("uncited"));
+        assert!(m4_row.get("tool_use_id").is_some(), "uncited row still records tool_use_id");
+
+        let m1_ref = activation_record_exists(storage.as_ref(), &scope, fixture_m1())
+            .await
+            .expect("M1 must gain a Strong/Turn activation ref");
+        assert_eq!(m1_ref.n, 1);
+        assert_eq!(m1_ref.last_strength, lunaris_core::activation::Strength::Strong);
+        assert_eq!(m1_ref.last_grain, lunaris_core::activation::Grain::Turn);
+
+        let m3_ref = activation_record_exists(storage.as_ref(), &scope, fixture_m3())
+            .await
+            .expect("M3 must gain a Strong/ToolCall activation ref");
+        assert_eq!(m3_ref.n, 1);
+        assert_eq!(m3_ref.last_strength, lunaris_core::activation::Strength::Strong);
+        assert_eq!(m3_ref.last_grain, lunaris_core::activation::Grain::ToolCall);
+
+        assert!(
+            activation_record_exists(storage.as_ref(), &scope, fixture_m2()).await.is_none(),
+            "uncited M2 must gain no activation ref at Stop"
+        );
+        assert!(
+            activation_record_exists(storage.as_ref(), &scope, fixture_m4()).await.is_none(),
+            "failed-tool M4 must gain no activation ref at Stop"
+        );
+    }
+
+    /// `transcript_path=None` must fail open: empty verdicts, `detector:
+    /// "skipped_no_transcript"`, capture still written, `Ok` returned.
+    #[tokio::test]
+    async fn feedback_pass_fail_open_no_transcript() {
+        let (svc, scope) = service_with_seeded_scope("test-citation-no-transcript").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let resp = svc
+            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None)
+            .await
+            .expect("capture_feedback must fail open, not error");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("skipped_no_transcript"));
+        assert_eq!(
+            meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()),
+            Some(0)
+        );
+    }
+
+    /// A transcript whose session ids differ from the request's `session_id`
+    /// must skip detection entirely (guards against resumed-session path
+    /// reuse) and write no activation refs.
+    #[tokio::test]
+    async fn feedback_pass_session_mismatch_skips() {
+        let (svc, scope) = service_with_seeded_scope("test-citation-mismatch").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let path = fixture_path("transcript_citation_session_mismatch.jsonl");
+        let resp = svc
+            .capture_feedback(
+                &scope,
+                // The fixture's entries all carry sessionId="sess-citation-OTHER".
+                Some("sess-citation-1".to_owned()),
+                vec![],
+                None,
+                Some(path.to_string_lossy().into_owned()),
+            )
+            .await
+            .expect("capture_feedback must succeed");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(
+            meta.get("detector").and_then(|d| d.as_str()),
+            Some("skipped_session_mismatch")
+        );
+        assert_eq!(
+            meta.get("verdicts").and_then(|v| v.as_array()).map(|a| a.len()),
+            Some(0)
+        );
+        assert!(activation_record_exists(storage.as_ref(), &scope, fixture_m1()).await.is_none());
+    }
+
+    /// `StoragePort` that fails only `atomic_write` batches touching an
+    /// activation-ledger key, delegating everything else to `inner`. Proves
+    /// the citation detector's activation write is best-effort: the
+    /// `turn_feedback` capture (an episode write, non-activation key) must
+    /// still succeed even when the activation write fails.
+    struct ActivationFailingStorage {
+        inner: Arc<dyn StoragePort>,
+    }
+
+    #[async_trait::async_trait]
+    impl StoragePort for ActivationFailingStorage {
+        async fn atomic_write(
+            &self,
+            scope: &Scope,
+            ops: &[lunaris_core::WriteOp],
+        ) -> Result<Lsn, lunaris_core::StorageError> {
+            let touches_activation = ops.iter().any(|op| {
+                let key = match op {
+                    lunaris_core::WriteOp::KvPut { key, .. } => key,
+                    lunaris_core::WriteOp::KvDelete { key } => key,
+                    _ => return false,
+                };
+                key.windows(b":activation:".len()).any(|w| w == b":activation:")
+            });
+            if touches_activation {
+                return Err(lunaris_core::StorageError::Backend(
+                    "forced activation write failure (test)".into(),
+                ));
+            }
+            self.inner.atomic_write(scope, ops).await
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        async fn vector_search(
+            &self,
+            scope: &Scope,
+            index: &str,
+            query: &[f32],
+            k: usize,
+            filter: Option<&lunaris_core::Filter>,
+            as_of: Option<lunaris_core::Hlc>,
+            rerank: bool,
+        ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+            self.inner.vector_search(scope, index, query, k, filter, as_of, rerank).await
+        }
+
+        async fn graph_traverse(
+            &self,
+            scope: &Scope,
+            query: &lunaris_core::CypherQuery,
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+            self.inner.graph_traverse(scope, query, as_of).await
+        }
+
+        async fn scan_range(
+            &self,
+            scope: &Scope,
+            prefix: &[u8],
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<
+            futures::stream::BoxStream<'_, Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>>,
+            lunaris_core::StorageError,
+        > {
+            self.inner.scan_range(scope, prefix, as_of).await
+        }
+
+        async fn read_as_of(
+            &self,
+            scope: &Scope,
+            key: &[u8],
+            as_of: lunaris_core::Hlc,
+        ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError> {
+            self.inner.read_as_of(scope, key, as_of).await
+        }
+
+        async fn publish(
+            &self,
+            scope: &Scope,
+            topic: &str,
+            partition: u16,
+            payload: bytes::Bytes,
+        ) -> Result<u64, lunaris_core::StorageError> {
+            self.inner.publish(scope, topic, partition, payload).await
+        }
+
+        async fn subscribe(
+            &self,
+            scope: &Scope,
+            group: &str,
+            topic: &str,
+            partition: u16,
+        ) -> Result<
+            futures::stream::BoxStream<'static, Result<lunaris_core::QueueMsg, lunaris_core::StorageError>>,
+            lunaris_core::StorageError,
+        > {
+            self.inner.subscribe(scope, group, topic, partition).await
+        }
+
+        fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+            self.inner.capabilities()
+        }
+
+        async fn lookup_by_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+        ) -> Result<Option<Lsn>, lunaris_core::StorageError> {
+            self.inner.lookup_by_dedupe_key(scope, dedupe_key).await
+        }
+
+        async fn insert_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+            lsn: Lsn,
+        ) -> Result<(), lunaris_core::StorageError> {
+            self.inner.insert_dedupe_key(scope, dedupe_key, lsn).await
+        }
+    }
+
+    /// The activation write failing must NOT fail the turn-path: capture
+    /// still succeeds and `Ok` is returned (same fail-open contract as
+    /// `trace_injection`).
+    #[tokio::test]
+    async fn feedback_pass_activation_write_failure_still_ok() {
+        let scope = Scope::new("test-citation-activation-fail").unwrap();
+        let inner = lunaris::open("memory://").await.unwrap();
+        let failing = StdArc::new(ActivationFailingStorage { inner }) as Arc<dyn StoragePort>;
+        let embedder: Arc<dyn lunaris_core::Embedder> = StdArc::new(StubEmbedder::new(768));
+        let clock = HlcClock::new(0);
+        let handle = StdArc::new(Lunaris::with_parts(failing.clone(), embedder, clock));
+
+        let svc = ContextService::new();
+        svc.insert_handle_for_test(&scope, handle).await;
+        svc.insert_storage_for_test(&scope, failing.clone()).await;
+
+        let path = fixture_path("transcript_citation.jsonl");
+        let resp = svc
+            .capture_feedback(
+                &scope,
+                Some("sess-citation-1".to_owned()),
+                vec![],
+                None,
+                Some(path.to_string_lossy().into_owned()),
+            )
+            .await
+            .expect("activation write failure must not fail capture_feedback");
+        assert!(resp.lsn.is_some());
+
+        let meta = find_turn_feedback_metadata(failing.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must still be written");
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("ok"));
     }
 }

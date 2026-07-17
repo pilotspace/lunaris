@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+pub mod citation;
 pub mod context;
 pub mod dedupe;
 pub(crate) mod embed_promotion;
@@ -17,6 +18,7 @@ pub mod policy;
 pub mod scope;
 pub mod scrub;
 pub mod session_marker;
+pub mod transcript;
 pub mod watchdog;
 
 use std::sync::Arc;
