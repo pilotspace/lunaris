@@ -2341,6 +2341,10 @@ mod tests {
             "prompt",
             None,
             vec![id1.to_string(), id2.to_string()],
+            // engram-soul-loop task 10(a) — arbitrary injected_chars for this
+            // activation-ledger-focused test; the counters themselves are
+            // pinned by `injection_trace_carries_token_counters` below.
+            42,
         )
         .await
         .expect("trace_injection must succeed");
@@ -2728,5 +2732,180 @@ mod tests {
             .await
             .expect("turn_feedback episode must still be written");
         assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("ok"));
+    }
+
+    // ── engram-soul-loop task 10 — context-savings telemetry ──────────────
+
+    /// Scan the scope's episode prefix and return the `metadata` object of
+    /// the (single, in these tests) episode whose `source` equals `source`.
+    /// Polls with a short bounded budget: `finish_recall`'s injection trace
+    /// lands via `spawn_trace_injection` (`tokio::spawn`, fire-and-forget),
+    /// so the write is not guaranteed to have landed the instant
+    /// `finish_recall` returns.
+    async fn wait_for_episode_metadata(
+        storage: &dyn StoragePort,
+        scope: &Scope,
+        source: &str,
+    ) -> Option<serde_json::Value> {
+        for _ in 0..50 {
+            use futures::StreamExt;
+            let mut stream = storage
+                .scan_range(scope, &lunaris_core::keyspace::episode_prefix(scope), None)
+                .await
+                .expect("scan_range must not error");
+            let mut found = None;
+            while let Some(item) = stream.next().await {
+                let (_, value) = item.expect("row read must not error");
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&value)
+                    && v.get("source").and_then(|s| s.as_str()) == Some(source)
+                {
+                    found = v.get("metadata").cloned();
+                }
+            }
+            if found.is_some() {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        None
+    }
+
+    /// engram-soul-loop task 10(a) — the `lunaris:memory_injection` capture's
+    /// meta must carry the REAL rendered payload size, not a value
+    /// recomputed from the memories vec. Drives the actual production spawn
+    /// site (`finish_recall` -> `spawn_trace_injection` -> `trace_injection`)
+    /// end-to-end so the test proves wiring, not just arithmetic on a
+    /// hand-picked length.
+    #[tokio::test]
+    async fn injection_trace_carries_token_counters() {
+        let (svc, scope) = service_with_seeded_scope("test-savings-injection").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let memories = vec![
+            ContextMemory {
+                episode_id: ulid::Ulid::new().to_string(),
+                source: "decision:x".to_owned(),
+                score: 0.9,
+                snippet: "granite embedder resolves llamacpp end to end".to_owned(),
+            },
+            ContextMemory {
+                episode_id: ulid::Ulid::new().to_string(),
+                source: "decision:y".to_owned(),
+                score: 0.8,
+                snippet: "second memory snippet for counting injected tokens".to_owned(),
+            },
+        ];
+        let memory_id_set: Vec<String> = memories.iter().map(|m| m.episode_id.clone()).collect();
+
+        let resp = svc
+            .finish_recall(&scope, "prompt", None, DEFAULT_PROMPT_MAX_CHARS, None, memories)
+            .await
+            .expect("finish_recall must succeed");
+        let expected_chars = resp.rendered_context.len();
+        assert!(expected_chars > 0, "rendered context must be non-empty");
+        let expected_injection_id = resp.injection_id.clone().expect("injection_id must be set");
+
+        let storage = handle.storage();
+        let meta = wait_for_episode_metadata(storage.as_ref(), &scope, "lunaris:memory_injection")
+            .await
+            .expect("lunaris:memory_injection episode must land");
+
+        assert_eq!(
+            meta.get("injected_chars").and_then(|v| v.as_u64()),
+            Some(expected_chars as u64),
+            "injected_chars must equal the REAL rendered_context.len(), not a recomputed value"
+        );
+        assert_eq!(
+            meta.get("injected_tokens_est").and_then(|v| v.as_u64()),
+            Some((expected_chars / 4) as u64)
+        );
+
+        // Every pre-existing meta key stays exactly as before (additive-only).
+        assert_eq!(
+            meta.get("injection_id").and_then(|v| v.as_str()),
+            Some(expected_injection_id.as_str())
+        );
+        assert_eq!(meta.get("phase").and_then(|v| v.as_str()), Some("prompt"));
+        let memory_ids: Vec<String> = meta
+            .get("memory_ids")
+            .and_then(|v| v.as_array())
+            .expect("memory_ids array")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(memory_ids, memory_id_set);
+    }
+
+    /// engram-soul-loop task 10(b) — when the citation detector actually ran
+    /// (`detector == "ok"`), the `lunaris:turn_feedback` capture's meta must
+    /// carry `transcript_stats` derived from the SAME transcript pass the
+    /// citation grader used (no second file read). Task-3 behavior
+    /// (verdicts count, detector value) must stay unchanged.
+    #[tokio::test]
+    async fn feedback_pass_records_transcript_stats() {
+        let (svc, scope) = service_with_seeded_scope("test-savings-feedback-stats").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let path = fixture_path("transcript_citation.jsonl");
+        let file_bytes = std::fs::metadata(&path).expect("fixture metadata must read").len();
+
+        let resp = svc
+            .capture_feedback(
+                &scope,
+                Some("sess-citation-1".to_owned()),
+                vec![],
+                None,
+                Some(path.to_string_lossy().into_owned()),
+            )
+            .await
+            .expect("capture_feedback must succeed");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("ok"));
+        let verdicts = meta.get("verdicts").and_then(|v| v.as_array()).expect("verdicts array");
+        assert_eq!(verdicts.len(), 4, "task-3 verdict behavior must stay unchanged: {verdicts:?}");
+
+        let stats = meta
+            .get("transcript_stats")
+            .expect("transcript_stats must be present when the detector ran");
+        assert_eq!(stats.get("file_bytes").and_then(|v| v.as_u64()), Some(file_bytes));
+        assert_eq!(stats.get("tool_call_count").and_then(|v| v.as_u64()), Some(2));
+        assert!(
+            stats.get("final_text_chars").and_then(|v| v.as_u64()).unwrap_or(0) > 0,
+            "final_text_chars must be > 0, got {stats:?}"
+        );
+    }
+
+    /// engram-soul-loop task 10(b), fail-open leg — when the detector did
+    /// NOT run (`transcript_path = None` -> `detector: "skipped_no_transcript"`),
+    /// the capture must still succeed and carry NO `transcript_stats` key at
+    /// all (not `null`, absent).
+    #[tokio::test]
+    async fn feedback_pass_no_transcript_has_no_stats() {
+        let (svc, scope) = service_with_seeded_scope("test-savings-feedback-no-transcript").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        let resp = svc
+            .capture_feedback(&scope, Some("sess-x".to_owned()), vec![], None, None)
+            .await
+            .expect("capture_feedback must fail open, not error");
+        assert!(resp.lsn.is_some());
+
+        let storage = handle.storage();
+        let meta = find_turn_feedback_metadata(storage.as_ref(), &scope)
+            .await
+            .expect("turn_feedback episode must exist");
+        assert_eq!(meta.get("detector").and_then(|d| d.as_str()), Some("skipped_no_transcript"));
+        assert!(
+            meta.get("transcript_stats").is_none(),
+            "transcript_stats must be absent when the detector was skipped, got {meta:?}"
+        );
     }
 }
