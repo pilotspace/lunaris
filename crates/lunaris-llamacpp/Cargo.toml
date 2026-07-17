@@ -27,7 +27,8 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "Opt-in llama.cpp inference runtime for Lunaris (embedder spike)"
+description  = "In-process llama.cpp inference runtime for Lunaris (embedder + reranker)"
+readme       = "README.md"
 
 [dependencies]
 lunaris-core = { workspace = true }

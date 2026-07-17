@@ -21,6 +21,7 @@ license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
 description  = "Feature-gated Ollama HTTP escape-hatch embedder for Lunaris"
+readme       = "README.md"
 
 [dependencies]
 lunaris-core = { workspace = true }
