@@ -395,6 +395,44 @@ mod tests {
         assert!(community_key(&scope, id).starts_with(&community_prefix(&scope)));
     }
 
+    // ── engram-soul-loop task 6 (staleness-pass) — verify-agenda keyspace ──
+    // `.add/tasks/staleness-pass/TASK.md` §3 CONTRACT: `verify_agenda_key` /
+    // `verify_agenda_prefix` mirror the `activation` template exactly (kind
+    // string `"verify_agenda"`, agenda entry ULID == the anchored episode's
+    // ULID — natural idempotent key, RC-1: keyspace helpers live in
+    // lunaris-core, not a lunaris-hook-local format!()).
+
+    #[test]
+    fn verify_agenda_key_format() {
+        let scope = Scope::new("_dev_").unwrap();
+        let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
+        assert_eq!(
+            verify_agenda_key(&scope, id),
+            b"lunaris:_dev_:verify_agenda:01HZZZZZZZZZZZZZZZZZZZZZZZ".to_vec()
+        );
+    }
+
+    #[test]
+    fn verify_agenda_prefix_format() {
+        let scope = Scope::new("acme.agent-1").unwrap();
+        assert_eq!(verify_agenda_prefix(&scope), b"lunaris:acme.agent-1:verify_agenda:".to_vec());
+    }
+
+    #[test]
+    fn verify_agenda_key_starts_with_prefix() {
+        let scope = Scope::new("org.team").unwrap();
+        let id = Ulid::new();
+        assert!(verify_agenda_key(&scope, id).starts_with(&verify_agenda_prefix(&scope)));
+    }
+
+    #[test]
+    fn verify_agenda_keys_differ_across_scopes() {
+        let id = Ulid::from_string("01HZZZZZZZZZZZZZZZZZZZZZZZ").unwrap();
+        let ka = verify_agenda_key(&scope_a(), id);
+        let kb = verify_agenda_key(&scope_b(), id);
+        assert_ne!(ka, kb, "same ULID in different scopes must produce different keys");
+    }
+
     // ---- parse_scope_from_key (inverse of scope_prefix, used by list_scopes) ----
 
     #[test]

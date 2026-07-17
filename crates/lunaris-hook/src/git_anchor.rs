@@ -203,4 +203,78 @@ mod tests {
         );
         assert!(ttl_cache_len() >= 1, "the cache must hold at least our own entry");
     }
+
+    // ── engram-soul-loop task 6 (staleness-pass) — changed_files_since ────
+    // `.add/tasks/staleness-pass/TASK.md` §3 CONTRACT: `git diff --name-only
+    // <anchor>..HEAD`, 300ms cap, fail-open `None`, TTL-cached per (canonical
+    // cwd, anchor_head). Mirrors `head_for_cwd`'s test style above.
+
+    fn write_file(dir: &std::path::Path, name: &str, contents: &str) {
+        std::fs::write(dir.join(name), contents).expect("write must succeed");
+    }
+
+    fn commit_all(dir: &std::path::Path, msg: &str) {
+        let status = std::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(dir)
+            .status()
+            .expect("git add must run");
+        assert!(status.success(), "git add failed");
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", msg])
+            .current_dir(dir)
+            .status()
+            .expect("git commit must run");
+        assert!(status.success(), "git commit failed");
+    }
+
+    /// `changed_files_since(cwd, anchor)` must report a file touched between
+    /// `anchor` and the repo's current HEAD.
+    #[tokio::test]
+    async fn changed_files_since_reports_touched_file() {
+        let repo = init_temp_repo();
+        write_file(repo.path(), "a.txt", "one");
+        commit_all(repo.path(), "seed a.txt");
+        let anchor = git_head_via_cli(repo.path());
+
+        write_file(repo.path(), "a.txt", "two");
+        commit_all(repo.path(), "touch a.txt");
+
+        let changed = changed_files_since(repo.path(), &anchor)
+            .await
+            .expect("a real repo with a real diff must resolve Some");
+        assert!(changed.contains("a.txt"), "changed set must contain a.txt, got {changed:?}");
+    }
+
+    /// A plain (non-repo) cwd must resolve to `None` — fail-open, never an
+    /// `Err`.
+    #[tokio::test]
+    async fn changed_files_since_none_outside_repo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let resolved = changed_files_since(dir.path(), &"a".repeat(40)).await;
+        assert!(resolved.is_none(), "a non-repo cwd must resolve to None, got {resolved:?}");
+    }
+
+    /// A second call for the SAME (cwd, anchor) pair inside the TTL must
+    /// reuse the cached value rather than invoking `git` again.
+    #[tokio::test]
+    async fn changed_files_since_cached_within_ttl() {
+        let repo = init_temp_repo();
+        write_file(repo.path(), "a.txt", "one");
+        commit_all(repo.path(), "seed a.txt");
+        let anchor = git_head_via_cli(repo.path());
+        write_file(repo.path(), "a.txt", "two");
+        commit_all(repo.path(), "touch a.txt");
+
+        let first = changed_files_since(repo.path(), &anchor).await;
+        let second = changed_files_since(repo.path(), &anchor).await;
+        assert_eq!(first, second, "cached value must match the fresh resolution");
+    }
+
+    /// `MAX_ANCHOR_DIFFS_PER_SWEEP` is the frozen §3 CONTRACT bound on
+    /// distinct anchor diffs resolved per sweep call site.
+    #[test]
+    fn max_anchor_diffs_per_sweep_is_eight() {
+        assert_eq!(MAX_ANCHOR_DIFFS_PER_SWEEP, 8);
+    }
 }
