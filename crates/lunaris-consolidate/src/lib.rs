@@ -49,6 +49,9 @@ use async_trait::async_trait;
 use lunaris_core::{LunarisError, StoragePort};
 
 pub mod act_r;
+// ADD task dream-agenda — engram-soul-loop task 8a, the read-only
+// distillation planner (`memory.dream_agenda`).
+pub mod dream;
 // ADD task activation-ledger — persistent activation-ledger reference source
 // for the ACT-R consolidator tick.
 pub mod ledger_reference_source;
@@ -59,6 +62,7 @@ pub mod types;
 pub mod worker;
 
 pub use act_r::{ActRConsolidator, ActRScorer, synthesize_fact_id_from_episode};
+pub use dream::{DreamAgenda, DreamCluster, DreamConfig, build_dream_agenda};
 pub use ledger_reference_source::LedgerReferenceSource;
 pub use leiden::{CommunityAssignment, GraphSnapshot, leiden_pass};
 pub use noop::NoopConsolidator;
