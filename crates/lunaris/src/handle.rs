@@ -1653,6 +1653,37 @@ impl<'a> ScopedLunaris<'a> {
         self.engine.storage.atomic_write(&self.scope, &ops).await.map_err(LunarisError::Storage)?;
         Ok(())
     }
+
+    /// engram-soul-loop task 7 (verify-agenda-tools) — list every verify-
+    /// agenda entry under this scope, freshest staleness first.
+    ///
+    /// Scans [`lunaris_core::keyspace::verify_agenda_prefix`] (mirrors
+    /// [`crate::digest::recent_by_source`]'s `StreamExt::next` loop): a
+    /// mid-stream storage error propagates, but a single corrupt/foreign row
+    /// is skipped and never aborts the whole list (`.add/tasks/
+    /// verify-agenda-tools/TASK.md` §1 Reject). Bounded by a 5_000-row scan
+    /// cap (mirrors `lunaris-hook::staleness::SCAN_CAP`) — a warn-and-partial
+    /// DoS guard for huge scopes. Results are sorted by `last_seen_ms` DESC
+    /// (freshest staleness first).
+    ///
+    /// RED stub (engram-soul-loop task 7): real scan+sort lands in GREEN.
+    pub async fn list_verify_agenda(&self) -> Result<Vec<VerifyAgendaEntry>, LunarisError> {
+        unimplemented!("list_verify_agenda: GREEN pending (engram-soul-loop task 7)")
+    }
+
+    /// engram-soul-loop task 7 (verify-agenda-tools) — remove one
+    /// verify-agenda entry, returning whether it existed.
+    ///
+    /// Presence is checked via `read_as_of` on
+    /// [`lunaris_core::keyspace::verify_agenda_key`]; when present, issues
+    /// exactly ONE `WriteOp::KvDelete` `atomic_write` (mirrors D-19 — no
+    /// write at all when the row was already absent, an idempotent no-op).
+    ///
+    /// RED stub (engram-soul-loop task 7): real read_as_of+KvDelete lands in
+    /// GREEN.
+    pub async fn remove_verify_agenda(&self, _episode_id: Ulid) -> Result<bool, LunarisError> {
+        unimplemented!("remove_verify_agenda: GREEN pending (engram-soul-loop task 7)")
+    }
 }
 
 /// engram-soul-loop task 6 (staleness-pass) — one verify-agenda entry
