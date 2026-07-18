@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lunaris::{Lunaris, Query, recent_by_source};
+use lunaris_consolidate::LedgerReferenceSource;
 use lunaris_core::snippet::{parse_jsonish, single_line, summarize, summarize_json, trim_to_chars};
 use lunaris_core::{
     Chunk, Episode, Hlc, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder,
@@ -30,6 +31,9 @@ pub const DEFAULT_TOOL_MAX_CHARS: usize = 900;
 pub const DEFAULT_TOOL_MIN_SCORE: f32 = 0.60;
 pub const DEFAULT_DIGEST_MAX_HITS: usize = 8;
 pub const DEFAULT_DIGEST_MAX_CHARS: usize = 2000;
+// RED (engram-soul-loop task 9): DEFAULT_DREAM_NUDGE_THRESHOLD intentionally
+// NOT YET defined — the nudge test suite below references it and must fail
+// to compile until GREEN adds it back.
 /// Char budget for the scrub+snapshot of a recall hit BEFORE curation. Larger
 /// than the final 260-char curated snippet so `parse_jsonish` sees a WHOLE JSON
 /// envelope instead of a mid-object truncation — the 900-char cap silently
@@ -542,6 +546,8 @@ impl ContextService {
                 if let Some(cwd) = cwd.clone() {
                     self.spawn_agenda_sweep(&scope, cwd);
                 }
+                // RED (engram-soul-loop task 9): the dream nudge is not yet
+                // spliced in — GREEN adds it after finish_recall.
                 self.finish_recall(
                     &scope,
                     "session_start",
@@ -1698,6 +1704,9 @@ fn render_context(
     out.push_str("</lunaris_memory_context>");
     trim_to_chars(&out, max_chars)
 }
+
+// RED (engram-soul-loop task 9): `splice_dream_nudge` intentionally NOT YET
+// defined — GREEN adds it here.
 
 /// engram-soul-loop task 6 (staleness-pass) — re-sort an ALREADY-curated
 /// list by the exact same ordering criteria `curate_context_memories` /
@@ -4187,5 +4196,396 @@ mod tests {
             }
             other => panic!("expected CaptureToolResult, got {other:?}"),
         }
+    }
+
+    // ── engram-soul-loop task 9 — dream-skill SessionStart nudge ──────────
+    // `.add/tasks/dream-skill/TASK.md` §2 SCENARIOS (frozen).
+
+    /// Seed `count` fresh, non-archived activation-ledger candidates for
+    /// `scope` via `record_activation_refs` — the same write path production
+    /// citation/reinforcement callers use. The ids need no corresponding
+    /// episode: the ledger row is independent of `episode:` rows, and the
+    /// nudge's cheap count only reads the ledger.
+    async fn seed_live_refs(handle: &Lunaris, scope: &Scope, count: usize) -> Vec<ulid::Ulid> {
+        let ids: Vec<ulid::Ulid> = (0..count).map(|_| ulid::Ulid::new()).collect();
+        let signals: Vec<lunaris_core::activation::RefSignal> = ids
+            .iter()
+            .map(|&id| lunaris_core::activation::RefSignal {
+                id,
+                grain: lunaris_core::activation::Grain::Turn,
+                strength: lunaris_core::activation::Strength::Weak,
+            })
+            .collect();
+        handle
+            .scoped(scope.clone())
+            .record_activation_refs(&signals)
+            .await
+            .expect("record_activation_refs must succeed");
+        ids
+    }
+
+    /// Scenario: nudge injected when agenda over threshold, even with an
+    /// empty digest. `source_prefixes: ["__none__:"]` forces `build_digest`
+    /// to zero matches, so `finish_recall` short-circuits via
+    /// `ContextResponse::empty()` — the nudge must still synthesize its own
+    /// wrapper and land in `rendered_context`.
+    #[tokio::test]
+    async fn test_nudge_injected_over_threshold_empty_digest() {
+        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-empty").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+
+        // Default threshold is 5 — 6 live candidates clears it.
+        seed_live_refs(handle.as_ref(), &scope, 6).await;
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: Some(vec!["__none__:".to_owned()]),
+            })
+            .await;
+
+        assert!(resp.ok, "a fired nudge must still report ok=true: {:?}", resp.error);
+        assert!(resp.memories.is_empty(), "the digest itself has zero source-matched memories");
+        assert!(
+            resp.rendered_context.contains("ripe for distillation — run /dream"),
+            "empty-digest nudge must still reach rendered_context, got {:?}",
+            resp.rendered_context
+        );
+        assert!(
+            !resp.rendered_context.contains("id="),
+            "the nudge line must never carry an id= token (citation-detector guard), got {:?}",
+            resp.rendered_context
+        );
+    }
+
+    /// Scenario: no nudge below threshold — the digest is byte-identical to
+    /// the pre-task-9 baseline (a direct `build_digest` + `finish_recall`
+    /// call, with no nudge logic involved at all).
+    #[tokio::test]
+    async fn test_no_nudge_below_threshold_byte_identical() {
+        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-below").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        seed_anchored_episode(
+            storage.as_ref(),
+            &scope,
+            "decision:dream-below-threshold",
+            "decision content",
+            None,
+            None,
+        )
+        .await;
+        // 2 < DEFAULT_DREAM_NUDGE_THRESHOLD (5).
+        seed_live_refs(handle.as_ref(), &scope, 2).await;
+
+        let baseline_memories = build_digest(
+            storage.as_ref(),
+            &scope,
+            &default_digest_prefixes(),
+            DEFAULT_DIGEST_MAX_HITS,
+        )
+        .await
+        .expect("baseline build_digest must succeed");
+        let baseline = svc
+            .finish_recall(
+                &scope,
+                "session_start",
+                None,
+                DEFAULT_DIGEST_MAX_CHARS,
+                None,
+                baseline_memories,
+                None,
+            )
+            .await
+            .expect("baseline finish_recall must succeed");
+        assert!(!baseline.rendered_context.is_empty(), "baseline digest must be non-empty");
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: None,
+            })
+            .await;
+
+        assert!(resp.ok, "digest dispatch must succeed: {:?}", resp.error);
+        assert_eq!(
+            resp.rendered_context, baseline.rendered_context,
+            "below-threshold digest must be byte-identical to the pre-task-9 baseline"
+        );
+        assert!(!resp.rendered_context.contains("ripe for distillation"));
+    }
+
+    /// Scenario: archived candidates do not count toward the agenda size —
+    /// 5 seeded, 3 archived, live == 2 < threshold(5), so no nudge fires.
+    #[tokio::test]
+    async fn test_archived_excluded_from_agenda_size() {
+        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-archived").await;
+        let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
+        svc.insert_storage_for_test(&scope, handle.storage()).await;
+        let storage = handle.storage();
+
+        let ids = seed_live_refs(handle.as_ref(), &scope, 5).await;
+        let archived = handle
+            .scoped(scope.clone())
+            .archive_activation(&ids[..3], 1_000)
+            .await
+            .expect("archive_activation must succeed");
+        assert_eq!(archived, 3);
+
+        let refs = LedgerReferenceSource::new(storage.clone())
+            .scan(&scope)
+            .await
+            .expect("ledger scan must succeed");
+        let live = refs.iter().filter(|(_, r)| !r.is_archived()).count();
+        assert_eq!(live, 2, "agenda_size must exclude archived candidates");
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: Some(vec!["__none__:".to_owned()]),
+            })
+            .await;
+
+        assert!(resp.ok);
+        assert!(
+            resp.rendered_context.is_empty(),
+            "2 live < threshold(5) must not trigger a nudge, got {:?}",
+            resp.rendered_context
+        );
+    }
+
+    /// `StoragePort` that fails `scan_range` ONLY for the activation-ledger
+    /// prefix (`lunaris:{scope}:activation:`), delegating everything else to
+    /// `inner`. Proves the dream nudge is fail-open: a scan error must never
+    /// error the digest or empty an otherwise-populated `rendered_context`.
+    struct ActivationScanFailingStorage {
+        inner: Arc<dyn StoragePort>,
+    }
+
+    #[async_trait::async_trait]
+    impl StoragePort for ActivationScanFailingStorage {
+        async fn atomic_write(
+            &self,
+            scope: &Scope,
+            ops: &[lunaris_core::WriteOp],
+        ) -> Result<Lsn, lunaris_core::StorageError> {
+            self.inner.atomic_write(scope, ops).await
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        async fn vector_search(
+            &self,
+            scope: &Scope,
+            index: &str,
+            query: &[f32],
+            k: usize,
+            filter: Option<&lunaris_core::Filter>,
+            as_of: Option<lunaris_core::Hlc>,
+            rerank: bool,
+        ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+            self.inner.vector_search(scope, index, query, k, filter, as_of, rerank).await
+        }
+
+        async fn graph_traverse(
+            &self,
+            scope: &Scope,
+            query: &lunaris_core::CypherQuery,
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+            self.inner.graph_traverse(scope, query, as_of).await
+        }
+
+        async fn scan_range(
+            &self,
+            scope: &Scope,
+            prefix: &[u8],
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<
+            futures::stream::BoxStream<
+                '_,
+                Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            if prefix.windows(b":activation:".len()).any(|w| w == b":activation:") {
+                return Err(lunaris_core::StorageError::Backend(
+                    "forced activation scan failure (test)".into(),
+                ));
+            }
+            self.inner.scan_range(scope, prefix, as_of).await
+        }
+
+        async fn read_as_of(
+            &self,
+            scope: &Scope,
+            key: &[u8],
+            as_of: lunaris_core::Hlc,
+        ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError> {
+            self.inner.read_as_of(scope, key, as_of).await
+        }
+
+        async fn publish(
+            &self,
+            scope: &Scope,
+            topic: &str,
+            partition: u16,
+            payload: bytes::Bytes,
+        ) -> Result<u64, lunaris_core::StorageError> {
+            self.inner.publish(scope, topic, partition, payload).await
+        }
+
+        async fn subscribe(
+            &self,
+            scope: &Scope,
+            group: &str,
+            topic: &str,
+            partition: u16,
+        ) -> Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            self.inner.subscribe(scope, group, topic, partition).await
+        }
+
+        fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+            self.inner.capabilities()
+        }
+
+        async fn lookup_by_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+        ) -> Result<Option<Lsn>, lunaris_core::StorageError> {
+            self.inner.lookup_by_dedupe_key(scope, dedupe_key).await
+        }
+
+        async fn insert_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+            lsn: Lsn,
+        ) -> Result<(), lunaris_core::StorageError> {
+            self.inner.insert_dedupe_key(scope, dedupe_key, lsn).await
+        }
+    }
+
+    /// Scenario: ledger scan failure fails open — the digest still returns
+    /// its normal memories/rendered_context, no nudge, no error.
+    #[tokio::test]
+    async fn test_ledger_scan_failure_fails_open() {
+        let scope = Scope::new("test-dream-nudge-scan-fail").unwrap();
+        let inner = lunaris::open("memory://").await.unwrap();
+        let episode_id = seed_anchored_episode(
+            inner.as_ref(),
+            &scope,
+            "decision:dream-fail-open",
+            "content that must survive a failing ledger scan",
+            None,
+            None,
+        )
+        .await;
+        let failing = StdArc::new(ActivationScanFailingStorage { inner }) as Arc<dyn StoragePort>;
+
+        let svc = ContextService::new();
+        svc.insert_storage_for_test(&scope, failing.clone()).await;
+
+        let resp = svc
+            .handle(ContextRequest::SessionDigest {
+                cwd: None,
+                scope: Some(scope.as_str().to_owned()),
+                session_id: None,
+                max_hits: None,
+                max_chars: None,
+                source_prefixes: None,
+            })
+            .await;
+
+        assert!(resp.ok, "digest must still succeed when the ledger scan fails: {:?}", resp.error);
+        assert!(
+            resp.rendered_context.contains(&episode_id.to_string()),
+            "digest must still render its normal memories when the nudge scan fails, got {:?}",
+            resp.rendered_context
+        );
+        assert!(
+            !resp.rendered_context.contains("ripe for distillation"),
+            "a failing ledger scan must never inject the nudge, got {:?}",
+            resp.rendered_context
+        );
+    }
+
+    /// Scenario/wiring pin: `LUNARIS_DREAM_NUDGE_THRESHOLD` parsing +
+    /// default. The crate is `#![forbid(unsafe_code)]`, so mutating env vars
+    /// at runtime (`unsafe` as of Rust 2024) can't be exercised here — mirrors
+    /// `resolve_scope_daemon_path_uses_env_ignoring_resolver`'s source-level
+    /// pin. This asserts the const default AND that the SessionDigest arm
+    /// wires the override through `env_usize_any` with that exact fallback.
+    #[test]
+    fn dream_nudge_threshold_env_wired_with_default_five() {
+        assert_eq!(DEFAULT_DREAM_NUDGE_THRESHOLD, 5);
+
+        let src = include_str!("context.rs");
+        assert!(
+            src.contains("pub const DEFAULT_DREAM_NUDGE_THRESHOLD: usize = 5;"),
+            "DEFAULT_DREAM_NUDGE_THRESHOLD must default to 5"
+        );
+
+        let body = src
+            .split("ContextRequest::SessionDigest {")
+            .nth(1)
+            .expect("SessionDigest arm must exist")
+            .split("/// Dispatch an engine-op")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains(r#"env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"])"#),
+            "the SessionDigest arm must read LUNARIS_DREAM_NUDGE_THRESHOLD via env_usize_any"
+        );
+        assert!(
+            body.contains(".unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD)"),
+            "the threshold must fall back to DEFAULT_DREAM_NUDGE_THRESHOLD when unset/unparseable"
+        );
+    }
+
+    /// Scenario: `/dream` skill exists and names the loop tools. A
+    /// repo-file assertion test (SKILL.md is a doc, not code — §5 BUILD).
+    #[test]
+    fn test_dream_skill_file_shape() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.claude/skills/dream/SKILL.md");
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("dream SKILL.md must exist at {path:?}: {e}"));
+        assert!(body.contains("name: dream"), "frontmatter must declare name: dream");
+        assert!(body.contains("user-invocable: true"), "the skill must be user-invocable");
+        assert!(body.contains("category: workflows"), "frontmatter must mirror add/SKILL.md's category");
+        assert!(body.contains("license: MIT"), "frontmatter must mirror add/SKILL.md's license");
+        assert!(body.contains("memory.dream_agenda"), "body must name memory.dream_agenda");
+        assert!(body.contains("memory.distill"), "body must name memory.distill");
+        assert!(body.contains("memory.resolve"), "body must name memory.resolve");
+        assert!(
+            body.contains("LUNARIS_DREAM_CRON"),
+            "v2 cron trigger must be documented as an env-gated stub"
+        );
+        assert!(
+            body.contains("LUNARIS_DREAM_PIGGYBACK"),
+            "v2 session-end-piggyback trigger must be documented as an env-gated stub"
+        );
     }
 }

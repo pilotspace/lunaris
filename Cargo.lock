@@ -2612,6 +2612,7 @@ dependencies = [
  "futures",
  "globset",
  "hex",
+ "lunaris-consolidate",
  "lunaris-core",
  "lunaris-extract",
  "lunaris-ingest",
