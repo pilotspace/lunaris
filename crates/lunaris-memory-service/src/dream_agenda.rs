@@ -252,7 +252,11 @@ mod tests {
             let err = handle(
                 &lunaris,
                 &scope,
-                DreamAgendaParams { limit: Some(limit), min_cluster_size: None, max_activation: None },
+                DreamAgendaParams {
+                    limit: Some(limit),
+                    min_cluster_size: None,
+                    max_activation: None,
+                },
             )
             .await
             .unwrap_err();
@@ -285,7 +289,11 @@ mod tests {
         let err = handle(
             &lunaris,
             &scope,
-            DreamAgendaParams { limit: None, min_cluster_size: None, max_activation: Some(f64::NAN) },
+            DreamAgendaParams {
+                limit: None,
+                min_cluster_size: None,
+                max_activation: Some(f64::NAN),
+            },
         )
         .await
         .unwrap_err();
