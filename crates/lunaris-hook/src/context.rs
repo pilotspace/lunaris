@@ -1801,9 +1801,11 @@ fn curate_context_memories_lossy(
     curated
 }
 
-/// Default source prefixes for the SessionStart digest: durable decisions.
+/// Default source prefixes for the SessionStart digest: durable decisions
+/// plus distilled knowledge records (engram-soul-loop task 8b,
+/// `memory.distill` — `"distilled:{kind}:{scope}"`).
 pub fn default_digest_prefixes() -> Vec<String> {
-    vec!["decision:".to_owned()]
+    vec!["decision:".to_owned(), "distilled:".to_owned()]
 }
 
 /// Build curated digest memories from the scope's most-recent, source-filtered
@@ -1879,7 +1881,11 @@ fn injectable_at_phase(phase: &str, source: &str, include_toolcalls: bool) -> bo
 }
 
 fn source_priority(source: &str) -> i32 {
-    if source.starts_with("decision:") {
+    if source.starts_with("distilled:") {
+        // engram-soul-loop task 8b — `memory.distill` typed knowledge
+        // records are the highest-value durable layer (above decision:90).
+        95
+    } else if source.starts_with("decision:") {
         90
     } else if source.starts_with("edit:") {
         85
@@ -1932,7 +1938,13 @@ fn is_low_value_text(source: &str, text: &str) -> bool {
 }
 
 fn dedupe_key(source: &str, snippet: &str) -> String {
-    let source_class = if source.starts_with("decision:") {
+    let source_class = if source.starts_with("distilled:") {
+        // engram-soul-loop task 8b — collapse every `distilled:{kind}:{scope}`
+        // source to one class, same as the decision:/edit: collapse below,
+        // so two distilled records with an identical rendered snippet dedupe
+        // regardless of `kind`.
+        "distilled"
+    } else if source.starts_with("decision:") {
         "decision"
     } else if source.starts_with("edit:") {
         "edit"
@@ -2691,6 +2703,68 @@ mod tests {
         assert_eq!(source_priority("lunaris:pre_tool_use"), 45);
         assert!(source_priority("decision:x") > source_priority("lunaris:tool_call:post"));
         assert!(source_priority("edit:y") > source_priority("lunaris:tool_call:post"));
+    }
+
+    // ── engram-soul-loop task 8b (`memory.distill`) — distilled: digest surface ──
+
+    /// §2 "distilled record ranks above decisions in the digest":
+    /// `source_priority("distilled:…") == 95 > source_priority("decision:…") == 90`.
+    #[test]
+    fn distilled_source_priority_ranks_above_decision() {
+        assert_eq!(source_priority("distilled:lesson:test-scope"), 95);
+        assert_eq!(source_priority("decision:test-scope"), 90);
+        assert!(
+            source_priority("distilled:lesson:test-scope") > source_priority("decision:test-scope")
+        );
+    }
+
+    /// `default_digest_prefixes()` must include `"distilled:"` so distilled
+    /// knowledge feeds the SessionStart digest alongside decisions.
+    #[test]
+    fn default_digest_prefixes_includes_distilled() {
+        let prefixes = default_digest_prefixes();
+        assert!(prefixes.contains(&"decision:".to_string()));
+        assert!(prefixes.contains(&"distilled:".to_string()));
+    }
+
+    /// `dedupe_key` classes every `distilled:*` source as `"distilled"`
+    /// (mirrors the existing `"decision"` / `"edit"` class collapse) so two
+    /// distilled records with the same rendered snippet dedupe against each
+    /// other regardless of their `kind` suffix.
+    #[test]
+    fn dedupe_key_classes_distilled_sources_together() {
+        let a = dedupe_key("distilled:lesson:test-scope", "prefer X over Y");
+        let b = dedupe_key("distilled:invariant:test-scope", "prefer X over Y");
+        assert_eq!(a, b, "distilled sources with the same snippet must collapse to one dedupe key");
+        assert!(a.starts_with("distilled:"));
+    }
+
+    /// A plain-text `distilled:*` record MUST survive
+    /// `summarize_memory_for_context` — it is genuine plain prose, not a
+    /// JSON envelope, so it must NOT be dropped by the 2026-07-14
+    /// anti-injection JSON-envelope policy. This is the load-bearing proof
+    /// that distilled knowledge actually reaches the SessionStart digest
+    /// (storing it as a JSON envelope would silently drop it here).
+    #[test]
+    fn distilled_plain_text_survives_summarize_memory_for_context() {
+        let text = "prefer X over Y because Z";
+        let summary = summarize_memory_for_context("distilled:lesson:test-scope", text);
+        assert_eq!(
+            summary,
+            Some(text.to_string()),
+            "genuine plain-text distilled content must pass through unmodified"
+        );
+    }
+
+    /// A JSON-envelope-shaped body under a `distilled:*` source is still
+    /// dropped by the same anti-injection policy every other source is
+    /// subject to — distilled content is exempt only because it is stored
+    /// as plain text, not because its source prefix is special-cased.
+    #[test]
+    fn distilled_json_envelope_is_still_dropped() {
+        let text = r#"{"cwd": "/tmp", "note": "not real content"}"#;
+        let summary = summarize_memory_for_context("distilled:lesson:test-scope", text);
+        assert_eq!(summary, None, "an unrecognized JSON envelope must still be dropped");
     }
 
     #[test]

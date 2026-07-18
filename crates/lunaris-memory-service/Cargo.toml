@@ -33,6 +33,10 @@ schemars = { version = "1.0", features = ["chrono04"] }
 # DTO field parsing: RFC-3339 t_ref (ingest/record) + ULID (forget).
 chrono = { workspace = true }
 ulid   = { workspace = true }
+# memory.distill (engram-soul-loop task 8b): deterministic dedupe-path
+# episode id, same 16-byte-truncation construction as `EntityId` /
+# lunaris-ingest's RAPTOR community-node id.
+blake3 = { workspace = true }
 
 # Optional: in-process Moon server for the `embedded-moon` feature (promoted
 # here from lunaris-mcp so lunaris-contextd shares ONE launcher definition).

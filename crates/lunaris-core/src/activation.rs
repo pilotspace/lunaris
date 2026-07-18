@@ -110,6 +110,21 @@ pub struct ActivationRecord {
     pub last_strength: Strength,
     /// Schema version. `1` for this task.
     pub v: u8,
+    /// engram-soul-loop task 8b (`memory.distill`) — unix-seconds this
+    /// record was ARCHIVED (activation drop), or `None` while live.
+    ///
+    /// `#[serde(default, skip_serializing_if = "Option::is_none")]` is
+    /// load-bearing twice over: `default` lets a pre-8b record (no
+    /// `archived_at` key at all) still decode under this struct's
+    /// `#[serde(deny_unknown_fields)]`; `skip_serializing_if` keeps an
+    /// unarchived record's serialized bytes BYTE-IDENTICAL to the pre-8b
+    /// shape (no new key ever appears on the wire until the record is
+    /// actually archived). Archive is activation drop, NOT a tombstone —
+    /// see [`Self::is_archived`] and `lunaris_retrieve::LedgerBoostProvider`
+    /// (0 boost) / `lunaris_consolidate::dream::build_dream_agenda`
+    /// (dropped from candidates). The episode itself is untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<u64>,
 }
 
 impl Default for ActivationRecord {
@@ -122,6 +137,7 @@ impl Default for ActivationRecord {
             last_grain: Grain::default(),
             last_strength: Strength::default(),
             v: 1,
+            archived_at: None,
         }
     }
 }
@@ -164,6 +180,16 @@ impl ActivationRecord {
         let elapsed = (now.saturating_sub(self.last_ref_wall)).max(1) as f64;
         let sum = self.weighted * elapsed.powf(-decay);
         sum.ln()
+    }
+
+    /// engram-soul-loop task 8b — `true` once `memory.distill` has archived
+    /// this record (activation drop). Archived records contribute 0 boost
+    /// ([`lunaris_retrieve::LedgerBoostProvider::priors`]) and are excluded
+    /// from `memory.dream_agenda` candidates
+    /// ([`lunaris_consolidate::dream::build_dream_agenda`]) — the underlying
+    /// episode stays recall-hydratable; only its usage boost is suppressed.
+    pub fn is_archived(&self) -> bool {
+        self.archived_at.is_some()
     }
 }
 
@@ -261,5 +287,58 @@ mod tests {
         assert_eq!(r.weighted, 1.0);
         r.apply(&RefSignal { id: Ulid::nil(), grain: Grain::Turn, strength: Strength::Strong }, 2);
         assert_eq!(r.weighted, 4.0);
+    }
+
+    // ── engram-soul-loop task 8b — memory.distill: ActivationRecord::archived_at ──
+
+    /// §6 VERIFY: "archived_at is serde-back-compat: an old ActivationRecord
+    /// json (no field) decodes". A record persisted before task 8b (no
+    /// `archived_at` key at all) must still decode under
+    /// `#[serde(deny_unknown_fields)]`, and `is_archived()` must read `false`
+    /// — the absence of the marker means "live".
+    #[test]
+    fn old_activation_record_without_archived_at_still_decodes() {
+        let raw = r#"{"n":1,"weighted":3.0,"first_ref_wall":1,"last_ref_wall":1,"last_grain":"turn","last_strength":"strong","v":1}"#;
+        let record: ActivationRecord = serde_json::from_str(raw).unwrap();
+        assert_eq!(record.archived_at, None);
+        assert!(!record.is_archived());
+    }
+
+    /// An unarchived (default) record serializes WITHOUT the `archived_at`
+    /// key at all (`skip_serializing_if`) — the on-disk bytes for the common
+    /// case stay byte-identical to the pre-8b shape. Once archived, the key
+    /// appears and round-trips.
+    #[test]
+    fn archived_at_skip_serializing_when_none_and_round_trips_when_set() {
+        let live = ActivationRecord::default();
+        assert!(!live.is_archived());
+        let live_json = serde_json::to_string(&live).unwrap();
+        assert!(
+            !live_json.contains("archived_at"),
+            "unarchived record must not emit archived_at: {live_json}"
+        );
+
+        let archived =
+            ActivationRecord { archived_at: Some(1_700_000_000), ..ActivationRecord::default() };
+        assert!(archived.is_archived());
+        let archived_json = serde_json::to_string(&archived).unwrap();
+        assert!(
+            archived_json.contains("\"archived_at\":1700000000"),
+            "archived record must serialize archived_at: {archived_json}"
+        );
+        let back: ActivationRecord = serde_json::from_str(&archived_json).unwrap();
+        assert_eq!(back.archived_at, Some(1_700_000_000));
+        assert!(back.is_archived());
+    }
+
+    /// `is_archived()` is a pure function of `archived_at` — true/false cases.
+    #[test]
+    fn is_archived_true_false() {
+        let mut r = ActivationRecord::default();
+        assert!(!r.is_archived());
+        r.archived_at = Some(42);
+        assert!(r.is_archived());
+        r.archived_at = None;
+        assert!(!r.is_archived());
     }
 }

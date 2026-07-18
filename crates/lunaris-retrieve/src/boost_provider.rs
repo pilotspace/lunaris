@@ -121,9 +121,161 @@ impl BoostProvider for LedgerBoostProvider {
                     continue;
                 }
             };
+            // engram-soul-loop task 8b — `memory.distill` archives a source
+            // record's `archived_at` (activation drop, NOT a tombstone: the
+            // episode itself stays recall-hydratable). An archived record
+            // contributes NO boost at all — omitted from the map entirely,
+            // same treatment as a missing/corrupt row.
+            if record.is_archived() {
+                continue;
+            }
             let a = record.activation(now, activation::DEFAULT_DECAY);
             out.insert(id, activation::boost_prior(a));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lunaris_core::activation::{Grain, RefSignal, Strength};
+    use lunaris_core::storage::types::{
+        CypherQuery, Filter, GraphResult, Lsn, QueueMsg, Row, VectorHit, WriteOp,
+    };
+    use lunaris_core::{BiTemporal, Hlc, StorageCapabilities, StorageError};
+
+    /// Minimal `StoragePort` double — only `read_as_of` is meaningful (the
+    /// only method `LedgerBoostProvider::priors` calls). Every other method
+    /// panics if reached, proving the provider never touches them.
+    #[derive(Default)]
+    struct FakeLedgerStorage {
+        rows: parking_lot::Mutex<HashMap<Vec<u8>, bytes::Bytes>>,
+    }
+
+    #[async_trait]
+    impl StoragePort for FakeLedgerStorage {
+        async fn atomic_write(
+            &self,
+            _scope: &Scope,
+            _ops: &[WriteOp],
+        ) -> Result<Lsn, StorageError> {
+            panic!("priors() must never write");
+        }
+        async fn vector_search(
+            &self,
+            _scope: &Scope,
+            _index: &str,
+            _query: &[f32],
+            _k: usize,
+            _filter: Option<&Filter>,
+            _as_of: Option<Hlc>,
+            _rerank: bool,
+        ) -> Result<Vec<VectorHit>, StorageError> {
+            panic!("priors() must never vector_search");
+        }
+        async fn graph_traverse(
+            &self,
+            _scope: &Scope,
+            _q: &CypherQuery,
+            _as_of: Option<Hlc>,
+        ) -> Result<GraphResult, StorageError> {
+            panic!("priors() must never graph_traverse");
+        }
+        async fn scan_range(
+            &self,
+            _scope: &Scope,
+            _prefix: &[u8],
+            _as_of: Option<Hlc>,
+        ) -> Result<
+            futures::stream::BoxStream<'_, Result<(bytes::Bytes, bytes::Bytes), StorageError>>,
+            StorageError,
+        > {
+            panic!("priors() must never scan_range — point reads only (bounded by hit set)");
+        }
+        async fn read_as_of(
+            &self,
+            _scope: &Scope,
+            key: &[u8],
+            _as_of: Hlc,
+        ) -> Result<Option<Row<bytes::Bytes>>, StorageError> {
+            Ok(self.rows.lock().get(key).cloned().map(|value| Row {
+                key: key.to_vec(),
+                value,
+                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+            }))
+        }
+        async fn publish(
+            &self,
+            _scope: &Scope,
+            _topic: &str,
+            _partition: u16,
+            _payload: bytes::Bytes,
+        ) -> Result<u64, StorageError> {
+            panic!("priors() must never publish");
+        }
+        async fn subscribe(
+            &self,
+            _scope: &Scope,
+            _group: &str,
+            _topic: &str,
+            _partition: u16,
+        ) -> Result<futures::stream::BoxStream<'static, Result<QueueMsg, StorageError>>, StorageError>
+        {
+            panic!("priors() must never subscribe");
+        }
+        fn capabilities(&self) -> StorageCapabilities {
+            panic!("priors() must never read capabilities");
+        }
+    }
+
+    /// §6 VERIFY: "archive proven by a recall-boost-suppression assertion
+    /// (not a stub)". This calls the REAL `LedgerBoostProvider::priors` —
+    /// only the storage backing is faked (mirrors the codebase-wide
+    /// `RecordingStorage`/`LedgerTestStorage` convention) — against two REAL
+    /// `ActivationRecord` rows, one archived and one live. Archived must
+    /// contribute NO entry (0 boost); live must still boost.
+    #[tokio::test]
+    async fn archived_record_contributes_zero_boost_live_record_still_boosts() {
+        let scope = Scope::new("test.boost-provider-archived").unwrap();
+        let id_archived = Ulid::new();
+        let id_live = Ulid::new();
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+        let mut archived_rec = ActivationRecord::default();
+        archived_rec.apply(
+            &RefSignal { id: id_archived, grain: Grain::Turn, strength: Strength::Strong },
+            now,
+        );
+        archived_rec.archived_at = Some(now);
+        assert!(archived_rec.is_archived());
+
+        let mut live_rec = ActivationRecord::default();
+        live_rec
+            .apply(&RefSignal { id: id_live, grain: Grain::Turn, strength: Strength::Strong }, now);
+        assert!(!live_rec.is_archived());
+
+        let storage = Arc::new(FakeLedgerStorage::default());
+        storage.rows.lock().insert(
+            activation_key(&scope, id_archived),
+            serde_json::to_vec(&archived_rec).unwrap().into(),
+        );
+        storage
+            .rows
+            .lock()
+            .insert(activation_key(&scope, id_live), serde_json::to_vec(&live_rec).unwrap().into());
+
+        let provider = LedgerBoostProvider::new(storage as Arc<dyn StoragePort>);
+        let priors = provider.priors(&scope, &[id_archived, id_live]).await;
+
+        assert!(
+            !priors.contains_key(&id_archived),
+            "archived record must contribute 0 boost (omitted entirely): {priors:?}"
+        );
+        assert!(
+            priors.get(&id_live).copied().unwrap_or(0.0) > 0.0,
+            "live record must still boost: {priors:?}"
+        );
     }
 }

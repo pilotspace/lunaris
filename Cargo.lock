@@ -2765,6 +2765,7 @@ version = "0.6.0-rc.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "blake3",
  "bytes",
  "chrono",
  "clap",

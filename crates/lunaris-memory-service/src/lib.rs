@@ -19,6 +19,7 @@ use thiserror::Error;
 #[cfg(feature = "embedded-moon")]
 pub mod embedded_moon;
 
+pub mod distill;
 pub mod dream_agenda;
 pub mod feedback;
 pub mod forget;
