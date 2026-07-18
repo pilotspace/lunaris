@@ -2,7 +2,7 @@
 
 slug: dream-agenda · created: 2026-07-18 · stage: production
 autonomy: auto
-phase: tests
+phase: done
 <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > engram-soul-loop **task 8a** (of the split dream wave — 8a=dream-agenda read-only planner,
@@ -232,8 +232,15 @@ Constraints: do NOT change any test or the contract; keyspace helpers from lunar
 - [ ] SEMANTIC — n/a (code task)
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Evidence (orchestrator re-verified, not trusting the executor):
+- Tests 13/13 green — consolidate `dream::tests` 6/6 (source_class_grouping, leiden_entity_clustering, distilled_excluded, max_activation_ceiling, reject_matrix, writes_nothing); memory-service `dream_agenda::tests` 6/6 (incl. `dream_agenda_clusters_via_ingest_structured_and_ledger` — full stack, no-LLM leiden proof); mcp `server_boot` 1/1 (15 tools, real binary).
+- READ-ONLY confirmed: `atomic_write` in dream.rs appears ONLY past `#[cfg(test)]` (line 371) — production `build_dream_agenda`/`handle` call none; `build_dream_agenda_writes_nothing` asserts storage key-count unchanged.
+- Leiden FIRST real call site: dream.rs:227 (was zero); proven end-to-end by the ingest_structured integration test asserting a `com:`-prefixed cluster.
+- `cargo clippy --workspace --all-targets -- -D warnings` clean (1m55s, all crates incl test targets compiled). `cargo fmt --all` applied (only vendor/moon submodule shows a pre-existing non-our diff; pin e41aa671 intact).
+- Green EARNED: integration test is discriminating (real shared blake3 entity → one `com:` cluster through the full handle→wrapper→engine stack), StubEmbedder harness, not overfit/vacuous.
+- No contract deviation. One internal correctness fix (MVCC read_at +999ms round-up) — not a contract change.
+Reviewed by: Tin Dang (autonomous project-lead, adversarial orchestrator re-verify) · date: 2026-07-18
 
 ---
 

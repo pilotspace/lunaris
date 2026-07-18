@@ -1367,12 +1367,12 @@
     },
     "dream-agenda": {
       "title": "memory.dream_agenda \u2014 read-only distillation planner (Leiden-cluster ripe raw episodes + activation stats)",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-18T08:35:14+00:00",
-      "updated": "2026-07-18T08:40:22+00:00"
+      "updated": "2026-07-18T10:19:05+00:00"
     },
     "distill": {
       "title": "memory.distill \u2014 write typed knowledge record (decision|lesson|invariant|gotcha) + archive sources (activation drop, provenance preserved)",
@@ -1445,7 +1445,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-18T08:48:09+00:00",
+  "updated": "2026-07-18T10:19:05+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
