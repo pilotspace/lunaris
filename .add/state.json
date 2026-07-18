@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "distill",
+  "active_task": "dream-skill",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1384,6 +1384,17 @@
       ],
       "created": "2026-07-18T08:44:20+00:00",
       "updated": "2026-07-18T12:38:33+00:00"
+    },
+    "dream-skill": {
+      "title": "/dream skill + SessionStart distillation nudge (agenda-size threshold)",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [
+        "distill"
+      ],
+      "created": "2026-07-18T12:55:29+00:00",
+      "updated": "2026-07-18T13:04:01+00:00"
     }
   },
   "milestones": {
@@ -1445,7 +1456,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-18T12:38:33+00:00",
+  "updated": "2026-07-18T13:04:01+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
