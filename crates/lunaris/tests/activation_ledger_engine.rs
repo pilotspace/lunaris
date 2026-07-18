@@ -418,3 +418,155 @@ async fn ledger_write_failure_does_not_error_turn_path() {
          apply_reflect_invalidate/apply_reflect_boost best-effort contract"
     );
 }
+
+// ---------------------------------------------------------------------------
+// engram-soul-loop task 8b (`memory.distill`) — ScopedLunaris::archive_activation.
+// ---------------------------------------------------------------------------
+
+/// §4 test_plan: "archive_activation: marks existing records, skips missing
+/// ids, returns correct count."
+#[tokio::test]
+async fn archive_activation_marks_existing_skips_missing_returns_count() {
+    let scope = Scope::new("test.archive-activation-marks").unwrap();
+    let storage = Arc::new(LedgerTestStorage::default());
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    let id_a = Ulid::new();
+    let id_b = Ulid::new();
+    let id_missing = Ulid::new(); // never referenced — no ledger record exists
+
+    scoped
+        .record_activation_refs(&[
+            RefSignal { id: id_a, grain: Grain::Turn, strength: Strength::Weak },
+            RefSignal { id: id_b, grain: Grain::Turn, strength: Strength::Weak },
+        ])
+        .await
+        .expect("seed refs for a and b");
+
+    let now = 1_800_000_000u64;
+    let archived_count = scoped
+        .archive_activation(&[id_a, id_b, id_missing], now)
+        .await
+        .expect("archive_activation must succeed");
+    assert_eq!(archived_count, 2, "only the two EXISTING records are counted; id_missing skipped");
+
+    let rec_a: ActivationRecord = serde_json::from_slice(
+        &storage.rows.lock().get(&activation_key(&scope, id_a)).unwrap().value,
+    )
+    .unwrap();
+    assert_eq!(rec_a.archived_at, Some(now));
+    assert!(rec_a.is_archived());
+
+    let rec_b: ActivationRecord = serde_json::from_slice(
+        &storage.rows.lock().get(&activation_key(&scope, id_b)).unwrap().value,
+    )
+    .unwrap();
+    assert_eq!(rec_b.archived_at, Some(now));
+    assert!(rec_b.is_archived());
+
+    assert!(
+        storage.rows.lock().get(&activation_key(&scope, id_missing)).is_none(),
+        "archive_activation must NEVER create a record for an id with no prior reference \
+         (already unboosted — nothing to mark)"
+    );
+}
+
+/// Empty `ids` is a no-op — no storage call at all (mirrors
+/// `record_activation_refs`'s empty-signals short-circuit).
+#[tokio::test]
+async fn archive_activation_empty_ids_is_noop() {
+    let scope = Scope::new("test.archive-activation-empty").unwrap();
+    let storage = Arc::new(LedgerTestStorage::default());
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    let before = storage.write_count();
+    let n = scoped.archive_activation(&[], 1_000).await.expect("empty ids must succeed");
+    assert_eq!(n, 0);
+    assert_eq!(storage.write_count(), before, "empty ids must not call atomic_write at all");
+}
+
+/// Every id missing a ledger record writes NOTHING (the batch has zero
+/// KvPut ops, so `atomic_write` is never called) and returns `0`.
+#[tokio::test]
+async fn archive_activation_all_missing_ids_writes_nothing() {
+    let scope = Scope::new("test.archive-activation-all-missing").unwrap();
+    let storage = Arc::new(LedgerTestStorage::default());
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    let before = storage.write_count();
+    let n = scoped
+        .archive_activation(&[Ulid::new(), Ulid::new()], 1_000)
+        .await
+        .expect("archive_activation over missing ids must still succeed");
+    assert_eq!(n, 0);
+    assert_eq!(storage.write_count(), before, "no atomic_write when nothing exists to mark");
+}
+
+/// §2 scenario: "archived sources lose their recall boost but stay
+/// recallable." Real `LedgerBoostProvider` + real recall pipeline: archiving
+/// A must (a) drop A's boost to 0 (B's equal-similarity tie is no longer
+/// flipped toward A) and (b) leave A fully recallable (activation drop, not
+/// a tombstone — vector_search still returns it, hydrate still resolves it).
+#[tokio::test]
+async fn archived_source_gets_zero_boost_but_stays_recallable() {
+    let scope = Scope::new("test.archive-activation-boost-suppression").unwrap();
+    let clock = HlcClock::new(0);
+    let id_a = Ulid::new();
+    let id_b = Ulid::new();
+    let ep = Ulid::new();
+
+    // Equal-similarity tie, A returned first pre-boost — any flip away from
+    // A is explained only by B's surviving boost once A is archived.
+    let storage =
+        Arc::new(LedgerTestStorage::new(vec![vector_hit(id_a, 0.80), vector_hit(id_b, 0.80)]));
+    seed_chunk(&storage, &scope, id_a, ep, "chunk A", &clock);
+    seed_chunk(&storage, &scope, id_b, ep, "chunk B", &clock);
+
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    scoped
+        .record_activation_refs(&[
+            RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: id_b, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: id_b, grain: Grain::ToolCall, strength: Strength::Strong },
+        ])
+        .await
+        .expect("seed refs for both a and b");
+
+    let now = 2_000_000_000u64;
+    let archived = scoped.archive_activation(&[id_a], now).await.expect("archive a");
+    assert_eq!(archived, 1);
+
+    let provider: Arc<dyn BoostProvider> =
+        Arc::new(LedgerBoostProvider::new(storage.clone() as Arc<dyn StoragePort>));
+
+    // Direct priors() call — the frozen §4 test_plan explicitly allows this
+    // form ("StubEmbedder recall or direct priors() call") — proven against
+    // the REAL provider, not a stub of it.
+    let priors = provider.priors(&scope, &[id_a, id_b]).await;
+    assert!(
+        !priors.contains_key(&id_a),
+        "archived A must contribute 0 boost (omitted entirely): {priors:?}"
+    );
+    assert!(priors.get(&id_b).copied().unwrap_or(0.0) > 0.0, "live B must still boost: {priors:?}");
+
+    // Recall-level proof: A stays fully recallable (activation drop, not a
+    // tombstone) and the tie now flips to B (only B's boost applies).
+    let hits = scoped
+        .dsl()
+        .with_root(Vector::new("chunks", 30))
+        .with_boost_provider(provider)
+        .execute(Query::text("q"))
+        .await
+        .expect("recall must succeed with an archived source in the hit set");
+    assert_eq!(hits.len(), 2, "archived source A must stay recallable: {hits:#?}");
+    assert_eq!(
+        hits[0].text, "chunk B",
+        "only B's surviving boost applies now that A is archived — the tie flips to B: {hits:#?}"
+    );
+}

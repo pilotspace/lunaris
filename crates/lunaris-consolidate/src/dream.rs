@@ -162,6 +162,16 @@ pub async fn build_dream_agenda(
     // 2. Hydrate + exclude + activation-filter.
     let mut candidates: Vec<Candidate> = Vec::with_capacity(refs.len());
     for (id, record) in refs {
+        // engram-soul-loop task 8b (`memory.distill`) — an archived record
+        // (activation drop via `ActivationRecord::archived_at`) is excluded
+        // from the candidate set, same as a gone/distilled episode. This is
+        // a cheap ledger-only check, so it runs BEFORE the episode hydrate
+        // read below. The episode itself is untouched (not a tombstone) —
+        // only its usage boost is suppressed here and in
+        // `lunaris_retrieve::LedgerBoostProvider::priors`.
+        if record.is_archived() {
+            continue;
+        }
         let key = episode_key(scope, id);
         let row =
             match storage.read_as_of(scope, &key, read_at).await.map_err(LunarisError::Storage)? {
@@ -175,10 +185,6 @@ pub async fn build_dream_agenda(
         if episode.source.starts_with("distilled:") {
             continue; // never re-distill a distilled record (§1 Must)
         }
-        // NOTE: `ActivationRecord` has no `archived_at`-style field yet — task
-        // 8b adds it. Forward-compat per the frozen contract: an absent
-        // marker means "live", so there is nothing to check here today. Do
-        // NOT add the field in this task.
         let activation = record.activation(now, cfg.decay);
         if cfg.max_activation.is_some_and(|ceiling| activation > ceiling) {
             continue; // not ripe (decayed) enough yet
@@ -817,6 +823,61 @@ mod tests {
         };
         let err = build_dream_agenda(storage.clone(), &scope, &bad_max, 1_000).await.unwrap_err();
         assert!(err.to_string().contains("invalid_max_activation"), "{err}");
+    }
+
+    /// engram-soul-loop task 8b (`memory.distill`) — an ARCHIVED source
+    /// (`ActivationRecord::archived_at` set) must drop out of the candidate
+    /// set entirely, same as a `distilled:*` source or a gone episode. A
+    /// live sibling with an identical shape must still be a candidate — the
+    /// exclusion is per-record, not scope-wide.
+    #[tokio::test]
+    async fn archived_sources_are_excluded_from_candidates() {
+        let storage = fresh_storage().await;
+        let scope = scope();
+        let base = unix_now();
+
+        let live_id = Ulid::new();
+        let archived_id = Ulid::new();
+        seed_episode(&storage, &scope, live_id, "lunaris:tool_call:post", "live episode").await;
+        seed_episode(&storage, &scope, archived_id, "lunaris:tool_call:post", "archived episode")
+            .await;
+        seed_activation(&storage, &scope, live_id, &[(base - 10, Strength::Weak)]).await;
+
+        // Archived: apply a ref, then stamp archived_at directly (mirrors
+        // `ScopedLunaris::archive_activation`'s RMW — this test seeds the
+        // ledger row shape by hand, same as `seed_activation`).
+        let mut archived_record = ActivationRecord::default();
+        archived_record.apply(
+            &RefSignal { id: archived_id, grain: Grain::Turn, strength: Strength::Weak },
+            base - 10,
+        );
+        archived_record.archived_at = Some(base);
+        assert!(archived_record.is_archived());
+        put(
+            &storage,
+            &scope,
+            activation_key(&scope, archived_id),
+            serde_json::to_vec(&archived_record).unwrap(),
+        )
+        .await;
+
+        let now = unix_now();
+        let cfg = DreamConfig { limit: 20, min_cluster_size: 1, max_activation: None, decay: 0.5 };
+        let agenda = build_dream_agenda(storage.clone(), &scope, &cfg, now).await.unwrap();
+
+        assert_eq!(
+            agenda.total_candidates, 1,
+            "the archived source must be excluded from candidates: {:?}",
+            agenda.clusters
+        );
+        let all_members: Vec<Ulid> =
+            agenda.clusters.iter().flat_map(|c| c.member_ids.clone()).collect();
+        assert!(all_members.contains(&live_id), "the live sibling must still be a candidate");
+        assert!(
+            !all_members.contains(&archived_id),
+            "the archived source must never appear in a cluster: {:?}",
+            agenda.clusters
+        );
     }
 
     /// §6 VERIFY: a dream_agenda call writes nothing — storage key-count
