@@ -32,6 +32,10 @@ lunaris-retrieve = { workspace = true }
 # Shared engine-op handlers — contextd's Memory(..) dispatch calls the SAME
 # functions the lunaris-mcp direct-open fallback uses (single source of truth).
 lunaris-memory-service = { workspace = true }
+# engram-soul-loop task 9 (dream-skill nudge) — LedgerReferenceSource is the
+# cheap agenda-size source for the SessionStart nudge (default-features=[],
+# no candle/reqwest pulled in).
+lunaris-consolidate = { workspace = true }
 
 # CLI
 clap = { workspace = true, features = ["derive", "env"] }
