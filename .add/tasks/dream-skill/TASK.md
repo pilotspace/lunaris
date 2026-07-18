@@ -2,7 +2,7 @@
 
 slug: dream-skill · created: 2026-07-18 · stage: production
 autonomy: auto
-phase: tests
+phase: done
 <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > engram-soul-loop **task 9** — the LAST task, closes the milestone. MILESTONE.md lines 114-115:
@@ -192,8 +192,15 @@ Constraints: do NOT change tests or contract; reuse env_usize_any; nudge line ca
 - [ ] SEMANTIC — SKILL.md read in full: correct tool names/params, honest v1-vs-v2 scope
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Evidence (orchestrator re-verified):
+- lunaris-hook 111/111 green (105 + 6 new): test_nudge_injected_over_threshold_empty_digest (nudge lands even when finish_recall short-circuits to empty; ok==true; asserts NO id= token), test_no_nudge_below_threshold_byte_identical, test_archived_excluded_from_agenda_size, test_ledger_scan_failure_fails_open (ActivationScanFailingStorage → digest still renders, no nudge, no error), dream_nudge_threshold_env_wired_with_default_five, test_dream_skill_file_shape.
+- Nudge is fail-open: SessionDigest arm scan Err → debug log + skip (context.rs:577-583); threshold-guarded; counts !is_archived(); uses cheap LedgerReferenceSource::scan (NOT build_dream_agenda). READ-ONLY, no new keyspace/marker.
+- splice_dream_nudge: no id= token; wraps in a minimal <lunaris_memory_context> block when empty; sets ok=true.
+- SKILL.md read in full: accurate to the real tool contracts (dream_agenda read-only, distill archive≠tombstone, resolve invalidate/supersede), honest v1-vs-v2 doc-stubs; fixed one cosmetic when_to_use emoji (⏳→⟳) to match the actual nudge line.
+- .gitignore narrowing verified SAFE: ONLY .claude/skills/dream/SKILL.md tracked; no settings.local.json/secrets.
+- cargo clippy --workspace --all-targets -D warnings clean (1m38s); fmt applied; vendor/moon pin restored.
+Reviewed by: Tin Dang (autonomous project-lead, adversarial orchestrator re-verify) · date: 2026-07-18
 
 ---
 

@@ -11,7 +11,7 @@ description: >-
   SessionStart digest nudges "N memories are ripe for distillation — run
   /dream to consolidate."
 user-invocable: true
-when_to_use: "Invoke when the user runs /dream, asks to consolidate/distill memory, or a Lunaris SessionStart context block contains a '⏳ ripe for distillation' nudge line."
+when_to_use: "Invoke when the user runs /dream, asks to consolidate/distill memory, or a Lunaris SessionStart context block contains a '⟳ ripe for distillation' nudge line."
 category: workflows
 keywords: [dream, distill, consolidate, memory, lunaris, engram]
 argument-hint: "[optional: a scope hint or a focus area, e.g. 'focus on auth-related memories'] (no argument = consolidate the whole current-project scope)"
