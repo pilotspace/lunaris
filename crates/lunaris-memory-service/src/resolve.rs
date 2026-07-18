@@ -174,10 +174,20 @@ pub async fn handle(
 mod tests {
     use super::*;
     use lunaris::EpisodeBuilder;
+    use lunaris_core::StubEmbedder;
     use lunaris_retrieve::Query;
+    use std::sync::Arc;
 
     async fn make_engine() -> (Lunaris, Scope) {
-        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+        // `StubEmbedder` (deterministic 768-d vectors) so the recall-based
+        // assertions below are reproducible on CI, which has no staged GGUF
+        // embedder model — `Lunaris::open("memory://")` alone would fall back
+        // to a NoopEmbedder whose zero vectors make recall return nothing
+        // (mirrors `recall.rs`'s test harness).
+        let embedder = Arc::new(StubEmbedder::new(768));
+        let lunaris = Lunaris::open_with_embedder("memory://", embedder)
+            .await
+            .expect("in-memory lunaris must open");
         let scope = Scope::new(format!("test.resolve-{}", Ulid::new())).unwrap();
         (lunaris, scope)
     }
