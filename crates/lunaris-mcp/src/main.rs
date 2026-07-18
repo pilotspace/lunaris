@@ -5,7 +5,7 @@
 //! `memory.feedback`, `memory.status`, `memory.scratchpad_write`,
 //! `memory.scratchpad_read`, `memory.scratchpad_grep`,
 //! `memory.scratchpad_consolidate`, `memory.verify_agenda`,
-//! `memory.resolve`, and `memory.dream_agenda`.
+//! `memory.resolve`, `memory.dream_agenda`, and `memory.distill`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -51,6 +51,7 @@ use crate::state::AppState;
 // (lunaris-memory-service), called by BOTH this mcp server and contextd.
 use lunaris_memory_service::protocol::MemoryRequest;
 use lunaris_memory_service::{
+    distill::{DistillParams, DistillResponse},
     dream_agenda::{DreamAgendaParams, DreamAgendaResponse},
     feedback::{FeedbackParams, FeedbackResponse},
     forget::{ForgetParams, ForgetResponse},
@@ -533,6 +534,39 @@ impl LunarisMcpServer {
             MemoryRequest::DreamAgenda { scope: self.state.scope.as_str().to_owned(), params };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
+
+    /// Transactional apply step for a `memory.dream_agenda` cluster: write a
+    /// typed knowledge record and archive its source episodes.
+    ///
+    /// engram-soul-loop task 8b. The coding harness (Claude, not Lunaris) is
+    /// the distiller/judge — it authors the `content` prose; this tool
+    /// writes it durably as `distilled:{kind}:<scope>` and archives every
+    /// source in `source_episode_ids` (activation drop via the ledger's
+    /// `archived_at` marker — the source episode itself is NOT tombstoned,
+    /// it stays fully recall-hydratable; only its usage boost is
+    /// suppressed and it exits the `memory.dream_agenda` candidate set).
+    #[tool(
+        name = "memory.distill",
+        description = "Transactional apply step for a memory.dream_agenda cluster: write a typed \
+                       knowledge record (kind=decision|lesson|invariant|gotcha) as a durable, highest-priority \
+                       episode (source='distilled:{kind}:<scope>', source_priority=95 — above decision:90 in \
+                       the SessionStart digest) and ARCHIVE every source in source_episode_ids. Archive is an \
+                       activation drop, NOT a delete: sources stay fully recallable (base score survives) but \
+                       lose their recall boost and drop out of future memory.dream_agenda candidates. \
+                       content must be plain prose (never a JSON envelope — JSON is dropped by the digest's \
+                       anti-injection filter). Accepts optional dedupe_key for replay-safe idempotency: a \
+                       replay returns the prior distilled_episode_id/lsn with was_duplicate=true and \
+                       archived_count=0 (never re-archives). Rejects: empty_provenance (no source_episode_ids), \
+                       invalid_source_id (a non-ULID entry), empty_content, invalid_kind (unknown kind, \
+                       including the reserved 'procedure')."
+    )]
+    async fn distill(
+        &self,
+        Parameters(params): Parameters<DistillParams>,
+    ) -> Result<Json<DistillResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Distill { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -570,6 +604,14 @@ impl ServerHandler for LunarisMcpServer {
                  anchor no longer matches HEAD for referenced files); each item carries a content snippet.\n\
                  - memory.resolve — act on a verify_agenda entry: keep (prune the row, leave the memory), \
                  invalidate (soft-delete the memory), or supersede (soft-delete + record a replacement id).\n\
+                 \n\
+                 DISTILL (consolidate raw episodes into durable knowledge):\n\
+                 - memory.dream_agenda — READ-ONLY: surfaces candidate clusters of ripe, referenced raw \
+                 episodes for you to reason over and distill. Writes nothing.\n\
+                 - memory.distill — the apply step: write your distilled prose as a typed, highest-priority \
+                 record (kind=decision|lesson|invariant|gotcha) and archive the cluster's source episodes \
+                 (activation drop — sources stay recallable, just deprioritized and excluded from future \
+                 agendas).\n\
                  \n\
                  DIAGNOSTICS (not for content retrieval):\n\
                  - memory.status — backend capabilities and queue health.\n\

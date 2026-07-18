@@ -127,6 +127,10 @@ pub enum MemoryRequest {
         scope: String,
         params: crate::dream_agenda::DreamAgendaParams,
     },
+    Distill {
+        scope: String,
+        params: crate::distill::DistillParams,
+    },
 }
 
 impl MemoryRequest {
@@ -149,7 +153,8 @@ impl MemoryRequest {
             | MemoryRequest::ScratchpadHandover { scope, .. }
             | MemoryRequest::VerifyAgenda { scope, .. }
             | MemoryRequest::Resolve { scope, .. }
-            | MemoryRequest::DreamAgenda { scope, .. } => scope,
+            | MemoryRequest::DreamAgenda { scope, .. }
+            | MemoryRequest::Distill { scope, .. } => scope,
         }
     }
 
@@ -171,6 +176,7 @@ impl MemoryRequest {
             MemoryRequest::VerifyAgenda { .. } => "verify_agenda",
             MemoryRequest::Resolve { .. } => "resolve",
             MemoryRequest::DreamAgenda { .. } => "dream_agenda",
+            MemoryRequest::Distill { .. } => "distill",
         }
     }
 
@@ -262,6 +268,9 @@ pub async fn dispatch(
         }
         MemoryRequest::DreamAgenda { params, .. } => {
             to_value(crate::dream_agenda::handle(lunaris, scope, params).await?)
+        }
+        MemoryRequest::Distill { params, .. } => {
+            to_value(crate::distill::handle(lunaris, scope, params).await?)
         }
     }
 }
