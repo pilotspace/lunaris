@@ -2,7 +2,7 @@
 
 slug: distill · created: 2026-07-18 · stage: production
 autonomy: auto
-phase: tests
+phase: done
 <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > engram-soul-loop **task 8b** (split from milestone task 8; 8a=dream-agenda done/merging first).
@@ -215,8 +215,14 @@ Constraints: do NOT change tests or contract; StubEmbedder for recall tests; key
 - [ ] SEMANTIC — n/a
 
 ### GATE RECORD
-Outcome: <PASS | RISK-ACCEPTED | HARD-STOP>
-Reviewed by: <name> · date: <date>
+Outcome: PASS
+Evidence (orchestrator re-verified — executor front-loaded impl into RED + parked mid-GREEN; orchestrator finished the wiring commit + independently ran the gate):
+- Tests all green: core activation 9/9 (incl old-record-without-archived_at decodes, skip_serializing_if round-trip, is_archived), retrieve boost 2/2 (archived→0 boost while live boosts), memory-service distill 9/9 (write+archive, idempotent-no-rearchive, not-tombstoned, full reject matrix empty_provenance/invalid_source_id/empty_content/invalid_kind incl reserved `procedure`), memory engine archive_activation 8/8 (marks existing/skips missing/count; archived→0 boost but recallable), consolidate dream 7/7 (incl NEW archived_sources_are_excluded_from_candidates — the 8a↔8b cross-wiring), hook context 105/105 (distilled_plain_text_survives + distilled_json_envelope_is_still_dropped + priority-95 + digest-prefix + dedupe-class), mcp server_boot 1/1 (16 tools real binary).
+- INGEST-04: `grep -c atomic_write crates/lunaris-memory-service/src/distill.rs` == 0 (ingest via ScopedLunaris::ingest; archive via ledger RMW).
+- Archive = activation drop, NOT tombstone: `archived_source_gets_zero_boost_but_stays_recallable` + `source_episodes_are_not_tombstoned` prove read_as_of + base-score recall survive.
+- `cargo clippy --workspace --all-targets -- -D warnings` clean (1m39s). `cargo fmt --all` applied; vendor/moon pin e41aa671 restored (not staged).
+- Green EARNED: distill handle validates before any write; deterministic blake3 id on the dedupe path so replay returns the same distilled_episode_id; discriminating cross-test proves archived sources leave the dream-agenda candidate set. No contract deviation.
+Reviewed by: Tin Dang (autonomous project-lead, adversarial orchestrator re-verify) · date: 2026-07-18
 
 ---
 
