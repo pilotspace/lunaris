@@ -31,9 +31,11 @@ pub const DEFAULT_TOOL_MAX_CHARS: usize = 900;
 pub const DEFAULT_TOOL_MIN_SCORE: f32 = 0.60;
 pub const DEFAULT_DIGEST_MAX_HITS: usize = 8;
 pub const DEFAULT_DIGEST_MAX_CHARS: usize = 2000;
-// RED (engram-soul-loop task 9): DEFAULT_DREAM_NUDGE_THRESHOLD intentionally
-// NOT YET defined — the nudge test suite below references it and must fail
-// to compile until GREEN adds it back.
+/// engram-soul-loop task 9 (dream-skill nudge) — minimum count of
+/// non-archived activation-ledger candidates (`LedgerReferenceSource::scan`)
+/// before the SessionStart digest appends the "/dream" nudge line. See
+/// `.add/tasks/dream-skill/TASK.md` §3 CONTRACT (frozen).
+pub const DEFAULT_DREAM_NUDGE_THRESHOLD: usize = 5;
 /// Char budget for the scrub+snapshot of a recall hit BEFORE curation. Larger
 /// than the final 260-char curated snippet so `parse_jsonish` sees a WHOLE JSON
 /// envelope instead of a mid-object truncation — the 900-char cap silently
@@ -546,18 +548,42 @@ impl ContextService {
                 if let Some(cwd) = cwd.clone() {
                     self.spawn_agenda_sweep(&scope, cwd);
                 }
-                // RED (engram-soul-loop task 9): the dream nudge is not yet
-                // spliced in — GREEN adds it after finish_recall.
-                self.finish_recall(
-                    &scope,
-                    "session_start",
-                    session_id.as_deref(),
-                    max_chars,
-                    None,
-                    memories,
-                    cwd.as_deref(),
-                )
-                .await
+                let mut resp = self
+                    .finish_recall(
+                        &scope,
+                        "session_start",
+                        session_id.as_deref(),
+                        max_chars,
+                        None,
+                        memories,
+                        cwd.as_deref(),
+                    )
+                    .await?;
+
+                // engram-soul-loop task 9 (dream-skill nudge) — cheap,
+                // fail-open agenda-size check: NEVER errors the digest,
+                // NEVER empties an otherwise-populated response. See
+                // `.add/tasks/dream-skill/TASK.md` §3 CONTRACT (frozen).
+                let threshold = env_usize_any(&["LUNARIS_DREAM_NUDGE_THRESHOLD"])
+                    .unwrap_or(DEFAULT_DREAM_NUDGE_THRESHOLD);
+                if threshold > 0 {
+                    match LedgerReferenceSource::new(storage.clone()).scan(&scope).await {
+                        Ok(refs) => {
+                            let n = refs.iter().filter(|(_, r)| !r.is_archived()).count();
+                            if n >= threshold {
+                                splice_dream_nudge(&mut resp, n);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                err = %err,
+                                "session digest: dream nudge ledger scan failed, skipping nudge"
+                            );
+                        }
+                    }
+                }
+
+                Ok(resp)
             }
         }
     }
@@ -1705,8 +1731,32 @@ fn render_context(
     trim_to_chars(&out, max_chars)
 }
 
-// RED (engram-soul-loop task 9): `splice_dream_nudge` intentionally NOT YET
-// defined — GREEN adds it here.
+/// engram-soul-loop task 9 (dream-skill nudge) — append the SessionStart
+/// distillation nudge to an already-finished digest response.
+///
+/// `finish_recall` short-circuits to `ContextResponse::empty()` when there
+/// were zero digest memories (`context.rs` §849-851), so `rendered_context`
+/// can arrive here EMPTY. In that case, synthesize a minimal
+/// `<lunaris_memory_context phase="session_start">` wrapper (matching
+/// `render_context`'s block style) carrying ONLY the nudge line, and flip
+/// `resp.ok` back to `true` so the adapter still forwards it.
+///
+/// The nudge line intentionally carries NO `id=` token: it is not a citable
+/// `ContextMemory`, and `transcript::parse_injection_line` / the citation
+/// detector find memory ids by locating `id=` in the rendered header — a
+/// nudge line must never be mis-parsed as one (frozen contract §3).
+fn splice_dream_nudge(resp: &mut ContextResponse, n: usize) {
+    let line = format!("⟳ {n} memories are ripe for distillation — run /dream to consolidate.");
+    if resp.rendered_context.is_empty() {
+        resp.rendered_context = format!(
+            "<lunaris_memory_context phase=\"session_start\">\n{line}\n</lunaris_memory_context>"
+        );
+    } else {
+        resp.rendered_context.push('\n');
+        resp.rendered_context.push_str(&line);
+    }
+    resp.ok = true;
+}
 
 /// engram-soul-loop task 6 (staleness-pass) — re-sort an ALREADY-curated
 /// list by the exact same ordering criteria `curate_context_memories` /
@@ -4568,13 +4618,16 @@ mod tests {
     /// repo-file assertion test (SKILL.md is a doc, not code — §5 BUILD).
     #[test]
     fn test_dream_skill_file_shape() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.claude/skills/dream/SKILL.md");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.claude/skills/dream/SKILL.md");
         let body = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("dream SKILL.md must exist at {path:?}: {e}"));
         assert!(body.contains("name: dream"), "frontmatter must declare name: dream");
         assert!(body.contains("user-invocable: true"), "the skill must be user-invocable");
-        assert!(body.contains("category: workflows"), "frontmatter must mirror add/SKILL.md's category");
+        assert!(
+            body.contains("category: workflows"),
+            "frontmatter must mirror add/SKILL.md's category"
+        );
         assert!(body.contains("license: MIT"), "frontmatter must mirror add/SKILL.md's license");
         assert!(body.contains("memory.dream_agenda"), "body must name memory.dream_agenda");
         assert!(body.contains("memory.distill"), "body must name memory.distill");
