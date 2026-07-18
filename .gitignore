@@ -50,7 +50,14 @@ Thumbs.db
 .ruff_cache/
 .cargo/
 .rustup/
-.claude/
+# .claude/ is local tooling (settings.local.json, worktrees/, the
+# plugin-materialized `add` skill) EXCEPT the project-authored `/dream`
+# skill (engram-soul-loop task 9), which is a real shipped deliverable and
+# must be committed with the branch, not left as a local-only artifact.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/dream/
 
 # --- Local env / secrets ---
 .env
