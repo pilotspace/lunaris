@@ -28,11 +28,13 @@ pub mod protocol;
 pub mod recall;
 pub mod record_decision;
 pub mod record_edit;
+pub mod resolve;
 pub mod scratchpad_consolidate;
 pub mod scratchpad_grep;
 pub mod scratchpad_read;
 pub mod scratchpad_write;
 pub mod status;
+pub mod verify_agenda;
 
 /// Tool-layer error. The `lunaris-mcp` boundary converts this into
 /// `rmcp::ErrorData`; `lunaris-contextd` maps it to a `MemoryResponse::Err`.

@@ -48,15 +48,25 @@ impl StoragePort for AgendaTestStorage {
         {
             let mut rows = self.rows.lock();
             for op in ops {
-                if let WriteOp::KvPut { key, value } = op {
-                    rows.insert(
-                        key.clone(),
-                        Row {
-                            key: key.clone(),
-                            value: value.clone().into(),
-                            bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
-                        },
-                    );
+                match op {
+                    WriteOp::KvPut { key, value } => {
+                        rows.insert(
+                            key.clone(),
+                            Row {
+                                key: key.clone(),
+                                value: value.clone().into(),
+                                bt: BiTemporal::at(Hlc::ZERO, Hlc::ZERO),
+                            },
+                        );
+                    }
+                    // engram-soul-loop task 7: remove_verify_agenda issues a
+                    // real KvDelete — the fixture must honor it.
+                    WriteOp::KvDelete { key } => {
+                        rows.remove(key);
+                    }
+                    // `WriteOp` is `#[non_exhaustive]` — vector/graph ops are
+                    // irrelevant to this KV-only fixture.
+                    _ => {}
                 }
             }
         }
@@ -259,4 +269,73 @@ async fn empty_entries_is_noop() {
 
     scoped.upsert_verify_agenda(&[]).await.expect("empty upsert must succeed");
     assert_eq!(storage.write_count(), 0, "an empty entries slice must not call atomic_write");
+}
+
+// ---------------------------------------------------------------------------
+// engram-soul-loop task 7 (verify-agenda-tools) — list_verify_agenda +
+// remove_verify_agenda (`.add/tasks/verify-agenda-tools/TASK.md` §4
+// test_plan "handle.rs (memory:// engine)" row).
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test 4 — list_verify_agenda round-trips upserted entries, sorted by
+// last_seen_ms DESC (freshest staleness first).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_verify_agenda_round_trips_sorted_by_last_seen_desc() {
+    let scope = Scope::new("test.agenda-list").unwrap();
+    let storage = Arc::new(AgendaTestStorage::default());
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    let id_older = Ulid::new();
+    let id_newer = Ulid::new();
+    let mut older = entry(id_older, &"a".repeat(40), &"b".repeat(40), &["src/a.rs"]);
+    older.first_seen_ms = 1_000;
+    older.last_seen_ms = 1_000;
+    let mut newer = entry(id_newer, &"a".repeat(40), &"b".repeat(40), &["src/b.rs"]);
+    newer.first_seen_ms = 2_000;
+    newer.last_seen_ms = 5_000;
+
+    scoped.upsert_verify_agenda(&[older, newer]).await.expect("seed upsert must succeed");
+
+    let listed = scoped.list_verify_agenda().await.expect("list_verify_agenda must succeed");
+    assert_eq!(listed.len(), 2, "both seeded entries must round-trip");
+    assert_eq!(listed[0].episode_id, id_newer, "freshest last_seen_ms (5_000) must sort first");
+    assert_eq!(listed[1].episode_id, id_older, "older last_seen_ms (1_000) must sort second");
+    assert!(
+        listed[0].last_seen_ms >= listed[1].last_seen_ms,
+        "list_verify_agenda must be sorted last_seen_ms DESC"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 5 — remove_verify_agenda returns true-then-false (idempotent) and the
+// key is gone from storage after the first call.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn remove_verify_agenda_is_idempotent_true_then_false() {
+    let scope = Scope::new("test.agenda-remove").unwrap();
+    let storage = Arc::new(AgendaTestStorage::default());
+    let handle = make_handle(storage.clone());
+    let scoped = handle.scoped(scope.clone());
+
+    let id = Ulid::new();
+    let seeded = entry(id, &"a".repeat(40), &"b".repeat(40), &["src/lib.rs"]);
+    scoped.upsert_verify_agenda(&[seeded]).await.expect("seed upsert must succeed");
+
+    let key = verify_agenda_key(&scope, id);
+    assert!(storage.rows.lock().contains_key(&key), "agenda row must exist after seeding");
+
+    let first = scoped.remove_verify_agenda(id).await.expect("first remove must succeed");
+    assert!(first, "first remove_verify_agenda call must report the row existed");
+    assert!(
+        !storage.rows.lock().contains_key(&key),
+        "the verify_agenda key must be gone from storage after removal"
+    );
+
+    let second = scoped.remove_verify_agenda(id).await.expect("second remove must succeed");
+    assert!(!second, "a repeat remove_verify_agenda call on an absent row must return false");
 }
