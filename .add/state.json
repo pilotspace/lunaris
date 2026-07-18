@@ -1,7 +1,7 @@
 {
   "project": "Lunaris",
   "stage": "production",
-  "active_task": "staleness-pass",
+  "active_task": "verify-agenda-tools",
   "active_milestone": "engram-soul-loop",
   "tasks": {
     "mq-typed-client": {
@@ -1344,6 +1344,15 @@
         ],
         "snapshot_md5": "4e11ee9ccacb1ec8f787f7e23715942e"
       }
+    },
+    "verify-agenda-tools": {
+      "title": "Verify Agenda Tools",
+      "phase": "tests",
+      "gate": "none",
+      "milestone": "engram-soul-loop",
+      "depends_on": [],
+      "created": "2026-07-18T01:52:22+00:00",
+      "updated": "2026-07-18T01:54:56+00:00"
     }
   },
   "milestones": {
@@ -1405,7 +1414,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-17T18:01:00+00:00",
+  "updated": "2026-07-18T01:54:56+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
