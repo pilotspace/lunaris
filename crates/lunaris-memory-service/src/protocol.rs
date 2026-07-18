@@ -115,6 +115,14 @@ pub enum MemoryRequest {
     ScratchpadHandover {
         scope: String,
     },
+    VerifyAgenda {
+        scope: String,
+        params: crate::verify_agenda::VerifyAgendaParams,
+    },
+    Resolve {
+        scope: String,
+        params: crate::resolve::ResolveParams,
+    },
 }
 
 impl MemoryRequest {
@@ -134,7 +142,9 @@ impl MemoryRequest {
             | MemoryRequest::ScratchpadRead { scope, .. }
             | MemoryRequest::ScratchpadGrep { scope, .. }
             | MemoryRequest::ScratchpadConsolidate { scope, .. }
-            | MemoryRequest::ScratchpadHandover { scope, .. } => scope,
+            | MemoryRequest::ScratchpadHandover { scope, .. }
+            | MemoryRequest::VerifyAgenda { scope, .. }
+            | MemoryRequest::Resolve { scope, .. } => scope,
         }
     }
 
@@ -153,6 +163,8 @@ impl MemoryRequest {
             MemoryRequest::ScratchpadGrep { .. } => "scratchpad_grep",
             MemoryRequest::ScratchpadConsolidate { .. } => "scratchpad_consolidate",
             MemoryRequest::ScratchpadHandover { .. } => "scratchpad_handover",
+            MemoryRequest::VerifyAgenda { .. } => "verify_agenda",
+            MemoryRequest::Resolve { .. } => "resolve",
         }
     }
 
@@ -235,6 +247,12 @@ pub async fn dispatch(
         // directly, never a Result — a failed drain must not error the caller.
         MemoryRequest::ScratchpadHandover { .. } => {
             to_value(crate::handover::handle(lunaris, scope).await)
+        }
+        MemoryRequest::VerifyAgenda { params, .. } => {
+            to_value(crate::verify_agenda::handle(lunaris, scope, params).await?)
+        }
+        MemoryRequest::Resolve { params, .. } => {
+            to_value(crate::resolve::handle(lunaris, scope, params).await?)
         }
     }
 }

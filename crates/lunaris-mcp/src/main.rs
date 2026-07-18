@@ -3,8 +3,9 @@
 //! MCP tools: `memory.ingest`, `memory.recall`, `memory.forget`,
 //! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
 //! `memory.feedback`, `memory.status`, `memory.scratchpad_write`,
-//! `memory.scratchpad_read`, `memory.scratchpad_grep`, and
-//! `memory.scratchpad_consolidate`.
+//! `memory.scratchpad_read`, `memory.scratchpad_grep`,
+//! `memory.scratchpad_consolidate`, `memory.verify_agenda`, and
+//! `memory.resolve`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -56,11 +57,13 @@ use lunaris_memory_service::{
     recall::{RecallParams, RecallResponse},
     record_decision::{RecordDecisionParams, RecordDecisionResponse},
     record_edit::{RecordEditParams, RecordEditResponse},
+    resolve::{ResolveParams, ResolveResponse},
     scratchpad_consolidate::{ScratchpadConsolidateParams, ScratchpadConsolidateResponse},
     scratchpad_grep::{ScratchpadGrepParams, ScratchpadGrepResponse},
     scratchpad_read::{ScratchpadReadParams, ScratchpadReadResponse},
     scratchpad_write::{ScratchpadWriteParams, ScratchpadWriteResponse},
     status::{StatusParams, StatusResponse},
+    verify_agenda::{VerifyAgendaParams, VerifyAgendaResponse},
 };
 // list_scopes stays local to mcp (registry coupling). Scratchpad ops now proxy
 // like the engine ops, but their session-aware namespace is resolved mcp-side.
@@ -448,6 +451,54 @@ impl LunarisMcpServer {
         };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
+
+    /// List memories flagged stale by the background verify/staleness sweep.
+    ///
+    /// engram-soul-loop task 7. Each item carries the episode's anchor/
+    /// current git heads, the changed files that triggered the flag, and a
+    /// content snippet so a human or harness can judge staleness. Pair with
+    /// `memory.resolve` to act on each entry.
+    #[tool(
+        name = "memory.verify_agenda",
+        description = "List memories flagged stale by the background verify/staleness sweep — episodes \
+                       whose recorded git anchor no longer matches the current HEAD for files they \
+                       reference. Each item carries episode_id, the anchor/current git heads, the \
+                       changed files, and a snippet of the memory's content so a human or harness can \
+                       judge staleness. Pair with memory.resolve to keep, invalidate, or supersede each \
+                       entry. Returns up to `limit` items (default 100), freshest staleness first."
+    )]
+    async fn verify_agenda(
+        &self,
+        Parameters(params): Parameters<VerifyAgendaParams>,
+    ) -> Result<Json<VerifyAgendaResponse>, rmcp::ErrorData> {
+        let req =
+            MemoryRequest::VerifyAgenda { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// Resolve a `memory.verify_agenda` entry: keep, invalidate, or supersede.
+    ///
+    /// engram-soul-loop task 7. `invalidate` / `supersede` reuse the same
+    /// episode-scoped MVCC soft-delete tombstone `memory.forget` uses — the
+    /// episode no longer appears in `memory.recall` afterward. Irreversible
+    /// (soft-delete only; no hard delete surface).
+    #[tool(
+        name = "memory.resolve",
+        description = "Resolve a memory.verify_agenda entry. action=keep prunes the agenda row and \
+                       leaves the episode live. action=invalidate soft-deletes the episode (MVCC \
+                       tombstone — it no longer appears in memory.recall) and prunes the agenda row. \
+                       action=supersede is the same as invalidate but requires superseded_by (the \
+                       replacement memory's episode ULID), echoed in the response. Irreversible for \
+                       invalidate/supersede (soft-delete only, no hard delete). status in the response \
+                       is kept|invalidated|superseded|not_found."
+    )]
+    async fn resolve(
+        &self,
+        Parameters(params): Parameters<ResolveParams>,
+    ) -> Result<Json<ResolveResponse>, rmcp::ErrorData> {
+        let req = MemoryRequest::Resolve { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -479,6 +530,12 @@ impl ServerHandler for LunarisMcpServer {
                  - memory.feedback — explicit ± vote on a specific memory_id with a required reason; moves \
                  recall ranking now via the activation ledger and leaves an audit trail for the background \
                  dream pass.\n\
+                 \n\
+                 CURATE (staleness review):\n\
+                 - memory.verify_agenda — list memories flagged stale by the background verify sweep (git \
+                 anchor no longer matches HEAD for referenced files); each item carries a content snippet.\n\
+                 - memory.resolve — act on a verify_agenda entry: keep (prune the row, leave the memory), \
+                 invalidate (soft-delete the memory), or supersede (soft-delete + record a replacement id).\n\
                  \n\
                  DIAGNOSTICS (not for content retrieval):\n\
                  - memory.status — backend capabilities and queue health.\n\

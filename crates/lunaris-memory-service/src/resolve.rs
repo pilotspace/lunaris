@@ -278,7 +278,8 @@ mod tests {
         let row = lunaris.storage().read_as_of(&scope, &key, read_at).await.unwrap();
         let row = row.expect("soft-deleted episode row must still be present (not hard-deleted)");
         let json: serde_json::Value = serde_json::from_slice(&row.value).unwrap();
-        let sys_to = json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
+        let sys_to =
+            json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
         assert!(
             sys_to.is_some_and(|v| !v.is_null()),
             "invalidate must close bt.sys[1] (soft tombstone); payload={json}"
@@ -321,7 +322,8 @@ mod tests {
         let read_at = lunaris.clock().tick();
         let row = lunaris.storage().read_as_of(&scope, &key, read_at).await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_slice(&row.value).unwrap();
-        let sys_to = json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
+        let sys_to =
+            json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
         assert!(
             sys_to.is_none_or(|v| v.is_null()),
             "rejected supersede must NOT touch the episode's bt.sys[1]"
@@ -365,7 +367,8 @@ mod tests {
         let read_at = lunaris.clock().tick();
         let row = lunaris.storage().read_as_of(&scope, &key, read_at).await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_slice(&row.value).unwrap();
-        let sys_to = json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
+        let sys_to =
+            json.get("bt").and_then(|bt| bt.get("sys")).and_then(|sys| sys.get(1)).cloned();
         assert!(
             sys_to.is_some_and(|v| !v.is_null()),
             "supersede must close bt.sys[1] (soft tombstone) exactly like invalidate"

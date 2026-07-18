@@ -105,11 +105,7 @@ pub async fn handle(
         });
     }
 
-    tracing::debug!(
-        scope = scope.as_str(),
-        count = items.len(),
-        "memory.verify_agenda listed",
-    );
+    tracing::debug!(scope = scope.as_str(), count = items.len(), "memory.verify_agenda listed",);
 
     Ok(VerifyAgendaResponse { count: items.len(), items })
 }
@@ -218,8 +214,16 @@ mod tests {
 
         assert_eq!(resp.count, 2, "both seeded agenda entries must list");
         assert_eq!(resp.items.len(), 2);
-        assert_eq!(resp.items[0].episode_id, id_b.to_string(), "last_seen_ms DESC: b (5_000) first");
-        assert_eq!(resp.items[1].episode_id, id_a.to_string(), "last_seen_ms DESC: a (1_000) second");
+        assert_eq!(
+            resp.items[0].episode_id,
+            id_b.to_string(),
+            "last_seen_ms DESC: b (5_000) first"
+        );
+        assert_eq!(
+            resp.items[1].episode_id,
+            id_a.to_string(),
+            "last_seen_ms DESC: a (1_000) second"
+        );
         for item in &resp.items {
             assert!(!item.files.is_empty(), "files must carry the diff context");
             assert_eq!(item.anchor_head, "a".repeat(40));

@@ -1666,9 +1666,47 @@ impl<'a> ScopedLunaris<'a> {
     /// DoS guard for huge scopes. Results are sorted by `last_seen_ms` DESC
     /// (freshest staleness first).
     ///
-    /// RED stub (engram-soul-loop task 7): real scan+sort lands in GREEN.
     pub async fn list_verify_agenda(&self) -> Result<Vec<VerifyAgendaEntry>, LunarisError> {
-        unimplemented!("list_verify_agenda: GREEN pending (engram-soul-loop task 7)")
+        use futures::stream::StreamExt;
+
+        let prefix = lunaris_core::keyspace::verify_agenda_prefix(&self.scope);
+        let mut stream = self
+            .engine
+            .storage
+            .scan_range(&self.scope, &prefix, None)
+            .await
+            .map_err(LunarisError::Storage)?;
+
+        let mut entries: Vec<VerifyAgendaEntry> = Vec::new();
+        let mut scanned = 0usize;
+        while let Some(item) = stream.next().await {
+            // A mid-stream storage error propagates (the storage call
+            // itself failed) — distinct from a corrupt VALUE, which is
+            // skipped below without aborting the list.
+            let (_key, value) = item.map_err(LunarisError::Storage)?;
+            scanned += 1;
+            match serde_json::from_slice::<VerifyAgendaEntry>(&value) {
+                Ok(entry) => entries.push(entry),
+                Err(e) => {
+                    tracing::warn!(
+                        err = %e,
+                        scope = self.scope.as_str(),
+                        "verify_agenda_list_corrupt_row_skipped"
+                    );
+                }
+            }
+            if scanned >= VERIFY_AGENDA_LIST_SCAN_CAP {
+                tracing::warn!(
+                    scanned,
+                    scope = self.scope.as_str(),
+                    "verify_agenda_list: scan cap reached — partial list"
+                );
+                break;
+            }
+        }
+
+        entries.sort_by(|a, b| b.last_seen_ms.cmp(&a.last_seen_ms));
+        Ok(entries)
     }
 
     /// engram-soul-loop task 7 (verify-agenda-tools) — remove one
@@ -1678,13 +1716,34 @@ impl<'a> ScopedLunaris<'a> {
     /// [`lunaris_core::keyspace::verify_agenda_key`]; when present, issues
     /// exactly ONE `WriteOp::KvDelete` `atomic_write` (mirrors D-19 — no
     /// write at all when the row was already absent, an idempotent no-op).
-    ///
-    /// RED stub (engram-soul-loop task 7): real read_as_of+KvDelete lands in
-    /// GREEN.
-    pub async fn remove_verify_agenda(&self, _episode_id: Ulid) -> Result<bool, LunarisError> {
-        unimplemented!("remove_verify_agenda: GREEN pending (engram-soul-loop task 7)")
+    pub async fn remove_verify_agenda(&self, episode_id: Ulid) -> Result<bool, LunarisError> {
+        let key = verify_agenda_key(&self.scope, episode_id);
+        let read_at = self.engine.clock.tick();
+        let existed = self
+            .engine
+            .storage
+            .read_as_of(&self.scope, &key, read_at)
+            .await
+            .map_err(LunarisError::Storage)?
+            .is_some();
+
+        if existed {
+            let ops = vec![lunaris_core::WriteOp::KvDelete { key }];
+            self.engine
+                .storage
+                .atomic_write(&self.scope, &ops)
+                .await
+                .map_err(LunarisError::Storage)?;
+        }
+
+        Ok(existed)
     }
 }
+
+/// Hard cap on rows scanned per [`ScopedLunaris::list_verify_agenda`] call
+/// (mirrors `lunaris-hook::staleness::SCAN_CAP` = 5_000) — a DoS guard for
+/// huge scopes; excess is a warn-and-partial list, never a hard failure.
+const VERIFY_AGENDA_LIST_SCAN_CAP: usize = 5_000;
 
 /// engram-soul-loop task 6 (staleness-pass) — one verify-agenda entry
 /// (`.add/tasks/staleness-pass/TASK.md` §3 CONTRACT, task-7 wire shape —
