@@ -153,8 +153,7 @@ pub async fn build_dream_agenda(
     // up to and including that second (regardless of its sub-second offset)
     // is visible. Mirrors the intent of `verify_agenda.rs`'s `clock.tick()`
     // read point without a clock handle.
-    let read_at =
-        Hlc::from_parts(now.saturating_mul(1000).saturating_add(999), u32::MAX, u16::MAX);
+    let read_at = Hlc::from_parts(now.saturating_mul(1000).saturating_add(999), u32::MAX, u16::MAX);
 
     // 1. Candidates = activation-ledger scan (task 2 primitive).
     let ledger = LedgerReferenceSource::new(storage.clone());
@@ -494,8 +493,14 @@ mod tests {
         let mut lunaris_ids = Vec::new();
         for i in 0..3u8 {
             let id = Ulid::new();
-            seed_episode(&storage, &scope, id, "lunaris:tool_call:post", &format!("lunaris note {i}"))
-                .await;
+            seed_episode(
+                &storage,
+                &scope,
+                id,
+                "lunaris:tool_call:post",
+                &format!("lunaris note {i}"),
+            )
+            .await;
             seed_activation(&storage, &scope, id, &[(base - 10, Strength::Weak)]).await;
             lunaris_ids.push(id);
         }
@@ -541,8 +546,11 @@ mod tests {
         assert!(!lunaris_cluster.snippets.is_empty() && lunaris_cluster.snippets.len() <= 3);
         assert_eq!(lunaris_cluster.dominant_source, "lunaris");
 
-        let edit_cluster =
-            agenda.clusters.iter().find(|c| c.cluster_id == "src:edit").expect("edit cluster present");
+        let edit_cluster = agenda
+            .clusters
+            .iter()
+            .find(|c| c.cluster_id == "src:edit")
+            .expect("edit cluster present");
         assert_eq!(edit_cluster.member_ids.len(), 2);
         assert_eq!(edit_cluster.dominant_source, "edit");
     }
@@ -571,8 +579,10 @@ mod tests {
         let zzz = EntityId::from_name_and_type("zzz-other", "concept");
         let qqq = EntityId::from_name_and_type("qqq-other2", "concept");
 
-        seed_fact(&storage, &scope, amber, "relates_to", foo_a, ep_a, "amber relates to foo-a").await;
-        seed_fact(&storage, &scope, amber, "relates_to", foo_b, ep_b, "amber relates to foo-b").await;
+        seed_fact(&storage, &scope, amber, "relates_to", foo_a, ep_a, "amber relates to foo-a")
+            .await;
+        seed_fact(&storage, &scope, amber, "relates_to", foo_b, ep_b, "amber relates to foo-b")
+            .await;
         seed_fact(&storage, &scope, zzz, "relates_to", qqq, ep_c, "zzz relates to qqq").await;
 
         let now = unix_now();
@@ -627,8 +637,12 @@ mod tests {
         let cfg = DreamConfig { limit: 20, min_cluster_size: 1, max_activation: None, decay: 0.5 };
         let agenda = build_dream_agenda(storage.clone(), &scope, &cfg, now).await.unwrap();
 
-        assert_eq!(agenda.total_candidates, 1, "the distilled record must be excluded from candidates");
-        let all_members: Vec<Ulid> = agenda.clusters.iter().flat_map(|c| c.member_ids.clone()).collect();
+        assert_eq!(
+            agenda.total_candidates, 1,
+            "the distilled record must be excluded from candidates"
+        );
+        let all_members: Vec<Ulid> =
+            agenda.clusters.iter().flat_map(|c| c.member_ids.clone()).collect();
         assert!(all_members.contains(&raw_id));
         assert!(!all_members.contains(&distilled_id));
     }
@@ -657,7 +671,10 @@ mod tests {
         let decay = 0.5;
         let hot_activation = {
             let mut r = ActivationRecord::default();
-            r.apply(&RefSignal { id: hot_id, grain: Grain::Turn, strength: Strength::Strong }, hot_ref_at);
+            r.apply(
+                &RefSignal { id: hot_id, grain: Grain::Turn, strength: Strength::Strong },
+                hot_ref_at,
+            );
             r.activation(now, decay)
         };
         let cold_activation = {
@@ -668,14 +685,19 @@ mod tests {
             );
             r.activation(now, decay)
         };
-        assert!(hot_activation > cold_activation, "fixture sanity: hot must score higher than cold");
+        assert!(
+            hot_activation > cold_activation,
+            "fixture sanity: hot must score higher than cold"
+        );
 
         let ceiling = cold_activation + 0.5; // just above the decayed value
-        let cfg = DreamConfig { limit: 20, min_cluster_size: 1, max_activation: Some(ceiling), decay };
+        let cfg =
+            DreamConfig { limit: 20, min_cluster_size: 1, max_activation: Some(ceiling), decay };
         let agenda = build_dream_agenda(storage.clone(), &scope, &cfg, now).await.unwrap();
 
         assert_eq!(agenda.total_candidates, 1, "only the decayed episode must pass the ceiling");
-        let all_members: Vec<Ulid> = agenda.clusters.iter().flat_map(|c| c.member_ids.clone()).collect();
+        let all_members: Vec<Ulid> =
+            agenda.clusters.iter().flat_map(|c| c.member_ids.clone()).collect();
         assert!(all_members.contains(&cold_id));
         assert!(!all_members.contains(&hot_id));
     }
@@ -721,7 +743,10 @@ mod tests {
                 _prefix: &[u8],
                 _as_of: Option<Hlc>,
             ) -> Result<
-                futures::stream::BoxStream<'_, Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>>,
+                futures::stream::BoxStream<
+                    '_,
+                    Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+                >,
                 lunaris_core::StorageError,
             > {
                 panic!("validation must reject before any storage call");
@@ -731,7 +756,8 @@ mod tests {
                 _scope: &Scope,
                 _key: &[u8],
                 _as_of: Hlc,
-            ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError> {
+            ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError>
+            {
                 panic!("validation must reject before any storage call");
             }
             async fn publish(
@@ -750,7 +776,10 @@ mod tests {
                 _topic: &str,
                 _partition: u16,
             ) -> Result<
-                futures::stream::BoxStream<'static, Result<lunaris_core::QueueMsg, lunaris_core::StorageError>>,
+                futures::stream::BoxStream<
+                    'static,
+                    Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+                >,
                 lunaris_core::StorageError,
             > {
                 panic!("validation must reject before any storage call");
@@ -763,13 +792,16 @@ mod tests {
         let storage: Arc<dyn StoragePort> = Arc::new(PanicStorage);
         let scope = scope();
 
-        let limit_zero = DreamConfig { limit: 0, min_cluster_size: 1, max_activation: None, decay: 0.5 };
-        let err = build_dream_agenda(storage.clone(), &scope, &limit_zero, 1_000).await.unwrap_err();
+        let limit_zero =
+            DreamConfig { limit: 0, min_cluster_size: 1, max_activation: None, decay: 0.5 };
+        let err =
+            build_dream_agenda(storage.clone(), &scope, &limit_zero, 1_000).await.unwrap_err();
         assert!(err.to_string().contains("invalid_limit"), "{err}");
 
         let limit_over =
             DreamConfig { limit: 101, min_cluster_size: 1, max_activation: None, decay: 0.5 };
-        let err = build_dream_agenda(storage.clone(), &scope, &limit_over, 1_000).await.unwrap_err();
+        let err =
+            build_dream_agenda(storage.clone(), &scope, &limit_over, 1_000).await.unwrap_err();
         assert!(err.to_string().contains("invalid_limit"), "{err}");
 
         let bad_min =
@@ -777,8 +809,12 @@ mod tests {
         let err = build_dream_agenda(storage.clone(), &scope, &bad_min, 1_000).await.unwrap_err();
         assert!(err.to_string().contains("invalid_min_cluster_size"), "{err}");
 
-        let bad_max =
-            DreamConfig { limit: 20, min_cluster_size: 1, max_activation: Some(f64::NAN), decay: 0.5 };
+        let bad_max = DreamConfig {
+            limit: 20,
+            min_cluster_size: 1,
+            max_activation: Some(f64::NAN),
+            decay: 0.5,
+        };
         let err = build_dream_agenda(storage.clone(), &scope, &bad_max, 1_000).await.unwrap_err();
         assert!(err.to_string().contains("invalid_max_activation"), "{err}");
     }
@@ -799,7 +835,10 @@ mod tests {
         let before = key_count(&storage, &scope).await;
         let cfg = DreamConfig::default();
         let agenda = build_dream_agenda(storage.clone(), &scope, &cfg, now).await.unwrap();
-        assert_eq!(agenda.total_candidates, 1, "fixture sanity: the seeded episode must be a candidate");
+        assert_eq!(
+            agenda.total_candidates, 1,
+            "fixture sanity: the seeded episode must be a candidate"
+        );
         let after = key_count(&storage, &scope).await;
 
         assert_eq!(before, after, "build_dream_agenda must write nothing");

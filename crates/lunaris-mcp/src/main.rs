@@ -4,8 +4,8 @@
 //! `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
 //! `memory.feedback`, `memory.status`, `memory.scratchpad_write`,
 //! `memory.scratchpad_read`, `memory.scratchpad_grep`,
-//! `memory.scratchpad_consolidate`, `memory.verify_agenda`, and
-//! `memory.resolve`.
+//! `memory.scratchpad_consolidate`, `memory.verify_agenda`,
+//! `memory.resolve`, and `memory.dream_agenda`.
 //!
 //! Transport: stdio only (newline-delimited JSON-RPC — NDJSON, one object per line).
 //! Auth: none — stdio is process-bound by the MCP client (Claude Code / Codex).
@@ -51,6 +51,7 @@ use crate::state::AppState;
 // (lunaris-memory-service), called by BOTH this mcp server and contextd.
 use lunaris_memory_service::protocol::MemoryRequest;
 use lunaris_memory_service::{
+    dream_agenda::{DreamAgendaParams, DreamAgendaResponse},
     feedback::{FeedbackParams, FeedbackResponse},
     forget::{ForgetParams, ForgetResponse},
     ingest::{IngestParams, IngestResponse},
@@ -497,6 +498,39 @@ impl LunarisMcpServer {
         Parameters(params): Parameters<ResolveParams>,
     ) -> Result<Json<ResolveResponse>, rmcp::ErrorData> {
         let req = MemoryRequest::Resolve { scope: self.state.scope.as_str().to_owned(), params };
+        decode_dto(self.proxy.dispatch(&self.state, req).await?)
+    }
+
+    /// READ-ONLY distillation planner: surface candidate clusters of ripe
+    /// raw episodes with activation stats for the caller to distill.
+    ///
+    /// engram-soul-loop task 8a. Tin's locked decision: the coding harness
+    /// (Claude, not Lunaris) is the distiller/judge — this tool writes
+    /// nothing (no episode, no ledger row, no agenda row). Candidates are
+    /// episodes with at least one activation-ledger reference; they are
+    /// grouped either by a Leiden entity community (when structured facts
+    /// give the candidates shared entities) or by source-class bucket
+    /// (always available as a fallback).
+    #[tool(
+        name = "memory.dream_agenda",
+        description = "READ-ONLY distillation planner. Surfaces candidate clusters of ripe (referenced, \
+                       not-yet-distilled) raw episodes with activation stats — it writes NOTHING. \
+                       Candidates are episodes with at least one activation-ledger reference, hydrated \
+                       and excluded when their source starts with `distilled:` or the episode is gone. \
+                       Clusters are formed by a Leiden entity community (cluster_id `com:<hex>`) when \
+                       shared structured-fact entities exist, or by source-class bucket (cluster_id \
+                       `src:<class>`) otherwise. Each cluster carries size, member_episode_ids (sorted), \
+                       mean/max activation, dominant_source, and up to 3 content snippets. limit (default \
+                       20, 1-100) caps the returned clusters; min_cluster_size (default 1, <=100) drops \
+                       smaller groups; max_activation optionally keeps only candidates decayed enough to \
+                       be ripe. Pair with a distillation apply step to act on a cluster."
+    )]
+    async fn dream_agenda(
+        &self,
+        Parameters(params): Parameters<DreamAgendaParams>,
+    ) -> Result<Json<DreamAgendaResponse>, rmcp::ErrorData> {
+        let req =
+            MemoryRequest::DreamAgenda { scope: self.state.scope.as_str().to_owned(), params };
         decode_dto(self.proxy.dispatch(&self.state, req).await?)
     }
 }

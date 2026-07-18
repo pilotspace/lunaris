@@ -1594,6 +1594,25 @@ impl<'a> ScopedLunaris<'a> {
         Ok(())
     }
 
+    /// engram-soul-loop task 8a (dream-agenda) — build a READ-ONLY
+    /// distillation agenda: Leiden-clustered (or source-class-bucketed)
+    /// candidate clusters of ripe raw episodes, with activation stats, for
+    /// the coding-harness distiller to reason over. Never calls
+    /// `atomic_write` — see `.add/tasks/dream-agenda/TASK.md` §3 CONTRACT.
+    ///
+    /// `now` is resolved here (`SystemTime::now()`, unix seconds) rather
+    /// than threaded from the caller — the frozen §3 engine signature takes
+    /// a plain `now: u64` (no live `HlcClock`), so this wrapper is the one
+    /// place that turns "now" into a concrete wall-clock reading.
+    pub async fn dream_agenda(
+        &self,
+        cfg: lunaris_consolidate::DreamConfig,
+    ) -> Result<lunaris_consolidate::DreamAgenda, LunarisError> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        lunaris_consolidate::build_dream_agenda(self.engine.storage.clone(), &self.scope, &cfg, now)
+            .await
+    }
+
     /// engram-soul-loop task 6 (staleness-pass) — RMW upsert of verify-
     /// agenda entries.
     ///
