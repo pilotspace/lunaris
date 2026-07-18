@@ -121,7 +121,9 @@ pub use verify_pipeline::{ENABLED_ENV_VAR as VERIFY_ENABLED_ENV_VAR, VerifierPip
 // without reaching into the per-crate paths.
 // T1d (260609-dvi): ActRConsolidator re-exported so lunaris-mcp needs no
 // direct dep on lunaris-consolidate.
-pub use lunaris_consolidate::{ActRConsolidator, Consolidator, NoopConsolidator};
+pub use lunaris_consolidate::{
+    ActRConsolidator, Consolidator, DreamAgenda, DreamCluster, DreamConfig, NoopConsolidator,
+};
 pub use lunaris_verify::{
     NeedsReviewItem as VerifyNeedsReviewItem, NoopVerifier, Verifier, VerifierBackend,
     VerifyDecision,

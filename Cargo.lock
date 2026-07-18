@@ -2531,6 +2531,7 @@ dependencies = [
  "hex",
  "lunaris-core",
  "lunaris-extract",
+ "lunaris-storage-embedded",
  "parking_lot",
  "serde",
  "serde_json",

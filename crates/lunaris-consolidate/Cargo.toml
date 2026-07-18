@@ -56,3 +56,8 @@ ulid             = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tokio            = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# ADD task dream-agenda — `dream.rs` unit tests need a REAL StoragePort (not
+# a panic-stub) to prove the read paths (activation-ledger scan, episode
+# hydrate, fact scan) actually work end-to-end. `lunaris-storage-embedded`
+# depends only on `lunaris-core` (no cycle back into `lunaris-consolidate`).
+lunaris-storage-embedded = { workspace = true }
