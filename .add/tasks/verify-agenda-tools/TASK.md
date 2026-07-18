@@ -2,7 +2,7 @@
 
 slug: verify-agenda-tools · created: 2026-07-18 · stage: production
 autonomy: auto
-phase: tests   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
+phase: done   <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > Milestone engram-soul-loop task 7: `memory.verify_agenda` (list stale
 > memories with diff context) + `memory.resolve` (keep | supersede |

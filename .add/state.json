@@ -1347,12 +1347,23 @@
     },
     "verify-agenda-tools": {
       "title": "Verify Agenda Tools",
-      "phase": "tests",
-      "gate": "none",
+      "phase": "done",
+      "gate": "PASS",
       "milestone": "engram-soul-loop",
       "depends_on": [],
       "created": "2026-07-18T01:52:22+00:00",
-      "updated": "2026-07-18T01:54:56+00:00"
+      "updated": "2026-07-18T02:38:01+00:00",
+      "flag_verified": true,
+      "tripwire": {
+        "contract_md5": "4d0607a9e3611d9514f2a9d79c901dfe",
+        "tests": {}
+      },
+      "scope": {
+        "declared": [
+          "crates/lunaris/src/handle.rs"
+        ],
+        "snapshot_md5": "fcc5adc1f226b23944d195b478ae40ff"
+      }
     }
   },
   "milestones": {
@@ -1414,7 +1425,7 @@
     }
   },
   "created": "2026-06-11T03:09:19+00:00",
-  "updated": "2026-07-18T01:54:56+00:00",
+  "updated": "2026-07-18T02:38:01+00:00",
   "setup": {
     "locked": true,
     "locked_at": "2026-06-11T03:19:08+00:00",
