@@ -2,7 +2,7 @@
 
 slug: distill · created: 2026-07-18 · stage: production
 autonomy: auto
-phase: contract
+phase: tests
 <!-- ground -> specify -> scenarios -> contract -> tests -> build -> verify -> observe -> done -->
 
 > engram-soul-loop **task 8b** (split from milestone task 8; 8a=dream-agenda done/merging first).

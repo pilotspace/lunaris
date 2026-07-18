@@ -28,7 +28,7 @@
 //! the embedder in a small exact-text LRU cache so repeated agent prompts and
 //! repeated chunk text do not re-run model inference.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -1592,6 +1592,89 @@ impl<'a> ScopedLunaris<'a> {
         // Mirrors D-11: exactly ONE atomic_write for the whole batch.
         self.engine.storage.atomic_write(&self.scope, &ops).await.map_err(LunarisError::Storage)?;
         Ok(())
+    }
+
+    /// engram-soul-loop task 8b (`memory.distill`, `.add/tasks/distill/
+    /// TASK.md` §3 CONTRACT, frozen) — archive every `id` in `ids`: RMW its
+    /// [`lunaris_core::keyspace::activation_key`] row, set
+    /// `archived_at = Some(now)`, and commit ALL touched records in exactly
+    /// ONE batch write — same D-11 shape as [`Self::record_activation_refs`].
+    ///
+    /// Archive is activation drop, NOT a tombstone: this method never
+    /// touches the episode itself (no `forget`/soft-delete). It only flips
+    /// the ledger marker that [`lunaris_retrieve::LedgerBoostProvider`]
+    /// (0 boost) and `lunaris_consolidate::dream::build_dream_agenda`
+    /// (dropped from candidates) both read via
+    /// [`lunaris_core::activation::ActivationRecord::is_archived`].
+    ///
+    /// - An `id` with NO existing ledger record is skipped (already
+    ///   unboosted — nothing to mark) — this method never CREATES a record.
+    /// - A corrupt existing record is skipped with a `tracing::warn!`
+    ///   (mirrors [`Self::record_activation_refs`]'s corrupt-row handling)
+    ///   rather than failing the whole batch.
+    /// - Duplicate ids in `ids` are archived once (deduped defensively).
+    /// - Returns the count of records ACTUALLY marked — ids skipped for
+    ///   either reason above are not counted.
+    /// - An empty `ids` slice is a no-op: `Ok(0)`, no storage call at all.
+    pub async fn archive_activation(&self, ids: &[Ulid], now: u64) -> Result<usize, LunarisError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let read_at = self.engine.clock.tick();
+        let mut seen: HashSet<Ulid> = HashSet::new();
+        let mut ops: Vec<lunaris_core::WriteOp> = Vec::with_capacity(ids.len());
+        let mut marked = 0usize;
+
+        for &id in ids {
+            if !seen.insert(id) {
+                continue; // duplicate id in the input slice — archive once
+            }
+            let key = activation_key(&self.scope, id);
+            let existing = self
+                .engine
+                .storage
+                .read_as_of(&self.scope, &key, read_at)
+                .await
+                .map_err(LunarisError::Storage)?;
+            let Some(row) = existing else {
+                continue; // no ledger record — already unboosted, nothing to mark
+            };
+            let mut record = match serde_json::from_slice::<
+                lunaris_core::activation::ActivationRecord,
+            >(&row.value)
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        err = %e,
+                        %id,
+                        scope = self.scope.as_str(),
+                        "activation_ledger_corrupt_record_skipped_on_archive"
+                    );
+                    continue;
+                }
+            };
+            record.archived_at = Some(now);
+            let value = serde_json::to_vec(&record).map_err(|e| {
+                LunarisError::Storage(StorageError::Backend(format!(
+                    "activation_ledger_serialize_failed: {e}"
+                )))
+            })?;
+            ops.push(lunaris_core::WriteOp::KvPut { key, value });
+            marked += 1;
+        }
+
+        // Mirrors D-11 / record_activation_refs: exactly ONE batch write for
+        // the whole call — and skip it entirely when nothing was touched.
+        if !ops.is_empty() {
+            self.engine
+                .storage
+                .atomic_write(&self.scope, &ops)
+                .await
+                .map_err(LunarisError::Storage)?;
+        }
+        Ok(marked)
     }
 
     /// engram-soul-loop task 8a (dream-agenda) — build a READ-ONLY
