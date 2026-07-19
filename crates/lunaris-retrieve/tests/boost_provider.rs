@@ -206,19 +206,23 @@ async fn provider_prior_flips_equal_similarity_order() {
     let clock = HlcClock::new(0);
     let id_a = Ulid::new();
     let id_b = Ulid::new();
-    let ep = Ulid::new();
+    // Episode-grain ledger contract (2026-07-19 fix): the boost pass keys
+    // priors by the hit's PARENT EPISODE id, so each chunk needs its own
+    // episode for a single-sided prior to discriminate.
+    let ep_a = Ulid::new();
+    let ep_b = Ulid::new();
 
     let rec = Arc::new(RecordingStorage::default());
     // B is returned FIRST from vector_search (both tie at 0.80) so a flip is
     // only explained by the provider prior, never by pre-existing order.
     *rec.vector_hits.lock() = vec![vh(id_b, 0.80), vh(id_a, 0.80)];
-    rec.seed_chunk(&scope, id_a, ep, "chunk A", &clock);
-    rec.seed_chunk(&scope, id_b, ep, "chunk B", &clock);
+    rec.seed_chunk(&scope, id_a, ep_a, "chunk A", &clock);
+    rec.seed_chunk(&scope, id_b, ep_b, "chunk B", &clock);
 
     let (storage, keyword, embedder) = build_parts(rec.clone());
     let calls = Arc::new(AtomicUsize::new(0));
     let mut prior = HashMap::new();
-    prior.insert(id_a, 0.10_f32);
+    prior.insert(ep_a, 0.10_f32);
     let provider = Arc::new(FixedProvider { out: prior, calls: calls.clone() });
 
     let builder = RetrievalBuilder::new(storage, keyword, embedder)
@@ -254,7 +258,10 @@ async fn provider_and_lru_compose_prior_then_delta() {
 
     let (storage, keyword, embedder) = build_parts(rec.clone());
     let mut prior = HashMap::new();
-    prior.insert(id_a, 0.10_f32);
+    // Episode-grain (2026-07-19 fix): the provider prior is keyed by the
+    // parent episode id; the LRU delta below stays keyed by the chunk id
+    // (the Phase 14.2 pass is untouched).
+    prior.insert(ep, 0.10_f32);
     let provider = Arc::new(FixedProvider { out: prior, calls: Arc::new(AtomicUsize::new(0)) });
 
     let boost_cache: Arc<parking_lot::RwLock<lru::LruCache<(Scope, Ulid), f32>>> = Arc::new(

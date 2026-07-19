@@ -184,8 +184,12 @@ pub async fn handle(
     let activation_applied = if was_duplicate {
         false
     } else {
+        // Episode-grain ledger contract (2026-07-19 fix): a vote on a CHUNK
+        // id must land on the parent EPISODE's ledger row — dream-agenda
+        // hydrates episode-only and silently drops chunk-keyed rows.
+        let ledger_id = resolve_ledger_id(lunaris, scope, memory_id).await;
         let signal =
-            RefSignal { id: memory_id, grain: Grain::Turn, strength: params.sentiment.strength() };
+            RefSignal { id: ledger_id, grain: Grain::Turn, strength: params.sentiment.strength() };
         match scoped.record_activation_refs(&[signal]).await {
             Ok(()) => true,
             Err(e) => {
@@ -211,6 +215,50 @@ pub async fn handle(
     );
 
     Ok(FeedbackResponse { lsn: lsn.to_string(), was_duplicate, activation_applied })
+}
+
+/// Resolve the id a ledger signal must land on (episode-grain contract).
+///
+/// If `id` names a CHUNK row in `scope`, return the chunk's parent
+/// `episode_id`; otherwise return `id` unchanged (already an episode id, or
+/// an unknown id — the ledger write stays best-effort either way). Storage
+/// errors and malformed chunk rows fail OPEN to the original id with a
+/// `tracing::warn!`: a resolution failure must never block the vote, it can
+/// only degrade it back to the pre-fix behavior.
+async fn resolve_ledger_id(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> Ulid {
+    /// Minimal projection of the chunk KV row — only the provenance field.
+    #[derive(Deserialize)]
+    struct ChunkEpisodeId {
+        episode_id: Ulid,
+    }
+
+    let key = lunaris_core::keyspace::chunk_key(scope, id);
+    let clock = lunaris_core::HlcClock::new(0);
+    let storage = lunaris.storage();
+    match storage.read_as_of(scope, &key, clock.tick()).await {
+        Ok(Some(row)) => match serde_json::from_slice::<ChunkEpisodeId>(&row.value) {
+            Ok(chunk) => chunk.episode_id,
+            Err(e) => {
+                tracing::warn!(
+                    err = %e,
+                    %id,
+                    scope = scope.as_str(),
+                    "memory.feedback chunk row malformed — ledger signal falls back to the given id",
+                );
+                id
+            }
+        },
+        Ok(None) => id,
+        Err(e) => {
+            tracing::warn!(
+                err = %e,
+                %id,
+                scope = scope.as_str(),
+                "memory.feedback chunk resolution read failed — ledger signal falls back to the given id",
+            );
+            id
+        }
+    }
 }
 
 #[cfg(test)]

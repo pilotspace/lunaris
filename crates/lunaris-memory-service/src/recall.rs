@@ -201,7 +201,16 @@ pub async fn handle(
         })
         .take(k)
         .map(|h| {
-            let episode_id = ulid_bytes_to_string(&h.id);
+            // Episode-grain id contract (2026-07-19 fix): the wire field is
+            // the PARENT EPISODE's ULID — the id memory.feedback /
+            // memory.forget / dream-agenda hydration all operate on. Fact
+            // hits (and any non-hydrated path) have an empty provenance
+            // channel; fall back to the raw hit id for those.
+            let episode_id = if h.episode_id.is_empty() {
+                ulid_bytes_to_string(&h.id)
+            } else {
+                ulid_bytes_to_string(&h.episode_id)
+            };
             let content: String = if params.raw {
                 h.text.chars().take(200).collect()
             } else {
