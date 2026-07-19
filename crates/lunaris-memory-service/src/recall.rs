@@ -658,4 +658,74 @@ mod tests {
         assert!(params.as_of.is_none());
         // Reaching here without model-dir creation proves the lazy invariant.
     }
+
+    /// Collect the trailing `{ulid}` of every KV key under `prefix`.
+    async fn scan_trailing_ulids(
+        lunaris: &Lunaris,
+        scope: &Scope,
+        prefix: Vec<u8>,
+    ) -> Vec<ulid::Ulid> {
+        use futures::StreamExt;
+        let mut out = Vec::new();
+        let storage = lunaris.storage();
+        let mut stream = storage.scan_range(scope, &prefix, None).await.unwrap();
+        while let Some(item) = stream.next().await {
+            let (key, _) = item.unwrap();
+            let s = std::str::from_utf8(&key).unwrap();
+            let tail = &s[s.rfind(':').unwrap() + 1..];
+            if let Ok(id) = ulid::Ulid::from_string(tail) {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    /// engram id-space fix (2026-07-19 live finding) — the wire `episode_id`
+    /// MUST carry the PARENT EPISODE's ULID (the id `memory.feedback`,
+    /// `memory.forget`, and dream-agenda hydration all operate on), never the
+    /// chunk's own id. Before the fix, recall returned chunk ULIDs labeled
+    /// `episode_id`, so feedback votes landed on chunk-keyed ledger rows that
+    /// `memory.dream_agenda` silently dropped.
+    #[tokio::test]
+    async fn recall_episode_id_is_parent_episode_not_chunk_id() {
+        let (lunaris, scope) = make_engine("test-recall-episode-grain").await;
+        let scoped = lunaris.scoped(scope.clone());
+        scoped
+            .ingest(EpisodeBuilder::new("test/src", "episode grain wire contract fixture"))
+            .await
+            .unwrap();
+
+        let episode_ids =
+            scan_trailing_ulids(&lunaris, &scope, lunaris_core::keyspace::episode_prefix(&scope))
+                .await;
+        let chunk_ids =
+            scan_trailing_ulids(&lunaris, &scope, lunaris_core::keyspace::chunk_prefix(&scope))
+                .await;
+        assert_eq!(episode_ids.len(), 1, "exactly one episode ingested");
+        assert!(!chunk_ids.is_empty(), "ingest must have produced chunks");
+        assert!(
+            !chunk_ids.contains(&episode_ids[0]),
+            "episode and chunk ids must be distinct ULIDs for this test to discriminate"
+        );
+
+        let resp = handle(
+            &lunaris,
+            &scope,
+            RecallParams {
+                query: "episode grain wire contract".into(),
+                k: 5,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
+        )
+        .await
+        .unwrap();
+        let hit = resp.hits.first().expect("recall must return the ingested episode");
+        assert_eq!(
+            hit.episode_id,
+            episode_ids[0].to_string(),
+            "wire episode_id must be the parent episode ULID, not the chunk id"
+        );
+    }
 }

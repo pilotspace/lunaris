@@ -542,4 +542,73 @@ mod tests {
             self.inner.capabilities()
         }
     }
+
+    /// Collect the trailing `{ulid}` of every KV key under `prefix`.
+    async fn scan_trailing_ulids(lunaris: &Lunaris, scope: &Scope, prefix: Vec<u8>) -> Vec<Ulid> {
+        let mut out = Vec::new();
+        let storage = lunaris.storage();
+        let mut stream = storage.scan_range(scope, &prefix, None).await.unwrap();
+        while let Some(item) = stream.next().await {
+            let (key, _) = item.unwrap();
+            let s = std::str::from_utf8(&key).unwrap();
+            let tail = &s[s.rfind(':').unwrap() + 1..];
+            if let Ok(id) = Ulid::from_string(tail) {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    /// engram id-space fix (2026-07-19 live finding) — a vote on a CHUNK id
+    /// must land on the PARENT EPISODE's ledger row. Recall historically
+    /// returned chunk ULIDs labeled `episode_id`; a feedback vote on such an
+    /// id wrote a chunk-keyed activation row that `memory.dream_agenda`
+    /// (episode-only hydration) silently dropped. The handler must resolve
+    /// chunk -> parent episode before emitting the `RefSignal` so the ledger
+    /// stays episode-grained regardless of caller vintage.
+    #[tokio::test]
+    async fn feedback_on_chunk_id_lands_on_parent_episode_ledger_row() {
+        let (lunaris, scope) = fresh("test-feedback-chunk-resolution").await;
+        let scoped = lunaris.scoped(scope.clone());
+        scoped
+            .ingest(lunaris::EpisodeBuilder::new("test/src", "chunk-grain feedback fixture"))
+            .await
+            .unwrap();
+
+        let episode_ids =
+            scan_trailing_ulids(&lunaris, &scope, lunaris_core::keyspace::episode_prefix(&scope))
+                .await;
+        let chunk_ids =
+            scan_trailing_ulids(&lunaris, &scope, lunaris_core::keyspace::chunk_prefix(&scope))
+                .await;
+        assert_eq!(episode_ids.len(), 1, "exactly one episode ingested");
+        let episode_id = episode_ids[0];
+        let chunk_id = *chunk_ids.first().expect("ingest must have produced a chunk");
+        assert_ne!(episode_id, chunk_id);
+
+        let resp = handle(
+            &lunaris,
+            &scope,
+            FeedbackParams {
+                memory_id: chunk_id.to_string(),
+                sentiment: Sentiment::Positive,
+                reason: "voted via a recall-hit chunk id".into(),
+                dedupe_key: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(resp.activation_applied);
+
+        let episode_row = read_activation(&lunaris, &scope, episode_id).await;
+        assert!(
+            episode_row.is_some(),
+            "the ledger signal must resolve chunk -> parent episode and land episode-keyed"
+        );
+        assert_eq!(episode_row.unwrap().last_strength, lunaris_core::activation::Strength::Strong);
+        assert!(
+            read_activation(&lunaris, &scope, chunk_id).await.is_none(),
+            "no chunk-keyed ledger row may be written — dream-agenda cannot hydrate it"
+        );
+    }
 }
