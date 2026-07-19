@@ -477,6 +477,58 @@ mod tests {
         assert!(!hits.is_empty(), "parity recall must find the seeded episode");
     }
 
+    /// Unified-inference contract (2026-07-19): the mcp engine has no resident
+    /// embedder — an embed-needing op served Direct forces a full local weight
+    /// load. So `needs_embedder()` requests must attempt the contextd socket
+    /// on EVERY call, even after the breaker latched the route to Direct: one
+    /// cheap connect keeps contextd the single inference host the moment the
+    /// daemon recovers. Embed-free ops keep the latched fast path untouched.
+    #[tokio::test]
+    async fn embed_ops_attempt_socket_even_when_latched_direct() {
+        crate::tools::staging::skip_stage_for_tests();
+        let state = fresh_state("test-proxy-embed-retry").await;
+        let dead = PathBuf::from("/nonexistent/embed-retry.sock");
+        let proxy = proxy_for_test_with_socket(usize::MAX, ROUTE_DIRECT, Some(dead));
+
+        // Embed-free op (Ingest) on a latched-Direct route: no socket attempt.
+        let ingest = MemoryRequest::Ingest {
+            scope: state.scope.as_str().to_owned(),
+            params: IngestParams {
+                source: "test/src".to_owned(),
+                content: "embed retry seed".to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+        proxy.dispatch(&state, ingest).await.expect("latched ingest must serve direct");
+        assert_eq!(
+            proxy.error_count.load(Ordering::Relaxed),
+            0,
+            "an embed-free op on a latched route must NOT attempt the socket"
+        );
+
+        // Embed op (Recall) on the same latched route: the dead socket MUST be
+        // attempted (one transport strike recorded), then served Direct anyway.
+        let recall = MemoryRequest::Recall {
+            scope: state.scope.as_str().to_owned(),
+            params: RecallParams {
+                query: "embed retry".to_owned(),
+                k: 3,
+                filters: None,
+                as_of: None,
+                raw: false,
+            },
+        };
+        proxy.dispatch(&state, recall).await.expect("latched recall must still serve direct");
+        assert_eq!(
+            proxy.error_count.load(Ordering::Relaxed),
+            1,
+            "an embed-needing op must attempt the contextd socket even after the \
+             breaker latched Direct (unified-inference contract)"
+        );
+    }
+
     /// T-25-01-01: the external MCP wire cannot inject a partition `scope`. The
     /// engine Params DTOs carry `#[serde(deny_unknown_fields)]` and no scope
     /// field, so a smuggled `scope` is rejected at deserialization — the scope
