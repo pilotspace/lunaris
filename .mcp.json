@@ -2,7 +2,7 @@
   "mcpServers": {
     "lunaris": {
       "type": "stdio",
-      "command": "/Volumes/Games/tindang-repo/lunaris/target/release/lunaris-mcp",
+      "command": "/Users/tindang/.lunaris/bin/lunaris-mcp",
       "args": [],
       "env": {
         "LUNARIS_MCP_LOG": "info,rmcp=warn",

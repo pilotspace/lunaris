@@ -36,8 +36,31 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LUNARIS_HOOK = ROOT / "target" / "release" / "lunaris-hook"
-LUNARIS_CONTEXTD = ROOT / "target" / "release" / "lunaris-contextd"
+
+
+def _resolve_binary(name: str, env_var: str) -> Path:
+    """Resolve a daemon/hook binary: env override > deployed copy > repo build.
+
+    Long-lived daemons MUST run from the deployed copy in ~/.lunaris/bin —
+    running them from target/release means every `cargo build --release`
+    invalidates the live process's mapped text pages (macOS then either
+    SIGKILLs it for codesigning or, worse, leaves a thread fault-looping at
+    100% CPU on an unreadable page — the 2026-07-19 lunaris-mcp zombie).
+    The target/release fallback stays for dev loops that never rebuild while
+    a daemon is up; scripts/deploy-local-daemons.sh maintains the deployed
+    copies.
+    """
+    override = os.environ.get(env_var)
+    if override:
+        return Path(override)
+    deployed = Path.home() / ".lunaris" / "bin" / name
+    if deployed.exists():
+        return deployed
+    return ROOT / "target" / "release" / name
+
+
+LUNARIS_HOOK = _resolve_binary("lunaris-hook", "LUNARIS_HOOK_BIN")
+LUNARIS_CONTEXTD = _resolve_binary("lunaris-contextd", "LUNARIS_CONTEXTD_BIN")
 KNOWN_DIRECT = {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
 PROMPT_EVENTS = {"userpromptsubmit", "userpromptexpansion"}
 POST_TOOL_EVENTS = {"posttooluse", "postcompact", "subagentstop"}
