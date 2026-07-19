@@ -448,19 +448,26 @@ impl RetrievalBuilder {
         // contract. A single batched `provider.priors(..)` call covers the
         // whole hit set — never one read per hit.
         if let Some(provider) = boost_provider {
-            let ids: Vec<Ulid> = hits
-                .iter()
-                .filter_map(|h| <[u8; 16]>::try_from(h.id.as_slice()).ok().map(Ulid::from_bytes))
-                .collect();
+            // Episode-grain ledger contract (2026-07-19 fix): the activation
+            // ledger is keyed by PARENT EPISODE id — the same id space
+            // memory.feedback writes and dream-agenda hydration reads. Key
+            // the prior lookup by `Hit.episode_id` (populated at hydration),
+            // falling back to the raw hit id for hits without a provenance
+            // channel (fact hits, non-hydrated paths). Chunks of the same
+            // episode intentionally share one prior.
+            fn ledger_id(hit: &Hit) -> Option<Ulid> {
+                let bytes = if hit.episode_id.is_empty() { &hit.id } else { &hit.episode_id };
+                <[u8; 16]>::try_from(bytes.as_slice()).ok().map(Ulid::from_bytes)
+            }
+            let ids: Vec<Ulid> = hits.iter().filter_map(ledger_id).collect();
             if !ids.is_empty() {
                 let priors = provider.priors(&ctx.scope, &ids).await;
                 if !priors.is_empty() {
                     for hit in &mut hits {
-                        if let Ok(arr) = <[u8; 16]>::try_from(hit.id.as_slice()) {
-                            let id = Ulid::from_bytes(arr);
-                            if let Some(&prior) = priors.get(&id) {
-                                hit.score += prior;
-                            }
+                        if let Some(id) = ledger_id(hit)
+                            && let Some(&prior) = priors.get(&id)
+                        {
+                            hit.score += prior;
                         }
                     }
                     hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
