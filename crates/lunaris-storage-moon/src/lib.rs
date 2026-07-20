@@ -53,6 +53,7 @@ pub(crate) mod hotkeys;
 // ft-navigate-recall — FT.NAVIGATE raw RESP path (typed SDK lacks a DECAY slot).
 pub(crate) mod navigate;
 pub mod queue;
+pub(crate) mod retry;
 pub mod scopes;
 pub mod vector;
 
@@ -258,8 +259,23 @@ impl StoragePort for MoonStorage {
         as_of: Option<Hlc>,
         rerank: bool,
     ) -> Result<Vec<VectorHit>, StorageError> {
-        crate::vector::vector_search(&self.client, scope, index, query, k, filter, as_of, rerank)
-            .await
+        // Belt-and-suspenders: retry ONCE on a transient connection fault so a
+        // backend flip never bubbles `broken pipe` up through recall. The SDK's
+        // ConnectionManager reconnects underneath; this catches the one command
+        // that races the reconnect. See `crate::retry`.
+        crate::retry::with_conn_retry(|| {
+            crate::vector::vector_search(
+                &self.client,
+                scope,
+                index,
+                query,
+                k,
+                filter,
+                as_of,
+                rerank,
+            )
+        })
+        .await
     }
 
     async fn graph_traverse(
@@ -495,7 +511,12 @@ impl KeywordPort for MoonStorage {
         filter: Option<&Filter>,
         as_of: Option<Hlc>,
     ) -> Result<Vec<KeywordHit>, StorageError> {
-        crate::keyword::keyword_search(&self.client, scope, index, query, k, filter, as_of).await
+        // Same one-shot reconnect guard as `vector_search` — keyword recall is
+        // the other read path that broke on a dropped socket in production.
+        crate::retry::with_conn_retry(|| {
+            crate::keyword::keyword_search(&self.client, scope, index, query, k, filter, as_of)
+        })
+        .await
     }
 }
 
