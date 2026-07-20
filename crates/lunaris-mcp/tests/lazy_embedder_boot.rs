@@ -52,7 +52,9 @@ async fn boots_without_weights_and_recall_errors_honestly() {
         "\n",
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
         "\n",
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory.recall","arguments":{"query":"lazy embedder probe","k":3}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"memory.ingest","arguments":{"source":"test/lazy","content":"Ingest must work without a dense embedder — KV + BM25 need no vectors."}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"memory.recall","arguments":{"query":"lazy embedder probe","k":3}}}"#,
         "\n",
     );
     stdin.write_all(handshake.as_bytes()).await.expect("write handshake");
@@ -61,13 +63,22 @@ async fn boots_without_weights_and_recall_errors_honestly() {
     // Behavior 1: the server must answer tools/list — i.e. bootstrap did NOT
     // eagerly resolve + probe the embedder and die on missing weights.
     let mut tools_line = None;
+    let mut ingest_line = None;
     let mut recall_line = None;
+    // rmcp dispatches the two tool calls CONCURRENTLY, so id:3 (ingest) and
+    // id:4 (recall) can arrive in either order — the fast Noop recall probe
+    // often replies before the slower SQLite ingest. Collect until we have
+    // BOTH tool replies (plus tools/list); never break on one id alone.
     tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(line) = lines.next_line().await.expect("read stdout line") {
             if line.contains("\"id\":2") {
                 tools_line = Some(line);
             } else if line.contains("\"id\":3") {
+                ingest_line = Some(line);
+            } else if line.contains("\"id\":4") {
                 recall_line = Some(line);
+            }
+            if ingest_line.is_some() && recall_line.is_some() {
                 break;
             }
         }
@@ -87,7 +98,18 @@ async fn boots_without_weights_and_recall_errors_honestly() {
         "tools/list must include memory.recall; line: {tools_line}"
     );
 
-    // Behavior 2: the Direct recall must be an HONEST error naming the
+    // Behavior 2: ingest MUST succeed without any embedder — the KV + BM25
+    // write needs no dense vector, so a missing embedder degrades vector
+    // recall but must NOT break ingest (the lazy embedder tolerates the
+    // NoopEmbedder fallback; the 2026-07-20 CI regression was ingest erroring
+    // here). No `"error"` object in the JSON-RPC reply.
+    let ingest_line = ingest_line.expect("server closed stdout before the ingest response");
+    assert!(
+        !ingest_line.contains(r#""error""#),
+        "ingest without an embedder must succeed (KV + BM25 need no vectors); line: {ingest_line}"
+    );
+
+    // Behavior 3: the Direct recall must be an HONEST error naming the
     // embedder — not a silent `{{\"hits\":[]}}` success from zero vectors.
     let recall_line = recall_line.expect("server closed stdout before the recall response");
     let lower = recall_line.to_lowercase();

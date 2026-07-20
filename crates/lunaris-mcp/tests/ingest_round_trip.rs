@@ -93,9 +93,10 @@ async fn ingest_round_trip() {
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-ingest-round-trip")
         .env("LUNARIS_MCP_STORAGE", &storage)
-        // Skip embedder health probe — ingest-only test, no recall exercised.
-        // Without this, bootstrap rejects NoopEmbedder and the server exits
-        // before responding (mcp-recall-empty-hits fix; see state.rs).
+        // The embedder is lazy and tolerates a NoopEmbedder fallback, so this
+        // ingest-only test needs no weights and no probe-skip env: ingest
+        // writes KV + BM25 without a dense vector. (Recall would return the
+        // honest "no embedder" error, but this test never recalls.)
         .env("LUNARIS_MCP_LOG", "error")
         .env("NO_COLOR", "1")
         .stdin(std::process::Stdio::piped())

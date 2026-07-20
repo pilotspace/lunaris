@@ -129,6 +129,15 @@ pub async fn handle(
         return Ok(RecallResponse { hits: vec![] });
     }
 
+    // Honesty gate (unified-inference, 2026-07-19): recall needs a real
+    // embedder — a NoopEmbedder produces a zero query vector, `vector_search`
+    // short-circuits on it, and the caller gets a silent empty hit list (the
+    // `mcp-recall-empty-hits` bug). Since the lazy embedder no longer
+    // hard-errors (so ingest can still store KV + BM25 without weights), the
+    // loud "no embedder" error lives HERE, on the one path where a zero vector
+    // is a lie. One probe per process; latches ready on the first real vector.
+    ensure_embedder_ready(lunaris).await?;
+
     // Treat k=0 as default_k so callers can omit the field via `k: 0`.
     let k = if params.k == 0 { default_k() } else { params.k };
 
@@ -234,6 +243,43 @@ pub async fn handle(
     );
 
     Ok(RecallResponse { hits: recall_hits })
+}
+
+/// Process-wide "the embedder can produce real vectors" latch.
+///
+/// The lazy default embedder (`lunaris::lazy_default_embedder`) tolerates a
+/// `NoopEmbedder` fallback so ingest still writes KV + BM25 without weights.
+/// That tolerance would let recall return a silent empty hit list from a zero
+/// query vector — the `mcp-recall-empty-hits` bug the old boot probe guarded.
+/// This restores that guard, lazily on the recall path: probe the embedder
+/// with a tiny input; a zero vector → an actionable error. The latch flips
+/// `true` on the first real (non-zero) vector so steady-state recall pays
+/// nothing; it never latches on failure, so a caller that stages weights
+/// between calls (the mcp model stager) recovers on the next recall.
+async fn ensure_embedder_ready(lunaris: &Lunaris) -> Result<(), ServiceError> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READY: AtomicBool = AtomicBool::new(false);
+    if READY.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let embedder = lunaris.embedder();
+    let probe = embedder
+        .embed_batch(&["lunaris recall embedder health probe"])
+        .await
+        .map_err(ServiceError::LunarisEngine)?;
+    let v = probe.into_iter().next().unwrap_or_default();
+    if v.is_empty() || v.iter().all(|&x| x == 0.0_f32) {
+        return Err(ServiceError::InvalidInput(
+            "no embedding backend available: the embedder resolved to NoopEmbedder \
+             (zero vectors), so semantic recall cannot run. Set LUNARIS_EMBEDDER_GGUF=\
+             <path to a granite-embedding-311m-multilingual-r2 GGUF> or stage weights \
+             under ~/.lunaris/models/. (Ingest still works without an embedder — only \
+             vector recall requires one.)"
+                .to_owned(),
+        ));
+    }
+    READY.store(true, Ordering::Relaxed);
+    Ok(())
 }
 
 /// ADD task activation-ledger — wire the persistent activation-ledger prior
