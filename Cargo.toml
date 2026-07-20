@@ -289,7 +289,32 @@ unicode-segmentation = "1"
 [profile.dev]
 opt-level = 0
 
+# Max-performance release (mirrors ../moon's proven profile so cross-repo perf
+# stays comparable). Fat LTO + a single codegen unit trade compile time for
+# whole-program inlining across crate boundaries — the hot recall/embed/rerank
+# paths are the win. `strip` drops symbols for a smaller text section (better
+# icache); for backtraces or a profiler, build `--profile profiling` instead.
+# LTO/codegen-units do NOT bake in CPU features, so the artifacts stay portable
+# for the published pip/npm/crates.io builds (target-cpu=native is deliberately
+# NOT set here for that reason).
 [profile.release]
-opt-level = 3
-lto       = "thin"
-debug     = 1
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+strip         = true
+panic         = "unwind" # keep unwinding: #[should_panic] tests + catch_unwind
+
+# Fast-iteration release: ~3-5x faster to link than the fat-LTO default, for
+# local perf smoke / benchmark builds where the last few % don't matter.
+[profile.release-fast]
+inherits      = "release"
+lto           = "thin"
+codegen-units = 16
+strip         = false
+
+# Profiling/instruments build: full optimization but keep debug symbols so
+# perf/Instruments/flamegraphs resolve frames.
+[profile.profiling]
+inherits = "release"
+strip    = false
+debug    = 1
