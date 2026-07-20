@@ -91,7 +91,6 @@ async fn record_edit_smoke() {
         // Skip embedder health probe — ingest-only test, no recall exercised.
         // Without this, bootstrap rejects NoopEmbedder and the server exits
         // before responding (mcp-recall-empty-hits fix; see state.rs).
-        .env("LUNARIS_MCP_SKIP_EMBEDDER_PROBE", "1")
         .env("LUNARIS_MCP_LOG", "error")
         .env("NO_COLOR", "1")
         .stdin(std::process::Stdio::piped())
