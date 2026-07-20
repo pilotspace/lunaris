@@ -6,9 +6,12 @@ live Moon on 2026-04-23 — rerun `scripts/test-recovery.py` to re-verify. §2.1
 (moon-v051-perf-exploit, `vendor/moon` @ `c9508066`); §2.7 added 2026-07-15
 for the Moon v0.7.1 bump (moon-v070-bump, `vendor/moon` @ `4161cdc`); §2.8
 added 2026-07-16 for the Moon v0.8.0 bump (moon-v080-bump, `vendor/moon` @
-`e41aa671` = 0.8.0 + PR #351). The SDK (`moondb 0.2.1`) is API-identical
-across all three bumps, so every change below is server-side behavior, not a
-Lunaris wire-format change.
+`e41aa671` = 0.8.0 + PR #351); pin moved to tag `v0.8.1` (`3f99f502`) on
+2026-07-20 — v0.8.1 folds in PR #351's dashtable fix plus the O3
+deploy-safe busy-poll governor and the idle-tick/SCAN CPU fixes
+(#375/#378/#379). The SDK (`moondb 0.2.1`) is API-identical across all
+these bumps, so every change below is server-side behavior, not a Lunaris
+wire-format change.
 
 Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
 
@@ -280,8 +283,9 @@ What the bump carries for Lunaris:
   segment-count stall guard — a post-restart total write refusal). With
   #353 the `--max-unflushed-immutable-segments 4096` operator override
   should become unnecessary; verify the backlog drains before retiring it.
-- **DashTable recovery-panic fix (PR #351 — why the pin is a main SHA,
-  not the tag).** Stock v0.8.0 still carries the
+- **DashTable recovery-panic fix (PR #351 — the reason the v0.8.0-era pin
+  was a main SHA rather than the tag; superseded by tag `v0.8.1`, which
+  includes #351).** Stock v0.8.0 still carries the
   `double NeedsSplit after split_segment` unreachable: loading a large
   shard checkpoint (`shard-0.rrdshard`) with hash-skewed keys panicked
   deterministically and crash-looped the daemon 119× on this host. The
