@@ -27,8 +27,8 @@ mod tests {
     /// The caller MUST hold the returned TempDir for the test's duration.
     async fn fresh_state_moon(scope_name: &str, data_dir: &str) -> AppState {
         // PRODUCTION bootstrap path (set_consolidator called, ActR installed).
-        // skip_probe=true avoids requiring real GGUF weights in CI.
-        AppState::bootstrap_inner(Some(scope_name), None, true, Some(data_dir)).await.unwrap()
+        // The embedder is lazy, so no GGUF weights are needed in CI.
+        AppState::bootstrap_inner(Some(scope_name), None, Some(data_dir)).await.unwrap()
     }
 
     /// Guard 2: embedded-moon + pipeline.enable() → worker_conflict.

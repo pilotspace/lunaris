@@ -171,11 +171,8 @@ async fn cold_start_under_500ms_no_gguf_staged() {
             .env("LUNARIS_EMBEDDER_DIR", &empty_embed_dir)
             // Same for the FP32 reranker → NoopReranker on cache miss.
             .env("LUNARIS_RERANKER_DIR", &empty_rerank_dir)
-            // Skip the embedder health probe — this test measures cold-start
-            // timing with NoopEmbedder intentionally (no real weights staged).
-            // Without this, bootstrap rejects the noop fallback and the server
-            // exits before responding to initialize (mcp-recall-empty-hits fix).
-            .env("LUNARIS_MCP_SKIP_EMBEDDER_PROBE", "1")
+            // (The embedder is lazy since the unified-inference cutover — no
+            // boot-time load or health probe — so no probe-skip env is needed.)
             // Suppress info/warn logs; keep error so real failures surface.
             .env("LUNARIS_MCP_LOG", "error")
             .env("NO_COLOR", "1")

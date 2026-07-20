@@ -2193,6 +2193,86 @@ pub async fn resolve_default_embedder() -> Result<Arc<dyn Embedder>, LunarisErro
     resolve_embedder(context_embed_max_batch_tokens()).await
 }
 
+/// Deferred-load twin of [`resolve_default_embedder`] (unified-inference,
+/// 2026-07-19). The returned handle resolves NOTHING at construction — the
+/// full GGUF resolve chain only runs on the first `embed_batch` call, and the
+/// result is cached for the process lifetime.
+///
+/// This exists for hosts that normally NEVER embed in-process: `lunaris-mcp`
+/// proxies every embed-needing op to the warm `lunaris-contextd` daemon, so an
+/// eager boot-time load parks a second resident copy of the weights (and a
+/// second llama.cpp threadpool) next to contextd's — the double-residency
+/// found in the 2026-07-19 CPU investigation. With this handle the local
+/// weights only materialize if an embed op must genuinely be served in-process
+/// (standalone npx/uvx installs, or contextd unreachable).
+///
+/// Honesty guard: if the deferred resolve lands on `NoopEmbedder` (no GGUF, no
+/// remote), the first call returns an actionable error instead of silently
+/// producing zero vectors — the `mcp-recall-empty-hits` bug class the old
+/// boot-time probe existed to catch. A failed resolve is NOT cached, so a
+/// caller that stages weights between calls (the mcp model stager) succeeds on
+/// the next attempt.
+pub fn lazy_default_embedder() -> Arc<dyn Embedder> {
+    Arc::new(LazyDefaultEmbedder { cell: tokio::sync::OnceCell::new() })
+}
+
+/// See [`lazy_default_embedder`].
+struct LazyDefaultEmbedder {
+    cell: tokio::sync::OnceCell<Arc<dyn Embedder>>,
+}
+
+impl LazyDefaultEmbedder {
+    async fn get_or_load(&self) -> Result<&Arc<dyn Embedder>, LunarisError> {
+        self.cell
+            .get_or_try_init(|| async {
+                let inner = resolve_default_embedder().await?;
+                // Same zero-vector probe the mcp bootstrap used to run at
+                // boot: reject the silent NoopEmbedder fallback loudly.
+                let probe = inner.embed_batch(&["lunaris lazy embedder probe"]).await?;
+                let v = probe.into_iter().next().unwrap_or_default();
+                if v.is_empty() || v.iter().all(|&x| x == 0.0_f32) {
+                    return Err(LunarisError::Storage(lunaris_core::StorageError::Backend(
+                        "no embedding backend available: the embedder resolved to \
+                         NoopEmbedder (zero vectors). Set LUNARIS_EMBEDDER_GGUF=<path to \
+                         granite-embedding-311m-multilingual-r2 GGUF> or stage weights \
+                         under ~/.lunaris/models/ — vector recall cannot run without an \
+                         embedder"
+                            .to_owned(),
+                    )));
+                }
+                Ok(inner)
+            })
+            .await
+    }
+}
+
+impl std::fmt::Debug for LazyDefaultEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LazyDefaultEmbedder").field("loaded", &self.cell.initialized()).finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for LazyDefaultEmbedder {
+    fn dim(&self) -> usize {
+        // Loaded → the real backend's dim. Unloaded → the configured default
+        // (LUNARIS_EMBED_DIM, else 768 — granite-r2's width), WITHOUT forcing
+        // a load: dim() is called on cold paths (index bootstrap) that must
+        // not pull weights in.
+        self.cell.get().map(|e| e.dim()).unwrap_or_else(resolve_embed_dim)
+    }
+
+    async fn embed_batch(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        self.get_or_load().await?.embed_batch(inputs).await
+    }
+
+    async fn embed_batch_lowpri(&self, inputs: &[&str]) -> Result<Vec<Vec<f32>>, LunarisError> {
+        // Forward to the inner lowpri lane — the trait default would route
+        // through embed_batch and head-of-line-block interactive recall.
+        self.get_or_load().await?.embed_batch_lowpri(inputs).await
+    }
+}
+
 /// Resolve the NoopEmbedder fallback dim from [`EMBED_DIM_ENV_VAR`].
 fn resolve_embed_dim() -> usize {
     static LOG_ONCE: OnceLock<()> = OnceLock::new();

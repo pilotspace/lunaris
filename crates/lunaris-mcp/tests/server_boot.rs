@@ -13,8 +13,9 @@
 //! tools. It exercises router validation for EVERY tool, not one response type,
 //! so reintroducing a non-object response schema on ANY future tool fails here.
 //!
-//! Backend is `memory://` (no Moon, no GGUF required) with the embedder probe
-//! skipped, so the test is light and runs under the default feature set in CI.
+//! Backend is `memory://` (no Moon, no GGUF required; the embedder is lazy and
+//! never loads here), so the test is light and runs under the default feature
+//! set in CI.
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -50,7 +51,6 @@ async fn server_boots_and_lists_all_tools() {
     let mut child = Command::new(bin)
         .arg("--storage")
         .arg("memory://")
-        .env("LUNARIS_MCP_SKIP_EMBEDDER_PROBE", "1")
         .env("LUNARIS_MCP_SKIP_STAGE", "1")
         .env("LUNARIS_MCP_SCOPE", "ci-boot-test")
         .env("LUNARIS_MCP_LOG", "error")

@@ -114,7 +114,16 @@ impl MemoryProxy {
         state: &AppState,
         req: MemoryRequest,
     ) -> Result<Value, rmcp::ErrorData> {
-        if self.route.load(Ordering::Relaxed) == ROUTE_SOCKET {
+        // Unified-inference contract (2026-07-19): the mcp engine's embedder is
+        // lazy — a Direct serve of an embed-needing op forces a full local
+        // weight load (a second resident copy next to contextd's). So embed
+        // ops attempt the socket on EVERY call, even after the breaker latched
+        // Direct: one cheap connect keeps contextd the single inference host
+        // the moment the daemon recovers. Embed-free ops keep the latched
+        // Direct fast path.
+        let try_socket_first = self.route.load(Ordering::Relaxed) == ROUTE_SOCKET
+            || (req.needs_embedder() && self.socket_path.is_some());
+        if try_socket_first {
             match self.try_socket(&req).await {
                 Ok(data) => {
                     self.error_count.store(0, Ordering::Relaxed);
