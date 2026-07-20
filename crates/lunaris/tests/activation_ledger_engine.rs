@@ -303,23 +303,29 @@ async fn reinforced_memory_outranks_across_handles() {
     let clock = HlcClock::new(0);
     let id_a = Ulid::new();
     let id_b = Ulid::new();
-    let ep = Ulid::new();
+    // Episode-grain ledger contract (PR #78): the boost pass keys priors by
+    // the hit's PARENT EPISODE, and production ledger rows are written on
+    // episode ids (memory.feedback resolves chunk→episode first). Each chunk
+    // gets its own parent so a prior on A's episode can flip the tie.
+    let ep_a = Ulid::new();
+    let ep_b = Ulid::new();
 
     // B ranks first pre-boost (equal scores, B returned first) so any flip
     // to A is explained ONLY by the persisted activation ledger.
     let storage =
         Arc::new(LedgerTestStorage::new(vec![vector_hit(id_b, 0.80), vector_hit(id_a, 0.80)]));
-    seed_chunk(&storage, &scope, id_a, ep, "chunk A", &clock);
-    seed_chunk(&storage, &scope, id_b, ep, "chunk B", &clock);
+    seed_chunk(&storage, &scope, id_a, ep_a, "chunk A", &clock);
+    seed_chunk(&storage, &scope, id_b, ep_b, "chunk B", &clock);
 
-    // Session 1: a fresh handle records two strong refs for A, then is dropped.
+    // Session 1: a fresh handle records two strong refs for A's parent
+    // episode (the id the service layer would resolve to), then is dropped.
     {
         let handle1 = make_handle(storage.clone());
         let scoped1 = handle1.scoped(scope.clone());
         scoped1
             .record_activation_refs(&[
-                RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
-                RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
+                RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
+                RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
             ])
             .await
             .expect("session 1 record_activation_refs must succeed");
@@ -516,30 +522,34 @@ async fn archived_source_gets_zero_boost_but_stays_recallable() {
     let clock = HlcClock::new(0);
     let id_a = Ulid::new();
     let id_b = Ulid::new();
-    let ep = Ulid::new();
+    // Episode-grain ledger contract (PR #78): ledger rows live on parent
+    // episode ids and the boost pass keys each hit by its parent episode —
+    // so each chunk needs its own parent for per-hit archive semantics.
+    let ep_a = Ulid::new();
+    let ep_b = Ulid::new();
 
     // Equal-similarity tie, A returned first pre-boost — any flip away from
     // A is explained only by B's surviving boost once A is archived.
     let storage =
         Arc::new(LedgerTestStorage::new(vec![vector_hit(id_a, 0.80), vector_hit(id_b, 0.80)]));
-    seed_chunk(&storage, &scope, id_a, ep, "chunk A", &clock);
-    seed_chunk(&storage, &scope, id_b, ep, "chunk B", &clock);
+    seed_chunk(&storage, &scope, id_a, ep_a, "chunk A", &clock);
+    seed_chunk(&storage, &scope, id_b, ep_b, "chunk B", &clock);
 
     let handle = make_handle(storage.clone());
     let scoped = handle.scoped(scope.clone());
 
     scoped
         .record_activation_refs(&[
-            RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
-            RefSignal { id: id_a, grain: Grain::ToolCall, strength: Strength::Strong },
-            RefSignal { id: id_b, grain: Grain::ToolCall, strength: Strength::Strong },
-            RefSignal { id: id_b, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: ep_a, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: ep_b, grain: Grain::ToolCall, strength: Strength::Strong },
+            RefSignal { id: ep_b, grain: Grain::ToolCall, strength: Strength::Strong },
         ])
         .await
-        .expect("seed refs for both a and b");
+        .expect("seed refs for both a and b (episode-grain rows)");
 
     let now = 2_000_000_000u64;
-    let archived = scoped.archive_activation(&[id_a], now).await.expect("archive a");
+    let archived = scoped.archive_activation(&[ep_a], now).await.expect("archive a's episode");
     assert_eq!(archived, 1);
 
     let provider: Arc<dyn BoostProvider> =
@@ -548,12 +558,15 @@ async fn archived_source_gets_zero_boost_but_stays_recallable() {
     // Direct priors() call — the frozen §4 test_plan explicitly allows this
     // form ("StubEmbedder recall or direct priors() call") — proven against
     // the REAL provider, not a stub of it.
-    let priors = provider.priors(&scope, &[id_a, id_b]).await;
+    let priors = provider.priors(&scope, &[ep_a, ep_b]).await;
     assert!(
-        !priors.contains_key(&id_a),
-        "archived A must contribute 0 boost (omitted entirely): {priors:?}"
+        !priors.contains_key(&ep_a),
+        "archived A (episode row) must contribute 0 boost (omitted entirely): {priors:?}"
     );
-    assert!(priors.get(&id_b).copied().unwrap_or(0.0) > 0.0, "live B must still boost: {priors:?}");
+    assert!(
+        priors.get(&ep_b).copied().unwrap_or(0.0) > 0.0,
+        "live B (episode row) must still boost: {priors:?}"
+    );
 
     // Recall-level proof: A stays fully recallable (activation drop, not a
     // tombstone) and the tie now flips to B (only B's boost applies).
