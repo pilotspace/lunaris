@@ -2,7 +2,8 @@
 //!
 //! Wave 2.B: full implementation.
 //! - Lazy model stager (`ensure_staged`) on first call, not at server start.
-//! - `Query::text(query).k` + optional `Filter::StartsWith` + optional `as_of`.
+//! - `Query::text(query).k` + optional `as_of`; `source_prefix` is enforced
+//!   AFTER recall on the hydrated Episode source (never pushed into storage).
 //! - Maps `Vec<Hit>` → `Vec<RecallHit>` with a curated LLM-ready snippet
 //!   (`lunaris_core::snippet`, ≤ 260 chars) by default, or the raw stored
 //!   bytes (≤ 200 chars) when `raw: true`.
@@ -11,7 +12,7 @@ use std::sync::Arc;
 
 use chrono::DateTime;
 use lunaris::Query;
-use lunaris_core::{Hlc, snippet, storage::types::Filter};
+use lunaris_core::{Hlc, snippet};
 use lunaris_retrieve::{Keyword, LedgerBoostProvider, RetrievalBuilder, Vector};
 use serde::{Deserialize, Serialize};
 
@@ -104,8 +105,11 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 ///
 /// 1. Assume a ready embedder — staging is a CALLER concern (the mcp `#[tool]`
 ///    wrapper stages lazily; contextd stages at warm-up).
-/// 2. Build `Query::text(query)` with optional `k`, `Filter::StartsWith`, and
-///    `as_of` bi-temporal snapshot.
+/// 2. Build `Query::text(query)` with optional `k` and `as_of` bi-temporal
+///    snapshot. `source_prefix` is NOT pushed into storage — it is enforced
+///    after recall on the hydrated source (see step 4), backed by an 8×-widened
+///    candidate over-fetch, because backend push-down filtering is lossy on
+///    Moon.
 /// 3. Execute the canonical hybrid plan:
 ///    `Vector(chunks) AND Keyword::bm25(chunks) -> fuse_rrf(60)`.
 ///    Moon handles this as native HYBRID search when the backend supports it;
@@ -155,14 +159,18 @@ pub async fn handle(
         if source_prefix.is_some() { k.saturating_mul(8).max(32) } else { k }.clamp(1, 100);
     q.k = candidate_k;
 
-    // Optional source-prefix filter. Keep it on the query as a best-effort
-    // backend hint, but do not trust it as the only enforcement layer.
-    if let Some(filters) = &params.filters
-        && let Some(prefix) = &filters.source_prefix
-        && !prefix.is_empty()
-    {
-        q.filter = Some(Filter::StartsWith { field: "source".into(), prefix: prefix.clone() });
-    }
+    // Do NOT push source_prefix down into the storage branches. On Moon that
+    // push-down is silently lossy — the keyword branch renders `@source:pre*`
+    // (invalid TAG syntax; `source` is a TAG field, and pre-PERF-MOON-01 indexes
+    // lack the field entirely) and the vector branch's over-fetch post-filter
+    // returns empty on large/quantized indexes. A backend that HONORS a lossy
+    // push-down returns ZERO candidates, so the authoritative post-filter below
+    // never sees the match — the live git_487b86f2 `memory.recall` bug
+    // (2026-07-20): same candidate set returned 0 hits pushed-down vs 22 when
+    // post-filtered on the hydrated source. The prefix is enforced ONLY after
+    // recall, on the hydrated Episode `source` (see the filter at the map step),
+    // backed by the 8×-widened `candidate_k` over-fetch above. Regression:
+    // tests/recall_source_prefix_moonlike.rs.
 
     // Optional bi-temporal as_of — HONESTY GATE first (ADD task
     // moon-parity-honesty): on a backend whose read paths ignore as_of
