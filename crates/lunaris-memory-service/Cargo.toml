@@ -79,3 +79,5 @@ tempfile     = "3"
 # directly (mirrors lunaris-hook::context.rs's identical pattern).
 async-trait  = { workspace = true }
 bytes        = { workspace = true }
+# recall_source_prefix_moonlike.rs mock storage double (StoragePort + KeywordPort).
+parking_lot  = { workspace = true }
