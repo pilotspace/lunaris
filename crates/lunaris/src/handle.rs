@@ -2206,12 +2206,16 @@ pub async fn resolve_default_embedder() -> Result<Arc<dyn Embedder>, LunarisErro
 /// weights only materialize if an embed op must genuinely be served in-process
 /// (standalone npx/uvx installs, or contextd unreachable).
 ///
-/// Honesty guard: if the deferred resolve lands on `NoopEmbedder` (no GGUF, no
-/// remote), the first call returns an actionable error instead of silently
-/// producing zero vectors — the `mcp-recall-empty-hits` bug class the old
-/// boot-time probe existed to catch. A failed resolve is NOT cached, so a
-/// caller that stages weights between calls (the mcp model stager) succeeds on
-/// the next attempt.
+/// The deferred resolve runs the same GGUF → remote → Noop chain as
+/// [`resolve_default_embedder`] and caches whatever it lands on. It does NOT
+/// hard-error on a `NoopEmbedder` fallback: **ingest** legitimately runs
+/// without a dense embedder (the KV + BM25 write still succeeds; only vector
+/// recall degrades), exactly as the pre-lazy `NoopEmbedder` path did. The
+/// "no embedder → loud error instead of silent empty hits"
+/// (`mcp-recall-empty-hits`) guard lives on the **recall** path
+/// (`lunaris_memory_service::recall::handle`), which is the only caller for
+/// which a zero query vector is a silent-failure — ingest storing a
+/// zero-vector is degraded-but-useful, not a lie.
 pub fn lazy_default_embedder() -> Arc<dyn Embedder> {
     Arc::new(LazyDefaultEmbedder { cell: tokio::sync::OnceCell::new() })
 }
@@ -2223,26 +2227,7 @@ struct LazyDefaultEmbedder {
 
 impl LazyDefaultEmbedder {
     async fn get_or_load(&self) -> Result<&Arc<dyn Embedder>, LunarisError> {
-        self.cell
-            .get_or_try_init(|| async {
-                let inner = resolve_default_embedder().await?;
-                // Same zero-vector probe the mcp bootstrap used to run at
-                // boot: reject the silent NoopEmbedder fallback loudly.
-                let probe = inner.embed_batch(&["lunaris lazy embedder probe"]).await?;
-                let v = probe.into_iter().next().unwrap_or_default();
-                if v.is_empty() || v.iter().all(|&x| x == 0.0_f32) {
-                    return Err(LunarisError::Storage(lunaris_core::StorageError::Backend(
-                        "no embedding backend available: the embedder resolved to \
-                         NoopEmbedder (zero vectors). Set LUNARIS_EMBEDDER_GGUF=<path to \
-                         granite-embedding-311m-multilingual-r2 GGUF> or stage weights \
-                         under ~/.lunaris/models/ — vector recall cannot run without an \
-                         embedder"
-                            .to_owned(),
-                    )));
-                }
-                Ok(inner)
-            })
-            .await
+        self.cell.get_or_try_init(resolve_default_embedder).await
     }
 }
 
