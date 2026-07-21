@@ -1022,9 +1022,37 @@ async fn scope_fact_texts(
 ///   the `max` truncation; ties keep first-seen order.
 /// - **Format** — `- <text>` per line, matching the reader's expected context
 ///   shape.
-fn distill_fact_texts(_facts: Vec<(f32, String)>, _max: usize) -> Vec<String> {
-    // RED stub — real implementation lands in the green commit.
-    Vec::new()
+fn distill_fact_texts(facts: Vec<(f32, String)>, max: usize) -> Vec<String> {
+    use std::collections::HashMap;
+    // Dedup by text, keeping the highest confidence seen for each claim.
+    // `order` preserves first-seen order so the confidence-desc sort below is
+    // deterministic on ties (stable sort keeps insertion order).
+    let mut best: HashMap<String, f32> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for (conf, text) in facts {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        match best.get_mut(&text) {
+            Some(prev) => {
+                if conf > *prev {
+                    *prev = conf;
+                }
+            }
+            None => {
+                order.push(text.clone());
+                best.insert(text, conf);
+            }
+        }
+    }
+    let mut ranked: Vec<(f32, String)> =
+        order.into_iter().map(|text| (best[&text], text)).collect();
+    // Confidence descending; stable so equal-confidence claims keep first-seen
+    // order. `partial_cmp` can't fail for finite confidences; NaN sorts as
+    // Equal (kept in place) rather than panicking.
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.into_iter().take(max).map(|(_, text)| format!("- {text}")).collect()
 }
 
 /// The `[Session date: ...]` marker prefixing a session's turns (empty string
