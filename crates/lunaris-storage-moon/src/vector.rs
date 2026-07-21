@@ -286,6 +286,9 @@ fn parse_ft_search(
             None => continue,
         };
         let mut score = 0.0f32;
+        // Rerank `__score` outranks the KNN `__vec_score` when both fields
+        // appear in one reply, independent of field order.
+        let mut rerank_score_seen = false;
         let mut metadata = serde_json::Value::Null;
         if let redis::Value::Array(kv) = fields {
             let mut it = kv.into_iter();
@@ -296,7 +299,26 @@ fn parse_ft_search(
                     _ => continue,
                 };
                 match (key.as_str(), val) {
-                    ("__score" | "__vec_score" | "vec_score", redis::Value::BulkString(b)) => {
+                    // Moon's KNN `__vec_score` is a DISTANCE (lower = closer;
+                    // the server falls back to f32::MAX when missing). The
+                    // StoragePort contract is HIGHER = more similar — every
+                    // non-Moon backend and every client-side consumer
+                    // (`client_side_rrf_weighted` sorts buckets DESCENDING)
+                    // assumes it. Convert via the monotone-decreasing
+                    // 1/(1+d) ∈ (0,1]; unparseable → 0.0 (worst).
+                    ("__vec_score" | "vec_score", redis::Value::BulkString(b)) => {
+                        if !rerank_score_seen {
+                            score = std::str::from_utf8(&b)
+                                .ok()
+                                .and_then(|s| s.parse::<f32>().ok())
+                                .map(|d| 1.0 / (1.0 + d.max(0.0)))
+                                .unwrap_or(0.0);
+                        }
+                    }
+                    // Native-rerank `__score` is a cross-encoder sigmoid —
+                    // already higher-is-better; passthrough.
+                    ("__score", redis::Value::BulkString(b)) => {
+                        rerank_score_seen = true;
                         score = std::str::from_utf8(&b)
                             .ok()
                             .and_then(|s| s.parse().ok())
