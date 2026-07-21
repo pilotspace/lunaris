@@ -55,7 +55,7 @@ use crate::operators::recency::{RecencyConfig, rescore_recency};
 // same `lunaris_retrieve::*` import surface.
 pub use crate::operators::graph::{DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, MAX_GRAPH_HOPS};
 
-use crate::hydrate::hydrate;
+use crate::hydrate::hydrate_mixed;
 use crate::operators::modifiers::FilterParseError;
 use crate::operators::vector::Vector;
 use crate::operators::{QueryContext, Retriever};
@@ -425,8 +425,12 @@ impl RetrievalBuilder {
             }
         };
         let raw = self.root.retrieve(&ctx).await?;
+        // KG-RAG Wave A (2026-07-21): hydrate through the heterogeneous read
+        // model so fact ids survive to every core caller (recall()/HTTP/MCP),
+        // not just the hook. Chunk-only inputs are byte-identical to the old
+        // `hydrate` (pinned by hydrate_mixed.rs::chunk_only_matches_existing_hydrate).
         let mut hits =
-            hydrate(self.storage.as_ref(), &ctx.scope, raw, as_of, initial_degraded).await?;
+            hydrate_mixed(self.storage.as_ref(), &ctx.scope, raw, as_of, initial_degraded).await?;
         if let Some(cfg) = recency_config {
             // `as_of` wins as the recency anchor when set, so bi-temporal
             // replay stays temporally consistent ("recency at that moment").
