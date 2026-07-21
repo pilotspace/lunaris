@@ -447,6 +447,38 @@ mod tests {
         assert!(out.by_chunk.is_empty());
     }
 
+    #[test]
+    fn synthesizes_a_readable_fact_per_relation() {
+        // The graph extractor (minimax cloud + ollama) only ever emitted
+        // entities + relations; the `facts` array was hard-coded empty, so the
+        // `fact:` KV keyspace stayed empty and every fact-text consumer
+        // (retrieval snippets, the LongMemEval reader context) had nothing to
+        // read — verified live 2026-07-21: a graph-ON haystack produced 161
+        // graph nodes / 75 edges but 0 facts. Each validated relation must now
+        // yield ONE Fact carrying the S-P-O triple AND a readable fact_text.
+        let json = r#"{
+            "entities":[
+                {"name":"Alice","entity_type":"Person","confidence":0.9,"valid_from_iso":"2025-01-01"},
+                {"name":"Racket","entity_type":"Product","confidence":0.9,"valid_from_iso":"2025-01-01"}
+            ],
+            "relations":[
+                {"subject_name":"Alice","subject_type":"Person","predicate":"SHOPS_AT",
+                 "object_name":"Store","object_type":"Org","confidence":0.8,
+                 "valid_from_iso":"2025-01-01"}
+            ]
+        }"#;
+        let raw = parse_extraction_json(json, Ulid::new());
+        assert_eq!(raw.relations.len(), 1);
+        assert_eq!(raw.facts.len(), 1, "exactly one fact synthesized per relation");
+        let f = &raw.facts[0];
+        assert_eq!(f.fact_text, "Alice shops at Store", "readable S-P-O claim sentence");
+        assert_eq!(f.predicate, "SHOPS_AT", "structured predicate preserved verbatim");
+        assert_eq!(f.subject_id, EntityId::from_name_and_type("Alice", "Person"));
+        assert_eq!(f.object_id, EntityId::from_name_and_type("Store", "Org"));
+        assert_eq!(f.confidence, 0.8, "confidence inherited from the relation");
+        assert_eq!(f.valid_from_iso, "2025-01-01");
+    }
+
     #[tokio::test]
     async fn parses_valid_json_into_entities() {
         let backend: Arc<dyn LlmBackend> = Arc::new(FauxBackend::new().with_response(
