@@ -1003,10 +1003,26 @@ async fn scope_fact_texts(
     use futures::stream::StreamExt;
     let prefix = format!("{}fact:", lunaris_core::keyspace::scope_prefix(scope)).into_bytes();
     let mut stream = storage.scan_range(scope, &prefix, None).await?;
+    // Deserialize ONLY the two fields the reader context needs, decoupled from
+    // the concrete `Fact` struct. ingest.rs serializes the **lunaris-extract**
+    // `Fact` (subject_id/object_id byte arrays + valid_from_iso), NOT the
+    // `lunaris_core::Fact` (scope/subject/bt) — parsing the wrong struct fails
+    // on every record and silently feeds 0 facts (verified live 2026-07-21).
+    // `fact_text`/`confidence` are present on BOTH shapes, so this minimal row
+    // is robust to whichever primitive is written.
+    #[derive(serde::Deserialize)]
+    struct FactTextRow {
+        fact_text: String,
+        #[serde(default = "unit_confidence")]
+        confidence: f32,
+    }
+    fn unit_confidence() -> f32 {
+        1.0
+    }
     let mut facts: Vec<(f32, String)> = Vec::new();
     while let Some(item) = stream.next().await {
         let (_key, value) = item?;
-        if let Ok(f) = serde_json::from_slice::<lunaris_core::Fact>(&value) {
+        if let Ok(f) = serde_json::from_slice::<FactTextRow>(&value) {
             facts.push((f.confidence, f.fact_text));
         }
     }
@@ -1303,29 +1319,37 @@ mod tests {
     async fn scope_fact_texts_reads_distilled_facts_from_kv() {
         // Wiring proof: facts written to KV during graph-ON ingest are actually
         // read back and distilled into the reader context. This is the
-        // discriminating "built != wired" test — it fails with the RED stub
-        // (empty) and passes only once the real distiller + scan are connected.
-        use lunaris_core::{Fact, HlcClock, Scope, StoragePort, WriteOp, keyspace::fact_key};
+        // discriminating "built != wired" test.
+        //
+        // CRITICAL: the KV value is the **lunaris-extract Fact** shape
+        // (`subject_id`/`object_id` byte arrays + `valid_from_iso`), NOT the
+        // core Fact shape — that is what `ingest.rs` actually serializes
+        // (verified live 2026-07-21: a `fact:` value HGET returned exactly this
+        // JSON). Reproduce that on-disk shape so the test guards the real
+        // deserialize path; an earlier version wrote the core shape and so
+        // silently passed while production fed 0 facts.
+        use lunaris_core::{Scope, StoragePort, WriteOp, keyspace::fact_key};
         use ulid::Ulid;
 
         let storage =
             std::sync::Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
         let scope = Scope::dev();
-        let clock = HlcClock::new(0);
-        let f_hi =
-            Fact::new(scope.clone(), Ulid::new(), "occupation", Ulid::new(), "user is a chef", 0.9, &clock);
-        let f_lo = Fact::new(
-            scope.clone(),
-            Ulid::new(),
-            "residence",
-            Ulid::new(),
-            "user lives in Paris",
-            0.6,
-            &clock,
-        );
+        let stored_fact = |text: &str, conf: f64| {
+            serde_json::to_vec(&serde_json::json!({
+                "id": Ulid::new().to_string(),
+                "subject_id": vec![1u8; 16],
+                "predicate": "p",
+                "object_id": vec![2u8; 16],
+                "fact_text": text,
+                "confidence": conf,
+                "valid_from_iso": "2025-01-01",
+                "valid_to_iso": null,
+            }))
+            .unwrap()
+        };
         let ops = vec![
-            WriteOp::KvPut { key: fact_key(&scope, f_hi.id), value: serde_json::to_vec(&f_hi).unwrap() },
-            WriteOp::KvPut { key: fact_key(&scope, f_lo.id), value: serde_json::to_vec(&f_lo).unwrap() },
+            WriteOp::KvPut { key: fact_key(&scope, Ulid::new()), value: stored_fact("user is a chef", 0.9) },
+            WriteOp::KvPut { key: fact_key(&scope, Ulid::new()), value: stored_fact("user lives in Paris", 0.6) },
         ];
         storage.atomic_write(&scope, &ops).await.unwrap();
 
