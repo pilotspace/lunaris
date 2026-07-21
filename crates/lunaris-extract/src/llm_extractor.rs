@@ -33,7 +33,7 @@ use serde::Deserialize;
 use ulid::Ulid;
 
 use crate::Extractor;
-use crate::types::{ChunkInput, Entity, EntityId, RawExtraction, RawExtractionBatch, Relation};
+use crate::types::{ChunkInput, Entity, EntityId, Fact, RawExtraction, RawExtractionBatch, Relation};
 
 /// Construction options for [`LlmExtractor`]. Mirrors the D-02 budgets
 /// from the existing extract backends so a drop-in swap preserves
@@ -380,6 +380,32 @@ impl ExtractionJson {
                 valid_to_iso: e.valid_to_iso,
             })
             .collect();
+        // Synthesize one Fact per relation: the SAME S-P-O triple the graph
+        // edge carries, plus a readable `fact_text` claim sentence. The graph
+        // extractor never populated the `Fact` primitive, so the `fact:` KV
+        // keyspace and every fact-text consumer was starved. `fact_text` is a
+        // "deduped-but-unsummed" claim (subject + humanized predicate +
+        // object) — exactly the shape the LME reader-context presentation
+        // hypothesis needs. Built from `&self.relations` BEFORE the
+        // `into_iter` below consumes it. Relations with a blank endpoint are
+        // skipped (the validator would reject the fact on empty fact_text
+        // anyway); every kept fact inherits the relation's confidence +
+        // bitemporal window so it passes the same validation gate.
+        let facts = self
+            .relations
+            .iter()
+            .filter(|r| !r.subject_name.trim().is_empty() && !r.object_name.trim().is_empty())
+            .map(|r| Fact {
+                id: Ulid::new(),
+                subject_id: EntityId::from_name_and_type(&r.subject_name, &r.subject_type),
+                predicate: r.predicate.clone(),
+                object_id: EntityId::from_name_and_type(&r.object_name, &r.object_type),
+                fact_text: synth_fact_text(&r.subject_name, &r.predicate, &r.object_name),
+                confidence: r.confidence,
+                valid_from_iso: r.valid_from_iso.clone(),
+                valid_to_iso: r.valid_to_iso.clone(),
+            })
+            .collect();
         let relations = self
             .relations
             .into_iter()
@@ -392,8 +418,16 @@ impl ExtractionJson {
                 valid_to_iso: r.valid_to_iso,
             })
             .collect();
-        RawExtraction { source_chunk_id: chunk_id, entities, relations, facts: Vec::new() }
+        RawExtraction { source_chunk_id: chunk_id, entities, relations, facts }
     }
+}
+
+/// Render an S-P-O triple as a readable claim sentence for `Fact::fact_text`.
+/// The predicate is humanized (SCREAMING_SNAKE / snake_case → lower-cased
+/// words), so `("Alice", "SHOPS_AT", "Store")` becomes `"Alice shops at Store"`.
+fn synth_fact_text(subject: &str, predicate: &str, object: &str) -> String {
+    let pred = predicate.trim().replace('_', " ").to_lowercase();
+    format!("{} {} {}", subject.trim(), pred, object.trim())
 }
 
 #[cfg(test)]
