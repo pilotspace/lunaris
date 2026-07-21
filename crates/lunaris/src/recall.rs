@@ -89,6 +89,16 @@ impl Lunaris {
         // cheap — the underlying LruCache is shared across all RetrievalBuilders
         // spawned from this handle.
         b = b.with_boost_cache(self.boost_cache.clone());
+        // KG-RAG Wave B (2026-07-21): when the graph pipeline is ON, the
+        // default root fuses the facts legs (chunks ∧ facts → RRF — the
+        // hook-proven `hybrid_root` composition, promoted to lunaris-retrieve)
+        // so the facts the pipeline writes are actually retrievable through
+        // recall()/HTTP/MCP. Gated on the toggle: graph-OFF callers keep the
+        // chunks-only root and never pay the extra facts searches. Callers can
+        // still override via `.with_root(...)` as before.
+        if self.graph_pipeline().is_enabled() {
+            b = b.with_root(lunaris_retrieve::hybrid_root(30));
+        }
         b
     }
 

@@ -12,10 +12,7 @@ use lunaris_core::{
     Chunk, Episode, Hlc, HlcClock, Lsn, NoopEmbedder, Scope, StoragePort, StubEmbedder,
 };
 use lunaris_memory_service::protocol::{MemoryRequest, MemoryResponse};
-use lunaris_retrieve::{
-    AndRetriever, FuseRrfRetriever, Keyword, QueryContext, RawHit, Retriever, SourceOp, Vector,
-    hydrate, hydrate_mixed,
-};
+use lunaris_retrieve::{QueryContext, RawHit, Retriever, SourceOp, hydrate, hydrate_mixed};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
@@ -49,23 +46,15 @@ pub const CURATION_INPUT_CHARS: usize = 8000;
 /// OUTSIDE this window — a cold GGUF load must not eat the recall budget.
 pub const DEFAULT_HYBRID_TIMEOUT_MS: u64 = 1500;
 
-/// The hook's hybrid recall root (hook-recall-graph-hybrid contract v1.1):
+/// The hook's hybrid recall root (hook-recall-graph-hybrid contract v1.1).
 ///
-/// `Vector("chunks",k) ∧ Keyword::bm25("chunks",k) ∧ Vector("facts",k)
-///  ∧ Keyword::bm25("facts",k) → fuse_rrf(60)`
-///
-/// The facts BM25 leg is the reliable fact signal today — graph-ON ingest
-/// writes STUB fact embeddings (det_vec), so in the merged vector RRF group
-/// facts would starve at scale; `fact_text` is FT-indexed as `content` and
-/// ranks lexically. The vector facts leg stays wired for the real-fact-
-/// embeddings follow-on. Runs client-side RRF deterministically: a manually
-/// built `QueryContext::new` has `moon_storage = None`, so the Moon-native
-/// FT.HYBRID dispatch never fires here.
-pub fn hybrid_root(k: usize) -> FuseRrfRetriever {
-    let chunks = Vector::new("chunks", k).and(Keyword::bm25("chunks", k));
-    let facts = Vector::new("facts", k).and(Keyword::bm25("facts", k));
-    AndRetriever::new(Box::new(chunks), Box::new(facts)).fuse_rrf(60)
-}
+/// KG-RAG Wave B: promoted to `lunaris_retrieve::hybrid_root` so the umbrella
+/// `Lunaris::recall()` composes the SAME root when the graph pipeline is on;
+/// re-exported here to keep the hook's public surface stable. Hook-specific
+/// note: a manually built `QueryContext::new` has `moon_storage = None`, so
+/// client-side RRF runs deterministically (Moon-native FT.HYBRID never fires
+/// on this path).
+pub use lunaris_retrieve::hybrid_root;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
