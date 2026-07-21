@@ -573,6 +573,51 @@ mod tests {
         );
     }
 
+    /// KG-RAG score-direction fix (2026-07-22): Moon's `__vec_score` is a
+    /// DISTANCE (lower = closer; see vendor/moon ft_search/response.rs —
+    /// missing score falls back to f32::MAX i.e. worst). The StoragePort
+    /// contract is HIGHER = more similar (what every non-Moon backend and
+    /// every client-side consumer assumes — `client_side_rrf_weighted` sorts
+    /// buckets DESCENDING). Raw passthrough inverted the vector leg's ranking
+    /// in any client-side RRF fusion over Moon and collapsed LME evidence
+    /// recall to 0% on the fused hybrid root. The adapter must convert
+    /// distances to a monotone-decreasing similarity; the native-rerank
+    /// `__score` field (sigmoid, already higher-better) stays passthrough.
+    #[test]
+    fn parse_ft_search_vec_score_distance_converts_to_higher_is_better() {
+        let scope = lunaris_core::Scope::new("acme.agent-1").unwrap();
+        let ft_idx = ft_index_name(&scope, "chunks");
+        let near: [u8; 16] = [1; 16];
+        let far: [u8; 16] = [2; 16];
+        let row = |id: &[u8; 16], d: &str| {
+            vec![
+                redis::Value::BulkString(format!("{ft_idx}:{}", hex::encode(id)).into_bytes()),
+                redis::Value::Array(vec![
+                    redis::Value::BulkString(b"__vec_score".to_vec()),
+                    redis::Value::BulkString(d.as_bytes().to_vec()),
+                ]),
+            ]
+        };
+        let mut arr = vec![redis::Value::Int(2)];
+        arr.extend(row(&near, "0.10")); // closer neighbour
+        arr.extend(row(&far, "0.50")); // farther neighbour
+        let hits = parse_ft_search(redis::Value::Array(arr), false, &ft_idx).unwrap();
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, near.to_vec());
+        assert!(
+            hits[0].score > hits[1].score,
+            "distance 0.10 must map to a HIGHER score than distance 0.50 \
+             (StoragePort contract: higher = more similar); got {} vs {}",
+            hits[0].score,
+            hits[1].score
+        );
+        assert!(
+            hits.iter().all(|h| h.score.is_finite() && h.score > 0.0 && h.score <= 1.0),
+            "converted similarity must live in (0, 1]; got {hits:?}"
+        );
+    }
+
     #[test]
     fn parse_ft_search_empty_returns_empty_vec() {
         let ft_idx = test_ft_index("_dev_", "chunks");
