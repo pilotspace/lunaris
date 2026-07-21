@@ -839,7 +839,23 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 }
                 if facts.is_empty() { expand_hit_sessions(&sources, rec, chrono) } else { facts }
             } else {
-                expand_hit_sessions(&sources, rec, chrono)
+                // Production-path presentation: session prose from chunk hits
+                // PLUS the fact hits the fused root retrieved (graph-ON via
+                // Waves A-C; empty under graph-OFF so the baseline arm is
+                // byte-identical).
+                let mut ctxs = expand_hit_sessions(&sources, rec, chrono);
+                if let Some(block) =
+                    fact_context_block(hits.iter().map(|h| (h.source.as_str(), h.text.as_str())))
+                {
+                    if debug {
+                        eprintln!(
+                            "    FACT_HITS: appending {} retrieved-fact bullets to reader context",
+                            block.lines().count().saturating_sub(1)
+                        );
+                    }
+                    ctxs.push(block);
+                }
+                ctxs
             };
             // Gen system prompt: intent-tailored when adaptive, else the COT knob.
             let gen_sys = if adaptive {
@@ -980,6 +996,25 @@ fn expand_hit_sessions(
         out.extend(turns.iter().cloned());
     }
     out
+}
+
+/// KG-RAG production-path presentation (Waves A-C follow-on): render the
+/// FACT HITS the fused recall root actually retrieved as one labelled
+/// reader-context block (`Distilled facts (from memory graph):` + one
+/// `- <fact_text>` bullet per hit, retrieval-rank order). Returns `None`
+/// when no fact hits are present so the graph-OFF (or facts-empty) arm is
+/// byte-identical to the prose-only baseline. Unlike [`scope_fact_texts`]
+/// (the `LME_GRAPH_CONTEXT=1` whole-scope KV scan), this is driven by the
+/// production retrieval path — the reader sees exactly what recall ranked.
+fn fact_context_block<'a>(hits: impl Iterator<Item = (&'a str, &'a str)>) -> Option<String> {
+    let bullets: Vec<String> = hits
+        .filter(|(source, _)| source.starts_with("fact:"))
+        .map(|(_, text)| format!("- {text}"))
+        .collect();
+    if bullets.is_empty() {
+        return None;
+    }
+    Some(format!("Distilled facts (from memory graph):\n{}", bullets.join("\n")))
 }
 
 /// Scan the scope's KV `fact:` records and return the distilled fact-text
