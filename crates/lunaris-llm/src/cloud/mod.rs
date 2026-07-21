@@ -214,7 +214,14 @@ impl CloudBackend {
             ),
         };
 
-        let mut req = self.client.post(&url).json(&body);
+        // Fix B: honour the caller's per-call budget. The shared client is
+        // built with a fixed 30s `HTTP_TIMEOUT`, but `GenOpts::timeout` is the
+        // intended per-call clamp (graph extraction passes 120s). Without this
+        // per-request override the 30s client timeout clamps first and a
+        // legitimate long extraction dies at 30s under concurrent load
+        // (LongMemEval graph run 2026-07). The outer `tokio::time::timeout`
+        // in `generate` remains the belt-and-braces backstop.
+        let mut req = self.client.post(&url).json(&body).timeout(opts.timeout);
         for (k, v) in headers {
             req = req.header(k, v);
         }
@@ -308,6 +315,12 @@ pub fn is_transient(err: &LunarisError) -> bool {
         || s.contains("timeout")
         || s.contains("connection")
         || s.contains("dns")
+        // Fix A: reqwest stringifies a connect/send/timeout failure as
+        // "error sending request for url (...)" — its Display carries neither
+        // "timeout" nor "connection". Without this a transient network blip
+        // during graph extraction became a permanent empty-extraction sentinel
+        // (LongMemEval graph run 2026-07). `send` also covers "error sending".
+        || s.contains("sending request")
 }
 
 #[cfg(test)]
@@ -327,6 +340,72 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("api_key is empty"), "got: {msg}");
         assert!(msg.contains("ANTHROPIC_API_KEY"), "got: {msg}");
+    }
+
+    // Fix A (LongMemEval graph run 2026-07): reqwest stringifies a
+    // connect/send/timeout failure as "error sending request for url (...)".
+    // Its Display carries NEITHER "timeout" NOR "connection", so the
+    // classifier returned false → CloudBackend::generate did NOT retry → a
+    // single transient network blip became a permanent empty-extraction
+    // sentinel (starving the graph). A reqwest send error MUST be transient.
+    #[test]
+    fn transient_classifier_matches_reqwest_send_error() {
+        let err = LunarisError::Storage(StorageError::Backend(
+            "cloud-api: error sending request for url \
+             (https://api.minimax.io/v1/text/chatcompletion_v2)"
+                .into(),
+        ));
+        assert!(is_transient(&err), "reqwest send error must be retryable: {err}");
+    }
+
+    // Fix B (LongMemEval graph run 2026-07): the reqwest client is built with
+    // a fixed 30s `HTTP_TIMEOUT`, but callers pass a WIDER per-call budget via
+    // `GenOpts::timeout` (graph extraction uses 120s). Without a per-request
+    // `.timeout(opts.timeout)`, the 30s client timeout clamps first and a
+    // legitimate long call dies at 30s despite a 120s budget. This mock server
+    // stalls 200ms while the CLIENT timeout is 50ms — so only a per-request
+    // override to the generous `opts.timeout` lets the call succeed.
+    #[tokio::test]
+    async fn per_request_timeout_overrides_short_client_timeout() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let _ = sock.read(&mut buf);
+                std::thread::sleep(Duration::from_millis(200));
+                let body = r#"{"choices":[{"message":{"content":"ok"}}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        // Client with a SHORT 50ms timeout (< the server's 200ms stall).
+        let client =
+            reqwest::Client::builder().timeout(Duration::from_millis(50)).build().unwrap();
+        let backend = CloudBackend {
+            client,
+            provider: CloudProvider::OpenAiCompat,
+            model: "test-model".into(),
+            api_key: String::new(),
+            max_retries: 0,
+            model_id: "openai-compat://test-model".into(),
+            base_url: Some(format!("http://{addr}/v1")),
+        };
+        // Generous 5s per-call budget. Pre-fix: request inherits the 50ms
+        // client clamp → times out on the 200ms stall → Err. Post-fix: the
+        // per-request `.timeout(opts.timeout)` grants 5s → succeeds.
+        let opts = GenOpts { max_tokens: 16, temperature: 0.0, timeout: Duration::from_secs(5) };
+        let r = backend.generate("hi", SchemaConstraint::None, opts).await;
+        assert!(r.is_ok(), "per-request timeout must override the short client clamp; got {r:?}");
     }
 
     #[test]
