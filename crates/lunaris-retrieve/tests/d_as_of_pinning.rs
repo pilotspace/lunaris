@@ -196,18 +196,24 @@ async fn as_of_none_is_pinned_once_and_matches_hydrate_snapshot() {
          pin ONE snapshot at the seam before constructing QueryContext",
     );
 
+    // KG-RAG Wave A: hydration is fact-aware (`hydrate_mixed`) — a missing id
+    // probes chunk_key THEN fact_key, so the single unresolvable hit issues
+    // exactly two read_as_of calls. The invariant under test is unchanged:
+    // EVERY hydration read must use the one pinned snapshot.
     let hydrate_calls = storage.read_as_of_calls.lock().clone();
     assert_eq!(
         hydrate_calls.len(),
-        1,
-        "hydrate() must issue exactly one read_as_of call for the single returned hit"
+        2,
+        "fact-aware hydration probes chunk_key then fact_key for the single unresolvable hit"
     );
-    assert_eq!(
-        hydrate_calls[0], pinned,
-        "hydrate()'s read_as_of snapshot must be the EXACT SAME pinned instant the root operator \
-         observed via ctx.query.as_of — pre-fix these come from two INDEPENDENT \
-         HlcClock::new(0) ticks and can diverge across a concurrent invalidation"
-    );
+    for call in &hydrate_calls {
+        assert_eq!(
+            *call, pinned,
+            "every hydration read_as_of snapshot must be the EXACT SAME pinned instant the root \
+             operator observed via ctx.query.as_of — pre-fix these come from INDEPENDENT \
+             HlcClock::new(0) ticks and can diverge across a concurrent invalidation"
+        );
+    }
 }
 
 #[tokio::test]
