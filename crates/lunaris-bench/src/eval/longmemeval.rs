@@ -1298,6 +1298,32 @@ mod tests {
     }
 
     #[test]
+    fn fact_hits_render_as_reader_context_block() {
+        // KG-RAG production-path presentation: fact hits retrieved by the
+        // fused root (Waves A-C — hydrate_mixed + hybrid_root + real fact
+        // embeddings) must reach the reader as a "Distilled facts" block,
+        // driven by RETRIEVAL rank (not the LME_GRAPH_CONTEXT whole-scope
+        // scan). Chunk hits are session-expanded separately and must not
+        // leak into the fact block.
+        let hits = vec![
+            ("helios:fs/lme0001/s1/0.md", "chunk prose"),
+            ("fact:listens_on", "zephyr-relay listens on port 7443"),
+            ("fact:prefers", "Tin prefers admin-rebase merges"),
+        ];
+        let block = fact_context_block(hits.iter().map(|(s, t)| (*s, *t)))
+            .expect("fact hits present -> block must render");
+        assert!(block.starts_with("Distilled facts"), "labelled block; got {block:?}");
+        assert!(block.contains("- zephyr-relay listens on port 7443"));
+        assert!(block.contains("- Tin prefers admin-rebase merges"));
+        assert!(!block.contains("chunk prose"), "chunk hits must not leak into the fact block");
+
+        assert!(
+            fact_context_block([("helios:fs/lme0001/s1/0.md", "prose")].into_iter()).is_none(),
+            "no fact hits -> no block (graph-OFF parity)"
+        );
+    }
+
+    #[test]
     fn distill_fact_texts_dedups_by_text_ranks_by_confidence_and_caps() {
         // The extractor emits the same claim from multiple chunks at differing
         // confidence; the reader context must (a) keep ONE bullet per distinct
