@@ -406,6 +406,38 @@ fn graph_pipeline_enabled() -> bool {
     std::env::var("LUNARIS_EVAL_LME_GRAPH").map(|v| v == "1").unwrap_or(false)
 }
 
+/// Reader-context source toggle (`LUNARIS_EVAL_LME_GRAPH_CONTEXT=1`, only
+/// meaningful together with `LME_GRAPH=1`).
+///
+/// This is the missing half of the graph prototype. `LME_GRAPH=1` alone only
+/// changes INGEST — it extracts Fact/Entity/Relation primitives and stores
+/// them — but the reader still receives raw multi-session prose via
+/// [`expand_hit_sessions`], so the extracted facts are never consumed. That
+/// makes the graph toggle a pure ingest-cost experiment (verified 2026-07-21:
+/// graph-ON vs graph-OFF J-scores are identical modulo reader sampling noise,
+/// because the reader prompt is byte-identical).
+///
+/// With THIS toggle on, the reader is fed the DISTILLED FACT SET instead of the
+/// raw prose — the actual `tmp/ceiling_test.py` presentation hypothesis ("the
+/// bottleneck is presentation, not the reader's arithmetic"; see
+/// [`graph_pipeline_enabled`]'s doc) tested against the real extraction
+/// pipeline rather than hand-authored facts.
+fn graph_fact_context_enabled() -> bool {
+    std::env::var("LUNARIS_EVAL_LME_GRAPH_CONTEXT").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Cap on the number of distilled facts fed to the reader
+/// (`LUNARIS_EVAL_LME_GRAPH_CONTEXT_MAX`, default 200). Bounds the reader
+/// prompt for large haystacks; facts are confidence-ranked before the cut so
+/// the highest-confidence claims survive truncation.
+fn graph_fact_context_max() -> usize {
+    std::env::var("LUNARIS_EVAL_LME_GRAPH_CONTEXT_MAX")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(200)
+}
+
 /// Real-corpus harness. For each of the first `limit` records
 /// (env `LUNARIS_EVAL_LME_LIMIT`, default 50) ingest the FULL haystack
 /// (distractor sessions included), then recall the top-k turns and score.
@@ -786,7 +818,29 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             } else {
                 std::env::var("LUNARIS_EVAL_LME_CHRONO").map(|v| v == "1").unwrap_or(false)
             };
-            let contexts = expand_hit_sessions(&sources, rec, chrono);
+            // Reader context source. Default = raw session prose. With
+            // LME_GRAPH_CONTEXT=1 (and graph ingest ON), feed the DISTILLED
+            // FACT SET instead — the presentation-hypothesis test. Design-for-
+            // failure: if extraction produced zero facts (quota exhaustion,
+            // empty haystack), fall back to prose so the arm degrades to the
+            // baseline rather than answering "I don't know" for everything.
+            let contexts = if graph_enabled && graph_fact_context_enabled() {
+                let facts = scope_fact_texts(
+                    lunaris.storage().as_ref(),
+                    &lunaris_core::Scope::dev(),
+                    graph_fact_context_max(),
+                )
+                .await?;
+                if debug {
+                    eprintln!(
+                        "    GRAPH_CONTEXT: feeding {} distilled facts to reader (raw prose suppressed)",
+                        facts.len()
+                    );
+                }
+                if facts.is_empty() { expand_hit_sessions(&sources, rec, chrono) } else { facts }
+            } else {
+                expand_hit_sessions(&sources, rec, chrono)
+            };
             // Gen system prompt: intent-tailored when adaptive, else the COT knob.
             let gen_sys = if adaptive {
                 super::lme_judge::gen_system_prompt_for(intent)
@@ -926,6 +980,51 @@ fn expand_hit_sessions(
         out.extend(turns.iter().cloned());
     }
     out
+}
+
+/// Scan the scope's KV `fact:` records and return the distilled fact-text
+/// reader context (one `- <fact_text>` bullet per surviving fact).
+///
+/// Because each LongMemEval question runs against a **pristine, per-question
+/// isolated store** (the `reset_moon` + fresh `Lunaris::open` at the top of the
+/// run loop), every `fact:` key under `scope` belongs to THIS question's
+/// haystack — no cross-question bleed, so a whole-scope scan is exactly the
+/// distilled knowledge for this haystack.
+///
+/// The scan prefix is `lunaris:{scope}:fact:`, which does NOT alias the
+/// `factspo:` secondary-index keys (their 5th byte is `s`, not `:`). A stray
+/// non-`Fact` value under the prefix is skipped rather than aborting the scan
+/// (design-for-failure: one malformed record must not zero the reader context).
+async fn scope_fact_texts(
+    storage: &dyn lunaris_core::StoragePort,
+    scope: &lunaris_core::Scope,
+    max: usize,
+) -> anyhow::Result<Vec<String>> {
+    use futures::stream::StreamExt;
+    let prefix = format!("{}fact:", lunaris_core::keyspace::scope_prefix(scope)).into_bytes();
+    let mut stream = storage.scan_range(scope, &prefix, None).await?;
+    let mut facts: Vec<(f32, String)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        let (_key, value) = item?;
+        if let Ok(f) = serde_json::from_slice::<lunaris_core::Fact>(&value) {
+            facts.push((f.confidence, f.fact_text));
+        }
+    }
+    Ok(distill_fact_texts(facts, max))
+}
+
+/// Dedup, confidence-rank, cap, and format extracted fact texts into reader
+/// bullets.
+///
+/// - **Dedup by text** — the extractor can emit the same claim from multiple
+///   chunks; keep the highest-confidence instance of each distinct text.
+/// - **Confidence-desc, stable** — the most reliable claims lead and survive
+///   the `max` truncation; ties keep first-seen order.
+/// - **Format** — `- <text>` per line, matching the reader's expected context
+///   shape.
+fn distill_fact_texts(_facts: Vec<(f32, String)>, _max: usize) -> Vec<String> {
+    // RED stub — real implementation lands in the green commit.
+    Vec::new()
 }
 
 /// The `[Session date: ...]` marker prefixing a session's turns (empty string
@@ -1142,6 +1241,71 @@ mod tests {
         if std::env::var("LUNARIS_EVAL_LME_GRAPH").is_err() {
             assert!(!graph_pipeline_enabled());
         }
+    }
+
+    #[test]
+    fn graph_fact_context_defaults_to_off() {
+        // Symmetric guard to `graph_pipeline_defaults_to_off`: the reader must
+        // never be silently switched from raw prose to the distilled fact set.
+        // Only an explicit LUNARIS_EVAL_LME_GRAPH_CONTEXT=1 opts in.
+        if std::env::var("LUNARIS_EVAL_LME_GRAPH_CONTEXT").is_err() {
+            assert!(!graph_fact_context_enabled());
+        }
+    }
+
+    #[test]
+    fn distill_fact_texts_dedups_by_text_ranks_by_confidence_and_caps() {
+        // The extractor emits the same claim from multiple chunks at differing
+        // confidence; the reader context must (a) keep ONE bullet per distinct
+        // claim at its highest confidence, (b) lead with the most reliable
+        // claims, and (c) survive a `max` cut without dropping a high-conf fact.
+        let facts = vec![
+            (0.50, "user lives in Paris".to_string()),
+            (0.90, "user is a chef".to_string()),
+            (0.70, "user lives in Paris".to_string()), // dup, higher confidence
+            (0.20, "user has a dog".to_string()),
+        ];
+        let out = distill_fact_texts(facts, 2);
+        // dedup Paris -> 0.70; rank desc: chef(0.90), Paris(0.70), dog(0.20);
+        // cap 2 drops the dog.
+        assert_eq!(out, vec!["- user is a chef".to_string(), "- user lives in Paris".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scope_fact_texts_reads_distilled_facts_from_kv() {
+        // Wiring proof: facts written to KV during graph-ON ingest are actually
+        // read back and distilled into the reader context. This is the
+        // discriminating "built != wired" test — it fails with the RED stub
+        // (empty) and passes only once the real distiller + scan are connected.
+        use lunaris_core::{Fact, HlcClock, Scope, StoragePort, WriteOp, keyspace::fact_key};
+        use ulid::Ulid;
+
+        let storage =
+            std::sync::Arc::new(crate::corpus::tests_recording::RecordingStorage::default());
+        let scope = Scope::dev();
+        let clock = HlcClock::new(0);
+        let f_hi =
+            Fact::new(scope.clone(), Ulid::new(), "occupation", Ulid::new(), "user is a chef", 0.9, &clock);
+        let f_lo = Fact::new(
+            scope.clone(),
+            Ulid::new(),
+            "residence",
+            Ulid::new(),
+            "user lives in Paris",
+            0.6,
+            &clock,
+        );
+        let ops = vec![
+            WriteOp::KvPut { key: fact_key(&scope, f_hi.id), value: serde_json::to_vec(&f_hi).unwrap() },
+            WriteOp::KvPut { key: fact_key(&scope, f_lo.id), value: serde_json::to_vec(&f_lo).unwrap() },
+        ];
+        storage.atomic_write(&scope, &ops).await.unwrap();
+
+        let out = scope_fact_texts(storage.as_ref(), &scope, 10).await.unwrap();
+        assert_eq!(
+            out,
+            vec!["- user is a chef".to_string(), "- user lives in Paris".to_string()]
+        );
     }
 
     #[test]

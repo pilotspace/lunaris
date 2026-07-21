@@ -1280,10 +1280,25 @@ pub mod tests_recording {
         async fn scan_range(
             &self,
             _scope: &lunaris_core::Scope,
-            _prefix: &[u8],
+            prefix: &[u8],
             _as_of: Option<Hlc>,
         ) -> Result<BoxStream<'_, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-            Err(StorageError::NotSupported("RecordingStorage::scan_range"))
+            // In-memory prefix scan over every recorded KvPut. Sufficient for
+            // read-back tests (e.g. the LongMemEval `scope_fact_texts` fact
+            // scan); non-KvPut ops and non-matching keys are skipped. Later
+            // writes to the same key are NOT deduped — callers that need
+            // last-writer-wins should not rely on this recorder for it.
+            let mut out: Vec<Result<(Bytes, Bytes), StorageError>> = Vec::new();
+            for batch in self.batches.lock().iter() {
+                for op in batch {
+                    if let WriteOp::KvPut { key, value } = op
+                        && key.starts_with(prefix)
+                    {
+                        out.push(Ok((Bytes::from(key.clone()), Bytes::from(value.clone()))));
+                    }
+                }
+            }
+            Ok(Box::pin(futures::stream::iter(out)))
         }
         async fn read_as_of(
             &self,
