@@ -361,7 +361,81 @@ pub fn validate(batch: RawExtractionBatch) -> ValidatedExtraction {
         }
     }
 
+    // ---------- KG-RAG Wave D (2026-07-21): duplicate-triple canonicalization
+    //
+    // The same assertion extracted from adjacent chunks (or restated in one
+    // session) otherwise lands as N fact rows + N vector entries and crowds
+    // the RRF fusion window with copies. Collapse survivors that agree on the
+    // FULL identity key — (subject, predicate, object, valid_from, valid_to) —
+    // keeping the MAX confidence at the first-seen position. Differing
+    // validity intervals are distinct temporal assertions and both survive.
+    // This is canonicalization of redundancy, NOT validation rejection:
+    // EXTRACT-05's needs_review routing for invalid items is untouched.
+    dedup_by_key(&mut out.facts, |f| {
+        (f.subject_id, f.predicate.clone(), f.object_id, f.valid_from_iso.clone(), f.valid_to_iso.clone())
+    });
+    dedup_by_key(&mut out.relations, |r| {
+        (r.subject_id, r.predicate.clone(), r.object_id, r.valid_from_iso.clone(), r.valid_to_iso.clone())
+    });
+
     out
+}
+
+/// Collapse items sharing an identity key to one survivor at the first-seen
+/// position, carrying the maximum confidence seen for that key. Order of
+/// distinct keys is preserved (deterministic output for identical input).
+fn dedup_by_key<T, K, F>(items: &mut Vec<T>, key_of: F)
+where
+    K: std::hash::Hash + Eq,
+    F: Fn(&T) -> K,
+    T: HasConfidence,
+{
+    use std::collections::HashMap;
+    let taken = std::mem::take(items);
+    let mut index_of_key: HashMap<K, usize> = HashMap::new();
+    let mut deduped_count = 0usize;
+    for item in taken {
+        match index_of_key.entry(key_of(&item)) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(items.len());
+                items.push(item);
+            }
+            std::collections::hash_map::Entry::Occupied(e) => {
+                let survivor = &mut items[*e.get()];
+                if item.confidence() > survivor.confidence() {
+                    survivor.set_confidence(item.confidence());
+                }
+                deduped_count += 1;
+            }
+        }
+    }
+    if deduped_count > 0 {
+        tracing::debug!(deduped = deduped_count, "validator_dedup_collapsed_duplicates");
+    }
+}
+
+/// Confidence accessor for [`dedup_by_key`]'s max-confidence merge.
+trait HasConfidence {
+    fn confidence(&self) -> f32;
+    fn set_confidence(&mut self, c: f32);
+}
+
+impl HasConfidence for Fact {
+    fn confidence(&self) -> f32 {
+        self.confidence
+    }
+    fn set_confidence(&mut self, c: f32) {
+        self.confidence = c;
+    }
+}
+
+impl HasConfidence for Relation {
+    fn confidence(&self) -> f32 {
+        self.confidence
+    }
+    fn set_confidence(&mut self, c: f32) {
+        self.confidence = c;
+    }
 }
 
 /// Project a [`ValidatedExtraction`] into a flat [`ExtractionBatch`] (the shape
