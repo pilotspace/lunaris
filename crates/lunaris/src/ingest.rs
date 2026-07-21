@@ -555,8 +555,34 @@ async fn ingest_episode_graph_on(
     // round-trips. The `id_hex` value is the EntityId Display impl
     // (lowercase 32-char hex of the 16 byte content hash). Verified by the
     // `id_hex_round_trip_ingest_then_graph_anchored` smoke test in Task 3b.
-    let embedder_dim = embedder.dim(); // W-2 verified: Embedder::dim() exists on the trait
-    for e in &validated.entities {
+    // KG-RAG Wave C (2026-07-21): ONE batched real-embedding pass over
+    // entity names + fact texts, replacing the det_vec hash stubs that made
+    // the entities/facts HNSW legs geometrically random. Same fallback +
+    // hard-error discipline as the chunk pass (embed_texts_with_fallback);
+    // batching keeps this a single embedder round per ingest, so INGEST-04's
+    // one-atomic-write invariant and the single-pass embedding rule both hold.
+    let graph_texts: Vec<&str> = validated
+        .entities
+        .iter()
+        .map(|e| e.name.as_str())
+        .chain(validated.facts.iter().map(|f| f.fact_text.as_str()))
+        .collect();
+    let graph_vecs: Vec<Vec<f32>> = if graph_texts.is_empty() {
+        Vec::new()
+    } else {
+        embed_texts_with_fallback(embedder, &graph_texts).await?
+    };
+    if graph_vecs.len() != graph_texts.len() {
+        // embed_texts_with_fallback guarantees 1 row per input or Err; a
+        // mismatch here would silently misalign fact vectors — fail loudly.
+        return Err(LunarisError::Storage(StorageError::Backend(format!(
+            "graph embedding row mismatch: {} texts, {} vectors",
+            graph_texts.len(),
+            graph_vecs.len()
+        ))));
+    }
+    let (entity_vecs, fact_vecs) = graph_vecs.split_at(validated.entities.len());
+    for (e, embedding) in validated.entities.iter().zip(entity_vecs) {
         // EntityId is `[u8; 16]`; flow it directly to the WriteOp id field.
         // (Ulid::from_bytes round-trip is lossless per the Plan 03-01
         // entity_id_to_ulid_bytes_are_lossless test.)
@@ -580,15 +606,10 @@ async fn ingest_episode_graph_on(
             }),
             index_kind: "entities".into(),
         });
-        // Stub embedding for entities (v0). Real entity embeddings land in
-        // v1 alongside the extractor's output stage. The deterministic
-        // hash-based vector keeps the vector index queryable for downstream
-        // composers without burning a model forward pass per entity.
-        let stub_embedding = det_vec(&e.name, embedder_dim);
         ops.push(WriteOp::VectorUpsert {
             index: ENTITIES_INDEX.into(),
             id: id_bytes,
-            embedding: stub_embedding,
+            embedding: embedding.clone(),
             metadata: json!({"entity_type": e.entity_type, "name": e.name}),
         });
     }
@@ -610,16 +631,15 @@ async fn ingest_episode_graph_on(
     }
 
     // NEW: per-fact KvPut + VectorUpsert{facts}.
-    for f in &validated.facts {
+    for (f, embedding) in validated.facts.iter().zip(fact_vecs) {
         let fact_value = serde_json::to_vec(f).map_err(|err| {
             LunarisError::Storage(StorageError::Backend(format!("fact serialize: {err}")))
         })?;
         ops.push(WriteOp::KvPut { key: scoped_fact_key(&episode.scope, f.id), value: fact_value });
-        let stub_embedding = det_vec(&f.fact_text, embedder_dim);
         ops.push(WriteOp::VectorUpsert {
             index: FACTS_INDEX.into(),
             id: f.id.to_bytes().to_vec(),
-            embedding: stub_embedding,
+            embedding: embedding.clone(),
             metadata: json!({"predicate": f.predicate, "fact_text": f.fact_text}),
         });
     }
@@ -644,9 +664,22 @@ async fn embed_with_fallback(
     embedder: &dyn Embedder,
     drafts: &[ChunkDraft],
 ) -> Result<Vec<Vec<f32>>, LunarisError> {
-    let mut out: Vec<Vec<f32>> = Vec::with_capacity(drafts.len());
-    for batch in drafts.chunks(EMBED_BATCH_SIZE) {
-        let texts: Vec<&str> = batch.iter().map(|d| d.text.as_str()).collect();
+    let texts: Vec<&str> = drafts.iter().map(|d| d.text.as_str()).collect();
+    embed_texts_with_fallback(embedder, &texts).await
+}
+
+/// Text-slice core of [`embed_with_fallback`] — KG-RAG Wave C reuses it for
+/// the entity-name + fact-text pass in `ingest_episode_graph_on` so graph
+/// primitives get REAL embeddings with the same batch-then-per-item fallback
+/// discipline as chunks (and the same F1 rule: embedder failure is a hard
+/// infra error, never a silent stub/zero fill).
+async fn embed_texts_with_fallback(
+    embedder: &dyn Embedder,
+    all_texts: &[&str],
+) -> Result<Vec<Vec<f32>>, LunarisError> {
+    let mut out: Vec<Vec<f32>> = Vec::with_capacity(all_texts.len());
+    for batch in all_texts.chunks(EMBED_BATCH_SIZE) {
+        let texts: Vec<&str> = batch.to_vec();
         match embedder.embed_batch(&texts).await {
             Ok(rows) if rows.len() == texts.len() => out.extend(rows),
             Ok(rows) => {
@@ -743,32 +776,6 @@ fn needs_review_envelope(item: &NeedsReviewItem) -> serde_json::Value {
             "item": { "reason": reason, "raw": raw },
         }),
     }
-}
-
-/// Deterministic stub embedding for entities + facts (v0). W-2 verified at
-/// planning time: [`Embedder::dim`] EXISTS on the trait
-/// (`lunaris-core/src/embedder.rs:14` — `fn dim(&self) -> usize`). This
-/// helper is INLINED in lunaris/src/ingest.rs (NOT pulled from
-/// lunaris-bench — that's a dev-dep and the dependency direction would
-/// invert). v1 swaps to a real entity-embedding pass via the extractor.
-fn det_vec(text: &str, dim: usize) -> Vec<f32> {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    text.hash(&mut h);
-    let mut state = h.finish().max(1);
-    let mut v = Vec::with_capacity(dim);
-    for _ in 0..dim {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        let bits = (state >> 33) as u32;
-        v.push(((bits as f32) / (u32::MAX as f32)) - 0.5);
-    }
-    // L2-normalise so dot-product is bounded — matches the StubEmbedder
-    // convention from lunaris-core for downstream rerank determinism.
-    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);
-    for x in &mut v {
-        *x /= norm;
-    }
-    v
 }
 
 #[cfg(test)]
