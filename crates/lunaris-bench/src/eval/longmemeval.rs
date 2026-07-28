@@ -935,6 +935,22 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 );
             }
             let verdict = judge_one(chat, &gen_model, &judge_model, rec, &contexts, gen_sys).await;
+            match &verdict {
+                Ok((correct, _, _)) => eprintln!(
+                    "{}",
+                    verdict_line(&rec.question_id, &rec.question_type, Some(*correct), None, recall_hit)
+                ),
+                Err(e) => eprintln!(
+                    "{}",
+                    verdict_line(
+                        &rec.question_id,
+                        &rec.question_type,
+                        None,
+                        Some(&e.to_string()),
+                        recall_hit
+                    )
+                ),
+            }
             match verdict {
                 Ok((correct, answer, raw)) => {
                     if correct {
@@ -1008,8 +1024,18 @@ fn verdict_line(
     error: Option<&str>,
     evidence_recall_hit: bool,
 ) -> String {
-    let _ = (question_id, question_type, correct, error, evidence_recall_hit);
-    String::new()
+    let mut payload = serde_json::json!({
+        "question_id": question_id,
+        "question_type": question_type,
+        "evidence_recall_hit": evidence_recall_hit,
+    });
+    if let Some(c) = correct {
+        payload["correct"] = serde_json::Value::Bool(c);
+    }
+    if let Some(e) = error {
+        payload["error"] = serde_json::Value::String(e.to_owned());
+    }
+    format!("LME_VERDICT {payload}")
 }
 
 /// Fully reset the Moon instance so the next question retrieves from a
