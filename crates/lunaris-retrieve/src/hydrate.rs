@@ -366,27 +366,38 @@ pub async fn partial_hydrate_text(
     // Plan 260610-f91: replace serial for loop with concurrent buffered fan-out.
     // Clone each hit's id upfront so the async block owns all its data
     // (avoids the higher-ranked lifetime bound on &RawHit closures).
-    let owned: Vec<(Vec<u8>, Vec<u8>)> = hits
+    //
+    // KG-RAG: mirror `hydrate_mixed`'s chunk→fact resolution — fact hits must
+    // pair-encode with the query as their `fact_text`, otherwise the
+    // cross-encoder scores them against "" and every fact sinks below top-k.
+    let owned: Vec<(Vec<u8>, Ulid)> = hits
         .iter()
-        .filter_map(|raw| chunk_lookup_key(scope, &raw.id).map(|key| (raw.id.clone(), key)))
+        .filter_map(|raw| {
+            let bytes = <[u8; 16]>::try_from(raw.id.as_slice()).ok()?;
+            Some((raw.id.clone(), Ulid::from_bytes(bytes)))
+        })
         .collect();
 
     let pairs: Vec<(Vec<u8>, String)> = {
         #[allow(clippy::type_complexity)]
         let results: Vec<Result<Option<(Vec<u8>, String)>, LunarisError>> = stream::iter(owned)
-            .map(|(id, key)| {
+            .map(|(id, ulid)| {
                 let scope = scope.clone();
                 async move {
-                    match storage.read_as_of(&scope, &key, snapshot).await? {
-                        Some(row) => {
-                            if let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value) {
-                                Ok(Some((id, chunk.text)))
-                            } else {
-                                Ok(None)
-                            }
-                        }
-                        None => Ok(None), // chunk no longer exists — skip
+                    if let Some(row) =
+                        storage.read_as_of(&scope, &chunk_key(&scope, ulid), snapshot).await?
+                        && let Ok(chunk) = serde_json::from_slice::<Chunk>(&row.value)
+                    {
+                        return Ok(Some((id, chunk.text)));
                     }
+                    if let Some(row) =
+                        storage.read_as_of(&scope, &fact_key(&scope, ulid), snapshot).await?
+                        && let Ok(fact) =
+                            serde_json::from_slice::<lunaris_extract::Fact>(&row.value)
+                    {
+                        return Ok(Some((id, fact.fact_text)));
+                    }
+                    Ok(None) // neither row exists at this snapshot — skip
                 }
             })
             .buffered(HYDRATE_CONCURRENCY)
