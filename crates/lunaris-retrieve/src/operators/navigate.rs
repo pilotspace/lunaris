@@ -127,7 +127,7 @@ impl Navigate {
                 score: h.score,
                 rerank_applied: h.rerank_applied,
                 degraded: false,
-                metadata: h.metadata,
+                metadata: super::tag_leg_index(h.metadata, &self.index),
                 source_op: SourceOp::Vector,
             })
             .collect())
@@ -167,6 +167,13 @@ impl Retriever for Navigate {
         };
         Ok(hits
             .into_iter()
+            // Hop-0 hits are the KNN SEEDS on the seed index (entity nodes
+            // with no KV row): hydration drops them anyway, but only AFTER
+            // `.top(k)` — so every seed that reaches fusion burns a fused/
+            // rerank/final reader-context slot and then vanishes. The leg's
+            // payload is the graph-EXPANDED content (hop >= 1); seeds exist
+            // to anchor the hop, not to be results.
+            .filter(|h| h.hop_depth >= 1)
             .map(|h| RawHit {
                 id: h.id,
                 // Moon's final_score is L2-style (lower = better); map into
@@ -175,7 +182,11 @@ impl Retriever for Navigate {
                 score: 1.0 / (1.0 + h.final_score.max(0.0)),
                 rerank_applied: false,
                 degraded: false,
+                // The "index" tag gives this leg its own RRF bucket (see
+                // fuse.rs per-leg bucketing) — hop-penalty scores are
+                // incomparable with genuine chunk cosines.
                 metadata: json!({
+                    "index": self.index,
                     "hop_depth": h.hop_depth,
                     "vec_score": h.vec_score,
                     "final_score": h.final_score,

@@ -83,7 +83,7 @@ impl Retriever for Keyword {
                 score: h.score,
                 rerank_applied: false,
                 degraded: false,
-                metadata: h.metadata,
+                metadata: super::tag_leg_index(h.metadata, &self.index),
                 source_op: SourceOp::Keyword,
             })
             .collect())

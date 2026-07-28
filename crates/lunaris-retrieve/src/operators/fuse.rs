@@ -189,20 +189,29 @@ pub fn client_side_rrf_weighted(
         return Vec::new();
     }
 
-    // 1. Bucket by source_op.
-    let mut by_source: HashMap<SourceOp, Vec<RawHit>> = HashMap::new();
+    // 1. Bucket by (source_op, leg index tag). Operators that know their
+    //    index stamp `metadata["index"]` (Vector/Keyword/Navigate), so two
+    //    legs of the SAME op over DIFFERENT indexes rank independently —
+    //    RRF's whole premise is rank-per-source, and cross-index score
+    //    magnitudes are incomparable (per-call min-max BM25, hop-penalty
+    //    Navigate constants vs genuine cosines: the 76.0%-vs-82.4% LME
+    //    regression mechanism). Hits without the tag (legacy/BYO operators)
+    //    collapse into the (op, None) bucket — the pre-tag behavior.
+    let mut by_source: HashMap<(SourceOp, Option<String>), Vec<RawHit>> = HashMap::new();
     for h in raw {
-        by_source.entry(h.source_op).or_default().push(h);
+        let leg = h.metadata.get("index").and_then(|v| v.as_str()).map(str::to_owned);
+        by_source.entry((h.source_op, leg)).or_default().push(h);
     }
 
     // 2. Within each bucket, sort descending by score and assign rank.
     //    Then accumulate the weighted RRF contribution per id.
     let mut fused: HashMap<Vec<u8>, f32> = HashMap::new();
     let mut sample: HashMap<Vec<u8>, RawHit> = HashMap::new();
-    for (src, mut group) in by_source {
+    for ((src, _leg), mut group) in by_source {
         // Default weight is 1.0 for any branch missing from the map — this
         // preserves the legacy `client_side_rrf` semantics when callers
-        // pass an empty HashMap.
+        // pass an empty HashMap. Weights stay keyed by SourceOp: every leg
+        // of an op shares the op's trust multiplier.
         let w = weights.get(&src).copied().unwrap_or(1.0_f32);
         group.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         for (rank, hit) in group.into_iter().enumerate() {

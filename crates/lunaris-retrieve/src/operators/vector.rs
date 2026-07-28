@@ -93,7 +93,7 @@ impl Retriever for Vector {
                 score: h.score,
                 rerank_applied: h.rerank_applied,
                 degraded: false,
-                metadata: h.metadata,
+                metadata: super::tag_leg_index(h.metadata, &self.index),
                 source_op: SourceOp::Vector,
             })
             .collect())
