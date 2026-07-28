@@ -994,6 +994,24 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     }
 }
 
+/// One machine-readable verdict line per question (expert review H5): the
+/// runner's scoring greps free-text `correct=` debug lines today, which are
+/// (a) only emitted under `LUNARIS_EVAL_LME_DEBUG=1` — without it a tally
+/// silently reports 0/0 — and (b) coupled to human-facing wording. This line
+/// is emitted UNCONDITIONALLY, prefixed `LME_VERDICT ` for cheap grep, with
+/// a JSON payload for exact parsing: question_id, question_type, correct
+/// (absent on judge error), error (absent on success), evidence_recall_hit.
+fn verdict_line(
+    question_id: &str,
+    question_type: &str,
+    correct: Option<bool>,
+    error: Option<&str>,
+    evidence_recall_hit: bool,
+) -> String {
+    let _ = (question_id, question_type, correct, error, evidence_recall_hit);
+    String::new()
+}
+
 /// Fully reset the Moon instance so the next question retrieves from a
 /// pristine store. `FLUSHALL` alone is NOT enough: it clears the data keys
 /// but the FT vector index keeps every prior doc as a GHOST entry
@@ -1274,6 +1292,28 @@ mod tests {
             return tree_contains_navigate(fuse.inner_retriever());
         }
         false
+    }
+
+    #[test]
+    fn lme_verdict_line_is_machine_parseable() {
+        // H5 (expert review 2026-07-28): scoring must not depend on
+        // DEBUG-gated free-text eprintln wording. One greppable prefix +
+        // strict-JSON payload per question, emitted unconditionally.
+        let ok = verdict_line("q42", "multi-session", Some(true), None, true);
+        let (prefix, json) = ok.split_once(' ').expect("prefix + payload");
+        assert_eq!(prefix, "LME_VERDICT");
+        let v: serde_json::Value = serde_json::from_str(json).expect("strict JSON payload");
+        assert_eq!(v["question_id"], "q42");
+        assert_eq!(v["question_type"], "multi-session");
+        assert_eq!(v["correct"], true);
+        assert_eq!(v["evidence_recall_hit"], true);
+        assert!(v.get("error").is_none(), "no error key on success");
+
+        let err = verdict_line("q7", "temporal-reasoning", None, Some("http 529"), false);
+        let (_, json) = err.split_once(' ').expect("prefix + payload");
+        let v: serde_json::Value = serde_json::from_str(json).expect("strict JSON payload");
+        assert!(v.get("correct").is_none(), "no correct key on ERR — never scored as wrong");
+        assert_eq!(v["error"], "http 529");
     }
 
     #[test]
