@@ -372,16 +372,23 @@ fn hybrid_rerank_top_in(pool: usize) -> usize {
 /// chunks-only baseline. The harness must compose the facts-aware 4-leg
 /// root itself when the graph pipeline is on.
 fn lme_fused_root(pool: usize, graph_enabled: bool) -> lunaris::FuseRrfRetriever {
-    let _ = graph_enabled;
-    lunaris::Vector::new("chunks", pool).and(lunaris::Keyword::bm25("chunks", pool)).fuse_rrf(60)
+    if graph_enabled {
+        // The production graph-ON root (`lunaris_retrieve::composition::
+        // hybrid_root`), pool-sized per leg: (Vector ∧ BM25)("chunks") ∧
+        // (Navigate("entities") ∧ BM25("facts")) → fuse_rrf(60).
+        lunaris::hybrid_root(pool)
+    } else {
+        lunaris::Vector::new("chunks", pool)
+            .and(lunaris::Keyword::bm25("chunks", pool))
+            .fuse_rrf(60)
+    }
 }
 
 /// Rerank pool for [`lme_fused_root`]: each leg contributes up to `pool`
 /// hits, so the cross-encoder must consider `legs × pool` fused candidates
 /// (the Bucket-A1 lesson, generalized to the 4-leg graph-ON root).
 fn lme_rerank_top_in(pool: usize, graph_enabled: bool) -> usize {
-    let _ = graph_enabled;
-    hybrid_rerank_top_in(pool)
+    hybrid_rerank_top_in(pool).saturating_mul(if graph_enabled { 2 } else { 1 })
 }
 
 /// Whether judge mode (LLM gen+judge round-trip) is active, vs the cheap
