@@ -4,6 +4,22 @@ pub mod aggregate;
 pub mod combinators;
 pub mod degraded;
 pub mod fuse;
+
+/// Stamp the retrieving leg's index name into a hit's metadata so
+/// `client_side_rrf_weighted` can bucket per (source_op, index) — see the
+/// per-leg bucketing note in fuse.rs. Object metadata gains an `"index"`
+/// key; `Null` becomes a fresh object; any other shape is left untouched
+/// (the hit then falls into the legacy (op, None) bucket).
+pub(crate) fn tag_leg_index(mut meta: serde_json::Value, index: &str) -> serde_json::Value {
+    match &mut meta {
+        serde_json::Value::Object(map) => {
+            map.insert("index".to_owned(), serde_json::Value::String(index.to_owned()));
+            meta
+        }
+        serde_json::Value::Null => serde_json::json!({ "index": index }),
+        _ => meta,
+    }
+}
 pub mod graph;
 pub mod keyword;
 pub mod modifiers;
