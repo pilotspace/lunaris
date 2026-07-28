@@ -425,10 +425,31 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
     // standalone " ago" check, independent of this connective list.)
     const UNITS: [&str; 4] = ["day", "week", "month", "year"];
     const DURATION_CONNECTIVES: [&str; 5] = ["between", "since", "until", "before", "after"];
-    let how_many_duration = q.contains("how many")
-        && UNITS.iter().any(|u| q.contains(&format!("how many {u}")))
-        && DURATION_CONNECTIVES.iter().any(|c| q.contains(c));
+    let how_many_unit = UNITS.iter().any(|u| q.contains(&format!("how many {u}")));
+    let how_many_duration =
+        how_many_unit && DURATION_CONNECTIVES.iter().any(|c| q.contains(c));
+    // "how many <unit> did I spend / did it take" is a SPAN (one activity's
+    // duration), not a tally of occurrence-days — distinct from the bare
+    // tally form ("how many days did I go jogging"), which stays Counting
+    // (q112/q117 lesson above).
+    const SPAN_VERBS: [&str; 4] = ["spend", "spent", " take", " took"];
+    let how_many_span = how_many_unit && SPAN_VERBS.iter().any(|v| q.contains(v));
+    // Ordering phrasings ("which happened first", "first, second and third",
+    // "in the order from first to last", "last Saturday") are timeline
+    // questions — chrono presentation is the whole fix for them.
+    const WEEKDAYS: [&str; 7] =
+        ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    let ordering = q.contains("happened first")
+        || q.contains("happened earlier")
+        || q.contains("happened later")
+        || q.contains("came first")
+        || q.contains("first, second")
+        || q.contains("order from")
+        || q.contains("first to last")
+        || WEEKDAYS.iter().any(|d| q.contains(&format!("last {d}")));
     let temporal = how_many_duration
+        || how_many_span
+        || ordering
         || q.contains("how long")
         || q.contains("how soon")
         || q.starts_with("when")
@@ -448,12 +469,24 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
     if temporal {
         return QueryIntent::Temporal;
     }
-    if q.contains("how many")
-        || q.contains("how often")
-        || q.contains("number of")
-        || q.contains("how frequently")
-        || q.starts_with("count ")
-        || q.contains("total number")
+    // Current-STATE questions ("how many X do I currently own?") ask for the
+    // latest stated figure, not an event tally — knowledge-update gold is a
+    // single number the history states outright. Counting's enumerate-and-
+    // tally prompt actively fights that; Factual's most-recent-fact guidance
+    // is the right frame.
+    let current_state = q.contains("currently")
+        || q.contains("right now")
+        || q.contains("at the moment")
+        || q.ends_with(" now?")
+        || q.contains("do i own")
+        || q.contains("do i have");
+    if !current_state
+        && (q.contains("how many")
+            || q.contains("how often")
+            || q.contains("number of")
+            || q.contains("how frequently")
+            || q.starts_with("count ")
+            || q.contains("total number"))
     {
         return QueryIntent::Counting;
     }
@@ -462,6 +495,8 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
         || q.contains("what should i")
         || q.contains("advice")
         || q.contains("any tips")
+        || q.contains("helpful tips") // "any helpful tips" splits "any tips"
+        || q.contains("have any tips")
         || q.contains("give me tips")
         || q.contains("help me")
         || q.contains("what would you")
@@ -519,8 +554,11 @@ pub(crate) fn gen_system_prompt_for(intent: QueryIntent) -> &'static str {
              Each memory begins with a `[Session date: ...]` marker and the \
              memories are arranged oldest-to-newest. Use those dates and the \
              current date to reason about time, ordering, and recency; read the \
-             timeline directly and answer concisely. If the information is \
-             genuinely absent, say you don't know."
+             timeline directly and answer concisely. If the question asks how \
+             long something took or how many days/weeks/years were spent — \
+             possibly across several activities — derive each span from the \
+             stated dates or durations and add them up, showing the spans you \
+             summed. If the information is genuinely absent, say you don't know."
         }
         QueryIntent::Recommendation => {
             "You are a helpful assistant with access to the user's past \
