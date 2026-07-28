@@ -173,6 +173,34 @@ fn seeded(scope: &Scope) -> (Arc<KvStorage>, Ulid, Ulid) {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
+/// Rerank pair-encoding half: `partial_hydrate_text` (the cross-encoder's
+/// candidate-text source, rerank.rs) must resolve FACT ids to their
+/// `fact_text` — with chunk-only hydration a fact hit gets no entry, the
+/// reranker pair-encodes it against an empty string, sigmoid ≈ 0, and every
+/// fact sinks below `.top(k)` before the reader ever sees it.
+#[tokio::test]
+async fn partial_hydrate_text_resolves_fact_text() {
+    let scope = Scope::new("hydrate-mixed-pht").unwrap();
+    let (storage, chunk_id, fact_id) = seeded(&scope);
+
+    let hits = vec![raw(chunk_id, 0.032, SourceOp::Vector), raw(fact_id, 0.016, SourceOp::Keyword)];
+    let texts =
+        lunaris_retrieve::hydrate::partial_hydrate_text(storage.as_ref(), &scope, &hits, None)
+            .await
+            .expect("partial_hydrate_text");
+
+    assert_eq!(
+        texts.get(&chunk_id.to_bytes().to_vec()).map(String::as_str),
+        Some("the chunk text"),
+        "chunk semantics unchanged"
+    );
+    assert_eq!(
+        texts.get(&fact_id.to_bytes().to_vec()).map(String::as_str),
+        Some("zephyr-relay listens on port 7443"),
+        "fact ids must hydrate to fact_text so the cross-encoder can score them"
+    );
+}
+
 /// §2 root-shape scenario, hydration half: a fused hit-list mixing chunk ids
 /// and fact ids hydrates BOTH — the chunk with existing `hydrate` semantics
 /// (text + episode source), the fact from its `fact_key` row (text =
