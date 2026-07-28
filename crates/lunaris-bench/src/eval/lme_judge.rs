@@ -755,6 +755,68 @@ mod tests {
     }
 
     #[test]
+    fn classify_intent_ordering_questions_are_temporal() {
+        // Expert review 2026-07-28 (R1): 46/133 temporal-reasoning questions
+        // routed Factual — no chrono sort, no timeline prompt — on ordering
+        // phrasings the classifier misses. These are exactly the questions
+        // where chronological presentation IS the fix.
+        use QueryIntent::*;
+        assert_eq!(
+            classify_intent("Which event happened first, my marathon or the office move?"),
+            Temporal
+        );
+        assert_eq!(
+            classify_intent("Who graduated first, second and third among my friends?"),
+            Temporal
+        );
+        assert_eq!(classify_intent("List my trips in the order from first to last."), Temporal);
+        assert_eq!(classify_intent("What did I do last Saturday?"), Temporal);
+    }
+
+    #[test]
+    fn classify_intent_spend_take_spans_are_temporal() {
+        // R1, second bucket: "how many <unit> did I spend/take" is a SPAN
+        // (duration of one activity), not a tally of occurrence-days — the
+        // enumerate-and-tally Counting prompt over/under-counts it. The bare
+        // tally form (q112/q117 lesson) must stay Counting.
+        use QueryIntent::*;
+        assert_eq!(classify_intent("How many days did I spend on my trip to Japan?"), Temporal);
+        assert_eq!(
+            classify_intent("How many weeks did it take to finish the renovation?"),
+            Temporal
+        );
+        assert_eq!(classify_intent("On how many days did I go jogging in December?"), Counting);
+    }
+
+    #[test]
+    fn classify_intent_current_state_questions_are_factual() {
+        // R2: 40/78 knowledge-update questions routed Counting. Gold is the
+        // LATEST STATED figure ("I now own 4 bikes"), not a re-derived tally
+        // of scattered event mentions — the Counting prompt actively fights
+        // the right answer and loses Factual's most-recent-fact guidance.
+        use QueryIntent::*;
+        assert_eq!(classify_intent("How many bikes do I currently own?"), Factual);
+        assert_eq!(
+            classify_intent("How many titles are currently on my to-watch list?"),
+            Factual
+        );
+        // Genuine event tallies keep Counting — do not over-rotate.
+        assert_eq!(classify_intent("How many days did I attend yoga class this month?"), Counting);
+    }
+
+    #[test]
+    fn classify_intent_helpful_tips_is_recommendation() {
+        // R5: "Do you have any helpful tips?" — "helpful" splits the existing
+        // "any tips" substring, so the one preference question phrased this
+        // way fell to Factual's "say you don't know" prompt.
+        use QueryIntent::*;
+        assert_eq!(
+            classify_intent("Do you have any helpful tips for my presentation?"),
+            Recommendation
+        );
+    }
+
+    #[test]
     fn classify_intent_recommendation_do_you_think_phrasing() {
         // v0.7 N=500 rerun q151/q153 (reader-reasoning gap) and q152
         // (retrieval gap): implicit ask-for-opinion phrasing ("do you think
