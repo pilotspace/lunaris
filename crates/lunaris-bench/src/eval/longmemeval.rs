@@ -1801,4 +1801,99 @@ mod tests {
         assert!(!evidence_recall_all_hit(&all_present, &[String::new()]));
         assert_eq!(evidence_recall_coverage(&all_present, &[String::new()]), (0, 0));
     }
+
+    // ── Extraction-cache wiring (graph-ingest cost elimination, 2026-07-29) ──
+    //
+    // The harness must route the graph-pipeline extractor through
+    // `lunaris_extract::CachedExtractor` whenever a cache dir is configured
+    // (LUNARIS_EVAL_LME_EXTRACT_CACHE_DIR), and stay a pure passthrough when
+    // it is not — pinned here so the production graph arm provably invokes
+    // the cache (built ≠ wired).
+
+    struct CountingStubExtractor {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl lunaris::Extractor for CountingStubExtractor {
+        async fn extract(
+            &self,
+            _episode_id: ulid::Ulid,
+            chunks: &[lunaris_extract::ChunkInput],
+        ) -> Result<lunaris_extract::RawExtractionBatch, lunaris::LunarisError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(lunaris_extract::RawExtractionBatch {
+                by_chunk: chunks
+                    .iter()
+                    .map(|c| lunaris_extract::RawExtraction {
+                        source_chunk_id: c.chunk_id,
+                        ..Default::default()
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    fn cache_test_chunk(text: &str) -> lunaris_extract::ChunkInput {
+        lunaris_extract::ChunkInput {
+            chunk_id: ulid::Ulid::new(),
+            text: text.to_owned(),
+            heading_path: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn extract_cache_wrap_replays_when_dir_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let inner = std::sync::Arc::new(CountingStubExtractor {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let (wrapped, stats_handle) = wrap_extractor_with_cache(
+            inner.clone(),
+            Some(dir.path().to_str().unwrap()),
+            "MiniMax-M3",
+        );
+        let stats_handle = stats_handle.expect("configured dir must yield a stats handle");
+
+        wrapped
+            .extract(ulid::Ulid::new(), &[cache_test_chunk("session one text")])
+            .await
+            .expect("fill");
+        wrapped
+            .extract(ulid::Ulid::new(), &[cache_test_chunk("session one text")])
+            .await
+            .expect("replay");
+
+        assert_eq!(
+            inner.calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "second identical extraction must replay from cache, not re-call the model"
+        );
+        let stats = stats_handle.stats();
+        assert_eq!((stats.hits, stats.misses), (1, 1), "one fill miss + one replay hit");
+    }
+
+    #[tokio::test]
+    async fn extract_cache_wrap_none_is_pure_passthrough() {
+        let inner = std::sync::Arc::new(CountingStubExtractor {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let (wrapped, stats_handle) = wrap_extractor_with_cache(inner.clone(), None, "MiniMax-M3");
+        assert!(stats_handle.is_none(), "no cache dir → no cache handle");
+
+        wrapped
+            .extract(ulid::Ulid::new(), &[cache_test_chunk("uncached text")])
+            .await
+            .expect("first");
+        wrapped
+            .extract(ulid::Ulid::new(), &[cache_test_chunk("uncached text")])
+            .await
+            .expect("second");
+
+        assert_eq!(
+            inner.calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "without a cache dir every extraction must reach the inner extractor"
+        );
+    }
 }
