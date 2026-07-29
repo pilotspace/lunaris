@@ -498,6 +498,25 @@ fn lme_final_top(
     }
 }
 
+/// Whether the retrieved-fact bullet block ([`fact_context_block`]) is fed
+/// to the reader for this question's classified intent.
+///
+/// Mechanism C of the N=125 A/B diagnosis (2026-07-29): fact bullets are
+/// atemporal deduped snapshots whose `valid_from` metadata is ~78%
+/// hallucinated ("else today" extraction fallback), so for Temporal
+/// questions they strip date ordering while asserting stale values, and for
+/// Recommendation questions a single bullet can override the gold preference
+/// carried by the prose (q146 "muscovado" vs gold turbinado). The
+/// aggregation-shaped intents keep the bullets — the q71/q177 multi-session
+/// wins came from exactly those.
+///
+/// `gate=false` (`LUNARIS_EVAL_LME_FACT_GATE=0`) restores unconditional
+/// bullets so an A/B can isolate this gate from the chunk-floor fix.
+fn fact_bullets_enabled(intent: super::lme_judge::QueryIntent, gate: bool) -> bool {
+    use super::lme_judge::QueryIntent;
+    !gate || matches!(intent, QueryIntent::Counting | QueryIntent::Factual)
+}
+
 /// Reader-context source toggle (`LUNARIS_EVAL_LME_GRAPH_CONTEXT=1`, only
 /// meaningful together with `LME_GRAPH=1`).
 ///
@@ -590,6 +609,9 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // CloudApiExtractorOpts::default()). MINIMAX_API_KEY is read directly at
     // that same site, never threaded through a harness variable or logged.
     let graph_enabled = graph_pipeline_enabled();
+    // Intent gate for the FACT_HITS reader bullets (Mechanism C, 2026-07-29).
+    // Default ON; LUNARIS_EVAL_LME_FACT_GATE=0 restores unconditional bullets.
+    let fact_gate = std::env::var("LUNARIS_EVAL_LME_FACT_GATE").map(|v| v != "0").unwrap_or(true);
     // See `effective_topk` doc for the KG-RAG regression this closes: graph-ON
     // widens the final top-k so hybrid_root's facts/BM25 legs don't evict
     // gold-session chunks from the truncated reader context.
@@ -962,18 +984,23 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 // Production-path presentation: session prose from chunk hits
                 // PLUS the fact hits the fused root retrieved (graph-ON via
                 // Waves A-C; empty under graph-OFF so the baseline arm is
-                // byte-identical).
+                // byte-identical). Intent-gated since the 2026-07-29
+                // Mechanism-C diagnosis — see `fact_bullets_enabled`.
                 let mut ctxs = expand_hit_sessions(&sources, rec, chrono);
-                if let Some(block) =
-                    fact_context_block(hits.iter().map(|h| (h.source.as_str(), h.text.as_str())))
-                {
-                    if debug {
-                        eprintln!(
-                            "    FACT_HITS: appending {} retrieved-fact bullets to reader context",
-                            block.lines().count().saturating_sub(1)
-                        );
+                if fact_bullets_enabled(intent, fact_gate) {
+                    if let Some(block) = fact_context_block(
+                        hits.iter().map(|h| (h.source.as_str(), h.text.as_str())),
+                    ) {
+                        if debug {
+                            eprintln!(
+                                "    FACT_HITS: appending {} retrieved-fact bullets to reader context",
+                                block.lines().count().saturating_sub(1)
+                            );
+                        }
+                        ctxs.push(block);
                     }
-                    ctxs.push(block);
+                } else if debug {
+                    eprintln!("    FACT_HITS: suppressed for {intent:?} intent (gate on)");
                 }
                 ctxs
             };
