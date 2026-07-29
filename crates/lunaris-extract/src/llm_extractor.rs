@@ -717,6 +717,61 @@ mod tests {
         );
     }
 
+    // ── Δ3 + Δ5 (SOTA comparison, tmp/sota_extractor_comparison.md) ──
+    //
+    // Δ3: fact_text is currently code-synthesized terse SVO ("Alice bought
+    // Wilson Pro Staff") — exactly the shape that scores near-zero under the
+    // cross-encoder against natural-language questions and that poisoned the
+    // FACT_HITS reader block. Graphiti-style fix: the model authors
+    // fact_text as ONE complete sentence preserving every specific detail;
+    // the synthesized form stays as fallback only.
+    // Δ5: extraction hygiene (Graphiti extract_nodes rules) — speaker
+    // attribution for chat chunks, pronoun resolution, most-specific-form,
+    // and a negative constraint against pronoun/generic/abstract entities.
+    // Both ride the SAME cache refill as the temporal rewrite.
+
+    #[test]
+    fn prompt_asks_for_llm_authored_fact_text_and_hygiene() {
+        let p = build_prompt(&chunk("user: I bought a Wilson racket."));
+        assert!(p.contains("fact_text"), "relation schema must include fact_text");
+        assert!(
+            p.contains("never generalize"),
+            "detail-preservation rule (proper nouns/quantities/dates survive)"
+        );
+        assert!(
+            p.contains("NEVER extract pronouns"),
+            "negative constraint: no pronoun/generic/abstract entities"
+        );
+        assert!(p.contains("speaker"), "chat speaker-attribution rule");
+    }
+
+    #[test]
+    fn llm_authored_fact_text_preferred_with_synth_fallback() {
+        let chunk_id = Ulid::new();
+        let raw = parse_extraction_json(
+            r#"{"entities":[],"relations":[
+                {"subject_name":"Alice","subject_type":"Person","predicate":"BOUGHT",
+                 "object_name":"Wilson Pro Staff","object_type":"Product","confidence":0.9,
+                 "valid_from_iso":"2023-05-14","valid_to_iso":null,
+                 "fact_text":"Alice bought a Wilson Pro Staff racket at Tennis Warehouse in May 2023"},
+                {"subject_name":"Alice","subject_type":"Person","predicate":"LIVES_IN",
+                 "object_name":"Boston","object_type":"City","confidence":0.9,
+                 "valid_from_iso":null,"valid_to_iso":null}
+            ]}"#,
+            chunk_id,
+        );
+        assert_eq!(raw.facts.len(), 2);
+        assert_eq!(
+            raw.facts[0].fact_text,
+            "Alice bought a Wilson Pro Staff racket at Tennis Warehouse in May 2023",
+            "model-authored fact_text must be used verbatim"
+        );
+        assert_eq!(
+            raw.facts[1].fact_text, "Alice lives in Boston",
+            "absent/empty fact_text falls back to the synthesized S-P-O sentence"
+        );
+    }
+
     #[test]
     fn build_prompt_without_reference_time_uses_null_policy() {
         let p = build_prompt(&chunk("Alice met Bob in Paris."));
