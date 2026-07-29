@@ -237,8 +237,22 @@ pub(crate) fn build_prompt(chunk: &ChunkInput) -> String {
          \"valid_to_iso\":null}}],\n\
          \"relations\":[{{\"subject_name\":\"Alice\",\"subject_type\":\"Person\",\
          \"predicate\":\"met\",\"object_name\":\"Bob\",\"object_type\":\"Person\",\
-         \"confidence\":0.9,\"valid_from_iso\":null,\"valid_to_iso\":null}}]}}\n\
+         \"confidence\":0.9,\"valid_from_iso\":null,\"valid_to_iso\":null,\
+         \"fact_text\":\"Alice met Bob at the spring design conference\"}}]}}\n\
          Use no other field names.\n\
+         Each relation's fact_text is ONE complete natural-language sentence \
+         restating the fact with ALL specific details preserved — proper \
+         nouns, brand and model names, quantities, prices, dates. Paraphrase \
+         the wording, never generalize.\n\
+         Extraction rules:\n\
+         - Chat transcripts are \"<speaker>: <text>\" lines. Attribute each \
+         fact to the correct speaker; the human speaker is the entity \
+         \"user\".\n\
+         - Resolve pronouns to the specific entity name when the chunk makes \
+         it clear; use the most specific form (\"road cycling\" not \
+         \"cycling\", \"the user's sister Anna\" not \"sister\").\n\
+         - NEVER extract pronouns, generic nouns, abstract concepts, or \
+         feelings as entities.\n\
          {reference_block}\
          Date rules for valid_from_iso / valid_to_iso (ISO 8601 dates, e.g. \
          2023-05-14):\n\
@@ -403,6 +417,11 @@ struct RelationJson {
     valid_from_iso: String,
     #[serde(default)]
     valid_to_iso: Option<String>,
+    /// Δ3 (SOTA comparison): model-authored natural-language restatement of
+    /// the relation, detail-preserving. Optional — absent/empty falls back
+    /// to [`synth_fact_text`]'s S-P-O sentence in `into_raw`.
+    #[serde(default, deserialize_with = "string_or_null")]
+    fact_text: String,
 }
 
 impl ExtractionJson {
@@ -440,7 +459,14 @@ impl ExtractionJson {
                 subject_id: EntityId::from_name_and_type(&r.subject_name, &r.subject_type),
                 predicate: r.predicate.clone(),
                 object_id: EntityId::from_name_and_type(&r.object_name, &r.object_type),
-                fact_text: synth_fact_text(&r.subject_name, &r.predicate, &r.object_name),
+                // Δ3: prefer the model-authored detail-preserving sentence —
+                // it both cross-encodes and reads far better than the terse
+                // synthesized S-P-O form, which stays as the fallback.
+                fact_text: if r.fact_text.trim().is_empty() {
+                    synth_fact_text(&r.subject_name, &r.predicate, &r.object_name)
+                } else {
+                    r.fact_text.trim().to_owned()
+                },
                 confidence: r.confidence,
                 valid_from_iso: r.valid_from_iso.clone(),
                 valid_to_iso: r.valid_to_iso.clone(),
