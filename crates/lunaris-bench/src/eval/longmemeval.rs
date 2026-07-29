@@ -646,6 +646,10 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // Pristine store + fresh empty indexes for THIS question only.
         reset_moon(url).await?;
         let lunaris = std::sync::Arc::new(lunaris::Lunaris::open(url).await?);
+        // Extraction-cache stats handle — present only when the graph arm
+        // runs with LUNARIS_EVAL_LME_EXTRACT_CACHE_DIR configured; read for
+        // the post-ingest EXTRACT_CACHE observability line.
+        let mut extract_cache: Option<std::sync::Arc<lunaris_extract::CachedExtractor>> = None;
         if graph_enabled {
             // Graph-pipeline prototype: route ingest through structured
             // Fact/Entity/Relation extraction instead of the default
@@ -678,11 +682,23 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 base_url: None,
             })
             .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
-            lunaris.graph_pipeline().set_extractor(std::sync::Arc::new(extractor));
+            // Content-addressed extraction cache (opt-in): identical chunks
+            // replay their extraction from disk instead of re-calling the
+            // model — the ~40 sequential MiniMax calls per question are the
+            // graph arm's dominant cost (~15 of ~20 min measured 2026-07-29).
+            let cache_dir = std::env::var("LUNARIS_EVAL_LME_EXTRACT_CACHE_DIR").ok();
+            let (extractor_arc, cache_handle) = wrap_extractor_with_cache(
+                std::sync::Arc::new(extractor),
+                cache_dir.as_deref(),
+                &extract_model_used,
+            );
+            extract_cache = cache_handle;
+            lunaris.graph_pipeline().set_extractor(extractor_arc);
             lunaris.graph_pipeline().enable();
             if debug {
                 eprintln!(
-                    "    GRAPH pipeline ENABLED extract_model={extract_model_used} batch_timeout_ms={extract_batch_timeout_ms} max_tokens={extract_max_tokens}"
+                    "    GRAPH pipeline ENABLED extract_model={extract_model_used} batch_timeout_ms={extract_batch_timeout_ms} max_tokens={extract_max_tokens} extract_cache={}",
+                    cache_dir.as_deref().unwrap_or("off")
                 );
             }
         }
@@ -762,6 +778,13 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             }
             acc
         };
+        // Unconditional (like LME_VERDICT): a warm cache dir showing 0 hits
+        // means the wiring or key derivation regressed — must be visible
+        // without DEBUG.
+        if let Some(cache) = &extract_cache {
+            let s = cache.stats();
+            eprintln!("    EXTRACT_CACHE hits={} misses={}", s.hits, s.misses);
+        }
         // Unfiltered recall. We deliberately DO NOT use `pad.grep`, whose
         // `StartsWith{source}` filter is malformed for Moon's TAG `source`
         // field (`@source:helios:fs/lme0000/*` with unescaped `:` / `/`) and
@@ -1304,6 +1327,35 @@ pub fn parse_longmemeval(bytes: &[u8]) -> anyhow::Result<Vec<EvalQuery>> {
             EvalQuery { query: r.question, expected_answer }
         })
         .collect())
+}
+
+/// Route the graph-pipeline extractor through the content-addressed
+/// extraction cache ([`lunaris_extract::CachedExtractor`]) when a cache dir
+/// is configured; pure passthrough otherwise.
+///
+/// Returns the (possibly wrapped) extractor plus a stats handle for the
+/// post-ingest `EXTRACT_CACHE hits=/misses=` observability line. A cache-dir
+/// I/O error disables the cache with a visible warning rather than failing
+/// the run — the cache is an accelerator, never a dependency.
+fn wrap_extractor_with_cache(
+    inner: std::sync::Arc<dyn lunaris::Extractor>,
+    cache_dir: Option<&str>,
+    namespace: &str,
+) -> (std::sync::Arc<dyn lunaris::Extractor>, Option<std::sync::Arc<lunaris_extract::CachedExtractor>>)
+{
+    let Some(dir) = cache_dir else {
+        return (inner, None);
+    };
+    match lunaris_extract::CachedExtractor::new(inner.clone(), dir, namespace) {
+        Ok(cached) => {
+            let cached = std::sync::Arc::new(cached);
+            (cached.clone() as std::sync::Arc<dyn lunaris::Extractor>, Some(cached))
+        }
+        Err(e) => {
+            eprintln!("    EXTRACT_CACHE disabled (cache dir {dir}: {e})");
+            (inner, None)
+        }
+    }
 }
 
 #[cfg(test)]
