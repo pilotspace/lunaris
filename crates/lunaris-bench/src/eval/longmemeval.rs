@@ -1495,6 +1495,28 @@ mod tests {
     }
 
     #[test]
+    fn fact_bullets_gated_by_intent() {
+        // N=125 A/B diagnosis (2026-07-29), Mechanism C: the one stable break
+        // WITH fact bullets (q146, Recommendation) was STEERED wrong by a
+        // single retrieved-fact bullet ("muscovado") against the gold
+        // preference the chunks carried. And with extraction dates 78%
+        // hallucinated (valid_from stamped 2025/2026 vs 2022-2023 haystacks),
+        // atemporal bullets actively harm Temporal readers — they strip date
+        // ordering. Gate: bullets stay for aggregation-shaped intents
+        // (Counting/Factual — the q71/q177 multi-session wins), suppressed
+        // for Temporal + Recommendation. `gate=false` (env
+        // LUNARIS_EVAL_LME_FACT_GATE=0) restores unconditional bullets so an
+        // A/B can isolate this gate from the chunk-floor fix.
+        use crate::eval::lme_judge::QueryIntent;
+        assert!(fact_bullets_enabled(QueryIntent::Counting, true));
+        assert!(fact_bullets_enabled(QueryIntent::Factual, true));
+        assert!(!fact_bullets_enabled(QueryIntent::Temporal, true));
+        assert!(!fact_bullets_enabled(QueryIntent::Recommendation, true));
+        assert!(fact_bullets_enabled(QueryIntent::Temporal, false));
+        assert!(fact_bullets_enabled(QueryIntent::Recommendation, false));
+    }
+
+    #[test]
     fn effective_topk_widens_when_graph_enabled() {
         // KG-RAG regression (2026-07-22): graph-ON's hybrid_root fuses 4 legs
         // (chunks x2, facts x2) via RRF into one ranked list, then the SAME
