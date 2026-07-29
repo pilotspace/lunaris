@@ -76,3 +76,5 @@ tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Force the `faux` feature on during `cargo test` so test modules can use
 # `FauxBackend` without every test binary having to pass `--features faux`.
 lunaris-llm    = { workspace = true, features = ["faux"] }
+# CachedExtractor contract tests need throwaway cache directories.
+tempfile       = "3"
