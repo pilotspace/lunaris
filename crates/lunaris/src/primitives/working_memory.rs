@@ -503,8 +503,9 @@ mod tests {
         let pub_fns = production.matches("    pub fn ").count()
             + production.matches("    pub async fn ").count();
         assert!(
-            pub_fns <= 6,
-            "PRIM-04 ≤30-LOC contract: WorkingMemory has {pub_fns} pub fns; cap is 6"
+            pub_fns <= 7,
+            "PRIM-04 ≤30-LOC contract: WorkingMemory has {pub_fns} pub fns; cap is 7 \
+             (write_dated added for Mechanism-B session-date grounding, 2026-07-29)"
         );
         assert!(
             pub_fns >= 3,

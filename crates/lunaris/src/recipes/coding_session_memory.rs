@@ -16,17 +16,18 @@
 //!
 //! ## ≤50-LOC public-surface contract (HELIOS-01)
 //!
-//! Public symbols on this module are exactly nine:
+//! Public symbols on this module are exactly ten:
 //!
 //! 1. [`CodingSessionMemory::new`]
 //! 2. [`CodingSessionMemory::write`]
-//! 3. [`CodingSessionMemory::read`]
-//! 4. [`CodingSessionMemory::edit`]
-//! 5. [`CodingSessionMemory::grep`]
-//! 6. [`CodingSessionMemory::ls`]
-//! 7. [`CodingSessionMemory::forget`]
-//! 8. [`CodingSessionMemory::as_of`]
-//! 9. [`AsOfScratchpad::read`]
+//! 3. [`CodingSessionMemory::write_dated`]
+//! 4. [`CodingSessionMemory::read`]
+//! 5. [`CodingSessionMemory::edit`]
+//! 6. [`CodingSessionMemory::grep`]
+//! 7. [`CodingSessionMemory::ls`]
+//! 8. [`CodingSessionMemory::forget`]
+//! 9. [`CodingSessionMemory::as_of`]
+//! 10. [`AsOfScratchpad::read`]
 //!
 //! The unit test `coding_session_memory_public_surface_under_50_loc` enforces this
 //! ceiling by counting `pub fn` + `pub async fn` declarations in this file.
@@ -70,8 +71,8 @@ const HELIOS_PREFIX: &str = "helios:fs/";
 /// default (500 tokens / chunk).
 const READ_TOP: usize = 8;
 
-/// **≤50 LOC public surface** (HELIOS-01 contract). Eight methods on
-/// `CodingSessionMemory` + [`AsOfScratchpad::read`] = 9 public symbols total.
+/// **≤50 LOC public surface** (HELIOS-01 contract). Nine methods on
+/// `CodingSessionMemory` + [`AsOfScratchpad::read`] = 10 public symbols total.
 ///
 /// v2 — delegates to [`WorkingMemory`] per HELIOS-03 / CONTEXT.md D-01.
 ///
@@ -312,9 +313,10 @@ mod tests {
     /// `pub async fn` declarations in the production portion of the source
     /// file (everything BEFORE the `#[cfg(test)]` marker — the test module's
     /// literal-string mentions of `"pub fn"` are excluded by truncating at
-    /// that boundary). The cap is **9** symbols total: 8 methods on
-    /// [`CodingSessionMemory`] + 1 on [`AsOfScratchpad`]. Adjust ONLY alongside
-    /// an HELIOS-* requirement update.
+    /// that boundary). The cap is **10** symbols total: 9 methods on
+    /// [`CodingSessionMemory`] (incl. `write_dated`, added for Mechanism-B
+    /// session-date grounding 2026-07-29) + 1 on [`AsOfScratchpad`]. Adjust
+    /// ONLY alongside an HELIOS-* requirement update.
     #[test]
     fn coding_session_memory_public_surface_under_50_loc() {
         let src = include_str!("./coding_session_memory.rs");
@@ -322,12 +324,12 @@ mod tests {
         let pub_fns = production.matches("    pub fn ").count()
             + production.matches("    pub async fn ").count();
         assert!(
-            pub_fns <= 9,
-            "HELIOS-01 ≤50-LOC contract: CodingSessionMemory+AsOfScratchpad have {pub_fns} pub fns; cap is 9 (8 methods on CodingSessionMemory + AsOfScratchpad::read)"
+            pub_fns <= 10,
+            "HELIOS-01 ≤50-LOC contract: CodingSessionMemory+AsOfScratchpad have {pub_fns} pub fns; cap is 10 (9 methods on CodingSessionMemory incl. write_dated [Mechanism B session-date grounding, 2026-07-29] + AsOfScratchpad::read)"
         );
         assert!(
-            pub_fns >= 9,
-            "HELIOS-01 contract: expected exactly 9 public methods (8 on CodingSessionMemory + AsOfScratchpad::read); got {pub_fns} — did the public surface shrink?"
+            pub_fns >= 10,
+            "HELIOS-01 contract: expected exactly 10 public methods (9 on CodingSessionMemory + AsOfScratchpad::read); got {pub_fns} — did the public surface shrink?"
         );
     }
 
