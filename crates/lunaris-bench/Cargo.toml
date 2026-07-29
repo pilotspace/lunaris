@@ -82,6 +82,8 @@ procfs             = { workspace = true }
 [dev-dependencies]
 criterion          = { workspace = true }
 parking_lot        = { workspace = true }
+# Extraction-cache wiring tests need throwaway cache directories.
+tempfile           = "3"
 futures            = { workspace = true }
 async-trait        = { workspace = true }
 bytes              = { workspace = true }
