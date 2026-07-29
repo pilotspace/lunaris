@@ -67,6 +67,10 @@ use async_trait::async_trait;
 use lunaris_core::LunarisError;
 use ulid::Ulid;
 
+// Content-addressed extraction cache decorator — wraps any Extractor so a
+// given (prompt-template, model-namespace, chunk) triple hits the LLM at
+// most once. Always built (std + blake3 + serde only).
+pub mod cached;
 #[cfg(feature = "cloud-api")]
 pub mod cloud_api;
 // RFC 0007 §3 — FallbackExtractor<P, F> static-dispatch combinator with
@@ -81,6 +85,7 @@ pub mod ollama;
 pub mod types;
 pub mod validator;
 
+pub use cached::{CacheStats, CachedExtractor};
 #[cfg(feature = "cloud-api")]
 pub use cloud_api::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvider};
 pub use llm_extractor::{LlmExtractor, LlmExtractorOpts};
