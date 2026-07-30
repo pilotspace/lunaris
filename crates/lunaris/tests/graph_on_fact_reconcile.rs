@@ -167,7 +167,11 @@ impl StoragePort for RecordingStorage {
             bi_temporal_native: false,
             graph_native: false,
             rerank_native: false,
-            queue_native: false,
+            // `publish` below is a real recorder, so the capability must claim
+            // the queue — `publish_needs_review` skips publishing entirely when
+            // `queue_native` is false, which would make the contradiction test
+            // unwinnable regardless of the production path.
+            queue_native: true,
             max_vector_dim: DIM as u32,
             native_rrf: false,
             max_scopes_recommended: 0,
@@ -319,13 +323,8 @@ async fn identical_fact_across_episodes_collapses_to_one_row() {
     );
 
     // Re-assertion is a Noop, never a contradiction.
-    let verify_msgs: Vec<_> = rec
-        .published
-        .lock()
-        .iter()
-        .filter(|(t, _)| t == "__lunaris_verify__")
-        .cloned()
-        .collect();
+    let verify_msgs: Vec<_> =
+        rec.published.lock().iter().filter(|(t, _)| t == "__lunaris_verify__").cloned().collect();
     assert!(
         verify_msgs.is_empty(),
         "re-asserting the same object must NOT flag a contradiction; got {verify_msgs:?}"
@@ -344,12 +343,9 @@ async fn graph_on_ingest_writes_spo_index() {
     ex.set("tea", "2023-05-01");
     ingest_one(&h, &clock, "s1.md", "The user prefers tea.", (2023, 5, 1)).await;
 
-    let want = String::from_utf8(fact_spo_key(
-        &lunaris_core::Scope::dev(),
-        &eid(SUBJ, SUBJ_TY).0,
-        PRED,
-    ))
-    .unwrap();
+    let want =
+        String::from_utf8(fact_spo_key(&lunaris_core::Scope::dev(), &eid(SUBJ, SUBJ_TY).0, PRED))
+            .unwrap();
     assert!(
         rec.rows.lock().contains_key(want.as_bytes()),
         "graph-ON ingest must write the spo index at {want}; keys were {:?}",
@@ -388,10 +384,7 @@ async fn graph_on_ingest_flags_cross_episode_contradiction() {
         body.contains("cross_episode_contradiction") || body.contains("CrossEpisodeContradiction"),
         "verify item must be the cross-episode-contradiction reason; got {body}"
     );
-    assert!(
-        body.contains(PRED),
-        "contradiction must name the contested predicate; got {body}"
-    );
+    assert!(body.contains(PRED), "contradiction must name the contested predicate; got {body}");
 
     // Both facts remain stored (additive) — arbitration is the verifier's job.
     assert_eq!(
@@ -433,25 +426,13 @@ async fn undated_fact_skips_reconciliation_without_false_supersede() {
 
     // Undated episode AND undated extraction.
     ex.set("turbinado", "");
-    let ep = Episode::new(
-        lunaris_core::Scope::dev(),
-        "s2.md",
-        "The user mentions turbinado.",
-        &clock,
-    );
+    let ep =
+        Episode::new(lunaris_core::Scope::dev(), "s2.md", "The user mentions turbinado.", &clock);
     assert!(ep.t_ref.is_none());
     h.ingest(ep).await.expect("undated graph-ON ingest must succeed");
 
-    let msgs: Vec<_> = rec
-        .published
-        .lock()
-        .iter()
-        .filter(|(t, _)| t == "__lunaris_verify__")
-        .cloned()
-        .collect();
-    assert!(
-        msgs.is_empty(),
-        "an unresolvable window must not be classified at all; got {msgs:?}"
-    );
+    let msgs: Vec<_> =
+        rec.published.lock().iter().filter(|(t, _)| t == "__lunaris_verify__").cloned().collect();
+    assert!(msgs.is_empty(), "an unresolvable window must not be classified at all; got {msgs:?}");
     assert_eq!(rec.kv_keys_matching(":fact:").len(), 2, "the fact is still written additively");
 }
