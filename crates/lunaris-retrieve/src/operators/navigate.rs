@@ -34,6 +34,16 @@ pub struct Navigate {
     pub index: String,
     pub k: usize,
     spec: NavigateSpec,
+    /// Index the degraded vector path searches instead of `index`.
+    ///
+    /// `index` is the KNN SEED index; the leg's payload can live in a
+    /// different one (KG-RAG facts-as-graph-nodes seeds on `entities` and
+    /// hops to `facts`). Only Moon can hop, so on every other backend — and
+    /// on any filtered query, which has no native navigate surface — the
+    /// degraded search must target the payload index or the leg returns seed
+    /// documents and its real content silently disappears. `None` keeps the
+    /// original behaviour: degrade against the seed index.
+    fallback_index: Option<String>,
 }
 
 impl Navigate {
@@ -48,7 +58,21 @@ impl Navigate {
             k: clamp_k(k),
             spec: NavigateSpec::new(DEFAULT_NAVIGATE_HOPS)
                 .expect("DEFAULT_NAVIGATE_HOPS is within 1..=MAX_HOPS"),
+            fallback_index: None,
         }
+    }
+
+    /// Point the degraded vector path at `index` instead of the KNN seed
+    /// index. Use it whenever the seed and payload indexes differ — a facts
+    /// leg seeding on `entities` MUST set `"facts"` here, or backends without
+    /// native navigate return entity documents in place of facts.
+    pub fn with_fallback_index(self, index: impl Into<String>) -> Self {
+        Self { fallback_index: Some(index.into()), ..self }
+    }
+
+    /// The configured degraded-path index, if any.
+    pub fn fallback_index(&self) -> Option<&str> {
+        self.fallback_index.as_deref()
     }
 
     /// Set the hop depth (`1..=5`, Moon's `MAX_EXPAND_DEPTH`). Errors with
@@ -107,12 +131,13 @@ impl Navigate {
     /// Plain vector-search fallback shared by the capability-gated and
     /// NotSupported degradation paths.
     async fn fallback_vector(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
+        let index = self.fallback_index.as_deref().unwrap_or(&self.index);
         let q_emb = ctx.embed_once().await?;
         let hits = ctx
             .storage
             .vector_search(
                 &ctx.scope,
-                &self.index,
+                index,
                 &q_emb,
                 self.k,
                 ctx.query.filter.as_ref(),
@@ -127,7 +152,9 @@ impl Navigate {
                 score: h.score,
                 rerank_applied: h.rerank_applied,
                 degraded: false,
-                metadata: super::tag_leg_index(h.metadata, &self.index),
+                // Tag with the index actually searched — per-leg RRF bucketing
+                // and the chunk-floor selector both route on this tag.
+                metadata: super::tag_leg_index(h.metadata, index),
                 source_op: SourceOp::Vector,
             })
             .collect())

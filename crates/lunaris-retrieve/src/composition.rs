@@ -37,7 +37,8 @@ use crate::operators::vector::Vector;
 /// been fact-aware since Wave A.
 pub fn hybrid_root(k: usize) -> FuseRrfRetriever {
     let chunks = Vector::new("chunks", k).and(Keyword::bm25("chunks", k));
-    let facts = Navigate::new("entities", k).and(Keyword::bm25("facts", k));
+    let facts =
+        Navigate::new("entities", k).with_fallback_index("facts").and(Keyword::bm25("facts", k));
     AndRetriever::new(Box::new(chunks), Box::new(facts)).fuse_rrf(60)
 }
 
@@ -65,6 +66,25 @@ mod tests {
         assert!(
             chunks_left.as_any().downcast_ref::<Vector>().is_some(),
             "chunks leg stays plain Vector"
+        );
+    }
+
+    /// The Navigate seed index is `entities`, but only Moon can hop from a
+    /// seed to a fact. Every other backend degrades to a flat vector search,
+    /// so the leg MUST declare `facts` as its fallback index — without it
+    /// SQLite (the shipped MCP default) and Postgres lose the fact vector leg
+    /// entirely and facts arrive by BM25 alone.
+    #[test]
+    fn facts_leg_declares_facts_as_its_degraded_fallback_index() {
+        let root = hybrid_root(30);
+        let (_chunks_and, facts_and) =
+            downcast_and(root.inner.as_ref()).expect("AndRetriever root");
+        let (facts_left, _) = downcast_and(facts_and).expect("facts AndRetriever");
+        let nav = facts_left.as_any().downcast_ref::<Navigate>().expect("facts leg is Navigate");
+        assert_eq!(
+            nav.fallback_index(),
+            Some("facts"),
+            "facts leg must fall back to the `facts` index on non-navigate backends"
         );
     }
 }
