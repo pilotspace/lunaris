@@ -307,10 +307,13 @@ fn coding_session_memory_v2_surface_matches_v1_exactly() {
     let pub_fns =
         production.matches("    pub fn ").count() + production.matches("    pub async fn ").count();
     assert_eq!(
-        pub_fns, 9,
-        "HELIOS-01 cross-crate sentinel: expected exactly 9 public methods \
-         (8 on CodingSessionMemory + AsOfScratchpad::read); got {pub_fns}. \
-         Any drift here vs the in-lib sentinel is a contract violation."
+        pub_fns, 10,
+        "HELIOS-01 cross-crate sentinel: expected exactly 10 public methods \
+         (9 on CodingSessionMemory + AsOfScratchpad::read); got {pub_fns}. \
+         Any drift here vs the in-lib sentinel is a contract violation. \
+         Re-baselined 9→10 alongside the in-lib sentinel when `write_dated` \
+         landed (session-date grounding — the recipe needs a write that \
+         stamps the observation's own t_ref instead of ingest wall-clock)."
     );
 }
 
