@@ -30,6 +30,12 @@ struct NavRecordingStorage {
     /// ft-navigate-filter-gap contract v1 — records the Debug rendering of
     /// the filter passed to each vector_search call (None = unfiltered call).
     vector_filters: Mutex<Vec<Option<String>>>,
+    /// KG-RAG facts-as-graph-nodes — records the INDEX each vector_search
+    /// fallback targets. The degraded path's index is a correctness question,
+    /// not a detail: a facts leg that KNN-seeds `entities` for graph hops must
+    /// fall back to `facts`, or backends without native navigate lose the
+    /// fact vector leg entirely.
+    vector_indexes: Mutex<Vec<String>>,
     /// Records the decay lambda passed to graph_traverse_decayed (None when
     /// called without decay; outer None = never called).
     decayed_calls: Mutex<Vec<Option<f64>>>,
@@ -53,7 +59,7 @@ impl StoragePort for NavRecordingStorage {
     async fn vector_search(
         &self,
         _scope: &lunaris_core::Scope,
-        _index: &str,
+        index: &str,
         _query: &[f32],
         _k: usize,
         filter: Option<&Filter>,
@@ -62,6 +68,7 @@ impl StoragePort for NavRecordingStorage {
     ) -> Result<Vec<VectorHit>, StorageError> {
         self.vector_calls.fetch_add(1, Ordering::SeqCst);
         self.vector_filters.lock().push(filter.map(|f| format!("{f:?}")));
+        self.vector_indexes.lock().push(index.to_owned());
         Ok(self.vector_hits.lock().clone())
     }
     async fn vector_navigate(
@@ -218,6 +225,75 @@ async fn navigate_degrades_to_vector_on_unsupported() {
     assert_eq!(rec.vector_calls.load(Ordering::SeqCst), 1, "vector fallback called once");
     let ids: Vec<_> = hits.iter().map(|h| h.id.clone()).collect();
     assert_eq!(ids, vec![b"v1".to_vec(), b"v2".to_vec()], "vector hits flow through unchanged");
+}
+
+/// KG-RAG facts-as-graph-nodes — the fused root's facts leg is
+/// `Navigate::new("entities", k)`: it KNN-seeds on ENTITY similarity and
+/// reaches facts by graph hop. On a backend with no native navigate there is
+/// no hop, so the degraded vector search must target the leg's CONTENT index
+/// (`facts`) — searching the seed index would return entity docs and the
+/// fact vector leg would silently vanish on SQLite (the shipped MCP default)
+/// and Postgres alike.
+#[tokio::test]
+async fn navigate_degraded_fallback_targets_fallback_index_when_set() {
+    let rec = Arc::new(NavRecordingStorage::with_native(false));
+    *rec.vector_hits.lock() = vec![vh(b"f1", 0.8)];
+    let ctx = ctx_for(rec.clone());
+
+    let op = Navigate::new("entities", 5).with_fallback_index("facts");
+    let hits = op.retrieve(&ctx).await.expect("degraded navigate must not error");
+
+    assert_eq!(
+        rec.vector_indexes.lock().clone(),
+        vec!["facts".to_string()],
+        "the degraded facts leg must vector-search `facts`, not the `entities` KNN seed index"
+    );
+    assert_eq!(
+        hits[0].metadata.get("index").and_then(|v| v.as_str()),
+        Some("facts"),
+        "hits must be tagged with the index they actually came from (per-leg RRF bucketing \
+         and the chunk-floor selector both read this tag); got {:?}",
+        hits[0].metadata
+    );
+}
+
+/// Regression pin — with no fallback configured the degraded path keeps
+/// searching the seed index, exactly as before the fallback existed.
+#[tokio::test]
+async fn navigate_degraded_fallback_defaults_to_seed_index() {
+    let rec = Arc::new(NavRecordingStorage::with_native(false));
+    *rec.vector_hits.lock() = vec![vh(b"e1", 0.8)];
+    let ctx = ctx_for(rec.clone());
+
+    let op = Navigate::new("entities", 5);
+    let _ = op.retrieve(&ctx).await.expect("degraded navigate must not error");
+
+    assert_eq!(
+        rec.vector_indexes.lock().clone(),
+        vec!["entities".to_string()],
+        "no fallback index configured => seed index unchanged"
+    );
+}
+
+/// The filter-gap degradation (native backend, filtered query) takes the same
+/// vector path and must honour the fallback index too — otherwise every
+/// FILTERED recall loses the fact vector leg even on Moon.
+#[tokio::test]
+async fn filtered_navigate_on_native_backend_uses_fallback_index() {
+    let rec = Arc::new(NavRecordingStorage::with_native(true));
+    *rec.vector_hits.lock() = vec![vh(b"f1", 0.8)];
+    let mut ctx = ctx_for(rec.clone());
+    ctx.query.filter = Some(Filter::Eq { field: "source".into(), value: json!("alpha.md") });
+
+    let op = Navigate::new("entities", 5).with_fallback_index("facts");
+    let _ = op.retrieve(&ctx).await.expect("filtered navigate retrieves");
+
+    assert_eq!(rec.navigate_calls.load(Ordering::SeqCst), 0, "filter present => no native path");
+    assert_eq!(
+        rec.vector_indexes.lock().clone(),
+        vec!["facts".to_string()],
+        "filtered degradation must also search the leg's content index"
+    );
 }
 
 /// §1 Reject — invalid hops / hop_penalty fail at construction, before IO.
