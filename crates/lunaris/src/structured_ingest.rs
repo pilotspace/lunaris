@@ -548,7 +548,11 @@ pub async fn ingest_structured_inner(
 /// prior [`SpoEntry`] list consumed by [`classify_fact`]. A missing row (or an
 /// empty/garbled value) yields an empty list — the first fact for a
 /// `(subject, predicate)` is always additive.
-async fn read_spo_index(
+/// `pub(crate)` so the LLM-extraction path (`ingest::ingest_episode_graph_on`)
+/// reuses this exact reader instead of forking the row format — the two
+/// ingest paths MUST agree on the spo-index encoding or a fact written by one
+/// is invisible to the other's contradiction check.
+pub(crate) async fn read_spo_index(
     storage: &dyn StoragePort,
     scope: &Scope,
     key: &[u8],
@@ -587,7 +591,7 @@ async fn read_spo_index(
 
 /// Serialize the spo-index entries to the canonical JSON array shape:
 /// `[{object_id:hex, fact_id:ulid_str, valid_from:iso, valid_to:iso|null}]`.
-fn spo_entries_to_json(entries: &[SpoEntry]) -> Vec<serde_json::Value> {
+pub(crate) fn spo_entries_to_json(entries: &[SpoEntry]) -> Vec<serde_json::Value> {
     entries
         .iter()
         .map(|e| {

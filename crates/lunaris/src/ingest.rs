@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use lunaris_core::{
     Chunk, Embedder, Episode, HlcClock, Lsn, LunarisError, StorageError, StoragePort, WriteOp,
-    keyspace::fact_key as scoped_fact_key, sanitize_graph_ident,
+    keyspace::{fact_key as scoped_fact_key, fact_spo_key},
+    sanitize_graph_ident,
 };
 use lunaris_extract::{ChunkInput, NeedsReviewItem, ValidatedExtraction, validate};
 // B-4 verified at planning time (grep -nE on lunaris-ingest/src/lib.rs lines
@@ -479,7 +480,10 @@ async fn ingest_episode_graph_on(
     // we're already inside the `lunaris.ingest` async block via the parent
     // `instrument(span)`, this nested info_span automatically attaches as a
     // child via tracing-subscriber's span-list emission.
-    let validated: ValidatedExtraction = if extractor.applies() {
+    // `mut`: the Δ4 reconciliation pass below appends
+    // `CrossEpisodeContradiction` items to `needs_review` before the
+    // post-commit verify-queue publish.
+    let mut validated: ValidatedExtraction = if extractor.applies() {
         // Granularity lever: per-chunk (default) vs per-session (one call over
         // the whole episode). See `build_extract_inputs`.
         //
@@ -667,7 +671,126 @@ async fn ingest_episode_graph_on(
     // graph_expand.rs) — chosen for readability if the raw graph is
     // inspected directly. `HAS_FACT`/`FACT_ABOUT` are fixed literals (not
     // extractor-controlled text), so no `sanitize_graph_ident` needed.
+    //
+    // Δ4 memory-update convergence (2026-07-30) — parity with
+    // `structured_ingest`, which has carried this since the mem0-parity wave:
+    //
+    // * **Deterministic identity.** The row id is `FactId::from_triple`, NOT
+    //   the extractor's `Ulid::new()`. Re-asserting the same
+    //   (subject, predicate, object) in a later session overwrites in place
+    //   instead of accruing a duplicate row. The validator's Wave-D dedup
+    //   cannot cover this: it is within-batch only and keys on `valid_from`,
+    //   which per-session date grounding makes distinct per session.
+    // * **spo index + contradiction detection.** Each fact is classified
+    //   against the in-scope `(subject, predicate)` rows; a different object
+    //   with an OVERLAPPING window is a cross-episode contradiction, routed
+    //   as a `NeedsReviewItem` to `__lunaris_verify__` for ASYNC arbitration
+    //   (blueprint §3.2 subsystem 5 — arbitration is off the hot path, so
+    //   `valid_to` is NOT stamped here; the verifier's `apply_supersede`
+    //   closes the loser). Both facts stay stored meanwhile.
+    // * **Fail-open.** A fact whose `valid_from` resolves from neither the
+    //   extraction nor `episode.t_ref` is written additively and skipped by
+    //   reconciliation entirely — an unknown window can never justify a
+    //   supersede.
+    //
+    // The spo-index KvPuts join THIS `ops` vec; the reads happen before the
+    // commit and do not count, so INGEST-04 (one `atomic_write`) holds.
+    let spo_now = clock.tick();
+    let episode_ref_date = episode.t_ref;
+    let mut spo_index: std::collections::HashMap<Vec<u8>, Vec<crate::reconcile::SpoEntry>> =
+        std::collections::HashMap::new();
+    let mut spo_touched: Vec<Vec<u8>> = Vec::new();
+
     for (f, embedding) in validated.facts.iter().zip(fact_vecs) {
+        // Deterministic identity replaces the extractor-supplied random id.
+        let fact_id = Ulid::from_bytes(
+            lunaris_extract::types::FactId::from_triple(f.subject_id, &f.predicate, f.object_id).0,
+        );
+        let mut fact_row = f.clone();
+        fact_row.id = fact_id;
+
+        // Reconcile against prior in-scope assertions of this
+        // (subject, predicate), when the window is resolvable.
+        if let Some(valid_from) = resolve_fact_instant(&f.valid_from_iso, episode_ref_date) {
+            let valid_to = resolve_fact_instant(
+                f.valid_to_iso.as_deref().unwrap_or_default(),
+                // A missing valid_to means "still open" — never inherit the
+                // episode date here or every fact would close immediately.
+                None,
+            );
+            let spo_key = fact_spo_key(&episode.scope, &f.subject_id.0, &f.predicate);
+            if !spo_index.contains_key(&spo_key) {
+                let prior = crate::structured_ingest::read_spo_index(
+                    storage,
+                    &episode.scope,
+                    &spo_key,
+                    spo_now,
+                )
+                .await?;
+                spo_index.insert(spo_key.clone(), prior);
+                spo_touched.push(spo_key.clone());
+            }
+            let new_triple = crate::reconcile::FactTriple {
+                subject_id: f.subject_id,
+                predicate: f.predicate.clone(),
+                object_id: f.object_id,
+                valid_from,
+                valid_to,
+            };
+            let prior = &spo_index[&spo_key];
+            match crate::reconcile::classify_fact(&new_triple, prior) {
+                crate::reconcile::FactDecision::Noop => {
+                    // Same triple: the deterministic-id KvPut overwrites the
+                    // row with the new window, so keep the index entry in sync
+                    // or a later check classifies against a stale interval and
+                    // can falsely supersede.
+                    if let Some(entry) = spo_index
+                        .get_mut(&spo_key)
+                        .and_then(|v| v.iter_mut().find(|e| e.object_id == f.object_id))
+                    {
+                        entry.valid_from = valid_from;
+                        entry.valid_to = valid_to;
+                    }
+                }
+                crate::reconcile::FactDecision::Append => {
+                    spo_index.get_mut(&spo_key).expect("seeded above").push(
+                        crate::reconcile::SpoEntry {
+                            object_id: f.object_id,
+                            fact_id,
+                            valid_from,
+                            valid_to,
+                        },
+                    );
+                }
+                crate::reconcile::FactDecision::Supersede { loser_fact_id } => {
+                    let existing_object = prior
+                        .iter()
+                        .find(|p| p.fact_id == loser_fact_id)
+                        .map_or(f.object_id, |p| p.object_id);
+                    validated.needs_review.push(NeedsReviewItem::Fact {
+                        reason: lunaris_extract::NeedsReviewReason::CrossEpisodeContradiction {
+                            subject: f.subject_id,
+                            predicate: f.predicate.clone(),
+                            existing_fact_id: loser_fact_id,
+                            existing_object,
+                            new_fact_id: fact_id,
+                            new_object: f.object_id,
+                        },
+                        raw: fact_row.clone(),
+                    });
+                    spo_index.get_mut(&spo_key).expect("seeded above").push(
+                        crate::reconcile::SpoEntry {
+                            object_id: f.object_id,
+                            fact_id,
+                            valid_from,
+                            valid_to,
+                        },
+                    );
+                }
+            }
+        }
+
+        let f = &fact_row;
         let fact_value = serde_json::to_vec(f).map_err(|err| {
             LunarisError::Storage(StorageError::Backend(format!("fact serialize: {err}")))
         })?;
@@ -707,6 +830,16 @@ async fn ingest_episode_graph_on(
         });
     }
 
+    // Δ4: fold the updated spo-index rows into the SAME ops vec (INGEST-04).
+    for key in spo_touched {
+        let entries = &spo_index[&key];
+        let value = serde_json::to_vec(&crate::structured_ingest::spo_entries_to_json(entries))
+            .map_err(|err| {
+                LunarisError::Storage(StorageError::Backend(format!("spo index serialize: {err}")))
+            })?;
+        ops.push(WriteOp::KvPut { key, value });
+    }
+
     // Step 6: ONE atomic_write call (INGEST-04 + D-18 + T-03-03-06).
     // RFC 0001: pass episode scope as the partition key.
     let lsn = storage.atomic_write(&episode.scope, &ops).await?;
@@ -718,6 +851,34 @@ async fn ingest_episode_graph_on(
     publish_needs_review(storage, &episode.scope, &validated.needs_review).await;
 
     Ok(lsn)
+}
+
+/// Resolve an extraction timestamp string to an instant for reconciliation
+/// windows, falling back to `fallback` (the episode's `t_ref`) when the string
+/// is absent or unparseable.
+///
+/// Accepts BOTH shapes the extractor can emit: a full RFC3339 timestamp and
+/// the bare `YYYY-MM-DD` date the session-date-grounded prompt asks for
+/// (dates are taken at UTC midnight). Returns `None` when neither the string
+/// nor the fallback yields an instant — the caller then skips reconciliation
+/// for that fact rather than inventing a window (Δ4 fail-open).
+fn resolve_fact_instant(
+    iso: &str,
+    fallback: Option<chrono::DateTime<chrono::Utc>>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = iso.trim();
+    if !s.is_empty() {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return Some(dt.with_timezone(&chrono::Utc));
+        }
+        if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            return Some(chrono::DateTime::from_naive_utc_and_offset(
+                d.and_time(chrono::NaiveTime::MIN),
+                chrono::Utc,
+            ));
+        }
+    }
+    fallback
 }
 
 /// Mirror of [`lunaris_ingest::pipeline::embed_with_fallback`]. Reused inline
