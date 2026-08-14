@@ -65,8 +65,22 @@ context injection, Codex included):
 scripts/setup-lunaris-agents.py --agent both --runner npx   # or: uvx | local
 ```
 
-A plain `npx`/`uvx`/`cargo install lunaris-mcp` install defaults to a
-zero-config **per-scope SQLite** store — recall works out of the box via
+**Without a package manager** — build from source:
+
+```bash
+cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp
+```
+
+`lunaris-mcp` is **not on crates.io** — plain `cargo install lunaris-mcp`
+will not work. It links `lunaris-memory-service`, which carries a
+`vendor/` path dependency and is therefore `publish = false`; a crate
+cannot be published to crates.io while any of its dependencies are
+unpublished. The `--git` form above builds the same source (needs a Rust
+1.94 toolchain, `cmake`, and a C++ compiler for llama.cpp). From 0.6.1
+onward, prebuilt `lunaris-mcp-<target>.tar.gz` binaries are also attached
+to each [GitHub release](https://github.com/pilotspace/lunaris/releases).
+
+A plain `npx`/`uvx` install defaults to a zero-config **per-scope SQLite** store — recall works out of the box via
 brute-force cosine, no external process. Point `LUNARIS_MCP_STORAGE` at
 Moon (`moon://127.0.0.1:6380`) or Postgres for HNSW-class latency beyond
 ~10k vectors per scope. The `setup-lunaris-agents.py` repo path instead

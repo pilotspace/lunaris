@@ -47,7 +47,10 @@ const key = `${process.platform}-${process.arch}`;
 const tarball = PLATFORM_MAP[key];
 if (!tarball) {
   console.error(`[lunaris-mcp] Unsupported platform: ${key}`);
-  console.error('Install the Rust toolchain and run: cargo install lunaris-mcp');
+  // NOT `cargo install lunaris-mcp`: the crate is publish = false (it links
+  // lunaris-memory-service, which has a vendor/ path dep), so it is not on
+  // crates.io. --git builds the same source.
+  console.error('Build from source: cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp');
   console.error('See: https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md');
   process.exit(1);
 }

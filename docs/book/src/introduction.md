@@ -61,9 +61,14 @@ client — get persistent, scope-isolated memory over stdio. Install the binary
 and register it:
 
 ```sh
-cargo install lunaris-mcp     # or, no Rust toolchain: npx -y @pilotspace/lunaris-mcp · uvx lunaris-mcp
-claude mcp add --transport stdio lunaris -- lunaris-mcp
+# no Rust toolchain needed — both download a prebuilt binary on first run
+claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
+# or: claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
 ```
+
+Building from source instead? `lunaris-mcp` is **not on crates.io** (it
+depends on a `publish = false` crate), so use the git form:
+`cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp`.
 
 The agent then calls eleven `memory.*` tools — seven durable-memory tools
 (`ingest`, `recall`, `forget`, `list_scopes`, `record_decision`,

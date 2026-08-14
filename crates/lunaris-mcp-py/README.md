@@ -76,18 +76,30 @@ args    = ["lunaris-mcp"]
 ## If the binary is missing
 
 If the binary is absent from the wheel (local dev, custom build), the
-`lunaris-mcp` entry point will print a clear error and suggest:
+`lunaris-mcp` entry point will print a clear error and suggest a source
+build:
 
 ```bash
-cargo install lunaris-mcp
+cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp
 ```
+
+`lunaris-mcp` is **not on crates.io** — it links `lunaris-memory-service`,
+which carries a `vendor/` path dependency and is therefore
+`publish = false`, and crates.io rejects a crate with unpublished
+dependencies. Plain `cargo install lunaris-mcp` will fail.
 
 ## Air-gap / offline
 
-For offline environments, install the Rust toolchain and build from source:
+For offline environments, either extract the prebuilt
+`lunaris-mcp-<target>.tar.gz` from a
+[GitHub release](https://github.com/pilotspace/lunaris/releases) (attached
+from 0.6.1 onward), or build from a checkout (needs Rust 1.94, `cmake`, and a C++ compiler for
+llama.cpp):
 
 ```bash
-cargo install lunaris-mcp
+git clone --recurse-submodules https://github.com/pilotspace/lunaris
+cd lunaris && cargo build --release -p lunaris-mcp
+# binary at target/release/lunaris-mcp
 ```
 
 Then use the `lunaris-mcp` binary directly.
