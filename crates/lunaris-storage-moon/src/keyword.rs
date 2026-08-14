@@ -174,7 +174,19 @@ fn parse_text_search_hits(raw: redis::Value) -> Vec<TextSearchHit> {
                 let field = value_to_string(k);
                 let value = value_to_string(v);
                 match field.as_str() {
-                    "__vec_score" | "vec_score" | "__score" | "score" => {
+                    // Moon's KNN `__vec_score` is a DISTANCE (lower = closer;
+                    // the server falls back to f32::MAX when missing). The
+                    // KeywordHit contract — like every other StoragePort
+                    // score, and like `min_max_normalize` two lines down in
+                    // `keyword_search` — is HIGHER = more similar. Convert via
+                    // the monotone-decreasing 1/(1+d) ∈ (0,1]; unparseable →
+                    // 0.0 (worst). Mirrors `vector.rs::parse_ft_search`.
+                    "__vec_score" | "vec_score" => {
+                        score =
+                            value.parse::<f64>().map(|d| 1.0 / (1.0 + d.max(0.0))).unwrap_or(0.0);
+                    }
+                    // BM25 relevance — already higher-is-better; passthrough.
+                    "__score" | "score" => {
                         score = value.parse().unwrap_or(0.0);
                     }
                     _ => {
