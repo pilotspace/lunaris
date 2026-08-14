@@ -22,6 +22,14 @@
 //!
 //! For `read_as_of` Phase 1 returns a default `BiTemporal` when the `bt` field is
 //! absent — Phase 2's higher-level write path will always populate it.
+//!
+//! ## AS_OF (0.6.2 task 9)
+//!
+//! Both readers below refuse a *historical* `as_of` up front via
+//! [`crate::as_of::reject_historical_read`] — Moon has no KV version chain,
+//! so answering with current state would be silently wrong. Latest-state
+//! reads (every production call site) are unaffected. See `crate::as_of`
+//! for the rule and the upstream `TemporalKvIndex` path.
 
 use bytes::Bytes;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -37,21 +45,28 @@ pub(crate) async fn read_as_of(
     c: &MoonClient,
     _scope: &Scope,
     key: &[u8],
-    _as_of: Hlc,
+    as_of: Hlc,
 ) -> Result<Option<Row<Bytes>>, StorageError> {
+    // Moon KV (HSET-based) exposes no AS_OF read clause —
+    // `TEMPORAL.SNAPSHOT_AT` is a 0-arg snapshot recorder, not a per-query
+    // pin (Phase 1.5 sent `TEMPORAL.SNAPSHOT_AT <ts>` via the SDK's
+    // `snapshot_at_packed(ts)`; the server rejects it), and an overwrite
+    // destroys the prior value so there is no version to return anyway.
+    //
+    // Upstream tracking: Moon carries a half-built `TemporalKvIndex`
+    // (`record` / `get_at`) with zero production call sites — see
+    // `vendor/moon` (read-only from this repo). Wiring it to the KV write
+    // path is what would let this method serve real historical reads;
+    // until then a historical pin is REFUSED rather than answered with
+    // present-time data (0.6.2 task 9, replaces the pre-0.6.2 "return
+    // current state" behaviour that made the bi-temporal claim silently
+    // wrong on the primary backend).
+    crate::as_of::reject_historical_read(as_of)?;
+
     let mut typed = c.typed();
 
     // RFC 0001 Wave 1C: `key` is already scope-prefixed by the caller
     // (e.g. `keyspace::episode_key(scope, id)`). No additional prefixing needed.
-    //
-    // Moon KV (HSET-based) does not yet expose an AS_OF read clause —
-    // `TEMPORAL.SNAPSHOT_AT` is a 0-arg snapshot recorder, not a per-query
-    // pin. Phase 1.5 used the SDK's `snapshot_at_packed(ts)` which sends
-    // `TEMPORAL.SNAPSHOT_AT <ts>` and is rejected by the server. Until
-    // Moon ships native HGET AS_OF, return current state (effectively
-    // `as_of == latest`). Bench + ingest hot path never query historical
-    // KV, so this is sufficient for live measurement. Tracked as B-task
-    // for AS_OF parity (STORE-07).
     //
     // Plan 260610-f91: collapse the two serial HGETs into one HMGET so both
     // fields are fetched in a single RESP round trip.
@@ -117,10 +132,16 @@ pub(crate) async fn scan_range<'a>(
     prefix: &[u8],
     as_of: Option<Hlc>,
 ) -> Result<BoxStream<'a, Result<(Bytes, Bytes), StorageError>>, StorageError> {
-    let typed = c.typed();
+    // Same contract as `read_as_of`: `None` means "latest" and is always
+    // served; `Some(historical)` is refused rather than answered with
+    // present-time rows. `GET /v1/snapshot/{lsn}` is the caller that makes
+    // this visible — it asks for the whole keyspace at a past LSN, which
+    // Moon cannot reconstruct.
+    if let Some(pin) = as_of {
+        crate::as_of::reject_historical_read(pin)?;
+    }
 
-    // AS_OF deferred per `read_as_of` rationale above — return current state.
-    let _ = as_of;
+    let typed = c.typed();
 
     // Build `<prefix>*` MATCH pattern. The StoragePort contract takes the
     // prefix literally; scope-aware callers pass an already scoped prefix.

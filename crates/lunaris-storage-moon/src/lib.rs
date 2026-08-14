@@ -39,6 +39,9 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 #![forbid(unsafe_code)]
 
+// 0.6.2 task 9 — AS_OF honesty guard for the KV readers. Public so callers
+// and tests can read the policy (`is_historical`) without a live Moon.
+pub mod as_of;
 pub mod atomic;
 pub mod client;
 pub mod graph;
@@ -335,6 +338,14 @@ impl StoragePort for MoonStorage {
         as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError> {
         crate::kv::read_as_of(&self.client, scope, key, as_of).await
+    }
+
+    /// Moon has no KV version chain — see [`crate::as_of`] for the full
+    /// rationale and the upstream `TemporalKvIndex` path. Declaring this
+    /// `false` is one half of the contract; `kv::read_as_of` refusing a
+    /// historical pin with `StorageError::NotSupported` is the other.
+    fn supports_historical_kv_reads(&self) -> bool {
+        crate::as_of::HISTORICAL_KV_READS
     }
 
     /// HOOK-05 idempotency sidecar (ADD task moon-parity-honesty): closes the
