@@ -134,9 +134,7 @@ async fn search_text(
             .search(index, query, k, None)
             .await
             .map(|hits| {
-                hits.into_iter()
-                    .map(|h| TextSearchHit { key: h.key, score: h.score, fields: h.fields })
-                    .collect()
+                hits.into_iter().map(|h| text_hit_from_sdk(h.key, h.score, h.fields)).collect()
             })
             .map_err(moon_err);
     }
@@ -152,6 +150,18 @@ async fn search_text(
 
     let raw = cmd.query_async(raw_conn).await.map_err(redis_err)?;
     Ok(parse_text_search_hits(raw))
+}
+
+/// Re-shape one moondb `TextSearchHit` into the local [`TextSearchHit`].
+///
+/// Seam for the non-`AS_OF` leg, which delegates reply parsing to the Moon
+/// SDK instead of [`parse_text_search_hits`].
+fn text_hit_from_sdk(
+    key: String,
+    score: f64,
+    fields: std::collections::HashMap<String, String>,
+) -> TextSearchHit {
+    TextSearchHit { key, score, fields }
 }
 
 fn parse_text_search_hits(raw: redis::Value) -> Vec<TextSearchHit> {
@@ -419,6 +429,99 @@ mod tests {
                  no 1/(1+d); got {} and {}",
                 hits[0].score,
                 hits[1].score
+            );
+        }
+    }
+
+    /// Task 0.6.2-17 — the arm split shipped in 0.6.1 recognises
+    /// `__vec_score`/`vec_score` and `__score`/`score`, but Moon's TEXT
+    /// (BM25) leg emits NEITHER. `build_text_response` writes the field as
+    /// `__bm25_score`:
+    ///
+    /// - `vendor/moon/src/command/vector_search/ft_text_search.rs:1925`
+    ///   `Frame::BulkString(Bytes::from_static(b"__bm25_score"))`
+    /// - documented shape at `:1439` and `:1877` —
+    ///   `[total, key1, ["__bm25_score", "N.NNNNNN"], key2, [...], ...]`
+    /// - server-side reader `extract_bm25_score_from_fields` at `:2018`,
+    ///   and the pin `response_field_name_is_bm25_score_not_vec_score` at
+    ///   `:2394`.
+    ///
+    /// So every real keyword hit falls through to the `_` catch-all: the
+    /// score is stashed as an ordinary field and `TextSearchHit.score`
+    /// stays 0.0.
+    #[test]
+    fn parse_text_search_hits_recognizes_moon_bm25_score_field() {
+        for field in ["__bm25_score", "bm25_score"] {
+            let raw = ft_reply(vec![
+                ft_row("idx:aa", &[(field, "4.250000")]),
+                ft_row("idx:bb", &[(field, "2.100000")]),
+            ]);
+            let hits = parse_text_search_hits(raw);
+
+            assert_eq!(hits.len(), 2, "{field}");
+            assert!(
+                (hits[0].score - 4.25).abs() < 1e-9 && (hits[1].score - 2.10).abs() < 1e-9,
+                "{field}: Moon's BM25 relevance must be carried verbatim into \
+                 TextSearchHit.score (higher = more relevant, no 1/(1+d) inversion); \
+                 got {} and {}",
+                hits[0].score,
+                hits[1].score
+            );
+            assert!(
+                !hits[0].fields.contains_key(field),
+                "{field}: a recognised score marker must NOT also leak into the \
+                 fields map; got {:?}",
+                hits[0].fields
+            );
+
+            // The harm this prevents, one layer down: `keyword_search` feeds
+            // these scores to `min_max_normalize`, whose zero-span branch
+            // returns `vec![1.0; n]` — an all-zero keyword leg collapses into
+            // a perfect tie and hands RRF fusion no relevance signal at all.
+            let normalized =
+                min_max_normalize(&hits.iter().map(|h| h.score as f32).collect::<Vec<_>>());
+            assert!(
+                normalized[0] > normalized[1],
+                "{field}: after min_max_normalize the higher-BM25 hit must rank \
+                 first, not tie; got {normalized:?}"
+            );
+        }
+    }
+
+    /// The production leg (no `AS_OF`) never reaches
+    /// `parse_text_search_hits` — it delegates to the Moon SDK, whose shared
+    /// reply parser recognises ONLY `__vec_score` / `vec_score`
+    /// (`vendor/moon/sdk/rust/src/util.rs:115`, `parse_search_results`, which
+    /// `parse_text_search_hits` at `:330` wraps verbatim). A BM25 reply
+    /// therefore arrives with `score = 0.0` and the real relevance stranded
+    /// in `fields`. Identical class of SDK gap to the one the hybrid leg
+    /// already works around for `__rrf_score`
+    /// (`crates/lunaris-retrieve/src/fusion.rs:199-217`).
+    #[test]
+    fn sdk_hit_recovers_bm25_score_stranded_in_fields() {
+        for field in ["__bm25_score", "__score"] {
+            let mut fields = std::collections::HashMap::new();
+            fields.insert(field.to_string(), "4.250000".to_string());
+            fields.insert("__metadata".to_string(), "{\"a\":1}".to_string());
+
+            // 0.0 is exactly what moondb hands back for a TEXT hit.
+            let hit = text_hit_from_sdk("idx:aa".to_string(), 0.0, fields);
+
+            assert!(
+                (hit.score - 4.25).abs() < 1e-9,
+                "{field}: the SDK leg must recover the BM25 score the Moon SDK \
+                 strands in `fields`; got {}",
+                hit.score
+            );
+            assert!(
+                !hit.fields.contains_key(field),
+                "{field}: the consumed score marker must be removed from `fields`"
+            );
+            assert_eq!(
+                hit.fields.get("__metadata").map(String::as_str),
+                Some("{\"a\":1}"),
+                "{field}: non-score fields must survive untouched — \
+                 `keyword_search` reads `__metadata` out of this map"
             );
         }
     }
