@@ -1,6 +1,6 @@
 name: crates-publish
 
-# Publishes moondb + the 15 publishable lunaris crates to crates.io in
+# Publishes moondb + the 14 publishable lunaris crates to crates.io in
 # dependency order. Tag-gated (v*) like the npm/PyPI publish jobs, plus
 # workflow_dispatch so an initial/repair publish can run from main without
 # re-tagging (a tag run executes the workflow file AT the tag's commit, so
