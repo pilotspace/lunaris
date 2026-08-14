@@ -559,4 +559,87 @@ mod tests {
             "recall DTO must also reject a wire-injected scope"
         );
     }
+
+    // ── Platform seam (Windows) ────────────────────────────────────────────
+    //
+    // The socket leg is unix-only. The decision "does this build have unix
+    // domain sockets, and did the operator ask for one anyway?" must be a
+    // PURE function of (platform, env, home) so a unix dev box / unix CI can
+    // execute the non-unix branch. `cfg!(unix)` is passed in as a parameter
+    // for exactly that reason — with `#[cfg(not(unix))]` the branch would be
+    // untestable everywhere the tests actually run.
+
+    const SOCK_ENV: &str = "/run/user/1000/lunaris-contextd.sock";
+
+    fn home() -> Option<PathBuf> {
+        Some(PathBuf::from("/home/dev"))
+    }
+
+    #[test]
+    fn unix_host_with_explicit_socket_enables_the_socket_leg() {
+        let got = resolve_socket_support(true, false, Some(PathBuf::from(SOCK_ENV)), home());
+        assert_eq!(got, SocketSupport::Enabled(PathBuf::from(SOCK_ENV)));
+    }
+
+    #[test]
+    fn unix_host_without_explicit_socket_falls_back_to_the_home_default() {
+        let got = resolve_socket_support(true, false, None, home());
+        assert_eq!(
+            got,
+            SocketSupport::Enabled(PathBuf::from("/home/dev/.lunaris/codex-contextd.sock"))
+        );
+    }
+
+    /// THE Windows contract: an operator who explicitly configured
+    /// `LUNARIS_CONTEXTD_SOCKET` on a target without unix domain sockets must
+    /// be told — silently degrading to Direct hides a misconfiguration that
+    /// costs a second resident model copy per session.
+    #[test]
+    fn non_unix_host_with_explicit_socket_is_reported_not_silently_dropped() {
+        let got = resolve_socket_support(false, false, Some(PathBuf::from(SOCK_ENV)), home());
+        assert_eq!(
+            got,
+            SocketSupport::UnsupportedPlatform { configured: PathBuf::from(SOCK_ENV) },
+            "an explicitly configured socket on a non-unix target must surface, not vanish"
+        );
+    }
+
+    /// Nothing was configured, so there is nothing to warn about: a Windows
+    /// user who never asked for contextd gets a quiet Direct-only proxy.
+    #[test]
+    fn non_unix_host_without_explicit_socket_is_quietly_direct_only() {
+        assert_eq!(resolve_socket_support(false, false, None, home()), SocketSupport::Disabled);
+    }
+
+    /// The operator opt-out wins on every platform, and never warns.
+    #[test]
+    fn disable_env_wins_over_platform_and_explicit_socket() {
+        assert_eq!(
+            resolve_socket_support(true, true, Some(PathBuf::from(SOCK_ENV)), home()),
+            SocketSupport::Disabled
+        );
+        assert_eq!(
+            resolve_socket_support(false, true, Some(PathBuf::from(SOCK_ENV)), home()),
+            SocketSupport::Disabled
+        );
+    }
+
+    /// No `$HOME` and no explicit socket → no path can be derived.
+    #[test]
+    fn missing_home_disables_the_socket_leg() {
+        assert_eq!(resolve_socket_support(true, false, None, None), SocketSupport::Disabled);
+    }
+
+    /// `SocketSupport` is the ONLY place the platform question is asked, so
+    /// every outcome must collapse into "which socket path, if any" for the
+    /// cfg-free call sites in `dispatch`.
+    #[test]
+    fn unsupported_platform_yields_no_socket_path() {
+        let support =
+            resolve_socket_support(false, false, Some(PathBuf::from(SOCK_ENV)), home());
+        assert!(
+            support.into_socket_path().is_none(),
+            "a non-unix host must never hand a socket path to the proxy"
+        );
+    }
 }
