@@ -16,8 +16,13 @@ name: crates-publish
 # Publish order is the dev-dep-aware topological order: versioned
 # dev-dependencies (all workspace-inherited ones carry ^X.Y.Z) are KEPT in
 # the published manifest and crates.io rejects deps that do not exist yet.
-# Path-only dev-deps (lunaris-bench, lunaris-conformance — req "*") are
-# stripped by cargo at publish and need no ordering. Derivation script:
+# Only a genuinely path-only dev-dep (req "*") is stripped by cargo at
+# publish. NOTE: `lunaris-bench` and `lunaris-conformance` are NOT such a
+# case — this comment used to claim they were, but the workspace manifest
+# gives both `version = "0.6.0-rc.2"`, so they render as ^0.6.0-rc.2 and are
+# kept. Both are `publish = false` test crates, which is why no publishable
+# crate may dev-depend on them; the closure is pinned by
+# xtask/tests/publish_metadata_guard.rs. Derivation script:
 # scripts/topo_order.py.
 #
 # moondb publishes first, from the vendored submodule source
@@ -97,7 +102,18 @@ jobs:
 
           MOONDB_VER=$(grep -E '^version = ' vendor/moon/sdk/rust/Cargo.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
           if is_published moondb "${MOONDB_VER}"; then
-            echo "moondb ${MOONDB_VER} already on crates.io — skipping"
+            # A version STRING is not an identity. moondb's version is
+            # maintained in the moon repo independently of moon's release
+            # tags, so the SDK source can move several releases forward while
+            # still declaring the version already sitting on crates.io — and
+            # it did: measured 2026-08-15, 9 of 13 source files differed from
+            # published 0.2.1, which is missing the entire ConnectionManager
+            # reconnect fix (moon PR #419). Skipping on the string alone hid
+            # that for two months. Verify the source actually matches before
+            # accepting the skip; the script fails the job (exit 1) on
+            # divergence and prints the owner remedy.
+            bash scripts/check-vendored-moondb-parity.sh
+            echo "moondb ${MOONDB_VER} already on crates.io and source-identical — skipping"
           else
             echo "::group::publish moondb ${MOONDB_VER}"
             cargo publish --manifest-path vendor/moon/sdk/rust/Cargo.toml --allow-dirty

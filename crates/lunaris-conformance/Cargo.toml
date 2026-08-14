@@ -5,6 +5,14 @@ edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
+# NOT publishable. This is the cross-backend conformance harness, and it
+# dev-depends on `lunaris-bench` (`publish = false`) with a real version req
+# (`^0.6.0-rc.2` via the workspace manifest), so that dev-dep is KEPT in the
+# published manifest and crates.io would reject the upload. It has never been
+# uploaded (crates.io 404s) and is absent from crates-publish.yml's list, so
+# the previous `publish = true` default was latent-only.
+# Pinned by xtask/tests/publish_metadata_guard.rs.
+publish     = false
 
 [dependencies]
 # Plan 05-02 — extends [dependencies] with the two backend constructors so the

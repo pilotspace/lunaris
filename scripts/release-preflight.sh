@@ -152,12 +152,19 @@ else
 fi
 
 # 9. Per-crate manifest hygiene
+# Crate DIRECTORY names of the publishable set (`crates/lunaris` publishes as
+# `lunaris-memory`). `lunaris-hook` was removed here on 2026-08-15: it is
+# `publish = false` (it depends on the unpublished `lunaris-memory-service`),
+# so certifying it as release-ready asserted readiness for something that can
+# never be uploaded. Keep this list in sync with crates-publish.yml's CRATES;
+# xtask/tests/publish_metadata_guard.rs fails if either lists an
+# unpublishable crate.
 HYGIENE_CRATES=(
   lunaris-core lunaris-storage-postgres lunaris-storage-moon
   lunaris-storage-embedded lunaris-llamacpp lunaris-embed-remote
   lunaris-llm lunaris-rerank lunaris-extract
   lunaris-verify lunaris-consolidate lunaris-ingest
-  lunaris-retrieve lunaris-hook lunaris
+  lunaris-retrieve lunaris
 )
 missing=""
 for c in "${HYGIENE_CRATES[@]}"; do
