@@ -359,6 +359,16 @@ async fn forget_dry_run_writes_zero_rows_returns_preview() {
     assert!(receipt.preview, "dry_run receipt MUST carry preview=true");
     assert_eq!(receipt.rows_written, 0);
     assert_eq!(receipt.rows_deleted, 0);
+    // 0.6.2 Task F — a preview whose only counters are zero is useless to the
+    // caller deciding whether to commit. The receipt MUST report how many
+    // primitives the target matched. Asserted through the serialized shape
+    // because that is what crosses the HTTP / MCP boundary.
+    let receipt_json = serde_json::to_value(&receipt).expect("receipt serializes");
+    assert_eq!(
+        receipt_json["matched"],
+        serde_json::json!(1),
+        "dry_run receipt MUST report the match count it would delete: {receipt_json}"
+    );
     assert_eq!(
         rec.batch_count(),
         0,
