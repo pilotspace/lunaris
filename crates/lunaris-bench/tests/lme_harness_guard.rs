@@ -73,26 +73,16 @@ fn harness_is_version_controlled() {
         "README.md",
         "questions/offsets125.tsv",
     ] {
-        assert!(
-            dir.join(required).is_file(),
-            "scripts/bench/lme/{required} is missing"
-        );
+        assert!(dir.join(required).is_file(), "scripts/bench/lme/{required} is missing");
     }
-    assert!(
-        !entry_points().is_empty(),
-        "no shell entry points found under {}",
-        dir.display()
-    );
+    assert!(!entry_points().is_empty(), "no shell entry points found under {}", dir.display());
 }
 
 /// The single refusal, in the single place.
 #[test]
 fn lib_hard_refuses_the_live_store_port() {
     let lib = read(&harness_dir().join("lib.sh"));
-    assert!(
-        lib.contains("lme_guard_port"),
-        "lib.sh must define lme_guard_port"
-    );
+    assert!(lib.contains("lme_guard_port"), "lib.sh must define lme_guard_port");
     assert!(
         lib.contains("6381"),
         "lib.sh must name port 6381 explicitly in its reserved-port list — a \
@@ -206,16 +196,9 @@ fn harness_contains_no_credentials_or_in_repo_key_files() {
 #[test]
 fn n125_manifest_has_125_questions() {
     let body = read(&harness_dir().join("questions/offsets125.tsv"));
-    let rows: Vec<&str> = body
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .collect();
-    assert_eq!(
-        rows.len(),
-        125,
-        "questions/offsets125.tsv must hold exactly 125 questions"
-    );
+    let rows: Vec<&str> =
+        body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    assert_eq!(rows.len(), 125, "questions/offsets125.tsv must hold exactly 125 questions");
     for (n, row) in rows.iter().enumerate() {
         let mut cols = row.split_whitespace();
         let offset = cols.next().unwrap_or("");
