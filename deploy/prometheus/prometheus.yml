@@ -1,0 +1,50 @@
+# Prometheus scrape config for a Lunaris + external Moon deployment.
+# Explained in docs/operations/observability.md §3.
+#
+# Targets assume the compose network names from deploy/docker-compose.yml.
+# Adjust for your topology.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/lunaris-alerts.yml
+
+scrape_configs:
+  # lunaris-server /metrics. Unauthenticated by design — restrict at the
+  # network layer (routes/metrics.rs:12-17).
+  - job_name: lunaris-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["lunaris-server:8080"]
+        labels:
+          service: lunaris
+
+  # `lunaris_ready` only updates when a /readyz probe actually runs (the
+  # result is cached 5s and single-flighted, readiness.rs:118-139). Scraping
+  # /metrics alone leaves the gauge stale, so poll /readyz as well.
+  # Requires blackbox_exporter with the standard `http_2xx` module.
+  # DELETE this job if a Kubernetes readinessProbe already drives /readyz.
+  - job_name: lunaris-readyz
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://lunaris-server:8080/readyz"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # Moon's admin HTTP server (--admin-port 9100) serves /healthz, /readyz and
+  # /metrics — vendor/moon/src/admin/http_server.rs:138-148.
+  - job_name: moon
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["moon:9100"]
+        labels:
+          service: moon
