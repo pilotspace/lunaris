@@ -128,12 +128,8 @@ fn blocks_publish(dep: &Dep) -> bool {
 #[test]
 fn publishable_crates_depend_only_on_publishable_crates() {
     let meta = workspace_metadata();
-    let unpublishable: Vec<&str> = meta
-        .packages
-        .iter()
-        .filter(|p| !p.is_publishable())
-        .map(|p| p.name.as_str())
-        .collect();
+    let unpublishable: Vec<&str> =
+        meta.packages.iter().filter(|p| !p.is_publishable()).map(|p| p.name.as_str()).collect();
 
     let mut offenders = Vec::new();
     for pkg in meta.packages.iter().filter(|p| p.is_publishable()) {
@@ -168,9 +164,7 @@ fn crates_publish_workflow_lists_only_publishable_crates() {
     let meta = workspace_metadata();
     let offenders: Vec<&String> = listed
         .iter()
-        .filter(|name| {
-            meta.packages.iter().any(|p| &p.name == *name && !p.is_publishable())
-        })
+        .filter(|name| meta.packages.iter().any(|p| &p.name == *name && !p.is_publishable()))
         .collect();
 
     assert!(
@@ -191,9 +185,7 @@ fn release_preflight_hygiene_list_holds_only_publishable_crates() {
     let meta = workspace_metadata();
     let offenders: Vec<&String> = listed
         .iter()
-        .filter(|dir| {
-            meta.packages.iter().any(|p| &p.dir_name() == *dir && !p.is_publishable())
-        })
+        .filter(|dir| meta.packages.iter().any(|p| &p.dir_name() == *dir && !p.is_publishable()))
         .collect();
 
     assert!(
@@ -306,11 +298,8 @@ fn moondb_parity_script_rejects_diverged_sources() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let combined =
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(
         combined.contains("client.rs"),
         "the failure must name the diverging file(s); got:\n{combined}"

@@ -6,7 +6,15 @@ rust-version.workspace = true
 license.workspace      = true
 authors.workspace      = true
 repository.workspace   = true
-publish          = true
+# NOT publishable. `lunaris-hook` is a Claude-Code / Codex integration binary
+# distributed from this repository, not a library, and it depends on
+# `lunaris-memory-service` (`publish = false`). cargo strips the path and pins
+# the registry version at publish, so crates.io rejects any manifest whose
+# dependency graph reaches an unpublished crate — `cargo publish -p
+# lunaris-hook` could only ever fail. The name has never been uploaded
+# (crates.io 404s), so this is a metadata correction with no registry
+# consequence. Pinned by xtask/tests/publish_metadata_guard.rs.
+publish          = false
 
 description = "Lunaris hook adapter — proactive capture of Claude Code lifecycle events into agent memory"
 readme      = "README.md"

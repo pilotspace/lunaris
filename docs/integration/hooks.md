@@ -16,14 +16,16 @@ or rehash GGUF files on every recall.
 
 ## Installation
 
-```bash
-# From crates.io (once published):
-cargo install lunaris-hook
+`lunaris-hook` is **not on crates.io** and is `publish = false`, so
+`cargo install lunaris-hook` does not work. It links `lunaris-memory-service`,
+which is also unpublished — crates.io would reject the upload. Build it from
+the repository:
 
-# From source:
+```bash
+# From a clone (installs both binaries onto your PATH):
 cargo install --path crates/lunaris-hook
 
-# Or from the workspace, when developing locally:
+# Or build in place, when developing locally:
 cargo build --release -p lunaris-hook
 ```
 
