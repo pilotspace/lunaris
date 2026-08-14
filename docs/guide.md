@@ -63,9 +63,18 @@ Every program begins here. You pick between the raw storage port (`lunaris::open
 
 `Cargo.toml`:
 
+```sh
+cargo add lunaris-memory --rename lunaris
+cargo add tokio --features macros,rt-multi-thread
+```
+
+The umbrella crate is published as **`lunaris-memory`** (the bare `lunaris` name
+on crates.io is an unrelated project); the `--rename` keeps the import path
+`use lunaris::…`, so the snippets below are unaffected:
+
 ```toml
 [dependencies]
-lunaris = "0.0.1"
+lunaris = { package = "lunaris-memory", version = "0.6" }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 

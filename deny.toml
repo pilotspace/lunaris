@@ -25,7 +25,8 @@ feature-depth = 1
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 # Block at YANK level — a yanked crate in a release would silently break
-# downstream `cargo add lunaris`.
+# downstream `cargo add lunaris-memory` (the umbrella's published name; the
+# bare `lunaris` name on crates.io is an unrelated third-party project).
 yanked = "deny"
 # Ignore-list is reserved for transitive "unmaintained" advisories where
 # the dependent is itself unforked upstream. Every entry MUST cite the

@@ -134,7 +134,7 @@ still named `lunaris`, so you import it as `use lunaris::…`. Rename it in
 
 ```toml
 [dependencies]
-lunaris = { package = "lunaris-memory", version = "0.4" }
+lunaris = { package = "lunaris-memory", version = "0.6" }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
