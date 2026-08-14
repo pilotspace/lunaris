@@ -389,8 +389,7 @@ mod tests {
         });
 
         // Client with a SHORT 50ms timeout (< the server's 200ms stall).
-        let client =
-            reqwest::Client::builder().timeout(Duration::from_millis(50)).build().unwrap();
+        let client = reqwest::Client::builder().timeout(Duration::from_millis(50)).build().unwrap();
         let backend = CloudBackend {
             client,
             provider: CloudProvider::OpenAiCompat,
