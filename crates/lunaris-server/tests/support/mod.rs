@@ -40,6 +40,9 @@ pub struct StubStorage {
     pub write_delay: Duration,
     /// `atomic_write` answers `Err` instead of `Ok`.
     pub write_fails: bool,
+    /// Number of `atomic_write` calls seen — how the `/readyz` suite proves
+    /// the canary is rate-limited and that `/healthz` stays write-free.
+    pub writes: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StubStorage {
@@ -66,6 +69,12 @@ impl StubStorage {
         self.write_fails = true;
         self
     }
+
+    /// Clone the write counter so a test can observe it after the stub has
+    /// been moved into the router.
+    pub fn write_counter(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.writes.clone()
+    }
 }
 
 #[async_trait]
@@ -85,6 +94,7 @@ impl StoragePort for StubStorage {
         _scope: &lunaris_core::Scope,
         _ops: &[WriteOp],
     ) -> Result<Lsn, StorageError> {
+        self.writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if !self.write_delay.is_zero() {
             tokio::time::sleep(self.write_delay).await;
         }
