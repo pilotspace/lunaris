@@ -178,6 +178,14 @@ adds the fan-out primitive.
 
 ### Time-travel recall
 
+> **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
+> keeps a KV version chain to hydrate the historical rows: **Postgres and
+> SQLite** answer these. On **Moon** the call returns
+> `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
+> Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
+> rather than silently answering with present-time data. Moon's search and
+> graph lanes stay temporal (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`).
+
 Cognee doesn't model bi-temporal queries first-class. The closest is
 filtering DataPoints by a `created_at` field post-search.
 

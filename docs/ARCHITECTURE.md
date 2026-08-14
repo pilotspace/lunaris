@@ -93,11 +93,15 @@ Three structural decisions carry the recall story:
   per-scope `FT` index (`lunaris_{scope}_{kind}_idx`). There is no
   "sync the vector DB with the text index" job because there is
   nothing to sync.
-- **Every row is bi-temporal.** The `bt` field records system time
-  (when Lunaris learned it) and valid time (when it was true in the
-  world) as two half-open intervals. `forget` and supersession close
-  intervals rather than destroy rows — which is why `.as_of(ts)` can
-  answer "what did the agent believe last Tuesday?"
+- **Every row is bi-temporal — on the write side, on every backend.**
+  The `bt` field records system time (when Lunaris learned it) and valid
+  time (when it was true in the world) as two half-open intervals.
+  `forget` and supersession close intervals rather than destroy rows.
+  **As-of *reads* are backend-dependent**: `.as_of(ts)` resolves the
+  search-side cut natively on Moon (`FT.SEARCH AS_OF` /
+  `GRAPH.QUERY VALID_AT`), but the KV hydration step behind it is
+  historical only on Postgres and SQLite — Moon refuses a historical KV
+  pin outright. See [Honest limits](#honest-limits-read-before-quoting-the-table-above).
 
 ## Where the milliseconds go — anatomy of a recall
 
@@ -148,7 +152,7 @@ store. (Source for each mapping: `crates/lunaris-storage-moon/src/`.)
 | Semantic search | `FT.SEARCH` KNN over auto-indexed `HSET` writes; no dimension cap (`vector.rs`, `client.rs`) | No sidecar vector DB. Writes are indexed by the same engine that stores them |
 | Keyword search | `FT.SEARCH` BM25 scoring on the **same index** (`keyword.rs`) | No second text-search system. One index serves both retrieval modes |
 | Hybrid fusion | Moon-side native RRF (`RrfFusion::Moon`) on HYBRID `FT.SEARCH` | Fusion happens in the engine, one round-trip, instead of N queries glued in app code |
-| Time travel | `FT.SEARCH … AS_OF <ms>` and `GRAPH.QUERY … VALID_AT <ms>` (`vector.rs`, `graph.rs`) | "What did the agent believe at time T?" resolves inside the search command |
+| Time travel (search + graph only) | `FT.SEARCH … AS_OF <ms>` and `GRAPH.QUERY … VALID_AT <ms>` (`vector.rs`, `graph.rs`) | The temporal cut resolves inside the search command. **Not** KV: `read_as_of` at a past instant is refused on Moon — see [Honest limits](#honest-limits-read-before-quoting-the-table-above) |
 | Graph memory | `GRAPH.QUERY` (Cypher), one named graph **per scope** (`graph.rs`, `keyspace.rs`) | Opt-in graph traversal without operating Neo4j; tenants can't see each other's graph by construction |
 | Bulk invalidation | `FT.INVALIDATE_RANGE` (`invalidate.rs`) | GDPR-grade forget over a time range without a scan-and-delete loop |
 | Server-side filters | `TAG` schema fields → `@source:{value}` resolves in Moon (`atomic.rs`, PERF-MOON-01) | Filtering before scoring, not after fetching |
@@ -179,12 +183,24 @@ offer at any price.
 
 The advantage map is real, but it is not "bi-temporal everywhere":
 
-- **Plain KV reads are not temporal on Moon.** Hash reads (`HMGET`)
-  ignore `AS_OF`; only `FT.SEARCH AS_OF` and `GRAPH.QUERY VALID_AT`
-  are temporal.
-  Lunaris stores an explicit `bt` field on KV rows and the engine
-  applies the temporal cut for `read_as_of` (`kv.rs`,
-  `capabilities()` reports `bi_temporal_native: false`).
+- **As-of KV reads do not work on Moon, and now say so.** Moon stores
+  Lunaris rows as plain hashes; `HGET`/`HMGET` accept no `AS_OF` clause
+  and an overwrite destroys the prior value, so there is no version to
+  return. Only `FT.SEARCH AS_OF` and `GRAPH.QUERY VALID_AT` are
+  temporal on Moon.
+  Since 0.6.2, `read_as_of` / `scan_range` on the Moon backend **refuse**
+  a historical pin with `StorageError::NotSupported` (HTTP `501
+  not_supported`) instead of silently answering with present-time data
+  — which is what they did before, making `GET /v1/snapshot/{lsn}` and
+  `POST /v1/recall {as_of: <past>}` return fabricated history.
+  Latest-state reads (the entire production hot path) are unaffected.
+  Backends declare this via `StoragePort::supports_historical_kv_reads()`
+  — `false` on Moon, `true` on Postgres and SQLite, which answer
+  historical KV reads correctly. Pinned by
+  `lunaris-storage-moon/tests/read_as_of_historical.rs` and the
+  non-skipping `read_as_of::historical_pin_is_explicit` conformance
+  test. The upstream path to closing it is Moon's `TemporalKvIndex`
+  (`record`/`get_at`), which has no production call sites yet.
 - **`FT.CREATE` schemas are sticky.** Moon will not resize or reshape an
   existing index in place; changing embedder dimension requires
   `FT.DROPINDEX` + re-ingest (`client.rs` fails fast on mismatch).

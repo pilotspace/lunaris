@@ -677,6 +677,8 @@ Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `sear
 
 Typestate-parameterised time-travel combinator. `S` is `Messages | Documents | Facts` — different type states unlock different methods. Source: `crates/lunaris-recipes/src/temporal_query.rs`.
 
+> **Backend note (v0.6.2).** A *past* `as_of` hydrates through `StoragePort::read_as_of`, which needs a backend that keeps a KV version chain — `supports_historical_kv_reads() == true` on Postgres and SQLite. On Moon the call returns `StorageError::NotSupported` (HTTP `501 not_supported`): Moon stores Lunaris rows as plain hashes, so it now refuses a historical pin instead of answering with present-time data. `before` / `after` / `between` filters over `valid`/`sys` on the *search* lane remain temporal on Moon (`FT.SEARCH AS_OF`).
+
 ```rust
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::{Documents, TemporalQuery};

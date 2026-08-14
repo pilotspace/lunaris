@@ -56,7 +56,9 @@ Every primitive is stored under the canonical key format `lunaris:{scope}:{kind}
 
 ![Bi-temporal MVCC](../images/architecture/lunaris-data-07-bitemporal-mvcc.png)
 
-Every primitive carries a BiTemporal record with two interval fields: valid (when the fact was true in the world) and sys (when it was recorded in Lunaris). Each write appends a new version row; old versions are never deleted. read_as_of(T) returns the version visible at logical time T, enabling point-in-time queries and retroactive corrections.
+Every primitive carries a BiTemporal record with two interval fields: valid (when the fact was true in the world) and sys (when it was recorded in Lunaris). Each write appends a new version row; old versions are never deleted.
+
+`read_as_of(T)` returns the version visible at logical time T — **on a backend that keeps a KV version chain**. Postgres and SQLite do (`supports_historical_kv_reads() == true`), so point-in-time queries and retroactive corrections resolve there. Moon does not: its Lunaris rows are plain hashes, so since v0.6.2 a historical `read_as_of` on Moon returns an explicit `StorageError::NotSupported` (HTTP `501 not_supported`) instead of quietly handing back today's row. Latest-state reads work on every backend, and Moon's search and graph lanes stay temporal through `FT.SEARCH AS_OF` / `GRAPH.QUERY VALID_AT`.
 
 ---
 

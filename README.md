@@ -196,7 +196,7 @@ against them; any feature that weakens any of the three is rejected.
 |---|---|---|
 | **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured strict-replay: p50 10.3 ms / p99 20.8 ms ([methodology](docs/benchmarks/v0.2.x/README.md)); k=30 hydration tail p50 6.0 ms / p99 6.2 ms after the concurrent-hydration fan-out ([A/B](docs/benchmarks/v0.6-recall-fanout-ab.md)). | `cargo bench --bench recall_hot_path` |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, graph, audit, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
+| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — `forget` and supersession close intervals instead of destroying rows. As-of *reads* are backend-dependent: search-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) on Moon, historical KV reads on Postgres/SQLite only ([limits](docs/ARCHITECTURE.md#honest-limits-read-before-quoting-the-table-above)). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 
 ## Architecture at a glance
 
@@ -222,7 +222,7 @@ substrate does *natively* instead of a layer bolted on top:
 
 - **Atomic memory** — `TXN.BEGIN` / `TXN.COMMIT` commit every lane at once; no half-written memory.
 - **Hybrid recall** — `FT.SEARCH` + native RRF fuse vector + keyword in one round trip.
-- **Time-travel** — `AS_OF` / `VALID_AT` make "what did the agent know at T?" a query, not a rebuild.
+- **Time-travel** — `FT.SEARCH AS_OF` / `GRAPH.QUERY VALID_AT` make "what did the agent know at T?" a query, not a rebuild (search + graph lanes; historical *KV* reads are a Postgres/SQLite capability — Moon refuses them explicitly rather than answering with today's data).
 - **Opt-in graph** — per-scope `GRAPH.QUERY` (Cypher): relationships without running Neo4j.
 - **GDPR forget** — `FT.INVALIDATE_RANGE` erases a whole time range, no scan-and-delete loop.
 - **Background work** — a native queue + pub/sub run consolidation without an external broker.
