@@ -1,4 +1,7 @@
-//! SDK feature-forwarding guard (found 2026-07-16, moon-v080-bump G6 triage).
+//! Feature-forwarding guard for every crate that imports the umbrella with
+//! `default-features = false` (found 2026-07-16, moon-v080-bump G6 triage;
+//! widened to `lunaris-bench` in 0.6.2 when the version-controlled LME
+//! harness landed).
 //!
 //! Both SDK cdylibs import the umbrella crate with `default-features =
 //! false`, so their `llamacpp` feature MUST explicitly forward
@@ -84,5 +87,43 @@ fn py_sdk_gpu_features_forward_to_umbrella() {
 fn ts_sdk_gpu_features_forward_to_umbrella() {
     for gpu in ["metal", "cuda", "vulkan"] {
         assert_forwards("crates/lunaris-ts/Cargo.toml", gpu, &format!("lunaris/{gpu}"));
+    }
+}
+
+/// `lunaris-bench` hosts the `lunaris-evals` binary that the committed
+/// LongMemEval harness (`scripts/bench/lme/`) drives, and it imports the
+/// umbrella with `default-features = false` like the SDKs do.
+///
+/// The harness's default embedder lane is a warm remote Ollama server
+/// (`LUNARIS_EMBEDDER_OLLAMA_URL`) — that is how the N=125 A/B dodges the
+/// llama.cpp Metal-contention deadlock under one-process-per-question. That
+/// lane only exists if `resolve_embedder`'s `#[cfg(feature = "embed-remote")]`
+/// arm is compiled in, which requires the forward below. Without it the eval
+/// binary silently resolves `NoopEmbedder` (zero vectors) and the whole run
+/// measures BM25 + insertion-order tie-breaks while still printing a J-score.
+#[test]
+fn bench_embed_remote_forwards_to_umbrella() {
+    assert_forwards(
+        "crates/lunaris-bench/Cargo.toml",
+        "embed-remote",
+        "lunaris/embed-remote",
+    );
+}
+
+/// The in-process lane of the same harness. Already green — pinned so a
+/// future edit cannot quietly drop it (727bc65 was exactly this regression).
+#[test]
+fn bench_llamacpp_and_gpu_features_forward_to_umbrella() {
+    assert_forwards(
+        "crates/lunaris-bench/Cargo.toml",
+        "llamacpp",
+        "lunaris/llamacpp",
+    );
+    for gpu in ["metal", "cuda", "vulkan"] {
+        assert_forwards(
+            "crates/lunaris-bench/Cargo.toml",
+            gpu,
+            &format!("lunaris/{gpu}"),
+        );
     }
 }
