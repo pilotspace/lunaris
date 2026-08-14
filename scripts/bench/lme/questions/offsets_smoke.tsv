@@ -1,0 +1,7 @@
+# LongMemEval-S single-question smoke set.
+#
+# One question, one process. Proves the plumbing end to end — dataset
+# download, Moon isolation, embedder resolution, rerank, generation, judge,
+# LME_VERDICT emission, tally — in a few minutes. It is a wiring check, not a
+# measurement: a single question carries no statistical meaning at all.
+134	single-session-preference
