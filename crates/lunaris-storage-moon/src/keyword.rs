@@ -152,16 +152,64 @@ async fn search_text(
     Ok(parse_text_search_hits(raw))
 }
 
-/// Re-shape one moondb `TextSearchHit` into the local [`TextSearchHit`].
+/// Is `field` a BM25 relevance marker in an FT.SEARCH reply?
 ///
-/// Seam for the non-`AS_OF` leg, which delegates reply parsing to the Moon
-/// SDK instead of [`parse_text_search_hits`].
+/// `__bm25_score` is the name Moon's TEXT leg actually emits — see
+/// `vendor/moon/src/command/vector_search/ft_text_search.rs:1925`
+/// (`build_text_response` writes `b"__bm25_score"`), the reply shape
+/// documented at `:1439`/`:1877`, the server's own reader
+/// `extract_bm25_score_from_fields` at `:2018`, and Moon's pin
+/// `response_field_name_is_bm25_score_not_vec_score` at `:2394`.
+/// `__score`/`score` are kept for the pre-0.6.2 spelling; the bare
+/// `bm25_score` mirrors the bare aliases already accepted alongside it.
+///
+/// Deliberately NOT included: `__vec_score` (a KNN *distance* — needs the
+/// `1/(1+d)` inversion, handled separately) and `__rrf_score` (hybrid RRF,
+/// which this module never issues — `lunaris-retrieve/src/fusion.rs` owns
+/// that leg).
+fn is_bm25_score_field(field: &str) -> bool {
+    matches!(field, "__bm25_score" | "bm25_score" | "__score" | "score")
+}
+
+/// Re-shape one moondb `TextSearchHit` into the local [`TextSearchHit`],
+/// recovering the BM25 score the Moon SDK strands in `fields`.
+///
+/// Seam for the non-`AS_OF` leg — the production path — which delegates reply
+/// parsing to the Moon SDK instead of [`parse_text_search_hits`]. That parser
+/// (`vendor/moon/sdk/rust/src/util.rs:115`, `parse_search_results`, wrapped
+/// verbatim by the SDK's own `parse_text_search_hits` at `:330`) recognises
+/// ONLY `__vec_score` / `vec_score` as score markers; every other field —
+/// `__bm25_score` included — falls through into `fields`, leaving the typed
+/// `score` at 0.0 for every keyword hit. Same class of SDK gap the hybrid leg
+/// already works around for `__rrf_score`
+/// (`crates/lunaris-retrieve/src/fusion.rs:199-217`), and we resolve it the
+/// same way: the marker in `fields` wins over the typed score.
+///
+/// BM25 relevance is already higher-is-better (Moon sorts DESC by it —
+/// `ft_text_search.rs:1938-1940`, "higher BM25 score = more relevant"), so the
+/// recovered value is a verbatim passthrough with no `1/(1+d)` inversion. The
+/// consumed markers are removed from `fields` so they cannot leak into the
+/// metadata `keyword_search` reads back out of that map.
 fn text_hit_from_sdk(
     key: String,
     score: f64,
-    fields: std::collections::HashMap<String, String>,
+    mut fields: std::collections::HashMap<String, String>,
 ) -> TextSearchHit {
-    TextSearchHit { key, score, fields }
+    // `retain` visits every entry, so the outcome does not depend on HashMap
+    // iteration order: if a reply ever carried more than one marker, the
+    // strongest wins deterministically.
+    let mut recovered: Option<f64> = None;
+    fields.retain(|k, v| {
+        if !is_bm25_score_field(k) {
+            return true;
+        }
+        if let Ok(parsed) = v.parse::<f64>() {
+            recovered = Some(recovered.map_or(parsed, |cur: f64| cur.max(parsed)));
+        }
+        false
+    });
+
+    TextSearchHit { key, score: recovered.unwrap_or(score), fields }
 }
 
 fn parse_text_search_hits(raw: redis::Value) -> Vec<TextSearchHit> {
@@ -196,7 +244,9 @@ fn parse_text_search_hits(raw: redis::Value) -> Vec<TextSearchHit> {
                             value.parse::<f64>().map(|d| 1.0 / (1.0 + d.max(0.0))).unwrap_or(0.0);
                     }
                     // BM25 relevance — already higher-is-better; passthrough.
-                    "__score" | "score" => {
+                    // The name Moon's TEXT leg really emits is `__bm25_score`;
+                    // see [`is_bm25_score_field`] for the vendor citations.
+                    f if is_bm25_score_field(f) => {
                         score = value.parse().unwrap_or(0.0);
                     }
                     _ => {
@@ -523,6 +573,36 @@ mod tests {
                 "{field}: non-score fields must survive untouched — \
                  `keyword_search` reads `__metadata` out of this map"
             );
+        }
+    }
+
+    /// Guard on the recovery rule: with no BM25 marker present the typed SDK
+    /// score must survive untouched. `text_hit_from_sdk` fills a gap; it does
+    /// not own the score.
+    #[test]
+    fn sdk_hit_keeps_typed_score_when_no_bm25_marker() {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("__metadata".to_string(), "null".to_string());
+        let hit = text_hit_from_sdk("idx:aa".to_string(), 0.75, fields);
+
+        assert!(
+            (hit.score - 0.75).abs() < 1e-9,
+            "typed score must pass through; got {}",
+            hit.score
+        );
+        assert_eq!(hit.fields.len(), 1, "non-marker fields must be left alone");
+    }
+
+    /// `__vec_score` is a KNN DISTANCE and must stay OUT of the BM25 family —
+    /// recovering it as a relevance score would invert the ranking, the exact
+    /// bug the 0.6.1 arm split fixed. Pins the boundary the new predicate draws.
+    #[test]
+    fn bm25_field_predicate_excludes_distance_markers() {
+        for field in ["__bm25_score", "bm25_score", "__score", "score"] {
+            assert!(is_bm25_score_field(field), "{field} must be recognised as BM25 relevance");
+        }
+        for field in ["__vec_score", "vec_score", "__rrf_score", "__metadata", "__graph_hops"] {
+            assert!(!is_bm25_score_field(field), "{field} must NOT be treated as BM25 relevance");
         }
     }
 
