@@ -1,0 +1,137 @@
+# Starter alert rules for lunaris-server + Moon.
+# Rationale, and the rules deliberately omitted, in
+# docs/operations/observability.md §5.
+#
+# TWO THRESHOLDS MUST BE TEMPLATED BEFORE USE:
+#   * LunarisInFlightSaturation — replace 256 with your LUNARIS_HTTP_CONCURRENCY
+#     (no metric exports the configured limit).
+#   * LunarisRecallLatencyHigh  — replace 0.5 with your actual latency SLO.
+
+groups:
+  - name: lunaris
+    rules:
+      # ── readiness ─────────────────────────────────────────────────────────
+      - alert: LunarisNotReady
+        expr: lunaris_ready == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "lunaris-server {{ $labels.instance }} is not ready"
+          description: >-
+            /readyz has been failing for 2m. Curl it for the per-component
+            breakdown: canary=timeout means Moon accepts connections but stalls
+            writes (the wedge signature); ping=error means Moon is unreachable;
+            embedder=error means no usable embedder is configured. Runbook:
+            docs/operations/external-moon.md §10.
+
+      - alert: LunarisReadinessGaugeStale
+        expr: absent(lunaris_ready)
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "lunaris_ready is absent — nothing is polling /readyz"
+          description: >-
+            The gauge only updates when a /readyz probe runs. Add a
+            readinessProbe or a blackbox job; otherwise LunarisNotReady can
+            never fire.
+
+      - alert: LunarisDown
+        expr: up{job="lunaris-server"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "lunaris-server scrape target is down"
+
+      # ── storage ───────────────────────────────────────────────────────────
+      - alert: MoonDown
+        expr: up{job="moon"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Moon admin endpoint is unreachable"
+          description: >-
+            Moon is the only supported backend. Check the process, then
+            `redis-cli -p 6379 PING` and
+            `redis-cli -p 6379 INFO server | grep moon_version`.
+
+      - alert: LunarisStorageErrors
+        expr: rate(lunaris_error_total{kind="storage"}[5m]) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Storage errors on {{ $labels.instance }}"
+          description: >-
+            Sustained StorageError rate. If this coincides with
+            lunaris_ready == 0, treat it as a Moon outage, not an app bug.
+
+      # ── load shedding / saturation ────────────────────────────────────────
+      # TEMPLATE: 256 = LUNARIS_HTTP_CONCURRENCY default (config.rs:111).
+      - alert: LunarisInFlightSaturation
+        expr: lunaris_http_in_flight > 0.8 * 256
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "In-flight requests above 80% of the concurrency limit"
+          description: >-
+            Sustained saturation precedes shedding. Either scale out, raise
+            LUNARIS_HTTP_CONCURRENCY (which raises the worst-case backlog to
+            concurrency x http-timeout-secs), or find the slow dependency.
+
+      - alert: LunarisSheddingLoad
+        expr: rate(lunaris_http_shed_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "lunaris-server is shedding requests (503 + Retry-After)"
+          description: >-
+            The concurrency limit is rejecting arrivals. This is correct
+            self-protection, not a bug — but callers are being turned away.
+
+      - alert: LunarisSheddingHeavily
+        expr: rate(lunaris_http_shed_total[5m]) > 1
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "lunaris-server is shedding >1 req/s"
+
+      - alert: LunarisRequestTimeouts
+        expr: rate(lunaris_http_timeout_total[5m]) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Requests exceeding --http-timeout-secs (408)"
+          description: >-
+            Usually a slow backend rather than a slow handler. Correlate with
+            lunaris_recall_duration_seconds and Moon's own metrics.
+
+      # ── latency / errors ──────────────────────────────────────────────────
+      # TEMPLATE: 0.5s is a placeholder SLO.
+      - alert: LunarisRecallLatencyHigh
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le, tenant) (rate(lunaris_recall_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 recall latency > 500ms for tenant {{ $labels.tenant }}"
+
+      - alert: LunarisRecallErrorRate
+        expr: >-
+          sum(rate(lunaris_recall_total{status="error"}[5m]))
+            / clamp_min(sum(rate(lunaris_recall_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 5% of recalls are failing"
+
+      # ── background work ───────────────────────────────────────────────────
+      - alert: LunarisQueueBacklog
+        expr: lunaris_verify_queue_depth > 10000 or lunaris_consolidator_queue_depth > 10000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Background queue {{ $labels.topic }} is backing up"
+          description: >-
+            The gauge stays at 0 on backends without queue support (the poller
+            warns once at startup), so 0 is not proof of an empty queue.
