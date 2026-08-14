@@ -5,6 +5,28 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## Unreleased
 
+### Changed
+
+- **MCP `memory.forget` previews by default (0.6.2 Task F)** — the tool's
+  request DTO gained a `dry_run` field that **defaults to `true`**. Omitting it
+  now scans and reports instead of deleting; an actual delete requires an
+  explicit `"dry_run": false`. Before this change the DTO carried
+  `deny_unknown_fields` and no `dry_run` field at all, so an LLM could issue an
+  irreversible scope-wide delete and had no way to preview one. The response is
+  now `{ status, dry_run, matched, removed }` (flat struct — the rmcp
+  `outputSchema` root-object invariant forbids an enum tag). The HTTP
+  `POST /v1/forget` surface keeps `dry_run: false` as its default for API
+  compatibility; only the MCP surface inverts it.
+
+### Added
+
+- **`ForgetReceipt.matched`** — the number of primitives the target matched,
+  populated on every path including `dry_run`, where `rows_written` and
+  `rows_deleted` are both zero by construction. Without it a preview could not
+  tell the caller what a commit would remove. Additive and
+  `#[serde(default)]`, so receipts minted by older servers (the HTTP
+  `confirmation_token` carries a serialized prior receipt) still deserialize.
+
 ## [0.6.0-rc.2] — 2026-07-17
 
 Second release candidate — fixes two P0-class SDK defects found while
