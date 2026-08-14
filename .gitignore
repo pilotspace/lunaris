@@ -65,6 +65,11 @@ Thumbs.db
 .env.*.local
 secrets/
 credentials.json
+# Provider API keys. The LME harness reads its key from MINIMAX_API_KEY or
+# from LUNARIS_BENCH_KEY_FILE (a path outside the repo); this is the backstop
+# for the habit of dropping a `*.key` next to the runner. No tracked file has
+# ever used this extension.
+*.key
 
 # --- Eval artefacts (large corpora, downloaded models) ---
 evals/data/
@@ -73,6 +78,23 @@ models/
 *.gguf
 *.safetensors
 *.onnx
+
+# --- LongMemEval harness output (scripts/bench/lme) ---
+# The runners default LME_RESULTS_DIR to target/lme, already covered by
+# `/target` above. These rules make the harness directory itself un-dirtyable
+# if an operator repoints LME_RESULTS_DIR at it: the SCRIPTS are tracked, the
+# run artifacts, caches and Moon scratch dirs never are. The LongMemEval
+# dataset is external and is never committed either (it downloads into
+# LUNARIS_EVAL_CACHE_DIR, default ~/.cache/lunaris/eval-hub).
+scripts/bench/lme/**/q*.json
+scripts/bench/lme/**/*.log
+scripts/bench/lme/**/config.fp
+scripts/bench/lme/**/config.env
+scripts/bench/lme/**/extract-cache/
+scripts/bench/lme/**/graphon/
+scripts/bench/lme/**/graphoff/
+scripts/bench/lme/**/fill/
+scripts/bench/lme/**/moon*/
 
 # --- Local Postgres / Moon dev state ---
 pgdata/

@@ -1,0 +1,138 @@
+# LongMemEval-S question set — N=125 stratified sample.
+#
+# Column 1 = zero-based offset into the longmemeval_s dataset (the value
+# passed as LUNARIS_EVAL_LME_OFFSET). Column 2 = the dataset's question
+# category, carried here so a per-category breakdown needs no dataset access.
+#
+# Category mix: 33 multi-session, 33 temporal-reasoning, 19 knowledge-update,
+# 18 single-session-user, 14 single-session-assistant,
+# 8 single-session-preference.
+#
+# This is the manifest behind the numbers that gate the 0.7.0 graph decision
+# (2026-07-28 A/B: graph-off 88.0%, graph-on 83.2%). Changing it changes what
+# "N=125" means — add a new file rather than editing this one.
+9	single-session-user
+10	single-session-user
+15	single-session-user
+17	single-session-user
+20	single-session-user
+24	single-session-user
+26	single-session-user
+29	single-session-user
+34	single-session-user
+38	single-session-user
+40	single-session-user
+45	single-session-user
+46	single-session-user
+47	single-session-user
+60	single-session-user
+61	single-session-user
+64	single-session-user
+69	single-session-user
+71	multi-session
+75	multi-session
+81	multi-session
+82	multi-session
+83	multi-session
+85	multi-session
+89	multi-session
+90	multi-session
+97	multi-session
+103	multi-session
+105	multi-session
+113	multi-session
+114	multi-session
+115	multi-session
+118	multi-session
+120	multi-session
+124	multi-session
+126	multi-session
+128	multi-session
+134	single-session-preference
+135	single-session-preference
+139	single-session-preference
+140	single-session-preference
+144	single-session-preference
+146	single-session-preference
+152	single-session-preference
+159	single-session-preference
+168	multi-session
+171	multi-session
+177	multi-session
+189	multi-session
+193	multi-session
+197	multi-session
+203	multi-session
+207	multi-session
+208	multi-session
+213	multi-session
+214	multi-session
+221	multi-session
+225	multi-session
+226	multi-session
+241	temporal-reasoning
+247	temporal-reasoning
+250	temporal-reasoning
+251	temporal-reasoning
+260	temporal-reasoning
+264	temporal-reasoning
+266	temporal-reasoning
+267	temporal-reasoning
+273	temporal-reasoning
+283	temporal-reasoning
+284	temporal-reasoning
+287	temporal-reasoning
+289	temporal-reasoning
+291	temporal-reasoning
+296	temporal-reasoning
+301	temporal-reasoning
+304	temporal-reasoning
+305	temporal-reasoning
+307	temporal-reasoning
+313	temporal-reasoning
+315	temporal-reasoning
+316	temporal-reasoning
+324	temporal-reasoning
+328	temporal-reasoning
+339	temporal-reasoning
+342	temporal-reasoning
+345	temporal-reasoning
+349	temporal-reasoning
+353	temporal-reasoning
+356	temporal-reasoning
+361	temporal-reasoning
+362	temporal-reasoning
+364	temporal-reasoning
+367	knowledge-update
+369	knowledge-update
+370	knowledge-update
+377	knowledge-update
+379	knowledge-update
+380	knowledge-update
+383	knowledge-update
+393	knowledge-update
+394	knowledge-update
+395	knowledge-update
+397	knowledge-update
+398	knowledge-update
+401	knowledge-update
+404	knowledge-update
+420	knowledge-update
+435	knowledge-update
+436	knowledge-update
+441	knowledge-update
+442	knowledge-update
+446	single-session-assistant
+448	single-session-assistant
+449	single-session-assistant
+456	single-session-assistant
+458	single-session-assistant
+462	single-session-assistant
+467	single-session-assistant
+479	single-session-assistant
+480	single-session-assistant
+483	single-session-assistant
+484	single-session-assistant
+486	single-session-assistant
+489	single-session-assistant
+497	single-session-assistant

@@ -1,0 +1,24 @@
+# LongMemEval-S subset — N=16, multi-session + single-session-preference.
+#
+# A ~2-hour shakeout set: enough questions to catch a broken config or a
+# regressed retrieval path, nowhere near enough to compare arms. J over 16
+# questions has a confidence interval far wider than the +/-5-point judge
+# noise floor, so NEVER report a delta from this file.
+#
+# Use: OFFSETS_FILE=scripts/bench/lme/questions/offsets16.tsv ...
+71	multi-session
+75	multi-session
+81	multi-session
+115	multi-session
+120	multi-session
+134	single-session-preference
+135	single-session-preference
+139	single-session-preference
+140	single-session-preference
+144	single-session-preference
+146	single-session-preference
+152	single-session-preference
+159	single-session-preference
+171	multi-session
+208	multi-session
+213	multi-session
