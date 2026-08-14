@@ -11,7 +11,7 @@
 //! headers — so Windows CI is the only true compiler for that target. These
 //! structural tests are the local, always-on stand-in.
 //!
-//! Scope: the *production* halves (everything before `#[cfg(test)]`) of
+//! Scope: the production code (everything outside a `#[cfg(test)]` region) of
 //! `lunaris-mcp/src/**` and `lunaris-memory-service/src/**` — the two
 //! first-party crates whose code lands in the Windows release binary.
 //! `cargo build -p lunaris-mcp` does not compile `tests/`, so test sources
@@ -63,7 +63,17 @@ fn opens_unix_gate(line: &str) -> bool {
     t.starts_with("#[cfg(") && t.contains("unix)") && !t.contains("not(unix")
 }
 
-/// Lines (0-based) covered by a `#[cfg(unix)]` gate.
+/// Does `line` open a `#[cfg(test)]`-style gate? Test code never reaches the
+/// Windows release binary. Detected structurally rather than by truncating at
+/// the first `#[cfg(test)]` in the file: proxy.rs has a `#[cfg(test)]` helper
+/// at line 99, and truncation there would have skipped the entire socket
+/// implementation below it — a silent hole in the guard.
+fn opens_test_gate(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with("#[cfg(") && t.contains("test)") && !t.contains("not(test")
+}
+
+/// Lines (0-based) covered by a gate whose opener satisfies `opens`.
 ///
 /// The rule is deterministic for rustfmt-normalised source:
 /// * the gated item starts at the first following line that is neither blank,
@@ -72,10 +82,10 @@ fn opens_unix_gate(line: &str) -> bool {
 /// * otherwise the region runs to the first line at the gate's own indentation
 ///   whose trimmed content is `}` — rustfmt puts an item's closing brace at
 ///   exactly the attribute's indentation.
-fn gated_lines(lines: &[&str]) -> Vec<bool> {
+fn gated_lines(lines: &[&str], opens: fn(&str) -> bool) -> Vec<bool> {
     let mut gated = vec![false; lines.len()];
     for (i, line) in lines.iter().enumerate() {
-        if !opens_unix_gate(line) {
+        if !opens(line) {
             continue;
         }
         let indent = indent_of(line);
@@ -99,18 +109,18 @@ fn gated_lines(lines: &[&str]) -> Vec<bool> {
     gated
 }
 
-/// Every unix-only token in the production half of `src` that is not covered
+/// Every unix-only token in the production code of `src` that is not covered
 /// by a `#[cfg(unix)]` gate.
 fn ungated_unix_hits(src: &str) -> Vec<Hit> {
-    // `#[cfg(test)]` modules never reach the Windows release binary.
-    let production = src.split("#[cfg(test)]").next().unwrap_or(src);
-    let lines: Vec<&str> = production.lines().collect();
-    let gated = gated_lines(&lines);
+    let lines: Vec<&str> = src.lines().collect();
+    let unix_gated = gated_lines(&lines, opens_unix_gate);
+    let test_gated = gated_lines(&lines, opens_test_gate);
     lines
         .iter()
         .enumerate()
         .filter(|(i, line)| {
-            !gated[*i]
+            !unix_gated[*i]
+                && !test_gated[*i]
                 && !is_comment(line)
                 && UNIX_ONLY_TOKENS.iter().any(|tok| line.contains(tok))
         })
@@ -176,7 +186,8 @@ async fn try_socket(&self) {
 
 #[test]
 fn scanner_ignores_prose() {
-    let src = "//! contextd speaks a UnixStream; see os::unix.\n// UnixListener, libc::\nfn f() {}\n";
+    let src =
+        "//! contextd speaks a UnixStream; see os::unix.\n// UnixListener, libc::\nfn f() {}\n";
     assert!(ungated_unix_hits(src).is_empty(), "comments are not a compile hazard");
 }
 
@@ -186,12 +197,33 @@ fn scanner_ignores_the_test_module() {
     assert!(ungated_unix_hits(src).is_empty(), "tests/ and cfg(test) never ship to Windows");
 }
 
+/// Regression on the guard itself: excluding test code by truncating at the
+/// first `#[cfg(test)]` would blind the scanner to everything below an
+/// early test-only helper — proxy.rs has one at line 99, above the entire
+/// socket implementation.
+#[test]
+fn scanner_keeps_scanning_after_an_early_cfg_test_helper() {
+    let src = "\
+#[cfg(test)]
+fn helper_for_tests() -> u8 {
+    0
+}
+
+use tokio::net::UnixStream;
+";
+    assert_eq!(
+        ungated_unix_hits(src).len(),
+        1,
+        "production code below a #[cfg(test)] item must still be scanned"
+    );
+}
+
 // ── the real scan ──────────────────────────────────────────────────────────
 
 fn rust_sources(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let entries = std::fs::read_dir(root)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", root.display()));
+    let entries =
+        std::fs::read_dir(root).unwrap_or_else(|e| panic!("read_dir {}: {e}", root.display()));
     for entry in entries {
         let path = entry.expect("dir entry").path();
         if path.is_dir() {
@@ -279,9 +311,9 @@ fn non_unix_fallback_exists() {
 /// not silently dropped into Direct-only.
 #[test]
 fn unsupported_platform_is_reported_loudly() {
-    // Production half only — the `#[cfg(test)]` module names the variant too,
-    // and a test mentioning a seam is not the seam.
-    let production = PROXY_SRC.split("#[cfg(test)]").next().unwrap_or(PROXY_SRC);
+    // Everything above `#[cfg(test)] mod tests` — the unit tests name the
+    // variant too, and a test mentioning a seam is not the seam.
+    let production = PROXY_SRC.split("#[cfg(test)]\nmod tests").next().unwrap_or(PROXY_SRC);
     assert!(
         production.contains("SocketSupport::UnsupportedPlatform"),
         "proxy.rs must classify an explicitly-configured socket on a non-unix \
