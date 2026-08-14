@@ -362,6 +362,12 @@ impl MoonClient {
             inner,
             txn_guard: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         };
+        // 0.6.2 — Moon server-version handshake. Runs FIRST on the fresh
+        // connection, before any index probing, so a server that predates the
+        // command surface Lunaris needs is named at startup instead of
+        // surfacing as `ERR unknown command 'FT.SEARCH'` inside a recall leg.
+        // Exactly one round-trip per connect; no per-operation cost.
+        me.version_handshake().await?;
         // Phase 22 dim-guardrail (+ W1-1 quantization-drift warning): probe
         // existing indices BEFORE `ensure_indexes` creates anything. If any
         // index already exists at a different dim, fail fast — Moon's
@@ -373,6 +379,126 @@ impl MoonClient {
         me.assert_existing_index_dims_match().await?;
         me.ensure_indexes().await?;
         Ok(me)
+    }
+
+    /// 0.6.2 — one-shot **Moon server-version handshake**.
+    ///
+    /// Issues a single `INFO server` on the freshly established connection and
+    /// applies [`crate::version`]'s policy: too old is a hard failure,
+    /// unrecognizable is a warning, current is a debug line. See that module
+    /// for the vendor-grounded rationale on why the gate reads `moon_version`
+    /// and never `redis_version`.
+    ///
+    /// ## Cost and placement
+    ///
+    /// ONE round-trip, ONCE per `connect`. Nothing on the hot path calls this,
+    /// so recall/ingest latency is unchanged.
+    ///
+    /// It is deliberately NOT re-run on reconnect. The SDK's
+    /// `redis::aio::ConnectionManager` (see `crate::retry`) transparently
+    /// re-dials the SAME endpoint, and a server cannot change version beneath a
+    /// live handle — a rolling upgrade tears the process down. Re-probing per
+    /// reconnect would add a round-trip to every heal for no new information.
+    ///
+    /// ## Bounding
+    ///
+    /// The connection was opened with `connect_with_timeout(moon_op_timeout())`,
+    /// so this command inherits `LUNARIS_MOON_OP_TIMEOUT` (default 10s) like
+    /// every other. A wedged server therefore cannot hang `connect` here — and
+    /// because a timeout is classified as FATAL by
+    /// [`crate::version::info_probe_failure_is_fatal`], it surfaces as a bounded
+    /// `StorageError::Backend` rather than being warned past (which is what
+    /// keeps `tests/op_timeout.rs` discriminating now that `INFO` is the first
+    /// real command on the wire).
+    async fn version_handshake(&self) -> Result<(), StorageError> {
+        use crate::version::{self, MoonVersionCheck};
+
+        let mut typed = self.typed();
+        // `INFO server`: Moon IGNORES the section argument
+        // (`vendor/moon/src/command/connection.rs:172` takes `_args`) and
+        // returns the full dump, but we pass it anyway so a future Moon that
+        // does honor it hands back the smallest useful reply. The parser scans
+        // rather than assuming a section-scoped body precisely because of this.
+        let info =
+            match redis::cmd("INFO").arg("server").query_async::<String>(typed.inner_mut()).await {
+                Ok(info) => info,
+                // Transport fault — the connection is unusable. Fail closed.
+                Err(e) if version::info_probe_failure_is_fatal(&e) => return Err(redis_err(e)),
+                // The server answered, it just refused `INFO`. Fail open.
+                Err(e) => {
+                    self.warn_version_unverified(&format!(
+                        "the server rejected the `INFO server` probe ({e})"
+                    ));
+                    return Ok(());
+                }
+            };
+
+        match version::check_moon_version(&info) {
+            MoonVersionCheck::Supported(found) => {
+                tracing::debug!(
+                    moon.host = %self.host,
+                    moon.port = self.port,
+                    moon.version = %found,
+                    min_supported = %version::MIN_MOON_VERSION,
+                    "moon: server version handshake ok"
+                );
+                Ok(())
+            }
+            MoonVersionCheck::Unsupported(found) => Err(StorageError::Backend(format!(
+                "moon: unsupported server version — {host}:{port} reports \
+                 moon_version {found}, but this Lunaris build requires >= {min}. \
+                 Older Moon builds are missing command surface Lunaris depends on \
+                 (FT.* vector/BM25 search, graph Cypher, TEMPORAL.*), which would \
+                 otherwise surface later as an opaque `ERR unknown command` in the \
+                 middle of a recall. \
+                 To proceed: upgrade the server — \
+                 `curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh \
+                 | VERSION=v{min} sh`, or run the ghcr.io/pilotspace/moon image at a tag \
+                 >= v{min} — then reconnect. \
+                 Confirm with `redis-cli -h {host} -p {port} INFO server | grep moon_version`.",
+                host = self.host,
+                port = self.port,
+                min = version::MIN_MOON_VERSION,
+            ))),
+            MoonVersionCheck::Unknown(detail) => {
+                self.warn_version_unverified(&detail);
+                Ok(())
+            }
+        }
+    }
+
+    /// Emit the "could not verify the Moon version" warning at most ONCE per
+    /// process; later occurrences drop to `debug!`.
+    ///
+    /// Connecting to a plain Redis or a cut-down dev build is a single
+    /// deployment-shaped fact, not a per-connection event — a bench harness or
+    /// a pooled service opening many handles should not paper its logs with the
+    /// identical line. The information is not lost: the repeats are still
+    /// recorded, just at `debug!`.
+    fn warn_version_unverified(&self, detail: &str) {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        let mut first = false;
+        WARNED.call_once(|| first = true);
+        let min = crate::version::MIN_MOON_VERSION;
+        if first {
+            tracing::warn!(
+                moon.host = %self.host,
+                moon.port = self.port,
+                min_supported = %min,
+                detail = %detail,
+                "moon: could NOT verify the server version — proceeding UNVERIFIED. \
+                 If this endpoint is not a Moon >= {min}, expect `ERR unknown command` \
+                 on the first FT.* / graph / TEMPORAL.* operation.",
+            );
+        } else {
+            tracing::debug!(
+                moon.host = %self.host,
+                moon.port = self.port,
+                min_supported = %min,
+                detail = %detail,
+                "moon: server version still unverified (warned once already)"
+            );
+        }
     }
 
     /// Phase 22 — fail-fast dim guardrail for Moon.

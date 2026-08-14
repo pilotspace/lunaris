@@ -3226,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "moon"
-version = "0.8.1"
+version = "0.8.5"
 dependencies = [
  "anyhow",
  "arc-swap",

@@ -56,8 +56,10 @@ pub mod queue;
 pub(crate) mod retry;
 pub mod scopes;
 pub mod vector;
+pub mod version;
 
 pub use client::MoonClient;
+pub use version::{MIN_MOON_VERSION, MoonVersion, MoonVersionCheck, check_moon_version};
 
 use std::collections::HashSet;
 use std::sync::Arc;
