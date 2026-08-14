@@ -69,6 +69,31 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
     }
 
+    /// 0.6.2 task 9 — the Moon backend refuses a historical `as_of` with
+    /// `StorageError::NotSupported`. That must reach the client as a
+    /// self-explanatory 501, not a 500 with an opaque message: the request
+    /// is not a server fault, it asks for a capability this deployment's
+    /// backend does not have. Covers `POST /v1/recall {as_of: <past>}` and
+    /// `GET /v1/snapshot/{lsn}` on a Moon-backed deployment.
+    #[tokio::test]
+    async fn moon_historical_as_of_refusal_maps_to_501_with_reason() {
+        let err = LunarisError::Storage(StorageError::NotSupported(
+            "moon_kv_as_of: Moon KV read_as_of/scan_range cannot answer a historical snapshot",
+        ));
+        let resp = map_error(err);
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let body_bytes = to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(v["error"], "not_supported");
+        let message = v["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("moon_kv_as_of"),
+            "the backend's reason must survive into the body so an operator can act on it, \
+             got: {message}"
+        );
+    }
+
     #[tokio::test]
     async fn validate_temporal_maps_to_400() {
         let err = LunarisError::Validate(ValidateError::Temporal);
