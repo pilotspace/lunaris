@@ -15,6 +15,13 @@ wire-format change.
 
 Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
 
+**Scope split.** This document covers surviving a crash **on the same host**
+(the data directory is still there). Moving the data to a *different* host —
+backup, restore, measured RPO/RTO, and the two naive procedures that silently
+lose data — lives in
+[`docs/operations/backup-restore.md`](operations/backup-restore.md), validated
+by `scripts/backup-restore-drill.sh`.
+
 ---
 
 ## 1. What survives a crash
@@ -94,7 +101,19 @@ Never force it to `on` for a Lunaris deployment unless you have a CDC
 consumer or a specific PITR requirement — `auto` gives the same crash-
 recovery guarantee at a fraction of the write amplification.
 
-### 2.2 The base-RDB trap
+### 2.2 The base-RDB trap — historical; NOT reproducible on Moon ≥ 0.8.5
+
+> **Re-measured 2026-08-15 against `vendor/moon` @ `ab4c393e` (v0.8.5): the
+> trap below no longer fires.** Moon now writes a 10-byte empty-state
+> `appendonlydir/moon.aof.1.base.rdb` at first boot, so the AOF chain always
+> has an anchor and a data directory that has never seen a `BGREWRITEAOF`
+> replays intact. `scripts/backup-restore-drill.sh` restores exactly such an
+> un-anchored copy on every run and asserts the outcome, so a future Moon that
+> brings the trap back will be caught. Keep `BGREWRITEAOF` in your procedures
+> for AOF-growth control — but note the drill measured **no restart-time
+> benefit** from it at 1.9 MB and 9.3 MB of `incr.aof`
+> (`docs/operations/backup-restore.md` §5). The rest of this section is
+> retained for operators on older Moon binaries.
 
 **Without an existing base RDB, AOF-only state is unreplayable.** If you start Moon fresh, ingest data, and `kill -9` before the first auto-save / `BGREWRITEAOF` has run, the restart fails with:
 
@@ -376,7 +395,7 @@ Evidence log: [`milestones/v0.1.1-bench/recovery-test.log`](../milestones/v0.1.1
 
 ## 5. Known limitations
 
-- **Single-shard only in this tested config.** Multi-shard Moon recovery semantics (cross-shard coordinator, manifest-level replay) aren't exercised by the harness yet.
+- **Single-shard only — and that is the only shape Lunaris supports.** Multi-shard Moon recovery semantics (cross-shard coordinator, manifest-level replay) aren't exercised by the harness, and cannot be until Lunaris changes: it commits each episode as ONE cross-key Moon TXN (INGEST-04), and a sharded Moon rejects it outright with `TXN does not support cross-shard writes`. Measured at `--shards 4` on 2026-08-15; see `docs/operations/backup-restore.md` §6.6.
 - **No Postgres recovery harness.** Postgres handles its own durability (WAL + fsync); a symmetric test is BENCH-04 on the roadmap.
 - **AOF grows unboundedly without auto-rewrite.** Use `--save` rules or schedule `BGREWRITEAOF` — otherwise replay time grows linearly with write volume.
 - **Pipeline workers replay idempotently** (`consolidator`, `verifier`) — they read from Moon Streams on start-up and resume from the last committed offset. No action needed on the Lunaris side.
@@ -387,6 +406,7 @@ Evidence log: [`milestones/v0.1.1-bench/recovery-test.log`](../milestones/v0.1.1
 
 ## 6. Related references
 
+- [`docs/operations/backup-restore.md`](operations/backup-restore.md) — backup, restore-to-a-new-host, measured RPO/RTO, and the demonstrated data-loss modes
 - `.planning/architect/blueprint.md` §5.4 — durability contract
 - `crates/lunaris-storage-moon/src/atomic.rs` — the `WriteOp` envelope shape
 - `crates/lunaris-mcp/src/embedded_moon.rs` — in-process Moon launch config; `parse_from([])` clap-default derivation (databases/shards/wal-kv-log/mem-full-pct/io-busy-poll-us/disk-offload all inherit upstream defaults)
