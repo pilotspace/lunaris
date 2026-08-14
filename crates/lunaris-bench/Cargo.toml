@@ -121,6 +121,19 @@ metal            = ["llamacpp", "lunaris/metal"]
 cuda             = ["llamacpp", "lunaris/cuda"]
 vulkan           = ["llamacpp", "lunaris/vulkan"]
 
+# Remote-embedder escape hatch, forwarded to the umbrella so the eval
+# gauntlet can resolve `LUNARIS_EMBEDDER_OLLAMA_URL` / `_OPENAI_URL`
+# (`resolve_embedder` steps 1/1b) instead of the in-process llama.cpp
+# embedder. This is the DEFAULT lane of the committed LongMemEval harness
+# (scripts/bench/lme/): one process per question plus an in-process
+# llama.cpp embedder deadlocks on Metal under GPU contention, so the
+# measured A/B points the embedder at a warm Ollama server instead.
+# Un-forwarded, `Lunaris::open()` silently resolves `NoopEmbedder` (zero
+# vectors) and the run still prints a J-score — same 727bc65 lesson as the
+# accelerator forwards above. Guarded by
+# `lunaris-core/tests/sdk_feature_forwarding.rs::bench_embed_remote_forwards_to_umbrella`.
+embed-remote     = ["lunaris/embed-remote"]
+
 [[bench]]
 name = "ingest_hot_path"
 harness = false
