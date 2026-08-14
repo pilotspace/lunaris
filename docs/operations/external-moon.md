@@ -99,8 +99,8 @@ Flag provenance, all from `vendor/moon/src/config.rs`:
 | `--appendonly` | `yes` | `:100-103` | The AOF is the recovery authority. |
 | `--appendfsync` | `everysec` | `:137-138` | `always` for a ~0 RPO at a throughput cost. |
 | `--dir` | auto-resolved | `:158-160` | Persistence files. Pass it explicitly. |
-| `--protected-mode` | `yes` | `:250-252` | Rejects non-loopback connections when no password is set. Must be `no` for container networking. |
-| `--admin-port` | — | `:29` | Enables the admin HTTP server: `/healthz`, `/readyz`, `/metrics` (`vendor/moon/src/admin/http_server.rs:138-148`). |
+| `--protected-mode` | `yes` | `:250-252` | Rejects non-loopback connections when no password is set. Must be `no` for container networking — pair it with network isolation, since Lunaris cannot send a password (§4). |
+| `--admin-port` | `0` = **disabled** | `:27-29` | Set it to enable the admin HTTP server: `/metrics`, `/healthz`, `/readyz` (`vendor/moon/src/admin/http_server.rs:138-148`). Required if you want to scrape Moon. |
 | `--maxmemory` | unset | `:177-184` | Whole-instance cap. |
 | `--profile standalone` | — | `:325-344` | Convenience preset that fills `--shards 1`, `--io-busy-poll-us 40`, `--io-driver epoll` for flags you left at their default. Safe on shared cores since 0.8.1. Optional. |
 
