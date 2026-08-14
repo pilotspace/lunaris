@@ -280,6 +280,15 @@ lunaris.scoped(scope_a).ingest(builder.clone()).await?;
 lunaris.scoped(scope_b).ingest(builder).await?;
 ```
 
+## Operating in production
+
+External Moon is the supported deployment (the embedded server is dev/test-only):
+
+- [`docs/operations/external-moon.md`](docs/operations/external-moon.md) — zero-to-connected: install, required version (≥ 0.8.5, enforced by a connect-time handshake), AOF persistence, **single-shard only**
+- [`docs/operations/backup-restore.md`](docs/operations/backup-restore.md) — the drilled backup/restore-to-new-host runbook with measured RPO/RTO
+- [`docs/operations/observability.md`](docs/operations/observability.md) — `/metrics`, `/readyz` semantics, Prometheus scrape config + starter alerts
+- [`deploy/`](deploy/) — docker-compose (Moon + lunaris-server with health-checked readiness) and the server Dockerfile
+
 ## Status
 
 | Milestone | Status |
