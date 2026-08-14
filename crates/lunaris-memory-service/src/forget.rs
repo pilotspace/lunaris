@@ -293,4 +293,142 @@ mod tests {
             handle(&lunaris, &scope, params).await.expect("episode_id dispatch must not error");
         let _ = resp.removed; // type-check: must be u64
     }
+
+    // ── 0.6.2 Task F — dry_run preview contract ───────────────────────────────
+    //
+    // The MCP caller is an LLM. An irreversible scope-wide delete MUST NOT be
+    // the default. These tests pin the inverted default: omitting `dry_run`
+    // previews; deleting requires an explicit `dry_run: false`.
+    //
+    // They deliberately drive the WIRE form (`serde_json::from_str`) rather
+    // than a struct literal — the default only exists on the deserialize path,
+    // which is exactly what an MCP client exercises. Responses are asserted
+    // through `serde_json::to_value` for the same reason: the contract is the
+    // JSON an LLM sees, not the Rust field set.
+
+    /// A real (non-`_dev_`) scope. `forget_scoped` (Wave 1D) routes scan +
+    /// write through the caller's partition, so an honest round-trip needs a
+    /// real scope — `Scope::dev()` is not required here.
+    async fn make_scoped_engine() -> (Lunaris, Scope) {
+        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+        let scope = Scope::new("forget-dry-run-test").expect("test scope must be valid");
+        (lunaris, scope)
+    }
+
+    /// `true` iff the episode row is present AND its system interval is still
+    /// open (i.e. no soft-delete tombstone was written).
+    async fn episode_is_live(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> bool {
+        use lunaris_core::StoragePort;
+        let key = lunaris_core::keyspace::episode_key(scope, id);
+        let now = lunaris.clock().tick();
+        match lunaris.storage().read_as_of(scope, &key, now).await.expect("read_as_of must succeed")
+        {
+            Some(row) => row.bt.sys.1.is_none(),
+            None => false,
+        }
+    }
+
+    async fn seed_episode(lunaris: &Lunaris, scope: &Scope, source: &str) -> Ulid {
+        let id = Ulid::new();
+        lunaris
+            .scoped(scope.clone())
+            .ingest(EpisodeBuilder::new(source, "content under test").id(id))
+            .await
+            .expect("ingest must succeed");
+        id
+    }
+
+    #[tokio::test]
+    async fn omitted_dry_run_deserializes_to_preview() {
+        let params: ForgetParams =
+            serde_json::from_str(r#"{"target":{"source_prefix":"src:notes/"}}"#)
+                .expect("the default wire form must parse");
+        let v = serde_json::to_value(&params).expect("params serialize");
+        assert_eq!(
+            v["dry_run"],
+            serde_json::json!(true),
+            "omitting dry_run MUST default to a preview on the MCP surface: {v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_false_is_accepted_by_the_dto() {
+        // deny_unknown_fields rejects this today — the field must exist.
+        let params: ForgetParams =
+            serde_json::from_str(r#"{"target":{"source_prefix":"src:notes/"},"dry_run":false}"#)
+                .expect("explicit dry_run:false must be accepted by the DTO");
+        let v = serde_json::to_value(&params).expect("params serialize");
+        assert_eq!(v["dry_run"], serde_json::json!(false), "explicit false must round-trip: {v}");
+    }
+
+    #[tokio::test]
+    async fn default_forget_previews_and_deletes_nothing() {
+        let (lunaris, scope) = make_scoped_engine().await;
+        let id = seed_episode(&lunaris, &scope, "src:notes/a").await;
+        assert!(
+            episode_is_live(&lunaris, &scope, id).await,
+            "precondition: the episode must be live right after ingest"
+        );
+
+        // Exactly what an LLM sends when it does not think about dry_run.
+        let params: ForgetParams =
+            serde_json::from_str(r#"{"target":{"source_prefix":"src:notes/"}}"#)
+                .expect("default wire form must parse");
+        let resp = handle(&lunaris, &scope, params).await.expect("forget must not error");
+        let v = serde_json::to_value(&resp).expect("response serializes");
+
+        assert_eq!(v["dry_run"], serde_json::json!(true), "response must mark the preview: {v}");
+        assert_eq!(v["status"], serde_json::json!("preview"), "flat status discriminator: {v}");
+        assert_eq!(v["removed"], serde_json::json!(0), "a preview removes NOTHING: {v}");
+        assert_eq!(
+            v["matched"],
+            serde_json::json!(1),
+            "a preview must report what it WOULD delete: {v}"
+        );
+        assert!(
+            episode_is_live(&lunaris, &scope, id).await,
+            "default memory.forget MUST NOT delete — the episode was destroyed by a preview call"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_dry_run_false_actually_deletes() {
+        let (lunaris, scope) = make_scoped_engine().await;
+        let id = seed_episode(&lunaris, &scope, "src:notes/a").await;
+
+        let params: ForgetParams =
+            serde_json::from_str(r#"{"target":{"source_prefix":"src:notes/"},"dry_run":false}"#)
+                .expect("explicit dry_run:false must be accepted by the DTO");
+        let resp = handle(&lunaris, &scope, params).await.expect("forget must not error");
+        let v = serde_json::to_value(&resp).expect("response serializes");
+
+        assert_eq!(v["dry_run"], serde_json::json!(false), "committed call is not a preview: {v}");
+        assert_eq!(v["status"], serde_json::json!("deleted"), "flat status discriminator: {v}");
+        assert_eq!(v["matched"], serde_json::json!(1), "match count is reported on commit too: {v}");
+        assert_eq!(v["removed"], serde_json::json!(1), "the episode must actually be removed: {v}");
+        assert!(
+            !episode_is_live(&lunaris, &scope, id).await,
+            "explicit dry_run:false MUST delete — the episode survived"
+        );
+    }
+
+    #[tokio::test]
+    async fn episode_id_target_also_defaults_to_preview() {
+        let (lunaris, scope) = make_scoped_engine().await;
+        let id = seed_episode(&lunaris, &scope, "src:ep-delete").await;
+
+        let params: ForgetParams =
+            serde_json::from_str(&format!(r#"{{"target":{{"episode_id":"{id}"}}}}"#))
+                .expect("default wire form must parse");
+        let resp = handle(&lunaris, &scope, params).await.expect("forget must not error");
+        let v = serde_json::to_value(&resp).expect("response serializes");
+
+        assert_eq!(v["dry_run"], serde_json::json!(true), "id target previews by default too: {v}");
+        assert_eq!(v["matched"], serde_json::json!(1), "the id target matched one episode: {v}");
+        assert_eq!(v["removed"], serde_json::json!(0), "preview removes nothing: {v}");
+        assert!(
+            episode_is_live(&lunaris, &scope, id).await,
+            "episode_id preview MUST NOT delete the episode"
+        );
+    }
 }
