@@ -152,7 +152,7 @@ RPO = how much acked data a restore can lose.
 | procedure | RPO | measured |
 |---|---|---|
 | **Cold backup (§2)** — quiesce → BGREWRITEAOF → clean SHUTDOWN → copy | **0** for every write acked before the shutdown | 200-doc and 1000-doc corpora restored with `RPO_docs_lost = 0`, DBSIZE identical, and every chunk text recalled verbatim |
-| Same, but the copy predates the BGREWRITEAOF | 0 on Moon ≥ 0.8.5 | the un-anchored copy restored intact (§6.4) — but see the RTO cost |
+| Same, but the copy predates the BGREWRITEAOF | 0 on Moon ≥ 0.8.5 | the un-anchored copy restored intact, at the same RTO (§6.4) — the historical base-RDB trap does not fire on this version |
 | **Hot `cp -R` under write load** (NOT supported) | everything acked from the instant `cp` starts reading, unbounded upward | **392 of 400** acked documents lost in run A, **1 996 of 2 000** in run B — and the restored instance reported no error at all |
 | **RDB-only backup** (`BGSAVE` + copy `dump.rdb`) | **100%** | 0 documents recovered, DBSIZE 0, no error |
 
