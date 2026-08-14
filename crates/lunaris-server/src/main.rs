@@ -93,12 +93,11 @@ async fn main() -> ExitCode {
     // /metrics reflects it instead of a constant 0. Soft no-op when unset.
     lunaris_server::eval_score::load_eval_scores_from_env();
 
-    if let Err(e) = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown.wait().await;
-        })
-        .await
-    {
+    // 0.6.2 P0-1 — the drain is BOUNDED by `--shutdown-grace-secs`. The old
+    // bare `axum::serve(..).with_graceful_shutdown(..)` never read the flag, so
+    // one wedged in-flight request pinned the process until the orchestrator
+    // escalated to SIGKILL (which also killed the healthy in-flight requests).
+    if let Err(e) = lunaris_server::shutdown::serve_with_deadline(listener, app, shutdown).await {
         tracing::error!(err = %e, "lunaris-server exited with error");
         return ExitCode::from(1);
     }
