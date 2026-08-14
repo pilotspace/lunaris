@@ -5,9 +5,19 @@
 //! No live Moon and no model weights — CI-friendly. The fake server below speaks
 //! exactly enough RESP to complete the redis-rs multiplexed-connection handshake
 //! (two pipelined `CLIENT SETINFO` commands → `+OK` each), then STALLS on the
-//! first real command (`FT._LIST`, issued by `connect_with_dim` via
-//! `assert_existing_index_dims_match`). That puts the stall on an *established*
-//! connection, which is where the per-op response timeout actually governs.
+//! first real command. That puts the stall on an *established* connection,
+//! which is where the per-op response timeout actually governs.
+//!
+//! Since 0.6.2 that first real command is `INFO server`, issued by
+//! `connect_with_dim` via `MoonClient::version_handshake` (it used to be
+//! `FT._LIST` via `assert_existing_index_dims_match`, one command later). The
+//! contract is unchanged because the handshake classifies a TIMEOUT as fatal
+//! and propagates it — see
+//! `lunaris_storage_moon::version::info_probe_failure_is_fatal`. Only a
+//! server-side *rejection* of `INFO` is warned past. If that classification
+//! ever flipped to fail-open, the stall would fall through to `FT._LIST` and
+//! cost a SECOND full timeout, tripping the `< 6s` upper bound below — so this
+//! test also guards the fail-closed half of the handshake policy.
 //!
 //! ## Why this test discriminates (empirically measured 2026-06-15)
 //!
