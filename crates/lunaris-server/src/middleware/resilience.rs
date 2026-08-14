@@ -101,15 +101,20 @@ pub fn timeout_middleware(
             let Some(budget) = budget else {
                 return next.run(req).await;
             };
+            // Snapshot for the (rare) timeout log BEFORE `req` is consumed.
+            // Both clones are O(1) — `Method` is an enum for every standard
+            // verb and `Uri` is refcounted `Bytes` — so the happy path pays no
+            // allocation. `uri.path().to_string()` would have cost one per
+            // request, on every route, forever.
             let method = req.method().clone();
-            let path = req.uri().path().to_string();
+            let uri = req.uri().clone();
             match tokio::time::timeout(budget, next.run(req)).await {
                 Ok(resp) => resp,
                 Err(_) => {
                     metrics().http_timeout_total.inc();
                     tracing::warn!(
                         %method,
-                        %path,
+                        path = uri.path(),
                         timeout_secs = secs,
                         "request exceeded the configured budget; answering 408"
                     );
