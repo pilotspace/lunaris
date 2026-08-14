@@ -15,7 +15,8 @@
 //! | `POST /v1/forget`         | forget by scope / target                  |
 //! | `GET  /v1/snapshot/{lsn}` | NDJSON stream of every primitive visible at `{lsn}`; `404` if `{lsn}` wall_ms is strictly in the future |
 //! | `GET  /v1/episode/{id}`   | fetch a single episode by ULID; `400` on bad ULID, `404` if absent in scope |
-//! | `GET  /healthz`           | unauthenticated liveness probe            |
+//! | `GET  /healthz`           | unauthenticated LIVENESS probe (process up) |
+//! | `GET  /readyz`            | unauthenticated READINESS probe — storage PING + write canary + embedder state; `503` when any check fails |
 //! | `GET  /metrics`           | Prometheus text-format metrics (root, no Bearer) |
 //!
 //! ## Security
@@ -68,6 +69,8 @@ pub mod hotkeys_poller;
 pub mod metrics;
 pub mod middleware;
 pub mod queue_depth_poller;
+// 0.6.2 P0-3 — rate-limited readiness prober behind GET /readyz.
+pub mod readiness;
 pub mod routes;
 pub mod shutdown;
 pub mod state;
@@ -255,6 +258,10 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
         // the user-entered recall token). Sits alongside /healthz + /metrics.
         .route("/", get(routes::ui::ui_handler))
         .route("/healthz", get(routes::healthz::healthz_handler))
+        // 0.6.2 P0-3 — readiness (k8s readinessProbe) is a DIFFERENT question
+        // from liveness: PING + write canary + embedder state. See
+        // `routes::readyz`.
+        .route("/readyz", get(routes::readyz::readyz_handler))
         // Plan 05-05 OPS-06 — `/metrics` mounted at root (NOT under `/v1`)
         // so Prometheus scrapers reach it without Bearer-auth tokens.
         // CONTEXT.md D-25 + threat-model T-05-05-05 (operators MUST front
