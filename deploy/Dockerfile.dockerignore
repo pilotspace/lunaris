@@ -1,0 +1,21 @@
+# BuildKit reads `<dockerfile>.dockerignore` in preference to a root
+# `.dockerignore`, so this trims the context for deploy/Dockerfile ONLY and
+# cannot affect scripts/pg-lunaris/Dockerfile.
+#
+# Without it the context includes target/ (tens of GB on a dev box) and the
+# `docker build` upload alone takes minutes.
+
+target/
+vendor/moon/target/
+.planning/
+.git/
+.github/
+.claude/
+.add/
+node_modules/
+**/node_modules/
+**/*.gguf
+**/*.safetensors
+tmp/
+docs/book/book/
+*.log

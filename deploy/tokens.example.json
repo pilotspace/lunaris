@@ -1,0 +1,10 @@
+{
+  "REPLACE-ME-with-a-long-random-string": {
+    "tenant": "acme",
+    "scopes": ["ingest", "recall", "forget"]
+  },
+  "REPLACE-ME-read-only-token": {
+    "tenant": "acme",
+    "scopes": ["recall"]
+  }
+}
