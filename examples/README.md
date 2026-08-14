@@ -8,7 +8,7 @@ backend.
 
 | Example | Path | What it shows | Backend / install |
 |---|---|---|---|
-| Quickstart — Rust | [quickstart-rs/](quickstart-rs/) | open → ingest → scoped `recall()` (one-liner + typed DSL) | Postgres; `cargo add lunaris` |
+| Quickstart — Rust | [quickstart-rs/](quickstart-rs/) | open → ingest → scoped `recall()` (one-liner + typed DSL) | Postgres; `cargo add lunaris-memory --rename lunaris` |
 | Quickstart — Python | [quickstart-py/](quickstart-py/) | ingest contract (recall is v0.3 for the binding) | Postgres; `pip install lunaris` |
 | Quickstart — TypeScript | [quickstart-ts/](quickstart-ts/) | ingest contract (recall is v0.3 for the binding) | Postgres; `npm i lunaris` |
 | Multi-agent / multi-session — Rust | [multi-agent-rs/](multi-agent-rs/) | hard scope isolation between two agents, multiple sessions inside one agent (via the `source` field), resume across a process boundary — all asserted against a live Moon backend | Moon (`--shards 1`); `cargo run` |
