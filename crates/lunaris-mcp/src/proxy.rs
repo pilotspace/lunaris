@@ -72,8 +72,16 @@ impl MemoryProxy {
     pub(crate) fn new() -> Self {
         // contextd speaks a unix socket; on non-unix targets the socket leg
         // does not exist, so the proxy is Direct-only from construction
-        // (no futile strikes, no breaker latency).
-        let socket_path = if cfg!(unix) { resolve_socket_path() } else { None };
+        // (no futile strikes, no breaker latency). The platform question is
+        // asked exactly once, here, via the SocketSupport seam.
+        let socket_path = resolve_socket_support(
+            cfg!(unix),
+            // Force Direct-only (tests / air-gapped operators / no daemon wanted).
+            std::env::var_os("LUNARIS_MCP_DISABLE_CONTEXTD").is_some(),
+            std::env::var_os(CONTEXTD_SOCKET_ENV).map(PathBuf::from),
+            dirs::home_dir(),
+        )
+        .into_socket_path();
         // Socket-first ONLY when the socket file already exists — otherwise skip
         // futile connect attempts on hosts where contextd is not deployed. A
         // daemon that dies mid-session is still caught by the breaker below.
@@ -254,17 +262,75 @@ impl Default for MemoryProxy {
     }
 }
 
-/// Resolve the contextd socket path, honoring the operator escape hatch.
-fn resolve_socket_path() -> Option<PathBuf> {
-    // Force Direct-only (tests / air-gapped operators / no daemon wanted).
-    if std::env::var_os("LUNARIS_MCP_DISABLE_CONTEXTD").is_some() {
-        return None;
+/// Whether this build can speak to contextd at all — the ONE place the
+/// platform question is asked, so every call site stays cfg-free.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SocketSupport {
+    /// Socket leg enabled at this path.
+    Enabled(PathBuf),
+    /// No socket leg, and nothing to say about it: operator opt-out, or no
+    /// path could be derived (no `$HOME`), or a non-unix host that never
+    /// asked for contextd.
+    Disabled,
+    /// The operator explicitly configured a socket, but this target has no
+    /// unix domain sockets (Windows). Reported once — see
+    /// [`SocketSupport::into_socket_path`] — then Direct-only.
+    UnsupportedPlatform { configured: PathBuf },
+}
+
+impl SocketSupport {
+    /// Collapse to "which socket path, if any", warning once on the
+    /// unsupported-platform outcome. The warn lives here rather than at the
+    /// call site so the diagnostic cannot be dropped by a future caller: a
+    /// silent downgrade to Direct-only looks identical to a healthy
+    /// Direct-only proxy, while costing a second resident model copy per
+    /// session (the daemon is the intended single inference host).
+    fn into_socket_path(self) -> Option<PathBuf> {
+        match self {
+            Self::Enabled(path) => Some(path),
+            Self::Disabled => None,
+            Self::UnsupportedPlatform { configured } => {
+                tracing::warn!(
+                    socket = %configured.display(),
+                    env = CONTEXTD_SOCKET_ENV,
+                    "contextd socket configured, but this platform has no unix domain \
+                     sockets; serving every memory op direct (in-process engine)"
+                );
+                None
+            }
+        }
     }
-    if let Some(p) = std::env::var_os(CONTEXTD_SOCKET_ENV) {
-        return Some(PathBuf::from(p));
+}
+
+/// Resolve the contextd socket for this platform, honoring the operator
+/// escape hatch.
+///
+/// Pure by construction: platform, env and `$HOME` all arrive as parameters
+/// so the non-unix branch is executable on the unix hosts where the tests
+/// actually run. A `#[cfg(not(unix))]` twin would be dead text everywhere
+/// except a Windows runner — and the msvc target cannot be cross-checked
+/// from macOS/Linux (the `ring` / `llama-cpp-sys-2` / `aws-lc-sys` build
+/// scripts need Windows C/C++ headers).
+fn resolve_socket_support(
+    unix_sockets: bool,
+    disabled: bool,
+    explicit: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> SocketSupport {
+    // The opt-out wins on every platform, and is never worth a warning.
+    if disabled {
+        return SocketSupport::Disabled;
     }
-    // Mirrors lunaris-contextd's default (~/.lunaris/codex-contextd.sock).
-    dirs::home_dir().map(|home| home.join(".lunaris").join("codex-contextd.sock"))
+    match (explicit, unix_sockets) {
+        (Some(configured), false) => SocketSupport::UnsupportedPlatform { configured },
+        (Some(path), true) => SocketSupport::Enabled(path),
+        // Nothing configured on a socket-less target: quietly Direct-only.
+        (None, false) => SocketSupport::Disabled,
+        // Mirrors lunaris-contextd's default (~/.lunaris/codex-contextd.sock).
+        (None, true) => home.map_or(SocketSupport::Disabled, |home| {
+            SocketSupport::Enabled(home.join(".lunaris").join("codex-contextd.sock"))
+        }),
+    }
 }
 
 /// Map a daemon-supplied error `code` back to an rmcp wire error. Caller faults
@@ -635,8 +701,7 @@ mod tests {
     /// cfg-free call sites in `dispatch`.
     #[test]
     fn unsupported_platform_yields_no_socket_path() {
-        let support =
-            resolve_socket_support(false, false, Some(PathBuf::from(SOCK_ENV)), home());
+        let support = resolve_socket_support(false, false, Some(PathBuf::from(SOCK_ENV)), home());
         assert!(
             support.into_socket_path().is_none(),
             "a non-unix host must never hand a socket path to the proxy"
