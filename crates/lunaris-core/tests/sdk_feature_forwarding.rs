@@ -103,27 +103,15 @@ fn ts_sdk_gpu_features_forward_to_umbrella() {
 /// measures BM25 + insertion-order tie-breaks while still printing a J-score.
 #[test]
 fn bench_embed_remote_forwards_to_umbrella() {
-    assert_forwards(
-        "crates/lunaris-bench/Cargo.toml",
-        "embed-remote",
-        "lunaris/embed-remote",
-    );
+    assert_forwards("crates/lunaris-bench/Cargo.toml", "embed-remote", "lunaris/embed-remote");
 }
 
 /// The in-process lane of the same harness. Already green — pinned so a
 /// future edit cannot quietly drop it (727bc65 was exactly this regression).
 #[test]
 fn bench_llamacpp_and_gpu_features_forward_to_umbrella() {
-    assert_forwards(
-        "crates/lunaris-bench/Cargo.toml",
-        "llamacpp",
-        "lunaris/llamacpp",
-    );
+    assert_forwards("crates/lunaris-bench/Cargo.toml", "llamacpp", "lunaris/llamacpp");
     for gpu in ["metal", "cuda", "vulkan"] {
-        assert_forwards(
-            "crates/lunaris-bench/Cargo.toml",
-            gpu,
-            &format!("lunaris/{gpu}"),
-        );
+        assert_forwards("crates/lunaris-bench/Cargo.toml", gpu, &format!("lunaris/{gpu}"));
     }
 }
