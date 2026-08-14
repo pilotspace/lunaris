@@ -13,6 +13,13 @@
 //! - `bi_temporal_native = false` → [`read_as_of::snapshot`] runs with
 //!   relaxed expectations (the backend may emulate temporal reads).
 //!
+//! [`read_as_of::historical_pin_is_explicit`] is deliberately NOT gated: it
+//! branches on the backend's own
+//! [`StoragePort::supports_historical_kv_reads`](lunaris_core::storage::StoragePort::supports_historical_kv_reads)
+//! declaration and asserts the matching behaviour in both directions, so
+//! "this backend can't do as-of reads" can never be expressed as a skip
+//! (0.6.2 task 9).
+//!
 //! [`as_of_parity::run`] is dual-backend (it takes BOTH a Moon and a
 //! Postgres handle) and is NOT part of the per-backend run — invoke it
 //! from the dedicated `tests/run_as_of_parity.rs` thin entry instead.
@@ -47,6 +54,9 @@ pub async fn run_full_storage_suite(storage: Arc<dyn StoragePort>) -> anyhow::Re
     }
     scan_range::prefix(&storage).await?;
     read_as_of::snapshot(&storage).await?;
+    // 0.6.2 task 9 — NOT capability-gated on purpose: a backend that cannot
+    // answer as-of reads must still prove it refuses them explicitly.
+    read_as_of::historical_pin_is_explicit(&storage).await?;
     if storage.capabilities().queue_native {
         queue::publish_subscribe_round_trip(&storage).await?;
     } else {

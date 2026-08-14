@@ -39,6 +39,10 @@ async fn embedded_storage_kv_conformance() -> anyhow::Result<()> {
     atomic_write::lsn_monotonic(&storage).await?;
     scan_range::prefix(&storage).await?;
     read_as_of::snapshot(&storage).await?;
+    // 0.6.2 task 9 — always-on, no external service: the embedded backend
+    // declares `supports_historical_kv_reads() == true`, so this asserts a
+    // 1970 pin does NOT see a row written today.
+    read_as_of::historical_pin_is_explicit(&storage).await?;
     Ok(())
 }
 
