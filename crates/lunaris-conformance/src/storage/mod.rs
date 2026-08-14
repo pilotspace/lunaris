@@ -1,7 +1,8 @@
 //! Plan 05-02 — `storage` suite (D-17).
 //!
-//! Eight test functions, one per `StoragePort` trait method (Phase 1
-//! STORE-01). Run them all via [`run_full_storage_suite`].
+//! Nine test functions covering the `StoragePort` trait surface (Phase 1
+//! STORE-01, plus the 0.6.2 historical-read contract). Run them all via
+//! [`run_full_storage_suite`].
 //!
 //! Tests gate themselves on `storage.capabilities()` per CONTEXT.md D-12 +
 //! D-17:
@@ -15,7 +16,7 @@
 //!
 //! [`read_as_of::historical_pin_is_explicit`] is deliberately NOT gated: it
 //! branches on the backend's own
-//! [`StoragePort::supports_historical_kv_reads`](lunaris_core::storage::StoragePort::supports_historical_kv_reads)
+//! [`StoragePort::supports_historical_kv_reads`]
 //! declaration and asserts the matching behaviour in both directions, so
 //! "this backend can't do as-of reads" can never be expressed as a skip
 //! (0.6.2 task 9).
