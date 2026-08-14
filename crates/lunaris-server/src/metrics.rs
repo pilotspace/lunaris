@@ -45,8 +45,9 @@
 use std::sync::OnceLock;
 
 use prometheus::{
-    GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, register_gauge_vec,
-    register_histogram_vec, register_int_counter_vec, register_int_gauge, register_int_gauge_vec,
+    GaugeVec, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, register_gauge_vec,
+    register_histogram_vec, register_int_counter, register_int_counter_vec, register_int_gauge,
+    register_int_gauge_vec,
 };
 
 /// Container for the nine declared metrics. Lazily constructed via [`metrics`]
@@ -76,6 +77,12 @@ pub struct Metrics {
     /// scope) so it costs one series. `shutdown::serve_with_deadline` reads it
     /// when the grace window expires to report `aborted_in_flight`.
     pub http_in_flight: IntGauge,
+    /// 0.6.2 P0-2 — requests rejected by the concurrency limit
+    /// (`503` + `Retry-After`). A non-zero rate here is the load-shed signal:
+    /// the server is protecting itself instead of queueing into an OOM.
+    pub http_shed_total: IntCounter,
+    /// 0.6.2 P0-2 — requests cut off by `--http-timeout-secs` (`408`).
+    pub http_timeout_total: IntCounter,
 }
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
@@ -152,6 +159,16 @@ pub fn metrics() -> &'static Metrics {
              decremented on response OR on drop, so a cancelled request cannot leak)"
         )
         .expect("register lunaris_http_in_flight"),
+        http_shed_total: register_int_counter!(
+            "lunaris_http_shed_total",
+            "Requests rejected by the --http-concurrency limit (503 + Retry-After)"
+        )
+        .expect("register lunaris_http_shed_total"),
+        http_timeout_total: register_int_counter!(
+            "lunaris_http_timeout_total",
+            "Requests cut off by the --http-timeout-secs budget (408)"
+        )
+        .expect("register lunaris_http_timeout_total"),
     })
 }
 

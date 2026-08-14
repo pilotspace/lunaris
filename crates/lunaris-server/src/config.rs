@@ -96,6 +96,20 @@ pub struct Config {
     /// Disable /metrics endpoint (Plan 05-05 will gate metrics layer on this).
     #[arg(long)]
     pub metrics_disabled: bool,
+    /// 0.6.2 P0-2 — per-request wall-clock budget in seconds. A request that
+    /// exceeds it is cut off with `408 Request Timeout`. `0` disables the
+    /// timeout entirely (for operators who bound requests at their proxy).
+    ///
+    /// The budget covers producing the RESPONSE, not streaming its body, so an
+    /// SSE `/v1/recall` stream is not severed mid-flight.
+    #[arg(long, default_value_t = 30, env = "LUNARIS_HTTP_TIMEOUT_SECS")]
+    pub http_timeout_secs: u64,
+    /// 0.6.2 P0-2 — maximum number of requests being served concurrently.
+    /// Arrivals beyond the cap are SHED immediately (`503` + `Retry-After`)
+    /// rather than queued, so a slow backend cannot convert into unbounded
+    /// in-flight work. `0` disables the limit.
+    #[arg(long, default_value_t = 256, env = "LUNARIS_HTTP_CONCURRENCY")]
+    pub http_concurrency: usize,
 }
 
 #[cfg(test)]
@@ -119,6 +133,8 @@ mod tests {
         assert_eq!(cfg.shutdown_grace_secs, 30);
         assert!(!cfg.metrics_disabled);
         assert_eq!(cfg.cors_origins, "*");
+        assert_eq!(cfg.http_timeout_secs, 30, "0.6.2 P0-2 default request budget");
+        assert_eq!(cfg.http_concurrency, 256, "0.6.2 P0-2 default concurrency cap");
     }
 
     #[test]
@@ -185,6 +201,10 @@ mod tests {
             "https://a.com,https://b.com",
             "--shutdown-grace-secs",
             "10",
+            "--http-timeout-secs",
+            "5",
+            "--http-concurrency",
+            "32",
             "--metrics-disabled",
         ])
         .expect("parse");
@@ -193,6 +213,8 @@ mod tests {
         assert_eq!(cfg.rate_burst, 240);
         assert_eq!(cfg.cors_origins, "https://a.com,https://b.com");
         assert_eq!(cfg.shutdown_grace_secs, 10);
+        assert_eq!(cfg.http_timeout_secs, 5);
+        assert_eq!(cfg.http_concurrency, 32);
         assert!(cfg.metrics_disabled);
     }
 }
