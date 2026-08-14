@@ -40,7 +40,11 @@ claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
 | macOS    | arm64 (M-series) | `aarch64-apple-darwin` |
 | Windows  | x64         | `x86_64-pc-windows-msvc` |
 
-Unsupported platforms: install the Rust toolchain and run `cargo install lunaris-mcp`.
+Unsupported platforms: build from source with
+`cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp`
+(needs Rust 1.94, `cmake`, and a C++ compiler). `lunaris-mcp` is not on
+crates.io — it depends on a `publish = false` crate — so plain
+`cargo install lunaris-mcp` does not work.
 See [docs/integration/claude-code.md](https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md).
 
 ## Air-gap / Offline Environments

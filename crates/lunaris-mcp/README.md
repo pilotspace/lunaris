@@ -13,9 +13,27 @@ seven durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 
 ## Install
 
+`lunaris-mcp` is **not published to crates.io**: it links
+`lunaris-memory-service`, which carries a `vendor/` path dependency and is
+therefore `publish = false`, and crates.io rejects a crate whose
+dependencies are unpublished. Use one of the three real channels instead.
+
 ```sh
-cargo install lunaris-mcp
+# 1. npx — prebuilt binary, no Rust toolchain
+npx -y @pilotspace/lunaris-mcp
+
+# 2. uvx — same binary, wrapped in a Python wheel
+uvx lunaris-mcp
+
+# 3. from source (needs Rust 1.94, cmake, and a C++ compiler for llama.cpp)
+cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp
 ```
+
+From 0.6.1 onward, prebuilt `lunaris-mcp-<target>.tar.gz` tarballs are
+also attached to each
+[GitHub release](https://github.com/pilotspace/lunaris/releases) —
+extract one and put the binary on your `PATH` if you would rather not run
+a package manager at all.
 
 ## Quick start
 

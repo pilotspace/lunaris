@@ -27,7 +27,11 @@ def main() -> None:  # pragma: no cover
         print(
             f"[lunaris-mcp] Binary not found at {binary}\n"
             "The wheel may not have been built with the binary included.\n"
-            "Fallback: install the Rust toolchain and run: cargo install lunaris-mcp\n"
+            # NOT `cargo install lunaris-mcp`: the crate is publish = false
+            # (it links lunaris-memory-service, which has a vendor/ path dep),
+            # so it is not on crates.io. --git builds the same source.
+            "Fallback: build from source with\n"
+            "  cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp\n"
             "See: https://github.com/pilotspace/lunaris/blob/main/docs/integration/claude-code.md",
             file=sys.stderr,
         )

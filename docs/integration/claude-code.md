@@ -183,7 +183,8 @@ Supported platforms: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `
 
 **Air-gap / offline environments (npm path):** Set `LUNARIS_MCP_BIN_PATH=/path/to/lunaris-mcp` to bypass
 the postinstall download and point directly at a pre-staged binary. For the pip/uvx path, use
-`cargo install lunaris-mcp` to build from source instead.
+`cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp` to build from source
+instead (the crate is not on crates.io — see Installation below).
 
 ---
 
@@ -206,11 +207,23 @@ Postgres) and returns `{ status: "unsupported_backend" }` on SQLite.
 
 ## Installation
 
+`lunaris-mcp` is **not published to crates.io**: it links
+`lunaris-memory-service`, which carries a `vendor/` path dependency and is
+therefore `publish = false`, and crates.io rejects a crate whose dependencies
+are unpublished. Plain `cargo install lunaris-mcp` will fail. Build from the
+git source instead (needs Rust 1.94, `cmake`, and a C++ compiler for
+llama.cpp):
+
 ```sh
-cargo install lunaris-mcp
+cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp
 ```
 
-The binary lands at `~/.cargo/bin/lunaris-mcp`. Verify:
+Prefer no Rust toolchain at all? Use `npx -y @pilotspace/lunaris-mcp` or
+`uvx lunaris-mcp` (above), or extract the prebuilt
+`lunaris-mcp-<target>.tar.gz` from a
+[GitHub release](https://github.com/pilotspace/lunaris/releases).
+
+The `cargo install` binary lands at `~/.cargo/bin/lunaris-mcp`. Verify:
 
 ```sh
 lunaris-mcp --help

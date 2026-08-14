@@ -22,8 +22,11 @@ No Rust toolchain is required for the `npx` / `uvx` paths — both download a
 prebuilt binary for your platform on first run.
 
 ```sh
-# Rust (builds from source → ~/.cargo/bin/lunaris-mcp)
-cargo install lunaris-mcp
+# Rust (builds from source → ~/.cargo/bin/lunaris-mcp).
+# NOT `cargo install lunaris-mcp` — the crate is publish = false (it links
+# lunaris-memory-service, which has a vendor/ path dep) so it is not on
+# crates.io. Needs cmake + a C++ compiler for llama.cpp.
+cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp
 
 # Node (no Rust toolchain)
 npx -y @pilotspace/lunaris-mcp --help
