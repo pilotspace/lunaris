@@ -27,10 +27,10 @@
 //! `FT.CREATE`, and the `MQ` capability probe. `read_as_of` is then driven
 //! through the real `StoragePort` trait object.
 //!
-//! * TODAY  → the historical read reaches `HMGET`, the fake answers two
-//!            nils, the adapter returns `Ok(None)` → RED.
-//! * FIXED  → the guard fires before any RESP traffic →
-//!            `Err(StorageError::NotSupported(_))` → GREEN.
+//! * TODAY → the historical read reaches `HMGET`, the fake answers two
+//!   nils, the adapter returns `Ok(None)` → RED.
+//! * FIXED → the guard fires before any RESP traffic →
+//!   `Err(StorageError::NotSupported(_))` → GREEN.
 //!
 //! The `hmget_calls` counter makes the "before any RESP traffic" half of
 //! the contract observable: a rejected historical read must cost zero Moon
@@ -63,8 +63,7 @@ type HmgetCounter = Arc<AtomicUsize>;
 fn parse_commands(buf: &[u8]) -> (Vec<Vec<Vec<u8>>>, usize) {
     let mut out = Vec::new();
     let mut pos = 0usize;
-    loop {
-        let Some((argc, mut p)) = read_prefixed_len(buf, pos, b'*') else { break };
+    while let Some((argc, mut p)) = read_prefixed_len(buf, pos, b'*') {
         let mut args: Vec<Vec<u8>> = Vec::with_capacity(argc);
         let mut complete = true;
         for _ in 0..argc {
