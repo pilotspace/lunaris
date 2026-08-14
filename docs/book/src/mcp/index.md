@@ -54,7 +54,7 @@ plus four working-memory (scratchpad) tools:
 |------|-------|---------|
 | `memory.ingest` | `source`, `content`, optional `t_ref`, `metadata` | `{ lsn }` |
 | `memory.recall` | `query`, optional `k`, `filters`, `as_of` | `{ hits[] }` |
-| `memory.forget` | `target.source_prefix` **XOR** `target.episode_id` | `{ removed }` |
+| `memory.forget` | `target.source_prefix` **XOR** `target.episode_id`, optional `dry_run` (**defaults to `true`**) | `{ status, dry_run, matched, removed }` |
 | `memory.list_scopes` | _(none)_ | `{ scopes[] }` |
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
@@ -79,6 +79,13 @@ are key-value put/get, `scratchpad_grep` lists entries by key-prefix, and
 notes by activation. **`scratchpad_consolidate` needs a native-queue backend
 (Moon or Postgres)** — on SQLite it returns `{ status: "unsupported_backend" }`
 (see [Storage backends](#storage-backends)).
+
+`memory.forget` **previews by default**: with `dry_run` omitted it scans,
+returns `{ status: "preview", matched: N, removed: 0 }`, and writes nothing.
+Deleting takes an explicit `"dry_run": false`. This inverts the HTTP
+`POST /v1/forget` default (`dry_run: false` there, for API compatibility) on
+purpose — the MCP caller is a language model, so the irreversible branch must
+be the one it has to ask for.
 
 The wire DTOs are identical across MCP clients, and every request DTO carries
 `#[serde(deny_unknown_fields)]` — no wire field can override the bound scope.

@@ -356,12 +356,32 @@ fast. Set `LUNARIS_MCP_SKIP_STAGE=1` if models are pre-staged.
 Delete memories. Exactly one of `target.source_prefix` or `target.episode_id`
 must be set.
 
+**Previews by default.** Omitting `dry_run` scans and reports; it deletes
+nothing. A real delete requires an explicit `"dry_run": false`. (The HTTP
+`POST /v1/forget` surface is the other way round — there `dry_run` defaults to
+`false` — because its callers are programs, not language models.)
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `target.source_prefix` | string | Delete all episodes whose source starts with this prefix (must be non-empty) |
 | `target.episode_id` | string | Delete the single episode identified by this ULID |
+| `dry_run` | bool | **Defaults to `true`.** `true` = preview only; `false` = commit the delete |
 
-Returns `{ "removed": <u64> }`.
+Returns
+`{ "status": "preview" | "deleted", "dry_run": <bool>, "matched": <u64>, "removed": <u64> }`.
+
+`matched` is what a committing call would remove; `removed` is what this call
+actually removed (always `0` on a preview). The two-step flow:
+
+```jsonc
+// 1. preview — nothing is deleted
+{ "target": { "source_prefix": "edit:" } }
+// -> { "status": "preview", "dry_run": true, "matched": 42, "removed": 0 }
+
+// 2. commit, once the count looks right
+{ "target": { "source_prefix": "edit:" }, "dry_run": false }
+// -> { "status": "deleted", "dry_run": false, "matched": 42, "removed": 42 }
+```
 
 ---
 
@@ -626,7 +646,9 @@ With Wave A connected:
 - **Scope isolation (RFC 0001)** — per-repo memory with zero cross-project
   bleed. The scope is bound at startup; no wire field can override it.
 - **`memory.forget`** — targeted deletion by source prefix or episode ID,
-  with a non-empty-prefix guard to prevent accidental total-wipe.
+  with a non-empty-prefix guard to prevent accidental total-wipe and a
+  preview-by-default `dry_run` (an agent that forgets to think about deletion
+  gets a match count, not a data loss).
 - **Sub-25 ms recall** — achievable on Moon (HNSW) over millions of
   bi-temporal facts and on Postgres (pgvector). SQLite brute-force cosine is
   fast enough for ≤10k vectors per scope (single-developer / single-project).

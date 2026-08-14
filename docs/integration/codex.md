@@ -574,7 +574,7 @@ Summary:
 |------|-------|---------|
 | `memory.ingest` | `source`, `content`, optional `t_ref`, `metadata` | `{ lsn }` |
 | `memory.recall` | `query`, optional `k`, `filters`, `as_of` | `{ hits[] }` |
-| `memory.forget` | `target.source_prefix` XOR `target.episode_id` | `{ removed }` |
+| `memory.forget` | `target.source_prefix` XOR `target.episode_id`, optional `dry_run` (**defaults to `true` = preview**) | `{ status, dry_run, matched, removed }` |
 | `memory.list_scopes` | _(none)_ | `{ scopes[] }` |
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |

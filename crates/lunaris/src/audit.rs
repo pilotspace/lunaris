@@ -88,6 +88,7 @@ mod tests {
         let r1 = ForgetReceipt {
             target: ForgetTarget::Id(id),
             indices_affected: vec![IndexKind::Kv, IndexKind::Vector, IndexKind::Graph],
+            matched: 7,
             rows_written: 3,
             rows_deleted: 4,
             audit_lsn: lsn,

@@ -90,6 +90,19 @@ pub enum IndexKind {
 pub struct ForgetReceipt {
     pub target: ForgetTarget,
     pub indices_affected: Vec<IndexKind>,
+    /// Primitives the target matched — what a committing call WOULD remove.
+    ///
+    /// Populated on EVERY path, including `dry_run`, where `rows_written` and
+    /// `rows_deleted` are both zero by construction: a preview whose only
+    /// counters are zeroes tells the caller nothing about the blast radius it
+    /// is being asked to confirm (0.6.2 Task F — the MCP `memory.forget`
+    /// preview surfaces this as `matched`).
+    ///
+    /// `#[serde(default)]` keeps receipts minted by pre-0.6.2 servers
+    /// deserializable — `POST /v1/forget` carries a serialized prior receipt
+    /// in `confirmation_token`, so an old client's token must still parse.
+    #[serde(default)]
+    pub matched: u64,
     /// Soft-delete MVCC writes (zero for hard / dry-run).
     pub rows_written: u64,
     /// Irreversible deletes (hard-only; zero for soft / dry-run).
@@ -279,6 +292,7 @@ impl Lunaris {
                 let receipt = ForgetReceipt {
                     target: request.target.clone(),
                     indices_affected: classify_indices(&request.target),
+                    matched: matches.len() as u64,
                     rows_written: 0,
                     rows_deleted: 0,
                     audit_lsn: Lsn { wall_ms: 0, counter: 0 },
@@ -321,6 +335,7 @@ impl Lunaris {
             let receipt = ForgetReceipt {
                 target: request.target.clone(),
                 indices_affected: classify_indices(&request.target),
+                matched: matches.len() as u64,
                 rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
                 rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
@@ -600,6 +615,7 @@ pub(crate) async fn forget_scoped(
             let receipt = ForgetReceipt {
                 target: request.target.clone(),
                 indices_affected: classify_indices(&request.target),
+                matched: matches.len() as u64,
                 rows_written: 0,
                 rows_deleted: 0,
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
@@ -628,6 +644,7 @@ pub(crate) async fn forget_scoped(
         let receipt = ForgetReceipt {
             target: request.target.clone(),
             indices_affected: classify_indices(&request.target),
+            matched: matches.len() as u64,
             rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
             rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
             audit_lsn: Lsn { wall_ms: 0, counter: 0 },

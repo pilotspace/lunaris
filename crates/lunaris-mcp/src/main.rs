@@ -213,12 +213,17 @@ impl LunarisMcpServer {
 
     /// Forget memories by source prefix or episode ID.
     ///
-    /// Wave 2.C implements the full deletion path.
+    /// Wave 2.C implements the full deletion path. 0.6.2 Task F: `dry_run`
+    /// defaults to TRUE on this surface — see `lunaris_memory_service::forget`.
     #[tool(
         name = "memory.forget",
-        description = "Delete durable memory episodes by source prefix or episode ID. \
+        description = "PREVIEW BY DEFAULT — this tool does NOT delete anything unless you pass dry_run:false. \
+                       Delete durable memory episodes by source prefix or episode ID. \
+                       Omitting dry_run (or dry_run:true) returns status='preview' with 'matched' = the number of \
+                       episodes that WOULD be removed, and changes nothing. Pass dry_run:false to actually \
+                       delete — that is irreversible, so preview first and show the user the count. \
                        Use source_prefix to bulk-delete (e.g. 'edit:' removes all edit-provenance records). \
-                       Use episode_id for surgical removal of a single episode. Irreversible."
+                       Use episode_id for surgical removal of a single episode."
     )]
     async fn forget(
         &self,

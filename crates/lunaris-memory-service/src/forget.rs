@@ -10,6 +10,17 @@
 //!
 //! The `scope` argument is the **only** partition key; the wire DTO
 //! intentionally carries no `scope` or `tenant` field (CLAUDE.md DTO discipline).
+//!
+//! ## `dry_run` defaults to TRUE here (0.6.2 Task F)
+//!
+//! This surface is driven by an LLM, so an irreversible scope-wide delete may
+//! not be the default. Omitting `dry_run` (or sending `true`) previews: the
+//! engine scans, reports `matched`, writes NOTHING, and the response carries
+//! `status = "preview"`. A real delete requires an explicit `dry_run: false`.
+//!
+//! The HTTP surface (`lunaris-server`, `ForgetRequestDto`) keeps `dry_run`
+//! defaulting to `false` for API compatibility — only MCP inverts it. Do not
+//! "fix" the asymmetry; it is the ruling.
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -40,18 +51,54 @@ pub struct ForgetTarget {
     pub episode_id: Option<String>,
 }
 
+/// `dry_run` default for the MCP surface: **preview**.
+///
+/// Deliberately inverted relative to `lunaris-server`'s `ForgetRequestDto`
+/// (which defaults to `false`). See the module docs.
+fn default_dry_run() -> bool {
+    true
+}
+
 /// Input parameters for `memory.forget`.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForgetParams {
     /// What to delete.
     pub target: ForgetTarget,
+
+    /// Preview switch — **defaults to `true`**.
+    ///
+    /// `true` (or omitted): scan only. Nothing is written, `removed` is `0`,
+    /// and `matched` reports what a real call would remove.
+    /// `false`: commit the (soft) delete.
+    #[serde(default = "default_dry_run")]
+    pub dry_run: bool,
 }
 
 /// Output of a successful `memory.forget` call.
+///
+/// Flat struct by contract: rmcp 1.7 validates each tool's generated
+/// `outputSchema` at router-build time and aborts server startup when the
+/// root is not `type: "object"`. The preview/commit outcome is therefore a
+/// `status` **field**, never a `#[serde(tag = …)]` enum discriminator
+/// (CLAUDE.md MCP tool-schema invariant; guard:
+/// `crates/lunaris-mcp/tests/server_boot.rs`).
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ForgetResponse {
-    /// Number of episodes logically removed.
+    /// `"preview"` when nothing was deleted, `"deleted"` when the delete
+    /// committed. Mirrors `dry_run`; carried as a field for LLM legibility.
+    pub status: String,
+
+    /// `true` when this call was a preview (the effective `dry_run`, echoed
+    /// from the engine receipt's `preview` flag rather than the request, so
+    /// it can never disagree with what the engine actually did).
+    pub dry_run: bool,
+
+    /// Episodes the target matched — i.e. what a committing call WOULD
+    /// remove. Reported on both paths.
+    pub matched: u64,
+
+    /// Number of episodes logically removed. Always `0` on a preview.
     ///
     /// For the default soft-delete path this equals `rows_written` from the
     /// underlying `ForgetReceipt`. Hard-delete receipts (not exposed via MCP)
@@ -74,6 +121,10 @@ pub struct ForgetResponse {
 ///
 /// The scope comes exclusively from `scope` (bound at startup).
 /// Cross-scope forgets are impossible by type.
+///
+/// `params.dry_run` (default `true`) selects preview vs commit; the engine's
+/// dry-run path returns before `atomic_write`, so a preview cannot mutate
+/// storage even if a later refactor got the response mapping wrong.
 pub async fn handle(
     lunaris: &Lunaris,
     scope: &Scope,
@@ -81,17 +132,32 @@ pub async fn handle(
 ) -> Result<ForgetResponse, ServiceError> {
     let engine_target = build_target(params.target)?;
 
+    let mut request = lunaris::forget::ForgetRequest::from(engine_target);
+    request.options.dry_run = params.dry_run;
+
     let scoped = lunaris.scoped(scope.clone());
-    let receipt = scoped.forget(engine_target).await?;
+    let receipt = scoped.forget(request).await?;
 
     // Soft-delete (default) populates rows_written; hard-delete populates
     // rows_deleted. The MCP wire doesn't expose the hard flag, so in practice
     // rows_deleted is always 0 here. Sum both to be defensive.
     let removed = receipt.rows_written + receipt.rows_deleted;
+    let status = if receipt.preview { "preview" } else { "deleted" };
 
-    tracing::debug!(scope = scope.as_str(), removed = removed, "memory.forget committed",);
+    tracing::debug!(
+        scope = scope.as_str(),
+        status = status,
+        matched = receipt.matched,
+        removed = removed,
+        "memory.forget completed",
+    );
 
-    Ok(ForgetResponse { removed })
+    Ok(ForgetResponse {
+        status: status.to_string(),
+        dry_run: receipt.preview,
+        matched: receipt.matched,
+        removed,
+    })
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -162,8 +228,10 @@ mod tests {
     #[tokio::test]
     async fn no_target_fields_returns_invalid_input() {
         let (lunaris, scope) = make_engine().await;
-        let params =
-            ForgetParams { target: ForgetTarget { source_prefix: None, episode_id: None } };
+        let params = ForgetParams {
+            target: ForgetTarget { source_prefix: None, episode_id: None },
+            dry_run: false,
+        };
         let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(matches!(err, ServiceError::InvalidInput(_)), "expected InvalidInput, got {err:?}");
         // Message must be informative.
@@ -183,6 +251,7 @@ mod tests {
                 source_prefix: Some("src:notes/".to_string()),
                 episode_id: Some("01HZZZZZZZZZZZZZZZZZZZZZZZ".to_string()),
             },
+            dry_run: false,
         };
         let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
@@ -199,6 +268,7 @@ mod tests {
                 source_prefix: None,
                 episode_id: Some("not-a-ulid".to_string()),
             },
+            dry_run: false,
         };
         let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
@@ -218,6 +288,7 @@ mod tests {
         let (lunaris, scope) = make_engine().await;
         let params = ForgetParams {
             target: ForgetTarget { source_prefix: Some(String::new()), episode_id: None },
+            dry_run: false,
         };
         let err = handle(&lunaris, &scope, params).await.unwrap_err();
         assert!(
@@ -264,6 +335,7 @@ mod tests {
                 source_prefix: Some("src:notes/".to_string()),
                 episode_id: None,
             },
+            dry_run: false,
         };
         // The handler must succeed (no ServiceError). The removed count reflects
         // the shim's behaviour — we only check it is a valid u64 (not a type
@@ -287,6 +359,7 @@ mod tests {
 
         let params = ForgetParams {
             target: ForgetTarget { source_prefix: None, episode_id: Some(known_ulid.to_string()) },
+            dry_run: false,
         };
         // ForgetTarget::Id path — exercises the ULID parse → engine dispatch.
         let resp =
@@ -315,16 +388,34 @@ mod tests {
         (lunaris, scope)
     }
 
-    /// `true` iff the episode row is present AND its system interval is still
-    /// open (i.e. no soft-delete tombstone was written).
-    async fn episode_is_live(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> bool {
-        use lunaris_core::StoragePort;
+    /// Is the episode still live? Returns `(live, evidence)` — the evidence
+    /// string goes into the assertion message so a failure shows the stored
+    /// state, not just `false`.
+    ///
+    /// A forget soft-delete stamps `bt.sys[1]` INSIDE the payload
+    /// (`build_soft_delete_op`) and commits it as a `KvPut`. Moon and Postgres
+    /// derive the row's `bt` from those same bytes, but the embedded (SQLite)
+    /// backend opens a fresh interval on every `KvPut` and keeps `bt` in its
+    /// own column — so on `memory://` the row-level `bt` stays open and the
+    /// tombstone is visible only in the payload. That payload gate is exactly
+    /// what `lunaris_retrieve::hydrate` reads to hide forgotten episodes.
+    /// Check both, so this probe is honest on every backend.
+    async fn episode_probe(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> (bool, String) {
         let key = lunaris_core::keyspace::episode_key(scope, id);
         let now = lunaris.clock().tick();
         match lunaris.storage().read_as_of(scope, &key, now).await.expect("read_as_of must succeed")
         {
-            Some(row) => row.bt.sys.1.is_none(),
-            None => false,
+            None => (false, "row absent".to_string()),
+            Some(row) => {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&row.value).unwrap_or(serde_json::Value::Null);
+                let payload_sys_to =
+                    payload.pointer("/bt/sys/1").cloned().unwrap_or(serde_json::Value::Null);
+                let live = row.bt.sys.1.is_none() && payload_sys_to.is_null();
+                let evidence =
+                    format!("row.bt.sys.1={:?}, payload.bt.sys[1]={payload_sys_to}", row.bt.sys.1);
+                (live, evidence)
+            }
         }
     }
 
@@ -365,10 +456,8 @@ mod tests {
     async fn default_forget_previews_and_deletes_nothing() {
         let (lunaris, scope) = make_scoped_engine().await;
         let id = seed_episode(&lunaris, &scope, "src:notes/a").await;
-        assert!(
-            episode_is_live(&lunaris, &scope, id).await,
-            "precondition: the episode must be live right after ingest"
-        );
+        let (live, why) = episode_probe(&lunaris, &scope, id).await;
+        assert!(live, "precondition: the episode must be live right after ingest ({why})");
 
         // Exactly what an LLM sends when it does not think about dry_run.
         let params: ForgetParams =
@@ -385,9 +474,10 @@ mod tests {
             serde_json::json!(1),
             "a preview must report what it WOULD delete: {v}"
         );
+        let (live, why) = episode_probe(&lunaris, &scope, id).await;
         assert!(
-            episode_is_live(&lunaris, &scope, id).await,
-            "default memory.forget MUST NOT delete — the episode was destroyed by a preview call"
+            live,
+            "default memory.forget MUST NOT delete — the episode was destroyed by a preview call ({why})"
         );
     }
 
@@ -404,12 +494,14 @@ mod tests {
 
         assert_eq!(v["dry_run"], serde_json::json!(false), "committed call is not a preview: {v}");
         assert_eq!(v["status"], serde_json::json!("deleted"), "flat status discriminator: {v}");
-        assert_eq!(v["matched"], serde_json::json!(1), "match count is reported on commit too: {v}");
-        assert_eq!(v["removed"], serde_json::json!(1), "the episode must actually be removed: {v}");
-        assert!(
-            !episode_is_live(&lunaris, &scope, id).await,
-            "explicit dry_run:false MUST delete — the episode survived"
+        assert_eq!(
+            v["matched"],
+            serde_json::json!(1),
+            "match count is reported on commit too: {v}"
         );
+        assert_eq!(v["removed"], serde_json::json!(1), "the episode must actually be removed: {v}");
+        let (live, why) = episode_probe(&lunaris, &scope, id).await;
+        assert!(!live, "explicit dry_run:false MUST delete — the episode survived ({why})");
     }
 
     #[tokio::test]
@@ -426,9 +518,7 @@ mod tests {
         assert_eq!(v["dry_run"], serde_json::json!(true), "id target previews by default too: {v}");
         assert_eq!(v["matched"], serde_json::json!(1), "the id target matched one episode: {v}");
         assert_eq!(v["removed"], serde_json::json!(0), "preview removes nothing: {v}");
-        assert!(
-            episode_is_live(&lunaris, &scope, id).await,
-            "episode_id preview MUST NOT delete the episode"
-        );
+        let (live, why) = episode_probe(&lunaris, &scope, id).await;
+        assert!(live, "episode_id preview MUST NOT delete the episode ({why})");
     }
 }

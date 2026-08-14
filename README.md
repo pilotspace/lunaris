@@ -110,7 +110,9 @@ memory deliberately:
   promote the durable ones with `memory.scratchpad_consolidate` (needs a
   Moon/Postgres backend).
 - Memory is partitioned by scope — never mix scopes; list with
-  `memory.list_scopes`. Use `memory.forget` when asked to delete.
+  `memory.list_scopes`. Use `memory.forget` when asked to delete — it
+  previews by default; show the match count, then re-issue with
+  `dry_run: false` to actually delete.
 - Check backend health with `memory.status` if recall returns nothing.
 ```
 
