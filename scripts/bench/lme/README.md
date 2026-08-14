@@ -87,7 +87,7 @@ as wrong answers is how a 20-question provider outage once looked like a
 | `python3` | 3.11+, stdlib only (`tally.py`) |
 | `perl` | preinstalled on macOS/Linux; provides the `alarm(2)` watchdog because neither `timeout` nor `gtimeout` exists on the reference box |
 | Ollama | serving the embedding model, default `http://127.0.0.1:11434` |
-| Reranker GGUF | `bge-reranker-v2-m3.Q5_K_M.gguf`; `scripts/bench/../stage-models` or `LUNARIS_RERANKER_GGUF` |
+| Reranker GGUF | `bge-reranker-v2-m3.Q5_K_M.gguf` under `~/.lunaris/models/`; stage with `cargo run -p lunaris-bench --bin stage-models`, or point `LUNARIS_RERANKER_GGUF` at your own copy |
 | MiniMax API key | generation + judging + graph-arm extraction |
 | LongMemEval-S dataset | downloaded on first use into `LUNARIS_EVAL_CACHE_DIR`; **not committed** (it is large and externally licensed) |
 
