@@ -1,9 +1,8 @@
 //! Plan 05-02 D-17 — `read_as_of` conformance.
 //!
-//! Asserts the basic temporal-read contract: a fresh `read_as_of` at
-//! `Hlc::ZERO` (before any write) returns `None`; a `read_as_of` after a
-//! commit at a generous "now" returns `Some(Row)` with the committed
-//! payload.
+//! Asserts the basic temporal-read contract: a `read_as_of` at "now"
+//! before any write returns `None`; a `read_as_of` after a commit at a
+//! generous "now" returns `Some(Row)` with the committed payload.
 //!
 //! ## Two different questions (0.6.2 task 9)
 //!
@@ -65,7 +64,7 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     let pre = storage.read_as_of(&lunaris_core::Scope::dev(), &key, now_pin()).await?;
     anyhow::ensure!(
         pre.is_none(),
-        "read_as_of::snapshot: expected None at Hlc::ZERO before any write, got {:?}",
+        "read_as_of::snapshot: expected None at 'now' before any write, got {:?}",
         pre,
     );
 
