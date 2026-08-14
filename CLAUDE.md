@@ -114,10 +114,19 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 
 ### Invariants worth grep-pinning
 
-- **INGEST-04 — one `atomic_write` per ingest.** `grep -c 'atomic_write'
-  crates/lunaris-ingest/src/pipeline.rs` must return exactly one real call
-  site (line 116). Any new ingest fan-out MUST extend the single
-  `WriteOp` vector, not introduce a second `atomic_write`.
+- **INGEST-04 — one `atomic_write` per ingest path.** The gate is ci.yml's
+  `ingest_04_single_atomic_write` step, which strips line comments before
+  counting:
+  `grep -v '^\s*//' crates/lunaris-ingest/src/pipeline.rs | grep -c 'storage\.atomic_write'`
+  must return exactly `1`. That call site is `pipeline.rs:438`, pinned by
+  `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call`.
+  A bare `grep -c 'atomic_write'` is NOT the invariant — it returns 10 because
+  it counts doc comments. Three ingest paths each carry exactly one write:
+  `lunaris-ingest/src/pipeline.rs:438`, `lunaris/src/ingest.rs:624` (graph-ON
+  fan-out), `lunaris/src/structured_ingest.rs:535` (agent-supplied graph) — so
+  the rule is one write PER PATH, not one workspace-wide. Any new ingest
+  fan-out MUST extend that path's single `WriteOp` vector, never add a second
+  `atomic_write`.
 - **Lock-across-await — never.** Snapshot under `read()`/`write()`, drop the
   guard before the next `.await`. The v0.2 review confirmed four hot files
   (`consolidate/supervisor.rs`, `verify/supervisor.rs`,
