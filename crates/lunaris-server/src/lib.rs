@@ -261,11 +261,37 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
         // with network ACL or reverse-proxy auth in production — documented
         // in spec markdown, see Plan 05-05 Task 3).
         .route("/metrics", get(routes::metrics::metrics_handler))
-        // 0.6.2 P0-1 — in-flight accounting for EVERY route (probes included),
-        // inside CORS so a preflight rejection is not counted as work.
-        // `shutdown::serve_with_deadline` reports this gauge as
-        // `aborted_in_flight` when the drain deadline expires.
+        // ── 0.6.2 P0-1 + P0-2 resilience stack ───────────────────────────
+        //
+        // `Router::layer` wraps the OUTSIDE of what is already there, so the
+        // LAST call runs FIRST on the request. Reading the calls below bottom
+        // to top gives the request path:
+        //
+        //   request → CORS → load-shed(concurrency) → in-flight → timeout
+        //           → per-route auth/tracing/rate-limit → handler
+        //
+        // Why this order (see `middleware::resilience` docs for the full
+        // argument):
+        //   * shed OUTSIDE the limit — the fused try-acquire refuses an
+        //     over-cap request immediately instead of parking it; a queue in
+        //     front of a slow backend is the unbounded-memory failure we are
+        //     removing.
+        //   * timeout INSIDE the limit — a permit is then held for at most one
+        //     request budget, so the worst-case backlog is
+        //     `concurrency × timeout`, not infinity. Outside the limit the
+        //     budget would be spent waiting for a permit.
+        //   * in-flight accounting BETWEEN them — the gauge (which the bounded
+        //     shutdown drain reports as `aborted_in_flight`) counts requests
+        //     actually being served; a shed request never becomes in-flight.
+        //   * CORS outermost — a preflight is answered without consuming a
+        //     concurrency permit.
+        .layer(axum::middleware::from_fn(middleware::resilience::timeout_middleware(
+            cfg.http_timeout_secs,
+        )))
         .layer(axum::middleware::from_fn(middleware::resilience::in_flight_middleware))
+        .layer(axum::middleware::from_fn(middleware::resilience::load_shed_middleware(
+            cfg.http_concurrency,
+        )))
         .layer(middleware::cors::cors_layer(&cfg.cors_origins))
         .with_state(state)
 }

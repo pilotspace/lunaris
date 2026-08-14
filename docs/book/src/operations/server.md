@@ -47,7 +47,9 @@ env). Source: `crates/lunaris-server/src/config.rs`.
 | `--rate-per-second` / `LUNARIS_RATE_PER_SECOND` | `60` | Per-tenant sustained request rate |
 | `--rate-burst` / `LUNARIS_RATE_BURST` | `120` | Per-tenant burst budget |
 | `--cors-origins` / `LUNARIS_CORS_ORIGINS` | `*` | CORS allow-list — `*` or a comma-separated origin list |
-| `--shutdown-grace-secs` / `LUNARIS_SHUTDOWN_GRACE_SECS` | `30` | Graceful-shutdown drain window |
+| `--shutdown-grace-secs` / `LUNARIS_SHUTDOWN_GRACE_SECS` | `30` | Graceful-shutdown drain window (a **ceiling** — see Deployment notes) |
+| `--http-timeout-secs` / `LUNARIS_HTTP_TIMEOUT_SECS` | `30` | Per-request wall-clock budget; over-budget → `408`. `0` disables |
+| `--http-concurrency` / `LUNARIS_HTTP_CONCURRENCY` | `256` | Max requests served concurrently; arrivals beyond the cap are shed with `503` + `Retry-After`, never queued. `0` disables |
 | `--metrics-disabled` | *(off)* | Remove the `/metrics` endpoint (no env var) |
 
 The same `LUNARIS_EMBEDDER_DIR` / `LUNARIS_EMBEDDER_GGUF` / `LUNARIS_GRAPH_ENABLED` / verifier /
@@ -101,6 +103,26 @@ operational summary:
 | `GET /healthz` | *(none)* | LB probe — `{"ok":true,"version":...}`. No auth, not rate-limited. |
 | `GET /metrics` | *(none)* | Prometheus text exposition. **No auth** — front it with a network ACL or reverse-proxy auth. `404` when `--metrics-disabled`. |
 
+### Request timeout, concurrency limit and load shedding
+
+Applied to **every** route (probes included), outside the per-route auth /
+rate-limit stack:
+
+- a request that exceeds `--http-timeout-secs` is cut off with `408` and the
+  `{error:"request_timeout"}` envelope, and counted in
+  `lunaris_http_timeout_total`. The budget covers producing the response, not
+  streaming its body — an SSE `/v1/recall` stream is never severed mid-flight;
+- a request arriving while `--http-concurrency` requests are already in flight
+  is **shed** with `503` + `Retry-After: 1` and the `{error:"overloaded"}`
+  envelope, counted in `lunaris_http_shed_total`. It is never queued: queueing
+  in front of a slow backend is how a latency blip becomes an OOM.
+
+Order on the request path is
+`CORS → load-shed(concurrency) → in-flight gauge → timeout → auth/rate-limit → handler`,
+so the worst-case backlog is bounded by `--http-concurrency × --http-timeout-secs`
+rather than by client patience. Rationale for that order lives in
+`crates/lunaris-server/src/middleware/resilience.rs`.
+
 ### Rate limiting
 
 Per-tenant, applied to every `/v1/*` request (key = the `tenant` claim).
@@ -123,6 +145,8 @@ Un-authenticated routes (`/healthz`, `/metrics`) are not rate-limited.
 | `lunaris_error_total` | counter | `kind` (cardinality cap ≤ 10) |
 | `lunaris_eval_score` | gauge | `harness` |
 | `lunaris_http_in_flight` | gauge | *(none)* |
+| `lunaris_http_shed_total` | counter | *(none)* |
+| `lunaris_http_timeout_total` | counter | *(none)* |
 
 Time-series count grows linearly with **tenant count** (the tokens-file map
 size), not with traffic. `Content-Type` is the standard

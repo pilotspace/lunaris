@@ -174,6 +174,8 @@ fn build_app() -> axum::Router {
         rate_burst: 10_000,
         cors_origins: "*".to_string(),
         shutdown_grace_secs: 30,
+        http_timeout_secs: 30,
+        http_concurrency: 256,
         metrics_disabled: true,
     };
     lunaris_server::build(cfg, lunaris)
