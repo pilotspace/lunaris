@@ -1,0 +1,178 @@
+# =============================================================================
+# Lunaris + external Moon — reference deployment
+# =============================================================================
+#
+#   cd deploy
+#   cp .env.example .env                  # then edit
+#   cp tokens.example.json tokens.json    # then replace the token strings
+#   docker compose up -d --build
+#
+# Runbook (version handshake, single-shard rule, persistence, model staging):
+#   docs/operations/external-moon.md
+# Backup / restore drill:
+#   docs/operations/backup-restore.md
+# Metrics + alerts:
+#   docs/operations/observability.md
+#
+# NOTE: `docker compose` reads `deploy/.env` automatically. `~` is NOT expanded
+# in volume paths — use an absolute path or one relative to this directory.
+# =============================================================================
+
+name: lunaris
+
+services:
+  # ---------------------------------------------------------------------------
+  # Moon — the storage substrate. EXTERNAL to Lunaris by design; this service
+  # exists so a single `compose up` gives you a correctly-flagged one.
+  # ---------------------------------------------------------------------------
+  moon:
+    # Tag format is the release version with the leading `v` STRIPPED — see
+    # vendor/moon/.github/workflows/release.yml:519 (`VERSION="${VER#v}"`).
+    # So release v0.8.5 publishes ghcr.io/pilotspace/moon:0.8.5.
+    # 0.8.5 is the floor Lunaris enforces at connect
+    # (crates/lunaris-storage-moon/src/version.rs:86, MIN_MOON_VERSION).
+    image: ghcr.io/pilotspace/moon:${MOON_VERSION:-0.8.5}
+    container_name: lunaris-moon
+    restart: unless-stopped
+
+    # The image's baked-in CMD is
+    #   moon --bind 0.0.0.0 --port 6379 --shards 0 --dir /data --protected-mode no
+    # (vendor/moon/Dockerfile:149). `--shards 0` means AUTO-DETECT FROM CPU
+    # COUNT (vendor/moon/src/config.rs:213), which on any multi-core host
+    # yields a SHARDED Moon — and a sharded Moon rejects Lunaris' ingest
+    # transaction outright:
+    #   TXN does not support cross-shard writes -- use hash tags {tag} to co-locate keys
+    # (docs/operations/backup-restore.md §6.6). Overriding `command` with an
+    # explicit `--shards 1` is therefore NOT tuning; it is a correctness
+    # requirement. Do not remove it.
+    command:
+      - moon
+      - --bind
+      - "0.0.0.0"
+      - --port
+      - "6379"
+      - --shards
+      - "1"
+      # AOF is the recovery authority the backup runbook assumes. `everysec`
+      # is the default (vendor/moon/src/config.rs:138); `always` trades
+      # throughput for a ~0 RPO. Whatever you pick here MUST be repeated on the
+      # restore host (docs/operations/backup-restore.md §3 step 4).
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - "${MOON_APPENDFSYNC:-everysec}"
+      # Persistence files land in the mounted volume.
+      - --dir
+      - /data
+      # Admin HTTP: /healthz, /readyz and Prometheus /metrics
+      # (vendor/moon/src/admin/http_server.rs:138-148).
+      - --admin-port
+      - "9100"
+      # Docker networking is non-loopback; protected mode would reject every
+      # connection arriving over the compose network.
+      - --protected-mode
+      - "no"
+
+    environment:
+      RUST_LOG: ${MOON_RUST_LOG:-moon=info}
+
+    volumes:
+      - moon-data:/data
+
+    # Not published to the host by default — Moon speaks an UNAUTHENTICATED
+    # Redis protocol here (Lunaris' `moon://` URL carries no credentials; see
+    # the runbook §4). Uncomment only on a trusted host/network.
+    # ports:
+    #   - "127.0.0.1:6379:6379"
+    #   - "127.0.0.1:9100:9100"
+
+    # The image ships this probe (vendor/moon/Dockerfile:141-142) because the
+    # distroless runtime has no shell and no HTTP client. It validates config
+    # in a SEPARATE process — it does NOT prove the listener is up or that
+    # writes are being accepted. Lunaris' own /readyz write canary is the
+    # probe that catches a write-stall wedge; see observability.md §4.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/moon", "--check-config"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ---------------------------------------------------------------------------
+  # lunaris-server — MemoryProtocol HTTP+SSE
+  # ---------------------------------------------------------------------------
+  lunaris-server:
+    # No lunaris-server image is published to any registry today (the crate is
+    # `publish = false`, crates/lunaris-server/Cargo.toml:8, and no workflow
+    # builds a container for it). Build locally from the repo Dockerfile.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        FEATURES: ${LUNARIS_BUILD_FEATURES:-lunaris/llamacpp}
+    image: lunaris-server:local
+    container_name: lunaris-server
+    restart: unless-stopped
+
+    depends_on:
+      moon:
+        condition: service_healthy
+
+    environment:
+      # Every flag in crates/lunaris-server/src/config.rs has a LUNARIS_* twin.
+      # Moon's own default port is 6379, but Lunaris' `moon://` URL defaults to
+      # 6380 when the port is omitted (DEFAULT_MOON_PORT,
+      # crates/lunaris-storage-moon/src/client.rs:31) — so ALWAYS write it out.
+      LUNARIS_STORAGE: ${LUNARIS_STORAGE:-moon://moon:6379}
+      LUNARIS_BIND: 0.0.0.0:8080
+      LUNARIS_TOKENS_FILE: /etc/lunaris/tokens.json
+      LUNARIS_RATE_PER_SECOND: ${LUNARIS_RATE_PER_SECOND:-60}
+      LUNARIS_RATE_BURST: ${LUNARIS_RATE_BURST:-120}
+      LUNARIS_CORS_ORIGINS: ${LUNARIS_CORS_ORIGINS:-*}
+      # 0.6.2 resilience knobs (config.rs:99-112). The shed/timeout counters
+      # in observability.md are the signal that these are biting.
+      LUNARIS_HTTP_TIMEOUT_SECS: ${LUNARIS_HTTP_TIMEOUT_SECS:-30}
+      LUNARIS_HTTP_CONCURRENCY: ${LUNARIS_HTTP_CONCURRENCY:-256}
+      # Bounded drain on SIGTERM (shutdown.rs::serve_with_deadline).
+      # Keep `stop_grace_period` strictly larger, or Docker SIGKILLs first.
+      LUNARIS_SHUTDOWN_GRACE_SECS: ${LUNARIS_SHUTDOWN_GRACE_SECS:-30}
+      # Per-command Moon response bound (client.rs:809). 10s default.
+      LUNARIS_MOON_OP_TIMEOUT: ${LUNARIS_MOON_OP_TIMEOUT:-10}
+      # GGUF weights, mounted below. A MISSING file is not fatal: open() warns
+      # and falls back to NoopEmbedder, and every vector recall then returns
+      # zero rows. Runbook §7 shows how to verify you did not ship that.
+      LUNARIS_EMBEDDER_GGUF: /models/${LUNARIS_EMBEDDER_GGUF_NAME:-granite-embedding-311m-multilingual-r2.Q4_K_M.gguf}
+      LUNARIS_RERANKER_GGUF: /models/${LUNARIS_RERANKER_GGUF_NAME:-bge-reranker-v2-m3.Q5_K_M.gguf}
+      LUNARIS_ENV: ${LUNARIS_ENV:-production}
+      RUST_LOG: ${LUNARIS_RUST_LOG:-lunaris=info,lunaris_server=info}
+
+    volumes:
+      - ${LUNARIS_TOKENS_FILE_HOST:-./tokens.json}:/etc/lunaris/tokens.json:ro
+      - ${LUNARIS_MODELS_DIR:-./models}:/models:ro
+
+    ports:
+      - "${LUNARIS_PORT:-8080}:8080"
+
+    # /readyz = storage PING + a KvPut/KvDelete WRITE CANARY + embedder check
+    # (crates/lunaris-server/src/readiness.rs). It is the only probe here that
+    # fails when Moon accepts connections but refuses writes. `start_period`
+    # is generous because the first request loads the GGUF.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+    # Must exceed LUNARIS_SHUTDOWN_GRACE_SECS so the bounded drain finishes
+    # before Docker escalates to SIGKILL.
+    stop_grace_period: ${LUNARIS_STOP_GRACE:-40s}
+
+volumes:
+  moon-data:
+    driver: local
