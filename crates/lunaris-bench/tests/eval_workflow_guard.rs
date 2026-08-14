@@ -44,6 +44,27 @@ fn job_level_env_lines(yml: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// Return the body of one `jobs.<job_id>:` block (the lines indented deeper
+/// than the 2-space job key), so an assertion can target a single job instead
+/// of the whole file.
+fn job_block(yml: &str, job_id: &str) -> String {
+    let lines: Vec<&str> = yml.lines().collect();
+    let header = format!("  {job_id}:");
+    let start = lines
+        .iter()
+        .position(|l| l.trim_end() == header)
+        .unwrap_or_else(|| panic!("job `{job_id}:` not found in eval-gauntlet.yml"));
+    let mut body = Vec::new();
+    for line in &lines[start + 1..] {
+        let indent = line.len() - line.trim_start().len();
+        if !line.trim().is_empty() && indent <= 2 {
+            break;
+        }
+        body.push(*line);
+    }
+    body.join("\n")
+}
+
 /// Contexts that do NOT exist inside `jobs.<job_id>.env`. That map is expanded
 /// by the Actions **service**, before a runner is assigned, so only
 /// `github` / `inputs` / `matrix` / `needs` / `secrets` / `strategy` / `vars`
@@ -155,8 +176,17 @@ fn gauntlet_workflow_targets_the_weights_cached_runner() {
         yml.contains("llm-weights-cached"),
         "eval-gauntlet.yml must target the [self-hosted, llm-weights-cached] runner"
     );
+    // Job-scoped, not file-scoped: the cheap `preflight` job legitimately runs
+    // on ubuntu-latest (that is the whole point — it must be schedulable when
+    // the self-hosted pool is empty). Only the job that actually produces
+    // numbers is forbidden from running weightless.
+    let heavy = job_block(&yml, "eval-gauntlet");
     assert!(
-        !yml.contains("runs-on: ubuntu-latest"),
+        heavy.contains("runs-on: [self-hosted, llm-weights-cached]"),
+        "the eval-gauntlet job must run on [self-hosted, llm-weights-cached]"
+    );
+    assert!(
+        !heavy.contains("ubuntu-latest"),
         "the gauntlet can't produce real numbers on ubuntu-latest (no weights)"
     );
 }
