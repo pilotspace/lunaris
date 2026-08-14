@@ -328,6 +328,89 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Build one `[key, [field, value, …]]` FT.SEARCH row.
+    fn ft_row(key: &str, fields: &[(&str, &str)]) -> Vec<redis::Value> {
+        let mut kv = Vec::with_capacity(fields.len() * 2);
+        for (f, v) in fields {
+            kv.push(redis::Value::BulkString(f.as_bytes().to_vec()));
+            kv.push(redis::Value::BulkString(v.as_bytes().to_vec()));
+        }
+        vec![redis::Value::BulkString(key.as_bytes().to_vec()), redis::Value::Array(kv)]
+    }
+
+    fn ft_reply(rows: Vec<Vec<redis::Value>>) -> redis::Value {
+        let mut arr = vec![redis::Value::Int(rows.len() as i64)];
+        for r in rows {
+            arr.extend(r);
+        }
+        redis::Value::Array(arr)
+    }
+
+    /// Score-direction fix, keyword leg (0.6.1): the sibling of the
+    /// `vector.rs::parse_ft_search` fix. Moon's `__vec_score` is a DISTANCE
+    /// (lower = closer); `TextSearchHit.score` feeds `min_max_normalize`
+    /// straight into `KeywordHit { score, raw_score }`, whose contract —
+    /// like every other StoragePort score — is HIGHER = more similar.
+    /// Raw passthrough therefore inverts the ranking of any FT.SEARCH reply
+    /// that carries a KNN distance field: the FARTHEST hit normalizes to 1.0.
+    /// Invariant: lower distance MUST map to a strictly higher score.
+    #[test]
+    fn parse_text_search_hits_vec_score_distance_converts_to_higher_is_better() {
+        for field in ["__vec_score", "vec_score"] {
+            let raw = ft_reply(vec![
+                ft_row("idx:aa", &[(field, "0.10")]), // closer neighbour
+                ft_row("idx:bb", &[(field, "0.90")]), // farther neighbour
+            ]);
+            let hits = parse_text_search_hits(raw);
+
+            assert_eq!(hits.len(), 2, "{field}");
+            assert!(
+                hits[0].score > hits[1].score,
+                "{field}: distance 0.10 must map to a HIGHER score than distance 0.90 \
+                 (KeywordHit contract: higher = more similar); got {} vs {}",
+                hits[0].score,
+                hits[1].score
+            );
+            assert!(
+                hits.iter().all(|h| h.score.is_finite() && h.score > 0.0 && h.score <= 1.0),
+                "{field}: converted similarity must live in (0, 1]; got {hits:?}"
+            );
+
+            // The harm this prevents, one layer down: `keyword_search` runs the
+            // parsed scores through `min_max_normalize`, so an un-inverted
+            // distance hands the FARTHEST hit the top normalized score.
+            let normalized =
+                min_max_normalize(&hits.iter().map(|h| h.score as f32).collect::<Vec<_>>());
+            assert!(
+                normalized[0] > normalized[1],
+                "{field}: after min_max_normalize the CLOSER hit must rank first; got {normalized:?}"
+            );
+        }
+    }
+
+    /// The other half of the same match: BM25 `score` / `__score` are genuine
+    /// relevance scores (higher = better) and MUST stay untouched. Converting
+    /// them would invert the keyword leg itself.
+    #[test]
+    fn parse_text_search_hits_bm25_score_stays_passthrough() {
+        for field in ["__score", "score"] {
+            let raw = ft_reply(vec![
+                ft_row("idx:aa", &[(field, "4.25")]),
+                ft_row("idx:bb", &[(field, "2.10")]),
+            ]);
+            let hits = parse_text_search_hits(raw);
+
+            assert_eq!(hits.len(), 2, "{field}");
+            assert!(
+                (hits[0].score - 4.25).abs() < 1e-9 && (hits[1].score - 2.10).abs() < 1e-9,
+                "{field}: BM25 relevance is already higher-is-better — passthrough verbatim, \
+                 no 1/(1+d); got {} and {}",
+                hits[0].score,
+                hits[1].score
+            );
+        }
+    }
+
     #[test]
     fn ft_escape_passes_alnum() {
         assert_eq!(ft_escape("hello world"), "hello world");
