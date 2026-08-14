@@ -21,6 +21,14 @@
 //! The HTTP surface (`lunaris-server`, `ForgetRequestDto`) keeps `dry_run`
 //! defaulting to `false` for API compatibility — only MCP inverts it. Do not
 //! "fix" the asymmetry; it is the ruling.
+//!
+//! Known limitation of `matched`: the engine's scan matches on the stored
+//! `source` / id, not on liveness, so an episode that was already soft-deleted
+//! still counts. Re-previewing a target you just forgot reports the same
+//! `matched` with `removed: 0` on the preview — an over-estimate, never an
+//! under-estimate, so it cannot hide a deletion from the caller. Narrowing it
+//! means teaching `scan_matches_scoped` the sys-gate, which changes
+//! `rows_written` on the HTTP path too; out of scope for 0.6.2 Task F.
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;

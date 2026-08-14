@@ -383,6 +383,10 @@ actually removed (always `0` on a preview). The two-step flow:
 // -> { "status": "deleted", "dry_run": false, "matched": 42, "removed": 42 }
 ```
 
+`matched` counts what the target matches in the store, not what is still
+live — an episode you already forgot keeps counting. Treat it as an upper
+bound: it can over-report an already-deleted episode, never hide a live one.
+
 ---
 
 ### `memory.list_scopes`
