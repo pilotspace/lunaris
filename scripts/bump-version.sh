@@ -62,7 +62,18 @@ rm -f "$pyproject.bak"
 echo "-> Bumping crates/lunaris-ts/package.json .version to $VER"
 pkgjson="crates/lunaris-ts/package.json"
 tmp=$(mktemp)
-jq --arg v "$VER" '.version = $v' "$pkgjson" > "$tmp"
+# .optionalDependencies MUST move with .version. CI publishes the five
+# @pilotspace/lunaris-<platform> packages at .version, so a stale pin makes
+# the main package request a version that was never published — and because
+# napi platform packages are OPTIONAL, npm swallows the 404 and installs a
+# binary-less package that only fails at require() time. That is exactly how
+# @pilotspace/lunaris@0.5.0 shipped with all five platform packages missing
+# (they exist only at 0.3.0). Guarded by
+# scripts/tests/test_npm_version_parity.py.
+jq --arg v "$VER" \
+  '.version = $v
+   | .optionalDependencies |= with_entries(.value = $v)' \
+  "$pkgjson" > "$tmp"
 mv "$tmp" "$pkgjson"
 
 echo "-> Bumping crates/lunaris-mcp-npm/package.json .version to $VER"
@@ -91,6 +102,10 @@ echo "-> Version parity assertion"
 rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
 py_ver=$(grep '^version = ' "$pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 ts_ver=$(jq -r '.version' "$pkgjson")
+# Any optionalDependency left off $VER would silently 404 at install time.
+ts_optdep_stale=$(jq -r --arg v "$VER" \
+  '[.optionalDependencies // {} | to_entries[] | select(.value != $v)
+    | "\(.key)@\(.value)"] | join(", ")' "$pkgjson")
 npm_mcp_ver=$(jq -r '.version' "$mcppkgjson")
 py_mcp_ver=$(grep '^version = ' "$py_mcp_pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
@@ -103,6 +118,11 @@ echo "  lunaris-mcp-py (pyproject): $py_mcp_ver"
 if [[ "$rust_ver" != "$VER" || "$py_ver" != "$VER" || "$ts_ver" != "$VER" || \
       "$npm_mcp_ver" != "$VER" || "$py_mcp_ver" != "$VER" ]]; then
   echo "ERROR: version parity broken" >&2
+  exit 5
+fi
+
+if [[ -n "$ts_optdep_stale" ]]; then
+  echo "ERROR: crates/lunaris-ts/package.json optionalDependencies not at $VER: $ts_optdep_stale" >&2
   exit 5
 fi
 

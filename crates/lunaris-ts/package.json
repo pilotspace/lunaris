@@ -48,11 +48,11 @@
     "README.md"
   ],
   "optionalDependencies": {
-    "@pilotspace/lunaris-linux-x64-gnu": "0.5.0",
-    "@pilotspace/lunaris-linux-arm64-gnu": "0.5.0",
-    "@pilotspace/lunaris-darwin-x64": "0.5.0",
-    "@pilotspace/lunaris-darwin-arm64": "0.5.0",
-    "@pilotspace/lunaris-win32-x64-msvc": "0.5.0"
+    "@pilotspace/lunaris-linux-x64-gnu": "0.6.0-rc.2",
+    "@pilotspace/lunaris-linux-arm64-gnu": "0.6.0-rc.2",
+    "@pilotspace/lunaris-darwin-x64": "0.6.0-rc.2",
+    "@pilotspace/lunaris-darwin-arm64": "0.6.0-rc.2",
+    "@pilotspace/lunaris-win32-x64-msvc": "0.6.0-rc.2"
   },
   "scripts": {
     "build": "napi build --platform --release",

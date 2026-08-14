@@ -145,8 +145,22 @@ jobs:
   # @pilotspace/lunaris-<platform> binary packages FIRST, then the main
   # @pilotspace/lunaris package — order matters because the main package's
   # optionalDependencies resolve the platform packages at install time, so
-  # they must already exist on the registry. Idempotent: an already-published
-  # version returns npm E409/E403 which we treat as a skip (re-runnable).
+  # they must already exist on the registry.
+  #
+  # This job deliberately keeps the DEFAULT `needs:` semantics (skip unless
+  # every build-napi matrix leg succeeded). A partial binary set must never
+  # be published: the missing platform's package would 404 as an OPTIONAL
+  # dependency, npm would report a successful install, and the failure would
+  # only surface at require() time. A red build-napi is loud on its own.
+  #
+  # Idempotency is achieved by asking the registry FIRST (`npm view`), not by
+  # swallowing publish failures. Until 0.6.1 every publish was wrapped in
+  # `|| echo "::warning::... (already published?)"`, which downgraded auth,
+  # network and E404 failures to a warning. In the v0.6.0-rc.1 tag run
+  # (29399540645) all six publishes returned `npm error code E404`
+  # (PUT rejected — the token cannot write the @pilotspace scope) and the job
+  # still reported success. Nothing landed on the registry and nobody noticed
+  # for two months.
   publish-npm:
     name: publish @pilotspace/lunaris to npm
     runs-on: ubuntu-latest
@@ -186,7 +200,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
           # Pre-release versions (a semver pre-release component, e.g.
           # 0.6.0-rc.1) must NOT land on the 'latest' dist-tag or `npm i`
@@ -197,11 +211,84 @@ jobs:
             *)   DIST_TAG="latest" ;;
           esac
           echo "publishing @pilotspace/lunaris@$VERSION under dist-tag '$DIST_TAG'"
+
+          # optionalDependencies MUST request the version we are publishing
+          # right now. scripts/bump-version.sh keeps the committed file in
+          # sync; this rewrite is the belt-and-braces guard so a hand-edited
+          # tree can never publish a main package whose platform deps 404
+          # (silently, because they are optional). Single source of truth:
+          # the .version field of this same file.
+          node -e '
+            const fs = require("fs");
+            const p = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            for (const k of Object.keys(p.optionalDependencies || {})) {
+              p.optionalDependencies[k] = p.version;
+            }
+            fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");
+          '
+          node -e 'console.log(JSON.stringify(require("./package.json").optionalDependencies))'
+
+          # Idempotent WITHOUT swallowing failures: ask the registry, and only
+          # skip when the exact version is provably already there. Everything
+          # else — E404 (token cannot write this scope), E403, auth, network —
+          # propagates and fails the job under `set -e`.
+          publish_one() {
+            pkg="$1"
+            dir="$2"
+            if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
+              echo "skip: ${pkg}@${VERSION} is already on the registry"
+              return 0
+            fi
+            ( cd "${dir}" && npm publish --access public --tag "${DIST_TAG}" )
+          }
+
           for d in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
             echo "--- @pilotspace/lunaris-$d ---"
-            (cd "npm/$d" && npm publish --access public --tag "$DIST_TAG") \
-              || echo "::warning::npm/$d publish skipped (already published?)"
+            publish_one "@pilotspace/lunaris-$d" "npm/$d"
           done
           echo "--- @pilotspace/lunaris (main) ---"
-          npm publish --access public --tag "$DIST_TAG" \
-            || echo "::warning::@pilotspace/lunaris main publish skipped (already published?)"
+          publish_one "@pilotspace/lunaris" "."
+
+      # Independent proof that the publish actually landed. The step above can
+      # only fail on a publish it attempted; this one fails on ANY of the six
+      # packages being absent from the registry at $VERSION, whatever the
+      # cause (silent skip, partial upload, wrong scope, wrong dist-tag).
+      # It is the gate that would have caught the 0.5.0 regression on the day
+      # it happened instead of two months later.
+      - name: Verify all six packages resolve at this version
+        working-directory: crates/lunaris-ts
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          missing=""
+          for pkg in \
+            "@pilotspace/lunaris-darwin-arm64" \
+            "@pilotspace/lunaris-darwin-x64" \
+            "@pilotspace/lunaris-linux-x64-gnu" \
+            "@pilotspace/lunaris-linux-arm64-gnu" \
+            "@pilotspace/lunaris-win32-x64-msvc" \
+            "@pilotspace/lunaris"; do
+            found=""
+            # The npmjs packument root can lag a fresh publish by a few
+            # seconds; retry before declaring a package missing so this gate
+            # reports real absences, not replication lag.
+            for attempt in 1 2 3 4 5 6; do
+              if npm view "${pkg}@${VERSION}" version >/dev/null 2>&1; then
+                found="yes"
+                break
+              fi
+              echo "  ${pkg}@${VERSION} not visible yet (attempt ${attempt}/6)"
+              sleep 10
+            done
+            if [ -n "${found}" ]; then
+              echo "ok:      ${pkg}@${VERSION}"
+            else
+              echo "MISSING: ${pkg}@${VERSION}"
+              missing="${missing} ${pkg}@${VERSION}"
+            fi
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::npm publish incomplete — absent from the registry:${missing}"
+            exit 1
+          fi
+          echo "all six @pilotspace/lunaris packages resolve at ${VERSION}"
