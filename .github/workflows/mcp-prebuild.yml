@@ -131,7 +131,24 @@ jobs:
     name: attach binary tarballs to GitHub Release
     runs-on: ubuntu-latest
     needs: build-binary
-    if: startsWith(github.ref, 'refs/tags/v')
+    # `!cancelled()` is what makes `fail-fast: false` above mean anything.
+    #
+    # Default `needs:` semantics skip a dependent job unless EVERY matrix leg
+    # of the needed job succeeded. `fail-fast: false` therefore bought nothing
+    # on a tag: it let the other four legs finish, then the aggregate
+    # build-binary result went "failure" and this job — plus build-wheel —
+    # was SKIPPED wholesale. That is not a hypothetical: the v0.6.0-rc.1 tag
+    # run (29399540377) built 4/5 targets fine and lost the entire MCP
+    # distribution because x86_64-pc-windows-msvc failed to compile
+    # (E0432, unresolved import tokio::net::UnixStream). v0.6.0-rc.1 has
+    # Python wheels and .node binaries attached but ZERO
+    # lunaris-mcp-*.tar.gz, and @pilotspace/lunaris-mcp is still stuck at
+    # 0.3.0 on npm.
+    #
+    # With `!cancelled()` this job runs on partial builds, ships what exists
+    # (the risk-register "source install supported" demotion), and the final
+    # completeness gate below still marks the run RED so the gap is loud.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -144,6 +161,29 @@ jobs:
           pattern: lunaris-mcp-*
           path: release-assets
           merge-multiple: true
+
+      # Records which of the five targets actually produced a tarball. This
+      # step never fails — the release assets and the npm package should still
+      # ship for the platforms that DID build. The hard failure is the last
+      # step of the job, so an incomplete distribution is both published and
+      # unmistakably red.
+      - name: Determine target completeness
+        id: completeness
+        run: |
+          set -euo pipefail
+          missing=""
+          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                   x86_64-apple-darwin aarch64-apple-darwin \
+                   x86_64-pc-windows-msvc; do
+            if [ -f "release-assets/lunaris-mcp-${t}.tar.gz" ]; then
+              echo "ok:      lunaris-mcp-${t}.tar.gz"
+            else
+              echo "MISSING: lunaris-mcp-${t}.tar.gz"
+              missing="${missing} ${t}"
+            fi
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+
       - name: Populate manifest.json with real sha256 hashes
         run: |
           cd release-assets
@@ -179,11 +219,11 @@ jobs:
         # if your npm-publish path is unavailable AND your org has a release-tag governance
         # policy that explicitly permits force-pushes. To switch, remove this step and add
         # a "Commit manifest.json back to main and re-tag" step instead.
-        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: crates/lunaris-mcp-npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           # The version field in package.json is already correct per the release commit.
           # The manifest.json on disk now has real hashes (previous step).
           npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
@@ -194,13 +234,42 @@ jobs:
             *-*) DIST_TAG="next" ;;
             *)   DIST_TAG="latest" ;;
           esac
+          # Re-runnable WITHOUT a `|| true` fallback: skip only on proof the
+          # exact version is already on the registry. Any other failure (E404
+          # = token cannot write the @pilotspace scope, E403, auth, network)
+          # fails the job. Mirrors the ts-prebuild.yml contract.
+          if npm view "@pilotspace/lunaris-mcp@${VERSION}" version >/dev/null 2>&1; then
+            echo "skip: @pilotspace/lunaris-mcp@${VERSION} is already on the registry"
+            exit 0
+          fi
           echo "publishing @pilotspace/lunaris-mcp@$VERSION under dist-tag '$DIST_TAG'"
           npm publish --access public --tag "$DIST_TAG"
+
+      # LAST step on purpose: the assets are attached and the npm package is
+      # published for every target that built, and only then does an
+      # incomplete target set turn the run red. Skipping the dependent jobs
+      # (the pre-0.6.1 behaviour) delivered nothing AND buried the reason.
+      - name: Fail the run if any target is missing from the release
+        if: steps.completeness.outputs.missing != ''
+        env:
+          MISSING_TARGETS: ${{ steps.completeness.outputs.missing }}
+        run: |
+          set -euo pipefail
+          echo "::error::lunaris-mcp release is incomplete — no binary for: ${MISSING_TARGETS}"
+          echo "Assets and the npm package were published for the targets that built."
+          echo "Users on the missing targets fall back to a source build."
+          exit 1
 
   build-wheel:
     name: wheel ${{ matrix.target }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     needs: build-binary
+    # Same `needs:`-skip trap as upload-binary-release: one failing
+    # build-binary leg used to skip ALL FIVE wheels. Per-target artifacts
+    # mean each wheel leg stands or falls on its own — the leg whose binary
+    # is missing fails at "Download binary artifact for this target" (loudly,
+    # in its own matrix cell) and the other four still ship.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
