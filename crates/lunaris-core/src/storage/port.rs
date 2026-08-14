@@ -189,12 +189,46 @@ pub trait StoragePort: Send + Sync + 'static {
     /// **Deviation 1 from blueprint §6:** the blueprint signature is
     /// `read_as_of<K: Key>(...)` — see the `scan_range` doc-comment for why this method
     /// takes `&[u8]`.
+    ///
+    /// ## Two request shapes, one method
+    ///
+    /// * **Latest-state read** — `as_of` is "now" (every production call site
+    ///   ticks the clock immediately before calling). Current state IS the
+    ///   correct answer. Every backend serves this.
+    /// * **Historical read** — `as_of` is meaningfully in the past. Only a
+    ///   backend with a real KV version chain can answer it. A backend that
+    ///   cannot MUST report [`Self::supports_historical_kv_reads`] `== false`
+    ///   and return `Err(StorageError::NotSupported(_))` for such a request.
+    ///   Returning current state (or a bare `Ok(None)`) for a historical pin
+    ///   is a silent correctness violation, not a graceful degrade.
     async fn read_as_of(
         &self,
         scope: &Scope,
         key: &[u8],
         as_of: Hlc,
     ) -> Result<Option<Row<Bytes>>, StorageError>;
+
+    /// Whether [`Self::read_as_of`] can answer a **historical** snapshot —
+    /// i.e. return the version that was current at a past `as_of` rather
+    /// than the version that is current now.
+    ///
+    /// This is deliberately NOT
+    /// [`StorageCapabilities::bi_temporal_native`](super::capabilities::StorageCapabilities::bi_temporal_native),
+    /// which means "temporal reads are a *native* backend feature". Postgres
+    /// reports `bi_temporal_native = false` (it emulates the snapshot with
+    /// `valid_from`/`valid_to`/`sys_from`/`sys_to` predicates) yet answers
+    /// historical reads correctly; Moon reports `false` too but *cannot*
+    /// answer them at all. Conflating the two is what let the gap hide.
+    ///
+    /// **Additive default = `true`** (the trait's documented contract; the
+    /// pattern mirrors [`Self::health_check`] / [`Self::hot_keys`]). A
+    /// backend without a KV version chain MUST override this to `false` AND
+    /// make historical `read_as_of` calls fail loudly — the two halves are
+    /// one contract. Today the Moon backend is the only `false`: Moon KV
+    /// rows are plain hashes and `HGET`/`HMGET` accept no `AS_OF` clause.
+    fn supports_historical_kv_reads(&self) -> bool {
+        true
+    }
 
     /// Queue publish. Returns the offset assigned by the broker (monotonic within
     /// `(topic, partition)`).
