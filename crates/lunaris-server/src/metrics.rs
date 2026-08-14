@@ -83,6 +83,10 @@ pub struct Metrics {
     pub http_shed_total: IntCounter,
     /// 0.6.2 P0-2 — requests cut off by `--http-timeout-secs` (`408`).
     pub http_timeout_total: IntCounter,
+    /// 0.6.2 P0-3 — `1` when the last `/readyz` probe passed every check,
+    /// `0` otherwise. Alert on `lunaris_ready == 0` for longer than one
+    /// readiness period: it means the backend PINGs but cannot serve.
+    pub ready: IntGauge,
 }
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
@@ -169,6 +173,12 @@ pub fn metrics() -> &'static Metrics {
             "Requests cut off by the --http-timeout-secs budget (408)"
         )
         .expect("register lunaris_http_timeout_total"),
+        ready: register_int_gauge!(
+            "lunaris_ready",
+            "1 when the last /readyz probe passed storage PING + write canary + embedder \
+             checks, 0 otherwise"
+        )
+        .expect("register lunaris_ready"),
     })
 }
 

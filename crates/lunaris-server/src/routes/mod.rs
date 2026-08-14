@@ -1,6 +1,8 @@
 //! Plan 05-01 routes — module declarations.
 //!
-//! - [`healthz`] — open probe surface (no auth).
+//! - [`healthz`] — open LIVENESS probe surface (no auth): is the process up?
+//! - [`readyz`] — open READINESS probe surface (no auth): storage PING + write
+//!   canary + embedder state (0.6.2 P0-3).
 //! - [`ingest`] — `POST /v1/ingest` (PROTO-01).
 //! - [`recall`] — `POST /v1/recall` with SSE branch (PROTO-02 + PROTO-03).
 //! - [`forget`] — `POST /v1/forget` (Plan 04-05 surface + D-21 two-step rail).
@@ -25,6 +27,7 @@ pub mod graph;
 pub mod healthz;
 pub mod ingest;
 pub mod metrics;
+pub mod readyz;
 pub mod recall;
 pub mod snapshot;
 pub mod ui;

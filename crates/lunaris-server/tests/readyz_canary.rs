@@ -98,7 +98,8 @@ async fn stalled_writes_turn_readyz_red_while_healthz_stays_green() {
 
 #[tokio::test]
 async fn failed_ping_turns_readyz_red() {
-    let app = build_app(test_config("ready-ping-fail"), StubStorage::healthy().with_health_failure());
+    let app =
+        build_app(test_config("ready-ping-fail"), StubStorage::healthy().with_health_failure());
     let (status, body) = get(app, "/readyz").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["ready"], serde_json::Value::Bool(false));
@@ -107,7 +108,8 @@ async fn failed_ping_turns_readyz_red() {
 
 #[tokio::test]
 async fn rejected_writes_turn_readyz_red() {
-    let app = build_app(test_config("ready-write-fail"), StubStorage::healthy().with_write_failure());
+    let app =
+        build_app(test_config("ready-write-fail"), StubStorage::healthy().with_write_failure());
     let (status, body) = get(app, "/readyz").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["checks"]["ping"], "ok");

@@ -54,11 +54,8 @@ async fn drain_is_bounded_by_grace_secs() {
     let shutdown = Shutdown::new(1);
     let trigger = shutdown.clone();
 
-    let server = tokio::spawn(lunaris_server::shutdown::serve_with_deadline(
-        listener,
-        hang_app(),
-        shutdown,
-    ));
+    let server =
+        tokio::spawn(lunaris_server::shutdown::serve_with_deadline(listener, hang_app(), shutdown));
 
     // Park one request inside the never-completing handler.
     let client = tokio::spawn(async move {
@@ -98,11 +95,8 @@ async fn idle_drain_returns_promptly_without_burning_the_grace_window() {
     let shutdown = Shutdown::new(30);
     let trigger = shutdown.clone();
 
-    let server = tokio::spawn(lunaris_server::shutdown::serve_with_deadline(
-        listener,
-        hang_app(),
-        shutdown,
-    ));
+    let server =
+        tokio::spawn(lunaris_server::shutdown::serve_with_deadline(listener, hang_app(), shutdown));
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let started = Instant::now();
@@ -125,11 +119,8 @@ async fn shutdown_fired_before_serve_is_still_observed() {
     // ever been polled, so no `Notify` waiter is registered yet.
     shutdown.trigger();
 
-    let server = tokio::spawn(lunaris_server::shutdown::serve_with_deadline(
-        listener,
-        hang_app(),
-        shutdown,
-    ));
+    let server =
+        tokio::spawn(lunaris_server::shutdown::serve_with_deadline(listener, hang_app(), shutdown));
 
     let outcome = tokio::time::timeout(Duration::from_secs(5), server).await;
     assert!(

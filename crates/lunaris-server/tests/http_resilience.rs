@@ -103,7 +103,10 @@ async fn requests_beyond_the_concurrency_cap_are_shed_immediately() {
         .to_str()
         .expect("ascii")
         .to_string();
-    assert!(retry_after.parse::<u64>().is_ok(), "Retry-After must be delta-seconds, got {retry_after:?}");
+    assert!(
+        retry_after.parse::<u64>().is_ok(),
+        "Retry-After must be delta-seconds, got {retry_after:?}"
+    );
     let body = to_bytes(resp.into_body(), 64 * 1024).await.expect("body");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("json envelope");
     assert_eq!(json["error"], "overloaded");

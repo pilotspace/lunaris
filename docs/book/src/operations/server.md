@@ -28,6 +28,7 @@ probe it:
 
 ```bash
 curl -s localhost:8080/healthz                                  # {"ok":true,"version":"0.2.1"}  (version = CARGO_PKG_VERSION)
+curl -s localhost:8080/readyz                                   # {"ready":true,"version":...,"checks":{"ping":"ok","canary":"ok","embedder":"ok"}}
 curl -s -H 'Authorization: Bearer <token>' \
      -H 'Content-Type: application/json' \
      -d '{"source":"demo","content":"Alice loves chocolate."}' \
@@ -100,8 +101,47 @@ operational summary:
 | `POST /v1/forget` | `forget` | Single-target / by-source / temporal-bound purge. Two-step hard-delete rail: `dry_run:true` → preview receipt; then `hard:true` + `confirmation_token: <serialized prior receipt>` → real delete. `hard:true` without the token → `428 Precondition Required`. |
 | `GET /v1/snapshot/{lsn}` | `recall` | Streams every primitive at the given Hlc (`<wall_ms>.<counter>[.<node_id>]`) as `application/x-ndjson`. Returns `404 snapshot_out_of_range` if the wall_ms is strictly in the future; an empty past snapshot is `200` + empty body. |
 | `GET /v1/episode/{id}` | `recall` | Fetch a single episode by ULID from the caller's scope. `200` + JSON on hit; `400 invalid_episode_id` on malformed ULID; `404 episode_not_found` when absent. |
-| `GET /healthz` | *(none)* | LB probe — `{"ok":true,"version":...}`. No auth, not rate-limited. |
+| `GET /healthz` | *(none)* | **Liveness** probe — `{"ok":true,"version":...}`; `503` when the storage PING fails. No auth, not rate-limited, never writes. |
+| `GET /readyz` | *(none)* | **Readiness** probe — storage PING + a write canary + embedder state. `200 {"ready":true,"checks":{...}}` / `503 {"ready":false,...}`. No auth, not rate-limited. |
 | `GET /metrics` | *(none)* | Prometheus text exposition. **No auth** — front it with a network ACL or reverse-proxy auth. `404` when `--metrics-disabled`. |
+
+### Liveness vs readiness
+
+Wire them to the matching Kubernetes probes — they answer different questions
+and have different remedies:
+
+| Probe | Endpoint | Asks | Failure remedy |
+|---|---|---|---|
+| `livenessProbe` | `/healthz` | Is the process up and is storage reachable? | Restart the pod |
+| `readinessProbe` | `/readyz` | Can the process actually **serve**? | Remove the pod from the LB |
+
+`/readyz` runs three checks, each bounded at **2 s**, and reports them
+individually in `checks`:
+
+1. `ping` — `StoragePort::health_check` (Moon `PING`);
+2. `canary` — a `KvPut` + `KvDelete` of the fixed reserved key
+   `lunaris:__health__:canary` in the reserved `__health__` scope;
+3. `embedder` — the embedder is configured with a usable dimension. This is a
+   *structural* check: a probe must never run inference, because a wedged ggml
+   pool cannot be cancelled and the probe itself would wedge.
+
+The `canary` check is the point of the endpoint. Both production wedges we have
+hit (the MA1 write-stall, the dashtable recovery crash-loop) answered `PING`
+happily while refusing every write, so a PING-only probe kept traffic flowing
+into a store that could not accept a byte. A `canary` of `timeout` is that exact
+signature. Note that liveness deliberately stays **green** in that case:
+restarting the process does not un-wedge the backend, it just adds a cold start
+to the incident.
+
+Readiness results are cached for **5 s** and probes single-flight, so at most one
+canary write reaches the store every 5 s regardless of probe rate — probe
+traffic can never become write traffic. `lunaris_ready` (`1`/`0`) exports the
+last verdict for alerting.
+
+```console
+$ curl -s localhost:8080/readyz | jq
+{ "ready": true, "version": "0.6.0", "checks": { "ping": "ok", "canary": "ok", "embedder": "ok" } }
+```
 
 ### Request timeout, concurrency limit and load shedding
 
@@ -147,6 +187,7 @@ Un-authenticated routes (`/healthz`, `/metrics`) are not rate-limited.
 | `lunaris_http_in_flight` | gauge | *(none)* |
 | `lunaris_http_shed_total` | counter | *(none)* |
 | `lunaris_http_timeout_total` | counter | *(none)* |
+| `lunaris_ready` | gauge | *(none)* |
 
 Time-series count grows linearly with **tenant count** (the tokens-file map
 size), not with traffic. `Content-Type` is the standard
