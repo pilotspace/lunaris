@@ -159,7 +159,14 @@ jobs:
     name: publish wheels to GitHub Release
     runs-on: ubuntu-latest
     needs: build-wheels
-    if: startsWith(github.ref, 'refs/tags/v')
+    # This workflow got LUCKY on v0.6.0-rc.1 — all five wheels built, so the
+    # default `needs:` semantics never bit. They are the same trap that
+    # skipped mcp-prebuild's entire release job on that same tag
+    # (run 29399540377: 4/5 targets green, 0 tarballs attached). Without
+    # `!cancelled()` a single failing arch attaches ZERO wheels, which
+    # contradicts the `fail-fast: false` + "source install supported"
+    # risk-register policy this workflow documents above.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Download all wheel artefacts
         uses: actions/download-artifact@v4
