@@ -261,6 +261,11 @@ pub fn build(cfg: Config, lunaris: Arc<lunaris::Lunaris>) -> Router {
         // with network ACL or reverse-proxy auth in production — documented
         // in spec markdown, see Plan 05-05 Task 3).
         .route("/metrics", get(routes::metrics::metrics_handler))
+        // 0.6.2 P0-1 — in-flight accounting for EVERY route (probes included),
+        // inside CORS so a preflight rejection is not counted as work.
+        // `shutdown::serve_with_deadline` reports this gauge as
+        // `aborted_in_flight` when the drain deadline expires.
+        .layer(axum::middleware::from_fn(middleware::resilience::in_flight_middleware))
         .layer(middleware::cors::cors_layer(&cfg.cors_origins))
         .with_state(state)
 }

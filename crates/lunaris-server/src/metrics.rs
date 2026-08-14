@@ -45,8 +45,8 @@
 use std::sync::OnceLock;
 
 use prometheus::{
-    GaugeVec, HistogramVec, IntCounterVec, IntGaugeVec, register_gauge_vec, register_histogram_vec,
-    register_int_counter_vec, register_int_gauge_vec,
+    GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, register_gauge_vec,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge, register_int_gauge_vec,
 };
 
 /// Container for the nine declared metrics. Lazily constructed via [`metrics`]
@@ -71,6 +71,11 @@ pub struct Metrics {
     /// set ≤ 13 (see `hotkeys_poller::classify_hot_key`). Raw key names
     /// NEVER appear — unparseable keys are dropped before labeling.
     pub hotkey_samples: IntGaugeVec,
+    /// 0.6.2 P0-1 — HTTP requests currently inside the router, maintained by
+    /// `middleware::resilience::in_flight_middleware`. Label-free (process
+    /// scope) so it costs one series. `shutdown::serve_with_deadline` reads it
+    /// when the grace window expires to report `aborted_in_flight`.
+    pub http_in_flight: IntGauge,
 }
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
@@ -141,6 +146,12 @@ pub fn metrics() -> &'static Metrics {
             &["scope", "kind"]
         )
         .expect("register lunaris_hotkey_samples"),
+        http_in_flight: register_int_gauge!(
+            "lunaris_http_in_flight",
+            "HTTP requests currently being served (incremented on entry to the router, \
+             decremented on response OR on drop, so a cancelled request cannot leak)"
+        )
+        .expect("register lunaris_http_in_flight"),
     })
 }
 

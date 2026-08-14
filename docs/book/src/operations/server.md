@@ -122,6 +122,7 @@ Un-authenticated routes (`/healthz`, `/metrics`) are not rate-limited.
 | `lunaris_consolidator_queue_depth` | gauge | `topic` |
 | `lunaris_error_total` | counter | `kind` (cardinality cap ≤ 10) |
 | `lunaris_eval_score` | gauge | `harness` |
+| `lunaris_http_in_flight` | gauge | *(none)* |
 
 Time-series count grows linearly with **tenant count** (the tokens-file map
 size), not with traffic. `Content-Type` is the standard
@@ -133,9 +134,15 @@ size), not with traffic. `Content-Type` is the standard
   the server holds nothing on disk. Scale horizontally; restarts are free.
   See [Durability & Recovery](./durability.md).
 - **Graceful shutdown.** On `SIGTERM`/`SIGINT` the server stops accepting new
-  connections and drains in-flight requests for `--shutdown-grace-secs`
-  (default 30 s) before exiting. Set your orchestrator's termination grace
-  period at least that high.
+  connections and drains in-flight requests for **at most**
+  `--shutdown-grace-secs` (default 30 s) before exiting. The window is a
+  ceiling, not a sleep: an idle server exits in milliseconds. If the window
+  expires the server logs
+  `WARN shutdown grace window expired; abandoning in-flight requests
+  aborted_in_flight=<n>` (n from the `lunaris_http_in_flight` gauge) and exits
+  anyway — so a wedged backend can no longer pin the process until the
+  orchestrator escalates to SIGKILL. Set your orchestrator's termination grace
+  period a few seconds ABOVE `--shutdown-grace-secs`.
 - **HTTP-only image.** A `cargo build --no-default-features -p lunaris`
   build links neither the native embedder nor the reranker stack — useful when
   the server uses the Ollama HTTP escape hatch (`--features embed-remote`,
