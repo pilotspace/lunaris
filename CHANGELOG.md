@@ -7,6 +7,20 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ### Changed
 
+- **BREAKING (Moon backend) — historical `read_as_of` / `scan_range` now
+  fail loudly instead of returning present-time data.** Moon stores Lunaris
+  rows as plain hashes: `HGET`/`HMGET` accept no `AS_OF` clause and an
+  overwrite destroys the prior value, so there was never a historical version
+  to return. Until now the adapter answered a past `as_of` with the *current*
+  row, which made `GET /v1/snapshot/{lsn}`, `POST /v1/recall {as_of: <past>}`
+  and `AsOfScratchpad::read` hand back fabricated history. Such requests now
+  return `StorageError::NotSupported` → HTTP `501 { "error":
+  "not_supported" }`. Latest-state reads — every recall, hydrate, forget,
+  verify and detail lookup — are unchanged, and Moon's search/graph lanes stay
+  temporal via `FT.SEARCH AS_OF` / `GRAPH.QUERY VALID_AT`. As-of KV reads
+  remain available on Postgres and SQLite. Upstream path to closing the gap:
+  Moon's unwired `TemporalKvIndex` (`record`/`get_at`).
+
 - **MCP `memory.forget` previews by default (0.6.2 Task F)** — the tool's
   request DTO gained a `dry_run` field that **defaults to `true`**. Omitting it
   now scans and reports instead of deleting; an actual delete requires an
@@ -18,6 +32,13 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   `POST /v1/forget` surface keeps `dry_run: false` as its default for API
   compatibility; only the MCP surface inverts it.
 
+- Docs narrowed accordingly: the bi-temporal **write** model still holds on
+  every backend; as-of **reads** are now documented as Postgres/SQLite for KV
+  and Moon-native for the search + graph lanes (README, `docs/ARCHITECTURE.md`
+  § Honest limits, book concepts / data-structures / introduction /
+  conformance, the three migration guides, `docs/guide.md`,
+  `docs/helios-integration.md`, `docs/POSITIONING.md`).
+
 ### Added
 
 - **`ForgetReceipt.matched`** — the number of primitives the target matched,
@@ -26,6 +47,15 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   tell the caller what a commit would remove. Additive and
   `#[serde(default)]`, so receipts minted by older servers (the HTTP
   `confirmation_token` carries a serialized prior receipt) still deserialize.
+
+- `StoragePort::supports_historical_kv_reads()` — new additive trait method
+  (default `true`; Moon overrides to `false`) so callers can route as-of reads
+  instead of discovering the hole at query time. Deliberately distinct from
+  `StorageCapabilities::bi_temporal_native`, which means "temporal reads are
+  *native*" and is `false` on Postgres even though Postgres answers them.
+  Pinned by the non-skipping conformance test
+  `read_as_of::historical_pin_is_explicit` (runs for every backend) and
+  `moon_declares_its_as_of_gap` (runs with no live services at all).
 
 ## [0.6.0-rc.2] — 2026-07-17
 

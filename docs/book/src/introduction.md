@@ -95,7 +95,7 @@ them; any feature that weakens any of the three is rejected.
 |---|---|---|
 | **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench recall_hot_path` + perf smoke in CI |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
+| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — supersede closes intervals instead of destroying rows. As-of *reads* are backend-dependent: search-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) on Moon, historical KV reads on Postgres/SQLite only — see [Core concepts](./getting-started/concepts.md#bi-temporal-mvcc--the-hlc). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 
 If everything else fails, that performance + correctness contract must hold —
 it's what differentiates Lunaris from Mem0, Zep, and Cognee. See

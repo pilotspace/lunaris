@@ -104,6 +104,19 @@ or an arbitration outcome stamps the *old* row's `sys` end and writes a
 persisted bitemporal from the payload bytes, so a typed-only mutation
 would be silently lost; the supersede writers patch both.)
 
+> **Which half is universal.** The bi-temporal *write* model above holds
+> on every backend. As-of *reads* do not: `StoragePort::read_as_of` can
+> answer a **historical** pin only where the backend keeps a KV version
+> chain — Postgres and SQLite (`supports_historical_kv_reads() == true`).
+> **Moon stores Lunaris rows as plain hashes with no version chain**, so
+> since v0.6.2 it refuses a historical pin with
+> `StorageError::NotSupported` (HTTP `501 not_supported`) rather than
+> answering with present-time data. Latest-state reads — what every
+> recall, hydrate and `forget` actually issues — work everywhere, and
+> Moon's search/graph lanes remain temporal via `FT.SEARCH AS_OF` and
+> `GRAPH.QUERY VALID_AT`. Closing the KV gap upstream is tracked against
+> Moon's `TemporalKvIndex`.
+
 The clock is a **Hybrid Logical Clock** (`crates/lunaris-core/src/hlc.rs`):
 `Hlc { wall_ms: u64, counter: u32, node_id: u16 }`, totally ordered by
 `(wall_ms, counter, node_id)`. When the wall clock doesn't advance

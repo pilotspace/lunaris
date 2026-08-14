@@ -20,6 +20,10 @@ Pick Lunaris when you can say **yes** to most of these:
 - I want a single substrate (Moon or Postgres) instead of running a
   vector DB + graph DB + relational DB.
 - I need bi-temporal queries: "what did the agent believe at time T?"
+  (bi-temporal *writes* on every backend; historical as-of *reads* on
+  Postgres/SQLite — on Moon they are refused with an explicit 501 rather
+  than silently answered with present-time data. See
+  [ARCHITECTURE.md § Honest limits](ARCHITECTURE.md#honest-limits-read-before-quoting-the-table-above).)
 - I need multi-tenant isolation that the type system enforces, not
   just a `user_id` string the caller could swap.
 - I want a composable retrieval DSL where vector + keyword + graph

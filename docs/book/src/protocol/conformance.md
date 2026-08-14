@@ -16,7 +16,18 @@ against:
    SSE + auth + rate limit + retrieval modes. Plan 05-03 PROTO-06.
 3. **AS_OF parity** — dual-backend differential test that asserts `recall`
    against Moon and Postgres returns identical hits + ordering for the same
-   input. Plan 05-02 STORE-07.
+   input. Plan 05-02 STORE-07. Needs both services and skips clean without
+   them, so it is backstopped by `moon_declares_its_as_of_gap` in the same
+   file, which runs unconditionally.
+
+**Historical vs latest reads (v0.6.2).** The storage suite's
+`read_as_of::historical_pin_is_explicit` is not capability-gated: it branches
+on the backend's own `StoragePort::supports_historical_kv_reads()` and
+requires the matching behaviour in both directions — a backend that declares
+`true` must not surface a row that did not exist at the pinned instant, and a
+backend that declares `false` (Moon: plain hashes, no KV version chain) must
+refuse with `StorageError::NotSupported`, never answer with present-time data.
+"This backend can't do as-of reads" therefore cannot be expressed as a skip.
 
 The reference implementation under test is `lunaris-server`
 (`crates/lunaris-server/`, axum 0.8 binary). The harness is library-shaped
@@ -27,7 +38,7 @@ wire to it without duplicating test code.
 
 | Suite        | Function                                                       | Tests | What it covers                                                                                  |
 |--------------|---------------------------------------------------------------|-------|-------------------------------------------------------------------------------------------------|
-| Storage      | `lunaris_conformance::run_full_storage_suite(storage)`        | 8     | atomic_write, vector_search, graph_traverse (gated), scan_range, read_as_of, publish/subscribe, capabilities |
+| Storage      | `lunaris_conformance::run_full_storage_suite(storage)`        | 9     | atomic_write, vector_search, graph_traverse (gated), scan_range, read_as_of (latest + historical), publish/subscribe, capabilities |
 | Protocol     | `lunaris_conformance::run_full_protocol_suite(client, url, t)`| 10    | POST /v1/ingest, POST /v1/recall (default + SSE + graph mode), POST /v1/forget (id + two-step hard), GET /v1/snapshot/{lsn}, auth (401 + 403), rate-limit (429 + Retry-After) |
 | AS_OF parity | `lunaris_conformance::storage::as_of_parity::run(moon, pg)`   | 1     | STORE-07 — Moon vs Postgres identical hits; capability-gated `Divergence` for rerank-score precision |
 
