@@ -291,36 +291,91 @@ restarting the process does not un-wedge a downstream store
 
 > A sharded Moon is **not a Lunaris backend**. Not "less tested" — not usable.
 
-Lunaris commits each episode as **one** cross-key Moon `TXN` (the INGEST-04
-single-`atomic_write` invariant). Moon rejects a TXN that spans shards, so on a
-`--shards > 1` instance the very first ingest fails:
+**Since 0.7.0 Lunaris enforces this at connect.** A handle opened against a
+multi-shard Moon fails immediately with a message naming the fix, instead of
+coming up healthy and failing mid-ingest hours later:
+
+```
+moon: MULTI-SHARD server detected at 10.0.0.7:6379 — the server rejected a
+co-location probe: CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard.
+… To proceed: restart Moon with `--shards 1` …
+```
+
+The guard is one read-only round-trip at connect (`MULTI` / `EXISTS` over 64
+keys that would hash to different shards / `EXEC`), it writes nothing, and it
+costs nothing per operation. Implementation and full policy table:
+`crates/lunaris-storage-moon/src/shards.rs`.
+
+### 5.1 Why sharding breaks Lunaris — both sides, independently
+
+**Write side.** Lunaris commits each episode as **one** cross-key Moon `TXN`
+(the INGEST-04 single-`atomic_write` invariant). Moon rejects a TXN that spans
+shards, so on a `--shards > 1` instance the very first ingest fails:
 
 ```
 storage: backend: moon: redis error: ResponseError:
   TXN does not support cross-shard writes -- use hash tags {tag} to co-locate keys
 ```
 
-This is measured, not theoretical — the backup/restore drill run at
-`--shards 4` never reaches the backup step. Full write-up:
+> **That error's advice is not a fix for Lunaris.** Earlier revisions of this
+> runbook implied hash tags would make sharded ingest work. They do not.
+> [RFC 0008](../rfcs/0008-sharded-moon-ingest.md) §2.3 measured the real rule:
+> the guard is *"every key must land on **the connection's own shard**"*, not
+> *"the keys must agree with each other"*. Moon assigns connections to shards
+> round-robin with no client control, so a fully `{scope}`-tagged keyspace still
+> failed on 11 of 16 scopes on one connection — and would fail on a *different*
+> 11 on the next. Non-deterministic per connection, not merely degraded.
+
+**Read side — and this one has no client-side fix at all.** `FT.NAVIGATE`, the
+graph leg of recall, does **not** scatter-gather: Moon runs it against the
+connection's own shard only. A Navigate for a scope whose data sits on another
+shard returns **empty results, not an error** — silent recall degradation (RFC
+0008 §1.3). Plain vector `FT.SEARCH … FILTER` is rejected outright under
+multi-shard. Fixing the write side would therefore buy a deployment that writes
+correctly and quietly loses graph hits, which is strictly worse than a loud
+refusal. Sharding stays deferred until Moon scatter-gathers `FT.NAVIGATE`
+(upstream ask #2 in RFC 0008 §6).
+
+Also measured, not theoretical: the backup/restore drill run at `--shards 4`
+never reaches the backup step. Write-up:
 [`backup-restore.md` §6.6](backup-restore.md) (and §7, "Single shard — and that
 is the only shape Lunaris supports").
 
-**The trap:** Moon's *binary* default is `--shards 1`
-(`vendor/moon/src/config.rs:223`), but the *container image* CMD passes
-`--shards 0` = auto-detect from CPU count (`vendor/moon/Dockerfile:147-149`).
-An operator who runs the image as-shipped on a 4-core host gets a 4-shard Moon
-and a Lunaris that cannot write a single episode.
+### 5.2 The container-image trap
 
-Check a running instance:
+Moon's *binary* default is `--shards 1` (`vendor/moon/src/config.rs`), but the
+*container image* CMD passes `--shards 0` = auto-detect from CPU count
+(`vendor/moon/Dockerfile`). An operator who runs the image as-shipped on a
+4-core host gets a 4-shard Moon. **Pin `--shards 1` explicitly** in your
+compose / helm / systemd arguments rather than relying on the default.
+
+### 5.3 Checking a running instance
+
+Moon does **not** publish its shard count — `INFO` (every section),
+`CONFIG GET *shard*`, `CLIENT INFO` and `CLUSTER KEYSLOT` were all checked live
+and expose nothing (RFC 0008 §2.3; upstream ask
+[pilotspace/moon#497](https://github.com/pilotspace/moon/issues/497) asks for a
+`num_shards` field, which the Lunaris guard already reads if present). So
+`INFO | grep -i shard` returns nothing on either shape and proves nothing.
+
+Check the launch arguments instead, or run the same co-location canary Lunaris
+uses:
 
 ```bash
-redis-cli -h 127.0.0.1 -p 6379 INFO | grep -i shard
+# What was it actually started with?
+ps -o args= -p "$(pgrep -f '[m]oon --port')"        # or: docker inspect / systemctl cat
+
+# Co-location canary: read-only, writes nothing. All three commands must ride
+# ONE connection, hence the pipe into a single redis-cli.
+#   single shard -> OK / QUEUED / "1) (integer) 0"
+#   multi-shard  -> OK / QUEUED / "CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard"
+printf 'MULTI\nEXISTS lunaris:__shardprobe__:canary:0 lunaris:__shardprobe__:canary:1 lunaris:__shardprobe__:canary:2 lunaris:__shardprobe__:canary:3\nEXEC\n' \
+  | redis-cli -h 127.0.0.1 -p 6379
 ```
 
 Changing shard count on an existing data directory is a Moon-side migration
-(`moon --migrate-aof-from … --migrate-aof-shards N`,
-`vendor/moon/src/config.rs:820-840`) — not something to do casually under a
-live Lunaris.
+(`moon --migrate-aof-from … --migrate-aof-shards N`) — not something to do
+casually under a live Lunaris.
 
 ---
 
