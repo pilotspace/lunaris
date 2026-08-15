@@ -9,7 +9,9 @@
 //!      pinned by `server_boot.rs::server_boots_and_lists_all_tools`).
 //!   3. `tools/call` for `memory.ingest` returns a non-empty `lsn` field.
 //!
-//! Uses a temp-dir SQLite DB so the test is hermetic and leaves no state behind.
+//! Backend is a `lunaris-test-harness` ephemeral child-process Moon, so the
+//! test is hermetic and leaves no state behind. (0.7.0 deleted the SQLite
+//! backend this used to open via a temp-dir `sqlite://` URL.)
 //! `LUNARIS_MCP_SCOPE` and `LUNARIS_MCP_STORAGE` are injected via env vars so
 //! the binary skips git-remote derivation and uses our isolated DB.
 //!
@@ -22,6 +24,7 @@
 //! lunaris-mcp` builds the binary automatically when the `[[bin]]` target is
 //! present. If running manually ensure `cargo build -p lunaris-mcp` first.
 
+use lunaris_test_harness::open_test_store;
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -86,9 +89,9 @@ async fn ingest_round_trip() {
         format!("{manifest}/../../target/debug/lunaris-mcp")
     });
 
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db_path = tmp.path().join("test.db");
-    let storage = format!("sqlite://{}", db_path.display());
+    // Bound for the child's whole lifetime — it owns the Moon.
+    let store = open_test_store().await;
+    let storage = store.url().to_owned();
 
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-ingest-round-trip")
@@ -122,11 +125,11 @@ async fn ingest_round_trip() {
     });
     send_msg(&mut stdin, &init_req).await;
 
-    // First-run SQLite migrations can take up to ~20 s on a cold DB.
-    // The server does not respond to `initialize` until `Lunaris::open` returns.
+    // The server does not answer `initialize` until `Lunaris::open` returns —
+    // which includes connecting to the Moon and creating its indices.
     let init_val = timeout(Duration::from_secs(60), read_msg(&mut reader))
         .await
-        .expect("initialize timed out (first-run DB migration can take up to 60 s)");
+        .expect("initialize timed out");
 
     assert!(init_val["error"].is_null(), "initialize returned error: {init_val}");
     let proto = &init_val["result"]["protocolVersion"];

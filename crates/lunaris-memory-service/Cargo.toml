@@ -73,7 +73,7 @@ tokio        = { workspace = true, features = ["macros", "rt", "rt-multi-thread"
 lunaris-core = { workspace = true }
 lunaris-consolidate = { workspace = true }
 futures      = { workspace = true }
-# status.rs test opens a real sqlite:// file to assert non-native-queue behaviour.
+# embedded_moon.rs tests need a scratch data dir for the launcher.
 tempfile     = "3"
 # feedback.rs's ActivationFailingStorage test double implements StoragePort
 # directly (mirrors lunaris-hook::context.rs's identical pattern).
