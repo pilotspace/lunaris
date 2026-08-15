@@ -11,9 +11,9 @@
 //! ```
 //!
 //! against a 1M-fact synthetic corpus. The blueprint §4.2 latency budget
-//! asserts:
-//!  - p50 ≤ 25 ms, p99 ≤ 80 ms on MoonStorage (RETRIEVE-11)
-//!  - p50 ≤ 60 ms on PostgresStorage (RETRIEVE-12; no p99 budget specified)
+//! asserts p50 ≤ 25 ms, p99 ≤ 80 ms on MoonStorage (RETRIEVE-11). The
+//! companion RETRIEVE-12 budget (p50 ≤ 60 ms on Postgres) retired with that
+//! backend in 0.7.0.
 //!
 //! ## Setup phase (one-shot, cached)
 //!
@@ -53,8 +53,12 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] =
-    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
+/// 0.7.0 is Moon-only. The `postgres` row (`PG_URL`) was removed with the
+/// backend; leaving it would have opened a `postgres://` URL that now returns
+/// `UnsupportedScheme`, turning a retired budget into a bench failure. The
+/// table shape stays so a second store can be added back without restructuring
+/// the loop.
+const BACKENDS: &[Backend] = &[Backend { label: "moon", env: "MOON_URL" }];
 
 /// How many distinct queries the bench cycles through. Larger = more diverse
 /// IO patterns; smaller = tighter cache locality. 50 hits the sweet spot —
@@ -72,7 +76,7 @@ const PER_BRANCH_K: usize = 30;
 fn recall_benches(c: &mut Criterion) {
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     let mut group = c.benchmark_group("recall_hot_path");
-    // The recall budget is tight (25 ms p50 Moon / 60 ms p50 Postgres) so we
+    // The recall budget is tight (25 ms p50 on Moon) so we
     // can afford more samples than the ingest bench in a fixed wall clock.
     group.sample_size(50);
     group.measurement_time(Duration::from_secs(20));

@@ -1,27 +1,55 @@
-# Lunaris Quickstart — Postgres + pgvector + pgmq + AGE on localhost:5432.
+# Lunaris Quickstart — Moon on localhost:6380.
 #
-# Reuses the production image from `scripts/pg-lunaris/` so the quickstart
-# exercises the same extensions matrix as CI. See `README.md` for the runbook.
+# 0.7.0 is Moon-only. This file used to build the `scripts/pg-lunaris` image
+# (Postgres + pgvector + pgmq + AGE); both that image and the Postgres backend
+# it served were deleted. See `docs/migration/0.6-to-0.7.md`.
+#
+# Two flags are load-bearing and are therefore spelled out instead of left to
+# the image's CMD (`vendor/moon/Dockerfile`, which ships `--shards 0`):
+#
+#   --shards 1          REQUIRED. Lunaris ingest is a single MULTI/EXEC TXN and
+#                       Moon refuses cross-shard writes; `0` means auto-detect
+#                       from CPU count, i.e. sharded, i.e. every ingest fails
+#                       with "TXN does not support cross-shard writes".
+#   --protected-mode no Docker networking is non-loopback, and protected mode
+#                       rejects every connection arriving through a forwarded
+#                       port.
+#
+# `--appendonly yes` keeps the quickstart's data across `docker compose
+# restart`. `docker compose down -v` still wipes it.
+#
+# The healthcheck is INHERITED from the image (`moon --check-config`): the
+# runtime is distroless — no shell, no redis-cli — so a `CMD-SHELL` probe
+# cannot run. It is a liveness probe only; it does not prove the listener
+# accepts writes. See `docs/operations/external-moon.md` for the production
+# recipe (real probes, durability, resource limits).
 
 services:
-  pg-lunaris:
-    container_name: lunaris-quickstart-pg
-    build:
-      context: ../../scripts/pg-lunaris
-    image: pg-lunaris:quickstart
+  moon:
+    container_name: lunaris-quickstart-moon
+    image: ghcr.io/pilotspace/moon:0.8.5
+    command:
+      [
+        "moon",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "6379",
+        "--shards",
+        "1",
+        "--dir",
+        "/data",
+        "--appendonly",
+        "yes",
+        "--protected-mode",
+        "no",
+      ]
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_PASSWORD: lunaris
-      POSTGRES_DB: lunaris
-      POSTGRES_USER: lunaris
+      # host 6380 -> container 6379. 6380 keeps the quickstart off a
+      # developer's default-port Redis/Moon.
+      - "6380:6379"
     volumes:
-      - pg-quickstart-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lunaris -d lunaris"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
+      - moon-quickstart-data:/data
 
 volumes:
-  pg-quickstart-data:
+  moon-quickstart-data:

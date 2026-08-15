@@ -10,10 +10,9 @@ Lunaris is configured along four axes:
    CONTEXT.md D-26).
 3. **Builder / pipeline toggles** — programmatic switches on the `Lunaris`
    handle (graph pipeline on/off, verifier on/off, per-scope enablement).
-4. **The storage URL scheme** — `postgres://…` vs `moon://…` selects the
-   backend.
+4. **The storage URL scheme** — `moon://…` is the only one 0.7.0 accepts.
 
-Defaults are tuned for *"Postgres + a local embedder, graph and verifier
+Defaults are tuned for *"a Moon you run, a local embedder, graph and verifier
 off"* — the safe production floor. Turn things on deliberately.
 
 ---
@@ -92,8 +91,8 @@ in-process model tier.
 
 ### Integration-test features (never default)
 
-`lunaris-recipes` / `lunaris-storage-postgres`: `pg-it`.
-`lunaris-recipes` / `lunaris-storage-moon`: `moon-it`.
+`lunaris-recipes` / `lunaris-storage-moon`: `moon-it`. (`pg-it` was removed
+in 0.7.0 with the Postgres backend.)
 `lunaris-conformance`: `chaos-it`. `lunaris-bench`: `budget-it`.
 
 > **Excluded from `cargo test --workspace`:** `lunaris-py` and `lunaris-ts`
@@ -176,7 +175,7 @@ that takes precedence.
 | Variable | Default | Controls |
 |---|---|---|
 | `LUNARIS_BIND` | `0.0.0.0:8080` | Listen address |
-| `LUNARIS_STORAGE` | *(required)* | Storage URL — `moon://host:port` or `postgres://user:pass@host/db`; the scheme picks the backend |
+| `LUNARIS_STORAGE` | *(required)* | Storage URL — `moon://host:port`. No default; no other scheme is accepted. |
 | `LUNARIS_TOKENS_FILE` | *(required)* | Path to the bearer-token map JSON (see below) |
 | `LUNARIS_RATE_PER_SECOND` | `60` | Per-tenant sustained request rate |
 | `LUNARIS_RATE_BURST` | `120` | Per-tenant burst budget |
@@ -209,8 +208,11 @@ endpoint.
 
 | Variable | Example | Used by |
 |---|---|---|
-| `PG_URL` | `postgres://lunaris@localhost/lunaris` | `#[cfg(feature = "pg-it")]` tests |
-| `MOON_URL` | `moon://localhost:6380` | `#[cfg(feature = "moon-it")]` tests |
+| `MOON_URL` | `moon://localhost:6390` | `#[cfg(feature = "moon-it")]` tests |
+| `MOON_TEST_BINARY` | `/path/to/moon` | `lunaris-test-harness` — the `moon` binary it spawns per fixture. Without it (and without `vendor/moon/target/{release,debug}/moon`) the harness **panics**; there is no in-memory fallback since 0.7.0. |
+
+> Point these at a **dedicated** Moon. Never at a store you care about — the
+> fixtures own their instance and clear it.
 
 ---
 
@@ -237,20 +239,12 @@ The handles are obtained from the `Lunaris` value after `open`; see
 
 | Scheme | Backend | Notes |
 |---|---|---|
-| `moon://host:port` | Moon (Redis-compatible) | Native `FT.SEARCH` vector + BM25, `GRAPH.QUERY`, message queue, native RRF fusion. The Moon adapter creates its `chunks` FT index at the configured embedder's dimension (default 768; `Lunaris::open` passes `embedder.dim()`, `MoonStorage::connect_with_dim` sets it directly) — Moon itself has no dim cap. See [Choosing a Backend](../operations/backends.md). |
-| `postgres://` / `postgresql://[user[:pass]@]host[:port]/db` | Postgres + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. pgvector handles embeddings up to ~1536-d. |
+| `moon://host:port` | Moon (Redis-compatible) | Native `FT.SEARCH` vector + BM25, `GRAPH.QUERY`, message queue, native RRF fusion. The adapter creates its `chunks` FT index at the configured embedder's dimension (default 768; `Lunaris::open` passes `embedder.dim()`, `MoonStorage::connect_with_dim` sets it directly) — Moon itself has no dim cap. Start Moon with **`--shards 1`**: an ingest is one MULTI/EXEC transaction and a sharded Moon rejects it. |
+| `postgres://` / `postgresql://` / `memory://` / `sqlite:///path` | — | **Removed in 0.7.0.** `StorageError::UnsupportedScheme`, with the message naming `docs/migration/0.6-to-0.7.md`. |
 | anything else | — | `StorageError::UnsupportedScheme` |
 
-**Postgres connection details** (`lunaris-storage-postgres/src/pool.rs`):
+There is no schema migration and no role bootstrap to run — per-scope
+keyspaces, FT indices, GRAPH keys, and MQ topics are created lazily on the
+first `atomic_write` per scope.
 
-- Pool size: `max_connections(8)` (currently fixed in code).
-- Per-session bootstrap: `LOAD 'age'` + `SET search_path = ag_catalog,
-  "$user", public`.
-- Migrations run automatically on connect (sqlx-managed, `./migrations/`).
-  Use `connect_no_migrate()` for the non-privileged app role that should not
-  run DDL — see [Operations → Backends](../operations/backends.md) and
-  `docs/migration/0.1-to-0.2.md` §6.2 for the `NOSUPERUSER NOBYPASSRLS` role
-  recipe (required so Postgres RLS actually applies).
-
-See also [Operations → Choosing a Backend](../operations/backends.md) for the
-trade-off discussion.
+See also [Operations → The Storage Backend](../operations/backends.md).

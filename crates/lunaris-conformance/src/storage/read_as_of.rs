@@ -7,14 +7,15 @@
 //! ## Two different questions (0.6.2 task 9)
 //!
 //! `StorageCapabilities::bi_temporal_native` answers "are temporal reads a
-//! NATIVE backend feature" — Postgres reports `false` because it emulates
-//! the snapshot with `valid_from`/`valid_to`/`sys_*` predicates, and Moon
-//! reports `false` too. It does NOT answer "can this backend answer a
-//! historical read at all", which is
-//! [`StoragePort::supports_historical_kv_reads`]: `true` for Postgres and
-//! the embedded SQLite backend, `false` for Moon (plain hashes, no version
-//! chain). Conflating the two is what let the Moon gap hide behind a
-//! conformance suite that never asked.
+//! NATIVE backend feature". Moon reports `false` — and so did the deleted
+//! Postgres backend, which emulated the snapshot with
+//! `valid_from`/`valid_to`/`sys_*` predicates. It does NOT answer "can this
+//! backend answer a historical read at all", which is
+//! [`StoragePort::supports_historical_kv_reads`]: the two SQL backends
+//! answered `true`, Moon answers `false` (plain hashes, no version chain).
+//! Conflating the two is what let the Moon gap hide behind a conformance
+//! suite that never asked — and with Moon the only backend left, this pair of
+//! flags is the whole record of the distinction.
 //!
 //! [`snapshot`] pins the latest-state contract every backend must meet;
 //! [`historical_pin_is_explicit`] pins the historical one, in BOTH

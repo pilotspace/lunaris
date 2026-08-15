@@ -26,15 +26,12 @@ assert_eq!(s.as_str(), "acme.agent-1");
 `Deserialize` impl re-runs the *same* validator on wire bytes — wire data is
 never trusted (RFC 0001 §11). The colon was **removed in v0.2.1** so the Moon
 KV format `lunaris:{scope}:{kind}:{ulid}` cannot byte-alias across scopes
-(RFC 0001 §11.3, RC-2); Postgres enforces the same alphabet via a per-table
-`<table>_scope_check` constraint. Use **dots** in identifiers: `acme.agent-42`,
+(RFC 0001 §11.3, RC-2). Use **dots** in identifiers: `acme.agent-42`,
 not `acme:agent-42`.
 
 > **Upgrading from v0.2.0?** Any scope/JWT-tenant string containing `:` now
 > fails at the HTTP boundary with `invalid scope`. Rotate JWTs (`acme:agent-42`
-> → `acme.agent-42`); on Postgres, rewrite affected rows
-> (`UPDATE <table> SET scope = replace(scope, ':', '.')` for each primitive
-> table) **before** running migration `20260512000007_scope_regex_tighten.sql`.
+> → `acme.agent-42`).
 > Moon keys are immutable — re-ingest colon-keyed data under the rewritten
 > scope. Recipe: RFC 0001 §11.4.
 
@@ -47,7 +44,7 @@ not `acme:agent-42`.
 ```rust
 use lunaris::{EpisodeBuilder, Lunaris, Query, Scope, Vector};
 
-let lunaris = Lunaris::open("postgres://lunaris@localhost/lunaris").await?;
+let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
 let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);   // ScopedLunaris<'_>
 
 let lsn  = scoped.ingest(EpisodeBuilder::new("notes.md", "Alice met Bob.")).await?;
@@ -67,8 +64,8 @@ returns a `RetrievalBuilder` pre-seeded with the scope for chained queries.
 Under the hood `&Scope` is threaded through every partitioned `StoragePort`
 method (`atomic_write`, `vector_search`, `graph_traverse`, `scan_range`,
 `read_as_of`, `publish`, `subscribe`, `queue_depth`) and `KeywordPort::keyword_search`
-— Postgres partitions via RLS, Moon via a per-scope keyspace prefix
-`lunaris:{scope}:` and per-scope FT/GRAPH/MQ resources.
+— Moon partitions via a per-scope keyspace prefix `lunaris:{scope}:` and
+per-scope FT/GRAPH/MQ resources.
 
 ## Per-scope worker supervision
 
@@ -89,7 +86,7 @@ restarts only the failed scope's task.
 **Operational ceiling:** N scopes ⇒ N Moon FT indices and N MQ topics. Moon's
 soft limit is ~512 FT indices per node before recall p99 degrades — surfaced
 as `StorageCapabilities::max_scopes_recommended`. Above that, multi-tenant
-pooling is a future RFC. Postgres has no such per-scope resource cost.
+pooling is a future RFC.
 
 See [Configuration → Supervision / worker pool](../reference/configuration.md#supervision--worker-pool).
 
@@ -187,7 +184,7 @@ need — a tenant wall costs Moon resources; a thread label costs nothing.
 
 | Level | How you set it | Strength | Cost |
 |---|---|---|---|
-| **Scope** | `lunaris.scoped(Scope::new("acme.agent-a")?)` — or, over HTTP, the JWT `tenant` claim → scope | **Hard wall.** Postgres RLS `USING` + `WITH CHECK`; per-scope Moon keyspace `lunaris:{scope}:` + per-scope FT/GRAPH/MQ resources. A cross-scope read is a type error (you'd need a *different* `ScopedLunaris`) or an RLS denial. | One Moon FT index + one MQ topic **per scope**; soft ceiling ~512 scopes/node before recall p99 degrades (`StorageCapabilities::max_scopes_recommended`). Postgres: free. |
+| **Scope** | `lunaris.scoped(Scope::new("acme.agent-a")?)` — or, over HTTP, the JWT `tenant` claim → scope | **Hard wall.** Per-scope Moon keyspace `lunaris:{scope}:` + per-scope FT/GRAPH/MQ resources. A cross-scope read is a type error — you'd need a *different* `ScopedLunaris`. | One Moon FT index + one MQ topic **per scope**; soft ceiling ~512 scopes/node before recall p99 degrades (`StorageCapabilities::max_scopes_recommended`). |
 | **Source prefix** | The `source` string on `EpisodeBuilder::new(source, content)` — or the `prefix` arg to `MessageStream::new` / the `"chat:<user>/"` prefix `MultiTurnConversation` derives | **Soft, filter-based.** Within one scope, `Hit.source` carries the episode's source; you narrow client-side (`hits.retain(\|h\| h.source.starts_with("conv:mon"))`). Nothing stops a same-scope query from seeing all prefixes. | Free — it's just a string. |
 | **Session / thread id** | `MultiTurnConversation::remember(turn, thread_id)` — or `MessageStream::ingest(msg, thread_id, participant)` | A *segment* of the source prefix (`chat:<user>/<thread_id>/`). Recall spans all threads by default; narrow by source prefix as above. `thread_id` + `participant_id` also land in the episode `metadata` map. | Free. |
 
@@ -373,11 +370,11 @@ blackboard for agent teams:
   `Relation.src` / `Relation.dst` must resolve within the same scope.
 - **`Scope` is an identifier, not a permission system** — AuthZ stays in the
   `lunaris-server` middleware (the token map's `scopes` array).
-- **v0.1 → v0.2 has no on-the-wire compatibility.** Migration is SQL-driven
-  on Postgres — `migrations/20260510000005_scope_partitioning.sql` backfills
-  `scope = '_legacy'` for pre-scope rows (`_legacy` is the reserved fallback
-  literal), and `metadata.tenant` is no longer silently honored as a tenant
-  key. Full recipe — including the v0.2.0 → v0.2.1 colon-removal step
+- **v0.1 → v0.2 had no on-the-wire compatibility.** Pre-scope rows were
+  backfilled to `scope = '_legacy'` (the reserved fallback literal), and
+  `metadata.tenant` is no longer silently honored as a tenant key. The
+  SQL-driven half of that recipe went with the Postgres backend in 0.7.0.
+  Full recipe — including the v0.2.0 → v0.2.1 colon-removal step
   (`migrations/20260512000007_scope_regex_tighten.sql`) — in
   `docs/migration/0.1-to-0.2.md`.
 

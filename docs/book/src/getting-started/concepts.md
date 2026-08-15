@@ -217,14 +217,13 @@ pipeline with no real backend wired just runs the shipped `Noop*` impl
 | Scheme | Backend | Notes |
 |---|---|---|
 | `moon://host:port` | **Moon** (Redis-compatible substrate) | Native `FT.SEARCH` (vector + BM25), `GRAPH.QUERY`, message queue, **native RRF fusion** (one round trip for `vector.and(keyword).fuse_rrf()`). The Moon adapter sizes its vector index to the configured embedder (default 768-d; a wider embedder works on Moon too via `Lunaris::open` / `connect_with_dim`). |
-| `postgres://` / `postgresql://` | **Postgres** + `pgvector` + Apache AGE + `pgmq` | Native graph + queue; **client-side** RRF fusion. pgvector handles embeddings up to ~1536-d. RLS-enforced tenant isolation. The portable default. |
+| `postgres://` / `postgresql://` / `memory://` / `sqlite:///path` | — | **Removed in 0.7.0.** `StorageError::UnsupportedScheme`, with the message naming the migration guide. |
 | anything else | — | `StorageError::UnsupportedScheme` |
 
-Every `Lunaris` call works identically against either — the scheme is
-the only thing that changes. Moon is the performance ceiling (we own
-it); Postgres is the portability proof (you probably already run one).
-Trade-offs and the embedding-dimension details:
-[Choosing a Backend](../operations/backends.md).
+Moon is the only backend. Start it with **`--shards 1`** — an ingest is one
+MULTI/EXEC transaction and a sharded Moon rejects it. Embedding-dimension
+details and the STORE-07 as-of gap:
+[The Storage Backend](../operations/backends.md).
 
 ## Next
 

@@ -1,148 +1,100 @@
-# Choosing a Backend (Moon vs Postgres)
+# The Storage Backend (Moon)
 
-**Lunaris ships two `StoragePort` implementations: Moon (a Redis-compatible
-substrate, the performance default) and Postgres (pgvector + Apache AGE +
-pgmq, the portability proof). Both pass the same conformance suite — pick by
-operational fit, not feature parity.** `Lunaris::open(url)` dispatches on the
-URL scheme: `moon://host:port` or `postgres://user:pass@host/db`.
+**As of 0.7.0 Lunaris ships exactly one `StoragePort` implementation: Moon,
+the Redis-compatible substrate.** `Lunaris::open(url)` accepts one scheme,
+`moon://host:port`; every retired spelling (`postgres://`, `postgresql://`,
+`memory://`, `sqlite:///path`) returns `UnsupportedScheme` carrying the
+migration link rather than half-working.
 
-## Feature parity at a glance
+If you are on 0.6.x with a Postgres or SQLite store, **migrate before you bump
+the pin** — the exit ramp is `lunaris-migrate`, built from the v0.6.2 tag. See
+[0.6 → 0.7](https://github.com/pilotspace/lunaris/blob/main/docs/migration/0.6-to-0.7.md).
 
-| | Moon (`lunaris-storage-moon`) | Postgres (`lunaris-storage-postgres`) |
-|---|---|---|
-| Vector search | Native `FT.SEARCH` (HNSW) | `pgvector` |
-| BM25 keyword | Native `FT.SEARCH` inverted index | `pgvector` + Postgres FTS |
-| RRF fusion | **Native** (in-substrate) | **Client-side** (Lunaris fuses in process) |
-| Graph traversal | Native `GRAPH.QUERY` | Apache AGE Cypher |
-| Pipeline queue | Native Streams | `pgmq` |
-| Embedding dim (adapter) | **Embedder-sized** — the Moon adapter creates its vector index at the configured embedder's dimension (default **768-d**, granite-embedding-311m-multilingual-r2; `Lunaris::open` passes `embedder.dim()` through, and `MoonStorage::connect_with_dim` lets you set it directly). No upper cap. | up to ~**1536-d** (pgvector practical ceiling) |
-| Bi-temporal `as_of` | Native bi-temporal index | `tstzrange &&` |
-| Tenant isolation | Per-scope keyspace prefix `lunaris:{scope}:` + per-scope FT/GRAPH/MQ | Postgres **RLS** (`SET LOCAL lunaris.scope`) |
-| Scope soft cap | ~512 scopes/node (`max_scopes_recommended`) | n/a (RLS scales with rows) |
-| Recovery | AOF + base-RDB replay — see [Durability](./durability.md) | WAL + fsync (Postgres-managed) |
+## What Moon provides
 
-The `StorageCapabilities` report a backend returns drives capability-gated
-behaviour (graph mode, native vs client RRF, queue mode); the AS_OF parity
-test (`lunaris_conformance::storage::as_of_parity::run`) asserts the two
-backends return identical hits + ordering for the same input.
+| Capability | Implementation |
+|---|---|
+| Vector search | Native `FT.SEARCH` (HNSW) |
+| BM25 keyword | Native `FT.SEARCH` inverted index |
+| RRF fusion | **Native, in-substrate** — a (Vector + Keyword) pair on one index is a single round trip |
+| Graph traversal | Native `GRAPH.QUERY` (Cypher) |
+| Pipeline queue | Native Streams |
+| Embedding dim | **Embedder-sized** — the adapter creates its vector index at `embedder.dim()` (default **768-d**). No upper cap. |
+| Bi-temporal `as_of` | Native, on the **search and graph** lanes (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) |
+| Historical KV read | **Not supported** — see STORE-07 below |
+| Tenant isolation | Per-scope keyspace prefix `lunaris:{scope}:` + per-scope FT / GRAPH / MQ |
+| Scope soft cap | ~512 scopes/node (`max_scopes_recommended`) |
+| Recovery | AOF + base-RDB replay — see [Durability](./durability.md) |
 
-> **About the embedding dimension.** Moon (the substrate) has *no* hard
-> vector-dimension limit — `FT.CREATE` only requires `DIM > 0`. The Moon
-> adapter creates its `chunks` (and `entities` / `facts` / `communities`) FT
-> indices at the **configured embedder's dimension**: `Lunaris::open(url)`
-> reads `embedder.dim()` and calls `MoonStorage::connect_with_dim(url, dim)`,
-> so a 1536-d embedder (OpenAI `text-embedding-3`) works against Moon out of
-> the box. The default is **768-d** (granite-embedding-311m-multilingual-r2); `max_vector_dim` in
-> `StorageCapabilities` then reports whatever dimension the index was actually
-> created at. Operator footgun: Moon's `FT.CREATE` is idempotent and does
-> **not** resize an existing index — if a Moon instance already holds a 768-d
-> `chunks` index and you reopen with a wider embedder, the old index stays and
-> the mismatch only shows up on the first vector write; drop the stale index
-> (`FT.DROPINDEX <name>`) first. And it remains a latency trade-off (wider
-> vectors = more bytes/vector and more distance-compute per query), not a
-> capability boundary.
+The `StorageCapabilities` report the backend returns still drives
+capability-gated behaviour (graph mode, native vs client RRF, queue mode). It
+is no longer a *portability* mechanism — with one backend it is how the engine
+learns what this Moon build supports, and it is what the STORE-07 refusal below
+is derived from.
 
-## When to pick which
+### STORE-07 — no historical KV reads
 
-**Pick Moon when:**
+Moon has no per-key version chain, so `read_as_of` cannot walk one.
+`supports_historical_kv_reads()` returns `false` and the call **refuses**
+rather than silently answering with today's value — a wrong answer to "what did
+the agent know at T?" is worse than a named error. Through 0.6.x this was the
+one capability Postgres/SQLite had that Moon did not; with those backends gone
+it is a flat limitation of 0.7.0, pinned by
+`lunaris_conformance::storage::read_as_of` and the `run_as_of_moon_gap` test.
 
-- Recall latency is a hard contract — Moon is the path the sub-25 ms-p50 moat
-  is measured on.
-- You already run (or are willing to run) Moon as infra.
-- The Moon adapter sizes its FT vector index to your embedder — the default
-  768-d (granite-embedding-311m-multilingual-r2) is the common case, but a wider embedder works
-  on Moon too (`Lunaris::open` passes `embedder.dim()` through). See the note
-  above for the "existing index won't auto-resize" footgun.
-- You don't need more than ~512 scopes per node.
+Time-travel over **search** and **graph** results is unaffected and native.
 
-**Pick Postgres when:**
+### About the embedding dimension
 
-- You already operate Postgres and want zero new infra.
-- You want pgvector's SQL-queryable storage and up to ~1536-d embeddings —
-  e.g. OpenAI `text-embedding-3`. (Moon now also sizes its index to wider
-  embedders, so this is a "SQL access + ecosystem" choice, not a hard
-  dimension boundary.)
-- You want the database boundary itself (RLS) enforcing tenant isolation, or
-  you want ad-hoc SQL access to the stored primitives.
-- The extra ~hundreds of ms vs Moon on the hot path is acceptable.
+Moon has no hard vector-dimension limit — `FT.CREATE` only requires `DIM > 0`.
+The adapter creates its `chunks` (and `entities` / `facts` / `communities`) FT
+indices at the **configured embedder's dimension**: `Lunaris::open(url)` reads
+`embedder.dim()` and calls `MoonStorage::connect_with_dim(url, dim)`, so a
+1536-d embedder (OpenAI `text-embedding-3`) works out of the box. The default
+is **768-d** (granite-embedding-311m-multilingual-r2); `max_vector_dim` in
+`StorageCapabilities` reports whatever dimension the index was actually created
+at.
 
-Either choice is correct; the conformance suite makes the surface identical.
-
-## Postgres setup (pgvector + AGE + pgmq)
-
-The backend expects three extensions available in the target database:
-
-- **`pgvector`** — vector column type + HNSW index for `vector_search`.
-- **Apache AGE** — Cypher graph queries for `graph_traverse`. Each session
-  bootstraps with `LOAD 'age'` + `SET search_path = ag_catalog, "$user",
-  public` (`crates/lunaris-storage-postgres/src/pool.rs`).
-- **`pgmq`** — message queue for the consolidate / verify pipeline queues.
-
-Schema is sqlx-managed (`crates/lunaris-storage-postgres/migrations/`):
-
-```bash
-sqlx migrate run --source crates/lunaris-storage-postgres/migrations \
-                 --database-url $LUNARIS_PG_URL
-```
-
-`PgClient::connect(url)` runs migrations on connect; `connect_no_migrate(url)`
-skips DDL — use the latter for the non-privileged app role (below) and let a
-privileged connection apply migrations first. Pool size is fixed at
-`max_connections(8)` in code.
-
-### The `NOSUPERUSER NOBYPASSRLS` role recipe
-
-**This is not optional for multi-tenant production.** Postgres superusers
-(`rolsuper=t`) and roles with `BYPASSRLS` skip every RLS policy regardless of
-`FORCE ROW LEVEL SECURITY` — connecting as such silently disables scope
-isolation. Create a dedicated role (from `docs/migration/0.1-to-0.2.md` §6.2):
-
-```sql
-CREATE ROLE lunaris_app WITH LOGIN PASSWORD '…' NOSUPERUSER NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO lunaris_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO lunaris_app;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO lunaris_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO lunaris_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT USAGE ON SEQUENCES TO lunaris_app;
-```
-
-Then connect via `postgres://lunaris_app@host/lunaris`. If you observe
-cross-scope reads in a test environment, **check the connection role first** —
-`crates/lunaris-storage-postgres/tests/scope_isolation.rs` is a false-pass
-under a superuser.
-
-### RLS notes (the invariants)
-
-- **Every read path opens a read tx and runs `SELECT set_config('lunaris.scope',
-  $1, true)` before the body** — mirror the `vector.rs::vector_search`
-  pattern. The v0.2 review found `keyword_search` skipping this; BM25 then
-  silently returned zero hits under the app role (fixed in v0.2.1, RC-A).
-  Tests that exercise a read path MUST run under the app role, not the owner —
-  owner/superuser tests pass by accident.
-- **Every `tenant_isolation` policy declares both `USING` and `WITH CHECK`.**
-  `USING`-only is read-tight on SELECT/UPDATE but leaves INSERT
-  scope-unchecked at the database boundary (RC-3; migration
-  `20260511000006_rls_with_check.sql`).
-- The `scope` column is `TEXT NOT NULL` on every primitive table; the
-  per-table `<table>_scope_check` constraint enforces the same
-  `[A-Za-z0-9_\-.]{1,128}` alphabet `Scope::new` uses (migration 7) — so a
-  scope string can never byte-alias across tenants.
+> **Operator footgun.** `FT.CREATE` is idempotent and does **not** resize an
+> existing index. If a Moon instance already holds a 768-d `chunks` index and
+> you reopen with a wider embedder, the old index stays and the mismatch only
+> surfaces on the first vector write — drop the stale index
+> (`FT.DROPINDEX <name>`) first. Wider vectors remain a latency trade-off (more
+> bytes/vector, more distance-compute per query), not a capability boundary.
 
 ## Moon setup
 
-Moon needs no schema migration — per-scope keyspaces, FT indices, GRAPH keys,
-and MQ topics are created lazily on the first `atomic_write` per scope (so the
-first write per new scope is slightly slower; subsequent writes hit the warm
-index). For durable operation see [Durability & Recovery](./durability.md) —
-the short version is: enable AOF (`--appendonly yes --appendfsync always`) and
-ensure a base RDB exists (`BGREWRITEAOF`, **not** `BGSAVE`) before you trust
-the data.
+```bash
+docker run -d --name lunaris-moon -p 6380:6379 \
+  ghcr.io/pilotspace/moon:0.8.5 \
+  --shards 1 --protected-mode no --appendonly yes
+```
+
+Two flags are load-bearing:
+
+- **`--shards 1` is mandatory.** A Lunaris ingest is one MULTI/EXEC
+  transaction, and a sharded Moon rejects cross-shard writes — every ingest
+  fails. The image defaults to `--shards 0` (auto-detect), so the flag has to
+  be passed explicitly.
+- **`--appendonly yes`** is what makes the store survive a restart.
+
+There is **no schema migration and no role bootstrap**. Per-scope keyspaces, FT
+indices, GRAPH keys, and MQ topics are created lazily on the first
+`atomic_write` per scope, so the first write for a new scope is slightly slower
+and subsequent writes hit the warm index.
+
+Before you trust the data on disk, read [Durability &
+Recovery](./durability.md) — the short version is: enable AOF
+(`--appendonly yes --appendfsync always`) and ensure a base RDB exists via
+`BGREWRITEAOF` (**not** `BGSAVE`).
+
+Full production setup — memory limits, backups, health probes, systemd/launchd
+units — is in
+[Running an external Moon](https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md).
 
 ## See also
 
 - [Durability & Recovery](./durability.md)
 - [Configuration Reference §4 — Storage URL scheme](../reference/configuration.md#4-storage-url-scheme)
 - [Multi-Agent & Scope](../guides/multi-agent.md)
-- [Conformance](../protocol/conformance.md) — the parity guarantees in code
+- [Conformance](../protocol/conformance.md)

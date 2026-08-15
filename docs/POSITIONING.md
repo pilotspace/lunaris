@@ -17,12 +17,14 @@ Pick Lunaris when you can say **yes** to most of these:
 
 - My agent's recall p50 is on the hot path of user experience —
   300 ms feels slow.
-- I want a single substrate (Moon or Postgres) instead of running a
-  vector DB + graph DB + relational DB.
+- I want a single substrate (Moon) instead of running a vector DB +
+  graph DB + relational DB.
 - I need bi-temporal queries: "what did the agent believe at time T?"
-  (bi-temporal *writes* on every backend; historical as-of *reads* on
-  Postgres/SQLite — on Moon they are refused with an explicit 501 rather
-  than silently answered with present-time data. See
+  (bi-temporal *writes* always; as-of *reads* on the search and graph
+  lanes. A historical **KV** read is refused with an explicit 501 rather
+  than silently answered with present-time data — Moon has no version
+  chain, and the Postgres/SQLite backends that did were removed in 0.7.0.
+  See
   [ARCHITECTURE.md § Honest limits](ARCHITECTURE.md#honest-limits-read-before-quoting-the-table-above).)
 - I need multi-tenant isolation that the type system enforces, not
   just a `user_id` string the caller could swap.
@@ -50,11 +52,11 @@ Pick a different tool when you can say **yes** to any of these:
   strength.
 - I want a "memory + chat agent in 5 minutes" with zero substrate
   knowledge. Use **Mem0** — it's optimized for that.
-- I need a specific vector DB or graph DB that Lunaris doesn't ship
-  a backend for (LanceDB, Qdrant, Weaviate, Neo4j, etc.) and I
-  don't want to operate Moon or Postgres. Either implement the
-  `StoragePort` trait for your backend (the extension point is open)
-  or pick a tool that ships a first-class adapter.
+- I don't want to operate Moon. It is the only backend as of 0.7.0 —
+  the Postgres and SQLite adapters were removed. `StoragePort` is still
+  a public trait, so implementing it for LanceDB / Qdrant / Weaviate /
+  Neo4j is an open extension point, but nothing ships one; if you need
+  that on day one, pick a tool with a first-class adapter.
 
 ## The moat (what differentiates Lunaris, with proof)
 

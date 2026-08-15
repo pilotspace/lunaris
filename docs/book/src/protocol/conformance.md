@@ -47,25 +47,24 @@ ships under the same crate gated on the `chaos-it` Cargo feature.
 
 ## Running locally
 
-### Storage suite (per backend)
+### Storage suite
 
 ```bash
-# Moon
-MOON_URL=moon://localhost:6380 \
+MOON_URL=moon://localhost:6390 \
   cargo test -p lunaris-conformance --test run_storage_moon -- --nocapture
 
-# Postgres
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
-  cargo test -p lunaris-conformance --test run_storage_postgres -- --nocapture
-
-# AS_OF parity (requires BOTH)
-MOON_URL=moon://localhost:6380 \
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
-  cargo test -p lunaris-conformance --test run_as_of_parity -- --nocapture
+# STORE-07: the historical-KV-read gap, asserted unconditionally
+MOON_URL=moon://localhost:6390 \
+  cargo test -p lunaris-conformance --test run_as_of_moon_gap -- --nocapture
 ```
 
-When env vars are unset → SKIPS cleanly (exit 0). When the TCP probe fails →
+When `MOON_URL` is unset → SKIPS cleanly (exit 0). When the TCP probe fails →
 SKIPS with diagnostic.
+
+> **Point `MOON_URL` at a dedicated Moon.** The suite writes and clears data.
+> `run_as_of_parity` (Moon vs Postgres, field-by-field) was deleted in 0.7.0
+> with the Postgres backend; `run_as_of_moon_gap` replaces it and needs no
+> second backend.
 
 ### Protocol suite (against `lunaris-server`)
 
@@ -73,8 +72,8 @@ SKIPS with diagnostic.
 # 1. Build the binary so the subprocess runner can find it.
 cargo build -p lunaris-server  # → target/debug/lunaris-server
 
-# 2. Run the suite (picks MOON_URL first, falls back to PG_URL).
-MOON_URL=moon://localhost:6380 \
+# 2. Run the suite.
+MOON_URL=moon://localhost:6390 \
   cargo test -p lunaris-conformance \
     --test run_protocol_lunaris_server -- --nocapture
 ```
@@ -88,8 +87,7 @@ happens via RAII Drop guards regardless of test outcome.
 ### Chaos / crash-recovery (Unix only, gated)
 
 ```bash
-MOON_URL=moon://localhost:6380 \
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
+MOON_URL=moon://localhost:6390 \
   cargo test -p lunaris-conformance \
     --features chaos-it --test crash_recovery -- --nocapture
 ```

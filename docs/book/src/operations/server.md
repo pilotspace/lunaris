@@ -43,7 +43,7 @@ env). Source: `crates/lunaris-server/src/config.rs`.
 | Flag / env var | Default | Meaning |
 |---|---|---|
 | `--bind` / `LUNARIS_BIND` | `0.0.0.0:8080` | Listen address |
-| `--storage` / `LUNARIS_STORAGE` | *(required)* | Storage URL — `moon://host:port` or `postgres://user:pass@host/db`; the scheme picks the backend (see [Choosing a Backend](./backends.md)) |
+| `--storage` / `LUNARIS_STORAGE` | *(required)* | Storage URL — `moon://host:port`, the only accepted scheme (see [The Storage Backend](./backends.md)) |
 | `--tokens-file` / `LUNARIS_TOKENS_FILE` | *(required)* | Path to the bearer-token map JSON (below) |
 | `--rate-per-second` / `LUNARIS_RATE_PER_SECOND` | `60` | Per-tenant sustained request rate |
 | `--rate-burst` / `LUNARIS_RATE_BURST` | `120` | Per-tenant burst budget |
@@ -82,8 +82,8 @@ A JSON object mapping opaque bearer tokens to a tenant id + scope set
 > **Heads-up on `forget` under real scopes.** In v0.2.x, `Lunaris::forget`
 > still routes through `Scope::dev()` internally for its `atomic_write` /
 > `read_as_of` / `scan_range` calls — a `forget` issued under any non-`_dev_`
-> scope silently returns `rows_written = 0`, `rows_deleted = 0` (Postgres RLS /
-> the Moon SCAN prefix filter everything out). It emits a `tracing::warn!` on
+> scope silently returns `rows_written = 0`, `rows_deleted = 0` (the Moon SCAN
+> prefix filters everything out). It emits a `tracing::warn!` on
 > every call. The real per-scope routing — `ScopedLunaris::forget(target)` with
 > a `403`/`404` cross-scope contract — is a **v0.3 deliverable** (RFC 0001
 > §11.6, `CHANGELOG.md` "Known issues"). See [Forgetting](../guides/forget.md)
@@ -224,5 +224,5 @@ size), not with traffic. `Content-Type` is the standard
 
 - [MemoryProtocol 0.1](../protocol/memoryprotocol-0.1.md) — the wire spec
 - [Conformance](../protocol/conformance.md) — certifying a server
-- [Choosing a Backend](./backends.md) — Moon vs Postgres
+- [The Storage Backend](./backends.md) — Moon setup and its honest limits
 - [Configuration Reference](../reference/configuration.md) — every flag/var

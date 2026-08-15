@@ -94,7 +94,7 @@ const DEFAULT_OVERLAP_TOKENS: usize = 100;
 
 /// Vector index name the chunk embeddings land in. Matches the
 /// `chunks|entities|facts|communities` whitelist in the Phase 1
-/// `PostgresStorage::atomic_write` and `MoonStorage::atomic_write`.
+/// `MoonStorage::atomic_write`.
 const CHUNK_VECTOR_INDEX: &str = "chunks";
 
 /// Vector index name the community summary embeddings land in (Phase-30 B1).
@@ -427,7 +427,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         // TODO(phase-future): push WriteOp::GraphEdge for parent-child edges (D7 deferred).
         // The tree is fully navigable via Community.parent / Community.members + Chunk.parent_id
         // without graph edges. Deferring avoids shipping an untested branch
-        // (graph-OFF/SQLite never exercises it — same trap as Phase-28 graph-ON RC).
+        // (the graph-OFF path never exercises it — same trap as Phase-28 graph-ON RC).
     }
 
     // INGEST-04: the single atomic write for this episode (see module-level invariant).

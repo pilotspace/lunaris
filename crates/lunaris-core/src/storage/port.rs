@@ -11,7 +11,8 @@
 //! RFC 0001 (v0.2): every partitioning method now takes `scope: &Scope` as the first
 //! argument after `&self`. `capabilities()` is unchanged. Wave 0 backend impls thread scope
 //! through to the underlying free functions; the free functions may `let _ = scope;` —
-//! real per-scope partitioning is Wave 1B (Postgres RLS) and Wave 1C (Moon keyspace prefix).
+//! real per-scope partitioning landed in Wave 1C as the Moon keyspace prefix
+//! (Wave 1B did the same for Postgres RLS, before that backend was deleted in 0.7.0).
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -156,12 +157,11 @@ pub trait StoragePort: Send + Sync + 'static {
     /// tenant scope to thread.
     ///
     /// **Additive default = `Ok(())`** (mirrors the `queue_depth` / `hot_keys`
-    /// precedent): an in-process or otherwise un-probeable backend (SQLite,
-    /// in-memory, test mocks) reports healthy and keeps compiling unchanged. The
-    /// Moon backend OVERRIDES this with a real `PING` round-trip bounded by
-    /// `LUNARIS_MOON_OP_TIMEOUT`, so a dead/stalled Moon surfaces as `Err` and
-    /// `lunaris-server`'s `/healthz` answers 503 (Postgres `SELECT 1` is a
-    /// PG-parity follow-up — live-PG is deferred).
+    /// precedent): an un-probeable port (test doubles, decorators) reports
+    /// healthy and keeps compiling unchanged. The Moon backend OVERRIDES this
+    /// with a real `PING` round-trip bounded by `LUNARIS_MOON_OP_TIMEOUT`, so a
+    /// dead/stalled Moon surfaces as `Err` and `lunaris-server`'s `/healthz`
+    /// answers 503.
     async fn health_check(&self) -> Result<(), StorageError> {
         Ok(())
     }
@@ -214,11 +214,13 @@ pub trait StoragePort: Send + Sync + 'static {
     ///
     /// This is deliberately NOT
     /// [`StorageCapabilities::bi_temporal_native`](super::capabilities::StorageCapabilities::bi_temporal_native),
-    /// which means "temporal reads are a *native* backend feature". Postgres
-    /// reports `bi_temporal_native = false` (it emulates the snapshot with
-    /// `valid_from`/`valid_to`/`sys_from`/`sys_to` predicates) yet answers
-    /// historical reads correctly; Moon reports `false` too but *cannot*
-    /// answer them at all. Conflating the two is what let the gap hide.
+    /// which means "temporal reads are a *native* backend feature". The two
+    /// are independent: the (now-deleted) Postgres backend reported
+    /// `bi_temporal_native = false` — it emulated the snapshot with
+    /// `valid_from`/`valid_to`/`sys_from`/`sys_to` predicates — yet answered
+    /// historical reads correctly. Moon reports `false` too but *cannot*
+    /// answer them at all. Conflating the two is what let the gap hide, which
+    /// is why this flag stays even though Moon is the only backend left.
     ///
     /// **Additive default = `true`** (the trait's documented contract; the
     /// pattern mirrors [`Self::health_check`] / [`Self::hot_keys`]). A
@@ -260,9 +262,7 @@ pub trait StoragePort: Send + Sync + 'static {
     /// default; the default returns `Err(StorageError::NotSupported(...))` so
     /// every existing impl keeps compiling without modification. The Moon
     /// backend implements this via raw `redis::cmd("MQ.LENGTH")` (Path 2 from
-    /// the D-12 B-NOTE — moon-client v0.1.x lacks a typed wrapper); the
-    /// Postgres backend implements it via `pgmq.queue_length($1)` with a
-    /// SqlState 42883 fallback for older pgmq installs (B-11).
+    /// the D-12 B-NOTE — moon-client v0.1.x lacks a typed wrapper).
     ///
     /// Plan 04-04 `Lunaris::recall_with_degraded_check` reads this once per
     /// recall to set `Hit::degraded = true` when the verifier queue depth
@@ -305,22 +305,17 @@ pub trait StoragePort: Send + Sync + 'static {
     /// auto-discovering. This is the documented escape hatch — callers
     /// MUST handle `NotSupported` and fall back to per-scope queries.
     ///
-    /// **Postgres backend:** returns `NotSupported`. Per migration
-    /// `20260510000005_scope_partitioning.sql`, every primitive table is
-    /// `FORCE ROW LEVEL SECURITY`-protected with a policy
-    /// `scope = current_setting('lunaris.scope', true)`. A cross-scope
-    /// `SELECT DISTINCT scope` would either return zero rows (when the GUC
-    /// is set) or require `SET row_security = off`, which Lunaris' app
-    /// role does not hold. The contractual answer is to surface this
-    /// degradation rather than weaken the RLS boundary.
-    ///
     /// **Moon backend:** implements via `SCAN MATCH lunaris:*` + parsing
     /// the scope segment out of `lunaris:{scope}:{kind}:{ulid}` keys
     /// (Q-U2 lock — lazy SCAN-parse; no explicit scope index).
     ///
-    /// **Embedded (SQLite) backend:** implements by scanning the `lunaris_kv`
-    /// key column and parsing scopes out of the same `lunaris:{scope}:…`
-    /// keyspace convention.
+    /// The `NotSupported` branch is not vestigial: the deleted Postgres
+    /// backend answered that way because every primitive table was
+    /// `FORCE ROW LEVEL SECURITY`-protected with
+    /// `scope = current_setting('lunaris.scope', true)`, so a cross-scope
+    /// `SELECT DISTINCT scope` would have needed `SET row_security = off`.
+    /// Any future store with a per-scope security boundary lands in the same
+    /// position, which is why the degradation stays part of the contract.
     async fn list_scopes(
         &self,
         prefix: Option<&str>,
@@ -398,13 +393,16 @@ pub trait StoragePort: Send + Sync + 'static {
     /// suite) can make degradation decisions per blueprint §6.
     fn capabilities(&self) -> StorageCapabilities;
 
-    // ── HOOK-05: idempotency helpers (default = no-op for Moon/Postgres) ──
+    // ── HOOK-05: idempotency helpers (defaulted, overridden by Moon) ──
 
     /// Idempotency read: look up a previously-committed dedupe key.
     ///
-    /// Default implementation returns `Ok(None)` (no dedupe — always fresh ingest).
-    /// `EmbeddedStorage` overrides with a real SQLite lookup.
-    /// Moon and Postgres use the default no-op (v0.5 scope: SQLite-only idempotency).
+    /// Default implementation returns `Ok(None)` (no dedupe — always fresh ingest),
+    /// so a port that does not carry a dedupe sidecar keeps compiling and simply
+    /// re-ingests. `MoonStorage` overrides it against the
+    /// `lunaris:{scope}:dedupe:{blake3}` KV sidecar; the v0.5 "SQLite-only
+    /// idempotency" boundary closed when it did, which is why HOOK-05 survived
+    /// the deletion of the SQLite backend.
     ///
     /// The lookup is READ-ONLY. INGEST-04 is preserved — this method never calls
     /// `atomic_write`. (W6 fix: trait method replaces any `as_any()` downcast approach.)
@@ -419,8 +417,8 @@ pub trait StoragePort: Send + Sync + 'static {
 
     /// Idempotency write: record a dedupe key after a successful `atomic_write`.
     ///
-    /// Default implementation is a no-op.
-    /// `EmbeddedStorage` overrides with a real SQLite `INSERT OR IGNORE`.
+    /// Default implementation is a no-op. `MoonStorage` overrides it with a
+    /// SET-NX first-writer-wins insert into the dedupe sidecar.
     ///
     /// This is a BEST-EFFORT post-`atomic_write` write (T-24-03-06): if the process
     /// is killed between the `atomic_write` commit and this call, replay will produce
@@ -439,8 +437,8 @@ pub trait StoragePort: Send + Sync + 'static {
 
     /// Post-bulk-ingest maintenance hint. Backends MAY use this to
     /// compact/optimize storage after a large write burst; the default is a
-    /// no-op so every existing `StoragePort` impl (Postgres, embedded
-    /// SQLite, test mocks) keeps compiling and behaving unchanged —
+    /// no-op so every existing `StoragePort` impl (test doubles, decorators,
+    /// third-party stores) keeps compiling and behaving unchanged —
     /// additive trait method, mirrors the `queue_depth` / `hot_keys`
     /// precedent.
     ///

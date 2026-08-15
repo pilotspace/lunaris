@@ -1,7 +1,7 @@
 # Durability & Recovery
 
-**Lunaris is stateless: every byte of durable state lives in the backend
-(Moon or Postgres), so recovery is a backend concern.** This chapter
+**Lunaris is stateless: every byte of durable state lives in Moon, so
+recovery is a Moon concern.** This chapter
 documents the Moon-backed crash-recovery path, the bi-temporal MVCC
 semantics the guarantees rest on, the two live-measurement gotchas you need
 to know, and how to test recovery yourself.
@@ -47,8 +47,8 @@ time* = when Lunaris knew it). Nothing is updated in place:
   `as_of` *before* the forget timestamp still sees the row.
 
 So "what did the agent know at time T" is a storage query (`read_as_of` /
-`.as_of(ts)` on the retrieval DSL — `tstzrange &&` on Postgres, native
-bi-temporal on Moon), not a log replay. Crash recovery therefore restores not
+`.as_of(ts)` on the retrieval DSL, native bi-temporal on Moon), not a log
+replay. Crash recovery therefore restores not
 just the current state but the entire history, because the history *is* the
 on-disk state.
 
@@ -256,8 +256,6 @@ Evidence log: `milestones/v0.1.1-bench/recovery-test.log`.
 - **Single-shard only in this tested config.** Multi-shard Moon recovery
   semantics (cross-shard coordinator, manifest-level replay) aren't exercised
   by the harness yet.
-- **No Postgres recovery harness.** Postgres handles its own durability
-  (WAL + fsync); a symmetric test is BENCH-04 on the roadmap.
 - **AOF grows unboundedly without auto-rewrite.** Use `--save` rules or
   schedule `BGREWRITEAOF` — otherwise replay time grows linearly with write
   volume.
@@ -271,6 +269,6 @@ Evidence log: `milestones/v0.1.1-bench/recovery-test.log`.
 - `crates/lunaris-storage-moon/src/atomic.rs` — the `WriteOp` envelope shape
 - `moon/src/persistence/` (upstream Moon repo) — AOF + RDB implementation
 - [Ingesting Observations](../guides/ingest.md) / [The Retrieval DSL](../guides/retrieval-dsl.md) — the end-user API the recovery guarantees apply to
-- [Choosing a Backend](./backends.md) — Moon vs Postgres trade-offs
+- [The Storage Backend](./backends.md) — Moon setup and its honest limits
 
 If something here doesn't match the source, the source wins.

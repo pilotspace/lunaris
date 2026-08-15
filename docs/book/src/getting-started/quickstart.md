@@ -1,13 +1,14 @@
 # 10-Minute Quickstart
 
-**From a fresh checkout to your first ingest + recall against a local
-Postgres backend in under ten minutes — Rust is canonical, with Python
-and TypeScript mirrors side by side.** This targets the v0.2.x OSS
-milestone: Postgres + pgvector as the backend, no Moon required. (The
-default embedder is in-process llama.cpp granite-r2 (GGUF) — no Ollama
+**From a fresh checkout to your first ingest + recall against a local Moon
+in under ten minutes — Rust is canonical, with Python and TypeScript
+mirrors side by side.** Moon is the only backend as of 0.7.0; the Postgres
+and SQLite paths this chapter used to open with were deleted (see
+[0.6 → 0.7](https://github.com/pilotspace/lunaris/blob/main/docs/migration/0.6-to-0.7.md)).
+The default embedder is in-process llama.cpp granite-r2 (GGUF) — no Ollama
 needed for embedding. The shipped `examples/quickstart-rs` crate opts into
 the `ollama` build to enable the Ollama **extractor + verifier** path —
-see step 2.)
+see step 2.
 
 > **API note.** This chapter uses the retrieval surface that exists in
 > the v0.2.x source: `ScopedLunaris::recall(Query::text(...))` returns
@@ -24,30 +25,29 @@ see step 2.)
 git clone https://github.com/pilotspace/lunaris && cd lunaris
 ```
 
-## 1. Bring up Postgres
+## 1. Bring up Moon
 
-The `examples/quickstart-*/` directories share one Postgres image
-(`postgres:16` + pgvector + pgmq + Apache AGE), built from
-`scripts/pg-lunaris/`:
+The `examples/quickstart-*/` directories share one compose file, which runs
+the published `ghcr.io/pilotspace/moon` image on `localhost:6380`:
 
 ```bash
 cd examples/quickstart-rs
 docker compose up -d
-docker compose ps        # wait until lunaris-quickstart-pg is "healthy"
+docker compose ps        # wait until lunaris-quickstart-moon is "healthy"
 ```
 
-Apply the schema (the quickstart binary doesn't run DDL itself):
-
-```bash
-sqlx migrate run --source ../../crates/lunaris-storage-postgres/migrations \
-                 --database-url postgres://lunaris:lunaris@localhost:5432/lunaris
-```
+There is no schema step — Moon needs no migration, and Lunaris creates its
+indexes on first connect. Note the compose file passes **`--shards 1`**: a
+Lunaris ingest is one MULTI/EXEC transaction and a sharded Moon rejects it.
 
 ## 2. Point Lunaris at it
 
 ```bash
-export LUNARIS_PG_URL="postgres://lunaris:lunaris@localhost:5432/lunaris"
+export LUNARIS_STORE_URL="moon://127.0.0.1:6380"
 ```
+
+The quickstart binary has **no default URL** — an unset `LUNARIS_STORE_URL`
+is an error, not a fallback to an in-process store.
 
 The default embedder is **granite-embedding-311m-multilingual-r2** (768-d),
 loaded from a Q4_K_M GGUF **in-process via llama.cpp** (staged at
@@ -86,11 +86,11 @@ use lunaris::{EpisodeBuilder, ForgetTarget, Lunaris, Query, Scope, ScopeSpec, Ve
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    // 3. Open a handle. The URL scheme picks the backend
-    //    (postgres:// here; moon://host:port for Moon).
-    let pg_url = env::var("LUNARIS_PG_URL")
-        .context("set LUNARIS_PG_URL — see examples/quickstart-rs/README.md")?;
-    let lunaris = Lunaris::open(&pg_url).await.context("Lunaris::open")?;
+    // 3. Open a handle. `moon://host:port` is the only scheme `open`
+    //    accepts since 0.7.0; anything else is an UnsupportedScheme error.
+    let url = env::var("LUNARIS_STORE_URL")
+        .context("set LUNARIS_STORE_URL — see examples/quickstart-rs/README.md")?;
+    let lunaris = Lunaris::open(&url).await.context("Lunaris::open")?;
 
     // The Scope newtype is the multi-agent partition key (RFC 0001).
     // Scope::new validates the string against [A-Za-z0-9_\-.]{1,128}.
@@ -168,9 +168,9 @@ forget preview: preview=true rows_would_write=...
 ```
 
 > **Hybrid recall, one line more.** Add BM25 keyword search and fuse it
-> with reciprocal-rank fusion — against a Moon backend `fuse_rrf`
-> collapses this to a single round trip; against Postgres it fuses
-> client-side. Same API either way:
+> with reciprocal-rank fusion — when both legs sit on the same Moon index
+> `fuse_rrf` collapses them into a single round trip, otherwise it fuses
+> the leg results client-side. Same API either way:
 >
 > ```rust
 > use lunaris::{Keyword, Vector};
@@ -218,8 +218,8 @@ def build_episode(scope: str, content: str) -> dict:
 
 
 async def main() -> None:
-    pg_url = os.environ["LUNARIS_PG_URL"]
-    handle = await lunaris.open(pg_url)                       # 3. open
+    url = os.environ["LUNARIS_STORE_URL"]
+    handle = await lunaris.open(url)                          # 3. open
     lsn = await handle.ingest(build_episode("quickstart",     # 4. ingest
                                             "Alice loves chocolate."))
     print(f"ingested at lsn={lsn} under scope `quickstart`")
@@ -260,7 +260,7 @@ function buildEpisode(scope: string, content: string): object {
   };
 }
 
-const handle = await lunaris.open(process.env.LUNARIS_PG_URL!);     // 3. open
+const handle = await lunaris.open(process.env.LUNARIS_STORE_URL!);  // 3. open
 const lsn = await handle.ingest(buildEpisode("quickstart",          // 4. ingest
                                              "Alice loves chocolate."));
 console.log(`ingested at lsn=${lsn} under scope \`quickstart\``);
@@ -283,7 +283,7 @@ docker compose down -v   # -v wipes the pg data volume
 
 | Step | Rust | What it is |
 |---|---|---|
-| Open | `Lunaris::open(url)` | URL scheme picks Postgres vs Moon |
+| Open | `Lunaris::open(url)` | `moon://host:port` — the only scheme (0.7.0) |
 | Scope | `Scope::new("quickstart")?` | the validated multi-agent partition key (RFC 0001) |
 | Bind | `lunaris.scoped(scope)` | all ops on the returned `ScopedLunaris` are partitioned |
 | Ingest | `scoped.ingest(EpisodeBuilder::new(src, body))` | one `atomic_write`: chunk + embed + commit |

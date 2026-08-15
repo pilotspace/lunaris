@@ -2,8 +2,10 @@
 //! `crates/lunaris/tests/activation_ledger_engine.rs` row). Exercises
 //! `ScopedLunaris::record_activation_refs` (the write half) and
 //! `lunaris_retrieve::LedgerBoostProvider` (the read half) against a
-//! `memory://`-shaped in-process `StoragePort` double — same fixture style
-//! as `phase_14_2_reflect_boost.rs`.
+//! hand-written in-process `StoragePort` double — same fixture style as
+//! `phase_14_2_reflect_boost.rs`. The double is deliberate, not a leftover
+//! from the deleted `memory://` backend: the subject is the ledger's exact
+//! read/write arithmetic, which a real store's ranking would blur.
 
 #![forbid(unsafe_code)]
 

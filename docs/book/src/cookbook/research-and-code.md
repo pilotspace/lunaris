@@ -116,7 +116,7 @@ use lunaris_recipes::documentary::CodeRepoMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
     let repo = CodeRepoMemory::new(lunaris.clone(), "repo:lunaris/");
 
     // Commit A — first version of the function.

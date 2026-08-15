@@ -83,9 +83,8 @@ asyncio.run(main())
 > returns one pre-bound to `handle`; a free `lunaris.RetrievalBuilder()` needs
 > a `.bind(handle)` before `.execute()`.
 
-Swap in `postgres://postgres:pass@localhost/lunaris` to run against Postgres
-— the URL scheme is the only difference. See
-[Choosing a Backend](../operations/backends.md).
+`moon://host:port` is the only accepted URL scheme as of 0.7.0. See
+[The Storage Backend](../operations/backends.md).
 
 ## The wire shape
 
@@ -189,7 +188,7 @@ from lunaris import EmbedderConfig, RerankerConfig
 
 # `open` is async — call it inside an async function or `asyncio.run(...)`.
 mem = await lunaris.open(
-    "memory://demo",
+    "moon://127.0.0.1:6380",
     embedder=EmbedderConfig.llamacpp(),   # granite-r2 Q4_K_M GGUF, in-process llama.cpp, staged default GGUF
     reranker=RerankerConfig.llamacpp(),   # bge-reranker-v2-m3 Q5_K_M GGUF cross-encoder
 )

@@ -27,13 +27,13 @@ already running Cognee can evaluate the switch with concrete code.
 | Concern                                    | Cognee                                          | Lunaris                                                |
 |---------------------------------------------|-------------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python                                          | Embedded Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Vector DB (LanceDB / Qdrant / Weaviate / ...)  + Graph DB (Neo4j / FalkorDB / Memgraph / ...) — pluggable | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Vector DB (LanceDB / Qdrant / Weaviate / ...)  + Graph DB (Neo4j / FalkorDB / Memgraph / ...) — pluggable | Moon (one substrate, FT.* + graph + KV native) |
 | **Composition model**                      | Pipeline of Tasks operating on DataPoints       | Composable retrieval DSL (`vector`, `keyword`, `graph` + `.and / .or / .then / .fuse_rrf`) |
 | **Bi-temporal**                            | Not first-class (DataPoints can carry timestamps but the engine doesn't model `(valid_time, sys_time)` tuples) | First-class `(valid_time, sys_time)` per row; `.as_of(ts)` is one combinator |
 | **Recall latency**                         | Depends on backend (~50 ms LanceDB local, ~200 ms cloud) | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |
 | **Atomicity**                              | Per-store best-effort                            | One `atomic_write` covers vector + KV + graph + audit + queue. CI gate enforces single call site |
-| **Tenancy**                                | `dataset` string on the API                     | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + Postgres RLS-enforced |
-| **Graph query language**                   | Cypher (via backend)                            | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored(entity_ids, hops)` operator on both |
+| **Tenancy**                                | `dataset` string on the API                     | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + per-scope Moon keyspace |
+| **Graph query language**                   | Cypher (via backend)                            | Moon native graph (Cypher dialect); the `Graph::anchored(entity_ids, hops)` operator lowers to it |
 | **Custom pipeline tasks**                  | First-class — register Tasks, compose with `await cognee.cognify()` | Override `Extractor` trait (Phase 3); recall DSL is fixed surface |
 | **License**                                | Apache 2.0                                      | Apache 2.0                                             |
 
@@ -182,12 +182,13 @@ v0.3 [RFC 0007](../appendix/index.md) (`FallbackExtractor` /
 ### Time-travel recall
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
-> `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
-> Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
-> rather than silently answering with present-time data. Moon's search and
-> graph lanes stay temporal (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`).
+> keeps a KV version chain to hydrate the historical rows, and **no 0.7.0
+> backend does**: the call returns `StorageError::NotSupported` (HTTP
+> `501 not_supported`). Moon stores Lunaris rows as plain hashes and refuses a
+> historical pin rather than silently answering with present-time data; the
+> Postgres and SQLite backends that answered it were deleted in 0.7.0. The
+> search and graph lanes stay temporal (`FT.SEARCH AS_OF`,
+> `GRAPH.QUERY VALID_AT`).
 
 Cognee doesn't model bi-temporal queries first-class. The closest is
 filtering DataPoints by a `created_at` field post-search.
@@ -204,8 +205,8 @@ hits = await (
 )
 ```
 
-The temporal cut happens at the storage layer (`tstzrange &&` on
-Postgres, native bi-temporal on Moon). On 1M-fact corpora the
+The temporal cut happens at the storage layer (native bi-temporal
+on Moon). On 1M-fact corpora the
 latency difference matters.
 
 ## Migration checklist
@@ -222,7 +223,7 @@ latency difference matters.
 5. **Shadow reads.** Every `cognee.search(...)` is also issued to
    Lunaris's recall DSL. Diff in your eval harness.
 6. **Cutover and decommission.** You now run one Rust process +
-   Moon/Postgres instead of Cognee + (vector DB) + (graph DB).
+   Moon instead of Cognee + (vector DB) + (graph DB).
 
 ## When to stay on Cognee
 
@@ -232,7 +233,7 @@ latency difference matters.
   Tasks) and that's load-bearing for your stack.
 - You're committed to a specific vector DB / graph DB combination
   that Lunaris doesn't ship a backend for, and you don't want to
-  operate Moon or Postgres.
+  operate Moon.
 - Pure Python deploy, no Rust binary in the build pipeline.
 
 ## Known gaps vs Cognee today
@@ -242,10 +243,11 @@ latency difference matters.
   impl — one impl, not a chain. v0.3 RFC 0007 adds composable
   fallback combinators for resilience but does not introduce a
   pipeline DSL.
-- **Backend matrix is smaller.** Lunaris ships Moon + Postgres; no
-  LanceDB / Qdrant / Weaviate adapter today. The `StoragePort`
-  trait is the extension point — a third-party crate can implement
-  the trait for any backend.
+- **Backend matrix is one.** Lunaris ships Moon and nothing else as
+  of 0.7.0 — no LanceDB / Qdrant / Weaviate adapter, and the
+  Postgres adapter was removed. The `StoragePort` trait is still the
+  extension point: a third-party crate can implement it for any
+  backend, but none does today.
 - **Graph-completion search.** Cognee's `GRAPH_COMPLETION` search
   type wraps an LLM call over the graph context. Lunaris exposes
   the graph traversal as an operator (`Graph::anchored`) and leaves

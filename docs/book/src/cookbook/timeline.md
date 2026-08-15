@@ -21,8 +21,7 @@ deliberately thin two-call composition of
 ### The boundary gotcha
 
 `between` is **lower-bound inclusive, upper-bound exclusive** — the Phase
-9.1 backend renderers emit `valid_from >= lo AND valid_from < hi` (Postgres)
-and `@valid_time:[lo hi]` (Moon)
+9.1 renderer emits `@valid_time:[lo hi]`
 (`crates/lunaris-recipes/src/documentary/timeline_reconstruction.rs:15-19`).
 To include "days 10 through 15 inclusive" (six days), pass `hi = Jan 16
 00:00:00Z`, not `hi = Jan 15`. This carries straight into the Python / TS
@@ -84,9 +83,9 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 }
 ```
 
-Swap the URL for `postgres://lunaris@localhost/lunaris` — the parity tests
-assert Moon and Postgres return the *same* set for both `between` and
-`as_of`.
+The recipe tests assert the returned set for both `between` and `as_of`
+against a live Moon; `moon://host:port` is the only URL scheme 0.7.0
+accepts.
 
 ## Notes
 

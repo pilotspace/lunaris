@@ -3,6 +3,91 @@
 All notable changes to Lunaris are documented here.
 Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/CHANGELOG-archive.md).
 
+## Unreleased
+
+Moon-only. The 0.7.0 line drops every storage backend except Moon; this
+section collects the removals as they land. Version numbers are unchanged
+until the release is cut.
+
+### Removed — BREAKING
+
+- **The Postgres backend (`lunaris-storage-postgres`) and the embedded SQLite
+  backend (`lunaris-storage-embedded`) are deleted.** `postgres://`,
+  `postgresql://`, `sqlite:///path` and `memory://` all return
+  `StorageError::UnsupportedScheme` from `lunaris::open` / `Lunaris::open`,
+  with a message naming the migration tool, the release it ships in, and
+  `docs/migration/0.6-to-0.7.md`. `moon://host:port` is the only scheme left.
+  The `sqlx` workspace dependency went with them — Lunaris no longer links a
+  SQL driver at all.
+  - `lunaris::PostgresStorage` and `lunaris::{BootstrapReport,
+    bootstrap_app_role}` are gone from the public API.
+  - `lunaris-server` loses its `migrate` and `bootstrap-db` subcommands;
+    invoking either prints why and exits 2. Moon needs neither a schema
+    migration nor a role bootstrap — point `--storage` at `moon://host:port`
+    and serve.
+  - The `pg-it` cargo feature is removed from every crate that declared it.
+
+- **`lunaris-migrate` is deleted from the workspace.** It cannot be built from
+  `main` — its source backends are gone. Operators moving 0.6.x data into Moon
+  MUST run it **from the v0.6.2 release binary, before upgrading**. See
+  `docs/migration/0.6-to-0.7.md` for the procedure and the lossy-conversion
+  contract. `lunaris-storage-postgres` is removed from the crates.io publish
+  list; the 0.6.2 versions stay on crates.io for anyone still on the old
+  backends.
+
+- **`LUNARIS_TEST_BACKEND=memory` is removed.** It selected the embedded
+  backend, which no longer exists. The value is now a named hard error rather
+  than a silent upgrade to Moon: every `lunaris-test-harness` fixture runs
+  against a disposable child-process Moon, and a missing `moon` binary PANICS
+  with a diagnostic naming `MOON_TEST_BINARY` instead of degrading. CI builds
+  `vendor/moon/target/release/moon` before `cargo test --workspace`
+  accordingly. `LUNARIS_TEST_BACKEND` unset / blank / `auto` / `moon` are all
+  accepted and equivalent.
+
+- **No binary silently picks a store any more.**
+  - `lunaris-mcp` had a per-scope `sqlite:///<HOME>/.lunaris/<scope>.db`
+    default. It is now a startup refusal carrying the external-Moon
+    quickstart; `--storage` / `LUNARIS_MCP_STORAGE` is mandatory. The
+    `embedded-moon` feature is unaffected (dev/test-only, never in `default`).
+  - `lunaris-hook` resolved the same file as its third step, after
+    `LUNARIS_STORE_URL` and contextd Moon discovery. Those two stay; the
+    fallback is now `ScopeResolveError::NoStoreUrl` with the same quickstart.
+  - `lunaris-bench`'s ER-F1 harness defaulted to `memory://`. `MOON_URL` (or
+    `LUNARIS_URL`) is now required — deliberately with no replacement default,
+    since a bench that guesses can guess a live store.
+
+- **The eight `lunaris-recipes` Moon-vs-Postgres parity test files are
+  deleted**, along with `lunaris-conformance`'s `run_storage_postgres.rs`,
+  `run_storage_embedded.rs`, the four EVAL-05 `sqlx` regression tests, and the
+  live half of `run_as_of_parity.rs`. The unconditional STORE-07 gap pin
+  survives as `run_as_of_moon_gap.rs`. CI's `pg-lunaris` service, the
+  `integration-vanilla-pg-negative` job, and the `postgres` row of
+  `conformance-bindings` are removed with them — the bindings parity matrix
+  now builds and runs a real Moon instead of neutral-skipping.
+
+### Changed
+
+- **Docs say Moon, everywhere a reader starts.** `README.md`, the book's
+  getting-started / MCP / operations / cookbook / migrating chapters,
+  `docs/ARCHITECTURE.md`, `docs/POSITIONING.md`, and the three
+  `docs/integration/*.md` guides no longer open with `memory://`, tell you to
+  run `sqlx migrate run`, or offer `--storage-backend sqlite`. The book page
+  "Choosing a Backend (Moon vs Postgres)" is now "The Storage Backend (Moon)"
+  and leads with the exit ramp; "Querying Three Ways (Zero-Deps SQLite)" lost
+  the premise and kept the content.
+- **The `examples/quickstart-rs` compose file runs Moon**, not
+  `postgres:16` + pgvector + AGE + pgmq, and the example reads
+  `LUNARIS_STORE_URL` with no default. `scripts/pg-lunaris/` and
+  `docs/ci/postgres-integration.md` are deleted — they built the image and
+  the CI job that image served.
+- **STORE-07 is now a flat limitation, not a backend choice.** Every place
+  that said "historical KV reads work on Postgres/SQLite" says instead that no
+  0.7.0 backend keeps a KV version chain, so `read_as_of` with a historical
+  pin refuses with `501 not_supported`. The search and graph lanes stay
+  temporal. `docs/release/deprecations.md` gains a §3 for the two deleted
+  storage crates (tombstone README, do **not** yank — every `lunaris-memory`
+  through 0.6.2 depends on them).
+
 ## [0.6.2] — 2026-08-15
 
 The operability release: first non-rc cut of the 0.6 line, and the last

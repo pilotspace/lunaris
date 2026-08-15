@@ -172,10 +172,9 @@ async fn main() -> Result<(), lunaris::LunarisError> {
   toggled per-scope on the consolidator pipeline (
   `lunaris.consolidator_pipeline()...`) — `HeliosScratchpad` itself adds no
   `consolidate` method.
-- **Backend portability** — `moon://...` and `postgres://...` are the only
-  selectors; the recipe code is byte-identical across them. Latency budgets
-  differ per backend (Moon recall p50 ≤ 25 ms; Postgres ≤ 60 ms); see
-  [Choosing a Backend](../operations/backends.md).
+- **Backend** — `moon://host:port` is the only selector as of 0.7.0. The
+  latency budget is Moon recall p50 ≤ 25 ms; see
+  [The Storage Backend](../operations/backends.md).
 - **For everything beyond the basics** — multi-session servers, hard
   delete, graph-aware entity recall, degraded-state handling, the
   production checklist — read [`docs/helios-integration.md`](https://github.com/pilotspace/lunaris/blob/main/docs/helios-integration.md).

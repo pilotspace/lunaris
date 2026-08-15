@@ -7,90 +7,47 @@ variables, see the [Configuration Reference](../reference/configuration.md).
 
 ## Prerequisites
 
-Lunaris needs a storage backend and an embedder. The connection-string
-scheme picks the backend:
+Lunaris needs a running Moon and an embedder. As of **0.7.0 there is one
+storage scheme**:
 
 | URL | Backend | Needs |
 |---|---|---|
-| `memory://` | embedded (SQLite, in-process) | **nothing** — start here |
-| `sqlite:///path/to/lunaris.db` | embedded (SQLite, file-backed) | nothing |
-| `postgres://…` / `postgresql://…` | Postgres + pgvector + pgmq | a database (the shipped image, or any Postgres with the extensions) |
-| `moon://host:port` | Moon | a running Moon instance |
+| `moon://host:port` | Moon | a running Moon started with `--shards 1` |
 
-### Storage: `memory://` — zero dependencies (start here)
+Every other spelling — `memory://`, `sqlite:///path`, `postgres://…` —
+is rejected by `Lunaris::open` with an `UnsupportedScheme` error carrying
+the migration link. The Postgres and SQLite backends were deleted in
+0.7.0; if you have data in one, migrate it **before** you bump your
+`lunaris` pin — see
+[0.6 → 0.7](https://github.com/pilotspace/lunaris/blob/main/docs/migration/0.6-to-0.7.md).
 
-```rust
-let lunaris = lunaris::Lunaris::open("memory://").await?;
-```
-
-No Docker, no Postgres, no Moon. Backed by an in-process SQLite database
-(`sqlite:///path` for a file you keep). Ideal for the quickstart, local
-development, and tests.
-
-> **Embedded-backend status.** The embedded backend currently implements
-> the bi-temporal KV core (`ingest`, recall-by-key, time-travel reads) with
-> the same atomic-write guarantee as Postgres. Vector / graph / BM25 search
-> and the consolidation queue are *not yet wired* on this backend — use
-> Postgres or Moon for those. See
-> [Choosing a Backend](../operations/backends.md).
-
-### Storage: Postgres (the portable production default)
-
-The Postgres backend requires **`pgvector`** and **`pgmq`** (queue), and
-optionally **Apache AGE** for the graph operators. A stock managed Postgres
-that has pgvector + pgmq works out of the box; the repo also ships a
-ready-built image that bundles all three:
-
-- **[`scripts/pg-lunaris/`](https://github.com/pilotspace/lunaris/tree/main/scripts/pg-lunaris)**
-  — `Dockerfile` building `postgres:16` + `pgvector` + AGE + pgmq.
-- **[`examples/quickstart-rs/docker-compose.yml`](https://github.com/pilotspace/lunaris/blob/main/examples/quickstart-rs/docker-compose.yml)**
-  — wraps that image with a healthcheck and a data volume on
-  `localhost:5432`. The Python and TS quickstarts reuse it via
-  `docker compose -f ../quickstart-rs/docker-compose.yml up -d`.
+### Storage: Moon
 
 ```bash
-cd examples/quickstart-rs
-docker compose up -d
-docker compose ps        # wait until lunaris-quickstart-pg is "healthy"
+docker run -d --name lunaris-moon -p 6380:6379 \
+  ghcr.io/pilotspace/moon:0.8.5 \
+  --shards 1 --protected-mode no --appendonly yes
 ```
 
-**Migrations are applied for you** — there is no `sqlx migrate run` step:
+```rust
+let lunaris = lunaris::Lunaris::open("moon://127.0.0.1:6380").await?;
+```
 
-- The simple path: `Lunaris::open("postgres://…")` runs the embedded
-  migration set automatically when the connecting role can run DDL.
-- The production path (RLS requires a `NOSUPERUSER NOBYPASSRLS` app role
-  that *can't* run DDL): one command provisions everything —
+`--shards 1` is **not optional**: a Lunaris ingest is one MULTI/EXEC
+transaction, and a sharded Moon rejects cross-shard writes. The image
+defaults to `--shards 0` (auto), so the flag has to be passed explicitly.
+`--appendonly yes` is what makes the store survive a restart.
 
-  ```bash
-  lunaris-server bootstrap-db \
-    --admin-url postgres://admin:pw@localhost:5432/lunaris \
-    --app-role  lunaris_app \
-    --app-password '…'
-  ```
+Moon provides native `FT.SEARCH` (vector + BM25), `GRAPH.QUERY`, a message
+queue, and **native RRF fusion** — the `fuse_rrf` operator collapses a
+(Vector + Keyword) pair on the same index into one round trip.
 
-  This runs the migrations as the admin role, creates/repairs
-  `lunaris_app` with the right grants, and reports any RLS hardening gap.
-  Then run the app against `postgres://lunaris_app:…@host/lunaris`.
-- Or let the server self-migrate on start: set
-  `LUNARIS_ADMIN_URL=postgres://admin:…@host/lunaris` alongside the app
-  `--storage` URL — migrations run over the admin connection, the runtime
-  binds the app role.
-- To run only the migrations (e.g. in CI): `lunaris-server migrate
-  --storage postgres://admin:…@host/lunaris`.
-
-See [Choosing a Backend](../operations/backends.md) for the trade-offs and
-the embedding-dimension story (the Moon adapter sizes its vector index to
-the embedder — default 768-d, set wider via `connect_with_dim`; pgvector
-handles up to ~1536-d).
-
-### Storage: Moon (the high-performance substrate)
-
-If you run [Moon](https://github.com/pilotspace/lunaris), point Lunaris
-at `moon://host:port`. Moon provides native `FT.SEARCH` (vector + BM25),
-`GRAPH.QUERY`, a message queue, and **native RRF fusion** — the
-`fuse_rrf` operator collapses a (Vector + Keyword) pair on the same
-index into one round trip. No Moon repo? Stick with Postgres; every
-`Lunaris` call works identically against either backend.
+Full production setup — persistence, memory limits, backups, health
+probes — is in
+[Running an external Moon](https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md). See
+[Choosing a Backend](../operations/backends.md) for the
+embedding-dimension story (the Moon adapter sizes its vector index to the
+embedder — default 768-d, set wider via `connect_with_dim`).
 
 ### Embedder: in-process llama.cpp, no external service required
 
@@ -167,19 +124,20 @@ covering Ollama / llama-server / vLLM / LM Studio via
 `with_verifier` impl; unset resolves to `NoopExtractor`/`NoopVerifier`. For a
 pure-Rust, no-C++-toolchain build (Tier-0): `default-features = false`.
 
-Smoke test — no services needed:
+Smoke test — needs the Moon from
+[Prerequisites](#storage-moon) running:
 
 ```rust
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = lunaris::Lunaris::open("memory://").await?;
+    let lunaris = lunaris::Lunaris::open("moon://127.0.0.1:6380").await?;
     println!("{lunaris:?}");
     Ok(())
 }
 ```
 
-Swap `"memory://"` for `"postgres://…"` or `"moon://…"` when you're ready
-to point at a real backend — every `Lunaris` call works identically.
+There is no zero-dependency scheme to start from since 0.7.0 — `open`
+either reaches a Moon or returns an error naming what to start.
 
 ## Python — `pip install lunaris`
 
@@ -230,7 +188,7 @@ cat > /tmp/lunaris-tokens.json <<'EOF'
 EOF
 
 cargo run -p lunaris-server -- \
-  --storage postgres://lunaris:lunaris@localhost:5432/lunaris \
+  --storage moon://127.0.0.1:6380 \
   --bind 0.0.0.0:8080 \
   --tokens-file /tmp/lunaris-tokens.json
 ```
@@ -254,16 +212,11 @@ unauthenticated. Full route list, DTOs, and the SSE contract:
 [Running the HTTP Server](../operations/server.md) and the
 [MemoryProtocol 0.1 spec](../protocol/memoryprotocol-0.1.md).
 
-`lunaris-server` also has two operational subcommands (Postgres only):
-
-- `lunaris-server migrate --storage <admin_url>` — apply the embedded
-  migration set and exit.
-- `lunaris-server bootstrap-db --admin-url <admin_url> [--app-role lunaris_app] --app-password <pw>`
-  — migrate, then create/repair the `NOSUPERUSER NOBYPASSRLS` app role
-  with the right grants, then report any RLS hardening gap.
-
-Set `LUNARIS_ADMIN_URL` alongside `--storage` (the app-role URL) to have
-the server migrate over the admin connection on start.
+> **Removed in 0.7.0.** `lunaris-server migrate` and `lunaris-server
+> bootstrap-db` were Postgres-only (embedded migration set, RLS app-role
+> provisioning) and went with the backend, along with `LUNARIS_ADMIN_URL`.
+> Moon needs no schema migration and no role bootstrap — start it, point
+> `--storage` at it. Indexes are created on first connect.
 
 ## Next
 
