@@ -479,6 +479,92 @@ mod tests {
         assert!(v.needs_review.is_empty());
     }
 
+    // ── Deterministic future-date backstop (Mechanism B, 2026-07-29) ──
+    //
+    // Even with REFERENCE_TIME in the prompt, a model can still stamp its
+    // own "today" (the observed 2025/2026 class, 78% of the audited cache).
+    // The backstop mechanically caps any valid_from LATER than the episode's
+    // reference date back to the reference date — semantically "known true
+    // as of this conversation", which is exactly what a present-tense
+    // hallucinated stamp meant. Items with an explicit valid_to are left
+    // alone (a stated, bounded future plan). Applied at the ingest boundary
+    // (AFTER cache replay, so hallucinated dates in already-cached raw
+    // extractions get capped too).
+
+    fn raw_with_dates(from: &str, to: Option<&str>) -> RawExtractionBatch {
+        let e = Entity {
+            id: EntityId::from_name_and_type("Alice", "Person"),
+            name: "Alice".into(),
+            aliases: vec![],
+            entity_type: "Person".into(),
+            confidence: 0.9,
+            valid_from_iso: from.into(),
+            valid_to_iso: to.map(str::to_owned),
+        };
+        let r = Relation {
+            subject_id: EntityId::from_name_and_type("Alice", "Person"),
+            predicate: "works_at".into(),
+            object_id: EntityId::from_name_and_type("Acme", "Org"),
+            confidence: 0.9,
+            valid_from_iso: from.into(),
+            valid_to_iso: to.map(str::to_owned),
+        };
+        RawExtractionBatch {
+            by_chunk: vec![RawExtraction {
+                source_chunk_id: Ulid::new(),
+                entities: vec![e],
+                relations: vec![r],
+                facts: vec![],
+            }],
+        }
+    }
+
+    #[test]
+    fn future_valid_from_capped_to_reference_date() {
+        // The observed hallucination class: model stamps its own today.
+        let mut batch = raw_with_dates("2025-01-30", None);
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        let raw = &batch.by_chunk[0];
+        assert_eq!(raw.entities[0].valid_from_iso, "2023-05-30");
+        assert_eq!(raw.relations[0].valid_from_iso, "2023-05-30");
+    }
+
+    #[test]
+    fn past_and_same_day_valid_from_untouched() {
+        let mut batch = raw_with_dates("2022-11-02", None);
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        assert_eq!(batch.by_chunk[0].entities[0].valid_from_iso, "2022-11-02");
+
+        // Same-day full RFC3339 timestamp must NOT count as future (date-part
+        // comparison, not lexicographic on the whole string).
+        let mut batch = raw_with_dates("2023-05-30T23:40:00Z", None);
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        assert_eq!(batch.by_chunk[0].entities[0].valid_from_iso, "2023-05-30T23:40:00Z");
+    }
+
+    #[test]
+    fn explicit_future_plan_with_valid_to_untouched() {
+        let mut batch = raw_with_dates("2023-08-01", Some("2023-09-01"));
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        assert_eq!(
+            batch.by_chunk[0].entities[0].valid_from_iso, "2023-08-01",
+            "a bounded, explicitly stated future plan must survive the cap"
+        );
+    }
+
+    #[test]
+    fn empty_and_garbage_valid_from_untouched() {
+        let mut batch = raw_with_dates("", None);
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        assert_eq!(batch.by_chunk[0].entities[0].valid_from_iso, "");
+
+        // Non-date junk (shorter than a date, non-numeric) is the
+        // validator's problem, not the cap's — leave it for the sanity pass.
+        let mut batch = raw_with_dates("unknown", None);
+        cap_future_valid_from(&mut batch, "2023-05-30");
+        assert_eq!(batch.by_chunk[0].entities[0].valid_from_iso, "unknown");
+    }
+
     #[test]
     fn into_batch_drops_needs_review() {
         let v = ValidatedExtraction {
