@@ -10,7 +10,7 @@
 //!
 //! `key = blake3(namespace || 0x00 || build_prompt(chunk))`
 //!
-//! [`crate::llm_extractor::build_prompt`] is the single prompt source shared
+//! `llm_extractor::build_prompt` (crate-private) is the single prompt source shared
 //! by `LlmExtractor` and `CloudApiExtractor`, and it embeds the chunk text,
 //! the heading path AND the template itself — so editing the template
 //! auto-invalidates every stale entry with no manual version bump. The
