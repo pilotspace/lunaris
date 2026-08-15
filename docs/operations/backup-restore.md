@@ -278,8 +278,11 @@ touch the data.
 
 ### 6.6 A sharded Moon is not a Lunaris backend at all
 
-Running the drill at `--shards 4` never reaches the backup step — the very
-first ingest fails:
+Since 0.7.0 you will not get this far: **Lunaris refuses to connect to a
+multi-shard Moon**, with an error naming `--shards 1`
+(`crates/lunaris-storage-moon/src/shards.rs`). Before that guard existed, running
+the drill at `--shards 4` never reached the backup step — the very first ingest
+failed:
 
 ```
 storage: backend: moon: redis error: ResponseError:
@@ -287,10 +290,26 @@ storage: backend: moon: redis error: ResponseError:
 ```
 
 Lunaris commits each episode as **one** cross-key Moon TXN (the INGEST-04
-single-`atomic_write` invariant), and Moon rejects a TXN spanning shards. So
-`--shards > 1` is not a "backup is unvalidated there" gap — it is a backend
-that Lunaris cannot write to today. Run Moon with `--shards 1`. The drill
-detects this and dies with the explanation rather than a confusing cascade.
+single-`atomic_write` invariant), and Moon rejects a TXN that spans shards.
+
+**Do not read that error's advice as a fix.** Hash tags do *not* make sharded
+ingest work. [RFC 0008](../rfcs/0008-sharded-moon-ingest.md) §2.3 measured it:
+the `TXN.*` guard is *"every key must land on **the connection's own shard**"*,
+not *"the keys must agree with each other"* — and Moon assigns connections to
+shards round-robin with no client control and no way to query the count. A
+fully hash-tagged keyspace still failed on 11 of 16 scopes on one connection,
+and would fail on a *different* 11 on the next.
+
+And even a fixed write side would not give a usable backend, because the read
+side is broken independently (RFC 0008 §1.3): `FT.NAVIGATE` — the graph leg of
+recall — answers from the connection's own shard and never scatter-gathers, so
+a Navigate for a scope living elsewhere returns **empty, with no error**. A
+sharded deployment would write correctly and silently lose graph recall, which
+is worse than today's loud failure.
+
+So `--shards > 1` is not a "backup is unvalidated there" gap — it is a backend
+Lunaris will not open. Run Moon with `--shards 1`. The drill detects the
+mismatch and dies with the explanation rather than a confusing cascade.
 
 ### 6.7 Restoring onto a directory in use
 
@@ -302,8 +321,9 @@ into a path no Moon process is holding, and start the new instance yourself.
 ## 7. Known limits of this validation
 
 * **Single shard — and that is the only shape Lunaris supports.** The drill
-  runs `--shards 1` because a sharded Moon rejects Lunaris' ingest TXN outright
-  (§6.6). Multi-shard backup/restore is untested and moot until that changes.
+  runs `--shards 1` because Lunaris refuses to connect to anything else (§6.6,
+  [RFC 0008](../rfcs/0008-sharded-moon-ingest.md)). Multi-shard backup/restore
+  is untested and moot until Moon scatter-gathers `FT.NAVIGATE`.
 * **Single host, local filesystem.** "New host" is modelled as a fresh data
   directory, a fresh port, and a new server process. Cross-machine transfer,
   its checksums, and its wall time are the operator's to measure.
