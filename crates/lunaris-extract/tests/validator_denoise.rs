@@ -86,12 +86,23 @@ fn duplicate_facts_collapse_keeping_max_confidence() {
 fn same_triple_different_interval_is_preserved() {
     let v = validate(batch(
         vec![
-            fact("lives_in", "Alice lives in Paris", 0.9, "2020-01-01T00:00:00Z", Some("2022-01-01T00:00:00Z")),
+            fact(
+                "lives_in",
+                "Alice lives in Paris",
+                0.9,
+                "2020-01-01T00:00:00Z",
+                Some("2022-01-01T00:00:00Z"),
+            ),
             fact("lives_in", "Alice lives in Paris again", 0.9, "2024-01-01T00:00:00Z", None),
         ],
         vec![],
     ));
-    assert_eq!(v.facts.len(), 2, "distinct validity intervals must both survive; got {:?}", v.facts);
+    assert_eq!(
+        v.facts.len(),
+        2,
+        "distinct validity intervals must both survive; got {:?}",
+        v.facts
+    );
 }
 
 /// Duplicate relations collapse on the same full key; relations to DIFFERENT

@@ -372,10 +372,22 @@ pub fn validate(batch: RawExtractionBatch) -> ValidatedExtraction {
     // This is canonicalization of redundancy, NOT validation rejection:
     // EXTRACT-05's needs_review routing for invalid items is untouched.
     dedup_by_key(&mut out.facts, |f| {
-        (f.subject_id, f.predicate.clone(), f.object_id, f.valid_from_iso.clone(), f.valid_to_iso.clone())
+        (
+            f.subject_id,
+            f.predicate.clone(),
+            f.object_id,
+            f.valid_from_iso.clone(),
+            f.valid_to_iso.clone(),
+        )
     });
     dedup_by_key(&mut out.relations, |r| {
-        (r.subject_id, r.predicate.clone(), r.object_id, r.valid_from_iso.clone(), r.valid_to_iso.clone())
+        (
+            r.subject_id,
+            r.predicate.clone(),
+            r.object_id,
+            r.valid_from_iso.clone(),
+            r.valid_to_iso.clone(),
+        )
     });
 
     out
