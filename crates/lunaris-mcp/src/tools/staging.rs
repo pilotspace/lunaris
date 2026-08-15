@@ -127,32 +127,37 @@ pub(crate) async fn resolve_namespace_session_aware(
 mod tests {
     use std::sync::Arc;
 
-    use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
     use serde_json::json;
 
     use super::*;
     use crate::proxy::MemoryProxy;
     use crate::state::AppState;
+    use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
 
-    async fn fresh_state(scope_name: &str) -> AppState {
+    /// 0.7.0 port off `memory://` — harness-issued ephemeral Moon, degrading to
+    /// `memory://` where no Moon binary resolves. `AppState` holds an
+    /// `Arc<Lunaris>`, so `TestEngine` is split via `into_parts()`; the returned
+    /// [`TestStore`] owns the Moon child and must stay bound for the test.
+    async fn fresh_state(scope_name: &str) -> (AppState, TestStore) {
         skip_stage_for_tests();
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let (lunaris, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        AppState {
+        let state = AppState {
             lunaris: Arc::new(lunaris),
             scope,
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None,
-        }
+        };
+        (state, store)
     }
 
     /// An EXPLICIT namespace is validated via the shared validator and returned
     /// verbatim — the session marker is never consulted. A `:` is rejected.
     #[tokio::test]
     async fn explicit_namespace_wins_and_colon_rejected() {
-        let state = fresh_state("test-staging-explicit").await;
+        let (state, _store) = fresh_state("test-staging-explicit").await;
         let proxy = MemoryProxy::direct_only_for_test();
 
         let ok = resolve_namespace_session_aware(&proxy, &state, Some("notes/".into()))
@@ -169,8 +174,9 @@ mod tests {
 
     /// scratchpad-proxiable: with a sessions.json marker naming an active
     /// session, the DEFAULT namespace (ns=None) becomes the per-session pad.
-    /// The handover fires THROUGH the proxy (Direct-only here → guard-skips on
-    /// memory://) and must NOT error the resolution.
+    /// The handover fires THROUGH the proxy (Direct-only here) and must NOT
+    /// error the resolution — on a backend without a native queue it guard-
+    /// skips, on Moon it runs the real drain; either way the resolution stands.
     #[tokio::test]
     async fn default_namespace_follows_session_marker_via_proxy() {
         let _seam = crate::session_pad::lock_test_seam().await;
@@ -184,7 +190,7 @@ mod tests {
         std::fs::write(&marker, serde_json::to_vec_pretty(&body).unwrap()).unwrap();
         crate::session_pad::set_sessions_file_for_tests(Some(marker.clone()));
 
-        let state = fresh_state("test-staging-session").await;
+        let (state, _store) = fresh_state("test-staging-session").await;
         let proxy = MemoryProxy::direct_only_for_test();
 
         let ns = resolve_namespace_session_aware(&proxy, &state, None)
