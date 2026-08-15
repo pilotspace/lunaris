@@ -125,8 +125,13 @@ jobs:
           echo "lunaris workspace version: ${LUNARIS_VER}"
 
           # Dev-dep-aware topological order — see header comment.
-          CRATES="lunaris-core lunaris-storage-moon lunaris-storage-postgres \
-            lunaris-storage-embedded lunaris-llm lunaris-embed-remote \
+          #
+          # `lunaris-storage-postgres` and `lunaris-storage-embedded` were
+          # deleted in 0.7.0 (Moon-only). Their last published versions stay on
+          # crates.io at 0.6.2 for anyone still on the old backends; nothing
+          # here republishes them, and they must NOT be re-added to this list.
+          CRATES="lunaris-core lunaris-storage-moon \
+            lunaris-llm lunaris-embed-remote \
             lunaris-rerank lunaris-llamacpp lunaris-extract \
             lunaris-ingest lunaris-verify \
             lunaris-consolidate lunaris-retrieve lunaris-memory"

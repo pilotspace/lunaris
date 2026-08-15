@@ -1,64 +1,44 @@
-# Phase 14 — Integration workflow: live pg-lunaris + live Moon services.
+# Integration workflow — live Moon service.
 #
-# Two waves combined into a single `integration` job because
-# `lunaris-conformance`'s AS_OF parity test compares Moon vs Postgres
-# field-by-field in-process — splitting into two jobs would require
-# cross-job state handoff for the parity assertion.
+# ## 0.7.0: Moon-only
 #
-# - 14-01 (CI-01): pg-lunaris service (pgvector + AGE + pgmq) built
-#   in-workflow via `docker/build-push-action@v5` + pg-it default-on
-#   + timing.json evidence artifact.
-# - 14-02 (CI-02, this commit): Moon service built from source at the
-#   SHA pinned by the `vendor/moon` git submodule, `moon-it` default-on,
-#   explicit AS_OF parity step on every PR.
+# This file used to run a `pg-lunaris` service (pgvector + AGE + pgmq) beside
+# Moon, with `pg-it` default-on and an AS_OF parity step comparing the two
+# backends field-by-field in-process. Slice B deleted
+# `lunaris-storage-postgres`, `lunaris-storage-embedded`, and `lunaris-migrate`,
+# so:
 #
-# ## Phase-14 ownership map (DO NOT fold into eval-gauntlet.yml)
+#   - the pg-lunaris image build / start / wait / teardown steps are gone,
+#     along with `PG_URL` / `LUNARIS_PG_URL` and the `pg-it` feature (which no
+#     longer exists on any crate);
+#   - the AS_OF parity step is gone with its test file. What survives is
+#     `run_as_of_moon_gap.rs`, which pins STORE-07 (Moon has no KV version
+#     chain, so a historical read is REFUSED, not faked) unconditionally as
+#     part of the main conformance run — no live second backend needed, and
+#     therefore no separate step;
+#   - the EVAL-05 `regression` step and the whole
+#     `integration-vanilla-pg-negative` job are gone: both asserted Postgres
+#     substrate-gap error strings from tests deleted with the backend.
 #
-# This file is strictly owned by Phase 14:
-#   - 14-01: pg-lunaris service, pg-it default-on, timing-summary step.
-#     REQ CI-01.
-#   - 14-02 (this wave): Moon service + moon-it default-on + AS_OF parity
-#     gate on every PR. REQ CI-02. Injection anchor preserved below.
-#   - 14-03 (wave 3): adds a vanilla-pg-negative-matrix job leg that
-#     runs the 4 EVAL-05 regression tests against postgres:16 and
-#     asserts specific expected-error substrings. REQ CI-03.
-#     Injection anchor: # <14-03-anchor>.
-#   - 14-04 (wave 4): documents + tunes for the 8-min p50 budget.
-#     Uses the timing.json artifact emitted below. REQ CI-04 + CI-05.
+# Required-check names changed with them — see the slice-B PR description.
+#
+# ## Ownership
+#
+# Moon is built from source at the SHA pinned by the `vendor/moon` submodule
+# (Option B — no registry, no token), cached via `Swatinem/rust-cache@v2` keyed
+# on that SHA so warm runs stay under ~3 min.
 #
 # ## Security posture (mirrors eval-gauntlet.yml)
 #
-# - No `run:` step interpolates untrusted `github.event.*` payloads.
-#   All ${{ ... }} expansions are limited to runner-provided,
-#   GitHub-controlled values (github.run_id, github.sha) and are passed
-#   via `env:` (RUN_ID / RUN_SHA) into the shell — never inlined into
-#   run: strings. security_reminder_hook-compliant.
-# - Services boot in a local docker daemon + a background process on
-#   the runner — no egress to a managed cluster.
-# - actions/checkout@v4 with submodules: recursive pulls both the
-#   .planning submodule (fixture paths) and the vendor/moon submodule
-#   (Moon source pinned for build-from-source per Plan 14-02 Option B).
-#
-# ## CI-01 + CI-02 acceptance hooks
-#
-# - docker/build-push-action@v5 with cache-from/cache-to type=gha
-#   keyed on scope=pg-lunaris (CI-01 "cached via docker/build-push-action
-#   GHA cache").
-# - The pg-lunaris image is built once per PR run, loaded to the local
-#   daemon via load: true, and started manually with docker run -d
-#   (GHA services: blocks can't consume a build: step cleanly —
-#   see Plan 14-01 D-02 in the plan body).
-# - Moon is built from `vendor/moon` submodule (14-02 Option B) with
-#   `Swatinem/rust-cache@v2` keyed on the pinned Moon SHA so cache
-#   hits stay < 3 min on warm runs (14-02 must-haves).
-# - cargo test -p lunaris-conformance --features moon-it,pg-it runs on
-#   every PR with both backends live (14-02 Task 3 behavior).
-# - AS_OF parity is invoked as a distinct named step with
-#   `if: success() || failure()` so the parity state is visible even
-#   on other failures (14-02 success criterion).
-# - timing-summary step records wall-clock seconds to the job summary
-#   AND uploads a timing.json artifact so Plan 14-04 can harvest p50
-#   across 5 consecutive main-branch runs without a custom action.
+# - No `run:` step interpolates untrusted `github.event.*` payloads. All
+#   expansions are limited to runner-provided, GitHub-controlled values
+#   (github.run_id, github.sha, github.workspace) and reach the shell via
+#   `env:` (RUN_ID / RUN_SHA) — never inlined into run: strings.
+# - The Moon service is a background process on the runner — no egress to a
+#   managed cluster.
+# - actions/checkout@v4 with `submodules: false`, then a NON-RECURSIVE
+#   `vendor/moon` init: vendor/moon has its own nested `.planning` submodule
+#   (SSH-only) we neither need nor can authenticate for.
 
 name: Integration
 
@@ -69,23 +49,26 @@ on:
 
 jobs:
   integration:
-    name: integration (pg-lunaris + Moon + pg-it + moon-it)
+    name: integration (Moon + moon-it)
     runs-on: ubuntu-latest
-    # CI-04 target p50 is 8 min; 25 min is the safety margin for first-run
-    # cache-miss (AGE + pgmq source compile ~90s on cold Docker layer cache
-    # PLUS Moon release build ~6 min on cold Swatinem/rust-cache).
+    # Target p50 is 8 min; 25 min is the safety margin for a cold
+    # Swatinem/rust-cache miss (Moon release build ~6 min from scratch).
     timeout-minutes: 25
 
     env:
-      # Two-tier skip discipline: when MOON_URL / PG_URL are set, conformance
-      # tests attempt the live connection; absent, they short-circuit to
-      # Ok(()). In this workflow both services are always up by the time
-      # cargo test runs (wait-for-port gates below), so both URLs are always
-      # present. MOON_URL uses the `moon://` scheme (not `redis://`) per
-      # the W-8 contract — Lunaris::open dispatches on URL scheme.
+      # Skip discipline: when MOON_URL is set, conformance tests attempt the
+      # live connection; absent, they short-circuit to Ok(()). The wait-for-port
+      # gate below guarantees it is up before any cargo test runs. The scheme is
+      # `moon://` (not `redis://`) per the W-8 contract — Lunaris::open
+      # dispatches on URL scheme, and since 0.7.0 `moon` is the only one it
+      # accepts.
       MOON_URL: moon://localhost:6390
-      PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
-      LUNARIS_PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
+      # The `lunaris-test-harness` fixtures spawn their OWN disposable Moon per
+      # test (never this one). Point them at the binary this job builds; without
+      # it every harness-backed test panics with the no-moon diagnostic, because
+      # 0.7.0 removed the in-process fallback that used to absorb a missing
+      # binary.
+      MOON_TEST_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
 
     steps:
       - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
@@ -97,50 +80,6 @@ jobs:
         # Non-recursive: vendor/moon has its own nested .planning submodule
         # (pilotspace/moon-docs, SSH-only) that we do NOT need for builds.
         run: git submodule update --init vendor/moon
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build pg-lunaris image (GHA layer cache)
-        uses: docker/build-push-action@v5
-        with:
-          context: scripts/pg-lunaris
-          tags: pg-lunaris:ci
-          load: true
-          # type=gha scoped on the Dockerfile directory — cache invalidates
-          # automatically when Dockerfile or init-extensions.sql changes
-          # (both live under scripts/pg-lunaris and feed the build context).
-          cache-from: type=gha,scope=pg-lunaris
-          cache-to: type=gha,mode=max,scope=pg-lunaris
-
-      - name: Start pg-lunaris container
-        # Manual docker run (not services:) per Plan 14-01 D-02 — GHA
-        # services: blocks cannot consume a local build-push-action
-        # output cleanly. Manual run gives full control over env/ports
-        # and lets the wait-for-port gate be job-local.
-        run: |
-          docker run -d --name pg-lunaris \
-            -p 5432:5432 \
-            -e POSTGRES_PASSWORD=lunaris \
-            -e POSTGRES_DB=lunaris \
-            -e POSTGRES_USER=lunaris \
-            pg-lunaris:ci
-
-      - name: Wait for Postgres (60s max)
-        # Same pattern as eval-gauntlet.yml — TCP probe with 30 attempts
-        # at 2s intervals. Bash /dev/tcp is sufficient; no netcat dep.
-        run: |
-          for i in $(seq 1 30); do
-            if (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; then
-              echo "pg-lunaris reachable after $i attempts"
-              exit 0
-            fi
-            echo "waiting for pg-lunaris (5432) ($i/30)..."
-            sleep 2
-          done
-          echo "ERROR: pg-lunaris not reachable after 60s"
-          docker logs pg-lunaris || true
-          exit 1
 
       - name: Install Rust 1.94 toolchain
         # Matches workspace rust-toolchain.toml + CLAUDE.md MSRV pin.
@@ -169,36 +108,41 @@ jobs:
             . -> target
             vendor/moon -> vendor/moon/target
           # Keyed on the pinned Moon SHA so the cache invalidates on SHA
-          # bump only (not on every unrelated lunaris change). 14-02
-          # must-haves: warm Moon builds stay < 3 min.
+          # bump only (not on every unrelated lunaris change), keeping warm
+          # Moon builds < 3 min.
           shared-key: moon-ci-${{ steps.moon-sha.outputs.sha }}
 
       - name: Build Moon (release, from vendor/moon submodule)
-        # Plan 14-02 Task 3 step 7. `cargo build --release --manifest-path
-        # vendor/moon/Cargo.toml --bin moon` produces
-        # vendor/moon/target/release/moon. The submodule pointer determines
-        # the source SHA — no secret / no token needed (Option B).
+        # `cargo build --release --manifest-path vendor/moon/Cargo.toml --bin
+        # moon` produces vendor/moon/target/release/moon — which is BOTH the
+        # long-lived service below AND the binary MOON_TEST_BINARY hands to the
+        # harness. The submodule pointer determines the source SHA; no secret
+        # and no token needed.
         run: |
           cargo build --release \
             --manifest-path vendor/moon/Cargo.toml \
             --bin moon
 
-      - name: Launch Moon service (port 6390)
-        # Launch in background with stdout+stderr redirected to a log file
-        # so the on-failure dump has something to show. Port 6390 matches
-        # eval-gauntlet.yml's URL contract (local-dev uses 6380; CI uses
-        # 6390) per reference_moon_local_run.md in the operator memory.
+      - name: Launch Moon service (port 6390, single shard)
+        # Background with stdout+stderr to a log file so the on-failure dump
+        # has something to show. Port 6390 matches eval-gauntlet.yml's URL
+        # contract (local dev uses 6380; CI uses 6390).
+        #
+        # `--shards 1` is REQUIRED, not cosmetic: Lunaris ingest is a single
+        # MULTI/EXEC TXN and Moon refuses cross-shard writes. A sharded Moon
+        # fails every ingest with "TXN does not support cross-shard writes"
+        # (docs/operations/external-moon.md).
         run: |
           mkdir -p "$RUNNER_TEMP"
-          ./vendor/moon/target/release/moon --port 6390 \
+          ./vendor/moon/target/release/moon --port 6390 --shards 1 \
             > "$RUNNER_TEMP/moon.log" 2>&1 &
           MOON_PID=$!
           echo "MOON_PID=$MOON_PID" >> "$GITHUB_ENV"
           echo "Moon launched with PID $MOON_PID, logging to $RUNNER_TEMP/moon.log"
 
       - name: Wait for Moon (60s max, two retries tolerated)
-        # Mirror the pg-5432 loop. Two retries absorb the first-second-of-boot
-        # loopback flake 14-02 Task 3 Action block calls out.
+        # TCP probe, 30 attempts at 2s. Bash /dev/tcp is sufficient; no netcat
+        # dep. Two retries absorb the first-second-of-boot loopback flake.
         run: |
           for i in $(seq 1 30); do
             if (echo > /dev/tcp/localhost/6390) >/dev/null 2>&1; then
@@ -212,85 +156,40 @@ jobs:
           cat "$RUNNER_TEMP/moon.log" || true
           exit 1
 
-      - name: Run conformance tests with moon-it + pg-it features
-        # CI-02 language verbatim: "moon-it and pg-it integration features
-        # ... are enabled by default on PR runs". Scope is strictly
-        # -p lunaris-conformance (NOT --workspace) per Plan 14-01 Action
-        # block — keep the 8-min budget tight. AS_OF parity test is also
-        # selected here (as part of the full suite); the following named
-        # step re-runs it in isolation so its result is visible in the
-        # Actions UI even if other tests fail.
+      - name: Run conformance tests with moon-it
+        # Scope is strictly -p lunaris-conformance (NOT --workspace) to keep the
+        # 8-min budget tight; --workspace is owned by ci.yml.
         run: |
           cargo test -p lunaris-conformance \
-            --features moon-it,pg-it \
+            --features moon-it \
             --no-fail-fast
 
-      - name: Run lunaris-recipes tests with moon-it + pg-it features
-        # Phase 18 SC5 — extend CI coverage to lunaris-recipes integration
-        # tests. The crate declares moon-it/pg-it features (Cargo.toml L16-18)
-        # and tests use probe_backend skip discipline (SKIP when env URL unset).
-        # Both MOON_URL and PG_URL are set in the job env, so all parity tests
-        # will run against live backends. Separate step from lunaris-conformance
-        # so failures are independently visible in the Actions UI.
+      - name: Run lunaris-storage-moon tests with moon-it
+        # The backend's own live-Moon suite. Before 0.7.0 this ran only from a
+        # developer's shell; with Postgres gone it is the deepest live coverage
+        # the storage layer has, so CI owns it.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-storage-moon \
+            --features moon-it \
+            --no-fail-fast
+
+      - name: Run lunaris-recipes tests with moon-it
+        # Recipe integration tests use probe_backend skip discipline (SKIP when
+        # MOON_URL is unset); it is set in the job env, so they run live.
+        # Separate step from lunaris-conformance so failures are independently
+        # visible in the Actions UI.
+        if: success() || failure()
         run: |
           cargo test -p lunaris-recipes \
-            --features moon-it,pg-it \
+            --features moon-it \
             --no-fail-fast
 
-      - name: AS_OF parity gate (moon-it + pg-it, one retry on flake)
-        # Plan 14-02 Task 3 step 10 — distinct named step with
-        # `if: success() || failure()` so the parity state is visible in
-        # the Actions UI even when the main feature-test step fails
-        # (CI-02 "lunaris-conformance AS_OF parity runs on every PR").
-        #
-        # Single retry absorbs HLC timing flakes per R14-06. The retry is
-        # implemented as a shell `for` loop because `cargo test` has no
-        # native --retries flag (that is cargo-nextest syntax). We do NOT
-        # retry the main feature-test step above because that would mask
-        # real regressions.
-        if: success() || failure()
-        run: |
-          for attempt in 1 2; do
-            echo "AS_OF parity attempt $attempt/2"
-            if cargo test -p lunaris-conformance \
-                --features moon-it,pg-it \
-                --test run_as_of_parity \
-                --no-fail-fast; then
-              echo "AS_OF parity PASSED on attempt $attempt"
-              exit 0
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              echo "AS_OF parity FAILED after 2 attempts"
-              exit 1
-            fi
-            echo "AS_OF parity flaked on attempt $attempt, retrying..."
-            sleep 3
-          done
-
-      - name: "Run EVAL-05 regression tests (positive path: pg-lunaris)"
-        # Plan 14-03 Task 6 (CI-03 positive half). Distinct named step so
-        # the 4 EVAL-05 regression tests appear as their own line in the
-        # Actions UI — mirrors the AS_OF-parity pattern above. These tests
-        # ALSO run as part of the main `cargo test -p lunaris-conformance
-        # --features moon-it,pg-it` step (they live under
-        # `tests/regression/`), so this is an explicit rerun for signal
-        # locality, not the only invocation. Same `if: success() ||
-        # failure()` guard so CI surfaces the regression state even when
-        # an unrelated earlier step failed.
-        if: success() || failure()
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            --no-fail-fast
-
-      - name: Timing summary (CI-04 evidence)
-        # Runs unconditionally so budget data is captured even on test
-        # failure. SECONDS is the bash shell-init wall-clock counter;
-        # per-step SECONDS resets on each new shell, so this captures
-        # step-wall-clock. Plan 14-04 will aggregate across runs via
-        # the uploaded artifact and (separately) the GHA API job-level
-        # wall-clock for the authoritative p50.
+      - name: Timing summary (budget evidence)
+        # Runs unconditionally so budget data is captured even on test failure.
+        # SECONDS is the bash shell-init wall-clock counter; per-step SECONDS
+        # resets on each new shell, so this captures step-wall-clock. The
+        # authoritative p50 comes from the GHA API job-level wall-clock.
         if: always()
         env:
           RUN_SHA: ${{ github.sha }}
@@ -318,14 +217,11 @@ jobs:
           path: timing.json
 
       - name: Budget gate (soft-fail)
-        # Plan 14-04 Task 2 (CI-04). Reads wall_clock_seconds from the
-        # timing.json the previous step wrote and classifies against the
-        # 480s (8-min) target per ROADMAP Phase 14 success criterion 3.
-        # SOFT-FAIL per R14-03 mitigation: blown budget triggers the
-        # docs/ci/postgres-integration.md §4 runbook, not a red PR.
-        # The step always exits 0 — classification lives in the job
-        # summary + a single structured JSON line on stdout for future
-        # log aggregation.
+        # Reads wall_clock_seconds from the timing.json the previous step wrote
+        # and classifies against the 480s (8-min) target. SOFT-FAIL: a blown
+        # budget triggers a runbook, not a red PR. The step always exits 0 —
+        # classification lives in the job summary + a single structured JSON
+        # line on stdout for future log aggregation.
         if: always()
         continue-on-error: true
         run: |
@@ -347,19 +243,11 @@ jobs:
             echo "## Budget gate: ${STATUS}"
             echo ""
             echo "- wall_clock_seconds: ${WALL}"
-            echo "- target_seconds: 480 (8 min, CI-04)"
-            echo "- classification: PASS ≤ 480, WARN 481–600, BREACH > 600"
-            echo "- soft-fail: this gate never blocks the PR (R14-03)"
-            if [ "$STATUS" != "PASS" ]; then
-              echo ""
-              echo "See docs/ci/postgres-integration.md §4 for the breach runbook."
-            fi
+            echo "- target_seconds: 480 (8 min)"
+            echo "- classification: PASS <= 480, WARN 481-600, BREACH > 600"
+            echo "- soft-fail: this gate never blocks the PR"
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
-
-      - name: Dump pg-lunaris logs on failure
-        if: failure()
-        run: docker logs pg-lunaris || true
 
       - name: Dump Moon logs on failure
         if: failure()
@@ -378,293 +266,3 @@ jobs:
             kill "$MOON_PID" 2>/dev/null || true
             echo "Killed Moon PID $MOON_PID"
           fi
-
-      - name: Tear down pg-lunaris
-        if: always()
-        run: docker rm -f pg-lunaris || true
-
-# <14-02-anchor>
-# Plan 14-02 extended the single `integration` job above with Moon
-# build-from-source (vendor/moon submodule) + moon-it default-on + AS_OF
-# parity step. Anchor preserved for historical traceability; further
-# Moon-side extensions land inside the `integration` job's `steps:` list.
-
-# <14-03-anchor>
-# Plan 14-03 injected `integration-vanilla-pg-negative` below. The job
-# runs the 4 EVAL-05 regression tests against vanilla `postgres:16`
-# (NO pgvector, NO Apache AGE, NO pgmq) and asserts the stderr of each
-# PG-dependent test contains the EXACT substring documented in the
-# Rust EXPECTED_VANILLA_ERRORS table at
-# `crates/lunaris-conformance/tests/regression.rs`. The PG-independent
-# candle test (bug #3) is asserted to PASS (exit code 0) on vanilla pg.
-#
-# Per Plan 14-03 P14-D06 + R14-02 mitigation: a "sanity trip-wire"
-# step runs a 5th synthetic test engineered to fail on BOTH backends
-# (a nonexistent test name → cargo exits 101). If the trip-wire ever
-# returns exit code 0, the assertion logic itself is broken and the
-# job fails.
-
-  integration-vanilla-pg-negative:
-    name: "integration-vanilla-pg-negative (CI-03 substrate-gap assertion)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    services:
-      vanilla-pg:
-        # VANILLA — NO pg-lunaris extensions (pgvector, AGE, pgmq). This is
-        # the substrate CI USED TO run against in v0.1.1; CI-03's purpose is
-        # to prove any of the 4 EVAL-05 regression tests fails on it with a
-        # specific expected substring. Do NOT replace with pg-lunaris:ci —
-        # that would defeat the whole job.
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: lunaris
-          POSTGRES_DB: lunaris
-          POSTGRES_USER: lunaris
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U lunaris -d lunaris"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=10
-
-    env:
-      # Two-tier skip discipline: the tests exit Ok(()) if PG_URL is absent;
-      # we always set it here so each test actually attempts a connection.
-      PG_URL: postgres://lunaris:lunaris@localhost:5432/lunaris
-
-    steps:
-      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-
-      - name: Init vendor/moon submodule
-        # Non-recursive — mirrors the positive-path `integration` job. The
-        # moondb path dep (vendor/moon/sdk/rust) is required for cargo to
-        # resolve the workspace graph even though this job never talks to
-        # Moon.
-        run: git submodule update --init vendor/moon
-
-      - name: Install Rust 1.94 toolchain
-        uses: dtolnay/rust-toolchain@1.94
-
-      - name: Cache cargo registry + target (separate scope from integration)
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          # Scope cache separately from the positive-path `integration`
-          # job so a negative-job cache corruption cannot poison the
-          # positive job.
-          shared-key: integration-vanilla-pg-negative
-
-      - name: Wait for vanilla postgres:16 (60s max)
-        run: |
-          for i in $(seq 1 30); do
-            if (echo > /dev/tcp/localhost/5432) >/dev/null 2>&1; then
-              echo "vanilla-pg reachable after $i attempts"
-              exit 0
-            fi
-            echo "waiting for vanilla-pg (5432) ($i/30)..."
-            sleep 2
-          done
-          echo "ERROR: vanilla-pg not reachable after 60s"
-          exit 1
-
-      - name: Build regression test binary (cache warm-up)
-        # Pre-build so each per-test step below only pays link time, not
-        # full compile time. Keeps per-step wall-clock < 15s.
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            --no-run
-
-      # Each per-test step is `continue-on-error: true` so the job
-      # reaches the grep-assertion step below even when (as expected)
-      # the test fails. The stderr is captured to a per-test log file
-      # so the grep is targeted, not ambient. `cargo test` is invoked
-      # with a filter (`-- <name> --exact`) so the regression binary
-      # runs ONE specific test and exits immediately after.
-
-      - name: "Regression #1 — sqlx_migration_version_collision (expect RED + vector-ext substring)"
-        id: r1
-        continue-on-error: true
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            -- sqlx_migration_version_collision::sqlx_migration_version_collision --exact --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/regression-sqlx_migration_version_collision.log"
-          # Preserve the cargo exit code so the outer step reports
-          # continue-on-error correctly.
-          exit "${PIPESTATUS[0]}"
-
-      - name: "Regression #2 — search_path_session_leak (expect RED + vector-ext substring)"
-        id: r2
-        continue-on-error: true
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            -- search_path_session_leak::search_path_session_leak --exact --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/regression-search_path_session_leak.log"
-          exit "${PIPESTATUS[0]}"
-
-      - name: "Regression #3 — candle_embed_tokens_fallback (expect GREEN — PG-independent)"
-        id: r3
-        continue-on-error: true
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            -- candle_embed_tokens_fallback::candle_embed_tokens_fallback --exact --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/regression-candle_embed_tokens_fallback.log"
-          exit "${PIPESTATUS[0]}"
-
-      - name: "Regression #4 — bytea_like_byterange_scan (expect RED + vector-ext substring)"
-        id: r4
-        continue-on-error: true
-        run: |
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            -- bytea_like_byterange_scan::bytea_like_byterange_scan --exact --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/regression-bytea_like_byterange_scan.log"
-          exit "${PIPESTATUS[0]}"
-
-      - name: "Sanity trip-wire (nonexistent test; must fail on BOTH backends)"
-        # R14-02 mitigation: a synthetic 5th probe engineered to fail
-        # regardless of backend (cargo test filter matches zero tests →
-        # cargo exits with "test result: ok. 0 passed" which is exit 0,
-        # so we invert: we DEMAND 1 test match. The filter below is a
-        # nonexistent name; `--exact` makes cargo refuse to match; we
-        # force exit 1 if the filter-match count is 0 OR if the binary
-        # reports "0 passed" on a positive assertion. If this step ever
-        # passes, the matrix assertion logic is silently broken.
-        id: trip_wire
-        continue-on-error: true
-        run: |
-          set +e
-          cargo test -p lunaris-conformance \
-            --features pg-it \
-            --test regression \
-            -- __regression_trip_wire_nonexistent_test__ --exact --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/regression-trip_wire.log"
-          CARGO_EXIT="${PIPESTATUS[0]}"
-          # Trip-wire invariant: a nonexistent-test filter reports "0
-          # passed" in cargo's output. That "0 passed" is the signal we
-          # grep for. If cargo's UI ever stops emitting "0 passed" for
-          # a zero-match run, the sanity trip-wire should still remain
-          # LOUD — we surface the cargo exit code + the log size so a
-          # human operator reviewing the logs can reason about it.
-          if grep -q "0 passed" "$RUNNER_TEMP/regression-trip_wire.log"; then
-            echo "trip_wire saw cargo's zero-match report ('0 passed') — assertion logic is sane"
-            # Force a non-zero exit so `continue-on-error: true` above
-            # still flags the step as 'expected to fail' in the UI, and
-            # the assertion step below uses this as the trip-wire signal.
-            exit 1
-          fi
-          # Zero-match report MISSING — cargo UI may have changed. This
-          # is the dangerous case; fail LOUD so the job turns red.
-          echo "ERROR: sanity trip-wire did NOT find 'test result: ok. 0 passed' in the log."
-          echo "The negative-matrix assertion logic may be silently green."
-          echo "cargo exit was: $CARGO_EXIT"
-          echo "--- trip_wire.log (first 40 lines) ---"
-          head -40 "$RUNNER_TEMP/regression-trip_wire.log"
-          exit 0 # PARADOXICALLY: exit 0 here = trip-wire broke =
-                 # the next step must turn the job RED by observing the
-                 # missing "0 passed" signal.
-
-      - name: "CI-03 assertion — substring-specific grep on each regression log"
-        # This is the CI-03 heart. For each of the 4 regression tests,
-        # grep the captured stderr for the EXACT substring documented
-        # in the Rust EXPECTED_VANILLA_ERRORS table
-        # (crates/lunaris-conformance/tests/regression.rs). If ANY
-        # expected substring is missing OR the candle test did not
-        # report PASS, the step exits 1 and the job turns red.
-        #
-        # Denormalization note (P14-D06): the list below is a hardcoded
-        # mirror of the Rust EXPECTED_VANILLA_ERRORS table. Any bump of
-        # the Rust table MUST update this YAML too. 4 entries — trivial
-        # to keep in sync; a future plan can emit this YAML from the
-        # Rust source.
-        #
-        # Sanity-trip-wire handling: step `trip_wire` above exits 1
-        # when cargo correctly reports "0 passed" for a nonexistent
-        # filter. We verify that by checking the step outcome ==
-        # 'failure' (cargo reported expected failure → trip-wire OK).
-        # If it's 'success', the trip-wire silently broke → turn red.
-        if: success() || failure()
-        env:
-          R1_OUTCOME: ${{ steps.r1.outcome }}
-          R2_OUTCOME: ${{ steps.r2.outcome }}
-          R3_OUTCOME: ${{ steps.r3.outcome }}
-          R4_OUTCOME: ${{ steps.r4.outcome }}
-          TRIP_WIRE_OUTCOME: ${{ steps.trip_wire.outcome }}
-        run: |
-          set -euo pipefail
-          FAIL=0
-
-          # Tests 1, 2, 4 (PG-dependent): assert RED + substring present.
-          for pair in \
-            "sqlx_migration_version_collision:extension \"vector\" is not available" \
-            "search_path_session_leak:extension \"vector\" is not available" \
-            "bytea_like_byterange_scan:extension \"vector\" is not available"
-          do
-            name="${pair%%:*}"
-            substring="${pair#*:}"
-            log="$RUNNER_TEMP/regression-$name.log"
-            if [ ! -f "$log" ]; then
-              echo "FAIL [$name]: log file missing ($log)"
-              FAIL=1
-              continue
-            fi
-            if grep -q "$substring" "$log"; then
-              echo "PASS [$name]: stderr contains expected substring '$substring'"
-            else
-              echo "FAIL [$name]: stderr does NOT contain expected substring '$substring'"
-              echo "--- last 20 lines of $log ---"
-              tail -20 "$log"
-              FAIL=1
-            fi
-          done
-
-          # Test 3 (PG-independent): assert GREEN (step outcome success).
-          if [ "$R3_OUTCOME" = "success" ]; then
-            echo "PASS [candle_embed_tokens_fallback]: step succeeded on vanilla pg:16 (PG-independent)"
-          else
-            echo "FAIL [candle_embed_tokens_fallback]: step outcome=$R3_OUTCOME (expected success — PG-independent)"
-            tail -30 "$RUNNER_TEMP/regression-candle_embed_tokens_fallback.log" || true
-            FAIL=1
-          fi
-
-          # Sanity trip-wire: cargo reported expected zero-match ⇒ step
-          # was forced to exit 1 (outcome=failure). If outcome=success,
-          # the trip-wire's "0 passed" detection silently broke.
-          if [ "$TRIP_WIRE_OUTCOME" = "failure" ]; then
-            echo "PASS [trip_wire]: assertion logic is sane (nonexistent-test filter correctly reported '0 passed')"
-          else
-            echo "FAIL [trip_wire]: outcome=$TRIP_WIRE_OUTCOME — the R14-02 sanity trip-wire did NOT detect cargo's zero-match signal."
-            echo "This means the negative-matrix assertion logic itself may be silently green."
-            FAIL=1
-          fi
-
-          if [ "$FAIL" -ne 0 ]; then
-            echo "::error::CI-03 negative-matrix assertion FAILED — one or more regression tests did not emit the expected substring on vanilla postgres:16."
-            exit 1
-          fi
-          echo "CI-03 negative-matrix assertion PASSED — all 4 regression tests behaved as expected on vanilla postgres:16."
-
-      - name: Upload vanilla-pg regression logs (post-mortem artifact)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vanilla-pg-regression-logs-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/regression-sqlx_migration_version_collision.log
-            ${{ runner.temp }}/regression-search_path_session_leak.log
-            ${{ runner.temp }}/regression-candle_embed_tokens_fallback.log
-            ${{ runner.temp }}/regression-bytea_like_byterange_scan.log
-            ${{ runner.temp }}/regression-trip_wire.log

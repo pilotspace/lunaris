@@ -23,6 +23,14 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache BOTH target dirs: the Moon build step below lands in
+          # vendor/moon/target via --manifest-path, and without it in the cache
+          # every run pays a cold ~6 min release build of the Moon binary the
+          # test harness needs.
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
       # NOT `cargo fmt --all`: --all also formats path deps OUTSIDE the
       # workspace members (documented cargo behavior), so the vendored
       # moondb SDK (vendor/moon/sdk/rust, excluded in [workspace] but
@@ -30,6 +38,19 @@ jobs:
       # does not own. Scope to workspace members only.
       - run: cargo metadata --no-deps --format-version=1 | jq -r '.packages[].name' | sed 's/^/-p /' | xargs cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `lunaris-test-harness` fixtures spawn a disposable child-process Moon
+      # per test. 0.7.0 deleted the in-process `memory://` backend they used to
+      # degrade to, so a missing binary is now a panic, not a skip — which
+      # means `cargo test --workspace` below CANNOT pass on a runner with no
+      # `moon` on disk. Build it from the pinned submodule; the harness finds
+      # `vendor/moon/target/release/moon` on its own default search path (no
+      # MOON_TEST_BINARY needed).
+      #
+      # This is a release build of a second workspace and is the single most
+      # expensive step in this job on a cold cache — Swatinem/rust-cache above
+      # covers the lunaris target dir only, so vendor/moon is added to it.
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
       # lunaris-py / lunaris-ts are EXCLUDED: pyo3 ships with the
       # `extension-module` feature (workspace pin), which suppresses
       # libpython linkage — their `cargo test` harness binaries therefore
