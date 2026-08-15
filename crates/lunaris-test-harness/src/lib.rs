@@ -149,7 +149,9 @@ impl TestStore {
 ///
 /// # Panics
 /// If `LUNARIS_TEST_BACKEND` names a removed backend, or no Moon could be
-/// started — see [`no_moon_panic`] for what the message tells you to do.
+/// started. The panic message names `MOON_TEST_BINARY` and the one-line
+/// `cargo build --release --bin moon` that fixes it — there is no
+/// `memory://` fallback to absorb a missing binary since 0.7.0.
 pub async fn open_test_store() -> TestStore {
     check_backend_env();
     let moon = EphemeralMoon::spawn().await.unwrap_or_else(|e| panic!("{}", no_moon_panic(&e)));
