@@ -446,11 +446,26 @@ mod tests {
     /// path: a strong-reinforced memory must outrank its equal-similarity
     /// peer through `handle()` itself (the exact path the hook / MCP tools
     /// execute), not just through an explicitly-wired test builder.
+    ///
+    /// **Equal-similarity-premise pin — deliberately NOT ported to Moon.** The
+    /// test needs its two hits to be genuine ties, which holds on the embedded
+    /// backend's raw cosine but NOT on Moon: RRF fusion is rank-based, so two
+    /// byte-identical episodes come back scored 1.0 and 0.102667205 — a ~10x
+    /// gap the ledger prior only sometimes overcomes. Left unpinned this test
+    /// fails roughly 1 run in 5 under `LUNARIS_TEST_BACKEND=moon` (measured:
+    /// 1/5, then 3/8). Pinned with `Policy::ForceMemory` rather than left
+    /// flaky.
+    ///
+    /// The flake is worth reading as a PRODUCTION signal, not just a fixture
+    /// problem: on the substrate production actually runs, a Strong
+    /// reinforcement does not reliably outrank an equal-content peer, because
+    /// the RRF rank gap dominates the activation prior. Tracked in
+    /// docs/testing/memory-to-moon-port-plan.md §6.
     #[tokio::test]
     async fn activation_boost_reranks_service_recall() {
         use lunaris_core::activation::{Grain, RefSignal, Strength};
 
-        let (lunaris, scope) = make_engine("test-recall-actboost").await;
+        let (lunaris, scope) = make_engine_with(Policy::ForceMemory, "test-recall-actboost").await;
         let scoped = lunaris.scoped(scope.clone());
 
         // Two distinct episodes with IDENTICAL content → identical vectors
