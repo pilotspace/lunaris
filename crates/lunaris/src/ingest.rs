@@ -574,6 +574,7 @@ async fn ingest_episode_graph_on(
                 "valid_from_iso": e.valid_from_iso,
                 "valid_to_iso": e.valid_to_iso,
             }),
+            index_kind: "entities".into(),
         });
         // Stub embedding for entities (v0). Real entity embeddings land in
         // v1 alongside the extractor's output stage. The deterministic

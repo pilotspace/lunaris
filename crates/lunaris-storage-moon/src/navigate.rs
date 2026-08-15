@@ -12,7 +12,12 @@
 //! Reply mirrors FT.SEARCH — `[count, key, [field, value, …], …]` — with
 //! `__vec_score`, `__hop_depth`, and `__final_score` fields per hit. Keys are
 //! decoded with the same `{ft_index}:{hex}` prefix-strip rule as
-//! `vector_search` (see `vector::decode_key`).
+//! `vector_search` (see `vector::decode_key`) — but tried against EVERY FT
+//! index kind this scope owns, not just the seed index. A graph hop can land
+//! on a node registered against a different index than the KNN seed (KG-RAG
+//! facts-as-graph-nodes: an `entities` seed can hop to a `Fact` node whose
+//! `_key` carries the `facts` prefix) — only a genuinely foreign SCOPE's
+//! index name fails every prefix and gets dropped.
 //!
 //! `FT.NAVIGATE DECAY` has no time-weight slot (the server fixes
 //! `time_weight = 1.0`), so only the λ of a `GraphDecay` is sent — documented
@@ -24,7 +29,7 @@ use lunaris_core::storage::types::{NavigateHit, NavigateSpec};
 
 use crate::client::{MoonClient, redis_err};
 use crate::keyspace::ft_index_name;
-use crate::vector::decode_key;
+use crate::vector::{SCOPE_VECTOR_INDEX_KINDS, decode_key};
 
 pub(crate) async fn vector_navigate(
     c: &MoonClient,
@@ -55,10 +60,26 @@ pub(crate) async fn vector_navigate(
     cmd.arg("PARAMS").arg(2).arg("v").arg(qbytes.as_slice());
     let reply: redis::Value = cmd.query_async(raw_conn).await.map_err(redis_err)?;
 
-    parse_ft_navigate(reply, &per_scope_index)
+    parse_ft_navigate(reply, scope)
 }
 
-fn parse_ft_navigate(v: redis::Value, ft_index: &str) -> Result<Vec<NavigateHit>, StorageError> {
+/// Every per-scope FT index prefix a graph-expanded hop can legally land on.
+///
+/// KG-RAG facts-as-graph-nodes: a hop from an `entities` KNN seed can reach a
+/// `Fact` node (registered via `GRAPH.ADDNODE ... _key facts:<hex>`), whose
+/// key carries a DIFFERENT index prefix than the seed. The single-prefix
+/// `decode_key(raw, seed_index)` scope-isolation check (designed only to
+/// reject a genuinely foreign SCOPE's keys, never exercised cross-INDEX
+/// before this) would silently drop every such hit as "foreign-prefix".
+/// Trying every kind this scope owns keeps the same scope-isolation guarantee
+/// (a different scope's index name never matches) while accepting any kind
+/// within THIS scope's graph.
+fn scope_index_prefixes(scope: &Scope) -> [String; SCOPE_VECTOR_INDEX_KINDS.len()] {
+    std::array::from_fn(|i| ft_index_name(scope, SCOPE_VECTOR_INDEX_KINDS[i]))
+}
+
+fn parse_ft_navigate(v: redis::Value, scope: &Scope) -> Result<Vec<NavigateHit>, StorageError> {
+    let prefixes = scope_index_prefixes(scope);
     let arr = match v {
         redis::Value::Array(a) => a,
         other => {
@@ -74,7 +95,7 @@ fn parse_ft_navigate(v: redis::Value, ft_index: &str) -> Result<Vec<NavigateHit>
             redis::Value::SimpleString(s) => s.into_bytes(),
             _ => continue,
         };
-        let Some(id_bytes) = decode_key(&raw_key, ft_index) else {
+        let Some(id_bytes) = prefixes.iter().find_map(|prefix| decode_key(&raw_key, prefix)) else {
             continue;
         };
         let mut vec_score = 0.0f32;
@@ -122,6 +143,10 @@ mod tests {
         redis::Value::BulkString(s.as_bytes().to_vec())
     }
 
+    fn dev_scope() -> Scope {
+        Scope::new("dev").unwrap()
+    }
+
     #[test]
     fn parse_navigate_reply_with_hop_metadata() {
         let idx = "lunaris_dev_entities_idx";
@@ -148,7 +173,7 @@ mod tests {
                 bulk("0.2"),
             ]),
         ]);
-        let hits = parse_ft_navigate(v, idx).unwrap();
+        let hits = parse_ft_navigate(v, &dev_scope()).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].id, vec![1u8; 16]);
         assert_eq!(hits[0].hop_depth, 0);
@@ -173,7 +198,7 @@ mod tests {
                 bulk("0"),
             ]),
         ]);
-        let hits = parse_ft_navigate(v, idx).unwrap();
+        let hits = parse_ft_navigate(v, &dev_scope()).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].hop_depth, 0);
         assert!((hits[0].final_score - 0.5).abs() < 1e-6, "vec_score is the fallback final score");
@@ -181,13 +206,46 @@ mod tests {
 
     #[test]
     fn parse_navigate_drops_foreign_prefix_keys() {
-        let idx = "lunaris_dev_entities_idx";
         let v = redis::Value::Array(vec![
             redis::Value::Int(1),
             bulk("otherscope_idx:0101"),
             redis::Value::Array(vec![]),
         ]);
-        let hits = parse_ft_navigate(v, idx).unwrap();
-        assert!(hits.is_empty(), "foreign-prefix keys must be dropped");
+        let hits = parse_ft_navigate(v, &dev_scope()).unwrap();
+        assert!(hits.is_empty(), "a key from a different scope's index must still be dropped");
+    }
+
+    /// KG-RAG facts-as-graph-nodes: a hop from an `entities` KNN seed can
+    /// land on a `Fact` graph node, whose `_key` carries the `facts` index
+    /// prefix — a DIFFERENT prefix than the seed. This must NOT be treated
+    /// as foreign — it's the same scope, just a different node kind.
+    #[test]
+    fn parse_navigate_accepts_cross_index_hop_within_same_scope() {
+        let entities_idx = "lunaris_dev_entities_idx";
+        let facts_idx = "lunaris_dev_facts_idx";
+        let seed_id = hex::encode([1u8; 16]);
+        let hop_id = hex::encode([2u8; 16]);
+        let v = redis::Value::Array(vec![
+            redis::Value::Int(2),
+            bulk(&format!("{entities_idx}:{seed_id}")),
+            redis::Value::Array(vec![
+                bulk("__hop_depth"),
+                bulk("0"),
+                bulk("__final_score"),
+                bulk("0.9"),
+            ]),
+            bulk(&format!("{facts_idx}:{hop_id}")),
+            redis::Value::Array(vec![
+                bulk("__hop_depth"),
+                bulk("1"),
+                bulk("__final_score"),
+                bulk("0.5"),
+            ]),
+        ]);
+        let hits = parse_ft_navigate(v, &dev_scope()).unwrap();
+        assert_eq!(hits.len(), 2, "the facts-index hop must survive, not be dropped as foreign");
+        assert_eq!(hits[0].id, vec![1u8; 16]);
+        assert_eq!(hits[1].id, vec![2u8; 16]);
+        assert_eq!(hits[1].hop_depth, 1);
     }
 }

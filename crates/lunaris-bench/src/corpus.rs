@@ -582,6 +582,7 @@ pub async fn build_corpus_with_options(
                             "name": format!("entity-{chunk_idx}-{entity_idx}"),
                             "type": "BenchEntity",
                         }),
+                        index_kind: "entities".to_string(),
                     });
                 }
 

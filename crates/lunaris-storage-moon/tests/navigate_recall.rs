@@ -67,6 +67,28 @@ fn node(id: Vec<u8>, name: &str) -> WriteOp {
             "aliases": [name.to_lowercase()],
             "confidence": 0.9,
         }),
+        index_kind: "entities".into(),
+    }
+}
+
+/// KG-RAG facts-as-graph-nodes: a `Fact` graph node registered against the
+/// `facts` FT index instead of `entities`.
+fn fact_node(id: Vec<u8>, predicate: &str) -> WriteOp {
+    WriteOp::GraphNode {
+        graph: "lunaris_graph".into(),
+        id: id.clone(),
+        label: "Fact".into(),
+        props: json!({ "id_hex": hex::encode(&id), "predicate": predicate }),
+        index_kind: "facts".into(),
+    }
+}
+
+fn fact_vector(id: Vec<u8>, e: Vec<f32>) -> WriteOp {
+    WriteOp::VectorUpsert {
+        index: "facts".into(),
+        id,
+        embedding: e,
+        metadata: json!({"fact_text": "test fact"}),
     }
 }
 
@@ -149,6 +171,46 @@ async fn navigate_surfaces_graph_linked_entity() {
         .unwrap_or_else(|| panic!("navigate must surface B via the graph; got {nav:?}"));
     assert!(b_hit.hop_depth >= 1, "B is a graph-expanded hit, got hop_depth {}", b_hit.hop_depth);
     assert!(nav.iter().any(|h| h.id == eid(1)), "A must still be present");
+}
+
+/// KG-RAG facts-as-graph-nodes DISCRIMINATOR — an `entities` KNN seed hops
+/// to a `Fact` node (registered against the `facts` FT index, a DIFFERENT
+/// prefix than the seed). Before the cross-index `parse_ft_navigate` fix,
+/// this hit would be silently dropped as "foreign-prefix" even though it's
+/// the same scope — only a different node kind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigate_surfaces_cross_index_fact_hop() {
+    let Some(moon) = connect_or_skip().await else { return };
+    let scope = fresh_scope();
+    let fact_id = eid(9);
+    let ops = vec![
+        node(eid(1), "A"),
+        vector(eid(1), "A", emb(1.0, 0.0)),
+        fact_node(fact_id.clone(), "SUBSCRIBES_TO"),
+        fact_vector(fact_id.clone(), emb(9.0, 9.0)), // vector-far, only graph-reachable
+        WriteOp::GraphEdge {
+            graph: "lunaris_graph".into(),
+            src: eid(1),
+            dst: fact_id.clone(),
+            rel: "HAS_FACT".into(),
+            props: json!({}),
+        },
+    ];
+    moon.atomic_write(&scope, &ops).await.expect("production atomic_write");
+
+    let spec = NavigateSpec::new(2).expect("valid hops");
+    let nav = moon
+        .vector_navigate(&scope, "entities", &query(), 3, &spec)
+        .await
+        .expect("navigate recall");
+    let fact_hit = nav.iter().find(|h| h.id == fact_id).unwrap_or_else(|| {
+        panic!("navigate must surface the facts-index Fact node via the graph hop; got {nav:?}")
+    });
+    assert!(
+        fact_hit.hop_depth >= 1,
+        "the Fact node is graph-expanded, got hop_depth {}",
+        fact_hit.hop_depth
+    );
 }
 
 /// §2 idempotence — re-writing the same EntityId must not duplicate the node.

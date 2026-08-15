@@ -292,7 +292,7 @@ async fn run_ops(
                 }
                 typed.hset_multiple(key.as_bytes(), &fields).await.map_err(moon_err)?;
             }
-            WriteOp::GraphNode { graph: _, id, label, props } => {
+            WriteOp::GraphNode { graph: _, id, label, props, index_kind } => {
                 // RFC 0001 Wave 1C: use per-scope graph key, ignoring the WriteOp's
                 // `graph` field (which was the global "lunaris_graph" pre-RFC).
                 // T-01-03-01: caller-validated `label`. See module rustdoc above.
@@ -385,8 +385,11 @@ async fn run_ops(
 
                 if !updated {
                     // Create path — ADDNODE registers `_key`, then one SET
-                    // targets the returned internal node id.
-                    let ft_key = format!("{}:{id_hex}", ft_index_name(scope, "entities"));
+                    // targets the returned internal node id. `index_kind`
+                    // (KG-RAG facts-as-graph-nodes) picks the RIGHT FT index
+                    // for this node's content — was hardcoded to "entities"
+                    // before facts could be graph nodes too.
+                    let ft_key = format!("{}:{id_hex}", ft_index_name(scope, index_kind.as_str()));
                     let conn = typed.inner_mut();
                     let node_id: i64 = redis::cmd("GRAPH.ADDNODE")
                         .arg(scope_graph.as_str())

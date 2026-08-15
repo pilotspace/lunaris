@@ -368,6 +368,7 @@ pub async fn ingest_structured_inner(
                 "valid_to_iso": e.valid_to.map(|t| t.to_rfc3339()),
                 "source_episode_id": episode_id_str,
             }),
+            index_kind: "entities".into(),
         });
         ops.push(WriteOp::VectorUpsert {
             index: ENTITIES_INDEX.into(),

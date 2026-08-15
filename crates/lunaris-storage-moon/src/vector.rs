@@ -44,7 +44,8 @@ use crate::keyspace::ft_index_name;
 /// standalone const here (rather than importing theirs) because neither is
 /// `pub` and this crate's file-ownership split (moon-v051-perf-exploit W1)
 /// keeps this module independent of `lib.rs`.
-const SCOPE_VECTOR_INDEX_KINDS: [&str; 4] = ["chunks", "entities", "facts", "communities"];
+pub(crate) const SCOPE_VECTOR_INDEX_KINDS: [&str; 4] =
+    ["chunks", "entities", "facts", "communities"];
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn vector_search(
