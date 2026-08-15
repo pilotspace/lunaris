@@ -19,29 +19,46 @@
 //! 2. `grep` recovers verbatim values for every key under a sub-prefix, and
 //!    does not leak keys from a sibling sub-prefix.
 //!
-//! Both assertions run on the embedded (`memory://`) backend — the
-//! `lunaris-mcp` default — whose `keyword_search` returns `NotSupported`. So
-//! the test also proves `WorkingMemory`'s INTERNAL vector-only fallback fires
-//! (no second fallback path bolted on by callers).
+//! ## Backend (0.7.0 port)
+//!
+//! The store now comes from `lunaris-test-harness` — an ephemeral
+//! child-process Moon, degrading to `memory://` where no Moon binary resolves.
+//! Both assertions above hold on either substrate and are strictly better
+//! exercised on Moon, which is what production runs.
+//!
+//! One claim did NOT survive the swap intact: this file previously doubled as
+//! the pin that `WorkingMemory`'s INTERNAL vector-only fallback fires, which
+//! is only observable on a backend whose `keyword_search` returns
+//! `NotSupported`. Moon implements `keyword_search`, so under
+//! `LUNARIS_TEST_BACKEND=moon` the hybrid path is taken instead and the
+//! fallback is not exercised; under `LUNARIS_TEST_BACKEND=memory` it still is.
+//! When 0.7.0 deletes the embedded backend that pin has to be re-expressed
+//! against a stubbed `KeywordPort` rather than a real one — see
+//! docs/testing/memory-to-moon-port-plan.md §2.2.
 
 #![forbid(unsafe_code)]
 
 use std::sync::Arc;
 
-use lunaris::{Lunaris, WorkingMemory};
+use lunaris::WorkingMemory;
 use lunaris_core::{Scope, StubEmbedder};
+use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
 use serde_json::json;
 
-async fn working_memory(scope_name: &str) -> WorkingMemory {
+/// `WorkingMemory::new` wants an `Arc<Lunaris>`, so the deref-transparent
+/// `TestEngine` is split via `into_parts()`. The [`TestStore`] guard rides back
+/// with the handle: it owns the Moon child, and dropping it would kill the
+/// backend out from under the `WorkingMemory`.
+async fn working_memory(scope_name: &str) -> (WorkingMemory, TestStore) {
     let embedder = Arc::new(StubEmbedder::new(768));
-    let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+    let (lunaris, store) = open_test_engine_with_embedder(embedder).await.into_parts();
     let scope = Scope::new(scope_name).unwrap();
-    WorkingMemory::new(Arc::new(lunaris), scope, "scratchpad/")
+    (WorkingMemory::new(Arc::new(lunaris), scope, "scratchpad/"), store)
 }
 
 #[tokio::test]
 async fn read_recovers_verbatim_object_value() {
-    let wm = working_memory("wm-rt-read").await;
+    let (wm, _store) = working_memory("wm-rt-read").await;
 
     // Straight quotes, `--`, and `...` all trip ENABLE_SMART_PUNCTUATION — so
     // recovering from the chunk `text` would corrupt this value.
@@ -63,7 +80,7 @@ async fn read_recovers_verbatim_object_value() {
 
 #[tokio::test]
 async fn grep_recovers_verbatim_values_and_respects_sub_prefix() {
-    let wm = working_memory("wm-rt-grep").await;
+    let (wm, _store) = working_memory("wm-rt-grep").await;
 
     let v0 = json!({ "i": 0, "s": "q \"0\" -- x" });
     let v1 = json!({ "i": 1, "s": "q \"1\" -- y" });
@@ -100,7 +117,7 @@ async fn grep_recovers_verbatim_values_and_respects_sub_prefix() {
 /// can drop distinct sibling keys. This pins one-entry-per-key.
 #[tokio::test]
 async fn grep_dedups_a_chunk_split_value_to_one_entry() {
-    let wm = working_memory("wm-rt-grep-split").await;
+    let (wm, _store) = working_memory("wm-rt-grep-split").await;
 
     // ~800 whitespace-separated words → > 500 surrogate tokens → ≥ 2 chunks.
     let big = (0..800).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");

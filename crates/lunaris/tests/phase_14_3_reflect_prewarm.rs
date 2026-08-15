@@ -23,8 +23,11 @@
 //!
 //! ## Storage substrate
 //!
-//! `EmbeddedStorage::connect("memory://")` — zero external deps, in-process,
-//! ephemeral. All four tests use it via the `make_handle` helper below.
+//! A `lunaris-test-harness` fixture (0.7.0 port off `memory://`): an ephemeral
+//! child-process Moon, degrading to the embedded backend where no Moon binary
+//! resolves. All four tests reach it via the `make_handle` helper below, which
+//! sizes the store from `embedder.dim()` — these fixtures are 4-d, and Moon's
+//! FT index width is fixed at `FT.CREATE` and never resized.
 //!
 //! ## No `FauxReflectSupervisor`
 //!
@@ -39,8 +42,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use lunaris::Lunaris;
-use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StoragePort, StubEmbedder};
-use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StubEmbedder};
+use lunaris_test_harness::{Policy, TestStorage, open_test_storage_with};
 use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
 
 // ---------------------------------------------------------------------------
@@ -88,27 +91,31 @@ impl Embedder for ErrorEmbedder {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a `Lunaris` handle wired to an in-memory storage backend and the
+/// Build a `Lunaris` handle wired to a harness-issued storage backend and the
 /// supplied embedder + reflect supervisor. The semaphore capacity is set via
 /// `with_prewarm_concurrency`.
+///
+/// The store is sized from `embedder.dim()` — every fixture here is 4-d, and
+/// Moon fixes its FT index width at `FT.CREATE` without resizing. The returned
+/// [`TestStorage`] guard owns the Moon child and must outlive the handle.
 async fn make_handle(
     embedder: Arc<dyn Embedder>,
     supervisor: Arc<dyn ReflectSupervisor>,
     prewarm_capacity: usize,
-) -> Lunaris {
-    let storage: Arc<dyn StoragePort> =
-        Arc::new(EmbeddedStorage::connect("memory://").await.expect("in-memory storage"));
+) -> (Lunaris, TestStorage) {
+    let storage = open_test_storage_with(Policy::from_env(), embedder.dim()).await;
     let clock = HlcClock::new(0);
-    Lunaris::with_parts(storage, embedder, clock)
+    let handle = Lunaris::with_parts(storage.port(), embedder, clock)
         .with_reflect_supervisor(supervisor)
-        .with_prewarm_concurrency(prewarm_capacity)
+        .with_prewarm_concurrency(prewarm_capacity);
+    (handle, storage)
 }
 
 /// Convenience: build a handle with the noop-fast `StubEmbedder` (4-d).
 async fn make_stub_handle(
     supervisor: Arc<dyn ReflectSupervisor>,
     prewarm_capacity: usize,
-) -> Lunaris {
+) -> (Lunaris, TestStorage) {
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(4));
     make_handle(embedder, supervisor, prewarm_capacity).await
 }
@@ -144,7 +151,7 @@ async fn prewarm_happy_path_spawns_warm_up() {
         },
     });
 
-    let handle = make_stub_handle(supervisor, 4).await;
+    let (handle, _storage) = make_stub_handle(supervisor, 4).await;
     let scope = Scope::new("test.prewarm-happy").unwrap();
     let initial_permits = handle.warm_up_semaphore().available_permits();
     let scoped = handle.scoped(scope);
@@ -188,7 +195,7 @@ async fn prewarm_none_is_noop() {
         output: ReflectOutput { pre_warm_query: None, ..ReflectOutput::default() },
     });
 
-    let handle = make_stub_handle(supervisor, 4).await;
+    let (handle, _storage) = make_stub_handle(supervisor, 4).await;
     let scope = Scope::new("test.prewarm-noop").unwrap();
     let initial_permits = handle.warm_up_semaphore().available_permits();
     let scoped = handle.scoped(scope);
@@ -229,7 +236,7 @@ async fn prewarm_semaphore_bound_is_respected() {
         },
     });
 
-    let handle = make_stub_handle(supervisor, 1).await;
+    let (handle, _storage) = make_stub_handle(supervisor, 1).await;
     let scope = Scope::new("test.prewarm-sembound").unwrap();
 
     // Manually hold the single permit — semaphore is now exhausted.
@@ -297,7 +304,7 @@ async fn prewarm_storage_error_does_not_crash_agent() {
     });
 
     let embedder: Arc<dyn Embedder> = Arc::new(ErrorEmbedder);
-    let handle = make_handle(embedder, supervisor, 4).await;
+    let (handle, _storage) = make_handle(embedder, supervisor, 4).await;
     let scope = Scope::new("test.prewarm-error").unwrap();
     let initial_permits = handle.warm_up_semaphore().available_permits();
     let scoped = handle.scoped(scope);

@@ -28,6 +28,7 @@
 use std::path::PathBuf;
 
 use lunaris::{Lunaris, RerankCandidate};
+use lunaris_test_harness::open_test_store;
 
 fn staged(name: &str) -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -67,7 +68,12 @@ async fn production_open_resolves_llamacpp_embedder_and_reranker() {
         std::env::set_var("LUNARIS_RERANKER_GGUF", &rerank_gguf);
     }
 
-    let handle = Lunaris::open("memory://").await.expect("open memory://");
+    // 0.7.0 port off `memory://`. The constructor stays `Lunaris::open` (no
+    // embedder argument) because the whole point is that the RESOLVER picks the
+    // llama.cpp embedder — the harness's `open_test_engine()` would substitute
+    // a StubEmbedder and the assertions below would prove nothing.
+    let store = open_test_store().await;
+    let handle = Lunaris::open(store.url()).await.expect("open test store");
 
     // Embedder half: real 768-d, unit-norm, non-degenerate.
     let embedder = handle.embedder();
