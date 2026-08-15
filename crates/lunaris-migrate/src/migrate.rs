@@ -68,6 +68,11 @@ impl ScopeReport {
 /// enumeration — Postgres is the documented case (its RLS boundary makes a
 /// cross-scope `SELECT DISTINCT scope` impossible under the app role), so a
 /// Postgres source must be migrated with explicit `--scope` arguments.
+/// RED: no stall detection yet.
+fn pagination_stalled(_prev: Option<&str>, _next: &str) -> bool {
+    false
+}
+
 pub async fn discover_scopes(source: &dyn StoragePort) -> Result<Vec<Scope>, MigrateError> {
     const PAGE: usize = 500;
     let mut out: Vec<Scope> = Vec::new();
@@ -201,6 +206,21 @@ fn write_manifest_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend that hands back the cursor it was given makes the enumeration
+    /// loop spin forever. An operator tool that hangs is worse than one that
+    /// stops with a diagnosis.
+    #[test]
+    fn a_repeated_cursor_is_treated_as_a_stall() {
+        assert!(pagination_stalled(Some("abc"), "abc"));
+        assert!(pagination_stalled(None, ""));
+    }
+
+    #[test]
+    fn an_advancing_cursor_is_not_a_stall() {
+        assert!(!pagination_stalled(None, "abc"));
+        assert!(!pagination_stalled(Some("abc"), "def"));
+    }
 
     #[test]
     fn skipped_sums_every_class() {
