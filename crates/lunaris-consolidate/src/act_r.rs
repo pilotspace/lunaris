@@ -135,7 +135,7 @@ impl Default for ActRScorer {
 /// ADD task activation-ledger: widened to `pub` (was private) so
 /// `LedgerReferenceSource`-driven ticks and their tests can compute the
 /// SAME deterministic `FactId` for a memory ulid that
-/// [`ActRConsolidator::classify_episode`] uses for an episode-event-driven
+/// `ActRConsolidator::classify_episode` uses for an episode-event-driven
 /// promotion/archive. No behavior change — the hash scheme and namespace
 /// constant are unchanged.
 pub fn synthesize_fact_id_from_episode(episode_id: Ulid) -> FactId {
@@ -244,7 +244,7 @@ impl ActRConsolidator {
     ///
     /// `now_secs` is caller-supplied (unix seconds) rather than sampled
     /// internally so tests are deterministic — mirrors
-    /// [`Self::classify_episode`]'s `now_secs` parameter.
+    /// `Self::classify_episode`'s `now_secs` parameter.
     ///
     /// Iteration is sorted by ulid bytes for the same determinism reason
     /// `consolidate` sorts by episode_id (stable output ordering across runs).
@@ -279,7 +279,7 @@ impl ActRConsolidator {
     }
 }
 
-/// Internal classification result from [`ActRConsolidator::classify_episode`].
+/// Internal classification result from `ActRConsolidator::classify_episode`.
 #[derive(Clone, Debug, PartialEq)]
 enum EpisodeDecision {
     Promote(PromotionEvent),

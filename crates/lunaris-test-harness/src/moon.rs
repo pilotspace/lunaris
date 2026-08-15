@@ -110,7 +110,7 @@ impl EphemeralMoon {
     ///
     /// # Errors
     /// No `moon` binary on this machine, every port draw racing, the child
-    /// exiting during boot, or the readiness probe exceeding [`READY_BUDGET`].
+    /// exiting during boot, or the readiness probe exceeding `READY_BUDGET`.
     pub async fn spawn() -> anyhow::Result<Self> {
         let bin = moon_binary().ok_or_else(|| {
             anyhow!(

@@ -184,9 +184,9 @@ impl ActivationRecord {
 
     /// engram-soul-loop task 8b — `true` once `memory.distill` has archived
     /// this record (activation drop). Archived records contribute 0 boost
-    /// ([`lunaris_retrieve::LedgerBoostProvider::priors`]) and are excluded
+    /// (`lunaris_retrieve::LedgerBoostProvider::priors`) and are excluded
     /// from `memory.dream_agenda` candidates
-    /// ([`lunaris_consolidate::dream::build_dream_agenda`]) — the underlying
+    /// (`lunaris_consolidate::dream::build_dream_agenda`) — the underlying
     /// episode stays recall-hydratable; only its usage boost is suppressed.
     pub fn is_archived(&self) -> bool {
         self.archived_at.is_some()

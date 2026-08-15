@@ -50,7 +50,7 @@ pub trait BoostProvider: Send + Sync {
 ///
 /// `StoragePort` has no native point-MGET primitive, so `priors()` issues
 /// bounded-concurrency `read_as_of` POINT reads — one per distinct hit id,
-/// at most [`READ_CONCURRENCY`] in flight — instead of scanning the whole
+/// at most `READ_CONCURRENCY` in flight — instead of scanning the whole
 /// `lunaris:{scope}:activation:` prefix. A prefix scan is one round trip
 /// today but reads EVERY ledger row in the scope on EVERY recall, so its
 /// cost grows with corpus age — exactly the workload this ledger is built
