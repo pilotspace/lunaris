@@ -297,8 +297,11 @@ coming up healthy and failing mid-ingest hours later:
 
 ```
 moon: MULTI-SHARD server detected at 10.0.0.7:6379 — the server rejected a
-co-location probe: CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard.
-… To proceed: restart Moon with `--shards 1` …
+co-location probe: Pipeline failure: [(Index 2, error: CrossSlot: Keys in
+MULTI/EXEC don't hash to the same shard)]. … To proceed: restart Moon with
+`--shards 1` (that is the BINARY default; the published container image's CMD
+passes `--shards 0` = auto-detect = one shard per core, so pin `--shards 1`
+explicitly in your compose / helm / systemd arguments), then reconnect. …
 ```
 
 The guard is one read-only round-trip at connect (`MULTI` / `EXISTS` over 64
@@ -367,8 +370,8 @@ ps -o args= -p "$(pgrep -f '[m]oon --port')"        # or: docker inspect / syste
 
 # Co-location canary: read-only, writes nothing. All three commands must ride
 # ONE connection, hence the pipe into a single redis-cli.
-#   single shard -> OK / QUEUED / "1) (integer) 0"
-#   multi-shard  -> OK / QUEUED / "CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard"
+#   single shard -> OK / QUEUED / 0
+#   multi-shard  -> OK / QUEUED / CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard
 printf 'MULTI\nEXISTS lunaris:__shardprobe__:canary:0 lunaris:__shardprobe__:canary:1 lunaris:__shardprobe__:canary:2 lunaris:__shardprobe__:canary:3\nEXEC\n' \
   | redis-cli -h 127.0.0.1 -p 6379
 ```
