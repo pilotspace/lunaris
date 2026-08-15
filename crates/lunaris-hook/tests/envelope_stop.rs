@@ -1,3 +1,4 @@
+use lunaris_test_harness::open_test_store;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
@@ -13,8 +14,12 @@ const STOP_JSON: &str = r#"{
 async fn stop_exits_0() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let scopes_json = tmp.path().join("scopes.json");
+    // 0.7.0 port off `memory://`: a harness-issued store URL (ephemeral
+    // child-process Moon, else `memory://`). `store` owns the Moon child and
+    // must outlive the spawned hook.
+    let store = open_test_store().await;
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
-        .env("LUNARIS_STORE_URL", "memory://")
+        .env("LUNARIS_STORE_URL", store.url())
         .env("LUNARIS_HOOK_SCOPE", "stop-test")
         .env("LUNARIS_SCOPES_FILE", scopes_json.to_str().unwrap())
         .env("LUNARIS_HOOK_LOG", "error")
