@@ -19,7 +19,7 @@ use ulid::Ulid;
 ///
 /// Per the frozen §3 CONTRACT Access note, a full-scope scan is reserved for
 /// the ACT-R tick (background maintenance) — the recall hot path uses the
-/// BATCHED [`lunaris_retrieve::LedgerBoostProvider`] read instead, which
+/// BATCHED `lunaris_retrieve::LedgerBoostProvider` read instead, which
 /// only asks for the ids in the current hit set.
 pub struct LedgerReferenceSource {
     storage: Arc<dyn StoragePort>,

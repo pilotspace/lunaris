@@ -9,7 +9,7 @@
 //! accept a byte, and no probe we shipped could see it.
 //!
 //! `/readyz` therefore *writes*: a fixed reserved key in a reserved scope is
-//! `KvPut` then `KvDelete`-d through the ordinary [`StoragePort`] path, bounded
+//! `KvPut` then `KvDelete`-d through the ordinary `StoragePort` path, bounded
 //! by [`CANARY_TIMEOUT`]. A backend that accepts connections but stalls writes
 //! fails the canary and drops out of the load balancer — which is the correct
 //! remedy. Liveness stays green on purpose: restarting the process does not

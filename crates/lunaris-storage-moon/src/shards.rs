@@ -15,7 +15,7 @@
 //!   Hash-tagging the keyspace does NOT fix this (the correction RFC 0008 makes
 //!   to the prose previously carried in `docs/operations/external-moon.md` §5).
 //! * **Read side (RFC §1.3).** `FT.NAVIGATE` — issued on the recall path by
-//!   [`crate::navigate`] — does not scatter-gather
+//!   `crate::navigate` — does not scatter-gather
 //!   (`vendor/moon/src/server/conn/handler_monoio/ft.rs:554-560`, a bare
 //!   `with_shard`). A Navigate for a scope owned by another shard returns
 //!   **empty, with no error**. Silently losing graph recall is strictly worse
@@ -106,7 +106,7 @@
 //!
 //! ONE round-trip, ONCE per `connect` — zero if `INFO` answered the question.
 //! Nothing on the hot path calls it. It is deliberately NOT re-run on reconnect:
-//! `redis::aio::ConnectionManager` (see [`crate::retry`]) re-dials the SAME
+//! `redis::aio::ConnectionManager` (see `crate::retry`) re-dials the SAME
 //! endpoint, and a server cannot change its shard count beneath a live handle
 //! (that requires an AOF migration and a restart — `vendor/moon/src/config.rs`
 //! `--migrate-aof-shards`).
