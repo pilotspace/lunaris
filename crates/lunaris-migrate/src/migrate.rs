@@ -1,0 +1,168 @@
+//! The copy engine: read every current primitive out of the source through
+//! `StoragePort`, classify it, and re-write the survivors into the destination
+//! as idempotent `KvPut` batches.
+
+use std::collections::BTreeMap;
+use std::io::Write as _;
+use std::path::Path;
+
+use futures::StreamExt;
+use lunaris_core::keyspace::scope_prefix;
+use lunaris_core::storage::WriteOp;
+use lunaris_core::{Scope, StoragePort};
+
+use crate::plan::{MigrationOptions, RowVerdict, classify_row, kind_of, needs_reembed};
+
+/// Failure modes of a migration run.
+#[derive(Debug, thiserror::Error)]
+pub enum MigrateError {
+    /// `--commit` without `--acknowledge-lossy`.
+    #[error("{}", crate::contract::ACK_REQUIRED)]
+    LossyNotAcknowledged,
+    /// A source read or destination write failed.
+    #[error("storage: {0}")]
+    Storage(#[from] lunaris_core::StorageError),
+    /// The re-embed manifest could not be written.
+    #[error("manifest: {0}")]
+    Manifest(#[from] std::io::Error),
+}
+
+/// What one scope's migration did — and, just as importantly, did not do.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScopeReport {
+    /// The scope this report covers.
+    pub scope: String,
+    /// Rows returned by the source scan (every key under `lunaris:{scope}:`).
+    pub scanned: u64,
+    /// Rows eligible to migrate.
+    pub eligible: u64,
+    /// Rows actually written to the destination. Always `0` on a dry run —
+    /// this is the field the dry-run guarantee is asserted on.
+    pub written: u64,
+    /// Eligible rows per primitive kind, e.g. `{"episode": 12, "fact": 40}`.
+    pub by_kind: BTreeMap<String, u64>,
+    /// Skipped: record validity closed (`bt.valid.1` set) — retracted state.
+    pub skipped_closed_valid: u64,
+    /// Skipped: record sys interval closed (`bt.sys.1` set) — logically deleted.
+    pub skipped_closed_sys: u64,
+    /// Skipped: key outside the canonical keyspace or belonging to another scope.
+    pub skipped_foreign_key: u64,
+    /// Eligible rows whose kind carries an embedding, i.e. the size of the
+    /// re-embed backlog this migration creates.
+    pub needs_reembed: u64,
+    /// `atomic_write` calls issued (`0` on a dry run).
+    pub batches: u64,
+}
+
+impl ScopeReport {
+    /// Total rows deliberately left behind.
+    #[must_use]
+    pub fn skipped(&self) -> u64 {
+        self.skipped_closed_valid + self.skipped_closed_sys + self.skipped_foreign_key
+    }
+}
+
+/// Enumerate the scopes present in `source`.
+///
+/// Returns `Err(StorageError::NotSupported)` from backends without scope
+/// enumeration — Postgres is the documented case (its RLS boundary makes a
+/// cross-scope `SELECT DISTINCT scope` impossible under the app role), so a
+/// Postgres source must be migrated with explicit `--scope` arguments.
+pub async fn discover_scopes(source: &dyn StoragePort) -> Result<Vec<Scope>, MigrateError> {
+    const PAGE: usize = 500;
+    let mut out: Vec<Scope> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = source.list_scopes(None, PAGE, cursor.as_deref()).await?;
+        out.extend(page.scopes);
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    out.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    out.dedup_by(|a, b| a.as_str() == b.as_str());
+    Ok(out)
+}
+
+/// Migrate one scope from `source` into `dest`.
+///
+/// Reads the whole `lunaris:{scope}:` prefix in one `scan_range` (the current
+/// row per key — a historical `as_of` is refused by the destination anyway),
+/// classifies each row, and writes the survivors in `batch_size` `KvPut`
+/// batches. Writes happen only when [`MigrationOptions::writes_enabled`].
+pub async fn migrate_scope(
+    source: &dyn StoragePort,
+    dest: &dyn StoragePort,
+    scope: &Scope,
+    opts: &MigrationOptions,
+) -> Result<ScopeReport, MigrateError> {
+    // RED: scaffolding only — counts what it scanned, decides nothing, writes
+    // nothing. The GREEN commit fills in classification, batching, and the
+    // re-embed manifest.
+    let _ = (dest, opts, classify_row, kind_of, needs_reembed, open_manifest, write_manifest_line);
+    let mut report = ScopeReport { scope: scope.as_str().to_owned(), ..ScopeReport::default() };
+    let prefix = scope_prefix(scope).into_bytes();
+    let mut stream = source.scan_range(scope, &prefix, None).await?;
+    while let Some(row) = stream.next().await {
+        let _ = row?;
+        report.scanned += 1;
+    }
+    Ok(report)
+}
+
+/// Commit one batch and fold the result into `report`.
+async fn flush(
+    dest: &dyn StoragePort,
+    scope: &Scope,
+    batch: &mut Vec<WriteOp>,
+    report: &mut ScopeReport,
+) -> Result<(), MigrateError> {
+    let n = batch.len() as u64;
+    dest.atomic_write(scope, batch).await?;
+    report.written += n;
+    report.batches += 1;
+    batch.clear();
+    Ok(())
+}
+
+fn open_manifest(path: &Path) -> Result<std::io::BufWriter<std::fs::File>, std::io::Error> {
+    // Truncate: a manifest is the backlog of THIS run, and appending to a stale
+    // one would hand the operator a re-embed list that no longer matches.
+    Ok(std::io::BufWriter::new(std::fs::File::create(path)?))
+}
+
+fn write_manifest_line(
+    w: &mut std::io::BufWriter<std::fs::File>,
+    scope: &Scope,
+    kind: &str,
+    key: &[u8],
+) -> Result<(), std::io::Error> {
+    let line = serde_json::json!({
+        "scope": scope.as_str(),
+        "kind": kind,
+        "key": String::from_utf8_lossy(key),
+    });
+    writeln!(w, "{line}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skipped_sums_every_class() {
+        let r = ScopeReport {
+            skipped_closed_valid: 2,
+            skipped_closed_sys: 3,
+            skipped_foreign_key: 4,
+            ..ScopeReport::default()
+        };
+        assert_eq!(r.skipped(), 9);
+    }
+
+    #[test]
+    fn ack_error_message_points_at_the_flag() {
+        assert!(MigrateError::LossyNotAcknowledged.to_string().contains("--acknowledge-lossy"));
+    }
+}

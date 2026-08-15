@@ -64,6 +64,13 @@ members = [
   # binary, and deliberately does NOT use the `embedded-moon` feature (that one
   # compiles the Moon *server* into the calling target).
   "crates/lunaris-test-harness",
+  # 0.7.0 prerequisite (slice A) — the operator exit ramp OFF the SQLite /
+  # Postgres backends and INTO Moon, built while all three still compile in one
+  # workspace. Deliberately short-lived: it is deleted together with
+  # `lunaris-storage-embedded` / `lunaris-storage-postgres` in 0.7.0, and
+  # operators run it from the last 0.6.x release binary. Grouped with
+  # lunaris-test-harness — both exist only to make that deletion safe.
+  "crates/lunaris-migrate",
   "xtask",
 ]
 exclude = [
