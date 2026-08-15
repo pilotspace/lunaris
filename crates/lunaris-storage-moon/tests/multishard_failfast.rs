@@ -7,13 +7,13 @@
 //!
 //! * **Write side (§2.3).** Moon's `TXN.*` guard is not "all keys must
 //!   co-locate", it is "all keys must land on **the connection's own shard**"
-//!   (`vendor/moon/src/server/conn/handler_monoio/mod.rs:2063-2069`). Connections
-//!   are assigned to shards round-robin (`listener.rs:453-459`) with no client
+//!   (`vendor/moon/src/server/conn/handler_monoio/mod.rs:2600-2610`). Connections
+//!   are assigned to shards round-robin (`listener.rs:503-508`) with no client
 //!   control, so on a `--shards N` instance ingest fails on roughly `1 - 1/N` of
 //!   connections — non-deterministically, per connection.
 //! * **Read side (§1.3).** `FT.NAVIGATE` — which `navigate.rs:47` issues on the
 //!   recall path — does **not** scatter-gather
-//!   (`handler_monoio/ft.rs:540-546`, a bare `with_shard`). A Navigate for a
+//!   (`handler_monoio/ft.rs:554-560`, a bare `with_shard`). A Navigate for a
 //!   scope living on another shard returns **empty, with no error**. Silent
 //!   recall degradation is worse than a loud failure.
 //!
@@ -36,8 +36,8 @@
 //! ```
 //!
 //! * `num_shards > 1` → `EXEC` is rejected `CROSSSLOT Keys in MULTI/EXEC don't
-//!   hash to the same shard` (`handler_monoio/write.rs:833-838`, reached via
-//!   `analyze_txn_locality`, `shared.rs:800-874`) — **and nothing is written**.
+//!   hash to the same shard` (`handler_monoio/write.rs:849-853`, reached via
+//!   `analyze_txn_locality`, `shared.rs:917-991`) — **and nothing is written**.
 //! * `num_shards == 1` → the whole body executes and `EXEC` returns an array.
 //!
 //! Because the body is read-only there is no canary key to clean up on ANY path
@@ -72,7 +72,7 @@ use std::time::Duration;
 enum ProbeScript {
     /// A MULTI-SHARD Moon: `MULTI` → `+OK`, body → `+QUEUED`, `EXEC` →
     /// `-CROSSSLOT …`. Verbatim the string Moon emits at
-    /// `vendor/moon/src/server/conn/handler_monoio/write.rs:835-837`.
+    /// `vendor/moon/src/server/conn/handler_monoio/write.rs:849-853`.
     CrossSlot,
     /// The same rejection phrased Moon's OTHER way — the `TXN.*` guard's
     /// wording (`ERR TXN does not support cross-shard writes …`, RFC 0008 §2.4).
