@@ -26,6 +26,13 @@ Nothing here has been executed. Ordering is not significant except where noted.
 | `lunaris-server` | no | — | `publish = false` | nothing to do |
 | `lunaris-memory-service` | no | — | `publish = false` | nothing to do |
 | **`moondb`** | yes | **`0.2.1`** (2026-06-13) | vendored, declares `0.2.1` | **needs a release — see §2** |
+| **`lunaris-storage-postgres`** | *unaudited* | — | *deleted (0.7.0)* | **check the registry — see §3** |
+| **`lunaris-storage-embedded`** | *unaudited* | — | *deleted (0.7.0)* | **check the registry — see §3** |
+| `lunaris-migrate` | no | — | *deleted (0.7.0)*, was `publish = false` | nothing to do — see §3 |
+
+The last three rows post-date the audit run: slice B deleted those crates on
+2026-08-16 and the snapshot above was taken the day before. §3 opens with the
+registry check rather than an assertion for exactly that reason.
 
 No version of any lunaris crate is currently yanked.
 
