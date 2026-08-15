@@ -58,6 +58,12 @@ members = [
   # from cwd+git remote (same algorithm as lunaris-mcp), writes one Episode via
   # ScopedLunaris::ingest, exits 0 on success or non-zero with structured stderr.
   "crates/lunaris-hook",
+  # 0.7.0 prerequisite — ephemeral child-process Moon fixtures so the ~60 test
+  # files that open `memory://` can be ported off the embedded SQLite backend
+  # before it is deleted. Dev-dependency only; never linked into a shipped
+  # binary, and deliberately does NOT use the `embedded-moon` feature (that one
+  # compiles the Moon *server* into the calling target).
+  "crates/lunaris-test-harness",
   "xtask",
 ]
 exclude = [
@@ -120,6 +126,10 @@ lunaris-conformance       = { path = "crates/lunaris-conformance", version = "0.
 lunaris-codegen           = { path = "crates/lunaris-codegen", version = "0.6.0-rc.2", default-features = false }
 lunaris-py                = { path = "crates/lunaris-py", version = "0.6.0-rc.2", default-features = false }
 lunaris-ts                = { path = "crates/lunaris-ts", version = "0.6.0-rc.2", default-features = false }
+# Dev-only. No `version` key: this crate is `publish = false` and is consumed
+# exclusively as a path dev-dependency, so a version req would only serve to
+# leak it into published manifests.
+lunaris-test-harness      = { path = "crates/lunaris-test-harness" }
 
 # async runtime
 tokio          = { version = "1", features = ["full"] }

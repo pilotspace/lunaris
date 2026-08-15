@@ -1,0 +1,31 @@
+[package]
+name        = "lunaris-test-harness"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+
+description = "Ephemeral child-process Moon fixtures for Lunaris integration tests (dev-only)"
+
+# NOT publishable. This crate exists only so workspace test targets can open a
+# real, disposable Moon instead of the embedded SQLite `memory://` backend
+# (which 0.7.0 deletes). It is a dev-dependency of the crates it serves and
+# must never appear in a published dependency graph.
+publish = false
+
+[dependencies]
+# `lunaris` is here so the harness can hand back a ready `Lunaris` handle
+# (`open_test_engine`). This forms a dev-dependency cycle with `crates/lunaris`
+# (lunaris --[dev]--> lunaris-test-harness --> lunaris), which Cargo explicitly
+# permits: cycles are only rejected when they run through NORMAL dependencies.
+lunaris      = { workspace = true }
+lunaris-core = { workspace = true }
+anyhow       = { workspace = true }
+tokio        = { workspace = true }
+
+[dev-dependencies]
+# Round-trip proof (`tests/harness_contract.rs`) ingests and recalls through
+# the harness-issued engine.
+lunaris-retrieve = { workspace = true }
+ulid             = { workspace = true }

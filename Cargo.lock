@@ -2970,6 +2970,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris-test-harness"
+version = "0.6.0-rc.2"
+dependencies = [
+ "anyhow",
+ "lunaris-core",
+ "lunaris-memory",
+ "lunaris-retrieve",
+ "tokio",
+ "ulid",
+]
+
+[[package]]
 name = "lunaris-ts"
 version = "0.6.0-rc.2"
 dependencies = [
