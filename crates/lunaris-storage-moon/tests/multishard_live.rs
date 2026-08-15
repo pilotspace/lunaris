@@ -29,8 +29,9 @@
 
 #![cfg(feature = "moon-it")]
 
+use lunaris_core::error::StorageError;
 use lunaris_storage_moon::ShardTopology;
-use lunaris_storage_moon::shards;
+use lunaris_storage_moon::{MoonClient, shards};
 
 fn moon_url() -> String {
     std::env::var("LUNARIS_MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
@@ -134,4 +135,49 @@ async fn the_probe_leaves_no_residue() {
         .await
         .expect("SCAN");
     assert!(keys.is_empty(), "reserved probe partition must be empty, found {keys:?}");
+}
+
+/// END-TO-END: the full `MoonClient::connect` path against a real server.
+///
+/// Unlike the probe-level tests above this one goes through the whole connect
+/// flow, so it needs a server at or above `MIN_MOON_VERSION` — the version
+/// handshake runs first and would otherwise mask the shard verdict. When the
+/// server is too old the test says so and skips rather than asserting on the
+/// wrong error.
+#[tokio::test]
+async fn connect_refuses_a_multi_shard_moon_and_accepts_a_single_shard_one() {
+    let Some(n) = expected_shards() else {
+        eprintln!("LUNARIS_TEST_MOON_SHARDS unset; SKIP");
+        return;
+    };
+    // Cheap reachability check so an absent server skips instead of failing.
+    if connect_raw().await.is_none() {
+        return;
+    }
+
+    let result = MoonClient::connect_with_dim(&moon_url(), 768).await;
+
+    if let Err(StorageError::Backend(msg)) = &result
+        && msg.contains("unsupported server version")
+    {
+        eprintln!("server predates MIN_MOON_VERSION ({msg}); SKIP the connect-level leg");
+        return;
+    }
+
+    if n > 1 {
+        let Err(StorageError::Backend(msg)) = result else {
+            panic!("connect to a --shards {n} Moon must FAIL, got {result:?}");
+        };
+        assert!(
+            msg.contains("MULTI-SHARD"),
+            "the error must name the detected topology; got: {msg}"
+        );
+        assert!(msg.contains("--shards 1"), "the error must name the fix; got: {msg}");
+        assert!(
+            msg.contains("docs/operations/external-moon.md"),
+            "the error must point at the runbook; got: {msg}"
+        );
+    } else {
+        assert!(result.is_ok(), "connect to a --shards 1 Moon must succeed: {result:?}");
+    }
 }
