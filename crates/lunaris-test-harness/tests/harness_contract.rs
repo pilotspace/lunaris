@@ -1,10 +1,12 @@
 //! Contract pins for the ephemeral-Moon test harness.
 //!
-//! Every Moon-dependent assertion below is gated on a resolvable binary and
-//! prints a skip line when there is none — that IS the fallback contract:
-//! `cargo test --workspace` must be green on a machine that never built the
-//! Moon submodule. CI closes the hole by setting `LUNARIS_TEST_BACKEND=moon`,
-//! which turns a missing binary into a panic instead of a skip.
+//! Through 0.6.x every assertion here was gated on a resolvable binary and
+//! printed a skip line when there was none — the fallback contract was
+//! "`cargo test --workspace` is green on a machine that never built the Moon
+//! submodule". 0.7.0 deleted the `memory://` backend that fallback ran on, so
+//! the contract inverted: a machine with no Moon binary FAILS, loudly, with
+//! build instructions. The gates are gone with it; a skip here would be the
+//! same silent hole the deletion exists to close.
 
 #![forbid(unsafe_code)]
 
@@ -15,20 +17,10 @@ use lunaris::EpisodeBuilder;
 use lunaris_core::Scope;
 use lunaris_retrieve::Query;
 use lunaris_test_harness::{
-    Backend, EphemeralMoon, Policy, RESERVED_PORTS, moon_binary, open_test_engine_with,
-    open_test_storage_with, open_test_store_with,
+    EphemeralMoon, MOON_BINARY_ENV, RESERVED_PORTS, check_backend_env_value, moon_binary,
+    open_test_engine_with_embedder, open_test_storage_with_dim, open_test_store,
 };
 use ulid::Ulid;
-
-/// `None` (with a skip line) when this machine has no Moon binary.
-fn require_binary(test: &str) -> Option<()> {
-    if moon_binary().is_some() {
-        Some(())
-    } else {
-        eprintln!("skipping {test}: no moon binary (set MOON_TEST_BINARY)");
-        None
-    }
-}
 
 fn stub() -> std::sync::Arc<dyn lunaris_core::Embedder> {
     std::sync::Arc::new(lunaris_core::StubEmbedder::new(768))
@@ -38,27 +30,39 @@ fn scope(tag: &str) -> Scope {
     Scope::new(format!("harness-{tag}-{}", Ulid::new().to_string().to_lowercase())).unwrap()
 }
 
-/// `Policy::ForceMemory` never spawns a process, on any machine.
-#[tokio::test]
-async fn force_memory_yields_the_embedded_backend() {
-    let store = open_test_store_with(Policy::ForceMemory).await;
-    assert_eq!(store.backend(), Backend::Memory);
-    assert_eq!(store.url(), "memory://");
-    assert!(store.moon().is_none(), "ForceMemory must not own a Moon process");
+/// The 0.7.0 contract in one assertion: there is no second substrate to pick,
+/// so a request for the deleted one is an error rather than a quiet upgrade.
+#[test]
+fn the_memory_backend_cannot_be_asked_for() {
+    let err = check_backend_env_value(Some("memory")).expect_err("memory must be rejected");
+    assert!(err.contains("removed in 0.7.0"), "{err}");
+    assert!(err.contains(MOON_BINARY_ENV), "{err}");
 }
 
-/// The headline behaviour: with a binary present, `Auto` gives you real Moon.
+/// Resolution is not conditional any more: `open_test_store` either hands back
+/// a real loopback Moon or panics.
 #[tokio::test]
-async fn auto_selects_moon_when_a_binary_is_available() {
-    let Some(()) = require_binary("auto_selects_moon_when_a_binary_is_available") else {
-        return;
-    };
-    let store = open_test_store_with(Policy::Auto).await;
-    assert_eq!(store.backend(), Backend::Moon, "Auto must prefer Moon when a binary exists");
+async fn every_store_is_a_real_loopback_moon() {
+    let store = open_test_store().await;
     assert!(
         store.url().starts_with("moon://127.0.0.1:"),
         "expected a loopback moon:// URL, got {}",
         store.url()
+    );
+    assert!(!RESERVED_PORTS.contains(&store.moon().port()));
+}
+
+/// A missing binary must be diagnosable from the harness alone. We cannot make
+/// one disappear mid-suite (env mutation is `unsafe` in edition 2024), so pin
+/// the resolver's contract instead: whatever this run resolved, the suite is
+/// running against a binary, and the *absence* branch is the panic path proven
+/// by `no_moon_message_carries_the_fix` in the crate's unit tests.
+#[test]
+fn the_suite_runs_against_a_resolved_binary() {
+    assert!(
+        moon_binary().is_some(),
+        "no moon binary resolved — this suite has no fallback since 0.7.0; \
+         set ${MOON_BINARY_ENV} or build vendor/moon/target/release/moon"
     );
 }
 
@@ -66,9 +70,6 @@ async fn auto_selects_moon_when_a_binary_is_available() {
 /// 6399 the dedicated bench Moon.
 #[tokio::test]
 async fn ephemeral_moon_never_binds_a_reserved_port() {
-    let Some(()) = require_binary("ephemeral_moon_never_binds_a_reserved_port") else {
-        return;
-    };
     let moon = EphemeralMoon::spawn().await.expect("spawn ephemeral moon");
     assert!(
         !RESERVED_PORTS.contains(&moon.port()),
@@ -86,9 +87,6 @@ async fn ephemeral_moon_never_binds_a_reserved_port() {
 /// Without this, a 60-file port would leave hundreds of orphaned servers.
 #[tokio::test]
 async fn dropping_the_fixture_reaps_the_process_and_the_data_dir() {
-    let Some(()) = require_binary("dropping_the_fixture_reaps_the_process_and_the_data_dir") else {
-        return;
-    };
     let moon = EphemeralMoon::spawn().await.expect("spawn ephemeral moon");
     let port = moon.port();
     let dir = moon.data_dir().to_path_buf();
@@ -123,25 +121,22 @@ async fn dropping_the_fixture_reaps_the_process_and_the_data_dir() {
     assert!(!dir.exists(), "scratch dir {} survived drop", dir.display());
 }
 
-/// Two fixtures are independent stores. This is the property that makes an
+/// Two fixtures are independent stores. This is the property that made an
 /// ephemeral Moon a faithful replacement for `memory://`, whose every
-/// `connect` is a fresh, process-private database.
+/// `connect` was a fresh, process-private database.
 ///
 /// Both fixtures are written to before the cross-read. That is not padding:
 /// recall against a Moon that has NEVER been written to fails with
 /// `no temporal snapshot registered for the given AS_OF timestamp`, where the
-/// embedded backend returns an empty result set. Porting a test whose
+/// embedded backend returned an empty result set. Porting a test whose
 /// assertion is "recall finds nothing" therefore needs the store seeded with
 /// something irrelevant first — see docs/testing/memory-to-moon-port-plan.md.
 #[tokio::test]
 async fn two_fixtures_do_not_share_state() {
-    let Some(()) = require_binary("two_fixtures_do_not_share_state") else {
-        return;
-    };
     let sc = scope("isolation");
 
-    let a = open_test_engine_with(Policy::RequireMoon, stub()).await;
-    let b = open_test_engine_with(Policy::RequireMoon, stub()).await;
+    let a = open_test_engine_with_embedder(stub()).await;
+    let b = open_test_engine_with_embedder(stub()).await;
     assert_ne!(a.url(), b.url(), "two fixtures must be distinct servers");
 
     let secret = Ulid::new();
@@ -162,37 +157,24 @@ async fn two_fixtures_do_not_share_state() {
     assert!(!leaked, "fixture B saw fixture A's episode: {hits:?}");
 }
 
-/// The bare-`StoragePort` seam, for the test files that call
-/// `EmbeddedStorage::connect("memory://")` directly instead of going through
-/// the engine. Capabilities are the discriminator: Moon reports a native graph
-/// and queue, the embedded backend reports neither.
+/// The bare-`StoragePort` seam, for the test files that open a backend directly
+/// instead of going through the engine. `graph_native` is the discriminator
+/// that proves it is really Moon and not a stub: the deleted embedded backend
+/// reported `false` here.
 #[tokio::test]
-async fn storage_seam_yields_a_live_backend_on_both_paths() {
-    let mem = open_test_storage_with(Policy::ForceMemory, 768).await;
-    assert_eq!(mem.backend(), Backend::Memory);
-    let caps = mem.port().capabilities();
-    assert!(!caps.graph_native, "the embedded backend has no native graph");
-
-    let Some(()) = require_binary("storage_seam_yields_a_live_backend_on_both_paths") else {
-        return;
-    };
-    let moon = open_test_storage_with(Policy::RequireMoon, 768).await;
-    assert_eq!(moon.backend(), Backend::Moon);
-    assert!(
-        moon.port().capabilities().graph_native,
-        "an ephemeral Moon must report the native graph the embedded backend lacks"
-    );
+async fn storage_seam_yields_a_live_moon_backend() {
+    let storage = open_test_storage_with_dim(768).await;
+    let caps = storage.port().capabilities();
+    assert!(caps.graph_native, "an ephemeral Moon must report the native graph");
+    assert!(caps.queue_native, "an ephemeral Moon must report the native queue");
 }
 
 /// End-to-end proof the harness hands back a working engine: ingest, then
 /// recall the same episode back out of a real Moon.
 #[tokio::test]
 async fn moon_backed_engine_round_trips_ingest_and_recall() {
-    let Some(()) = require_binary("moon_backed_engine_round_trips_ingest_and_recall") else {
-        return;
-    };
-    let engine = open_test_engine_with(Policy::RequireMoon, stub()).await;
-    assert_eq!(engine.backend(), Backend::Moon);
+    let engine = open_test_engine_with_embedder(stub()).await;
+    assert!(engine.url().starts_with("moon://"));
 
     let sc = scope("roundtrip");
     let scoped = engine.scoped(sc);

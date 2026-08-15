@@ -50,9 +50,7 @@ use ulid::Ulid;
 use crate::episode_builder::EpisodeBuilder;
 use lunaris_extract::{Extractor, NoopExtractor};
 use lunaris_rerank::{NoopReranker, Reranker};
-use lunaris_storage_embedded::EmbeddedStorage;
 use lunaris_storage_moon::MoonStorage;
-use lunaris_storage_postgres::PostgresStorage;
 use lunaris_verify::{
     BOOST_DELTA, NoopReflectSupervisor, NoopVerifier, ReflectInput, ReflectOutput,
     ReflectSupervisor, Verifier, apply_reflect_boost, apply_reflect_invalidate,
@@ -286,17 +284,12 @@ impl Lunaris {
     /// - `moon://...` → [`lunaris_storage_moon::MoonStorage`] backend.
     ///   Plan 02-02 wires the typed `Arc<MoonStorage>` alongside the dyn
     ///   trait Arcs so `recall().fuse_rrf()` can take the Moon-native one-
-    ///   round-trip path.
-    /// - `postgres://...` → [`lunaris_storage_postgres::PostgresStorage`] backend.
-    ///   `moon_storage` field stays `None`; `recall().fuse_rrf()` falls back
-    ///   to client-side reciprocal rank fusion. If `LUNARIS_ADMIN_URL` is set,
-    ///   migrations run over that DDL-capable admin connection first and the
-    ///   handle binds to (the possibly non-DDL) `url` — no out-of-band
-    ///   `sqlx migrate run`.
-    /// - `memory://` / `sqlite:///path` →
-    ///   [`lunaris_storage_embedded::EmbeddedStorage`] — the zero-dependency
-    ///   dev/embedded backend (no Docker, no Postgres, no Moon). `memory://`
-    ///   is in-process and ephemeral; `sqlite:///path` is file-backed.
+    ///   round-trip path. **This is the only scheme 0.7.0 serves.**
+    /// - `postgres://`, `sqlite:///path` and `memory://` were retired in
+    ///   0.7.0 with `lunaris-storage-postgres` / `lunaris-storage-embedded`.
+    ///   They now fail with an `UnsupportedScheme` error that names the
+    ///   migration path (`lunaris-migrate` from the v0.6.2 release binary —
+    ///   see `docs/migration/0.6-to-0.7.md`) rather than opening a store.
     ///
     /// ## Default backend resolution (llama.cpp-only cutover)
     ///
@@ -432,88 +425,11 @@ impl Lunaris {
                     bakeoff_config: None,
                 })
             }
-            "postgres" | "postgresql" => {
-                // OPS — onboarding: if `LUNARIS_ADMIN_URL` is set, migrate over
-                // that DDL-capable admin connection first, then bind the handle
-                // to (the possibly non-DDL) `url` without re-running migrations.
-                // Unset → legacy behaviour: migrate as the role behind `url`,
-                // with an actionable hint if it lacks DDL and the schema is
-                // behind. This removes the out-of-band `sqlx migrate run` step.
-                let admin_url =
-                    std::env::var("LUNARIS_ADMIN_URL").ok().filter(|s| !s.trim().is_empty());
-                let p =
-                    Arc::new(PostgresStorage::connect_with_admin(url, admin_url.as_deref()).await?);
-                let storage_arc: Arc<dyn StoragePort> = p.clone();
-                verify_pipeline.bind_storage(storage_arc.clone());
-                verify_pipeline.bind_clock(clock.clone());
-                consolidator_pipeline.bind_storage(storage_arc.clone());
-                if initial_verify_state {
-                    verify_pipeline.spawn_worker_if_idle();
-                }
-                if initial_consolidate_state {
-                    consolidator_pipeline.spawn_worker_if_idle();
-                }
-                Ok(Self {
-                    storage: storage_arc,
-                    keyword: p as Arc<dyn KeywordPort>,
-                    embedder,
-                    clock,
-                    moon_storage: None,
-                    reranker,
-                    graph_pipeline,
-                    verify_pipeline,
-                    consolidator_pipeline,
-                    reflect_supervisor: Arc::new(NoopReflectSupervisor),
-                    boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
-                        boost_cache_capacity(),
-                    ))),
-                    warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
-                        resolve_prewarm_concurrency(),
-                    )),
-                    token_counter: token_counter.clone(),
-                    bakeoff_config: None,
-                })
-            }
-            // Onboarding overhaul (phase 1): the zero-dependency embedded
-            // backend — `memory://` (in-process) / `sqlite:///path` (file).
-            // Same wiring shape as the Postgres arm; `EmbeddedStorage` impls
-            // both `StoragePort` and `KeywordPort`.
-            "memory" | "sqlite" => {
-                let e = Arc::new(EmbeddedStorage::connect(url).await?);
-                let storage_arc: Arc<dyn StoragePort> = e.clone();
-                verify_pipeline.bind_storage(storage_arc.clone());
-                verify_pipeline.bind_clock(clock.clone());
-                consolidator_pipeline.bind_storage(storage_arc.clone());
-                if initial_verify_state {
-                    verify_pipeline.spawn_worker_if_idle();
-                }
-                if initial_consolidate_state {
-                    consolidator_pipeline.spawn_worker_if_idle();
-                }
-                Ok(Self {
-                    storage: storage_arc,
-                    keyword: e as Arc<dyn KeywordPort>,
-                    embedder,
-                    clock,
-                    moon_storage: None,
-                    reranker,
-                    graph_pipeline,
-                    verify_pipeline,
-                    consolidator_pipeline,
-                    reflect_supervisor: Arc::new(NoopReflectSupervisor),
-                    boost_cache: Arc::new(parking_lot::RwLock::new(lru::LruCache::new(
-                        boost_cache_capacity(),
-                    ))),
-                    warm_up_semaphore: Arc::new(tokio::sync::Semaphore::new(
-                        resolve_prewarm_concurrency(),
-                    )),
-                    token_counter: token_counter.clone(),
-                    bakeoff_config: None,
-                })
-            }
-            other => Err(LunarisError::Storage(lunaris_core::StorageError::UnsupportedScheme(
-                other.to_string(),
-            ))),
+            other => Err(LunarisError::Storage(
+                crate::open::retired_scheme_error(other).unwrap_or_else(|| {
+                    lunaris_core::StorageError::UnsupportedScheme(other.to_string())
+                }),
+            )),
         }
     }
 

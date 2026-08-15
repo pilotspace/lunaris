@@ -58,9 +58,8 @@ ulid             = { workspace = true, features = ["serde"] }
 tokio            = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # ADD task dream-agenda — `dream.rs` unit tests need a REAL StoragePort (not
 # a panic-stub) to prove the read paths (activation-ledger scan, episode
-# hydrate, fact scan) actually work end-to-end. `lunaris-storage-embedded`
-# depends only on `lunaris-core` (no cycle back into `lunaris-consolidate`).
-lunaris-storage-embedded = { workspace = true }
+# hydrate, fact scan) actually work end-to-end. Since 0.7.0 that store is an
+# ephemeral Moon issued by `lunaris-test-harness`.
 # 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
 # in crates/lunaris-test-harness) so tests stop opening `memory://` directly.
 # Dev-only; the cycle back through `lunaris` runs via dev-deps, which Cargo allows.

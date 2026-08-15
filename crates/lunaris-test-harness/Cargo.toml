@@ -22,11 +22,9 @@ publish = false
 lunaris      = { workspace = true }
 lunaris-core = { workspace = true }
 # `open_test_storage` hands back a bare `Arc<dyn StoragePort>` for the ~13 test
-# files that call `EmbeddedStorage::connect("memory://")` directly rather than
-# going through the engine. Both backends are needed because the harness
-# resolves either one depending on whether a Moon binary exists.
+# files that open a store directly rather than going through the engine.
+# Since 0.7.0 there is exactly one backend to resolve.
 lunaris-storage-moon     = { workspace = true }
-lunaris-storage-embedded = { workspace = true }
 anyhow       = { workspace = true }
 tokio        = { workspace = true }
 

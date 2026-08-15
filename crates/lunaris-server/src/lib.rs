@@ -75,7 +75,7 @@ pub mod routes;
 pub mod shutdown;
 pub mod state;
 
-pub use config::{Command, Config, OpsCli};
+pub use config::{Config, retired_subcommand};
 pub use shutdown::Shutdown;
 pub use state::AppState;
 
