@@ -33,7 +33,9 @@ use serde::Deserialize;
 use ulid::Ulid;
 
 use crate::Extractor;
-use crate::types::{ChunkInput, Entity, EntityId, Fact, RawExtraction, RawExtractionBatch, Relation};
+use crate::types::{
+    ChunkInput, Entity, EntityId, Fact, RawExtraction, RawExtractionBatch, Relation,
+};
 
 /// Construction options for [`LlmExtractor`]. Mirrors the D-02 budgets
 /// from the existing extract backends so a drop-in swap preserves
