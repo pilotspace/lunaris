@@ -34,6 +34,15 @@ pub struct AndRetriever {
 }
 
 impl AndRetriever {
+    /// Read-only branch accessors for the documented `as_any` tree-inspection
+    /// pattern (operators/mod.rs) — lets external callers (e.g. harness shape
+    /// tests) walk a composed root without widening field visibility.
+    pub fn branches(&self) -> (&dyn Retriever, &dyn Retriever) {
+        (self.left.as_ref(), self.right.as_ref())
+    }
+}
+
+impl AndRetriever {
     pub fn new(left: Box<dyn Retriever>, right: Box<dyn Retriever>) -> Self {
         Self { left, right }
     }

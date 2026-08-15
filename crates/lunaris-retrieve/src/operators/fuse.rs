@@ -54,6 +54,13 @@ impl FuseRrfRetriever {
         Self { inner, k, hint, weights: HashMap::new() }
     }
 
+    /// Read-only inner-tree accessor for the documented `as_any`
+    /// tree-inspection pattern (operators/mod.rs) — external shape tests walk
+    /// the composed root without widening field visibility.
+    pub fn inner_retriever(&self) -> &dyn Retriever {
+        self.inner.as_ref()
+    }
+
     /// Set per-branch RRF weights. Each [`SourceOp`] branch (e.g.
     /// `Vector`, `Keyword`, `Graph`) is multiplied by its weight before
     /// summing reciprocal-rank contributions:
