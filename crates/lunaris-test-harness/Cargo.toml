@@ -21,6 +21,12 @@ publish = false
 # permits: cycles are only rejected when they run through NORMAL dependencies.
 lunaris      = { workspace = true }
 lunaris-core = { workspace = true }
+# `open_test_storage` hands back a bare `Arc<dyn StoragePort>` for the ~13 test
+# files that call `EmbeddedStorage::connect("memory://")` directly rather than
+# going through the engine. Both backends are needed because the harness
+# resolves either one depending on whether a Moon binary exists.
+lunaris-storage-moon     = { workspace = true }
+lunaris-storage-embedded = { workspace = true }
 anyhow       = { workspace = true }
 tokio        = { workspace = true }
 
