@@ -268,12 +268,17 @@ mod tests {
     use futures::StreamExt;
     use lunaris_core::activation::ActivationRecord;
     use lunaris_core::{StoragePort, StubEmbedder};
+    use lunaris_test_harness::{TestEngine, open_test_engine_with_embedder, open_test_storage};
 
     use super::*;
 
-    async fn fresh(scope_name: &str) -> (Lunaris, Scope) {
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists. `TestEngine` derefs to `Lunaris`, so call sites are unchanged —
+    /// but the binding owns the Moon child process and must outlive the test.
+    async fn fresh(scope_name: &str) -> (TestEngine, Scope) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let lunaris = open_test_engine_with_embedder(embedder).await;
         let scope = Scope::new(scope_name).unwrap();
         (lunaris, scope)
     }
@@ -459,8 +464,12 @@ mod tests {
     #[tokio::test]
     async fn activation_write_failure_degrades_honestly_episode_still_written() {
         let scope = Scope::new("test-feedback-activation-fail").unwrap();
-        let inner = lunaris::open("memory://").await.unwrap();
-        let failing = Arc::new(ActivationFailingStorage { inner }) as Arc<dyn StoragePort>;
+        // Reaches past the engine for a bare `StoragePort` to wrap in the
+        // failure decorator. `storage` owns the Moon child and must outlive the
+        // `Lunaris` built from its port.
+        let storage = open_test_storage().await;
+        let failing =
+            Arc::new(ActivationFailingStorage { inner: storage.port() }) as Arc<dyn StoragePort>;
         let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(StubEmbedder::new(768));
         let clock = lunaris_core::HlcClock::new(0);
         let lunaris = Lunaris::with_parts(failing, embedder, clock);

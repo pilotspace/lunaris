@@ -153,10 +153,15 @@ fn truncate_snippet(content: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use lunaris::EpisodeBuilder;
+    use lunaris_test_harness::{TestEngine, open_test_engine};
     use ulid::Ulid;
 
-    async fn make_engine() -> (Lunaris, Scope) {
-        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists. `TestEngine` derefs to `Lunaris`, so the call sites below are
+    /// unchanged — but the binding owns the Moon child and must outlive them.
+    async fn make_engine() -> (TestEngine, Scope) {
+        let lunaris = open_test_engine().await;
         let scope = Scope::new(format!("test.verify-agenda-{}", Ulid::new())).unwrap();
         (lunaris, scope)
     }

@@ -285,17 +285,28 @@ fn to_value<T: Serialize>(dto: T) -> Result<Value, ServiceError> {
 
 #[cfg(test)]
 mod tests {
-    use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with};
     use serde_json::json;
 
     use super::*;
 
-    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope) {
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists.
+    ///
+    /// `dispatch` takes `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
+    /// is split into its parts. The returned [`TestStore`] owns the Moon child
+    /// and must be bound for the test's lifetime — hence the third element.
+    async fn fresh_with(policy: Policy, scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Arc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        let (engine, store) = open_test_engine_with(policy, embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        (lunaris, scope)
+        (Arc::new(engine), scope, store)
+    }
+
+    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
+        fresh_with(Policy::from_env(), scope_name).await
     }
 
     /// needs_embedder: recall + scratchpad_read/grep touch vector search;
@@ -348,7 +359,7 @@ mod tests {
     /// wire variants route to the shared handlers end to end.
     #[tokio::test]
     async fn dispatch_scratchpad_write_then_read_round_trip() {
-        let (lunaris, scope) = fresh("test-proto-rt").await;
+        let (lunaris, scope, _store) = fresh("test-proto-rt").await;
         let write = MemoryRequest::ScratchpadWrite {
             scope: scope.as_str().into(),
             params: crate::scratchpad_write::ScratchpadWriteParams {
@@ -371,11 +382,17 @@ mod tests {
         assert_eq!(data.get("value"), Some(&json!({"v": 7})));
     }
 
-    /// Handover via dispatch on memory:// (queue_native=false) returns Ok with an
+    /// Handover via dispatch on a non-native-queue backend returns Ok with an
     /// advisory skip status — never an error.
+    ///
+    /// **Degrade pin — deliberately NOT ported to Moon** (same reason as
+    /// `handover::tests::handover_on_memory_backend_skips_no_queue`): the
+    /// assertion *is* `queue_native == false`. Pinned with an explicit
+    /// [`Policy::ForceMemory`] so 0.7.0's deletion of the embedded backend
+    /// surfaces here as a compile error, not a silent semantic flip.
     #[tokio::test]
     async fn dispatch_handover_on_memory_is_ok_and_skips() {
-        let (lunaris, scope) = fresh("test-proto-handover").await;
+        let (lunaris, scope, _store) = fresh_with(Policy::ForceMemory, "test-proto-handover").await;
         let req = MemoryRequest::ScratchpadHandover { scope: scope.as_str().into() };
         let data = dispatch(&lunaris, &scope, req).await.unwrap();
         assert_eq!(data.get("status").and_then(|s| s.as_str()), Some("skipped_no_queue"));

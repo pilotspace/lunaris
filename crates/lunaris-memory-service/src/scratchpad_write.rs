@@ -71,20 +71,29 @@ mod tests {
 
     use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
     use serde_json::json;
 
     use super::*;
 
-    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope) {
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists.
+    ///
+    /// The handlers take `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
+    /// is split into its parts. The returned [`TestStore`] owns the Moon child
+    /// process and must be bound for the test's lifetime — hence the third
+    /// element of the tuple.
+    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Arc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        let (engine, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        (lunaris, scope)
+        (Arc::new(engine), scope, store)
     }
 
     #[tokio::test]
     async fn scratchpad_write_returns_valid_lsn() {
-        let (lunaris, scope) = fresh("test-sw-lsn").await;
+        let (lunaris, scope, _store) = fresh("test-sw-lsn").await;
         let resp = handle(
             &lunaris,
             &scope,
@@ -104,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn scratchpad_write_with_namespace_returns_valid_lsn() {
-        let (lunaris, scope) = fresh("test-sw-ns").await;
+        let (lunaris, scope, _store) = fresh("test-sw-ns").await;
         let resp = handle(
             &lunaris,
             &scope,
@@ -126,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn scratchpad_write_invalid_namespace_colon() {
-        let (lunaris, scope) = fresh("test-sw-colon").await;
+        let (lunaris, scope, _store) = fresh("test-sw-colon").await;
         let result = handle(
             &lunaris,
             &scope,
@@ -145,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn scratchpad_write_empty_namespace_rejected() {
-        let (lunaris, scope) = fresh("test-sw-empty").await;
+        let (lunaris, scope, _store) = fresh("test-sw-empty").await;
         let result = handle(
             &lunaris,
             &scope,

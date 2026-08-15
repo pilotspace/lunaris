@@ -68,16 +68,25 @@ mod tests {
 
     use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
     use serde_json::json;
 
     use super::*;
     use crate::scratchpad_write;
 
-    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope) {
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists.
+    ///
+    /// The handlers take `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
+    /// is split into its parts. The returned [`TestStore`] owns the Moon child
+    /// process and must be bound for the test's lifetime — hence the third
+    /// element of the tuple.
+    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Arc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        let (engine, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        (lunaris, scope)
+        (Arc::new(engine), scope, store)
     }
 
     async fn write_key(
@@ -102,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_returns_written_entries() {
-        let (lunaris, scope) = fresh("test-sg-written").await;
+        let (lunaris, scope, _store) = fresh("test-sg-written").await;
         write_key(&lunaris, &scope, "alpha", json!("a"), "grep-test-ns-a/").await;
         write_key(&lunaris, &scope, "beta", json!("b"), "grep-test-ns-a/").await;
 
@@ -129,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_cross_namespace_isolation() {
-        let (lunaris, scope) = fresh("test-sg-isolation").await;
+        let (lunaris, scope, _store) = fresh("test-sg-isolation").await;
         write_key(&lunaris, &scope, "shared-key", json!("from-a"), "ns-iso-a/").await;
         write_key(&lunaris, &scope, "other-key", json!("from-b"), "ns-iso-b/").await;
 
@@ -152,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_invalid_namespace_colon() {
-        let (lunaris, scope) = fresh("test-sg-ns").await;
+        let (lunaris, scope, _store) = fresh("test-sg-ns").await;
         let result = handle(
             &lunaris,
             &scope,

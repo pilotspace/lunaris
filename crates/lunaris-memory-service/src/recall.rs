@@ -380,17 +380,27 @@ mod tests {
     use super::*;
     use lunaris::{EpisodeBuilder, Lunaris};
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{Policy, TestEngine, open_test_engine_with};
 
     /// Construct an in-process Lunaris handle with `StubEmbedder` (deterministic
-    /// 768-d vectors) backed by SQLite `memory://`. StubEmbedder produces
-    /// deterministic non-zero vectors so vector recall returns real ranked hits
-    /// rather than the zero-vector NoopEmbedder which returns nothing.
-    async fn make_engine(scope_name: &str) -> (Lunaris, Scope) {
+    /// 768-d vectors) over a harness-issued ephemeral Moon (0.7.0 port off
+    /// `memory://`; falls back to `memory://` only where no Moon binary
+    /// exists). StubEmbedder produces deterministic non-zero vectors so vector
+    /// recall returns real ranked hits rather than the zero-vector
+    /// NoopEmbedder which returns nothing.
+    ///
+    /// `TestEngine` derefs to `Lunaris`, so call sites are unchanged — but the
+    /// binding owns the Moon child and must outlive them.
+    async fn make_engine(scope_name: &str) -> (TestEngine, Scope) {
+        make_engine_with(Policy::from_env(), scope_name).await
+    }
+
+    async fn make_engine_with(policy: Policy, scope_name: &str) -> (TestEngine, Scope) {
         // No staging needed — the handler no longer stages (that is a CALLER
         // concern, lifted to the mcp/contextd boundary). StubEmbedder provides
         // deterministic recall without the 253 MB HF download.
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let lunaris = open_test_engine_with(policy, embedder).await;
         let scope = Scope::new(scope_name).unwrap();
         (lunaris, scope)
     }
@@ -586,9 +596,19 @@ mod tests {
     ///
     /// Previously ignored with stale "embedded backend lacks vector_search".
     /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
+    ///
+    /// **Bi-temporal pin — deliberately NOT ported to Moon.** Moon reads
+    /// current state only; `as_of` there is rejected outright with
+    /// `InvalidInput("as_of requires a bi-temporal backend … STORE-07")`, so
+    /// the assertion below is unreachable on that substrate. Pinned with an
+    /// explicit [`Policy::ForceMemory`] rather than left to `from_env`, so
+    /// under `LUNARIS_TEST_BACKEND=moon` it still exercises the bi-temporal
+    /// contract instead of failing. 0.7.0 deletes the embedded backend, at
+    /// which point this test's only remaining oracle is Postgres (or Moon,
+    /// once STORE-07 lands) — the compiler will point here.
     #[tokio::test]
     async fn as_of_time_travel_proves_bi_temporal() {
-        let (lunaris, scope) = make_engine("test-recall-bt").await;
+        let (lunaris, scope) = make_engine_with(Policy::ForceMemory, "test-recall-bt").await;
         let scoped = lunaris.scoped(scope.clone());
 
         // Ingest fact A, capture wall time between the two ingests.
