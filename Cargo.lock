@@ -2345,6 +2345,7 @@ dependencies = [
  "lunaris-ingest",
  "lunaris-memory",
  "lunaris-storage-moon",
+ "lunaris-test-harness",
  "nix 0.29.0",
  "proptest",
  "rand 0.9.4",
@@ -2771,6 +2772,9 @@ name = "lunaris-test-harness"
 version = "0.6.2"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "bytes",
+ "futures",
  "lunaris-core",
  "lunaris-memory",
  "lunaris-retrieve",

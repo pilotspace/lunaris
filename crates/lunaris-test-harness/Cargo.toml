@@ -27,6 +27,12 @@ lunaris-core = { workspace = true }
 lunaris-storage-moon     = { workspace = true }
 anyhow       = { workspace = true }
 tokio        = { workspace = true }
+# `doubles::PortWithCaps` implements `StoragePort` / `KeywordPort` by hand — it
+# is a forwarding decorator over a live backend, so it needs the same trait
+# machinery a real backend crate does.
+async-trait  = { workspace = true }
+bytes        = { workspace = true }
+futures      = { workspace = true }
 
 [dev-dependencies]
 # Round-trip proof (`tests/harness_contract.rs`) ingests and recalls through

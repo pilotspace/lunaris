@@ -3,14 +3,12 @@
 //! ## What this test proves
 //!
 //! `atomic_write` is **all-or-nothing** under `kill -9` mid-transaction on
-//! BOTH backends:
+//! **Moon** — TXN.BEGIN / TXN.COMMIT / TXN.ABORT (Phase 1 STORE-03; the chaos
+//! test here exercises the ABORT-on-connection-drop path).
 //!
-//! - **Moon** — TXN.BEGIN / TXN.COMMIT / TXN.ABORT (Phase 1 STORE-03; the
-//!   chaos test here exercises the ABORT-on-connection-drop path).
-//! - **Postgres** — sqlx `BEGIN` / `COMMIT` / drop-rollback (Phase 1
-//!   STORE-04; the chaos test exercises the rollback-on-connection-drop
-//!   path via the `pg_terminate_backend` semantics that fire when the
-//!   client TCP socket closes mid-transaction).
+//! Through 0.6.x this was a two-backend proof: a Postgres arm exercised
+//! `sqlx`'s rollback-on-connection-drop as the blueprint §5.3 portability
+//! claim. 0.7.0 deleted that backend, so STORE-06 is a single-substrate gate.
 //!
 //! Per **D-24**, this plan does NOT add new backend logic. The TXN.ABORT /
 //! transaction-rollback mechanisms already exist; this test asserts they
@@ -33,10 +31,10 @@
 //!
 //! ## Skip discipline (D-25 + Plan 02-04 two-tier pattern)
 //!
-//! The property test SKIPs cleanly when `MOON_URL` / `PG_URL` env vars are
-//! unset — `cargo test --features chaos-it` exits 0 even without any
-//! running backend. This mirrors the `moon-it` / `pg-it` discipline from
-//! Plan 02-04 (no backend = clean test exit, NOT failure). Probe order:
+//! The property test SKIPs cleanly when the `MOON_URL` env var is unset —
+//! `cargo test --features chaos-it` exits 0 even without any running backend.
+//! This mirrors the `moon-it` discipline from Plan 02-04 (no backend = clean
+//! test exit, NOT failure). Probe order:
 //!
 //! 1. Env value must be `Some` (W-7 fix: caller passes `Option<String>`,
 //!    not an env var NAME, so the test never touches process env).
@@ -104,20 +102,15 @@ mod chaos {
     /// (mutating env is not memory-safe in Rust 2024 edition).
     fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let url = url?;
-        let host_port = if let Some(rest) = url.strip_prefix("moon://") {
-            // moon://host:port[/path] — strip optional trailing path.
-            rest.split('/').next()?.to_string()
-        } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            // postgres://[user[:pass]@]host[:port]/db — strip userinfo,
-            // strip /db, fall back to default port 5432 when absent.
-            let after_scheme = url.split("://").nth(1)?;
-            let authority = after_scheme.split('/').next()?;
-            let bare = authority.rsplit('@').next()?;
-            if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
-        } else {
+        // 0.7.0: `moon://` is the only scheme left. The `postgres://` branch
+        // that used to sit here (strip userinfo, default port 5432) went with
+        // `lunaris-storage-postgres`.
+        let Some(rest) = url.strip_prefix("moon://") else {
             // Unknown scheme — skip rather than guess.
             return None;
         };
+        // moon://host:port[/path] — strip optional trailing path.
+        let host_port = rest.split('/').next()?.to_string();
 
         // W-3 fix: ToSocketAddrs resolves hostnames + literal IPs. The
         // inline `host_port.parse::<SocketAddr>()` path would reject
@@ -128,9 +121,9 @@ mod chaos {
         let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
             Some(a) => a,
             None => {
-                // Intentionally do NOT log the URL itself (it may carry
-                // credentials in postgres://user:pass@host form). Log only
-                // the host_port and the env var name.
+                // Intentionally do NOT log the URL itself (a store URL can
+                // carry credentials). Log only the host_port and the env var
+                // name.
                 eprintln!("crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)");
                 return None;
             }
@@ -255,8 +248,8 @@ mod chaos {
             .arg("--corpus")
             .arg(CHAOS_CORPUS_SIZE.to_string())
             // T-04-03-02 mitigation: route stdout/stderr to /dev/null so
-            // the chaos child doesn't echo URLs (which may carry creds in
-            // postgres://user:pass@host form) into the test log.
+            // the chaos child doesn't echo URLs (which may carry creds) into
+            // the test log.
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -295,9 +288,8 @@ mod chaos {
         // valid scenarios for the all-or-nothing property.
         let _ = child.wait();
 
-        // T-04-03-06 mitigation: 100ms sleep so the backend's TXN.ABORT
-        // (Moon) or rollback-on-conn-drop (Postgres) finishes fully before
-        // we reopen and scan. Without this, the recovery scan could race
+        // T-04-03-06 mitigation: 100ms sleep so Moon's TXN.ABORT finishes
+        // fully before we reopen and scan. Without this, the recovery scan could race
         // the in-flight rollback and observe transient partial state.
         std::thread::sleep(Duration::from_millis(100));
 
@@ -341,25 +333,10 @@ mod chaos {
             );
         }
 
-        /// STORE-06 + OPS-07 on Postgres — the portability proof per
-        /// blueprint §5.3 (Lunaris isn't Moon-locked).
-        #[test]
-        fn postgres_atomic_write_is_all_or_nothing_under_kill_minus_9(
-            delay_ms in 1u64..ATOMIC_WRITE_P99_MS,
-        ) {
-            // W-7 fix: read env at the call site.
-            let url = match probe_backend("PG_URL", std::env::var("PG_URL").ok()) {
-                Some(u) => u,
-                None => return Ok(()),
-            };
-            let (before, after) = run_chaos_iteration(&url, delay_ms);
-            prop_assert!(
-                after == before || after == before + CHAOS_CORPUS_SIZE,
-                "STORE-06 (Postgres): atomic_write must be all-or-nothing under kill -9; \
-                 before={before} after={after} chaos_corpus_size={CHAOS_CORPUS_SIZE} \
-                 delay_ms={delay_ms}"
-            );
-        }
+        // The Postgres arm (`postgres_atomic_write_is_all_or_nothing_under_kill_minus_9`,
+        // the blueprint §5.3 "Lunaris isn't Moon-locked" portability proof) was
+        // deleted in 0.7.0 with `lunaris-storage-postgres`. Moon is the only
+        // substrate now, so the Moon arm above IS the STORE-06 gate.
     }
 
     /// W-7 unit assertion: passing `None` short-circuits without touching

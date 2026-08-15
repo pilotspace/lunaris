@@ -16,8 +16,9 @@
 //!   and TypeScript drivers replicate the same shape in their own
 //!   languages and assert against the same committed golden JSON.
 //! - [`run_rust_driver_backend_parity`] — the Rust-side test entry.
-//!   Opens Moon + Postgres handles (controlled by env vars) and
-//!   asserts each backend's row set matches the golden reference.
+//!   Opens a Moon handle (controlled by an env var) and asserts its row
+//!   set matches the golden reference. It took a Postgres handle too
+//!   through 0.6.x; that arm went with the backend in 0.7.0.
 //!
 //! NO byte-exact HLC / ULID comparison — those vary per run.
 //! Normalization strips them so we test structural invariants only
@@ -199,41 +200,24 @@ pub fn assert_structural_eq(rows: &NormalizedRows, golden: &GoldenReference) -> 
 /// 4. Normalize into [`NormalizedRows`].
 /// 5. [`assert_structural_eq`] against the golden reference.
 ///
-/// Critically: the two backends are compared AGAINST THE GOLDEN, not
-/// against each other. No cross-language byte-identity assertion is
-/// made anywhere in this function.
-pub async fn run_rust_driver_backend_parity(
-    moon_url: Option<&str>,
-    postgres_url: Option<&str>,
-) -> anyhow::Result<()> {
+/// Critically: the backend is compared AGAINST THE GOLDEN, not against
+/// another driver. No cross-language byte-identity assertion is made
+/// anywhere in this function.
+///
+/// 0.7.0 dropped the `postgres_url` arm with `lunaris-storage-postgres`. The
+/// "backend parity" in the name is now parity between the three LANGUAGE
+/// drivers' independent runs against the same golden, over one substrate.
+pub async fn run_rust_driver_backend_parity(moon_url: Option<&str>) -> anyhow::Result<()> {
     let golden = GoldenReference::load()?;
 
-    if moon_url.is_none() && postgres_url.is_none() {
-        eprintln!(
-            "run_bindings_backend_parity: SKIP (LUNARIS_MOON_URL and LUNARIS_POSTGRES_URL both unset)"
-        );
+    let Some(url) = moon_url else {
+        eprintln!("run_bindings_backend_parity: SKIP (LUNARIS_MOON_URL unset)");
         return Ok(());
-    }
+    };
 
-    if let Some(url) = moon_url {
-        let handle = Lunaris::open(url)
-            .await
-            .with_context(|| format!("Lunaris::open({url}) for Moon backend"))?;
-        exercise_one_backend(&handle, &golden, "moon").await?;
-    } else {
-        eprintln!("run_bindings_backend_parity: SKIP Moon (LUNARIS_MOON_URL unset)");
-    }
-
-    if let Some(url) = postgres_url {
-        let handle = Lunaris::open(url)
-            .await
-            .with_context(|| format!("Lunaris::open({url}) for Postgres backend"))?;
-        exercise_one_backend(&handle, &golden, "postgres").await?;
-    } else {
-        eprintln!("run_bindings_backend_parity: SKIP Postgres (LUNARIS_POSTGRES_URL unset)");
-    }
-
-    Ok(())
+    let handle =
+        Lunaris::open(url).await.with_context(|| format!("Lunaris::open({url}) for Moon backend"))?;
+    exercise_one_backend(&handle, &golden, "moon").await
 }
 
 /// Per-backend ingest + scan + normalize + assert.

@@ -47,11 +47,6 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let url = url?;
     let host_port = if let Some(rest) = url.strip_prefix("moon://") {
         rest.split('/').next()?.to_string()
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let after_scheme = url.split("://").nth(1)?;
-        let authority = after_scheme.split('/').next()?;
-        let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("run_storage_moon: SKIP {name} (unknown URL scheme)");
         return None;
@@ -61,7 +56,7 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
         Some(a) => a,
         None => {
-            // Intentionally do NOT log the full URL — postgres:// URLs
+            // Intentionally do NOT log the full URL — store URLs
             // can carry credentials in the userinfo segment
             // (T-05-02-01 mitigation).
             eprintln!("run_storage_moon: SKIP {name} (DNS resolution of {host_port} failed)");

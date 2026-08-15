@@ -143,24 +143,29 @@ mod tests {
     use std::sync::Arc;
 
     use lunaris::Lunaris;
-    use lunaris_core::{Scope, StubEmbedder};
-    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with};
+    use lunaris_core::{HlcClock, Scope, StubEmbedder};
+    use lunaris_test_harness::doubles::PortWithCaps;
+    use lunaris_test_harness::{TestStorage, open_test_storage};
 
     use super::*;
 
-    /// **Degrade pin — deliberately NOT ported to Moon.** The only round-trip
-    /// test in this module asserts the `queue_native == false` gate, which is
-    /// true of the embedded backend and false of Moon. Routed through the
-    /// harness with an explicit [`Policy::ForceMemory`] so 0.7.0's deletion of
-    /// the embedded backend surfaces as a compile error here rather than a
-    /// silent semantic flip; the replacement is a stubbed `StoragePort`
-    /// reporting `queue_native = false`, not a real backend.
-    async fn fresh_memory(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
-        let embedder = Arc::new(StubEmbedder::new(768));
-        let (engine, store) =
-            open_test_engine_with(Policy::ForceMemory, embedder).await.into_parts();
+    /// A live Moon that DECLARES no native queue — the one bit this module's
+    /// round-trip test is about.
+    ///
+    /// **Re-expressed in 0.7.0.** It used to be the embedded SQLite backend,
+    /// whose `queue_native == false` happened to be what the guard reads.
+    /// That made the test look like a claim about `memory://` and coupled a
+    /// three-line gate to a whole storage engine. The returned [`TestStorage`]
+    /// owns the Moon child and must outlive the handle.
+    async fn fresh_no_queue(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStorage) {
+        let storage = open_test_storage().await;
+        let engine = Lunaris::with_parts(
+            Arc::new(PortWithCaps::without_queue(storage.port())),
+            Arc::new(StubEmbedder::new(768)),
+            HlcClock::new(0),
+        );
         let scope = Scope::new(scope_name).unwrap();
-        (Arc::new(engine), scope, store)
+        (Arc::new(engine), scope, storage)
     }
 
     /// REGRESSION (codex dogfood, 2026-06-09): the response type's generated MCP
@@ -177,16 +182,16 @@ mod tests {
         );
     }
 
-    /// Guard 1: memory:// backend (queue_native=false) → unsupported_backend.
+    /// Guard 1: a backend declaring `queue_native = false` → unsupported_backend.
     #[tokio::test]
     async fn guard_queue_native_false_returns_unsupported_backend() {
-        let (lunaris, scope, _store) = fresh_memory("test-cons-gate").await;
+        let (lunaris, scope, _storage) = fresh_no_queue("test-cons-gate").await;
         let resp = handle(&lunaris, &scope, ScratchpadConsolidateParams { namespace: None })
             .await
             .unwrap();
         assert_eq!(
             resp.status, "unsupported_backend",
-            "memory:// must return unsupported_backend; got: {resp:?}"
+            "a queue-less backend must return unsupported_backend; got: {resp:?}"
         );
     }
 }

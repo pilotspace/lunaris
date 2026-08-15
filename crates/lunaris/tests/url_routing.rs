@@ -4,14 +4,16 @@
 //!
 //! Plan 02 wired both `MoonStorage::connect` and `PostgresStorage::connect` to
 //! URL-only stubs that always succeeded; Plans 03 / 04 replaced them with real
-//! `redis::aio::ConnectionManager::new(...)` and `sqlx::postgres::PgPool::connect(...)`
-//! respectively. Tests that actually open a Moon / Postgres URL now depend on a running
-//! backend at that URL — they are gated behind the `moon-it` and `pg-it` features.
+//! IO. The test that actually opens a Moon URL therefore depends on a running
+//! backend at that URL — it is gated behind the `moon-it` feature. Its
+//! Postgres sibling was deleted in 0.7.0 with that backend.
 //!
 //! Tests for invalid URL schemes (rediss / garbage) still run in CI without any backend,
 //! because the URL allowlist rejects them BEFORE any backend constructor dials out.
+//! The RETIRED schemes (`postgres://`, `sqlite://`, `memory://`) are covered by
+//! `lunaris::open`'s own unit tests, which assert the migration prose.
 
-// `lunaris::*` is only needed when the moon-it / pg-it gates are on; without them the
+// `lunaris::*` is only needed when the moon-it gate is on; without it the
 // only thing the test file uses is `lunaris::open(...)`. We reference it explicitly to
 // keep the import surface honest under the default feature set.
 #[allow(unused_imports)]
@@ -34,21 +36,9 @@ async fn moon_url_returns_handle_with_moon_capabilities() {
     assert_eq!(cap.max_vector_dim, 768, "Moon profile pinned to 768d");
 }
 
-/// Live-Postgres test — only runs with `--features pg-it` (set in this crate's Cargo.toml,
-/// forwards through to `lunaris-storage-postgres/pg-it`). The Plan-02 unconditional version
-/// of this test was retired when Plan 04 wired real `sqlx` IO that requires a reachable
-/// Postgres+pgvector+age+pgmq instance at the URL.
-#[cfg(feature = "pg-it")]
-#[tokio::test]
-async fn postgres_url_returns_handle_with_postgres_capabilities() {
-    let h = lunaris::open("postgres://localhost/lunaris").await.expect("postgres URL should parse");
-    let cap = h.capabilities();
-    assert!(!cap.bi_temporal_native, "Postgres bi-temporal is emulated");
-    assert!(cap.graph_native, "AGE provides graph");
-    assert!(!cap.rerank_native, "no native cross-encoder on Postgres");
-    assert!(cap.queue_native, "pgmq provides queue");
-    assert_eq!(cap.max_vector_dim, 1536);
-}
+// `postgres_url_returns_handle_with_postgres_capabilities` (gated on `pg-it`)
+// was deleted in 0.7.0 with `lunaris-storage-postgres`. `postgres://` now
+// routes to the retired-scheme error — see `lunaris::open`'s unit tests.
 
 #[tokio::test]
 async fn rejects_unknown_scheme() {

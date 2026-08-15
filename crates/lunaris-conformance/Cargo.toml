@@ -47,6 +47,11 @@ reqwest                  = { workspace = true, features = ["stream"] }
 # `env!("CARGO_BIN_EXE_chaos")`) AND `build_chaos_corpus` (corpus helper).
 lunaris-bench = { workspace = true }
 proptest       = { workspace = true }
+# 0.7.0 — `tests/run_raptor_parity.rs` used to gate its Moon arms on a `MOON_URL`
+# env var CI never set, so they had never run; the harness powers them with a
+# disposable child-process Moon instead. Dev-only, and a dev-dependency cycle
+# through `lunaris` that Cargo permits.
+lunaris-test-harness = { workspace = true }
 # Plan 14-03's 4 EVAL-05 regression tests issued raw `sqlx` queries against the
 # pg-lunaris pool. They were deleted in 0.7.0 with `lunaris-storage-postgres`,
 # and the `sqlx` dev-dep with them — the workspace no longer carries a SQL

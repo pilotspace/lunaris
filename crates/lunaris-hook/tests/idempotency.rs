@@ -2,19 +2,38 @@
 //!
 //! Verifies that calling `lunaris_hook::run()` twice with the same envelope:
 //! 1. Both calls return `Ok(Some(lsn))` with byte-equal LSNs.
-//! 2. `lunaris_dedupe` table has exactly one row for the (scope, dedupe_key) pair.
-//! 3. The episodes table has exactly one row for the content (no duplicate Episode).
-//! 4. The second call's LSN equals the first (idempotent return via IngestKind::Duplicate).
+//! 2. The scope's live episode key set is UNCHANGED by the second call (no
+//!    duplicate Episode, and no new rows of any kind).
+//! 3. The second call's LSN equals the first (idempotent return via
+//!    `IngestKind::Duplicate`).
 //!
-//! Documented: "HOOK-05: second call returns IngestKind::Duplicate with the prior LSN.
-//! lunaris_dedupe table has exactly one row."
+//! Documented: "HOOK-05: second call returns IngestKind::Duplicate with the
+//! prior LSN."
+//!
+//! ## Rewritten in 0.7.0
+//!
+//! This file used to open `EmbeddedStorage::connect("memory://")` and assert
+//! against the embedded SCHEMA with raw `sqlx` — `SELECT COUNT(*) FROM
+//! lunaris_dedupe`, `... FROM lunaris_kv WHERE sys_to IS NULL`. The port plan
+//! recorded it as the one file the Moon harness could not serve, because those
+//! assertions were about SQLite tables rather than about the `StoragePort`
+//! contract.
+//!
+//! They are re-expressed here through `StoragePort::scan_range`, which is both
+//! portable AND a closer statement of the actual claim. "`lunaris_dedupe` has
+//! one row" was a proxy for "no duplicate episode was written"; counting live
+//! episode keys says that directly, and says it about whatever backend is
+//! underneath. Moon implements the dedupe sidecar natively
+//! (`MoonStorage::lookup_by_dedupe_key`, which closed the v0.5 "SQLite-only
+//! idempotency" boundary), so HOOK-05 is a real contract here, not a
+//! vacuously-passing one.
 
 use std::sync::Arc;
 
+use futures::StreamExt as _;
 use lunaris::Lunaris;
-use lunaris_core::{HlcClock, NoopEmbedder, Scope};
-use lunaris_storage_embedded::EmbeddedStorage;
-use sqlx::Row as _;
+use lunaris_core::{HlcClock, NoopEmbedder, Scope, StoragePort};
+use lunaris_test_harness::{TestStorage, open_test_storage};
 
 /// Deterministic PreToolUse envelope JSON.
 /// Fixed session_id, fixed tool_name="Edit", fixed tool_input — produces a
@@ -30,29 +49,48 @@ const ENVELOPE: &str = r#"{
   "timestamp": "2026-05-25T00:00:00Z"
 }"#;
 
-/// Build a Lunaris handle backed by an in-memory SQLite database.
+/// Build a Lunaris handle over a disposable child-process Moon.
 ///
-/// Uses `with_parts` (the test seam) with a `NoopEmbedder` so no GGUF
-/// models are loaded and cold-start time is negligible.
-async fn build_lunaris_in_memory() -> (Lunaris, EmbeddedStorage) {
-    let storage = EmbeddedStorage::connect("memory://")
-        .await
-        .expect("EmbeddedStorage::connect(memory://) must succeed");
-
-    // NoopEmbedder at dim=768 (granite-r2 default). Hook pipeline does not
-    // embed at capture time — embedding is deferred to first recall.
+/// Uses `with_parts` (the test seam) with a `NoopEmbedder` so no GGUF models
+/// are loaded and cold-start time is negligible — the hook pipeline does not
+/// embed at capture time anyway (embedding is deferred to first recall).
+///
+/// The returned [`TestStorage`] owns the Moon child and must outlive the
+/// handle.
+async fn build_lunaris() -> (Lunaris, TestStorage) {
+    let storage = open_test_storage().await;
+    // NoopEmbedder at dim=768 (granite-r2 default), matching the harness's
+    // FT index width.
     let embedder = Arc::new(NoopEmbedder::new(768));
-    let storage_arc: Arc<dyn lunaris_core::StoragePort> = Arc::new(storage.clone());
     // HlcClock::new already returns Arc<HlcClock> — do NOT wrap in Arc::new again.
-    let clock = HlcClock::new(0);
-
-    let handle = Lunaris::with_parts(storage_arc, embedder, clock);
+    let handle = Lunaris::with_parts(storage.port(), embedder, HlcClock::new(0));
     (handle, storage)
 }
 
 /// Derive the expected scope from a fixed string (no git repo needed in CI).
 fn fixed_scope() -> Scope {
     Scope::new("idempotency-test-scope").expect("scope must be valid")
+}
+
+/// Every live key under this scope's episode prefix, sorted — the portable
+/// stand-in for the old `SELECT ... FROM lunaris_kv WHERE sys_to IS NULL`.
+///
+/// The whole KEY SET is collected rather than a count: a backend that wrote a
+/// duplicate under a fresh ULID and retired the old one would keep a count
+/// stable while changing the set.
+async fn live_episode_keys(storage: &Arc<dyn StoragePort>, scope: &Scope) -> Vec<Vec<u8>> {
+    let prefix = format!("lunaris:{}:episode:", scope.as_str());
+    let mut stream = storage
+        .scan_range(scope, prefix.as_bytes(), None)
+        .await
+        .expect("scan_range over the episode prefix must succeed");
+    let mut keys = Vec::new();
+    while let Some(row) = stream.next().await {
+        let (k, _v) = row.expect("scan_range row must decode");
+        keys.push(k.to_vec());
+    }
+    keys.sort();
+    keys
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -63,7 +101,8 @@ async fn same_envelope_twice_returns_identical_lsn() {
         .with_test_writer()
         .try_init();
 
-    let (handle, storage) = build_lunaris_in_memory().await;
+    let (handle, storage) = build_lunaris().await;
+    let port = storage.port();
     let lunaris = Arc::new(handle);
     let scope = fixed_scope();
 
@@ -75,6 +114,12 @@ async fn same_envelope_twice_returns_identical_lsn() {
         .expect("first run() must succeed");
 
     let lsn1 = result1.expect("first run() must return Some(lsn)");
+
+    let keys_after_first = live_episode_keys(&port, &scope).await;
+    assert!(
+        !keys_after_first.is_empty(),
+        "HOOK-05 precondition: the first run must write at least one live episode row"
+    );
 
     // === Second call — same envelope, same scope ===
     let result2 = lunaris_hook::run(stdin_bytes, scope.clone(), Arc::clone(&lunaris))
@@ -89,78 +134,17 @@ async fn same_envelope_twice_returns_identical_lsn() {
         "HOOK-05: second call must return the same LSN as the first (IngestKind::Duplicate)"
     );
 
-    // Assertion 2: lunaris_dedupe table has exactly one row for this scope+key pair.
-    // We can't easily get the dedupe_key here, so count ALL rows for the scope.
-    let dedupe_count: i64 =
-        sqlx::query("SELECT COUNT(*) AS cnt FROM lunaris_dedupe WHERE scope = ?")
-            .bind(scope.as_str())
-            .fetch_one(storage.pool())
-            .await
-            .expect("SELECT COUNT from lunaris_dedupe must succeed")
-            .try_get("cnt")
-            .expect("cnt column must be present");
-
+    // Assertion 2: the second run wrote NOTHING. Replaces the old
+    // `SELECT COUNT(*) FROM lunaris_dedupe` / `lunaris_kv` pair — same claim,
+    // stated against the port contract instead of one backend's schema.
+    let keys_after_second = live_episode_keys(&port, &scope).await;
     assert_eq!(
-        dedupe_count,
-        1,
-        "HOOK-05: lunaris_dedupe must have exactly one row after two identical runs (scope={})",
-        scope.as_str()
+        keys_after_first, keys_after_second,
+        "HOOK-05: the replayed envelope must not add, replace, or retire a single episode row"
     );
 
-    // Assertion 3: episodes table has exactly one KV row for this scope's episode key prefix.
-    // The episodes are stored under `lunaris:{scope}:episode:*` in lunaris_kv.
-    // We check that the second run did NOT write a duplicate KV row (no second sys_from entry).
-    let episode_prefix = format!("lunaris:{}:episode:", scope.as_str());
-    let episode_count: i64 = sqlx::query(
-        "SELECT COUNT(*) AS cnt FROM lunaris_kv \
-         WHERE key LIKE ? AND sys_to IS NULL",
-    )
-    .bind(format!("{}%", episode_prefix))
-    .fetch_one(storage.pool())
-    .await
-    .expect("SELECT COUNT from lunaris_kv must succeed")
-    .try_get("cnt")
-    .expect("cnt column must be present");
-
-    assert!(
-        episode_count >= 1,
-        "HOOK-05: at least one live episode KV row must exist for scope {}",
-        scope.as_str()
-    );
-
-    // The first run produces N KV rows per episode (chunk + episode + fact entries).
-    // We verify that the second run added zero new live rows by checking the
-    // total live-row count equals the count after the first run.
-    // Since lsn1 == lsn2, we know no second atomic_write happened.
-    // The strongest assertion is: the HLC used for the second run's sys_from would be
-    // strictly greater than lsn1 if a second write had occurred.
-    // We verify this by asserting all live rows have sys_from <= lsn1's HLC string.
-    let lsn1_wall = lsn1.wall_ms;
-    let lsn1_ctr = lsn1.counter;
-    // HLC string format: "{wall_ms:020}.{counter:010}.{node_id:05}" (from schema.rs)
-    let lsn1_hlc_str = format!("{:020}.{:010}.{:05}", lsn1_wall, lsn1_ctr, 0_u32);
-
-    let newer_rows: i64 = sqlx::query(
-        "SELECT COUNT(*) AS cnt FROM lunaris_kv \
-         WHERE key LIKE ? AND sys_from > ? AND sys_to IS NULL",
-    )
-    .bind(format!("{}%", episode_prefix))
-    .bind(&lsn1_hlc_str)
-    .fetch_one(storage.pool())
-    .await
-    .expect("SELECT COUNT newer rows must succeed")
-    .try_get("cnt")
-    .expect("cnt column must be present");
-
-    assert_eq!(
-        newer_rows, 0,
-        "HOOK-05: no new KV rows must be written after the first ingest — \
-         second run must have returned IngestKind::Duplicate (lsn1_hlc={})",
-        lsn1_hlc_str
-    );
-
-    // Assertion 4: second run's lsn equals first (already verified above, but
-    // re-state for clarity in test output).
+    // Assertion 3: LSN components match field-by-field (re-stated for a
+    // readable failure line when the `assert_eq!` above is what breaks).
     assert_eq!(
         lsn1.wall_ms, lsn2.wall_ms,
         "HOOK-05: lsn.wall_ms must match (same logical commit time)"

@@ -8,7 +8,8 @@
 //!
 //! ## Skip discipline (two-tier — Plan 02-04 + Plan 04-03)
 //!
-//! 1. Neither `MOON_URL` nor `PG_URL` set / TCP-reachable → SKIP cleanly.
+//! 1. `MOON_URL` unset / not TCP-reachable → SKIP cleanly. (The `PG_URL`
+//!    fallback went with the Postgres backend in 0.7.0.)
 //! 2. Resolved `lunaris-server` binary path does not exist → SKIP cleanly
 //!    (developer needs to run `cargo build -p lunaris-server` first).
 //! 3. Server fails to print `LISTENING_ON <addr>` within 10s → SKIP cleanly
@@ -32,17 +33,12 @@ use url::Url;
 
 #[tokio::test]
 async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
-    // 1. Pick a backend (prefer MOON_URL; fall back to PG_URL).
-    let storage_url = match (
-        probe_backend("MOON_URL", std::env::var("MOON_URL").ok()),
-        probe_backend("PG_URL", std::env::var("PG_URL").ok()),
-    ) {
-        (Some(u), _) => u,
-        (None, Some(u)) => u,
-        (None, None) => {
-            eprintln!(
-                "SKIP run_protocol_lunaris_server: neither MOON_URL nor PG_URL set / reachable"
-            );
+    // 1. Pick a backend. The `PG_URL` fallback that used to sit here died with
+    //    `lunaris-storage-postgres` in 0.7.0 — there is one substrate now.
+    let storage_url = match probe_backend("MOON_URL", std::env::var("MOON_URL").ok()) {
+        Some(u) => u,
+        None => {
+            eprintln!("SKIP run_protocol_lunaris_server: MOON_URL not set / reachable");
             return Ok(());
         }
     };
@@ -209,11 +205,6 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let url = url?;
     let host_port = if let Some(rest) = url.strip_prefix("moon://") {
         rest.split('/').next()?.to_string()
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let after_scheme = url.split("://").nth(1)?;
-        let authority = after_scheme.split('/').next()?;
-        let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else if let Some(rest) = url.strip_prefix("redis://") {
         rest.split('/').next()?.to_string()
     } else {

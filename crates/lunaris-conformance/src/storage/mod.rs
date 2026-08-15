@@ -21,9 +21,11 @@
 //! "this backend can't do as-of reads" can never be expressed as a skip
 //! (0.6.2 task 9).
 //!
-//! [`as_of_parity::run`] is dual-backend (it takes BOTH a Moon and a
-//! Postgres handle) and is NOT part of the per-backend run — invoke it
-//! from the dedicated `tests/run_as_of_parity.rs` thin entry instead.
+//! `as_of_parity::run` was dual-backend — it took BOTH a Moon and a Postgres
+//! handle and compared their historical reads. It was deleted in 0.7.0 with
+//! the second backend: a parity suite with one arm proves nothing. What it was
+//! really guarding lives on unconditionally in
+//! `tests/run_as_of_moon_gap.rs`.
 
 #![forbid(unsafe_code)]
 
@@ -31,7 +33,6 @@ use std::sync::Arc;
 
 use lunaris_core::storage::StoragePort;
 
-pub mod as_of_parity;
 pub mod atomic_write;
 pub mod graph_traverse;
 pub mod queue;
@@ -63,7 +64,5 @@ pub async fn run_full_storage_suite(storage: Arc<dyn StoragePort>) -> anyhow::Re
     } else {
         eprintln!("conformance: SKIP queue::publish_subscribe_round_trip (queue_native=false)");
     }
-    // as_of_parity is dual-backend; not part of the per-backend run — see
-    // crates/lunaris-conformance/tests/run_as_of_parity.rs.
     Ok(())
 }

@@ -105,31 +105,36 @@ pub async fn handle(lunaris: &Arc<Lunaris>, scope: &Scope) -> HandoverResponse {
 mod tests {
     use std::sync::Arc;
 
-    use lunaris_core::{Scope, StubEmbedder};
-    use lunaris_test_harness::{Policy, open_test_engine_with};
+    use lunaris_core::{HlcClock, Scope, StubEmbedder};
+    use lunaris_test_harness::doubles::PortWithCaps;
+    use lunaris_test_harness::open_test_storage;
 
     use super::*;
 
-    /// Guard 1 on a non-native-queue backend: infallible skip, never errors.
+    /// Guard 1 on a backend that declares no native queue: infallible skip,
+    /// never errors.
     ///
-    /// **Degrade pin — deliberately NOT ported to Moon.** The assertion *is*
-    /// `queue_native == false`, which is true only of the embedded backend;
-    /// Moon takes the real queue path and returns a different status. Routed
-    /// through the harness with an explicit [`Policy::ForceMemory`] so that
-    /// when 0.7.0 deletes the embedded backend the harness arm disappears and
-    /// the compiler points straight here. The replacement is a stubbed
-    /// `StoragePort` reporting `queue_native = false`, not a real backend.
+    /// **Re-expressed in 0.7.0.** This used to open the embedded SQLite
+    /// backend, whose `queue_native == false` was doing the work. That
+    /// coupled a three-line guard to a whole storage engine — and made the
+    /// test read as a claim about `memory://` when it is a claim about one
+    /// bool. It now runs against a real Moon with that single bit cleared
+    /// ([`PortWithCaps::without_queue`]), so the guard is exercised directly
+    /// and every other call still reaches a live store.
     #[tokio::test]
-    async fn handover_on_memory_backend_skips_no_queue() {
-        let embedder = Arc::new(StubEmbedder::new(768));
-        // `handle` takes `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
-        // is split; `_store` must outlive `lunaris` and does (declared first,
-        // dropped last).
-        let (engine, _store) =
-            open_test_engine_with(Policy::ForceMemory, embedder).await.into_parts();
-        let lunaris = Arc::new(engine);
+    async fn handover_on_no_queue_backend_skips() {
+        // Bind the fixture: it owns the Moon child for the test's lifetime.
+        let storage = open_test_storage().await;
+        let lunaris = Arc::new(Lunaris::with_parts(
+            Arc::new(PortWithCaps::without_queue(storage.port())),
+            Arc::new(StubEmbedder::new(768)),
+            HlcClock::new(0),
+        ));
         let scope = Scope::new("test-handover-noqueue").unwrap();
         let resp = handle(&lunaris, &scope).await;
-        assert_eq!(resp.status, "skipped_no_queue", "memory:// handover must skip; got: {resp:?}");
+        assert_eq!(
+            resp.status, "skipped_no_queue",
+            "a queue-less backend must skip handover; got: {resp:?}"
+        );
     }
 }
