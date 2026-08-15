@@ -45,16 +45,18 @@ impl IndexedStorage {
         let chunk = lunaris_core::Chunk::new(scope.clone(), ep_id, text, 4, 0, vec![], clock);
         let mut chunk_val = serde_json::to_value(&chunk).unwrap();
         chunk_val["id"] = serde_json::Value::String(id.to_string());
-        self.rows_by_key
-            .lock()
-            .insert(lunaris_core::keyspace::chunk_key(scope, id), serde_json::to_vec(&chunk_val).unwrap());
+        self.rows_by_key.lock().insert(
+            lunaris_core::keyspace::chunk_key(scope, id),
+            serde_json::to_vec(&chunk_val).unwrap(),
+        );
 
         let ep = lunaris_core::Episode::new(scope.clone(), "test:source", "episode text", clock);
         let mut ep_val = serde_json::to_value(&ep).unwrap();
         ep_val["id"] = serde_json::Value::String(ep_id.to_string());
-        self.rows_by_key
-            .lock()
-            .insert(lunaris_core::keyspace::episode_key(scope, ep_id), serde_json::to_vec(&ep_val).unwrap());
+        self.rows_by_key.lock().insert(
+            lunaris_core::keyspace::episode_key(scope, ep_id),
+            serde_json::to_vec(&ep_val).unwrap(),
+        );
     }
 
     fn seed_fact(&self, scope: &Scope, id: Ulid, predicate: &str, fact_text: &str) {
@@ -68,9 +70,10 @@ impl IndexedStorage {
             valid_from_iso: "2026-07-14T00:00:00Z".to_owned(),
             valid_to_iso: None,
         };
-        self.rows_by_key
-            .lock()
-            .insert(lunaris_core::keyspace::fact_key(scope, id), serde_json::to_vec(&fact).unwrap());
+        self.rows_by_key.lock().insert(
+            lunaris_core::keyspace::fact_key(scope, id),
+            serde_json::to_vec(&fact).unwrap(),
+        );
     }
 }
 
@@ -217,14 +220,15 @@ async fn graph_on_default_recall_returns_fact_hits() {
     let f = fixture();
     f.handle.graph_pipeline().enable();
 
-    let hits =
-        f.handle.scoped(f.scope.clone()).recall(Query::text("what does Tin prefer?")).await.unwrap();
+    let hits = f
+        .handle
+        .scoped(f.scope.clone())
+        .recall(Query::text("what does Tin prefer?"))
+        .await
+        .unwrap();
 
     let texts: Vec<&str> = hits.iter().map(|h| h.text.as_str()).collect();
-    assert!(
-        texts.contains(&"the chunk text"),
-        "chunk leg must still contribute; got {texts:?}"
-    );
+    assert!(texts.contains(&"the chunk text"), "chunk leg must still contribute; got {texts:?}");
     assert!(
         texts.contains(&"Tin prefers admin-rebase merges"),
         "graph-ON default recall must surface the fact hit via the fused facts leg; got {texts:?}"
