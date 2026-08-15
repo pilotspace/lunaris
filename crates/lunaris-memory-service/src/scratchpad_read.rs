@@ -60,23 +60,35 @@ mod tests {
 
     use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
     use serde_json::json;
 
     use super::*;
     use crate::scratchpad_write;
 
-    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope) {
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists.
+    ///
+    /// The handlers take `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
+    /// is split into its parts. The returned [`TestStore`] owns the Moon child
+    /// process and must be bound for the test's lifetime — hence the third
+    /// element of the tuple.
+    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Arc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        let (engine, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        (lunaris, scope)
+        (Arc::new(engine), scope, store)
     }
 
-    /// Discriminating: write then read — proves the vector-only fallback works on
-    /// the embedded backend (keyword_search NotSupported → Vector-only + Filter::Eq).
+    /// Discriminating: write then read — proves the key-scoped lookup works on
+    /// whichever backend the harness resolved. On the embedded backend that is
+    /// the vector-only fallback (keyword_search NotSupported → Vector-only +
+    /// Filter::Eq); on Moon it is the real hybrid path, which is strictly more
+    /// coverage for the same assertion.
     #[tokio::test]
     async fn write_then_read_round_trip() {
-        let (lunaris, scope) = fresh("test-sr-rt").await;
+        let (lunaris, scope, _store) = fresh("test-sr-rt").await;
         scratchpad_write::handle(
             &lunaris,
             &scope,
@@ -103,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_missing_key_returns_found_false() {
-        let (lunaris, scope) = fresh("test-sr-miss").await;
+        let (lunaris, scope, _store) = fresh("test-sr-miss").await;
         let resp = handle(
             &lunaris,
             &scope,
@@ -117,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_invalid_namespace_colon() {
-        let (lunaris, scope) = fresh("test-sr-ns").await;
+        let (lunaris, scope, _store) = fresh("test-sr-ns").await;
         let result = handle(
             &lunaris,
             &scope,

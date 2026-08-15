@@ -144,14 +144,23 @@ mod tests {
 
     use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with};
 
     use super::*;
 
-    async fn fresh_memory(scope_name: &str) -> (Arc<Lunaris>, Scope) {
+    /// **Degrade pin — deliberately NOT ported to Moon.** The only round-trip
+    /// test in this module asserts the `queue_native == false` gate, which is
+    /// true of the embedded backend and false of Moon. Routed through the
+    /// harness with an explicit [`Policy::ForceMemory`] so 0.7.0's deletion of
+    /// the embedded backend surfaces as a compile error here rather than a
+    /// silent semantic flip; the replacement is a stubbed `StoragePort`
+    /// reporting `queue_native = false`, not a real backend.
+    async fn fresh_memory(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Arc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
+        let (engine, store) =
+            open_test_engine_with(Policy::ForceMemory, embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        (lunaris, scope)
+        (Arc::new(engine), scope, store)
     }
 
     /// REGRESSION (codex dogfood, 2026-06-09): the response type's generated MCP
@@ -171,7 +180,7 @@ mod tests {
     /// Guard 1: memory:// backend (queue_native=false) → unsupported_backend.
     #[tokio::test]
     async fn guard_queue_native_false_returns_unsupported_backend() {
-        let (lunaris, scope) = fresh_memory("test-cons-gate").await;
+        let (lunaris, scope, _store) = fresh_memory("test-cons-gate").await;
         let resp = handle(&lunaris, &scope, ScratchpadConsolidateParams { namespace: None })
             .await
             .unwrap();

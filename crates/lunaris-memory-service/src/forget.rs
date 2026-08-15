@@ -220,9 +220,13 @@ mod tests {
     use super::*;
     use lunaris::{EpisodeBuilder, Lunaris};
     use lunaris_core::Scope;
+    use lunaris_test_harness::{TestEngine, open_test_engine};
 
-    async fn make_engine() -> (Lunaris, Scope) {
-        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists. Hold the returned `TestEngine` — it owns the Moon child.
+    async fn make_engine() -> (TestEngine, Scope) {
+        let lunaris = open_test_engine().await;
         // Use Scope::dev() so the shim in ScopedLunaris::forget (which routes
         // through the deprecated Lunaris::forget hard-coded to Scope::dev()
         // until Wave 1D) actually finds the episodes we ingest.
@@ -390,8 +394,8 @@ mod tests {
     /// A real (non-`_dev_`) scope. `forget_scoped` (Wave 1D) routes scan +
     /// write through the caller's partition, so an honest round-trip needs a
     /// real scope — `Scope::dev()` is not required here.
-    async fn make_scoped_engine() -> (Lunaris, Scope) {
-        let lunaris = Lunaris::open("memory://").await.expect("in-memory lunaris must open");
+    async fn make_scoped_engine() -> (TestEngine, Scope) {
+        let lunaris = open_test_engine().await;
         let scope = Scope::new("forget-dry-run-test").expect("test scope must be valid");
         (lunaris, scope)
     }

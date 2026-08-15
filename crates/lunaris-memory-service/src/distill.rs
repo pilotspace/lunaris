@@ -316,16 +316,19 @@ mod tests {
     use lunaris_core::StubEmbedder;
     use lunaris_core::activation::{Grain, RefSignal, Strength};
     use lunaris_core::keyspace::{activation_key, episode_key};
+    use lunaris_test_harness::{TestEngine, open_test_engine_with_embedder};
     use std::sync::Arc;
 
-    async fn make_engine() -> (Lunaris, Scope) {
-        // `StubEmbedder` (deterministic 768-d vectors) — `Lunaris::open`
-        // alone falls back to a NoopEmbedder / zero vectors on CI (mirrors
-        // `resolve.rs` / `dream_agenda.rs`'s test harness).
+    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
+    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
+    /// exists. `TestEngine` derefs to `Lunaris`, so the call sites below are
+    /// unchanged — but the binding owns the Moon child and must outlive them.
+    async fn make_engine() -> (TestEngine, Scope) {
+        // `StubEmbedder` (deterministic 768-d vectors) — the harness default
+        // embedder, restated here so the dim is visible next to the assertions
+        // (mirrors `resolve.rs` / `dream_agenda.rs`'s test harness).
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Lunaris::open_with_embedder("memory://", embedder)
-            .await
-            .expect("in-memory lunaris must open");
+        let lunaris = open_test_engine_with_embedder(embedder).await;
         let scope = Scope::new(format!("test.distill-{}", Ulid::new())).unwrap();
         (lunaris, scope)
     }
