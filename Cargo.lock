@@ -2532,6 +2532,7 @@ dependencies = [
  "lunaris-core",
  "lunaris-extract",
  "lunaris-storage-embedded",
+ "lunaris-test-harness",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2620,6 +2621,7 @@ dependencies = [
  "lunaris-memory-service",
  "lunaris-retrieve",
  "lunaris-storage-embedded",
+ "lunaris-test-harness",
  "parking_lot",
  "regex",
  "serde",
@@ -2647,6 +2649,7 @@ dependencies = [
  "lunaris-llm",
  "lunaris-storage-embedded",
  "lunaris-storage-moon",
+ "lunaris-test-harness",
  "parking_lot",
  "pulldown-cmark",
  "serde",
@@ -2706,6 +2709,7 @@ dependencies = [
  "lunaris-memory",
  "lunaris-memory-service",
  "lunaris-retrieve",
+ "lunaris-test-harness",
  "reqwest 0.13.2",
  "rmcp",
  "schemars",
@@ -2788,6 +2792,31 @@ dependencies = [
  "tokio",
  "tracing",
  "ulid",
+]
+
+[[package]]
+name = "lunaris-migrate"
+version = "0.6.0-rc.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
+ "futures",
+ "lunaris-core",
+ "lunaris-storage-embedded",
+ "lunaris-storage-moon",
+ "lunaris-storage-postgres",
+ "lunaris-test-harness",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "url",
 ]
 
 [[package]]
