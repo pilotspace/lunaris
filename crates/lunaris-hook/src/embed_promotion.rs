@@ -304,6 +304,7 @@ mod lowpri_routing_tests {
     use super::*;
     use async_trait::async_trait;
     use lunaris_core::{Chunk, Embedder, LunarisError};
+    use lunaris_test_harness::open_test_engine_with_embedder;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Embedder that records which lane was invoked. Overrides BOTH methods so
@@ -336,7 +337,10 @@ mod lowpri_routing_tests {
         let hi = Arc::new(AtomicUsize::new(0));
         let lo = Arc::new(AtomicUsize::new(0));
         let embedder = Arc::new(RecordingEmbedder { dim: 768, hi: hi.clone(), lo: lo.clone() });
-        let handle = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        // 0.7.0 port off `memory://` — harness-issued ephemeral Moon, degrading
+        // to `memory://` where no Moon binary resolves. `TestEngine` derefs to
+        // `Lunaris`; the binding owns the Moon child.
+        let handle = open_test_engine_with_embedder(embedder).await;
 
         let scope = Scope::new("test.lowpri").unwrap();
         let clock = HlcClock::new(0);

@@ -1,8 +1,10 @@
 //! Cold-start latency gate (HOOK-06).
 //!
 //! Gate: p50 ≤ 50ms, p99 ≤ 150ms over 1000 deterministic envelopes through
-//! the FULL pipeline (filter + scrub + dedupe + ingest) against an in-memory
-//! SQLite instance (`memory://`).
+//! the FULL pipeline (filter + scrub + dedupe + ingest) against a
+//! harness-issued disposable store (0.7.0 port off `memory://`: an ephemeral
+//! child-process Moon, degrading to the embedded backend where no Moon binary
+//! resolves).
 //!
 //! # Methodology
 //!
@@ -37,34 +39,37 @@
 //!
 //! # T-24-04-03 mitigation
 //!
-//! `memory://` creates an in-process ephemeral DB — no shared file, no SQLite
-//! lock contention from parallel test runners. Pinned to `current_thread` to
-//! prevent concurrent test subtasks racing the same pool.
+//! Every harness fixture is a private, empty database — a fresh in-process
+//! SQLite on the embedded arm, a private child-process Moon on the Moon arm —
+//! so there is no shared file and no lock contention from parallel test
+//! runners. Pinned to `current_thread` to prevent concurrent test subtasks
+//! racing the same pool.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use lunaris::Lunaris;
 use lunaris_core::{HlcClock, NoopEmbedder, Scope};
-use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_test_harness::{TestStorage, open_test_storage};
 
 /// Fixture: 1000 NDJSON envelopes, 250 per kind (PreToolUse/PostToolUse/Stop/SessionStart).
 /// Committed to the repo — deterministically generated via `gen_replay_fixture`.
 const FIXTURE: &str = include_str!("fixtures/replay_1000.json");
 
-/// Build a `Lunaris` handle backed by an in-memory SQLite database.
+/// Build a `Lunaris` handle backed by a harness-issued disposable store.
 ///
 /// Uses `NoopEmbedder` so no GGUF weights are loaded — the hook pipeline is
 /// embed-free at capture time (HOOK-06 budget invariant: no GGUF deps in
 /// `lunaris-hook/Cargo.toml`).
-async fn build_lunaris_in_memory() -> Lunaris {
-    let storage = EmbeddedStorage::connect("memory://")
-        .await
-        .expect("EmbeddedStorage::connect(memory://) must succeed in cold_start test");
+///
+/// 0.7.0 port off `memory://`. The returned `TestStorage` guard owns the Moon
+/// child process and must outlive the handle built from its port.
+async fn build_lunaris_in_memory() -> (Lunaris, TestStorage) {
+    let storage = open_test_storage().await;
     let embedder = Arc::new(NoopEmbedder::new(768));
-    let storage_arc: Arc<dyn lunaris_core::StoragePort> = Arc::new(storage);
     let clock = HlcClock::new(0);
-    Lunaris::with_parts(storage_arc, embedder, clock)
+    let handle = Lunaris::with_parts(storage.port(), embedder, clock);
+    (handle, storage)
 }
 
 /// Scope used for the latency gate — fixed string avoids git repo I/O.
@@ -87,7 +92,7 @@ async fn hook_pipeline_meets_latency_budget() {
         .with_test_writer()
         .try_init();
 
-    let handle = build_lunaris_in_memory().await;
+    let (handle, _storage) = build_lunaris_in_memory().await;
     let lunaris = Arc::new(handle);
     let scope = gate_scope();
 
