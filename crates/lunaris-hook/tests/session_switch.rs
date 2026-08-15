@@ -12,6 +12,7 @@ use lunaris_hook::session_marker::{
     SwitchObserved, observe_end_at, observe_start_at, read_active_at, sanitize_session_id,
     switch_meta,
 };
+use lunaris_test_harness::open_test_store;
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 fn temp_sessions_file() -> (tempfile::TempDir, PathBuf) {
@@ -156,9 +157,16 @@ const START_B: &str = r#"{
   "cwd": "/tmp/test-hook-repo"
 }"#;
 
-async fn run_hook(envelope: &str, scopes: &Path, sessions: &Path) -> std::process::Output {
+/// 0.7.0 port off `memory://`: the store URL is threaded in from a
+/// harness-issued fixture the caller holds for the children's lifetime.
+async fn run_hook(
+    envelope: &str,
+    store_url: &str,
+    scopes: &Path,
+    sessions: &Path,
+) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lunaris-hook"))
-        .env("LUNARIS_STORE_URL", "memory://")
+        .env("LUNARIS_STORE_URL", store_url)
         .env("LUNARIS_HOOK_SCOPE", "session-switch-e2e")
         .env("LUNARIS_SCOPES_FILE", scopes.to_str().unwrap())
         .env("LUNARIS_SESSIONS_FILE", sessions.to_str().unwrap())
@@ -184,7 +192,8 @@ async fn e2e_switch_emits_stderr_line_and_exits_0() {
     let scopes = tmp.path().join("scopes.json");
     let sessions = tmp.path().join("sessions.json");
 
-    let out_a = run_hook(START_A, &scopes, &sessions).await;
+    let store = open_test_store().await;
+    let out_a = run_hook(START_A, store.url(), &scopes, &sessions).await;
     assert_eq!(out_a.status.code(), Some(0), "first SessionStart must exit 0");
     let stderr_a = String::from_utf8_lossy(&out_a.stderr);
     assert!(
@@ -192,7 +201,7 @@ async fn e2e_switch_emits_stderr_line_and_exits_0() {
         "first session must not report a switch, got: {stderr_a}"
     );
 
-    let out_b = run_hook(START_B, &scopes, &sessions).await;
+    let out_b = run_hook(START_B, store.url(), &scopes, &sessions).await;
     assert_eq!(out_b.status.code(), Some(0), "second SessionStart must exit 0");
     let stderr_b = String::from_utf8_lossy(&out_b.stderr);
     assert!(

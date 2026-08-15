@@ -9,11 +9,20 @@
 //! This file references NO new symbols, so it compiles TODAY: the live
 //! discriminator is ASSERTION-RED (a graph-pipeline fact is invisible to the
 //! current chunks-only recall) and goes green only when the v1.1 hybrid root
-//! serves the production path. The memory:// tests are degrade guard pins.
+//! serves the production path. The two cheap tests at the bottom are degrade
+//! guard pins.
 //!
-//! Live gate: LUNARIS_HOOK_TEST_MOON_URL (moon-it pattern: skipped when
-//! unset). Run on this box where the staged granite GGUF exists — contextd
-//! embeds the prompt in-process.
+//! ## Backend (0.7.0 port off `memory://`)
+//!
+//! The degrade pins take a harness-issued store (ephemeral child-process Moon,
+//! degrading to `memory://` where no Moon binary resolves) rather than a
+//! hard-coded `memory://`. Both assert on an EMPTY store, so their subject —
+//! "degraded/legacy routing injects nothing and surfaces no hybrid error" —
+//! is backend-independent.
+//!
+//! The live discriminator keeps its `LUNARIS_HOOK_TEST_MOON_URL` gate: unlike
+//! the pins it needs a real staged granite GGUF (contextd embeds the prompt
+//! in-process), which no ephemeral fixture can supply.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,6 +32,7 @@ use lunaris_core::keyspace::fact_key;
 use lunaris_core::storage::types::WriteOp;
 use lunaris_core::{Episode, HlcClock, Scope, StubEmbedder};
 use lunaris_extract::types::{EntityId, Fact};
+use lunaris_test_harness::open_test_store;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -191,11 +201,15 @@ async fn fact_surfaces_in_injected_context_moon() {
     );
 }
 
-// ─── memory:// degrade pins (no live backend needed) ─────────────────────────
+// ─── degrade pins (no live backend needed) ───────────────────────────────────
 
-fn memory_env() -> HashMap<&'static str, String> {
+/// Env for a contextd child pointed at a harness-issued store.
+///
+/// 0.7.0 port off `memory://`: the URL is threaded in from a fixture the
+/// caller holds open for the child's lifetime.
+fn memory_env(store_url: &str) -> HashMap<&'static str, String> {
     let mut env = HashMap::new();
-    env.insert("LUNARIS_STORE_URL", "memory://".to_owned());
+    env.insert("LUNARIS_STORE_URL", store_url.to_owned());
     // Force the fast NoopEmbedder fallback — these pins exercise routing, not
     // embedding quality, and must stay CI-cheap.
     env.insert("LUNARIS_EMBEDDER_GGUF", "/nonexistent/embedder.gguf".to_owned());
@@ -210,16 +224,19 @@ fn memory_env() -> HashMap<&'static str, String> {
 #[tokio::test]
 async fn timeout_zero_degrades_to_legacy() {
     let dir = tempfile::tempdir().expect("tempdir");
+    // One store for BOTH children, exactly as the single `memory://` literal
+    // used to imply. `store` owns the Moon child and outlives both contextds.
+    let store = open_test_store().await;
 
     let timeout_socket = dir.path().join("timeout.sock");
-    let mut env = memory_env();
+    let mut env = memory_env(store.url());
     env.insert("LUNARIS_CONTEXT_RECALL_TIMEOUT_MS", "0".to_owned());
     let mut timeout_child = spawn_contextd(&timeout_socket, &env).await;
     let degraded = request(&timeout_socket, &recall_for_prompt("ctxd-degrade-pin")).await;
     let _ = timeout_child.kill().await;
 
     let control_socket = dir.path().join("control.sock");
-    let mut env = memory_env();
+    let mut env = memory_env(store.url());
     env.insert("LUNARIS_CONTEXT_RECALL", "vector".to_owned());
     let mut control_child = spawn_contextd(&control_socket, &env).await;
     let control = request(&control_socket, &recall_for_prompt("ctxd-degrade-pin")).await;
@@ -247,16 +264,18 @@ async fn timeout_zero_degrades_to_legacy() {
 #[tokio::test]
 async fn legacy_env_routes_old_path() {
     let dir = tempfile::tempdir().expect("tempdir");
+    let store = open_test_store().await;
     let socket = dir.path().join("legacy-pin.sock");
-    let mut env = memory_env();
+    let mut env = memory_env(store.url());
     env.insert("LUNARIS_CONTEXT_RECALL", "vector".to_owned());
     let mut child = spawn_contextd(&socket, &env).await;
     let response = request(&socket, &recall_for_prompt("ctxd-legacy-pin")).await;
     let _ = child.kill().await;
 
-    // Today's memory:// behavior: the embedded backend has no BM25, so the
-    // legacy keyword fallback surfaces its error as ok:false — the adapter
-    // treats it as "no context". Pin the shape, not the exact message.
+    // The store is empty, so the legacy keyword path yields nothing on either
+    // backend — as an `ok:false` from the embedded backend's missing BM25, or
+    // as an empty result from Moon's. Either way the adapter treats it as "no
+    // context". Pin the shape, not the exact message.
     assert!(response.get("ok").is_some(), "contextd must answer the legacy request: {response}");
     let rendered = response["rendered_context"].as_str().unwrap_or_default();
     assert!(rendered.is_empty(), "empty store must inject nothing: {response}");
