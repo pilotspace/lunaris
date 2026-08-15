@@ -39,9 +39,10 @@ use thiserror::Error;
 ///
 /// **Breaking change** for any v0.2.0 deployment that minted scope strings
 /// containing `:` (e.g. `acme:agent-42`). The recommended replacement is
-/// `.` or `-` (`acme.agent-42`). The Postgres CHECK constraint on every
-/// `scope` column is tightened in migration
-/// `20260512000007_scope_regex_tighten.sql` to match.
+/// `.` or `-` (`acme.agent-42`). Enforcement is at the type level: `Scope::new`
+/// is the only constructor, and the hand-rolled `Deserialize` re-runs it on
+/// wire bytes. (v0.2.1 also tightened a matching Postgres CHECK constraint;
+/// that backend was removed in 0.7.0.)
 const VALID_SCOPE_CHARS: fn(char) -> bool =
     |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
 const MAX_SCOPE_LEN: usize = 128;
@@ -115,8 +116,8 @@ impl Scope {
     /// the validated database column). Caller is responsible for ensuring
     /// the invariant `^[A-Za-z0-9_\-.]{1,128}$` holds.
     ///
-    /// Wave 0: no call sites exist yet — Wave 1B (Postgres) and Wave 1C (Moon)
-    /// will use this when deserializing scope values from storage rows.
+    /// Used when deserializing scope values that came back out of storage —
+    /// they were validated by `Scope::new` on the way in.
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn from_trusted(s: &str) -> Self {

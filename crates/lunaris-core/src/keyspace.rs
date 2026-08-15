@@ -2,8 +2,10 @@
 //!
 //! These helpers encode the **canonical Lunaris key format** for every primitive
 //! kind: `lunaris:{scope}:{kind}:{ulid}`. They are storage-backend–agnostic —
-//! Moon, Postgres, and future backends all derive their per-row keys from these
-//! functions so the format stays in one place.
+//! Moon and any future backend derive their per-row keys from these functions
+//! so the format stays in one place. (That agnosticism is why they live in
+//! `lunaris-core` rather than the backend crate, and it survived the 0.7.0
+//! Moon-only cutover unchanged.)
 //!
 //! ## What lives here vs. in `lunaris-storage-moon::keyspace`
 //!
@@ -281,8 +283,7 @@ pub fn verify_agenda_prefix(scope: &Scope) -> Vec<u8> {
 ///
 /// This is the inverse of [`scope_prefix`] + the primitive `*_key` helpers
 /// and is used by [`StoragePort::list_scopes`](crate::StoragePort::list_scopes)
-/// impls (Moon SCAN-parse, embedded SQLite key-scan) to recover the set of
-/// known scopes from raw keys.
+/// impls (Moon SCAN-parse) to recover the set of known scopes from raw keys.
 ///
 /// The input is `&[u8]` (not `&str`) because Moon's SCAN cursor returns raw
 /// bytes — a malformed UTF-8 key short-circuits to `None` rather than

@@ -98,8 +98,7 @@ impl Embedder for FailingEmbedder {
 /// operator who flips to the noop backend doesn't have to re-create their
 /// `FT.CREATE` HNSW index.
 ///
-/// Moon's `FT.CREATE` requires `dim > 0` and Postgres/sqlite vector columns
-/// are sized at migration time; `NoopEmbedder::new(0)` therefore surfaces
+/// Moon's `FT.CREATE` requires `dim > 0`, so `NoopEmbedder::new(0)` surfaces
 /// as a `StorageError::Backend("vector dim must be > 0")` at
 /// `Lunaris::open()` time. The constructor itself accepts `0` so the error
 /// path stays uniform across `Stub` / `Noop` / real backends.

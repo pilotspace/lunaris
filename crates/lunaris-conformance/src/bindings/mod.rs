@@ -212,8 +212,9 @@ pub async fn run_rust_driver_backend_parity(moon_url: Option<&str>) -> anyhow::R
         return Ok(());
     };
 
-    let handle =
-        Lunaris::open(url).await.with_context(|| format!("Lunaris::open({url}) for Moon backend"))?;
+    let handle = Lunaris::open(url)
+        .await
+        .with_context(|| format!("Lunaris::open({url}) for Moon backend"))?;
     exercise_one_backend(&handle, &golden, "moon").await
 }
 

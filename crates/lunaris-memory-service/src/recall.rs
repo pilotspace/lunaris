@@ -686,10 +686,7 @@ mod tests {
             msg.contains("bi-temporal") && msg.contains("STORE-07"),
             "the refusal must name the capability and the tracking id, got: {msg}"
         );
-        assert!(
-            !msg.contains("green"),
-            "the refusal must not leak current-state content: {msg}"
-        );
+        assert!(!msg.contains("green"), "the refusal must not leak current-state content: {msg}");
     }
 
     /// Wave A.1: source-prefix filter excludes episodes from non-matching sources.

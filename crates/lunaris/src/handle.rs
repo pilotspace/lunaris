@@ -429,11 +429,11 @@ impl Lunaris {
                     bakeoff_config: None,
                 })
             }
-            other => Err(LunarisError::Storage(
-                crate::open::retired_scheme_error(other).unwrap_or_else(|| {
-                    lunaris_core::StorageError::UnsupportedScheme(other.to_string())
-                }),
-            )),
+            other => {
+                Err(LunarisError::Storage(crate::open::retired_scheme_error(other).unwrap_or_else(
+                    || lunaris_core::StorageError::UnsupportedScheme(other.to_string()),
+                )))
+            }
         }
     }
 

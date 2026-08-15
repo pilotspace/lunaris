@@ -346,13 +346,12 @@ mod tests {
     async fn decide_storage_real_launcher_wires_moon_url() {
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap().to_owned();
-        let (url, guard) =
-            crate::embedded_moon::decide_storage_with_launcher(None, move || {
-                let dir = data_dir.clone();
-                async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
-            })
-            .await
-            .expect("real launcher must bring Moon up");
+        let (url, guard) = crate::embedded_moon::decide_storage_with_launcher(None, move || {
+            let dir = data_dir.clone();
+            async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
+        })
+        .await
+        .expect("real launcher must bring Moon up");
         assert!(
             url.starts_with("moon://"),
             "decide_storage with real launcher must return moon:// URL, got: {url}"

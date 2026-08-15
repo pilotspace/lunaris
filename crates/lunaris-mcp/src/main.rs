@@ -386,9 +386,9 @@ impl LunarisMcpServer {
     /// Read a single key from the agent scratchpad.
     ///
     /// Returns the verbatim stored value (recovered from the Episode `content`,
-    /// not the chunked text). Write-then-read is read-your-writes consistent on
-    /// every backend — Moon indexes synchronously inline in HSET, and the sqlite
-    /// default enforces the `source` filter at the SQL boundary.
+    /// not the chunked text). Write-then-read is read-your-writes consistent:
+    /// Moon indexes synchronously inline in HSET, so the value is visible to the
+    /// very next read.
     #[tool(
         name = "memory.scratchpad_read",
         description = "Exact key lookup on the agent scratchpad. Returns {found, value?} where value is the \
