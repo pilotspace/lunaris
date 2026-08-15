@@ -227,7 +227,7 @@ impl StoragePort for PortWithCaps {
 
     /// The one method that is NOT a forward — the whole point of the type.
     fn capabilities(&self) -> StorageCapabilities {
-        self.caps.clone()
+        self.caps
     }
 
     async fn lookup_by_dedupe_key(
