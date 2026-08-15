@@ -68,9 +68,11 @@ impl ScopeReport {
 /// enumeration — Postgres is the documented case (its RLS boundary makes a
 /// cross-scope `SELECT DISTINCT scope` impossible under the app role), so a
 /// Postgres source must be migrated with explicit `--scope` arguments.
-/// RED: no stall detection yet.
-fn pagination_stalled(_prev: Option<&str>, _next: &str) -> bool {
-    false
+/// Whether the backend failed to advance pagination: it echoed the cursor it
+/// was handed, or handed back an empty one. Either way another round trip would
+/// return the same page forever.
+fn pagination_stalled(prev: Option<&str>, next: &str) -> bool {
+    next.is_empty() || prev == Some(next)
 }
 
 pub async fn discover_scopes(source: &dyn StoragePort) -> Result<Vec<Scope>, MigrateError> {
@@ -81,7 +83,21 @@ pub async fn discover_scopes(source: &dyn StoragePort) -> Result<Vec<Scope>, Mig
         let page = source.list_scopes(None, PAGE, cursor.as_deref()).await?;
         out.extend(page.scopes);
         match page.next_cursor {
-            Some(c) => cursor = Some(c),
+            Some(next) => {
+                if pagination_stalled(cursor.as_deref(), &next) {
+                    // Stop with what we have rather than spin. The scopes
+                    // collected so far are still valid, and `--scope` is the
+                    // documented fallback for an enumeration this tool cannot
+                    // trust.
+                    tracing::warn!(
+                        scopes_so_far = out.len(),
+                        "list_scopes did not advance its cursor — stopping enumeration; \
+                         pass explicit --scope arguments if a scope is missing"
+                    );
+                    break;
+                }
+                cursor = Some(next);
+            }
             None => break,
         }
     }
