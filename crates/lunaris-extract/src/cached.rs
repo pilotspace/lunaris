@@ -122,11 +122,7 @@ impl CachedExtractor {
     /// every candidate holds identical-shape valid JSON).
     fn write_entry(&self, chunk: &ChunkInput, raw: &RawExtraction) {
         let path = self.entry_path(chunk);
-        let tmp = self.dir.join(format!(
-            ".tmp-{}-{}",
-            std::process::id(),
-            Ulid::new()
-        ));
+        let tmp = self.dir.join(format!(".tmp-{}-{}", std::process::id(), Ulid::new()));
         let result = serde_json::to_vec(raw)
             .map_err(std::io::Error::other)
             .and_then(|bytes| std::fs::write(&tmp, bytes))
