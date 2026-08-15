@@ -3,7 +3,12 @@
 All notable changes to Lunaris are documented here.
 Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/CHANGELOG-archive.md).
 
-## Unreleased
+## [0.6.2] — 2026-08-15
+
+The operability release: first non-rc cut of the 0.6 line, and the last
+release in which the Postgres and SQLite backends ship (both are removed
+in 0.7.0 — see `docs/release/deprecations.md` and
+`docs/migration/0.6-to-0.7.md`).
 
 ### Changed
 
@@ -39,7 +44,60 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   conformance, the three migration guides, `docs/guide.md`,
   `docs/helios-integration.md`, `docs/POSITIONING.md`).
 
+- **HTTP server hardening** — graceful shutdown now drains in-flight
+  requests with a bound; requests carry a 30s timeout, a 256-request
+  concurrency limit with load-shedding, and `/readyz` performs a real
+  storage write canary instead of a liveness echo.
+
+- **moondb pin → 0.3.0** — `vendor/moon` moves to moon main `d70bebbd`
+  whose SDK removes five dead wire forms (none used by Lunaris) and
+  registers `TXN`/`FT.AGGREGATE`. The server still reports
+  `moon_version 0.8.5`, so the connection handshake floor is unchanged.
+
 ### Added
+
+- **`lunaris-migrate`** — one-shot Postgres/SQLite → Moon migration CLI
+  with an explicit lossy contract: system-time history collapses to
+  migration time, only open-interval rows migrate, and vector/BM25/graph
+  lanes stay dead until re-embedding (`--reembed-manifest`). Dry-run by
+  default; a real run requires `--acknowledge-lossy`. Ships in the 0.6.x
+  line only and is deleted in 0.7.0.
+
+- **Moon version handshake** — the Moon adapter now reads the
+  `moon_version` INFO field at connect and refuses servers older than
+  0.8.5 (fail-open when the field is unrecognizable, fail-closed on
+  transport faults).
+
+- **Multi-shard fail-fast** — connecting to a Moon started with
+  `--shards N>1` is now a hard, deterministic startup error (read-only
+  `MULTI`/`EXISTS` probe). Sharded Moon cannot yet host Lunaris writes or
+  graph recall; see RFC 0008 (`docs/rfcs/0008-sharded-moon-ingest.md`).
+
+- **`lunaris-test-harness`** — child-process ephemeral Moon for the test
+  suite (`LUNARIS_TEST_BACKEND=auto|moon|memory`, `MOON_TEST_BINARY`);
+  the workspace suite now runs against a real Moon in ~3ms boots instead
+  of only the in-memory port.
+
+- **Operations docs** — external-Moon onboarding, observability guide,
+  Docker Compose + Dockerfile under `deploy/`, and a rehearsed
+  backup/restore drill (`scripts/backup-restore-drill.sh`,
+  `docs/operations/backup-restore.md`; RPO 0, RTO < 1s at test scale).
+
+- **Release integrity** — crates-publish now verifies the vendored moondb
+  SDK source matches the crate published at the same version
+  (`scripts/check-vendored-moondb-parity.sh`) and guards crate
+  publishability metadata (`xtask` publish-metadata tests);
+  `lunaris-hook` is explicitly unpublished.
+
+- The LME benchmark harness moved into version control
+  (`scripts/bench/lme/`) with a guard test ratchet; bench runs use a
+  dedicated Moon port and hard-refuse the production store.
+
+### Fixed
+
+- **Moon keyword hits scored 0.0** — the Moon SDK parser strands
+  `__bm25_score` in the returned field map; the adapter now recovers it,
+  so BM25 hits fuse with their real scores instead of flattening to zero.
 
 - **`ForgetReceipt.matched`** — the number of primitives the target matched,
   populated on every path including `dry_run`, where `rows_written` and
