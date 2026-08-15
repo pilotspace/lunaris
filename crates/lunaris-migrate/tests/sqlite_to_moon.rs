@@ -293,8 +293,10 @@ async fn reembed_manifest_lists_exactly_the_keys_that_lost_their_vectors() {
     let dest = open_test_storage().await;
     let manifest = seeded._dir.path().join("reembed.jsonl");
 
-    let opts =
-        MigrationOptions { reembed_manifest: Some(manifest.clone()), ..MigrationOptions::default() };
+    let opts = MigrationOptions {
+        reembed_manifest: Some(manifest.clone()),
+        ..MigrationOptions::default()
+    };
     let report = migrate_scope(seeded.source.as_ref(), dest.port().as_ref(), &seeded.scope, &opts)
         .await
         .expect("dry run with manifest");

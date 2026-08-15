@@ -88,7 +88,23 @@ pub enum RowVerdict {
 /// operator state.
 #[must_use]
 pub fn classify_row(scope: &Scope, key: &[u8], value: &[u8]) -> RowVerdict {
-    let _ = (scope, key, value, interval_is_closed as fn(Option<&serde_json::Value>) -> bool);
+    match kind_of(key) {
+        Some((row_scope, _kind)) if row_scope == scope.as_str() => {}
+        _ => return RowVerdict::SkipForeignKey,
+    }
+    // Only the record's own stamp is consulted. The storage-level interval is
+    // not readable through `scan_range` (it hands back raw value bytes), and it
+    // is exactly the axis this migration cannot preserve anyway.
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(value) else {
+        return RowVerdict::Migrate;
+    };
+    let Some(bt) = v.get("bt") else { return RowVerdict::Migrate };
+    if interval_is_closed(bt.get("valid")) {
+        return RowVerdict::SkipClosedValid;
+    }
+    if interval_is_closed(bt.get("sys")) {
+        return RowVerdict::SkipClosedSys;
+    }
     RowVerdict::Migrate
 }
 
@@ -168,7 +184,10 @@ mod tests {
     fn open_intervals_migrate() {
         let v = br#"{"id":"x","bt":{"valid":[{"wall_ms":1,"counter":0},null],
                      "sys":[{"wall_ms":1,"counter":0},null]}}"#;
-        assert_eq!(classify_row(&scope(), b"lunaris:acme.agent-1:fact:01H", v), RowVerdict::Migrate);
+        assert_eq!(
+            classify_row(&scope(), b"lunaris:acme.agent-1:fact:01H", v),
+            RowVerdict::Migrate
+        );
     }
 
     #[test]
