@@ -209,10 +209,7 @@ async fn navigate_uses_port_when_native() {
     assert_eq!(rec.navigate_calls.load(Ordering::SeqCst), 1, "port navigate called once");
     assert_eq!(rec.vector_calls.load(Ordering::SeqCst), 0, "no vector fallback on native path");
     assert_eq!(hits.len(), 1, "the hop-0 KNN seed is dropped; only graph-expanded hits survive");
-    assert!(
-        hits.iter().all(|h| h.id != b"seed".to_vec()),
-        "hop-0 seed must not reach the caller"
-    );
+    assert!(hits.iter().all(|h| h.id != b"seed".to_vec()), "hop-0 seed must not reach the caller");
     let expanded = hits.iter().find(|h| h.id == b"expanded".to_vec()).expect("expanded hit");
     assert_eq!(
         expanded.metadata.get("hop_depth").and_then(|v| v.as_u64()),

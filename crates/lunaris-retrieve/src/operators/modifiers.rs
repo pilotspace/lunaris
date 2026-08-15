@@ -64,7 +64,7 @@ impl Retriever for TopRetriever {
 /// LME N=125 A/B diagnosis (2026-07-29, graph-ON 83.2% vs graph-OFF 88.0%):
 /// with a plain `top(n)` cut, reranked fact/Navigate hits that outrank
 /// mid-value evidence chunks EVICT them from the final context (q251: the
-/// date-bearing chunk that was graph-OFF's hit[1] at 0.513 vanished from
+/// date-bearing chunk that was graph-OFF's `hit[1]` at 0.513 vanished from
 /// graph-ON's entire list). Because the chunk legs and cross-encoder scores
 /// are identical across arms, reserving `floor_n` slots for floor-leg hits
 /// makes the graph-ON chunk context a strict superset of graph-OFF's — extra
