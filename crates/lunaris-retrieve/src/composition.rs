@@ -69,11 +69,12 @@ mod tests {
         );
     }
 
-    /// The Navigate seed index is `entities`, but only Moon can hop from a
-    /// seed to a fact. Every other backend degrades to a flat vector search,
-    /// so the leg MUST declare `facts` as its fallback index — without it
-    /// SQLite (the shipped MCP default) and Postgres lose the fact vector leg
-    /// entirely and facts arrive by BM25 alone.
+    /// The Navigate seed index is `entities`, but hopping from a seed to a
+    /// fact needs native graph-navigate. Anything without it degrades to a
+    /// flat vector search, so the leg MUST declare `facts` as its fallback
+    /// index — without it the fact vector leg is lost entirely and facts
+    /// arrive by BM25 alone. This is live on Moon too: a FILTERED query has
+    /// no native navigate surface and takes the same degraded path.
     #[test]
     fn facts_leg_declares_facts_as_its_degraded_fallback_index() {
         let root = hybrid_root(30);
