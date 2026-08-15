@@ -97,16 +97,68 @@ pub async fn migrate_scope(
     scope: &Scope,
     opts: &MigrationOptions,
 ) -> Result<ScopeReport, MigrateError> {
-    // RED: scaffolding only — counts what it scanned, decides nothing, writes
-    // nothing. The GREEN commit fills in classification, batching, and the
-    // re-embed manifest.
-    let _ = (dest, opts, classify_row, kind_of, needs_reembed, open_manifest, write_manifest_line);
+    if opts.commit && !opts.acknowledge_lossy {
+        return Err(MigrateError::LossyNotAcknowledged);
+    }
     let mut report = ScopeReport { scope: scope.as_str().to_owned(), ..ScopeReport::default() };
+    let mut manifest = match &opts.reembed_manifest {
+        Some(path) => Some(open_manifest(path)?),
+        None => None,
+    };
+
     let prefix = scope_prefix(scope).into_bytes();
+    let mut batch: Vec<WriteOp> = Vec::with_capacity(opts.batch_size);
+    // Buffered up front so the source stream is closed before the first write:
+    // the two handles are never live at the same time, which matters on a
+    // single-connection backend and keeps a mid-run failure from leaving a
+    // half-drained stream behind.
+    let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let mut stream = source.scan_range(scope, &prefix, None).await?;
     while let Some(row) = stream.next().await {
-        let _ = row?;
+        let (key, value) = row?;
+        rows.push((key.to_vec(), value.to_vec()));
+    }
+    drop(stream);
+
+    for (key, value) in rows {
         report.scanned += 1;
+        match classify_row(scope, &key, &value) {
+            RowVerdict::SkipClosedValid => {
+                report.skipped_closed_valid += 1;
+                continue;
+            }
+            RowVerdict::SkipClosedSys => {
+                report.skipped_closed_sys += 1;
+                continue;
+            }
+            RowVerdict::SkipForeignKey => {
+                report.skipped_foreign_key += 1;
+                continue;
+            }
+            RowVerdict::Migrate => {}
+        }
+        report.eligible += 1;
+        let kind = kind_of(&key).map(|(_, k)| k).unwrap_or("unknown").to_owned();
+        if needs_reembed(&kind) {
+            report.needs_reembed += 1;
+            if let Some(w) = manifest.as_mut() {
+                write_manifest_line(w, scope, &kind, &key)?;
+            }
+        }
+        *report.by_kind.entry(kind).or_insert(0) += 1;
+
+        if opts.writes_enabled() {
+            batch.push(WriteOp::KvPut { key, value });
+            if batch.len() >= opts.batch_size {
+                flush(dest, scope, &mut batch, &mut report).await?;
+            }
+        }
+    }
+    if !batch.is_empty() {
+        flush(dest, scope, &mut batch, &mut report).await?;
+    }
+    if let Some(mut w) = manifest {
+        w.flush()?;
     }
     Ok(report)
 }

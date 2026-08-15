@@ -5,10 +5,8 @@
 //! so it proves what an application will actually see — not what the writer
 //! believed it wrote.
 
-#[allow(unused_imports)]
 use std::collections::BTreeMap;
 
-#[allow(unused_imports)]
 use futures::StreamExt;
 use lunaris_core::keyspace::scope_prefix;
 use lunaris_core::{Scope, StoragePort};
@@ -73,10 +71,61 @@ pub async fn verify_scope(
     scope: &Scope,
     sample: usize,
 ) -> Result<VerifyReport, MigrateError> {
-    // RED: scaffolding only — the comparison itself lands in the GREEN commit.
-    let _ = (source, dest, sample, push_example, classify_row, kind_of, RowVerdict::Migrate);
-    let _ = scope_prefix(scope);
-    Ok(VerifyReport { scope: scope.as_str().to_owned(), ..VerifyReport::default() })
+    let prefix = scope_prefix(scope).into_bytes();
+    let mut report = VerifyReport { scope: scope.as_str().to_owned(), ..VerifyReport::default() };
+
+    let mut eligible: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut stream = source.scan_range(scope, &prefix, None).await?;
+    while let Some(row) = stream.next().await {
+        let (key, value) = row?;
+        if classify_row(scope, &key, &value) != RowVerdict::Migrate {
+            continue;
+        }
+        let kind = kind_of(&key).map(|(_, k)| k).unwrap_or("unknown").to_owned();
+        *report.by_kind_source.entry(kind).or_insert(0) += 1;
+        eligible.insert(key.to_vec(), value.to_vec());
+    }
+    drop(stream);
+    report.source_eligible = eligible.len() as u64;
+
+    let mut present: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut stream = dest.scan_range(scope, &prefix, None).await?;
+    while let Some(row) = stream.next().await {
+        let (key, value) = row?;
+        let kind = kind_of(&key).map(|(_, k)| k).unwrap_or("unknown").to_owned();
+        *report.by_kind_dest.entry(kind).or_insert(0) += 1;
+        present.insert(key.to_vec(), value.to_vec());
+    }
+    drop(stream);
+    report.dest_rows = present.len() as u64;
+
+    // Spread the content sample across the whole key range rather than taking
+    // it from the head: a truncated write is then as visible as a corrupt one.
+    let stride = if sample == 0 || eligible.is_empty() {
+        usize::MAX
+    } else {
+        eligible.len().div_ceil(sample).max(1)
+    };
+
+    for (i, (key, want)) in eligible.iter().enumerate() {
+        match present.get(key) {
+            None => {
+                report.missing += 1;
+                push_example(&mut report.missing_examples, key);
+            }
+            Some(got) => {
+                if stride != usize::MAX && i % stride == 0 {
+                    report.sampled += 1;
+                    if got != want {
+                        report.mismatched += 1;
+                        push_example(&mut report.mismatch_examples, key);
+                    }
+                }
+            }
+        }
+    }
+    report.dest_only = present.keys().filter(|k| !eligible.contains_key(*k)).count() as u64;
+    Ok(report)
 }
 
 fn push_example(bucket: &mut Vec<String>, key: &[u8]) {

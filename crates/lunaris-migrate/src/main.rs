@@ -66,11 +66,12 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    tracing_subscriber::fmt().with_env_filter(
-        tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-    )
-    .init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     match run(Cli::parse()).await {
         Ok(true) => ExitCode::SUCCESS,
@@ -99,7 +100,8 @@ async fn run(cli: Cli) -> Result<bool> {
         bail!("{}", lunaris_migrate::ACK_REQUIRED);
     }
     if !opts.writes_enabled() {
-        println!("MODE: dry run — counting only, nothing will be written.\n");
+        let why = if cli.dry_run { "--dry-run" } else { "default" };
+        println!("MODE: dry run ({why}) — counting only, nothing will be written.\n");
     } else {
         println!("MODE: COMMIT — the destination will be written.\n");
     }
@@ -169,7 +171,9 @@ async fn open_source(url: &str) -> Result<Arc<dyn StoragePort>> {
             Ok(Arc::new(s))
         }
         "moon" => bail!("Moon is the destination of this tool, not a source"),
-        other => bail!("unsupported source scheme {other:?}: use sqlite://, memory://, postgres://"),
+        other => {
+            bail!("unsupported source scheme {other:?}: use sqlite://, memory://, postgres://")
+        }
     }
 }
 
@@ -201,8 +205,10 @@ fn print_scope_report(r: &ScopeReport, committing: bool) {
 }
 
 fn print_verify_report(v: &VerifyReport) {
-    println!("  verify: source_eligible={} dest_rows={} sampled={}",
-             v.source_eligible, v.dest_rows, v.sampled);
+    println!(
+        "  verify: source_eligible={} dest_rows={} sampled={}",
+        v.source_eligible, v.dest_rows, v.sampled
+    );
     if v.ok() {
         println!("  verify: PASS");
     } else {
