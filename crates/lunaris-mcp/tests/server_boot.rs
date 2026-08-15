@@ -13,13 +13,14 @@
 //! tools. It exercises router validation for EVERY tool, not one response type,
 //! so reintroducing a non-object response schema on ANY future tool fails here.
 //!
-//! Backend is whatever `lunaris-test-harness` resolves — an ephemeral
-//! child-process Moon, degrading to `memory://` where no Moon binary exists
-//! (0.7.0 port off the hard-coded scheme). No GGUF is required either way; the
-//! embedder is lazy and never loads here, so the test stays light and runs
-//! under the default feature set in CI. Note the harness SPAWNS a prebuilt
-//! `moon` binary — it does not enable `embedded-moon`, so this test binary
-//! still never links the Moon server (CLAUDE.md invariant).
+//! Backend is a `lunaris-test-harness` ephemeral child-process Moon, passed in
+//! via `--storage` — which since 0.7.0 is mandatory (there is no SQLite
+//! default left to fall back to; `no_storage_refuses_to_boot_with_the_
+//! quickstart` below pins the refusal). No GGUF is required; the embedder is
+//! lazy and never loads here, so the test stays light and runs under the
+//! default feature set in CI. Note the harness SPAWNS a prebuilt `moon`
+//! binary — it does not enable `embedded-moon`, so this test binary still
+//! never links the Moon server (CLAUDE.md invariant).
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -111,4 +112,58 @@ async fn server_boots_and_lists_all_tools() {
         .expect("server did not exit within 15s of stdin EOF")
         .expect("await child exit");
     assert!(status.success(), "server exited non-zero: {status:?}");
+}
+
+/// 0.7.0: with no `--storage` and no `LUNARIS_MCP_STORAGE`, the server must
+/// REFUSE to boot and say what to do about it.
+///
+/// The shipped default was a per-scope SQLite file. Deleting the backend
+/// without deleting the default would have left the binary "starting" against
+/// a URL every tool call then fails on — the worst outcome for a stdio server
+/// whose client shows tool errors, not startup logs.
+///
+/// Driven against the real binary with an EMPTY env for both spellings, so it
+/// also proves the clap `env =` fallback does not resurrect a value from the
+/// developer's shell.
+///
+/// Skipped under `--features embedded-moon`: that build DOES have a default
+/// (the Moon it launches in-process), and it is a dev/test build that never
+/// ships (CLAUDE.md invariant).
+#[cfg(not(feature = "embedded-moon"))]
+#[tokio::test]
+async fn no_storage_refuses_to_boot_with_the_quickstart() {
+    let bin = env!("CARGO_BIN_EXE_lunaris-mcp");
+
+    let out = tokio::time::timeout(
+        Duration::from_secs(60),
+        Command::new(bin)
+            .env_remove("LUNARIS_MCP_STORAGE")
+            .env("LUNARIS_MCP_SKIP_STAGE", "1")
+            .env("LUNARIS_MCP_SCOPE", "ci-no-storage-test")
+            .env("LUNARIS_MCP_LOG", "error")
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await
+    .expect("binary must fail fast, not hang waiting on stdio")
+    .expect("run lunaris-mcp binary");
+
+    assert!(!out.status.success(), "a storage-less start must not succeed: {:?}", out.status);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for needle in [
+        "LUNARIS_MCP_STORAGE",
+        "--storage",
+        "moon://",
+        "--shards 1",
+        "docs/operations/external-moon.md",
+        "lunaris-migrate",
+    ] {
+        assert!(stderr.contains(needle), "startup refusal must mention {needle}:\n{stderr}");
+    }
+    // The dead default must not be advertised anywhere in the refusal except
+    // as history — never as something the operator could still reach for.
+    assert!(
+        !stderr.contains("sqlite:///<HOME>"),
+        "the retired SQLite default must not be offered as a way out:\n{stderr}"
+    );
 }

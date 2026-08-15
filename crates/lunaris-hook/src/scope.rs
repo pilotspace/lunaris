@@ -10,14 +10,20 @@
 //! the one in `lunaris-mcp`. Both point at the same `~/.lunaris/scopes.json`
 //! on disk. Neither binary depends on the other.
 //!
-//! # Storage URL default (W5 fix)
+//! # Storage URL resolution (W5 fix; no-default since 0.7.0)
 //!
-//! Default is `sqlite://~/.lunaris/<scope>.db` — mirrors `lunaris-mcp`'s
-//! `resolve_storage_url` in `state.rs` (per-scope partition). ROADMAP SC#1
-//! prose says "memory.db" but the canonical pattern from state.rs is
-//! `<scope>.db`. Both binaries derive identical scopes → they naturally write
-//! to the same file. Override via `LUNARIS_STORE_URL` (W7 fix — no
-//! `LUNARIS_HOOK_STORAGE` alias; single shared env var across both binaries).
+//! Two sources, in order: `LUNARIS_STORE_URL` (W7 fix — no
+//! `LUNARIS_HOOK_STORAGE` alias; single shared env var across both binaries),
+//! then a live `lunaris-contextd` embedded Moon discovered via
+//! `~/.lunaris/contextd-moon.url`.
+//!
+//! There is **no third step**. Through 0.6.x this function ended in
+//! `sqlite://~/.lunaris/<scope>.db`; 0.7.0 deleted the embedded backend, so
+//! that line would now mint a URL `lunaris::open` refuses. Rather than defer
+//! the failure to a scheme error two frames later — or invent a
+//! `moon://localhost:6380` default, which risks writing an agent's captures
+//! into whatever unrelated Moon happens to own that port — an unresolvable
+//! store is a named error carrying the external-Moon quickstart.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -152,6 +158,23 @@ pub fn resolve_with_path(
     resolve_with(cwd, &store, override_)
 }
 
+/// The operator exit ramp printed when no storage URL can be resolved.
+///
+/// One constant so the env-var path, the discovery path, and any future caller
+/// cannot drift into telling an operator three different stories.
+pub const NO_STORE_URL_HELP: &str = "\
+no Lunaris store is reachable: `LUNARIS_STORE_URL` is unset and no live \
+lunaris-contextd Moon is advertised at `~/.lunaris/contextd-moon.url`. \
+0.7.0 is Moon-only — the per-scope `sqlite:///<HOME>/.lunaris/<scope>.db` \
+fallback was deleted with the embedded backend, and there is deliberately no \
+replacement default (guessing a port could route an agent's captures into an \
+unrelated Moon). Stand one up:\n  \
+curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh\n  \
+moon --bind 127.0.0.1 --port 6380 --shards 1 --dir ~/.lunaris/moon\n\
+then export LUNARIS_STORE_URL=moon://127.0.0.1:6380 . Moon MUST run with \
+`--shards 1` (Lunaris ingest is a single-shard TXN). Full recipe — durability, \
+health checks, container flags: docs/operations/external-moon.md.";
+
 /// Derive the storage URL for the given scope.
 ///
 /// Priority (W5 + W7 fix + contextd embedded-moon unification):
@@ -160,11 +183,11 @@ pub fn resolve_with_path(
 /// 2. contextd's embedded Moon, discovered via `~/.lunaris/contextd-moon.url`
 ///    and liveness-probed (see `discover_contextd_moon`). This is what keeps
 ///    the ONE-SHOT hook binary and the contextd daemon writing to the SAME
-///    store when contextd bundles Moon in-process — without it the hook's
-///    direct open would split-brain into per-scope SQLite while contextd
-///    captures land in Moon.
-/// 3. `sqlite:///<HOME>/.lunaris/<scope>.db` — per-scope partition, mirrors
-///    `lunaris-mcp/src/state.rs::resolve_storage_url` exactly.
+///    store when contextd bundles Moon in-process.
+///
+/// Anything else is [`ScopeResolveError::NoStoreUrl`] carrying
+/// [`NO_STORE_URL_HELP`]. Step 3 used to be a per-scope SQLite file; 0.7.0
+/// deleted that backend (see the module docs).
 ///
 /// Both binaries derive identical scopes for the same repo AND resolve through
 /// this same function, so they naturally converge on one store per priority
@@ -182,15 +205,20 @@ pub fn resolve_storage_url(scope: &Scope) -> Result<String, ScopeResolveError> {
 /// explicitly so tests can point it at a tempdir (no env mutation: `set_var`
 /// is `unsafe fn` in edition 2024 and this crate forbids unsafe). The env
 /// override stays in the public wrapper.
+///
+/// `scope` is no longer read: it only ever named the per-scope SQLite file.
+/// The parameter is kept so every call site and the discovery contract stay
+/// put, and so re-introducing a scope-partitioned store later is a one-line
+/// change rather than a signature break.
 pub fn resolve_storage_url_at(
     scope: &Scope,
     lunaris_dir: &Path,
 ) -> Result<String, ScopeResolveError> {
+    let _ = scope;
     if let Some(url) = discover_contextd_moon(&lunaris_dir.join(CONTEXTD_MOON_URL_FILE)) {
         return Ok(url);
     }
-    std::fs::create_dir_all(lunaris_dir).map_err(ScopeResolveError::Io)?;
-    Ok(format!("sqlite://{}", lunaris_dir.join(format!("{}.db", scope.as_str())).display()))
+    Err(ScopeResolveError::NoStoreUrl(NO_STORE_URL_HELP.to_string()))
 }
 
 /// Discovery-file name under `~/.lunaris`. Written by `lunaris-contextd` when
@@ -212,10 +240,15 @@ pub const CONTEXTD_MOON_URL_FILE: &str = "contextd-moon.url";
 /// The PING (not a bare TCP connect) matters because the discovery file is
 /// never cleaned up: after contextd dies, the OS will eventually reassign
 /// its ephemeral port to some unrelated process. A random listener accepts
-/// TCP but does not answer `+PONG`, so the probe fails and we fall through
-/// to SQLite. A stale/garbage/unwritable file behaves the same — the hook
-/// must NEVER hang or error on somebody else's leftovers (fail-open,
-/// matching the hook's contract everywhere else).
+/// TCP but does not answer `+PONG`, so the probe fails and discovery is
+/// declined. A stale/garbage/unwritable file behaves the same — the probe
+/// must NEVER hang or propagate somebody else's leftovers as an error.
+///
+/// Declining is not the same as failing open: since 0.7.0 there is no SQLite
+/// beneath this step, so a declined discovery ends in
+/// [`ScopeResolveError::NoStoreUrl`]. What this function still guarantees is
+/// that the *reason* is "nothing live was advertised" rather than a hang or a
+/// parse error from a file no one owns.
 fn discover_contextd_moon(url_file: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(url_file).ok()?;
     let url = raw.trim();
@@ -253,14 +286,35 @@ mod discovery_tests {
         Scope::new("test-discovery-scope").unwrap()
     }
 
-    #[test]
-    fn no_discovery_file_falls_through_to_sqlite() {
-        let tmp = tempfile::tempdir().unwrap();
-        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
+    /// Assert the no-store outcome: a NAMED error whose text an operator can
+    /// act on without reading the source.
+    ///
+    /// Each of these cases used to assert `url.starts_with("sqlite://")`. The
+    /// claim being made was never "SQLite" — it was "this discovery input is
+    /// not trusted". With the fallback gone, the same claim is that the
+    /// resolver refuses, and refuses *legibly*: naming the env var to set, the
+    /// `--shards 1` requirement Moon ingest depends on, and the runbook.
+    #[track_caller]
+    fn assert_refused_with_exit_ramp(result: Result<String, ScopeResolveError>) {
+        let Err(err) = result else {
+            panic!("untrusted/absent discovery must not resolve a store URL, got: {result:?}");
+        };
         assert!(
-            url.starts_with("sqlite://") && url.ends_with("test-discovery-scope.db"),
-            "absent discovery file must yield per-scope sqlite, got: {url}"
+            matches!(err, ScopeResolveError::NoStoreUrl(_)),
+            "must be the named NoStoreUrl variant, got: {err:?}"
         );
+        let msg = err.to_string();
+        for needle in
+            ["LUNARIS_STORE_URL", "moon://", "--shards 1", "docs/operations/external-moon.md"]
+        {
+            assert!(msg.contains(needle), "exit ramp must mention {needle}: {msg}");
+        }
+    }
+
+    #[test]
+    fn no_discovery_file_is_a_named_refusal() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
     }
 
     /// Minimal RESP responder standing in for contextd's embedded Moon:
@@ -283,7 +337,7 @@ mod discovery_tests {
     }
 
     #[test]
-    fn live_discovery_endpoint_wins_over_sqlite() {
+    fn live_discovery_endpoint_resolves() {
         let (listener, port) = spawn_pong_listener();
         let responder = answer_pong(listener);
         let tmp = tempfile::tempdir().unwrap();
@@ -296,13 +350,13 @@ mod discovery_tests {
         assert_eq!(
             url,
             format!("moon://127.0.0.1:{port}"),
-            "live PONG-answering endpoint must be preferred over sqlite"
+            "a live PONG-answering endpoint is the only way this resolver succeeds"
         );
         responder.join().unwrap();
     }
 
     #[test]
-    fn tcp_accept_without_pong_falls_through_to_sqlite() {
+    fn tcp_accept_without_pong_is_not_trusted() {
         // A foreign process on contextd's reused ephemeral port accepts TCP
         // but does not speak RESP — discovery must reject it (this is why
         // the probe is a PING, not a bare connect: the discovery file is
@@ -324,11 +378,7 @@ mod discovery_tests {
             format!("moon://127.0.0.1:{port}\n"),
         )
         .unwrap();
-        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
-        assert!(
-            url.starts_with("sqlite://"),
-            "a non-RESP listener must not be trusted as the embedded Moon, got: {url}"
-        );
+        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
         silent.join().unwrap();
     }
 
@@ -339,15 +389,11 @@ mod discovery_tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "moon://192.0.2.10:6379\n")
             .unwrap();
-        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
-        assert!(
-            url.starts_with("sqlite://"),
-            "non-loopback discovery address must fall through to sqlite, got: {url}"
-        );
+        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
     }
 
     #[test]
-    fn stale_discovery_file_falls_through_to_sqlite() {
+    fn stale_discovery_file_is_not_trusted() {
         // Bind then DROP the listener — the advertised port is dead, exactly
         // like a discovery file left behind by a crashed contextd.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -359,22 +405,14 @@ mod discovery_tests {
             format!("moon://127.0.0.1:{port}\n"),
         )
         .unwrap();
-        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
-        assert!(
-            url.starts_with("sqlite://"),
-            "dead discovery endpoint must fall through to sqlite, got: {url}"
-        );
+        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
     }
 
     #[test]
-    fn garbage_discovery_file_falls_through_to_sqlite() {
+    fn garbage_discovery_file_is_not_trusted() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "redis://not-a-moon-url:abc\n")
             .unwrap();
-        let url = resolve_storage_url_at(&scope(), tmp.path()).unwrap();
-        assert!(
-            url.starts_with("sqlite://"),
-            "unparseable discovery file must fall through to sqlite, got: {url}"
-        );
+        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
     }
 }

@@ -3896,6 +3896,12 @@ mod tests {
         std::fs::create_dir_all(repo.path().join("src")).expect("mkdir src");
         std::fs::write(repo.path().join("src/lib.rs"), "fn main() {}").expect("write lib.rs");
         git_commit_all(repo.path(), "touch lib.rs");
+        // The control recall above primed `git_anchor`'s 5s TTL caches with
+        // the PRE-move HEAD and an empty anchor diff. Without dropping them,
+        // the recall below is answered from that snapshot and the memory looks
+        // fresh — the production TTL would be under test instead of the
+        // staleness pass. Only this repo's entries are dropped.
+        crate::git_anchor::forget_cwd_for_test(repo.path());
 
         let resp = svc
             .handle(ContextRequest::RecallForPrompt {

@@ -93,9 +93,23 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     // the native Gemma backend (feature build + LUNARIS_EXTRACT_GEMMA_PATH); a
     // handle carrying only NoopExtractor (`applies() == false`) → SKIP. Never
     // FAIL on a merely-absent extractor.
-    let url = std::env::var("MOON_URL")
-        .or_else(|_| std::env::var("LUNARIS_URL"))
-        .unwrap_or_else(|_| "memory://".to_string());
+    // Store URL is REQUIRED — there is no default, and deliberately so.
+    //
+    // Through 0.6.x this fell back to `"memory://"`, which 0.7.0 deleted. The
+    // fix is not a new default (`moon://localhost:6380` would be worse: a bench
+    // that silently picks a store can silently pick the WRONG store, and this
+    // machine's 6381 is a live personal memory store). An unset variable is a
+    // hard error naming both spellings, so an operator who meant to point at
+    // the dedicated bench Moon finds out before the run, not after.
+    let url = match std::env::var("MOON_URL").or_else(|_| std::env::var("LUNARIS_URL")) {
+        Ok(u) if !u.trim().is_empty() => u,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "ER-F1 needs a store URL and has no default: set MOON_URL (or LUNARIS_URL) to a \
+                 `moon://host:port`. Point it at a DEDICATED bench Moon — never at a live store."
+            ));
+        }
+    };
     let lunaris = match lunaris::Lunaris::open(&url).await {
         Ok(l) => l,
         Err(e) => {
@@ -249,15 +263,25 @@ mod tests {
     #[tokio::test]
     async fn run_skips_cleanly_without_extractor_env() {
         let mut results: Vec<EvalRow> = Vec::new();
-        super::run(&mut results).await.unwrap();
-        assert_eq!(results.len(), 1);
+        let outcome = super::run(&mut results).await;
+
         // SKIP-not-FAIL invariant (Reject: false_fail_on_absent): with the
         // extractor env absent the harness MUST emit SKIPPED, never a 0.0→FAIL.
         // A live run with weights present may legitimately PASS/FAIL — assert
         // the strict invariant only when the gating capability is absent.
         if std::env::var("LUNARIS_EXTRACT_GEMMA_PATH").is_err() {
+            outcome.expect("absent extractor weights must SKIP, never error");
+            assert_eq!(results.len(), 1);
             assert_eq!(results[0].status, "SKIPPED");
+        } else if let Err(e) = outcome {
+            // The only hard error `run` can raise past the extractor gate is the
+            // 0.7.0 missing-store-URL refusal (there is no `memory://` default
+            // any more). Assert it names the fix rather than swallowing it.
+            let msg = e.to_string();
+            assert!(msg.contains("MOON_URL"), "unexpected hard error: {msg}");
+            return;
         } else {
+            assert_eq!(results.len(), 1);
             assert!(matches!(results[0].status.as_str(), "SKIPPED" | "PASS" | "FAIL"));
         }
         assert_eq!(results[0].harness, HARNESS);

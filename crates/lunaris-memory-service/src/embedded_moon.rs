@@ -121,51 +121,40 @@ pub enum EmbeddedMoonError {
 ///   `LUNARIS_STORE_URL` bypass regardless of the feature flag.
 /// - If `launcher` returns `Ok(guard)`, return
 ///   `("moon://127.0.0.1:<port>", Some(guard))`.
-/// - If `launcher` returns `Err(e)`, emit `tracing::warn` (circuit-breaker),
-///   fall back to `sqlite:///<HOME>/.lunaris/<scope>.db`, and return
-///   `(url, None)`. The caller **always starts** — Moon bring-up failure is
-///   NOT fatal.
+/// - If `launcher` returns `Err(e)`, **propagate it**.
+///
+/// ## The circuit breaker is gone (0.7.0)
+///
+/// This used to swallow a launch failure, `tracing::warn`, and hand back
+/// `sqlite:///<HOME>/.lunaris/<scope>.db` so the caller "always starts". That
+/// backend no longer exists, so the only thing such a fallback could still
+/// produce is a URL `Lunaris::open` rejects two frames later, with the
+/// original launch failure already discarded into a log line nobody reads on a
+/// stdio transport. Failing here keeps the *cause* attached to the failure —
+/// and a server that starts against no store was never the useful outcome; it
+/// answered every tool call with an error anyway.
+///
+/// `scope` is therefore no longer a parameter: it existed only to name the
+/// SQLite file.
 ///
 /// No `std::env::set_var` / `remove_var` anywhere — those are `unsafe fn` in
 /// edition 2024 and forbidden by the callers' `#![forbid(unsafe_code)]`.
 pub async fn decide_storage_with_launcher<F, Fut>(
     override_: Option<&str>,
-    scope: &lunaris_core::Scope,
     launcher: F,
-) -> (String, Option<EmbeddedMoonGuard>)
+) -> Result<(String, Option<EmbeddedMoonGuard>), EmbeddedMoonError>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<EmbeddedMoonGuard, EmbeddedMoonError>>,
 {
     if let Some(url) = override_ {
         // Explicit storage override: bypass embedded Moon entirely.
-        return (url.to_owned(), None);
+        return Ok((url.to_owned(), None));
     }
 
-    match launcher().await {
-        Ok(guard) => {
-            let url = format!("moon://127.0.0.1:{}", guard.port);
-            (url, Some(guard))
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "embedded Moon launch failed — circuit-breaking to SQLite default"
-            );
-            // Replicate the SQLite URL construction from the callers'
-            // resolve_storage_url helpers (avoids a circular dep). Ensure the
-            // parent directory exists before returning the fallback URL —
-            // without this, Lunaris::open would fail on a fresh host where
-            // ~/.lunaris has not been created yet.
-            let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-            let dir = home.join(".lunaris");
-            // Best-effort dir creation — if it fails, Lunaris::open will
-            // surface the error with a better diagnostic than a panic here.
-            let _ = std::fs::create_dir_all(&dir);
-            let path = dir.join(format!("{}.db", scope.as_str()));
-            (format!("sqlite://{}", path.display()), None)
-        }
-    }
+    let guard = launcher().await?;
+    let url = format!("moon://127.0.0.1:{}", guard.port);
+    Ok((url, Some(guard)))
 }
 
 // ── Real launcher ─────────────────────────────────────────────────────────────
@@ -294,19 +283,18 @@ mod tests {
     // decide_storage_with_launcher opt-out — override bypasses launcher.
     #[tokio::test]
     async fn decide_storage_override_bypasses_launcher() {
-        use lunaris_core::Scope;
-        let scope = Scope::new("test-vuz-optout").unwrap();
         let launcher_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let lc = launcher_called.clone();
         let (url, guard) =
-            decide_storage_with_launcher(Some("sqlite:///test.db"), &scope, move || {
+            decide_storage_with_launcher(Some("moon://db.internal:6380"), move || {
                 lc.store(true, std::sync::atomic::Ordering::Relaxed);
                 async move {
                     Err(EmbeddedMoonError::Timeout { port: 0, data_dir: "unused".into() })
                 }
             })
-            .await;
-        assert_eq!(url, "sqlite:///test.db");
+            .await
+            .expect("an explicit override never consults the launcher, so it cannot fail");
+        assert_eq!(url, "moon://db.internal:6380");
         assert!(guard.is_none(), "override must produce no guard");
         assert!(
             !launcher_called.load(std::sync::atomic::Ordering::Relaxed),
@@ -314,32 +302,34 @@ mod tests {
         );
     }
 
-    // decide_storage_with_launcher fallback — Err from launcher → sqlite URL.
+    // A failed launch is TERMINAL. This test used to assert the opposite —
+    // that the seam swallowed the error and handed back a sqlite:// URL. 0.7.0
+    // deleted that backend, so the "keep going" branch could only produce a
+    // URL the very next call rejects, minus the reason why.
     // No env mutation needed: the DI seam accepts a stub closure.
     #[tokio::test]
-    async fn decide_storage_launcher_failure_falls_back_to_sqlite() {
-        use lunaris_core::Scope;
-        let scope = Scope::new("test-vuz-fallback").unwrap();
-        let (url, guard) = decide_storage_with_launcher(None, &scope, || async move {
-            Err(EmbeddedMoonError::Timeout { port: 0, data_dir: "simulated".into() })
+    async fn decide_storage_launcher_failure_propagates_the_cause() {
+        let err = decide_storage_with_launcher(None, || async move {
+            Err(EmbeddedMoonError::Timeout { port: 4242, data_dir: "simulated".into() })
         })
-        .await;
-        assert!(url.starts_with("sqlite://"), "fallback URL must be sqlite://, got: {url}");
-        assert!(guard.is_none(), "failed launch must produce no guard");
+        .await
+        .expect_err("a failed launch must surface, not fall back");
+        let msg = err.to_string();
+        assert!(msg.contains("4242"), "the cause must carry the port it tried: {msg}");
+        assert!(msg.contains("simulated"), "the cause must carry the data dir: {msg}");
     }
 
     // decide_storage_with_launcher happy path — real launcher → moon:// URL.
     #[tokio::test]
     async fn decide_storage_real_launcher_returns_moon_url() {
-        use lunaris_core::Scope;
-        let scope = Scope::new("test-vuz-happypath").unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap().to_owned();
-        let (url, guard) = decide_storage_with_launcher(None, &scope, move || {
+        let (url, guard) = decide_storage_with_launcher(None, move || {
             let dir = data_dir.clone();
             async move { launch_embedded_moon(&dir).await }
         })
-        .await;
+        .await
+        .expect("real launcher must bring Moon up");
         assert!(url.starts_with("moon://"), "real launcher must produce moon:// URL, got: {url}");
         assert!(guard.is_some(), "real launcher must produce a guard");
         if let Some(g) = guard {
