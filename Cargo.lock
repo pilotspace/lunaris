@@ -2968,6 +2968,7 @@ dependencies = [
  "futures",
  "hex",
  "lunaris-core",
+ "lunaris-test-harness",
  "moondb",
  "parking_lot",
  "redis 1.2.0",

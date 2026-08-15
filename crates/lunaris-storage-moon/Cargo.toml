@@ -49,6 +49,13 @@ hex            = { workspace = true }
 
 [dev-dependencies]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Dev-dependency cycle (storage-moon --[dev]--> harness --> lunaris -->
+# storage-moon), which Cargo explicitly permits — same precedent as
+# crates/lunaris's own dev-dep on the harness. Used by dim_configurable.rs:
+# the global-index dim guardrail tests each need a PRIVATE Moon (whichever
+# dim connects first wins the shared instance, so the two tests can never
+# both pass against one server).
+lunaris-test-harness = { workspace = true }
 
 [features]
 default      = []
