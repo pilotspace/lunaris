@@ -18,16 +18,20 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use lunaris_test_harness::open_test_store;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 #[tokio::test]
 async fn boots_without_weights_and_recall_errors_honestly() {
     let bin = env!("CARGO_BIN_EXE_lunaris-mcp");
+    // 0.7.0 port off `memory://`. Bound for the child's whole lifetime — it
+    // owns the Moon.
+    let store = open_test_store().await;
 
     let mut child = Command::new(bin)
         .arg("--storage")
-        .arg("memory://")
+        .arg(store.url())
         // Force the resolve chain to have NO usable backend: the GGUF path is
         // nonexistent, staging is skipped, and contextd is disabled so the
         // proxy must serve Direct. Deliberately NO LUNARIS_MCP_SKIP_EMBEDDER_PROBE.

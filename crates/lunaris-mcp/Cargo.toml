@@ -100,3 +100,8 @@ serde_json = { workspace = true }
 lunaris-consolidate = { workspace = true }
 lunaris-core = { workspace = true }
 futures = { workspace = true }
+# 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
+# in crates/lunaris-test-harness) so tests stop opening `memory://` directly.
+# Dev-only; a dev-dependency cycle through `lunaris` that Cargo permits. NOTE
+# this is NOT the `embedded-moon` feature — nothing here links the Moon server.
+lunaris-test-harness = { workspace = true }

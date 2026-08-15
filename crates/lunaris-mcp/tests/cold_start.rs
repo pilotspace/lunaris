@@ -19,7 +19,8 @@
 //! The test sets four env vars to prevent the binary from touching real
 //! developer caches:
 //!
-//! - `LUNARIS_MCP_STORAGE=memory://` — ephemeral in-process DB; no disk I/O.
+//! - `LUNARIS_MCP_STORAGE=<harness store>` — a disposable, empty database
+//!   (ephemeral child-process Moon, else `memory://`); no developer-cache I/O.
 //! - `LUNARIS_EMBEDDER_DIR=<empty_tempdir>` — FP16 weights missing → fast
 //!   fallback to `NoopEmbedder` (zero vectors). Without this, a dev machine
 //!   with `~/.cache/lunaris/models/granite-embedding-311m-multilingual-r2/`
@@ -77,6 +78,7 @@
 //! before running integration tests, so this overhead is absorbed before the
 //! warmup spawn. `Instant::now()` for the timed run starts AFTER the warmup.
 
+use lunaris_test_harness::open_test_store;
 use std::time::{Duration, Instant};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -154,11 +156,16 @@ async fn cold_start_under_500ms_no_gguf_staged() {
 
     // Shared env-var builder — same vars applied to both warmup and timed runs.
     // Extracted here so we can't accidentally mis-set one run vs the other.
+    // Resolved once so warmup and timed runs share one store, exactly as the
+    // single `memory://` literal used to imply. Bound for both children.
+    let store = open_test_store().await;
+    let store_url = store.url().to_owned();
     let mk_cmd = || {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_lunaris-mcp"));
         cmd
-            // Ephemeral in-memory storage — no disk I/O, no SQLite migrations.
-            .env("LUNARIS_MCP_STORAGE", "memory://")
+            // Ephemeral disposable storage — no developer-cache I/O, no
+            // SQLite migrations (0.7.0 port off `memory://`).
+            .env("LUNARIS_MCP_STORAGE", store_url.as_str())
             // Scope override — skips git-remote derivation (filesystem I/O).
             .env("LUNARIS_MCP_SCOPE", "cold-start-test")
             // Redirect GGUF stager away from ~/.lunaris/models/ so the lazy
@@ -227,8 +234,8 @@ async fn cold_start_under_500ms_no_gguf_staged() {
     // ── 1. initialize ─────────────────────────────────────────────────────────
     //
     // The binary responds to `initialize` only after `AppState::bootstrap`
-    // completes. On memory:// there are no migrations, so this is effectively
-    // just tokio runtime + Lunaris::open startup time.
+    // completes. The harness store has no migrations to run, so this is
+    // effectively just tokio runtime + Lunaris::open startup time.
     let init_req = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -273,7 +280,7 @@ async fn cold_start_under_500ms_no_gguf_staged() {
     //
     // Stop the clock immediately after the last byte of the `tools/list`
     // response arrives. The interval covers: OS process creation, tokio
-    // runtime init, `Lunaris::open` (memory:// migrations are a no-op),
+    // runtime init, `Lunaris::open` (the harness store has no migrations),
     // rmcp handshake, and the `tools/list` response serialisation.
     //
     // Measured warm-cache baselines (M1 Pro, debug build):

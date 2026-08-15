@@ -358,12 +358,12 @@ mod tests {
 
     use std::sync::Arc;
 
-    use lunaris::Lunaris;
     use lunaris_core::{Scope, StubEmbedder};
     use lunaris_memory_service::ingest::IngestParams;
     use lunaris_memory_service::recall::RecallParams;
 
     use crate::state::AppState;
+    use lunaris_test_harness::{TestStore, open_test_engine_with_embedder};
 
     /// Deterministic constructor (no env / fs) for state-machine tests.
     fn proxy_for_test(breaker_n: usize, initial_route: u8) -> MemoryProxy {
@@ -388,18 +388,26 @@ mod tests {
         }
     }
 
-    /// In-process AppState (memory:// + StubEmbedder, no GGUF) for the direct
-    /// fallback path.
-    async fn fresh_state(scope_name: &str) -> AppState {
+    /// In-process AppState (harness-issued ephemeral Moon + StubEmbedder, no
+    /// GGUF) for the direct fallback path.
+    ///
+    /// 0.7.0 port off `memory://`. `AppState` holds an `Arc<Lunaris>`, so the
+    /// deref-transparent `TestEngine` is split via `into_parts()`; the returned
+    /// [`TestStore`] owns the Moon child and must stay bound for the test.
+    ///
+    /// This is the harness, NOT the `embedded-moon` feature — no test binary in
+    /// this crate links the Moon server (CLAUDE.md invariant).
+    async fn fresh_state(scope_name: &str) -> (AppState, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+        let (lunaris, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
-        AppState {
+        let state = AppState {
             lunaris: Arc::new(lunaris),
             scope,
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None,
-        }
+        };
+        (state, store)
     }
 
     #[test]
@@ -465,7 +473,7 @@ mod tests {
     /// guarantee at the heart of the fallback design.
     #[tokio::test]
     async fn contextd_down_falls_back_to_direct_and_serves_the_call() {
-        let state = fresh_state("test-proxy-fallback").await;
+        let (state, _store) = fresh_state("test-proxy-fallback").await;
         // A nonexistent socket → connect refused → transport strike → Direct.
         let dead = PathBuf::from("/nonexistent/lunaris-contextd-does-not-exist.sock");
         let proxy = proxy_for_test_with_socket(1, ROUTE_SOCKET, Some(dead));
@@ -497,7 +505,7 @@ mod tests {
     async fn direct_fallback_is_byte_identical_to_bare_dispatch() {
         // Recall touches the embedder on the direct path — skip the GGUF stage.
         crate::tools::staging::skip_stage_for_tests();
-        let state = fresh_state("test-proxy-parity").await;
+        let (state, _store) = fresh_state("test-proxy-parity").await;
 
         // Seed one episode through the proxy (socket down → direct).
         let dead = PathBuf::from("/nonexistent/parity.sock");
@@ -561,7 +569,7 @@ mod tests {
     #[tokio::test]
     async fn embed_ops_attempt_socket_even_when_latched_direct() {
         crate::tools::staging::skip_stage_for_tests();
-        let state = fresh_state("test-proxy-embed-retry").await;
+        let (state, _store) = fresh_state("test-proxy-embed-retry").await;
         let dead = PathBuf::from("/nonexistent/embed-retry.sock");
         let proxy = proxy_for_test_with_socket(usize::MAX, ROUTE_DIRECT, Some(dead));
 

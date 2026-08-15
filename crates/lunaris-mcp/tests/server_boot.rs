@@ -13,13 +13,18 @@
 //! tools. It exercises router validation for EVERY tool, not one response type,
 //! so reintroducing a non-object response schema on ANY future tool fails here.
 //!
-//! Backend is `memory://` (no Moon, no GGUF required; the embedder is lazy and
-//! never loads here), so the test is light and runs under the default feature
-//! set in CI.
+//! Backend is whatever `lunaris-test-harness` resolves — an ephemeral
+//! child-process Moon, degrading to `memory://` where no Moon binary exists
+//! (0.7.0 port off the hard-coded scheme). No GGUF is required either way; the
+//! embedder is lazy and never loads here, so the test stays light and runs
+//! under the default feature set in CI. Note the harness SPAWNS a prebuilt
+//! `moon` binary — it does not enable `embedded-moon`, so this test binary
+//! still never links the Moon server (CLAUDE.md invariant).
 
 use std::process::Stdio;
 use std::time::Duration;
 
+use lunaris_test_harness::open_test_store;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
@@ -47,10 +52,12 @@ const EXPECTED_TOOLS: &[&str] = &[
 #[tokio::test]
 async fn server_boots_and_lists_all_tools() {
     let bin = env!("CARGO_BIN_EXE_lunaris-mcp");
+    // Bound for the child's whole lifetime — it owns the Moon.
+    let store = open_test_store().await;
 
     let mut child = Command::new(bin)
         .arg("--storage")
-        .arg("memory://")
+        .arg(store.url())
         .env("LUNARIS_MCP_SKIP_STAGE", "1")
         .env("LUNARIS_MCP_SCOPE", "ci-boot-test")
         .env("LUNARIS_MCP_LOG", "error")
