@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lunaris::{Episode, Lunaris};
+use lunaris_test_harness::open_test_store;
 
 /// Minimal OpenAI-compatible server: serves every connection a canned
 /// chat-completions body whose content is an empty-but-valid extraction,
@@ -92,7 +93,11 @@ async fn env_configured_openai_compat_extractor_serves_the_ingest_path() {
         std::env::set_var("LUNARIS_GRAPH_ENABLED", "1");
     }
 
-    let handle = Lunaris::open("memory://").await.expect("open memory://");
+    // 0.7.0 port off `memory://`. `Lunaris::open` (not the harness's
+    // `open_test_engine`) because this test discriminates on the RESOLVED
+    // extractor/embedder, which a harness-supplied StubEmbedder would mask.
+    let store = open_test_store().await;
+    let handle = Lunaris::open(store.url()).await.expect("open test store");
     let ep = Episode::new(
         lunaris_core::Scope::dev(),
         "remote-llm-wired.md",

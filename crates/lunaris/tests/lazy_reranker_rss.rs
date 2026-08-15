@@ -32,6 +32,7 @@ use std::sync::Arc;
 use lunaris::Lunaris;
 use lunaris_core::{Embedder, NoopEmbedder};
 use lunaris_rerank::RerankCandidate;
+use lunaris_test_harness::open_test_store;
 
 const RSS_TOLERANCE_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
 
@@ -51,10 +52,16 @@ async fn open_does_not_materialize_gguf_into_rss() {
         return;
     }
 
+    // 0.7.0 port off `memory://`: the store is resolved BEFORE the baseline
+    // sample so the harness's own allocations (and the Moon child's spawn) sit
+    // under `rss_before` rather than inside the 100 MiB open() budget. The Moon
+    // itself is a separate process and contributes no RSS to this one.
+    let store = open_test_store().await;
+
     let rss_before = sample_rss().expect("RSS sample (before open)");
 
     let embedder: Arc<dyn Embedder> = Arc::new(NoopEmbedder::new(768));
-    let handle = Lunaris::open_with_embedder("memory://", embedder)
+    let handle = Lunaris::open_with_embedder(store.url(), embedder)
         .await
         .expect("open_with_embedder must succeed");
 

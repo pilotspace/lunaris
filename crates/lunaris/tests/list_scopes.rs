@@ -1,30 +1,38 @@
 //! `Lunaris::list_scopes` — high-level pass-through to
-//! `StoragePort::list_scopes`, validated against the embedded SQLite backend.
+//! `StoragePort::list_scopes`, validated against a real backend.
 //!
-//! These tests do NOT require Moon / Postgres; the embedded backend
-//! (`memory://`) provides a real `StoragePort` implementation of `list_scopes`
-//! that exercises the full path from `Lunaris::list_scopes` through the trait
-//! pass-through to the backend impl.
+//! The store comes from `lunaris-test-harness` (0.7.0 port off `memory://`):
+//! an ephemeral child-process Moon, degrading to the embedded backend where no
+//! Moon binary resolves. Either way it is a real `StoragePort` implementation
+//! of `list_scopes`, so the test exercises the full path from
+//! `Lunaris::list_scopes` through the trait pass-through to the backend impl.
 
 use lunaris::Lunaris;
 use lunaris_core::{Scope, WriteOp, keyspace::episode_key};
+use lunaris_test_harness::{TestStorage, open_test_storage};
 use ulid::Ulid;
 
-/// Helper — open a memory-backed Lunaris handle, bypassing the real embedder
+/// Helper — open a harness-backed Lunaris handle, bypassing the real embedder
 /// resolution path which downloads model weights.
-async fn open_mem() -> Lunaris {
+///
+/// Returns the [`TestStorage`] guard alongside the handle: it owns the Moon
+/// child process, and dropping it would take the backend with it. `NoopEmbedder`
+/// defaults to `NOOP_DEFAULT_DIM` (768), which is the harness's storage width,
+/// so the two agree without an explicit dim.
+async fn open_mem() -> (Lunaris, TestStorage) {
     use std::sync::Arc;
 
     use lunaris_core::{HlcClock, NoopEmbedder};
-    use lunaris_storage_embedded::EmbeddedStorage;
 
-    let storage = EmbeddedStorage::connect("memory://").await.expect("memory storage");
-    Lunaris::with_parts(Arc::new(storage), Arc::new(NoopEmbedder::default()), HlcClock::new(0))
+    let storage = open_test_storage().await;
+    let engine =
+        Lunaris::with_parts(storage.port(), Arc::new(NoopEmbedder::default()), HlcClock::new(0));
+    (engine, storage)
 }
 
 #[tokio::test]
 async fn list_scopes_passes_through_to_storage_for_embedded_backend() {
-    let engine = open_mem().await;
+    let (engine, _storage) = open_mem().await;
 
     // Seed two scopes via direct storage writes (we cannot ingest without an
     // embedder + extractor, but list_scopes only needs the keyspace shape).
@@ -46,7 +54,7 @@ async fn list_scopes_passes_through_to_storage_for_embedded_backend() {
 
 #[tokio::test]
 async fn list_scopes_pagination_round_trips_through_high_level() {
-    let engine = open_mem().await;
+    let (engine, _storage) = open_mem().await;
     for name in ["round-1", "round-2", "round-3"] {
         let scope = Scope::new(name).expect("valid scope");
         let key = episode_key(&scope, Ulid::new());

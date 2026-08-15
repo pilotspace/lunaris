@@ -12,11 +12,13 @@ use std::sync::Arc;
 
 use lunaris::Lunaris;
 use lunaris_core::{Embedder, LunarisError, NoopEmbedder, StorageError};
+use lunaris_test_harness::open_test_store;
 
 #[tokio::test]
 async fn try_with_embedder_accepts_matching_dim() {
     let embedder: Arc<dyn Embedder> = Arc::new(NoopEmbedder::new(768));
-    let handle = Lunaris::open_with_embedder("memory://", embedder)
+    let store = open_test_store().await;
+    let handle = Lunaris::open_with_embedder(store.url(), embedder)
         .await
         .expect("open_with_embedder must succeed");
 
@@ -29,7 +31,8 @@ async fn try_with_embedder_accepts_matching_dim() {
 #[tokio::test]
 async fn try_with_embedder_rejects_mismatched_dim() {
     let embedder: Arc<dyn Embedder> = Arc::new(NoopEmbedder::new(768));
-    let handle = Lunaris::open_with_embedder("memory://", embedder)
+    let store = open_test_store().await;
+    let handle = Lunaris::open_with_embedder(store.url(), embedder)
         .await
         .expect("open_with_embedder must succeed");
 
