@@ -42,8 +42,6 @@
 
 #![cfg(feature = "bindings-it")]
 
-use std::sync::Arc;
-
 use anyhow::{Context, bail};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -57,7 +55,7 @@ use ::lunaris::Lunaris;
 /// `FixtureCorpus` ingest. Not byte-exact HLC stamps / ULIDs — those
 /// vary per run. The driver tests assert:
 ///
-/// - `scan_range("episode:conformance:", None)` returns exactly
+/// - `scan_range("lunaris:_dev_:episode:", None)` returns exactly
 ///   `episode_count * per_episode_key_count` rows.
 /// - Distinct episode IDs (ULIDs stripped from the key suffix) == `episode_count`.
 /// - Prefix matches `keys_prefix`.
@@ -73,14 +71,17 @@ pub struct GoldenReference {
     pub episode_count: usize,
     /// Number of chunks per episode (documentary — not asserted).
     pub chunk_count_per_episode: usize,
-    /// Key prefix for every ingested row. Must match
-    /// `build_episode_ops` in `src/fixtures/mod.rs` which writes
-    /// `format!("episode:conformance:{}", ep.id)`.
+    /// Key prefix for every ingested episode row. Must match what the
+    /// PUBLIC ingest path (`Lunaris::ingest`, the API all three drivers
+    /// exercise) writes: `lunaris_core::keyspace::episode_key` under
+    /// `Scope::dev()` — i.e. `lunaris:_dev_:episode:{ulid}`.
     pub keys_prefix: String,
     /// Embedding dimension (documentary — not asserted).
     pub embedding_dim: usize,
-    /// Number of KV rows written per episode. `build_episode_ops`
-    /// writes ONE `WriteOp::KvPut` per episode, so this is 1.
+    /// Number of KV rows written per episode UNDER `keys_prefix`. The
+    /// ingest pipeline writes exactly one episode row per episode (its
+    /// chunk/doctree/community rows live under other prefixes the scan
+    /// never touches), so this is 1.
     pub per_episode_key_count: usize,
 }
 
@@ -193,7 +194,7 @@ pub fn assert_structural_eq(rows: &NormalizedRows, golden: &GoldenReference) -> 
 /// 2. Ingest the FixtureCorpus (10 deterministic episodes) via
 ///    `FixtureCorpus::ingest_into(handle.storage())` — ONE
 ///    `atomic_write` per episode, per INGEST-04 invariant.
-/// 3. `scan_range(b"episode:conformance:", None)` + `try_collect`.
+/// 3. `scan_range(b"lunaris:_dev_:episode:", None)` + `try_collect`.
 /// 4. Normalize into [`NormalizedRows`].
 /// 5. [`assert_structural_eq`] against the golden reference.
 ///
@@ -229,12 +230,21 @@ async fn exercise_one_backend(
     golden: &GoldenReference,
     backend_label: &str,
 ) -> anyhow::Result<()> {
+    // Ingest through the PUBLIC pipeline (`Lunaris::ingest`), not the raw
+    // `FixtureCorpus::ingest_into` KvPuts. The Py and TS drivers wrap exactly
+    // this API, so all three drivers must exercise the same write path or the
+    // "parity" is three tests asserting three different things — which is how
+    // the golden rotted at the pre-RFC-0001 `episode:conformance:` prefix
+    // without any driver noticing (the CI row skipped for years; the first
+    // real run returned 0 rows for Py/TS while Rust passed against its own
+    // raw writes).
     let corpus = crate::fixtures::FixtureCorpus::new();
-    let storage: Arc<dyn lunaris_core::StoragePort> = handle.storage();
-    corpus
-        .ingest_into(&storage)
-        .await
-        .with_context(|| format!("ingest FixtureCorpus into {backend_label}"))?;
+    for ep in corpus.episodes() {
+        handle
+            .ingest(ep.clone())
+            .await
+            .with_context(|| format!("ingest fixture episode into {backend_label}"))?;
+    }
     let rows = collect_normalized_chunk_rows(handle, &golden.keys_prefix)
         .await
         .with_context(|| format!("scan_range on {backend_label}"))?;
@@ -255,7 +265,7 @@ mod tests {
         // `WriteOp::KvPut` per episode under the
         // `episode:conformance:` prefix).
         assert_eq!(g.episode_count, crate::fixtures::EPISODE_COUNT);
-        assert_eq!(g.keys_prefix, "episode:conformance:");
+        assert_eq!(g.keys_prefix, "lunaris:_dev_:episode:");
         assert_eq!(g.per_episode_key_count, 1);
     }
 
@@ -264,13 +274,13 @@ mod tests {
         let golden = GoldenReference {
             episode_count: 10,
             chunk_count_per_episode: 3,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             embedding_dim: 128,
             per_episode_key_count: 1,
         };
         let rows = NormalizedRows {
             total_rows: 9, // one short
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             distinct_episode_ids: 10,
         };
         let err = assert_structural_eq(&rows, &golden).unwrap_err();
@@ -282,7 +292,7 @@ mod tests {
         let golden = GoldenReference {
             episode_count: 10,
             chunk_count_per_episode: 3,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             embedding_dim: 128,
             per_episode_key_count: 1,
         };
@@ -300,13 +310,13 @@ mod tests {
         let golden = GoldenReference {
             episode_count: 10,
             chunk_count_per_episode: 3,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             embedding_dim: 128,
             per_episode_key_count: 1,
         };
         let rows = NormalizedRows {
             total_rows: 10,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             distinct_episode_ids: 8, // two duplicate keys
         };
         let err = assert_structural_eq(&rows, &golden).unwrap_err();
@@ -318,13 +328,13 @@ mod tests {
         let golden = GoldenReference {
             episode_count: 10,
             chunk_count_per_episode: 3,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             embedding_dim: 128,
             per_episode_key_count: 1,
         };
         let rows = NormalizedRows {
             total_rows: 10,
-            keys_prefix: "episode:conformance:".to_string(),
+            keys_prefix: "lunaris:_dev_:episode:".to_string(),
             distinct_episode_ids: 10,
         };
         assert!(assert_structural_eq(&rows, &golden).is_ok());

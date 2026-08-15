@@ -1,7 +1,7 @@
 {
   "episode_count": 10,
   "chunk_count_per_episode": 3,
-  "keys_prefix": "episode:conformance:",
+  "keys_prefix": "lunaris:_dev_:episode:",
   "embedding_dim": 128,
   "per_episode_key_count": 1
 }
