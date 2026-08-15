@@ -228,7 +228,7 @@ describe("Plan 08-04 — per-driver backend parity (TypeScript)", () => {
       expect(golden).toHaveProperty(required);
     }
     expect(golden.episode_count).toBe(COUNT);
-    expect(golden.keys_prefix).toBe("episode:conformance:");
+    expect(golden.keys_prefix).toBe("lunaris:_dev_:episode:");
     expect(golden.per_episode_key_count).toBe(1);
   });
 

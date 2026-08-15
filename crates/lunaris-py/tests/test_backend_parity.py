@@ -262,5 +262,5 @@ def test_golden_reference_loads():
 
     # Hardcoded invariants that match the Rust `FixtureCorpus`:
     assert golden["episode_count"] == COUNT
-    assert golden["keys_prefix"] == "episode:conformance:"
+    assert golden["keys_prefix"] == "lunaris:_dev_:episode:"
     assert golden["per_episode_key_count"] == 1
