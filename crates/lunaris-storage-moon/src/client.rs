@@ -367,7 +367,16 @@ impl MoonClient {
         // command surface Lunaris needs is named at startup instead of
         // surfacing as `ERR unknown command 'FT.SEARCH'` inside a recall leg.
         // Exactly one round-trip per connect; no per-operation cost.
-        me.version_handshake().await?;
+        let info = me.version_handshake().await?;
+        // 0.7.0 task 22 (RFC 0008 §6 Option C) — single-shard guard. Runs on the
+        // same fresh connection, immediately after the version handshake and
+        // still before any index probing, because a sharded Moon is not a
+        // Lunaris backend at all: ingest would fail mid-`TXN` and graph recall
+        // would silently return empty (`FT.NAVIGATE` never scatter-gathers).
+        // Free when the server publishes a shard count; otherwise exactly one
+        // extra round-trip per connect, and no per-operation cost. See
+        // `crate::shards`.
+        me.single_shard_guard(info.as_deref()).await?;
         // Phase 22 dim-guardrail (+ W1-1 quantization-drift warning): probe
         // existing indices BEFORE `ensure_indexes` creates anything. If any
         // index already exists at a different dim, fail fast — Moon's
@@ -410,7 +419,13 @@ impl MoonClient {
     /// `StorageError::Backend` rather than being warned past (which is what
     /// keeps `tests/op_timeout.rs` discriminating now that `INFO` is the first
     /// real command on the wire).
-    async fn version_handshake(&self) -> Result<(), StorageError> {
+    ///
+    /// ## Return value
+    ///
+    /// The raw `INFO` body when the server answered one, so the caller can hand
+    /// it to [`MoonClient::single_shard_guard`] without paying a second `INFO`
+    /// round-trip. `None` means the server refused `INFO` (the fail-open arm).
+    async fn version_handshake(&self) -> Result<Option<String>, StorageError> {
         use crate::version::{self, MoonVersionCheck};
 
         let mut typed = self.typed();
@@ -429,7 +444,7 @@ impl MoonClient {
                     self.warn_version_unverified(&format!(
                         "the server rejected the `INFO server` probe ({e})"
                     ));
-                    return Ok(());
+                    return Ok(None);
                 }
             };
 
@@ -442,7 +457,7 @@ impl MoonClient {
                     min_supported = %version::MIN_MOON_VERSION,
                     "moon: server version handshake ok"
                 );
-                Ok(())
+                Ok(Some(info))
             }
             MoonVersionCheck::Unsupported(found) => Err(StorageError::Backend(format!(
                 "moon: unsupported server version — {host}:{port} reports \
@@ -462,8 +477,94 @@ impl MoonClient {
             ))),
             MoonVersionCheck::Unknown(detail) => {
                 self.warn_version_unverified(&detail);
+                Ok(Some(info))
+            }
+        }
+    }
+
+    /// 0.7.0 task 22 — one-shot **single-shard guard** (RFC 0008 §6 Option C).
+    ///
+    /// A sharded Moon is not a Lunaris backend: ingest fails mid-`TXN` on
+    /// roughly `1 - 1/N` of connections and graph recall silently returns empty
+    /// because `FT.NAVIGATE` never scatter-gathers. [`crate::shards`] carries
+    /// the vendor-grounded evidence, the probe design, and the full policy
+    /// table; this function is only the async seam that applies it.
+    ///
+    /// `info` is the body [`MoonClient::version_handshake`] already fetched, so
+    /// the forward-compatible `num_shards` fast path (upstream ask
+    /// pilotspace/moon#497) costs nothing. When it answers the question the
+    /// co-location probe is skipped entirely; otherwise the probe is exactly one
+    /// additional round-trip, once per `connect`.
+    ///
+    /// Not re-run on reconnect, for the same reason the version handshake is
+    /// not: `ConnectionManager` re-dials the SAME endpoint, and a server cannot
+    /// change its shard count beneath a live handle.
+    async fn single_shard_guard(&self, info: Option<&str>) -> Result<(), StorageError> {
+        use crate::shards;
+
+        // 1) Free path: the server told us outright.
+        if let Some(verdict) = info.and_then(shards::classify_info) {
+            return self.apply_shard_verdict(verdict);
+        }
+
+        // 2) Co-location probe. `Err` here is a TRANSPORT fault only, and we
+        //    fail closed on it exactly as the version handshake does — which is
+        //    what keeps `tests/op_timeout.rs` discriminating.
+        let mut typed = self.typed();
+        let verdict = shards::probe_shard_topology(typed.inner_mut()).await.map_err(redis_err)?;
+        self.apply_shard_verdict(verdict)
+    }
+
+    /// Turn a [`crate::shards::ShardTopology`] verdict into the connect outcome.
+    fn apply_shard_verdict(
+        &self,
+        verdict: crate::shards::ShardTopology,
+    ) -> Result<(), StorageError> {
+        use crate::shards::ShardTopology;
+        match verdict {
+            ShardTopology::Single(detail) => {
+                tracing::debug!(
+                    moon.host = %self.host,
+                    moon.port = self.port,
+                    detail = %detail,
+                    "moon: single-shard guard ok"
+                );
                 Ok(())
             }
+            ShardTopology::Multi(detail) => Err(StorageError::Backend(
+                crate::shards::multi_shard_error(&self.host, self.port, &detail),
+            )),
+            ShardTopology::Unknown(detail) => {
+                self.warn_shard_topology_unverified(&detail);
+                Ok(())
+            }
+        }
+    }
+
+    /// Emit the "could not verify the shard topology" warning at most ONCE per
+    /// process; later occurrences drop to `debug!`. Same rationale as
+    /// [`MoonClient::warn_version_unverified`] — it is a deployment-shaped fact,
+    /// not a per-connection event.
+    fn warn_shard_topology_unverified(&self, detail: &str) {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        let mut first = false;
+        WARNED.call_once(|| first = true);
+        if first {
+            tracing::warn!(
+                moon.host = %self.host,
+                moon.port = self.port,
+                detail = %detail,
+                "moon: could NOT verify that the server is single-shard — proceeding UNVERIFIED. \
+                 Lunaris requires `--shards 1`; on a sharded Moon ingest fails mid-transaction \
+                 and graph recall silently returns empty (docs/rfcs/0008-sharded-moon-ingest.md)."
+            );
+        } else {
+            tracing::debug!(
+                moon.host = %self.host,
+                moon.port = self.port,
+                detail = %detail,
+                "moon: shard topology still unverified (warned once already)"
+            );
         }
     }
 

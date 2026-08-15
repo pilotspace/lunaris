@@ -138,9 +138,7 @@ fn spawn_scripted_moon(script: Script) -> (u16, CommandLog) {
                         match parse_command(&pending) {
                             Ok(Some((args, used))) => {
                                 pending.drain(..used);
-                                log.lock()
-                                    .expect("command log poisoned")
-                                    .push(command_name(&args));
+                                log.lock().expect("command log poisoned").push(command_name(&args));
                                 let reply = reply_for(&args, &script);
                                 if sock.write_all(&reply).is_err() {
                                     return;
