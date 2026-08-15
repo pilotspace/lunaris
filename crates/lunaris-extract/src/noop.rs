@@ -63,8 +63,14 @@ mod tests {
                 chunk_id: Ulid::new(),
                 text: "hello world".into(),
                 heading_path: vec!["intro".into()],
+                reference_time_iso: None,
             },
-            ChunkInput { chunk_id: Ulid::new(), text: "second chunk".into(), heading_path: vec![] },
+            ChunkInput {
+                chunk_id: Ulid::new(),
+                text: "second chunk".into(),
+                heading_path: vec![],
+                reference_time_iso: None,
+            },
         ];
         let extracted = NoopExtractor.extract(Ulid::new(), &chunks).await.unwrap();
         assert_eq!(extracted.by_chunk.len(), 2);

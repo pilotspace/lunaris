@@ -343,8 +343,18 @@ mod tests {
     async fn fallback_wrap_transient_degrades_to_noop() {
         let wrapped = fallback_wrap(ScriptedExtractor::new(vec![transient_err()]), "gemma-3-4b-it");
         let chunks = vec![
-            ChunkInput { chunk_id: Ulid::new(), text: "a".into(), heading_path: vec![] },
-            ChunkInput { chunk_id: Ulid::new(), text: "b".into(), heading_path: vec![] },
+            ChunkInput {
+                chunk_id: Ulid::new(),
+                text: "a".into(),
+                heading_path: vec![],
+                reference_time_iso: None,
+            },
+            ChunkInput {
+                chunk_id: Ulid::new(),
+                text: "b".into(),
+                heading_path: vec![],
+                reference_time_iso: None,
+            },
         ];
         let batch = wrapped
             .extract(Ulid::new(), &chunks)

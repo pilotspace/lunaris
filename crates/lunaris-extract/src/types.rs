@@ -186,6 +186,19 @@ pub struct ChunkInput {
     pub text: String,
     #[serde(default)]
     pub heading_path: Vec<String>,
+    /// Date-only ISO reference time (`YYYY-MM-DD`) of the episode this chunk
+    /// came from (`Episode::t_ref`), when known. Rendered by `build_prompt`
+    /// as a `REFERENCE_TIME:` line so the model can ground `valid_from_iso`/
+    /// `valid_to_iso` and resolve relative expressions ("yesterday", "last
+    /// week") — Mechanism B of the 2026-07-29 LME diagnosis: without it, 78%
+    /// of extracted dates were the model's own hallucinated "today"
+    /// (Graphiti-style fix; see tmp/sota_extractor_comparison.md §3).
+    ///
+    /// NOTE: this participates in `build_prompt` and therefore in
+    /// `CachedExtractor`'s content-addressed key — changing an episode's
+    /// reference time correctly invalidates its cached extractions.
+    #[serde(default)]
+    pub reference_time_iso: Option<String>,
 }
 
 // ------------------------------- Entity --------------------------------------
