@@ -95,12 +95,14 @@ async fn graph_pipeline_hazard_triple_survives_live_moon_cypher() {
                 "name": "Grey's Anatomy",
                 "type": "TV Show",
             }),
+            index_kind: "entities".into(),
         },
         WriteOp::GraphNode {
             graph: "ignored".into(),
             id: genre.to_vec(),
             label: genre_label,
             props: json!({ "id_hex": hex16(&genre), "name": "Drama", "type": "Genre" }),
+            index_kind: "entities".into(),
         },
         WriteOp::GraphEdge {
             graph: "ignored".into(),

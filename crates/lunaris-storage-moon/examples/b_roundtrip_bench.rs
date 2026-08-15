@@ -42,6 +42,7 @@ fn node(id: &[u8; 16], name: &str) -> WriteOp {
         id: id.to_vec(),
         label: "Person".into(),
         props: json!({ "id_hex": hex16(id), "name": name, "type": "Person" }),
+        index_kind: "entities".into(),
     }
 }
 

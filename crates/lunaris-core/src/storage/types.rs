@@ -94,9 +94,28 @@ pub enum WriteOp {
     /// Vector index upsert. `index` is the vector index name (e.g., "chunk_emb").
     VectorUpsert { index: String, id: Vec<u8>, embedding: Vec<f32>, metadata: serde_json::Value },
     /// Graph node upsert.
-    GraphNode { graph: String, id: Vec<u8>, label: String, props: serde_json::Value },
+    ///
+    /// `index_kind` names the vector/keyword FT index this node's content
+    /// lives in (e.g. `"entities"`, `"facts"`) — backends that register a
+    /// `key_to_node` mapping for graph-expanded search (Moon's `FT.NAVIGATE`)
+    /// need it to build the node's `_key` against the RIGHT index instead of
+    /// assuming every graph node is an entity. Defaults to `"entities"` on
+    /// deserialize (pre-index_kind callers / WAL replay) since entities were
+    /// the only graph-registered kind before this field existed.
+    GraphNode {
+        graph: String,
+        id: Vec<u8>,
+        label: String,
+        props: serde_json::Value,
+        #[serde(default = "default_graph_node_index_kind")]
+        index_kind: String,
+    },
     /// Graph edge upsert.
     GraphEdge { graph: String, src: Vec<u8>, dst: Vec<u8>, rel: String, props: serde_json::Value },
+}
+
+fn default_graph_node_index_kind() -> String {
+    "entities".to_string()
 }
 
 /// Sanitize free-form text into a Cypher-safe identifier for

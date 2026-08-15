@@ -72,6 +72,7 @@ fn node(id: Vec<u8>, name: &str) -> WriteOp {
             "aliases": [name.to_lowercase()],
             "confidence": 0.9,
         }),
+        index_kind: "entities".into(),
     }
 }
 

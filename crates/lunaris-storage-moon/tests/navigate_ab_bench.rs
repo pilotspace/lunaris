@@ -84,6 +84,7 @@ fn node(graph_id: Vec<u8>, name: String) -> WriteOp {
             "type": "Person",
             "confidence": 0.9,
         }),
+        index_kind: "entities".into(),
     }
 }
 

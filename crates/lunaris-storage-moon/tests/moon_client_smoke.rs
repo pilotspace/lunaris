@@ -176,6 +176,7 @@ async fn graph_query_valid_at_round_trip_via_moon() {
                     "name": "Moon ValidAt",
                     "type": "Person",
                 }),
+                index_kind: "entities".into(),
             }],
         )
         .await

@@ -273,12 +273,14 @@ pub async fn seed_one_edge(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()>
                     id: alice_id.clone(),
                     label: "Person".to_string(),
                     props: serde_json::json!({ "name": "Alice" }),
+                    index_kind: "entities".to_string(),
                 },
                 WriteOp::GraphNode {
                     graph: "lunaris_graph".to_string(),
                     id: bob_id.clone(),
                     label: "Person".to_string(),
                     props: serde_json::json!({ "name": "Bob" }),
+                    index_kind: "entities".to_string(),
                 },
                 WriteOp::GraphEdge {
                     graph: "lunaris_graph".to_string(),

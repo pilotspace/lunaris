@@ -157,6 +157,7 @@ fn write_op_variants_roundtrip() {
             id: b"n1".to_vec(),
             label: "Person".into(),
             props: serde_json::json!({"name":"Alice"}),
+            index_kind: "entities".into(),
         },
         WriteOp::GraphEdge {
             graph: "lunaris_graph".into(),
