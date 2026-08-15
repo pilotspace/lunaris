@@ -639,4 +639,60 @@ mod tests {
         assert_eq!(raw.source_chunk_id, chunk_id);
         assert!(raw.entities.is_empty());
     }
+
+    // ── Session-date grounding (Mechanism B, N=125 A/B diagnosis 2026-07-29) ──
+    //
+    // Cache-entry audit: 78% of extracted valid_from dates were hallucinated
+    // (3,359/4,882 stamped 2025 + 443 stamped 2026 against 2022-2023
+    // haystacks). Two prompt defects MANDATE that outcome: the instruction
+    // "else today" tells the model to stamp its own today, and the few-shot
+    // example hardcodes "2025-01-01" twice, anchoring even models that would
+    // otherwise abstain. Graphiti-style fix (REFERENCE_TIME injection +
+    // null-over-guess): see tmp/sota_extractor_comparison.md §3.
+
+    fn dated_chunk(text: &str, reference: &str) -> ChunkInput {
+        ChunkInput {
+            chunk_id: Ulid::new(),
+            heading_path: vec!["section".into()],
+            text: text.into(),
+            reference_time_iso: Some(reference.into()),
+        }
+    }
+
+    #[test]
+    fn build_prompt_renders_reference_time_and_temporal_rules() {
+        let p = build_prompt(&dated_chunk("I met Bob yesterday.", "2023-05-30"));
+        assert!(
+            p.contains("REFERENCE_TIME: 2023-05-30"),
+            "prompt must inject the session date as REFERENCE_TIME"
+        );
+        assert!(
+            p.contains("relative time expressions"),
+            "prompt must instruct resolving relative dates against REFERENCE_TIME"
+        );
+        assert!(
+            p.contains("NEVER invent a date"),
+            "prompt must carry the null-over-guess rule"
+        );
+        assert!(!p.contains("else today"), "the hallucination mandate must be gone");
+        assert!(
+            !p.contains("2025-01-01"),
+            "few-shot example dates must not anchor the model to 2025"
+        );
+    }
+
+    #[test]
+    fn build_prompt_without_reference_time_uses_null_policy() {
+        let p = build_prompt(&chunk("Alice met Bob in Paris."));
+        assert!(
+            !p.contains("REFERENCE_TIME:"),
+            "no reference time available -> no REFERENCE_TIME line"
+        );
+        assert!(
+            p.contains("NEVER invent a date"),
+            "null-over-guess must hold even without a reference time"
+        );
+        assert!(!p.contains("else today"));
+        assert!(!p.contains("2025-01-01"));
+    }
 }
