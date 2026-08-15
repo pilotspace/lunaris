@@ -33,12 +33,10 @@ name = "lunaris"
 
 [dependencies]
 lunaris-core              = { workspace = true }
+# 0.7.0 is Moon-only: `lunaris-storage-postgres` and
+# `lunaris-storage-embedded` were deleted, and with them the `postgres://`,
+# `sqlite:///path` and `memory://` URL schemes. See docs/migration/0.6-to-0.7.md.
 lunaris-storage-moon      = { workspace = true }
-lunaris-storage-postgres  = { workspace = true }
-# Onboarding overhaul (phase 1): always-on so `memory://` works out of the box
-# with zero external services. Pure SQLite — no heavy deps to gate behind a
-# feature.
-lunaris-storage-embedded  = { workspace = true }
 lunaris-embed-remote      = { workspace = true, optional = true }
 lunaris-extract           = { workspace = true }
 lunaris-ingest            = { workspace = true }
@@ -147,5 +145,4 @@ ollama    = ["lunaris-extract/ollama", "lunaris-verify/ollama"]
 llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp"]
 # Enable to run the integration tests that require a live Moon instance at moon://localhost:6380
 moon-it = ["lunaris-storage-moon/moon-it"]
-# Enable to run the integration tests that require a live Postgres+pgvector+age+pgmq at postgres://localhost/lunaris
-pg-it   = ["lunaris-storage-postgres/pg-it"]
+# `pg-it` was removed in 0.7.0 with `lunaris-storage-postgres`.

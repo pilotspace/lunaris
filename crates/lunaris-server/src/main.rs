@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 
-use lunaris_server::{Command, Config, OpsCli, Shutdown};
+use lunaris_server::{Config, Shutdown, retired_subcommand};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -27,16 +27,13 @@ async fn main() -> ExitCode {
     // try_init().ok() so test code with its own subscriber doesn't panic.
     lunaris::logging::init();
 
-    // Dispatch: a recognised operational subcommand (`migrate`, `bootstrap-db`)
-    // → run it and exit; anything else → the unchanged serve path. See
-    // `config.rs` for why this is a manual peek rather than one clap struct.
-    if std::env::args().nth(1).is_some_and(|a| Command::is_subcommand_name(&a)) {
-        return match OpsCli::parse().command {
-            Command::Migrate { storage } => run_migrate(&storage).await,
-            Command::BootstrapDb { admin_url, app_role, app_password } => {
-                run_bootstrap_db(&admin_url, &app_role, &app_password).await
-            }
-        };
+    // 0.7.0 retired the two Postgres-only subcommands (`migrate`,
+    // `bootstrap-db`). Peek at argv[1] and, if it names one of them, fail with
+    // the migration story rather than letting clap report an unexpected
+    // argument — see `config::retired_subcommand`.
+    if let Some(msg) = std::env::args().nth(1).and_then(|a| retired_subcommand(&a)) {
+        eprintln!("{msg}");
+        return ExitCode::from(2);
     }
 
     let cfg = Config::parse();
@@ -104,60 +101,10 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `lunaris-server migrate --storage <admin_url>` — apply every embedded
-/// Postgres migration, then exit. No `sqlx-cli`, no checked-out migrations dir.
-async fn run_migrate(storage: &str) -> ExitCode {
-    match lunaris::PostgresStorage::migrate(storage).await {
-        Ok(()) => {
-            tracing::info!(storage = %redact(storage), "migrations applied");
-            println!("ok: migrations applied at {}", redact(storage));
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("migrate failed: {e}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-/// `lunaris-server bootstrap-db --admin-url … --app-role … --app-password …` —
-/// migrate as admin, create/repair the `NOSUPERUSER NOBYPASSRLS` app role +
-/// grants, then report any RLS hardening gaps. Replaces the §6.2 recipe.
-async fn run_bootstrap_db(admin_url: &str, app_role: &str, app_password: &str) -> ExitCode {
-    match lunaris::bootstrap_app_role(admin_url, app_role, app_password).await {
-        Ok(report) => {
-            println!("ok: migrations applied; role {app_role:?} created/updated with DML grants");
-            for t in &report.tables_missing_force_rls {
-                eprintln!("warning: table {t:?} has RLS enabled but FORCE ROW LEVEL SECURITY off");
-            }
-            for (p, t) in &report.policies_missing_with_check {
-                eprintln!(
-                    "warning: policy {p:?} on {t:?} is write-capable but has no WITH CHECK clause"
-                );
-            }
-            if report.is_clean() {
-                println!("rls: all tenant tables FORCE-enabled and write policies have WITH CHECK");
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("bootstrap-db failed: {e}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-/// Redact `user:pass@` userinfo from a connection string for logging.
-fn redact(url: &str) -> String {
-    match url::Url::parse(url) {
-        Ok(mut u) if !u.username().is_empty() || u.password().is_some() => {
-            let _ = u.set_username("***");
-            let _ = u.set_password(None);
-            u.to_string()
-        }
-        _ => url.to_string(),
-    }
-}
+// `run_migrate` / `run_bootstrap_db` (and the `redact` helper that existed to
+// keep Postgres userinfo out of their logs) were deleted in 0.7.0 with the
+// Postgres backend. `main` now answers both subcommand names with
+// `config::retired_subcommand`.
 
 async fn shutdown_signal() {
     use tokio::signal;

@@ -64,7 +64,6 @@ moon-it = ["dep:lunaris-storage-moon"]
 tokio          = { workspace = true, features = ["macros", "rt-multi-thread"] }
 parking_lot    = { workspace = true }
 futures        = { workspace = true }
-lunaris-storage-embedded = { workspace = true }
 # FauxBackend for llm-summarizer feature tests.
 lunaris-llm    = { workspace = true, features = ["faux"] }
 # 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs

@@ -2,12 +2,11 @@
 resolver = "3"
 members = [
   "crates/lunaris-core",
+  # 0.7.0 is Moon-only. `lunaris-storage-postgres` and
+  # `lunaris-storage-embedded` were deleted here; operators exit via the
+  # `lunaris-migrate` binary shipped in the v0.6.2 release (see
+  # docs/migration/0.6-to-0.7.md).
   "crates/lunaris-storage-moon",
-  "crates/lunaris-storage-postgres",
-  # Onboarding overhaul (phase 1): zero-dependency embedded backend on SQLite —
-  # `memory://` (in-process) and `sqlite:///path` (file). Grouped with the other
-  # storage backends per the grouping-by-concern rule.
-  "crates/lunaris-storage-embedded",
   "crates/lunaris-verify",
   "crates/lunaris",
   "crates/lunaris-bench",
@@ -64,13 +63,10 @@ members = [
   # binary, and deliberately does NOT use the `embedded-moon` feature (that one
   # compiles the Moon *server* into the calling target).
   "crates/lunaris-test-harness",
-  # 0.7.0 prerequisite (slice A) — the operator exit ramp OFF the SQLite /
-  # Postgres backends and INTO Moon, built while all three still compile in one
-  # workspace. Deliberately short-lived: it is deleted together with
-  # `lunaris-storage-embedded` / `lunaris-storage-postgres` in 0.7.0, and
-  # operators run it from the last 0.6.x release binary. Grouped with
-  # lunaris-test-harness — both exist only to make that deletion safe.
-  "crates/lunaris-migrate",
+  # `lunaris-migrate` (the operator exit ramp OFF SQLite / Postgres and INTO
+  # Moon) lived here through 0.6.x and was deleted with its two source
+  # backends in 0.7.0, exactly as its manifest comment promised. Operators run
+  # it from the **v0.6.2 release binary** — it cannot be built from main.
   "xtask",
 ]
 exclude = [
@@ -114,8 +110,6 @@ publish      = false
 lunaris                   = { path = "crates/lunaris", version = "0.6.2", default-features = false, package = "lunaris-memory" }
 lunaris-core              = { path = "crates/lunaris-core", version = "0.6.2" }
 lunaris-storage-moon      = { path = "crates/lunaris-storage-moon", version = "0.6.2", default-features = false }
-lunaris-storage-postgres  = { path = "crates/lunaris-storage-postgres", version = "0.6.2", default-features = false }
-lunaris-storage-embedded  = { path = "crates/lunaris-storage-embedded", version = "0.6.2", default-features = false }
 lunaris-embed-remote      = { path = "crates/lunaris-embed-remote", version = "0.6.2", default-features = false }
 lunaris-llamacpp          = { path = "crates/lunaris-llamacpp", version = "0.6.2", default-features = false }
 lunaris-rerank            = { path = "crates/lunaris-rerank", version = "0.6.2", default-features = false }
@@ -173,7 +167,12 @@ redis          = { version = "0.32", features = ["aio", "tokio-comp", "connectio
 # the 2-way; moondb 0.2.0 closed the gap. When the vendored SDK API changes,
 # cut a new moondb release in the moon repo and bump submodule + pin together.
 moon           = { path = "vendor/moon/sdk/rust", version = "0.3.0", package = "moondb" }
-sqlx           = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "tls-rustls-ring", "postgres", "sqlite", "uuid", "chrono", "json"] }
+# NOTE — `sqlx` was a workspace dependency through 0.6.x for
+# `lunaris-storage-postgres` (postgres) and `lunaris-storage-embedded`
+# (sqlite). Both crates were deleted in 0.7.0 (Moon-only), and with them the
+# workspace's only SQL driver. Do not re-add one: Moon is the storage
+# substrate, and a second driver would re-open the portability surface 0.7.0
+# closed on purpose.
 url            = "2"
 # Phase 2 ingest hot path (INGEST-01..04) — chunker + real EmbeddingGemma + Ollama alt
 pulldown-cmark = { version = "0.13", default-features = false }

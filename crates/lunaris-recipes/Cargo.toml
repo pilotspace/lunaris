@@ -13,7 +13,7 @@
 # only EXTERNAL crates (tokio, serde, thiserror, …), so internal deps MUST use
 # explicit path entries, not `{ workspace = true }`.
 #
-# Feature gates `moon-it` + `pg-it` mirror Phase 4 Plan 04-03 + Phase 5 Plan
+# Feature gate `moon-it` mirrors Phase 4 Plan 04-03 + Phase 5 Plan
 # 05-02 `probe_backend` discipline: parity tests under `tests/` SKIP cleanly
 # when env URL is unset, so `cargo test -p lunaris-recipes` stays zero-config.
 
@@ -37,7 +37,6 @@ lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
 lunaris-consolidate = { workspace = true }
 lunaris-storage-moon = { workspace = true, optional = true }
-lunaris-storage-postgres = { workspace = true, optional = true }
 tokio       = { workspace = true }
 async-trait = { workspace = true }
 thiserror   = { workspace = true }
@@ -70,4 +69,4 @@ default = []
 # Integration-test flags — parity tests SKIP cleanly when env URL is unset
 # (mirrors Phase 4 Plan 04-03 + Plan 05-02 probe_backend discipline).
 moon-it = ["dep:lunaris-storage-moon"]
-pg-it   = ["dep:lunaris-storage-postgres"]
+# `pg-it` was removed in 0.7.0 with `lunaris-storage-postgres` (Moon-only).

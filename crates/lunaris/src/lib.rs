@@ -95,11 +95,10 @@ pub use primitives::WorkingMemory;
 pub use logging::init as init_logging;
 pub use lunaris_core::*;
 pub use open::open;
-// Postgres operational helpers (production role bootstrap), re-exported so
-// `lunaris-server` and other consumers don't need a direct dependency on the
-// backend crate. `PostgresStorage` itself is re-exported below alongside the
-// other backend types; these back the `lunaris-server bootstrap-db` subcommand.
-pub use lunaris_storage_postgres::bootstrap::{BootstrapReport, bootstrap_app_role};
+// `bootstrap_app_role` / `BootstrapReport` (the Postgres production-role
+// bootstrap behind `lunaris-server bootstrap-db`) were removed in 0.7.0 with
+// `lunaris-storage-postgres`. Moon has no role/RLS bootstrap step — see
+// docs/operations/external-moon.md.
 // Plan 05-04 — opinionated v0 recipes (helios-rfc §5.3 surface). v0 ships only
 // CodingSessionMemory (renamed from HeliosScratchpad in v0.5) + its borrowed
 // AsOfScratchpad time-travel view; the other 9 recipes (RECIPE-V1-01..11) ship in v1.
@@ -184,10 +183,10 @@ pub use lunaris_extract::{CloudApiExtractor, CloudApiExtractorOpts, CloudProvide
 #[cfg(feature = "ollama")]
 pub use lunaris_extract::{OllamaExtractor, OllamaExtractorOpts};
 
-// Re-export backend concrete types for callers who want to construct directly
-// (bypassing URL routing — needed by the conformance harness in Phase 5).
+// Re-export the backend concrete type for callers who want to construct
+// directly (bypassing URL routing — needed by the conformance harness in
+// Phase 5). Since 0.7.0 there is exactly one.
 pub use lunaris_storage_moon::MoonStorage;
-pub use lunaris_storage_postgres::PostgresStorage;
 
 /// Glob-import the common surface: `use lunaris::prelude::*;`.
 ///

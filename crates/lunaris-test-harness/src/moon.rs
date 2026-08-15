@@ -58,15 +58,16 @@ const SPAWN_ATTEMPTS: usize = 5;
 /// Locate a usable `moon` binary, or `None` when this machine has none.
 ///
 /// Resolution order:
-/// 1. `$MOON_TEST_BINARY` (must exist; a set-but-missing path is an error the
-///    caller sees as `None` only under [`crate::Policy::Auto`]).
+/// 1. `$MOON_TEST_BINARY` (must exist; a set-but-missing path resolves to
+///    `None`, same as unset).
 /// 2. `<workspace-root>/vendor/moon/target/release/moon`
 /// 3. `<workspace-root>/vendor/moon/target/debug/moon`
 ///
-/// Returning `None` is the load-bearing fallback path: `cargo test --workspace`
-/// on a machine that never checked out or built the Moon submodule must still
-/// go green, with every Moon-backed fixture transparently degrading to
-/// `memory://`.
+/// `None` used to be the load-bearing fallback path — every fixture degraded to
+/// `memory://`. 0.7.0 deleted that backend, so `None` now means the calling
+/// fixture PANICS with build instructions (`crate::open_test_store`). That is
+/// the intended trade: a suite that cannot reach its substrate must say so, not
+/// quietly test something else.
 #[must_use]
 pub fn moon_binary() -> Option<PathBuf> {
     if let Ok(raw) = std::env::var(MOON_BINARY_ENV) {
