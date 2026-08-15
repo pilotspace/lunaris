@@ -7,7 +7,9 @@
 //!   3. `tools/call` for `memory.record_decision` returns a non-empty `lsn`.
 //!   4. The response does NOT contain a JSON-RPC `error` field.
 //!
-//! Uses a temp-dir SQLite DB so the test is hermetic and leaves no state behind.
+//! Backend is a `lunaris-test-harness` ephemeral child-process Moon, so the
+//! test is hermetic and leaves no state behind. (0.7.0 deleted the SQLite
+//! backend this used to open via a temp-dir `sqlite://` URL.)
 //!
 //! # Transport note
 //! rmcp's stdio transport uses NDJSON — one JSON object per line —
@@ -17,6 +19,7 @@
 //! Before Task 2 registers `memory.record_decision`, the `tools/list` assertion
 //! at step 2 will fail because the tool is not yet in the list.
 
+use lunaris_test_harness::open_test_store;
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -81,9 +84,9 @@ async fn record_decision_smoke() {
         format!("{manifest}/../../target/debug/lunaris-mcp")
     });
 
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db_path = tmp.path().join("record_decision_smoke.db");
-    let storage = format!("sqlite://{}", db_path.display());
+    // Bound for the child's whole lifetime — it owns the Moon.
+    let store = open_test_store().await;
+    let storage = store.url().to_owned();
 
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-record-decision")
@@ -116,10 +119,11 @@ async fn record_decision_smoke() {
     });
     send_msg(&mut stdin, &init_req).await;
 
-    // First-run SQLite migrations can take time on a cold DB.
+    // The server does not answer `initialize` until `Lunaris::open` returns —
+    // which includes connecting to the Moon and creating its indices.
     let init_val = timeout(Duration::from_secs(60), read_msg(&mut reader))
         .await
-        .expect("initialize timed out (first-run DB migration can take up to 60 s)");
+        .expect("initialize timed out");
 
     assert!(init_val["error"].is_null(), "initialize returned error: {init_val}");
     let proto = &init_val["result"]["protocolVersion"];
@@ -164,7 +168,7 @@ async fn record_decision_smoke() {
         "params": {
             "name": "memory.record_decision",
             "arguments": {
-                "decision": "Use SQLite for local dev",
+                "decision": "Cap the extractor retry budget at 3",
                 "rationale": "Zero dependencies.",
                 "tags": ["arch", "storage"]
             }

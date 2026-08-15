@@ -108,29 +108,34 @@ async fn queue_status(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use lunaris::Lunaris;
-    use lunaris_core::{Scope, StubEmbedder};
+    use lunaris_core::Scope;
+    use lunaris_test_harness::open_test_engine;
 
     use super::*;
 
+    /// Was `status_reports_non_native_queue_for_sqlite`, which opened a
+    /// `sqlite://` temp file to exercise the degraded branch. 0.7.0 deleted
+    /// that backend and with it the only substrate whose queue was not
+    /// native, so the negative case is unreachable — asserting it would need
+    /// a hand-rolled `StoragePort` double reporting a capability no shipped
+    /// backend reports. What is worth pinning is the shape `handle` returns
+    /// on the path that actually runs: three probed topics, all live.
     #[tokio::test]
-    async fn status_reports_non_native_queue_for_sqlite() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("status.db");
-        let lunaris = Lunaris::open_with_embedder(
-            &format!("sqlite://{}", path.display()),
-            Arc::new(StubEmbedder::new(8)),
-        )
-        .await
-        .unwrap();
+    async fn status_reports_a_native_queue_and_probes_every_topic() {
+        let engine = open_test_engine().await;
         let scope = Scope::new("mcp-status-test").unwrap();
 
-        let response = handle(&lunaris, &scope, StatusParams {}).await.unwrap();
+        let response = handle(&engine, &scope, StatusParams {}).await.unwrap();
 
-        assert!(!response.queue_native);
-        assert_eq!(response.queues.len(), 3);
-        assert!(response.queues.iter().all(|queue| !queue.available));
+        assert!(response.queue_native, "Moon's queue is native");
+        assert_eq!(response.queues.len(), 3, "one entry per probed topic");
+        for queue in &response.queues {
+            assert!(
+                queue.available,
+                "topic `{}` must probe live on Moon: {:?}",
+                queue.topic, queue.error
+            );
+            assert!(queue.error.is_none(), "no error on an available topic");
+        }
     }
 }
