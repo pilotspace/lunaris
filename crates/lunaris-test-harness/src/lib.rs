@@ -50,7 +50,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use lunaris::Lunaris;
-use lunaris_core::{Embedder, StubEmbedder};
+use lunaris_core::{Embedder, StoragePort, StubEmbedder};
 
 pub use moon::{EphemeralMoon, MOON_BINARY_ENV, RESERVED_PORTS, moon_binary};
 
@@ -182,6 +182,84 @@ pub async fn open_test_store_with(policy: Policy) -> TestStore {
             TestStore { url: m.url().to_owned(), backend: Backend::Moon, moon: Some(m) }
         }
     }
+}
+
+/// A bare `StoragePort` bound to a [`TestStore`], which it keeps alive.
+///
+/// For the test files that reach past the engine and call
+/// `EmbeddedStorage::connect("memory://")` directly.
+pub struct TestStorage {
+    port: Arc<dyn StoragePort>,
+    store: TestStore,
+}
+
+/// Manual — `StoragePort` has no `Debug` supertrait, so the derive cannot see
+/// through the `Arc<dyn _>`. The store (URL + backend) is the useful half.
+impl std::fmt::Debug for TestStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestStorage").field("store", &self.store).finish_non_exhaustive()
+    }
+}
+
+impl TestStorage {
+    /// A clonable handle to the backend.
+    #[must_use]
+    pub fn port(&self) -> Arc<dyn StoragePort> {
+        Arc::clone(&self.port)
+    }
+
+    /// The URL this backend was opened against.
+    #[must_use]
+    pub fn url(&self) -> &str {
+        self.store.url()
+    }
+
+    /// Which substrate this resolved to.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        self.store.backend()
+    }
+}
+
+impl Deref for TestStorage {
+    type Target = Arc<dyn StoragePort>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.port
+    }
+}
+
+/// Open a bare backend on a fresh store, sized to [`DEFAULT_TEST_DIM`].
+///
+/// # Panics
+/// If the store cannot be opened or the backend refuses the connection.
+pub async fn open_test_storage() -> TestStorage {
+    open_test_storage_with(Policy::from_env(), DEFAULT_TEST_DIM).await
+}
+
+/// Open a bare backend with an explicit policy and vector dimension.
+///
+/// `dim` is load-bearing on Moon and inert on the embedded backend: Moon fixes
+/// its FT index width at `FT.CREATE` time and will NOT resize an existing
+/// index, so a fixture whose embedder is not 768-d must say so here.
+///
+/// # Panics
+/// If the store cannot be opened or the backend refuses the connection.
+pub async fn open_test_storage_with(policy: Policy, dim: usize) -> TestStorage {
+    let store = open_test_store_with(policy).await;
+    let port: Arc<dyn StoragePort> = match store.backend() {
+        Backend::Moon => Arc::new(
+            lunaris_storage_moon::MoonStorage::connect_with_dim(store.url(), dim)
+                .await
+                .unwrap_or_else(|e| panic!("connect Moon at {}: {e}", store.url())),
+        ),
+        Backend::Memory => Arc::new(
+            lunaris_storage_embedded::EmbeddedStorage::connect(store.url())
+                .await
+                .unwrap_or_else(|e| panic!("connect embedded at {}: {e}", store.url())),
+        ),
+    };
+    TestStorage { port, store }
 }
 
 /// A `Lunaris` handle bound to a [`TestStore`], which it keeps alive.

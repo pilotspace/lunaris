@@ -5,33 +5,42 @@
 //! under any real scope because it delegates to the deprecated
 //! `Scope::dev()`-hard-coded pipeline.
 //!
-//! Live gate: LUNARIS_TEST_MOON_URL (moon-it pattern: skipped when unset).
-//! The hard-without-token rejection runs ungated on `memory://`.
+//! ## Backend (0.7.0 port)
+//!
+//! Previously gated on `LUNARIS_TEST_MOON_URL`, which nothing in CI ever set —
+//! so all four Moon assertions below were *skipped on every run*, and only the
+//! `memory://` rejection test actually executed. They now open a harness-issued
+//! ephemeral Moon and run whenever a Moon binary is present.
+//!
+//! The `LUNARIS_TEST_MOON_URL` escape hatch is deliberately NOT carried over.
+//! This file calls `forget`; pointing it at an operator's live store was a
+//! footgun with no upside now that a disposable Moon costs ~3 ms.
 //!
 //! RED until the scoped forget pipeline lands in
 //! `crates/lunaris/src/forget.rs` + `crates/lunaris/src/handle.rs`.
 
 use std::sync::Arc;
 
-use lunaris::{EpisodeBuilder, ForgetTarget, Lunaris, ScopeSpec};
+use lunaris::{EpisodeBuilder, ForgetTarget, ScopeSpec};
 use lunaris_core::{Scope, StubEmbedder};
 use lunaris_retrieve::Query;
+use lunaris_test_harness::{
+    Policy, TestEngine, moon_binary, open_test_engine_with, open_test_engine_with_embedder,
+};
 use ulid::Ulid;
 
-fn moon_url() -> Option<String> {
-    match std::env::var("LUNARIS_TEST_MOON_URL") {
-        Ok(u) if !u.is_empty() => Some(u),
-        _ => {
-            eprintln!("skipping: LUNARIS_TEST_MOON_URL not set (live-Moon gate)");
-            None
-        }
+/// A disposable Moon-backed engine, or `None` (with a skip line) on a machine
+/// with no Moon binary — the same two-tier discipline the env gate had, minus
+/// the "nobody ever sets it" failure mode.
+///
+/// The returned `TestEngine` owns the Moon child process and derefs to
+/// `Lunaris`; hold it for the whole test.
+async fn open_moon() -> Option<TestEngine> {
+    if moon_binary().is_none() {
+        eprintln!("skipping: no moon binary (set MOON_TEST_BINARY)");
+        return None;
     }
-}
-
-async fn open_moon(url: &str) -> Lunaris {
-    Lunaris::open_with_embedder(url, Arc::new(StubEmbedder::new(768)))
-        .await
-        .expect("open live Moon")
+    Some(open_test_engine_with(Policy::RequireMoon, Arc::new(StubEmbedder::new(768))).await)
 }
 
 fn fresh_scope(tag: &str) -> Scope {
@@ -48,8 +57,7 @@ fn recalls_episode(hits: &[lunaris_retrieve::Hit], episode_id: Ulid) -> bool {
 /// forget(Id) → rows_written == 1 → recall misses.
 #[tokio::test]
 async fn forget_id_removes_from_recall_moon() {
-    let Some(url) = moon_url() else { return };
-    let engine = open_moon(&url).await;
+    let Some(engine) = open_moon().await else { return };
     let scope = fresh_scope("id");
     let scoped = engine.scoped(scope.clone());
 
@@ -79,8 +87,7 @@ async fn forget_id_removes_from_recall_moon() {
 /// stamped, keep/x survives and still recalls.
 #[tokio::test]
 async fn forget_prefix_removes_all_matches_moon() {
-    let Some(url) = moon_url() else { return };
-    let engine = open_moon(&url).await;
+    let Some(engine) = open_moon().await else { return };
     let scope = fresh_scope("prefix");
     let scoped = engine.scoped(scope.clone());
 
@@ -116,8 +123,7 @@ async fn forget_prefix_removes_all_matches_moon() {
 /// §2 "cross-scope isolation": forget under scope A never sees scope B's rows.
 #[tokio::test]
 async fn forget_cross_scope_isolated_moon() {
-    let Some(url) = moon_url() else { return };
-    let engine = open_moon(&url).await;
+    let Some(engine) = open_moon().await else { return };
     let scope_a = fresh_scope("iso-a");
     let scope_b = fresh_scope("iso-b");
 
@@ -147,8 +153,7 @@ async fn forget_cross_scope_isolated_moon() {
 /// the episode still recalls afterwards.
 #[tokio::test]
 async fn forget_dry_run_previews_without_writing_moon() {
-    let Some(url) = moon_url() else { return };
-    let engine = open_moon(&url).await;
+    let Some(engine) = open_moon().await else { return };
     let scope = fresh_scope("dry");
     let scoped = engine.scoped(scope.clone());
 
@@ -169,13 +174,15 @@ async fn forget_dry_run_previews_without_writing_moon() {
     assert!(recalls_episode(&post, ep_id), "dry_run must leave the episode recallable");
 }
 
-/// §2 "hard delete without token rejected" — ungated (`memory://`), the
-/// SCOPED path must keep the D-21 safety rail.
+/// §2 "hard delete without token rejected" — the SCOPED path must keep the
+/// D-21 safety rail.
+///
+/// Backend-agnostic on purpose: the rejection fires before any storage call,
+/// so this one runs under the default policy (Moon when available, `memory://`
+/// otherwise) and needs no skip gate.
 #[tokio::test]
 async fn forget_hard_without_token_rejected() {
-    let engine = Lunaris::open_with_embedder("memory://", Arc::new(StubEmbedder::new(768)))
-        .await
-        .expect("open embedded");
+    let engine = open_test_engine_with_embedder(Arc::new(StubEmbedder::new(768))).await;
     let scoped = engine.scoped(Scope::new("hard-no-token").unwrap());
 
     let err = scoped

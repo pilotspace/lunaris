@@ -2,22 +2,34 @@
 //!
 //! Verifies that `ScopedLunaris::ingest_structured` writes the episode, the
 //! chunks, and the agent-supplied graph (entities, relations, facts) in a
-//! single transaction against the in-process `memory://` backend.
+//! single transaction.
+//!
+//! ## Backend (0.7.0 port)
+//!
+//! Ported off `memory://` onto `lunaris_test_harness::open_test_engine_*`,
+//! which gives each test its own ephemeral child-process Moon and degrades to
+//! `memory://` only where no Moon binary exists. That matters here beyond
+//! future-proofing: the embedded backend has no native graph, so the entity /
+//! relation / fact writes this file exercises were previously landing as plain
+//! KV rows. On Moon they go through the real graph path, which is what
+//! production does.
 
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
+use lunaris::EpisodeBuilder;
 use lunaris::structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
-use lunaris::{EpisodeBuilder, Lunaris};
 use lunaris_core::{Embedder, NoopEmbedder, Scope};
+use lunaris_test_harness::{TestEngine, open_test_engine_with_embedder};
 
-/// Open a `memory://` Lunaris handle with a pinned NoopEmbedder so the
-/// resolver doesn't try to construct OllamaEmbedder (which lunaris-bench
-/// transitively forces on in workspace test builds).
-async fn open_test_handle() -> Lunaris {
-    Lunaris::open_with_embedder("memory://", Arc::new(NoopEmbedder::new(768)) as Arc<dyn Embedder>)
-        .await
-        .expect("open_with_embedder memory:// must succeed")
+/// Open a harness-issued handle with a pinned NoopEmbedder so the resolver
+/// doesn't try to construct a real embedder (which lunaris-bench transitively
+/// forces on in workspace test builds).
+///
+/// The returned `TestEngine` derefs to `Lunaris` AND owns the Moon child
+/// process — bind it to a local, never `let _ =`.
+async fn open_test_handle() -> TestEngine {
+    open_test_engine_with_embedder(Arc::new(NoopEmbedder::new(768)) as Arc<dyn Embedder>).await
 }
 
 fn alice_then_bob() -> StructuredIngest {
@@ -96,10 +108,8 @@ async fn ingest_structured_writes_episode_chunks_and_graph_in_one_call() {
     let scope = Scope::new("test-agent-structured-ingest").expect("scope valid");
     let scoped = handle.scoped(scope.clone());
 
-    let lsn = scoped
-        .ingest_structured(alice_then_bob())
-        .await
-        .expect("ingest_structured must succeed on memory://");
+    let lsn =
+        scoped.ingest_structured(alice_then_bob()).await.expect("ingest_structured must succeed");
 
     // Single atomic_write produced one monotonic LSN. We don't pin the
     // exact value (it depends on the HlcClock seed) — only that a write

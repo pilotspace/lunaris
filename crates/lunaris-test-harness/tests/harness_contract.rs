@@ -16,7 +16,7 @@ use lunaris_core::Scope;
 use lunaris_retrieve::Query;
 use lunaris_test_harness::{
     Backend, EphemeralMoon, Policy, RESERVED_PORTS, moon_binary, open_test_engine_with,
-    open_test_store_with,
+    open_test_storage_with, open_test_store_with,
 };
 use ulid::Ulid;
 
@@ -160,6 +160,28 @@ async fn two_fixtures_do_not_share_state() {
         b.scoped(sc).recall(Query::text("cobalt beacon")).await.expect("recall from fixture B");
     let leaked = hits.iter().any(|h| h.episode_id == secret.to_bytes().to_vec());
     assert!(!leaked, "fixture B saw fixture A's episode: {hits:?}");
+}
+
+/// The bare-`StoragePort` seam, for the test files that call
+/// `EmbeddedStorage::connect("memory://")` directly instead of going through
+/// the engine. Capabilities are the discriminator: Moon reports a native graph
+/// and queue, the embedded backend reports neither.
+#[tokio::test]
+async fn storage_seam_yields_a_live_backend_on_both_paths() {
+    let mem = open_test_storage_with(Policy::ForceMemory, 768).await;
+    assert_eq!(mem.backend(), Backend::Memory);
+    let caps = mem.port().capabilities();
+    assert!(!caps.graph_native, "the embedded backend has no native graph");
+
+    let Some(()) = require_binary("storage_seam_yields_a_live_backend_on_both_paths") else {
+        return;
+    };
+    let moon = open_test_storage_with(Policy::RequireMoon, 768).await;
+    assert_eq!(moon.backend(), Backend::Moon);
+    assert!(
+        moon.port().capabilities().graph_native,
+        "an ephemeral Moon must report the native graph the embedded backend lacks"
+    );
 }
 
 /// End-to-end proof the harness hands back a working engine: ingest, then

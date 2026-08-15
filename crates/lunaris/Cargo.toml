@@ -101,6 +101,11 @@ anyhow         = { workspace = true }
 lunaris-conformance = { path = "../lunaris-conformance" }
 # rand drives the deterministic per-iter (kill_site, kill_offset_ns) sampler.
 rand           = { workspace = true }
+# 0.7.0 prerequisite — ephemeral child-process Moon fixtures, so tests can stop
+# opening `memory://` before the embedded backend is deleted. This closes a
+# dev-dependency cycle (lunaris-test-harness depends on this crate); Cargo
+# permits that, and rejects cycles only through NORMAL dependencies.
+lunaris-test-harness = { workspace = true }
 
 # Plan 12-04 — `nix` (Unix SIGKILL delivery) gated to Unix targets so non-Unix
 # builds skip the chaos test cleanly.

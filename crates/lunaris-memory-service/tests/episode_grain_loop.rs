@@ -9,8 +9,8 @@
 //! Result: a user voting on ids recall handed them could never grow a dream
 //! agenda.
 //!
-//! This test drives the whole loop through the public service handlers over
-//! `memory://` + `StubEmbedder` and fails unless ALL THREE seams agree on
+//! This test drives the whole loop through the public service handlers over an
+//! ephemeral Moon + `StubEmbedder` and fails unless ALL THREE seams agree on
 //! episode-grain:
 //! 1. recall's wire `episode_id` is the parent episode ULID;
 //! 2. feedback on that id lands an episode-keyed ledger row;
@@ -19,15 +19,27 @@
 
 use std::sync::Arc;
 
-use lunaris::{EpisodeBuilder, Lunaris};
+use lunaris::EpisodeBuilder;
 use lunaris_core::{Scope, StubEmbedder};
 use lunaris_memory_service::dream_agenda::{self, DreamAgendaParams};
 use lunaris_memory_service::feedback::{self, FeedbackParams, Sentiment};
 use lunaris_memory_service::recall::{self, RecallParams};
+use lunaris_test_harness::{TestEngine, open_test_engine_with_embedder};
 
-async fn make_engine(scope_name: &str) -> (Lunaris, Scope) {
+/// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued ephemeral
+/// Moon, falling back to `memory://` only where no Moon binary exists.
+///
+/// This is the highest-value backend swap in the file: the loop under test is
+/// recall ranking → activation ledger → boosted re-recall, and on the embedded
+/// backend that ran over SQLite brute-force scoring. On Moon it runs over the
+/// real FT vector index — the same path production takes.
+///
+/// `TestEngine` derefs to `Lunaris`, so every `&lunaris` call site below
+/// coerces unchanged; the binding must stay alive because it owns the Moon
+/// child process.
+async fn make_engine(scope_name: &str) -> (TestEngine, Scope) {
     let embedder = Arc::new(StubEmbedder::new(768));
-    let lunaris = Lunaris::open_with_embedder("memory://", embedder).await.unwrap();
+    let lunaris = open_test_engine_with_embedder(embedder).await;
     let scope = Scope::new(scope_name).unwrap();
     (lunaris, scope)
 }

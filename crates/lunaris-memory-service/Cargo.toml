@@ -81,3 +81,6 @@ async-trait  = { workspace = true }
 bytes        = { workspace = true }
 # recall_source_prefix_moonlike.rs mock storage double (StoragePort + KeywordPort).
 parking_lot  = { workspace = true }
+# 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
+# in crates/lunaris-test-harness) so integration tests stop opening `memory://`.
+lunaris-test-harness = { workspace = true }
