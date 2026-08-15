@@ -51,12 +51,16 @@ cargo set-version --workspace "$VER"
 
 echo "-> Bumping crates/lunaris-py/pyproject.toml [project].version to $VER"
 pyproject="crates/lunaris-py/pyproject.toml"
-line=$(grep -n '^version = ' "$pyproject" | head -1 | cut -d: -f1)
+# Tolerate aligned assignments (`version   = "..."`): match any run of
+# whitespace around `=`. Under `pipefail` an unmatched grep would kill the
+# whole script silently at the assignment, so `|| true` keeps the explicit
+# empty-check below as the real error path.
+line=$(grep -nE '^version[[:space:]]*=[[:space:]]*"' "$pyproject" | head -1 | cut -d: -f1 || true)
 if [[ -z "$line" ]]; then
   echo "ERROR: could not find version line in $pyproject" >&2
   exit 4
 fi
-sed -i.bak "${line}s/version = \".*\"/version = \"$VER\"/" "$pyproject"
+sed -i.bak -E "${line}s/^(version[[:space:]]*=[[:space:]]*)\".*\"/\\1\"$VER\"/" "$pyproject"
 rm -f "$pyproject.bak"
 
 echo "-> Bumping crates/lunaris-ts/package.json .version to $VER"
@@ -84,12 +88,12 @@ mv "$tmp" "$mcppkgjson"
 
 echo "-> Bumping crates/lunaris-mcp-py/pyproject.toml [project].version to $VER"
 py_mcp_pyproject="crates/lunaris-mcp-py/pyproject.toml"
-py_mcp_line=$(grep -n '^version = ' "$py_mcp_pyproject" | head -1 | cut -d: -f1)
+py_mcp_line=$(grep -nE '^version[[:space:]]*=[[:space:]]*"' "$py_mcp_pyproject" | head -1 | cut -d: -f1 || true)
 if [[ -z "$py_mcp_line" ]]; then
   echo "ERROR: could not find version line in $py_mcp_pyproject" >&2
   exit 4
 fi
-sed -i.bak "${py_mcp_line}s/version = \".*\"/version = \"$VER\"/" "$py_mcp_pyproject"
+sed -i.bak -E "${py_mcp_line}s/^(version[[:space:]]*=[[:space:]]*)\".*\"/\\1\"$VER\"/" "$py_mcp_pyproject"
 rm -f "$py_mcp_pyproject.bak"
 
 echo "-> Bumping crates/lunaris-mcp-py/python/lunaris_mcp/__init__.py __version__ to $VER"
@@ -100,14 +104,14 @@ rm -f "$py_mcp_init.bak"
 echo "-> Version parity assertion"
 # Rust source-of-truth: root Cargo.toml [workspace.package].version.
 rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
-py_ver=$(grep '^version = ' "$pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+py_ver=$(grep -E '^version[[:space:]]*=[[:space:]]*"' "$pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 ts_ver=$(jq -r '.version' "$pkgjson")
 # Any optionalDependency left off $VER would silently 404 at install time.
 ts_optdep_stale=$(jq -r --arg v "$VER" \
   '[.optionalDependencies // {} | to_entries[] | select(.value != $v)
     | "\(.key)@\(.value)"] | join(", ")' "$pkgjson")
 npm_mcp_ver=$(jq -r '.version' "$mcppkgjson")
-py_mcp_ver=$(grep '^version = ' "$py_mcp_pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+py_mcp_ver=$(grep -E '^version[[:space:]]*=[[:space:]]*"' "$py_mcp_pyproject" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
 echo "  Rust (workspace.package): $rust_ver"
 echo "  Python (pyproject):       $py_ver"
