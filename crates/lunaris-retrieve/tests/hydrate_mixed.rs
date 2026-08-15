@@ -190,12 +190,12 @@ async fn partial_hydrate_text_resolves_fact_text() {
             .expect("partial_hydrate_text");
 
     assert_eq!(
-        texts.get(&chunk_id.to_bytes().to_vec()).map(String::as_str),
+        texts.get(chunk_id.to_bytes().as_slice()).map(String::as_str),
         Some("the chunk text"),
         "chunk semantics unchanged"
     );
     assert_eq!(
-        texts.get(&fact_id.to_bytes().to_vec()).map(String::as_str),
+        texts.get(fact_id.to_bytes().as_slice()).map(String::as_str),
         Some("zephyr-relay listens on port 7443"),
         "fact ids must hydrate to fact_text so the cross-encoder can score them"
     );

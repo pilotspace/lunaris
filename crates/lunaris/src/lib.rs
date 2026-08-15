@@ -153,10 +153,10 @@ pub use lunaris_verify::{OllamaVerifier, OllamaVerifierOpts};
 // `use lunaris::{Tree, Vector}` and never reach into `lunaris_retrieve::`
 // (the retrieval-DSL guide's standing contract).
 pub use lunaris_retrieve::{
-    AndRetriever, DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, DegradedFallbackRetriever,
-    FuseRrfRetriever, Graph, Hit, Keyword, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS, Navigate, Plan,
-    Query, RawHit, RerankRetriever, RetrievalBuilder, RetrievalService, Retriever, SourceOp, Tree,
-    Vector, degraded_fallback, filter_str, hybrid_root, plan_query, rerank,
+    AndRetriever, DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, DegradedFallbackRetriever, FuseRrfRetriever,
+    Graph, Hit, Keyword, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS, Navigate, Plan, Query, RawHit,
+    RerankRetriever, RetrievalBuilder, RetrievalService, Retriever, SourceOp, Tree, Vector,
+    degraded_fallback, filter_str, hybrid_root, plan_query, rerank,
 };
 
 // Reranker trait + helpers re-exported from lunaris-rerank so callers

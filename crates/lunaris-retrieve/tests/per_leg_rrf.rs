@@ -31,9 +31,7 @@ use lunaris_core::storage::types::{
     CypherQuery, Filter, GraphResult, Lsn, NavigateHit, NavigateSpec, QueueMsg, Row, VectorHit,
     WriteOp,
 };
-use lunaris_core::{
-    Hlc, NoopEmbedder, Scope, StorageCapabilities, StorageError, StoragePort,
-};
+use lunaris_core::{Hlc, NoopEmbedder, Scope, StorageCapabilities, StorageError, StoragePort};
 use lunaris_retrieve::operators::{QueryContext, Retriever};
 use lunaris_retrieve::{Query, hybrid_root};
 
@@ -51,12 +49,7 @@ const HOP_FACT1: &[u8; 16] = b"HOP_FACT_0000001";
 const HOP_FACT2: &[u8; 16] = b"HOP_FACT_0000002";
 
 fn vh(id: &[u8; 16], score: f32) -> VectorHit {
-    VectorHit {
-        id: id.to_vec(),
-        score,
-        rerank_applied: false,
-        metadata: serde_json::json!({}),
-    }
+    VectorHit { id: id.to_vec(), score, rerank_applied: false, metadata: serde_json::json!({}) }
 }
 
 fn kh(id: &[u8; 16], score: f32) -> KeywordHit {
