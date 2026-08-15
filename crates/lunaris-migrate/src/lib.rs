@@ -77,10 +77,12 @@
 
 pub mod contract;
 pub mod migrate;
+pub mod open;
 pub mod plan;
 pub mod verify;
 
 pub use contract::{ACK_REQUIRED, LOSSY_CONTRACT};
+pub use open::{OpenError, open_dest, open_source};
 pub use migrate::{MigrateError, ScopeReport, discover_scopes, migrate_scope};
 pub use plan::{
     DEFAULT_BATCH_SIZE, DEFAULT_SAMPLE, MigrationOptions, RowVerdict, classify_row, kind_of,
