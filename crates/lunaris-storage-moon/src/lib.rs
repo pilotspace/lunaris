@@ -58,10 +58,15 @@ pub(crate) mod navigate;
 pub mod queue;
 pub(crate) mod retry;
 pub mod scopes;
+// 0.7.0 task 22 — connect-time single-shard guard (RFC 0008 §6 Option C).
+// Public so operators/tests can read the policy and the probe key set without a
+// live Moon, and so an out-of-crate live harness can exercise the classifiers.
+pub mod shards;
 pub mod vector;
 pub mod version;
 
 pub use client::MoonClient;
+pub use shards::ShardTopology;
 pub use version::{MIN_MOON_VERSION, MoonVersion, MoonVersionCheck, check_moon_version};
 
 use std::collections::HashSet;

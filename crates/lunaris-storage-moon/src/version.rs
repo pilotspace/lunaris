@@ -152,7 +152,7 @@ pub enum MoonVersionCheck {
 /// server.
 #[must_use]
 pub fn check_moon_version(info: &str) -> MoonVersionCheck {
-    match field(info, MOON_VERSION_FIELD) {
+    match info_field(info, MOON_VERSION_FIELD) {
         Some(raw) => match MoonVersion::parse(raw) {
             Some(v) if v >= MIN_MOON_VERSION => MoonVersionCheck::Supported(v),
             Some(v) => MoonVersionCheck::Unsupported(v),
@@ -161,7 +161,7 @@ pub fn check_moon_version(info: &str) -> MoonVersionCheck {
                  major.minor.patch version"
             )),
         },
-        None => match field(info, "redis_version") {
+        None => match info_field(info, "redis_version") {
             Some(redis) => MoonVersionCheck::Unknown(format!(
                 "the INFO reply carried no `{MOON_VERSION_FIELD}` field — only \
                  `redis_version:{redis}`, which Moon hard-codes to a compatibility literal and \
@@ -185,7 +185,7 @@ pub fn check_moon_version(info: &str) -> MoonVersionCheck {
 /// (`vendor/moon/src/server/conn/handler_monoio/dispatch.rs:678-684`), and the
 /// canonical `# Server` block is always emitted first
 /// (`vendor/moon/src/command/connection.rs:176`).
-fn field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn info_field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
     info.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).find_map(
         |line| {
             let (key, value) = line.split_once(':')?;
