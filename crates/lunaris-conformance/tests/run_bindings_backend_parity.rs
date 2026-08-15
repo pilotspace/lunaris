@@ -2,10 +2,13 @@
 //!
 //! Rust-driver entry for the Phase 8 success-criterion #4 test: within
 //! a single process, ingest the FixtureCorpus via `Lunaris::open` +
-//! `FixtureCorpus::ingest_into` into BOTH Moon and Postgres backends,
-//! then scan each and assert the normalized shape matches the
-//! committed golden reference at
+//! `FixtureCorpus::ingest_into` into Moon, then scan and assert the
+//! normalized shape matches the committed golden reference at
 //! `crates/lunaris-conformance/fixtures/golden/bindings_fixture.json`.
+//!
+//! Through 0.6.x this ran against BOTH Moon and Postgres; 0.7.0 deleted the
+//! second backend, so the surviving parity axis is across the three language
+//! drivers, not across substrates.
 //!
 //! The Python and TypeScript drivers (`lunaris-py/tests/
 //! test_backend_parity.py` and `lunaris-ts/__test__/
@@ -19,16 +22,15 @@
 //! Run with:
 //! ```text
 //! LUNARIS_MOON_URL=moon://localhost:6380 \
-//!   LUNARIS_POSTGRES_URL=postgres://postgres:lunaris@localhost:5432/lunaris \
 //!   cargo test -p lunaris-conformance --features bindings-it \
 //!     --test run_bindings_backend_parity -- --nocapture
 //! ```
 //!
-//! When both env vars are unset the test SKIPs cleanly (exits 0) so
+//! When the env var is unset the test SKIPs cleanly (exits 0) so
 //! local `cargo test --workspace --all-targets --features bindings-it`
 //! runs green without a dev-box backend. Mirrors the Plan 04-03 /
-//! 05-02 two-tier skip pattern from `tests/run_storage_moon.rs` +
-//! `tests/run_storage_postgres.rs` (Shared Pattern 2 in PATTERNS.md).
+//! 05-02 two-tier skip pattern from `tests/run_storage_moon.rs`
+//! (Shared Pattern 2 in PATTERNS.md).
 
 #![cfg(feature = "bindings-it")]
 #![forbid(unsafe_code)]
@@ -48,10 +50,8 @@ async fn rust_driver_backend_parity() -> anyhow::Result<()> {
     //      `localhost:N` form, not just literal IPs).
     //   4. 1-second TCP connect probe succeeds.
     let moon = probe_backend("LUNARIS_MOON_URL", std::env::var("LUNARIS_MOON_URL").ok());
-    let pg = probe_backend("LUNARIS_POSTGRES_URL", std::env::var("LUNARIS_POSTGRES_URL").ok());
 
-    lunaris_conformance::bindings::run_rust_driver_backend_parity(moon.as_deref(), pg.as_deref())
-        .await
+    lunaris_conformance::bindings::run_rust_driver_backend_parity(moon.as_deref()).await
 }
 
 /// Verbatim mirror of `run_storage_moon.rs::probe_backend` lines
@@ -63,11 +63,6 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let url = url?;
     let host_port = if let Some(rest) = url.strip_prefix("moon://") {
         rest.split('/').next()?.to_string()
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let after_scheme = url.split("://").nth(1)?;
-        let authority = after_scheme.split('/').next()?;
-        let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
         eprintln!("run_bindings_backend_parity: SKIP {name} (unknown URL scheme)");
         return None;
@@ -77,8 +72,8 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
         Some(a) => a,
         None => {
-            // Intentionally do NOT log the full URL — postgres:// URLs
-            // can carry credentials in the userinfo segment
+            // Intentionally do NOT log the full URL — a store URL can
+            // carry credentials in the userinfo segment
             // (T-05-02-01 mitigation).
             eprintln!(
                 "run_bindings_backend_parity: SKIP {name} (DNS resolution of {host_port} failed)"

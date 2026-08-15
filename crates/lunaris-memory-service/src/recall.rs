@@ -379,30 +379,46 @@ mod tests {
 
     use super::*;
     use lunaris::{EpisodeBuilder, Lunaris};
-    use lunaris_core::{Scope, StubEmbedder};
-    use lunaris_test_harness::{Policy, TestEngine, open_test_engine_with};
+    use lunaris_core::{HlcClock, Scope, StubEmbedder};
+    use lunaris_test_harness::doubles::{NoKeywordSearch, PortWithCaps};
+    use lunaris_test_harness::{
+        TestEngine, TestStorage, open_test_engine_with_embedder, open_test_storage,
+    };
 
     /// Construct an in-process Lunaris handle with `StubEmbedder` (deterministic
-    /// 768-d vectors) over a harness-issued ephemeral Moon (0.7.0 port off
-    /// `memory://`; falls back to `memory://` only where no Moon binary
-    /// exists). StubEmbedder produces deterministic non-zero vectors so vector
-    /// recall returns real ranked hits rather than the zero-vector
-    /// NoopEmbedder which returns nothing.
+    /// 768-d vectors) over a harness-issued ephemeral Moon. StubEmbedder
+    /// produces deterministic non-zero vectors so vector recall returns real
+    /// ranked hits rather than the zero-vector NoopEmbedder which returns
+    /// nothing.
     ///
     /// `TestEngine` derefs to `Lunaris`, so call sites are unchanged — but the
     /// binding owns the Moon child and must outlive them.
     async fn make_engine(scope_name: &str) -> (TestEngine, Scope) {
-        make_engine_with(Policy::from_env(), scope_name).await
-    }
-
-    async fn make_engine_with(policy: Policy, scope_name: &str) -> (TestEngine, Scope) {
         // No staging needed — the handler no longer stages (that is a CALLER
         // concern, lifted to the mcp/contextd boundary). StubEmbedder provides
         // deterministic recall without the 253 MB HF download.
         let embedder = Arc::new(StubEmbedder::new(768));
-        let lunaris = open_test_engine_with(policy, embedder).await;
+        let lunaris = open_test_engine_with_embedder(embedder).await;
         let scope = Scope::new(scope_name).unwrap();
         (lunaris, scope)
+    }
+
+    /// An engine on a real Moon that is forced down the CLIENT-SIDE fusion
+    /// path: `with_parts_keyword` leaves `moon_storage = None` (so
+    /// `fuse_rrf` cannot take Moon's one-round-trip `HYBRID`), and
+    /// [`NoKeywordSearch`] removes the BM25 leg.
+    ///
+    /// That combination is what the activation-boost test needs and why it
+    /// exists — see its doc comment.
+    async fn make_client_side_fusion_engine(scope_name: &str) -> (Lunaris, Scope, TestStorage) {
+        let storage = open_test_storage().await;
+        let engine = Lunaris::with_parts_keyword(
+            Arc::new(PortWithCaps::new(storage.port(), |_| {})),
+            Arc::new(NoKeywordSearch),
+            Arc::new(StubEmbedder::new(768)),
+            HlcClock::new(0),
+        );
+        (engine, Scope::new(scope_name).unwrap(), storage)
     }
 
     /// Wave A.1: brute-force cosine `vector_search` ships in the embedded
@@ -447,25 +463,31 @@ mod tests {
     /// peer through `handle()` itself (the exact path the hook / MCP tools
     /// execute), not just through an explicitly-wired test builder.
     ///
-    /// **Equal-similarity-premise pin — deliberately NOT ported to Moon.** The
-    /// test needs its two hits to be genuine ties, which holds on the embedded
-    /// backend's raw cosine but NOT on Moon: RRF fusion is rank-based, so two
-    /// byte-identical episodes come back scored 1.0 and 0.102667205 — a ~10x
-    /// gap the ledger prior only sometimes overcomes. Left unpinned this test
-    /// fails roughly 1 run in 5 under `LUNARIS_TEST_BACKEND=moon` (measured:
-    /// 1/5, then 3/8). Pinned with `Policy::ForceMemory` rather than left
-    /// flaky.
+    /// **Re-expressed in 0.7.0 against port doubles.** This used to open the
+    /// embedded backend, and the comment claimed that backend gave genuine
+    /// score ties. It did not: it gave CLIENT-SIDE RRF scores, `1/(60+1)` vs
+    /// `1/(60+2)` — a 1.6% rank gap that the ledger prior clears every time.
+    /// Moon's *native* one-round-trip fusion returns a ~10x gap for the same
+    /// pair (1.0 vs 0.1027), which the prior clears only sometimes; left
+    /// unpinned the test failed ~1 run in 5 (measured 1/5, then 3/8).
     ///
-    /// The flake is worth reading as a PRODUCTION signal, not just a fixture
-    /// problem: on the substrate production actually runs, a Strong
-    /// reinforcement does not reliably outrank an equal-content peer, because
-    /// the RRF rank gap dominates the activation prior. Tracked in
-    /// docs/testing/memory-to-moon-port-plan.md §6.
+    /// So the honest subject is the client-side fusion path, and the fixture
+    /// now says so out loud instead of naming a backend:
+    /// [`make_client_side_fusion_engine`] runs a REAL Moon with
+    /// `moon_storage = None` and a [`NoKeywordSearch`] double, which is
+    /// exactly the arrangement the deleted backend produced.
+    ///
+    /// The Moon-native gap is NOT covered here and must not be read as
+    /// covered. It is a production question — whether `LUNARIS_ACTIVATION_BOOST`
+    /// (default-on) means anything against Moon's rank-based fusion — tracked
+    /// as item 7 of docs/testing/memory-to-moon-port-plan.md §6, deliberately
+    /// out of scope for the deletion.
     #[tokio::test]
-    async fn activation_boost_reranks_service_recall() {
+    async fn activation_boost_reranks_client_side_fused_recall() {
         use lunaris_core::activation::{Grain, RefSignal, Strength};
 
-        let (lunaris, scope) = make_engine_with(Policy::ForceMemory, "test-recall-actboost").await;
+        let (lunaris, scope, _storage) =
+            make_client_side_fusion_engine("test-recall-actboost").await;
         let scoped = lunaris.scoped(scope.clone());
 
         // Two distinct episodes with IDENTICAL content → identical vectors
@@ -606,24 +628,33 @@ mod tests {
         assert_eq!(resp.hits[0].content, "The cobalt gateway is CG-1.");
     }
 
-    /// Wave A.1: bi-temporal as_of snapshot. Ingest A, capture wall time, ingest
-    /// B, then recall with as_of = t_between. Must not surface B.
+    /// **Re-expressed in 0.7.0 as the capability-honest arm.**
     ///
-    /// Previously ignored with stale "embedded backend lacks vector_search".
-    /// Re-enabled 2026-05-26 as part of the mcp-recall-empty-hits fix.
+    /// The old test ingested A, captured a wall time, ingested B, and asserted
+    /// a recall pinned to `t_between` did not surface B. That claim needed a
+    /// bi-temporal backend, and the workspace no longer has one: the embedded
+    /// SQLite and Postgres backends that could answer a historical read were
+    /// both deleted, and Moon reads current state only (STORE-07).
     ///
-    /// **Bi-temporal pin — deliberately NOT ported to Moon.** Moon reads
-    /// current state only; `as_of` there is rejected outright with
-    /// `InvalidInput("as_of requires a bi-temporal backend … STORE-07")`, so
-    /// the assertion below is unreachable on that substrate. Pinned with an
-    /// explicit [`Policy::ForceMemory`] rather than left to `from_env`, so
-    /// under `LUNARIS_TEST_BACKEND=moon` it still exercises the bi-temporal
-    /// contract instead of failing. 0.7.0 deletes the embedded backend, at
-    /// which point this test's only remaining oracle is Postgres (or Moon,
-    /// once STORE-07 lands) — the compiler will point here.
+    /// Faking it would be the worst outcome — a caller who believes they got a
+    /// historical view and acts on current-state data. So what is pinned here
+    /// is the REFUSAL, end to end through the same `handle` the MCP tools and
+    /// the hook call: `as_of` on a non-bi-temporal backend must return
+    /// `InvalidInput` naming STORE-07, never hits.
+    ///
+    /// This is strictly stronger than the pure-function test in
+    /// `as_of_gate_tests`, which proves `ensure_as_of_supported` is correct but
+    /// not that the service path calls it (built ≠ wired). The positive
+    /// direction — a `bi_temporal_native = true` backend passes the gate —
+    /// stays covered there, against synthetic capabilities, which is the only
+    /// honest way to express it with no such backend in the tree.
     #[tokio::test]
-    async fn as_of_time_travel_proves_bi_temporal() {
-        let (lunaris, scope) = make_engine_with(Policy::ForceMemory, "test-recall-bt").await;
+    async fn as_of_on_a_non_bitemporal_backend_is_refused_not_faked() {
+        let (lunaris, scope) = make_engine("test-recall-bt").await;
+        assert!(
+            !lunaris.storage().capabilities().bi_temporal_native,
+            "precondition: the only backend 0.7.0 ships is not bi-temporal"
+        );
         let scoped = lunaris.scoped(scope.clone());
 
         // Ingest fact A, capture wall time between the two ingests.
@@ -636,8 +667,7 @@ mod tests {
 
         scoped.ingest(EpisodeBuilder::new("bt/src", "the sky is green")).await.unwrap();
 
-        // Recall with as_of = t_between: B was not ingested yet at that point.
-        let resp = handle(
+        let err = handle(
             &lunaris,
             &scope,
             RecallParams {
@@ -649,18 +679,17 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect_err("as_of must be refused, not silently answered with current state");
 
-        // Either zero hits (snapshot filtered B) OR the top hit must be A.
-        // We must NOT see "green" as the top content when as_of is before B.
-        if !resp.hits.is_empty() {
-            assert!(
-                !resp.hits[0].content.contains("green"),
-                "bi-temporal as_of must not return fact B (sky is green) at t_between; \
-                 got: {:?}",
-                resp.hits[0].content
-            );
-        }
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bi-temporal") && msg.contains("STORE-07"),
+            "the refusal must name the capability and the tracking id, got: {msg}"
+        );
+        assert!(
+            !msg.contains("green"),
+            "the refusal must not leak current-state content: {msg}"
+        );
     }
 
     /// Wave A.1: source-prefix filter excludes episodes from non-matching sources.

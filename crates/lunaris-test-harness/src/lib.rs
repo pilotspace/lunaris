@@ -45,6 +45,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod doubles;
 pub mod moon;
 
 use std::ops::Deref;

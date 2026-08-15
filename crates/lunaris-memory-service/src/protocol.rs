@@ -286,27 +286,36 @@ fn to_value<T: Serialize>(dto: T) -> Result<Value, ServiceError> {
 #[cfg(test)]
 mod tests {
     use lunaris_core::{Scope, StubEmbedder};
-    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with};
+    use lunaris_test_harness::doubles::PortWithCaps;
+    use lunaris_test_harness::{TestStorage, TestStore, open_test_engine_with_embedder, open_test_storage};
     use serde_json::json;
 
     use super::*;
 
-    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
-    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
-    /// exists.
+    /// A harness-issued ephemeral Moon.
     ///
     /// `dispatch` takes `&Arc<Lunaris>`, so the deref-transparent `TestEngine`
     /// is split into its parts. The returned [`TestStore`] owns the Moon child
     /// and must be bound for the test's lifetime — hence the third element.
-    async fn fresh_with(policy: Policy, scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
+    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
         let embedder = Arc::new(StubEmbedder::new(768));
-        let (engine, store) = open_test_engine_with(policy, embedder).await.into_parts();
+        let (engine, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         let scope = Scope::new(scope_name).unwrap();
         (Arc::new(engine), scope, store)
     }
 
-    async fn fresh(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStore) {
-        fresh_with(Policy::from_env(), scope_name).await
+    /// Same, but the engine's storage DECLARES no native queue. See
+    /// `handover::tests` for why that is a capability double and not a second
+    /// storage engine.
+    async fn fresh_no_queue(scope_name: &str) -> (Arc<Lunaris>, Scope, TestStorage) {
+        let storage = open_test_storage().await;
+        let engine = Lunaris::with_parts(
+            Arc::new(PortWithCaps::without_queue(storage.port())),
+            Arc::new(StubEmbedder::new(768)),
+            lunaris_core::HlcClock::new(0),
+        );
+        let scope = Scope::new(scope_name).unwrap();
+        (Arc::new(engine), scope, storage)
     }
 
     /// needs_embedder: recall + scratchpad_read/grep touch vector search;
@@ -385,14 +394,13 @@ mod tests {
     /// Handover via dispatch on a non-native-queue backend returns Ok with an
     /// advisory skip status — never an error.
     ///
-    /// **Degrade pin — deliberately NOT ported to Moon** (same reason as
-    /// `handover::tests::handover_on_memory_backend_skips_no_queue`): the
-    /// assertion *is* `queue_native == false`. Pinned with an explicit
-    /// [`Policy::ForceMemory`] so 0.7.0's deletion of the embedded backend
-    /// surfaces here as a compile error, not a silent semantic flip.
+    /// **Re-expressed in 0.7.0** (same move as
+    /// `handover::tests::handover_on_no_queue_backend_skips`): the assertion
+    /// *is* `queue_native == false`, so it is made against a live Moon with
+    /// that one bit cleared rather than against a second storage engine.
     #[tokio::test]
-    async fn dispatch_handover_on_memory_is_ok_and_skips() {
-        let (lunaris, scope, _store) = fresh_with(Policy::ForceMemory, "test-proto-handover").await;
+    async fn dispatch_handover_on_no_queue_backend_is_ok_and_skips() {
+        let (lunaris, scope, _storage) = fresh_no_queue("test-proto-handover").await;
         let req = MemoryRequest::ScratchpadHandover { scope: scope.as_str().into() };
         let data = dispatch(&lunaris, &scope, req).await.unwrap();
         assert_eq!(data.get("status").and_then(|s| s.as_str()), Some("skipped_no_queue"));

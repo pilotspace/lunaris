@@ -68,7 +68,11 @@ mod tests {
     #[tokio::test]
     async fn retired_schemes_name_the_exit_ramp() {
         for url in ["memory://", "sqlite:///tmp/lunaris.db", "postgres://u@h/db"] {
-            let err = open(url).await.expect_err("retired scheme must not open");
+            // `Arc<dyn StoragePort>` is not `Debug`, so `expect_err` is out —
+            // match the Ok arm explicitly instead.
+            let Err(err) = open(url).await else {
+                panic!("{url}: retired scheme must not open");
+            };
             let LunarisError::Storage(StorageError::UnsupportedScheme(msg)) = err else {
                 panic!("{url}: expected UnsupportedScheme, got {err:?}");
             };

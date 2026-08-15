@@ -2098,30 +2098,42 @@ mod tests {
 
     use std::sync::Arc as StdArc;
 
-    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with, open_test_storage};
+    use lunaris_test_harness::doubles::PortWithCaps;
+    use lunaris_test_harness::{
+        TestStorage, TestStore, open_test_engine_with_embedder, open_test_storage,
+    };
 
     /// Build a disposable engine (harness-issued ephemeral Moon + StubEmbedder,
-    /// no GGUF; degrades to `memory://` where no Moon binary resolves) and
-    /// preload it into the service's per-scope handle cache under `scope_name`,
-    /// so `handle_memory` dispatches against it without touching real storage.
+    /// no GGUF) and preload it into the service's per-scope handle cache under
+    /// `scope_name`, so `handle_memory` dispatches against it without touching
+    /// real storage.
     ///
-    /// 0.7.0 port off `memory://`. The third tuple element is the [`TestStore`]
-    /// guard: it owns the Moon child process, so it must stay bound for the
-    /// test's lifetime — hence `_store` at every call site.
+    /// The third tuple element is the [`TestStore`] guard: it owns the Moon
+    /// child process, so it must stay bound for the test's lifetime — hence
+    /// `_store` at every call site.
     async fn service_with_seeded_scope(scope_name: &str) -> (ContextService, Scope, TestStore) {
-        service_with_seeded_scope_under(Policy::from_env(), scope_name).await
-    }
-
-    async fn service_with_seeded_scope_under(
-        policy: Policy,
-        scope_name: &str,
-    ) -> (ContextService, Scope, TestStore) {
         let svc = ContextService::new();
         let scope = Scope::new(scope_name).unwrap();
         let embedder = StdArc::new(StubEmbedder::new(768));
-        let (engine, store) = open_test_engine_with(policy, embedder).await.into_parts();
+        let (engine, store) = open_test_engine_with_embedder(embedder).await.into_parts();
         svc.insert_handle_for_test(&scope, StdArc::new(engine)).await;
         (svc, scope, store)
+    }
+
+    /// Same, but the seeded engine's storage DECLARES no native queue. See
+    /// `lunaris_test_harness::doubles` for why that is a capability double and
+    /// not a second storage engine.
+    async fn service_with_no_queue_scope(scope_name: &str) -> (ContextService, Scope, TestStorage) {
+        let svc = ContextService::new();
+        let scope = Scope::new(scope_name).unwrap();
+        let storage = open_test_storage().await;
+        let engine = lunaris::Lunaris::with_parts(
+            StdArc::new(PortWithCaps::without_queue(storage.port())),
+            StdArc::new(StubEmbedder::new(768)),
+            lunaris_core::HlcClock::new(0),
+        );
+        svc.insert_handle_for_test(&scope, StdArc::new(engine)).await;
+        (svc, scope, storage)
     }
 
     /// The socket protocol must decode the new umbrella variant: a
@@ -2310,16 +2322,13 @@ mod tests {
     /// status, never an `Err`. The mcp caller relies on this to warn-and-
     /// continue without failing the triggering scratchpad op.
     ///
-    /// **Degrade pin — deliberately NOT ported to Moon** (mirrors
-    /// `lunaris_memory_service::handover`'s pin): the asserted status is
-    /// `skipped_no_queue`, which only a `queue_native == false` backend
-    /// produces. Pinned with an explicit [`Policy::ForceMemory`] so 0.7.0's
-    /// deletion of the embedded backend surfaces here as a compile error
-    /// rather than a silent semantic flip.
+    /// **Re-expressed in 0.7.0** (mirrors `lunaris_memory_service::handover`'s
+    /// move): the asserted status is `skipped_no_queue`, which only a
+    /// `queue_native == false` backend produces. That is now stated as a
+    /// capability double over a live Moon, not as a second storage engine.
     #[tokio::test]
     async fn handle_memory_scratchpad_handover_is_ok_and_skips() {
-        let (svc, scope, _store) =
-            service_with_seeded_scope_under(Policy::ForceMemory, "test-mem-sp-handover").await;
+        let (svc, scope, _storage) = service_with_no_queue_scope("test-mem-sp-handover").await;
         let resp = svc
             .handle_memory(MemoryRequest::ScratchpadHandover { scope: scope.as_str().to_owned() })
             .await;
@@ -3816,19 +3825,23 @@ mod tests {
     /// `transcript::parse_injection_line` (the citation detector's line
     /// parser must keep extracting `id=` after the marker is appended).
     ///
-    /// **Score-scale pin — deliberately NOT ported to Moon.** The assertion
-    /// `0.60 < score < 0.75` encodes the EMBEDDED backend's raw brute-force
-    /// cosine scale (an exact match scores ~1.0, and STALE_DECAY takes it to
-    /// ~0.7). Moon returns RRF-fused scores on a completely different scale:
-    /// the same decayed hit measures 0.0115 against an un-stale ~0.0164, so
-    /// the 0.7x RATIO still holds but the absolute window does not. Pinned
-    /// with an explicit `Policy::ForceMemory` rather than loosened, because
-    /// widening the window would stop discriminating decay at all. 0.7.0 must
-    /// re-express this as a ratio against an un-stale control hit.
+    /// **Re-expressed in 0.7.0 as a RATIO against a control.** The old
+    /// assertion was `0.60 < score < 0.75`, which encoded the deleted embedded
+    /// backend's raw brute-force cosine scale (exact match ~1.0, decayed
+    /// ~0.7). Moon returns RRF-fused scores on a different scale entirely —
+    /// the same decayed hit measures ~0.0115 against an un-stale ~0.0164 — so
+    /// an absolute window is meaningless here, and widening it to fit both
+    /// would stop discriminating decay at all.
+    ///
+    /// The control is THE SAME hit recalled BEFORE its anchor moved. Same
+    /// episode, same query, same rank, so whatever the backend's score scale
+    /// is, it cancels: `stale / fresh` must be `STALE_DECAY`. Comparing
+    /// against a *different* episode would not work on Moon — RRF scores by
+    /// rank, so two equal-content peers come back ~10x apart (port-plan
+    /// difference #9), which would swamp a 0.7x effect.
     #[tokio::test]
     async fn stale_memory_decays_and_banners_via_real_recall_path() {
-        let (svc, scope, _store) =
-            service_with_seeded_scope_under(Policy::ForceMemory, "test-stale-exit-criterion").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-exit-criterion").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3852,6 +3865,31 @@ mod tests {
             })
             .await;
         assert!(matches!(ingest, MemoryResponse::Ok { .. }), "seed ingest failed: {ingest:?}");
+
+        // CONTROL: recall the memory while its anchor is still current. This
+        // is the un-decayed score of the very hit we are about to stale, which
+        // is what makes the later assertion a ratio rather than a guess about
+        // the backend's score scale.
+        let control = svc
+            .handle(ContextRequest::RecallForPrompt {
+                cwd: Some(repo.path().to_path_buf()),
+                scope: Some(scope.as_str().to_owned()),
+                session_id: Some("sess-stale-control".to_owned()),
+                prompt: query_text.to_owned(),
+                max_hits: Some(5),
+                max_chars: None,
+                min_score: Some(0.0),
+            })
+            .await;
+        assert!(control.ok, "control recall must succeed: {:?}", control.error);
+        let fresh = control
+            .memories
+            .iter()
+            .find(|m| m.source == "decision:git-anchor-exit")
+            .expect("control recall must return the seeded memory");
+        assert!(!fresh.stale, "the control hit must NOT be stale — its anchor has not moved");
+        let fresh_score = fresh.score;
+        assert!(fresh_score > 0.0, "control score must be positive to divide by; got {fresh_score}");
 
         // Move HEAD: edit the anchored file and commit — the memory's
         // anchor is now stale.
@@ -3879,9 +3917,12 @@ mod tests {
             .find(|m| m.source == "decision:git-anchor-exit")
             .expect("seeded memory must be present in the recall");
         assert!(hit.stale, "the anchored memory must be flagged stale after src/lib.rs moved");
+        let ratio = hit.score / fresh_score;
+        let expected = crate::staleness::STALE_DECAY;
         assert!(
-            hit.score > 0.60 && hit.score < 0.75,
-            "score must be decayed by STALE_DECAY (~0.7x an ~1.0 exact-match score), got {}",
+            (ratio - expected).abs() < 0.02,
+            "the SAME hit must lose exactly STALE_DECAY once its anchor moves: \
+             stale={} / fresh={fresh_score} = {ratio}, expected ~{expected}",
             hit.score
         );
 

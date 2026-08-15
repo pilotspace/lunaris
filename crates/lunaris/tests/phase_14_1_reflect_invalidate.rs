@@ -178,26 +178,9 @@ async fn reflect_invalidate_moon() -> anyhow::Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Postgres parity test
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn reflect_invalidate_postgres() -> anyhow::Result<()> {
-    let url = match probe_backend(
-        "LUNARIS_TEST_POSTGRES_URL",
-        std::env::var("LUNARIS_TEST_POSTGRES_URL").ok(),
-    ) {
-        Some(u) => u,
-        None => return Ok(()), // SKIP
-    };
-
-    let storage: Arc<dyn StoragePort> =
-        Arc::new(lunaris_storage_postgres::PostgresStorage::connect(&url).await?);
-
-    run_reflect_invalidate_test(storage, "postgres").await;
-    Ok(())
-}
+// The Postgres parity arm (`reflect_invalidate_postgres`, gated on
+// `LUNARIS_TEST_POSTGRES_URL`) was deleted in 0.7.0 with
+// `lunaris-storage-postgres`.
 
 // ---------------------------------------------------------------------------
 // ScopedLunaris::end_turn integration smoke (in-memory, no live backend)

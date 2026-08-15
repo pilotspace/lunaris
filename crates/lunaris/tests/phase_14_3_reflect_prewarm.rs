@@ -43,7 +43,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use lunaris::Lunaris;
 use lunaris_core::{Embedder, HlcClock, LunarisError, Scope, StubEmbedder};
-use lunaris_test_harness::{Policy, TestStorage, open_test_storage_with};
+use lunaris_test_harness::{TestStorage, open_test_storage_with_dim};
 use lunaris_verify::{ReflectInput, ReflectOutput, ReflectSupervisor};
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ async fn make_handle(
     supervisor: Arc<dyn ReflectSupervisor>,
     prewarm_capacity: usize,
 ) -> (Lunaris, TestStorage) {
-    let storage = open_test_storage_with(Policy::from_env(), embedder.dim()).await;
+    let storage = open_test_storage_with_dim(embedder.dim()).await;
     let clock = HlcClock::new(0);
     let handle = Lunaris::with_parts(storage.port(), embedder, clock)
         .with_reflect_supervisor(supervisor)
