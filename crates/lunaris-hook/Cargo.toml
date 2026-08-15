@@ -107,3 +107,7 @@ lunaris-extract          = { workspace = true }
 # HOOK-05 idempotency integration test
 lunaris-storage-embedded = { workspace = true }
 sqlx                     = { workspace = true }
+# 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
+# in crates/lunaris-test-harness) so tests stop opening `memory://` directly.
+# Dev-only, and a dev-dependency cycle through `lunaris` that Cargo permits.
+lunaris-test-harness     = { workspace = true }

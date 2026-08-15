@@ -2098,16 +2098,30 @@ mod tests {
 
     use std::sync::Arc as StdArc;
 
-    /// Build an in-process engine (memory:// + StubEmbedder, no GGUF) and
+    use lunaris_test_harness::{Policy, TestStore, open_test_engine_with, open_test_storage};
+
+    /// Build a disposable engine (harness-issued ephemeral Moon + StubEmbedder,
+    /// no GGUF; degrades to `memory://` where no Moon binary resolves) and
     /// preload it into the service's per-scope handle cache under `scope_name`,
     /// so `handle_memory` dispatches against it without touching real storage.
-    async fn service_with_seeded_scope(scope_name: &str) -> (ContextService, Scope) {
+    ///
+    /// 0.7.0 port off `memory://`. The third tuple element is the [`TestStore`]
+    /// guard: it owns the Moon child process, so it must stay bound for the
+    /// test's lifetime — hence `_store` at every call site.
+    async fn service_with_seeded_scope(scope_name: &str) -> (ContextService, Scope, TestStore) {
+        service_with_seeded_scope_under(Policy::from_env(), scope_name).await
+    }
+
+    async fn service_with_seeded_scope_under(
+        policy: Policy,
+        scope_name: &str,
+    ) -> (ContextService, Scope, TestStore) {
         let svc = ContextService::new();
         let scope = Scope::new(scope_name).unwrap();
         let embedder = StdArc::new(StubEmbedder::new(768));
-        let handle = StdArc::new(Lunaris::open_with_embedder("memory://", embedder).await.unwrap());
-        svc.insert_handle_for_test(&scope, handle).await;
-        (svc, scope)
+        let (engine, store) = open_test_engine_with(policy, embedder).await.into_parts();
+        svc.insert_handle_for_test(&scope, StdArc::new(engine)).await;
+        (svc, scope, store)
     }
 
     /// The socket protocol must decode the new umbrella variant: a
@@ -2201,7 +2215,7 @@ mod tests {
     /// uses, driven by the daemon's warm handle.
     #[tokio::test]
     async fn handle_memory_ingest_then_recall_round_trip() {
-        let (svc, scope) = service_with_seeded_scope("test-mem-rt").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-mem-rt").await;
 
         let ingest = svc
             .handle_memory(MemoryRequest::Ingest {
@@ -2247,7 +2261,7 @@ mod tests {
     /// is what lets a socket-mode mcp avoid opening a second engine for them.
     #[tokio::test]
     async fn handle_memory_scratchpad_write_then_read_round_trip() {
-        let (svc, scope) = service_with_seeded_scope("test-mem-sp-rt").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-mem-sp-rt").await;
 
         let write = svc
             .handle_memory(MemoryRequest::ScratchpadWrite {
@@ -2292,12 +2306,20 @@ mod tests {
     }
 
     /// scratchpad-proxiable: a handover over the socket is INFALLIBLE — on a
-    /// memory:// warm handle (no native queue) it returns Ok with an advisory
-    /// skip status, never an `Err`. The mcp caller relies on this to warn-and-
+    /// warm handle with no native queue it returns Ok with an advisory skip
+    /// status, never an `Err`. The mcp caller relies on this to warn-and-
     /// continue without failing the triggering scratchpad op.
+    ///
+    /// **Degrade pin — deliberately NOT ported to Moon** (mirrors
+    /// `lunaris_memory_service::handover`'s pin): the asserted status is
+    /// `skipped_no_queue`, which only a `queue_native == false` backend
+    /// produces. Pinned with an explicit [`Policy::ForceMemory`] so 0.7.0's
+    /// deletion of the embedded backend surfaces here as a compile error
+    /// rather than a silent semantic flip.
     #[tokio::test]
     async fn handle_memory_scratchpad_handover_is_ok_and_skips() {
-        let (svc, scope) = service_with_seeded_scope("test-mem-sp-handover").await;
+        let (svc, scope, _store) =
+            service_with_seeded_scope_under(Policy::ForceMemory, "test-mem-sp-handover").await;
         let resp = svc
             .handle_memory(MemoryRequest::ScratchpadHandover { scope: scope.as_str().to_owned() })
             .await;
@@ -2327,7 +2349,7 @@ mod tests {
     /// through the memory channel.
     #[tokio::test]
     async fn handle_memory_status_returns_backend_dto() {
-        let (svc, scope) = service_with_seeded_scope("test-mem-status").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-mem-status").await;
         let resp =
             svc.handle_memory(MemoryRequest::Status { scope: scope.as_str().to_owned() }).await;
         match resp {
@@ -2862,7 +2884,7 @@ mod tests {
     /// would make this test unable to observe either write.
     #[tokio::test]
     async fn trace_injection_emits_weak_activation_refs() {
-        let (svc, scope) = service_with_seeded_scope("test-activation-inject").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-activation-inject").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -2986,7 +3008,7 @@ mod tests {
     /// `verdicts` meta row; M2/M4 must gain no strong ref.
     #[tokio::test]
     async fn feedback_pass_writes_verdicts_and_strong_refs() {
-        let (svc, scope) = service_with_seeded_scope("test-citation-e2e").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-citation-e2e").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3064,7 +3086,7 @@ mod tests {
     /// "skipped_no_transcript"`, capture still written, `Ok` returned.
     #[tokio::test]
     async fn feedback_pass_fail_open_no_transcript() {
-        let (svc, scope) = service_with_seeded_scope("test-citation-no-transcript").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-citation-no-transcript").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3087,7 +3109,7 @@ mod tests {
     /// reuse) and write no activation refs.
     #[tokio::test]
     async fn feedback_pass_session_mismatch_skips() {
-        let (svc, scope) = service_with_seeded_scope("test-citation-mismatch").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-citation-mismatch").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3251,8 +3273,11 @@ mod tests {
     #[tokio::test]
     async fn feedback_pass_activation_write_failure_still_ok() {
         let scope = Scope::new("test-citation-activation-fail").unwrap();
-        let inner = lunaris::open("memory://").await.unwrap();
-        let failing = StdArc::new(ActivationFailingStorage { inner }) as Arc<dyn StoragePort>;
+        // 0.7.0 port: a bare harness-issued `StoragePort` to wrap in the
+        // failure decorator. `store` owns the Moon child and outlives it.
+        let store = open_test_storage().await;
+        let failing =
+            StdArc::new(ActivationFailingStorage { inner: store.port() }) as Arc<dyn StoragePort>;
         let embedder: Arc<dyn lunaris_core::Embedder> = StdArc::new(StubEmbedder::new(768));
         let clock = HlcClock::new(0);
         let handle = StdArc::new(Lunaris::with_parts(failing.clone(), embedder, clock));
@@ -3328,7 +3353,7 @@ mod tests {
     /// hand-picked length.
     #[tokio::test]
     async fn injection_trace_carries_token_counters() {
-        let (svc, scope) = service_with_seeded_scope("test-savings-injection").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-savings-injection").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3396,7 +3421,7 @@ mod tests {
     /// (verdicts count, detector value) must stay unchanged.
     #[tokio::test]
     async fn feedback_pass_records_transcript_stats() {
-        let (svc, scope) = service_with_seeded_scope("test-savings-feedback-stats").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-savings-feedback-stats").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3444,7 +3469,8 @@ mod tests {
     /// all (not `null`, absent).
     #[tokio::test]
     async fn feedback_pass_no_transcript_has_no_stats() {
-        let (svc, scope) = service_with_seeded_scope("test-savings-feedback-no-transcript").await;
+        let (svc, scope, _store) =
+            service_with_seeded_scope("test-savings-feedback-no-transcript").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3523,7 +3549,7 @@ mod tests {
     /// proves the cwd is actually threaded end-to-end from the wire request.
     #[tokio::test]
     async fn tool_capture_stamps_head_and_files() {
-        let (svc, scope) = service_with_seeded_scope("test-git-anchor-tool").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-git-anchor-tool").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3576,7 +3602,7 @@ mod tests {
     /// meta carries NEITHER `git_head` NOR `files` — and still succeeds.
     #[tokio::test]
     async fn capture_without_repo_omits_keys() {
-        let (svc, scope) = service_with_seeded_scope("test-git-anchor-no-repo").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-git-anchor-no-repo").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3614,7 +3640,7 @@ mod tests {
     /// empty array).
     #[tokio::test]
     async fn paths_absent_omits_files() {
-        let (svc, scope) = service_with_seeded_scope("test-git-anchor-no-paths").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-git-anchor-no-paths").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3651,7 +3677,7 @@ mod tests {
     /// pre-existing `feedback_pass_fail_open_no_transcript` test).
     #[tokio::test]
     async fn feedback_capture_carries_git_head() {
-        let (svc, scope) = service_with_seeded_scope("test-git-anchor-feedback").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-git-anchor-feedback").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3789,9 +3815,20 @@ mod tests {
     /// proves the stale-marked rendered line still round-trips through
     /// `transcript::parse_injection_line` (the citation detector's line
     /// parser must keep extracting `id=` after the marker is appended).
+    ///
+    /// **Score-scale pin — deliberately NOT ported to Moon.** The assertion
+    /// `0.60 < score < 0.75` encodes the EMBEDDED backend's raw brute-force
+    /// cosine scale (an exact match scores ~1.0, and STALE_DECAY takes it to
+    /// ~0.7). Moon returns RRF-fused scores on a completely different scale:
+    /// the same decayed hit measures 0.0115 against an un-stale ~0.0164, so
+    /// the 0.7x RATIO still holds but the absolute window does not. Pinned
+    /// with an explicit `Policy::ForceMemory` rather than loosened, because
+    /// widening the window would stop discriminating decay at all. 0.7.0 must
+    /// re-express this as a ratio against an un-stale control hit.
     #[tokio::test]
     async fn stale_memory_decays_and_banners_via_real_recall_path() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-exit-criterion").await;
+        let (svc, scope, _store) =
+            service_with_seeded_scope_under(Policy::ForceMemory, "test-stale-exit-criterion").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -3873,7 +3910,7 @@ mod tests {
     /// stale one pre-decay must rank ABOVE it once the stale one decays.
     #[tokio::test]
     async fn finish_recall_resorts_after_stale_decay() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-resort").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-resort").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -3952,7 +3989,7 @@ mod tests {
     /// between `id=<id>` and the closing `]`).
     #[tokio::test]
     async fn anchored_but_untouched_file_stays_fresh() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-untouched-fresh").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-untouched-fresh").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4015,7 +4052,7 @@ mod tests {
     /// fresh, and the call still succeeds.
     #[tokio::test]
     async fn finish_recall_without_cwd_stays_fresh() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-no-cwd").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-no-cwd").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4052,7 +4089,7 @@ mod tests {
     /// gets none. A second digest run preserves `first_seen_ms`.
     #[tokio::test]
     async fn session_digest_writes_verify_agenda_and_preserves_first_seen() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-digest-agenda").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-digest-agenda").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4140,7 +4177,7 @@ mod tests {
     /// episode gets a `verify_agenda` entry after settling.
     #[tokio::test]
     async fn commit_capture_spawns_agenda_sweep() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-commit-capture").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-commit-capture").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4183,7 +4220,7 @@ mod tests {
     /// `false`) must NOT spawn the agenda sweep.
     #[tokio::test]
     async fn non_commit_capture_does_not_spawn_sweep() {
-        let (svc, scope) = service_with_seeded_scope("test-stale-non-commit-capture").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-stale-non-commit-capture").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4281,7 +4318,7 @@ mod tests {
     /// wrapper and land in `rendered_context`.
     #[tokio::test]
     async fn test_nudge_injected_over_threshold_empty_digest() {
-        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-empty").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-dream-nudge-empty").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
 
@@ -4318,7 +4355,7 @@ mod tests {
     /// call, with no nudge logic involved at all).
     #[tokio::test]
     async fn test_no_nudge_below_threshold_byte_identical() {
-        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-below").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-dream-nudge-below").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4380,7 +4417,7 @@ mod tests {
     /// 5 seeded, 3 archived, live == 2 < threshold(5), so no nudge fires.
     #[tokio::test]
     async fn test_archived_excluded_from_agenda_size() {
-        let (svc, scope) = service_with_seeded_scope("test-dream-nudge-archived").await;
+        let (svc, scope, _store) = service_with_seeded_scope("test-dream-nudge-archived").await;
         let handle = svc.handle_for_scope(&scope).await.expect("seeded handle resolves");
         svc.insert_storage_for_test(&scope, handle.storage()).await;
         let storage = handle.storage();
@@ -4542,7 +4579,10 @@ mod tests {
     #[tokio::test]
     async fn test_ledger_scan_failure_fails_open() {
         let scope = Scope::new("test-dream-nudge-scan-fail").unwrap();
-        let inner = lunaris::open("memory://").await.unwrap();
+        // 0.7.0 port: a bare harness-issued `StoragePort`. `store` owns the
+        // Moon child and must outlive the decorator built from its port.
+        let store = open_test_storage().await;
+        let inner = store.port();
         let episode_id = seed_anchored_episode(
             inner.as_ref(),
             &scope,

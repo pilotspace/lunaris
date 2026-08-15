@@ -2,10 +2,20 @@
 //!
 //! E2E tier: spawns the real binary with stdout PIPED (unlike
 //! session_switch.rs, stdout is the contract surface here).
-//! - silent paths run on memory:// (cheap, deterministic — keyword_search is
-//!   NotSupported there, so a switch must warn + stay silent on stdout);
-//! - the positive path needs a live Moon and is gated behind
-//!   `LUNARIS_HOOK_TEST_MOON_URL` (moon-it pattern: skipped when unset).
+//! ## Backend (0.7.0 port off `memory://`)
+//!
+//! - the two stdout-discipline paths take whatever store `lunaris-test-harness`
+//!   resolves (ephemeral child-process Moon, else `memory://`) — they assert
+//!   only that stdout stays empty, which is backend-independent;
+//! - `e2e_switch_on_memory_warns_and_stays_silent` is a DEGRADE PIN and stays
+//!   on the embedded backend by explicit `Policy::ForceMemory`: its whole
+//!   subject is the `keyword_search` `NotSupported` skip, which Moon does not
+//!   produce. 0.7.0 must re-express it against a stubbed `KeywordPort`;
+//! - the positive path was gated behind `LUNARIS_HOOK_TEST_MOON_URL`, which
+//!   nothing in CI ever set, so it was skipped on every run since it was
+//!   written. It now takes a harness-issued ephemeral Moon and actually
+//!   executes whenever one resolves. The env hatch is deliberately not carried
+//!   over: it pointed a writing test at an operator's live store.
 //!
 //! Red evidence: handover.rs ships as stubs until the build phase — the
 //! NotSupported warn and the stdout JSON do not exist yet.
@@ -14,6 +24,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use lunaris_test_harness::{Backend, Policy, open_test_store, open_test_store_with};
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 
 const SCOPE: &str = "ctx-inject-e2e";
@@ -73,8 +84,10 @@ async fn e2e_same_session_restart_stdout_empty() {
     let scopes = tmp.path().join("scopes.json");
     let sessions = tmp.path().join("sessions.json");
 
+    let store = open_test_store().await;
+
     for _ in 0..2 {
-        let out = run_hook(START_A, "memory://", &scopes, &sessions).await;
+        let out = run_hook(START_A, store.url(), &scopes, &sessions).await;
         assert_eq!(out.status.code(), Some(0));
         assert!(
             out.stdout.is_empty(),
@@ -91,7 +104,8 @@ async fn e2e_non_session_start_stdout_empty() {
     let scopes = tmp.path().join("scopes.json");
     let sessions = tmp.path().join("sessions.json");
 
-    let out = run_hook(PRE_TOOL_USE, "memory://", &scopes, &sessions).await;
+    let store = open_test_store().await;
+    let out = run_hook(PRE_TOOL_USE, store.url(), &scopes, &sessions).await;
     assert_eq!(out.status.code(), Some(0));
     assert!(
         out.stdout.is_empty(),
@@ -100,19 +114,27 @@ async fn e2e_non_session_start_stdout_empty() {
     );
 }
 
-/// Switch on memory://: keyword_search is NotSupported on the embedded
-/// backend, so the injection must FAIL SILENT — stdout empty, ONE stderr
-/// warn naming the skip, exit 0 (decided by the ingest alone).
+/// Switch on the embedded backend: keyword_search is NotSupported there, so
+/// the injection must FAIL SILENT — stdout empty, ONE stderr warn naming the
+/// skip, exit 0 (decided by the ingest alone).
+///
+/// **Degrade pin — deliberately NOT ported to Moon.** The subject of the test
+/// IS the `NotSupported` skip; Moon implements `keyword_search` and takes the
+/// injecting path instead. Routed through the harness with an explicit
+/// `Policy::ForceMemory` so 0.7.0's deletion of the embedded backend surfaces
+/// here rather than silently inverting the assertion.
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_switch_on_memory_warns_and_stays_silent() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let scopes = tmp.path().join("scopes.json");
     let sessions = tmp.path().join("sessions.json");
 
-    let out_a = run_hook(START_A, "memory://", &scopes, &sessions).await;
+    let store = open_test_store_with(Policy::ForceMemory).await;
+
+    let out_a = run_hook(START_A, store.url(), &scopes, &sessions).await;
     assert_eq!(out_a.status.code(), Some(0));
 
-    let out_b = run_hook(START_B, "memory://", &scopes, &sessions).await;
+    let out_b = run_hook(START_B, store.url(), &scopes, &sessions).await;
     assert_eq!(out_b.status.code(), Some(0), "context failure must not change the exit code");
     assert!(
         out_b.stdout.is_empty(),
@@ -126,16 +148,22 @@ async fn e2e_switch_on_memory_warns_and_stays_silent() {
     );
 }
 
-/// Positive path on a LIVE Moon (gated): seed pad entries for sess-a, flip
-/// the session to sess-b, and assert the stdout hook-JSON carries the
-/// distilled summary. Set LUNARIS_HOOK_TEST_MOON_URL=moon://127.0.0.1:6380
-/// (see reference_moon_local_run) to run it.
+/// Positive path on a real Moon: seed pad entries for sess-a, flip the session
+/// to sess-b, and assert the stdout hook-JSON carries the distilled summary.
+///
+/// 0.7.0 port: previously gated on `LUNARIS_HOOK_TEST_MOON_URL`, which nothing
+/// in CI ever set — so this ran zero times. It now takes a harness-issued
+/// ephemeral Moon and skips only when the harness resolved the embedded
+/// backend (no Moon binary, or `LUNARIS_TEST_BACKEND=memory`), which is the
+/// one case where the assertion below is genuinely unreachable.
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_switch_on_moon_injects_additional_context() {
-    let Ok(moon_url) = std::env::var("LUNARIS_HOOK_TEST_MOON_URL") else {
-        eprintln!("skipping: LUNARIS_HOOK_TEST_MOON_URL not set (live-Moon gate)");
+    let store = open_test_store().await;
+    if store.backend() != Backend::Moon {
+        eprintln!("skipping: harness resolved the embedded backend, not Moon");
         return;
-    };
+    }
+    let moon_url = store.url().to_owned();
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let scopes = tmp.path().join("scopes.json");
