@@ -126,6 +126,13 @@ async fn dropping_the_fixture_reaps_the_process_and_the_data_dir() {
 /// Two fixtures are independent stores. This is the property that makes an
 /// ephemeral Moon a faithful replacement for `memory://`, whose every
 /// `connect` is a fresh, process-private database.
+///
+/// Both fixtures are written to before the cross-read. That is not padding:
+/// recall against a Moon that has NEVER been written to fails with
+/// `no temporal snapshot registered for the given AS_OF timestamp`, where the
+/// embedded backend returns an empty result set. Porting a test whose
+/// assertion is "recall finds nothing" therefore needs the store seeded with
+/// something irrelevant first — see docs/testing/memory-to-moon-port-plan.md.
 #[tokio::test]
 async fn two_fixtures_do_not_share_state() {
     let Some(()) = require_binary("two_fixtures_do_not_share_state") else {
@@ -137,14 +144,22 @@ async fn two_fixtures_do_not_share_state() {
     let b = open_test_engine_with(Policy::RequireMoon, stub()).await;
     assert_ne!(a.url(), b.url(), "two fixtures must be distinct servers");
 
+    let secret = Ulid::new();
     a.scoped(sc.clone())
-        .ingest(EpisodeBuilder::new("iso/one", "the cobalt beacon flashes every 17 seconds"))
+        .ingest(
+            EpisodeBuilder::new("iso/one", "the cobalt beacon flashes every 17 seconds").id(secret),
+        )
         .await
         .expect("ingest into fixture A");
+    b.scoped(sc.clone())
+        .ingest(EpisodeBuilder::new("iso/two", "unrelated filler so B has a snapshot"))
+        .await
+        .expect("ingest into fixture B");
 
     let hits =
         b.scoped(sc).recall(Query::text("cobalt beacon")).await.expect("recall from fixture B");
-    assert!(hits.is_empty(), "fixture B saw fixture A's write: {hits:?}");
+    let leaked = hits.iter().any(|h| h.episode_id == secret.to_bytes().to_vec());
+    assert!(!leaked, "fixture B saw fixture A's episode: {hits:?}");
 }
 
 /// End-to-end proof the harness hands back a working engine: ingest, then
