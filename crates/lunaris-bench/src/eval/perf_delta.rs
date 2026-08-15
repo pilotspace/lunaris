@@ -1,5 +1,23 @@
 //! Plan 05-06 EVAL-07 / EVAL-09 — Moon vs Postgres perf-delta harness.
 //!
+//! # RETIRED IN 0.7.0 — reads as SKIPPED, permanently
+//!
+//! The metric is a RATIO between two backends, and 0.7.0 deleted the second
+//! one. The criterion benches no longer emit a `postgres` label (the row was
+//! removed from `benches/{ingest,recall}_hot_path.rs` — it would have opened a
+//! URL `Lunaris::open` now rejects), so `read_p50(.., "postgres")` returns
+//! `None` on every run and every row is SKIPPED.
+//!
+//! It is kept registered, not deleted, for one reason: the manifest's row
+//! cardinality is a contract (`run_all` promises the catalogue is always
+//! complete, and CI greps the manifest for `"status":"FAIL"`). Dropping the
+//! harness would silently shrink the catalogue. What IS changed is the skip
+//! REASON — it used to say "run `cargo bench` first", which would send an
+//! operator to re-run benches forever chasing data that can no longer exist.
+//!
+//! Deleting this harness and re-cutting the catalogue is a follow-up, not a
+//! slice-B change.
+//!
 //! Walks Criterion JSON at
 //! `target/criterion/<group>/<bench>/<label>/new/estimates.json` and emits
 //! one [`EvalRow`] per `(group, bench)` with metric
@@ -45,6 +63,13 @@ use crate::eval::EvalRow;
 pub(crate) const HARNESS: &str = "perf-delta";
 const RATIO_THRESHOLD: f64 = 5.0;
 
+/// Why every row skips since 0.7.0. Named so the reason is one string rather
+/// than two divergent copies, and so a grep for it lands on the module doc.
+const RETIRED_REASON: &str =
+    "retired in 0.7.0: this metric is a Moon-vs-Postgres ratio and the Postgres backend \
+     was deleted, so the `postgres` Criterion label is never produced. Re-running \
+     `cargo bench` will not populate it. See the module docs.";
+
 /// `(criterion_group, bench_basename)` rows — mirror of `BUDGET_TABLE` from
 /// `crates/lunaris-bench/tests/budget_assertions.rs:49-152`. Plan 02-04 +
 /// Plan 03-04 set the existing benches; Plan 05-06 reuses them verbatim
@@ -71,18 +96,16 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     let criterion_root = target.join("criterion");
 
     // Whole-directory absence → emit SKIPPED rows per (group, bench) so the
-    // manifest still has stable cardinality. Caller can re-run after
-    // `cargo bench -p lunaris-bench` populates the data.
+    // manifest still has stable cardinality. Since 0.7.0 the populated branch
+    // below skips too (no `postgres` label exists), so this is the same
+    // outcome by a shorter path — the reason string is shared.
     if !criterion_root.exists() {
         for (group, bench) in BENCHES {
             results.push(EvalRow::skipped(
                 HARNESS,
                 &format!("{group}/{bench}::p50_ratio"),
                 RATIO_THRESHOLD,
-                &format!(
-                    "no Criterion data at {} — run `cargo bench -p lunaris-bench` first",
-                    criterion_root.display()
-                ),
+                RETIRED_REASON,
             ));
         }
         return Ok(());
@@ -108,7 +131,7 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
                 HARNESS,
                 &format!("{group}/{bench}::p50_ratio"),
                 RATIO_THRESHOLD,
-                "missing Criterion JSON for one or both backends — `cargo bench` did not populate this row",
+                RETIRED_REASON,
             ),
         };
         results.push(row);
@@ -195,20 +218,37 @@ mod tests {
         assert!(results.iter().all(|r| r.status == "SKIPPED"));
     }
 
+    /// 0.7.0: `run` must emit a full-cardinality catalogue of SKIPPED rows
+    /// whose reason names the removal, whether or not `target/criterion/`
+    /// exists on this machine. Both branches share `RETIRED_REASON`, so this
+    /// holds on a developer box with stale bench data and in a clean CI
+    /// checkout alike — which is the point: neither can produce a ratio.
     #[tokio::test]
-    async fn run_emits_one_row_per_bench_when_root_missing() {
+    async fn run_emits_a_retired_skip_for_every_bench() {
         let mut results: Vec<EvalRow> = Vec::new();
-        // run() doesn't take a path; it reads from CARGO_TARGET_DIR or the
-        // workspace target/ — we trust the integration path. Just verify
-        // that calling run() always populates BENCHES.len() rows minimum
-        // (either real ratios or SKIPPED).
-        let initial = results.len();
         super::run(&mut results).await.unwrap();
-        assert!(
-            results.len() >= initial + BENCHES.len(),
-            "run should append at least {} rows; got {}",
+
+        assert_eq!(
+            results.len(),
             BENCHES.len(),
-            results.len() - initial
+            "the catalogue cardinality is a manifest contract"
+        );
+        for row in &results {
+            assert_eq!(row.status, "SKIPPED", "no ratio is computable without a second backend");
+        }
+    }
+
+    /// `EvalRow` does not carry the reason — `skipped` prints it to stderr and
+    /// drops it — so the wording cannot be asserted through a row. Pin the
+    /// constant directly: it must name the removal, and must NOT send the
+    /// reader to `cargo bench`, which is the exact dead end 0.7.0 created.
+    #[test]
+    fn the_retired_reason_names_the_removal_and_not_a_rerun() {
+        assert!(RETIRED_REASON.contains("retired in 0.7.0"));
+        assert!(RETIRED_REASON.contains("Postgres backend"));
+        assert!(
+            !RETIRED_REASON.contains("run `cargo bench`"),
+            "re-running benches cannot produce the missing label"
         );
     }
 }
