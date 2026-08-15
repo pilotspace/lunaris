@@ -4,10 +4,11 @@
 //! Measures `Lunaris::ingest(Episode { 12 KB markdown })` end-to-end on TWO
 //! recipes:
 //!
-//! 1. `ingest_12kb_md/{moon,postgres}` — Phase 2 fast path (graph OFF).
+//! 1. `ingest_12kb_md/moon` — Phase 2 fast path (graph OFF).
 //!    Blueprint §4.1 latency budget asserts p50 ≤ 50 ms / p99 ≤ 110 ms on
-//!    both `MoonStorage` AND `PostgresStorage`.
-//! 2. `ingest_12kb_md_graph_on/{moon,postgres}` — Plan 03-04 INGEST-06
+//!    `MoonStorage`. (The same budget applied to `PostgresStorage` until 0.7.0
+//!    deleted that backend.)
+//! 2. `ingest_12kb_md_graph_on/moon` — Plan 03-04 INGEST-06
 //!    graph-ON path. Blueprint §4.1 budget: p50 ≤ 300 ms / p99 ≤ 570 ms.
 //!    The bench enables `graph_pipeline` on the handle BEFORE the iter loop
 //!    and installs a non-network `StubExtractor` (D-03) so the measurement
@@ -23,13 +24,13 @@
 //!
 //! Each backend opts in via an env var:
 //! - `MOON_URL=moon://localhost:6380` → registers the `*/moon` benches.
-//! - `PG_URL=postgres://lunaris:lunaris@localhost/lunaris` → registers the
-//!   `*/postgres` benches.
+//!
+//! Point it at a DEDICATED bench Moon, never a live store.
 //!
 //! When a URL env is unset OR the host:port doesn't accept a 1-sec TCP probe,
 //! the bench group emits `eprintln!("SKIP …")` and continues without
-//! registering that backend. Empty bench groups (both backends unreachable)
-//! finalise with zero registered benches → Criterion reports "no benches".
+//! registering that backend. An empty bench group finalises with zero
+//! registered benches → Criterion reports "no benches".
 //!
 //! ## Embedder + extractor + reranker choices
 //!
@@ -69,8 +70,12 @@ struct Backend {
     env: &'static str,
 }
 
-const BACKENDS: &[Backend] =
-    &[Backend { label: "moon", env: "MOON_URL" }, Backend { label: "postgres", env: "PG_URL" }];
+/// 0.7.0 is Moon-only. The `postgres` row (`PG_URL`) was removed with the
+/// backend; leaving it would have opened a `postgres://` URL that now returns
+/// `UnsupportedScheme`, turning a retired budget into a bench failure. The
+/// table shape stays so a second store can be added back without restructuring
+/// the loop.
+const BACKENDS: &[Backend] = &[Backend { label: "moon", env: "MOON_URL" }];
 
 // ----- Plan 03-04 — bench-only StubExtractor (D-03 / I-3 / I-4) -----
 

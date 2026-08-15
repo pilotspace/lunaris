@@ -5,9 +5,10 @@ atomicity and a graph that's opt-in.**
 
 A production-grade agent-memory engine in Rust, with first-class Python
 and TypeScript SDKs and a zero-Rust MCP server for coding agents. Raw
-observations in; structured, bi-temporal facts out. Backed by **Moon**
-(the high-performance Redis-compatible substrate), **Postgres**, or
-**SQLite** (`memory://` — zero infrastructure).
+observations in; structured, bi-temporal facts out. Backed by **Moon**, the
+high-performance Redis-compatible substrate — and, as of 0.7.0, only Moon.
+The Postgres and SQLite backends were removed; see
+[0.6 → 0.7](docs/migration/0.6-to-0.7.md) if you are on one.
 
 ![Lunaris layered architecture](https://raw.githubusercontent.com/pilotspace/lunaris/main/docs/book/src/images/architecture/lunaris-layers.png)
 
@@ -80,14 +81,14 @@ unpublished. The `--git` form above builds the same source (needs a Rust
 onward, prebuilt `lunaris-mcp-<target>.tar.gz` binaries are also attached
 to each [GitHub release](https://github.com/pilotspace/lunaris/releases).
 
-A plain `npx`/`uvx` install defaults to a zero-config **per-scope SQLite** store — recall works out of the box via
-brute-force cosine, no external process. Point `LUNARIS_MCP_STORAGE` at
-Moon (`moon://127.0.0.1:6380`) or Postgres for HNSW-class latency beyond
-~10k vectors per scope. The `setup-lunaris-agents.py` repo path instead
-is Moon-only for its agent config (the lifecycle hooks use Moon's queues
-for background embedding; install Moon via the Moon repo's curl one-liner). A
-source build with `--features embedded-moon` auto-launches an in-process
-Moon — an opt-in, not the published-binary default. First ingest stages
+**`LUNARIS_MCP_STORAGE` is required.** Through 0.6.x an unset value opened a
+per-scope SQLite file; 0.7.0 deleted that backend, and the server now refuses
+to boot rather than guess a store — a mis-routed memory is harder to notice
+than a process that will not start. Point it at a Moon
+(`moon://127.0.0.1:6380`), started with `--shards 1`; install Moon via the
+Moon repo's curl one-liner or the `ghcr.io/pilotspace/moon` image. A source
+build with `--features embedded-moon` auto-launches an in-process Moon — an
+opt-in for development, not the published-binary default. First ingest stages
 the embedder weights once (lazy GGUF download).
 
 Full guides: [`docs/integration/claude-code.md`](docs/integration/claude-code.md) ·
@@ -107,8 +108,7 @@ memory deliberately:
 - Before answering questions about prior work, query `memory.recall`.
 - Use `memory.scratchpad_write`/`scratchpad_read`/`scratchpad_grep` for
   transient working notes within a task (drafts, plans, in-progress state);
-  promote the durable ones with `memory.scratchpad_consolidate` (needs a
-  Moon/Postgres backend).
+  promote the durable ones with `memory.scratchpad_consolidate`.
 - Memory is partitioned by scope — never mix scopes; list with
   `memory.list_scopes`. Use `memory.forget` when asked to delete — it
   previews by default; show the match count, then re-issue with
@@ -136,7 +136,7 @@ cargo add lunaris-memory --rename lunaris
 import asyncio, lunaris, ulid
 
 async def main():
-    handle = await lunaris.open("moon://127.0.0.1:6380")  # or "memory://"
+    handle = await lunaris.open("moon://127.0.0.1:6380")
 
     lsn = await handle.ingest({
         "id": str(ulid.ULID()), "source": "quickstart",
@@ -156,7 +156,7 @@ asyncio.run(main())
 ```ts
 import { open, RetrievalBuilder } from "@pilotspace/lunaris";
 
-const handle = await open("moon://127.0.0.1:6380"); // or "memory://"
+const handle = await open("moon://127.0.0.1:6380");
 const lsn = await handle.ingest(episode);           // same episode shape as Python
 const hits = await new RetrievalBuilder().bind(handle).top(5).execute();
 ```
@@ -172,9 +172,9 @@ let scoped  = lunaris.scoped(Scope::new("acme.agent-1")?);
 let lsn = scoped.ingest(EpisodeBuilder::new("user-msg", "Alice loves chocolate.")).await?;
 ```
 
-The connection URL is the only backend switch: `moon://` (latency
-flagship), `postgres://` (portability, RLS-isolated), `memory://` /
-`sqlite:///path` (zero infrastructure). Embedding and reranking run
+`moon://host:port` is the only connection scheme — every retired spelling
+(`postgres://`, `memory://`, `sqlite:///path`) returns an error naming the
+migration guide. Embedding and reranking run
 **in-process** via llama.cpp (`granite-embedding-311m` Q4_K_M +
 `bge-reranker-v2-m3` Q5_K_M GGUF) — no embedding API, no network on the
 hot path; GPU offload is a build-time `metal`/`cuda`/`vulkan` feature.
@@ -196,7 +196,7 @@ against them; any feature that weakens any of the three is rejected.
 |---|---|---|
 | **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured strict-replay: p50 10.3 ms / p99 20.8 ms ([methodology](docs/benchmarks/v0.2.x/README.md)); k=30 hydration tail p50 6.0 ms / p99 6.2 ms after the concurrent-hydration fan-out ([A/B](docs/benchmarks/v0.6-recall-fanout-ab.md)). | `cargo bench --bench recall_hot_path` |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, graph, audit, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — `forget` and supersession close intervals instead of destroying rows. As-of *reads* are backend-dependent: search-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) on Moon, historical KV reads on Postgres/SQLite only ([limits](docs/ARCHITECTURE.md#honest-limits-read-before-quoting-the-table-above)). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
+| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — `forget` and supersession close intervals instead of destroying rows. As-of *reads* are search-side and graph-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`); historical **KV** reads are not available on Moon and `read_as_of` refuses rather than answering with today's data — the Postgres/SQLite version chains that served them were removed in 0.7.0 ([limits](docs/ARCHITECTURE.md#honest-limits-read-before-quoting-the-table-above)). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 
 ## Architecture at a glance
 
@@ -222,7 +222,7 @@ substrate does *natively* instead of a layer bolted on top:
 
 - **Atomic memory** — `TXN.BEGIN` / `TXN.COMMIT` commit every lane at once; no half-written memory.
 - **Hybrid recall** — `FT.SEARCH` + native RRF fuse vector + keyword in one round trip.
-- **Time-travel** — `FT.SEARCH AS_OF` / `GRAPH.QUERY VALID_AT` make "what did the agent know at T?" a query, not a rebuild (search + graph lanes; historical *KV* reads are a Postgres/SQLite capability — Moon refuses them explicitly rather than answering with today's data).
+- **Time-travel** — `FT.SEARCH AS_OF` / `GRAPH.QUERY VALID_AT` make "what did the agent know at T?" a query, not a rebuild (search + graph lanes only; a historical *KV* read has no version chain to walk on Moon, so `read_as_of` refuses explicitly rather than answering with today's data).
 - **Opt-in graph** — per-scope `GRAPH.QUERY` (Cypher): relationships without running Neo4j.
 - **GDPR forget** — `FT.INVALIDATE_RANGE` erases a whole time range, no scan-and-delete loop.
 - **Background work** — a native queue + pub/sub run consolidation without an external broker.
@@ -267,8 +267,8 @@ included for context, not as a head-to-head claim.
 ## Multi-agent isolation
 
 Every Lunaris operation is partitioned by `Scope` — a validated newtype
-enforced at compile time and at the storage boundary (Postgres RLS with
-`WITH CHECK`, per-scope Moon keyspaces + indices). Cross-scope reads are
+enforced at compile time and at the storage boundary (per-scope Moon
+keyspaces + per-scope indices). Cross-scope reads are
 a type error. See [RFC 0001](docs/rfcs/0001-scope-newtype.md).
 
 ```rust

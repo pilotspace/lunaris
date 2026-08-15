@@ -1,11 +1,12 @@
 //! Plan 08-04 — per-driver backend parity.
 //!
 //! Each language (Rust / Python / TypeScript) drives a round-trip via
-//! its own `Lunaris::open` + handle ingest pipeline into BOTH Moon and
-//! Postgres within a single process. Within a process, `StoragePort::
-//! atomic_write` fans identical bytes to each backend (proven at the
-//! v0.1.0 Phase 1 level), so Moon rows and Postgres rows are
-//! structurally identical by construction.
+//! its own `Lunaris::open` + handle ingest pipeline into Moon. The name
+//! predates 0.7.0, when the same corpus went into BOTH Moon and Postgres in
+//! one process and the claim was that `StoragePort::atomic_write` fans
+//! identical bytes to each. With one backend left, what is still asserted —
+//! and what actually caught regressions — is that all THREE language drivers
+//! produce the same structural row set against the same committed golden.
 //!
 //! This module provides:
 //!
@@ -179,16 +180,12 @@ pub fn assert_structural_eq(rows: &NormalizedRows, golden: &GoldenReference) -> 
 
 /// Rust-driver backend-parity test body.
 ///
-/// Reads `LUNARIS_MOON_URL` + `LUNARIS_POSTGRES_URL` from the
-/// environment. When either is unset, skips the corresponding backend
-/// with `Ok(())` (follows the Plan 04-03 / 05-02 two-tier skip
-/// pattern from `tests/run_storage_moon.rs` + `run_storage_postgres.rs`).
-/// When BOTH are unset, the test exits `Ok(())` without exercising
-/// any code path — the harness is still validated at the type level
-/// by `cargo check`. The Plan 08-04 CI job sets both env vars so at
-/// least the `memory` matrix row (mapped to `postgres://` in CI) and
-/// the `postgres` row exercise the full path; the `moon` matrix row
-/// skips neutrally when Moon is not configured.
+/// The caller reads `LUNARIS_MOON_URL` from the environment. When it is unset
+/// the test exits `Ok(())` without exercising any code path (the two-tier skip
+/// pattern from `tests/run_storage_moon.rs`) — the harness is still validated
+/// at the type level by `cargo check`. `conformance-bindings.yml` builds and
+/// launches a Moon and sets the var, so CI takes the full path rather than the
+/// skip.
 ///
 /// Per-backend flow:
 ///
@@ -222,10 +219,10 @@ pub async fn run_rust_driver_backend_parity(moon_url: Option<&str>) -> anyhow::R
 
 /// Per-backend ingest + scan + normalize + assert.
 ///
-/// Factored out so the caller's orchestration loop stays compact and
-/// each backend's error surface names the backend in the context
-/// (`"Moon backend failed structural parity"` vs `"Postgres backend
-/// failed structural parity"`).
+/// Factored out so the caller's orchestration loop stays compact and the error
+/// surface names the store in the context (`"moon backend failed structural
+/// parity"`). Only one label is passed today; the parameter stays so adding a
+/// backend does not mean re-threading the error context.
 async fn exercise_one_backend(
     handle: &Lunaris,
     golden: &GoldenReference,

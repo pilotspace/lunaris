@@ -239,6 +239,62 @@ to the submodule-bump PR in this repo would be the next improvement.
 
 ---
 
+## 3. `lunaris-storage-postgres` / `lunaris-storage-embedded` — deleted in 0.7.0
+
+Added when slice B removed both crates from the workspace. **Not yet audited
+against the live registry** — the snapshot table above predates the deletion, so
+start by establishing what is actually published:
+
+```bash
+for c in lunaris-storage-postgres lunaris-storage-embedded; do
+  printf '%s -> ' "$c"
+  curl -s "https://crates.io/api/v1/crates/$c" | jq -r '.crate.max_version // "NOT PUBLISHED"'
+done
+```
+
+If either returns `NOT PUBLISHED`, there is no registry action for it and this
+section is closed for that crate — it was only ever an internal member.
+
+If a version IS published, the treatment is **identical to §1: tombstone
+README, do NOT `cargo yank`.** Same reasoning, and it applies more strongly
+here: every published `lunaris-memory` version through `0.6.2` declares these
+crates as dependencies, so yanking them would make the entire 0.1–0.6 line
+unresolvable from a fresh `cargo add`. These backends are removed, not unsound.
+
+The tombstone text differs from §1 only in where it points:
+
+```markdown
+# lunaris-storage-postgres — DEPRECATED
+
+The Postgres backend was removed in Lunaris 0.7.0. Lunaris is Moon-only.
+
+**Migrate before upgrading:** run `lunaris-migrate` from the **v0.6.2 release
+binary** — it cannot be built from `main`, because its source backends are the
+ones being removed.
+
+Migration guide: https://github.com/pilotspace/lunaris/blob/main/docs/migration/0.6-to-0.7.md
+Standing a Moon up: https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md
+
+The last functional release stays on crates.io and is deliberately **not**
+yanked: every `lunaris-memory` release through 0.6.2 depends on it.
+```
+
+Note the asymmetry with §1's candle crates: those had a drop-in successor
+(`lunaris-llamacpp`) and no data to move. These do not — the user has a
+populated store, and the tombstone's job is to get them to `lunaris-migrate`
+**before** they bump their `lunaris-memory` pin, not after.
+
+### Related: `lunaris-migrate`
+
+`publish = false`, never on crates.io, and deleted from the workspace in 0.7.0.
+No registry action. Its only distribution channel is `git checkout v0.6.2 &&
+cargo build --release -p lunaris-migrate` (see the migration guide §6) —
+**unless** an owner attaches a prebuilt binary to the v0.6.2 GitHub release,
+which no workflow in this repo does. Do not document a download until one
+exists.
+
+---
+
 ## Not on this list, and why
 
 - **`lunaris-hook`** — set to `publish = false` on 2026-08-15. It is a

@@ -1,34 +1,30 @@
-# Querying Three Ways (Zero-Deps SQLite)
+# Querying Three Ways
 
 **Reach for this page when you want to see the raw retrieval surface — not a
-recipe wrapper — and run it with zero infrastructure.** One ingested document,
-one question, asked three ways: the one-shot `recall(query)`, a composed DSL
-plan that **fuses** flat chunks with RAPTOR tree descent, and the `Tree`
-operator on its own. Everything here runs against the embedded SQLite backend
-(`memory://`) — **no Docker, no Moon, no Postgres**; storage is an in-process
-SQLite database and the default embedder runs in-process too.
+recipe wrapper.** One ingested document, one question, asked three ways: the
+one-shot `recall(query)`, a composed DSL plan that **fuses** flat chunks with
+RAPTOR tree descent, and the `Tree` operator on its own.
 
-> **Zero-deps means zero *infrastructure*.** `Lunaris::open("memory://")` opens
-> the [embedded backend](../operations/backends.md) — no server to start. The
-> default embedder runs in-process and loads its model weights from disk on
-> first use; that is the only one-time cost. To run fully offline in a test,
-> drive the lower-level path with a `StubEmbedder` —
-> `EmbeddedStorage::connect("memory://")` + `StubEmbedder::new(768)` +
-> `ingest_episode`, as in `crates/lunaris-ingest/tests/raptor_wiring.rs`.
-
-This complements the recipe pages: those (`DocumentKnowledgeBase`, …) wrap a
-`Vector + Keyword(BM25) ⊕ RRF` plan and are **server-backed** (BM25 is a
-Moon / Postgres feature — see [Scaling up](#scaling-up-hybrid-bm25-fusion)
-below). This page is the zero-deps path that exercises only the
-vector-and-tree operators the embedded backend already serves.
+> **This page used to be the zero-deps SQLite tour.** 0.7.0 deleted the
+> embedded backend, so it now needs a Moon like every other page:
+>
+> ```bash
+> docker run -d -p 6380:6379 ghcr.io/pilotspace/moon:0.8.5 \
+>   --shards 1 --protected-mode no --appendonly yes
+> ```
+>
+> What it still is: the *unwrapped* surface. The recipe pages
+> (`DocumentKnowledgeBase`, …) hand you a prebuilt
+> `Vector + Keyword(BM25) ⊕ RRF` plan; this page composes the operators by
+> hand so you can see what a plan is made of.
 
 ## The three forms
 
-| Form | Call | Runs on `memory://`? | Use it when… |
-|---|---|---|---|
-| One-shot | `scoped.recall(query)` | ✅ | a plain semantic lookup is enough |
-| DSL fusion | `scoped.dsl().with_root(Vector….and(Tree…).fuse_rrf(k))….execute()` | ✅ | you want to blend flat chunks with hierarchical context |
-| Tree | `scoped.dsl().with_root(Tree::new("communities", k).with_depth(2))…` | ✅ | a whole-document question whose answer spans many chunks |
+| Form | Call | Use it when… |
+|---|---|---|
+| One-shot | `scoped.recall(query)` | a plain semantic lookup is enough |
+| DSL fusion | `scoped.dsl().with_root(Vector….and(Tree…).fuse_rrf(k))….execute()` | you want to blend flat chunks with hierarchical context |
+| Tree | `scoped.dsl().with_root(Tree::new("communities", k).with_depth(2))…` | a whole-document question whose answer spans many chunks |
 
 All three are the **same engine**: `recall(query)` is just `dsl()` with the
 default root left in place. See [Two ways to
@@ -36,10 +32,10 @@ query](../guides/retrieval-dsl.md#two-ways-to-query) for the distinction.
 
 ## Example
 
-Shaped after the embedded-backend ingest fixtures in
+Shaped after the ingest fixtures in
 `crates/lunaris-ingest/tests/raptor_wiring.rs` (which ingest a headed document
-on `memory://` and assert RAPTOR builds communities with 768-d summary
-embeddings) and the `Tree` discrimination benchmark in
+and assert RAPTOR builds communities with 768-d summary embeddings) and the
+`Tree` discrimination benchmark in
 `crates/lunaris-retrieve/tests/tree_recall.rs`.
 
 ```rust,no_run
@@ -100,9 +96,8 @@ are directly comparable across the chunks and communities indices.
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Zero infra: SQLite in-process, no server. Swap "memory://" for
-    // "sqlite:///path/to.db" to persist across runs.
-    let lunaris = Lunaris::open("memory://").await.context("open")?;
+    // `moon://host:port` is the only scheme 0.7.0 accepts.
+    let lunaris = Lunaris::open("moon://127.0.0.1:6380").await.context("open")?;
     let scoped = lunaris.scoped(Scope::new("demo").context("scope")?);
 
     // Ingest once. The umbrella pipeline chunks + embeds + builds the RAPTOR
@@ -152,28 +147,16 @@ async fn main() -> Result<()> {
 
 ### What's proven where
 
-The embedded backend serves **every** storage op these forms need — there is
-no Moon-specific call in this path:
-
-- **Ingest builds communities on SQLite.** `raptor_wiring.rs` ingests on
-  `memory://` and asserts each community carries a 768-d `summary_embedding`
-  (the `communities` vector index is populated at ingest, backend-agnostically,
-  via the single `atomic_write` in `crates/lunaris-ingest/src/pipeline.rs`).
+- **Ingest builds communities.** `raptor_wiring.rs` ingests a headed document
+  and asserts each community carries a 768-d `summary_embedding` — the
+  `communities` vector index is populated at ingest, via the single
+  `atomic_write` in `crates/lunaris-ingest/src/pipeline.rs`.
 - **`Tree` uses only `vector_search` + `read_as_of`** (see
   `crates/lunaris-retrieve/src/operators/tree.rs`) — both core `StoragePort`
-  methods the embedded backend implements. No Cypher, no `GRAPH.QUERY`.
-- **`fuse_rrf` folds client-side** by `source_op`, so it is portable across
-  backends (`crates/lunaris-retrieve/src/operators/combinators.rs`).
-
-One honest caveat: the headline *tree-beats-flat* discrimination benchmark
-(`tree_recall.rs`) was **measured against Moon**, not SQLite. The code path is
-identical on both backends, and the evidence on `memory://` is strong: the
-community tree build is verified by `raptor_wiring.rs`; `read_as_of` runs on
-embedded; and `vector_search` runs on embedded — exercised directly on the
-`chunks` index and **index-name-agnostic by construction** (`WHERE idx = ?1`,
-no whitelist), with the `communities` upsert riding the identical
-`atomic_write` path. What has *not* run on SQLite is the end-to-end "tree
-returns more chunks than flat at the same budget" assertion itself.
+  methods, no Cypher and no `GRAPH.QUERY`.
+- **The *tree-beats-flat* discrimination benchmark** (`tree_recall.rs`) is
+  measured against Moon, which since 0.7.0 is the only place it could be
+  measured.
 
 ## Scaling up: hybrid BM25 fusion
 
@@ -194,11 +177,9 @@ let hits = scoped
     .await?;
 ```
 
-This needs a **server backend** (`moon://…` or `postgres://…`): the embedded
-SQLite backend returns `embedded backend: keyword_search not yet implemented (FTS5 BM25 pending)`
-(`crates/lunaris-storage-embedded/src/lib.rs`). Everything else on this page is
-unchanged — only the `Keyword` branch requires the server-side FT index. For a
-batteries-included hybrid-RAG wrapper over a server backend, reach for
+The `Keyword` branch rides Moon's native inverted index, and when both legs sit
+on the same index `fuse_rrf` collapses them into one round trip instead of two.
+For a batteries-included hybrid-RAG wrapper over the same plan, reach for
 [`DocumentKnowledgeBase`](./document-kb.md).
 
 ## Notes
@@ -213,5 +194,5 @@ batteries-included hybrid-RAG wrapper over a server backend, reach for
   vector search, then walks community KV rows up to `d` levels — latency scales
   with depth × fan-out, capped at `MAX_TREE_DEPTH = 4`.
 - See [The Retrieval DSL](../guides/retrieval-dsl.md) for the full operator and
-  combinator surface, and [Choosing a Backend](../operations/backends.md) for
-  when to graduate from `memory://` to Moon or Postgres.
+  combinator surface, and [The Storage Backend](../operations/backends.md) for
+  the Moon setup this page assumes.

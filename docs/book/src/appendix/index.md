@@ -12,7 +12,7 @@ says "RFC 000N" it means one of these:
 
 | RFC | Title | What it decides |
 |---|---|---|
-| `docs/rfcs/0001-scope-newtype.md` | `Scope` newtype and `ScopedLunaris<'a>` typestate | Multi-agent partition key — the validated `Scope` alphabet, the `lunaris:{scope}:{kind}:{ulid}` KV format, Postgres RLS, and why the typestate makes cross-scope leaks a compile error. |
+| `docs/rfcs/0001-scope-newtype.md` | `Scope` newtype and `ScopedLunaris<'a>` typestate | Multi-agent partition key — the validated `Scope` alphabet, the `lunaris:{scope}:{kind}:{ulid}` KV format, and why the typestate makes cross-scope leaks a compile error. (Its Postgres RLS section is historical: that backend was removed in 0.7.0.) |
 | `docs/rfcs/0004-extractor-tiers.md` | `ExtractorTier` typestate enum and laptop-floor default swap | **Historical.** Described the candle / Ollama / cloud-API extractor tiers and the default-model choice; the candle tier was deleted in the v0.6 llama.cpp-only cutover (`docs/decisions/2026-07-10-llamacpp-only-cutover.md`) — extractor is remote-only (`LUNARIS_EXTRACT_PROVIDER`) or `NoopExtractor`. |
 | `docs/rfcs/0006-verifier-default-swap.md` | Verifier default swap: Gemma 3 27B → Gemma 3 270M | **Historical.** Why the verifier used to default to `NoopVerifier` with a candle `verify-small` laptop-floor build; superseded by the v0.6 llama.cpp-only cutover — the verifier is now remote-only (`LUNARIS_VERIFY_PROVIDER`) or `NoopVerifier`, no local model tiers. |
 | `docs/rfcs/0007-fallback-combinators.md` | `FallbackExtractor<P, F>` / `FallbackEmbedder<P, F>` with per-provider circuit breakers | The v0.3 resilience primitives — the fan-out / fallback combinators referenced by the [Cognee migration](../migrating/cognee.md). |
@@ -49,8 +49,8 @@ for the current (v0.6) inference-runtime decision.
 
 ## How this fits together
 
-- Conventions enforced in code review (Scope, HTTP DTO discipline, Postgres
-  RLS, the grep-pinned invariants) live in the repository `CLAUDE.md`.
+- Conventions enforced in code review (Scope, HTTP DTO discipline, the
+  grep-pinned invariants) live in the repository `CLAUDE.md`.
 - The generated rustdoc — built from `cargo doc` on every release — is the
   authoritative API surface; see [API Reference](../reference/api.md).
 - Where this book disagrees with the Rust source, the source wins.

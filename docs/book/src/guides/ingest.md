@@ -10,7 +10,7 @@ whether the [graph pipeline](./graph.md) is on or off.
 ```rust
 use lunaris::{EpisodeBuilder, Lunaris, Scope};
 
-let lunaris = Lunaris::open("postgres://lunaris@localhost/lunaris").await?;
+let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
 let scope   = Scope::new("acme.agent-1")?;            // partition key — no colons
 let scoped  = lunaris.scoped(scope);
 
@@ -59,7 +59,7 @@ which reads the graph-pipeline toggle **once** at the top and picks a branch
 3. **Assemble one `Vec<WriteOp>`** — one `KvPut` for the episode, plus per
    chunk a `KvPut` (chunk JSON) and a `VectorUpsert` (768-d embedding +
    `{episode_id, heading_path, offset, text, source}` metadata). The `text`
-   field is what lets both Postgres and Moon BM25 score chunk content.
+   field is what lets Moon's BM25 index score chunk content.
 4. **One `atomic_write`** — `storage.atomic_write(&scope, &ops).await`. All
    chunks for an episode land or none do; that is the Phase 1 atomicity
    contract.

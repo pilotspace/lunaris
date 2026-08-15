@@ -19,9 +19,9 @@
 //! - [`helios_interrupt_profile`] — composite profile mixing the two
 //!   Helios-flow variants so Task 2 can sample uniformly.
 //! - [`fsck_all`] — pure shim that opens the session-scoped KV slice via
-//!   `StoragePort::scan_range` and reports per-Episode orphans. Postgres +
-//!   Moon backends behave identically here because the probe operates at
-//!   the `StoragePort` surface (no backend-specific joins). The probe is
+//!   `StoragePort::scan_range` and reports per-Episode orphans. It operates
+//!   entirely at the `StoragePort` surface (no backend-specific joins), so it
+//!   is portable to any store the port admits. The probe is
 //!   intentionally conservative — any write path that shears
 //!   `episode:<ulid>` / `chunk:<ulid>:*` / vector-upsert emission across
 //!   the atomic boundary will surface.
@@ -146,10 +146,9 @@ pub fn helios_interrupt_profile() -> InterruptProfile {
 /// * `Graph` — edge primitive exists but one endpoint node is missing.
 /// * `Index` — index metadata references a primary row that was never
 ///   committed (only meaningful for backends with a materialized index
-///   table separate from the primary store; Moon's `FT.*` + Postgres's
-///   `pg_trgm` indices are both crash-safe at the storage layer, so this
-///   class is expected to be empty on the 50x2 run — its presence would
-///   indicate a deeper bug).
+///   table separate from the primary store; Moon's `FT.*` indices are
+///   crash-safe at the storage layer, so this class is expected to be empty
+///   on the 50x2 run — its presence would indicate a deeper bug).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OrphanClass {
     Kv,
@@ -176,8 +175,7 @@ impl OrphanClass {
 pub struct OrphanRow {
     pub class: OrphanClass,
     /// Canonical key identifying the orphan (e.g. `"episode:<ulid>"`).
-    /// Backend-agnostic string form so the JSON is portable across Moon
-    /// / Postgres.
+    /// Backend-agnostic string form so the JSON is portable across stores.
     pub key: String,
     /// Human-readable context — what the probe expected vs what it found.
     pub reason: String,
@@ -218,8 +216,8 @@ impl FsckReport {
 ///
 /// ### Probe scope
 ///
-/// The probe intentionally stays at the `StoragePort::scan_range` surface
-/// so it works on BOTH Moon and Postgres with no backend-specific SQL.
+/// The probe intentionally stays at the `StoragePort::scan_range` surface so
+/// it works on any store the port admits, with no backend-specific queries.
 /// The prefixes scanned:
 ///
 /// * `episode:` — collect the `(episode_id, source)` pairs where
@@ -236,13 +234,11 @@ impl FsckReport {
 ///
 /// The probe is conservative — it may miss Vector/Graph/Index orphans if
 /// the backend does not expose them under `scan_range`. For Moon this is
-/// fine (all primitives live behind `scan_range`); for Postgres, vector
-/// rows live in `lunaris_vectors` and are reachable via `scan_range` with
-/// the `vector:` prefix (Phase 1 STORE-02). This matches the per-class
-/// audit contract the chaos test needs.
+/// fine (all primitives live behind `scan_range`). This matches the
+/// per-class audit contract the chaos test needs.
 ///
-/// Callers with backend-specific fsck needs (e.g. pgmq partition-packing
-/// diagnostics) layer those on top; this helper stays generic.
+/// Callers with backend-specific fsck needs layer those on top; this helper
+/// stays generic.
 pub async fn fsck_all(
     storage: Arc<dyn StoragePort>,
     session_prefix: &str,
@@ -304,8 +300,8 @@ pub async fn fsck_all(
     // v0.1.0 Plan 03-02) and vector upserts are part of the same
     // atomic_write as the KV fanout (so a vector orphan would also
     // surface as an absent episode_id, covered by the KV check above).
-    // The Index slice is backend-managed (Moon FT.* / Postgres pg_trgm)
-    // and crash-safe at the storage layer per STORE-03/STORE-04.
+    // The Index slice is backend-managed (Moon FT.*) and crash-safe at the
+    // storage layer per STORE-03/STORE-04.
     //
     // If a future Phase 13 EVAL-05 probe needs classified Vector/Graph
     // orphans, extend `scan_vector_orphans` / `scan_graph_orphans` here.

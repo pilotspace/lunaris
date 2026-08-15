@@ -24,9 +24,10 @@ members = [
   # umbrella) per the grouping-by-concern rule (NOT alphabetical).
   "crates/lunaris-ts",
   # Phase 9 Plan 09-01: lunaris-recipes hosts the 4 composable primitives
-  # (MessageStream / DocumentCorpus / TemporalQuery / WorkingMemory) +
-  # Moon + Postgres parity harness. Placed after lunaris-ts per the
-  # grouping-by-concern rule (all downstream-consumer crates clustered).
+  # (MessageStream / DocumentCorpus / TemporalQuery / WorkingMemory).
+  # Its Moon-vs-Postgres parity harness went with the Postgres backend in
+  # 0.7.0. Placed after lunaris-ts per the grouping-by-concern rule (all
+  # downstream-consumer crates clustered).
   "crates/lunaris-recipes",
   "crates/lunaris-consolidate",
   # llama.cpp-only cutover (Phase C) — Ollama/OpenAI-compatible HTTP escape

@@ -63,13 +63,12 @@ memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 
 Each hit carries `episode_id`, `source`, `content` (≤200 chars), `score`
-(0–1), and `ingested_at` (RFC-3339). On the default SQLite backend recall is
-**vector-only** (brute-force cosine); point at Moon or Postgres to add BM25
-keyword fusion and hybrid recall.
+(0–1), and `ingested_at` (RFC-3339). Recall against Moon is hybrid — native
+HNSW vector search fused with BM25 keyword search.
 
-> **SQLite note.** Brute-force cosine scales comfortably to ~10k vectors per
-> scope. For larger corpora, point `LUNARIS_MCP_STORAGE` at Moon or Postgres
-> (see [Storage backends](./index.md#storage-backends)).
+> **`LUNARIS_MCP_STORAGE` is required (0.7.0).** There is no default store any
+> more; the server refuses to boot without one. See
+> [Storage](./index.md#storage).
 
 ## Point at Moon
 
@@ -116,7 +115,7 @@ table, the `lunaris-contextd` warm sidecar, and measured timings are in
 |---------|-----|
 | `lunaris-mcp: command not found` | Add `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile, restart the terminal, re-run `claude mcp add`. |
 | Connected but no tools appear | The `initialize` handshake failed. Run `lunaris-mcp` directly; any startup error prints to stderr. |
-| `memory.recall` returns empty | Nothing ingested into this scope yet — run `memory.ingest` first. On Moon/Postgres, check `LUNARIS_MCP_STORAGE`. |
+| `memory.recall` returns empty | Nothing ingested into this scope yet — run `memory.ingest` first. Otherwise check that `LUNARIS_MCP_STORAGE` names the Moon you ingested into. |
 | First recall takes ~30 s | One-time GGUF staging to `~/.lunaris/models/`. Set `LUNARIS_MCP_SKIP_STAGE=1` if pre-staged. |
 | Silent disconnect | Something is writing to **stdout** (often an `echo`/`print` in `.bashrc`/`.zshrc`). It corrupts MCP framing. |
 | Wrong scope | Run `memory.list_scopes`; set `LUNARIS_MCP_SCOPE` or rename the entry in `~/.lunaris/scopes.json` and restart. |

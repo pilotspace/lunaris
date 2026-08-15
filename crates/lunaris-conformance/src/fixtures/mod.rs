@@ -1,7 +1,7 @@
 //! Plan 05-02 — deterministic fixture corpus for `lunaris-conformance::storage`.
 //!
 //! 10 episodes seeded from a fixed `0xCAFE_F00D` ChaCha20 RNG so re-runs
-//! across Moon and Postgres produce byte-identical primitive bytes.
+//! across independent stores produce byte-identical primitive bytes.
 //! Mirrors the determinism contract from `crates/lunaris-bench/src/corpus.rs`
 //! lines 1-150 (Shared Pattern 5 in PATTERNS.md).
 //!
@@ -34,9 +34,8 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ulid::Ulid;
 
-/// Vector dimensionality used by fixture-seeded embeddings. Must match both
-/// `MoonClient::ensure_indexes` (`const DIM: usize = 768`) and the Postgres
-/// `chunks.embedding` column (`vector(768)`). Keeping the constant here
+/// Vector dimensionality used by fixture-seeded embeddings. Must match
+/// `MoonClient::ensure_indexes` (`const DIM: usize = 768`). Keeping the constant here
 /// (instead of hard-coding 768 at every call site) localises the update when
 /// the canonical dimension moves.
 pub const EMBED_DIM: usize = 768;
@@ -83,13 +82,13 @@ impl FixtureCorpus {
     }
 
     /// Atomic-write every episode into the given backend. Deterministic on
-    /// the same `SEED`, so calling this on Moon and Postgres produces
-    /// byte-identical primitive bytes.
+    /// the same `SEED`, so calling this against two independent stores
+    /// produces byte-identical primitive bytes.
     ///
     /// Each episode lands as a SINGLE `atomic_write` carrying BOTH the
     /// `WriteOp::KvPut` raw episode payload AND a `WriteOp::VectorUpsert`
     /// into the `chunks` index so the `vector_search` parity suite has
-    /// searchable rows on both backends (INGEST-04 single-call invariant
+    /// searchable rows (INGEST-04 single-call invariant
     /// per Episode preserved — one `atomic_write` call per episode).
     pub async fn ingest_into(&self, storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
         for ep in &self.episodes {
@@ -159,8 +158,8 @@ fn build_episode_ops(ep: &Episode) -> anyhow::Result<Vec<WriteOp>> {
     // and stored vectors live in the same metric space.
     //
     // Metadata carries:
-    //   * `text`     — picked up by Moon's `extract_content_for_index` and
-    //                  Postgres's tsvector generator for BM25 payloads.
+    //   * `text`     — picked up by Moon's `extract_content_for_index` for
+    //                  BM25 payloads.
     //   * `source`   — chunks FT index has a `SchemaField::Tag("source")`
     //                  declared; keeps parity with production writes.
     //   * `valid_time_ms` — chunks FT index has `SchemaField::Numeric("valid_time")`;

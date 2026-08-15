@@ -6,7 +6,7 @@
 Zep and Lunaris both model agent memory bi-temporally — they're the
 closest comparison in the space. The difference is the substrate:
 Zep is a hosted Python service backed by Postgres + Neo4j; Lunaris
-is an embedded Rust core with optional Postgres or Moon backing
+is an embedded Rust core backed by Moon
 that runs in-process with your agent.
 
 This page maps Zep concepts to their Lunaris equivalents so a team
@@ -24,12 +24,12 @@ already running Zep can evaluate the switch with concrete code.
 | Concern                                   | Zep                                          | Lunaris                                                |
 |--------------------------------------------|----------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python service (Zep Cloud or self-hosted)    | Embedded Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Postgres + Neo4j (two services)              | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Postgres + Neo4j (two services)              | Moon (one substrate, FT.* + graph + KV native) |
 | **Bi-temporal model**                     | Temporal Knowledge Graph — facts carry validity periods | `(valid_time, sys_time)` tuple per row — full Snodgrass bi-temporal |
 | **Recall latency**                         | 200–500 ms (HTTP hop + Python)              | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |
-| **Tenancy**                                | `user_id` / `session_id` strings on the API | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + Postgres RLS-enforced |
+| **Tenancy**                                | `user_id` / `session_id` strings on the API | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + per-scope Moon keyspace |
 | **Atomicity**                              | Per-store best-effort; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
-| **Graph queries**                          | Cypher via Neo4j                             | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored` operator |
+| **Graph queries**                          | Cypher via Neo4j                             | Moon native graph (Cypher dialect); the `Graph::anchored` operator lowers to it |
 | **Embedder coupling**                     | OpenAI default                                | In-process native granite-r2 (local, 768-d) by default; Ollama HTTP escape hatch (`--features embed-remote`) for air-gapped/remote deployments |
 | **Memory consolidation**                  | "MemGPT-style" salience-weighted episodic   | ACT-R base-level activation + Leiden community detection (RFC blueprint §5.1) |
 | **License**                                | Apache 2.0                                   | Apache 2.0                                             |
@@ -44,7 +44,7 @@ you fan out to graph + vector.
 Lunaris is **library-oriented**: your agent links the Rust crate
 (or imports the PyO3 / NAPI binding) and the recall happens
 in-process. The strength is sub-25 ms p50 and a single substrate to
-operate; the cost is operating Moon or Postgres yourself.
+operate; the cost is operating Moon yourself.
 
 Either choice can be right. Zep is the right choice if your team
 treats memory as someone else's problem to operate. Lunaris is the
@@ -82,7 +82,7 @@ mem.scoped(scope).ingest(
 
 Zep's `session_id` maps to Lunaris's `Scope`. The Lunaris type
 system guarantees the scope can't be smuggled past the API — every
-storage call takes `&Scope`, RLS enforces it in Postgres. (The typed
+storage call takes `&Scope`, and the per-scope Moon keyspace enforces it. (The typed
 `Scope` / `EpisodeBuilder` SDK ergonomics land in v0.3; today the
 Python surface uses dicts — see the [Python SDK](../sdk/python.md) page.)
 
@@ -135,12 +135,13 @@ without you having to write a router.
 ### Time-travel recall
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
-> `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
-> Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
-> rather than silently answering with present-time data. Moon's search and
-> graph lanes stay temporal (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`).
+> keeps a KV version chain to hydrate the historical rows, and **no 0.7.0
+> backend does**: the call returns `StorageError::NotSupported` (HTTP
+> `501 not_supported`). Moon stores Lunaris rows as plain hashes and refuses a
+> historical pin rather than silently answering with present-time data; the
+> Postgres and SQLite backends that answered it were deleted in 0.7.0. The
+> search and graph lanes stay temporal (`FT.SEARCH AS_OF`,
+> `GRAPH.QUERY VALID_AT`).
 
 **Zep**
 
@@ -163,8 +164,8 @@ hits = await (
 ```
 
 The Zep approach pulls every fact then filters in Python; Lunaris
-pushes the temporal cut into the storage query (`tstzrange &&` on
-Postgres, native bi-temporal on Moon). On 1M-fact corpora the
+pushes the temporal cut into the storage query (native bi-temporal
+on Moon). On 1M-fact corpora the
 latency difference is meaningful.
 
 ### Graph traversal
@@ -189,8 +190,7 @@ hits = await (
 )
 ```
 
-`Graph::anchored` resolves to an AGE Cypher query on Postgres or a
-native graph query on Moon — same operator on either backend. See
+`Graph::anchored` resolves to a native graph query on Moon. See
 [The Graph Pipeline](../guides/graph.md).
 
 ### Forget
@@ -227,12 +227,12 @@ on date T" is itself recorded. See [Forgetting](../guides/forget.md).
 5. **Cutover when the diff is acceptable.** Promote Lunaris to
    primary; keep Zep as fallback for ~1 release.
 6. **Decommission Zep.** You're now running one Rust process
-   (your agent) + Moon or Postgres. No Python service to operate,
+   (your agent) + Moon. No Python service to operate,
    no Neo4j to back up.
 
 ## When to stay on Zep
 
-- You're not ready to operate a substrate (Moon or Postgres) and
+- You're not ready to operate Moon and
   prefer Zep Cloud's hosted plan.
 - Your agent stack is pure Python and adding a Rust binary to your
   build pipeline is friction.

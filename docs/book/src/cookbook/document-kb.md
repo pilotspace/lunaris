@@ -43,7 +43,7 @@ use lunaris_recipes::documentary::DocumentKnowledgeBase;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
 
     let kb = DocumentKnowledgeBase::new(lunaris.clone(), "kb:docs/");
 

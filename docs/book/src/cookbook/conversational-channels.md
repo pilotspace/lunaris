@@ -106,7 +106,7 @@ use lunaris_recipes::conversational::EmailThreading;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
 
     // Opt in to the sender/recipient graph BEFORE ingest if you want edges
     // (the extractor runs inside the ingest hot path, not after the fact).

@@ -116,7 +116,7 @@ index, with one transaction boundary across all four lanes.
 - The query language itself: [The Retrieval DSL](./retrieval-dsl.md)
 - The primitives and the keyspace:
   [Core Concepts](../getting-started/concepts.md)
-- Backend trade-offs (Moon vs Postgres vs SQLite):
-  [Choosing a Backend](../operations/backends.md)
+- Backend setup and its honest limits:
+  [The Storage Backend](../operations/backends.md)
 - The published numbers:
   [`docs/benchmarks/v0.2.x/`](https://github.com/pilotspace/lunaris/tree/main/docs/benchmarks/v0.2.x)

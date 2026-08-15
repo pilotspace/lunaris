@@ -222,9 +222,10 @@ mod tests {
     use lunaris_core::Scope;
     use lunaris_test_harness::{TestEngine, open_test_engine};
 
-    /// Ported off `memory://` (0.7.0 prerequisite) onto a harness-issued
-    /// ephemeral Moon; falls back to `memory://` only where no Moon binary
-    /// exists. Hold the returned `TestEngine` — it owns the Moon child.
+    /// Runs against a harness-issued ephemeral Moon (0.7.0: there is no
+    /// in-process fallback — a missing `moon` binary panics with the
+    /// `MOON_TEST_BINARY` diagnostic). Hold the returned `TestEngine` — it owns
+    /// the Moon child.
     async fn make_engine() -> (TestEngine, Scope) {
         let lunaris = open_test_engine().await;
         // Use Scope::dev() so the shim in ScopedLunaris::forget (which routes
@@ -405,13 +406,13 @@ mod tests {
     /// state, not just `false`.
     ///
     /// A forget soft-delete stamps `bt.sys[1]` INSIDE the payload
-    /// (`build_soft_delete_op`) and commits it as a `KvPut`. Moon and Postgres
-    /// derive the row's `bt` from those same bytes, but the embedded (SQLite)
-    /// backend opens a fresh interval on every `KvPut` and keeps `bt` in its
-    /// own column — so on `memory://` the row-level `bt` stays open and the
-    /// tombstone is visible only in the payload. That payload gate is exactly
-    /// what `lunaris_retrieve::hydrate` reads to hide forgotten episodes.
-    /// Check both, so this probe is honest on every backend.
+    /// (`build_soft_delete_op`) and commits it as a `KvPut`. Moon derives the
+    /// row's `bt` from those same bytes, so both views agree there — but a
+    /// backend that keeps `bt` in its own column and opens a fresh interval on
+    /// every `KvPut` (as the deleted SQLite one did) leaves the row-level `bt`
+    /// open with the tombstone visible only in the payload. The payload gate is
+    /// what `lunaris_retrieve::hydrate` actually reads to hide forgotten
+    /// episodes. Check both, so this probe stays honest against any port.
     async fn episode_probe(lunaris: &Lunaris, scope: &Scope, id: Ulid) -> (bool, String) {
         let key = lunaris_core::keyspace::episode_key(scope, id);
         let now = lunaris.clock().tick();

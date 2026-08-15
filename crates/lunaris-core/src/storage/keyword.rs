@@ -4,17 +4,20 @@
 //! storage impls may not have a BM25 path. Backends that DO support keyword
 //! search opt in by implementing this extension trait.
 //!
-//! Phase 2 (`RETRIEVE-02`) wires both `MoonStorage` (`FT.SEARCH ... SCORER BM25`
-//! via `moon-client`'s `text().search`) and `PostgresStorage` (`tsvector` +
-//! `ts_rank_cd`). The umbrella `lunaris::Lunaris` handle stores
-//! `Arc<dyn KeywordPort>` alongside `Arc<dyn StoragePort>` (both point at the
-//! same backend struct via two trait Arcs — no duplicate connection).
+//! Phase 2 (`RETRIEVE-02`) wires `MoonStorage` (`FT.SEARCH ... SCORER BM25`
+//! via `moon-client`'s `text().search`). Since 0.7.0 that is the only in-tree
+//! implementor — the `tsvector` + `ts_rank_cd` Postgres impl was deleted with
+//! its backend — but the trait stays separate from `StoragePort` on purpose:
+//! it is the seam a third-party store with no BM25 path declines. The umbrella
+//! `lunaris::Lunaris` handle stores `Arc<dyn KeywordPort>` alongside
+//! `Arc<dyn StoragePort>` (both point at the same backend struct via two trait
+//! Arcs — no duplicate connection).
 //!
 //! ## Score normalization contract
 //!
 //! `KeywordHit.score` MUST be in `[0.0, 1.0]` after min-max normalization
 //! within the call's result set. Backends populate `raw_score` with the
-//! native BM25 / `ts_rank_cd` value for callers that want the unscaled signal.
+//! native BM25 value for callers that want the unscaled signal.
 //! Min-max normalization is per-call (NOT global) — this matches the Phase 2
 //! `fuse_rrf` operator's per-branch ranking convention.
 
@@ -37,7 +40,7 @@ use crate::hlc::Hlc;
 /// Wave 0 froze `StoragePort` with `&Scope` on 8 methods but missed this trait.
 /// BM25 keyword search was therefore not scope-isolated at the trait level.
 /// Wave 2.5A closes the gap — backends thread `scope` through to the underlying
-/// FT index routing (Moon) or `tsvector` partitioning (Postgres).
+/// FT index routing (Moon).
 #[async_trait]
 pub trait KeywordPort: Send + Sync + 'static {
     /// BM25 keyword search.
@@ -46,7 +49,7 @@ pub trait KeywordPort: Send + Sync + 'static {
     ///   this scope only (RFC 0001 §3.4 amendment, Wave 2.5A).
     /// * `index` is the table / FT index name (e.g., `"chunks"`).
     /// * `query` is the user-supplied query text. Backends MUST escape any
-    ///   index-DSL specials (FT escape on Moon; parameterized on Postgres).
+    ///   index-DSL specials (FT escape on Moon).
     /// * `k` is the maximum number of hits to return.
     /// * `filter` narrows the candidate set BEFORE ranking (not after).
     /// * `as_of` is an MVCC bi-temporal snapshot timestamp; `None` means "live".
@@ -68,9 +71,8 @@ pub trait KeywordPort: Send + Sync + 'static {
 /// One keyword search hit.
 ///
 /// `score` is min-max normalized to `[0.0, 1.0]` within the call's result set.
-/// `raw_score` carries the backend-native value (BM25 raw on Moon,
-/// `ts_rank_cd` raw on Postgres). `metadata` carries the row payload (typically
-/// the `payload` JSONB column on Postgres or the `__metadata` field on Moon).
+/// `raw_score` carries the backend-native value (raw BM25 on Moon).
+/// `metadata` carries the row payload (the `__metadata` field on Moon).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeywordHit {
     pub id: Vec<u8>,

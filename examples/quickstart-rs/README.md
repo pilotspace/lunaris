@@ -1,10 +1,13 @@
 # Lunaris Quickstart — Rust
 
 Goal: from a fresh checkout, run your first Lunaris ingest + recall
-against a local Postgres backend in under 10 minutes.
+against a local Moon in under 10 minutes.
 
-This example targets the **v0.2.x OSS Foundation** milestone — Postgres
-+ pgvector as the canonical backend, no Moon required.
+**0.7.0 is Moon-only.** This quickstart targeted Postgres + pgvector
+through 0.6.x; that backend, the SQLite one, and `lunaris-migrate` were
+all deleted. If you have 0.6.x data to bring across, run `lunaris-migrate`
+from the **v0.6.2 release binary before upgrading** — see
+[`docs/migration/0.6-to-0.7.md`](../../docs/migration/0.6-to-0.7.md).
 
 ## Prerequisites
 
@@ -12,34 +15,29 @@ This example targets the **v0.2.x OSS Foundation** milestone — Postgres
 - `cargo` 1.94+ (Rust edition 2024 toolchain)
 - the granite-r2 Q4_K_M GGUF staged at `~/.lunaris/models/` (default llama.cpp embedder); graph extraction optionally via a remote provider — see below
 
-## Five steps
+## Four steps
 
 ```bash
 # 1. From the repo root
 cd examples/quickstart-rs
 
-# 2. Bring up Postgres + pgvector + pgmq + AGE
+# 2. Bring up Moon (single shard — see the compose file for why that is
+#    required, not a tuning choice)
 docker compose up -d
-docker compose ps        # wait until `lunaris-quickstart-pg` is "healthy"
+docker compose ps
 
-# 3. Apply migrations from the repo's storage crate (Phase 23: bake
-#    these into the image so step 3 disappears)
-sqlx migrate run --source ../../crates/lunaris-storage-postgres/migrations \
-                 --database-url postgres://lunaris:lunaris@localhost:5432/lunaris
+# 3. Moon needs no schema migration and no role bootstrap. That is the
+#    whole of what used to be step 3.
 
-# 4. Start Ollama in the background and pull a tiny embedder
-ollama serve &
-ollama pull nomic-embed-text
-
-# 5. Point the binary at Postgres and run
-export LUNARIS_PG_URL="postgres://lunaris:lunaris@localhost:5432/lunaris"
+# 4. Point the binary at Moon and run
+export LUNARIS_STORE_URL="moon://127.0.0.1:6380"
 cargo run --release
 ```
 
 Expected output:
 
 ```
-quickstart: opening lunaris handle at postgres://lunaris:lunaris@localhost:5432/lunaris
+quickstart: opening lunaris handle at moon://127.0.0.1:6380
 quickstart: ingested episode at lsn=Lsn(1) under scope `quickstart`
 quickstart: recalled 1 hit(s) for "hello"
 quickstart:   top hit score=0.83 text="# Hello from Lunaris …"
@@ -49,13 +47,12 @@ quickstart: DSL form returned 1 hit(s)
 ## Tear-down
 
 ```bash
-docker compose down -v   # -v wipes the pg data volume
+docker compose down -v   # -v wipes the Moon data volume
 ```
 
-## In-process variant (no Ollama)
+## Graph extraction (optional)
 
-To run with all-Candle in-process (Gemma 3 4B extractor + EmbeddingGemma
-embedder — remote-only since the llama.cpp cutover):
+Extraction and verification are remote-only since the llama.cpp cutover:
 
 ```bash
 # Extraction/verification run against a remote provider (or any
@@ -105,10 +102,15 @@ at `docs.lunaris.dev`.
   Download it out-of-band (SHA-256s:
   `cargo run -p lunaris-bench --bin stage-models -- --help`) or set
   `LUNARIS_EMBEDDER_GGUF` to an existing copy.
-- `postgres connection refused` → the container is still starting.
-  Wait for the healthcheck (`docker compose ps`).
-- `relation "episodes" does not exist` → migrations haven't run. Re-run
-  step 3.
+- `connection refused` → Moon is still starting. Re-check
+  `docker compose ps`, or `docker compose logs moon`.
+- `TXN does not support cross-shard writes` on ingest → Moon is running
+  sharded. It MUST run with `--shards 1`; the published image's own CMD
+  uses `--shards 0` (auto-detect), which is why the compose file overrides
+  the whole command.
+- `` `postgres://` was removed in 0.7.0 `` → `LUNARIS_STORE_URL` still
+  points at the old backend. See
+  [`docs/migration/0.6-to-0.7.md`](../../docs/migration/0.6-to-0.7.md).
 
 ## What's next
 

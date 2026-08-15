@@ -26,7 +26,7 @@
 //!
 //! ## Storage design
 //!
-//! Rather than relying on `memory://` to produce deterministic cosine scores,
+//! Rather than relying on a real store to produce deterministic cosine scores,
 //! we wire a `BoostTestStorage` that returns fixed `VectorHit`s from
 //! `vector_search` (scores 0.90 / 0.80 / 0.70 for A / B / C). `read_as_of`
 //! returns seeded chunk + episode rows so `hydrate()` can project full `Hit`s.

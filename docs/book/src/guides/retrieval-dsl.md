@@ -68,8 +68,8 @@ pre-seeded builder). So there is nothing `recall()` can do that `dsl()` cannot �
 | Time-travel (`as_of`), filters, rerank | `scoped.dsl().as_of(…)/.filter(…)/.rerank(…)` | builder → `Vec<Hit>` |
 
 **See it run.** [Querying Three Ways](../cookbook/querying-three-ways.md) runs
-all three forms — direct recall, DSL fusion, and the `Tree` operator — against
-zero-deps SQLite (`memory://`) over one ingested document.
+all three forms — direct recall, DSL fusion, and the `Tree` operator — over one
+ingested document.
 
 > Mind the three `recall` names. **`ScopedLunaris::recall(query)`** (above)
 > returns `Vec<Hit>` and is the canonical one-shot. **`ScopedLunaris::dsl()`**
@@ -228,7 +228,7 @@ Vector::new("chunks", 30)
 URL **and** the shape is `Vector + Keyword(BM25)` on the *same* index,
 `fuse_rrf` dispatches to Moon's native `text().hybrid_search` — one round trip
 instead of two (`crates/lunaris-retrieve/src/operators/fuse.rs`, governed by
-`StorageCapabilities::native_rrf`). Postgres always uses client-side RRF
+`StorageCapabilities::native_rrf`). Anything else folds client-side
 (`crates/lunaris-retrieve/src/operators/fuse.rs::client_side_rrf`). **Any `Graph`
 branch in the tree forces client-side RRF** — the Moon one-trip path only
 fires for the Vector+Keyword(BM25) case. The API is identical either way.

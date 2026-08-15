@@ -11,12 +11,13 @@ carries the crate-level detail and the proof links.
 Lunaris is a pure-Rust engine with thin SDK shells. Your agent talks to
 the **surface** layer (Python, TypeScript, HTTP, or MCP). The **engine**
 turns observations into structured memory and queries into fused result
-sets. Everything below the engine is a **port** — a Rust trait — so the
-same engine runs on three substrates:
+sets. Everything below the engine is a **port** — a Rust trait — with one
+implementation behind it:
 
-- **Moon** — our Redis-compatible substrate, the latency flagship
-- **Postgres** — the portability proof, RLS-isolated
-- **SQLite** — `memory://` zero-deps onboarding; first recall in minutes
+- **Moon** — our Redis-compatible substrate, and since 0.7.0 the only
+  backend. The Postgres portability proof and the SQLite onboarding
+  backend were removed; the port stays a trait, so a third-party
+  substrate is still an open extension point.
 
 You never write Moon commands or SQL. You write one typed expression
 (see [The Retrieval DSL](../guides/retrieval-dsl.md) for the full
@@ -126,11 +127,11 @@ lists every limit next to every advantage.
 
 ## Where next
 
-- [10-Minute Quickstart](./quickstart.md) — first recall on SQLite,
-  zero dependencies
+- [10-Minute Quickstart](./quickstart.md) — first recall against a
+  local Moon
 - [Core Concepts](./concepts.md) — episodes, primitives, scopes,
   bi-temporal time
 - [The Retrieval DSL](../guides/retrieval-dsl.md) — composing
   vector / keyword / graph queries
-- [Choosing a Backend](../operations/backends.md) — Moon vs Postgres
-  vs SQLite
+- [The Storage Backend](../operations/backends.md) — Moon setup and
+  its honest limits

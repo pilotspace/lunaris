@@ -38,7 +38,7 @@ use lunaris_recipes::conversational::ChatAgentMemory;
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // One handle per process — share via Arc. URL scheme picks the backend.
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
 
     let mem = ChatAgentMemory::new(lunaris.clone(), "user-42");
 
@@ -78,7 +78,7 @@ use lunaris_recipes::conversational::ChatAgentMemory;
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // A brand-new process. Nothing was kept in memory between runs.
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
 
     // Same user id as before ⇒ same `"chat:user-42/"` scope ⇒ same memory.
     // `new` is pure — the first storage round-trip is the `recall` below.

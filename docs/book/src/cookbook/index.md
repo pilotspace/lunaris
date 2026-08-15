@@ -5,10 +5,9 @@ retrieval plans — pick the named recipe that matches your data shape and you
 get a ≤ 30-LOC, parity-tested API instead.**
 
 > **Want the raw query surface instead of a recipe wrapper?**
-> [Querying Three Ways](./querying-three-ways.md) shows direct `recall`, DSL
-> fusion, and the `Tree` operator running zero-deps on SQLite (`memory://`) —
-> no server. The recipe wrappers below are server-backed (their BM25 arm needs
-> Moon or Postgres).
+> [Querying Three Ways](./querying-three-ways.md) composes the same operators
+> by hand — direct `recall`, DSL fusion, and the `Tree` operator. Same Moon,
+> no wrapper.
 
 Lunaris ships a small library of *recipe types* in the `lunaris-recipes`
 crate (plus `HeliosScratchpad` in the umbrella `lunaris` crate). They are
@@ -33,16 +32,15 @@ blueprint §7 recipe discoverable from the public surface, not to add
 behaviour. None of them bundle a second vector or BM25 library; the fused
 recall plan they assemble (`Vector + Keyword ⊕ RRF`) lowers through the
 [retrieval DSL](../guides/retrieval-dsl.md) and dispatches to Moon-native
-`FT.*` or Postgres client-side rank-merge inside
-`RetrievalBuilder::execute`.
+`FT.*` inside `RetrievalBuilder::execute`.
 
-**All ten wrappers carry Moon + Postgres parity tests** under
+**All ten wrappers carry live-Moon tests** under
 `crates/lunaris-recipes/tests/*_parity.rs` (and the documentary trio also
-under `tests/documentary_rust_integration.rs`). The parity assertion is
-direct Moon-vs-Postgres byte-identity on hit count + hit-id ordering per
-query — the same correctness contract the conformance suite holds for the
-six core primitives. The tests are feature-gated behind `moon-it` + `pg-it`
-and probe both backends with a 1-second TCP check, so a default
+under `tests/documentary_rust_integration.rs`). They were Moon-vs-Postgres
+byte-identity assertions until 0.7.0 removed the second backend; what remains
+is the same hit-count + hit-id-ordering contract, asserted against Moon alone.
+The tests are feature-gated behind `moon-it`
+and probe the backend with a 1-second TCP check, so a default
 `cargo test -p lunaris-recipes` stays zero-config.
 
 ## The recipe map
@@ -116,7 +114,7 @@ RAG primitive. It binds an `Arc<Lunaris>` to a *source prefix*
 | `top` | `fn top(self, k: usize) -> Self` | caps output; default `10` |
 | `search` | `async fn search(self, query: &str) -> Result<Vec<Hit>, LunarisError>` | **consumes `self`**; fans out a `Vector + Keyword(BM25) ⊕ RRF(60)` plan with a generous over-fetch, executes, then prunes to the source prefix and caps at `k` |
 
-The Moon-native-RRF vs Postgres-client-side branch lives inside
+The native-RRF vs client-side-fold branch lives inside
 `RetrievalBuilder::execute`; the primitive is pure plan composition.
 
 **Reach for it when** your data is a mostly-static document corpus and the
@@ -136,7 +134,7 @@ at `cargo check`, not at runtime.
 | `as_of` | `fn as_of(self, ts: Hlc) -> Self` | snapshot at `ts` |
 | `before` / `after` | `fn before(self, ts: Hlc) -> Self` / `fn after(self, ts: Hlc) -> Self` | valid-time bounds |
 | `between` | `fn between(self, after: Hlc, before: Hlc) -> Self` | requires `S: SupportsBetween`; panics if `after > before`; range is **`[after, before)`** (lower inclusive, upper exclusive) |
-| `execute` | `async fn execute(self, query: &str) -> Result<Vec<Hit>, LunarisError>` | dispatch handled by `RetrievalBuilder::execute` (Moon `TEMPORAL.SNAPSHOT_AT` / Postgres bi-temporal `WHERE`) |
+| `execute` | `async fn execute(self, query: &str) -> Result<Vec<Hit>, LunarisError>` | dispatch handled by `RetrievalBuilder::execute` (Moon `TEMPORAL.SNAPSHOT_AT`) |
 
 **Reach for it when** you need "what did the agent know at time T" as a
 query rather than a rebuild — audit replay, post-incident debugging, pinned

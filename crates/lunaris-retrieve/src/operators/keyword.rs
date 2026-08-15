@@ -1,7 +1,7 @@
 //! `Keyword::bm25(index, k)` — runs `KeywordPort::keyword_search`.
 //!
-//! Both backends (`MoonStorage`, `PostgresStorage`) impl `KeywordPort` after
-//! Plan 02-02 Task 1; this operator is backend-agnostic — the
+//! `MoonStorage` impls `KeywordPort` (0.7.0 is Moon-only; the `PostgresStorage`
+//! impl went with its backend). This operator stays backend-agnostic — the
 //! [`super::QueryContext`] holds the right `Arc<dyn KeywordPort>` for the
 //! handle that built it.
 

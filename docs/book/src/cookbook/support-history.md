@@ -47,7 +47,7 @@ use lunaris_recipes::documentary::CustomerSupportHistory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    let lunaris = Arc::new(Lunaris::open("postgres://lunaris@localhost/lunaris").await?);
+    let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
     let hist = CustomerSupportHistory::new(lunaris.clone());
 
     // Ticket bodies → DocumentCorpus under `ticket:<id>`.

@@ -1,9 +1,10 @@
 //! `Lunaris` — the high-level memory-engine handle (Phase 2 surface).
 //!
 //! Wraps `Arc<dyn StoragePort> + Arc<dyn Embedder> + Arc<HlcClock>` so callers
-//! can construct multiple instances against different URLs (Plan 02-04 needs
-//! this for the Moon-vs-Postgres benches). All three fields are `Arc`-shared
-//! so `Lunaris::clone()` is cheap and `Lunaris` is `Send + Sync` for free.
+//! can construct multiple instances against different URLs (originally for the
+//! Moon-vs-Postgres benches; since 0.7.0 that means several independent Moons).
+//! All three fields are `Arc`-shared so `Lunaris::clone()` is cheap and
+//! `Lunaris` is `Send + Sync` for free.
 //!
 //! ## Construction paths
 //!
@@ -69,7 +70,10 @@ pub struct Lunaris {
     pub(crate) clock: Arc<HlcClock>,
     /// Concrete `MoonStorage` Arc when the handle was opened against a `moon://` URL.
     /// Plan 02-02's `fuse_rrf` Moon-native dispatch reads this to opt into the
-    /// one-round-trip `text().hybrid_search()` path. None for Postgres / custom backends.
+    /// one-round-trip `text().hybrid_search()` path. `None` for a handle built
+    /// via `with_parts*` from a custom or decorated `StoragePort` — including a
+    /// test double wrapping a live Moon, which is exactly how the client-side
+    /// fusion path is still exercised now that no second backend exists.
     pub(crate) moon_storage: Option<Arc<MoonStorage>>,
     /// Plan 02-03: cross-encoder reranker for the recall hot path.
     /// Defaults to `BgeRerankerV2M3` when `~/.cache/lunaris/models/bge-reranker-v2-m3/`
@@ -613,8 +617,8 @@ impl Lunaris {
     /// N-04 D2 — fallible counterpart to [`Self::with_embedder`].
     ///
     /// Refuses the swap when `embedder.dim() != self.embedder.dim()`. The
-    /// handle's existing `embedder.dim()` is the dim Moon's `FT.CREATE` /
-    /// Postgres's `pgvector` column was sized for at `Lunaris::open*` time
+    /// handle's existing `embedder.dim()` is the dim Moon's `FT.CREATE` index
+    /// was sized for at `Lunaris::open*` time
     /// (see [`Lunaris::open_with_embedder`] — the dim flows into
     /// `MoonStorage::connect_with_dim`). Replacing it with a different-width
     /// embedder produces garbage similarity scores until the index is
@@ -628,8 +632,8 @@ impl Lunaris {
     ///
     /// The infallible [`Self::with_embedder`] is intentionally retained
     /// (and emits a `tracing::warn!` on mismatch) for backwards-compat with
-    /// callers that have proven their backend tolerates the swap (e.g.,
-    /// `memory://` tests that never run a vector query).
+    /// callers that have proven their store tolerates the swap (e.g., tests
+    /// that never run a vector query).
     pub fn try_with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Result<Self, LunarisError> {
         let store_dim = self.embedder.dim();
         let new_dim = embedder.dim();
@@ -893,14 +897,14 @@ impl Lunaris {
     ///
     /// ## Backend support
     ///
-    /// - **Moon** + **embedded SQLite** — supported (lazy SCAN-parse derivation
-    ///   from the `lunaris:{scope}:…` keyspace).
-    /// - **Postgres** — returns `Err(StorageError::NotSupported(_))`. The
-    ///   primitive tables are RLS-protected with `FORCE ROW LEVEL SECURITY`
-    ///   (migration `20260510000005_scope_partitioning.sql`) and the
-    ///   application role cannot bypass it. Callers MUST handle `NotSupported`
-    ///   by either (a) supplying a known scope list from caller context, or
-    ///   (b) routing the enumeration through a Moon-fronted instance.
+    /// Supported on Moon — lazy SCAN-parse derivation from the
+    /// `lunaris:{scope}:…` keyspace. The method still returns `Result` and a
+    /// custom `StoragePort` may answer `Err(StorageError::NotSupported(_))`:
+    /// that is what the Postgres backend did (its primitive tables were
+    /// RLS-protected with `FORCE ROW LEVEL SECURITY` and the application role
+    /// could not bypass it), and the contract is kept so a future backend can
+    /// decline without a signature change. Callers handling `NotSupported`
+    /// supply a known scope list from caller context instead.
     ///
     /// This is the v0.3 surface introduced by the cross-scope enumeration
     /// patch. The higher-level `list_atoms` / `get_atom_by_scope_lsn` from the
@@ -913,7 +917,7 @@ impl Lunaris {
     ///
     /// ```ignore
     /// use lunaris::Lunaris;
-    /// let engine = Lunaris::open("memory://").await?;
+    /// let engine = Lunaris::open("moon://127.0.0.1:6380").await?;
     /// let page = engine.list_scopes(None, 100, None).await?;
     /// for scope in page.scopes {
     ///     println!("known scope: {scope:?}");
@@ -1099,11 +1103,15 @@ impl<'a> ScopedLunaris<'a> {
     /// ## Trait-method approach (W6 fix)
     ///
     /// Uses `StoragePort::lookup_by_dedupe_key` / `insert_dedupe_key` trait methods
-    /// directly — no `as_any()` downcast. SQLite implements them natively; Moon
-    /// implements them via the `lunaris:{scope}:dedupe:{blake3}` KV sidecar with
-    /// SET-NX first-writer-wins (ADD task moon-parity-honesty — closed the former
-    /// "SQLite-only idempotency" v0.5 boundary). Postgres still returns `Ok(None)`
-    /// from the trait default, falling through to unconditional Fresh ingest.
+    /// directly — no `as_any()` downcast. Moon implements them via the
+    /// `lunaris:{scope}:dedupe:{blake3}` KV sidecar with SET-NX
+    /// first-writer-wins (ADD task moon-parity-honesty — closed the former
+    /// "SQLite-only idempotency" v0.5 boundary). Both methods keep a trait
+    /// default returning `Ok(None)` / `Ok(())`, so a custom `StoragePort` that
+    /// implements neither falls through to unconditional Fresh ingest rather
+    /// than failing — which is why the HOOK-05 guard
+    /// (`lunaris-hook/tests/idempotency.rs`) asserts against a real Moon and
+    /// not a double.
     ///
     /// ## Post-commit race window (T-24-03-06)
     ///
@@ -1117,7 +1125,8 @@ impl<'a> ScopedLunaris<'a> {
         dedupe_key: &str,
     ) -> Result<(Lsn, IngestKind), LunarisError> {
         // Attempt read-only lookup via StoragePort trait method.
-        // EmbeddedStorage returns the real hit; Moon/Postgres return Ok(None).
+        // Moon returns the real hit from its dedupe sidecar; a port that does
+        // not implement the sidecar answers Ok(None) via the trait default.
         match self.engine.storage.lookup_by_dedupe_key(&self.scope, dedupe_key).await {
             Ok(Some(prior_lsn)) => {
                 tracing::debug!(
@@ -1337,7 +1346,7 @@ impl<'a> ScopedLunaris<'a> {
         //
         // If the reflector predicted a next-turn query, spawn a background task
         // to issue a real recall against the storage backend. This populates
-        // Moon's FT page cache (or the OS page cache for Postgres) before the
+        // Moon's FT page cache before the
         // agent issues the actual query, reducing first-hit latency on the next
         // turn.
         //

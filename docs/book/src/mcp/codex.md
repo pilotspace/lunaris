@@ -56,9 +56,9 @@ memory.ingest  source="src:notes/architecture"  content="The ingest pipeline wri
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 
-> **SQLite note.** Brute-force cosine scales comfortably to ~10k vectors per
-> scope. For larger corpora, point `LUNARIS_MCP_STORAGE` at Moon or Postgres
-> (see [Storage backends](./index.md#storage-backends)).
+> **`LUNARIS_MCP_STORAGE` is required (0.7.0).** There is no default store any
+> more; the server refuses to boot without one. See
+> [Storage](./index.md#storage).
 
 ## Override scope or point at Moon
 
@@ -111,7 +111,7 @@ memory. Full hook config, modes, and measured timings are in
 |---------|-----|
 | `lunaris-mcp: command not found` | Add `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile, restart the terminal. |
 | Tools don't appear after Codex starts | Run `lunaris-mcp` directly; any startup error prints to stderr. |
-| `memory.recall` returns empty | Nothing ingested into this scope yet — run `memory.ingest` first. On Moon/Postgres, check `LUNARIS_MCP_STORAGE`. |
+| `memory.recall` returns empty | Nothing ingested into this scope yet — run `memory.ingest` first. Otherwise check that `LUNARIS_MCP_STORAGE` names the Moon you ingested into. |
 | First recall takes ~30 s | One-time GGUF staging to `~/.lunaris/models/`. Set `LUNARIS_MCP_SKIP_STAGE=1` if pre-staged. |
 | Silent disconnect | A shell-profile `echo`/`print` is writing to **stdout** and corrupting MCP framing. |
 | Wrong scope | Run `memory.list_scopes`; set `LUNARIS_MCP_SCOPE` in `[mcp_servers.lunaris.env]`. |

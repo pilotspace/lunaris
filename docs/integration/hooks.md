@@ -77,12 +77,13 @@ Use the setup script for normal installation:
 scripts/setup-lunaris-agents.py --agent codex --runner local
 ```
 
-The setup script defaults hook/context storage to Moon by writing
+The setup script points hook/context storage at Moon by writing
 `LUNARIS_STORE_URL=moon://127.0.0.1:6380`. It also writes
-`LUNARIS_GRAPH_ENABLED=1` for Moon-backed installs, which lets graph-enabled
-ingests populate Moon's graph store for later graph retrieval. Use
-`--moon-url moon://host:port` to point at another Moon instance, or
-`--storage-backend sqlite` to opt back into per-scope SQLite.
+`LUNARIS_GRAPH_ENABLED=1`, which lets graph-enabled ingests populate Moon's
+graph store for later graph retrieval. Use `--moon-url moon://host:port` to
+point at another Moon instance. There is no non-Moon option as of 0.7.0 —
+`LUNARIS_STORE_URL` is required, and `lunaris-hook` exits with the
+external-Moon quickstart when neither it nor contextd discovery yields one.
 
 Packaged MCP runner modes are also supported once the PyPI/npm packages are
 published:
@@ -387,7 +388,7 @@ this.
 
 ### Budget
 
-The full hook pipeline (filter + scrub + dedupe + SQLite ingest) must complete
+The full hook pipeline (filter + scrub + dedupe + ingest) must complete
 in:
 
 | Metric | Budget |
@@ -455,7 +456,7 @@ future invocations for the session.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LUNARIS_HOOK_SCOPE` | *(derived)* | Override scope name directly |
-| `LUNARIS_STORE_URL` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage URL (shared with `lunaris-mcp`) |
+| `LUNARIS_STORE_URL` | *(required — no default)* | Storage URL, shared with `lunaris-mcp`; setup writes `moon://127.0.0.1:6380`. Unset, and with no live contextd discovery file, the hook exits with the quickstart |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_HOOK_LOG` | `warn` | Log filter directive (RUST_LOG syntax) |
 | `LUNARIS_HOOK_LOG_JSON` | *(unset)* | Set to `1` for structured JSON stderr on errors |
@@ -512,12 +513,17 @@ Every storage resolver — the warm contextd engine *and* each one-shot
 2. the discovery file, **liveness-probed** with a short TCP connect (default
    25 ms, `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`) — a stale file left by a
    crashed contextd fails the probe and is ignored,
-3. per-scope SQLite (`~/.lunaris/<scope>.db`), the zero-daemon fallback.
+3. **nothing** — the ladder ends there. Through 0.6.x step 3 was a per-scope
+   SQLite file (`~/.lunaris/<scope>.db`); 0.7.0 deleted that backend, and the
+   hook now exits with a JSON diagnostic naming `LUNARIS_STORE_URL`, the
+   `--shards 1` requirement, and the external-Moon runbook. A hook that cannot
+   find a store must say so — silently writing to a second store is how
+   captures go missing.
 
 Because both binaries walk the same ladder, captures from the warm daemon and
 from one-shot hooks always land in the same store. If the embedded Moon fails
-to launch (or its URL cannot be advertised), contextd logs a warning and
-serves from per-scope SQLite — it always starts. Opt out at runtime with
+to launch (or its URL cannot be advertised), contextd logs the failure and the
+one-shot hooks fall through to the refusal above. Opt out at runtime with
 `LUNARIS_CONTEXTD_EMBEDDED_MOON=0`; the data dir defaults to
 `~/.lunaris/contextd-moon-data` (`LUNARIS_CONTEXTD_MOON_DIR`).
 
@@ -572,8 +578,8 @@ CI runners the gate may breach the p99 budget. If this happens consistently:
 3. Record the results in `milestones/v0.5-HOOK-LATENCY.json` as evidence.
 
 The gate is not expected to fail on any modern macOS or Linux x86-64 host — if
-it does, investigate whether a regex or SQLite write is taking an unexpected path
-(e.g., accidental GGUF load via a transitive dependency).
+it does, investigate whether a regex or a store write is taking an unexpected
+path (e.g., accidental GGUF load via a transitive dependency).
 
 ### Can I capture read/edit tool calls?
 

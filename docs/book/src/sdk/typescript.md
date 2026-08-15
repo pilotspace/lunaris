@@ -66,9 +66,8 @@ main();
 > `handle.recall()` returns the *raw* napi `RetrievalBuilder`, whose builder
 > methods are not-yet-wired stubs; reach for the imported one instead.
 
-Swap in `postgres://postgres:pass@localhost/lunaris` to run against Postgres
-— the URL scheme is the only difference. See
-[Choosing a Backend](../operations/backends.md).
+`moon://host:port` is the only accepted URL scheme as of 0.7.0. See
+[The Storage Backend](../operations/backends.md).
 
 ## The wire shape
 
@@ -163,7 +162,7 @@ surfaced as a chainable `withEmbedder` / `withReranker` extension on the
 import { open, EmbedderConfig, RerankerConfig } from "@pilotspace/lunaris";
 
 // `withEmbedder` / `withReranker` are chainable and return a NEW handle.
-const mem = (await open("memory://demo"))
+const mem = (await open("moon://127.0.0.1:6380"))
   .withEmbedder(EmbedderConfig.llamacpp())   // granite-r2 Q4_K_M GGUF, in-process llama.cpp
   .withReranker(RerankerConfig.llamacpp());  // bge-reranker-v2-m3 Q5_K_M GGUF
 ```

@@ -24,7 +24,7 @@
 # Cookbook
 
 - [Overview](./cookbook/index.md)
-- [Querying Three Ways (Zero-Deps)](./cookbook/querying-three-ways.md)
+- [Querying Three Ways](./cookbook/querying-three-ways.md)
 - [Chat Agent Memory](./cookbook/chat-agent.md)
 - [Multi-Turn Conversation](./cookbook/multi-turn.md)
 - [Slack / Email / Meeting Notes](./cookbook/conversational-channels.md)
@@ -43,7 +43,7 @@
 # Operations
 
 - [Running the HTTP Server](./operations/server.md)
-- [Choosing a Backend (Moon vs Postgres)](./operations/backends.md)
+- [The Storage Backend (Moon)](./operations/backends.md)
 - [Durability & Recovery](./operations/durability.md)
 
 # SDKs

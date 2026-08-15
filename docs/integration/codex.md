@@ -69,14 +69,12 @@ the postinstall download and point directly at a pre-staged binary.
 |-------------|---------|
 | Rust toolchain | 1.94+ |
 | Codex CLI | latest |
-| Moon or Postgres (optional) | HNSW-accelerated recall for >10k-vector corpora |
+| Moon (**required**) | The only storage backend; start it with `--shards 1` |
 
-`memory.recall` works on the default SQLite backend via brute-force cosine
-(Wave A.1). For corpora larger than ~10k vectors per scope, switch to Moon
-(HNSW) or Postgres (pgvector) for HNSW-class latency. The default SQLite
-path supports ten of the eleven tools without any external process; only
-`memory.scratchpad_consolidate` needs a native-queue backend (Moon or
-Postgres) and returns `{ status: "unsupported_backend" }` on SQLite.
+`memory.recall` fuses native HNSW vector search with BM25 keyword search on
+Moon, and all eleven tools are available. There is no zero-dependency
+fallback: the SQLite backend was deleted in 0.7.0 and `LUNARIS_MCP_STORAGE`
+became mandatory.
 
 ---
 
@@ -160,8 +158,10 @@ The script:
   binary or packaged runner commands like `uvx lunaris-mcp` / `npx -y @pilotspace/lunaris-mcp`;
 - optionally builds the vendored Moon release binary with `--build-moon`;
   Moon's default feature set enables `mq`, graph, and text-index support;
-- defaults storage to Moon at `moon://127.0.0.1:6380`, writing
-  `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL` for hooks/contextd;
+- points storage at Moon (`moon://127.0.0.1:6380` unless `--moon-url` says
+  otherwise), writing `LUNARIS_MCP_STORAGE` for MCP and `LUNARIS_STORE_URL`
+  for hooks/contextd — both are **required** as of 0.7.0, and neither binary
+  starts without one;
 - enables `LUNARIS_GRAPH_ENABLED=1` when the effective storage URL is
   `moon://...`, so graph extraction/write paths can populate Moon-native graph
   search;
@@ -182,12 +182,6 @@ Use a different Moon instance:
 
 ```sh
 scripts/setup-lunaris-agents.py --agent codex --runner local --moon-url moon://192.168.1.10:6380
-```
-
-Use SQLite instead of Moon:
-
-```sh
-scripts/setup-lunaris-agents.py --agent codex --runner local --storage-backend sqlite
 ```
 
 Use `--runner uvx` or `--runner npx` after the corresponding package has been
@@ -490,9 +484,8 @@ Returns:
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 
-> **SQLite note:** brute-force cosine scales comfortably to ~10k vectors per
-> scope (single-developer / single-project use). For larger corpora, switch to
-> Moon or Postgres via `LUNARIS_MCP_STORAGE`.
+> **`LUNARIS_MCP_STORAGE` is required** and must name a Moon. See
+> [Common Configurations](#common-configurations).
 
 ---
 
@@ -521,16 +514,17 @@ LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6380"
 LUNARIS_GRAPH_ENABLED = "1"
 ```
 
-Moon runs on port 6380 by default (`../moon/target/release/moon --port 6380`).
-Moon provides native vector search, BM25/hybrid fusion, graph traversal,
-queues, and bi-temporal reads. SQLite brute-force cosine handles up to ~10k
-vectors per scope; above that threshold, Moon or Postgres is the right choice.
+Moon runs on port 6380 by default
+(`moon --port 6380 --shards 1 --appendonly yes`). `--shards 1` is mandatory —
+an ingest is one MULTI/EXEC transaction and a sharded Moon rejects it. Moon
+provides native vector search, BM25/hybrid fusion, graph traversal, queues,
+and search-side bi-temporal reads.
 
-### Custom storage path
+### A different Moon
 
 ```toml
 [mcp_servers.lunaris.env]
-LUNARIS_MCP_STORAGE = "sqlite:////data/lunaris/workspace.db"
+LUNARIS_MCP_STORAGE = "moon://moon.internal:6380"
 ```
 
 ### Adjust log verbosity
@@ -556,8 +550,8 @@ LUNARIS_MCP_SKIP_STAGE = "1"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | setup writes `moon://127.0.0.1:6380`; binary fallback is per-scope SQLite | Storage backend URL |
-| `LUNARIS_GRAPH_ENABLED` | setup writes `1` for Moon; binary fallback is off | Enable graph extraction/write path for graph retrieval |
+| `LUNARIS_MCP_STORAGE` | *(required — no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset = refuses to boot |
+| `LUNARIS_GRAPH_ENABLED` | setup writes `1`; otherwise off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |
@@ -582,7 +576,7 @@ Summary:
 | `memory.scratchpad_write` | `key`, `value`, optional `namespace` | `{ lsn }` |
 | `memory.scratchpad_read` | `key`, optional `namespace` | `{ found, value }` |
 | `memory.scratchpad_grep` | `pattern`, optional `namespace` | `{ entries[] }` |
-| `memory.scratchpad_consolidate` | optional `namespace` | `{ status, promotions, archives }` (needs Moon/Postgres) |
+| `memory.scratchpad_consolidate` | optional `namespace` | `{ status, promotions, archives }` (needs a native queue; Moon has one) |
 
 ---
 
@@ -603,9 +597,10 @@ Persisted to `~/.lunaris/scopes.json`. To rename:
 
 ## Multi-Window Concurrency
 
-Same behaviour as Claude Code: the default SQLite backend runs in WAL mode
-with `busy_timeout`. Two Codex windows in the same repo share the same `.db`
-safely.
+Same behaviour as Claude Code: two Codex windows in the same repo share one
+Moon safely. Concurrent writers are serialized by Moon's single-threaded
+command loop, and each ingest is a single MULTI/EXEC transaction, so no window
+observes a half-written episode.
 
 ---
 
@@ -621,9 +616,8 @@ error, then restart Codex.
 
 **`memory.recall` returns empty hits**
 No episodes have been ingested into the current scope yet. Run
-`memory.ingest` first, then retry. If you are on Moon or Postgres and still
-see empty hits, verify that `LUNARIS_MCP_STORAGE` points at the correct
-backend URL.
+`memory.ingest` first, then retry. If hits are still empty, verify that
+`LUNARIS_MCP_STORAGE` names the same Moon you ingested into.
 
 **First `memory.recall` takes ~30 seconds**
 The GGUF embedder (~150 MB) and reranker are being staged to
@@ -640,18 +634,11 @@ Run `memory.list_scopes` to inspect the scope registry, then set
 
 ---
 
-## Moon vs SQLite / Postgres
+## Pointing at a Moon by hand
 
-The `setup-lunaris-agents.py` agent setup defaults to Moon (its lifecycle
-hooks need Moon's queues); a plain `npx`/`uvx` MCP install defaults to SQLite.
-SQLite brute-force cosine remains the right choice for solo offline use:
-
-- **≤10k vectors per scope** — brute-force cosine is fast enough; no external
-  process required.
-- **>10k vectors per scope** — use Moon (native vector/BM25/graph/queues) or
-  Postgres (pgvector/AGE) for indexed latency at scale.
-
-To use Moon manually, set `LUNARIS_MCP_STORAGE` in `~/.codex/config.toml`:
+`setup-lunaris-agents.py` writes the storage URL for you. If you configure
+Codex yourself, set `LUNARIS_MCP_STORAGE` in `~/.codex/config.toml` — it has
+no default and the server will not start without it:
 
 ```toml
 [mcp_servers.lunaris.env]
@@ -659,8 +646,9 @@ LUNARIS_MCP_STORAGE = "moon://127.0.0.1:6380"
 LUNARIS_GRAPH_ENABLED = "1"
 ```
 
-Moon: `../moon/target/release/moon --port 6380`. Postgres: any `postgres://`
-connection string with the `pgvector` extension installed.
+Start Moon with `moon --port 6380 --shards 1 --appendonly yes`, or run the
+`ghcr.io/pilotspace/moon` image with the same flags. Production setup is in
+[`docs/operations/external-moon.md`](../operations/external-moon.md).
 
 ---
 
@@ -680,7 +668,7 @@ Write any observation as an Episode.
 ```json
 {"name": "memory.ingest", "arguments": {
   "source": "codex/task-planner",
-  "content": "Decided to use SQLite for zero-dependency onboarding."
+  "content": "Retry budget for the extractor call is 3 with jittered backoff."
 }}
 ```
 
@@ -690,15 +678,15 @@ Write a structured decision episode with `source = "decision:<scope>"`.
 
 ```json
 {"name": "memory.record_decision", "arguments": {
-  "decision": "Use SQLite as the default Lunaris backend",
-  "rationale": "Zero external dependencies for onboarding.",
-  "alternatives": ["Postgres", "Moon"],
+  "decision": "Make Moon the only Lunaris storage backend",
+  "rationale": "One substrate to test, tune, and operate; the portability proof cost more than it bought.",
+  "alternatives": ["Keep Postgres as a portability proof", "Keep SQLite for onboarding"],
   "tags": ["arch", "storage"],
-  "dedupe_key": "decision-sqlite-default-2026-05"
+  "dedupe_key": "decision-moon-only-2026-08"
 }}
 ```
 
-Recall decisions later: `memory.recall` with query `"SQLite backend decision"`.
+Recall decisions later: `memory.recall` with query `"storage backend decision"`.
 
 ### `memory.record_edit` (file edits)
 
@@ -740,8 +728,7 @@ from the durable episode log:
 - `memory.scratchpad_consolidate` — `{ namespace? }` → `{ status, promotions, archives }`
 
 `memory.scratchpad_consolidate` drains the scratchpad queue and promotes/archives
-notes by activation. It needs a native-queue backend (Moon or Postgres) and
-returns `{ status: "unsupported_backend" }` on SQLite. See the
+notes by activation. It needs a native-queue backend, which Moon has. See the
 [MCP tool reference](../book/src/mcp/index.md#tool-surface) for the full surface.
 
 ---

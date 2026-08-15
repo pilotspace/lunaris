@@ -2,8 +2,10 @@
 //! (`.add/tasks/staleness-pass/TASK.md` §4 test_plan,
 //! `crates/lunaris/tests/verify_agenda_engine.rs` row). Exercises
 //! `ScopedLunaris::upsert_verify_agenda` (the RMW writer) against a
-//! `memory://`-shaped in-process `StoragePort` double — same fixture style
-//! as `activation_ledger_engine.rs`.
+//! hand-written in-process `StoragePort` double — same fixture style as
+//! `activation_ledger_engine.rs`. The double is deliberate, not a leftover
+//! from the deleted `memory://` backend: the subject is the RMW sequence the
+//! ENGINE performs, so the store is held to exact, inspectable KV semantics.
 
 #![forbid(unsafe_code)]
 
@@ -274,7 +276,7 @@ async fn empty_entries_is_noop() {
 // ---------------------------------------------------------------------------
 // engram-soul-loop task 7 (verify-agenda-tools) — list_verify_agenda +
 // remove_verify_agenda (`.add/tasks/verify-agenda-tools/TASK.md` §4
-// test_plan "handle.rs (memory:// engine)" row).
+// test_plan "handle.rs (engine-level)" row).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------

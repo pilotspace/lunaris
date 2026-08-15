@@ -20,11 +20,11 @@ not marketing comparisons.
 | Concern                                    | Mem0                                    | Lunaris                                                |
 |---------------------------------------------|------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python / hosted REST API                | Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Vector DB + graph DB + relational (3 services) | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Vector DB + graph DB + relational (3 services) | Moon (one substrate, FT.* + graph + KV native) |
 | **Atomicity**                              | Best-effort per-store; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
 | **Bi-temporal facts**                      | Not modeled — overwrite semantics       | First-class `(valid_time, sys_time)` tuple per row     |
 | **Recall latency (laptop, 1M facts)**     | p95 ~1.44 s (Mem0-published "selective" figure, 2026-06; wide query-dependent range) | 10.3 ms p50 / 20.8 ms p99 strict-replay (manual bench, not CI-gated); budget p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64` (M2 Pro) |
-| **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call + RLS-enforced in Postgres |
+| **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call and enforced by a per-scope Moon keyspace |
 | **Forgetting**                             | Hard delete                              | Tombstone via bi-temporal `sys_time` close (audit trail preserved) |
 | **License**                                | Apache 2.0                              | Apache 2.0                                             |
 | **Default LLM coupling**                  | OpenAI                                   | None — extractor/verifier are remote-only (anthropic/openai/gemini/minimax/openai-compat) or a custom impl; both optional |
@@ -101,12 +101,13 @@ and the type system rejects mixing incompatible operators. See
 ### Time-travel recall (no Mem0 equivalent)
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
-> `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
-> Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
-> rather than silently answering with present-time data. Moon's search and
-> graph lanes stay temporal (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`).
+> keeps a KV version chain to hydrate the historical rows, and **no 0.7.0
+> backend does**: the call returns `StorageError::NotSupported` (HTTP
+> `501 not_supported`). Moon stores Lunaris rows as plain hashes and refuses a
+> historical pin rather than silently answering with present-time data; the
+> Postgres and SQLite backends that answered it were deleted in 0.7.0. The
+> search and graph lanes stay temporal (`FT.SEARCH AS_OF`,
+> `GRAPH.QUERY VALID_AT`).
 
 ```python
 from datetime import datetime, timezone

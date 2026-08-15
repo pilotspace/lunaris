@@ -383,10 +383,9 @@ mod tests {
     use lunaris_core::{Episode, HlcClock, WriteOp};
     use lunaris_test_harness::{TestStorage, open_test_storage};
 
-    /// 0.7.0 port off `memory://` — a harness-issued backend (ephemeral
-    /// child-process Moon, degrading to `memory://` where no Moon binary
-    /// resolves). The `TestStorage` guard rides back with the port because it
-    /// owns the Moon child; drop it and the backend dies mid-test.
+    /// A harness-issued ephemeral child-process Moon. The `TestStorage` guard
+    /// rides back with the port because it owns the Moon child; drop it and the
+    /// backend dies mid-test.
     async fn fresh_storage() -> (Arc<dyn StoragePort>, TestStorage) {
         let storage = open_test_storage().await;
         (storage.port(), storage)

@@ -8,9 +8,10 @@
 //!   on-disk fingerprint cache so re-runs of the recall bench skip rebuild.
 //! - `benches/*.rs` (in this crate) — three Criterion benches that exercise
 //!   the Phase 2 hot path: `ingest_hot_path`, `recall_hot_path`,
-//!   `atomic_write_hot_path`. Each runs against MoonStorage AND
-//!   PostgresStorage when the live backend is reachable; skips gracefully
-//!   when not.
+//!   `atomic_write_hot_path`. Each runs against MoonStorage when `MOON_URL`
+//!   points at a reachable store; skips gracefully when not. (The parallel
+//!   PostgresStorage row retired with that backend in 0.7.0.) Point `MOON_URL`
+//!   at a DEDICATED bench Moon — never at a live store.
 //! - `tests/budget_assertions.rs` (gated by feature `budget-it`) — parses
 //!   Criterion's `target/criterion/<group>/<bench>/new/{estimates,sample}.json`
 //!   and panics with an actionable message when the measured p50/p99 exceeds

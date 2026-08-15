@@ -78,11 +78,12 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# Run the conformance suite against both backends (PG via pg-lunaris image)
-# Note: requires pg-lunaris from scripts/pg-lunaris/docker-compose.yml
+# Run the conformance suite against the live Moon. (Through 0.6.x this ran
+# both backends via `--features moon-it,pg-it` against a `pg-lunaris`
+# container; the Postgres backend, the `pg-it` feature, and the image were all
+# deleted in 0.7.0.)
 MOON_URL=moon://localhost:6390 \
-PG_URL=postgres://lunaris:lunaris@localhost:5432/lunaris \
-  cargo test -p lunaris-conformance --features moon-it,pg-it --no-fail-fast
+  cargo test -p lunaris-conformance --features moon-it --no-fail-fast
 
 # Cleanup
 kill $MOON_PID || true

@@ -2,10 +2,9 @@
 //!
 //! Seeds 3 chunk vectors via `fixtures::seed_three_chunks` (B-3 fix —
 //! defined in Task 1, called unconditionally here), queries with the
-//! exact target vector, and asserts at least one hit comes back. Both
-//! Moon and Postgres backends accept `index="chunks"` (the canonical
-//! chunk index name across both per
-//! `lunaris-storage-postgres/src/vector.rs:38-48` whitelist).
+//! exact target vector, and asserts at least one hit comes back.
+//! `index="chunks"` is the canonical chunk index name every backend
+//! whitelists.
 
 #![forbid(unsafe_code)]
 
@@ -14,8 +13,7 @@ use std::sync::Arc;
 use lunaris_core::storage::StoragePort;
 
 /// Vector dimensionality for the conformance fixture. Must match Moon's
-/// `ensure_indexes` (`DIM = 768`) AND Postgres's `chunks.embedding`
-/// declared as `vector(768)` — any other value triggers a backend-side
+/// `ensure_indexes` (`DIM = 768`) — any other value triggers a backend-side
 /// dim-mismatch error (debug session `conformance-dim-mismatch.md`,
 /// 2026-04-24). Centralised in `fixtures::EMBED_DIM`.
 const FIXTURE_DIM: usize = crate::fixtures::EMBED_DIM;

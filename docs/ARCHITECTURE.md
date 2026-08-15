@@ -20,11 +20,11 @@ swappable because the engine never sees a concrete database.
 | **L4 — Engine facade** | `lunaris` (umbrella) | One handle, whole engine: `open()`, `ingest()`, `recall()`, `forget()`, `snapshot()`, `structured_ingest()`, plus the opt-in graph / consolidator / verifier pipelines |
 | **L3 — Cognition** | `lunaris-ingest`, `lunaris-retrieve`, `lunaris-extract`, `lunaris-consolidate`, `lunaris-verify` + ML runtimes `lunaris-llamacpp`, `lunaris-llm`, `lunaris-embed-remote` | Pipelines that turn raw observations into primitives, and queries into fused result sets. Embedder + reranker run on in-process llama.cpp (GGUF, static-linked FFI); extractor/verifier LLM slots are remote-only |
 | **L2 — Contracts** | `lunaris-core` | The kernel: primitives, `BiTemporal`, HLC clocks, validated `Scope`, canonical keyspace, `StoragePort` / `KeywordPort` traits, capability negotiation, circuit breakers, audit |
-| **L1 — Substrate** | `lunaris-storage-moon` (flagship), `lunaris-storage-postgres` (portability proof), `lunaris-storage-embedded` (SQLite, zero-deps) | One trait, three backends. Moon first by design |
+| **L1 — Substrate** | `lunaris-storage-moon` | One trait, one backend. The Postgres portability proof and the SQLite zero-deps backend were deleted in 0.7.0 — see [`migration/0.6-to-0.7`](migration/0.6-to-0.7.md) |
 
-Cross-cutting: `lunaris-conformance` (every backend passes the same port
-conformance suite), `lunaris-bench` (perf gates), `lunaris-codegen`
-(SDK generation).
+Cross-cutting: `lunaris-conformance` (the port conformance suite — now a
+single-backend contract test rather than a parity harness), `lunaris-bench`
+(perf gates), `lunaris-codegen` (SDK generation).
 
 ### The port is the architecture
 
@@ -97,11 +97,12 @@ Three structural decisions carry the recall story:
   The `bt` field records system time (when Lunaris learned it) and valid
   time (when it was true in the world) as two half-open intervals.
   `forget` and supersession close intervals rather than destroy rows.
-  **As-of *reads* are backend-dependent**: `.as_of(ts)` resolves the
-  search-side cut natively on Moon (`FT.SEARCH AS_OF` /
-  `GRAPH.QUERY VALID_AT`), but the KV hydration step behind it is
-  historical only on Postgres and SQLite — Moon refuses a historical KV
-  pin outright. See [Honest limits](#honest-limits-read-before-quoting-the-table-above).
+  **As-of *reads* are lane-dependent**: `.as_of(ts)` resolves the
+  search-side and graph-side cut natively (`FT.SEARCH AS_OF` /
+  `GRAPH.QUERY VALID_AT`), but the KV hydration step behind it has no
+  version chain to walk on Moon, so a historical KV pin is refused
+  outright. The Postgres/SQLite backends that answered it were deleted in
+  0.7.0, so this is now a flat limitation rather than a backend choice. See [Honest limits](#honest-limits-read-before-quoting-the-table-above).
 
 ## Where the milliseconds go — anatomy of a recall
 
@@ -177,7 +178,7 @@ offer at any price.
 | Navigate recall edge (graph-linked corpora only) | **plain 0.00 → nav 1.00 recall@5** on 2-hop graph-linked targets, +0.05 ms p50 | opt-in graph | [`docs/benchmarks/v0.7-moon-v030-rerun.md`](benchmarks/v0.7-moon-v030-rerun.md) |
 | Flat tail at k=30 | **p50 6.0 ms / p99 6.2 ms** (was p50 12 / p99 97.3 before the hydration fan-out, MCP stdio, live Moon) | p99 inside the p50 contract | [`docs/benchmarks/v0.6-recall-fanout-ab.md`](benchmarks/v0.6-recall-fanout-ab.md) |
 | One atomic write per ingest | exactly 1 `atomic_write` call site | INGEST-04 | `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| Backend parity | Moon + Postgres + SQLite pass the same suite | conformance | `crates/lunaris-conformance` |
+| Port contract | Moon passes the full port conformance suite | conformance | `crates/lunaris-conformance` |
 
 ## Honest limits (read before quoting the table above)
 
@@ -194,9 +195,9 @@ The advantage map is real, but it is not "bi-temporal everywhere":
   — which is what they did before, making `GET /v1/snapshot/{lsn}` and
   `POST /v1/recall {as_of: <past>}` return fabricated history.
   Latest-state reads (the entire production hot path) are unaffected.
-  Backends declare this via `StoragePort::supports_historical_kv_reads()`
-  — `false` on Moon, `true` on Postgres and SQLite, which answer
-  historical KV reads correctly. Pinned by
+  The backend declares this via `StoragePort::supports_historical_kv_reads()`
+  — `false`, and since 0.7.0 there is no backend that returns `true`. Pinned
+  by
   `lunaris-storage-moon/tests/read_as_of_historical.rs` and the
   non-skipping `read_as_of::historical_pin_is_explicit` conformance
   test. The upstream path to closing it is Moon's `TemporalKvIndex`
@@ -208,12 +209,13 @@ The advantage map is real, but it is not "bi-temporal everywhere":
   `--params`, so the adapter renders literals; property filters use
   `WHERE` clauses, never inline `{id: …}` maps (`atomic.rs`, fixed in
   `adbac2d`).
-- **Postgres and SQLite take different routes to the same contract** —
-  e.g. tsvector BM25, pgvector, RLS-enforced scope — at different
-  performance points. Moon is the latency flagship; the others are the
-  portability proof. See
-  [`operations/backends`](book/src/operations/backends.md) for the
-  decision guide.
+- **There is no second backend to fall back to.** Through 0.6.x, Postgres
+  (tsvector BM25, pgvector, RLS-enforced scope) and SQLite took different
+  routes to the same contract at different performance points. 0.7.0 deleted
+  both: one substrate to test, tune, and operate. The cost is that Moon's
+  gaps — the two above — are now the engine's gaps, and that running Lunaris
+  means running Moon. See
+  [`operations/backends`](book/src/operations/backends.md).
 
 ## Where to go next
 

@@ -1,31 +1,33 @@
 //! Lunaris 10-minute quickstart — Rust.
 //!
-//! Demonstrates the v0.2.x public API surface against a local Postgres
-//! backend: open a handle, ingest one episode under a scope, recall it.
+//! Demonstrates the public API surface against a local Moon: open a
+//! handle, ingest one episode under a scope, recall it.
+//!
+//! Through 0.6.x this quickstart targeted Postgres + pgvector. 0.7.0 is
+//! Moon-only — see `docs/migration/0.6-to-0.7.md`.
 //!
 //! ## Prerequisites
 //!
-//! 1. `docker compose up -d` (from this directory) — starts Postgres
-//!    16 + pgvector + pgmq + Apache AGE on `localhost:5432`.
+//! 1. `docker compose up -d` (from this directory) — starts Moon on
+//!    `localhost:6380` with `--shards 1` (REQUIRED: Lunaris ingest is a
+//!    single MULTI/EXEC TXN and Moon refuses cross-shard writes).
 //! 2. Stage the granite-r2 Q4_K_M GGUF at `~/.lunaris/models/` for the
 //!    default in-process llama.cpp embedder. (Or `ollama serve &` with
 //!    `--features embed-remote` + `LUNARIS_EMBEDDER_OLLAMA_URL` as the
 //!    air-gap escape hatch.)
-//! 3. `export LUNARIS_PG_URL="postgres://lunaris:lunaris@localhost:5432/lunaris"`.
+//! 3. `export LUNARIS_STORE_URL="moon://127.0.0.1:6380"`.
 //! 4. `cargo run`.
 //!
 //! Expected output:
 //!
 //! ```text
-//! quickstart: opening lunaris handle at postgres://...
+//! quickstart: opening lunaris handle at moon://127.0.0.1:6380
 //! quickstart: ingested episode at lsn=Lsn(1) under scope `quickstart`
 //! quickstart: recalled 1 hit(s) for "hello"
 //! quickstart:   top hit score=0.83 text="# Hello from Lunaris …"
 //! ```
 //!
-//! See `examples/quickstart-rs/README.md` for the full runbook + a
-//! Postgres-only no-Ollama variant that uses a hand-wired stub
-//! embedder via the (internal) `with_parts` API.
+//! See `examples/quickstart-rs/README.md` for the full runbook.
 
 use std::env;
 
@@ -36,11 +38,14 @@ use lunaris::{EpisodeBuilder, Lunaris, Scope, Vector};
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let pg_url = env::var("LUNARIS_PG_URL")
-        .context("set LUNARIS_PG_URL — see examples/quickstart-rs/README.md")?;
+    // No default on purpose: guessing `moon://127.0.0.1:6380` would let the
+    // quickstart write demo episodes into whatever Moon happens to own that
+    // port — which on a developer box is often a real store.
+    let store_url = env::var("LUNARIS_STORE_URL")
+        .context("set LUNARIS_STORE_URL=moon://127.0.0.1:6380 — see examples/quickstart-rs/README.md")?;
 
-    println!("quickstart: opening lunaris handle at {pg_url}");
-    let lunaris = Lunaris::open(&pg_url).await.context("Lunaris::open failed")?;
+    println!("quickstart: opening lunaris handle at {store_url}");
+    let lunaris = Lunaris::open(&store_url).await.context("Lunaris::open failed")?;
 
     let scope = Scope::new("quickstart").context("Scope::new")?;
     let scoped = lunaris.scoped(scope);

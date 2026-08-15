@@ -24,15 +24,15 @@ with first-class **Python** (`pip install lunaris`) and **TypeScript**
 You feed it raw observations — chat turns, documents, tool outputs — as
 `Episode`s. It chunks, embeds, and (optionally) extracts entities, relations,
 and facts using a small local LLM, then stores everything in a bi-temporal
-MVCC store backed by **Postgres** (the portable default) or **Moon** (a
-high-performance Redis-compatible substrate). Agents query it through a
+MVCC store backed by **Moon**, a high-performance Redis-compatible
+substrate (and, as of 0.7.0, the only backend). Agents query it through a
 composable retrieval DSL that fuses semantic search, graph traversal, and
 BM25 keyword lookup, with an optional cross-encoder rerank pass on top.
 
 ```rust
 use lunaris::{EpisodeBuilder, Lunaris, Query, Scope};
 
-let lunaris = Lunaris::open("postgres://lunaris@localhost/lunaris").await?;
+let lunaris = Lunaris::open("moon://127.0.0.1:6380").await?;
 let scope   = Scope::new("acme.agent-1")?;
 let scoped  = lunaris.scoped(scope);
 
@@ -81,10 +81,10 @@ memory.ingest  source="src:notes"  content="The ingest pipeline writes one atomi
 memory.recall  query="ingest atomicity"  k=3
 ```
 
-Scope is derived per-repo from the git remote; the default SQLite backend needs
-no external process and `memory.recall` works out of the box (vector-only —
-Moon or Postgres add BM25 + hybrid fusion). See **[MCP Server](./mcp/index.md)**
-for the full guide.
+Scope is derived per-repo from the git remote. `LUNARIS_MCP_STORAGE` must name
+a Moon — there is no default store as of 0.7.0, and the server refuses to boot
+without one. `memory.recall` then runs hybrid vector + BM25 recall. See
+**[MCP Server](./mcp/index.md)** for the full guide.
 
 ## The three moats
 
@@ -95,7 +95,7 @@ them; any feature that weakens any of the three is rejected.
 |---|---|---|
 | **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench recall_hot_path` + perf smoke in CI |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — supersede closes intervals instead of destroying rows. As-of *reads* are backend-dependent: search-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) on Moon, historical KV reads on Postgres/SQLite only — see [Core concepts](./getting-started/concepts.md#bi-temporal-mvcc--the-hlc). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
+| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — supersede closes intervals instead of destroying rows. As-of *reads* are search-side and graph-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`); historical **KV** reads have no version chain on Moon and are refused explicitly — see [Core concepts](./getting-started/concepts.md#bi-temporal-mvcc--the-hlc). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 
 If everything else fails, that performance + correctness contract must hold —
 it's what differentiates Lunaris from Mem0, Zep, and Cognee. See

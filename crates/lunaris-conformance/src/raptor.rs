@@ -2,10 +2,13 @@
 //!
 //! ## STORE-03 honesty note
 //!
-//! The SQLite self-parity arm (`fixture_5_parity_sqlite_self`) passes
-//! unconditionally and demonstrates determinism at the code level.
-//! Moon/SQLite cross-backend parity is **UAT-GATED** — requires `MOON_URL`
-//! to be set. Not claimed green in autonomous CI runs.
+//! What this suite proves is DETERMINISM, not cross-backend agreement. Through
+//! 0.6.x the unconditional arm was SQLite self-parity, with a Moon-vs-SQLite
+//! arm gated on an env var CI never set — so the cross-backend claim was never
+//! actually made. 0.7.0 deleted SQLite and left one backend, so the arms are
+//! now two INDEPENDENT ephemeral Moons (`fixture_5_parity_moon_self`): same
+//! input, two fresh stores, identical output. That runs on every CI run rather
+//! than skipping, which is more coverage than the old shape delivered.
 //!
 //! ## Members parity design
 //!
@@ -155,7 +158,10 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 ///   B1 population-at-ingest is proven index-side by
 ///   `lunaris-ingest/tests/raptor_wiring.rs`, not through the KV blob).
 ///
-/// Used for both SQLite self-parity (unconditional) and Moon vs SQLite (UAT-gated).
+/// `storage_a` and `storage_b` are two INDEPENDENT stores. Since 0.7.0 both are
+/// ephemeral Moons, so this is self-parity across fresh instances; the
+/// signature stays two-armed so a second backend can be compared without a
+/// rewrite.
 pub async fn run_raptor_parity_suite(
     storage_a: Arc<dyn StoragePort>,
     storage_b: Arc<dyn StoragePort>,
