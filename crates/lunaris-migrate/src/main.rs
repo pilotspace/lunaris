@@ -2,14 +2,13 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use lunaris_core::{Scope, StoragePort};
 use lunaris_migrate::{
     LOSSY_CONTRACT, MigrationOptions, ScopeReport, VerifyReport, discover_scopes, migrate_scope,
-    verify_scope,
+    open_dest, open_source, verify_scope,
 };
 
 /// One-way migration of Lunaris primitives from the SQLite / Postgres backends
@@ -62,7 +61,21 @@ struct Cli {
     /// Write the re-embed backlog (one JSONL line per key needing a vector).
     #[arg(long, value_name = "PATH")]
     reembed_manifest: Option<PathBuf>,
+
+    /// Embedder dimension the destination's FT indices must be created at.
+    ///
+    /// Load-bearing even though this tool writes no vectors: opening a Moon
+    /// handle CREATES the `chunks`/`entities`/`facts`/`communities` FT indices
+    /// if they are absent, and `FT.CREATE`'s `DIM` is STICKY — Moon will not
+    /// resize later. Migrating with the wrong value leaves a destination whose
+    /// indices can never accept your embedder's vectors without a
+    /// `FT.DROPINDEX` + full re-ingest.
+    #[arg(long, default_value_t = DEFAULT_VECTOR_DIM)]
+    vector_dim: usize,
 }
+
+/// granite-r2, the production embedder.
+const DEFAULT_VECTOR_DIM: usize = 768;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -107,7 +120,7 @@ async fn run(cli: Cli) -> Result<bool> {
     }
 
     let source = open_source(&cli.from).await?;
-    let dest = open_dest(&cli.to).await?;
+    let dest = open_dest(&cli.to, cli.vector_dim).await?;
 
     let scopes = resolve_scopes(&cli, source.as_ref()).await?;
     if scopes.is_empty() {
@@ -152,43 +165,6 @@ async fn resolve_scopes(cli: &Cli, source: &dyn StoragePort) -> Result<Vec<Scope
     )
 }
 
-async fn open_source(url: &str) -> Result<Arc<dyn StoragePort>> {
-    let scheme = url.split(':').next().unwrap_or_default();
-    match scheme {
-        "memory" | "sqlite" => {
-            let s = lunaris_storage_embedded::EmbeddedStorage::connect(url)
-                .await
-                .with_context(|| format!("open source {url}"))?;
-            Ok(Arc::new(s))
-        }
-        // `connect_no_migrate` on purpose: a migration SOURCE is read-only, and
-        // running DDL against the store an operator is leaving is not this
-        // tool's business.
-        "postgres" | "postgresql" => {
-            let s = lunaris_storage_postgres::PostgresStorage::connect_no_migrate(url)
-                .await
-                .with_context(|| format!("open source {url}"))?;
-            Ok(Arc::new(s))
-        }
-        "moon" => bail!("Moon is the destination of this tool, not a source"),
-        other => {
-            bail!("unsupported source scheme {other:?}: use sqlite://, memory://, postgres://")
-        }
-    }
-}
-
-async fn open_dest(url: &str) -> Result<Arc<dyn StoragePort>> {
-    if !url.starts_with("moon://") {
-        bail!("destination must be a moon:// URL (this tool migrates INTO Moon)");
-    }
-    // Plain `connect`: the multi-shard guard and the Moon server-version
-    // handshake run here, and there is deliberately no way to skip them.
-    let s = lunaris_storage_moon::MoonStorage::connect(url)
-        .await
-        .with_context(|| format!("open destination {url}"))?;
-    Ok(Arc::new(s))
-}
-
 fn print_scope_report(r: &ScopeReport, committing: bool) {
     println!("scope {}", r.scope);
     println!("  scanned            {}", r.scanned);
@@ -201,6 +177,45 @@ fn print_scope_report(r: &ScopeReport, committing: bool) {
     println!("  needs re-embed     {}", r.needs_reembed);
     for (kind, n) in &r.by_kind {
         println!("    {kind:<16} {n}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(extra: &[&str]) -> Cli {
+        let mut argv = vec!["lunaris-migrate", "--from", "memory://", "--to", "moon://h:1"];
+        argv.extend_from_slice(extra);
+        Cli::try_parse_from(argv).expect("cli parses")
+    }
+
+    /// The dim must reach `MoonStorage::connect_with_dim`. Opening a Moon
+    /// handle creates the FT indices, and `FT.CREATE DIM` is sticky — a wrong
+    /// default here is not cosmetic, it is a destination that can never accept
+    /// the operator's vectors without a drop + re-ingest.
+    #[test]
+    fn vector_dim_defaults_to_the_production_embedder_width() {
+        assert_eq!(parse(&[]).vector_dim, 768);
+    }
+
+    #[test]
+    fn vector_dim_is_overridable_for_other_embedders() {
+        assert_eq!(parse(&["--vector-dim", "1536"]).vector_dim, 1536);
+    }
+
+    #[test]
+    fn dry_run_and_commit_are_mutually_exclusive() {
+        let r = Cli::try_parse_from([
+            "lunaris-migrate",
+            "--from",
+            "memory://",
+            "--to",
+            "moon://h:1",
+            "--dry-run",
+            "--commit",
+        ]);
+        assert!(r.is_err(), "--dry-run with --commit must not parse");
     }
 }
 
