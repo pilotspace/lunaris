@@ -111,6 +111,28 @@ pub(crate) fn resolve_calls_for_test(cwd: &Path) -> usize {
     RESOLVE_CALLS.lock().get(cwd).copied().unwrap_or(0)
 }
 
+/// Test seam: forget every cached HEAD / anchor-diff for `cwd`.
+///
+/// The 5 s TTL is a production feature — it is what stops a sweep from
+/// shelling out to `git` once per candidate memory. It is also invisible to
+/// most tests, because they move HEAD once and read once.
+///
+/// A test that moves HEAD *after* already reading it must call this, or the
+/// second read is served from the pre-move cache and the code under test
+/// looks like it ignored the move. `stale_memory_decays_and_banners_via_
+/// real_recall_path` is exactly that shape: it needs a control recall on the
+/// un-moved anchor to divide by.
+///
+/// Only the given `cwd`'s entries are dropped (both caches), so concurrent
+/// tests on their own tempdirs are unaffected. Sleeping past the TTL instead
+/// would add 5 s of wall clock to the suite and still race.
+#[cfg(test)]
+pub(crate) fn forget_cwd_for_test(cwd: &Path) {
+    let key = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    CACHE.lock().remove(&key);
+    DIFF_CACHE.lock().retain(|(p, _), _| p != &key);
+}
+
 // ── engram-soul-loop task 6 (staleness-pass) — changed-files diff ─────────
 //
 // `.add/tasks/staleness-pass/TASK.md` §3 CONTRACT: `git diff --name-only

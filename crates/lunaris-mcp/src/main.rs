@@ -87,7 +87,12 @@ struct Cli {
     #[arg(long, env = "LUNARIS_MCP_SCOPE")]
     scope: Option<String>,
 
-    /// Storage URL (default: sqlite:///`<HOME>`/.lunaris/`<scope>`.db).
+    /// Storage URL (`moon://host:port`) — REQUIRED, no default since 0.7.0.
+    ///
+    /// Left `Option` rather than `required = true` so the missing-value case
+    /// reaches `AppState::bootstrap` and gets the external-Moon quickstart,
+    /// instead of clap's bare "the following required arguments were not
+    /// provided".
     #[arg(long, env = "LUNARIS_MCP_STORAGE")]
     storage: Option<String>,
 

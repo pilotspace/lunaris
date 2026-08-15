@@ -54,6 +54,20 @@ pub enum ScopeResolveError {
     /// against future regressions.
     #[error("derived scope failed validation: {0}")]
     DerivationInvalid(#[source] ScopeError),
+
+    /// No storage URL could be resolved for this scope.
+    ///
+    /// Through 0.6.x every resolver ended in a per-scope
+    /// `sqlite:///<HOME>/.lunaris/<scope>.db` fallback, so this state was
+    /// unreachable. 0.7.0 deleted the embedded backend, and with it the last
+    /// substrate a resolver could conjure on its own — an unresolvable store is
+    /// now a terminal condition rather than a silent downgrade.
+    ///
+    /// The payload is the caller's own operator-facing prose: `lunaris-hook`
+    /// and `lunaris-mcp` have different exit ramps, and neither belongs in
+    /// `lunaris-core`.
+    #[error("{0}")]
+    NoStoreUrl(String),
 }
 
 // ── Shared data model ─────────────────────────────────────────────────────────

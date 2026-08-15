@@ -45,8 +45,12 @@ The audience is internal agent platforms first (we own the substrate), with a pu
 - **Reranker** — `BAAI/bge-reranker-v2-m3` (Apache-2.0, XLM-RoBERTa,
   cross-encoder, sigmoid output ∈ [0,1]) as Q5_K_M GGUF, lazy-loaded on
   first recall (override `LUNARIS_RERANKER_GGUF`).
-- **Storage** — Moon (Redis-compatible, internal) + Postgres (portability
-  proof) + SQLite (`memory://`, `sqlite:///path`, zero-deps onboarding).
+- **Storage** — Moon (Redis-compatible, internal), and only Moon. The Postgres
+  portability proof and the SQLite onboarding backend (`memory://`,
+  `sqlite:///path`) were deleted in 0.7.0 along with `lunaris-migrate`; see
+  `docs/migration/0.6-to-0.7.md`. `moon://host:port` is the sole scheme
+  `lunaris::open` accepts — every retired spelling returns
+  `UnsupportedScheme` carrying the exit ramp.
 - **HTTP** — `axum ≥0.8` + `tower ≥0.5` + `tower-http` + `tracing` +
   `prometheus 0.14` (`/metrics`).
 - **Async** — `tokio` latest 1.x + `parking_lot` for sync primitives;
@@ -151,8 +155,18 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   `cargo test --workspace` / CI-clippy stay light (must NOT compile the moon
   server). `grep -n 'embedded-moon' crates/lunaris-mcp/Cargo.toml` must never
   show it inside `default = [...]`. The published `npx`/`uvx`/`cargo install`
-  binaries do NOT enable it, so the **shipped MCP storage default is SQLite** —
-  do not document Moon as the shipped default.
+  binaries do NOT enable it.
+- **There is no shipped MCP storage default (0.7.0).** Through 0.6.x an unset
+  `LUNARIS_MCP_STORAGE` opened `sqlite:///<HOME>/.lunaris/<scope>.db`; slice B
+  deleted `lunaris-storage-embedded`, and the default died with it. A stock
+  `lunaris-mcp` with no `--storage` / `LUNARIS_MCP_STORAGE` REFUSES TO BOOT
+  with the external-Moon quickstart (`state.rs::NO_STORAGE_HELP`, pinned by
+  `tests/server_boot.rs::no_storage_refuses_to_boot_with_the_quickstart`). Do
+  NOT re-introduce a default — not SQLite, and not a guessed
+  `moon://127.0.0.1:6380` either: a mis-routed store is harder to notice than a
+  server that will not start. Same rule for `lunaris-hook`
+  (`scope.rs::NO_STORE_URL_HELP`, after `LUNARIS_STORE_URL` and contextd
+  discovery both come up empty).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

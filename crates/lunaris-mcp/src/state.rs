@@ -34,7 +34,45 @@ pub(crate) enum BootstrapError {
     /// Filesystem I/O failure while deriving the default storage path.
     #[error("storage path i/o: {0}")]
     Io(#[from] io::Error),
+
+    /// No storage URL was supplied and none could be derived.
+    ///
+    /// 0.7.0 removed the per-scope SQLite default, so `--storage` /
+    /// `LUNARIS_MCP_STORAGE` is now mandatory on a stock build. Carries
+    /// [`NO_STORAGE_HELP`].
+    #[error("{0}")]
+    NoStorage(String),
+
+    /// The `embedded-moon` build could not bring its in-process Moon up.
+    ///
+    /// Only reachable on `--features embedded-moon` (dev/test only — CLAUDE.md
+    /// invariant keeps it out of every default feature set) with no
+    /// `--storage` override.
+    #[cfg(feature = "embedded-moon")]
+    #[error("embedded Moon launch failed: {0}")]
+    EmbeddedMoon(#[from] crate::embedded_moon::EmbeddedMoonError),
 }
+
+/// The operator exit ramp printed when `lunaris-mcp` starts with no storage.
+///
+/// Held as one constant so the stock build and any future caller cannot drift
+/// into telling an operator two different stories about the same startup.
+pub(crate) const NO_STORAGE_HELP: &str = "\
+lunaris-mcp needs a storage URL and has no default: pass `--storage \
+moon://host:port` or set `LUNARIS_MCP_STORAGE`.\n\n\
+Through 0.6.x an unset value silently opened a per-scope SQLite file at \
+`~/.lunaris/<scope>.db`. 0.7.0 is Moon-only — that backend is gone, and \
+guessing a Moon endpoint is worse than refusing: `moon://127.0.0.1:6380` may \
+belong to an unrelated store, and an MCP server that mis-routes an agent's \
+memory is harder to notice than one that will not start.\n\n\
+Stand a Moon up:\n  \
+curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh\n  \
+moon --bind 127.0.0.1 --port 6380 --shards 1 --dir ~/.lunaris/moon\n\
+then start with `--storage moon://127.0.0.1:6380`. Moon MUST run with \
+`--shards 1` (Lunaris ingest is a single-shard TXN). Full recipe — durability, \
+health checks, container flags: docs/operations/external-moon.md.\n\n\
+Migrating an existing 0.6.x SQLite/Postgres store? Run `lunaris-migrate` from \
+the v0.6.2 release binary BEFORE upgrading — see docs/migration/0.6-to-0.7.md.";
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -101,30 +139,27 @@ impl AppState {
         // Derive storage URL — and optionally launch embedded Moon.
         // When the embedded-moon feature is ON and no --storage override is
         // given, decide_storage_with_launcher starts run_embedded in-process
-        // and returns the moon://127.0.0.1:<port> URL. On launch failure the
-        // circuit-breaker emits tracing::warn and falls back to SQLite.
+        // and returns the moon://127.0.0.1:<port> URL. A launch failure is now
+        // terminal (0.7.0: there is no SQLite left to circuit-break onto).
         #[cfg(feature = "embedded-moon")]
         let (storage_url, embedded_guard) = {
             let data_dir = data_dir_override.unwrap_or("./.lunaris-moon").to_owned();
-            crate::embedded_moon::decide_storage_with_launcher(
-                storage_override,
-                &scope,
-                move || {
-                    // Clone into the async block so the future owns `data_dir`
-                    // and does not borrow from the closure environment.
-                    let dir = data_dir.clone();
-                    async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
-                },
-            )
-            .await
+            crate::embedded_moon::decide_storage_with_launcher(storage_override, move || {
+                // Clone into the async block so the future owns `data_dir`
+                // and does not borrow from the closure environment.
+                let dir = data_dir.clone();
+                async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
+            })
+            .await?
         };
         // Map Option<EmbeddedMoonGuard> → Option<Arc<EmbeddedMoonGuard>>.
         #[cfg(feature = "embedded-moon")]
         let embedded_guard = embedded_guard.map(Arc::new);
 
-        // When embedded-moon is OFF, use the existing sync helper unchanged.
+        // When embedded-moon is OFF (every shipped build), the override is the
+        // only source of a storage URL.
         #[cfg(not(feature = "embedded-moon"))]
-        let storage_url = resolve_storage_url(storage_override, &scope)?;
+        let storage_url = resolve_storage_url(storage_override)?;
 
         tracing::info!(
             scope   = scope.as_str(),
@@ -160,40 +195,78 @@ impl AppState {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Derive the SQLite storage URL for the given scope.
+/// Resolve the storage URL from the caller-supplied `--storage` /
+/// `LUNARIS_MCP_STORAGE` value.
 ///
-/// Priority:
-/// 1. Caller-supplied `override_` (passed through verbatim).
-/// 2. `sqlite:///<HOME>/.lunaris/<scope>.db` — created if absent.
+/// There is exactly one source. Step 2 used to be
+/// `sqlite:///<HOME>/.lunaris/<scope>.db`, created on demand; 0.7.0 deleted
+/// that backend, so an absent override is [`BootstrapError::NoStorage`]
+/// carrying [`NO_STORAGE_HELP`].
 ///
-/// Used only when the `embedded-moon` feature is OFF. When the feature is ON,
-/// `decide_storage_with_launcher` handles both the Moon and SQLite fallback paths.
+/// Used only when the `embedded-moon` feature is OFF — which is every shipped
+/// `npx`/`uvx`/`cargo install` binary (CLAUDE.md invariant: `embedded-moon` is
+/// never in a default feature set). When the feature IS on,
+/// `decide_storage_with_launcher` supplies the URL from the Moon it launched.
 #[cfg(not(feature = "embedded-moon"))]
-fn resolve_storage_url(override_: Option<&str>, scope: &Scope) -> Result<String, BootstrapError> {
-    if let Some(url) = override_ {
-        return Ok(url.to_owned());
+fn resolve_storage_url(override_: Option<&str>) -> Result<String, BootstrapError> {
+    match override_ {
+        Some(url) if !url.trim().is_empty() => Ok(url.to_owned()),
+        _ => Err(BootstrapError::NoStorage(NO_STORAGE_HELP.to_string())),
     }
-
-    let home = dirs::home_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no $HOME directory found"))?;
-    let dir = home.join(".lunaris");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.db", scope.as_str()));
-    Ok(format!("sqlite://{}", path.display()))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    // Only the embedded-moon tests below use items from the parent module.
-    #[cfg(feature = "embedded-moon")]
     use super::*;
 
     // The old boot-time `probe_embedder_health` unit tests lived here. The
     // probe moved into `lunaris::lazy_default_embedder`'s first-load path
     // (unified-inference, 2026-07-19); its honest-error behavior is now pinned
     // end-to-end by `tests/lazy_embedder_boot.rs` against the real binary.
+
+    // ── Storage is required (0.7.0) ──────────────────────────────────────────
+
+    /// A stock build (no `embedded-moon`) with no `--storage` must REFUSE, and
+    /// the refusal must be enough to fix the config without reading source.
+    ///
+    /// The shipped default was a per-scope SQLite file. Deleting that backend
+    /// without deleting the default would have left `lunaris-mcp` minting a
+    /// `sqlite://` URL for `Lunaris::open` to reject — a scheme error two
+    /// frames from the actual decision, naming a path the operator never
+    /// chose.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn absent_storage_is_a_named_refusal_with_the_quickstart() {
+        let err = resolve_storage_url(None).expect_err("no --storage must not resolve a URL");
+        assert!(
+            matches!(err, BootstrapError::NoStorage(_)),
+            "must be the named NoStorage variant, got: {err:?}"
+        );
+        let msg = err.to_string();
+        for needle in [
+            "LUNARIS_MCP_STORAGE",
+            "--storage",
+            "moon://",
+            "--shards 1",
+            "docs/operations/external-moon.md",
+            "lunaris-migrate",
+            "v0.6.2",
+        ] {
+            assert!(msg.contains(needle), "startup error must mention {needle}: {msg}");
+        }
+    }
+
+    /// Whitespace is not a storage URL. `LUNARIS_MCP_STORAGE=""` in a shell
+    /// wrapper reaches clap as `Some("")`, which would otherwise sail through
+    /// to `Lunaris::open("")` and fail on URL parsing instead.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn blank_storage_is_treated_as_absent() {
+        assert!(matches!(resolve_storage_url(Some("   ")), Err(BootstrapError::NoStorage(_))));
+        assert_eq!(resolve_storage_url(Some("moon://h:6380")).unwrap(), "moon://h:6380");
+    }
 
     // ── Discriminating bootstrap test (T1) ───────────────────────────────────
 
@@ -271,16 +344,15 @@ mod tests {
     #[cfg(feature = "embedded-moon")]
     #[tokio::test]
     async fn decide_storage_real_launcher_wires_moon_url() {
-        use lunaris_core::Scope;
-        let scope = Scope::new("test-vuz-wiring").unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap().to_owned();
         let (url, guard) =
-            crate::embedded_moon::decide_storage_with_launcher(None, &scope, move || {
+            crate::embedded_moon::decide_storage_with_launcher(None, move || {
                 let dir = data_dir.clone();
                 async move { crate::embedded_moon::launch_embedded_moon(&dir).await }
             })
-            .await;
+            .await
+            .expect("real launcher must bring Moon up");
         assert!(
             url.starts_with("moon://"),
             "decide_storage with real launcher must return moon:// URL, got: {url}"
@@ -296,17 +368,14 @@ mod tests {
     #[cfg(feature = "embedded-moon")]
     #[tokio::test]
     async fn decide_storage_override_skips_embedded_moon() {
-        use lunaris_core::Scope;
         use std::sync::{
             Arc,
             atomic::{AtomicBool, Ordering},
         };
-        let scope = Scope::new("test-vuz-optout-state").unwrap();
         let called = Arc::new(AtomicBool::new(false));
         let c = called.clone();
         let (url, guard) = crate::embedded_moon::decide_storage_with_launcher(
-            Some("sqlite:///override.db"),
-            &scope,
+            Some("moon://db.internal:6380"),
             move || {
                 c.store(true, Ordering::Relaxed);
                 async move {
@@ -317,8 +386,9 @@ mod tests {
                 }
             },
         )
-        .await;
-        assert_eq!(url, "sqlite:///override.db");
+        .await
+        .expect("an override never consults the launcher, so it cannot fail");
+        assert_eq!(url, "moon://db.internal:6380");
         assert!(guard.is_none(), "--storage override must produce no guard");
         assert!(!called.load(Ordering::Relaxed), "launcher must NOT be called");
     }

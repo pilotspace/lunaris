@@ -102,8 +102,13 @@ async fn handle_connection(
 /// - `LUNARIS_STORE_URL` is set — an explicit storage override applies to the
 ///   hook binaries too, so launching a Moon nobody would resolve to is waste;
 /// - `LUNARIS_CONTEXTD_EMBEDDED_MOON=0` — operator opt-out;
-/// - the launch itself fails — WARN and fall through to today's per-scope
-///   SQLite behaviour (circuit-breaker: contextd ALWAYS starts).
+/// - the launch itself fails — WARN and advertise nothing (circuit-breaker:
+///   contextd ALWAYS starts). Since 0.7.0 there is no per-scope SQLite behind
+///   this, so hook binaries that find no discovery file refuse with
+///   `scope::NO_STORE_URL_HELP` rather than silently splitting off into their
+///   own file. contextd still starts either way — the daemon serves more than
+///   storage-backed ops, and a start-time abort would take the whole hook
+///   surface down with it.
 ///
 /// Data dir: `LUNARIS_CONTEXTD_MOON_DIR` or `~/.lunaris/contextd-moon-data`.
 /// On success writes `~/.lunaris/contextd-moon.url` (the discovery file
@@ -158,10 +163,12 @@ async fn launch_unified_moon() -> Option<lunaris_memory_service::embedded_moon::
                     Some(guard)
                 }
                 Err(err) => {
-                    // Un-advertised Moon would split-brain (contextd on Moon,
-                    // hooks on SQLite) — shut it down and use SQLite everywhere.
+                    // An un-advertised Moon is worse than none: contextd would
+                    // capture into it while every hook binary refuses for want
+                    // of a store. Shut it down so both sides fail the same way.
                     tracing::warn!(err = %err, file = %url_file.display(),
-                        "cannot advertise embedded Moon — shutting it down, using SQLite");
+                        "cannot advertise embedded Moon — shutting it down; set \
+                         LUNARIS_STORE_URL to an external moon:// endpoint");
                     guard.shutdown().await;
                     None
                 }
@@ -169,7 +176,9 @@ async fn launch_unified_moon() -> Option<lunaris_memory_service::embedded_moon::
         }
         Err(err) => {
             tracing::warn!(err = %err,
-                "embedded Moon launch failed — falling back to per-scope SQLite");
+                "embedded Moon launch failed — no store will be advertised; \
+                 set LUNARIS_STORE_URL to an external moon:// endpoint \
+                 (docs/operations/external-moon.md)");
             None
         }
     }
