@@ -23,7 +23,7 @@ use lunaris_ingest::{
     BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter,
     ingest_episode_with_receipt,
 };
-use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_test_harness::{Policy, open_test_storage_with};
 use parking_lot::Mutex;
 
 // --------------------------- RecordingStorage ---------------------------
@@ -510,25 +510,37 @@ async fn community_summary_embedding_populated_at_ingest() {
 ///
 /// This is the DISCRIMINATING integration test: it proves the REAL production ingest
 /// path populates the `communities` vector index (not just a unit test of an isolated
-/// component). Uses `EmbeddedStorage` (SQLite in-memory) which implements `vector_search`
-/// with brute-force cosine — no external dependencies needed.
+/// component).
+///
+/// **Metadata pin — 0.7.0 port stops at `Policy::ForceMemory`.** The store is
+/// harness-issued, but pinned to the embedded backend, because the second half
+/// of this test asserts `hit.metadata["summary"]` is present. On Moon the
+/// vector half PASSES (the communities FT index returns hits) and the metadata
+/// half FAILS: `lunaris-storage-moon::vector::vector_search` hydrates
+/// `VectorHit.metadata` from KV only on the post-filter path
+/// (`vector.rs` ~:92-120); with `filter = None` it keeps whatever the FT reply
+/// carried, which for the communities index is nothing. That is a real gap in
+/// Moon-side BM25 content extraction for communities, NOT a fixture problem —
+/// it is recorded in docs/testing/memory-to-moon-port-plan.md rather than
+/// papered over by relaxing the assertion. Unpin once the hydrate covers the
+/// unfiltered path.
 #[tokio::test]
 async fn community_vector_index_searchable_after_ingest() {
-    let storage: Arc<EmbeddedStorage> =
-        Arc::new(EmbeddedStorage::connect("memory://").await.expect("embedded storage must open"));
+    let storage = open_test_storage_with(Policy::ForceMemory, 768).await;
+    let port = storage.port();
     let embedder = Arc::new(StubEmbedder::new(768));
     let clock = HlcClock::new(0);
     // Use a multi-section doc to guarantee at least one Community is produced.
     let ep = twelve_kb_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    ingest_episode(&*port, &*embedder, &clock, ep).await.expect("ingest ok");
 
     // StubEmbedder produces a fixed non-zero vector. Use a non-zero probe so cosine
     // similarity is well-defined and the brute-force scan can return hits.
     let probe: Vec<f32> = vec![1.0_f32; 768];
     let hits = StoragePort::vector_search(
-        storage.as_ref(),
+        port.as_ref(),
         &scope,
         "communities",
         &probe,

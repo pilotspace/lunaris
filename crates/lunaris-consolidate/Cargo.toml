@@ -61,3 +61,7 @@ tokio            = { workspace = true, features = ["macros", "rt-multi-thread"] 
 # hydrate, fact scan) actually work end-to-end. `lunaris-storage-embedded`
 # depends only on `lunaris-core` (no cycle back into `lunaris-consolidate`).
 lunaris-storage-embedded = { workspace = true }
+# 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
+# in crates/lunaris-test-harness) so tests stop opening `memory://` directly.
+# Dev-only; the cycle back through `lunaris` runs via dev-deps, which Cargo allows.
+lunaris-test-harness = { workspace = true }

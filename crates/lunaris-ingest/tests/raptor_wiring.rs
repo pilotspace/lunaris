@@ -7,12 +7,12 @@ use std::collections::BTreeSet;
 
 use futures::StreamExt as _;
 use lunaris_core::{
-    Episode, HlcClock, Scope, StoragePort, StubEmbedder,
+    Episode, HlcClock, Scope, StubEmbedder,
     keyspace::{chunk_prefix, community_prefix},
     primitives::{Chunk, Community},
 };
 use lunaris_ingest::ingest_episode;
-use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_test_harness::open_test_storage;
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -38,7 +38,7 @@ fn headed_episode(clock: &HlcClock) -> Episode {
 
 /// Helper: scan all keys under `prefix` and deserialize each value as `T`.
 async fn scan_deserialize<T: serde::de::DeserializeOwned>(
-    storage: &EmbeddedStorage,
+    storage: &dyn lunaris_core::StoragePort,
     scope: &Scope,
     prefix: Vec<u8>,
 ) -> Vec<T> {
@@ -62,17 +62,20 @@ async fn scan_deserialize<T: serde::de::DeserializeOwned>(
 /// aggregation (purely a members.len() > 0 check would pass even on a stub).
 #[tokio::test]
 async fn fixture_3a_h1_community_summary_non_empty() {
-    let storage =
-        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    // 0.7.0 port off `memory://` — harness-issued backend, degrading to
+    // `memory://` where no Moon binary resolves. The binding owns the Moon
+    // child, and `TestStorage` derefs to `Arc<dyn StoragePort>`.
+    let storage = open_test_storage().await;
+    let port = storage.port();
     let embedder = StubEmbedder::new(768);
     let clock = HlcClock::new(0);
     let ep = headed_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&storage, &embedder, &clock, ep).await.expect("ingest must succeed");
+    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
 
     let communities: Vec<Community> =
-        scan_deserialize(&storage, &scope, community_prefix(&scope)).await;
+        scan_deserialize(&*port, &scope, community_prefix(&scope)).await;
 
     // Must have at least one Community with level == 1 (the H1 section).
     let h1_communities: Vec<&Community> = communities.iter().filter(|c| c.level == 1).collect();
@@ -123,23 +126,26 @@ async fn fixture_3a_h1_community_summary_non_empty() {
 /// is robust even though Chunk IDs are random across runs.
 #[tokio::test]
 async fn fixture_3b_leaf_chunk_parent_id_set() {
-    let storage =
-        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    // 0.7.0 port off `memory://` — harness-issued backend, degrading to
+    // `memory://` where no Moon binary resolves. The binding owns the Moon
+    // child, and `TestStorage` derefs to `Arc<dyn StoragePort>`.
+    let storage = open_test_storage().await;
+    let port = storage.port();
     let embedder = StubEmbedder::new(768);
     let clock = HlcClock::new(0);
     let ep = headed_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&storage, &embedder, &clock, ep).await.expect("ingest must succeed");
+    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
 
     // Collect all persisted community IDs.
     let communities: Vec<Community> =
-        scan_deserialize(&storage, &scope, community_prefix(&scope)).await;
+        scan_deserialize(&*port, &scope, community_prefix(&scope)).await;
     let community_ids: BTreeSet<ulid::Ulid> = communities.iter().map(|c| c.id).collect();
     assert!(!community_ids.is_empty(), "communities must be persisted");
 
     // Collect all persisted chunks.
-    let chunks: Vec<Chunk> = scan_deserialize(&storage, &scope, chunk_prefix(&scope)).await;
+    let chunks: Vec<Chunk> = scan_deserialize(&*port, &scope, chunk_prefix(&scope)).await;
     assert!(!chunks.is_empty(), "chunks must be persisted");
 
     // All chunks must have parent_id set and pointing into the community set.
@@ -169,8 +175,11 @@ async fn fixture_3b_leaf_chunk_parent_id_set() {
 /// pool). Every persisted community summary MUST now be ≤ the 2048-byte cap.
 #[tokio::test]
 async fn long_terminal_free_section_summary_is_capped() {
-    let storage =
-        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    // 0.7.0 port off `memory://` — harness-issued backend, degrading to
+    // `memory://` where no Moon binary resolves. The binding owns the Moon
+    // child, and `TestStorage` derefs to `Arc<dyn StoragePort>`.
+    let storage = open_test_storage().await;
+    let port = storage.port();
     let embedder = StubEmbedder::new(768);
     let clock = HlcClock::new(0);
 
@@ -182,10 +191,10 @@ async fn long_terminal_free_section_summary_is_capped() {
     let ep = Episode::new(Scope::dev(), "longsec.md", content, &clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&storage, &embedder, &clock, ep).await.expect("ingest must succeed");
+    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
 
     let communities: Vec<Community> =
-        scan_deserialize(&storage, &scope, community_prefix(&scope)).await;
+        scan_deserialize(&*port, &scope, community_prefix(&scope)).await;
     assert!(!communities.is_empty(), "communities must be persisted");
 
     // The cap (the fix): no summary may exceed 2048 bytes, even when the
