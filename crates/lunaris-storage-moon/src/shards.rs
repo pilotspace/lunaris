@@ -9,14 +9,14 @@
 //!
 //! * **Write side (RFC §2.3).** Moon's `TXN.*` guard is not "all keys must
 //!   co-locate" — it is "all keys must land on **the connection's own shard**"
-//!   (`vendor/moon/src/server/conn/handler_monoio/mod.rs:2063-2069`). Connections
-//!   are assigned round-robin (`listener.rs:453-459`) with no client control, so
+//!   (`vendor/moon/src/server/conn/handler_monoio/mod.rs:2600-2610`). Connections
+//!   are assigned round-robin (`listener.rs:503-508`) with no client control, so
 //!   ingest fails on roughly `1 - 1/N` of connections, non-deterministically.
 //!   Hash-tagging the keyspace does NOT fix this (the correction RFC 0008 makes
 //!   to the prose previously carried in `docs/operations/external-moon.md` §5).
 //! * **Read side (RFC §1.3).** `FT.NAVIGATE` — issued on the recall path by
 //!   [`crate::navigate`] — does not scatter-gather
-//!   (`vendor/moon/src/server/conn/handler_monoio/ft.rs:540-546`, a bare
+//!   (`vendor/moon/src/server/conn/handler_monoio/ft.rs:554-560`, a bare
 //!   `with_shard`). A Navigate for a scope owned by another shard returns
 //!   **empty, with no error**. Silently losing graph recall is strictly worse
 //!   than a loud failure, which is why fixing only the write side was rejected
@@ -46,9 +46,9 @@
 //! ```
 //!
 //! * `num_shards > 1` → `analyze_txn_locality`
-//!   (`vendor/moon/src/server/conn/shared.rs:800-874`) sees keys owned by more
+//!   (`vendor/moon/src/server/conn/shared.rs:917-991`) sees keys owned by more
 //!   than one shard and `EXEC` is rejected `CROSSSLOT Keys in MULTI/EXEC don't
-//!   hash to the same shard` (`handler_monoio/write.rs:833-838`).
+//!   hash to the same shard` (`handler_monoio/write.rs:849-853`).
 //! * `num_shards == 1` → the body executes and `EXEC` returns its array.
 //!
 //! ### Why `MULTI/EXEC` and not `TXN.*`
@@ -62,7 +62,7 @@
 //!
 //! ### Why read-only, and why 64 keys
 //!
-//! `command_keys` (`vendor/moon/src/tracking/invalidation.rs:132-159`) reads the
+//! `command_keys` (`vendor/moon/src/tracking/invalidation.rs:140-167`) reads the
 //! command-metadata key spec, and `EXISTS` declares `first_key: 1, last_key: -1`
 //! (`vendor/moon/src/command/metadata.rs:291`) — so a single `EXISTS` with N
 //! arguments contributes all N keys to the locality analysis. Reads and writes
@@ -79,7 +79,7 @@
 //! With [`PROBE_KEY_COUNT`] = 64 pseudo-random keys, the worst case is
 //! `num_shards == 2`, where a false negative needs all 64 keys to agree —
 //! `2^-63`. That argument deliberately does not depend on Moon's specific hash
-//! (`xxh64`, seed 0, `dispatch.rs:169-173`), so the guard survives an upstream
+//! (`xxh64`, seed 0, `dispatch.rs:170-173`), so the guard survives an upstream
 //! hash change. There is no false-POSITIVE risk in the other direction: at
 //! `--shards 1`, `key_to_shard` returns `0` for every key by construction.
 //!
@@ -203,7 +203,7 @@ pub fn classify_info(info: &str) -> Option<ShardTopology> {
 /// wordings for the same fact (RFC §2.3, §2.4):
 ///
 /// * `CROSSSLOT Keys in MULTI/EXEC don't hash to the same shard`
-///   (`handler_monoio/write.rs:835-837`) — what this probe expects; and
+///   (`handler_monoio/write.rs:849-853`) — what this probe expects; and
 /// * `ERR TXN does not support cross-shard writes …`
 ///   (`ERR_TXN_CROSS_SHARD`) — the `TXN.*` guard's phrasing, which a differently
 ///   shaped server could answer with.
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn probe_keys_carry_no_hash_tag() {
         // A `{…}` anywhere in the key would make Moon hash the TAG instead of
-        // the key (`vendor/moon/src/shard/dispatch.rs:169-173`), collapsing all
+        // the key (`vendor/moon/src/shard/dispatch.rs:170-173`), collapsing all
         // 64 probe keys onto one shard and turning the guard into a no-op.
         for k in probe_keys() {
             assert!(!k.contains('{') && !k.contains('}'), "probe key must not be hash-tagged: {k}");
