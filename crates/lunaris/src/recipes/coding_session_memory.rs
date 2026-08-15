@@ -110,6 +110,17 @@ impl CodingSessionMemory {
         self.wm.write(path, serde_json::Value::String(content.into())).await
     }
 
+    /// [`Self::write`] with the content's real-world date stamped as
+    /// [`lunaris_core::Episode::t_ref`] — see [`WorkingMemory::write_dated`].
+    pub async fn write_dated(
+        &self,
+        path: &str,
+        content: impl Into<String>,
+        t_ref: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Lsn, LunarisError> {
+        self.wm.write_dated(path, serde_json::Value::String(content.into()), t_ref).await
+    }
+
     /// Read the latest content at `path`. Delegates to [`WorkingMemory::read`]
     /// and unwraps the `Value::String` back into the caller's `String` — the
     /// byte-for-byte-preserving inverse of [`Self::write`]. Non-`String`

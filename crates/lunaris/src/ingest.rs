@@ -319,12 +319,20 @@ fn parse_graph_extract_granularity(raw: Option<&str>) -> bool {
 ///   episode IS the unit) and an empty `heading_path`. Empty `content` yields
 ///   an empty vec so the extractor is skipped, matching the per-chunk path's
 ///   empty-chunks behaviour.
+///
+/// `reference_time_iso` (date-only, from [`Episode::t_ref`]) is stamped on
+/// EVERY input — session-date grounding for the extraction prompt
+/// (Mechanism B, 2026-07-29): an in-text date marker only survives into the
+/// first chunk of a document, so threading the episode's real date here is
+/// the only way later chunks get a `REFERENCE_TIME`.
 fn build_extract_inputs(
     episode_id: Ulid,
     episode_content: &str,
     chunks: &[Chunk],
     per_session: bool,
+    reference_time_iso: Option<&str>,
 ) -> Vec<ChunkInput> {
+    let reference_time_iso = reference_time_iso.map(str::to_owned);
     if per_session {
         if episode_content.is_empty() {
             return Vec::new();
@@ -333,9 +341,7 @@ fn build_extract_inputs(
             chunk_id: episode_id,
             text: episode_content.to_string(),
             heading_path: Vec::new(),
-            // Threaded from `Episode::t_ref` by the graph-ON ingest slice;
-            // unset here so this commit stays extract-scoped.
-            reference_time_iso: None,
+            reference_time_iso,
         }]
     } else {
         chunks
@@ -344,7 +350,7 @@ fn build_extract_inputs(
                 chunk_id: c.id,
                 text: c.text.clone(),
                 heading_path: c.heading_path.clone(),
-                reference_time_iso: None,
+                reference_time_iso: reference_time_iso.clone(),
             })
             .collect()
     }
@@ -476,15 +482,31 @@ async fn ingest_episode_graph_on(
     let validated: ValidatedExtraction = if extractor.applies() {
         // Granularity lever: per-chunk (default) vs per-session (one call over
         // the whole episode). See `build_extract_inputs`.
-        let chunk_inputs: Vec<ChunkInput> =
-            build_extract_inputs(episode.id, &episode.content, &chunks, per_session_extract);
+        //
+        // Session-date grounding (Mechanism B, 2026-07-29): the episode's
+        // real-world date reaches the extraction prompt as REFERENCE_TIME
+        // (date-only — LME sessions and most provenance are date-grained).
+        let reference_time_iso = episode.t_ref.map(|t| t.format("%Y-%m-%d").to_string());
+        let chunk_inputs: Vec<ChunkInput> = build_extract_inputs(
+            episode.id,
+            &episode.content,
+            &chunks,
+            per_session_extract,
+            reference_time_iso.as_deref(),
+        );
         let extract_span = tracing::info_span!(
             "lunaris.extract",
             correlation_id = tracing::field::Empty,
             episode_id = %episode.id,
             chunk_count = chunk_inputs.len(),
         );
-        let raw = extractor.extract(episode.id, &chunk_inputs).instrument(extract_span).await?;
+        let mut raw = extractor.extract(episode.id, &chunk_inputs).instrument(extract_span).await?;
+        // Deterministic backstop for the observed model-"today" hallucination
+        // class — runs AFTER extraction (and any extraction-cache replay), so
+        // stale cached dates get capped too. See `cap_future_valid_from`.
+        if let Some(ref_date) = reference_time_iso.as_deref() {
+            lunaris_extract::cap_future_valid_from(&mut raw, ref_date);
+        }
         validate(raw)
     } else {
         // NoopExtractor — produces empty raw batch; validator returns empty.
@@ -497,12 +519,13 @@ async fn ingest_episode_graph_on(
     // + 2 * chunks.len() (KvPut + VectorUpsert per chunk)
     // + 2 * entities.len() (GraphNode + VectorUpsert{entities})
     // + 1 * relations.len() (GraphEdge)
-    // + 2 * facts.len() (KvPut + VectorUpsert{facts})
+    // + 5 * facts.len() (KvPut + VectorUpsert{facts} + GraphNode + 2x
+    //   GraphEdge — KG-RAG facts-as-graph-nodes, 2026-07-22)
     let cap = 1
         + 2 * chunks.len()
         + 2 * validated.entities.len()
         + validated.relations.len()
-        + 2 * validated.facts.len();
+        + 5 * validated.facts.len();
     let mut ops: Vec<WriteOp> = Vec::with_capacity(cap);
 
     // Episode KvPut
@@ -630,17 +653,57 @@ async fn ingest_episode_graph_on(
         });
     }
 
-    // NEW: per-fact KvPut + VectorUpsert{facts}.
+    // NEW: per-fact KvPut + VectorUpsert{facts} + GraphNode + GraphEdge x2.
+    //
+    // KG-RAG facts-as-graph-nodes (2026-07-22): Facts join the entity graph
+    // — `(subject)-[:HAS_FACT]->(fact:Fact)-[:FACT_ABOUT]->(object)` — so
+    // FT.NAVIGATE hops from an `entities` KNN seed can reach real fact
+    // CONTENT (dates, numbers, the actual sentence), not just entity names.
+    // `index_kind: "facts"` makes atomic.rs register this node's `_key`
+    // against the `facts` FT index (not `entities`) so `Navigate`'s
+    // graph-expanded hits hydrate via the existing `fact_key` KV lookup.
+    // Edge direction is arbitrary — Moon's graph-expand BFS traverses
+    // `Direction::Both` (vendor/moon/src/command/vector_search/
+    // graph_expand.rs) — chosen for readability if the raw graph is
+    // inspected directly. `HAS_FACT`/`FACT_ABOUT` are fixed literals (not
+    // extractor-controlled text), so no `sanitize_graph_ident` needed.
     for (f, embedding) in validated.facts.iter().zip(fact_vecs) {
         let fact_value = serde_json::to_vec(f).map_err(|err| {
             LunarisError::Storage(StorageError::Backend(format!("fact serialize: {err}")))
         })?;
+        let fact_id_bytes = f.id.to_bytes().to_vec();
         ops.push(WriteOp::KvPut { key: scoped_fact_key(&episode.scope, f.id), value: fact_value });
         ops.push(WriteOp::VectorUpsert {
             index: FACTS_INDEX.into(),
-            id: f.id.to_bytes().to_vec(),
+            id: fact_id_bytes.clone(),
             embedding: embedding.clone(),
             metadata: json!({"predicate": f.predicate, "fact_text": f.fact_text}),
+        });
+        ops.push(WriteOp::GraphNode {
+            graph: GRAPH_NAME.into(),
+            id: fact_id_bytes.clone(),
+            label: "Fact".into(),
+            props: json!({
+                "predicate": f.predicate,
+                "confidence": f.confidence,
+                "valid_from_iso": f.valid_from_iso,
+                "valid_to_iso": f.valid_to_iso,
+            }),
+            index_kind: "facts".into(),
+        });
+        ops.push(WriteOp::GraphEdge {
+            graph: GRAPH_NAME.into(),
+            src: f.subject_id.0.to_vec(),
+            dst: fact_id_bytes.clone(),
+            rel: "HAS_FACT".into(),
+            props: json!({}),
+        });
+        ops.push(WriteOp::GraphEdge {
+            graph: GRAPH_NAME.into(),
+            src: fact_id_bytes,
+            dst: f.object_id.0.to_vec(),
+            rel: "FACT_ABOUT".into(),
+            props: json!({}),
         });
     }
 
@@ -814,28 +877,40 @@ mod graph_granularity_tests {
         // Even with THREE chunks present, per-session must collapse to ONE
         // input carrying the full episode content (keyed by episode id).
         let chunks = vec![chunk("user: hi"), chunk("assistant: hello"), chunk("user: bye")];
-        let inputs = build_extract_inputs(eid, content, &chunks, true);
+        let inputs = build_extract_inputs(eid, content, &chunks, true, Some("2023-05-30"));
         assert_eq!(inputs.len(), 1, "per-session must emit exactly one extractor input");
         assert_eq!(inputs[0].chunk_id, eid, "the single input is keyed by episode id");
         assert_eq!(inputs[0].text, content, "the single input carries the whole session text");
         assert!(inputs[0].heading_path.is_empty());
+        assert_eq!(inputs[0].reference_time_iso.as_deref(), Some("2023-05-30"));
     }
 
     #[test]
     fn per_session_empty_content_skips_extraction() {
-        let inputs = build_extract_inputs(Ulid::new(), "", &[], true);
+        let inputs = build_extract_inputs(Ulid::new(), "", &[], true, None);
         assert!(inputs.is_empty(), "empty episode content must skip the extractor");
     }
 
     #[test]
     fn per_chunk_yields_one_input_per_chunk_preserving_ids_and_text() {
         let chunks = vec![chunk("alpha"), chunk("beta"), chunk("gamma")];
-        let inputs = build_extract_inputs(Ulid::new(), "alpha beta gamma", &chunks, false);
+        let inputs = build_extract_inputs(
+            Ulid::new(),
+            "alpha beta gamma",
+            &chunks,
+            false,
+            Some("2023-05-30"),
+        );
         assert_eq!(inputs.len(), 3, "per-chunk must emit one input per chunk");
         for (inp, ch) in inputs.iter().zip(chunks.iter()) {
             assert_eq!(inp.chunk_id, ch.id);
             assert_eq!(inp.text, ch.text);
             assert_eq!(inp.heading_path, ch.heading_path);
+            assert_eq!(
+                inp.reference_time_iso.as_deref(),
+                Some("2023-05-30"),
+                "EVERY per-chunk input carries the episode reference time"
+            );
         }
     }
 }

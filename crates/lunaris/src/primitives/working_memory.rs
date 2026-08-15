@@ -87,11 +87,39 @@ impl WorkingMemory {
 
     /// Write `(k, v)` under `{scope_prefix}{k}` as an [`Episode`].
     pub async fn write(&self, k: &str, v: serde_json::Value) -> Result<Lsn, LunarisError> {
+        self.write_inner(k, v, None).await
+    }
+
+    /// [`Self::write`] with the payload's real-world reference time stamped
+    /// as [`Episode::t_ref`].
+    ///
+    /// `t_ref` is the date the CONTENT is from (a chat session's date, a
+    /// document's authored date) — distinct from the ingest-time HLC the
+    /// clock stamps on `bt`. Graph-ON ingest threads it into the extraction
+    /// prompt as `REFERENCE_TIME` so extracted `valid_from`/`valid_to`
+    /// dates are grounded in the content's timeline instead of the model's
+    /// "today" (Mechanism B, 2026-07-29 LME diagnosis).
+    pub async fn write_dated(
+        &self,
+        k: &str,
+        v: serde_json::Value,
+        t_ref: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Lsn, LunarisError> {
+        self.write_inner(k, v, Some(t_ref)).await
+    }
+
+    async fn write_inner(
+        &self,
+        k: &str,
+        v: serde_json::Value,
+        t_ref: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Lsn, LunarisError> {
         let source = self.scope_key(k);
         let content = serde_json::to_string(&v)
             .map_err(|e| LunarisError::from(lunaris_core::StorageError::from(e)))?;
-        let episode =
+        let mut episode =
             Episode::new(self.scope.clone(), source, content, self.lunaris.clock().as_ref());
+        episode.t_ref = t_ref;
         self.lunaris.ingest(episode).await
     }
 
