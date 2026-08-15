@@ -126,12 +126,16 @@ impl EphemeralMoon {
     /// # Errors
     /// See [`Self::spawn`].
     pub async fn spawn_from(bin: &Path) -> anyhow::Result<Self> {
-        // RED: the child-process lifecycle lands in the GREEN commit.
-        let _ = (bin, SPAWN_ATTEMPTS, READY_BUDGET);
-        bail!("EphemeralMoon::spawn_from is not implemented yet")
+        let mut last: Option<anyhow::Error> = None;
+        for _ in 0..SPAWN_ATTEMPTS {
+            match Self::try_spawn_once(bin).await {
+                Ok(m) => return Ok(m),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| anyhow!("moon spawn failed with no recorded cause")))
     }
 
-    #[allow(dead_code)]
     async fn try_spawn_once(bin: &Path) -> anyhow::Result<Self> {
         let port = free_loopback_port()?;
         let dir = scratch_dir(port);
