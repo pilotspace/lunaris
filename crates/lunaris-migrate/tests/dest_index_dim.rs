@@ -29,11 +29,10 @@ async fn destination_indices_are_created_at_the_requested_dim() {
     // Moon refuses a handle whose configured width disagrees with an existing
     // index. If `open_dest` had ignored `dim`, the indices would be 768-d and
     // this connect would succeed.
-    let err = MoonStorage::connect_with_dim(store.url(), 768)
-        .await
-        .err()
-        .expect("768-d handle must be refused once the indices exist at 1536-d");
-    let msg = err.to_string();
+    let msg = match MoonStorage::connect_with_dim(store.url(), 768).await {
+        Ok(_) => panic!("768-d handle must be refused once the indices exist at 1536-d"),
+        Err(e) => e.to_string(),
+    };
     assert!(
         msg.contains("dim mismatch") && msg.contains("1536"),
         "expected Moon's sticky-dim refusal naming the existing width, got: {msg}"

@@ -66,10 +66,7 @@ pub async fn open_dest(url: &str, dim: usize) -> Result<Arc<dyn StoragePort>, Op
             "destination must be a moon:// URL (this tool migrates INTO Moon)".into(),
         ));
     }
-    // RED: `dim` is accepted and ignored — the destination's indices get
-    // created at the built-in default width.
-    let _ = dim;
-    let s = lunaris_storage_moon::MoonStorage::connect(url)
+    let s = lunaris_storage_moon::MoonStorage::connect_with_dim(url, dim)
         .await
         .map_err(|source| OpenError::Backend { url: url.to_owned(), source })?;
     Ok(Arc::new(s))
@@ -79,21 +76,30 @@ pub async fn open_dest(url: &str, dim: usize) -> Result<Arc<dyn StoragePort>, Op
 mod tests {
     use super::*;
 
+    /// `Arc<dyn StoragePort>` is not `Debug`, so `expect_err` is unavailable —
+    /// unwrap the error arm by hand.
+    fn err_of(r: Result<Arc<dyn StoragePort>, OpenError>, what: &str) -> OpenError {
+        match r {
+            Ok(_) => panic!("{what} must not open"),
+            Err(e) => e,
+        }
+    }
+
     #[tokio::test]
     async fn moon_is_rejected_as_a_source() {
-        let e = open_source("moon://127.0.0.1:1").await.expect_err("moon is not a source");
+        let e = err_of(open_source("moon://127.0.0.1:1").await, "moon as a source");
         assert!(matches!(e, OpenError::Scheme(_)), "got {e:?}");
     }
 
     #[tokio::test]
     async fn an_unknown_source_scheme_is_rejected_before_any_io() {
-        let e = open_source("mysql://localhost/db").await.expect_err("unsupported scheme");
+        let e = err_of(open_source("mysql://localhost/db").await, "an unsupported scheme");
         assert!(e.to_string().contains("mysql"), "error must echo the scheme: {e}");
     }
 
     #[tokio::test]
     async fn a_non_moon_destination_is_rejected() {
-        let e = open_dest("sqlite:///tmp/x.db", 768).await.expect_err("dest must be moon");
+        let e = err_of(open_dest("sqlite:///tmp/x.db", 768).await, "a non-moon destination");
         assert!(matches!(e, OpenError::Scheme(_)), "got {e:?}");
     }
 }
