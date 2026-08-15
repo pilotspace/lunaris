@@ -63,7 +63,7 @@ pub use operators::graph::{
     DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, Graph, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS,
 };
 pub use operators::keyword::Keyword;
-pub use operators::modifiers::{TopRetriever, filter_str};
+pub use operators::modifiers::{FlooredTopRetriever, TopRetriever, filter_str, floored_top};
 pub use operators::navigate::{DEFAULT_NAVIGATE_HOPS, Navigate};
 pub use operators::recency::{
     ACT_R_MIN_AGE_SECONDS, ActR, Exp, RecencyConfig, RecencyScorer, TimeSource, rescore_recency,

@@ -58,6 +58,104 @@ impl Retriever for TopRetriever {
     }
 }
 
+/// Chunk-superset floored top-k selection (pure function; the policy behind
+/// [`FlooredTopRetriever`]).
+///
+/// LME N=125 A/B diagnosis (2026-07-29, graph-ON 83.2% vs graph-OFF 88.0%):
+/// with a plain `top(n)` cut, reranked fact/Navigate hits that outrank
+/// mid-value evidence chunks EVICT them from the final context (q251: the
+/// date-bearing chunk that was graph-OFF's hit[1] at 0.513 vanished from
+/// graph-ON's entire list). Because the chunk legs and cross-encoder scores
+/// are identical across arms, reserving `floor_n` slots for floor-leg hits
+/// makes the graph-ON chunk context a strict superset of graph-OFF's — extra
+/// legs can only ADD context, never displace it.
+///
+/// Selection contract:
+/// - Output is at most `n` hits, in descending score order.
+/// - At least `min(floor_n, n, available_floor_hits)` of them match the
+///   floor: metadata `"index"` equals `floor_index`, or the hit carries NO
+///   `"index"` tag at all (untagged hits predate per-leg tagging — they come
+///   from chunk-era legs, so they fail open to the floor rather than being
+///   silently demoted to headroom candidates).
+/// - The remaining slots are filled by global score order regardless of leg.
+/// - `hits.len() <= n` degenerates to a plain sort (nothing to displace).
+pub fn floored_top(
+    mut hits: Vec<RawHit>,
+    n: usize,
+    floor_index: &str,
+    floor_n: usize,
+) -> Vec<RawHit> {
+    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    if hits.len() <= n {
+        return hits;
+    }
+    let is_floor = |h: &RawHit| match h.metadata.get("index") {
+        Some(serde_json::Value::String(ix)) => ix == floor_index,
+        _ => true,
+    };
+    let mut selected = vec![false; hits.len()];
+    let mut taken = 0usize;
+    let floor_target = floor_n.min(n);
+    for (i, h) in hits.iter().enumerate() {
+        if taken == floor_target {
+            break;
+        }
+        if is_floor(h) {
+            selected[i] = true;
+            taken += 1;
+        }
+    }
+    for flag in selected.iter_mut() {
+        if taken == n {
+            break;
+        }
+        if !*flag {
+            *flag = true;
+            taken += 1;
+        }
+    }
+    hits.into_iter().zip(selected).filter_map(|(h, keep)| keep.then_some(h)).collect()
+}
+
+/// [`TopRetriever`] with a reserved per-leg floor — see [`floored_top`] for
+/// the selection contract and the displacement regression it closes.
+pub struct FlooredTopRetriever {
+    inner: Box<dyn Retriever>,
+    n: usize,
+    floor_index: String,
+    floor_n: usize,
+}
+
+impl FlooredTopRetriever {
+    pub fn new(inner: Box<dyn Retriever>, n: usize, floor_index: &str, floor_n: usize) -> Self {
+        Self { inner, n, floor_index: floor_index.to_owned(), floor_n }
+    }
+
+    pub fn n(&self) -> usize {
+        self.n
+    }
+
+    pub fn floor_index(&self) -> &str {
+        &self.floor_index
+    }
+
+    pub fn floor_n(&self) -> usize {
+        self.floor_n
+    }
+}
+
+#[async_trait]
+impl Retriever for FlooredTopRetriever {
+    async fn retrieve(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
+        let hits = self.inner.retrieve(ctx).await?;
+        Ok(floored_top(hits, self.n, &self.floor_index, self.floor_n))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 // --------------------------------------------------------------------- filter_str
 
 /// Errors from the v0 [`filter_str`] parser. Returned at builder time so
