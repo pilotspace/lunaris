@@ -180,6 +180,21 @@ fn print_scope_report(r: &ScopeReport, committing: bool) {
     }
 }
 
+fn print_verify_report(v: &VerifyReport) {
+    println!(
+        "  verify: source_eligible={} dest_rows={} sampled={}",
+        v.source_eligible, v.dest_rows, v.sampled
+    );
+    if v.ok() {
+        println!("  verify: PASS");
+    } else {
+        println!("  verify: FAIL missing={} mismatched={}", v.missing, v.mismatched);
+        for k in v.missing_examples.iter().chain(v.mismatch_examples.iter()) {
+            println!("    {k}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,20 +231,5 @@ mod tests {
             "--commit",
         ]);
         assert!(r.is_err(), "--dry-run with --commit must not parse");
-    }
-}
-
-fn print_verify_report(v: &VerifyReport) {
-    println!(
-        "  verify: source_eligible={} dest_rows={} sampled={}",
-        v.source_eligible, v.dest_rows, v.sampled
-    );
-    if v.ok() {
-        println!("  verify: PASS");
-    } else {
-        println!("  verify: FAIL missing={} mismatched={}", v.missing, v.mismatched);
-        for k in v.missing_examples.iter().chain(v.mismatch_examples.iter()) {
-            println!("    {k}");
-        }
     }
 }

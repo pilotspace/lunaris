@@ -21,9 +21,11 @@
 //! row per key; each row is classified ([`plan::classify_row`]); survivors are
 //! re-written as `WriteOp::KvPut` batches through
 //! [`atomic_write`](lunaris_core::StoragePort::atomic_write). Because the
-//! destination handle is a normal `MoonStorage::connect`, the connect-time
-//! multi-shard guard and server-version handshake apply unchanged — this tool
-//! deliberately has no way to bypass them.
+//! destination handle is a normal `MoonStorage::connect_with_dim`
+//! ([`open::open_dest`]), the connect-time multi-shard guard and server-version
+//! handshake apply unchanged — this tool deliberately has no way to bypass
+//! them. The width matters even though no vectors are written: see
+//! [`open::open_dest`] for why `--vector-dim` is load-bearing.
 //!
 //! # The lossy contract
 //!
@@ -82,8 +84,8 @@ pub mod plan;
 pub mod verify;
 
 pub use contract::{ACK_REQUIRED, LOSSY_CONTRACT};
-pub use open::{OpenError, open_dest, open_source};
 pub use migrate::{MigrateError, ScopeReport, discover_scopes, migrate_scope};
+pub use open::{OpenError, open_dest, open_source};
 pub use plan::{
     DEFAULT_BATCH_SIZE, DEFAULT_SAMPLE, MigrationOptions, RowVerdict, classify_row, kind_of,
     needs_reembed,
