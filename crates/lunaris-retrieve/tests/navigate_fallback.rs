@@ -189,6 +189,14 @@ fn nh(id: &[u8], vec_score: f32, hop_depth: u32, final_score: f32) -> NavigateHi
 
 /// §2 capability gating — graph_navigate_native=true routes through the
 /// port's vector_navigate and graph-expanded hits carry hop provenance.
+///
+/// Re-baselined 2 → 1 hit alongside the hop-0 seed drop (KG-RAG per-leg RRF
+/// wave): the KNN seeds a Navigate hop starts from are entity nodes with no
+/// KV row, so hydration discards them anyway — but only AFTER `.top(k)`, so
+/// every seed that reached fusion burned a reader-context slot and then
+/// vanished. The leg's payload is the graph-EXPANDED content (hop >= 1).
+/// The drop itself is pinned end-to-end by
+/// `per_leg_rrf.rs::navigate_hop0_entity_seeds_never_reach_fusion`.
 #[tokio::test]
 async fn navigate_uses_port_when_native() {
     let rec = Arc::new(NavRecordingStorage::with_native(true));
@@ -200,7 +208,11 @@ async fn navigate_uses_port_when_native() {
 
     assert_eq!(rec.navigate_calls.load(Ordering::SeqCst), 1, "port navigate called once");
     assert_eq!(rec.vector_calls.load(Ordering::SeqCst), 0, "no vector fallback on native path");
-    assert_eq!(hits.len(), 2);
+    assert_eq!(hits.len(), 1, "the hop-0 KNN seed is dropped; only graph-expanded hits survive");
+    assert!(
+        hits.iter().all(|h| h.id != b"seed".to_vec()),
+        "hop-0 seed must not reach the caller"
+    );
     let expanded = hits.iter().find(|h| h.id == b"expanded".to_vec()).expect("expanded hit");
     assert_eq!(
         expanded.metadata.get("hop_depth").and_then(|v| v.as_u64()),
@@ -232,8 +244,9 @@ async fn navigate_degrades_to_vector_on_unsupported() {
 /// reaches facts by graph hop. On a backend with no native navigate there is
 /// no hop, so the degraded vector search must target the leg's CONTENT index
 /// (`facts`) — searching the seed index would return entity docs and the
-/// fact vector leg would silently vanish on SQLite (the shipped MCP default)
-/// and Postgres alike.
+/// fact vector leg would silently vanish. Moon is the only shipped backend
+/// with native navigate today, but the degraded path is still live on it:
+/// any FILTERED query has no native navigate surface and falls through here.
 #[tokio::test]
 async fn navigate_degraded_fallback_targets_fallback_index_when_set() {
     let rec = Arc::new(NavRecordingStorage::with_native(false));
