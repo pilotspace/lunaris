@@ -26,9 +26,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use lunaris_core::LunarisError;
-use lunaris_extract::types::{
-    ChunkInput, Entity, EntityId, RawExtraction, RawExtractionBatch,
-};
+use lunaris_extract::types::{ChunkInput, Entity, EntityId, RawExtraction, RawExtractionBatch};
 use lunaris_extract::{CachedExtractor, Extractor};
 use std::sync::Mutex;
 use ulid::Ulid;
@@ -88,8 +86,7 @@ fn chunk(text: &str) -> ChunkInput {
 }
 
 fn cached(inner: Arc<CountingExtractor>, dir: &Path, ns: &str) -> CachedExtractor {
-    CachedExtractor::new(inner as Arc<dyn Extractor>, dir, ns)
-        .expect("cache dir must be creatable")
+    CachedExtractor::new(inner as Arc<dyn Extractor>, dir, ns).expect("cache dir must be creatable")
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -113,8 +110,7 @@ async fn first_call_fills_cache_second_call_replays() {
     // Fresh decorator instance (fresh process semantics), fresh chunk ids.
     let replayed_chunks = [chunk("alice met bob"), chunk("bob runs zephyr-relay")];
     let second = cached(inner.clone(), dir.path(), "MiniMax-M3");
-    let replay =
-        second.extract(Ulid::new(), &replayed_chunks).await.expect("replay extract");
+    let replay = second.extract(Ulid::new(), &replayed_chunks).await.expect("replay extract");
 
     assert_eq!(
         inner.calls.load(Ordering::SeqCst),
@@ -239,7 +235,7 @@ async fn stats_count_hits_and_misses() {
 #[tokio::test]
 async fn applies_forwards_to_inner() {
     let dir = tempfile::tempdir().unwrap();
-    let noop = Arc::new(lunaris_extract::NoopExtractor::default()) as Arc<dyn Extractor>;
+    let noop = Arc::new(lunaris_extract::NoopExtractor) as Arc<dyn Extractor>;
     let c = CachedExtractor::new(noop, dir.path(), "noop").expect("build");
     assert!(!c.applies(), "NoopExtractor's applies()=false must pass through the cache");
 }
