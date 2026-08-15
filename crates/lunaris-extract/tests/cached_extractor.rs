@@ -82,7 +82,12 @@ impl Extractor for CountingExtractor {
 }
 
 fn chunk(text: &str) -> ChunkInput {
-    ChunkInput { chunk_id: Ulid::new(), text: text.to_owned(), heading_path: vec![] }
+    ChunkInput {
+        chunk_id: Ulid::new(),
+        text: text.to_owned(),
+        heading_path: vec![],
+        reference_time_iso: None,
+    }
 }
 
 fn cached(inner: Arc<CountingExtractor>, dir: &Path, ns: &str) -> CachedExtractor {

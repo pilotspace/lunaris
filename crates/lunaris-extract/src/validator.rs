@@ -450,6 +450,57 @@ impl HasConfidence for Relation {
     }
 }
 
+/// Deterministic future-date backstop (Mechanism B, 2026-07-29 LME
+/// diagnosis; see `tmp/sota_extractor_comparison.md` §3 rider 2).
+///
+/// Even with `REFERENCE_TIME` in the extraction prompt, a model can still
+/// stamp its own "today" (the observed 2025/2026 hallucination class — 78%
+/// of a 4,882-item cache audit). This pass mechanically caps any
+/// `valid_from_iso` whose DATE PART (first 10 chars, `YYYY-MM-DD`) is later
+/// than `reference_date` back to `reference_date` — semantically "known
+/// true as of this conversation", which is exactly what a present-tense
+/// hallucinated stamp meant.
+///
+/// Left untouched: items with an explicit `valid_to_iso` (a stated, bounded
+/// future plan), same-day full timestamps (date-part comparison, never
+/// lexicographic on the whole string), past dates, and empty/garbage values
+/// that don't parse as a 10-char date prefix (the validator's sanity pass
+/// owns those).
+///
+/// Call at the ingest boundary AFTER extraction (and therefore after any
+/// extraction-cache replay) so hallucinated dates in already-cached raw
+/// extractions are capped too.
+pub fn cap_future_valid_from(batch: &mut RawExtractionBatch, reference_date: &str) {
+    let ref_date = reference_date.get(..10).unwrap_or(reference_date);
+
+    fn cap_one(valid_from: &mut String, valid_to: &Option<String>, ref_date: &str) {
+        if valid_to.as_deref().is_some_and(|t| !t.is_empty()) {
+            return;
+        }
+        let Some(date_part) = valid_from.get(..10) else {
+            return;
+        };
+        let looks_like_date = date_part.as_bytes()[4] == b'-'
+            && date_part.as_bytes()[7] == b'-'
+            && date_part[..4].bytes().all(|b| b.is_ascii_digit());
+        if looks_like_date && date_part > ref_date {
+            *valid_from = ref_date.to_owned();
+        }
+    }
+
+    for raw in &mut batch.by_chunk {
+        for e in &mut raw.entities {
+            cap_one(&mut e.valid_from_iso, &e.valid_to_iso, ref_date);
+        }
+        for r in &mut raw.relations {
+            cap_one(&mut r.valid_from_iso, &r.valid_to_iso, ref_date);
+        }
+        for f in &mut raw.facts {
+            cap_one(&mut f.valid_from_iso, &f.valid_to_iso, ref_date);
+        }
+    }
+}
+
 /// Project a [`ValidatedExtraction`] into a flat [`ExtractionBatch`] (the shape
 /// the Plan 03-03 ingest fan-out converts into `WriteOp`s). `needs_review` is
 /// dropped by this conversion — the caller is expected to publish those items

@@ -202,19 +202,57 @@ pub(crate) fn build_prompt(chunk: &ChunkInput) -> String {
     // failing parse_extraction_json's required-field check on every chunk
     // (confirmed against MiniMax-M3 via the LongMemEval graph-pipeline
     // prototype, 2026-07 -- 100% empty-extraction fallback).
+    // Temporal grounding (Mechanism B, 2026-07-29 LME diagnosis + SOTA
+    // comparison tmp/sota_extractor_comparison.md §3, Graphiti REFERENCE_TIME
+    // mechanics): the prior wording "(from the chunk's context, else today)"
+    // MANDATED hallucinated dates — 78% of a 4,882-item cache audit carried
+    // the model's own "today" (2025/2026) against 2022-2023 source text — and
+    // the few-shot example hardcoded "2025-01-01" twice, anchoring even
+    // models that would otherwise abstain. Now: inject the episode's real
+    // date when known, resolve relative expressions against it, and require
+    // null over guessing. The example demonstrates one resolved date + one
+    // null (never a fixed modern date).
+    let reference_block = match chunk.reference_time_iso.as_deref() {
+        Some(d) => format!(
+            "REFERENCE_TIME: {d} (the date the conversation/document in \
+             <chunk> is from)\n\
+             - Resolve relative time expressions against REFERENCE_TIME: \
+             \"yesterday\" = REFERENCE_TIME minus 1 day; \"last week\" = \
+             about 7 days before; \"two years ago\" = 2 years before; \
+             \"today\" / \"this morning\" / \"just now\" = REFERENCE_TIME.\n\
+             - A fact stated in the present tense with no other date (\"I \
+             work at Acme\") is known true as of this conversation: set \
+             valid_from_iso to REFERENCE_TIME.\n\
+             - Never output a date later than REFERENCE_TIME unless the \
+             text explicitly states a future plan.\n"
+        ),
+        None => String::new(),
+    };
     format!(
         "Extract entities and relations from the chunk below as JSON.\n\n\
          Respond with a JSON object of EXACTLY this shape (all fields \
          required except aliases and valid_to_iso):\n\
          {{\"entities\":[{{\"name\":\"Alice\",\"entity_type\":\"Person\",\
-         \"aliases\":[],\"confidence\":0.9,\"valid_from_iso\":\"2025-01-01\",\
+         \"aliases\":[],\"confidence\":0.9,\"valid_from_iso\":\"2023-05-14\",\
          \"valid_to_iso\":null}}],\n\
          \"relations\":[{{\"subject_name\":\"Alice\",\"subject_type\":\"Person\",\
          \"predicate\":\"met\",\"object_name\":\"Bob\",\"object_type\":\"Person\",\
-         \"confidence\":0.9,\"valid_from_iso\":\"2025-01-01\",\"valid_to_iso\":null}}]}}\n\
-         Use no other field names. valid_from_iso is the date (from the \
-         chunk's context, else today) the fact became true. If nothing is \
-         extractable, return {{\"entities\":[],\"relations\":[]}}.\n\n\
+         \"confidence\":0.9,\"valid_from_iso\":null,\"valid_to_iso\":null}}]}}\n\
+         Use no other field names.\n\
+         {reference_block}\
+         Date rules for valid_from_iso / valid_to_iso (ISO 8601 dates, e.g. \
+         2023-05-14):\n\
+         - If the text states an explicit date (or one resolvable from the \
+         rules above) for when the fact became true, use it. Month and year \
+         only: use the 1st of that month. Year only: use January 1st.\n\
+         - If a fact's start date is genuinely unknown, set valid_from_iso \
+         to null. NEVER invent a date and NEVER infer temporal bounds from \
+         unrelated events.\n\
+         - Set valid_to_iso ONLY when the text says the fact ended, changed, \
+         or was replaced (\"no longer\", \"used to\", \"switched from X to \
+         Y\", \"sold my\"); otherwise null.\n\
+         If nothing is extractable, return \
+         {{\"entities\":[],\"relations\":[]}}.\n\n\
          <chunk heading=\"{}\">\n{}\n</chunk>",
         chunk.heading_path.join(" / "),
         chunk.text
@@ -442,6 +480,7 @@ mod tests {
             chunk_id: Ulid::new(),
             heading_path: vec!["section".into()],
             text: text.into(),
+            reference_time_iso: None,
         }
     }
 
@@ -670,10 +709,7 @@ mod tests {
             p.contains("relative time expressions"),
             "prompt must instruct resolving relative dates against REFERENCE_TIME"
         );
-        assert!(
-            p.contains("NEVER invent a date"),
-            "prompt must carry the null-over-guess rule"
-        );
+        assert!(p.contains("NEVER invent a date"), "prompt must carry the null-over-guess rule");
         assert!(!p.contains("else today"), "the hallucination mandate must be gone");
         assert!(
             !p.contains("2025-01-01"),

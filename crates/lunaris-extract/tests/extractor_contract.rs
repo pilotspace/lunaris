@@ -45,11 +45,17 @@ fn extractor_is_dyn_compat() {
 #[tokio::test]
 async fn noop_extractor_works() {
     let chunks = vec![
-        ChunkInput { chunk_id: Ulid::new(), text: "alpha".into(), heading_path: vec![] },
+        ChunkInput {
+            chunk_id: Ulid::new(),
+            text: "alpha".into(),
+            heading_path: vec![],
+            reference_time_iso: None,
+        },
         ChunkInput {
             chunk_id: Ulid::new(),
             text: "beta gamma".into(),
             heading_path: vec!["intro".into()],
+            reference_time_iso: None,
         },
     ];
     let extracted = NoopExtractor.extract(Ulid::new(), &chunks).await.unwrap();
@@ -82,6 +88,7 @@ async fn ollama_extracts_real_batch() {
         chunk_id: Ulid::new(),
         text: "Alice Smith was born in Paris in 1990.".into(),
         heading_path: vec!["bio".into()],
+        reference_time_iso: None,
     }];
     let out = extractor.extract(Ulid::new(), &chunks).await.expect("ollama extract");
     assert_eq!(out.by_chunk.len(), 1);
@@ -138,6 +145,7 @@ async fn cloud_api_extracts_real_batch() {
         chunk_id: Ulid::new(),
         text: "Alice Smith was born in Paris in 1990.".into(),
         heading_path: vec!["bio".into()],
+        reference_time_iso: None,
     }];
     let out = extractor.extract(Ulid::new(), &chunks).await.expect("cloud-api extract");
     assert_eq!(out.by_chunk.len(), 1);

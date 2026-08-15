@@ -393,6 +393,7 @@ mod tests {
                 chunk_id: Ulid::new(),
                 text: format!("chunk {i}"),
                 heading_path: vec![],
+                reference_time_iso: None,
             })
             .collect();
         let in_flight = Arc::new(AtomicUsize::new(0));
@@ -434,6 +435,7 @@ mod tests {
                 chunk_id: Ulid::new(),
                 text: format!("chunk {i}"),
                 heading_path: vec![],
+                reference_time_iso: None,
             })
             .collect();
         let in_flight = Arc::new(AtomicUsize::new(0));

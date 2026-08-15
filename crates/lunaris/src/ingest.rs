@@ -333,6 +333,9 @@ fn build_extract_inputs(
             chunk_id: episode_id,
             text: episode_content.to_string(),
             heading_path: Vec::new(),
+            // Threaded from `Episode::t_ref` by the graph-ON ingest slice;
+            // unset here so this commit stays extract-scoped.
+            reference_time_iso: None,
         }]
     } else {
         chunks
@@ -341,6 +344,7 @@ fn build_extract_inputs(
                 chunk_id: c.id,
                 text: c.text.clone(),
                 heading_path: c.heading_path.clone(),
+                reference_time_iso: None,
             })
             .collect()
     }

@@ -146,6 +146,7 @@ pub async fn run(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
             chunk_id: ulid::Ulid::new(),
             text: doc.text.clone(),
             heading_path: Vec::new(),
+            reference_time_iso: None,
         };
         match extractor.extract(ulid::Ulid::new(), std::slice::from_ref(&chunk)).await {
             Ok(batch) => {

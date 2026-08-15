@@ -97,7 +97,8 @@ pub use types::{
     Relation,
 };
 pub use validator::{
-    NeedsReviewItem, NeedsReviewReason, ValidatedExtraction, into_batch, validate,
+    NeedsReviewItem, NeedsReviewReason, ValidatedExtraction, cap_future_valid_from, into_batch,
+    validate,
 };
 
 /// Object-safe async extractor.
