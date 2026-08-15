@@ -82,9 +82,8 @@ pub trait Key: Send + Sync {
 
 /// One operation in an `atomic_write` batch.
 ///
-/// All variants must commit together or all roll back. Backends translate each variant
-/// to their native command (e.g., `HSET`, `FT.SUGADD`, `GRAPH.QUERY MERGE` on Moon;
-/// `INSERT`, `pgvector` upsert, AGE Cypher `MERGE` on Postgres).
+/// All variants must commit together or all roll back. The backend translates each
+/// variant to its native command (`HSET`, `FT.SUGADD`, `GRAPH.QUERY MERGE` on Moon).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum WriteOp {
@@ -103,11 +102,10 @@ pub enum WriteOp {
 /// Sanitize free-form text into a Cypher-safe identifier for
 /// [`WriteOp::GraphNode::label`] / [`WriteOp::GraphEdge::rel`].
 ///
-/// T-01-03-01 (see `lunaris-storage-moon::atomic` / `lunaris-storage-postgres::atomic`
-/// module docs): both Moon's Cypher and Postgres/AGE's Cypher-in-SQL interpolate
-/// `label`/`rel` directly into the query string with no parameterization -- v0
-/// trusts callers to validate against `^[A-Za-z_][A-Za-z0-9_]*$` BEFORE calling
-/// `atomic_write`. Grammar-constrained extractors (Candle + GBNF) always produce
+/// T-01-03-01 (see the `lunaris-storage-moon::atomic` module docs): Moon's Cypher
+/// interpolates `label`/`rel` directly into the query string with no
+/// parameterization -- v0 trusts callers to validate against
+/// `^[A-Za-z_][A-Za-z0-9_]*$` BEFORE calling `atomic_write`. Grammar-constrained extractors (Candle + GBNF) always produce
 /// clean identifiers; free-form JSON extractors (Ollama, cloud-API models with no
 /// schema enforcement) do not -- an entity_type of `"TV Show"` broke Moon's Cypher
 /// parser in live testing (LongMemEval graph-pipeline prototype, 2026-07). Callers
@@ -291,9 +289,9 @@ pub struct VectorHit {
 
 // ----- Filter -----
 
-/// Filter expression passed to `vector_search`. v0 supports a small algebra; backends
-/// translate to their native filter language (`FT.SEARCH ... FILTER ...` on Moon,
-/// `WHERE ...` on Postgres).
+/// Filter expression passed to `vector_search`. v0 supports a small algebra; the
+/// backend translates it to its native filter language
+/// (`FT.SEARCH ... FILTER ...` on Moon).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Filter {
@@ -541,7 +539,8 @@ pub struct QueueMsg {
 /// ```
 /// use lunaris_core::RrfFusion;
 ///
-/// // Always available; works on any StoragePort backend (incl. Postgres).
+/// // Always available: the fold happens in-process, so it needs no
+/// // backend capability at all.
 /// let client_side = RrfFusion::Client { k: 60 };
 ///
 /// // Only valid when capabilities().native_rrf == true (Moon backend) AND
@@ -566,8 +565,9 @@ pub enum RrfFusion {
     /// in a single round trip via `client.text().hybrid_search()`. Only valid when
     /// `capabilities().native_rrf == true` AND both branches are `Vector` and
     /// `Keyword(BM25)` operators on the same Moon index. Phase 2's `fuse_rrf`
-    /// query planner picks this variant for Moon backends; falls back to
-    /// `Client` on non-native backends (e.g., Postgres).
+    /// query planner picks this variant when both hold; anything else — a
+    /// `Graph` branch in the tree, or legs on different indices — folds
+    /// `Client`-side.
     Moon {
         /// RRF constant in the `1 / (k + rank)` formula. Conventional value: 60.
         k: usize,

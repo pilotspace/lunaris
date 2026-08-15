@@ -75,8 +75,8 @@ pub struct Chunk {
     ///
     /// `skip_serializing` is deliberate: the KV `KvPut` JSON payload used to
     /// carry this as a raw JSON float array — ~80% of the document's bytes
-    /// and a straight duplicate of the binary vector Moon's FT index (and
-    /// the SQLite/Postgres dedicated vector column) already stores. Nothing
+    /// and a straight duplicate of the binary vector Moon's FT index
+    /// already stores. Nothing
     /// on the read path (`lunaris-retrieve::hydrate`, the `tree.rs` RAPTOR
     /// descent, the `detail.rs` inspector route) reads `.embedding` back off
     /// a KV-deserialized primitive — verified via `find_referencing_symbols`
@@ -96,8 +96,9 @@ pub struct Chunk {
     /// Pre-existing rows serialised without this field deserialise to `None`
     /// via `#[serde(default)]` (STRUCT-03 serde back-compat contract).
     ///
-    /// Moon backend: field travels in the existing JSONB KvPut payload — no DDL.
-    /// Postgres backend: `chunks.parent_id BYTEA NULL` (migration 20260601000008).
+    /// Travels in the existing JSONB KvPut payload — no DDL, no index change.
+    /// (Through 0.6.x the Postgres backend carried it as
+    /// `chunks.parent_id BYTEA NULL`; that backend was removed in 0.7.0.)
     #[serde(default)]
     pub parent_id: Option<Ulid>,
     pub bt: BiTemporal,

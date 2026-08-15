@@ -317,7 +317,10 @@ mod tests {
         let lsn = wrapped
             .atomic_write(
                 &scope,
-                &[WriteOp::KvPut { key: b"lunaris:doubles-forwarding:kv:x".to_vec(), value: b"v".to_vec() }],
+                &[WriteOp::KvPut {
+                    key: b"lunaris:doubles-forwarding:kv:x".to_vec(),
+                    value: b"v".to_vec(),
+                }],
             )
             .await
             .expect("write must reach the live Moon");

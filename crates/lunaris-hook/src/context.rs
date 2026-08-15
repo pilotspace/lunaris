@@ -3889,7 +3889,10 @@ mod tests {
             .expect("control recall must return the seeded memory");
         assert!(!fresh.stale, "the control hit must NOT be stale — its anchor has not moved");
         let fresh_score = fresh.score;
-        assert!(fresh_score > 0.0, "control score must be positive to divide by; got {fresh_score}");
+        assert!(
+            fresh_score > 0.0,
+            "control score must be positive to divide by; got {fresh_score}"
+        );
 
         // Move HEAD: edit the anchored file and commit — the memory's
         // anchor is now stale.

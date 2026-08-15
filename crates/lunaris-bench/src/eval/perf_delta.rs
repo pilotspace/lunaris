@@ -65,8 +65,7 @@ const RATIO_THRESHOLD: f64 = 5.0;
 
 /// Why every row skips since 0.7.0. Named so the reason is one string rather
 /// than two divergent copies, and so a grep for it lands on the module doc.
-const RETIRED_REASON: &str =
-    "retired in 0.7.0: this metric is a Moon-vs-Postgres ratio and the Postgres backend \
+const RETIRED_REASON: &str = "retired in 0.7.0: this metric is a Moon-vs-Postgres ratio and the Postgres backend \
      was deleted, so the `postgres` Criterion label is never produced. Re-running \
      `cargo bench` will not populate it. See the module docs.";
 

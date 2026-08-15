@@ -287,7 +287,9 @@ fn to_value<T: Serialize>(dto: T) -> Result<Value, ServiceError> {
 mod tests {
     use lunaris_core::{Scope, StubEmbedder};
     use lunaris_test_harness::doubles::PortWithCaps;
-    use lunaris_test_harness::{TestStorage, TestStore, open_test_engine_with_embedder, open_test_storage};
+    use lunaris_test_harness::{
+        TestStorage, TestStore, open_test_engine_with_embedder, open_test_storage,
+    };
     use serde_json::json;
 
     use super::*;
