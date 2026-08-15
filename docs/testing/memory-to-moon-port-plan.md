@@ -109,9 +109,10 @@ local** — it owns the Moon child, and `let _ = ...` would kill it immediately.
 ## 2. Behavioural differences met while porting
 
 These are real. They are not harness bugs. Items 1-4 were predicted before
-slice 2; items 5-8 were found by RUNNING the suite under
+slice 2; items 5-9 were found by RUNNING the suite under
 `LUNARIS_TEST_BACKEND=moon`, not by inspection, and each one cost a
-reclassification.
+reclassification. **Item 9 was only visible in the FULL-workspace run** — it
+fails about one run in five, so a single per-crate green does not clear it.
 
 1. **Recall against a never-written Moon errors.** `no temporal snapshot
    registered for the given AS_OF timestamp`, where the embedded backend returns
@@ -153,6 +154,16 @@ reclassification.
    EMBEDDER RESOLVER (`optional_embedder.rs`, `llamacpp_wired.rs`,
    `remote_llm_wired.rs`) must take only the URL — `open_test_store()` — and
    keep calling `Lunaris::open` itself, or it passes vacuously.
+9. **"Equal-similarity peers" is not a thing on Moon, and the difference is
+   INTERMITTENT.** Two byte-identical episodes have identical vectors and
+   identical BM25, so on the embedded backend they tie exactly. Moon fuses by
+   RANK, so the same pair comes back scored `1.0` and `0.102667205` — a ~10x
+   gap. Any test that reinforces the second hit and expects it to overtake the
+   first passes most of the time and fails the rest; measured 1 failure in 5
+   runs, then 3 in 8. A per-crate green is NOT evidence here; only repeated
+   runs are. See the pin on
+   `memory_service::recall::activation_boost_reranks_service_recall`, and §6
+   item 7 for why this is a production signal and not just a fixture problem.
 
 ---
 
@@ -206,7 +217,7 @@ crate. Untouched by slice 2.
 | `crates/lunaris-memory-service/src/distill.rs` | 1 | DONE |
 | `crates/lunaris-memory-service/src/dream_agenda.rs` | 1 | DONE |
 | `crates/lunaris-memory-service/src/protocol.rs` | 1 | DONE, except `dispatch_handover_on_memory_is_ok_and_skips` (**PIN**, same gate) |
-| `crates/lunaris-memory-service/src/recall.rs` | 1 | DONE, except `as_of_time_travel_proves_bi_temporal` (**PIN**, difference #5) |
+| `crates/lunaris-memory-service/src/recall.rs` | 1 | DONE, except two **PIN**s: `as_of_time_travel_proves_bi_temporal` (difference #5) and `activation_boost_reranks_service_recall` (difference #9) |
 | `crates/lunaris-memory-service/src/resolve.rs` | 1 | DONE |
 | `crates/lunaris-memory-service/src/scratchpad_grep.rs` | 1 | DONE |
 | `crates/lunaris-memory-service/src/scratchpad_read.rs` | 1 | DONE |
@@ -299,11 +310,11 @@ commit.
 (`lunaris-hook/tests/idempotency.rs`, `lunaris-conformance/tests/run_raptor_parity.rs`)
 are recorded above with the specific reason the harness cannot serve them.
 
-Eight individual TESTS inside otherwise-ported files are pinned to
+Nine individual TESTS inside otherwise-ported files are pinned to
 `Policy::ForceMemory`, each with a doc comment naming the reason. Pinning
 through the harness rather than leaving a raw `memory://` literal is
 deliberate: when 0.7.0 removes the embedded arm, `Policy::ForceMemory`
-disappears and the compiler points at exactly these eight sites.
+disappears and the compiler points at exactly these nine sites.
 
 | pinned test | reason |
 |---|---|
@@ -315,6 +326,7 @@ disappears and the compiler points at exactly these eight sites.
 | `hook::context::stale_memory_decays_and_banners_via_real_recall_path` | absolute score window; Moon's scale differs |
 | `hook::tests::context_inject::e2e_switch_on_memory_warns_and_stays_silent` | `keyword_search` `NotSupported` |
 | `ingest::tests::ingest_pipeline::community_vector_index_searchable_after_ingest` | Moon's unfiltered `vector_search` returns no metadata |
+| `memory_service::recall::activation_boost_reranks_service_recall` | needs a genuine score TIE; Moon's RRF gives 1.0 vs 0.1027 (difference #9) — INTERMITTENT, ~1 run in 5 |
 
 ## 5. Crates with `lunaris-test-harness` in `[dev-dependencies]`
 
@@ -334,7 +346,7 @@ invariant in CLAUDE.md: no test binary links Moon.
 ## 6. What 0.7.0 still has to do
 
 1. Decide `crates/lunaris-bench/src/eval/er_f1.rs:98` (production default URL).
-2. Re-express the eight pinned tests — six against stubbed
+2. Re-express the nine pinned tests — six against stubbed
    `StoragePort` / `KeywordPort` doubles, one (`as_of`) against Postgres or a
    Moon that has STORE-07, one (`stale_memory_decays…`) as a ratio against an
    un-stale control hit.
@@ -346,3 +358,25 @@ invariant in CLAUDE.md: no test binary links Moon.
    `lunaris-storage-moon::vector::vector_search` should hydrate
    `VectorHit.metadata` on the unfiltered path too, or communities BM25 content
    extraction is silently empty in production on Moon.
+7. Also not a test concern: decide whether difference #9 is acceptable
+   PRODUCT behaviour. `LUNARIS_ACTIVATION_BOOST` is default-on, and the
+   activation-ledger prior demonstrably does NOT reliably outrank an
+   equal-content peer on Moon — the substrate production runs — because the
+   RRF rank gap dominates it. The embedded backend made the boost look
+   decisive; Moon shows it is marginal. Either the prior needs to apply before
+   fusion rather than after, or the documented strength of a `Strong` signal
+   needs to come down to match what it actually does.
+
+## 7. How to verify a port
+
+Per-crate green on both policies is the batch gate, but it is NOT sufficient on
+its own — difference #9 slipped through exactly that check. Before calling a
+sweep done:
+
+    LUNARIS_TEST_BACKEND=memory cargo test --workspace \
+        --exclude lunaris-py --exclude lunaris-ts
+    LUNARIS_TEST_BACKEND=moon MOON_TEST_BINARY=<path/to/moon> \
+        cargo test --workspace --exclude lunaris-py --exclude lunaris-ts
+
+and re-run the Moon arm at least twice: the ranking-dependent failures are
+probabilistic, and one green run proves nothing about them.
