@@ -381,10 +381,15 @@ mod tests {
     use lunaris_core::activation::{ActivationRecord, Grain, RefSignal, Strength};
     use lunaris_core::keyspace::{activation_key, fact_key, scope_prefix};
     use lunaris_core::{Episode, HlcClock, WriteOp};
-    use lunaris_storage_embedded::EmbeddedStorage;
+    use lunaris_test_harness::{TestStorage, open_test_storage};
 
-    async fn fresh_storage() -> Arc<dyn StoragePort> {
-        Arc::new(EmbeddedStorage::connect("memory://").await.expect("open embedded storage"))
+    /// 0.7.0 port off `memory://` — a harness-issued backend (ephemeral
+    /// child-process Moon, degrading to `memory://` where no Moon binary
+    /// resolves). The `TestStorage` guard rides back with the port because it
+    /// owns the Moon child; drop it and the backend dies mid-test.
+    async fn fresh_storage() -> (Arc<dyn StoragePort>, TestStorage) {
+        let storage = open_test_storage().await;
+        (storage.port(), storage)
     }
 
     /// Real current unix seconds. `build_dream_agenda`'s `now` argument
@@ -492,7 +497,7 @@ mod tests {
     /// (always-available path).
     #[tokio::test]
     async fn source_class_grouping_over_referenced_episodes() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
         let base = unix_now();
 
@@ -565,7 +570,7 @@ mod tests {
     /// (no-LLM path) — proves `leiden_pass` gets a real call site.
     #[tokio::test]
     async fn leiden_entity_clustering_via_shared_fact_entity() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
         let base = unix_now();
 
@@ -621,7 +626,7 @@ mod tests {
     /// §2 scenario: distilled records are never candidates.
     #[tokio::test]
     async fn distilled_sources_are_excluded() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
         let base = unix_now();
 
@@ -656,7 +661,7 @@ mod tests {
     /// §2 scenario: max_activation ceiling keeps only ripe (decayed) episodes.
     #[tokio::test]
     async fn max_activation_ceiling_keeps_only_decayed() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
         let base = unix_now();
 
@@ -832,7 +837,7 @@ mod tests {
     /// exclusion is per-record, not scope-wide.
     #[tokio::test]
     async fn archived_sources_are_excluded_from_candidates() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
         let base = unix_now();
 
@@ -884,7 +889,7 @@ mod tests {
     /// snapshot before/after is byte-identical.
     #[tokio::test]
     async fn build_dream_agenda_writes_nothing() {
-        let storage = fresh_storage().await;
+        let (storage, _storage_guard) = fresh_storage().await;
         let scope = scope();
 
         let base = unix_now();

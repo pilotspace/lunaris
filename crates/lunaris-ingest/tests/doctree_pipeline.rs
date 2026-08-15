@@ -16,7 +16,7 @@ use lunaris_core::{
     keyspace::doctree_key,
 };
 use lunaris_ingest::{DocTree, ingest_episode};
-use lunaris_storage_embedded::EmbeddedStorage;
+use lunaris_test_harness::open_test_storage;
 use parking_lot::Mutex;
 
 // ---- RecordingStorage (minimal, reused from ingest_pipeline.rs) ----
@@ -149,26 +149,29 @@ async fn doctree_kvput_appears_in_ops() {
     assert_eq!(n_doctree, 1, "exactly one DocTree KvPut must appear in the batch");
 }
 
-/// Prove DocTree is queryable via the embedded SQLite storage (memory://).
+/// Prove DocTree is queryable via a real storage backend.
 ///
 /// Full round-trip: ingest → atomic_write to embedded → read_as_of → deserialize DocTree.
 #[tokio::test]
 async fn doctree_is_queryable_via_embedded_storage() {
-    let storage =
-        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    // 0.7.0 port off `memory://` — harness-issued backend, degrading to
+    // `memory://` where no Moon binary resolves. The binding owns the Moon
+    // child, and `TestStorage` derefs to `Arc<dyn StoragePort>`.
+    let storage = open_test_storage().await;
+    let port = storage.port();
     let embedder = Arc::new(StubEmbedder::new(768));
     let clock = HlcClock::new(0);
     let ep = heading_episode(&clock);
     let episode_id = ep.id;
     let scope = ep.scope.clone();
 
-    let lsn = ingest_episode(&storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    let lsn = ingest_episode(&*port, &*embedder, &clock, ep).await.expect("ingest ok");
 
     // Read back the DocTree using read_as_of at the commit HLC.
     let key = doctree_key(&scope, episode_id);
     // Use the HLC from the commit LSN to form a valid as_of timestamp.
     let as_of = Hlc { wall_ms: lsn.wall_ms, counter: lsn.counter, node_id: 0 };
-    let row = storage.read_as_of(&scope, &key, as_of).await.expect("read_as_of must not error");
+    let row = port.read_as_of(&scope, &key, as_of).await.expect("read_as_of must not error");
 
     let row = row.expect("DocTree row must exist after ingest");
     let tree: DocTree =
@@ -200,15 +203,18 @@ async fn doctree_is_queryable_via_embedded_storage() {
 /// No-heading document must produce a single-root DocTree that is queryable.
 #[tokio::test]
 async fn no_heading_doc_doctree_is_single_root_and_queryable() {
-    let storage =
-        EmbeddedStorage::connect("memory://").await.expect("embedded storage must connect");
+    // 0.7.0 port off `memory://` — harness-issued backend, degrading to
+    // `memory://` where no Moon binary resolves. The binding owns the Moon
+    // child, and `TestStorage` derefs to `Arc<dyn StoragePort>`.
+    let storage = open_test_storage().await;
+    let port = storage.port();
     let embedder = Arc::new(StubEmbedder::new(768));
     let clock = HlcClock::new(0);
     let ep = no_heading_episode(&clock);
     let episode_id = ep.id;
     let scope = ep.scope.clone();
 
-    let lsn = ingest_episode(&storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    let lsn = ingest_episode(&*port, &*embedder, &clock, ep).await.expect("ingest ok");
 
     let key = doctree_key(&scope, episode_id);
     let as_of = Hlc { wall_ms: lsn.wall_ms, counter: lsn.counter, node_id: 0 };
