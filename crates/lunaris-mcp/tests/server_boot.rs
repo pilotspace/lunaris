@@ -25,6 +25,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use futures::StreamExt;
 use lunaris_test_harness::open_test_store;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -165,5 +166,130 @@ async fn no_storage_refuses_to_boot_with_the_quickstart() {
     assert!(
         !stderr.contains("sqlite:///<HOME>"),
         "the retired SQLite default must not be offered as a way out:\n{stderr}"
+    );
+}
+
+/// Task #28: an ADVERTISED, PROBED store is not a guessed default.
+///
+/// A stock build with no `--storage` and no `LUNARIS_MCP_STORAGE` must adopt
+/// the Moon `lunaris-contextd` advertises in `~/.lunaris/contextd-moon.url`,
+/// exactly as `lunaris-hook` already does — and must SERVE against that store,
+/// not merely boot.
+///
+/// The discriminating half is the readback: the test connects to the SAME Moon
+/// out-of-band and scans the scope's episode keyspace for the value the server
+/// wrote over MCP. A server that booted but opened some other store leaves that
+/// scan empty, so "it started" cannot pass for "it is wired".
+///
+/// Hermetic: `HOME` points at a tempdir, so the discovery file under test is
+/// the only one on the search path and a developer machine running a real
+/// contextd cannot leak into (or out of) this test.
+///
+/// Skipped under `--features embedded-moon`: that build launches its own
+/// in-process Moon before any discovery could apply (dev/test only — CLAUDE.md
+/// invariant keeps it out of every shipped binary).
+#[cfg(not(feature = "embedded-moon"))]
+#[tokio::test]
+async fn advertised_contextd_store_boots_the_stock_server() {
+    use lunaris_core::{Scope, StoragePort, keyspace};
+
+    const SCOPE: &str = "ci-discovery-boot-test";
+
+    let bin = env!("CARGO_BIN_EXE_lunaris-mcp");
+    // Bound for the child's whole lifetime — it owns the Moon contextd would
+    // have owned in production.
+    let store = open_test_store().await;
+
+    // The discovery file contextd writes when its embedded Moon is ready.
+    let home = tempfile::tempdir().expect("tempdir for HOME");
+    let lunaris_dir = home.path().join(".lunaris");
+    std::fs::create_dir_all(&lunaris_dir).expect("create ~/.lunaris");
+    std::fs::write(lunaris_dir.join("contextd-moon.url"), format!("{}\n", store.url()))
+        .expect("write discovery file");
+
+    let mut child = Command::new(bin)
+        // NO --storage, NO LUNARIS_MCP_STORAGE: the discovery file is the only
+        // thing standing between this server and the boot refusal.
+        .env_remove("LUNARIS_MCP_STORAGE")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("LUNARIS_MCP_SKIP_STAGE", "1")
+        .env("LUNARIS_MCP_SCOPE", SCOPE)
+        .env("LUNARIS_MCP_LOG", "error")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn lunaris-mcp binary");
+
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut lines = BufReader::new(child.stdout.take().expect("child stdout")).lines();
+
+    // `scratchpad_write` is the cheapest tool that touches storage AND does not
+    // need an embedder (WorkingMemory::write rides ingest, not recall), so the
+    // child never loads a GGUF.
+    let marker = "discovery-boot-marker";
+    let handshake = format!(
+        concat!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2024-11-05","capabilities":{{}},"clientInfo":{{"name":"ci","version":"0"}}}}}}"#,
+            "\n",
+            r#"{{"jsonrpc":"2.0","method":"notifications/initialized"}}"#,
+            "\n",
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"memory.scratchpad_write","arguments":{{"key":"{marker}","value":"advertised-store"}}}}}}"#,
+            "\n",
+        ),
+        marker = marker,
+    );
+    stdin.write_all(handshake.as_bytes()).await.expect("write handshake");
+    stdin.flush().await.expect("flush handshake");
+
+    let call_line = tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(line) = lines.next_line().await.expect("read stdout line") {
+            if line.contains("\"id\":2") {
+                return Some(line);
+            }
+        }
+        None
+    })
+    .await
+    .expect("timed out waiting for the scratchpad_write response")
+    .expect(
+        "server closed stdout before answering — a stock build refused to boot despite a live \
+         contextd store being advertised in ~/.lunaris/contextd-moon.url",
+    );
+    assert!(
+        !call_line.contains("\"error\""),
+        "memory.scratchpad_write failed on the discovery-resolved store: {call_line}"
+    );
+
+    drop(stdin);
+    let status = tokio::time::timeout(Duration::from_secs(15), child.wait())
+        .await
+        .expect("server did not exit within 15s of stdin EOF")
+        .expect("await child exit");
+    assert!(status.success(), "server exited non-zero: {status:?}");
+
+    // ── The discriminating assertion ────────────────────────────────────────
+    // Read the ADVERTISED Moon out-of-band. If the server had resolved any
+    // other store (or a default), this scan is empty.
+    let scope = Scope::new(SCOPE).expect("valid scope");
+    let storage = lunaris_storage_moon::MoonStorage::connect(store.url())
+        .await
+        .expect("connect to the advertised Moon");
+    let prefix = keyspace::episode_prefix(&scope);
+    let mut stream =
+        storage.scan_range(&scope, &prefix, None).await.expect("scan the episode keyspace");
+    let mut found = false;
+    while let Some(item) = stream.next().await {
+        let (_key, value) = item.expect("scan item");
+        if String::from_utf8_lossy(&value).contains(marker) {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "the MCP server booted but wrote nowhere this Moon can see — a boot that ignores the \
+         advertised contextd store is exactly the split-routing failure task #20 contained"
     );
 }
