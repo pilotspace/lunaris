@@ -1435,6 +1435,35 @@ mod tests {
     }
 
     #[test]
+    fn lme_final_top_reserves_chunk_floor_when_graph_on() {
+        // N=125 A/B diagnosis (2026-07-29, graph-ON 83.2 vs graph-OFF 88.0):
+        // the rerank pool already covers all fused candidates, so displacement
+        // happens at the FINAL top-k cut — reranked fact/Navigate hits outrank
+        // mid-value evidence chunks and evict them from the reader context
+        // (q251: graph-OFF's 0.513 date-bearing hit[1] vanished from graph-ON's
+        // entire list). The final selection must therefore reserve the full
+        // graph-OFF chunk budget (`base_k`) for chunk-leg hits — facts compete
+        // only for the widened headroom — making graph-ON's chunk context a
+        // strict superset of graph-OFF's. Graph-OFF keeps the plain top-k.
+        let inner =
+            || Box::new(lunaris::Vector::new("chunks", 1)) as Box<dyn lunaris::Retriever>;
+        let on = lme_final_top(inner(), 10, true);
+        let floored = on
+            .as_any()
+            .downcast_ref::<lunaris::FlooredTopRetriever>()
+            .expect("graph-ON final top must be the chunk-floored selector");
+        assert_eq!(floored.n(), effective_topk(10, true), "width stays the widened top-k");
+        assert_eq!(floored.floor_n(), 10, "chunk floor = full graph-OFF budget");
+        assert_eq!(floored.floor_index(), "chunks");
+
+        let off = lme_final_top(inner(), 10, false);
+        assert!(
+            off.as_any().downcast_ref::<lunaris::TopRetriever>().is_some(),
+            "graph-OFF arm must stay a plain top-k (byte-identical baseline)"
+        );
+    }
+
+    #[test]
     fn effective_topk_widens_when_graph_enabled() {
         // KG-RAG regression (2026-07-22): graph-ON's hybrid_root fuses 4 legs
         // (chunks x2, facts x2) via RRF into one ranked list, then the SAME
