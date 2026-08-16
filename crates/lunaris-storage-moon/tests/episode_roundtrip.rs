@@ -4,10 +4,13 @@
 //! NOT fail on the per-commit gate. To run:
 //!
 //! ```bash
-//! cargo test -p lunaris-storage-moon --features moon-it --test episode_roundtrip
+//! MOON_URL=moon://127.0.0.1:6380 \
+//!   cargo test -p lunaris-storage-moon --features moon-it --test episode_roundtrip
 //! ```
 //!
-//! Expects Moon at `MOON_URL` env var (default `moon://localhost:6380`).
+//! Dials `MOON_URL` (default `moon://localhost:6380`) and PANICS on connect if
+//! nothing is listening — the feature gate keeps it off CI, `MOON_URL` is what
+//! makes it pass locally.
 //!
 //! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
 

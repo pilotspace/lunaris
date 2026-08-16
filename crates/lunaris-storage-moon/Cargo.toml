@@ -2,8 +2,10 @@
 #
 # Integration tests:
 #   cargo test -p lunaris-storage-moon --lib                   # unit tests, no Moon required
-#   cargo test -p lunaris-storage-moon --features moon-it      # round-trip vs live Moon
-# Live tests expect Moon at MOON_URL (default moon://localhost:6380).
+#   MOON_URL=moon://127.0.0.1:6380 \
+#     cargo test -p lunaris-storage-moon --features moon-it    # round-trip vs live Moon
+# The `moon-it` tests dial MOON_URL (default moon://localhost:6380) and PANIC
+# on connect if nothing is listening — set it explicitly at a live Moon.
 
 [package]
 name        = "lunaris-storage-moon"

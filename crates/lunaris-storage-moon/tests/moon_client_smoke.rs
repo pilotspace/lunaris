@@ -6,8 +6,12 @@
 //! does NOT fail on the per-commit gate. To run:
 //!
 //! ```bash
-//! cargo test -p lunaris-storage-moon --features moon-it --test moon_client_smoke
+//! MOON_URL=moon://127.0.0.1:6380 \
+//!   cargo test -p lunaris-storage-moon --features moon-it --test moon_client_smoke
 //! ```
+//!
+//! Dials `MOON_URL` (default `moon://localhost:6380`) and PANICS on connect if
+//! nothing is listening.
 //!
 //! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
 
