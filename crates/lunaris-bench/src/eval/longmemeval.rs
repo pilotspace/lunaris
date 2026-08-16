@@ -1341,8 +1341,10 @@ fn wrap_extractor_with_cache(
     inner: std::sync::Arc<dyn lunaris::Extractor>,
     cache_dir: Option<&str>,
     namespace: &str,
-) -> (std::sync::Arc<dyn lunaris::Extractor>, Option<std::sync::Arc<lunaris_extract::CachedExtractor>>)
-{
+) -> (
+    std::sync::Arc<dyn lunaris::Extractor>,
+    Option<std::sync::Arc<lunaris_extract::CachedExtractor>>,
+) {
     let Some(dir) = cache_dir else {
         return (inner, None);
     };
