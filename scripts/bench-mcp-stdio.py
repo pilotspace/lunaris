@@ -5,8 +5,14 @@ Spawns the lunaris-mcp binary, completes the JSON-RPC initialize handshake,
 then measures cold + warm latencies for tools/list, memory.status,
 memory.ingest, and memory.recall. Reports p50 / p95 / p99 per operation.
 
+0.7.0 is Moon-only, so the bench needs a Moon: either point `--storage` at a
+running one or pass `--start-moon` to spawn the vendored binary on a temporary
+port. There is no default — `lunaris-mcp` itself refuses to boot without
+`LUNARIS_MCP_STORAGE`.
+
 Usage:
-    python3 scripts/bench-mcp-stdio.py [--n-ingest 100] [--n-recall 100]
+    python3 scripts/bench-mcp-stdio.py --start-moon [--n-ingest 100] [--n-recall 100]
+    python3 scripts/bench-mcp-stdio.py --storage moon://127.0.0.1:6399
 """
 from __future__ import annotations
 
@@ -114,20 +120,6 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def reset_sqlite_storage(storage: str) -> None:
-    if not storage.startswith("sqlite://"):
-        return
-    path = storage[len("sqlite://") :]
-    if path.startswith("/"):
-        db = Path(path)
-    else:
-        db = Path(path).resolve()
-    for ext in ("", "-shm", "-wal"):
-        p = Path(f"{db}{ext}")
-        if p.exists():
-            p.unlink()
-
-
 def start_moon(binary: Path, port: int, data_dir: Path) -> subprocess.Popen[bytes]:
     proc = subprocess.Popen(
         [
@@ -174,7 +166,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", default=str(DEFAULT_MCP_BIN))
     ap.add_argument("--scope", default="bench-mcp-stdio")
-    ap.add_argument("--storage", default="sqlite:///tmp/lunaris-bench-mcp.db")
+    ap.add_argument(
+        "--storage",
+        default=None,
+        help=(
+            "moon:// URL for LUNARIS_MCP_STORAGE. Required unless --start-moon "
+            "is passed. 0.7.0 is Moon-only and lunaris-mcp refuses to boot with "
+            "no storage, so there is no default to fall back on."
+        ),
+    )
     ap.add_argument("--gguf", default=str(DEFAULT_GGUF))
     ap.add_argument("--n-ingest", type=int, default=100)
     ap.add_argument("--n-recall", type=int, default=100)
@@ -219,18 +219,26 @@ def main() -> int:
         moon_proc = start_moon(moon_binary, port, moon_dir)
         args.storage = f"moon://127.0.0.1:{port}"
 
-    reset_sqlite_storage(args.storage)
+    if not args.storage:
+        raise SystemExit(
+            "no storage: pass --storage moon://host:port, or --start-moon to "
+            "spawn the vendored Moon on a temporary port"
+        )
+    if not args.storage.startswith("moon://"):
+        raise SystemExit(
+            f"unsupported storage {args.storage!r}: 0.7.0 is Moon-only — "
+            "lunaris::open accepts moon:// and nothing else"
+        )
 
     env = {
         "LUNARIS_MCP_SCOPE": args.scope,
         "LUNARIS_MCP_STORAGE": args.storage,
         "LUNARIS_EMBEDDER_GGUF": args.gguf,
         "LUNARIS_MCP_LOG": "warn",
+        "LUNARIS_GRAPH_ENABLED": "1",
     }
     if args.skip_stage:
         env["LUNARIS_MCP_SKIP_STAGE"] = "1"
-    if args.storage.startswith("moon://"):
-        env["LUNARIS_GRAPH_ENABLED"] = "1"
 
     print(f"=== Lunaris-via-MCP stdio benchmark ===")
     print(f"binary:  {args.binary}")
