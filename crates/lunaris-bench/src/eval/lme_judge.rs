@@ -426,8 +426,7 @@ pub(crate) fn classify_intent(question: &str) -> QueryIntent {
     const UNITS: [&str; 4] = ["day", "week", "month", "year"];
     const DURATION_CONNECTIVES: [&str; 5] = ["between", "since", "until", "before", "after"];
     let how_many_unit = UNITS.iter().any(|u| q.contains(&format!("how many {u}")));
-    let how_many_duration =
-        how_many_unit && DURATION_CONNECTIVES.iter().any(|c| q.contains(c));
+    let how_many_duration = how_many_unit && DURATION_CONNECTIVES.iter().any(|c| q.contains(c));
     // "how many <unit> did I spend / did it take" is a SPAN (one activity's
     // duration), not a tally of occurrence-days — distinct from the bare
     // tally form ("how many days did I go jogging"), which stays Counting
@@ -834,10 +833,7 @@ mod tests {
         // the right answer and loses Factual's most-recent-fact guidance.
         use QueryIntent::*;
         assert_eq!(classify_intent("How many bikes do I currently own?"), Factual);
-        assert_eq!(
-            classify_intent("How many titles are currently on my to-watch list?"),
-            Factual
-        );
+        assert_eq!(classify_intent("How many titles are currently on my to-watch list?"), Factual);
         // Genuine event tallies keep Counting — do not over-rotate.
         assert_eq!(classify_intent("How many days did I attend yoga class this month?"), Counting);
     }

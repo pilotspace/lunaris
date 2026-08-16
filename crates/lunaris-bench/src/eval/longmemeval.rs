@@ -938,7 +938,13 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             match &verdict {
                 Ok((correct, _, _)) => eprintln!(
                     "{}",
-                    verdict_line(&rec.question_id, &rec.question_type, Some(*correct), None, recall_hit)
+                    verdict_line(
+                        &rec.question_id,
+                        &rec.question_type,
+                        Some(*correct),
+                        None,
+                        recall_hit
+                    )
                 ),
                 Err(e) => eprintln!(
                     "{}",
