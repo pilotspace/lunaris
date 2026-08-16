@@ -469,6 +469,35 @@ fn effective_topk(base_k: usize, graph_enabled: bool) -> usize {
         .unwrap_or(base_k + FACTS_TOPK_HEADROOM)
 }
 
+/// Final top-k selector for the hybrid arm.
+///
+/// [`effective_topk`]'s widening alone proved insufficient (N=125 A/B,
+/// 2026-07-29: graph-ON 83.2% vs graph-OFF 88.0%): within the widened cut,
+/// reranked fact/Navigate hits still outrank and EVICT mid-value evidence
+/// chunks (q251's date-bearing graph-OFF hit[1] disappeared from graph-ON's
+/// entire list). Graph-ON therefore reserves the FULL graph-OFF chunk budget
+/// (`base_k`) for chunk-leg hits via [`lunaris::FlooredTopRetriever`] — the
+/// extra legs compete only for the widened headroom. Chunk legs and
+/// cross-encoder scores are identical across arms, so this makes graph-ON's
+/// chunk context a strict superset of graph-OFF's. Graph-OFF keeps the plain
+/// top-k (byte-identical baseline arm).
+fn lme_final_top(
+    inner: Box<dyn lunaris::Retriever>,
+    base_k: usize,
+    graph_enabled: bool,
+) -> Box<dyn lunaris::Retriever> {
+    if graph_enabled {
+        Box::new(lunaris::FlooredTopRetriever::new(
+            inner,
+            effective_topk(base_k, true),
+            "chunks",
+            base_k,
+        ))
+    } else {
+        Box::new(lunaris::TopRetriever::new(inner, effective_topk(base_k, false)))
+    }
+}
+
 /// Reader-context source toggle (`LUNARIS_EVAL_LME_GRAPH_CONTEXT=1`, only
 /// meaningful together with `LME_GRAPH=1`).
 ///
@@ -818,11 +847,14 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                     lme_rerank_top_in(pool, graph_enabled),
                 );
                 builder
-                    .with_root(reranked.top(k))
+                    .with_root_boxed(lme_final_top(Box::new(reranked), base_k, graph_enabled))
                     .execute(lunaris::Query::text(&rec.question))
                     .await?
             } else {
-                builder.with_root(fused.top(k)).execute(lunaris::Query::text(&rec.question)).await?
+                builder
+                    .with_root_boxed(lme_final_top(Box::new(fused), base_k, graph_enabled))
+                    .execute(lunaris::Query::text(&rec.question))
+                    .await?
             }
         } else {
             let mut builder = lunaris.recall_with_degraded_check().await?;
@@ -1445,8 +1477,7 @@ mod tests {
         // graph-OFF chunk budget (`base_k`) for chunk-leg hits — facts compete
         // only for the widened headroom — making graph-ON's chunk context a
         // strict superset of graph-OFF's. Graph-OFF keeps the plain top-k.
-        let inner =
-            || Box::new(lunaris::Vector::new("chunks", 1)) as Box<dyn lunaris::Retriever>;
+        let inner = || Box::new(lunaris::Vector::new("chunks", 1)) as Box<dyn lunaris::Retriever>;
         let on = lme_final_top(inner(), 10, true);
         let floored = on
             .as_any()
