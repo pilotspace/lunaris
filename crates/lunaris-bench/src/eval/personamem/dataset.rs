@@ -79,8 +79,53 @@ pub(crate) struct PmContextGroup {
 /// commas, doubled `""` escapes and embedded newlines; `\r\n` line endings
 /// normalize to `\n` outside quotes.
 pub(crate) fn parse_csv_records(input: &str) -> Vec<Vec<String>> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let mut records: Vec<Vec<String>> = Vec::new();
+    let mut record: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut pending = false; // saw any byte of the current record
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_quotes = true;
+                pending = true;
+            }
+            ',' => {
+                record.push(std::mem::take(&mut field));
+                pending = true;
+            }
+            '\r' => {}
+            '\n' => {
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+                pending = false;
+            }
+            _ => {
+                field.push(c);
+                pending = true;
+            }
+        }
     }
+    if pending || !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records
+}
 
 /// Parse an `all_options` cell into `(letter, text)` pairs.
 ///
@@ -88,43 +133,164 @@ pub(crate) fn parse_csv_records(input: &str) -> Vec<Vec<String>> {
 /// option markers and takes the text between consecutive markers. Returns an
 /// empty vec when no marker is present.
 pub(crate) fn parse_options(raw: &str) -> Vec<(char, String)> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let b = raw.as_bytes();
+    // (quote_byte_idx, letter, text_start_byte_idx)
+    let mut marks: Vec<(usize, char, usize)> = Vec::new();
+    let mut i = 0usize;
+    while i + 3 < b.len() {
+        if (b[i] == b'\'' || b[i] == b'"')
+            && b[i + 1] == b'('
+            && b[i + 2].is_ascii_alphabetic()
+            && b[i + 3] == b')'
+        {
+            marks.push((i, (b[i + 2] as char).to_ascii_lowercase(), i + 4));
+            i += 4;
+        } else {
+            i += 1;
+        }
     }
+    let mut out = Vec::with_capacity(marks.len());
+    for (k, &(_, letter, start)) in marks.iter().enumerate() {
+        let end = marks.get(k + 1).map(|m| m.0).unwrap_or(b.len());
+        let text = unescape_repr(strip_option_tail(&raw[start..end]));
+        out.push((letter, text));
+    }
+    out
+}
 
 /// Trim the list-container residue (`', ` / `']` / `", ` / `"]`) off the tail
 /// of one option segment.
 fn strip_option_tail(seg: &str) -> &str {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
-    }
+    let s = seg.trim_end();
+    let s = s.strip_suffix(',').or_else(|| s.strip_suffix(']')).unwrap_or(s);
+    let s = s.trim_end();
+    let s = s.strip_suffix('\'').or_else(|| s.strip_suffix('"')).unwrap_or(s);
+    s.trim()
+}
 
 /// Undo the Python-`repr` / JSON escapes that survive the marker split.
 /// Unknown escapes keep their backslash rather than being silently eaten.
 fn unescape_repr(s: &str) -> String {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\'') => out.push('\''),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
     }
+    out
+}
 
 /// Normalize a `correct_answer` / model reply fragment to a bare option
 /// letter: `"(c)"`, `" C "`, `"c)"` → `'c'`. `None` when no ASCII letter is
 /// present.
 pub(crate) fn normalize_letter(s: &str) -> Option<char> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
-    }
+    s.chars().find(|c| c.is_ascii_alphabetic()).map(|c| c.to_ascii_lowercase())
+}
 
 /// Parse `questions_{SIZE}.csv` bytes. Rows missing a required column value,
 /// carrying an unparseable `end_index_in_shared_context`, an unreadable
 /// `correct_answer`, or fewer than two options are SKIPPED with a stderr note
 /// — one malformed row must never abort a benchmark run.
 pub(crate) fn parse_questions_csv(bytes: &[u8]) -> anyhow::Result<Vec<PmQuestion>> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let text = String::from_utf8_lossy(bytes);
+    let records = parse_csv_records(&text);
+    let header = records.first().ok_or_else(|| anyhow::anyhow!("empty questions CSV"))?;
+    let col = |name: &str| -> anyhow::Result<usize> {
+        header
+            .iter()
+            .position(|h| h.trim() == name)
+            .ok_or_else(|| anyhow::anyhow!("questions CSV missing column {name:?}"))
+    };
+    let (c_qid, c_type, c_msg, c_ans, c_opts, c_ctx, c_end) = (
+        col("question_id")?,
+        col("question_type")?,
+        col("user_question_or_message")?,
+        col("correct_answer")?,
+        col("all_options")?,
+        col("shared_context_id")?,
+        col("end_index_in_shared_context")?,
+    );
+    let c_persona = col("persona_id").ok();
+    let c_topic = col("topic").ok();
+    let get = |row: &[String], idx: usize| -> String {
+        row.get(idx).map(|s| s.trim().to_string()).unwrap_or_default()
+    };
+
+    let mut out = Vec::with_capacity(records.len().saturating_sub(1));
+    let mut skipped = 0usize;
+    for row in records.iter().skip(1) {
+        if row.len() <= c_end.max(c_opts) {
+            skipped += 1;
+            continue;
+        }
+        let options = parse_options(&get(row, c_opts));
+        let gold = normalize_letter(&get(row, c_ans));
+        let end_index = get(row, c_end).parse::<usize>().ok();
+        let (Some(gold_letter), Some(end_index)) = (gold, end_index) else {
+            skipped += 1;
+            continue;
+        };
+        if options.len() < 2 || !options.iter().any(|(l, _)| *l == gold_letter) {
+            skipped += 1;
+            continue;
+        }
+        out.push(PmQuestion {
+            persona_id: c_persona.map(|i| get(row, i)).unwrap_or_default(),
+            question_id: get(row, c_qid),
+            question_type: get(row, c_type),
+            topic: c_topic.map(|i| get(row, i)).unwrap_or_default(),
+            user_message: get(row, c_msg),
+            gold_letter,
+            options,
+            shared_context_id: get(row, c_ctx),
+            end_index,
+        });
     }
+    if skipped > 0 {
+        eprintln!("[personamem] skipped {skipped} malformed question row(s)");
+    }
+    Ok(out)
+}
 
 /// Group questions by `shared_context_id`, preserving first-appearance order
 /// of the contexts (so `LUNARIS_EVAL_PM_OFFSET` is stable across runs) and
 /// sorting each group by `(end_index, question_id)` — the order in which the
 /// incremental prefix ingest can answer them.
 pub(crate) fn group_by_context(questions: Vec<PmQuestion>) -> Vec<PmContextGroup> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let mut order: Vec<String> = Vec::new();
+    let mut by_ctx: HashMap<String, Vec<PmQuestion>> = HashMap::new();
+    for q in questions {
+        let key = q.shared_context_id.clone();
+        if !by_ctx.contains_key(&key) {
+            order.push(key.clone());
+        }
+        by_ctx.entry(key).or_default().push(q);
     }
+    order
+        .into_iter()
+        .map(|shared_context_id| {
+            let mut questions = by_ctx.remove(&shared_context_id).unwrap_or_default();
+            questions.sort_by(|a, b| {
+                a.end_index.cmp(&b.end_index).then_with(|| a.question_id.cmp(&b.question_id))
+            });
+            PmContextGroup { shared_context_id, questions }
+        })
+        .collect()
+}
 
 /// Parse `shared_contexts_{SIZE}.jsonl`, keeping only the ids in `wanted`
 /// (empty `wanted` = keep everything). Streaming per line so the 1M split's
@@ -134,27 +300,63 @@ pub(crate) fn parse_contexts_jsonl(
     text: &str,
     wanted: &HashSet<String>,
 ) -> HashMap<String, Vec<PmMessage>> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    #[derive(serde::Deserialize)]
+    struct RawMsg {
+        #[serde(default)]
+        role: String,
+        #[serde(default)]
+        content: String,
     }
+    let mut out = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(obj) = serde_json::from_str::<HashMap<String, Vec<RawMsg>>>(line) else {
+            continue;
+        };
+        for (id, msgs) in obj {
+            if !wanted.is_empty() && !wanted.contains(&id) {
+                continue;
+            }
+            out.insert(
+                id,
+                msgs.into_iter().map(|m| PmMessage { role: m.role, content: m.content }).collect(),
+            );
+        }
+    }
+    out
+}
 
 /// Render one message as an ingestable document body. `system` messages are
 /// the persona blob and pass through verbatim; `user` / `assistant` messages
 /// get their speaker prefix only when the dataset did not already carry one.
 pub(crate) fn render_message(msg: &PmMessage) -> String {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let content = msg.content.trim();
+    match msg.role.as_str() {
+        "system" => content.to_string(),
+        "user" if content.starts_with("User:") => content.to_string(),
+        "user" => format!("User: {content}"),
+        "assistant" if content.starts_with("Assistant:") => content.to_string(),
+        "assistant" => format!("Assistant: {content}"),
+        other if content.starts_with(other) => content.to_string(),
+        other => format!("{other}: {content}"),
     }
+}
 
 /// Document key for message `idx` — zero-padded so `Hit::source` sorts and
 /// parses back (see [`index_from_source`]).
 pub(crate) fn doc_key(idx: usize) -> String {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
-    }
+    format!("m{idx:05}.md")
+}
 
 /// Recover the message index from a `Hit::source`
 /// (`helios:fs/<session>/m00042.md`). `None` for any other shape.
 pub(crate) fn index_from_source(source: &str) -> Option<usize> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
-    }
+    let name = source.rsplit('/').next()?;
+    name.strip_prefix('m')?.strip_suffix(".md")?.parse::<usize>().ok()
+}
 
 /// **Temporal honesty, enforced by construction.**
 ///
@@ -176,19 +378,30 @@ pub(crate) struct IngestCursor {
 
 impl IngestCursor {
     pub(crate) fn new() -> Self {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        Self::default()
     }
 
     /// How far the store has been advanced (exclusive message index).
     pub(crate) fn position(&self) -> usize {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        self.next
     }
 
     /// Documents to write so the store reflects `messages[..end]`.
     /// `end` is clamped to `messages.len()`; an `end` at or below the current
     /// position yields nothing (never rewinds, never rewrites).
     pub(crate) fn advance(&mut self, messages: &[PmMessage], end: usize) -> Vec<(usize, String)> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        let end = end.min(messages.len());
+        let mut out = Vec::new();
+        while self.next < end {
+            let idx = self.next;
+            self.next += 1;
+            let body = render_message(&messages[idx]);
+            if body.is_empty() || !self.seen.insert(body.clone()) {
+                continue;
+            }
+            out.push((idx, body));
+        }
+        out
     }
 }
 
@@ -315,7 +528,10 @@ mod tests {
         assert_eq!(render_message(&msg("user", "User: hi")), "User: hi");
         assert_eq!(render_message(&msg("user", "hi")), "User: hi");
         assert_eq!(render_message(&msg("assistant", "sure")), "Assistant: sure");
-        assert_eq!(render_message(&msg("system", "Current user persona: X")), "Current user persona: X");
+        assert_eq!(
+            render_message(&msg("system", "Current user persona: X")),
+            "Current user persona: X"
+        );
     }
 
     #[test]
@@ -370,6 +586,47 @@ mod tests {
         assert_eq!(cur.position(), 4);
     }
 
+    /// Real-corpus check, opt-in: point `LUNARIS_EVAL_PM_LOCAL_CSV` /
+    /// `_LOCAL_JSONL` at a downloaded split and the parsers are exercised
+    /// against the actual bytes (589 rows / 37 contexts on 32k). Unset => the
+    /// test no-ops, so `cargo test --workspace` stays hermetic and offline.
+    #[test]
+    fn real_split_parses_every_row_and_joins_to_its_context() {
+        let (Ok(csv), Ok(jsonl)) = (
+            std::env::var("LUNARIS_EVAL_PM_LOCAL_CSV"),
+            std::env::var("LUNARIS_EVAL_PM_LOCAL_JSONL"),
+        ) else {
+            return;
+        };
+        let bytes = std::fs::read(&csv).expect("read local questions CSV");
+        let rows = parse_csv_records(&String::from_utf8_lossy(&bytes)).len() - 1;
+        let questions = parse_questions_csv(&bytes).expect("parse local questions CSV");
+        assert_eq!(questions.len(), rows, "every CSV row must parse into a question");
+        assert!(
+            questions.iter().all(|q| q.options.len() == 4),
+            "PersonaMem is 4-way multiple choice on every row"
+        );
+
+        let groups = group_by_context(questions);
+        let wanted: HashSet<String> = groups.iter().map(|g| g.shared_context_id.clone()).collect();
+        let text = std::fs::read_to_string(&jsonl).expect("read local contexts JSONL");
+        let contexts = parse_contexts_jsonl(&text, &wanted);
+        for g in &groups {
+            let msgs = contexts
+                .get(&g.shared_context_id)
+                .unwrap_or_else(|| panic!("context {} missing from JSONL", g.shared_context_id));
+            for q in &g.questions {
+                assert!(
+                    q.end_index <= msgs.len(),
+                    "{} prefix end {} exceeds context length {}",
+                    q.question_id,
+                    q.end_index,
+                    msgs.len()
+                );
+            }
+        }
+    }
+
     #[test]
     fn grouping_preserves_context_order_and_sorts_by_prefix_end() {
         let mk = |qid: &str, ctx: &str, end: usize| PmQuestion {
@@ -397,6 +654,9 @@ mod tests {
             groups[0].questions.iter().map(|q| q.end_index).collect::<Vec<_>>(),
             vec![10, 20]
         );
-        assert_eq!(groups[1].questions.iter().map(|q| q.end_index).collect::<Vec<_>>(), vec![5, 30]);
+        assert_eq!(
+            groups[1].questions.iter().map(|q| q.end_index).collect::<Vec<_>>(),
+            vec![5, 30]
+        );
     }
 }

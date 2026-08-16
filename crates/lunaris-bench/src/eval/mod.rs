@@ -118,6 +118,11 @@ impl EvalRow {
 /// `EvalRow` per harness. SKIPPED rows still land in the manifest so the
 /// 9-metric catalogue is always complete — a missing harness shows up as
 /// `status:"SKIPPED"` rather than silently absent.
+///
+/// [`personamem`] is deliberately NOT here. It needs a bench Moon AND a chat
+/// reader endpoint for every question, so it is operator-driven
+/// (`lunaris-evals personamem`, `scripts/bench/pm/`) rather than part of the
+/// per-push gauntlet.
 pub async fn run_all(results: &mut Vec<EvalRow>) -> anyhow::Result<()> {
     longmemeval::run(results).await?;
     locomo::run(results).await?;

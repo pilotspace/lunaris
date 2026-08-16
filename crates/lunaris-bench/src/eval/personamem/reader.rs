@@ -34,8 +34,30 @@ pub(crate) fn render_mcq_prompt(
     user_message: &str,
     options: &[(char, String)],
 ) -> String {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let mut s = String::with_capacity(4096);
+    s.push_str("Retrieved memories from your past conversations with this user");
+    s.push_str(" (oldest first):\n");
+    if memories.is_empty() {
+        s.push_str("(no memories retrieved)\n");
+    } else {
+        for m in memories {
+            s.push_str("---\n");
+            s.push_str(m.trim());
+            s.push('\n');
+        }
     }
+    s.push_str("\nThe user now says:\n");
+    s.push_str(user_message.trim());
+    s.push_str("\n\nCandidate replies:\n");
+    for (letter, text) in options {
+        s.push_str(&format!("({letter}) {}\n", text.trim()));
+    }
+    s.push_str("\nWhich candidate reply is correct? Answer with exactly one letter (");
+    let letters: Vec<String> = options.iter().map(|(l, _)| l.to_string()).collect();
+    s.push_str(&letters.join(", "));
+    s.push_str(").");
+    s
+}
 
 /// Parse a model reply down to one of `valid` option letters.
 ///
@@ -44,8 +66,31 @@ pub(crate) fn render_mcq_prompt(
 /// Returns `None` when no valid letter can be found — the caller scores that
 /// as WRONG and logs it, never as a crash and never as a silent pass.
 pub(crate) fn parse_letter(raw: &str, valid: &[char]) -> Option<char> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+    let lower = raw.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
     }
+    let is_valid = |c: char| valid.contains(&c);
+    let bytes: Vec<char> = lower.chars().collect();
+    // Pass 1 — a parenthesized letter `(c)` anywhere.
+    for i in 0..bytes.len() {
+        if bytes[i] == '(' && i + 2 < bytes.len() && bytes[i + 2] == ')' && is_valid(bytes[i + 1]) {
+            return Some(bytes[i + 1]);
+        }
+    }
+    // Pass 2 — a standalone letter token: bounded by non-alphanumerics.
+    for (i, &c) in bytes.iter().enumerate() {
+        if !is_valid(c) {
+            continue;
+        }
+        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        let after_ok = i + 1 == bytes.len() || !bytes[i + 1].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return Some(c);
+        }
+    }
+    None
+}
 
 /// One scored question.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -73,8 +118,10 @@ pub(crate) struct PmVerdict {
 /// One machine-readable line per question, emitted UNCONDITIONALLY so the
 /// runner's tally never depends on a debug flag (LME expert-review H5).
 pub(crate) fn verdict_line(v: &PmVerdict) -> String {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
-    }
+    let payload = serde_json::to_string(v)
+        .unwrap_or_else(|e| format!("{{\"question_id\":\"?\",\"serialize_error\":\"{e}\"}}"));
+    format!("PM_VERDICT {payload}")
+}
 
 /// Running accuracy with a per-question_type breakdown.
 #[derive(Debug, Default)]
@@ -87,7 +134,17 @@ pub(crate) struct PmTally {
 
 impl PmTally {
     pub(crate) fn record(&mut self, v: &PmVerdict) {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        if v.error.is_some() {
+            self.errors += 1;
+            return;
+        }
+        self.scored += 1;
+        let e = self.by_type.entry(v.question_type.clone()).or_default();
+        e.1 += 1;
+        if v.correct {
+            self.correct += 1;
+            e.0 += 1;
+        }
     }
 
     /// Accuracy in percent over SCORED questions (ERR excluded — counting a
@@ -95,12 +152,18 @@ impl PmTally {
     /// Zero scored questions yields `0.0`; the caller must treat an empty
     /// window as a SKIP, never as a real 0%.
     pub(crate) fn accuracy(&self) -> f64 {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        if self.scored == 0 { 0.0 } else { 100.0 * self.correct as f64 / self.scored as f64 }
     }
 
     /// `(question_type, correct, scored, pct)` rows, alphabetical.
     pub(crate) fn breakdown(&self) -> Vec<(String, usize, usize, f64)> {
-        unimplemented!("RED: PersonaMem harness not implemented yet")
+        self.by_type
+            .iter()
+            .map(|(t, (c, n))| {
+                let pct = if *n == 0 { 0.0 } else { 100.0 * *c as f64 / *n as f64 };
+                (t.clone(), *c, *n, pct)
+            })
+            .collect()
     }
 }
 

@@ -1204,7 +1204,9 @@ fn verdict_line(
 /// the subsequent `Lunaris::open` re-runs `ensure_indexes` and recreates
 /// them empty. `moon_url` is the `moon://host:port` form, mapped to
 /// `redis://` for the redis-compatible wire.
-async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
+/// `pub(crate)` so the PersonaMem harness resets its store with the SAME
+/// FLUSHALL + DROPINDEX pair rather than re-deriving the ghost-index lesson.
+pub(crate) async fn reset_moon(moon_url: &str) -> anyhow::Result<()> {
     let redis_url = moon_url.replacen("moon://", "redis://", 1);
     let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_multiplexed_async_connection().await?;
