@@ -129,12 +129,29 @@ the scope model.
 
 ## Storage
 
-**`LUNARIS_MCP_STORAGE` (or `--storage`) is required, and Moon is the only
-backend.** Through 0.6.x an unset value opened a per-scope SQLite file at
-`~/.lunaris/<scope>.db`; 0.7.0 deleted that backend, and the server now
-**refuses to boot** rather than guess a store — a stdio server surfaces tool
-errors to its client but not startup logs, so "starts, then fails every call"
-was the worst outcome available. The refusal prints the quickstart.
+Moon is the only backend, and the server resolves it in exactly this order:
+
+| # | Source | Notes |
+|---|--------|-------|
+| 1 | `--storage` / `LUNARIS_MCP_STORAGE` | Explicit always wins. |
+| 2 | `~/.lunaris/contextd-moon.url` | The store a running `lunaris-contextd` **advertises**, adopted only after a loopback + RESP `PING` liveness probe (25 ms, `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`). |
+| 3 | — | **Refuses to boot**, printing the quickstart. |
+
+Step 2 is why an MCP server and the `lunaris-hook` daemon on the same machine
+land in the same Moon without being configured twice — `lunaris-hook` has
+always resolved this way, and `lunaris-mcp` now does too. An
+*advertised and probed* store is not a guessed default: a stale file (contextd
+crashed, its port recycled) fails the probe and is declined, which lands you in
+step 3 rather than in somebody else's Moon. The file is read **once, at boot** —
+start contextd first, then the agent.
+
+There is still **no default**. Through 0.6.x an unset value opened a per-scope
+SQLite file at `~/.lunaris/<scope>.db`; 0.7.0 deleted that backend, and nothing
+guesses a store in its place — not SQLite, and not a hardcoded
+`moon://127.0.0.1:6380` either. A stdio server surfaces tool errors to its
+client but not startup logs, so "starts, then fails every call" (or worse,
+"starts, and quietly writes into an unrelated Moon") was the worst outcome
+available.
 
 ```bash
 docker run -d --name lunaris-moon -p 6380:6379 \
@@ -170,7 +187,8 @@ reads. See
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | *(required — no default)* | Storage URL. `moon://host:port` only; the server refuses to boot without it |
+| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL. `moon://host:port` only. Unset: the server falls back to a live `lunaris-contextd` store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
+| `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget for that discovery file (`0` disables discovery) |
 | `LUNARIS_GRAPH_ENABLED` | off | Enable the graph extraction/write path (Moon graph recall) |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive (logs to **stderr only**) |
 | `LUNARIS_MCP_SKIP_STAGE` | unset | Set to `1` to skip GGUF staging on first recall |

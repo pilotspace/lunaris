@@ -59,7 +59,10 @@ pub(crate) enum BootstrapError {
 /// into telling an operator two different stories about the same startup.
 pub(crate) const NO_STORAGE_HELP: &str = "\
 lunaris-mcp needs a storage URL and has no default: pass `--storage \
-moon://host:port` or set `LUNARIS_MCP_STORAGE`.\n\n\
+moon://host:port` or set `LUNARIS_MCP_STORAGE`. Alternatively, run \
+`lunaris-contextd` — a live contextd advertises its store in \
+`~/.lunaris/contextd-moon.url` and this server adopts it (after a liveness \
+probe), which is also how `lunaris-hook` finds the same Moon.\n\n\
 Through 0.6.x an unset value silently opened a per-scope SQLite file at \
 `~/.lunaris/<scope>.db`. 0.7.0 is Moon-only — that backend is gone, and \
 guessing a Moon endpoint is worse than refusing: `moon://127.0.0.1:6380` may \
@@ -73,6 +76,22 @@ then start with `--storage moon://127.0.0.1:6380`. Moon MUST run with \
 health checks, container flags: docs/operations/external-moon.md.\n\n\
 Migrating an existing 0.6.x SQLite/Postgres store? Run `lunaris-migrate` from \
 the v0.6.2 release binary BEFORE upgrading — see docs/migration/0.6-to-0.7.md.";
+
+/// Appended to [`NO_STORAGE_HELP`] when a discovery file WAS present but did
+/// not pass the probe.
+///
+/// Without this line the two cases are indistinguishable to an operator who
+/// just started contextd and is staring at "needs a storage URL" — and the
+/// fixes differ: "start contextd" vs "contextd died and left this file
+/// behind". Discovery is read once at boot, so the restart matters.
+#[cfg(not(feature = "embedded-moon"))]
+pub(crate) const STALE_DISCOVERY_NOTE: &str = "\
+NOTE: `~/.lunaris/contextd-moon.url` exists but did not answer a RESP PING on \
+loopback within the probe budget, so it was NOT trusted (a crashed contextd \
+leaves this file behind, and its ephemeral port is eventually reused by an \
+unrelated process). Restart `lunaris-contextd`, delete the stale file, or set \
+`LUNARIS_MCP_STORAGE` explicitly. The file is read ONCE at boot — starting \
+contextd afterwards does not re-point a running server.";
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -94,11 +113,15 @@ pub(crate) struct AppState {
     ///
     /// Retained (it used to be a local in `bootstrap_inner`) so the proxy can
     /// compare it against the store `lunaris-contextd` reports over the socket.
-    /// The two are resolved from entirely different sources — this one from
-    /// `--storage` / `LUNARIS_MCP_STORAGE`, the daemon's from its own
-    /// `LUNARIS_STORE_URL` / discovery file — and until they were compared,
-    /// falling back to Direct could silently continue an op stream in a second
-    /// Moon (split-routing containment, task #20).
+    /// Until they were compared, falling back to Direct could silently continue
+    /// an op stream in a second Moon (split-routing containment, task #20).
+    ///
+    /// Whatever [`resolve_storage_url`] returned: `--storage` /
+    /// `LUNARIS_MCP_STORAGE`, or (task #28) the store contextd advertised in
+    /// `~/.lunaris/contextd-moon.url`. On the discovery path the comparison is
+    /// trivially satisfied — both sides read the same file — which is the
+    /// point: the split-check only has work to do when an operator configured
+    /// the two halves separately.
     pub(crate) storage_url: String,
     /// Owned embedded Moon guard — keeps the in-process Moon alive for the
     /// server's lifetime. `None` when the `embedded-moon` feature is OFF, when
@@ -206,23 +229,67 @@ impl AppState {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Resolve the storage URL from the caller-supplied `--storage` /
-/// `LUNARIS_MCP_STORAGE` value.
+/// Resolve the storage URL.
 ///
-/// There is exactly one source. Step 2 used to be
-/// `sqlite:///<HOME>/.lunaris/<scope>.db`, created on demand; 0.7.0 deleted
-/// that backend, so an absent override is [`BootstrapError::NoStorage`]
-/// carrying [`NO_STORAGE_HELP`].
+/// Precedence (task #28):
+/// 1. `--storage` / `LUNARIS_MCP_STORAGE` — explicit always wins, passed
+///    verbatim.
+/// 2. The store a live `lunaris-contextd` **advertises** in
+///    `~/.lunaris/contextd-moon.url`, adopted only after the shared
+///    loopback + RESP-`PING` liveness probe
+///    ([`lunaris_core::store_discovery`], the same function `lunaris-hook`
+///    resolves through).
+/// 3. [`BootstrapError::NoStorage`] carrying [`NO_STORAGE_HELP`].
+///
+/// Step 2 is a deliberate revision of the 0.7.0 "no default storage" contract,
+/// not a retreat from it: an *advertised and probed* store is not a guess. The
+/// alternative — refusing next to a running contextd — pushed operators into
+/// configuring one install twice, and a half-configured pair is exactly the
+/// split-routing state the proxy now has to refuse to serve through. What
+/// stays banned is guessing: no SQLite, and no hardcoded
+/// `moon://127.0.0.1:6380`. A dead or tampered discovery file is DECLINED, so
+/// it lands in step 3 rather than in somebody else's Moon.
+///
+/// Read once, at boot: a discovery file that appears mid-session is not picked
+/// up (see the [`lunaris_core::store_discovery`] module docs).
 ///
 /// Used only when the `embedded-moon` feature is OFF — which is every shipped
 /// `npx`/`uvx`/`cargo install` binary (CLAUDE.md invariant: `embedded-moon` is
 /// never in a default feature set). When the feature IS on,
-/// `decide_storage_with_launcher` supplies the URL from the Moon it launched.
+/// `decide_storage_with_launcher` supplies the URL from the Moon it launched,
+/// and discovery never runs: that build already owns a store.
 #[cfg(not(feature = "embedded-moon"))]
 fn resolve_storage_url(override_: Option<&str>) -> Result<String, BootstrapError> {
-    match override_ {
-        Some(url) if !url.trim().is_empty() => Ok(url.to_owned()),
-        _ => Err(BootstrapError::NoStorage(NO_STORAGE_HELP.to_string())),
+    let lunaris_dir = dirs::home_dir().map(|home| home.join(".lunaris"));
+    resolve_storage_url_at(override_, lunaris_dir.as_deref())
+}
+
+/// Testable body of [`resolve_storage_url`] — takes the `~/.lunaris` dir
+/// explicitly so tests can point it at a tempdir (no env mutation: `set_var`
+/// is an `unsafe fn` in edition 2024). `None` means the home directory could
+/// not be determined, which is indistinguishable from "no file" for our
+/// purposes: there is nowhere to look.
+#[cfg(not(feature = "embedded-moon"))]
+fn resolve_storage_url_at(
+    override_: Option<&str>,
+    lunaris_dir: Option<&std::path::Path>,
+) -> Result<String, BootstrapError> {
+    use lunaris_core::store_discovery::{StoreDiscovery, discover_contextd_moon};
+
+    if let Some(url) = override_.filter(|u| !u.trim().is_empty()) {
+        return Ok(url.to_owned());
+    }
+    match lunaris_dir.map(discover_contextd_moon) {
+        Some(StoreDiscovery::Live(url)) => {
+            tracing::info!(storage = %url, "adopted the store advertised by lunaris-contextd");
+            Ok(url)
+        }
+        Some(StoreDiscovery::Declined) => {
+            Err(BootstrapError::NoStorage(format!("{NO_STORAGE_HELP}\n\n{STALE_DISCOVERY_NOTE}")))
+        }
+        Some(StoreDiscovery::Absent) | None => {
+            Err(BootstrapError::NoStorage(NO_STORAGE_HELP.to_string()))
+        }
     }
 }
 
@@ -247,10 +314,16 @@ mod tests {
     /// `sqlite://` URL for `Lunaris::open` to reject — a scheme error two
     /// frames from the actual decision, naming a path the operator never
     /// chose.
+    ///
+    /// Hermetic: the lunaris dir is an EMPTY tempdir, so this pins "nothing
+    /// explicit and nothing advertised" rather than "whatever this developer's
+    /// `~/.lunaris` happens to hold".
     #[cfg(not(feature = "embedded-moon"))]
     #[test]
     fn absent_storage_is_a_named_refusal_with_the_quickstart() {
-        let err = resolve_storage_url(None).expect_err("no --storage must not resolve a URL");
+        let empty = tempfile::tempdir().unwrap();
+        let err = resolve_storage_url_at(None, Some(empty.path()))
+            .expect_err("no --storage and no advertised store must not resolve a URL");
         assert!(
             matches!(err, BootstrapError::NoStorage(_)),
             "must be the named NoStorage variant, got: {err:?}"
@@ -264,9 +337,17 @@ mod tests {
             "docs/operations/external-moon.md",
             "lunaris-migrate",
             "v0.6.2",
+            // Task #28: contextd is a supported alternative to --storage, and
+            // an operator who cannot see this line will not find it.
+            "lunaris-contextd",
+            "contextd-moon.url",
         ] {
             assert!(msg.contains(needle), "startup error must mention {needle}: {msg}");
         }
+        assert!(
+            !msg.contains("did not answer a RESP PING"),
+            "there was no discovery file — the stale-file note must not appear: {msg}"
+        );
     }
 
     /// Whitespace is not a storage URL. `LUNARIS_MCP_STORAGE=""` in a shell
@@ -275,8 +356,109 @@ mod tests {
     #[cfg(not(feature = "embedded-moon"))]
     #[test]
     fn blank_storage_is_treated_as_absent() {
-        assert!(matches!(resolve_storage_url(Some("   ")), Err(BootstrapError::NoStorage(_))));
-        assert_eq!(resolve_storage_url(Some("moon://h:6380")).unwrap(), "moon://h:6380");
+        let empty = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            resolve_storage_url_at(Some("   "), Some(empty.path())),
+            Err(BootstrapError::NoStorage(_))
+        ));
+        assert_eq!(
+            resolve_storage_url_at(Some("moon://h:6380"), Some(empty.path())).unwrap(),
+            "moon://h:6380"
+        );
+    }
+
+    // ── Contextd discovery is arm 2 (task #28) ───────────────────────────────
+
+    /// Stand up a one-shot RESP responder and advertise it in `dir`.
+    /// Returns the URL written and the responder thread.
+    #[cfg(not(feature = "embedded-moon"))]
+    fn advertise_pong_endpoint(dir: &std::path::Path) -> (String, std::thread::JoinHandle<()>) {
+        use lunaris_core::store_discovery::CONTEXTD_MOON_URL_FILE;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 64];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"+PONG\r\n");
+            }
+        });
+        let url = format!("moon://127.0.0.1:{port}");
+        std::fs::write(dir.join(CONTEXTD_MOON_URL_FILE), format!("{url}\n")).unwrap();
+        (url, handle)
+    }
+
+    /// A live, advertised contextd store IS configured storage — this is the
+    /// unit-level twin of `tests/server_boot.rs::
+    /// advertised_contextd_store_boots_the_stock_server`.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn live_advertised_store_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, responder) = advertise_pong_endpoint(dir.path());
+        assert_eq!(resolve_storage_url_at(None, Some(dir.path())).unwrap(), url);
+        responder.join().unwrap();
+    }
+
+    /// Explicit beats advertised, and must not even probe: an operator who
+    /// passed `--storage` has already answered the question.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn explicit_storage_wins_over_a_live_advertised_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let (advertised, responder) = advertise_pong_endpoint(dir.path());
+        assert_eq!(
+            resolve_storage_url_at(Some("moon://db.internal:6380"), Some(dir.path())).unwrap(),
+            "moon://db.internal:6380"
+        );
+        assert_ne!(advertised, "moon://db.internal:6380");
+        // Nothing probed, so the responder is still parked on `accept()`.
+        // Unblock it ourselves so the thread can be joined instead of leaked.
+        let _ = std::net::TcpStream::connect(advertised.trim_start_matches("moon://"));
+        responder.join().unwrap();
+    }
+
+    /// A discovery file naming a DEAD endpoint is not configured storage. Same
+    /// refusal as no file at all, plus the line that tells the operator which
+    /// of the two situations they are in.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn stale_advertised_store_refuses_with_the_stale_note() {
+        use lunaris_core::store_discovery::CONTEXTD_MOON_URL_FILE;
+
+        // Bind then DROP — the advertised port is dead, exactly like a file
+        // left behind by a crashed contextd.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CONTEXTD_MOON_URL_FILE),
+            format!("moon://127.0.0.1:{port}\n"),
+        )
+        .unwrap();
+
+        let err = resolve_storage_url_at(None, Some(dir.path()))
+            .expect_err("a dead advertised endpoint must never be treated as configured storage");
+        assert!(matches!(err, BootstrapError::NoStorage(_)), "got: {err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("--storage"), "the quickstart must still be there: {msg}");
+        assert!(
+            msg.contains("did not answer a RESP PING"),
+            "a present-but-declined file must say so — 'needs a storage URL' alone sends the \
+             operator hunting for a config they already wrote: {msg}"
+        );
+    }
+
+    /// No home directory: nowhere to look, ordinary refusal, no panic.
+    #[cfg(not(feature = "embedded-moon"))]
+    #[test]
+    fn no_home_dir_is_the_ordinary_refusal() {
+        let err = resolve_storage_url_at(None, None).expect_err("must refuse");
+        assert!(matches!(err, BootstrapError::NoStorage(_)), "got: {err:?}");
+        assert!(!err.to_string().contains("did not answer a RESP PING"));
     }
 
     // ── Discriminating bootstrap test (T1) ───────────────────────────────────

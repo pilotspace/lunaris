@@ -1,9 +1,11 @@
 # Claude Code Integration
 
 Status: stdio MCP plus lifecycle hooks and context injection. **Moon is
-required** — as of 0.7.0 there is no other backend and no default store, so a
-plain `npx`/`uvx`/`cargo install` install needs `LUNARIS_MCP_STORAGE` set or
-the server refuses to boot. `setup-lunaris-agents.py` writes it for you and
+required** — as of 0.7.0 there is no other backend and no guessed default, so a
+plain `npx`/`uvx`/`cargo install` install needs `LUNARIS_MCP_STORAGE` set (or a
+running `lunaris-contextd` advertising its store — see
+[Pointing at a Moon by hand](#pointing-at-a-moon-by-hand)) or the server
+refuses to boot. `setup-lunaris-agents.py` writes it for you and
 expects Moon installed via the Moon repo's curl installer. Eleven tools live — seven
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
@@ -198,8 +200,10 @@ instead (the crate is not on crates.io — see Installation below).
 
 `memory.recall` fuses native HNSW vector search with BM25 keyword search on
 Moon, and all eleven tools are available. There is no zero-dependency
-fallback: the SQLite backend was deleted in 0.7.0 and `LUNARIS_MCP_STORAGE`
-became mandatory.
+fallback: the SQLite backend was deleted in 0.7.0, so a store must come from
+`LUNARIS_MCP_STORAGE` or from a running `lunaris-contextd` advertising one in
+`~/.lunaris/contextd-moon.url` (liveness-probed). With neither, the server
+refuses to boot.
 
 ---
 
@@ -306,7 +310,8 @@ Returns up to `k` hits fused from semantic (vector) + keyword (BM25) search.
 Each hit includes `episode_id`, `source`, `content` (≤200 chars), `score`
 (0–1), and `ingested_at` (RFC-3339).
 
-> **`LUNARIS_MCP_STORAGE` is required** and must name a Moon. See
+> **`LUNARIS_MCP_STORAGE` has no default** and must name a Moon when set;
+> unset, a live `lunaris-contextd` store is adopted instead. See
 > [Common Configurations](#common-configurations).
 
 ---
@@ -477,7 +482,8 @@ models are already present under `~/.lunaris/models/`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | *(required — no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset = refuses to boot |
+| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
+| `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget for that discovery file (`0` disables discovery) |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1`; otherwise off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
 | `LUNARIS_CONTEXT_MAX_HITS` | `5` prompt, `3` post-tool | Shared Codex/Claude Code context injection hit cap |
@@ -653,7 +659,7 @@ With Wave A connected:
 ## Pointing at a Moon by hand
 
 If you are not using `setup-lunaris-agents.py`, set `LUNARIS_MCP_STORAGE`
-yourself — it has no default:
+yourself — there is no guessed default:
 
 ```json
 "env": {
@@ -665,6 +671,27 @@ yourself — it has no default:
 Start Moon with `moon --port 6380 --shards 1 --appendonly yes`, or run the
 `ghcr.io/pilotspace/moon` image with the same flags. Production setup is in
 [`docs/operations/external-moon.md`](../operations/external-moon.md).
+
+### Or: let `lunaris-contextd` supply the store
+
+If you already run `lunaris-contextd` with its embedded Moon, you can leave
+`LUNARIS_MCP_STORAGE` unset. contextd advertises its endpoint in
+`~/.lunaris/contextd-moon.url`, and `lunaris-mcp` adopts it after a loopback +
+RESP `PING` liveness probe (25 ms, `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`) —
+the same resolution `lunaris-hook` has always used, which is what keeps the
+MCP tools and the hooks in ONE store instead of two.
+
+Caveats worth knowing:
+
+- **Read once, at boot.** Start contextd *before* the agent. A discovery file
+  that appears later is not picked up by an already-running server.
+- **A stale file is declined, not trusted.** If contextd crashed and its
+  ephemeral port has been recycled, the probe fails and `lunaris-mcp` refuses
+  to boot (saying so) rather than writing into whatever now owns that port.
+- **Explicit still wins.** Setting `LUNARIS_MCP_STORAGE` skips discovery
+  entirely. If you set it to a *different* Moon than contextd is using, the
+  MCP proxy will refuse to serve ops locally rather than split one op stream
+  across two stores.
 
 ---
 

@@ -59,21 +59,37 @@ args    = []
 - [Codex integration guide](../../docs/integration/codex.md)
 - [Decision record: Option A (stdio) adopted](../../docs/decisions/2026-05-24-claude-code-mcp-reversal.md)
 
-## Storage backends
+## Storage
 
-The default SQLite backend supports ten of the eleven tools, including
-`memory.recall`: it runs **vector-only** brute-force cosine (implemented in
-`lunaris-storage-embedded`). The one exception is
-`memory.scratchpad_consolidate`, which needs a native-queue backend (Moon or
-Postgres) and returns `{ status: "unsupported_backend" }` on SQLite. BM25
-keyword fusion and hybrid recall also require a keyword-capable backend —
-point `LUNARIS_MCP_STORAGE` at Moon (`moon://127.0.0.1:6380`) or Postgres,
-which also gives HNSW-class latency above ~10k vectors per scope.
+Moon is the only backend (0.7.0 deleted SQLite and Postgres). There is **no
+guessed default**; the server resolves a store in three steps:
+
+1. `--storage` / `LUNARIS_MCP_STORAGE` — explicit always wins.
+2. The store a running `lunaris-contextd` **advertises** in
+   `~/.lunaris/contextd-moon.url`, adopted only after a loopback + RESP `PING`
+   liveness probe (25 ms, `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`). This is how an
+   MCP server and the `lunaris-hook` daemon on one machine land in the same
+   Moon without being configured twice. A stale file left by a crashed
+   contextd fails the probe and is declined — it never re-points you at
+   whatever now owns that port. Read once, at boot: start contextd first.
+3. Otherwise **refuse to boot**, printing the external-Moon quickstart. A
+   stdio server shows its client tool errors, not startup logs, so "starts,
+   then fails every call" is the worst outcome available.
+
+```bash
+docker run -d --name lunaris-moon -p 6380:6379 \
+  ghcr.io/pilotspace/moon:0.8.5 \
+  --shards 1 --protected-mode no --appendonly yes
+```
+
+`--shards 1` is mandatory — a Lunaris ingest is one MULTI/EXEC transaction and
+a sharded Moon rejects it.
 
 A source build with `--features embedded-moon` makes `lunaris-mcp`
-auto-launch an in-process Moon when no `LUNARIS_MCP_STORAGE` override is set.
-The feature is off by default and is not compiled into the published
-`npx`/`uvx`/`cargo install` binaries, so the shipped default stays SQLite.
+auto-launch an in-process Moon when no `LUNARIS_MCP_STORAGE` override is set
+(discovery does not run on that build — it already owns a store). The feature
+is off by default and is not compiled into the published
+`npx`/`uvx`/`cargo install` binaries.
 
 ## License
 

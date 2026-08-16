@@ -156,17 +156,31 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   server). `grep -n 'embedded-moon' crates/lunaris-mcp/Cargo.toml` must never
   show it inside `default = [...]`. The published `npx`/`uvx`/`cargo install`
   binaries do NOT enable it.
-- **There is no shipped MCP storage default (0.7.0).** Through 0.6.x an unset
+- **There is no shipped MCP storage default — explicit > advertised > refuse
+  (0.7.0, revised task #28).** `lunaris-mcp` resolves storage in exactly three
+  steps: (1) `--storage` / `LUNARIS_MCP_STORAGE`, explicit always wins;
+  (2) the store a live `lunaris-contextd` **advertises** in
+  `~/.lunaris/contextd-moon.url`, adopted ONLY after the shared loopback +
+  RESP-`PING` liveness probe (`lunaris_core::store_discovery`, the same
+  function `lunaris-hook` resolves through — neither binary depends on the
+  other); (3) REFUSE TO BOOT with the external-Moon quickstart
+  (`state.rs::NO_STORAGE_HELP`). Step 2 is not a default: an advertised,
+  probed store is a store somebody stood up and announced, and a dead or
+  tampered file is DECLINED (→ step 3, plus `STALE_DISCOVERY_NOTE`), never
+  trusted. It is read ONCE at boot. Through 0.6.x an unset
   `LUNARIS_MCP_STORAGE` opened `sqlite:///<HOME>/.lunaris/<scope>.db`; slice B
-  deleted `lunaris-storage-embedded`, and the default died with it. A stock
-  `lunaris-mcp` with no `--storage` / `LUNARIS_MCP_STORAGE` REFUSES TO BOOT
-  with the external-Moon quickstart (`state.rs::NO_STORAGE_HELP`, pinned by
-  `tests/server_boot.rs::no_storage_refuses_to_boot_with_the_quickstart`). Do
-  NOT re-introduce a default — not SQLite, and not a guessed
-  `moon://127.0.0.1:6380` either: a mis-routed store is harder to notice than a
-  server that will not start. Same rule for `lunaris-hook`
-  (`scope.rs::NO_STORE_URL_HELP`, after `LUNARIS_STORE_URL` and contextd
-  discovery both come up empty).
+  deleted `lunaris-storage-embedded`, and that default died with it. Do NOT
+  re-introduce a **guessed** default — not SQLite, and not a hardcoded
+  `moon://127.0.0.1:6380` either: a mis-routed store is harder to notice than
+  a server that will not start. Both arms are pinned against the real binary
+  by `tests/server_boot.rs::{no_storage_refuses_to_boot_with_the_quickstart,
+  advertised_contextd_store_boots_the_stock_server}` — both hermetic (tempdir
+  `HOME` **and** a cleared `LUNARIS_CONTEXTD_SOCKET`, which `proxy.rs` reads
+  first), because a developer running contextd would otherwise flip either
+  one. Same three-step rule for `lunaris-hook`, with `LUNARIS_STORE_URL` as
+  its step 1 (`scope.rs::NO_STORE_URL_HELP`). `lunaris-mcp` must NOT read
+  `LUNARIS_STORE_URL`, and `lunaris-hook` must NOT read
+  `LUNARIS_MCP_STORAGE`: step 1 is per-binary on purpose.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->

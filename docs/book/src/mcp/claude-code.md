@@ -66,8 +66,9 @@ Each hit carries `episode_id`, `source`, `content` (≤200 chars), `score`
 (0–1), and `ingested_at` (RFC-3339). Recall against Moon is hybrid — native
 HNSW vector search fused with BM25 keyword search.
 
-> **`LUNARIS_MCP_STORAGE` is required (0.7.0).** There is no default store any
-> more; the server refuses to boot without one. See
+> **`LUNARIS_MCP_STORAGE` has no default (0.7.0).** Set it, or run
+> `lunaris-contextd` and let the server adopt the store contextd advertises
+> (liveness-probed); with neither, it refuses to boot. See
 > [Storage](./index.md#storage).
 
 ## Point at Moon

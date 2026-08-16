@@ -73,8 +73,10 @@ the postinstall download and point directly at a pre-staged binary.
 
 `memory.recall` fuses native HNSW vector search with BM25 keyword search on
 Moon, and all eleven tools are available. There is no zero-dependency
-fallback: the SQLite backend was deleted in 0.7.0 and `LUNARIS_MCP_STORAGE`
-became mandatory.
+fallback: the SQLite backend was deleted in 0.7.0, so a store must come from
+`LUNARIS_MCP_STORAGE` or from a running `lunaris-contextd` advertising one in
+`~/.lunaris/contextd-moon.url` (liveness-probed). With neither, the server
+refuses to boot.
 
 ---
 
@@ -484,7 +486,9 @@ Returns:
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 
-> **`LUNARIS_MCP_STORAGE` is required** and must name a Moon. See
+> **`LUNARIS_MCP_STORAGE` has no default** and must name a Moon when set.
+> Unset, the server adopts the store a live `lunaris-contextd` advertises in
+> `~/.lunaris/contextd-moon.url`; with neither it refuses to boot. See
 > [Common Configurations](#common-configurations).
 
 ---
@@ -550,7 +554,8 @@ LUNARIS_MCP_SKIP_STAGE = "1"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LUNARIS_MCP_SCOPE` | derived from git/cwd | Force a specific scope name |
-| `LUNARIS_MCP_STORAGE` | *(required — no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset = refuses to boot |
+| `LUNARIS_MCP_STORAGE` | *(no default)* | Storage URL; setup writes `moon://127.0.0.1:6380`. Unset: falls back to a live store advertised in `~/.lunaris/contextd-moon.url`, else refuses to boot |
+| `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget for that discovery file (`0` disables discovery) |
 | `LUNARIS_GRAPH_ENABLED` | setup writes `1`; otherwise off | Enable graph extraction/write path for graph retrieval |
 | `LUNARIS_EMBED_CACHE_CAPACITY` | `2048` | Exact-text embedding cache entries per MCP process; set `0` to disable |
 | `LUNARIS_MCP_LOG` | `info,rmcp=warn` | `tracing`-style filter directive |
