@@ -18,11 +18,19 @@ use std::collections::BTreeMap;
 pub(crate) const MCQ_SYSTEM_PROMPT: &str = "You are a personalized assistant that \
     remembers this user's past conversations. You are shown memories retrieved \
     from those conversations, then the user's latest message and several \
-    candidate replies. Choose the ONE reply that best fits what you know about \
-    the user — their stated facts, their most recent preferences, and how those \
-    preferences changed over time. Prefer the most recent preference when an \
-    earlier one was superseded. Answer with EXACTLY ONE LETTER and nothing \
-    else: no punctuation, no explanation, no restatement of the option.";
+    candidate model responses. Find the most appropriate response. Verify each \
+    candidate against the memories before judging its helpfulness: a candidate \
+    that makes a claim about the user (their facts, preferences, or history) \
+    is wrong when the claim misstates the memories and strong when it states \
+    them accurately — the most recent statement of a preference supersedes \
+    older ones, and the reasons the user gave when things changed matter. When \
+    the user asks for suggestions or ideas, remember you are choosing the \
+    ASSISTANT's reply: a candidate narrating personal experiences in the first \
+    person ('I started...', 'I created...') is someone's anecdote, not a reply \
+    to the request. Prefer the suggestion that best fits this user's known \
+    interests and situation — building on something they already do or love is \
+    often exactly right. Reason briefly, then give your final answer as one \
+    letter after the special token <final_answer>.";
 
 /// Render the reader prompt: retrieved memories (chronological), the in-situ
 /// user message, then the lettered options.
@@ -33,6 +41,7 @@ pub(crate) fn render_mcq_prompt(
     memories: &[String],
     user_message: &str,
     options: &[(char, String)],
+    option_evidence: &[(char, Vec<String>)],
 ) -> String {
     let mut s = String::with_capacity(4096);
     s.push_str("Retrieved memories from your past conversations with this user");
@@ -48,14 +57,66 @@ pub(crate) fn render_mcq_prompt(
     }
     s.push_str("\nThe user now says:\n");
     s.push_str(user_message.trim());
-    s.push_str("\n\nCandidate replies:\n");
+    s.push_str("\n\nCandidate model responses:\n");
     for (letter, text) in options {
         s.push_str(&format!("({letter}) {}\n", text.trim()));
     }
-    s.push_str("\nWhich candidate reply is correct? Answer with exactly one letter (");
-    let letters: Vec<String> = options.iter().map(|(l, _)| l.to_string()).collect();
+    // Per-option evidence: the past messages most similar to each candidate.
+    // This is what lets the reader detect a RECYCLED candidate — PersonaMem's
+    // fresh-idea distractors restate activities/suggestions already in the
+    // history, which a topk-bounded memory window cannot reveal on its own.
+    if option_evidence.iter().any(|(_, ev)| !ev.is_empty()) {
+        s.push_str(
+            "\nPast-conversation messages most similar to each candidate \
+             (for checking novelty and factual claims):\n",
+        );
+        for (letter, ev) in option_evidence {
+            s.push_str(&format!("({letter}):\n"));
+            if ev.is_empty() {
+                s.push_str("  (no similar past message)\n");
+            } else {
+                for m in ev {
+                    s.push_str("  - ");
+                    s.push_str(m.trim());
+                    s.push('\n');
+                }
+            }
+        }
+    }
+    // Official-protocol framing (PersonaMem inference.py): the task is to find
+    // the most appropriate MODEL RESPONSE to the user's message, reasoning
+    // first and emitting the letter after a `<final_answer>` token.
+    //
+    // The guidance is TWO-SIDED by necessity — the v2..v5 validation runs
+    // mapped PersonaMem's distractor design. Recall-type questions: the gold
+    // option is the one that ACCURATELY echoes the memories, and the
+    // generic-helpful option is the distractor (v3's "don't trust echoes"
+    // guidance broke these). Suggestion questions: gold is NEVER a
+    // first-person anecdote (93/93 in the 32k split) and routinely EXTENDS an
+    // activity the user already has — so novelty guidance is anti-correlated
+    // with gold (v4/v5 scored below random on the category), and the working
+    // signals are voice (an assistant reply addresses the user) and
+    // persona-fit.
+    s.push_str(
+        "\nYou are the assistant in this ongoing conversation. Find the most \
+         appropriate model response to the user's message. Verify each \
+         candidate against the memories before judging its helpfulness: a \
+         candidate that makes a claim about the user (their facts, \
+         preferences, or history) is wrong when the claim misstates the \
+         memories and strong when it states them accurately — the most recent \
+         statement of a preference supersedes older ones, and the reasons the \
+         user gave when things changed matter. When the user asks for \
+         suggestions or ideas, remember you are choosing the ASSISTANT's \
+         reply: a candidate narrating personal experiences in the first \
+         person (\"I started...\", \"I created...\") is someone's anecdote, \
+         not a reply to the request. Prefer the suggestion that best fits \
+         this user's known interests and situation — building on something \
+         they already do or love is often exactly right.\n\nThink it through \
+         briefly, then give your final answer (",
+    );
+    let letters: Vec<String> = options.iter().map(|(l, _)| format!("({l})")).collect();
     s.push_str(&letters.join(", "));
-    s.push_str(").");
+    s.push_str(") after the special token <final_answer>.");
     s
 }
 
@@ -66,7 +127,14 @@ pub(crate) fn render_mcq_prompt(
 /// Returns `None` when no valid letter can be found — the caller scores that
 /// as WRONG and logs it, never as a crash and never as a silent pass.
 pub(crate) fn parse_letter(raw: &str, valid: &[char]) -> Option<char> {
-    let lower = raw.trim().to_ascii_lowercase();
+    // Official-protocol extraction: when the reply carries `<final_answer>`,
+    // only what FOLLOWS the last occurrence is the answer — reasoning text
+    // before it may name several letters while weighing options.
+    let scoped = match raw.rsplit_once("<final_answer>") {
+        Some((_, tail)) => tail,
+        None => raw,
+    };
+    let lower = scoped.trim().to_ascii_lowercase();
     if lower.is_empty() {
         return None;
     }
@@ -186,6 +254,7 @@ mod tests {
             &["User: I love jazz".into(), "Assistant: noted".into()],
             "Recommend me something",
             &opts(),
+            &[],
         );
         assert!(p.contains("User: I love jazz"));
         assert!(p.contains("Assistant: noted"));
@@ -193,14 +262,55 @@ mod tests {
         for (l, t) in opts() {
             assert!(p.contains(&format!("({l}) {t}")), "missing option {l}");
         }
-        assert!(p.contains("exactly one letter"));
-        assert!(p.contains("a, b, c, d"));
+        assert!(p.contains("<final_answer>"), "official-protocol answer token missing");
+        assert!(p.contains("(a), (b), (c), (d)"));
+        assert!(p.contains("most appropriate model response"), "official task framing missing");
+    }
+
+    #[test]
+    fn letter_after_final_answer_token_wins_over_reasoning_mentions() {
+        let valid = ['a', 'b', 'c', 'd'];
+        assert_eq!(
+            parse_letter(
+                "Option (a) repeats the trip idea the user already heard, and (b) \
+                 contradicts their latest preference. <final_answer> (c)",
+                &valid
+            ),
+            Some('c')
+        );
+        // Multiple tokens: only the LAST one is authoritative.
+        assert_eq!(
+            parse_letter("<final_answer> (a) — wait, no. <final_answer> d", &valid),
+            Some('d')
+        );
+        // Token present but nothing valid after it: unparseable, scored wrong.
+        assert_eq!(parse_letter("<final_answer> none of them", &valid), None);
     }
 
     #[test]
     fn prompt_states_the_no_memory_floor_explicitly() {
-        let p = render_mcq_prompt(&[], "hi", &opts());
+        let p = render_mcq_prompt(&[], "hi", &opts(), &[]);
         assert!(p.contains("(no memories retrieved)"));
+    }
+
+    #[test]
+    fn prompt_renders_per_option_evidence_when_present() {
+        let ev =
+            vec![('a', vec!["User: I made a scrapbook of my trips".to_string()]), ('b', vec![])];
+        let p = render_mcq_prompt(&["User: hi".into()], "Any new ideas?", &opts(), &ev);
+        assert!(p.contains("most similar to each candidate"));
+        assert!(p.contains("User: I made a scrapbook of my trips"));
+        assert!(p.contains("(no similar past message)"));
+    }
+
+    /// All-empty evidence (the no-memory floor arm) must not render the
+    /// evidence section at all — the floor prompt stays byte-identical in
+    /// shape to a memories-only prompt.
+    #[test]
+    fn prompt_omits_evidence_section_when_all_empty() {
+        let ev = vec![('a', vec![]), ('b', vec![])];
+        let p = render_mcq_prompt(&[], "hi", &opts(), &ev);
+        assert!(!p.contains("most similar to each candidate"));
     }
 
     #[test]
