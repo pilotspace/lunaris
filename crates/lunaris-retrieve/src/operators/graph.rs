@@ -85,11 +85,11 @@ pub const DEFAULT_GRAPH_HOPS: usize = 2;
 pub const MAX_GRAPH_HOPS: usize = 5;
 /// Default candidate count for graph traversal (matches Vector/Keyword default of 30).
 pub const DEFAULT_GRAPH_K: usize = 30;
-/// Graph name used by both Moon and Postgres backends. Matches the AGE
-/// `SELECT create_graph('lunaris_graph')` setup in the Phase 1 Postgres
-/// migration AND the Moon `GRAPH.QUERY <graph> "..."` graph parameter — both
-/// backends share the same graph identifier so the Cypher template stays
-/// portable.
+/// Graph name Lunaris traverses — the `<graph>` argument of Moon's
+/// `GRAPH.QUERY <graph> "..."`. Held as a constant (rather than inlined at
+/// each call site) so a future backend can be pointed at the same graph
+/// identifier and keep the Cypher template portable; `with_graph()`
+/// overrides it per tenant.
 pub const LUNARIS_GRAPH_NAME: &str = "lunaris_graph";
 
 /// Graph-anchored retrieval operator.
@@ -230,10 +230,10 @@ impl Graph {
         super::rerank::RerankRetriever::new(Box::new(self), reranker)
     }
 
-    /// Wrap with a fallback retriever — if THIS graph path errors (e.g.,
-    /// Postgres AGE returns `NotSupported`, Moon GRAPH.QUERY transient
-    /// disconnect), switch to `fallback` and tag returned hits with
-    /// `degraded: true` (Plan 02-03).
+    /// Wrap with a fallback retriever — if THIS graph path errors (e.g., a
+    /// backend without graph support returns `NotSupported`, or Moon
+    /// GRAPH.QUERY hits a transient disconnect), switch to `fallback` and
+    /// tag returned hits with `degraded: true` (Plan 02-03).
     pub fn degraded_fallback<R: Retriever + 'static>(
         self,
         fallback: R,
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn build_cypher_legacy_dialect_omits_path_metrics_and_reduce() {
-        // Legacy tier (Moon + embedded ceiling): id/name/type only. No
+        // Legacy tier (Moon's ceiling): id/name/type only. No
         // path binding, no length(), no reduce(), no source_entity_id.
         // This is the universally-supported template.
         let id = EntityId::from_name_and_type("Alice", "Person");

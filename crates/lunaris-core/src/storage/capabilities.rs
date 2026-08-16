@@ -49,18 +49,18 @@ pub struct StorageCapabilities {
     /// `true` only when KV reads support historical `AS_OF` natively.
     ///
     /// Moon supports temporal graph and FT surfaces, but its hash/KV `HGET`
-    /// path currently returns latest state for Lunaris KV rows. Postgres
-    /// stores bi-temporal columns but the Lunaris Postgres adapter still
-    /// treats that as an emulated storage contract.
+    /// path currently returns latest state for Lunaris KV rows, so Moon
+    /// reports `false` and `read_as_of` refuses a historical pin with
+    /// `NotSupported` rather than silently answering with current state.
     pub bi_temporal_native: bool,
-    /// `true` for Moon (CSR + Cypher) and Postgres (AGE extension).
+    /// `true` for Moon (CSR + Cypher).
     pub graph_native: bool,
-    /// `true` for Moon's bundled cross-encoder; `false` for Postgres.
+    /// `true` for Moon's bundled cross-encoder.
     pub rerank_native: bool,
-    /// `true` for Moon (`MQ.*`) and Postgres (`pgmq`).
+    /// `true` for Moon (`MQ.*`).
     pub queue_native: bool,
-    /// Maximum vector dimension the backend's index can hold. Typically 768 (Moon
-    /// EmbeddingGemma) or 1536 (Postgres+pgvector default upper bound).
+    /// Maximum vector dimension the backend's index can hold. Moon reports the
+    /// dimension its FT indices were actually created at (768 by default).
     pub max_vector_dim: u32,
     /// `true` when the backend can run RRF (Reciprocal Rank Fusion) over
     /// `(vector, sparse_bm25)` natively in a single round trip — i.e., Moon's
@@ -68,8 +68,8 @@ pub struct StorageCapabilities {
     /// via `client.text().hybrid_search()`. Phase 2's `fuse_rrf` operator opts into
     /// `RrfFusion::Moon` when both branches hit a backend with `native_rrf=true` AND
     /// both branches are `Vector` / `Keyword(BM25)` operators on the same Moon index.
-    /// Backends with `native_rrf=false` (e.g., Postgres) fall back to client-side
-    /// fusion (`RrfFusion::Client`).
+    /// Backends with `native_rrf=false` fall back to client-side fusion
+    /// (`RrfFusion::Client`), which is always correct if slower.
     pub native_rrf: bool,
     /// Recommended upper bound on active scopes for this backend.
     ///
@@ -77,10 +77,10 @@ pub struct StorageCapabilities {
     /// Moon's soft limit is ~512 FT indices per node before recall p99 degrades
     /// (per Moon docs §6.4 "index count"). Above `max_scopes_recommended` the
     /// operator should consider workspace-level pooling (future RFC). A value of
-    /// `0` means no limit is documented (e.g., Postgres with RLS has no index
-    /// multiplier per scope).
+    /// `0` means no limit is documented — a backend with no per-scope index
+    /// multiplier.
     ///
-    /// RFC 0001 §3.6: set to `512` for Moon, `0` for Postgres.
+    /// RFC 0001 §3.6: set to `512` for Moon.
     pub max_scopes_recommended: usize,
     /// Cypher dialect tier the backend's graph executor accepts.
     ///
@@ -97,17 +97,16 @@ pub struct StorageCapabilities {
     ///
     /// Callers gate `StoragePort::graph_traverse_decayed(decay: Some(_))` on
     /// this flag; the default trait impl returns `NotSupported`. `true` for
-    /// Moon (v0.3.0+); `false` for Postgres (AGE has no decay clause) and
-    /// embedded. `#[serde(default)]` keeps pre-v0.7 serialized capability
-    /// payloads parseable (missing field → `false`).
+    /// Moon (v0.3.0+). `#[serde(default)]` keeps pre-v0.7 serialized
+    /// capability payloads parseable (missing field → `false`).
     #[serde(default)]
     pub graph_decay_native: bool,
     /// `true` when the backend supports graph-expanded vector retrieval —
     /// i.e., Moon's `FT.NAVIGATE` (KNN seeds → bounded BFS → hop-aware
     /// re-rank). Callers gate `StoragePort::vector_navigate` on this flag;
     /// the DSL `Navigate` operator degrades to plain `vector_search` when
-    /// `false`. `true` for Moon (v0.3.0+); `false` for Postgres/embedded.
-    /// `#[serde(default)]` keeps older serialized payloads parseable.
+    /// `false`. `true` for Moon (v0.3.0+). `#[serde(default)]` keeps older
+    /// serialized payloads parseable.
     #[serde(default)]
     pub graph_navigate_native: bool,
 }

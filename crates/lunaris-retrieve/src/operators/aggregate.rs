@@ -30,7 +30,8 @@
 //! `FT.AGGREGATE` is issued through the typed moondb SDK
 //! (`ctx.moon_storage`), the exact same access pattern
 //! `fusion.rs::fuse_via_moon_native` uses for the native RRF hybrid path.
-//! Non-Moon backends (Postgres, embedded/SQLite) return
+//! A `QueryContext` without a typed Moon handle wired (`ctx.moon_storage`
+//! is `None` — e.g. a test double, or a future non-Moon backend) returns
 //! `LunarisError::Storage(StorageError::NotSupported(_))` — never a silent
 //! wrong (or worse, silently degraded/inexact) count. There is currently no
 //! `StorageCapabilities` flag dedicated to aggregation (unlike

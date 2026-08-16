@@ -37,7 +37,7 @@
 //! `label` / `rel` directly into the Cypher string. v0 trusts callers to validate these
 //! against `^[A-Za-z_][A-Za-z0-9_]*$` BEFORE calling `atomic_write`. Phase 4 (`OPS-04`
 //! audit) moves the guard into the `StoragePort` trait. We accept this in v0 because
-//! validating at the trait would force every backend (Moon + Postgres + future) to
+//! validating at the trait would force every backend (Moon + any future one) to
 //! re-implement the same regex.
 //!
 //! ## Atomicity model
@@ -243,11 +243,10 @@ async fn run_ops(
                     buf.extend_from_slice(&f.to_le_bytes());
                 }
                 let meta_json = serde_json::to_string(metadata)?;
-                // Gap 9 fix (2026-04-21): mirror the Postgres tsvector convention
-                // (`crates/lunaris-storage-postgres/migrations/20260421_000004_tsvector_bm25.sql`)
-                // so Moon BM25 / HYBRID FT.SEARCH have a real text payload to
-                // score against. Without this, the FT index sees only `vec`
-                // and FT.SEARCH returns "no such index" / "unknown index".
+                // Gap 9 fix (2026-04-21): give Moon BM25 / HYBRID FT.SEARCH a
+                // real text payload to score against. Without this, the FT
+                // index sees only `vec` and FT.SEARCH returns "no such index"
+                // / "unknown index".
                 let content = extract_content_for_index(index, metadata);
                 // RFC 0001 Wave 1C: write to `{ft_index_name(scope, kind)}:{id_hex}`.
                 // The FT index name is per-scope so each agent's vectors are isolated.
@@ -479,9 +478,8 @@ async fn run_ops(
     Ok(())
 }
 
-/// Per-index BM25/HYBRID text payload extractor — mirrors the Postgres
-/// tsvector source convention (see
-/// `crates/lunaris-storage-postgres/migrations/20260421_000004_tsvector_bm25.sql`).
+/// Per-index BM25/HYBRID text payload extractor — the canonical mapping
+/// from a row's metadata to the `content` field Moon's FT index scores.
 ///
 /// | index       | source field(s)                                          |
 /// |-------------|----------------------------------------------------------|
