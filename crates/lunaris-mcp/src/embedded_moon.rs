@@ -46,6 +46,7 @@ mod tests {
         let app_state = crate::state::AppState {
             lunaris: Arc::new(lunaris),
             scope,
+            storage_url: url.clone(),
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None, // guard owned separately for this test
         };
@@ -129,6 +130,7 @@ mod tests {
         let app_state = crate::state::AppState {
             lunaris: Arc::new(lunaris),
             scope,
+            storage_url: url.clone(),
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None,
         };

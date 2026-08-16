@@ -202,8 +202,38 @@ impl MemoryRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum MemoryResponse {
-    Ok { data: Value },
-    Err { code: String, message: String },
+    Ok {
+        data: Value,
+        /// The storage URL the daemon actually served this op against.
+        ///
+        /// Split-routing containment (task #20). The socket route and the mcp
+        /// proxy's Direct fallback derive their store from two INDEPENDENT
+        /// sources — contextd resolves `LUNARIS_STORE_URL` /
+        /// `~/.lunaris/contextd-moon.url` in its own process env, while the mcp
+        /// engine is opened at boot from `--storage` / `LUNARIS_MCP_STORAGE`.
+        /// Without this field nothing can tell whether falling back to Direct
+        /// continues the same op stream or silently starts a second one in
+        /// another Moon.
+        ///
+        /// `Option` + `#[serde(default)]` keeps the wire additive: a daemon
+        /// older than this field simply reports `None`, which the proxy reads
+        /// as "unknown" and treats exactly as it did before — an unknown store
+        /// is the pre-existing status quo, not a reason to refuse.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        store: Option<String>,
+    },
+    Err {
+        code: String,
+        message: String,
+    },
+}
+
+impl MemoryResponse {
+    /// Success carrying the store the op was served against.
+    #[must_use]
+    pub fn ok(data: Value, store: impl Into<String>) -> Self {
+        Self::Ok { data, store: Some(store.into()) }
+    }
 }
 
 /// The ONE variant→handler dispatch. Both the contextd socket path and the mcp

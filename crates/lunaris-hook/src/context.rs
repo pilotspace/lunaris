@@ -157,6 +157,11 @@ pub enum ContextRequest {
     Memory(MemoryRequest),
 }
 
+/// Placeholder store URL stamped into the memo by the `insert_*_for_test`
+/// seams, whose handles are constructed in-process rather than resolved.
+#[cfg(test)]
+const TEST_STORE_URL: &str = "moon://test-preloaded-handle";
+
 /// Internal error carrier for the memory dispatch — classifies a failure into
 /// a stable wire `code` before it becomes a [`MemoryResponse::Err`].
 struct MemoryError {
@@ -250,6 +255,19 @@ impl ContextResponse {
 pub struct ContextService {
     handles: Arc<Mutex<HashMap<String, Arc<Lunaris>>>>,
     storages: Arc<Mutex<HashMap<String, Arc<dyn StoragePort>>>>,
+    /// Per-scope storage URL, resolved ONCE per daemon lifetime.
+    ///
+    /// Split-routing containment (task #20). `handles` and `storages` are two
+    /// independent caches that used to call `scope::resolve_storage_url`
+    /// separately, at whatever moment each was first touched. That resolver is
+    /// not a constant: it reads `~/.lunaris/contextd-moon.url` and liveness-
+    /// probes the advertised endpoint on a 25 ms budget, so a discovery-file
+    /// rewrite (or a probe that flaps under load) between the two lazy
+    /// resolutions could latch the engine cache to one Moon and the capture
+    /// cache to another — inside ONE daemon, for ONE scope. Routing both
+    /// through this memo makes first-resolution-wins the daemon's contract and
+    /// gives `handle_memory` a URL to report on the wire.
+    store_urls: Arc<Mutex<HashMap<String, String>>>,
     embed_workers: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     query_embeddings: Arc<Mutex<HashMap<String, Vec<f32>>>>,
     /// The GGUF embedder is scope-INDEPENDENT (identical model for every
@@ -269,6 +287,7 @@ impl ContextService {
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             storages: Arc::new(Mutex::new(HashMap::new())),
+            store_urls: Arc::new(Mutex::new(HashMap::new())),
             embed_workers: Arc::new(Mutex::new(HashMap::new())),
             query_embeddings: Arc::new(Mutex::new(HashMap::new())),
             embedder: Arc::new(tokio::sync::OnceCell::new()),
@@ -584,12 +603,19 @@ impl ContextService {
     /// fallback uses, so the two paths cannot diverge.
     pub async fn handle_memory(&self, request: MemoryRequest) -> MemoryResponse {
         match self.handle_memory_inner(request).await {
-            Ok(data) => MemoryResponse::Ok { data },
+            // Report the store this op was actually served against, so the mcp
+            // proxy can tell whether its Direct fallback would continue the
+            // same op stream or silently start a second one in another Moon
+            // (split-routing containment, task #20).
+            Ok((data, store)) => MemoryResponse::ok(data, store),
             Err(err) => MemoryResponse::Err { code: err.code.to_owned(), message: err.message },
         }
     }
 
-    async fn handle_memory_inner(&self, request: MemoryRequest) -> Result<Value, MemoryError> {
+    async fn handle_memory_inner(
+        &self,
+        request: MemoryRequest,
+    ) -> Result<(Value, String), MemoryError> {
         // Every variant carries an explicit scope (trusted local peer). Resolve
         // it to the validated newtype first — an empty/invalid string is a
         // scope_required fault, never a silent fall-through to a default scope.
@@ -604,15 +630,22 @@ impl ContextService {
             .handle_for_scope(&scope)
             .await
             .map_err(|e| MemoryError::storage_unavailable(e.to_string()))?;
+        // Memoized by `handle_for_scope` above, so this cannot re-resolve or
+        // disagree with the store the handle was opened against.
+        let store = self
+            .store_url_for_scope(&scope)
+            .await
+            .map_err(|e| MemoryError::storage_unavailable(e.to_string()))?;
 
         // Delegate to the SHARED variant→handler dispatch — the exact same
         // `lunaris_memory_service::protocol::dispatch` the mcp direct-open
         // fallback calls, so the two surfaces cannot diverge. Staging is not
         // needed here: `handle_for_scope` already resolved the shared resident
         // embedder, so the recall path meets a ready engine.
-        lunaris_memory_service::protocol::dispatch(&handle, &scope, request)
+        let data = lunaris_memory_service::protocol::dispatch(&handle, &scope, request)
             .await
-            .map_err(MemoryError::from_service)
+            .map_err(MemoryError::from_service)?;
+        Ok((data, store))
     }
 
     /// Test seam: preload the per-scope handle cache with an in-process engine
@@ -621,6 +654,15 @@ impl ContextService {
     #[cfg(test)]
     pub(crate) async fn insert_handle_for_test(&self, scope: &Scope, handle: Arc<Lunaris>) {
         self.handles.lock().await.insert(scope.as_str().to_owned(), handle);
+        // Seed the memo too: `handle_memory_inner` reports the resolved store
+        // on the wire, and a preloaded handle has no URL to report otherwise —
+        // it would fall through to the real env resolver and fail the test for
+        // an unrelated reason.
+        self.store_urls
+            .lock()
+            .await
+            .entry(scope.as_str().to_owned())
+            .or_insert_with(|| TEST_STORE_URL.to_owned());
     }
 
     /// Test seam (ADD task activation-ledger): preload the per-scope
@@ -638,6 +680,11 @@ impl ContextService {
         storage: Arc<dyn StoragePort>,
     ) {
         self.storages.lock().await.insert(scope.as_str().to_owned(), storage);
+        self.store_urls
+            .lock()
+            .await
+            .entry(scope.as_str().to_owned())
+            .or_insert_with(|| TEST_STORE_URL.to_owned());
     }
 
     async fn handle_for_scope(&self, scope: &Scope) -> anyhow::Result<Arc<Lunaris>> {
@@ -646,7 +693,7 @@ impl ContextService {
             return Ok(existing);
         }
 
-        let storage_url = crate::scope::resolve_storage_url(scope)?;
+        let storage_url = self.store_url_for_scope(scope).await?;
         // Share the single process embedder AND reranker instead of loading a
         // resident GGUF model of each per scope (the 7.32 GB contextd RSS leak,
         // 2026-07-14). `open_with_embedder` would resolve its own (lazy)
@@ -667,10 +714,39 @@ impl ContextService {
             return Ok(existing);
         }
 
-        let storage_url = crate::scope::resolve_storage_url(scope)?;
+        let storage_url = self.store_url_for_scope(scope).await?;
         let storage = lunaris::open(&storage_url).await?;
         let mut storages = self.storages.lock().await;
         Ok(storages.entry(key).or_insert(storage).clone())
+    }
+
+    /// The storage URL this daemon serves `scope` from — resolved once, then
+    /// memoized for the process lifetime. See [`ContextService::store_urls`].
+    pub(crate) async fn store_url_for_scope(&self, scope: &Scope) -> anyhow::Result<String> {
+        self.store_url_with(scope, || Ok(crate::scope::resolve_storage_url(scope)?)).await
+    }
+
+    /// Memo body with the resolver injected, so the first-resolution-wins
+    /// contract is testable without touching the environment (`set_var` is
+    /// `unsafe fn` in edition 2024 and this crate forbids unsafe).
+    ///
+    /// A FAILED resolution is deliberately NOT memoized: contextd outlives the
+    /// Moon it talks to, and caching "no store" would wedge a scope for the
+    /// daemon's whole lifetime over one 25 ms probe that lost a race. Only a
+    /// success latches.
+    async fn store_url_with<F>(&self, scope: &Scope, resolve: F) -> anyhow::Result<String>
+    where
+        F: FnOnce() -> anyhow::Result<String>,
+    {
+        let key = scope.as_str().to_owned();
+        // Snapshot under the guard, then DROP it — `resolve` is sync today but
+        // the guard must never span an await if that changes.
+        if let Some(existing) = self.store_urls.lock().await.get(&key).cloned() {
+            return Ok(existing);
+        }
+        let url = resolve()?;
+        let mut urls = self.store_urls.lock().await;
+        Ok(urls.entry(key).or_insert(url).clone())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2245,7 +2321,7 @@ mod tests {
             })
             .await;
         match recall {
-            MemoryResponse::Ok { data } => {
+            MemoryResponse::Ok { data, .. } => {
                 let hits = data.get("hits").and_then(|h| h.as_array()).expect("hits array");
                 assert!(!hits.is_empty(), "expected at least one recall hit, got {data}");
             }
@@ -2275,7 +2351,7 @@ mod tests {
             })
             .await;
         match &write {
-            MemoryResponse::Ok { data } => {
+            MemoryResponse::Ok { data, .. } => {
                 assert!(
                     data.get("lsn").and_then(|l| l.as_str()).is_some(),
                     "write DTO must carry lsn"
@@ -2296,7 +2372,7 @@ mod tests {
             })
             .await;
         match read {
-            MemoryResponse::Ok { data } => {
+            MemoryResponse::Ok { data, .. } => {
                 assert_eq!(data.get("found").and_then(|f| f.as_bool()), Some(true));
                 assert_eq!(data.get("value"), Some(&serde_json::json!({"answer": 42})));
             }
@@ -2322,7 +2398,7 @@ mod tests {
             .handle_memory(MemoryRequest::ScratchpadHandover { scope: scope.as_str().to_owned() })
             .await;
         match resp {
-            MemoryResponse::Ok { data } => {
+            MemoryResponse::Ok { data, .. } => {
                 assert_eq!(data.get("status").and_then(|s| s.as_str()), Some("skipped_no_queue"));
             }
             MemoryResponse::Err { code, message } => {
@@ -2339,7 +2415,7 @@ mod tests {
         let resp = svc.handle_memory(MemoryRequest::Status { scope: String::new() }).await;
         match resp {
             MemoryResponse::Err { code, .. } => assert_eq!(code, "scope_required"),
-            MemoryResponse::Ok { data } => panic!("expected scope_required, got Ok({data})"),
+            MemoryResponse::Ok { data, .. } => panic!("expected scope_required, got Ok({data})"),
         }
     }
 
@@ -2351,7 +2427,7 @@ mod tests {
         let resp =
             svc.handle_memory(MemoryRequest::Status { scope: scope.as_str().to_owned() }).await;
         match resp {
-            MemoryResponse::Ok { data } => {
+            MemoryResponse::Ok { data, .. } => {
                 assert_eq!(data.get("scope").and_then(|s| s.as_str()), Some("test-mem-status"));
                 assert!(data.get("queues").and_then(|q| q.as_array()).is_some(), "queues DTO");
             }
@@ -2816,6 +2892,79 @@ mod tests {
         let b = dedupe_key("distilled:invariant:test-scope", "prefer X over Y");
         assert_eq!(a, b, "distilled sources with the same snippet must collapse to one dedupe key");
         assert!(a.starts_with("distilled:"));
+    }
+
+    // ── Split-routing containment (task #20) ─────────────────────────────────
+
+    /// First-resolution-wins: once a scope's store URL is resolved, the memo is
+    /// authoritative for the daemon's lifetime.
+    ///
+    /// `handle_for_scope` (the engine cache) and `storage_for_scope` (the
+    /// capture-write cache) used to call `scope::resolve_storage_url`
+    /// independently, whenever each was first touched. That resolver re-reads
+    /// `~/.lunaris/contextd-moon.url` and liveness-probes it on a 25 ms budget,
+    /// so two resolutions separated in time are NOT guaranteed to agree — a
+    /// contextd restart onto a new port, or one probe that loses a race under
+    /// load, is enough to latch the two caches onto different Moons for the
+    /// same scope, inside one daemon.
+    ///
+    /// The second resolver here panics: if it is ever consulted, the memo is
+    /// not doing its job.
+    #[tokio::test]
+    async fn store_url_is_resolved_once_per_scope_then_memoized() {
+        let service = ContextService::new();
+        let scope = Scope::new("test-store-memo").unwrap();
+
+        let first = service
+            .store_url_with(&scope, || Ok("moon://127.0.0.1:6390".to_owned()))
+            .await
+            .expect("first resolution must succeed");
+        assert_eq!(first, "moon://127.0.0.1:6390");
+
+        let second = service
+            .store_url_with(&scope, || panic!("memoized scope must NOT re-resolve"))
+            .await
+            .expect("memoized resolution must succeed");
+        assert_eq!(
+            second, first,
+            "both contextd caches must observe ONE store per scope for the daemon's lifetime"
+        );
+    }
+
+    /// A FAILED resolution must not be memoized. contextd outlives the Moon it
+    /// talks to; caching "no store" would wedge a scope for the whole daemon
+    /// lifetime over a single probe that lost a race, which is precisely the
+    /// flap the memo exists to absorb.
+    #[tokio::test]
+    async fn a_failed_resolution_is_not_memoized() {
+        let service = ContextService::new();
+        let scope = Scope::new("test-store-memo-retry").unwrap();
+
+        let failed = service
+            .store_url_with(&scope, || Err(anyhow::anyhow!("probe timed out")))
+            .await;
+        assert!(failed.is_err(), "a failing resolver must surface its error");
+
+        let recovered = service
+            .store_url_with(&scope, || Ok("moon://127.0.0.1:6391".to_owned()))
+            .await
+            .expect("a later attempt must be free to resolve");
+        assert_eq!(recovered, "moon://127.0.0.1:6391", "failure must not poison the memo");
+    }
+
+    /// Distinct scopes keep distinct entries — the memo is per-scope, not a
+    /// single process-wide store URL.
+    #[tokio::test]
+    async fn the_store_memo_is_partitioned_by_scope() {
+        let service = ContextService::new();
+        let a = Scope::new("test-memo-scope-a").unwrap();
+        let b = Scope::new("test-memo-scope-b").unwrap();
+
+        let ua = service.store_url_with(&a, || Ok("moon://127.0.0.1:6392".to_owned())).await.unwrap();
+        let ub = service.store_url_with(&b, || Ok("moon://127.0.0.1:6393".to_owned())).await.unwrap();
+
+        assert_eq!(ua, "moon://127.0.0.1:6392");
+        assert_eq!(ub, "moon://127.0.0.1:6393", "a second scope must resolve on its own");
     }
 
     /// A plain-text `distilled:*` record MUST survive

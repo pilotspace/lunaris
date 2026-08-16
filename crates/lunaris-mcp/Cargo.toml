@@ -55,6 +55,10 @@ anyhow      = { workspace = true }
 blake3 = { workspace = true }
 dirs   = { workspace = true }
 
+# proxy.rs — contextd store identity cell (UNSAFE_POLICY: parking_lot over
+# std::sync::*Lock). Snapshot-and-drop only; never held across an await.
+parking_lot = { workspace = true }
+
 # Wave 2.A — t_ref parsing in memory.ingest handler (RFC-3339 → DateTime<Utc>)
 chrono = { workspace = true }
 

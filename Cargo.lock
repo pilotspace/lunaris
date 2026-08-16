@@ -2546,6 +2546,7 @@ dependencies = [
  "lunaris-memory-service",
  "lunaris-retrieve",
  "lunaris-test-harness",
+ "parking_lot",
  "reqwest 0.13.2",
  "rmcp",
  "schemars",
