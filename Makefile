@@ -10,7 +10,7 @@
 # files use `make foo OUTPUT=...`.
 
 .PHONY: help bench-public bench-recall bench-ingest bench-helios \
-        bench-baseline test test-pg test-moon docs docs-serve docs-rust \
+        bench-baseline test test-moon docs docs-serve docs-rust \
         ci-local clean release-preflight release-preflight-fast \
         check-scope-leaks setup-hooks
 
@@ -19,14 +19,13 @@ help:
 	@echo ""
 	@echo "  Benchmarks (Phase 24)"
 	@echo "    bench-public      Reproduce all v0.2.x public benchmark numbers"
-	@echo "    bench-recall      Recall p50/p99 vs Postgres + Moon"
+	@echo "    bench-recall      Recall p50/p99 (criterion, recall_hot_path)"
 	@echo "    bench-ingest      Ingest p50 + atomic_write throughput"
 	@echo "    bench-helios      Helios 10K-turn E2E (HUMAN-UAT-gated)"
 	@echo "    bench-baseline    Save current bench numbers as the v0.2.1 baseline"
 	@echo ""
 	@echo "  Tests"
 	@echo "    test              Full workspace test (skips backends if envs unset)"
-	@echo "    test-pg           Postgres integration tests (requires PG_URL)"
 	@echo "    test-moon         Moon integration tests (requires MOON_URL)"
 	@echo ""
 	@echo "  Release (Phase 22)"
@@ -99,12 +98,8 @@ bench-baseline: bench-public
 test:
 	cargo test --workspace --all-targets
 
-test-pg:
-	@test -n "$$PG_URL" || (echo "set PG_URL=postgres://lunaris@localhost/lunaris" && exit 1)
-	cargo test -p lunaris-storage-postgres --features pg-it
-
 test-moon:
-	@test -n "$$MOON_URL" || (echo "set MOON_URL=moon://127.0.0.1:6379" && exit 1)
+	@test -n "$$MOON_URL" || (echo "set MOON_URL=moon://127.0.0.1:6380" && exit 1)
 	cargo test -p lunaris-storage-moon --features moon-it
 
 # ---------------------------------------------------------------------------
