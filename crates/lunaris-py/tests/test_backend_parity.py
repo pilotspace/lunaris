@@ -2,11 +2,14 @@
 
 Python-driver entry for the Phase 8 success-criterion #4 test: within a
 single process, ingest the FixtureCorpus via lunaris-py's
-`conformance_fixture_episodes` + `handle.ingest` into BOTH Moon and
-Postgres backends (when env-configured), then scan each via
+`conformance_fixture_episodes` + `handle.ingest` into Moon, then scan via
 `scan_kv_prefix` and assert the normalized shape matches the committed
 golden reference at
 `crates/lunaris-conformance/fixtures/golden/bindings_fixture.json`.
+
+Through 0.6.x this ran against BOTH Moon and Postgres; 0.7.0 deleted the
+second backend, so the surviving parity axis is across the three language
+drivers, not across substrates.
 
 The Rust and TypeScript drivers (`crates/lunaris-conformance/tests/
 run_bindings_backend_parity.rs` and `crates/lunaris-ts/__test__/
@@ -18,9 +21,9 @@ backend parity is the correct interpretation of success criterion #4
 iteration 2 scope-reset note).
 
 Requires the `bindings-it` feature build (`maturin develop --release
---features bindings-it`). When either env var is unset, that backend
-is skipped neutrally. When both are unset, the test skips entirely —
-mirroring the Plan 04-03 / 05-02 two-tier skip pattern.
+--features bindings-it`). When `LUNARIS_MOON_URL` is unset or the Moon
+it names is unreachable, the test skips neutrally — mirroring the Plan
+04-03 / 05-02 two-tier skip pattern.
 """
 from __future__ import annotations
 
@@ -66,22 +69,27 @@ COUNT = 10
 
 
 def _parse_host_port(url: str) -> tuple[str, int] | None:
-    """Extract host:port from moon:// or postgres:// URL for TCP probe."""
-    for scheme, default_port in (("moon://", 6379), ("postgres://", 5432), ("postgresql://", 5432)):
-        if url.startswith(scheme):
-            rest = url[len(scheme):]
-            # postgres URLs can carry userinfo — strip it before splitting.
-            if "@" in rest:
-                rest = rest.rsplit("@", 1)[1]
-            authority = rest.split("/")[0].split("?")[0]
-            if ":" in authority:
-                host, port_str = authority.split(":", 1)
-                try:
-                    return host, int(port_str)
-                except ValueError:
-                    return None
-            return authority, default_port
-    return None
+    """Extract host:port from a `moon://` URL for the TCP probe.
+
+    `moon://` is the only scheme `lunaris.open` accepts from 0.7.0 on;
+    anything else returns None so the caller skips instead of probing a
+    port nothing will ever be opened against.
+    """
+    scheme, default_port = "moon://", 6379
+    if not url.startswith(scheme):
+        return None
+    rest = url[len(scheme):]
+    # A store URL can carry userinfo — strip it before splitting.
+    if "@" in rest:
+        rest = rest.rsplit("@", 1)[1]
+    authority = rest.split("/")[0].split("?")[0]
+    if ":" in authority:
+        host, port_str = authority.split(":", 1)
+        try:
+            return host, int(port_str)
+        except ValueError:
+            return None
+    return authority, default_port
 
 
 def _host_port_reachable(host: str, port: int, timeout_s: float = 1.0) -> bool:
@@ -115,9 +123,9 @@ def _probe_backend(env_name: str) -> str | None:
         return None
     host, port = parsed
     if not _host_port_reachable(host, port):
-        # Intentionally do NOT log the full URL — postgres:// URLs can
-        # carry credentials in the userinfo segment (T-05-02-01
-        # mitigation, mirror of Rust-side probe_backend).
+        # Intentionally do NOT log the full URL — a store URL can carry
+        # credentials in the userinfo segment (T-05-02-01 mitigation,
+        # mirror of Rust-side probe_backend).
         print(
             f"test_backend_parity: SKIP {env_name} (TCP probe to {host}:{port} failed)",
             file=sys.stderr,
@@ -209,10 +217,10 @@ def test_python_driver_backend_parity():
 
     Flow:
       1. Load committed golden JSON.
-      2. Probe LUNARIS_MOON_URL + LUNARIS_POSTGRES_URL.
-      3. For each reachable backend: open handle, ingest
-         FixtureCorpus, scan prefix, normalize, assert against golden.
-      4. If BOTH are unreachable, skip.
+      2. Probe LUNARIS_MOON_URL.
+      3. If reachable: open handle, ingest FixtureCorpus, scan prefix,
+         normalize, assert against golden.
+      4. If unreachable, skip.
     """
     if not _bindings_it_feature_present():
         pytest.skip(
@@ -223,21 +231,16 @@ def test_python_driver_backend_parity():
 
     golden = _load_golden()
     moon = _probe_backend("LUNARIS_MOON_URL")
-    pg = _probe_backend("LUNARIS_POSTGRES_URL")
 
-    if moon is None and pg is None:
+    if moon is None:
         pytest.skip(
-            "Neither LUNARIS_MOON_URL nor LUNARIS_POSTGRES_URL configured "
-            "with a reachable backend — skipping per-driver parity test"
+            "LUNARIS_MOON_URL not configured with a reachable Moon — "
+            "skipping per-driver parity test"
         )
 
     async def run() -> None:
-        if moon is not None:
-            rows = await _ingest_and_normalize(moon, golden)
-            _assert_structural_eq(rows, golden, "moon")
-        if pg is not None:
-            rows = await _ingest_and_normalize(pg, golden)
-            _assert_structural_eq(rows, golden, "postgres")
+        rows = await _ingest_and_normalize(moon, golden)
+        _assert_structural_eq(rows, golden, "moon")
 
     asyncio.run(run())
 

@@ -2,11 +2,14 @@
 //
 // TypeScript-driver entry for the Phase 8 success-criterion #4 test:
 // within a single process, ingest the FixtureCorpus via lunaris-ts's
-// `conformanceFixtureEpisodes` + `handle.ingest` into BOTH Moon and
-// Postgres backends (when env-configured), then scan each via
+// `conformanceFixtureEpisodes` + `handle.ingest` into Moon, then scan via
 // `scanKvPrefix` and assert the normalized shape matches the committed
 // golden reference at
 // `crates/lunaris-conformance/fixtures/golden/bindings_fixture.json`.
+//
+// Through 0.6.x this ran against BOTH Moon and Postgres; 0.7.0 deleted the
+// second backend, so the surviving parity axis is across the three language
+// drivers, not across substrates.
 //
 // The Rust and Python drivers (`crates/lunaris-conformance/tests/
 // run_bindings_backend_parity.rs` and `crates/lunaris-py/tests/
@@ -18,9 +21,9 @@
 // iteration 2 scope-reset note).
 //
 // Requires the `bindings-it` feature build (`napi build --platform
-// --release --cargo-flags "--features bindings-it"`). When either env
-// var is unset, that backend is skipped neutrally. When both are unset,
-// the test exits without exercising the live paths — mirror of the Plan
+// --release --cargo-flags "--features bindings-it"`). When
+// `LUNARIS_MOON_URL` is unset or the Moon it names is unreachable, the
+// test exits without exercising the live paths — mirror of the Plan
 // 04-03 / 05-02 two-tier skip pattern.
 
 import { describe, expect, test } from "vitest";
@@ -68,30 +71,26 @@ function loadGolden(): GoldenReference {
 const SEED = BigInt(0xCAFE_F00D);
 const COUNT = 10;
 
+// `moon://` is the only scheme `lunaris.open` accepts from 0.7.0 on;
+// anything else returns null so the caller skips instead of probing a
+// port nothing will ever be opened against.
 function parseHostPort(u: string): { host: string; port: number } | null {
-  const schemes: [string, number][] = [
-    ["moon://", 6379],
-    ["postgres://", 5432],
-    ["postgresql://", 5432],
-  ];
-  for (const [scheme, defaultPort] of schemes) {
-    if (u.startsWith(scheme)) {
-      let rest = u.slice(scheme.length);
-      // postgres URLs can carry userinfo — strip it before splitting.
-      const atIdx = rest.lastIndexOf("@");
-      if (atIdx >= 0) {
-        rest = rest.slice(atIdx + 1);
-      }
-      const authority = rest.split("/")[0].split("?")[0];
-      const colonIdx = authority.indexOf(":");
-      if (colonIdx < 0) return { host: authority, port: defaultPort };
-      const host = authority.slice(0, colonIdx);
-      const port = Number.parseInt(authority.slice(colonIdx + 1), 10);
-      if (!Number.isFinite(port)) return null;
-      return { host, port };
-    }
+  const scheme = "moon://";
+  const defaultPort = 6379;
+  if (!u.startsWith(scheme)) return null;
+  let rest = u.slice(scheme.length);
+  // A store URL can carry userinfo — strip it before splitting.
+  const atIdx = rest.lastIndexOf("@");
+  if (atIdx >= 0) {
+    rest = rest.slice(atIdx + 1);
   }
-  return null;
+  const authority = rest.split("/")[0].split("?")[0];
+  const colonIdx = authority.indexOf(":");
+  if (colonIdx < 0) return { host: authority, port: defaultPort };
+  const host = authority.slice(0, colonIdx);
+  const port = Number.parseInt(authority.slice(colonIdx + 1), 10);
+  if (!Number.isFinite(port)) return null;
+  return { host, port };
 }
 
 async function reachable(host: string, port: number): Promise<boolean> {
@@ -123,8 +122,8 @@ async function probeBackend(envName: string): Promise<string | null> {
     return null;
   }
   if (!(await reachable(parsed.host, parsed.port))) {
-    // Intentionally do NOT log the full URL — postgres:// URLs can
-    // carry credentials in the userinfo segment (T-05-02-01 mitigation,
+    // Intentionally do NOT log the full URL — a store URL can carry
+    // credentials in the userinfo segment (T-05-02-01 mitigation,
     // mirror of Rust-side probe_backend).
     // eslint-disable-next-line no-console
     console.error(
@@ -248,24 +247,17 @@ describe("Plan 08-04 — per-driver backend parity (TypeScript)", () => {
 
     const golden = loadGolden();
     const moonUrl = await probeBackend("LUNARIS_MOON_URL");
-    const pgUrl = await probeBackend("LUNARIS_POSTGRES_URL");
 
-    if (!moonUrl && !pgUrl) {
-      // Neither backend reachable — skip neutrally (no-op pass).
+    if (!moonUrl) {
+      // Moon unreachable — skip neutrally (no-op pass).
       // eslint-disable-next-line no-console
       console.error(
-        "backend_parity: SKIP (neither LUNARIS_MOON_URL nor LUNARIS_POSTGRES_URL configured with a reachable backend)",
+        "backend_parity: SKIP (LUNARIS_MOON_URL not configured with a reachable Moon)",
       );
       return;
     }
 
-    if (moonUrl) {
-      const rows = await ingestAndNormalize(moonUrl, golden);
-      assertStructuralEq(rows, golden, "moon");
-    }
-    if (pgUrl) {
-      const rows = await ingestAndNormalize(pgUrl, golden);
-      assertStructuralEq(rows, golden, "postgres");
-    }
+    const rows = await ingestAndNormalize(moonUrl, golden);
+    assertStructuralEq(rows, golden, "moon");
   }, 60_000);
 });
