@@ -186,7 +186,7 @@ impl StoragePort for RecordingStorage {
             native_rrf: false,
             max_scopes_recommended: 0,
             // Wave 4 amendment: read from the configurable field so
-            // dispatch-tier tests can swap Legacy / PathMetrics / Full.
+            // dispatch-tier tests can swap Legacy / Full.
             cypher_dialect: *self.dialect.lock(),
             graph_decay_native: false,
             graph_navigate_native: false,
@@ -263,7 +263,7 @@ async fn graph_anchored_returns_hits_for_traversed_entities() {
     assert!(calls[0].0.cypher.contains("[*1..2]"), "hops literal: {}", calls[0].0.cypher);
     // Wave 4 amendment: RecordingStorage defaults to CypherDialect::Legacy
     // (no overrides). The operator therefore dispatches the Legacy template
-    // here. The dispatch_* tests cover the PathMetrics/Full assertions.
+    // here. The dispatch_* tests cover the Full-tier assertions.
     // Inspector-UAT fix (2026-06-16): the anchor filters via WHERE, not the
     // inline-property form `(n {id_hex: sid})` which Moon silently ignores.
     assert!(
@@ -896,30 +896,6 @@ async fn dispatch_legacy_dialect_emits_no_path_metrics_no_reduce() {
 }
 
 #[tokio::test]
-async fn dispatch_path_metrics_dialect_emits_path_binding_and_length_but_no_reduce() {
-    // PathMetrics tier (Postgres AGE 1.5): the operator MUST emit
-    // MATCH p = ... + length(p) + source_entity_id, but MUST NOT emit
-    // reduce(...) (AGE 1.5 parser rejects the `|` token).
-    let cypher = dispatched_cypher_with_dialect(CypherDialect::PathMetrics).await;
-    assert!(
-        cypher.contains("MATCH p ="),
-        "PathMetrics dialect MUST bind a path variable: {cypher}"
-    );
-    assert!(
-        cypher.contains("length(p) AS path_length"),
-        "PathMetrics dialect MUST emit length(p) AS path_length: {cypher}"
-    );
-    assert!(
-        cypher.contains("source_entity_id"),
-        "PathMetrics dialect MUST emit source_entity_id alias: {cypher}"
-    );
-    assert!(
-        !cypher.contains("reduce("),
-        "PathMetrics dialect MUST NOT emit reduce() — AGE 1.5 rejects the `|` token: {cypher}"
-    );
-}
-
-#[tokio::test]
 async fn dispatch_full_dialect_emits_reduce_for_edge_weight_product() {
     // Full tier (forward-compat — no current backend supports this): the
     // operator MUST emit the full Wave-4 template including reduce(...) for
@@ -971,17 +947,10 @@ async fn dispatch_legacy_preserves_back_compat_score() {
 }
 
 #[tokio::test]
-async fn dispatch_path_metrics_preserves_back_compat_score_when_columns_absent() {
-    // PathMetrics tier + 3-column response → same Wave-3 fallback. The
-    // dialect declaration says "backend CAN emit those columns" but the
-    // operator MUST handle the case where it didn't.
-    let score = score_back_compat_with_dialect(CypherDialect::PathMetrics).await;
-    assert!((score - 1.0).abs() < 1e-6, "expected 1.0, got {score}");
-}
-
-#[tokio::test]
 async fn dispatch_full_preserves_back_compat_score_when_columns_absent() {
-    // Full tier + 3-column response → same Wave-3 fallback.
+    // Full tier + 3-column response → same Wave-3 fallback. The dialect
+    // declaration says "backend CAN emit those columns" but the operator
+    // MUST handle the case where it didn't.
     let score = score_back_compat_with_dialect(CypherDialect::Full).await;
     assert!((score - 1.0).abs() < 1e-6, "expected 1.0, got {score}");
 }

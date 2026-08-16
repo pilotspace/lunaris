@@ -8,44 +8,39 @@ use serde::{Deserialize, Serialize};
 
 /// Cypher dialect tier the backend's graph executor accepts.
 ///
-/// Wave 4 amendment: parallel-agent probes against the two supported
-/// backends discovered that neither accepts the full Wave-4 template:
-///
-/// - **Moon** rejects `MATCH p = (n)-[*1..N]-(m)` (path-variable binding
-///   is restricted to `shortestPath()` calls). Its function table also
-///   omits `length()`, `reduce()`, and `relationships()`. Primary-source
-///   citation: `vendor/moon/src/graph/cypher/parser/pattern.rs:172-216`
-///   + `executor/eval.rs:116-227`.
-/// - **Apache AGE 1.5** (Postgres backend) accepts `MATCH p = ...` and
-///   `length(p)` and `n.id_hex AS source_entity_id`, but rejects
-///   `reduce(acc, x in xs | ...)` — parse error at the `|` token.
-///   Confirmed by the Wave 4b probe.
+/// Wave 4 amendment: a parallel-agent probe found that Moon does not
+/// accept the full Wave-4 template. It rejects
+/// `MATCH p = (n)-[*1..N]-(m)` (path-variable binding is restricted to
+/// `shortestPath()` calls) and its function table omits `length()`,
+/// `reduce()`, and `relationships()`. Primary-source citation:
+/// `vendor/moon/src/graph/cypher/parser/pattern.rs:172-216`
+/// + `executor/eval.rs:116-227`.
 ///
 /// Each backend declares the tier it genuinely supports via
 /// [`StorageCapabilities::cypher_dialect`]. The
 /// `crates/lunaris-retrieve/src/operators/graph.rs` operator reads this
 /// field at retrieve-time and picks the matching template. Promotion to
 /// a higher tier requires primary-source dialect verification.
+///
+/// 0.7.0 removed the intermediate `PathMetrics` tier — it existed only to
+/// describe Apache AGE 1.5 (path binding + `length(p)`, but no `reduce()`),
+/// and the Postgres backend that spoke it was deleted with the Moon-only
+/// break. No producer survived it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CypherDialect {
     /// Pre-Wave-4 template: `MATCH (n)-[*1..N]-(m) RETURN m.id_hex AS id,
     /// m.name AS name, m.type AS type`. No path metrics, no source
-    /// entity. All backends support this. The operator's optional-header
-    /// fallback (Wave 3) reduces the score formula to the legacy
-    /// `1.0 / (1.0 + i)` when no path metrics arrive.
+    /// entity. This is Moon's ceiling today. The operator's
+    /// optional-header fallback (Wave 3) reduces the score formula to the
+    /// legacy `1.0 / (1.0 + i)` when no path metrics arrive.
     #[default]
     Legacy,
-    /// Wave 4 partial: adds `MATCH p = ...` path binding + `length(p) AS
-    /// path_length` + `n.id_hex AS source_entity_id`. Omits the
-    /// `reduce(...)` expression because AGE 1.5 rejects the `|` token.
-    /// The operator stamps `anchor_confidence` post-Cypher from the seed
-    /// map; `edge_weight_product` falls back to its `1.0` default in the
-    /// header-keyed parser. AGE 1.5 compatible.
-    PathMetrics,
-    /// Wave 4 full: PathMetrics + `reduce(w=1.0, r in relationships(p) |
-    /// w * coalesce(r.weight, 1.0)) AS edge_weight_product`. No current
-    /// backend supports this — kept for forward-compat when Moon or AGE
-    /// add `reduce()` over variable-length paths.
+    /// Wave 4 full: `MATCH p = ...` path binding + `length(p) AS
+    /// path_length` + `n.id_hex AS source_entity_id` +
+    /// `reduce(w=1.0, r in relationships(p) | w * coalesce(r.weight, 1.0))
+    /// AS edge_weight_product`. No current backend supports this — kept
+    /// for forward-compat against a Moon that grows path binding and
+    /// `reduce()` over variable-length paths.
     Full,
 }
 
@@ -90,12 +85,9 @@ pub struct StorageCapabilities {
     /// Cypher dialect tier the backend's graph executor accepts.
     ///
     /// Defaults to [`CypherDialect::Legacy`] — the universally-supported
-    /// pre-Wave-4 template. Backends opt into higher tiers only with
-    /// primary-source dialect verification:
-    /// - Moon: stays at `Legacy` (Wave 4 probe rejected `MATCH p = ...`).
-    /// - Postgres (AGE 1.5): `PathMetrics` (accepts `MATCH p = ...` +
-    ///   `length(p)` + `source_entity_id`; rejects `reduce(...)`).
-    /// - Embedded: `Legacy` (no graph support; returns `NotSupported`).
+    /// pre-Wave-4 template. Backends opt into `Full` only with
+    /// primary-source dialect verification; Moon stays at `Legacy` (the
+    /// Wave 4 probe rejected `MATCH p = ...`).
     ///
     /// See [`CypherDialect`] for the full tier matrix.
     pub cypher_dialect: CypherDialect,

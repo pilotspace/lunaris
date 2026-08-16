@@ -7,30 +7,28 @@
 //!
 //! ## Capability-driven Cypher dialect dispatch (Wave 4 amendment)
 //!
-//! Parallel-agent probes against the two supported backends found that
-//! neither accepts the full Wave-4 template. The operator now picks the
-//! Cypher template at `retrieve()`-time from
-//! [`StorageCapabilities::cypher_dialect`](lunaris_core::CypherDialect):
+//! A parallel-agent probe found that Moon does not accept the full Wave-4
+//! template. The operator picks the Cypher template at `retrieve()`-time
+//! from [`StorageCapabilities::cypher_dialect`](lunaris_core::CypherDialect):
 //!
 //! | Tier | Backends | Template shape |
 //! |------|----------|----------------|
-//! | [`CypherDialect::Legacy`] | Moon, embedded | `MATCH (n)-[*1..N]-(m) RETURN id/name/type` |
-//! | [`CypherDialect::PathMetrics`] | Postgres (AGE 1.5) | `MATCH p = ...` + `length(p)` + `source_entity_id` (no `reduce()`) |
-//! | [`CypherDialect::Full`] | (forward-compat) | PathMetrics + `reduce(...) AS edge_weight_product` |
+//! | [`CypherDialect::Legacy`] | Moon | `MATCH (n)-[*1..N]-(m) RETURN id/name/type` |
+//! | [`CypherDialect::Full`] | (forward-compat) | `MATCH p = ...` + `length(p)` + `source_entity_id` + `reduce(...) AS edge_weight_product` |
 //!
-//! Primary-source rejections that motivated the split:
-//! - **Moon** rejects `MATCH p = (n)-[*1..N]-(m)` outside `shortestPath()`
-//!   (`vendor/moon/src/graph/cypher/parser/pattern.rs:172-216`) and its
-//!   function table omits `length()`, `reduce()`, `relationships()`
-//!   (`executor/eval.rs:116-227`).
-//! - **Apache AGE 1.5** accepts the path binding + `length(p)` + the
-//!   `source_entity_id` alias but rejects `reduce(acc, x in xs | ...)`
-//!   — parse error at the `|` token (Wave 4b probe).
+//! Primary-source rejection that motivated the split: **Moon** rejects
+//! `MATCH p = (n)-[*1..N]-(m)` outside `shortestPath()`
+//! (`vendor/moon/src/graph/cypher/parser/pattern.rs:172-216`) and its
+//! function table omits `length()`, `reduce()`, `relationships()`
+//! (`executor/eval.rs:116-227`).
+//!
+//! 0.7.0 dropped the intermediate `PathMetrics` tier along with the
+//! Postgres backend (Apache AGE 1.5) that was its only producer.
 //!
 //! W-7 fix: the property name MUST be `id_hex` because Plan 03-03's ingest
 //! fan-out writes `WriteOp::GraphNode { props: { "id_hex": format!("{}",
 //! entity_id), ... } }`. Earlier drafts used `id`, which silently returned
-//! zero rows. All three templates use `id_hex`.
+//! zero rows. Both templates use `id_hex`.
 //!
 //! Score formula:
 //!   `score = (edge_weight_product / (1.0 + path_length)) * anchor_confidence`
@@ -41,8 +39,8 @@
 //! `Graph::anchored`'s `Vec<(EntityId, f32)>` argument).
 //!
 //! Back-compat: when a column the dialect promises is absent from the
-//! response (e.g., a degraded backend, or PathMetrics where
-//! `edge_weight_product` is never emitted), the header-keyed parser falls
+//! response (e.g., a degraded backend that answers with the legacy
+//! three-column shape), the header-keyed parser falls
 //! back to defaults (`path_length = i`, `edge_weight_product = 1.0`,
 //! `anchor_confidence = 1.0`) — the score reduces to the Wave-3 legacy
 //! `1.0 / (1.0 + i)`. The `graph_score_back_compat_when_no_new_headers`
@@ -260,12 +258,8 @@ impl Graph {
     /// - [`CypherDialect::Legacy`] — Moon-compatible. No path binding, no
     ///   `length()`, no `reduce()`, no `source_entity_id`. The header-keyed
     ///   parser falls back to the Wave-3 `1/(1+i)` score formula.
-    /// - [`CypherDialect::PathMetrics`] — AGE-1.5-compatible. Adds
-    ///   `MATCH p = ...` + `length(p) AS path_length` +
-    ///   `n.id_hex AS source_entity_id`. Skips `reduce(...)` because AGE
-    ///   1.5 rejects the `|` token; `edge_weight_product` falls back to
-    ///   the parser default `1.0`.
-    /// - [`CypherDialect::Full`] — forward-compat. PathMetrics +
+    /// - [`CypherDialect::Full`] — forward-compat. `MATCH p = ...` +
+    ///   `length(p) AS path_length` + `n.id_hex AS source_entity_id` +
     ///   `reduce(w=1.0, r in relationships(p) | ...) AS
     ///   edge_weight_product`. No current backend accepts this.
     ///
@@ -281,18 +275,6 @@ impl Graph {
                    m.id_hex AS id, \
                    m.name AS name, \
                    m.type AS type \
-                 LIMIT $k",
-                hops = self.hops,
-            ),
-            CypherDialect::PathMetrics => format!(
-                "UNWIND $ids AS sid \
-                 MATCH p = (n)-[*1..{hops}]-(m) WHERE n.id_hex = sid \
-                 RETURN \
-                   m.id_hex AS id, \
-                   m.name AS name, \
-                   m.type AS type, \
-                   length(p) AS path_length, \
-                   n.id_hex AS source_entity_id \
                  LIMIT $k",
                 hops = self.hops,
             ),
@@ -337,10 +319,9 @@ impl Retriever for Graph {
         }
         // Wave 4 amendment: read the backend's declared dialect tier and
         // build the matching Cypher template. Moon stays at Legacy (its
-        // parser rejects `MATCH p = ...` outside shortestPath()), Postgres
-        // (AGE 1.5) reports PathMetrics (supports path binding + length(p)
-        // + source_entity_id but rejects `reduce()`), embedded reports
-        // Legacy. The capability is read ONCE here, not threaded through
+        // parser rejects `MATCH p = ...` outside shortestPath()); `Full`
+        // is reserved for a future backend that accepts path binding +
+        // reduce(). The capability is read ONCE here, not threaded through
         // every operator method, so the dispatch point is single and
         // testable. See `dispatch_*` integration tests in graph_anchored.rs.
         let dialect = ctx.storage.capabilities().cypher_dialect;
@@ -533,7 +514,7 @@ mod tests {
         let g = Graph::anchored(vec![(id1, 1.0), (id2, 1.0)], 3);
         let id1_hex = format!("{}", id1);
         let id2_hex = format!("{}", id2);
-        for dialect in [CypherDialect::Legacy, CypherDialect::PathMetrics, CypherDialect::Full] {
+        for dialect in [CypherDialect::Legacy, CypherDialect::Full] {
             let q = g.build_cypher(dialect);
             assert!(
                 q.cypher.contains("[*1..3]"),
@@ -574,7 +555,7 @@ mod tests {
         // nor `hops` constrains. See `feedback_moon_cypher_inline_filter`.
         let id = EntityId::from_name_and_type("Alice", "Person");
         let g = Graph::anchored(vec![(id, 1.0)], 2);
-        for dialect in [CypherDialect::Legacy, CypherDialect::PathMetrics, CypherDialect::Full] {
+        for dialect in [CypherDialect::Legacy, CypherDialect::Full] {
             let q = g.build_cypher(dialect);
             assert!(
                 q.cypher.contains("WHERE n.id_hex = sid"),
@@ -627,39 +608,10 @@ mod tests {
     }
 
     #[test]
-    fn build_cypher_path_metrics_dialect_emits_path_and_length_but_not_reduce() {
-        // PathMetrics tier (Postgres AGE 1.5 ceiling): path binding +
-        // length(p) + source_entity_id; NO reduce() (AGE rejects `|`).
-        let id = EntityId::from_name_and_type("Alice", "Person");
-        let g = Graph::anchored(vec![(id, 1.0)], 2);
-        let q = g.build_cypher(CypherDialect::PathMetrics);
-        assert!(q.cypher.contains("MATCH p ="), "PathMetrics MUST bind path: {}", q.cypher);
-        assert!(
-            q.cypher.contains("length(p) AS path_length"),
-            "PathMetrics MUST emit length(p) AS path_length: {}",
-            q.cypher
-        );
-        assert!(
-            q.cypher.contains("n.id_hex AS source_entity_id"),
-            "PathMetrics MUST emit source_entity_id alias: {}",
-            q.cypher
-        );
-        assert!(
-            !q.cypher.contains("reduce("),
-            "PathMetrics MUST NOT emit reduce() — AGE 1.5 rejects `|`: {}",
-            q.cypher
-        );
-        assert!(
-            !q.cypher.contains("edge_weight_product"),
-            "PathMetrics MUST NOT emit edge_weight_product alias (operator falls back to default 1.0): {}",
-            q.cypher
-        );
-    }
-
-    #[test]
     fn build_cypher_full_dialect_emits_full_wave4_columns() {
-        // Full tier (forward-compat — no backend supports this yet):
-        // PathMetrics + reduce(...) AS edge_weight_product.
+        // Full tier (forward-compat — no backend supports this yet): path
+        // binding + length(p) + source_entity_id + reduce(...) AS
+        // edge_weight_product.
         let id = EntityId::from_name_and_type("Alice", "Person");
         let g = Graph::anchored(vec![(id, 1.0)], 2);
         let q = g.build_cypher(CypherDialect::Full);
@@ -686,7 +638,7 @@ mod tests {
     fn build_cypher_targets_lunaris_graph_by_default() {
         let id = EntityId::from_name_and_type("Alice", "Person");
         let g = Graph::anchored(vec![(id, 1.0)], 2);
-        for dialect in [CypherDialect::Legacy, CypherDialect::PathMetrics, CypherDialect::Full] {
+        for dialect in [CypherDialect::Legacy, CypherDialect::Full] {
             let q = g.build_cypher(dialect);
             assert_eq!(q.graph, "lunaris_graph", "[{dialect:?}] default graph name");
         }
@@ -698,7 +650,7 @@ mod tests {
         // its own AGE / Moon graph (property holds per-dialect).
         let id = EntityId::from_name_and_type("Alice", "Person");
         let g = Graph::anchored(vec![(id, 1.0)], 2).with_graph("tenant_42_graph");
-        for dialect in [CypherDialect::Legacy, CypherDialect::PathMetrics, CypherDialect::Full] {
+        for dialect in [CypherDialect::Legacy, CypherDialect::Full] {
             let q = g.build_cypher(dialect);
             assert_eq!(q.graph, "tenant_42_graph", "[{dialect:?}] custom graph name");
         }
