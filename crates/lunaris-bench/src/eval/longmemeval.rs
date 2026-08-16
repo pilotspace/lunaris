@@ -498,6 +498,36 @@ fn lme_final_top(
     }
 }
 
+/// Parse the harness's own `[Session date: <d>]` marker (prepended to every
+/// session's turn list at corpus-load time) back into a UTC timestamp for
+/// the dated-write seam (`CodingSessionMemory::write_dated` →
+/// `Episode::t_ref` → extraction `REFERENCE_TIME`).
+///
+/// LongMemEval's format is `2023/05/30 (Tue) 23:40` — weekday and time are
+/// optional, parenthesized tokens are skipped. Unparseable or absent marker
+/// → `None`: the session ingests undated and the extraction prompt falls
+/// back to its null-over-guess policy (never "today").
+fn session_date_utc(texts: &[String]) -> Option<chrono::DateTime<chrono::Utc>> {
+    let inner = texts.first()?.strip_prefix("[Session date: ")?.strip_suffix(']')?;
+    let mut date_tok: Option<&str> = None;
+    let mut time_tok: Option<&str> = None;
+    for tok in inner.split_whitespace() {
+        if tok.starts_with('(') {
+            continue;
+        }
+        if date_tok.is_none() {
+            date_tok = Some(tok);
+        } else if time_tok.is_none() {
+            time_tok = Some(tok);
+        }
+    }
+    let date = chrono::NaiveDate::parse_from_str(date_tok?, "%Y/%m/%d").ok()?;
+    let time = time_tok
+        .and_then(|t| chrono::NaiveTime::parse_from_str(t, "%H:%M").ok())
+        .unwrap_or(chrono::NaiveTime::MIN);
+    Some(chrono::DateTime::from_naive_utc_and_offset(date.and_time(time), chrono::Utc))
+}
+
 /// Whether the retrieved-fact bullet block ([`fact_context_block`]) is fed
 /// to the reader for this question's classified intent.
 ///
@@ -777,7 +807,12 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         // entity/relation key is a deterministic blake3 of name+type, so
         // concurrent writes are idempotent same-key puts — no last-writer
         // hazard, no cross-session interference.
-        let docs: Vec<(String, String, usize)> = rec
+        // The 4th element is the session's real-world date parsed back from
+        // the harness's own `[Session date: ...]` marker — threaded to
+        // `Episode::t_ref` via `write_dated` so graph-ON extraction gets a
+        // REFERENCE_TIME on every chunk (Mechanism B, 2026-07-29).
+        type DocEntry = (String, String, usize, Option<chrono::DateTime<chrono::Utc>>);
+        let docs: Vec<DocEntry> = rec
             .sessions
             .iter()
             .enumerate()
@@ -789,7 +824,12 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 {
                     return None;
                 }
-                Some((format!("{sid}.md"), turns.join("\n\n"), turns.len()))
+                Some((
+                    format!("{sid}.md"),
+                    turns.join("\n\n"),
+                    turns.len(),
+                    session_date_utc(turns),
+                ))
             })
             .collect();
         // INGEST CONCURRENCY (`LUNARIS_EVAL_LME_INGEST_CONCURRENCY`, default 1
@@ -807,8 +847,11 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             .unwrap_or(1);
         let ingested: usize = if ingest_concurrency <= 1 {
             let mut acc = 0usize;
-            for (name, doc, nturns) in &docs {
-                pad.write(name, doc.clone()).await?;
+            for (name, doc, nturns, date) in &docs {
+                match date {
+                    Some(t) => pad.write_dated(name, doc.clone(), *t).await?,
+                    None => pad.write(name, doc.clone()).await?,
+                };
                 acc += nturns;
             }
             acc
@@ -816,9 +859,15 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             use futures::stream::StreamExt;
             let results: Vec<Result<usize, lunaris_core::LunarisError>> =
                 futures::stream::iter(docs.iter())
-                    .map(|(name, doc, nturns)| {
+                    .map(|(name, doc, nturns, date)| {
                         let pad = &pad;
-                        async move { pad.write(name, doc.clone()).await.map(|_| *nturns) }
+                        async move {
+                            match date {
+                                Some(t) => pad.write_dated(name, doc.clone(), *t).await,
+                                None => pad.write(name, doc.clone()).await,
+                            }
+                            .map(|_| *nturns)
+                        }
                     })
                     .buffer_unordered(ingest_concurrency)
                     .collect()
@@ -2028,6 +2077,7 @@ mod tests {
             chunk_id: ulid::Ulid::new(),
             text: text.to_owned(),
             heading_path: vec![],
+            reference_time_iso: None,
         }
     }
 
