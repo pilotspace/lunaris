@@ -213,6 +213,25 @@ struct RunConfig {
     q_limit: usize,
     topk: usize,
     pool: usize,
+    /// Context-window expansion: each hit message is rendered together with
+    /// this many neighbouring messages on each side (clamped to the prefix
+    /// bound). PersonaMem docs are single messages, so a bare hit often lands
+    /// mid-dialogue — an assistant turn without the user turn that prompted
+    /// it. `0` restores bare-hit rendering.
+    neighbors: usize,
+    /// Per-option evidence retrieval: for each candidate response, the store
+    /// is queried with the OPTION TEXT and this many top hits are shown to the
+    /// reader as "most similar past messages". This is what exposes RECYCLED
+    /// candidates — PersonaMem's fresh-idea distractors restate activities or
+    /// suggestions already in the history, invisible to a topk-bounded memory
+    /// window. `0` disables the pass.
+    evidence: usize,
+    /// Reader-ceiling mode: bypass retrieval entirely and hand the reader the
+    /// FULL allowed prefix (`messages[..end_index]`). Not a memory-system
+    /// measurement — it answers "what would this reader score if retrieval
+    /// were perfect and unlimited", which bounds what any retrieval
+    /// configuration can achieve with this reader.
+    full_ctx: bool,
     hybrid: bool,
     rerank: bool,
     no_memory: bool,
@@ -232,6 +251,9 @@ impl RunConfig {
             q_limit: env_usize("LUNARIS_EVAL_PM_QLIMIT", usize::MAX),
             topk: env_usize("LUNARIS_EVAL_PM_TOPK", 10),
             pool: env_usize("LUNARIS_EVAL_PM_POOL", 30),
+            neighbors: env_usize("LUNARIS_EVAL_PM_NEIGHBORS", 1),
+            evidence: env_usize("LUNARIS_EVAL_PM_EVIDENCE", 3),
+            full_ctx: env_flag("LUNARIS_EVAL_PM_FULLCTX", false),
             hybrid: env_flag("LUNARIS_EVAL_PM_HYBRID", true),
             rerank: env_flag("LUNARIS_EVAL_PM_RERANK", true),
             no_memory: env_flag("LUNARIS_EVAL_PM_NOMEM", false),
@@ -246,7 +268,7 @@ impl RunConfig {
     fn banner(&self) -> String {
         format!(
             "  [personamem] split={} model={} contexts[{}..{}) of {} \
-             topk={} pool={} hybrid={} rerank={} memory={}",
+             topk={} pool={} neighbors={} evidence={} fullctx={} hybrid={} rerank={} memory={}",
             self.split,
             self.model,
             self.offset,
@@ -254,6 +276,9 @@ impl RunConfig {
             self.total_contexts,
             self.topk,
             self.pool,
+            self.neighbors,
+            self.evidence,
+            self.full_ctx,
             self.hybrid,
             self.rerank,
             if self.no_memory { "OFF (no-memory floor arm)" } else { "ON" },
@@ -370,10 +395,10 @@ async fn answer_one(
         error,
     };
 
-    let (sources, hits) = if cfg.no_memory {
+    let (sources, hits) = if cfg.no_memory || cfg.full_ctx {
         (Vec::new(), 0)
     } else {
-        match retrieve(lunaris, &q.user_message, cfg).await {
+        match retrieve(lunaris, &q.user_message, cfg, cfg.topk).await {
             Ok(s) => {
                 let n = s.len();
                 (s, n)
@@ -402,9 +427,63 @@ async fn answer_one(
         return mk(None, hits, 0, max_hit_index, Some(msg));
     }
 
+    // Context-window expansion (post-guard, clamped to the prefix bound):
+    // PersonaMem docs are single messages, so a bare hit often lands
+    // mid-dialogue — an assistant turn without the user turn that prompted it.
+    // Rendering each hit with `cfg.neighbors` messages on each side restores
+    // the local dialogue. Clamping to `end_index - 1` means expansion can
+    // never leak past the prefix the raw hits were guarded against above.
+    let indices = if cfg.full_ctx && !cfg.no_memory {
+        // Reader-ceiling mode: the whole allowed prefix, in order.
+        (0..q.end_index.min(messages.len())).collect()
+    } else {
+        expand_with_neighbors(&indices, cfg.neighbors, q.end_index)
+    };
     let memories: Vec<String> =
         indices.iter().filter_map(|i| messages.get(*i)).map(dataset::render_message).collect();
-    let prompt = reader::render_mcq_prompt(&memories, &q.user_message, &q.options);
+
+    // Per-option evidence: query the store with each CANDIDATE's text and show
+    // the reader its nearest past messages. A recycled candidate (an activity
+    // or suggestion already in the history) surfaces its own near-duplicate;
+    // a genuinely new one doesn't. Same store, same guard discipline.
+    let mut option_evidence: Vec<(char, Vec<String>)> = Vec::new();
+    if !cfg.no_memory && !cfg.full_ctx && cfg.evidence > 0 {
+        for (letter, text) in &q.options {
+            let srcs = match retrieve(lunaris, text, cfg, cfg.evidence).await {
+                Ok(s) => s,
+                Err(e) => {
+                    return mk(
+                        None,
+                        hits,
+                        0,
+                        max_hit_index,
+                        Some(format!("evidence recall failed: {e}")),
+                    );
+                }
+            };
+            let mut ev: Vec<usize> =
+                srcs.iter().filter_map(|s| dataset::index_from_source(s)).collect();
+            ev.sort_unstable();
+            ev.dedup();
+            if let Some(leak) = ev.iter().find(|i| **i >= q.end_index) {
+                let msg = format!(
+                    "TEMPORAL LEAK: evidence hit index {leak} >= prefix end {} for {}",
+                    q.end_index, q.question_id
+                );
+                eprintln!("  [personamem] {msg}");
+                return mk(None, hits, 0, max_hit_index, Some(msg));
+            }
+            let rendered: Vec<String> = ev
+                .iter()
+                .filter_map(|i| messages.get(*i))
+                .map(|m| truncate_chars(&dataset::render_message(m), 400))
+                .collect();
+            option_evidence.push((*letter, rendered));
+        }
+    }
+
+    let prompt =
+        reader::render_mcq_prompt(&memories, &q.user_message, &q.options, &option_evidence);
     if cfg.debug {
         eprintln!(
             "    [DEBUG {}] type={} end={} ingested={ingested} hits={hits} memories={} session={session}",
@@ -449,6 +528,7 @@ async fn retrieve(
     lunaris: &std::sync::Arc<lunaris::Lunaris>,
     query: &str,
     cfg: &RunConfig,
+    topk: usize,
 ) -> anyhow::Result<Vec<String>> {
     let hits = if cfg.hybrid {
         let fused = lunaris::Vector::new("chunks", cfg.pool)
@@ -465,12 +545,12 @@ async fn retrieve(
                 cfg.pool.saturating_mul(2),
             );
             builder
-                .with_root_boxed(Box::new(lunaris::TopRetriever::new(Box::new(reranked), cfg.topk)))
+                .with_root_boxed(Box::new(lunaris::TopRetriever::new(Box::new(reranked), topk)))
                 .execute(lunaris::Query::text(query))
                 .await?
         } else {
             builder
-                .with_root_boxed(Box::new(lunaris::TopRetriever::new(Box::new(fused), cfg.topk)))
+                .with_root_boxed(Box::new(lunaris::TopRetriever::new(Box::new(fused), topk)))
                 .execute(lunaris::Query::text(query))
                 .await?
         }
@@ -479,9 +559,41 @@ async fn retrieve(
         if cfg.rerank {
             builder = builder.rerank(lunaris.reranker());
         }
-        builder.top(cfg.topk).execute(lunaris::Query::text(query)).await?
+        builder.top(topk).execute(lunaris::Query::text(query)).await?
     };
     Ok(hits.into_iter().map(|h| h.source).collect())
+}
+
+/// Truncate to at most `max` characters on a char boundary, marking the cut.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max).collect();
+        t.push('…');
+        t
+    }
+}
+
+/// Expand hit indices with `neighbors` messages on each side, clamped to the
+/// question's prefix (`end_index` exclusive), sorted and deduped. `neighbors`
+/// of 0 returns the input untouched, so bare-hit rendering stays reachable.
+///
+/// Pure by design: expansion runs AFTER the runtime temporal-leak guard, so
+/// this clamp is what keeps the widened window inside the prefix bound.
+fn expand_with_neighbors(indices: &[usize], neighbors: usize, end_index: usize) -> Vec<usize> {
+    if neighbors == 0 || end_index == 0 {
+        return indices.to_vec();
+    }
+    let last_allowed = end_index - 1;
+    let mut expanded: Vec<usize> = indices
+        .iter()
+        .flat_map(|&i| i.saturating_sub(neighbors)..=i.saturating_add(neighbors))
+        .filter(|&i| i <= last_allowed)
+        .collect();
+    expanded.sort_unstable();
+    expanded.dedup();
+    expanded
 }
 
 /// Per-question artifact (`<LUNARIS_EVAL_PM_ARTIFACT_DIR>/<question_id>.json`).
@@ -570,6 +682,9 @@ mod tests {
             q_limit: usize::MAX,
             topk: 10,
             pool: 30,
+            neighbors: 1,
+            evidence: 3,
+            full_ctx: false,
             hybrid: true,
             rerank: true,
             no_memory: false,
@@ -587,6 +702,20 @@ mod tests {
         assert_eq!(v["scored"], serde_json::json!(4));
         assert_eq!(v["offset"], serde_json::json!(3));
         assert_eq!(v["split"], serde_json::json!("32k"));
+    }
+
+    #[test]
+    fn neighbor_expansion_widens_dedupes_and_clamps_to_the_prefix() {
+        // Two hits one apart: windows overlap and dedupe.
+        assert_eq!(expand_with_neighbors(&[3, 4], 1, 100), vec![2, 3, 4, 5]);
+        // Hit at 0: the left edge saturates instead of underflowing.
+        assert_eq!(expand_with_neighbors(&[0], 2, 100), vec![0, 1, 2]);
+        // Hit at the prefix boundary: expansion NEVER crosses end_index.
+        assert_eq!(expand_with_neighbors(&[9], 3, 10), vec![6, 7, 8, 9]);
+        // neighbors=0 restores bare-hit rendering byte-for-byte.
+        assert_eq!(expand_with_neighbors(&[7, 2], 0, 10), vec![7, 2]);
+        // Degenerate empty prefix stays empty-safe.
+        assert_eq!(expand_with_neighbors(&[], 1, 0), Vec::<usize>::new());
     }
 
     #[test]

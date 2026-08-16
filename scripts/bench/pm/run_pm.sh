@@ -50,6 +50,9 @@ RERANKER_GGUF="${LUNARIS_RERANKER_GGUF:-$HOME/.lunaris/models/bge-reranker-v2-m3
 READER_MODEL="${READER_MODEL:-claude-sonnet-5}"
 TOPK="${TOPK:-10}"
 POOL="${POOL:-30}"
+NEIGHBORS="${NEIGHBORS:-1}"                   # hit context-window expansion (± messages)
+EVIDENCE="${EVIDENCE:-3}"                     # per-option evidence hits (0 = off)
+FULLCTX="${FULLCTX:-0}"                       # reader-ceiling mode: full prefix, no retrieval
 QOFFSET="${QOFFSET:-0}"                       # question slice within a context
 QLIMIT="${QLIMIT:-}"                          # empty = every question
 
@@ -101,6 +104,9 @@ declare -a CFG=(
   "LUNARIS_EVAL_PM_QOFFSET=${QOFFSET}"
   "LUNARIS_EVAL_PM_TOPK=${TOPK}"
   "LUNARIS_EVAL_PM_POOL=${POOL}"
+  "LUNARIS_EVAL_PM_NEIGHBORS=${NEIGHBORS}"
+  "LUNARIS_EVAL_PM_EVIDENCE=${EVIDENCE}"
+  "LUNARIS_EVAL_PM_FULLCTX=${FULLCTX}"
   "LUNARIS_EVAL_PM_HYBRID=1"
   "LUNARIS_EVAL_PM_RERANK=1"
   "LUNARIS_EVAL_PM_NOMEM=${NOMEM}"
