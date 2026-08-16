@@ -174,6 +174,7 @@ pub mod locomo;
 pub mod longmemeval;
 pub mod memory;
 pub mod perf_delta;
+pub mod personamem;
 pub mod results;
 pub mod score;
 
