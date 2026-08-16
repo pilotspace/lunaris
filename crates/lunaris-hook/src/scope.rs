@@ -15,7 +15,9 @@
 //! Two sources, in order: `LUNARIS_STORE_URL` (W7 fix — no
 //! `LUNARIS_HOOK_STORAGE` alias; single shared env var across both binaries),
 //! then a live `lunaris-contextd` embedded Moon discovered via
-//! `~/.lunaris/contextd-moon.url`.
+//! `~/.lunaris/contextd-moon.url`. The discovery half now lives in
+//! `lunaris_core::store_discovery` — `lunaris-mcp` resolves through the same
+//! function (task #28), so "the advertised store" means one thing repo-wide.
 //!
 //! There is **no third step**. Through 0.6.x this function ended in
 //! `sqlite://~/.lunaris/<scope>.db`; 0.7.0 deleted the embedded backend, so
@@ -215,7 +217,7 @@ pub fn resolve_storage_url_at(
     lunaris_dir: &Path,
 ) -> Result<String, ScopeResolveError> {
     let _ = scope;
-    if let Some(url) = discover_contextd_moon(&lunaris_dir.join(CONTEXTD_MOON_URL_FILE)) {
+    if let Some(url) = discover_contextd_moon(lunaris_dir).into_url() {
         return Ok(url);
     }
     Err(ScopeResolveError::NoStoreUrl(NO_STORE_URL_HELP.to_string()))
@@ -224,62 +226,20 @@ pub fn resolve_storage_url_at(
 /// Discovery-file name under `~/.lunaris`. Written by `lunaris-contextd` when
 /// its embedded Moon is ready (feature `embedded-moon`); read by EVERY
 /// resolver, feature or not — a missing file simply falls through.
-pub const CONTEXTD_MOON_URL_FILE: &str = "contextd-moon.url";
-
-/// Read the contextd embedded-Moon discovery file and liveness-probe the
-/// advertised endpoint. Returns `Some("moon://…")` only when:
-/// - the address is LOOPBACK (contextd only ever advertises 127.0.0.1 —
-///   a discovery file pointing anywhere else is treated as tampered and
-///   ignored, so it can never redirect captures off-host), and
-/// - the endpoint answers a real RESP `PING` with `+PONG` within the probe
-///   budget (default 25ms, override `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS`;
-///   `0` errors the connect, i.e. skips discovery entirely — documented
-///   escape hatch, not a crash: `connect_timeout` returns `InvalidInput`
-///   for a zero duration).
 ///
-/// The PING (not a bare TCP connect) matters because the discovery file is
-/// never cleaned up: after contextd dies, the OS will eventually reassign
-/// its ephemeral port to some unrelated process. A random listener accepts
-/// TCP but does not answer `+PONG`, so the probe fails and discovery is
-/// declined. A stale/garbage/unwritable file behaves the same — the probe
-/// must NEVER hang or propagate somebody else's leftovers as an error.
-///
-/// Declining is not the same as failing open: since 0.7.0 there is no SQLite
-/// beneath this step, so a declined discovery ends in
-/// [`ScopeResolveError::NoStoreUrl`]. What this function still guarantees is
-/// that the *reason* is "nothing live was advertised" rather than a hang or a
-/// parse error from a file no one owns.
-fn discover_contextd_moon(url_file: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(url_file).ok()?;
-    let url = raw.trim();
-    let addr = url.strip_prefix("moon://")?;
-    let sock: std::net::SocketAddr = addr.parse().ok()?;
-    if !sock.ip().is_loopback() {
-        return None;
-    }
-    let timeout_ms = std::env::var("LUNARIS_MOON_DISCOVERY_TIMEOUT_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(25);
-    let timeout = std::time::Duration::from_millis(timeout_ms);
-    let probe = || -> std::io::Result<bool> {
-        use std::io::{Read, Write};
-        let mut stream = std::net::TcpStream::connect_timeout(&sock, timeout)?;
-        stream.set_read_timeout(Some(timeout))?;
-        stream.set_write_timeout(Some(timeout))?;
-        stream.write_all(b"*1\r\n$4\r\nPING\r\n")?;
-        let mut buf = [0u8; 7]; // "+PONG\r\n"
-        stream.read_exact(&mut buf)?;
-        Ok(buf.starts_with(b"+PONG"))
-    };
-    match probe() {
-        Ok(true) => Some(url.to_string()),
-        _ => None,
-    }
-}
+/// Re-exported from `lunaris_core::store_discovery` so `contextd.rs` (the
+/// WRITER) and every reader name the same constant. Since task #28 the probe
+/// itself lives there too, shared with `lunaris-mcp`; neither binary depends
+/// on the other.
+pub use lunaris_core::store_discovery::{CONTEXTD_MOON_URL_FILE, discover_contextd_moon};
 
 #[cfg(test)]
 mod discovery_tests {
+    //! Hook-side precedence. The probe's own semantics (stale port, non-loopback,
+    //! TCP-without-PONG, garbage) are pinned once in
+    //! `lunaris_core::store_discovery` — duplicating them here would only mean
+    //! two places to update when the contract moves.
+
     use super::*;
 
     fn scope() -> Scope {
@@ -356,46 +316,12 @@ mod discovery_tests {
     }
 
     #[test]
-    fn tcp_accept_without_pong_is_not_trusted() {
-        // A foreign process on contextd's reused ephemeral port accepts TCP
-        // but does not speak RESP — discovery must reject it (this is why
-        // the probe is a PING, not a bare connect: the discovery file is
-        // never cleaned up after contextd dies).
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let silent = std::thread::spawn(move || {
-            // Accept, read, answer garbage — never +PONG.
-            if let Ok((mut stream, _)) = listener.accept() {
-                use std::io::{Read, Write};
-                let mut buf = [0u8; 64];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n");
-            }
-        });
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp.path().join(CONTEXTD_MOON_URL_FILE),
-            format!("moon://127.0.0.1:{port}\n"),
-        )
-        .unwrap();
-        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
-        silent.join().unwrap();
-    }
-
-    #[test]
-    fn non_loopback_discovery_address_is_rejected() {
-        // contextd only ever advertises 127.0.0.1 — a discovery file pointing
-        // off-host is tampered/corrupt and must never redirect captures.
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "moon://192.0.2.10:6379\n")
-            .unwrap();
-        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
-    }
-
-    #[test]
-    fn stale_discovery_file_is_not_trusted() {
+    fn declined_discovery_is_a_named_refusal() {
         // Bind then DROP the listener — the advertised port is dead, exactly
-        // like a discovery file left behind by a crashed contextd.
+        // like a discovery file left behind by a crashed contextd. The probe's
+        // other decline paths are covered in `lunaris_core::store_discovery`;
+        // what matters HERE is that a decline maps to the exit ramp and never
+        // to a store URL.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -405,14 +331,6 @@ mod discovery_tests {
             format!("moon://127.0.0.1:{port}\n"),
         )
         .unwrap();
-        assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
-    }
-
-    #[test]
-    fn garbage_discovery_file_is_not_trusted() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(CONTEXTD_MOON_URL_FILE), "redis://not-a-moon-url:abc\n")
-            .unwrap();
         assert_refused_with_exit_ramp(resolve_storage_url_at(&scope(), tmp.path()));
     }
 }

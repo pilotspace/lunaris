@@ -13,10 +13,13 @@
 //! tools. It exercises router validation for EVERY tool, not one response type,
 //! so reintroducing a non-object response schema on ANY future tool fails here.
 //!
-//! Backend is a `lunaris-test-harness` ephemeral child-process Moon, passed in
-//! via `--storage` — which since 0.7.0 is mandatory (there is no SQLite
-//! default left to fall back to; `no_storage_refuses_to_boot_with_the_
-//! quickstart` below pins the refusal). No GGUF is required; the embedder is
+//! Backend is a `lunaris-test-harness` ephemeral child-process Moon. There is
+//! still no shipped storage default; storage comes either from `--storage` or
+//! (task #28) from a live store `lunaris-contextd` advertises in
+//! `~/.lunaris/contextd-moon.url`. Both arms are pinned below —
+//! `no_storage_refuses_to_boot_with_the_quickstart` for the refusal,
+//! `advertised_contextd_store_boots_the_stock_server` for the discovery path.
+//! No GGUF is required; the embedder is
 //! lazy and never loads here, so the test stays light and runs under the
 //! default feature set in CI. Note the harness SPAWNS a prebuilt `moon`
 //! binary — it does not enable `embedded-moon`, so this test binary still
@@ -115,8 +118,9 @@ async fn server_boots_and_lists_all_tools() {
     assert!(status.success(), "server exited non-zero: {status:?}");
 }
 
-/// 0.7.0: with no `--storage` and no `LUNARIS_MCP_STORAGE`, the server must
-/// REFUSE to boot and say what to do about it.
+/// 0.7.0 + task #28: with no `--storage`, no `LUNARIS_MCP_STORAGE`, **and no
+/// live contextd store advertised**, the server must REFUSE to boot and say
+/// what to do about it.
 ///
 /// The shipped default was a per-scope SQLite file. Deleting the backend
 /// without deleting the default would have left the binary "starting" against
@@ -127,6 +131,12 @@ async fn server_boots_and_lists_all_tools() {
 /// also proves the clap `env =` fallback does not resurrect a value from the
 /// developer's shell.
 ///
+/// `HOME` is an EMPTY tempdir. Since task #28 arm 2 reads
+/// `~/.lunaris/contextd-moon.url`, the refusal is now conditional on there
+/// being nothing advertised — without the tempdir this test would flake (pass
+/// or fail) depending on whether the developer running it has `lunaris-contextd`
+/// up, and would stop pinning anything.
+///
 /// Skipped under `--features embedded-moon`: that build DOES have a default
 /// (the Moon it launches in-process), and it is a dev/test build that never
 /// ships (CLAUDE.md invariant).
@@ -134,11 +144,17 @@ async fn server_boots_and_lists_all_tools() {
 #[tokio::test]
 async fn no_storage_refuses_to_boot_with_the_quickstart() {
     let bin = env!("CARGO_BIN_EXE_lunaris-mcp");
+    let home = tempfile::tempdir().expect("tempdir for HOME");
 
     let out = tokio::time::timeout(
         Duration::from_secs(60),
         Command::new(bin)
             .env_remove("LUNARIS_MCP_STORAGE")
+            // See the note in `advertised_contextd_store_boots_the_stock_server`:
+            // LUNARIS_CONTEXTD_SOCKET outranks the tempdir HOME.
+            .env_remove("LUNARIS_CONTEXTD_SOCKET")
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .env("LUNARIS_MCP_SKIP_STAGE", "1")
             .env("LUNARIS_MCP_SCOPE", "ci-no-storage-test")
             .env("LUNARIS_MCP_LOG", "error")
@@ -158,9 +174,18 @@ async fn no_storage_refuses_to_boot_with_the_quickstart() {
         "--shards 1",
         "docs/operations/external-moon.md",
         "lunaris-migrate",
+        // Task #28: starting contextd is a supported alternative to --storage,
+        // and the refusal is the only place an operator will learn that.
+        "lunaris-contextd",
+        "contextd-moon.url",
     ] {
         assert!(stderr.contains(needle), "startup refusal must mention {needle}:\n{stderr}");
     }
+    // Nothing was advertised here, so the stale-file note would be a lie.
+    assert!(
+        !stderr.contains("did not answer a RESP PING"),
+        "no discovery file existed — the stale-file note must not appear:\n{stderr}"
+    );
     // The dead default must not be advertised anywhere in the refusal except
     // as history — never as something the operator could still reach for.
     assert!(
@@ -182,8 +207,9 @@ async fn no_storage_refuses_to_boot_with_the_quickstart() {
 /// scan empty, so "it started" cannot pass for "it is wired".
 ///
 /// Hermetic: `HOME` points at a tempdir, so the discovery file under test is
-/// the only one on the search path and a developer machine running a real
-/// contextd cannot leak into (or out of) this test.
+/// the only one on the search path, and `LUNARIS_CONTEXTD_SOCKET` is cleared so
+/// a developer machine running a real contextd cannot leak into (or out of)
+/// this test through the proxy path either.
 ///
 /// Skipped under `--features embedded-moon`: that build launches its own
 /// in-process Moon before any discovery could apply (dev/test only — CLAUDE.md
@@ -211,6 +237,11 @@ async fn advertised_contextd_store_boots_the_stock_server() {
         // NO --storage, NO LUNARIS_MCP_STORAGE: the discovery file is the only
         // thing standing between this server and the boot refusal.
         .env_remove("LUNARIS_MCP_STORAGE")
+        // `proxy.rs` reads LUNARIS_CONTEXTD_SOCKET *ahead* of `$HOME/.lunaris`,
+        // so the tempdir HOME alone does not isolate us: a developer with that
+        // var exported would route these tool calls into their own contextd's
+        // store and the readback below would scan an empty keyspace.
+        .env_remove("LUNARIS_CONTEXTD_SOCKET")
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
         .env("LUNARIS_MCP_SKIP_STAGE", "1")

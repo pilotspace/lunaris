@@ -26,6 +26,9 @@ pub mod snippet;
 // Phase 23-01 — Scope derivation shared between lunaris-mcp and lunaris-hook.
 pub mod scope_resolver;
 pub mod storage;
+// Task #28 — contextd store discovery, shared between lunaris-mcp and
+// lunaris-hook (the other half of the bootstrap `scope_resolver` owns).
+pub mod store_discovery;
 
 pub use bitemporal::BiTemporal;
 pub use circuit_breaker::{CircuitBreaker, CircuitConfig, CircuitState};

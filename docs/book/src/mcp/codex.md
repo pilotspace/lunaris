@@ -56,8 +56,9 @@ memory.ingest  source="src:notes/architecture"  content="The ingest pipeline wri
 memory.recall  query="ingest pipeline atomicity"  k=3
 ```
 
-> **`LUNARIS_MCP_STORAGE` is required (0.7.0).** There is no default store any
-> more; the server refuses to boot without one. See
+> **`LUNARIS_MCP_STORAGE` has no default (0.7.0).** Set it, or run
+> `lunaris-contextd` and let the server adopt the store contextd advertises
+> (liveness-probed); with neither, it refuses to boot. See
 > [Storage](./index.md#storage).
 
 ## Override scope or point at Moon
