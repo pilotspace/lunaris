@@ -1522,6 +1522,32 @@ mod tests {
     }
 
     #[test]
+    fn session_date_parsed_from_marker() {
+        // Mechanism B (session-date grounding): the harness already prepends
+        // `[Session date: <d>]` to each session's turn list — the SAME value
+        // must now also reach `Episode::t_ref` via the dated-write seam so
+        // extraction gets a REFERENCE_TIME on EVERY chunk (the in-text marker
+        // only survives into the first chunk of a session). This parser reads
+        // the harness's own marker back; format is LongMemEval's
+        // "2023/05/30 (Tue) 23:40" (weekday optional, time optional).
+        let texts =
+            vec!["[Session date: 2023/05/30 (Tue) 23:40]".to_string(), "user: hi".to_string()];
+        let t = session_date_utc(&texts).expect("full marker must parse");
+        assert_eq!(t.to_rfc3339(), "2023-05-30T23:40:00+00:00");
+
+        let texts = vec!["[Session date: 2023/05/30]".to_string()];
+        let t = session_date_utc(&texts).expect("date-only marker must parse");
+        assert_eq!(t.to_rfc3339(), "2023-05-30T00:00:00+00:00");
+
+        assert!(session_date_utc(&["user: hi".to_string()]).is_none(), "no marker -> None");
+        assert!(
+            session_date_utc(&["[Session date: not-a-date]".to_string()]).is_none(),
+            "unparseable marker -> None (undated ingest, null-over-guess prompt)"
+        );
+        assert!(session_date_utc(&[]).is_none());
+    }
+
+    #[test]
     fn fact_bullets_gated_by_intent() {
         // N=125 A/B diagnosis (2026-07-29), Mechanism C: the one stable break
         // WITH fact bullets (q146, Recommendation) was STEERED wrong by a
