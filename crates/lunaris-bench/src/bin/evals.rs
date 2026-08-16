@@ -46,6 +46,10 @@ enum EvalCmd {
     E2e,
     /// EVAL-07 / EVAL-09 — Moon vs Postgres p50 ratio from Criterion JSON.
     PerfDelta,
+    /// EVAL-PM — PersonaMem persona-tracking MCQ accuracy (≥76% = Tencent's
+    /// published number). Operator-driven: needs a bench Moon + a chat reader,
+    /// so it is NOT part of `all`.
+    Personamem,
     /// EVAL-01..09 — Run every harness; aggregate into one eval-results.json.
     All,
 }
@@ -71,6 +75,7 @@ async fn main() -> ExitCode {
         EvalCmd::Memory => lunaris_bench::eval::memory::run(&mut results).await,
         EvalCmd::E2e => lunaris_bench::eval::e2e::run(&mut results).await,
         EvalCmd::PerfDelta => lunaris_bench::eval::perf_delta::run(&mut results).await,
+        EvalCmd::Personamem => lunaris_bench::eval::personamem::run(&mut results).await,
         EvalCmd::All => lunaris_bench::eval::run_all(&mut results).await,
     };
 
