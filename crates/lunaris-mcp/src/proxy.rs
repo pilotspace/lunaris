@@ -612,6 +612,132 @@ mod tests {
         );
     }
 
+    // ── Split-routing containment (task #20) ─────────────────────────────────
+
+    /// Spawn a one-shot fake contextd: accepts EXACTLY one connection, answers
+    /// with the supplied JSON, then unlinks the socket so every later connect
+    /// is refused (a daemon that died mid-session).
+    #[cfg(unix)]
+    fn spawn_one_shot_contextd(
+        dir: &std::path::Path,
+        reply: serde_json::Value,
+    ) -> (PathBuf, tokio::task::JoinHandle<()>) {
+        let path = dir.join("contextd.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind fake contextd");
+        listener.set_nonblocking(false).unwrap();
+        let sock = path.clone();
+        let handle = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                let _ = stream.read_to_end(&mut buf);
+                let _ = stream.write_all(reply.to_string().as_bytes());
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+            }
+            // Daemon dies: drop the listener AND unlink, so the next connect
+            // is a transport failure rather than a hang.
+            drop(listener);
+            let _ = std::fs::remove_file(&sock);
+        });
+        (path, handle)
+    }
+
+    /// SPLIT-ROUTING (task #20). The socket route and the Direct route derive
+    /// their store from two INDEPENDENT sources that nothing reconciles:
+    /// contextd resolves `LUNARIS_STORE_URL` / `~/.lunaris/contextd-moon.url`
+    /// in ITS OWN process env (`lunaris-hook/src/context.rs:649,670`), while
+    /// the mcp engine is opened once at boot from `--storage` /
+    /// `LUNARIS_MCP_STORAGE` (`state.rs:162`).
+    ///
+    /// So when contextd answers from Moon A and then dies, the breaker latches
+    /// this session to Direct and the SAME logical op stream continues against
+    /// Moon B — an ingest served over the socket is invisible to the forget
+    /// served Direct. `direct_fallback_is_byte_identical_to_bare_dispatch`
+    /// proves the two routes run identical CODE; it says nothing about them
+    /// running against the same STORE.
+    ///
+    /// Contract: once contextd has reported a store that differs from this
+    /// server's own, the Direct fallback is REFUSED — a named error the
+    /// operator can act on, never a silent write into the second store.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_fallback_is_refused_when_contextd_reported_a_different_store() {
+        let (state, store) = fresh_state("test-proxy-split-store").await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        // contextd answers one call, reporting a store that is NOT ours.
+        let foreign = "moon://127.0.0.1:1";
+        assert_ne!(foreign, store.url(), "the fake daemon must name a different store");
+        let (sock, server) = spawn_one_shot_contextd(
+            tmp.path(),
+            serde_json::json!({"status": "ok", "data": {"lsn": "0-1"}, "store": foreign}),
+        );
+        let proxy = proxy_for_test_with_socket(1, ROUTE_SOCKET, Some(sock));
+
+        let ingest = |content: &str| MemoryRequest::Ingest {
+            scope: state.scope.as_str().to_owned(),
+            params: IngestParams {
+                source: "test/src".to_owned(),
+                content: content.to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+
+        // Call 1 — served over the socket by the (foreign-store) daemon.
+        let first = proxy.dispatch(&state, ingest("written to moon A")).await;
+        assert!(first.is_ok(), "the socket call must succeed: {first:?}");
+        server.await.unwrap();
+
+        // Call 2 — daemon is gone. Serving this Direct would write into OUR
+        // store while call 1 landed in the daemon's: the split this test pins.
+        let second = proxy.dispatch(&state, ingest("must NOT land in moon B")).await;
+        let err = second.expect_err(
+            "with contextd's store known to differ, the Direct fallback MUST be refused — \
+             serving it splits one op stream across two Moons",
+        );
+        let msg = format!("{err:?}");
+        for needle in ["store", foreign] {
+            assert!(msg.contains(needle), "refusal must name {needle}: {msg}");
+        }
+    }
+
+    /// The fallback must stay OPEN in the normal case: a daemon that reports
+    /// the SAME store (or an older daemon that reports none at all) is not a
+    /// split, and refusing there would break every standalone install.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_fallback_is_allowed_when_contextd_reported_the_same_store() {
+        let (state, store) = fresh_state("test-proxy-same-store").await;
+        let tmp = tempfile::tempdir().unwrap();
+        let (sock, server) = spawn_one_shot_contextd(
+            tmp.path(),
+            serde_json::json!({"status": "ok", "data": {"lsn": "0-1"}, "store": store.url()}),
+        );
+        let proxy = proxy_for_test_with_socket(1, ROUTE_SOCKET, Some(sock));
+
+        let ingest = |content: &str| MemoryRequest::Ingest {
+            scope: state.scope.as_str().to_owned(),
+            params: IngestParams {
+                source: "test/src".to_owned(),
+                content: content.to_owned(),
+                t_ref: None,
+                metadata: None,
+                dedupe_key: None,
+            },
+        };
+
+        proxy.dispatch(&state, ingest("same store")).await.expect("socket call");
+        server.await.unwrap();
+
+        let second = proxy
+            .dispatch(&state, ingest("fallback is safe here"))
+            .await
+            .expect("same-store fallback must still be served Direct");
+        assert!(second.get("lsn").is_some(), "direct fallback must return a real ingest DTO");
+    }
+
     /// T-25-01-01: the external MCP wire cannot inject a partition `scope`. The
     /// engine Params DTOs carry `#[serde(deny_unknown_fields)]` and no scope
     /// field, so a smuggled `scope` is rejected at deserialization — the scope
