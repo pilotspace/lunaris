@@ -147,6 +147,7 @@ mod tests {
         let state = AppState {
             lunaris: Arc::new(lunaris),
             scope,
+            storage_url: store.url().to_owned(),
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None,
         };

@@ -90,6 +90,16 @@ pub(crate) struct AppState {
     pub(crate) lunaris: Arc<Lunaris>,
     /// Scope bound at server startup — all memory operations partition by this.
     pub(crate) scope: Scope,
+    /// The URL `lunaris` was opened against.
+    ///
+    /// Retained (it used to be a local in `bootstrap_inner`) so the proxy can
+    /// compare it against the store `lunaris-contextd` reports over the socket.
+    /// The two are resolved from entirely different sources — this one from
+    /// `--storage` / `LUNARIS_MCP_STORAGE`, the daemon's from its own
+    /// `LUNARIS_STORE_URL` / discovery file — and until they were compared,
+    /// falling back to Direct could silently continue an op stream in a second
+    /// Moon (split-routing containment, task #20).
+    pub(crate) storage_url: String,
     /// Owned embedded Moon guard — keeps the in-process Moon alive for the
     /// server's lifetime. `None` when the `embedded-moon` feature is OFF, when
     /// a `--storage` override was supplied, or when Moon bring-up failed and the
@@ -187,6 +197,7 @@ impl AppState {
         Ok(Self {
             lunaris: Arc::new(lunaris),
             scope,
+            storage_url,
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: embedded_guard,
         })

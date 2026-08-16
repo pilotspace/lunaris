@@ -57,6 +57,17 @@ pub(crate) struct MemoryProxy {
     breaker_n: usize,
     /// One-shot log when the breaker first trips.
     fallback_logged: Once,
+    /// The store `lunaris-contextd` last reported serving this scope from.
+    ///
+    /// `None` until a socket reply carries one — either because the daemon has
+    /// never been reached this session, or because it predates the `store`
+    /// field. Refreshed on EVERY successful reply rather than latched once, so
+    /// a contextd that restarts onto a new Moon (its embedded server takes a
+    /// fresh ephemeral port and rewrites `~/.lunaris/contextd-moon.url`) is
+    /// noticed on its next answer instead of being judged against a stale URL.
+    contextd_store: parking_lot::Mutex<Option<String>>,
+    /// One-shot log when a store mismatch is first observed.
+    split_logged: Once,
 }
 
 /// Outcome of a socket attempt.
@@ -98,6 +109,8 @@ impl MemoryProxy {
             connect_timeout: Duration::from_millis(connect_ms),
             breaker_n: breaker_n.max(1),
             fallback_logged: Once::new(),
+            contextd_store: parking_lot::Mutex::new(None),
+            split_logged: Once::new(),
         }
     }
 
@@ -113,6 +126,8 @@ impl MemoryProxy {
             connect_timeout: Duration::from_millis(DEFAULT_CONNECT_MS),
             breaker_n: 1,
             fallback_logged: Once::new(),
+            contextd_store: parking_lot::Mutex::new(None),
+            split_logged: Once::new(),
         }
     }
 
@@ -155,7 +170,53 @@ impl MemoryProxy {
                 }
             }
         }
+        // Split-routing containment (task #20): the Direct engine and contextd
+        // resolve their stores from independent sources, so falling back is
+        // only safe while those stores agree.
+        if let Some(foreign) = self.foreign_contextd_store(state) {
+            return Err(split_store_error(&foreign, &state.storage_url));
+        }
         self.direct(state, req).await
+    }
+
+    /// The store contextd reported, when it is KNOWN and DIFFERENT from ours.
+    ///
+    /// `None` — meaning "fall back as before" — covers both the healthy case
+    /// (same store) and the unknown case (daemon never reached this session, or
+    /// too old to report). Unknown is the pre-fix status quo, not new evidence
+    /// of a split: refusing on it would break every standalone install and
+    /// every mixed-version upgrade, which is a worse failure than the one being
+    /// prevented.
+    ///
+    /// Comparison is exact after trimming. Two spellings of one endpoint
+    /// (`127.0.0.1` vs `localhost`) therefore read as a mismatch — deliberately
+    /// the conservative direction, since the only cost is that a fallback which
+    /// would have worked becomes an actionable error naming both URLs, and that
+    /// only when contextd is already down.
+    fn foreign_contextd_store(&self, state: &AppState) -> Option<String> {
+        // Snapshot and drop the guard — never held across the await below.
+        let reported = self.contextd_store.lock().clone()?;
+        if reported.trim() == state.storage_url.trim() {
+            return None;
+        }
+        self.split_logged.call_once(|| {
+            tracing::error!(
+                contextd_store = %reported,
+                mcp_store = %state.storage_url,
+                "lunaris-contextd serves this scope from a DIFFERENT store than this MCP \
+                 server; refusing the direct-open fallback rather than splitting one memory \
+                 stream across two Moons — point --storage / LUNARIS_MCP_STORAGE at the \
+                 daemon's store, or stop the daemon"
+            );
+        });
+        Some(reported)
+    }
+
+    /// Record the store contextd reported for this op.
+    fn note_contextd_store(&self, store: Option<String>) {
+        if let Some(store) = store {
+            *self.contextd_store.lock() = Some(store);
+        }
     }
 
     /// Record one transport failure; latch the route to Direct (once) when the
@@ -226,7 +287,12 @@ impl MemoryProxy {
         match serde_json::from_slice::<MemoryResponse>(&resp)
             .map_err(|e| SocketErr::Transport(format!("decode: {e}")))?
         {
-            MemoryResponse::Ok { data } => Ok(data),
+            MemoryResponse::Ok { data, store } => {
+                // Refresh on every reply so a contextd that restarted onto a
+                // new Moon is judged against its CURRENT store, not a stale one.
+                self.note_contextd_store(store);
+                Ok(data)
+            }
             MemoryResponse::Err { code, message } => Err(SocketErr::App { code, message }),
         }
     }
@@ -333,6 +399,30 @@ fn resolve_socket_support(
     }
 }
 
+/// The refusal raised instead of a Direct fallback that would land in a second
+/// store (split-routing containment, task #20).
+///
+/// Names BOTH URLs and both knobs, because the operator cannot see either from
+/// the client: the daemon's store came from contextd's own `LUNARIS_STORE_URL`
+/// or `~/.lunaris/contextd-moon.url`, and this server's from `--storage` /
+/// `LUNARIS_MCP_STORAGE`. A launchd/systemd contextd and an MCP server
+/// configured in `.mcp.json` routinely have different environments, which is
+/// how the two drift apart in the first place.
+fn split_store_error(contextd_store: &str, mcp_store: &str) -> rmcp::ErrorData {
+    rmcp::ErrorData::internal_error(
+        format!(
+            "refusing to serve this op locally: lunaris-contextd is serving this scope from \
+             store `{contextd_store}`, but this MCP server was opened on `{mcp_store}`. The \
+             daemon is unreachable right now, so serving the call here would write into the \
+             second store — an ingest that no later recall or forget can see. Point \
+             `--storage` / `LUNARIS_MCP_STORAGE` at `{contextd_store}` (the daemon resolves \
+             its own from LUNARIS_STORE_URL or ~/.lunaris/contextd-moon.url), or stop \
+             lunaris-contextd so this server owns the scope outright."
+        ),
+        None,
+    )
+}
+
 /// Map a daemon-supplied error `code` back to an rmcp wire error. Caller faults
 /// are `invalid_params`; everything else is an internal error.
 fn app_code_to_rmcp(code: &str, message: &str) -> rmcp::ErrorData {
@@ -385,6 +475,8 @@ mod tests {
             connect_timeout: Duration::from_millis(100),
             breaker_n,
             fallback_logged: Once::new(),
+            contextd_store: parking_lot::Mutex::new(None),
+            split_logged: Once::new(),
         }
     }
 
@@ -404,6 +496,7 @@ mod tests {
         let state = AppState {
             lunaris: Arc::new(lunaris),
             scope,
+            storage_url: store.url().to_owned(),
             #[cfg(feature = "embedded-moon")]
             _embedded_moon: None,
         };
