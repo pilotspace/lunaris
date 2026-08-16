@@ -1340,7 +1340,7 @@ mod tests {
         // driven by RETRIEVAL rank (not the LME_GRAPH_CONTEXT whole-scope
         // scan). Chunk hits are session-expanded separately and must not
         // leak into the fact block.
-        let hits = vec![
+        let hits = [
             ("helios:fs/lme0001/s1/0.md", "chunk prose"),
             ("fact:listens_on", "zephyr-relay listens on port 7443"),
             ("fact:prefers", "Tin prefers admin-rebase merges"),
@@ -1409,16 +1409,19 @@ mod tests {
             .unwrap()
         };
         let ops = vec![
-            WriteOp::KvPut { key: fact_key(&scope, Ulid::new()), value: stored_fact("user is a chef", 0.9) },
-            WriteOp::KvPut { key: fact_key(&scope, Ulid::new()), value: stored_fact("user lives in Paris", 0.6) },
+            WriteOp::KvPut {
+                key: fact_key(&scope, Ulid::new()),
+                value: stored_fact("user is a chef", 0.9),
+            },
+            WriteOp::KvPut {
+                key: fact_key(&scope, Ulid::new()),
+                value: stored_fact("user lives in Paris", 0.6),
+            },
         ];
         storage.atomic_write(&scope, &ops).await.unwrap();
 
         let out = scope_fact_texts(storage.as_ref(), &scope, 10).await.unwrap();
-        assert_eq!(
-            out,
-            vec!["- user is a chef".to_string(), "- user lives in Paris".to_string()]
-        );
+        assert_eq!(out, vec!["- user is a chef".to_string(), "- user lives in Paris".to_string()]);
     }
 
     #[test]
