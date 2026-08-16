@@ -96,6 +96,11 @@ async fn ingest_round_trip() {
     let mut child = Command::new(&bin)
         .env("LUNARIS_MCP_SCOPE", "test-ingest-round-trip")
         .env("LUNARIS_MCP_STORAGE", &storage)
+        // Hermetic against a developer's live contextd: proxy.rs resolves
+        // LUNARIS_CONTEXTD_SOCKET (default $HOME/.lunaris/codex-contextd.sock)
+        // AHEAD of the explicit storage above, and a reachable daemon would
+        // serve this ingest from ITS store instead of the test's Moon.
+        .env("LUNARIS_MCP_DISABLE_CONTEXTD", "1")
         // The embedder is lazy and tolerates a NoopEmbedder fallback, so this
         // ingest-only test needs no weights and no probe-skip env: ingest
         // writes KV + BM25 without a dense vector. (Recall would return the

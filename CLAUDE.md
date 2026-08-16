@@ -147,7 +147,9 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   router, so they CANNOT catch this — the guard is
   `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
   which spawns the real binary, drives `initialize` → `tools/list`, and
-  asserts all 11 tools register. New MCP tools MUST keep that roster green.
+  asserts every tool in its `EXPECTED_TOOLS` roster registers (16 as of
+  0.7.0 — trust the constant, not this count). New MCP tools MUST keep that
+  roster green.
 - **embedded-moon — opt-in, never in `default`.** `lunaris-mcp`'s
   `embedded-moon` feature (`crates/lunaris-mcp/Cargo.toml`) pulls in the Moon
   server crate to auto-launch an in-process Moon when no `LUNARIS_MCP_STORAGE`
