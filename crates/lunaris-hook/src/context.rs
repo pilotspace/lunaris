@@ -2940,9 +2940,8 @@ mod tests {
         let service = ContextService::new();
         let scope = Scope::new("test-store-memo-retry").unwrap();
 
-        let failed = service
-            .store_url_with(&scope, || Err(anyhow::anyhow!("probe timed out")))
-            .await;
+        let failed =
+            service.store_url_with(&scope, || Err(anyhow::anyhow!("probe timed out"))).await;
         assert!(failed.is_err(), "a failing resolver must surface its error");
 
         let recovered = service
@@ -2960,8 +2959,10 @@ mod tests {
         let a = Scope::new("test-memo-scope-a").unwrap();
         let b = Scope::new("test-memo-scope-b").unwrap();
 
-        let ua = service.store_url_with(&a, || Ok("moon://127.0.0.1:6392".to_owned())).await.unwrap();
-        let ub = service.store_url_with(&b, || Ok("moon://127.0.0.1:6393".to_owned())).await.unwrap();
+        let ua =
+            service.store_url_with(&a, || Ok("moon://127.0.0.1:6392".to_owned())).await.unwrap();
+        let ub =
+            service.store_url_with(&b, || Ok("moon://127.0.0.1:6393".to_owned())).await.unwrap();
 
         assert_eq!(ua, "moon://127.0.0.1:6392");
         assert_eq!(ub, "moon://127.0.0.1:6393", "a second scope must resolve on its own");
