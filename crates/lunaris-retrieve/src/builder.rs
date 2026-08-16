@@ -35,9 +35,9 @@
 //!
 //! `Graph::anchored(_, hops)` clamps `hops` to `[1, MAX_GRAPH_HOPS=5]`
 //! (D-14 DoS defense). Empty `entity_ids` short-circuits to an empty
-//! result without touching storage. The Cypher template is portable across
-//! Moon GRAPH.QUERY and Postgres AGE per D-16; W-7 alignment uses
-//! `id_hex` as the match property.
+//! result without touching storage. The Cypher template is kept portable
+//! per D-16 — it targets Moon GRAPH.QUERY without leaning on
+//! Moon-specific syntax; W-7 alignment uses `id_hex` as the match property.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;

@@ -702,8 +702,8 @@ impl MoonClient {
     /// (HNSW Cosine, `self.dim`-d — set at `connect`/`connect_with_dim`;
     /// defaults to [`DEFAULT_VECTOR_DIM`]) AND a TEXT `content` field so BM25 / HYBRID
     /// `FT.SEARCH` can score against the per-row text payload populated by
-    /// `WriteOp::VectorUpsert` (Gap 9 fix 2026-04-21 —
-    /// `extract_content_for_index` mirrors the Postgres tsvector convention).
+    /// `WriteOp::VectorUpsert` (Gap 9 fix 2026-04-21 — see
+    /// `atomic::extract_content_for_index` for the per-index source fields).
     ///
     /// Per Moon's vector model (`docs/vector-search-guide.md`), HSET writes to keys
     /// matching `<prefix>` are auto-indexed by FT.SEARCH. Without this call, every

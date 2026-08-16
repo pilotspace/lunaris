@@ -24,7 +24,7 @@
 //! ## Threat model (T-02-03-05)
 //!
 //! `degraded_fallback` MAY mask a security-relevant primary error (e.g., an
-//! auth failure from Postgres). v0 accepts this — Phase 5 PROTO-05 (Bearer
+//! auth failure from the backend). v0 accepts this — Phase 5 PROTO-05 (Bearer
 //! auth) lands at the HTTP boundary BEFORE the retriever runs, so an auth
 //! failure surfaces via `lunaris-server` middleware, not via the retriever.
 //! Documented in the plan threat register.

@@ -353,10 +353,11 @@ impl StoragePort for MoonStorage {
         crate::as_of::HISTORICAL_KV_READS
     }
 
-    /// HOOK-05 idempotency sidecar (ADD task moon-parity-honesty): closes the
-    /// documented "SQLite-only idempotency" v0.5 boundary for Moon — the
-    /// trait-default `Ok(None)` fall-through minted duplicate episodes for
-    /// every replayed dedupe key (proved live 2026-07-14).
+    /// HOOK-05 idempotency sidecar (ADD task moon-parity-honesty): gives Moon
+    /// a real dedupe-key lookup. Before this, the trait-default `Ok(None)`
+    /// fall-through minted duplicate episodes for every replayed dedupe key
+    /// (proved live 2026-07-14) — idempotency was documented as available on
+    /// the embedded backend only, a boundary this closes.
     async fn lookup_by_dedupe_key(
         &self,
         scope: &Scope,
@@ -478,9 +479,10 @@ impl StoragePort for MoonStorage {
             // KV `read_as_of` therefore returns current state on Moon —
             // historical KV reads need a Lunaris-layer versioned-key encoding
             // (Gap 8 — tracked for follow-up phase). Reporting `false` here
-            // makes downstream consumers route bi-temporal reads to Postgres
-            // (which has native bi-temporal columns) per the dual-backend
-            // contract. Live-measurement gap fix 2026-04-21.
+            // is one half of the contract; `kv::read_as_of` refusing a
+            // historical pin with `StorageError::NotSupported` is the other
+            // (see `crate::as_of`). Live-measurement gap fix 2026-04-21;
+            // 0.7.0 removed the second backend this used to defer to.
             bi_temporal_native: false,
             graph_native: true,
             rerank_native: true,
@@ -494,8 +496,8 @@ impl StoragePort for MoonStorage {
             // Gap 9 closure (2026-04-21): `ensure_indexes` now declares
             // `SchemaField::Text("content")` on chunks/entities/facts/communities
             // and `WriteOp::VectorUpsert` writes the `content` field via
-            // `extract_content_for_index` (mirrors the Postgres
-            // `payload->>'text'/'fact_text'/...` tsvector convention). Moon's
+            // `extract_content_for_index` (text/fact_text/name/summary per
+            // index — see that function's table). Moon's
             // SDK `hybrid_search` (3-weight + sparse_field) therefore resolves
             // `@content` and `fuse_rrf` opts into `RrfFusion::Moon` for one
             // round-trip server-side fusion. If the schema regresses (e.g. an

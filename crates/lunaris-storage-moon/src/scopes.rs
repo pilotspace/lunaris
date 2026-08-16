@@ -99,8 +99,8 @@ pub(crate) async fn list_scopes(
                 all.insert(scope.as_str().to_string());
             }
             // Non-Lunaris keys (or keys whose scope segment fails Scope::new's
-            // regex) are silently skipped — same contract as the embedded
-            // backend.
+            // regex) are silently skipped — `list_scopes` reports the scopes
+            // Lunaris owns, never every key in the Moon instance.
         }
         if next == 0 {
             break;
