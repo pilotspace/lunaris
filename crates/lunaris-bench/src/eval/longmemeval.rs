@@ -752,15 +752,35 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
             let extract_model_used = extract_model.clone().unwrap_or_else(|| {
                 std::env::var("MINIMAX_EXTRACT_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string())
             });
+            // `LUNARIS_EVAL_LME_EXTRACT_BASE_URL` re-points extraction at an
+            // OpenAI-compatible `/chat/completions` endpoint instead of MiniMax
+            // native — the seam that lets the harness run against a local
+            // provider shim (e.g. a Claude-CLI bridge) when no MiniMax key is
+            // available. The provider flips to OpenAiCompat because that is the
+            // one lunaris-llm backend that honors `base_url`; its key is
+            // optional by design (local endpoints), read from
+            // LUNARIS_OPENAI_COMPAT_API_KEY. Set LUNARIS_EVAL_LME_EXTRACT_MODEL
+            // alongside it — the MiniMax-M3 fallback above names a model a
+            // non-MiniMax endpoint will not serve.
+            let extract_base_url =
+                std::env::var("LUNARIS_EVAL_LME_EXTRACT_BASE_URL").ok().filter(|s| !s.is_empty());
+            let (provider, api_key) = if extract_base_url.is_some() {
+                (
+                    lunaris::CloudProvider::OpenAiCompat,
+                    std::env::var("LUNARIS_OPENAI_COMPAT_API_KEY").unwrap_or_default(),
+                )
+            } else {
+                (lunaris::CloudProvider::MiniMax, api_key)
+            };
             let extractor = lunaris::CloudApiExtractor::new(lunaris::CloudApiExtractorOpts {
-                provider: lunaris::CloudProvider::MiniMax,
+                provider,
                 model: extract_model_used.clone(),
                 api_key,
                 batch_timeout_ms: extract_batch_timeout_ms,
                 max_retries: 1,
                 max_tokens: extract_max_tokens,
                 concurrency: extract_concurrency,
-                base_url: None,
+                base_url: extract_base_url,
             })
             .map_err(|e| anyhow::anyhow!("graph-pipeline extractor construction failed: {e}"))?;
             // Content-addressed extraction cache (opt-in): identical chunks

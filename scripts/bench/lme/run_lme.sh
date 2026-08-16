@@ -44,6 +44,16 @@ EMBED_MODEL="${EMBED_MODEL:-granite-embed-r2}"
 RERANKER_GGUF="${LUNARIS_RERANKER_GGUF:-$HOME/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf}"
 GEN_MODEL="${GEN_MODEL:-minimax-m3:cloud}"
 JUDGE_MODEL="${JUDGE_MODEL:-minimax-m3:cloud}"
+# Optional provider swap (all-or-nothing): CHAT_URL re-points the gen/judge
+# Ollama-shaped client (LUNARIS_EVAL_OLLAMA_URL — pick a NON-minimax
+# GEN_MODEL/JUDGE_MODEL or the MiniMax native client still wins), and
+# EXTRACT_BASE_URL + EXTRACT_MODEL re-point graph-arm extraction at an
+# OpenAI-compatible /chat/completions endpoint (e.g. a local Claude-CLI
+# bridge). All three land in CFG so the H4 fingerprint + config.env record
+# the swap; artifacts from different providers can never silently mix.
+CHAT_URL="${CHAT_URL:-}"
+EXTRACT_BASE_URL="${EXTRACT_BASE_URL:-}"
+EXTRACT_MODEL="${EXTRACT_MODEL:-}"
 
 DRY_RUN="${LME_DRY_RUN:-0}"
 for arg in "$@"; do
@@ -102,6 +112,11 @@ declare -a CFG=(
   # and the cache key embeds the model + prompt template.
   "LUNARIS_EVAL_LME_EXTRACT_CACHE_DIR=${LME_EXTRACT_CACHE_DIR}"
 )
+# Provider-swap knobs join CFG only when set, so the default MiniMax config
+# keeps its historical fingerprint.
+[ -n "$CHAT_URL" ] && CFG+=("LUNARIS_EVAL_OLLAMA_URL=${CHAT_URL}")
+[ -n "$EXTRACT_BASE_URL" ] && CFG+=("LUNARIS_EVAL_LME_EXTRACT_BASE_URL=${EXTRACT_BASE_URL}")
+[ -n "$EXTRACT_MODEL" ] && CFG+=("LUNARIS_EVAL_LME_EXTRACT_MODEL=${EXTRACT_MODEL}")
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "=== LME dry run — no question will be executed ==="
