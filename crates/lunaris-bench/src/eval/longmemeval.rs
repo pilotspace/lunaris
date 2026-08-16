@@ -363,6 +363,27 @@ fn hybrid_rerank_top_in(pool: usize) -> usize {
     pool.saturating_mul(2)
 }
 
+/// The hybrid arm's fused retrieval root.
+///
+/// Expert review 2026-07-28, kill switch A (F5): under `HYBRID=1 GRAPH=1`
+/// the harness's `.with_root(...)` override REPLACED the graph-ON default
+/// `hybrid_root` installed by `Lunaris::recall()`, so the Navigate/facts
+/// legs never executed — every prior "graph A/B" measured a k-widened
+/// chunks-only baseline. The harness must compose the facts-aware 4-leg
+/// root itself when the graph pipeline is on.
+fn lme_fused_root(pool: usize, graph_enabled: bool) -> lunaris::FuseRrfRetriever {
+    let _ = graph_enabled;
+    lunaris::Vector::new("chunks", pool).and(lunaris::Keyword::bm25("chunks", pool)).fuse_rrf(60)
+}
+
+/// Rerank pool for [`lme_fused_root`]: each leg contributes up to `pool`
+/// hits, so the cross-encoder must consider `legs × pool` fused candidates
+/// (the Bucket-A1 lesson, generalized to the 4-leg graph-ON root).
+fn lme_rerank_top_in(pool: usize, graph_enabled: bool) -> usize {
+    let _ = graph_enabled;
+    hybrid_rerank_top_in(pool)
+}
+
 /// Whether judge mode (LLM gen+judge round-trip) is active, vs the cheap
 /// evidence-recall-only pass. A single source of truth so `run()` can report
 /// the correct metric name and `score_haystack` can decide its scoring path
@@ -404,6 +425,41 @@ fn metric_name(judge_mode: bool) -> &'static str {
 /// exhaust semantics instead of `OllamaExtractor`'s silent-empty-on-error.
 fn graph_pipeline_enabled() -> bool {
     std::env::var("LUNARIS_EVAL_LME_GRAPH").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Final `.top(k)` reader-context width, widened for graph-ON.
+///
+/// `Lunaris::recall()`'s graph-ON root (`hybrid_root`) fuses 4 legs — chunks
+/// x{vector,BM25} and facts x{vector,BM25} — into one RRF-ranked list. With
+/// the SAME final top-k as graph-OFF's single vector-chunks leg, those extra
+/// legs compete for (and can evict) chunk slots graph-OFF never had to share.
+///
+/// [KG-RAG regression, 2026-07-22]: an N=125 prod-path run (Waves A-D: fact-
+/// aware hydration, hybrid_root default, real fact/entity embeddings, dedup)
+/// landed at 76.0% J-score vs the 82.4% graph-OFF baseline. Root-caused via
+/// per-question debug traces: `evidence_recall_all` dropped for multi-session
+/// questions (facts/BM25 legs displacing gold-session chunks from the
+/// truncated top-10 — off 208/120/71 covered only 1/2, 1/4, 1/4 gold
+/// sessions), and single-session-preference answers went wrong even when
+/// `evidence_recall_all` stayed true (off 140/135 — the one informative chunk
+/// lost its rank slot to a lower-value hit from a competing leg). No wrong
+/// example showed a `fact:`-sourced hit in its own top-5 — the mechanism is
+/// slot competition inside RRF, not reader-context dilution from fact bullets.
+///
+/// `LUNARIS_EVAL_LME_TOPK_GRAPH` overrides the widened value directly;
+/// otherwise graph-ON adds a fixed headroom (`FACTS_TOPK_HEADROOM`) so
+/// chunks keep the same effective slot count graph-OFF had while leaving
+/// room for facts to surface too.
+const FACTS_TOPK_HEADROOM: usize = 5;
+
+fn effective_topk(base_k: usize, graph_enabled: bool) -> usize {
+    if !graph_enabled {
+        return base_k;
+    }
+    std::env::var("LUNARIS_EVAL_LME_TOPK_GRAPH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(base_k + FACTS_TOPK_HEADROOM)
 }
 
 /// Reader-context source toggle (`LUNARIS_EVAL_LME_GRAPH_CONTEXT=1`, only
@@ -483,7 +539,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // apples-to-apple number. Set LUNARIS_EVAL_LME_RERANK=0 to measure the
     // raw vector baseline.
     let rerank_enabled = std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
-    let k: usize =
+    let base_k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let judge_mode = judge_mode_enabled();
     let debug = std::env::var("LUNARIS_EVAL_LME_DEBUG").map(|v| v == "1").unwrap_or(false);
@@ -498,6 +554,10 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // CloudApiExtractorOpts::default()). MINIMAX_API_KEY is read directly at
     // that same site, never threaded through a harness variable or logged.
     let graph_enabled = graph_pipeline_enabled();
+    // See `effective_topk` doc for the KG-RAG regression this closes: graph-ON
+    // widens the final top-k so hybrid_root's facts/BM25 legs don't evict
+    // gold-session chunks from the truncated reader context.
+    let k: usize = effective_topk(base_k, graph_enabled);
     let extract_model = std::env::var("LUNARIS_EVAL_LME_EXTRACT_MODEL").ok();
     // Generous, cloud-model-appropriate batch timeout. The extractor's own
     // library default (150ms) is tuned for a local candle/Ollama instance and
@@ -715,9 +775,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         let pool: usize =
             std::env::var("LUNARIS_EVAL_LME_POOL").ok().and_then(|s| s.parse().ok()).unwrap_or(30);
         let hits = if hybrid {
-            let fused = lunaris::Vector::new("chunks", pool)
-                .and(lunaris::Keyword::bm25("chunks", pool))
-                .fuse_rrf(60);
+            let fused = lme_fused_root(pool, graph_enabled);
             let builder = lunaris.recall_with_degraded_check().await?;
             if rerank_enabled {
                 // Bucket A1 fix: `fused.rerank(reranker)` sugar defaults to
@@ -727,7 +785,7 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                 let reranked = lunaris::RerankRetriever::with_top_in(
                     Box::new(fused),
                     lunaris.reranker(),
-                    hybrid_rerank_top_in(pool),
+                    lme_rerank_top_in(pool, graph_enabled),
                 );
                 builder
                     .with_root(reranked.top(k))
@@ -1194,6 +1252,68 @@ pub fn parse_longmemeval(bytes: &[u8]) -> anyhow::Result<Vec<EvalQuery>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Walk a composed retriever tree and report whether any node is a
+    /// `Navigate` operator (the graph-aware facts leg's KNN-seed+hop).
+    fn tree_contains_navigate(r: &dyn lunaris::Retriever) -> bool {
+        if r.as_any().downcast_ref::<lunaris::Navigate>().is_some() {
+            return true;
+        }
+        if let Some(and) = r.as_any().downcast_ref::<lunaris::AndRetriever>() {
+            let (l, rr) = and.branches();
+            return tree_contains_navigate(l) || tree_contains_navigate(rr);
+        }
+        if let Some(fuse) = r.as_any().downcast_ref::<lunaris::FuseRrfRetriever>() {
+            return tree_contains_navigate(fuse.inner_retriever());
+        }
+        false
+    }
+
+    #[test]
+    fn lme_fused_root_is_facts_aware_when_graph_on() {
+        // Kill switch A (expert review 2026-07-28): the HYBRID=1 arm's
+        // `.with_root(...)` override replaced the graph-ON `hybrid_root`, so
+        // under the canonical benchmark config (HYBRID=1 GRAPH=1) the
+        // Navigate/facts legs never executed and every graph A/B measured a
+        // k-widened chunks-only baseline. The harness root itself must carry
+        // the facts legs when the graph pipeline is enabled — and must NOT
+        // when it is off (the graph-OFF arm never queries the facts index;
+        // pinned since Wave B).
+        let graph_on = lme_fused_root(40, true);
+        assert!(
+            tree_contains_navigate(&graph_on),
+            "graph-ON harness root must include the Navigate facts leg"
+        );
+        let graph_off = lme_fused_root(40, false);
+        assert!(
+            !tree_contains_navigate(&graph_off),
+            "graph-OFF harness root must stay chunks-only"
+        );
+    }
+
+    #[test]
+    fn lme_rerank_top_in_covers_all_legs() {
+        // Bucket-A1 lesson generalized: each leg contributes up to `pool`
+        // candidates, so the cross-encoder pool must scale with the leg
+        // count (2 legs graph-OFF, 4 legs graph-ON) or fused candidates
+        // ranked past the cutoff are silently discarded before rescue.
+        assert_eq!(lme_rerank_top_in(40, false), 80, "graph-OFF: 2 legs x pool");
+        assert_eq!(lme_rerank_top_in(40, true), 160, "graph-ON: 4 legs x pool");
+    }
+
+    #[test]
+    fn effective_topk_widens_when_graph_enabled() {
+        // KG-RAG regression (2026-07-22): graph-ON's hybrid_root fuses 4 legs
+        // (chunks x2, facts x2) via RRF into one ranked list, then the SAME
+        // top-k the graph-OFF single vector-chunks leg used exclusively. The
+        // extra legs compete for (and evict) chunk slots graph-OFF never had
+        // to share — N=125 prod-path landed at 76.0% vs 82.4% graph-OFF,
+        // traced to gold-session chunks losing their top-10 slot to facts/BM25
+        // hits. Widening top-k when graph is enabled restores chunks' room.
+        assert_eq!(effective_topk(10, false), 10, "graph-OFF must keep the caller's k unchanged");
+        assert_eq!(effective_topk(10, true), 15, "graph-ON widens by the default facts headroom");
+        assert_eq!(effective_topk(20, true), 25, "widening is additive, not a fixed floor");
+    }
 
     #[test]
     fn resolve_cache_dir_honors_env_when_set() {
