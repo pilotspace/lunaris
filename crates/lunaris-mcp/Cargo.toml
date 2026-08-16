@@ -104,6 +104,10 @@ serde_json = { workspace = true }
 lunaris-consolidate = { workspace = true }
 lunaris-core = { workspace = true }
 futures = { workspace = true }
+# server_boot.rs — reads the DISCOVERY-advertised Moon out-of-band to prove the
+# server served against THAT store. Deliberately not via `Lunaris::open`: this
+# readback must not depend on an embedder.
+lunaris-storage-moon = { workspace = true }
 # 0.7.0 prerequisite — ephemeral child-process Moon fixtures (see the crate docs
 # in crates/lunaris-test-harness) so tests stop opening `memory://` directly.
 # Dev-only; a dev-dependency cycle through `lunaris` that Cargo permits. NOTE
