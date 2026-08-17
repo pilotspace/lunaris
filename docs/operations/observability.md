@@ -6,7 +6,8 @@ at the cited line. Nothing is aspirational — if a series is not in the table
 below, `lunaris-server` does not emit it today.
 
 Companion runbooks: [`external-moon.md`](external-moon.md) (deployment),
-[`backup-restore.md`](backup-restore.md) (durability).
+[`backup-restore.md`](backup-restore.md) (durability),
+[`slo.md`](slo.md) (SLO targets, error-budget policy, burn-rate math).
 
 ---
 
@@ -198,8 +199,13 @@ automatic restart to it.
 
 Shipped as
 [`deploy/prometheus/lunaris-alerts.yml`](../../deploy/prometheus/lunaris-alerts.yml).
-**Two values must be templated to your deployment** — they are marked inline:
-the concurrency limit and your latency SLO.
+**One value must be templated to your deployment** — the concurrency limit,
+marked inline. The latency threshold and the burn-rate expressions come from
+the SLO doc ([`slo.md`](slo.md) §2/§4); rescale them only if your deployment
+promises a different SLO. The shipped file carries a second group,
+`lunaris-slo-burn` (multiwindow burn-rate rules: page at 14.4×/1h+5m,
+ticket at 6×/6h+30m — not reproduced below; see the file and `slo.md` §4).
+The excerpt below shows the `lunaris` starter group.
 
 ```yaml
 groups:
@@ -301,17 +307,17 @@ groups:
             lunaris_recall_duration_seconds and Moon's own metrics.
 
       # ── latency ───────────────────────────────────────────────────────────
-      # TEMPLATE: 0.5s is a placeholder. Lunaris' stated contract is sub-25ms
-      # recall; pick the SLO your deployment actually promises.
+      # 0.1s = the paging latency SLO (slo.md §2, provisional until GA-2).
+      # The 25ms p50 product contract is a dashboard KPI, not paged.
       - alert: LunarisRecallLatencyHigh
         expr: >-
-          histogram_quantile(0.95,
+          histogram_quantile(0.99,
             sum by (le, tenant) (rate(lunaris_recall_duration_seconds_bucket[5m]))
-          ) > 0.5
+          ) > 0.1
         for: 10m
         labels: { severity: warning }
         annotations:
-          summary: "p95 recall latency > 500ms for tenant {{ $labels.tenant }}"
+          summary: "p99 recall latency > 100ms (the SLO threshold) for tenant {{ $labels.tenant }}"
 
       - alert: LunarisRecallErrorRate
         expr: >-
