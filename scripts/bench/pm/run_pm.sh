@@ -55,6 +55,7 @@ EVIDENCE="${EVIDENCE:-3}"                     # per-option evidence hits (0 = of
 FULLCTX="${FULLCTX:-0}"                       # reader-ceiling mode: full prefix, no retrieval
 QOFFSET="${QOFFSET:-0}"                       # question slice within a context
 QLIMIT="${QLIMIT:-}"                          # empty = every question
+QIDS_FILE="${QIDS_FILE:-}"                    # question-id allowlist (second-reader re-run)
 
 DRY_RUN="${PM_DRY_RUN:-0}"
 for arg in "$@"; do
@@ -114,6 +115,7 @@ declare -a CFG=(
   "LUNARIS_EMBED_BATCH=8"
 )
 [ -n "$QLIMIT" ] && CFG+=("LUNARIS_EVAL_PM_QLIMIT=${QLIMIT}")
+[ -n "$QIDS_FILE" ] && CFG+=("LUNARIS_EVAL_PM_QIDS_FILE=${QIDS_FILE}")
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "=== PersonaMem dry run — no context will be executed ==="
