@@ -174,6 +174,7 @@ offer at any price.
 | Claim | Measured | Contract | Proof |
 |---|---|---|---|
 | Sub-25 ms recall | **p50 10.3 ms / p99 20.8 ms** (strict replay, 10k-doc corpus, live Moon) | p50 < 25 ms | [`docs/benchmarks/v0.2.x/README.md`](benchmarks/v0.2.x/README.md) |
+| Contract at the target corpus (GA-2b) | **p50 19–22 ms / p99 23.4–24.4 ms** (100k docs, unified production root, Moon v0.8.5, retrieval-only) — holds with ≤ 25 % headroom; opt-in rerank stage measures ~1.3 s/recall and graph-ON ~39 ms p50 | p50 < 25 ms @ 100k | [`docs/operations/capacity.md`](operations/capacity.md) |
 | Contract holds on Moon v0.3.0 | **retrieval-only p50 3.1 ms / p99 3.6 ms** (3k-doc SQuAD train, Q4-GGUF granite embedder, live Moon — smaller corpus than the 10k baseline, see the caveat in the report) | p50 < 25 ms | [`docs/benchmarks/v0.7-moon-v030-rerun.md`](benchmarks/v0.7-moon-v030-rerun.md) |
 | Navigate recall edge (graph-linked corpora only) | **plain 0.00 → nav 1.00 recall@5** on 2-hop graph-linked targets, +0.05 ms p50 | opt-in graph | [`docs/benchmarks/v0.7-moon-v030-rerun.md`](benchmarks/v0.7-moon-v030-rerun.md) |
 | Flat tail at k=30 | **p50 6.0 ms / p99 6.2 ms** (was p50 12 / p99 97.3 before the hydration fan-out, MCP stdio, live Moon) | p99 inside the p50 contract | [`docs/benchmarks/v0.6-recall-fanout-ab.md`](benchmarks/v0.6-recall-fanout-ab.md) |
