@@ -78,6 +78,17 @@ fn env_flag(key: &str, default: bool) -> bool {
     std::env::var(key).map(|v| v == "1").unwrap_or(default)
 }
 
+/// Parse a question-id allowlist file: one id per line, `#` comments and
+/// blank lines ignored. Returns `None` when the env var is unset/empty
+/// (= answer every question).
+fn parse_qids(text: &str) -> HashSet<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Split id (`32k` | `128k` | `1M`). Rejected values would 404 into a SKIP, so
 /// the set is closed here and the mistake is loud.
 fn split_id() -> anyhow::Result<String> {
@@ -232,6 +243,11 @@ struct RunConfig {
     /// were perfect and unlimited", which bounds what any retrieval
     /// configuration can achieve with this reader.
     full_ctx: bool,
+    /// Optional question-id allowlist (`LUNARIS_EVAL_PM_QIDS_FILE`): when
+    /// set, ONLY listed questions are answered — the re-run unit for a
+    /// second-reader pass over a prior run's failures. Unlisted questions are
+    /// skipped entirely (not scored, not ERR).
+    qids: Option<HashSet<String>>,
     hybrid: bool,
     rerank: bool,
     no_memory: bool,
@@ -254,6 +270,19 @@ impl RunConfig {
             neighbors: env_usize("LUNARIS_EVAL_PM_NEIGHBORS", 1),
             evidence: env_usize("LUNARIS_EVAL_PM_EVIDENCE", 3),
             full_ctx: env_flag("LUNARIS_EVAL_PM_FULLCTX", false),
+            qids: std::env::var("LUNARIS_EVAL_PM_QIDS_FILE").ok().filter(|s| !s.is_empty()).map(
+                |f| match std::fs::read_to_string(&f) {
+                    Ok(t) => parse_qids(&t),
+                    Err(e) => {
+                        // A missing allowlist must never silently widen the
+                        // run to every question: fail closed.
+                        eprintln!(
+                            "  [personamem] QIDS_FILE {f} unreadable ({e}) — answering NO questions"
+                        );
+                        HashSet::new()
+                    }
+                },
+            ),
             hybrid: env_flag("LUNARIS_EVAL_PM_HYBRID", true),
             rerank: env_flag("LUNARIS_EVAL_PM_RERANK", true),
             no_memory: env_flag("LUNARIS_EVAL_PM_NOMEM", false),
@@ -268,7 +297,7 @@ impl RunConfig {
     fn banner(&self) -> String {
         format!(
             "  [personamem] split={} model={} contexts[{}..{}) of {} \
-             topk={} pool={} neighbors={} evidence={} fullctx={} hybrid={} rerank={} memory={}",
+             topk={} pool={} neighbors={} evidence={} fullctx={} qids={} hybrid={} rerank={} memory={}",
             self.split,
             self.model,
             self.offset,
@@ -279,6 +308,7 @@ impl RunConfig {
             self.neighbors,
             self.evidence,
             self.full_ctx,
+            self.qids.as_ref().map_or_else(|| "all".into(), |q| q.len().to_string()),
             self.hybrid,
             self.rerank,
             if self.no_memory { "OFF (no-memory floor arm)" } else { "ON" },
@@ -308,8 +338,13 @@ async fn score_contexts(
             );
             continue;
         };
-        let questions: Vec<&PmQuestion> =
-            group.questions.iter().skip(cfg.q_offset).take(cfg.q_limit).collect();
+        let questions: Vec<&PmQuestion> = group
+            .questions
+            .iter()
+            .skip(cfg.q_offset)
+            .take(cfg.q_limit)
+            .filter(|q| cfg.qids.as_ref().is_none_or(|ids| ids.contains(&q.question_id)))
+            .collect();
         if questions.is_empty() {
             continue;
         }
@@ -685,6 +720,7 @@ mod tests {
             neighbors: 1,
             evidence: 3,
             full_ctx: false,
+            qids: None,
             hybrid: true,
             rerank: true,
             no_memory: false,
@@ -716,6 +752,13 @@ mod tests {
         assert_eq!(expand_with_neighbors(&[7, 2], 0, 10), vec![7, 2]);
         // Degenerate empty prefix stays empty-safe.
         assert_eq!(expand_with_neighbors(&[], 1, 0), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn qids_file_parses_ids_skipping_comments_and_blanks() {
+        let set = parse_qids("# failures from 32k-memory-v6\nabc-1\n\n  def-2  \n#x\n");
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("abc-1") && set.contains("def-2"));
     }
 
     #[test]
