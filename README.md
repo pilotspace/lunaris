@@ -264,6 +264,30 @@ The Zep/Mem0 figures use their own (different) reader models, so the
 end-to-end row is not a controlled apples-to-apples comparison — it's
 included for context, not as a head-to-head claim.
 
+## Persona tracking — PersonaMem (32k)
+
+Full 32k split (589 questions, 37 shared contexts), production hybrid
+recall path, exact letter-match scoring (no LLM judge), zero errors:
+
+| Configuration | Accuracy |
+|---|---|
+| **Lunaris + two-reader ensemble (oracle upper bound¹)** | **81.8%** (482/589) |
+| Lunaris + claude-sonnet-5 reader | **75.0%** (442/589) |
+| No-memory floor (same reader, options only) | 41.9% (247/589) |
+| TencentDB-Agent-Memory (published; split/reader unstated) | 76% / 48% |
+
+**Memory lift: +33.1 points** with the identical reader — larger than
+Tencent's published +28, from a lower floor. Fact-recall questions go
+from 2.3% without memory to 83.7% with it.
+
+¹ claude-opus-5 re-answered only the questions the Sonnet arm missed
+(gold labels routed them), so 81.8% is an upper bound on a two-reader
+cascade, not a single-reader measurement; the clean single-reader number
+is 75.0%. Full methodology, per-category table, caveats, and
+reproduction commands:
+[`scripts/bench/pm/RESULTS.md`](scripts/bench/pm/RESULTS.md) and the
+[book write-up](https://github.com/pilotspace/lunaris/blob/main/docs/book/src/benchmarks/personamem.md).
+
 ## Multi-agent isolation
 
 Every Lunaris operation is partitioned by `Scope` — a validated newtype
