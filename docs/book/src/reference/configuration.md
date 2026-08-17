@@ -117,6 +117,29 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 | `LUNARIS_GRAPH_ENABLED` | bool | off | Entity / community graph extraction pipeline |
 | `LUNARIS_VERIFY_ENABLED` | bool | off | Slow-path arbitration verifier pipeline |
 | `LUNARIS_CONSOLIDATE_ENABLED` | bool | off | Consolidation pipeline |
+| `LUNARIS_RECALL_RERANK` | bool | off | Opt-in cross-encoder rerank stage on the production recall root (applies to MCP `memory.recall` and HTTP `/v1/recall` / SDK `Lunaris::recall()`; the hook's context-injection hot path never reranks). Read ONCE at handle construction, like `LUNARIS_GRAPH_ENABLED`. |
+| `LUNARIS_RECALL_RERANK_TOP_IN` | positive int | `2*k` | Candidate-pool depth fed to the cross-encoder when `LUNARIS_RECALL_RERANK` is on. Clamped to at least the final top-`k`; `0` / non-numeric falls back to the default. |
+
+#### The production recall pipeline (GA-1)
+
+Every production surface builds ONE canonical recall root,
+`lunaris_retrieve::production_root(k, graph_enabled)`:
+
+- graph-OFF: `Vector("chunks",k) ∧ BM25("chunks",k) → fuse_rrf(60) → top(k)`
+- graph-ON: the same chunks legs fused with the fact legs
+  (`Navigate("entities",k, fallback "facts") ∧ BM25("facts",k)`), then `top(k)`
+
+Per-surface deltas on top of that shared root:
+
+| Surface | Fact legs | Activation boost | Cross-encoder rerank |
+|---|---|---|---|
+| MCP `memory.recall` (+contextd) | with `LUNARIS_GRAPH_ENABLED` | yes (`LUNARIS_ACTIVATION_BOOST`, default on) | opt-in via `LUNARIS_RECALL_RERANK` |
+| HTTP `/v1/recall` + SDK `Lunaris::recall()` | with `LUNARIS_GRAPH_ENABLED` | no | opt-in via `LUNARIS_RECALL_RERANK` |
+| Hook context injection | always on (`LUNARIS_CONTEXT_RECALL=vector` opts out) | no | never (latency-critical path) |
+
+Rerank is OFF by default on every surface; with it off the bge-reranker GGUF
+is never loaded. When enabled, the stage runs between RRF fusion and the
+final `top(k)` over the top `LUNARIS_RECALL_RERANK_TOP_IN` candidates.
 
 > The llama.cpp granite-r2 embedder and bge-reranker-v2-m3 reranker are
 > selected unconditionally when the `llamacpp` feature is on (default) —

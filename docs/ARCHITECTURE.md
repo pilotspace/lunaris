@@ -116,7 +116,7 @@ budget like this:
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side (`RrfFusion::Moon`) | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command (PERF-MOON-01) | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered `buffered(32)` fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
-| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only pay it when you ask for it |
+| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only pay it when you ask for it — `LUNARIS_RECALL_RERANK=1` (MCP + HTTP/SDK recall; the hook hot path never reranks) or an explicit `.rerank(..)` in the DSL |
 
 **The 86 ms lesson.** The same 10k-document SQuAD harness
 (`scripts/bench-squad-kb.py`) measured **p50 86 ms** when query

@@ -617,12 +617,13 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
     // ceiling is real on a given host.
     let offset: usize =
         std::env::var("LUNARIS_EVAL_LME_OFFSET").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    // Cross-encoder rerank toggle. The bare `recall()` root is pure vector
-    // (`Vector::new("chunks", 30)`) with NO rerank — the weakest config. The
-    // production recall path reranks the vector candidates with the bge
-    // cross-encoder, which is what Zep/Mem0 do too, so default ON for an
-    // apples-to-apple number. Set LUNARIS_EVAL_LME_RERANK=0 to measure the
-    // raw vector baseline.
+    // Cross-encoder rerank toggle. GA-1 truth: the production recall path
+    // does NOT rerank by default — the stage is opt-in via
+    // LUNARIS_RECALL_RERANK (default OFF on every surface). The bench keeps
+    // its own default ON because Zep/Mem0 rerank in their published
+    // pipelines, so ON is the apples-to-apples comparison config. Set
+    // LUNARIS_EVAL_LME_RERANK=0 to measure the fused-root baseline
+    // (which IS the production default).
     let rerank_enabled = std::env::var("LUNARIS_EVAL_LME_RERANK").map(|v| v != "0").unwrap_or(true);
     let base_k: usize =
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);

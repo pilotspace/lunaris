@@ -6,7 +6,12 @@
 //!   per hit, terminated by `event: done\ndata: {}\n\n`.
 //!
 //! Two retrieval modes per D-05:
-//! - `mode: "semantic"` (default) → Phase 2 hot path (Vector + Keyword + RRF + bge-rerank).
+//! - `mode: "semantic"` (default) → the GA-1 unified production root
+//!   (`lunaris_retrieve::production_root`, inherited via `scoped.dsl()`):
+//!   Vector ∧ BM25("chunks") → RRF, plus fact legs when the graph pipeline
+//!   is ON. Cross-encoder rerank is OPT-IN via `LUNARIS_RECALL_RERANK`
+//!   (default OFF — pre-GA-1 versions of this header claimed an always-on
+//!   bge-rerank stage that had no production call site).
 //! - `mode: "graph"` → Phase 3 `Graph::anchored` operator, gated on
 //!   `capabilities().graph_native || lunaris.graph_pipeline().is_enabled()`.
 
@@ -155,6 +160,11 @@ pub async fn recall_handler(
     // Plan 07-01 — compose Graph::anchored into the root when mode=graph and
     // the 501 gate passed. Empty-entity fallback marks each hit degraded=true
     // per ROADMAP Phase 7 SC #2.
+    //
+    // GA-1 note: `with_root` REPLACES the unified production root the
+    // builder was seeded with (`scoped.dsl()` → `production_root`) — mode=
+    // graph keeps its own Vector ∧ Graph::anchored composition and is NOT
+    // double-wrapped by a second top/rerank stage.
     let mut fallback_degraded = false;
     if req.mode == RetrievalMode::Graph {
         let entities = extract_query_entities(&req.query);
