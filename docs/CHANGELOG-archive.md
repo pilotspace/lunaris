@@ -348,7 +348,11 @@ and any other MCP-native agent can register Lunaris as a memory server.
 ### Added
 
 - **`lunaris-mcp` binary crate** — `cargo install lunaris-mcp` then add to
-  your editor's MCP config. Four tools: `memory.ingest`, `memory.recall`,
+  your editor's MCP config. *(Historical correction: the crate was never
+  publishable to crates.io — it links a `vendor/` path dep. The working
+  installs are `cargo install --git`, `npx`/`uvx`, or the GitHub-release
+  binaries; see `docs/book/src/mcp/index.md`.)* Four tools:
+  `memory.ingest`, `memory.recall`,
   `memory.forget`, `memory.list_scopes`. Stdio transport, no auth
   (process-bound). See `docs/integration/claude-code.md` (5-step walkthrough)
   and `docs/integration/codex.md` (Codex CLI parity guide).
