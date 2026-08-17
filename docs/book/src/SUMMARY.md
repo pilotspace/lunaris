@@ -57,6 +57,10 @@
 - [Claude Code](./mcp/claude-code.md)
 - [Codex CLI](./mcp/codex.md)
 
+# Benchmarks
+
+- [PersonaMem vs TencentDB Agent Memory](./benchmarks/personamem.md)
+
 # Migrating From
 
 - [Mem0](./migrating/mem0.md)
