@@ -45,6 +45,7 @@
 - [Running the HTTP Server](./operations/server.md)
 - [The Storage Backend (Moon)](./operations/backends.md)
 - [Durability & Recovery](./operations/durability.md)
+- [Security & Hardening](./operations/security.md)
 
 # SDKs
 

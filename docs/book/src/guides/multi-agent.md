@@ -29,9 +29,12 @@ KV format `lunaris:{scope}:{kind}:{ulid}` cannot byte-alias across scopes
 (RFC 0001 §11.3, RC-2). Use **dots** in identifiers: `acme.agent-42`,
 not `acme:agent-42`.
 
-> **Upgrading from v0.2.0?** Any scope/JWT-tenant string containing `:` now
-> fails at the HTTP boundary with `invalid scope`. Rotate JWTs (`acme:agent-42`
-> → `acme.agent-42`).
+> **Upgrading from v0.2.0?** Any scope/tenant string containing `:` now
+> fails at the HTTP boundary with `invalid scope`. Rewrite the `tenant`
+> entries in your server-side bearer-tokens file (`LUNARIS_TOKENS_FILE`) and
+> restart (`acme:agent-42` → `acme.agent-42`) — there are no JWTs in v0; the
+> tenant lives in the tokens file, not inside the token
+> (see [Security & Hardening](../operations/security.md)).
 > Moon keys are immutable — re-ingest colon-keyed data under the rewritten
 > scope. Recipe: RFC 0001 §11.4.
 
