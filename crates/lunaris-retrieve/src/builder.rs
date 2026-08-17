@@ -162,6 +162,15 @@ impl RetrievalBuilder {
         self
     }
 
+    /// GA-1 conformance accessor — the canonical plan string of the current
+    /// root (see [`crate::composition::plan_repr`]). Per-surface tests
+    /// compare this against [`crate::composition::production_root`]'s plan so
+    /// a future `with_root` divergence on a production surface fails a NAMED
+    /// test instead of drifting silently.
+    pub fn root_plan(&self) -> String {
+        crate::composition::plan_repr(self.root.as_ref())
+    }
+
     /// Replace the root retriever.
     ///
     /// `with_root(Vector::new("chunks", 30).and(Keyword::bm25("chunks", 30)).fuse_rrf(60).top(5))`.

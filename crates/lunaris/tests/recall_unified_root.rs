@@ -154,10 +154,14 @@ impl Reranker for PanickingReranker {
         _query: &str,
         _docs: Vec<RerankCandidate>,
     ) -> Result<Vec<RerankCandidate>, LunarisError> {
-        panic!("rerank() invoked with LUNARIS_RECALL_RERANK off — the OFF path must never touch the reranker");
+        panic!(
+            "rerank() invoked with LUNARIS_RECALL_RERANK off — the OFF path must never touch the reranker"
+        );
     }
     fn applies(&self) -> bool {
-        panic!("applies() invoked with LUNARIS_RECALL_RERANK off — the OFF path must never touch the reranker");
+        panic!(
+            "applies() invoked with LUNARIS_RECALL_RERANK off — the OFF path must never touch the reranker"
+        );
     }
 }
 

@@ -49,7 +49,7 @@ pub mod types;
 
 pub use boost_provider::{BoostProvider, LedgerBoostProvider};
 pub use builder::RetrievalBuilder;
-pub use composition::hybrid_root;
+pub use composition::{hybrid_root, plan_repr, production_root, production_root_reranked};
 pub use hydrate::{hydrate, hydrate_mixed, partial_hydrate_text};
 // W5 task 3: FT.AGGREGATE deterministic counting/grouping operator. NOT a
 // `Retriever` (see module docs) — re-exported at the crate root alongside
