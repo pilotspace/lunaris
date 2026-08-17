@@ -11,12 +11,16 @@ Companion docs: [`observability.md`](observability.md) (metric catalogue,
 scrape config), [`external-moon.md`](external-moon.md) (deployment runbook),
 [`backup-restore.md`](backup-restore.md) (durability; RPO/RTO evidence).
 
-> **Provisional status.** The measured latency envelope behind these targets
-> is a **10k-document corpus** (see §5). The product contract claims
-> sub-25 ms recall "over millions of bi-temporal facts"; the capacity study
-> that validates the targets at the production corpus envelope is **GA-2**
-> work. Every row marked *provisional* below must be re-confirmed (and this
-> doc re-issued) when GA-2 lands.
+> **Envelope status.** The GA-2b capacity study
+> ([`capacity.md`](capacity.md)) measured the recall envelope at the stated
+> **target corpus of 100k documents** (single-shard Moon, retrieval-only
+> decomposition): default-config p50 19–22 ms / p99 23.4–24.4 ms. The
+> latency rows below are now anchored to that measurement. Two caveats
+> survive: (1) the product line "millions of bi-temporal facts" is NOT
+> measured — 100k is the validated envelope, and the observed scaling trend
+> says millions will not meet 25 ms p50 without further storage-side work
+> ([`capacity.md` §5](capacity.md)); (2) the ingest-availability row still
+> has no measured availability baseline and stays provisional.
 
 ---
 
@@ -57,9 +61,9 @@ Window for all objectives: **30 days rolling**.
 | Objective | Target | Budget (30 d) | Status |
 |---|---|---|---|
 | Recall availability | **99.9 %** of served `/v1/recall` requests return `status="ok"` | 0.1 % of requests | active |
-| Recall latency | **99 %** of served recalls complete in **≤ 100 ms** server-side | 1 % of requests | **provisional until GA-2 capacity study** |
-| Recall p50 contract (KPI) | p50 **≤ 25 ms** — the product contract; tracked on dashboards via the `le="0.025"` bucket ratio (≥ 50 % of requests ≤ 25 ms), **not paged** | — | **provisional until GA-2 capacity study** |
-| Ingest availability | **99.9 %** of served `/v1/ingest` requests return `status="ok"` | 0.1 % of requests | **provisional until GA-2 capacity study** (no measured ingest baseline exists yet) |
+| Recall latency | **99 %** of served recalls complete in **≤ 100 ms** server-side | 1 % of requests | active — anchored by GA-2b: engine-side p99 23.4–24.4 ms @ 100k docs, ~4× headroom for the HTTP layer ([`capacity.md` §3](capacity.md)). **Void with `LUNARIS_RECALL_RERANK=1`** — the rerank stage measures ~1.3 s/recall; rerank deployments must re-derive this row ([`capacity.md` §4](capacity.md)) |
+| Recall p50 contract (KPI) | p50 **≤ 25 ms** — the product contract; tracked on dashboards via the `le="0.025"` bucket ratio (≥ 50 % of requests ≤ 25 ms), **not paged** | — | **holds at the 100k target corpus** (GA-2b: p50 19–22 ms, ≤ 25 % headroom; engine-side, default config — graph-ON measures ~39 ms and does not fit under this KPI). Beyond 100k the contract is unvalidated — see [`capacity.md` §5](capacity.md) |
+| Ingest availability | **99.9 %** of served `/v1/ingest` requests return `status="ok"` | 0.1 % of requests | **provisional** — still no measured availability baseline. GA-2b observed sustained ~1.2 k docs/s build-rate ingest with two retryable Moon pressure states worth knowing about ([`capacity.md` §5](capacity.md)) |
 
 ### Why 100 ms for the paging latency SLO
 
@@ -71,9 +75,16 @@ claims"). 100 ms is that measured p99 with ~5× headroom for the HTTP layer,
 reranking, and corpus growth beyond the measured envelope. It is a *paging*
 threshold, deliberately looser than the 25 ms product contract: the contract
 is a KPI we track and defend in benchmarks; the SLO is what we wake someone
-up for. If GA-2 shows the p99 at the production corpus size materially above
-20.8 ms, this target — and the `le="0.1"` threshold in the rules file — must
-be revisited, not silently missed.
+up for.
+
+GA-2b measured the p99 at the 100k target corpus: **23.4–24.4 ms**
+engine-side ([`capacity.md` §3](capacity.md)) — materially above the 10k
+baseline's 20.8 ms but still ~4× under the 100 ms threshold, so the target
+stands for the default config. Two conditions would force a revisit:
+corpus growth past the 100k envelope (the p50 KPI, not this SLO, breaks
+first), and **enabling the opt-in rerank stage**, which measures ~1.3 s per
+recall at its default depth and makes this row unmeetable as written
+([`capacity.md` §4](capacity.md)).
 
 ## 3. Error-budget policy
 
@@ -132,7 +143,10 @@ SLO, just as none exports `LUNARIS_HTTP_CONCURRENCY`).
 | 99.9 % availability targets | policy choice (one 43-minute full-outage budget per 30 d), **not** a measured baseline | provisional; revisit with GA-2 production data |
 | 100 ms latency SLO threshold | derived: measured 20.8 ms p99 × ~5 headroom, rounded to a stock bucket edge | provisional until GA-2 capacity study |
 | RPO = 0 / RTO < 1 s (Moon durability) | `docs/operations/backup-restore.md` restore drill | informs the readiness objective, not a request-level SLI |
+| p50 19–22 ms / p99 23.4–24.4 ms @ 100k docs (default config) | [`capacity.md`](capacity.md) (GA-2b, Moon v0.8.5, M4 Pro, retrieval-only) | the target-corpus envelope; two runs quoted because run-to-run p50 drift was ± 3 ms on a non-lab box |
+| Rerank stage ~1.3 s/recall (top_in=60), ~1.0–1.4 s one-time lazy load | [`capacity.md` §4](capacity.md) | opt-in `LUNARIS_RECALL_RERANK`; linear in `top_in`; voids the 100 ms latency row where enabled |
 
-There is **no measured number** behind the ingest-availability target and no
-capacity study beyond 10k documents yet. Both are explicitly pending GA-2 —
-do not quote §2 externally without the provisional markers.
+There is **no measured number** behind the ingest-availability target
+(GA-2b measured build-rate throughput, not availability), and no measured
+envelope beyond 100k documents. Do not quote the "millions of facts"
+product line as measured — [`capacity.md` §5](capacity.md).

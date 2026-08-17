@@ -210,6 +210,17 @@ path = "src/bin/eval_05_helios_10k.rs"
 name = "perf-gate-check"
 path = "src/bin/perf_gate_check.rs"
 
+# GA-2b — recall-latency envelope harness at the target corpus (100k docs).
+# Resumable deterministic corpus ingest through the REAL public ingest paths
+# + timed passes over the GA-1 unified production root for the three
+# production configs (baseline | rerank | graph). Wrapped by
+# scripts/bench/perf/recall_latency.sh (own scratch Moon, port-guarded).
+# Build with `--features llamacpp,metal` so the rerank config resolves the
+# real lazy bge GGUF reranker (727bc65 feature-forwarding lesson).
+[[bin]]
+name = "recall-latency"
+path = "src/bin/recall_latency.rs"
+
 # N-04 D5 — `stage-models` HF Hub stager. Downloads the granite-r2 +
 # bge-reranker-v2-m3 safetensors into the operator's local cache; the
 # canonical GGUF SHA-256s are printed alongside so operators staging

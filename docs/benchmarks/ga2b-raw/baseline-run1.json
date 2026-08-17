@@ -1,0 +1,19 @@
+{
+  "config": "baseline",
+  "corpus_docs_hint": 100000,
+  "k": 30,
+  "queries": 500,
+  "warmup": 50,
+  "mean_ms": 19.518122487999992,
+  "p50_ms": 19.196375000000003,
+  "p95_ms": 22.311916,
+  "p99_ms": 23.360417,
+  "max_ms": 23.956833,
+  "first_call_ms": 42.477459,
+  "avg_hits": 30.0,
+  "zero_hit_queries": 0,
+  "embedder": "StubEmbedder(768) — retrieval-only decomposition",
+  "methodology": "retrieval-only (embed out of loop; v0.2.x strict-replay decomposition)",
+  "workspace_sha": "b17f9e66044a044df14535fede3c81e1ec922213",
+  "run_timestamp_iso": "2026-08-17T22:09:23.676003+00:00"
+}

@@ -1,0 +1,19 @@
+{
+  "config": "rerank",
+  "corpus_docs_hint": 100000,
+  "k": 30,
+  "queries": 100,
+  "warmup": 10,
+  "mean_ms": 580.94851373,
+  "p50_ms": 575.622042,
+  "p95_ms": 598.9284580000001,
+  "p99_ms": 996.65675,
+  "max_ms": 996.65675,
+  "first_call_ms": 1598.584,
+  "avg_hits": 30.0,
+  "zero_hit_queries": 0,
+  "embedder": "StubEmbedder(768) — retrieval-only decomposition",
+  "methodology": "retrieval-only (embed out of loop; v0.2.x strict-replay decomposition)",
+  "workspace_sha": "b17f9e66044a044df14535fede3c81e1ec922213",
+  "run_timestamp_iso": "2026-08-17T22:24:19.288925+00:00"
+}
