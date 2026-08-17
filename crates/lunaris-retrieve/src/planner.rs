@@ -81,4 +81,22 @@ mod tests {
     fn empty_query_is_vector_only() {
         assert_eq!(plan_query(""), Plan::VectorOnly);
     }
+
+    /// Pins the documented v0 limitation (see the book's recall-anatomy
+    /// "CJK and other case-less scripts" note): the heuristic is
+    /// English-only, so CJK queries — even ones naming a proper entity —
+    /// can never produce `Plan::Hybrid` and the BM25 leg is never planned.
+    ///
+    /// This test is a tripwire, not an endorsement: when the Phase-3
+    /// graph-anchored planner (or any CJK-aware heuristic) lands, it SHOULD
+    /// fail — update it together with the book note.
+    #[test]
+    fn cjk_query_always_plans_vector_only() {
+        // zh: "What did Alice do at Beijing's Tsinghua University?"
+        assert_eq!(plan_query("爱丽丝在北京清华大学做了什么？"), Plan::VectorOnly);
+        // ja: "Where does Tanaka-san work at Toyota?" (whitespace-separated)
+        assert_eq!(plan_query("田中さん は トヨタ で どこで 働いていますか"), Plan::VectorOnly);
+        // ko: "What did Samsung announce in Seoul?"
+        assert_eq!(plan_query("삼성이 서울에서 무엇을 발표했나요?"), Plan::VectorOnly);
+    }
 }

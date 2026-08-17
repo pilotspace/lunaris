@@ -61,6 +61,31 @@ round trips**. Here is how a typical
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
 | 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only paid when you ask for it |
 
+### CJK and other case-less scripts — vector-only auto-planning
+
+Two v0 behaviours to know if your corpus or queries are in Chinese,
+Japanese, or Korean (or any script without case):
+
+- **The auto-planner never picks the keyword leg for CJK queries.** The
+  `plan_query` helper (exported by `lunaris-retrieve`; RETRIEVE-13)
+  chooses `Hybrid` (vector + BM25) only when it sees an entity-like
+  **ASCII-uppercase** token mid-query — an English-only heuristic
+  (`crates/lunaris-retrieve/src/planner.rs`). CJK text has no ASCII
+  uppercase, so a CJK query **always plans `VectorOnly`** and BM25 is
+  never consulted on that path. This is pinned by the
+  `cjk_query_always_plans_vector_only` unit test in `planner.rs`, so the
+  behaviour change will be visible when the graph-anchored planner
+  replaces the heuristic. The multilingual granite-r2 embedder carries
+  CJK recall in the meantime — and note this only affects *auto-planned*
+  recall: an **explicit** DSL query (`vector.and(keyword).fuse_rrf(60)`)
+  runs exactly the legs you wrote, in any script.
+- **Sentence segmentation splits on ASCII terminals only.** The ingest
+  chunker's sentence mode splits paragraphs on `.` `!` `?`
+  (`crates/lunaris-ingest/src/chunker/segment.rs`); the full-width
+  `。` `！` `？` terminals are not split points, so CJK prose in
+  sentence mode degrades to paragraph-sized units. Chunks stay
+  retrievable (the embedder is multilingual), just coarser.
+
 ### The 86 ms lesson
 
 The same 10k-document SQuAD harness (`scripts/bench-squad-kb.py`)
