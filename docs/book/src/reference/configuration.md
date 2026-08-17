@@ -114,7 +114,7 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 |---|---|---|---|
 | `LUNARIS_VERIFY_PROVIDER` | `anthropic`\|`openai`\|`gemini`\|`minimax`\|`openai-compat` | unset | Remote verifier provider (v0.6 llama.cpp-only cutover deleted the local `270m`/`27b` model tiers — see `docs/decisions/2026-07-10-llamacpp-only-cutover.md`). Set-but-broken logs a `tracing::warn!` and falls back to `NoopVerifier`; unset is also `NoopVerifier`. |
 | `LUNARIS_CONSOLIDATOR_BACKEND` | `actr` \| `noop` | `actr` | ACT-R consolidator vs no-op |
-| `LUNARIS_GRAPH_ENABLED` | bool | off | Entity / community graph extraction pipeline |
+| `LUNARIS_GRAPH_ENABLED` | bool | off | Entity / community graph extraction pipeline. (The graph's name is the compile-time constant `LUNARIS_GRAPH_NAME = "lunaris_graph"` — not an env var.) |
 | `LUNARIS_VERIFY_ENABLED` | bool | off | Slow-path arbitration verifier pipeline |
 | `LUNARIS_CONSOLIDATE_ENABLED` | bool | off | Consolidation pipeline |
 
@@ -134,6 +134,11 @@ insensitive) for "enabled"; anything else (or unset) is "disabled".
 | `LUNARIS_DEVICE` | `auto` | `cpu` is the runtime kill-switch forcing zero GPU layers even on a `metal`/`cuda`/`vulkan` build. |
 | `LUNARIS_EMBEDDER_OLLAMA_URL` | — | **Operator escape hatch only.** Routes the embedder to a remote Ollama HTTP endpoint; requires `--features embed-remote`; resolves **after** the llama.cpp step. Not the supported path. |
 | `LUNARIS_OLLAMA_MODEL` | `embeddinggemma:300m` | Ollama model tag for the `embed-remote` escape-hatch embedder |
+| `LUNARIS_EMBEDDER_OPENAI_URL` | — | **Selector** for the OpenAI-compatible remote embedder (`lunaris-embed-remote::OpenAiEmbedder`, also `--features embed-remote`): setting it routes embedding to that `/v1/embeddings` endpoint, checked **ahead of** the Ollama hatch (`lunaris/src/handle.rs`). Empty = off. |
+| `LUNARIS_EMBEDDER_OPENAI_MODEL` | `text-embedding-3-small` | Model id sent in the OpenAI-compatible `/v1/embeddings` request (`lunaris-embed-remote/src/openai.rs`) |
+| `LUNARIS_EMBEDDER_OPENAI_API_KEY` | — | Optional bearer token for that endpoint; empty/whitespace → no `Authorization` header (keyless llama-server/vLLM allowed). Redacted in `Debug` output. |
+| `LUNARIS_EMBED_MAX_BATCH_TOKENS` | `4096` | llama.cpp batch-token window for the in-process embedder (`lunaris/src/handle.rs`); values < 16 rejected → default |
+| `LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS` | `1024` | Same knob for the interactive/contextd embedder — smaller default (~1.1 GB compute buffer vs ~2.5 GB at 4096); values < 16 rejected → default |
 
 ### Verifier / extractor providers (remote-only)
 
@@ -152,6 +157,27 @@ A provider that is set but fails to construct (bad URL, missing key) logs a
 `tracing::warn!` and degrades to `NoopExtractor`/`NoopVerifier` — never a
 silent backend swap.
 
+**Workspace-wide LLM defaults** (`lunaris-llm`, `src/config.rs`) — consulted
+only when the per-pipeline variable (`LUNARIS_EXTRACT_PROVIDER` /
+`LUNARIS_VERIFY_PROVIDER` / `LUNARIS_REFLECT_PROVIDER`) is unset. Precedence:
+per-pipeline env → workspace env → TOML file → built-in default.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_LLM_PROVIDER` | `ollama` (built-in fallback pair is `ollama` + `gemma3:4b`) | Default provider for the extract/verify/reflect pipelines: `ollama`\|`anthropic`\|`openai`\|`gemini`\|`openai-compat`; unknown value is a hard `UnknownProvider` error |
+| `LUNARIS_LLM_MODEL` | `gemma3:4b` | Default model id for those pipelines |
+| `LUNARIS_LLM_CONFIG` | unset | Path to a TOML file with optional `[default]`/`[extract]`/`[verify]`/`[reflect]` sections (`provider`, `model`); env vars still win over file values; unreadable path is a hard error |
+
+### Moon storage tuning (`lunaris-storage-moon`)
+
+Read by the Moon adapter in **any** embedding process (server, MCP, SDKs).
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_MOON_OP_TIMEOUT` | `10` (whole **seconds** — no `_MS`/`_SECS` suffix in the name) | Per-command Moon response timeout on the multiplexed connection (`HSET`/`FT.*`/TXN/`PING`), so a stalled Moon cannot hang ingest or recall (`lunaris-storage-moon/src/client.rs`). `≤ 0`/unparseable → warn + default. |
+| `LUNARIS_MOON_COMPACT_MIN` | `512` | Minimum vector-upsert count in a bulk ingest before the `BulkIngestComplete` maintenance hint issues `FT.COMPACT` on the scope's vector indexes (`lunaris-storage-moon/src/vector.rs`). `0`/garbage → warn + default. |
+| `LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT` | `true` | Whether every `atomic_write` commit also registers a `TEMPORAL.SNAPSHOT_AT` (`lunaris-storage-moon/src/atomic.rs`). Set `false` to save one Moon round trip per write **if you never use `AS_OF` recall**. |
+
 ### Supervision / worker pool
 
 | Variable | Default | Controls |
@@ -159,13 +185,22 @@ silent backend swap.
 | `LUNARIS_SCOPE_CONCURRENCY` | `8` | Max concurrent message-process tasks **per scope** |
 | `LUNARIS_SCOPE_IDLE_TIMEOUT_MS` | `1800000` (30 min) | Idle-scope worker eviction timeout |
 | `LUNARIS_WORKER_DRAIN_MS` | `5000` (5 s) | Graceful drain window when a scope worker shuts down |
+| `LUNARIS_CONSOLIDATE_DEBOUNCE_MS` | `60000` (60 s) | Debounce window the consolidation worker waits before flushing a batch of episode events to `consolidate_scoped` (`lunaris-consolidate/src/worker.rs`) |
 
 ### Logging
+
+There is **no `LUNARIS_LOG` variable** — the library/server filter is the
+standard `RUST_LOG`; the auxiliary binaries each have their own clap-backed
+filter var.
 
 | Variable | Default | Controls |
 |---|---|---|
 | `LUNARIS_ENV` | — | `production` selects the JSON `tracing` subscriber; otherwise pretty. Also auto-selects JSON when stdout is not a TTY. (`lunaris::init_logging()` / `lunaris::logging::init()`) |
-| `RUST_LOG` | — | Standard `tracing-subscriber` env filter |
+| `RUST_LOG` | `info` when unset | Standard `tracing-subscriber` env filter for the library / `lunaris-server` |
+| `LUNARIS_HOOK_LOG` | `warn` | Tracing filter for the `lunaris-hook` binary (`lunaris-hook/src/main.rs`) |
+| `LUNARIS_HOOK_LOG_JSON` | unset | `1` switches hook logs to JSON lines |
+| `LUNARIS_CONTEXTD_LOG` | `warn` | Tracing filter for the `lunaris-contextd` daemon (`lunaris-hook/src/contextd.rs`) |
+| `LUNARIS_MCP_LOG` | `info,rmcp=warn` | Tracing filter for `lunaris-mcp` (stderr — stdout is the MCP transport) |
 
 ### HTTP server (`lunaris-server`)
 
@@ -179,11 +214,15 @@ that takes precedence.
 | `LUNARIS_TOKENS_FILE` | *(required)* | Path to the bearer-token map JSON (see below) |
 | `LUNARIS_RATE_PER_SECOND` | `60` | Per-tenant sustained request rate |
 | `LUNARIS_RATE_BURST` | `120` | Per-tenant burst budget |
-| `LUNARIS_CORS_ORIGINS` | `*` | CORS allow-list — `*` or a comma-separated list |
+| `LUNARIS_CORS_ORIGINS` | `*` | CORS allow-list — `*` or a comma-separated list. Set an explicit list if browsers talk to your deployment ([Security & Hardening](../operations/security.md)). |
 | `LUNARIS_SHUTDOWN_GRACE_SECS` | `30` | Graceful-shutdown drain window |
+| `LUNARIS_HTTP_TIMEOUT_SECS` | `30` | Per-request wall-clock budget; exceeding it returns `408`. Covers producing the response, not streaming an SSE body. `0` disables (bound requests at your proxy instead). |
+| `LUNARIS_HTTP_CONCURRENCY` | `256` | Max concurrently-served requests; arrivals beyond the cap are **shed** immediately (`503` + `Retry-After`), never queued. `0` disables the limit. |
 
 Plus the `--metrics-disabled` CLI flag, which removes the `/metrics`
-endpoint.
+endpoint. The per-command Moon timeout the server inherits is
+`LUNARIS_MOON_OP_TIMEOUT` — a storage-layer variable, not a
+`lunaris-server` flag (see *Moon storage tuning* above).
 
 **Bearer-token map format** (`LUNARIS_TOKENS_FILE`, D-07):
 
@@ -204,11 +243,62 @@ endpoint.
   this list is `403`.
 - A missing or invalid token is `401`.
 
+### MCP server (`lunaris-mcp`)
+
+Every var has a matching CLI flag (clap) that takes precedence. Storage
+resolution is explicit → contextd-advertised → refuse-to-boot; see
+[MCP Server](../mcp/index.md).
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_MCP_STORAGE` | unset (**no default since 0.7.0**) | Storage URL (`moon://host:port`). Unset → adopt a live `lunaris-contextd`-advertised store, else refuse to boot with the external-Moon quickstart. Must match contextd's store or the two write to different Moons. |
+| `LUNARIS_MCP_SCOPE` | unset | Overrides the auto-derived memory scope (git remote + branch, else cwd hash) |
+| `LUNARIS_MCP_MODELS_DIR` | `~/.lunaris/models` | Where lazy GGUF staging puts model files (mostly test isolation) |
+| `LUNARIS_MCP_SKIP_STAGE` | unset | Presence-only: skip lazy GGUF staging on first recall (CI / operator override) |
+| `LUNARIS_MCP_DISABLE_CONTEXTD` | unset | Presence-only: serve every op Direct instead of proxying to the warm `lunaris-contextd` daemon |
+| `LUNARIS_MCP_CONTEXTD_CONNECT_MS` | `500` | Cold-start budget for connecting to contextd's socket before falling back to Direct |
+| `LUNARIS_MCP_CONTEXTD_BREAKER_N` | `3` | Consecutive contextd failures before the circuit breaker opens (ops go Direct) |
+
+(`LUNARIS_MCP_LOG` is in the Logging table above.)
+
+### Hooks & context injection (`lunaris-hook` / `lunaris-contextd`)
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_STORE_URL` | unset | The hook binary's storage URL (`moon://host:port`). Unset → adopt a live contextd-advertised store, else hard-error with the external-Moon quickstart (`lunaris-hook/src/scope.rs`). This is the real name — `LUNARIS_HOOK_STORAGE` does not exist. |
+| `LUNARIS_CONTEXT_RECALL` | `hybrid` | `vector` forces the legacy vector-only recall path for context injection; anything else is hybrid (vector + BM25 RRF, degrading to vector on failure) |
+| `LUNARIS_CONTEXT_RECALL_TIMEOUT_MS` | `1500` | Deadline on the hybrid retrieve; timeout degrades to the vector path |
+| `LUNARIS_CONTEXT_MAX_HITS` / `_MIN_SCORE` / `_MAX_CHARS` | `5` / `0.55` / `1600` | Prompt-phase injection budget: max memories, min cosine score, char cap |
+| `LUNARIS_CONTEXT_POST_TOOL_MAX_HITS` / `_MIN_SCORE` / `_MAX_CHARS` | `3` / `0.60` / `900` | Post-tool-call injection budget |
+| `LUNARIS_CONTEXT_DIGEST_MAX_HITS` / `_MAX_CHARS` | `8` / `2000` | SessionStart digest budget |
+| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | `1`/`true` re-includes raw tool-call captures in prompt-phase injection (excluded by default as low-signal) |
+| `LUNARIS_CONTEXT_EMBED_CACHE_MAX` | `256` | Max entries in contextd's query-embedding cache (cleared wholesale when full, not LRU) |
+| `LUNARIS_CONTEXT_PROFILE` | off | Exactly `1` (not `true`) emits latency breadcrumbs for recall / embedding / promotion |
+| `LUNARIS_INFER_WATCHDOG_MS` | `120000` | Per-inference-call timeout in contextd; a timed-out call fails only that request (recall fail-opens) |
+| `LUNARIS_INFER_WATCHDOG_TRIP` | `2` | Consecutive inference timeouts that count as "wedged, not slow" — trips the wedge policy (contextd exits 70; hooks respawn it) |
+| `LUNARIS_DREAM_NUDGE_THRESHOLD` | `5` | Ripe-memory count at which the SessionStart digest nudges "run /dream"; `0` disables the check |
+| `LUNARIS_SESSIONS_FILE` | `~/.lunaris/sessions.json` | Where session markers / session pads persist (tests + non-default homes) |
+| `LUNARIS_CODEX_CONTEXT_*` / `LUNARIS_CODEX_POST_TOOL_*` | same defaults | **Lowest-priority aliases** of the matching `LUNARIS_CONTEXT_*` knobs — consulted only when the generic var is unset/unparseable, for any client (not Codex-detected) |
+
+> `LUNARIS_DREAM_CRON` and `LUNARIS_DREAM_PIGGYBACK` appear in the `/dream`
+> skill docs as v2 stubs but are **not read by any code yet** — setting them
+> does nothing today.
+
+### Bench-only variables
+
+The `LUNARIS_EVAL_*` family (plus the bench harness knobs) configures the
+LongMemEval / PersonaMem benchmark rigs only — never a production process.
+They are documented next to the harnesses:
+[`scripts/bench/lme/README.md`](https://github.com/pilotspace/lunaris/blob/main/scripts/bench/lme/README.md)
+and
+[`scripts/bench/pm/README.md`](https://github.com/pilotspace/lunaris/blob/main/scripts/bench/pm/README.md).
+
 ### Integration-test probes (not for production)
 
 | Variable | Example | Used by |
 |---|---|---|
 | `MOON_URL` | `moon://localhost:6390` | `#[cfg(feature = "moon-it")]` tests |
+| `LUNARIS_MOON_URL` | `moon://127.0.0.1:6380` (default in the storage-moon live tests) | Live-Moon integration/conformance tests only; unset → those `#[ignore]`d tests skip. Production code never reads it. |
 | `MOON_TEST_BINARY` | `/path/to/moon` | `lunaris-test-harness` — the `moon` binary it spawns per fixture. Without it (and without `vendor/moon/target/{release,debug}/moon`) the harness **panics**; there is no in-memory fallback since 0.7.0. |
 
 > Point these at a **dedicated** Moon. Never at a store you care about — the
