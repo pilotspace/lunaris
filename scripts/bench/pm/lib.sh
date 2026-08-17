@@ -155,14 +155,27 @@ pm_rc_is_timeout() { # $1 = rc
 # ---------------------------------------------------------------------------
 # Moon helpers. Every one of these routes through pm_guard_port first.
 # ---------------------------------------------------------------------------
+# redis-cli's -t (connection timeout) flag only exists in redis-cli >= 8.0.
+# Ubuntu 24.04 runners ship redis-tools 7.0.15, where the unrecognized flag
+# makes redis-cli exit 1 WITHOUT connecting — the recall-ratchet's first CI
+# run failed all 4 shards on exactly this (Moon healthy, every ping "failed").
+# Bound the probe with coreutils timeout when available instead.
+_lme_redis_cli() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 3 redis-cli "$@"
+  else
+    redis-cli "$@"
+  fi
+}
+
 pm_moon_ping() { # $1 = port
   pm_guard_port "$1" "moon ping target"
-  redis-cli -p "$1" -t 3 ping >/dev/null 2>&1
+  _lme_redis_cli -p "$1" ping >/dev/null 2>&1
 }
 
 pm_moon_flush() { # $1 = port — DESTRUCTIVE, guarded
   pm_guard_port "$1" "FLUSHALL target"
-  redis-cli -p "$1" -t 3 flushall >/dev/null 2>&1
+  _lme_redis_cli -p "$1" flushall >/dev/null 2>&1
 }
 
 pm_count() { # $1 = dir, $2 = optional -name glob
