@@ -1,11 +1,14 @@
 # Starter alert rules for lunaris-server + Moon.
 # Rationale, and the rules deliberately omitted, in
-# docs/operations/observability.md §5.
+# docs/operations/observability.md §5. SLO thresholds (latency + burn-rate
+# math) are derived from docs/operations/slo.md — change them THERE first.
 #
-# TWO THRESHOLDS MUST BE TEMPLATED BEFORE USE:
+# ONE THRESHOLD MUST BE TEMPLATED BEFORE USE:
 #   * LunarisInFlightSaturation — replace 256 with your LUNARIS_HTTP_CONCURRENCY
 #     (no metric exports the configured limit).
-#   * LunarisRecallLatencyHigh  — replace 0.5 with your actual latency SLO.
+# If your deployment promises a different SLO than docs/operations/slo.md §2
+# (99.9% availability, 99% of recalls <= 100ms), rescale the lunaris-slo-burn
+# expressions and the LunarisRecallLatencyHigh threshold accordingly.
 
 groups:
   - name: lunaris
@@ -105,16 +108,24 @@ groups:
             lunaris_recall_duration_seconds and Moon's own metrics.
 
       # ── latency / errors ──────────────────────────────────────────────────
-      # TEMPLATE: 0.5s is a placeholder SLO.
+      # 0.1s = the paging latency SLO from docs/operations/slo.md §2 (99% of
+      # recalls <= 100ms; provisional until the GA-2 capacity study). The
+      # 25ms p50 product contract is a dashboard KPI (le="0.025" bucket
+      # ratio), deliberately NOT paged. Slow-drift backstop for the
+      # lunaris-slo-burn group below.
       - alert: LunarisRecallLatencyHigh
         expr: >-
-          histogram_quantile(0.95,
+          histogram_quantile(0.99,
             sum by (le, tenant) (rate(lunaris_recall_duration_seconds_bucket[5m]))
-          ) > 0.5
+          ) > 0.1
         for: 10m
         labels: { severity: warning }
         annotations:
-          summary: "p95 recall latency > 500ms for tenant {{ $labels.tenant }}"
+          summary: "p99 recall latency > 100ms (the SLO threshold) for tenant {{ $labels.tenant }}"
+          description: >-
+            Threshold source: docs/operations/slo.md §2. Sustained breach
+            here consumes the latency error budget; the burn-rate rules in
+            the lunaris-slo-burn group decide paging.
 
       - alert: LunarisRecallErrorRate
         expr: >-
@@ -135,3 +146,131 @@ groups:
           description: >-
             The gauge stays at 0 on backends without queue support (the poller
             warns once at startup), so 0 is not proof of an empty queue.
+
+  # ── SLO burn-rate rules ─────────────────────────────────────────────────
+  # Multiwindow multi-burn-rate (SRE-workbook pattern), derived from
+  # docs/operations/slo.md §4. Both windows must burn simultaneously:
+  #   page:   14.4x budget burn over 1h AND 5m  (severity: critical)
+  #   ticket:  6x   budget burn over 6h AND 30m (severity: warning)
+  # Budgets (30d window): availability 0.1% (0.001); latency 1% (0.01) of
+  # requests slower than 0.1s. 14.4 * 0.001 = 0.0144; 6 * 0.001 = 0.006;
+  # 14.4 * 0.01 = 0.144; 6 * 0.01 = 0.06.
+  # NOTE: shed (503) and timed-out (408) requests never reach the verb
+  # counters, so these ratios cover SERVED requests only — the shedding
+  # alerts above are the capacity net (observability.md §2).
+  - name: lunaris-slo-burn
+    rules:
+      # ── recall availability (SLO 99.9%) ──────────────────────────────────
+      - alert: LunarisRecallAvailabilityBurnPage
+        expr: >-
+          (
+            sum(rate(lunaris_recall_total{status="error"}[1h]))
+              / clamp_min(sum(rate(lunaris_recall_total[1h])), 1e-9)
+          ) > 0.0144
+          and
+          (
+            sum(rate(lunaris_recall_total{status="error"}[5m]))
+              / clamp_min(sum(rate(lunaris_recall_total[5m])), 1e-9)
+          ) > 0.0144
+        labels: { severity: critical }
+        annotations:
+          summary: "Recall availability burning 14.4x the 30d error budget (1h + 5m)"
+          description: >-
+            Sustained, this consumes ~2% of the 30-day budget per hour.
+            Policy: docs/operations/slo.md §3 — rollout freeze applies.
+
+      - alert: LunarisRecallAvailabilityBurnTicket
+        expr: >-
+          (
+            sum(rate(lunaris_recall_total{status="error"}[6h]))
+              / clamp_min(sum(rate(lunaris_recall_total[6h])), 1e-9)
+          ) > 0.006
+          and
+          (
+            sum(rate(lunaris_recall_total{status="error"}[30m]))
+              / clamp_min(sum(rate(lunaris_recall_total[30m])), 1e-9)
+          ) > 0.006
+        labels: { severity: warning }
+        annotations:
+          summary: "Recall availability burning 6x the 30d error budget (6h + 30m)"
+          description: >-
+            Slow burn — ticket, not page. Investigate within one business
+            day per docs/operations/slo.md §3.
+
+      # ── ingest availability (SLO 99.9%, provisional until GA-2) ──────────
+      - alert: LunarisIngestAvailabilityBurnPage
+        expr: >-
+          (
+            sum(rate(lunaris_ingest_total{status="error"}[1h]))
+              / clamp_min(sum(rate(lunaris_ingest_total[1h])), 1e-9)
+          ) > 0.0144
+          and
+          (
+            sum(rate(lunaris_ingest_total{status="error"}[5m]))
+              / clamp_min(sum(rate(lunaris_ingest_total[5m])), 1e-9)
+          ) > 0.0144
+        labels: { severity: critical }
+        annotations:
+          summary: "Ingest availability burning 14.4x the 30d error budget (1h + 5m)"
+          description: >-
+            Sustained, this consumes ~2% of the 30-day budget per hour.
+            Policy: docs/operations/slo.md §3 — rollout freeze applies.
+
+      - alert: LunarisIngestAvailabilityBurnTicket
+        expr: >-
+          (
+            sum(rate(lunaris_ingest_total{status="error"}[6h]))
+              / clamp_min(sum(rate(lunaris_ingest_total[6h])), 1e-9)
+          ) > 0.006
+          and
+          (
+            sum(rate(lunaris_ingest_total{status="error"}[30m]))
+              / clamp_min(sum(rate(lunaris_ingest_total[30m])), 1e-9)
+          ) > 0.006
+        labels: { severity: warning }
+        annotations:
+          summary: "Ingest availability burning 6x the 30d error budget (6h + 30m)"
+
+      # ── recall latency (SLO: 99% of recalls <= 0.1s; 0.1 is a stock
+      #    bucket edge — metrics.rs registers default Prometheus buckets) ───
+      - alert: LunarisRecallLatencyBurnPage
+        expr: >-
+          (
+            1 - (
+              sum(rate(lunaris_recall_duration_seconds_bucket{le="0.1"}[1h]))
+                / clamp_min(sum(rate(lunaris_recall_duration_seconds_count[1h])), 1e-9)
+            )
+          ) > 0.144
+          and
+          (
+            1 - (
+              sum(rate(lunaris_recall_duration_seconds_bucket{le="0.1"}[5m]))
+                / clamp_min(sum(rate(lunaris_recall_duration_seconds_count[5m])), 1e-9)
+            )
+          ) > 0.144
+        labels: { severity: critical }
+        annotations:
+          summary: "Recall latency burning 14.4x the 30d budget — >14.4% of recalls slower than 100ms (1h + 5m)"
+          description: >-
+            Threshold source: docs/operations/slo.md §2 (provisional until
+            the GA-2 capacity study). Correlate with lunaris_http_in_flight,
+            Moon's own metrics, and the reranker lazy-load on first recall.
+
+      - alert: LunarisRecallLatencyBurnTicket
+        expr: >-
+          (
+            1 - (
+              sum(rate(lunaris_recall_duration_seconds_bucket{le="0.1"}[6h]))
+                / clamp_min(sum(rate(lunaris_recall_duration_seconds_count[6h])), 1e-9)
+            )
+          ) > 0.06
+          and
+          (
+            1 - (
+              sum(rate(lunaris_recall_duration_seconds_bucket{le="0.1"}[30m]))
+                / clamp_min(sum(rate(lunaris_recall_duration_seconds_count[30m])), 1e-9)
+            )
+          ) > 0.06
+        labels: { severity: warning }
+        annotations:
+          summary: "Recall latency burning 6x the 30d budget — >6% of recalls slower than 100ms (6h + 30m)"
