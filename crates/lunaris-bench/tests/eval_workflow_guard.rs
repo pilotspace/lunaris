@@ -1,16 +1,34 @@
-//! Red-first structural guard: the gauntlet CI workflow must be a RUNNABLE,
-//! SKIP-clean gate — not a phantom that can never produce numbers (frozen
-//! contract §3, eval-gauntlet-ci-gate).
+//! Structural guard: the recall-quality CI gate must be a RUNNABLE,
+//! hosted-runner workflow — not a phantom that can never produce numbers.
 //!
-//! RED until BUILD reworks `.github/workflows/eval-gauntlet.yml` off the
-//! unpublished `services: moondb/moon` image (→ manual docker-run, the
-//! integration.yml pattern) and onto the weights-cached self-hosted runner
-//! (like `llm-gates.yml`), so real numbers populate at HUMAN-UAT.
+//! History this file carries forward (GA-2a): the previous gate,
+//! `.github/workflows/eval-gauntlet.yml`, never executed once. From its
+//! first commit (4638a5c) to 2026-08-15 every recorded run (200/200) was a
+//! `startup_failure` with an empty `jobs` array — a `${{ runner.temp }}`
+//! reference in a job-level `env:` map makes GitHub reject the ENTIRE file
+//! (STARTUP-01) — and after going dispatch-only it targeted a
+//! `[self-hosted, llm-weights-cached]` pool with zero registered runners.
+//! GA-2a replaced it with `.github/workflows/recall-ratchet.yml`: a
+//! judge-free LongMemEval-S any-gold ratchet that runs on `ubuntu-latest`
+//! (CPU llamacpp + public HF dataset + a scratch Moon built from
+//! vendor/moon), compared against a checked-in measured baseline.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn workspace_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR is <repo>/crates/lunaris-bench.
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.pop();
+    p.pop();
+    p
+}
+
+fn workflow_path() -> PathBuf {
+    workspace_root().join(".github/workflows/recall-ratchet.yml")
+}
 
 fn workflow_src() -> String {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/eval-gauntlet.yml");
+    let p = workflow_path();
     std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
 }
 
@@ -44,27 +62,6 @@ fn job_level_env_lines(yml: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// Return the body of one `jobs.<job_id>:` block (the lines indented deeper
-/// than the 2-space job key), so an assertion can target a single job instead
-/// of the whole file.
-fn job_block(yml: &str, job_id: &str) -> String {
-    let lines: Vec<&str> = yml.lines().collect();
-    let header = format!("  {job_id}:");
-    let start = lines
-        .iter()
-        .position(|l| l.trim_end() == header)
-        .unwrap_or_else(|| panic!("job `{job_id}:` not found in eval-gauntlet.yml"));
-    let mut body = Vec::new();
-    for line in &lines[start + 1..] {
-        let indent = line.len() - line.trim_start().len();
-        if !line.trim().is_empty() && indent <= 2 {
-            break;
-        }
-        body.push(*line);
-    }
-    body.join("\n")
-}
-
 /// Contexts that do NOT exist inside `jobs.<job_id>.env`. That map is expanded
 /// by the Actions **service**, before a runner is assigned, so only
 /// `github` / `inputs` / `matrix` / `needs` / `secrets` / `strategy` / `vars`
@@ -74,17 +71,10 @@ fn job_block(yml: &str, job_id: &str) -> String {
 /// name stays stuck at its file path (`name:` was never read).
 const RUNNER_SIDE_CONTEXTS: &[&str] = &["runner.", "env.", "steps.", "job."];
 
-/// Regression pin for the defect that made this workflow un-loadable from the
-/// day it was committed (4638a5c) until this fix: `jobs.eval-gauntlet.env`
-/// held `LUNARIS_EVAL_CACHE_DIR: ${{ runner.temp }}/lunaris-eval-cache`.
-///
-/// Forensics (2026-08-15): 200/200 recorded runs = failure, `jobs: []`, and
-/// every one fired on `push` even though `on:` has been `workflow_dispatch`-only
-/// since b8601cc — the give-away that GitHub could not read the triggers at
-/// all. `actionlint` reports it as
-/// `context "runner" is not allowed here` at 58:35.
+/// STARTUP-01, carried forward from the gauntlet post-mortem: this is the
+/// exact defect class that made the previous gate un-loadable for 7 weeks.
 #[test]
-fn gauntlet_workflow_job_env_uses_no_runner_side_context() {
+fn ratchet_workflow_job_env_uses_no_runner_side_context() {
     let yml = workflow_src();
     let offenders: Vec<String> = job_level_env_lines(&yml)
         .into_iter()
@@ -98,7 +88,7 @@ fn gauntlet_workflow_job_env_uses_no_runner_side_context() {
 
     assert!(
         offenders.is_empty(),
-        "eval-gauntlet.yml references a runner-side context inside a job-level `env:` block.\n\
+        "recall-ratchet.yml references a runner-side context inside a job-level `env:` block.\n\
          GitHub rejects the WHOLE file for this (startup_failure, zero jobs) — it does not \
          merely skip the step.\n\
          Move the value into a step that writes `$GITHUB_ENV` instead.\n\
@@ -107,86 +97,139 @@ fn gauntlet_workflow_job_env_uses_no_runner_side_context() {
     );
 }
 
-/// The gauntlet's heavy job can only ever run on a weights-cached self-hosted
-/// runner, and this repo has had ZERO registered runners since the candle
-/// cutover. A workflow whose only job can never be scheduled dies invisibly
-/// (queued forever, no annotation). There must be a cheap always-schedulable
-/// preflight that reaches a *visible* decision instead.
+/// The whole point of GA-2a: the recall gate must be schedulable on a stock
+/// hosted runner. A `self-hosted` label on any EFFECTIVE line (comments are
+/// allowed to tell the gauntlet post-mortem) recreates the phantom-gate
+/// failure mode (queued forever against an empty pool).
 #[test]
-fn gauntlet_workflow_has_a_cheap_preflight_that_skips_visibly() {
+fn ratchet_workflow_runs_on_a_hosted_runner() {
     let yml = workflow_src();
     assert!(
-        yml.contains("preflight:"),
-        "eval-gauntlet.yml needs a `preflight:` job that runs on a stock GitHub \
-         runner, so dispatching the workflow always produces a visible result"
+        yml.contains("runs-on: ubuntu-latest"),
+        "recall-ratchet.yml must run on ubuntu-latest — a hosted runner that exists"
     );
+    let offenders: Vec<String> = yml
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim_start().starts_with('#') && l.contains("self-hosted"))
+        .map(|(n, l)| format!("  line {}: {}", n + 1, l.trim()))
+        .collect();
     assert!(
-        yml.contains("::notice::eval gauntlet skipped:"),
-        "the preflight must announce the skip with a `::notice::eval gauntlet skipped: <reason>` \
-         annotation — an invisible skip is what let this gate rot for 7 weeks"
-    );
-    assert!(
-        yml.contains("needs: preflight"),
-        "the heavy weights-cached job must be gated behind `needs: preflight` so it is \
-         explicitly skipped, not left queueing against an empty runner pool"
+        offenders.is_empty(),
+        "recall-ratchet.yml must never target a self-hosted pool; the eval gauntlet \
+         died queued against an empty one. Offending lines:\n{}",
+        offenders.join("\n")
     );
 }
 
+/// The gate must actually fire: push to main (path-filtered to the
+/// recall-affecting surface), a weekly schedule, and manual dispatch.
 #[test]
-fn gauntlet_workflow_has_no_phantom_moon_service() {
+fn ratchet_workflow_has_push_schedule_and_dispatch_triggers() {
     let yml = workflow_src();
-    // Reject: unrunnable_service — a `services:` block can't launch an
-    // unpublished/locally-built Moon image; the integration.yml manual
-    // `docker run` pattern is the runnable shape.
+    assert!(yml.contains("\n  push:"), "recall-ratchet.yml must trigger on push to main");
+    assert!(yml.contains("\n  schedule:"), "recall-ratchet.yml must keep its weekly schedule");
     assert!(
-        !yml.contains("services:"),
-        "eval-gauntlet.yml still has a services: block — use a manual docker-run Moon step"
+        yml.contains("workflow_dispatch"),
+        "recall-ratchet.yml must stay manually dispatchable"
+    );
+    for path in [
+        "crates/lunaris-retrieve/**",
+        "crates/lunaris-storage-moon/**",
+        "crates/lunaris-ingest/**",
+        "crates/lunaris-llamacpp/**",
+        "scripts/bench/lme/**",
+        ".github/workflows/recall-ratchet.yml",
+    ] {
+        assert!(
+            yml.contains(&format!("\"{path}\"")),
+            "recall-ratchet.yml push path filter lost {path} — a recall-affecting \
+             change there would silently skip the gate"
+        );
+    }
+}
+
+/// The workflow must run THE gate script against THE checked-in baseline —
+/// not re-derive its own scoring inline (copy-paste drift is how the
+/// gauntlet's config diverged from the published numbers).
+#[test]
+fn ratchet_workflow_runs_the_gate_against_the_checked_in_baseline() {
+    let yml = workflow_src();
+    assert!(
+        yml.contains("scripts/bench/lme/anygold_gate.sh"),
+        "recall-ratchet.yml must invoke scripts/bench/lme/anygold_gate.sh"
+    );
+    assert!(
+        yml.contains("scripts/bench/lme/baselines/ci-anygold.json"),
+        "recall-ratchet.yml must compare against the checked-in baseline file"
     );
 }
 
+/// The baseline the workflow gates on must exist, parse, and be internally
+/// coherent — including its config signature's offsets manifest actually
+/// matching the manifest in the tree (a silently edited manifest invalidates
+/// the ratchet).
 #[test]
-fn gauntlet_workflow_is_dispatch_only_while_runner_pool_is_empty() {
-    let yml = workflow_src();
-    // 2026-07-17: the repo has ZERO registered self-hosted runners — the
-    // `llm-weights-cached` pool's only other consumer (llm-gates.yml) was
-    // deleted in the candle cutover (3856bbb), and every push/PR trigger
-    // since fails at dispatch in 0s (red on every push = alarm fatigue).
-    // Until a weights-cached runner is registered again, the gauntlet must
-    // be manual-dispatch only. When the runner returns, restore the
-    // push/pull_request triggers AND flip these assertions.
-    assert!(yml.contains("workflow_dispatch"), "eval-gauntlet.yml must stay manually dispatchable");
+fn checked_in_baseline_is_coherent_with_the_offsets_manifest() {
+    let p = workspace_root().join("scripts/bench/lme/baselines/ci-anygold.json");
+    let body = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+    let v: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|e| panic!("parse {}: {e}", p.display()));
+
+    assert_eq!(v["metric"], "lme_s_anygold", "baseline metric must be lme_s_anygold");
+    let hits = v["hits"].as_u64().expect("baseline.hits must be a non-negative integer");
+    let total = v["total"].as_u64().expect("baseline.total must be a non-negative integer");
+    let tol = v["tolerance_questions"]
+        .as_u64()
+        .expect("baseline.tolerance_questions must be a non-negative integer");
+    assert!(hits <= total, "baseline hits {hits} cannot exceed total {total}");
+    assert!(total > 1, "a 1-question baseline ratchets nothing");
     assert!(
-        !yml.contains("\n  push:"),
-        "eval-gauntlet.yml must not auto-trigger on push while no \
-         llm-weights-cached runner is registered (0s dispatch failure)"
+        tol < total,
+        "tolerance {tol} >= total {total} makes the gate vacuous — it could never fail"
     );
-    assert!(
-        !yml.contains("\n  pull_request:"),
-        "eval-gauntlet.yml must not auto-trigger on pull_request while no \
-         llm-weights-cached runner is registered (0s dispatch failure)"
+
+    let sig = v["config_signature"].as_str().expect("baseline.config_signature must be a string");
+    // `offsets=<file>:<count>` must agree with the manifest in the tree.
+    let offsets_part = sig
+        .split('|')
+        .find_map(|part| part.strip_prefix("offsets="))
+        .expect("config_signature must carry an offsets=<file>:<count> component");
+    let (fname, count) =
+        offsets_part.rsplit_once(':').expect("offsets component must be <file>:<count>");
+    let count: u64 = count.parse().expect("offsets count must be numeric");
+    assert_eq!(count, total, "signature offsets count must equal baseline.total");
+    let manifest = workspace_root().join("scripts/bench/lme/questions").join(fname);
+    let rows = manifest_rows(&manifest);
+    assert_eq!(
+        rows as u64,
+        total,
+        "{} holds {rows} questions but the baseline claims {total} — manifest drift; \
+         re-bless the baseline",
+        manifest.display()
     );
 }
 
+fn manifest_rows(path: &Path) -> usize {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .count()
+}
+
+/// The gauntlet must stay dead. Its yml resurfacing would re-register a
+/// workflow that either startup-fails on every push or queues forever — both
+/// alarm-fatigue generators that hid real breakage for weeks.
 #[test]
-fn gauntlet_workflow_targets_the_weights_cached_runner() {
-    let yml = workflow_src();
-    // Must: real J/F1 numbers need cached model weights → the self-hosted
-    // weights-cached runner (mirrors llm-gates.yml), SKIP-clean elsewhere.
+fn the_eval_gauntlet_workflow_stays_deleted() {
+    let p = workspace_root().join(".github/workflows/eval-gauntlet.yml");
     assert!(
-        yml.contains("llm-weights-cached"),
-        "eval-gauntlet.yml must target the [self-hosted, llm-weights-cached] runner"
-    );
-    // Job-scoped, not file-scoped: the cheap `preflight` job legitimately runs
-    // on ubuntu-latest (that is the whole point — it must be schedulable when
-    // the self-hosted pool is empty). Only the job that actually produces
-    // numbers is forbidden from running weightless.
-    let heavy = job_block(&yml, "eval-gauntlet");
-    assert!(
-        heavy.contains("runs-on: [self-hosted, llm-weights-cached]"),
-        "the eval-gauntlet job must run on [self-hosted, llm-weights-cached]"
-    );
-    assert!(
-        !heavy.contains("ubuntu-latest"),
-        "the gauntlet can't produce real numbers on ubuntu-latest (no weights)"
+        !p.exists(),
+        "{} is back. The eval gauntlet was replaced by recall-ratchet.yml (GA-2a); \
+         if a heavier LLM-judged gate is wanted again, build it as a NEW workflow \
+         that is provably schedulable, and keep this tombstone until then",
+        p.display()
     );
 }
