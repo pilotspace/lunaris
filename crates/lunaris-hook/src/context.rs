@@ -56,6 +56,21 @@ pub const DEFAULT_HYBRID_TIMEOUT_MS: u64 = 1500;
 /// on this path).
 pub use lunaris_retrieve::hybrid_root;
 
+/// GA-1 — the hook hot path's recall root, built THROUGH the canonical
+/// [`lunaris_retrieve::production_root`] (one composition, every surface).
+///
+/// `graph = true` unconditionally: the hook's fact legs stay DEFAULT-ON per
+/// the hook-recall-graph-hybrid contract (opt out of the whole hybrid path
+/// with `LUNARIS_CONTEXT_RECALL=vector`, not per-leg). The opt-in
+/// `LUNARIS_RECALL_RERANK` cross-encoder stage is INTENTIONALLY never
+/// applied here — context injection is the latency-critical path (the
+/// recall budget is `LUNARIS_CONTEXT_RECALL_TIMEOUT_MS`, default 1.5 s, and
+/// a cold reranker GGUF load alone would blow it). Pinned by
+/// `tests/context_production_root.rs`.
+pub fn hook_recall_root(candidate_k: usize) -> lunaris_retrieve::TopRetriever {
+    lunaris_retrieve::production_root(candidate_k, true)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContextRequest {
@@ -1154,7 +1169,9 @@ impl ContextService {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(DEFAULT_HYBRID_TIMEOUT_MS);
-        let root = hybrid_root(candidate_k);
+        // GA-1: routed through the unified production root (fact legs ON,
+        // rerank NEVER — see `hook_recall_root`).
+        let root = hook_recall_root(candidate_k);
         let raw_hits =
             tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), root.retrieve(&ctx))
                 .await

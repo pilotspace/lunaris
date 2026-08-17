@@ -13,7 +13,10 @@ use std::sync::Arc;
 use chrono::DateTime;
 use lunaris::Query;
 use lunaris_core::{Hlc, snippet};
-use lunaris_retrieve::{Keyword, LedgerBoostProvider, RetrievalBuilder, Vector};
+use lunaris_retrieve::{
+    LedgerBoostProvider, Reranker, RetrievalBuilder, Retriever, Vector, production_root,
+    production_root_reranked,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::ServiceError;
@@ -110,11 +113,15 @@ fn hlc_to_rfc3339(hlc: &Hlc) -> String {
 ///    after recall on the hydrated source (see step 4), backed by an 8×-widened
 ///    candidate over-fetch, because backend push-down filtering is lossy on
 ///    Moon.
-/// 3. Execute the canonical hybrid plan:
-///    `Vector(chunks) AND Keyword::bm25(chunks) -> fuse_rrf(60)`.
-///    Moon handles this as native HYBRID search when the backend supports it;
-///    other keyword-capable backends use client-side RRF. Backends without a
-///    keyword surface fall back narrowly to vector-only recall.
+/// 3. Execute the GA-1 unified production root ([`recall_root`] →
+///    `lunaris_retrieve::production_root`): `Vector ∧ BM25("chunks") →
+///    fuse_rrf(60) → top(candidate_k)`, plus the fact legs
+///    (`Navigate("entities", fallback "facts") ∧ BM25("facts")`) when the
+///    graph pipeline is enabled, plus the opt-in `LUNARIS_RECALL_RERANK`
+///    cross-encoder stage between fusion and the final top-k. Moon handles
+///    the chunks fusion as native HYBRID search when the backend supports
+///    it; other keyword-capable backends use client-side RRF. Backends
+///    without a keyword surface fall back narrowly to vector-only recall.
 /// 4. Map each `Hit` to `RecallHit` — curated snippet by default (JSON
 ///    envelopes summarized via `lunaris_core::snippet`, 260-char cap), raw
 ///    200-char preview when `params.raw`.
@@ -185,30 +192,35 @@ pub async fn handle(
     }
 
     // Execute — ScopedLunaris::recall threads the bound scope through.
+    // GA-1: the root is built THROUGH the `recall_root` seam (→
+    // `lunaris_retrieve::production_root`), so the graph-ON fact legs are no
+    // longer silently discarded by this surface's `with_root` (the pre-GA-1
+    // bug) and the opt-in rerank stage composes identically to HTTP/SDK.
     let scoped = lunaris.scoped(scope.clone());
-    let root = Vector::new("chunks", candidate_k)
-        .and(Keyword::bm25("chunks", candidate_k))
-        .fuse_rrf(60)
-        .top(candidate_k);
-    let hits =
-        match with_activation_boost(scoped.dsl().with_root(root), lunaris).execute(q.clone()).await
-        {
-            Ok(hits) => hits,
-            Err(err) if is_keyword_not_supported(&err) => {
-                tracing::debug!(
-                    scope = scope.as_str(),
-                    "memory.recall keyword branch unsupported; falling back to vector-only"
-                );
-                with_activation_boost(
-                    scoped.dsl().with_root(Vector::new("chunks", candidate_k)),
-                    lunaris,
-                )
-                .execute(q)
-                .await
-                .map_err(ServiceError::LunarisEngine)?
-            }
-            Err(err) => return Err(ServiceError::LunarisEngine(err)),
-        };
+    let graph_enabled = lunaris.graph_pipeline().is_enabled();
+    let rerank_cfg = lunaris.recall_rerank();
+    let rerank_arg = rerank_cfg.enabled.then(|| (lunaris.reranker(), rerank_cfg.top_in));
+    let root = recall_root(candidate_k, graph_enabled, rerank_arg);
+    let hits = match with_activation_boost(scoped.dsl().with_root_boxed(root), lunaris)
+        .execute(q.clone())
+        .await
+    {
+        Ok(hits) => hits,
+        Err(err) if is_keyword_not_supported(&err) => {
+            tracing::debug!(
+                scope = scope.as_str(),
+                "memory.recall keyword branch unsupported; falling back to vector-only"
+            );
+            with_activation_boost(
+                scoped.dsl().with_root(Vector::new("chunks", candidate_k)),
+                lunaris,
+            )
+            .execute(q)
+            .await
+            .map_err(ServiceError::LunarisEngine)?
+        }
+        Err(err) => return Err(ServiceError::LunarisEngine(err)),
+    };
 
     // Map hits to wire DTO with explicit type so the collector infers correctly.
     let recall_hits: Vec<RecallHit> = hits
@@ -288,6 +300,33 @@ async fn ensure_embedder_ready(lunaris: &Lunaris) -> Result<(), ServiceError> {
     }
     READY.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+/// GA-1 — the `memory.recall` root-construction seam.
+///
+/// The handler builds its root EXCLUSIVELY through this function, which
+/// delegates to the canonical [`lunaris_retrieve::production_root`] /
+/// [`lunaris_retrieve::production_root_reranked`] compositions. Pinned by
+/// `tests/recall_root_conformance.rs` (plan equality against
+/// `production_root` for every (graph, rerank) combination) so a future
+/// inline `with_root` divergence on this surface fails a NAMED test — the
+/// pre-GA-1 handler built a private chunks-only root that silently dropped
+/// the graph-ON fact legs.
+///
+/// `rerank` is `Some((reranker, top_in_override))` ONLY when the handle's
+/// `LUNARIS_RECALL_RERANK` toggle is on; passing `None` provably never
+/// touches the reranker (the lazy GGUF stays unloaded).
+pub fn recall_root(
+    candidate_k: usize,
+    graph_enabled: bool,
+    rerank: Option<(Arc<dyn Reranker>, Option<usize>)>,
+) -> Box<dyn Retriever> {
+    match rerank {
+        Some((reranker, top_in)) => {
+            Box::new(production_root_reranked(candidate_k, graph_enabled, reranker, top_in))
+        }
+        None => Box::new(production_root(candidate_k, graph_enabled)),
+    }
 }
 
 /// ADD task activation-ledger — wire the persistent activation-ledger prior

@@ -54,6 +54,9 @@ pub mod open;
 // unchanged. Phase 13 proper primitives-crate extraction subsumes this.
 pub mod primitives;
 pub mod recall;
+// GA-1 — opt-in cross-encoder rerank stage on the production recall root
+// (`LUNARIS_RECALL_RERANK`, read once at handle construction).
+pub mod recall_rerank;
 pub mod recipes;
 // `memory-update-intelligence` — pure cross-episode reconciliation decision
 // core (dedup NOOP / additive Append / cross-episode Supersede). Consumed by
@@ -82,6 +85,7 @@ pub use handle::{
     IngestKind, Lunaris, ScopedLunaris, VerifyAgendaEntry, lazy_default_embedder,
     resolve_default_embedder, resolve_default_reranker,
 };
+pub use recall_rerank::{RECALL_RERANK_ENV_VAR, RECALL_RERANK_TOP_IN_ENV_VAR, RecallRerankConfig};
 // Phase 23 — agent-facing structured-ingest public surface.
 pub use structured_ingest::{EntityInput, FactInput, RelationInput, StructuredIngest};
 // Phase 12 Option-A: `WorkingMemory` lives here now. `lunaris-recipes`

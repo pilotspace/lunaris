@@ -80,6 +80,12 @@ pub struct Lunaris {
     /// is present; falls back to `NoopReranker` per RETRIEVE-06 contract when
     /// the cache is missing. Callers swap via `with_reranker(reranker)`.
     pub(crate) reranker: Arc<dyn Reranker>,
+    /// GA-1 — opt-in rerank stage on the production recall root. Read ONCE
+    /// from `LUNARIS_RECALL_RERANK` / `LUNARIS_RECALL_RERANK_TOP_IN` at
+    /// `open*` construction (default OFF; the `with_parts*` test seams stay
+    /// OFF like the graph pipeline's hardcoded `false`). Accessor + escape
+    /// hatch live in `crate::recall_rerank`.
+    pub(crate) recall_rerank: crate::recall_rerank::RecallRerankConfig,
     /// Plan 03-03: graph extraction pipeline toggle (D-10/D-11). Default OFF.
     /// The `Extractor` itself lives INSIDE the handle's
     /// `RwLock<Option<Arc<dyn Extractor>>>` — callers `swap` via
@@ -415,6 +421,9 @@ impl Lunaris {
                     clock,
                     moon_storage: Some(m),
                     reranker,
+                    // GA-1: rerank toggle frozen at construction — the ONLY
+                    // env read (mirrors the graph pipeline's D-10 pattern).
+                    recall_rerank: crate::recall_rerank::RecallRerankConfig::from_env(),
                     graph_pipeline,
                     verify_pipeline,
                     consolidator_pipeline,
@@ -483,6 +492,10 @@ impl Lunaris {
             // tests) keep working without picking up the candle dep
             // transitively. Production callers swap via with_reranker.
             reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
+            // GA-1: test seam stays OFF (no env read) — same shape as the
+            // graph pipeline's hardcoded `false` below. Tests opt in via
+            // `with_recall_rerank`.
+            recall_rerank: crate::recall_rerank::RecallRerankConfig::default(),
             // Plan 03-03: graph pipeline OFF by default with a NoopExtractor
             // installed. Tests that exercise the graph-ON path call
             // `handle.graph_pipeline().enable()` + `handle.with_extractor(...)`
@@ -543,6 +556,8 @@ impl Lunaris {
             clock,
             moon_storage: None,
             reranker: Arc::new(NoopReranker) as Arc<dyn Reranker>,
+            // GA-1: test seam stays OFF (no env read) — see `with_parts`.
+            recall_rerank: crate::recall_rerank::RecallRerankConfig::default(),
             // Plan 03-03 — see `with_parts` for the rationale.
             graph_pipeline: Arc::new(GraphPipelineHandle::new(
                 false,
@@ -1185,10 +1200,13 @@ impl<'a> ScopedLunaris<'a> {
 
     /// Recall hits under the bound scope.
     ///
-    /// Runs the **default plan** (a `Vector` search over the `chunks` index —
-    /// no keyword fusion, no rerank), executes it, and returns the hydrated
-    /// `Vec<Hit>`. This is the one-shot convenience form; for a custom plan
-    /// (hybrid fusion, graph / tree, `as_of`, rerank) use [`Self::dsl`].
+    /// Runs the **default plan** — the GA-1 unified production root
+    /// (`lunaris_retrieve::production_root`): `Vector ∧ BM25("chunks") →
+    /// fuse_rrf(60) → top(30)`, fact legs when the graph pipeline is ON, and
+    /// the opt-in `LUNARIS_RECALL_RERANK` cross-encoder stage — executes it,
+    /// and returns the hydrated `Vec<Hit>`. This is the one-shot convenience
+    /// form; for a custom plan (graph / tree, `as_of`, thresholds) use
+    /// [`Self::dsl`].
     /// Wave 2.5C: the scope is applied to the `Vector` search and to hydrate,
     /// so only hits from this scope's partition are returned. (The same scope
     /// threading covers `Graph` / `Keyword` and any other operators you attach

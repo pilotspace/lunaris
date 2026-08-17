@@ -34,12 +34,21 @@ const DEFAULT_VERIFY_WARN_THRESHOLD: u64 = 1000;
 /// [`lunaris_verify::worker::VERIFY_TOPIC`] verbatim.
 const VERIFY_TOPIC: &str = "__lunaris_verify__";
 
+/// GA-1: default `k` for the unified production recall root composed by
+/// [`Lunaris::recall`]. Matches the pre-GA-1 `Vector::new("chunks", 30)`
+/// candidate width and blueprint §4.2's top-30 sizing.
+const DEFAULT_RECALL_K: usize = 30;
+
 impl Lunaris {
     /// Build a [`RetrievalBuilder`] bound to this handle's storage, keyword,
     /// embedder, and (when available) the typed `Arc<MoonStorage>` that
     /// enables the Phase 1.5 RRF Moon-native dispatch.
     ///
-    /// Default root operator is `Vector::new("chunks", 30)`. Callers replace
+    /// Default root operator is the GA-1 unified production root
+    /// (`lunaris_retrieve::production_root(30, graph_enabled)`):
+    /// `Vector ∧ BM25("chunks") → fuse_rrf(60) → top(30)`, plus the fact
+    /// legs when the graph pipeline is ON, plus the opt-in
+    /// `LUNARIS_RECALL_RERANK` cross-encoder stage. Callers replace
     /// the root via [`RetrievalBuilder::with_root`] for the canonical example
     /// from blueprint §8:
     ///
@@ -89,15 +98,29 @@ impl Lunaris {
         // cheap — the underlying LruCache is shared across all RetrievalBuilders
         // spawned from this handle.
         b = b.with_boost_cache(self.boost_cache.clone());
-        // KG-RAG Wave B (2026-07-21): when the graph pipeline is ON, the
-        // default root fuses the facts legs (chunks ∧ facts → RRF — the
-        // hook-proven `hybrid_root` composition, promoted to lunaris-retrieve)
-        // so the facts the pipeline writes are actually retrievable through
-        // recall()/HTTP/MCP. Gated on the toggle: graph-OFF callers keep the
-        // chunks-only root and never pay the extra facts searches. Callers can
-        // still override via `.with_root(...)` as before.
-        if self.graph_pipeline().is_enabled() {
-            b = b.with_root(lunaris_retrieve::hybrid_root(30));
+        // GA-1 (2026-08-17): the default root is THE unified production root
+        // (`lunaris_retrieve::production_root`) — one composition, every
+        // surface (MCP memory.recall, hook, HTTP /v1/recall, SDK). Graph-OFF
+        // callers now get `Vector ∧ BM25("chunks") → fuse_rrf(60) → top(30)`
+        // (a DELIBERATE default change: pre-GA-1 this was a bare
+        // Vector("chunks",30)); graph-ON adds the fact legs (the hook-proven
+        // `hybrid_root` structure, KG-RAG Wave B). The opt-in cross-encoder
+        // stage (`LUNARIS_RECALL_RERANK`, frozen at construction) composes
+        // between fusion and the final top-k; when OFF the reranker Arc is
+        // never touched, so the lazy GGUF never loads. Callers can still
+        // override via `.with_root(...)` as before. Conformance pin:
+        // tests/recall_unified_root.rs.
+        let graph_on = self.graph_pipeline().is_enabled();
+        let rerank = self.recall_rerank();
+        if rerank.enabled {
+            b = b.with_root(lunaris_retrieve::production_root_reranked(
+                DEFAULT_RECALL_K,
+                graph_on,
+                self.reranker(),
+                rerank.top_in,
+            ));
+        } else {
+            b = b.with_root(lunaris_retrieve::production_root(DEFAULT_RECALL_K, graph_on));
         }
         b
     }
