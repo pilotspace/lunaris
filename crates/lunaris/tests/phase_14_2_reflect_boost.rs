@@ -257,6 +257,17 @@ fn seed_chunk(
     storage.seed(episode_key(scope, ep_id), ep_bytes);
 }
 
+/// GA-1 re-baseline: the unified default recall root
+/// (`lunaris_retrieve::production_root`) RRF-fuses the vector + BM25 legs
+/// (k=60), so hydrated scores are rank-reciprocal sums — not the raw cosine
+/// scores these tests originally pinned. With the BM25 leg returning empty,
+/// the fused score of the hit at 0-based descending rank `r` is exactly
+/// `1/(60 + r + 1)`. The boost pass is unchanged: post-hydrate, delta is
+/// ADDED to the fused score.
+fn rrf_score(rank: usize) -> f32 {
+    1.0_f32 / (60.0 + rank as f32 + 1.0)
+}
+
 /// Build a `VectorHit` whose `id` is the raw 16-byte ULID bytes.
 fn vector_hit(id: Ulid, score: f32) -> VectorHit {
     VectorHit {
@@ -267,12 +278,39 @@ fn vector_hit(id: Ulid, score: f32) -> VectorHit {
     }
 }
 
+/// Empty-result `KeywordPort` — GA-1's unified default root fuses a BM25
+/// leg into every recall, so the keyword-less `with_parts` seam (whose
+/// `NoKeywordSupport` sentinel ERRORS the leg) can no longer execute the
+/// default plan. An empty keyword result keeps these tests exercising
+/// exactly what they always did: the vector-hit boost mechanics.
+struct EmptyKeyword;
+
+#[async_trait::async_trait]
+impl lunaris_core::storage::keyword::KeywordPort for EmptyKeyword {
+    async fn keyword_search(
+        &self,
+        _scope: &Scope,
+        _index: &str,
+        _query: &str,
+        _k: usize,
+        _filter: Option<&Filter>,
+        _as_of: Option<Hlc>,
+    ) -> Result<Vec<lunaris_core::storage::keyword::KeywordHit>, StorageError> {
+        Ok(Vec::new())
+    }
+}
+
 /// Build a `Lunaris` handle with `BoostTestStorage` and a `StubEmbedder`.
 fn make_handle(storage: Arc<BoostTestStorage>, reflect_output: ReflectOutput) -> Lunaris {
     let embedder: Arc<dyn lunaris_core::Embedder> = Arc::new(lunaris_core::StubEmbedder::new(4));
     let clock = HlcClock::new(0);
-    Lunaris::with_parts(storage as Arc<dyn StoragePort>, embedder, clock)
-        .with_reflect_supervisor(Arc::new(StubReflectSupervisor { output: reflect_output }))
+    Lunaris::with_parts_keyword(
+        storage as Arc<dyn StoragePort>,
+        Arc::new(EmptyKeyword),
+        embedder,
+        clock,
+    )
+    .with_reflect_supervisor(Arc::new(StubReflectSupervisor { output: reflect_output }))
 }
 
 // ---------------------------------------------------------------------------
@@ -337,12 +375,12 @@ async fn boost_rescore_promotes_chunk() {
     assert_eq!(hits_after.len(), 3, "expected 3 hits after end_turn");
     assert_eq!(&hits_after[0].text, "chunk B", "B must be first after boost");
 
-    // Score of B must be original (0.80) + BOOST_DELTA.
-    let expected_b_score = 0.80_f32 + BOOST_DELTA;
+    // Score of B must be its fused RRF score (rank 1 pre-boost) + BOOST_DELTA.
+    let expected_b_score = rrf_score(1) + BOOST_DELTA;
     let actual_b_score = hits_after[0].score;
     assert!(
         (actual_b_score - expected_b_score).abs() < 1e-5,
-        "B.score must be {expected_b_score:.4} (0.80 + BOOST_DELTA={BOOST_DELTA}); got {actual_b_score:.4}"
+        "B.score must be {expected_b_score:.4} (rrf(1) + BOOST_DELTA={BOOST_DELTA}); got {actual_b_score:.4}"
     );
 
     eprintln!("boost_rescore_promotes_chunk: PASS (B promoted, score={actual_b_score:.4})");
@@ -404,8 +442,8 @@ async fn boost_isolated_by_scope() {
         "scope_b recall must not see scope_a's boost; A must be first: {hits_b:#?}"
     );
     assert!(
-        (hits_b[0].score - 0.90).abs() < 1e-5,
-        "A.score must be 0.90 (unaffected by scope_a boost); got {}",
+        (hits_b[0].score - rrf_score(0)).abs() < 1e-5,
+        "A.score must be rrf(0) (unaffected by scope_a boost); got {}",
         hits_b[0].score
     );
 
@@ -454,13 +492,17 @@ async fn empty_boost_is_noop() {
         "empty boost+invalidate end_turn must produce zero atomic_writes"
     );
 
-    // Recall ordering is vanilla — A is first (score=0.90, no delta).
+    // Recall ordering is vanilla — A is first (fused rrf(0) score, no delta).
     let hits = scoped
         .recall(lunaris_retrieve::Query::text("test"))
         .await
         .expect("recall after empty boost");
     assert_eq!(hits.len(), 1);
-    assert!((hits[0].score - 0.90).abs() < 1e-5, "A.score must be 0.90; got {}", hits[0].score);
+    assert!(
+        (hits[0].score - rrf_score(0)).abs() < 1e-5,
+        "A.score must be rrf(0); got {}",
+        hits[0].score
+    );
 
     eprintln!("empty_boost_is_noop: PASS");
 }
@@ -556,10 +598,10 @@ async fn boost_combines_with_invalidate() {
         hits.iter().map(|h| (&h.text, h.score)).collect::<Vec<_>>()
     );
 
-    let expected_y_score = 0.80_f32 + BOOST_DELTA;
+    let expected_y_score = rrf_score(1) + BOOST_DELTA;
     assert!(
         (hits[0].score - expected_y_score).abs() < 1e-5,
-        "14.2: Y.score must be {expected_y_score:.4}; got {:.4}",
+        "14.2: Y.score must be {expected_y_score:.4} (rrf(1) + BOOST_DELTA); got {:.4}",
         hits[0].score
     );
 
