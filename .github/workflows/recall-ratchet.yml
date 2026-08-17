@@ -1,0 +1,274 @@
+# recall-ratchet.yml — GA-2a recall-quality regression gate that ACTUALLY
+# RUNS on hosted runners.
+#
+# Replaces eval-gauntlet.yml, which never executed once: 200/200 recorded
+# runs were startup failures (a `runner.temp` reference in a job-level
+# `env:` map made the whole file unparseable — STARTUP-01), and after going
+# dispatch-only it targeted a `[self-hosted, llm-weights-cached]` runner
+# pool that has zero members. A gate that cannot be scheduled gates nothing.
+#
+# What this gate measures: LongMemEval-S evidence-recall **any-gold** (gold
+# evidence present in the capped reader context) over the 16-question
+# shakeout manifest, graph-OFF, judge-free. Any-gold needs NO LLM judge and
+# NO extraction provider — only the embedder + reranker GGUFs (a CPU
+# llamacpp build, proven feasible on ubuntu-latest by perf-gates.yml) and
+# the public HF dataset. That makes it the one recall metric a hosted
+# runner can honestly produce, and it is Lunaris's own contract: recall
+# correctness, not e2e QA accuracy.
+#
+# Shape: a 4-way matrix shards the 16 questions (measured ~125 s/question
+# on the reference box with the full production retrieval config — rerank
+# INCLUDED, because disabling it demonstrably flips outcomes; a single
+# hosted job would blow the <40 min wall-clock target), then a cheap fan-in
+# job merges the shard artifacts and runs the ratchet: tally.py compares
+# any-gold hits against the checked-in baseline
+# scripts/bench/lme/baselines/ci-anygold.json with an explicit tolerance.
+# Regression beyond tolerance exits nonzero. The baseline records the
+# retrieval-config signature it was measured under; the gate refuses
+# (exit 6) to compare across a config change — re-bless with
+# `anygold_gate.sh --write-baseline` instead.
+#
+# N=16 (offsets16.tsv), not N=1 or N=125: one question proves plumbing but
+# ratchets nothing; 125 is hours of CPU embedding. 16 stratified questions
+# give 6.25-points-per-question granularity on a deterministic (judge-free)
+# metric — retrieval is stable run-to-run, so a 2-question drop is signal,
+# unlike the ±5-point LLM-judge noise floor that makes small J deltas
+# meaningless. NEVER report J-score deltas from this manifest; the ratchet
+# is any-gold only.
+#
+# STARTUP-01 lesson (do not regress it): job-level `env:` maps are expanded
+# by the Actions service BEFORE a runner is assigned — `runner.*` / `env.*`
+# / `steps.*` / `job.*` there make GitHub reject the ENTIRE file as a
+# startup_failure with an empty jobs array. Only literal values and
+# github/inputs/vars/secrets belong below. Pinned by
+# crates/lunaris-bench/tests/eval_workflow_guard.rs.
+
+name: recall-ratchet
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris/**"
+      - "crates/lunaris-core/**"
+      - "crates/lunaris-retrieve/**"
+      - "crates/lunaris-storage-moon/**"
+      - "crates/lunaris-ingest/**"
+      - "crates/lunaris-embed-remote/**"
+      - "crates/lunaris-llamacpp/**"
+      - "crates/lunaris-rerank/**"
+      - "crates/lunaris-bench/src/eval/**"
+      - "Cargo.lock"
+      - "vendor/moon"
+      - "scripts/bench/lme/**"
+      - ".github/workflows/recall-ratchet.yml"
+  schedule:
+    # Weekly full re-run regardless of pushes: catches drift from the
+    # environment side (dataset re-hosting, runner image, toolchain).
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      measure-only:
+        description: >-
+          Run the measurement but skip the baseline comparison (for scouting
+          a re-bless; the merged tally artifact carries the numbers).
+        type: boolean
+        default: false
+
+concurrency:
+  group: recall-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    name: any-gold shard ${{ matrix.shard }}/4 (judge-free, CPU)
+    runs-on: ubuntu-latest
+    # ~4 questions x ~2-6 min (CPU, x86) + builds. Warm-cache target is well
+    # under 40 min; the margin covers a cold llama.cpp + Moon compile. The
+    # per-question alarm(2) watchdog inside the gate script keeps a single
+    # wedged question from eating the whole budget.
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      # GGUF URLs + digests: keep in sync with
+      # crates/lunaris-mcp/src/model_stager.rs (ModelKind::url / ::sha256)
+      # and perf-gates.yml. A digest mismatch is an integrity failure.
+      EMBEDDER_GGUF_URL: https://huggingface.co/mykor/granite-embedding-311m-multilingual-r2-GGUF/resolve/main/granite-embedding-311M-multilingual-r2-Q4_K_M.gguf
+      EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
+      RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf
+      RERANKER_GGUF_SHA256: 1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef
+    steps:
+      - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        # Non-recursive: vendor/moon's nested .planning submodule is
+        # SSH-only and not needed for builds.
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # One shared key for all shards — they build identical artifacts.
+          key: recall-ratchet-cpu
+          # Cache BOTH target dirs (the ci.yml lesson): the Moon build lands
+          # in vendor/moon/target via --manifest-path and is the most
+          # expensive cold step after llama.cpp itself.
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
+
+      - name: Install redis-cli (harness PING/FLUSH helper)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-tools
+
+      - name: Cache GGUF artifacts
+        id: gguf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.lunaris/models
+          key: gguf-${{ env.EMBEDDER_GGUF_SHA256 }}-${{ env.RERANKER_GGUF_SHA256 }}
+
+      - name: Stage GGUF artifacts (download + SHA-256 verify)
+        if: steps.gguf-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.lunaris/models
+          curl -sSfL --retry 3 "${EMBEDDER_GGUF_URL}" \
+            -o ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          curl -sSfL --retry 3 "${RERANKER_GGUF_URL}" \
+            -o ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+          cd ~/.lunaris/models
+          sha256sum -c <<EOF
+          ${EMBEDDER_GGUF_SHA256}  granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          ${RERANKER_GGUF_SHA256}  bge-reranker-v2-m3.Q5_K_M.gguf
+          EOF
+
+      - name: Assert GGUFs staged
+        # The gate script also checks, but fail here with the clearer story:
+        # a missing GGUF means the cache+download steps above broke, not the
+        # recall path.
+        run: |
+          test -s ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          test -s ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+
+      - name: Cache LongMemEval-S dataset (public HF)
+        # hf-hub layout under the harness's default LUNARIS_EVAL_CACHE_DIR.
+        # The dataset revision is pinned to `main` by lunaris-evals; a
+        # re-host would surface as a cache miss + fresh download, and a
+        # download failure fails the gate LOUDLY (gate exit 7 with the
+        # SKIPPED reason), never silently green.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/lunaris/eval-hub
+          key: lme-dataset-longmemeval-s-v1
+
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+
+      - name: Build lunaris-evals (release, CPU llamacpp)
+        # `llamacpp` only — no `metal`/`cuda` (hosted CPU runner), and no
+        # `embed-remote` (the gate uses the in-process embedder; there is no
+        # warm Ollama here).
+        run: cargo build --release -p lunaris-bench --bin lunaris-evals --features llamacpp
+
+      - name: Measure shard (4 questions, scratch Moon, judge-free)
+        env:
+          LME_MOON_BIN: vendor/moon/target/release/moon
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_COUNT: "4"
+        run: scripts/bench/lme/anygold_gate.sh
+
+      - name: Give per-shard files collision-free names for the merge
+        # q*.{log,json} are naturally disjoint across shards (different
+        # offsets); config.env / anygold.json are NOT and would silently
+        # last-write-win under download-artifact's merge-multiple.
+        if: always()
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          set -uo pipefail
+          cd target/lme/anygold 2>/dev/null || exit 0
+          [ -f config.env ] && mv config.env "config.shard${SHARD_INDEX}.env"
+          [ -f anygold.json ] && mv anygold.json "anygold.shard${SHARD_INDEX}.json"
+          true
+
+      - name: Upload shard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recall-ratchet-shard-${{ matrix.shard }}
+          path: |
+            target/lme/anygold/q*.log
+            target/lme/anygold/q*.json
+            target/lme/anygold/config.shard*.env
+            target/lme/anygold/anygold.shard*.json
+          retention-days: 14
+
+  ratchet:
+    name: merge shards + ratchet vs baseline
+    needs: measure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MEASURE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.measure-only }}
+    steps:
+      - name: Checkout (tally.py + baseline only; no submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Download all shard artifacts (merged)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: recall-ratchet-shard-*
+          path: merged/
+          merge-multiple: true
+
+      - name: Ratchet merged any-gold vs checked-in baseline
+        run: |
+          set -euo pipefail
+          ls merged/
+          # All four shards must be present and must have measured under ONE
+          # config signature — the signature the baseline is compared under.
+          [ "$(ls merged/config.shard*.env | wc -l)" -eq 4 ] || {
+            echo "::error::expected 4 shard config files, got:"; ls merged/; exit 1; }
+          sig="$(grep -h '^SIG=' merged/config.shard*.env | sort -u)"
+          [ "$(printf '%s\n' "$sig" | wc -l)" -eq 1 ] || {
+            echo "::error::shards measured under different config signatures:"; printf '%s\n' "$sig"; exit 1; }
+          sig="${sig#SIG=}"
+          expected="$(awk '!/^[[:space:]]*#/ && NF {c++} END {print c}' scripts/bench/lme/questions/offsets16.tsv)"
+          if [ "${MEASURE_ONLY}" = "true" ]; then
+            echo "::notice::measure-only dispatch — baseline comparison skipped."
+            python3 scripts/bench/lme/tally.py --dir merged --expected "$expected" --anygold --json | tee merged-anygold.json
+          else
+            python3 scripts/bench/lme/tally.py --dir merged --expected "$expected" --anygold \
+              --baseline scripts/bench/lme/baselines/ci-anygold.json \
+              --config-signature "$sig" --json | tee merged-anygold.json
+          fi
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## LME-S any-gold ratchet (N=16, judge-free)"
+            echo
+            echo '```json'
+            cat merged-anygold.json 2>/dev/null || echo '(no merged tally produced)'
+            echo '```'
+            echo
+            echo "Baseline: \`scripts/bench/lme/baselines/ci-anygold.json\` — re-bless locally with"
+            echo '`scripts/bench/lme/anygold_gate.sh --write-baseline scripts/bench/lme/baselines/ci-anygold.json`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged tally
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recall-ratchet-merged-${{ github.run_id }}
+          path: merged-anygold.json
+          retention-days: 14
