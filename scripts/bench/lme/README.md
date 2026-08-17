@@ -148,7 +148,9 @@ default; only the API key is mandatory.
 | `ab_run.sh` | graph-off then graph-on over the same offsets. |
 | `chain_fill_then_ab.sh` | fill → coverage check → A/B, with the Moon watchdog running. The single command for a full run. |
 | `moon_watchdog.sh` | Restarts the bench Moon if it dies mid-run. |
-| `tally.py` | Three-way scoring (correct / wrong / ERR) + FINAL determination. |
+| `tally.py` | Three-way scoring (correct / wrong / ERR) + FINAL determination. `--anygold` scores retrieval (evidence_recall_hit) instead of judge verdicts; `--baseline` / `--write-baseline` drive the CI ratchet. |
+| `anygold_gate.sh` | Judge-free any-gold ratchet — the gate behind `.github/workflows/recall-ratchet.yml`. Starts and owns its own scratch Moon; needs no API key. |
+| `baselines/ci-anygold.json` | The checked-in ratchet baseline (hits / total / tolerance / config signature). Re-bless with `anygold_gate.sh --write-baseline`. |
 | `questions/offsets125.tsv` | The canonical N=125 stratified manifest, with categories. |
 | `questions/offsets16.tsv` | 16-question shakeout subset. Never report deltas from it. |
 | `questions/offsets_smoke.tsv` | One question. Plumbing check only. |
@@ -216,6 +218,41 @@ extraction cost into the measured run and multiplies it.
   fresh `DIR` instead of mixing runs.
 
 ---
+
+## The CI recall ratchet (`anygold_gate.sh`)
+
+`.github/workflows/recall-ratchet.yml` runs a **judge-free** slice of this
+harness on every recall-affecting push to main: LongMemEval-S
+evidence-recall **any-gold** over `questions/offsets16.tsv`, graph-OFF, one
+process per question, against a scratch Moon the gate starts itself. Any-gold
+(a gold-evidence session present in the capped reader context) needs no LLM
+judge and no extraction provider, so the gate runs on a stock hosted runner
+with only the embedder + reranker GGUFs and the public HF dataset — and it is
+deterministic, so unlike J-score there is no ±5-point noise floor to hide in.
+
+The result ratchets against `baselines/ci-anygold.json` with an explicit
+per-question tolerance. The baseline records the retrieval-config signature
+it was measured under; the gate refuses to compare across a config change
+(exit 6). After an accepted, understood change:
+
+```bash
+cargo build --release -p lunaris-bench --bin lunaris-evals --features llamacpp
+MOON_PORT=6455 LME_MOON_BIN=<moon-binary> \
+  scripts/bench/lme/anygold_gate.sh --write-baseline scripts/bench/lme/baselines/ci-anygold.json
+```
+
+Two deliberate differences from `run_lme.sh`: the gate uses the IN-PROCESS
+llama.cpp embedder (CI has no warm Ollama; on CPU, one process per question,
+the Metal-contention deadlock lane does not exist), and it refuses to run
+against any Moon it did not start — including the watchdog's 6399 — because
+it flushes between questions.
+
+CI wall clock: at ~2 min/question (M3 Max CPU; slower on hosted x86) a
+single 16-question job would blow the budget, so the workflow shards the
+manifest 4 ways (`SHARD_INDEX`/`SHARD_COUNT`, round-robin so category
+stratification survives) and a fan-in job merges the shard artifacts before
+the one baseline comparison. Sharded invocations refuse `--baseline` /
+`--write-baseline` — a shard alone is a partial arm.
 
 ## Exit codes
 
