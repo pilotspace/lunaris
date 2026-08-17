@@ -797,13 +797,22 @@ mod tests {
     }
 
     #[test]
-    fn recall_handler_uses_hybrid_vector_keyword_rrf_plan() {
+    fn recall_handler_uses_the_unified_production_root() {
+        // GA-1 re-pin (was `recall_handler_uses_hybrid_vector_keyword_rrf_plan`):
+        // the handler must build its root THROUGH the `recall_root` seam —
+        // the old inline Vector∧BM25 `with_root` was exactly the drift that
+        // silently dropped the graph-ON fact legs. The plan-SHAPE contract
+        // lives in `tests/recall_root_conformance.rs`; this source pin holds
+        // the call-path contract.
         let src = include_str!("recall.rs");
         assert!(
-            src.contains("Vector::new(\"chunks\", candidate_k)")
-                && src.contains("Keyword::bm25(\"chunks\", candidate_k)")
-                && src.contains(".fuse_rrf(60)"),
-            "memory.recall must use the canonical hybrid Vector+BM25 RRF plan"
+            src.contains("let root = recall_root(candidate_k, graph_enabled, rerank_arg);"),
+            "memory.recall handler must build its root through the recall_root seam"
+        );
+        assert!(
+            src.contains("production_root(candidate_k, graph_enabled)")
+                && src.contains("production_root_reranked(candidate_k, graph_enabled,"),
+            "recall_root must delegate to lunaris_retrieve::production_root[_reranked]"
         );
     }
 
