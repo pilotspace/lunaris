@@ -36,14 +36,18 @@ uvx lunaris-mcp --help
 ```
 
 Supported prebuilt platforms: `linux-x64`, `linux-arm64`, `darwin-x64`,
-`darwin-arm64`, `win32-x64`. On any other platform, `cargo install
-lunaris-mcp` builds from source.
+`darwin-arm64`, `win32-x64`. On any other platform, build from source with
+the `cargo install --git` form above — plain `cargo install lunaris-mcp`
+**always fails** (the crate is not on crates.io).
 
 > **Registry availability.** The `npx`/`uvx` packages
 > (`@pilotspace/lunaris-mcp`, `lunaris-mcp`) are published as part of the
-> npx/uvx distribution wave; until your registry shows them, `cargo install
-> lunaris-mcp` is the always-available path. The npm/PyPI wrappers honour
-> `LUNARIS_MCP_BIN_PATH` for air-gapped hosts.
+> npx/uvx distribution wave; until your registry shows them, the
+> always-available paths are the prebuilt `lunaris-mcp-<target>.tar.gz`
+> binaries attached to each
+> [GitHub release](https://github.com/pilotspace/lunaris/releases)
+> (since v0.6.1) or the `cargo install --git` source build. The npm/PyPI
+> wrappers honour `LUNARIS_MCP_BIN_PATH` for air-gapped hosts.
 
 ## Tool surface
 

@@ -62,7 +62,11 @@ rejected.
   surface area for RC bugs.
 - **Deployment simplicity.** `cargo install lunaris-mcp` + two config lines
   is the full install story. No port exposure, no TLS, no token rotation for
-  the common single-developer case.
+  the common single-developer case. *(2026-08-17 note: the bare
+  `cargo install lunaris-mcp` never worked — the crate is `publish = false`
+  by design. The shipped install story became `npx`/`uvx`, GitHub-release
+  binaries, or `cargo install --git`; the "two config lines" simplicity
+  argument is unchanged.)*
 - **Internal-first audience.** The v0 audience is internal agent platforms
   (Helios, Claude Code). stdio is sufficient and safe: MCP clients sandbox
   the child process.
