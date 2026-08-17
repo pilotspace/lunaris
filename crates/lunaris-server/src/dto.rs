@@ -182,10 +182,10 @@ pub fn categories_filter(categories: &[String]) -> Option<Filter> {
 
 /// Two retrieval modes per CONTEXT.md D-05 + PROTO-03.
 ///
-/// `Semantic` runs the GA-1 unified production root (Vector + Keyword(BM25)
-/// + RRF, fact legs when the graph pipeline is ON; cross-encoder rerank is
-/// opt-in via `LUNARIS_RECALL_RERANK`, default OFF). `Graph` runs Phase 3
-/// `Graph::anchored` and is gated on
+/// `Semantic` runs the GA-1 unified production root — Vector and
+/// Keyword(BM25) fused with RRF, fact legs when the graph pipeline is ON;
+/// cross-encoder rerank is opt-in via `LUNARIS_RECALL_RERANK` (default
+/// OFF). `Graph` runs Phase 3 `Graph::anchored` and is gated on
 /// `StorageCapabilities::graph_native || lunaris.graph_pipeline().is_enabled()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
