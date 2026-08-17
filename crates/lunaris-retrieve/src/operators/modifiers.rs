@@ -119,6 +119,12 @@ pub fn floored_top(
 
 /// [`TopRetriever`] with a reserved per-leg floor — see [`floored_top`] for
 /// the selection contract and the displacement regression it closes.
+///
+/// GA-1 scope note (2026-08-17): this operator is a **bench/DSL-level
+/// primitive only** — its sole consumer is the LongMemEval harness
+/// (`lunaris-bench`). It is deliberately NOT part of the unified production
+/// root (`crate::composition::production_root`); wiring it into a
+/// production surface is a future, separately-validated decision.
 pub struct FlooredTopRetriever {
     inner: Box<dyn Retriever>,
     n: usize,
