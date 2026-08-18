@@ -3,4 +3,4 @@
 # Version must match pyproject.toml and the Cargo workspace version
 # (root Cargo.toml [workspace.package].version).
 # Updated in lockstep by scripts/bump-version.sh.
-__version__ = "0.6.2"
+__version__ = "0.7.0"
