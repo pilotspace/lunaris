@@ -30,8 +30,10 @@ git push origin v0.7.0
 # 4. crates.io publish runs in CI: .github/workflows/crates-publish.yml
 #    triggers on the v* tag (workflow_dispatch for an initial/repair run —
 #    a tag run executes the workflow file AT the tag's commit). It
-#    publishes moondb from vendor/moon/sdk/rust first, then the 15
-#    publishable crates in dev-dep-aware topological order (derivation:
+#    publishes moondb from vendor/moon/sdk/rust first, then the 12
+#    publishable crates in dev-dep-aware topological order (was 15 before
+#    the 0.7.0 PG/SQLite crate deletions; the roster is guard-tested by
+#    xtask/tests/publish_metadata_guard.rs) (derivation:
 #    scripts/topo_order.py — versioned dev-deps are KEPT in published
 #    manifests, so they order the publish too). Idempotent: re-runs skip
 #    versions already on crates.io. Requires the CARGO_REGISTRY_TOKEN
