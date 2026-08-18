@@ -57,6 +57,14 @@ async fn run_hook(
         .env("LUNARIS_SCOPES_FILE", scopes.to_str().unwrap())
         .env("LUNARIS_SESSIONS_FILE", sessions.to_str().unwrap())
         .env("LUNARIS_HOOK_LOG", "warn")
+        // The ingest budget must NOT be a variable in this file. Left unset,
+        // the hook takes its 100ms production default; a loaded CI runner
+        // blows through that, the hook emits `emergency_drop` instead of
+        // reaching the context-inject branch, and the stderr assertions fail
+        // on a hook that behaved correctly (seen 2026-08-19 on PR #137, whose
+        // diff was one YAML line). `emergency_drop.rs` is the file that owns
+        // timeout behaviour and pins its own budget; here we buy headroom.
+        .env("LUNARIS_HOOK_DROP_AFTER_MS", "10000")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
