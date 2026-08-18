@@ -243,8 +243,15 @@ jobs:
       # published for every target that built, and only then does an
       # incomplete target set turn the run red. Skipping the dependent jobs
       # (the pre-0.6.1 behaviour) delivered nothing AND buried the reason.
+      #
+      # `!cancelled()` (not the default success-gate) because being last means
+      # every earlier step can suppress this one: on the v0.7.0 tag the npm
+      # publish failed on the #135 token block and this guard was SKIPPED, so
+      # the run said nothing about whether all five targets reached the
+      # release. Publishing first must not cost us the completeness signal —
+      # a failed publish is exactly when you want to know what shipped.
       - name: Fail the run if any target is missing from the release
-        if: steps.completeness.outputs.missing != ''
+        if: ${{ !cancelled() && steps.completeness.outputs.missing != '' }}
         env:
           MISSING_TARGETS: ${{ steps.completeness.outputs.missing }}
         run: |
