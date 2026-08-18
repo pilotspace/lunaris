@@ -24,7 +24,7 @@ use lunaris_core::storage::types::Filter;
 /// `min(k, total_matching)`. Corpus: 20 chunks all from "scratchpad"; k = 10.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filtered_top_k_is_not_starved() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfks");
 

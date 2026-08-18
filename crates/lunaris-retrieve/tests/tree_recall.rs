@@ -25,17 +25,14 @@
 //!
 //! ## Requirements
 //!
-//! Live Moon at `MOON_URL` (default `moon://127.0.0.1:6380`).
-//! Run with:
+//! A disposable child-process Moon (`lunaris-test-harness`), spawned per run;
+//! `MOON_URL` is an explicit debugging override. Run with:
 //! ```bash
-//! MOON_URL=moon://127.0.0.1:6380 \
-//!   cargo test -p lunaris-retrieve --test tree_recall -- --nocapture
+//! cargo test -p lunaris-retrieve --test tree_recall -- --nocapture
 //! ```
-//! The test skips gracefully when Moon is not reachable.
+//! The test skips gracefully when no moon binary is available.
 
-use std::net::TcpStream;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use lunaris_core::storage::keyword::KeywordHit;
@@ -52,27 +49,22 @@ use ulid::Ulid;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn moon_url() -> String {
-    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
-}
-
-/// Return `true` if Moon is reachable at `url`.
-fn probe_moon(url: &str) -> bool {
-    let host_port = url
-        .strip_prefix("moon://")
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or("127.0.0.1:6380");
-    // Try numeric parse first; fall back to hostname resolution.
-    if let Ok(addr) = host_port.parse::<std::net::SocketAddr>() {
-        TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
-    } else {
-        use std::net::ToSocketAddrs;
-        host_port
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut it| it.next())
-            .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok())
-            .unwrap_or(false)
+/// Acquire a Moon: explicit `MOON_URL` override, else a disposable
+/// child-process Moon (SKIP when no moon binary). The `EphemeralMoon` must be
+/// held for the test body — dropping it kills the child.
+async fn acquire_moon() -> Option<(Option<lunaris_test_harness::EphemeralMoon>, String)> {
+    if let Ok(url) = std::env::var("MOON_URL") {
+        return Some((None, url));
+    }
+    match lunaris_test_harness::EphemeralMoon::spawn().await {
+        Ok(m) => {
+            let url = m.url().to_string();
+            Some((Some(m), url))
+        }
+        Err(e) => {
+            eprintln!("SKIP tree_recall: cannot spawn disposable Moon: {e:#}");
+            None
+        }
     }
 }
 
@@ -200,11 +192,7 @@ impl KeywordPort for NoKeyword {
 /// - `tree_hits.len() >= 2`  (community k=1 → descends to multiple leaf chunks)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tree_retrieval_beats_flat_on_whole_document_query() {
-    let url = moon_url();
-    if !probe_moon(&url) {
-        eprintln!("SKIP tree_recall: Moon not reachable at {url}");
-        return;
-    }
+    let Some((_moon, url)) = acquire_moon().await else { return };
 
     // ------------------------------------------------------------------ setup
     // Unique scope so parallel test runs (or re-runs) don't interfere.
@@ -396,11 +384,7 @@ async fn tree_retrieval_beats_flat_on_whole_document_query() {
 /// data) returns an empty result rather than panicking.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn tree_retrieval_empty_index_returns_empty() {
-    let url = moon_url();
-    if !probe_moon(&url) {
-        eprintln!("SKIP tree_empty_smoke: Moon not reachable at {url}");
-        return;
-    }
+    let Some((_moon, url)) = acquire_moon().await else { return };
 
     // Unique scope with no data ingested under it → empty communities index.
     let scope_str = format!("b2empty{}", &Ulid::new().to_string()[..8]);

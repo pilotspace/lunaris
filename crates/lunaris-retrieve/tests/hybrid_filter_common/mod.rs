@@ -12,11 +12,13 @@
 //! ## Why a live Moon (not a mock)
 //!
 //! The bug lives at the Moon FT.SEARCH HYBRID boundary — a mock cannot
-//! reproduce it. We connect to a live Moon at `MOON_URL` (default
-//! `moon://127.0.0.1:6380`) and SKIP gracefully when no listener is reachable,
-//! mirroring `tree_recall.rs`. The red is observed against a real Moon (CI /
-//! local dev with a Moon up); the skip keeps `cargo test` green on hosts
-//! without one.
+//! reproduce it. Each test spawns a disposable child-process Moon via
+//! `lunaris-test-harness` (SKIP when no moon binary is available), with
+//! `MOON_URL` as an explicit debugging override. The suite used to default to
+//! ambient `moon://127.0.0.1:6380`: on any host where something else listens
+//! there (found 2026-08-18 — a plain Redis on a dev box) the TCP probe passed
+//! and `connect_with_dim` then panicked on `FT._LIST`, hard-failing all four
+//! tests instead of skipping.
 //!
 //! ## Satisfiability (walked the future fix through this harness)
 //!
@@ -32,9 +34,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashSet;
-use std::net::TcpStream;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use lunaris_core::storage::keyword::KeywordHit;
@@ -46,6 +46,7 @@ use lunaris_core::{
 use lunaris_ingest::pipeline::ingest_episode_with_receipt;
 use lunaris_retrieve::{Keyword, Query, QueryContext, RawHit, Retriever, Vector};
 use lunaris_storage_moon::MoonStorage;
+use lunaris_test_harness::EphemeralMoon;
 use ulid::Ulid;
 
 /// Embedding dimension — matches `StubEmbedder` + the chunks FT index.
@@ -57,43 +58,32 @@ pub const VT_2025_MS: u64 = 1_700_000_000_000; // 2023-11 in real epoch ms; "202
 pub const VT_2026_MS: u64 = 1_760_000_000_000;
 
 // ---------------------------------------------------------------------------
-// Moon reachability (skip-if-down, identical contract to tree_recall.rs)
+// Moon acquisition — disposable child-process Moon (MOON_URL = debug override)
 // ---------------------------------------------------------------------------
 
-pub fn moon_url() -> String {
-    std::env::var("MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
-}
-
-pub fn probe_moon(url: &str) -> bool {
-    let host_port = url
-        .strip_prefix("moon://")
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or("127.0.0.1:6380");
-    if let Ok(addr) = host_port.parse::<std::net::SocketAddr>() {
-        TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
-    } else {
-        use std::net::ToSocketAddrs;
-        host_port
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut it| it.next())
-            .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok())
-            .unwrap_or(false)
-    }
-}
-
-/// Connect to Moon, returning `None` (→ test SKIP) when no listener is up.
-pub async fn connect() -> Option<Arc<MoonStorage>> {
-    let url = moon_url();
-    if !probe_moon(&url) {
-        eprintln!("SKIP hybrid_filter: Moon not reachable at {url}");
-        return None;
-    }
-    Some(Arc::new(
-        MoonStorage::connect_with_dim(&url, DIM)
+/// Connect to a Moon for this test. `MOON_URL`, when set explicitly, wins and
+/// MUST be a reachable Moon (an operator override panics loudly rather than
+/// skipping). Otherwise a disposable child-process Moon is spawned; the test
+/// SKIPs only when no moon binary is available. The returned `EphemeralMoon`
+/// must be held for the test body — dropping it kills the child.
+pub async fn connect() -> Option<(Option<EphemeralMoon>, Arc<MoonStorage>)> {
+    if let Ok(url) = std::env::var("MOON_URL") {
+        let storage = MoonStorage::connect_with_dim(&url, DIM)
             .await
-            .expect("MoonStorage::connect_with_dim must succeed for live Moon"),
-    ))
+            .expect("MOON_URL was set explicitly — it must point at a reachable Moon");
+        return Some((None, Arc::new(storage)));
+    }
+    let moon = match EphemeralMoon::spawn().await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("SKIP hybrid_filter: cannot spawn disposable Moon: {e:#}");
+            return None;
+        }
+    };
+    let storage = MoonStorage::connect_with_dim(moon.url(), DIM)
+        .await
+        .expect("connect_with_dim must succeed against a freshly spawned Moon");
+    Some((Some(moon), Arc::new(storage)))
 }
 
 /// Deterministic 768-d embedder — no candle required.

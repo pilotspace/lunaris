@@ -2706,6 +2706,7 @@ dependencies = [
  "lunaris-ingest",
  "lunaris-rerank",
  "lunaris-storage-moon",
+ "lunaris-test-harness",
  "moondb",
  "parking_lot",
  "serde",

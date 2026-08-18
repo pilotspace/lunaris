@@ -28,7 +28,7 @@ use lunaris_core::storage::types::Filter;
 /// the TAG and the NUMERIC leaf; hits matching only one are absent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn and_filter_source_and_valid_time_constrains_both() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfand");
 
@@ -73,7 +73,7 @@ async fn and_filter_source_and_valid_time_constrains_both() {
 /// dropped disjunct would silently return a subset — forbidden by CHANGE I).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn or_filter_accepts_either_rejects_third() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfor");
 
@@ -116,7 +116,7 @@ async fn or_filter_accepts_either_rejects_third() {
 /// axis.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn valid_time_range_bounds_both_branches() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfvt");
 
