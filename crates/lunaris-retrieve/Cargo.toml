@@ -66,6 +66,10 @@ async-trait          = { workspace = true }
 # index is populated, then assert tree retrieval returns more chunks than flat.
 lunaris-ingest       = { workspace = true }
 lunaris-storage-moon = { workspace = true }
+# Disposable child-process Moon for the hybrid_filter / tree_recall suites —
+# replaces the ambient moon://127.0.0.1:6380 default that hard-failed on any
+# host where a non-Moon service owns that port.
+lunaris-test-harness = { workspace = true }
 bytes                = { workspace = true }
 futures              = { workspace = true }
 serde_json           = { workspace = true }

@@ -8,7 +8,7 @@
 //! CHANGE A/B/G) and `fuse_via_moon_native` passes it via the new SDK param
 //! (CHANGE H/I).
 //!
-//! Run against a live Moon: `MOON_URL=moon://127.0.0.1:6380 cargo test -p
+//! Run against a live Moon: `cargo test -p
 //! lunaris-retrieve --test hybrid_filter`. No Moon → tests SKIP.
 
 mod hybrid_filter_common;
@@ -27,7 +27,7 @@ use lunaris_core::storage::types::Filter;
 /// filter (not just a storage-level fixture).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filtered_hybrid_recall_excludes_foreign_source() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let clock = HlcClock::new(0);
     let scope = unique_scope("hfeq");
@@ -83,7 +83,7 @@ async fn filtered_hybrid_recall_excludes_foreign_source() {
 /// branches; the non-matching source is absent from every position.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn startswith_filter_constrains_both_branches() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfsw");
 
@@ -131,7 +131,7 @@ async fn startswith_filter_constrains_both_branches() {
 /// boundary itself is broken — exactly the leak this task closes. RED today.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn correctness_holds_without_any_per_caller_postfilter() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfnp");
 
@@ -179,7 +179,7 @@ async fn correctness_holds_without_any_per_caller_postfilter() {
 /// fix that accidentally over-filters the no-filter case.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_filter_baseline_returns_both_sources() {
-    let Some(storage) = connect().await else { return };
+    let Some((_moon, storage)) = connect().await else { return };
     let embedder = embedder();
     let scope = unique_scope("hfbl");
 
