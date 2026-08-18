@@ -178,12 +178,46 @@ lme_moon_start() { # $1 = port, $2 = data dir, $3 = log file
   nohup "$LME_MOON_BIN" --bind 127.0.0.1 --port "$1" --dir "$2" --shards 1 \
     --protected-mode no --disk-free-min-pct 1 >> "$3" 2>&1 &
   local pid=$!
+  # Pidfile is the reaper's handle (lme_moon_stop / lme_moon_reap_stale):
+  # without it a crashed harness leaves an unfindable orphan burning CPU
+  # (2026-08-18: a 6399 Moon survived its session by 14h at 260% CPU).
+  echo "$pid" > "$2/moon.pid"
   local _try
   for _try in $(seq 1 50); do
     lme_moon_ping "$1" && break
     sleep 0.2
   done
   echo "$pid"
+}
+
+lme_moon_stop() { # $1 = port, $2 = data dir — TERM then KILL via pidfile
+  lme_guard_port "$1" "moon stop target"
+  local pid=""
+  [ -f "$2/moon.pid" ] && pid=$(cat "$2/moon.pid" 2>/dev/null)
+  # Fallback: match the exact managed invocation (bench bind + port), never
+  # a bare "moon" — other Moons on this host are not ours to touch.
+  [ -n "$pid" ] || pid=$(pgrep -f -- "--bind 127.0.0.1 --port $1 " | head -1)
+  [ -n "$pid" ] || return 0
+  kill "$pid" 2>/dev/null
+  local _try
+  for _try in $(seq 1 25); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+  rm -f "$2/moon.pid"
+}
+
+# Reap a leftover bench Moon before starting a fresh one. The bench port is
+# exclusively harness-owned (lme_guard_port keeps live/persistent ports out),
+# so any pre-existing listener here is by definition a stale instance from a
+# dead session — kill it rather than silently reusing unknown state.
+lme_moon_reap_stale() { # $1 = port, $2 = data dir
+  lme_guard_port "$1" "moon reap target"
+  if lme_moon_ping "$1"; then
+    echo "reaping stale bench Moon on port $1 (pre-existing listener on an exclusively-harness-owned port)" >&2
+    lme_moon_stop "$1" "$2"
+  fi
 }
 
 # Count entries in a directory without tripping over exotic filenames.
