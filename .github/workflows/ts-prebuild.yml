@@ -23,15 +23,10 @@ name: ts-prebuild
 # All `run:` steps use static strings / literal paths / CI-controlled
 # matrix values only. No untrusted user input flows into any command.
 
+# PR-time removed 2026-08-18 (CI diet): any Cargo.lock change fired all three
+# prebuild matrices on the PR (~8-14 min each). PR-time SDK verification is
+# `scripts/ci/local-ci.sh full`; main-push/tag runs keep the release truth.
 on:
-  pull_request:
-    paths:
-      - "crates/lunaris-ts/**"
-      - "crates/lunaris-codegen/**"
-      - ".github/workflows/ts-prebuild.yml"
-      - "scripts/tests/test_npm_version_parity.py"
-      - "Cargo.toml"
-      - "Cargo.lock"
   push:
     branches: [main]
     paths:

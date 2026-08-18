@@ -26,18 +26,15 @@ name: conformance-bindings
 # All `run:` steps use static strings / literal paths / CI-controlled values.
 # No untrusted user input flows into any command.
 #
-# Triggers: push to main + PR touching bindings / codegen / conformance.
+# Triggers: push to main touching bindings / codegen / conformance + nightly.
 
+# PR-time removed 2026-08-18 (CI diet): at ~19 min this was the slowest PR
+# gate, and any crates/lunaris/** touch fired it. The SDK parity truth for
+# PRs is `scripts/ci/local-ci.sh full` (maturin+pytest / napi+vitest run
+# locally); main-push + nightly cron keep the post-merge backstop.
 on:
-  pull_request:
-    paths:
-      - "crates/lunaris-py/**"
-      - "crates/lunaris-ts/**"
-      - "crates/lunaris-codegen/**"
-      - "crates/lunaris-conformance/**"
-      - "crates/lunaris/**"
-      - "crates/lunaris-core/**"
-      - ".github/workflows/conformance-bindings.yml"
+  schedule:
+    - cron: "15 3 * * *"
   push:
     branches: [main]
     paths:
