@@ -28,6 +28,14 @@ POLL_SECS="${POLL_SECS:-20}"
 # to protect.
 STOP_MARKER_FILE="${STOP_MARKER_FILE:-$LME_RESULTS_DIR/chain.log}"
 STOP_MARKER="${STOP_MARKER:-AB_COMPLETE}"
+# Orphan prevention (2026-08-18: a crashed runner never wrote AB_COMPLETE, so
+# this loop kept a bench Moon alive for 14h at 260% CPU — and would have
+# resurrected it if only the Moon were killed). Three layers:
+#   1. parent tether — when the launching process dies, stop the Moon + exit;
+#   2. absolute TTL — no bench run takes a day; expire regardless;
+#   3. signal traps — INT/TERM stop the managed Moon instead of orphaning it.
+WATCHDOG_PARENT_PID="${WATCHDOG_PARENT_PID:-$PPID}"
+WATCHDOG_TTL_SECS="${WATCHDOG_TTL_SECS:-21600}"
 
 DRY_RUN=0
 for arg in "$@"; do
@@ -56,11 +64,25 @@ fi
 [ -x "$LME_MOON_BIN" ] || LME_EXIT=2 lme_die "moon binary not found: $LME_MOON_BIN (override LME_MOON_BIN)"
 mkdir -p "$LME_RESULTS_DIR"
 
+# Any pre-existing listener on the (exclusively harness-owned) bench port is
+# a stale instance from a dead session — reap before managing a fresh one.
+lme_moon_reap_stale "$MOON_PORT" "$DATA_DIR"
+
+_watchdog_bail() { # $1 = reason
+  echo "watchdog: $1 — stopping managed Moon $MOON_PORT + exiting @ $(date '+%F %T')" >> "$EVENTS"
+  lme_moon_stop "$MOON_PORT" "$DATA_DIR"
+  exit 0
+}
+trap '_watchdog_bail "signal"' INT TERM
+DEADLINE=$(( $(date +%s) + WATCHDOG_TTL_SECS ))
+
 while true; do
   if grep -q "$STOP_MARKER" "$STOP_MARKER_FILE" 2>/dev/null; then
     echo "watchdog: $STOP_MARKER seen, exiting @ $(date '+%F %T')" >> "$EVENTS"
     exit 0
   fi
+  kill -0 "$WATCHDOG_PARENT_PID" 2>/dev/null || _watchdog_bail "parent $WATCHDOG_PARENT_PID gone"
+  [ "$(date +%s)" -lt "$DEADLINE" ] || _watchdog_bail "TTL ${WATCHDOG_TTL_SECS}s expired"
   if ! lme_moon_ping "$MOON_PORT"; then
     echo "watchdog: Moon $MOON_PORT DOWN — starting @ $(date '+%F %T')" >> "$EVENTS"
     lme_moon_start "$MOON_PORT" "$DATA_DIR" "$MOON_LOG" >/dev/null
