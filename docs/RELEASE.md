@@ -24,8 +24,13 @@ grep '^version' Cargo.toml | head -1         # must be 0.7.0
 git tag -a v0.7.0 -m "v0.7.0 — Moon-only storage"
 git push origin v0.7.0
 
-# 3. CI runs and stays green on the tag (semver-checks vs v0.6.2,
-#    cargo publish --dry-run on lunaris-core)
+# 3. CI does NOT run on the tag. `ci.yml` triggers on main pushes + PRs
+#    only, so semver-checks (advisory) and the lunaris-core
+#    `cargo publish --dry-run` must already be green on the MAIN COMMIT you
+#    are tagging — check the main-push board there, not the tag. Exactly four
+#    workflows fire on a `v*` tag: crates-publish, ts-prebuild, mcp-prebuild,
+#    python-prebuild. (`ci.yml`'s submodule-tag-parity / RELEASE-05 job is
+#    gated on refs/tags/v* and therefore never executes — issue #136.)
 
 # 4. crates.io publish runs in CI: .github/workflows/crates-publish.yml
 #    triggers on the v* tag (workflow_dispatch for an initial/repair run —
