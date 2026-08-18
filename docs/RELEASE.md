@@ -189,10 +189,21 @@ artifacts only; rolling a **deployment** back is §7.
 
 ## 7. Deployment upgrade / rollback — 0.6.2 ↔ 0.7.0
 
-> **Rehearsed on: PENDING** — the live rehearsal of both directions is a
-> GA-4 gate. Until that field carries a date and an operator name, treat
-> this section as a *procedure draft* verified against the code and
-> migration docs, not against a production run.
+> **Rehearsed on: 2026-08-18** — operator: Claude (delegated release
+> captain, GA-4). Both directions ran live on macOS/M4 Pro against a
+> scratch Moon 0.8.5 (`--shards 1`): 0.6.2 (SQLite, 5 episodes, recall
+> smoke green) → `lunaris-migrate --commit --acknowledge-lossy
+> --reembed-manifest` (built-in verify PASS, 20/20 rows) → 0.7.0 binary
+> (main @ `15e7a28`) `/readyz` green → **declared post-migrate recall gap
+> confirmed empty** → same-id re-ingest re-embed (step 4 below) restored
+> recall → new 0.7.0-era write → in-place rollback to the 0.6.2 binary on
+> the same Moon store, which read both migrated and 0.7.0-era data.
+> Rehearsal findings: (a) a bare `cargo build -p lunaris-server` produces
+> the Tier-0 NoopEmbedder binary and reproduces the silent zero-vector
+> failure — release artifacts MUST be built
+> `--features lunaris/llamacpp` (`docs/operations/external-moon.md`);
+> (b) the re-ingest re-embed recipe of `docs/migration/0.6-to-0.7.md` §4
+> works as documented and is no longer just a paper procedure.
 
 Modeled on the 0.3→0.4 rollback precedent
 (`docs/migration/0.3-to-0.4-native-default.md` §4). The full upgrade
@@ -215,7 +226,14 @@ is the operational order of operations.
    no schema migration and no role bootstrap; the retired
    `lunaris-server migrate` / `bootstrap-db` subcommands answer with
    the exit ramp rather than a parse error.
-4. Keep the 0.6.2 source store **read-only but intact** until the
+4. **Re-embed before cutting traffic over.** Migrated KV carries no
+   vectors and no FT documents — semantic *and* keyword recall are empty
+   until you re-ingest (`docs/migration/0.6-to-0.7.md` §4). For each
+   episode in the moved scopes, POST `/v1/ingest` with the **same `id`**,
+   `source` and `content` (enumerate via `GET /v1/browse/episode`); the
+   normal pipeline re-derives chunks, embeddings, FT documents and graph
+   projection. Recall smoke must pass before the deployment takes reads.
+5. Keep the 0.6.2 source store **read-only but intact** until the
    rollback window below closes — `lunaris-migrate` never mutates the
    source, so it doubles as your rollback dataset.
 
