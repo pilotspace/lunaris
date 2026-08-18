@@ -7,10 +7,7 @@ name: python-prebuild
 # so the matrix dimension is just platform (not platform x Python-version).
 #
 # Triggers:
-# - `pull_request` touching `crates/lunaris-py/**` or `crates/lunaris-codegen/**`
-#   so every change that could affect the Python wheel is CI-validated on all
-#   five platforms.
-# - `push` to `main` when the same paths change - keeps main green.
+# - `push` to `main` when wheel-affecting paths change - keeps main green.
 # - `workflow_dispatch` for preview builds.
 # - `push` with a `v*` tag - promotes wheels to GitHub Release assets.
 #
@@ -27,14 +24,9 @@ name: python-prebuild
 # vulnerability-research/how-to-catch-github-actions-workflow-injections
 # -before-attackers-do/.
 
+# PR-time removed 2026-08-18 (CI diet) — see ts-prebuild.yml; local-ci.sh
+# `full` covers PR-time SDK verification, main-push/tag runs keep release truth.
 on:
-  pull_request:
-    paths:
-      - "crates/lunaris-py/**"
-      - "crates/lunaris-codegen/**"
-      - ".github/workflows/python-prebuild.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
   push:
     branches: [main]
     paths:

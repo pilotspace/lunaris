@@ -42,10 +42,16 @@
 
 name: Integration
 
+# PR-time removed 2026-08-18 (CI diet): this suite costs ~8 min on every PR
+# and duplicates what `scripts/ci/local-ci.sh full` runs locally at M4 speed.
+# main-push + nightly cron keep the post-merge backstop; dispatch covers
+# on-demand runs. See docs/ci/local-ci.md for the contract.
 on:
   push:
     branches: [main]
-  pull_request:
+  schedule:
+    - cron: "45 2 * * *"
+  workflow_dispatch:
 
 jobs:
   integration:

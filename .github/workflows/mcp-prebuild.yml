@@ -19,15 +19,9 @@ name: mcp-prebuild
 # All run: steps use static strings / CI-controlled matrix values only.
 # No untrusted user input (PR body / commit message) flows into commands.
 
+# PR-time removed 2026-08-18 (CI diet) — see ts-prebuild.yml; local-ci.sh
+# `full` covers PR-time MCP build/tests, main-push/tag runs keep release truth.
 on:
-  pull_request:
-    paths:
-      - "crates/lunaris-mcp/**"
-      - "crates/lunaris-mcp-npm/**"
-      - "crates/lunaris-mcp-py/**"
-      - ".github/workflows/mcp-prebuild.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
   push:
     branches: [main]
     paths:
