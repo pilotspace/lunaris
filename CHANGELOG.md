@@ -3,11 +3,69 @@
 All notable changes to Lunaris are documented here.
 Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/CHANGELOG-archive.md).
 
-## Unreleased
+## [0.7.0] — 2026-08-18
 
-Moon-only. The 0.7.0 line drops every storage backend except Moon; this
-section collects the removals as they land. Version numbers are unchanged
-until the release is cut.
+Moon-only, and the GA cut. Every storage backend except Moon is deleted,
+the recall pipeline is one root across every surface, and the release
+gates that used to be aspirations are executed artifacts: a recall-quality
+ratchet that runs in CI, a measured latency envelope at the target corpus,
+and a §7 upgrade/rollback procedure that has actually been rehearsed.
+
+### Added
+
+- **One production recall root.** `lunaris_retrieve::production_root(k,
+  graph)` — `Vector ∧ BM25("chunks")` (∧ graph fact legs when enabled) →
+  RRF(60) → top-k — is now what HTTP/SDK `recall`, MCP `memory.recall`,
+  and the Claude Code hook all execute. Named conformance pins assert the
+  plan shape per surface (`plan_repr`), so the benched path and the
+  shipped path can no longer drift apart silently.
+- **Opt-in reranker stage in production recall.** `LUNARIS_RECALL_RERANK=1`
+  inserts the bge-reranker cross-encoder over the fused candidates
+  (`LUNARIS_RECALL_RERANK_TOP_IN`, default `2k`) on HTTP/SDK and MCP.
+  Default OFF — and the capacity study is why: ~1.3 s/recall at
+  `top_in=60` vs a ~20 ms un-reranked recall. OFF provably never loads
+  the reranker GGUF. The hook's 1.5 s-budget path never reranks.
+- **recall-ratchet CI gate.** Judge-free LongMemEval-S any-gold hit-rate
+  (N=16, 4-shard CPU matrix) against a committed baseline
+  (`scripts/bench/lme/baselines/ci-anygold.json`, 15/16, tolerance 1,
+  config-signature-locked). Replaces the Eval Gauntlet, which had 20
+  startup failures and 0 completed runs; the workflow guard now pins the
+  ratchet instead. First green run reproduced the Darwin baseline
+  exactly (same single miss) on Linux CPU.
+- **Measured capacity envelope** (`docs/operations/capacity.md`): at the
+  100k-doc target corpus the production root holds the core contract —
+  p50 19.2–22.4 ms, p99 ≤ 24.4 ms (25 ms p50 ceiling, ≤25% headroom).
+  Graph-ON fact legs measure ~39 ms p50 (2× cost); rerank ~1.3 s/recall.
+  Raw envelopes committed under `docs/benchmarks/ga2b-raw/`.
+- **Operations pack**: SLO document with multiwindow burn-rate alert
+  rules (`docs/operations/slo.md`, `deploy/prometheus/lunaris-alerts.yml`),
+  `SECURITY.md` + book security page, a ~45-row environment-variable
+  reference, and a CJK-query planner pin (vector-only, no dead BM25 leg).
+- **Release engineering**: RELEASE.md §7 upgrade/rollback is stamped
+  **Rehearsed on 2026-08-18** (both directions, live, including the
+  post-migrate re-embed step it was missing); the drill ships as
+  `scripts/release/rollback-drill.sh`.
+- **Decision records**: graph fact-legs stay default-OFF for GA
+  (latency contract + no measured quality win;
+  `docs/decisions/2026-08-18-graph-default-off-ga.md`); OTLP export is
+  post-GA (`docs/decisions/2026-08-17-otlp-post-ga.md`).
+- **PersonaMem benchmark results** published in README + book (32k v1:
+  63.3% / 53.5% — above TencentDB-Agent-Memory's published claim).
+
+### Changed (recall defaults)
+
+- The HTTP/SDK default recall root was a bare `Vector("chunks", 30)`;
+  it is now the fused `production_root` — BM25 + RRF join the default
+  path. MCP's `with_root` override no longer silently discards graph
+  fact legs. The "sub-25 ms over millions" headline is scoped to the
+  measured 100k-doc envelope until a larger corpus is measured.
+
+### Fixed
+
+- `h2` 0.4.13 → 0.4.16 (RUSTSEC-2026-0258, unbounded empty DATA frames).
+- Bench scratch-Moon probes no longer depend on `redis-cli -t` (a
+  redis-cli ≥8 flag): version-agnostic wrapper, fixes all-shard CI
+  failures on ubuntu-24.04's redis-tools 7.0.15.
 
 ### Removed — BREAKING
 
