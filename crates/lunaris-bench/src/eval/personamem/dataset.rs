@@ -627,6 +627,73 @@ mod tests {
         }
     }
 
+    /// **`suggest_new_ideas` does not measure memory — it measures option
+    /// length.** Pins the dataset property root-caused in issue #141, because
+    /// every conclusion drawn from that category depends on it.
+    ///
+    /// Picking the SHORTEST candidate — ignoring the question, the retrieved
+    /// memories and the persona entirely — scores 98.9% there against a 25%
+    /// random baseline, while no other category exceeds 15.5%. Gold averages
+    /// 245 chars against 564 for the distractors (2.3x); every other category
+    /// sits between 0.75x and 1.17x. The distractors are the long
+    /// persona-woven ones, so retrieved persona content makes the WRONG answer
+    /// look better supported — which is the whole of the "memory net-harms on
+    /// suggest_new_ideas" finding.
+    ///
+    /// This test exists to stop that being forgotten and re-diagnosed as a
+    /// retrieval defect. It must NOT become a reason to teach the reader a
+    /// shortness preference: that would score ~99% here and mean nothing,
+    /// while making real suggestions worse (in production, building on what we
+    /// know about the user is the DESIRABLE behaviour this category punishes).
+    ///
+    /// Asserted in both directions so it is discriminating rather than a
+    /// tautology: the anomaly must hold on `suggest_new_ideas` AND must NOT
+    /// hold anywhere else. Opt-in on the real split, same as the parser test
+    /// above; unset => no-op, so `cargo test --workspace` stays offline.
+    #[test]
+    fn suggest_new_ideas_gold_is_the_shortest_option_and_no_other_category_is() {
+        let Ok(csv) = std::env::var("LUNARIS_EVAL_PM_LOCAL_CSV") else {
+            return;
+        };
+        let questions =
+            parse_questions_csv(&std::fs::read(&csv).expect("read local questions CSV"))
+                .expect("parse local questions CSV");
+
+        // question_type -> (times gold was the shortest, total)
+        let mut by_type: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for q in &questions {
+            let Some(gold) = q.options.iter().find(|(l, _)| *l == q.gold_letter) else {
+                continue;
+            };
+            let shortest = q.options.iter().map(|(_, t)| t.len()).min().unwrap_or(0);
+            let e = by_type.entry(q.question_type.clone()).or_default();
+            e.1 += 1;
+            if gold.1.len() == shortest {
+                e.0 += 1;
+            }
+        }
+        assert!(by_type.len() >= 7, "expected the 7 PersonaMem categories, got {}", by_type.len());
+
+        for (qt, (short, n)) in &by_type {
+            let pct = 100.0 * *short as f64 / *n as f64;
+            if qt == "suggest_new_ideas" {
+                assert!(
+                    pct > 90.0,
+                    "issue #141: suggest_new_ideas gold is the shortest option in {pct:.1}% of \
+                     {n} questions — if this has dropped below 90% the split changed and the \
+                     'degenerate category' conclusion must be re-derived, not assumed"
+                );
+            } else {
+                assert!(
+                    pct < 30.0,
+                    "{qt} now scores {pct:.1}% on pick-shortest ({n} questions). The length \
+                     artifact was supposed to be UNIQUE to suggest_new_ideas; if it is not, the \
+                     whole benchmark is length-confounded and the headline needs re-deriving"
+                );
+            }
+        }
+    }
+
     #[test]
     fn grouping_preserves_context_order_and_sorts_by_prefix_end() {
         let mk = |qid: &str, ctx: &str, end: usize| PmQuestion {
