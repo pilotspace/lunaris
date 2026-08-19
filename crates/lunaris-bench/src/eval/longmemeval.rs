@@ -629,6 +629,17 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
         std::env::var("LUNARIS_EVAL_LME_TOPK").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let judge_mode = judge_mode_enabled();
     let debug = std::env::var("LUNARIS_EVAL_LME_DEBUG").map(|v| v == "1").unwrap_or(false);
+    // Reader-ceiling arm — see `all_sessions`. Diagnostic only: it bypasses
+    // retrieval, so its score is NOT a memory-system measurement and must never
+    // be reported as a J-score.
+    let full_ctx = std::env::var("LUNARIS_EVAL_LME_FULLCTX").map(|v| v == "1").unwrap_or(false);
+    if full_ctx {
+        eprintln!(
+            "  [longmemeval] FULLCTX=1 — READER-CEILING ARM: retrieval is bypassed and the \
+             whole haystack goes to the reader. This bounds what retrieval could achieve; it \
+             is NOT a J-score and must not be published as one."
+        );
+    }
     let gen_model = std::env::var("LUNARIS_EVAL_LME_GEN_MODEL")
         .unwrap_or_else(|_| super::lme_judge::DEFAULT_MODEL.to_string());
     let judge_model = std::env::var("LUNARIS_EVAL_LME_JUDGE_MODEL")
@@ -1050,6 +1061,19 @@ async fn score_haystack(url: &str, records: &[HaystackRecord]) -> anyhow::Result
                     );
                 }
                 if facts.is_empty() { expand_hit_sessions(&sources, rec, chrono) } else { facts }
+            } else if full_ctx {
+                // Reader-ceiling arm: hand over the entire haystack. Checked
+                // AFTER the graph-context branch so the two diagnostics cannot
+                // silently combine into an arm that is neither.
+                let ctxs = all_sessions(rec, chrono);
+                if debug {
+                    eprintln!(
+                        "    FULLCTX: bypassing retrieval — {} turns from {} sessions",
+                        ctxs.len(),
+                        rec.sessions.len()
+                    );
+                }
+                ctxs
             } else {
                 // Production-path presentation: session prose from chunk hits
                 // PLUS the fact hits the fused root retrieved (graph-ON via
@@ -1265,6 +1289,34 @@ fn expand_hit_sessions(
         out.extend(turns.iter().cloned());
     }
     out
+}
+
+/// **Reader-ceiling presentation** (`LUNARIS_EVAL_LME_FULLCTX=1`): every
+/// haystack session reaches the reader, retrieval bypassed entirely.
+///
+/// This is NOT a memory-system measurement. It answers "what would this reader
+/// score if retrieval were perfect and unlimited", which BOUNDS what any
+/// retrieval configuration can achieve — the only way to know whether a J-score
+/// has headroom left or has saturated. LongMemEval has never had this measured,
+/// so `graph-OFF 88.0%` currently has no known ceiling to sit under. The
+/// PersonaMem counterpart (`LUNARIS_EVAL_PM_FULLCTX`) is what showed retrieval
+/// there landing 2 questions from its ceiling at p=0.50, retiring a milestone
+/// premised on a coverage gap (issue #141).
+///
+/// Deliberately shares `chronological` with [`expand_hit_sessions`]: a ceiling
+/// measured under a different presentation is not a bound on the arm it is the
+/// ceiling for.
+///
+/// Cost warning: on `longmemeval_s` this is ~50 sessions / ~494 turns per
+/// question, so the gen call carries the full haystack. Use a
+/// large-context gen model and expect the arm to be slow and token-heavy —
+/// it is a diagnostic, not a routine arm.
+fn all_sessions(rec: &HaystackRecord, chronological: bool) -> Vec<String> {
+    let mut picked: Vec<&(String, Vec<String>)> = rec.sessions.iter().collect();
+    if chronological {
+        picked.sort_by(|a, b| session_date_key(a).cmp(session_date_key(b)));
+    }
+    picked.into_iter().flat_map(|(_, turns)| turns.iter().cloned()).collect()
 }
 
 /// KG-RAG production-path presentation (Waves A-C follow-on): render the
@@ -1941,6 +1993,80 @@ mod tests {
         assert!(ctx.iter().any(|t| t.contains("the degree is BA")));
         // Distractor session comes first (first appearance in ranking).
         assert_eq!(ctx[0], "user: noise");
+    }
+
+    /// Reader-ceiling arm (`LUNARIS_EVAL_LME_FULLCTX=1`): the whole haystack
+    /// reaches the reader, retrieval bypassed entirely.
+    ///
+    /// This is the LongMemEval counterpart of PersonaMem's `FULLCTX` mode, and
+    /// it exists to answer a question the J-score alone cannot: is there any
+    /// headroom left for retrieval work? On PersonaMem the matched answer was
+    /// no — retrieval landed 2 questions from the ceiling at p=0.50, which
+    /// retired a milestone premised on a coverage gap (issue #141). LongMemEval
+    /// has never had a ceiling measured, so "graph-OFF 88.0%" has no known
+    /// upper bound to be compared against.
+    ///
+    /// The discriminating property against [`expand_hit_sessions`] is the
+    /// EMPTY-sources case: retrieval-driven expansion returns nothing when
+    /// nothing was retrieved, while the ceiling must still hand over every
+    /// session. A ceiling arm that silently degraded to "whatever retrieval
+    /// found" would report the retrieval score as the ceiling and make the gap
+    /// look like zero — the exact false-negative this arm is built to rule out.
+    #[test]
+    fn all_sessions_hands_the_reader_the_whole_haystack_even_with_zero_hits() {
+        let rec = HaystackRecord {
+            question_id: "q".into(),
+            question_type: "single-session-user".into(),
+            question: "?".into(),
+            answer: "A".into(),
+            question_date: String::new(),
+            answer_session_ids: vec!["s_gold".into()],
+            sessions: vec![
+                ("s_distract".into(), vec!["user: noise".into()]),
+                ("s_gold".into(), vec!["user: q".into(), "assistant: the degree is BA".into()]),
+                ("s_other".into(), vec!["user: unrelated".into()]),
+            ],
+        };
+
+        // Zero retrieval hits: expansion yields nothing, the ceiling yields all.
+        assert!(
+            expand_hit_sessions(&[], &rec, false).is_empty(),
+            "precondition: retrieval-driven expansion is empty with no hits"
+        );
+        let ceiling = all_sessions(&rec, false);
+        assert_eq!(ceiling.len(), 4, "every turn of every session must reach the reader");
+        assert!(ceiling.iter().any(|t| t.contains("the degree is BA")), "gold turn missing");
+        assert!(ceiling.iter().any(|t| t.contains("unrelated")), "distractors must be kept too");
+    }
+
+    /// The ceiling arm honours chronological presentation, so it stays
+    /// comparable with the retrieval arm it is the ceiling FOR — a ceiling
+    /// measured under different presentation is not a bound on that arm.
+    #[test]
+    fn all_sessions_orders_chronologically_when_asked() {
+        let rec = HaystackRecord {
+            question_id: "q".into(),
+            question_type: "temporal-reasoning".into(),
+            question: "?".into(),
+            answer: "A".into(),
+            question_date: String::new(),
+            answer_session_ids: vec![],
+            sessions: vec![
+                (
+                    "s_jun".into(),
+                    vec!["[Session date: 2023/06/01 (Thu) 09:00]".into(), "user: june".into()],
+                ),
+                (
+                    "s_jan".into(),
+                    vec!["[Session date: 2023/01/01 (Sun) 09:00]".into(), "user: january".into()],
+                ),
+            ],
+        };
+        let ctx = all_sessions(&rec, true);
+        assert!(ctx[1].contains("january"), "oldest session must come first: {ctx:?}");
+        assert!(ctx[3].contains("june"));
+        // Unsorted mode preserves declaration order.
+        assert!(all_sessions(&rec, false)[1].contains("june"));
     }
 
     #[test]
