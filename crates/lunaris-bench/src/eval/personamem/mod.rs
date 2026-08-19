@@ -412,10 +412,11 @@ async fn answer_one(
     cfg: &RunConfig,
     ingested: usize,
 ) -> PmVerdict {
+    // Every verdict derives its retrieval fields from one `Retrieval`, so the
+    // honesty max and the coverage set can never disagree.
     let mk = |predicted: Option<char>,
-              hits: usize,
+              retrieval: &reader::Retrieval,
               memories: usize,
-              max_hit_index: Option<usize>,
               error: Option<String>| PmVerdict {
         question_id: q.question_id.clone(),
         question_type: q.question_type.clone(),
@@ -424,42 +425,56 @@ async fn answer_one(
         predicted,
         gold: q.gold_letter,
         correct: predicted == Some(q.gold_letter) && error.is_none(),
-        hits,
+        hits: retrieval.hits(),
         memories,
-        max_hit_index,
+        max_hit_index: retrieval.max_index(),
+        hit_indices: retrieval.indices().to_vec(),
         error,
     };
 
-    let (sources, hits) = if cfg.no_memory || cfg.full_ctx {
-        (Vec::new(), 0)
+    let sources = if cfg.no_memory || cfg.full_ctx {
+        Vec::new()
     } else {
         match retrieve(lunaris, &q.user_message, cfg, cfg.topk).await {
-            Ok(s) => {
-                let n = s.len();
-                (s, n)
+            Ok(s) => s,
+            Err(e) => {
+                return mk(
+                    None,
+                    &reader::Retrieval::default(),
+                    0,
+                    Some(format!("recall failed: {e}")),
+                );
             }
-            Err(e) => return mk(None, 0, 0, None, Some(format!("recall failed: {e}"))),
         }
     };
 
     // Hit sources → message indices, chronological, deduped.
-    let mut indices: Vec<usize> =
-        sources.iter().filter_map(|s| dataset::index_from_source(s)).collect();
-    indices.sort_unstable();
-    indices.dedup();
-    let max_hit_index = indices.last().copied();
+    let retrieval = reader::Retrieval::new(
+        sources.len(),
+        sources.iter().filter_map(|s| dataset::index_from_source(s)).collect(),
+    );
+    if retrieval.unmapped() > 0 {
+        // The cursor is the only writer, so every stored document key parses.
+        // A miss means the store carried documents this harness did not write.
+        eprintln!(
+            "  [personamem] {} of {} hits carried no message index for {} — store not isolated?",
+            retrieval.unmapped(),
+            retrieval.hits(),
+            q.question_id
+        );
+    }
 
     // RUNTIME TEMPORAL-HONESTY GUARD. Unreachable while the cursor is the only
     // writer and the store was reset for this context; if it fires, the store
     // carried another prefix's documents and the score would be inflated.
-    if let Some(leak) = indices.iter().find(|i| **i >= q.end_index) {
+    if let Some(leak) = retrieval.indices().iter().find(|i| **i >= q.end_index) {
         let msg = format!(
             "TEMPORAL LEAK: hit message index {leak} >= prefix end {} for {} \
              (store was not isolated for this context)",
             q.end_index, q.question_id
         );
         eprintln!("  [personamem] {msg}");
-        return mk(None, hits, 0, max_hit_index, Some(msg));
+        return mk(None, &retrieval, 0, Some(msg));
     }
 
     // Context-window expansion (post-guard, clamped to the prefix bound):
@@ -472,7 +487,7 @@ async fn answer_one(
         // Reader-ceiling mode: the whole allowed prefix, in order.
         (0..q.end_index.min(messages.len())).collect()
     } else {
-        expand_with_neighbors(&indices, cfg.neighbors, q.end_index)
+        expand_with_neighbors(retrieval.indices(), cfg.neighbors, q.end_index)
     };
     let memories: Vec<String> =
         indices.iter().filter_map(|i| messages.get(*i)).map(dataset::render_message).collect();
@@ -487,13 +502,7 @@ async fn answer_one(
             let srcs = match retrieve(lunaris, text, cfg, cfg.evidence).await {
                 Ok(s) => s,
                 Err(e) => {
-                    return mk(
-                        None,
-                        hits,
-                        0,
-                        max_hit_index,
-                        Some(format!("evidence recall failed: {e}")),
-                    );
+                    return mk(None, &retrieval, 0, Some(format!("evidence recall failed: {e}")));
                 }
             };
             let mut ev: Vec<usize> =
@@ -506,7 +515,7 @@ async fn answer_one(
                     q.end_index, q.question_id
                 );
                 eprintln!("  [personamem] {msg}");
-                return mk(None, hits, 0, max_hit_index, Some(msg));
+                return mk(None, &retrieval, 0, Some(msg));
             }
             let rendered: Vec<String> = ev
                 .iter()
@@ -521,10 +530,11 @@ async fn answer_one(
         reader::render_mcq_prompt(&memories, &q.user_message, &q.options, &option_evidence);
     if cfg.debug {
         eprintln!(
-            "    [DEBUG {}] type={} end={} ingested={ingested} hits={hits} memories={} session={session}",
+            "    [DEBUG {}] type={} end={} ingested={ingested} hits={} memories={} session={session}",
             q.question_id,
             q.question_type,
             q.end_index,
+            retrieval.hits(),
             memories.len()
         );
     }
@@ -534,13 +544,7 @@ async fn answer_one(
         // Design-for-failure: a transport failure is ERR for this question and
         // never scored wrong; the run continues.
         Err(e) => {
-            return mk(
-                None,
-                hits,
-                memories.len(),
-                max_hit_index,
-                Some(format!("chat failed: {e}")),
-            );
+            return mk(None, &retrieval, memories.len(), Some(format!("chat failed: {e}")));
         }
     };
     let valid: Vec<char> = q.options.iter().map(|(l, _)| *l).collect();
@@ -552,7 +556,7 @@ async fn answer_one(
             raw.chars().take(120).collect::<String>()
         );
     }
-    mk(predicted, hits, memories.len(), max_hit_index, None)
+    mk(predicted, &retrieval, memories.len(), None)
 }
 
 /// The production recall root. Default = hybrid (Vector ∧ BM25 → RRF) reranked
