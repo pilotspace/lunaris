@@ -44,23 +44,17 @@ no Rust toolchain required (`linux-x64/arm64`, `darwin-x64/arm64`,
 **Claude Code** — one command, either runner:
 
 ```bash
-claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
-# or
 claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
+# or
+claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
 ```
-
-> **Prefer `uvx` right now.** The npm channel is stale — a registry token
-> permission blocks publishing, so `npx @pilotspace/lunaris-mcp` still
-> resolves to 0.3.0 while `uvx lunaris-mcp` tracks the current release.
-> Tracked in [#135](https://github.com/pilotspace/lunaris/issues/135);
-> every other channel (crates.io, PyPI, GitHub Release binaries) is current.
 
 **Any MCP client** — JSON config:
 
 ```json
 {
   "mcpServers": {
-    "lunaris": { "command": "uvx", "args": ["lunaris-mcp"] }
+    "lunaris": { "command": "npx", "args": ["-y", "@pilotspace/lunaris-mcp"] }
   }
 }
 ```
@@ -128,7 +122,7 @@ memory deliberately:
 # Python (3.11+)
 pip install lunaris
 
-# TypeScript (Node 20+) — NOTE: npm is pinned at 0.5.0 pending issue #135
+# TypeScript (Node 20+)
 npm install @pilotspace/lunaris
 
 # Rust — published as `lunaris-memory`; import as `lunaris`
