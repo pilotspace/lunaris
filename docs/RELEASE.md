@@ -29,8 +29,8 @@ git push origin v0.7.0
 #    `cargo publish --dry-run` must already be green on the MAIN COMMIT you
 #    are tagging — check the main-push board there, not the tag. Exactly four
 #    workflows fire on a `v*` tag: crates-publish, ts-prebuild, mcp-prebuild,
-#    python-prebuild. (`ci.yml`'s submodule-tag-parity / RELEASE-05 job is
-#    gated on refs/tags/v* and therefore never executes — issue #136.)
+#    python-prebuild. (`ci.yml` has NO tag-gated job — the dormant
+#    submodule-tag-parity / RELEASE-05 job was removed in issue #136.)
 
 # 4. crates.io publish runs in CI: .github/workflows/crates-publish.yml
 #    triggers on the v* tag (workflow_dispatch for an initial/repair run —
