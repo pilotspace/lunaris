@@ -160,6 +160,51 @@ pub(crate) fn parse_letter(raw: &str, valid: &[char]) -> Option<char> {
     None
 }
 
+/// What the retrieval leg returned for one question.
+///
+/// Sole owner of the three retrieval fields a verdict carries. The temporal
+/// honesty guard reads `max_index()` and an offline coverage pass reads
+/// `indices()`; tracking those separately let a caller populate one and not
+/// the other, which reads as "temporally clean, zero coverage" — a run that
+/// looks fine and scores as if retrieval returned nothing.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Retrieval {
+    /// Sources the retriever returned, INCLUDING any whose key carried no
+    /// PersonaMem message index.
+    sources: usize,
+    /// Ascending, deduped message indices parsed out of those sources.
+    indices: Vec<usize>,
+}
+
+impl Retrieval {
+    /// `indices` is normalized here so no call site has to remember to.
+    pub(crate) fn new(sources: usize, mut indices: Vec<usize>) -> Self {
+        indices.sort_unstable();
+        indices.dedup();
+        Self { sources, indices }
+    }
+
+    pub(crate) fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    /// Sources returned — NOT `indices().len()`; a source whose key does not
+    /// parse still counts as a retrieval hit.
+    pub(crate) fn hits(&self) -> usize {
+        self.sources
+    }
+
+    pub(crate) fn max_index(&self) -> Option<usize> {
+        self.indices.last().copied()
+    }
+
+    /// Sources that carried no parseable message index. Non-zero means the
+    /// store held documents this harness did not write.
+    pub(crate) fn unmapped(&self) -> usize {
+        self.sources.saturating_sub(self.indices.len())
+    }
+}
+
 /// One scored question.
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct PmVerdict {
@@ -177,6 +222,16 @@ pub(crate) struct PmVerdict {
     pub memories: usize,
     /// Highest message index that reached the reader — MUST be `< end_index`.
     pub max_hit_index: Option<usize>,
+    /// Every message index the retrieval leg returned, ascending and deduped,
+    /// BEFORE neighbour expansion.
+    ///
+    /// `max_hit_index` alone answers only the temporal-honesty question ("did
+    /// anything leak past the prefix?"). Retrieval COVERAGE — did the hit set
+    /// contain the message the gold answer rests on — needs the whole set, and
+    /// recovering it otherwise means re-running the arm. Emitted on every
+    /// verdict so a finished run can be re-scored for coverage offline.
+    #[serde(default)]
+    pub hit_indices: Vec<usize>,
     /// Set only on a transport/chat failure; such a question is ERR, and the
     /// tally never scores an ERR as wrong (LME H3 discipline).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,8 +408,36 @@ mod tests {
             hits: 3,
             memories: 3,
             max_hit_index: Some(9),
+            hit_indices: vec![2, 5, 9],
             error: error.map(|s| s.to_string()),
         }
+    }
+
+    /// Coverage re-scoring needs the WHOLE hit set on every verdict.
+    #[test]
+    fn verdict_carries_every_hit_index() {
+        let v = verdict("suggest_new_ideas", true, None);
+        let payload: serde_json::Value =
+            serde_json::from_str(verdict_line(&v).strip_prefix("PM_VERDICT ").unwrap()).unwrap();
+        assert_eq!(payload["hit_indices"], serde_json::json!([2, 5, 9]));
+    }
+
+    /// `hit_indices` and `max_hit_index` must not be tracked separately — the
+    /// honesty guard reads the max and the coverage pass reads the set, and a
+    /// caller that populated one but not the other would leave the run
+    /// looking temporally clean while scoring as zero-coverage. `Retrieval`
+    /// owns both, derived from one list.
+    #[test]
+    fn retrieval_derives_its_own_max_and_normalizes_the_index_set() {
+        let r = Retrieval::new(4, vec![9, 2, 5, 5]);
+        assert_eq!(r.indices(), [2, 5, 9], "indices must be ascending and deduped");
+        assert_eq!(r.max_index(), Some(9));
+        assert_eq!(r.hits(), 4, "hits counts SOURCES returned, not indices parsed");
+        assert_eq!(r.unmapped(), 1, "a source whose key carried no message index is reportable");
+
+        let empty = Retrieval::new(0, vec![]);
+        assert_eq!(empty.max_index(), None);
+        assert_eq!(empty.unmapped(), 0);
     }
 
     #[test]
