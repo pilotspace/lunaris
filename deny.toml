@@ -45,6 +45,38 @@ ignore = [
     # Re-review when indicatif drops number_prefix (advisory itself says
     # the maintainer has not responded to the unmaintained tag).
     { id = "RUSTSEC-2025-0119", reason = "transitive via hf-hub/indicatif; not in shipped surface (dev-dep only)" },
+    # arrayref@0.3.9 yanked — HELD DELIBERATELY, do not "fix" by upgrading.
+    #
+    # On 2026-08-20 every arrayref release from 0.3.5 through 0.3.9 was yanked
+    # within the same window that 0.3.10 was published (07:15Z, same publisher
+    # account `droundy`). cargo_deny was green on main through 08-19, so the
+    # yanks are hours old, not historical.
+    #
+    # 0.3.10 declares a dependency on `proc-macro1`, which returns 404 on
+    # crates.io — it does not resolve, so `cargo update -p arrayref` fails
+    # outright. `proc-macro1` is a one-character variant of the ubiquitous
+    # `proc-macro2`. Mass-yanking every usable version and shipping a
+    # replacement whose only new dependency is an unresolvable near-homograph
+    # is the shape of a compromised publishing account, not a maintenance
+    # release. It is NOT proven — the same publisher account appears on both,
+    # which is equally consistent with compromise or with an unusual
+    # maintainer action.
+    #
+    # Reach: arrayref -> blake3 -> lunaris-consolidate and onward to nearly
+    # every crate here. blake3 is on the core path (EntityId hashing, ingest
+    # dedupe keys), so this is not a peripheral dependency.
+    #
+    # Holding 0.3.9 is the conservative option: a yanked version is still the
+    # exact code that has been building and passing here for months, whereas
+    # 0.3.10 is an hours-old artifact we cannot even resolve, let alone audit.
+    # Yanking blocks NEW dependents; it does not retract what is already in
+    # Cargo.lock.
+    #
+    # RE-REVIEW: as soon as upstream (arrayref/blake3/RustSec) says anything.
+    # Exit this entry by moving to a version that is both unyanked AND
+    # resolvable — never by taking 0.3.10 on the strength of its version
+    # number. Owner has been notified.
+    { crate = "arrayref@0.3.9", reason = "yanked 2026-08-20 in a mass-yank alongside 0.3.10, which depends on the non-existent `proc-macro1`; holding the long-audited version pending upstream clarification" },
 ]
 
 # ───────────────────────── licenses ─────────────────────────
