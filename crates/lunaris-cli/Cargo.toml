@@ -1,0 +1,44 @@
+[package]
+name             = "lunaris-cli"
+version          = { workspace = true }
+edition          = { workspace = true }
+rust-version     = { workspace = true }
+license          = { workspace = true }
+repository       = { workspace = true }
+description      = "Human- and script-facing CLI for a running Lunaris memory store"
+# NOT publishable, for the same structural reason as `lunaris-mcp` and
+# `lunaris-hook`: this depends on `lunaris-memory-service` (publish = false),
+# which carries an optional PATH dependency on `vendor/moon`. cargo strips the
+# path on publish and demands a registry version, and the `moon` name on
+# crates.io belongs to an unrelated third party — so no version can ever
+# satisfy it. Distribution mirrors lunaris-mcp: npx / uvx / GitHub Release
+# binaries. See README.md and docs/book/src/mcp/index.md, which already
+# document the same caveat honestly for lunaris-mcp.
+publish          = false
+
+[[bin]]
+name = "lunaris"
+path = "src/main.rs"
+
+[dependencies]
+# The engine. `llamacpp` is hard-wired exactly as lunaris-mcp and lunaris-hook
+# do it, so a plain `cargo build -p lunaris-cli` cannot silently produce the
+# Tier-0 NoopEmbedder build (the trap that bites lunaris-server).
+lunaris      = { workspace = true, features = ["llamacpp"] }
+lunaris-core = { workspace = true }
+# THE shared command surface. Every subcommand builds a `MemoryRequest` and
+# hands it to `protocol::dispatch` — the identical function contextd runs and
+# the mcp proxy falls back to. The CLI must never open storage or plan a recall
+# on its own; that is what made three recall surfaces diverge before GA-1.
+lunaris-memory-service = { workspace = true }
+
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+anyhow     = { workspace = true }
+tracing    = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+lunaris-test-harness = { workspace = true }
