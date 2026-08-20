@@ -39,6 +39,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TS_PACKAGE_JSON = REPO_ROOT / "crates" / "lunaris-ts" / "package.json"
+TS_PACKAGE_LOCK = REPO_ROOT / "crates" / "lunaris-ts" / "package-lock.json"
 TS_PREBUILD_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ts-prebuild.yml"
 
 # napi-rs target triple -> the npm/<dir> name `napi create-npm-dirs` emits,
@@ -135,6 +136,68 @@ class WorkflowPublishRoster(unittest.TestCase):
             "ts-prebuild.yml publishes a different set of platform packages "
             "than @pilotspace/lunaris depends on — the difference installs as "
             "a silent 404",
+        )
+
+
+
+
+class NpmLockFileParity(unittest.TestCase):
+    """`npm ci` refuses to run when the lock disagrees with package.json.
+
+    This is not hypothetical. The v0.7.0 release published the five
+    `@pilotspace/lunaris-*` platform packages on 2026-08-19 after a long
+    E404/EOTP token fight; `package.json` had already been bumped to require
+    `0.7.0`, but `package-lock.json` still carried each platform package with
+    NO version at all -- the shape npm records for an optional dependency it
+    could not resolve at lock time. From then on every `npm ci` in CI failed
+    EUSAGE ("lock file's @pilotspace/lunaris-darwin-arm64@ does not satisfy
+    ... @0.7.0"), which took down BOTH conformance-bindings jobs nightly.
+
+    The sibling tests in this file all read package.json only, so a lock that
+    disagrees with it was invisible to them. This closes that gap: the lock is
+    a published artifact of the release process and must be re-generated
+    whenever the version moves (`npm install --package-lock-only`).
+    """
+
+    def _lock_versions(self) -> dict:
+        lock = json.loads(TS_PACKAGE_LOCK.read_text(encoding="utf-8"))
+        out = {}
+        for path, meta in lock.get("packages", {}).items():
+            name = path.split("node_modules/")[-1]
+            if name.startswith("@pilotspace/"):
+                out[name] = meta.get("version")
+        return out
+
+    def test_lock_file_pins_the_same_versions_as_package_json(self) -> None:
+        optional = _load_package_json().get("optionalDependencies", {})
+        locked = self._lock_versions()
+
+        mismatched = {
+            name: (locked.get(name), want)
+            for name, want in optional.items()
+            if locked.get(name) != want
+        }
+        self.assertEqual(
+            mismatched,
+            {},
+            "crates/lunaris-ts/package-lock.json disagrees with package.json "
+            f"(name: locked -> required): {mismatched}. `npm ci` will fail "
+            "EUSAGE and every workflow that installs lunaris-ts dies at that "
+            "step. A `None` on the locked side means the package was "
+            "unpublished when the lock was written. Fix by running "
+            "`npm install --package-lock-only` in crates/lunaris-ts and "
+            "committing the result.",
+        )
+
+    def test_lock_file_records_every_optional_dependency(self) -> None:
+        optional = set(_load_package_json().get("optionalDependencies", {}))
+        locked = set(self._lock_versions())
+        missing = sorted(optional - locked)
+        self.assertEqual(
+            missing,
+            [],
+            f"package-lock.json has no entry at all for {missing}. Regenerate "
+            "it with `npm install --package-lock-only` in crates/lunaris-ts.",
         )
 
 
