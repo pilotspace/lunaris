@@ -75,8 +75,20 @@ on:
         type: boolean
         default: false
 
+# Keyed on the COMMIT, not just the ref. A ref-only group makes every push to
+# `main` share one key, so with cancel-in-progress the next commit kills the
+# previous commit's in-flight ratchet — and at this gate's ~40-minute wall
+# clock a merge train voids it entirely. That happened on 2026-08-19 (two
+# consecutive `cancelled` runs, main unmeasured from 05:26Z onward), and a
+# cancelled gate is indistinguishable from a passing one on a board with no
+# required checks.
+#
+# With the sha in the key, cancel-in-progress still does its real job —
+# superseding a duplicate run of the SAME commit (a re-push of an unchanged
+# tree, an overlapping dispatch) — while every distinct commit gets measured.
+# Pinned by eval_workflow_guard.rs::recall_ratchet_concurrency_cannot_cancel_a_different_commit.
 concurrency:
-  group: recall-ratchet-${{ github.ref }}
+  group: recall-ratchet-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
