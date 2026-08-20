@@ -233,3 +233,62 @@ fn the_eval_gauntlet_workflow_stays_deleted() {
         p.display()
     );
 }
+
+/// A gate that gets cancelled reports nothing, and "reported nothing" is
+/// indistinguishable from "passed" on a board with no branch protection.
+/// That is the exact failure mode STARTUP-01 hid behind for weeks, arriving
+/// by a different road.
+///
+/// Observed 2026-08-20: `recall-ratchet` was `cancelled` on the two most
+/// recent main pushes (2026-08-19 07:03Z and 08:48Z), leaving main's recall
+/// quality unmeasured since 05:26Z. Cause: this is the ONLY main-push
+/// workflow carrying a `concurrency:` block, and its group keyed on
+/// `github.ref` — which is `refs/heads/main` for EVERY main push. With
+/// `cancel-in-progress: true`, commit N+1 cancels commit N's in-flight run,
+/// and the ratchet's ~40-minute wall clock means any merge train voids it.
+///
+/// The fix is to key the group on `github.sha` as well, so a run can only
+/// ever cancel another run **of the same commit** (a genuine duplicate,
+/// which is what cancel-in-progress is for). Every distinct main commit then
+/// gets measured.
+///
+/// NOTE the residual, deliberately not papered over: nothing *detects* a
+/// ratchet that never ran, because `main` has no branch protection and so no
+/// required checks. Closing that needs an owner decision, not a code change;
+/// this guard closes the cause instead of the symptom.
+#[test]
+fn recall_ratchet_concurrency_cannot_cancel_a_different_commit() {
+    let yml = workflow_src();
+
+    let group = yml
+        .lines()
+        .skip_while(|l| l.trim_start() != "concurrency:")
+        .find(|l| l.trim_start().starts_with("group:"))
+        .unwrap_or_else(|| {
+            panic!(
+                "recall-ratchet.yml has no `concurrency.group`. If the whole \
+                 concurrency block was removed that is ACCEPTABLE (every run \
+                 then completes) — delete this test deliberately rather than \
+                 letting it fail silently."
+            )
+        })
+        .to_string();
+
+    let cancels = yml
+        .lines()
+        .skip_while(|l| l.trim_start() != "concurrency:")
+        .any(|l| l.trim_start() == "cancel-in-progress: true");
+
+    if cancels {
+        assert!(
+            group.contains("github.sha"),
+            "recall-ratchet.yml sets `cancel-in-progress: true` with group \
+             `{}`, which does not include `github.sha`. On main every push \
+             shares one group key, so a new commit CANCELS the previous \
+             commit's ratchet and that commit ships unmeasured. Include \
+             github.sha in the group so a run can only supersede a duplicate \
+             of the SAME commit.",
+            group.trim()
+        );
+    }
+}
