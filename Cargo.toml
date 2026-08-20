@@ -53,6 +53,13 @@ members = [
   # handlers (memory.ingest, .recall, .forget, .list_scopes) land in Wave 2.
   "crates/lunaris-mcp",
   "crates/lunaris-memory-service",
+  # Human- and script-facing CLI. A PEER of the mcp/hook/http surfaces, not a
+  # layer beneath them: it builds a MemoryRequest and hands it to the same
+  # protocol::dispatch, socket-first to contextd with a direct-open fallback.
+  # Its reason to exist is that every other surface is a machine protocol, so
+  # nothing could ask the store a question from a shell — which also makes it
+  # the neutral instrument for proving the surfaces agree.
+  "crates/lunaris-cli",
   # v0.5 Wave B — hook adapter binary that captures Claude Code lifecycle events
   # into Lunaris memory. Reads a single hook envelope from stdin, derives scope
   # from cwd+git remote (same algorithm as lunaris-mcp), writes one Episode via
