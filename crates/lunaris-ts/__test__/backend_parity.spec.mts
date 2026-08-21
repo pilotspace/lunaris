@@ -140,6 +140,31 @@ interface NormalizedRows {
   distinct_episode_ids: number;
 }
 
+/**
+ * The 10 fixture episodes' ULIDs, as they appear in the KV key suffix.
+ *
+ * `lunaris_core::keyspace::episode_key` renders `lunaris:{scope}:episode:{ulid}`
+ * with the ULID's canonical 26-char string, and `Episode`'s serde emits `id`
+ * the same way — so the serialized episode's `id` IS the key suffix, no
+ * decoding step in between.
+ */
+function fixtureEpisodeIds(episodes: object[]): Set<string> {
+  const ids = new Set<string>();
+  for (const ep of episodes) {
+    const id = (ep as { id?: unknown }).id;
+    expect(
+      typeof id,
+      "fixture episode is missing a string `id` — the FFI serde shape changed",
+    ).toBe("string");
+    ids.add(id as string);
+  }
+  expect(
+    ids.size,
+    "the fixture corpus emitted duplicate episode ids — it is no longer deterministic-distinct",
+  ).toBe(episodes.length);
+  return ids;
+}
+
 async function ingestAndNormalize(
   u: string,
   golden: GoldenReference,
@@ -149,6 +174,7 @@ async function ingestAndNormalize(
   // boundary.
   const episodes = lunaris.conformanceFixtureEpisodes(SEED, COUNT) as object[];
   expect(episodes).toHaveLength(COUNT);
+  const wanted = fixtureEpisodeIds(episodes);
 
   const handle = await lunaris.open(u);
   for (const ep of episodes) {
@@ -158,8 +184,20 @@ async function ingestAndNormalize(
   const prefixBuf = Buffer.from(golden.keys_prefix, "utf-8");
   const rawRows = (await lunaris.scanKvPrefix(handle, prefixBuf)) as [Buffer, Buffer][];
 
-  // Parse each key as "{prefix}{ulid}" and collect unique suffixes.
+  // Parse each key as "{prefix}{ulid}" and keep ONLY the fixture's own
+  // episodes.
+  //
+  // This filter is the whole point. Before W4.14 this suite was the only
+  // thing writing under `lunaris:_dev_:episode:` on the CI Moon, so an
+  // absolute count over the prefix happened to equal 10. Widening the
+  // live-Moon job to run every binding suite put 150+ unrelated episodes
+  // in the same scope and the assertion failed at `10 vs 163` — not
+  // because parity broke, but because "the store contains nothing else"
+  // was never the contract and never held on a Moon that outlives one
+  // run. What IS the contract: the 10 deterministic fixture episodes are
+  // each present exactly once, at the golden per-episode key count.
   const distinct = new Set<string>();
+  let matched = 0;
   for (const [k] of rawRows) {
     let keyStr: string;
     try {
@@ -167,13 +205,15 @@ async function ingestAndNormalize(
     } catch {
       continue;
     }
-    if (keyStr.startsWith(golden.keys_prefix)) {
-      distinct.add(keyStr.slice(golden.keys_prefix.length));
-    }
+    if (!keyStr.startsWith(golden.keys_prefix)) continue;
+    const suffix = keyStr.slice(golden.keys_prefix.length);
+    if (!wanted.has(suffix)) continue;
+    distinct.add(suffix);
+    matched += 1;
   }
 
   return {
-    total_rows: rawRows.length,
+    total_rows: matched,
     keys_prefix: golden.keys_prefix,
     distinct_episode_ids: distinct.size,
   };
@@ -198,7 +238,7 @@ function assertStructuralEq(
   const wantTotal = golden.episode_count * golden.per_episode_key_count;
   expect(
     rows.total_rows,
-    `${label} row-count drift: got ${rows.total_rows} want ${wantTotal} (${golden.episode_count} episodes × ${golden.per_episode_key_count} keys/episode)`,
+    `${label} row-count drift: got ${rows.total_rows} fixture-owned rows, want ${wantTotal} (${golden.episode_count} episodes × ${golden.per_episode_key_count} keys/episode)`,
   ).toBe(wantTotal);
 }
 

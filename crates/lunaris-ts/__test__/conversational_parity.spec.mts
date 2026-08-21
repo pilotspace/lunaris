@@ -238,12 +238,14 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     const query = fixture.query as string;
 
     const { ChatAgentMemory } = lunaris as {
-      ChatAgentMemory: new (h: unknown, userId: string) => {
-        remember: (t: string) => Promise<string>;
-        recall: (q: string) => Promise<Hit[]>;
+      ChatAgentMemory: {
+        new: (h: unknown, userId: string) => {
+          remember: (t: string) => Promise<string>;
+          recall: (q: string) => Promise<Hit[]>;
+        };
       };
     };
-    const cam = new ChatAgentMemory(h, userId);
+    const cam = ChatAgentMemory.new(h, userId);
     for (const turn of turns) await cam.remember(turn.text);
 
     const hits = await cam.recall(query);
@@ -274,14 +276,16 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     const query = fixture.query as string;
 
     const { MultiTurnConversation } = lunaris as {
-      MultiTurnConversation: new (h: unknown, userId: string) => {
-        remember: (t: string, threadId: string) => Promise<string>;
-        recall: (q: string) => Promise<Hit[]>;
-        consolidate: () => Promise<{ promotions?: unknown[]; archives?: unknown[] }>;
+      MultiTurnConversation: {
+        new: (h: unknown, userId: string) => {
+          remember: (t: string, threadId: string) => Promise<string>;
+          recall: (q: string) => Promise<Hit[]>;
+          consolidate: () => Promise<{ promotions?: unknown[]; archives?: unknown[] }>;
+        };
       };
     };
-    const conv = new MultiTurnConversation(h, userId);
-    const other = new MultiTurnConversation(h, otherUserId);
+    const conv = MultiTurnConversation.new(h, userId);
+    const other = MultiTurnConversation.new(h, otherUserId);
 
     for (const s of sessions) {
       for (const t of s.turns) await conv.remember(t.text, s.thread_id);
@@ -331,15 +335,17 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     const channelFilter = `${fixture.channel_filter as string}-${tag}`;
 
     const { SlackArchive } = lunaris as {
-      SlackArchive: new (h: unknown) => {
-        ingest_channel: (ch: string, user: string, text: string) => Promise<string>;
-        recall: (q: string) => Promise<Hit[]>;
-        channel: (id: string) => { recall: (q: string) => Promise<Hit[]> };
+      SlackArchive: {
+        new: (h: unknown) => {
+          ingestChannel: (ch: string, user: string, text: string) => Promise<string>;
+          recall: (q: string) => Promise<Hit[]>;
+          channel: (id: string) => { recall: (q: string) => Promise<Hit[]> };
+        };
       };
     };
-    const slack = new SlackArchive(h);
+    const slack = SlackArchive.new(h);
     for (const ch of channels) {
-      for (const m of ch.messages) await slack.ingest_channel(ch.id, m.user, m.text);
+      for (const m of ch.messages) await slack.ingestChannel(ch.id, m.user, m.text);
     }
 
     const wide = await slack.recall(query);
@@ -378,12 +384,14 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     expect(gh.graphPipeline.isEnabled(), "a fresh handle must be graph-off").toBe(false);
 
     const { EmailThreading } = lunaris as {
-      EmailThreading: new (h: unknown) => {
-        ingest: (rootId: string, from: string, body: string) => Promise<string>;
-        thread: (rootId: string) => { recall: (q: string) => Promise<Hit[]> };
+      EmailThreading: {
+        new: (h: unknown) => {
+          ingest: (rootId: string, from: string, body: string) => Promise<string>;
+          thread: (rootId: string) => { recall: (q: string) => Promise<Hit[]> };
+        };
       };
     };
-    const email = new EmailThreading(h);
+    const email = EmailThreading.new(h);
     for (const m of messages) await email.ingest(rootId, m.from, m.body);
 
     const hits = await email.thread(rootId).recall(query);
@@ -414,17 +422,19 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     if (!h) return;
 
     const { EmailThreading } = lunaris as {
-      EmailThreading: new (h: unknown) => {
-        with_graph_pipeline: (on: boolean) => { with_graph_pipeline: (on: boolean) => unknown };
+      EmailThreading: {
+        new: (h: unknown) => {
+          withGraphPipeline: (on: boolean) => { withGraphPipeline: (on: boolean) => unknown };
+        };
       };
     };
     const gh = h as { graphPipeline: { isEnabled: () => boolean } };
     expect(gh.graphPipeline.isEnabled(), "a fresh handle must be graph-off").toBe(false);
 
-    const em = new EmailThreading(h).with_graph_pipeline(true);
-    expect(gh.graphPipeline.isEnabled(), "with_graph_pipeline(true) must enable it").toBe(true);
-    em.with_graph_pipeline(false);
-    expect(gh.graphPipeline.isEnabled(), "with_graph_pipeline(false) must disable it").toBe(false);
+    const em = EmailThreading.new(h).withGraphPipeline(true);
+    expect(gh.graphPipeline.isEnabled(), "withGraphPipeline(true) must enable it").toBe(true);
+    em.withGraphPipeline(false);
+    expect(gh.graphPipeline.isEnabled(), "withGraphPipeline(false) must disable it").toBe(false);
   });
 
   test("meeting_notes_memory — notes land under meeting:notes/ and recall finds them", async (ctx: SkippableCtx) => {
@@ -441,12 +451,14 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     // rather than for a count that a previous run has already inflated.
     const tag = runTag();
     const { MeetingNotesMemory } = lunaris as {
-      MeetingNotesMemory: new (h: unknown) => {
-        note: (heading: string, body: string) => Promise<string>;
-        recall: (q: string) => Promise<Hit[]>;
+      MeetingNotesMemory: {
+        new: (h: unknown) => {
+          note: (heading: string, body: string) => Promise<string>;
+          recall: (q: string) => Promise<Hit[]>;
+        };
       };
     };
-    const mn = new MeetingNotesMemory(h);
+    const mn = MeetingNotesMemory.new(h);
     for (const n of notes) await mn.note(n.heading, `${n.body} [run ${tag}]`);
 
     const hits = await mn.recall(query);

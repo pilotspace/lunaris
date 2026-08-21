@@ -272,7 +272,7 @@ async function runResearchPaper(
   const mem = await l.open(url_);
   const prefix = `papers:doc-11-03-ts/${backendLabel}/`;
   let corpus = l.ResearchPaperCorpus.new(mem, prefix);
-  corpus = corpus.with_graph_pipeline(false);
+  corpus = corpus.withGraphPipeline(false);
   const papers = loadFixture<{ id: string; title: string; abstract: string }[]>(
     "research_paper_corpus_papers.json",
   );
@@ -303,7 +303,7 @@ async function runCodeRepoAsOf(
   for (const c of commits) {
     const ms = rfc3339ToUnixMs(c.committer_date_rfc3339);
     const meta = { function_name: "target" };
-    await repo.ingest_commit(c.sha, ms, [[c.function_body_chunk, meta]]);
+    await repo.ingestCommit(c.sha, ms, [[c.function_body_chunk, meta]]);
   }
   const hits = (await repo.recall(query, asOf)) as Hit[];
   return hits.map((h) => h.text);
@@ -351,10 +351,10 @@ async function runCustomerSupportRefund(
     }[];
   }>("customer_support_50_tickets.json");
   for (const t of fx.tickets) {
-    await hist.ingest_ticket(t.id, t.body);
+    await hist.ingestTicket(t.id, t.body);
   }
   for (const c of fx.chats) {
-    await hist.ingest_chat(c.ticket_id, c.turn_idx, c.participant, c.msg);
+    await hist.ingestChat(c.ticket_id, c.turn_idx, c.participant, c.msg);
   }
   const hits = (await hist.recall(query)) as Hit[];
   return hits.map((h) => [h.source, h.id]);
