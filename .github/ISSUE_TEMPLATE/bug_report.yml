@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in Lunaris does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if this is a **security** issue, do not open a public
+        issue — see [`SECURITY.md`](https://github.com/pilotspace/lunaris/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        I called `recall` with … and expected …, but got …
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: >
+        The smallest code, CLI invocation, or MCP tool call that shows the
+        problem. A repro we can paste and run is worth ten paragraphs.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Lunaris version
+      description: "Crate / `pip show lunaris` / `npm ls lunaris` / `lunaris-mcp --version`."
+      placeholder: "0.7.0"
+    validations:
+      required: true
+
+  - type: input
+    id: moon-version
+    attributes:
+      label: Moon version
+      description: >
+        Lunaris 0.7.0 hard-rejects any Moon below 0.8.5 at connect. `MOON.VERSION`
+        or your install method.
+      placeholder: "0.8.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface
+      multiple: true
+      options:
+        - Rust crate
+        - Python SDK
+        - TypeScript SDK
+        - HTTP server (lunaris-server)
+        - MCP server (lunaris-mcp)
+        - Claude Code / Codex hooks (lunaris-hook)
+        - CLI (lunaris-cli)
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: "macOS 15.7 arm64 / Ubuntu 24.04 x86_64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: >
+        Any `LUNARIS_*` environment variables you set — especially
+        `LUNARIS_MCP_STORAGE` / `LUNARIS_STORE_URL`, `LUNARIS_GRAPH_ENABLED`,
+        `LUNARIS_RECALL_RERANK`, `LUNARIS_ACTIVATION_BOOST`. **Redact secrets.**
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Run with `RUST_LOG=lunaris=debug` if you can. Redact secrets."
+      render: shell

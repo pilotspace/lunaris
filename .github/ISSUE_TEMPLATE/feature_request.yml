@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a capability Lunaris does not have.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do that Lunaris makes hard or impossible?
+        Describe the situation, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: What should exist? What would the API or CLI look like?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >
+        Workarounds, other tools, or the shape of the thing you built yourself.
+        This tells us how much the gap actually costs.
+
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Does this touch a core contract?
+      description: >
+        Lunaris defends three properties. A feature that weakens one needs a
+        much stronger case — say so up front rather than have it found in review.
+      options:
+        - label: "Could affect the sub-25 ms p50 recall path"
+        - label: "Could affect the single-`atomic_write`-per-ingest guarantee"
+        - label: "Could affect bi-temporal MVCC (valid/sys intervals, as-of reads)"
+        - label: "None of the above"

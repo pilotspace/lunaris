@@ -1,0 +1,35 @@
+name: Documentation problem
+description: A doc is wrong, stale, or claims something that is not true.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Claims that cannot be traced to a committed artifact are bugs here, not
+        style nits. If a number has no source, say so — we would rather delete
+        it than soften it.
+
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: File path, URL, or book page.
+      placeholder: "docs/operations/capacity.md §3, or the README moat table"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What is wrong
+      description: Quote the passage and say what is inaccurate about it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        If you are correcting a factual or numeric claim, what should it say and
+        what backs the replacement?

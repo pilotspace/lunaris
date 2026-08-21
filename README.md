@@ -1,5 +1,14 @@
 # Lunaris
 
+[![CI](https://github.com/pilotspace/lunaris/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/pilotspace/lunaris/actions/workflows/ci.yml)
+[![recall-ratchet](https://github.com/pilotspace/lunaris/actions/workflows/recall-ratchet.yml/badge.svg?branch=main)](https://github.com/pilotspace/lunaris/actions/workflows/recall-ratchet.yml)
+[![crates.io](https://img.shields.io/crates/v/lunaris-memory.svg?label=crates.io%20lunaris-memory)](https://crates.io/crates/lunaris-memory)
+[![docs.rs](https://img.shields.io/docsrs/lunaris-memory?label=docs.rs)](https://docs.rs/lunaris-memory)
+[![PyPI](https://img.shields.io/pypi/v/lunaris.svg?label=pypi%20lunaris)](https://pypi.org/project/lunaris/)
+[![npm](https://img.shields.io/npm/v/%40pilotspace%2Flunaris.svg?label=npm%20%40pilotspace%2Flunaris)](https://www.npmjs.com/package/@pilotspace/lunaris)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94-blue.svg)](CONTRIBUTING.md#prerequisites)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Sub-25 ms recall at 100,000 documents per scope — measured, not
 projected — with provable atomicity and a graph that's opt-in.**
 
@@ -343,6 +352,14 @@ tag. [`CHANGELOG.md`](CHANGELOG.md) is the authority — this table is a summary
 | **0.1.x** | 2026-04 → 05 | First engine cut: bi-temporal store, retrieval DSL, single-`atomic_write` ingest |
 
 [`RELEASES.md`](RELEASES.md) carries the per-release gate evidence.
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the build + test recipe (including
+the `MOON_TEST_BINARY` that storage-backed tests need), what CI checks, and
+the grep-pinned invariants a PR must not break. Participation is governed by
+our [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go to
+[`SECURITY.md`](SECURITY.md), never a public issue.
 
 ## Coming from another agent-memory tool?
 
