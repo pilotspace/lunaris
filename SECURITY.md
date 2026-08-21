@@ -6,9 +6,9 @@ Lunaris is pre-1.0; only the newest release line receives security fixes.
 
 | Version | Supported |
 |---|---|
-| 0.6.x (latest patch) | ✅ security fixes |
-| main (0.7.0-dev) | ✅ fixes land here first |
-| ≤ 0.5.x | ❌ upgrade — see `docs/migration/` |
+| 0.7.x (latest patch) | ✅ security fixes |
+| `main` (0.7.x-dev) | ✅ fixes land here first |
+| ≤ 0.6.x | ❌ upgrade — see [`docs/migration/0.6-to-0.7.md`](docs/migration/0.6-to-0.7.md) |
 
 ## Reporting a vulnerability
 

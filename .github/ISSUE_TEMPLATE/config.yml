@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/pilotspace/lunaris/security/advisories/new
+    about: Report privately. Do not open a public issue for a security problem.
+  - name: Documentation
+    url: https://pilotspace.github.io/lunaris/
+    about: The Lunaris Book — quickstart, guides, API reference, migration guides.

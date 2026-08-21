@@ -32,19 +32,44 @@ yanked = "deny"
 # the dependent is itself unforked upstream. Every entry MUST cite the
 # upstream-blocker and a re-review date so this list doesn't silently
 # accumulate.
+#
+# RATIONALE RE-VERIFIED 2026-08-21 (W2.12). The previous rationale for both
+# entries was WRONG: it blamed `candle-core/gemm`, but candle was deleted in
+# the v0.6 llama.cpp-only cutover and `gemm` is absent from Cargo.lock
+# entirely (`grep -c 'name = "gemm' Cargo.lock` -> 0). Both advisories are
+# still live; they just arrive by a different road, and both are now IN THE
+# SHIPPED SURFACE, not dev-only. Verified by walking Cargo.lock's reverse
+# edges, not by reading the old comment.
+#
+# NEXT RE-REVIEW: 2026-11-21, or at the next minor release, whichever is
+# first. An entry without a re-review date is how this list rots.
 ignore = [
     # RUSTSEC-2024-0436 — paste@1.0.15 is unmaintained.
-    # Reach: gemm → candle-core → candle-{nn,transformers} → lunaris-embed
-    #        / lunaris-extract / lunaris-rerank / lunaris-verify.
-    # Upstream: candle 0.10 still pulls gemm 0.19 which pulls paste 1.0.
-    # Re-review when candle bumps off gemm (tracked in candle issue queue).
-    { id = "RUSTSEC-2024-0436", reason = "transitive via candle-core/gemm; no published candle release moves off gemm yet" },
+    # Actual reach (Cargo.lock, 2026-08-21):
+    #   paste <- tokenizers <- lunaris-ingest <- lunaris-memory / -retrieve
+    #                                          <- lunaris-mcp / -server / -hook
+    #   paste <- macro_rules_attribute <- tokenizers  (same root)
+    # This IS in the shipped surface — `tokenizers` is a normal dependency of
+    # lunaris-ingest (Cargo.toml:36), not a dev-dep. Accepted because `paste`
+    # is a proc-macro crate with no runtime component and the advisory is
+    # "unmaintained", not a vulnerability.
+    # Blocker: huggingface/tokenizers still depends on paste 1.0.
+    # Re-review: 2026-11-21, or when tokenizers drops paste.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained (not a vulnerability); proc-macro only; transitive via tokenizers <- lunaris-ingest; re-review 2026-11-21" },
     # RUSTSEC-2025-0119 — number_prefix@0.4.0 is unmaintained.
-    # Reach: indicatif → hf-hub → lunaris-bench (dev-dep) +
-    #        candle-* via reqwest pulls.
-    # Re-review when indicatif drops number_prefix (advisory itself says
-    # the maintainer has not responded to the unmaintained tag).
-    { id = "RUSTSEC-2025-0119", reason = "transitive via hf-hub/indicatif; not in shipped surface (dev-dep only)" },
+    # Actual reach (Cargo.lock, 2026-08-21):
+    #   number_prefix <- indicatif <- lunaris-mcp   (DIRECT normal dep,
+    #                                                lunaris-mcp/Cargo.toml:81)
+    #   number_prefix <- indicatif <- hf-hub <- lunaris-bench (dev)
+    # The old "not in shipped surface (dev-dep only)" claim is FALSE:
+    # lunaris-mcp is a shipped binary and depends on indicatif directly for
+    # the model stager's stderr progress bar. Accepted because the advisory is
+    # "unmaintained", not a vulnerability, and the crate only formats byte
+    # counts for a progress bar.
+    # Blocker: indicatif still depends on number_prefix; the advisory notes
+    # the maintainer has not responded to the unmaintained tag.
+    # Re-review: 2026-11-21, or when indicatif drops number_prefix.
+    { id = "RUSTSEC-2025-0119", reason = "unmaintained (not a vulnerability); byte-count formatting in a progress bar; transitive via indicatif <- lunaris-mcp (shipped) and <- hf-hub <- lunaris-bench (dev); re-review 2026-11-21" },
 ]
 
 # ───────────────────────── licenses ─────────────────────────
