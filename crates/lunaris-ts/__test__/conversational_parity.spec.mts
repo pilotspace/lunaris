@@ -54,6 +54,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
+import crypto from "node:crypto";
 
 // Dynamic import — matches the `backend_parity.spec.mts` pattern so a
 // binding-load failure surfaces via `abi_pin.spec.mts` first.
@@ -87,9 +88,15 @@ function loadFixture(name: string): Record<string, unknown> {
  * Not a ULID — pulling a dependency in for this would be the only reason
  * this file needs one. Time + entropy is enough to keep two runs against the
  * same Moon from sharing a `chat:<user>/` prefix, which is all this is for.
+ *
+ * `randomBytes`, not `Math.random()`: this value ends up inside a scope-ish
+ * identifier, and CodeQL's `js/insecure-randomness` rule flags PRNG output
+ * reaching one (high severity). The rule is arguably over-firing on a test
+ * discriminator, but the CSPRNG costs nothing here and a muzzled alert is
+ * worse than a one-line change.
  */
 function runTag(): string {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  return `${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
 }
 
 function parseHostPort(u: string): { host: string; port: number } | null {
