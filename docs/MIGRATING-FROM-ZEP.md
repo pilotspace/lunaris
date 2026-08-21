@@ -3,7 +3,7 @@
 Zep and Lunaris both model agent memory bi-temporally — they're the
 closest comparison in the space. The difference is the substrate:
 Zep is a hosted Python service backed by Postgres + Neo4j; Lunaris
-is an embedded Rust core with optional Postgres or Moon backing
+is an embedded Rust core with a Moon backing
 that runs in-process with your agent.
 
 This doc maps Zep concepts to their Lunaris equivalents so a team
@@ -41,7 +41,7 @@ you fan out to graph + vector.
 Lunaris is **library-oriented**: your agent links the Rust crate
 (or imports the PyO3 / NAPI binding) and the recall happens
 in-process. The strength is sub-25 ms p50 and a single substrate to
-operate; the cost is operating Moon or Postgres yourself.
+operate; the cost is operating Moon yourself.
 
 Either choice can be right. Zep is the right choice if your team
 treats memory as someone else's problem to operate. Lunaris is the
@@ -79,7 +79,8 @@ mem.scoped(scope).ingest(
 
 Zep's `session_id` maps to Lunaris's `Scope`. The Lunaris type
 system guarantees the scope can't be smuggled past the API — every
-storage call takes `&Scope`, RLS enforces it in Postgres.
+storage call takes `&Scope`, and Moon bakes it into the key, the FT index
+name, and the graph name.
 
 ### Recall — semantic
 
@@ -132,8 +133,8 @@ without you having to write a router.
 ### Time-travel recall
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
+> keeps a KV version chain to hydrate the historical rows, and the two
+> backends that did (Postgres, SQLite) were deleted in 0.7.0. On **Moon** the call returns
 > `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
 > Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
 > rather than silently answering with present-time data. Moon's search and
@@ -160,8 +161,8 @@ hits = await (
 ```
 
 The Zep approach pulls every fact then filters in Python; Lunaris
-pushes the temporal cut into the storage query (`tstzrange &&` on
-Postgres, native bi-temporal on Moon). On 1M-fact corpora the
+pushes the temporal cut into the storage query (`FT.SEARCH AS_OF` on
+Moon). On 1M-fact corpora the
 latency difference is meaningful.
 
 ### Graph traversal
@@ -227,12 +228,12 @@ on date T" is itself recorded.
 5. **Cutover when the diff is acceptable.** Promote Lunaris to
    primary; keep Zep as fallback for ~1 release.
 6. **Decommission Zep.** You're now running one Rust process
-   (your agent) + Moon or Postgres. No Python service to operate,
+   (your agent) + Moon. No Python service to operate,
    no Neo4j to back up.
 
 ## When to stay on Zep
 
-- You're not ready to operate a substrate (Moon or Postgres) and
+- You're not ready to operate a substrate (Moon) and
   prefer Zep Cloud's hosted plan.
 - Your agent stack is pure Python and adding a Rust binary to your
   build pipeline is friction.

@@ -25,7 +25,7 @@ A thin-bordered funnel shape (NOT filled solid — just the outline) below the V
 The single arrow is labeled with a small hand-drawn circle containing "!" and the text: "storage.atomic_write(ops)"
 Pencil annotation beside the arrow: "INGEST-04: exactly ONE call per ingest"
 
-BOTTOM — a database cylinder labeled "Moon / Postgres / SQLite".
+BOTTOM — a database cylinder labeled "Moon".
 
 CONNECTIONS: main flow arrows thin solid lines with small open arrowheads.
 Annotation leader lines are thin, light pencil-gray strokes ending in small dots.

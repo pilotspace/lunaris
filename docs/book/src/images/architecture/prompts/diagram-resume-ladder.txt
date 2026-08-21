@@ -23,7 +23,7 @@ EACH ROW MUST VISIBLY SHOW its step numeral: a small hand-drawn circle at the ro
     Pencil annotation: "bi-temporal point-in-time view"
   Thin vertical arrow on left edge of LADDER pointing downward, labeled "miss? go deeper"
 
-STORE at bottom: one database cylinder labeled "Moon / Postgres / SQLite"
+STORE at bottom: one database cylinder labeled "Moon"
   with smaller print below the cylinder: "bi-temporal MVCC store"
   Thin arrows from LADDER down into the cylinder.
 

@@ -13,7 +13,7 @@ deploy-safe busy-poll governor and the idle-tick/SCAN CPU fixes
 these bumps, so every change below is server-side behavior, not a Lunaris
 wire-format change.
 
-Lunaris is stateless: every byte of durable state lives in the backend (Moon or Postgres). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
+Lunaris is stateless: every byte of durable state lives in the backend (Moon). Recovery is therefore a backend concern. This guide documents the Moon-backed path, the recovery procedure, the two live-measurement gotchas you need to know, and how to test recovery yourself.
 
 **Scope split.** This document covers surviving a crash **on the same host**
 (the data directory is still there). Moving the data to a *different* host —
@@ -396,7 +396,6 @@ Evidence log: [`milestones/v0.1.1-bench/recovery-test.log`](../milestones/v0.1.1
 ## 5. Known limitations
 
 - **Single-shard only — and that is the only shape Lunaris supports.** Multi-shard Moon recovery semantics (cross-shard coordinator, manifest-level replay) aren't exercised by the harness, and cannot be until Lunaris changes: it commits each episode as ONE cross-key Moon TXN (INGEST-04), and a sharded Moon rejects it outright with `TXN does not support cross-shard writes`. Measured at `--shards 4` on 2026-08-15; see `docs/operations/backup-restore.md` §6.6.
-- **No Postgres recovery harness.** Postgres handles its own durability (WAL + fsync); a symmetric test is BENCH-04 on the roadmap.
 - **AOF grows unboundedly without auto-rewrite.** Use `--save` rules or schedule `BGREWRITEAOF` — otherwise replay time grows linearly with write volume.
 - **Pipeline workers replay idempotently** (`consolidator`, `verifier`) — they read from Moon Streams on start-up and resume from the last committed offset. No action needed on the Lunaris side.
 - **`scripts/test-recovery.py` predates the v0.5.1+ substrate bump** (§2.1, §2.4, §2.5). It still exercises the right failure modes (kill-9, restart, probe-identity) but its reference numbers (§4) were captured before the vector-index dedup rescan and AOF-backpressure fail-loud changes — re-run it and update §4's numbers rather than trusting the 2026-04-23 figures for anything restart-time or backpressure related.

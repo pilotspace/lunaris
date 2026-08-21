@@ -739,7 +739,7 @@ async fn warmup_reranker(lunaris: Arc<Lunaris>) {
 
 ### 9.1 Per-component swap (alternative — when store_url unchanged)
 
-If you want to avoid re-opening the store (saves a Redis/Postgres reconnect + reuses extractor/verifier/consolidator state), use the per-component swap path. This requires Lunaris exposing the per-field setters publicly, which it does as builder methods that consume `self`. Trick: build a fresh `Lunaris` via `open_with_embedder`, then chain `.with_reranker`. Don't try to mutate the existing `Arc<Lunaris>` in place — that fights the type system.
+If you want to avoid re-opening the store (saves a Moon reconnect + reuses extractor/verifier/consolidator state), use the per-component swap path. This requires Lunaris exposing the per-field setters publicly, which it does as builder methods that consume `self`. Trick: build a fresh `Lunaris` via `open_with_embedder`, then chain `.with_reranker`. Don't try to mutate the existing `Arc<Lunaris>` in place — that fights the type system.
 
 Alternative pattern for the truly latency-sensitive path: wrap the embedder + reranker in your OWN `ArcSwap`-based proxy `Embedder` / `Reranker` impl. Then swap inside the proxy without touching the Lunaris handle at all. ~50 LOC; recommended only if reload latency is profiled as a problem.
 
