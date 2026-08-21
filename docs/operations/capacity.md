@@ -6,6 +6,13 @@ latency envelope** at that corpus on the GA-1 unified production root
 opt-in rerank stage** (`LUNARIS_RECALL_RERANK`). It anchors the rows in
 [`slo.md`](slo.md) that were provisional pending the GA-2 capacity study.
 
+> **Operating points.** The two configs below are Lunaris's two named
+> operating points: **`fast`** (rerank OFF — the shipped default) and
+> **`quality`** (rerank ON — opt-in). Every published number must state
+> which one it describes; §3 row (a) is `fast`, rows (b)/(b′) are
+> `quality`. Canonical definition and the full cross-benchmark mapping:
+> [`docs/benchmarks/operating-points.md`](../benchmarks/operating-points.md).
+
 **TL;DR:**
 
 - **Target corpus: 100,000 documents per scope, single-shard Moon.** At
