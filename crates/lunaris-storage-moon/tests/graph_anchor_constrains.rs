@@ -33,6 +33,7 @@ use lunaris_storage_moon::MoonStorage;
 use serde_json::json;
 use ulid::Ulid;
 
+mod common;
 fn url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".to_string())
 }
@@ -41,7 +42,7 @@ async fn connect_or_skip() -> Option<MoonStorage> {
     match MoonStorage::connect(&url()).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             None
         }
     }

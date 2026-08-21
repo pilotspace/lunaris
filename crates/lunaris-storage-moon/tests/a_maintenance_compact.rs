@@ -46,6 +46,7 @@ use lunaris_storage_moon::vector::{
 };
 use serde_json::json;
 
+mod common;
 const DIM: usize = 768;
 
 fn moon_url() -> String {
@@ -56,7 +57,7 @@ async fn connect_or_skip() -> Option<MoonStorage> {
     match MoonStorage::connect(&moon_url()).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             None
         }
     }

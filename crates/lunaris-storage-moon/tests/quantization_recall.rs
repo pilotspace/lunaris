@@ -25,6 +25,7 @@ use lunaris_storage_moon::client::Quantization;
 use serde_json::json;
 use ulid::Ulid;
 
+mod common;
 const DIM: usize = 768;
 const N_DOCS: usize = 600;
 const N_QUERIES: usize = 20;
@@ -43,7 +44,7 @@ async fn connect_or_skip(u: &str) -> Option<MoonStorage> {
     match MoonStorage::connect(u).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             None
         }
     }

@@ -24,6 +24,7 @@ use lunaris_storage_moon::MoonStorage;
 use serde_json::json;
 use ulid::Ulid;
 
+mod common;
 const DIM: usize = 768;
 
 fn url() -> String {
@@ -34,7 +35,7 @@ async fn connect_or_skip() -> Option<MoonStorage> {
     match MoonStorage::connect_with_dim(&url(), DIM).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             None
         }
     }

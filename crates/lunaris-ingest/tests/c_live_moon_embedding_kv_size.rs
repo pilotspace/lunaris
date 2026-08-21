@@ -30,14 +30,53 @@ fn url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:7803".to_string())
 }
 
+/// `integration.yml` runs this file live (the W4.8 step that exists because
+/// `gated_tests_have_a_runner` found the crate gated on `moon-it` with no job
+/// passing the feature). That job builds Moon, port-checks it, and sets
+/// `LUNARIS_CONFORMANCE_STRICT=1` — its own comment: *"A skip in THIS job is a
+/// defect, not a courtesy."* Honour it here too, or the one step added to make
+/// this test run can report success without it ever reaching Moon.
+///
+/// The flag is a parameter rather than an env read at the decision point so a
+/// test can exercise both arms without mutating the process environment —
+/// `set_var` is `unsafe` in edition 2024 and every test in this file shares
+/// one binary.
+fn strict() -> bool {
+    std::env::var("LUNARIS_CONFORMANCE_STRICT").as_deref() == Ok("1")
+}
+
+fn note_unreachable(err: impl std::fmt::Display, strict: bool) {
+    assert!(
+        !strict,
+        "Moon is unreachable ({err}), and LUNARIS_CONFORMANCE_STRICT=1 forbids \
+         skipping — the job that sets it guarantees a live Moon, so this means \
+         the fixture broke. Skipping would report success for a test that never ran."
+    );
+    eprintln!("MOON_URL not reachable ({err}); SKIP c_live_moon_embedding_kv_size");
+}
+
 async fn connect_or_skip() -> Option<MoonStorage> {
     match MoonStorage::connect(&url()).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP c_live_moon_embedding_kv_size");
+            note_unreachable(e, strict());
             None
         }
     }
+}
+
+/// The discriminating half: a scanner reading source cannot tell a working
+/// strict mode from a decorative one.
+#[test]
+fn strict_mode_refuses_to_skip() {
+    assert!(
+        std::panic::catch_unwind(|| note_unreachable("connection refused", true)).is_err(),
+        "note_unreachable(.., strict = true) returned instead of panicking"
+    );
+    // And a dev box without a Moon must still be able to run the rest of the
+    // crate's tests — a strict mode that cannot be turned off gets turned off
+    // wholesale.
+    note_unreachable("connection refused", false);
 }
 
 const DOC: &str = "# Quarterly Report

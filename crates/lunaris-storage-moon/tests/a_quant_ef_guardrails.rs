@@ -23,6 +23,7 @@
 use lunaris_storage_moon::MoonStorage;
 use lunaris_storage_moon::client::Quantization;
 
+mod common;
 fn base_url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:7801".to_string())
 }
@@ -36,9 +37,7 @@ async fn connect_or_skip(u: &str) -> Option<MoonStorage> {
     match MoonStorage::connect(u).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!(
-                "MOON_URL not reachable ({e}); SKIP (this is expected outside CI-with-live-Moon)"
-            );
+            common::note_moon_unreachable(e);
             None
         }
     }
