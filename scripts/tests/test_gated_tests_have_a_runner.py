@@ -35,7 +35,10 @@ Four features gated real test files while NO `cargo test` anywhere in
   Criterion output and asserts the p50/p99 latency budgets. This is the
   implementation the retracted "latency contract enforced in CI" claim
   (W2.4) pointed at. It has never run in CI.
-- `sdk-parity-it`  -- `lunaris-conformance/tests/sdk_embedder_parity.rs`.
+- `sdk-parity-it`  -- `lunaris-conformance/tests/sdk_embedder_parity.rs`, since
+  DELETED (W4.10): it drove both SDKs through `EmbedderConfig.fastembed()`,
+  an API the v0.6 llama.cpp-only cutover retired, so its subject no longer
+  exists in either SDK. The feature it was gated on went with it.
 
 Design notes worth keeping
 --------------------------
@@ -85,13 +88,6 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "and Postgres was deleted in 0.7.0, so the assertions cannot be trusted "
         "until the rows are re-derived. Wiring it into CI before that re-derivation "
         "would enforce a contract nobody has re-checked. Tracked as W4.9."
-    ),
-    ("lunaris-conformance", "sdk-parity-it"): (
-        "W4.10 -- sdk_embedder_parity.rs drives both SDKs through "
-        "`EmbedderConfig.fastembed()`, an API RETIRED by the v0.6 llama.cpp-only "
-        "cutover. The suite cannot pass as written; it needs rewriting against "
-        "`llamacpp()` or deleting. It also returns Ok(()) when an interpreter is "
-        "missing, so even once wired it would need that skip-path fixed first."
     ),
 }
 
