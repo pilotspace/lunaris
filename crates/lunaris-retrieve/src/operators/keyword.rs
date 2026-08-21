@@ -65,17 +65,19 @@ impl Retriever for Keyword {
         // Wave 2.5C plumbs the real per-call scope from ctx.scope; until then
         // ctx.scope == Scope::dev() for bare Lunaris::recall() callers and the
         // caller-supplied scope for ScopedLunaris::recall() callers.
-        let hits = ctx
-            .keyword
-            .keyword_search(
-                &ctx.scope,
-                &self.index,
-                &ctx.query.text,
-                self.k,
-                ctx.query.filter.as_ref(),
-                ctx.query.as_of,
-            )
-            .await?;
+        // F1: same rule as the vector leg — an absent index means no rows.
+        let hits = crate::missing_index::no_rows_if_index_absent(
+            ctx.keyword
+                .keyword_search(
+                    &ctx.scope,
+                    &self.index,
+                    &ctx.query.text,
+                    self.k,
+                    ctx.query.filter.as_ref(),
+                    ctx.query.as_of,
+                )
+                .await,
+        )?;
         Ok(hits
             .into_iter()
             .map(|h| RawHit {

@@ -74,18 +74,21 @@ impl Retriever for Vector {
         // Wave 2.5C: use ctx.scope — plumbed from RetrievalBuilder::with_scope
         // (set by ScopedLunaris::recall/dsl) so vector_search is scope-isolated
         // at the storage layer. Bare Lunaris::recall() uses Scope::dev().
-        let hits = ctx
-            .storage
-            .vector_search(
-                &ctx.scope,
-                &self.index,
-                &q_emb,
-                self.k,
-                ctx.query.filter.as_ref(),
-                ctx.query.as_of,
-                false,
-            )
-            .await?;
+        // F1: a scope with no writes has no FT index yet. That is "no rows",
+        // not an error — see `crate::missing_index`.
+        let hits = crate::missing_index::no_rows_if_index_absent(
+            ctx.storage
+                .vector_search(
+                    &ctx.scope,
+                    &self.index,
+                    &q_emb,
+                    self.k,
+                    ctx.query.filter.as_ref(),
+                    ctx.query.as_of,
+                    false,
+                )
+                .await,
+        )?;
         Ok(hits
             .into_iter()
             .map(|h| RawHit {
