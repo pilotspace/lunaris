@@ -265,48 +265,80 @@ every win.
 
 ## Recall quality — LongMemEval-S
 
-Full `longmemeval_s` dataset (N=500, not a subsample), `main` HEAD, one
-process per question:
-
-| Metric | Score |
-|---|---|
-| **Retrieval — any gold session surfaced** | **98.2% (491/500)** |
-| **Retrieval — all gold sessions surfaced** | **93.0% (465/500)** |
-| End-to-end J-score (MiniMax m3 as both generator and judge) | 85.4% (427/500) |
-| Zep (published, GPT-4o reader) | 90.2% |
-| Mem0 (published) | 66–68% |
-
-Retrieval itself is strong and holds up at full scale. The end-to-end
-J-score sits below retrieval recall because most misses are the reader
-model reasoning incorrectly over evidence it *did* retrieve (multi-session
-counting/aggregation questions), not Lunaris failing to find the right
-memories — see the miss breakdown in
+**Lunaris currently publishes no LongMemEval headline.** The former
+`85.4% (427/500)` J-score and its `98.2%` / `93.0%` retrieval companions
+were **retracted on 2026-08-21**: the driver that produced them
+(`tmp/full500.sh`) was never in git, no raw 500-question artifact set
+survives, and the surviving drivers contradict the published methodology
+(50 questions per process and a `gpt-4o` judge, against a page claiming
+one-process-per-question with a MiniMax judge). Full reasoning:
 [`docs/benchmarks/v0.7-longmemeval-jscore-validation.md`](docs/benchmarks/v0.7-longmemeval-jscore-validation.md).
-The Zep/Mem0 figures use their own (different) reader models, so the
-end-to-end row is not a controlled apples-to-apples comparison — it's
-included for context, not as a head-to-head claim.
+
+We would rather ship an empty row than an unreproducible one. What
+exists instead, today:
+
+- **The harness is in the repository** — `scripts/bench/lme/`, one
+  process per question, config-fingerprinted, resume-safe, with its own
+  reserved-port guards. Ported into version control in 0.6.2 precisely
+  so that a number can never again outlive its runner.
+- **A judge-free retrieval ratchet runs in CI** on every recall-affecting
+  push to `main` (LongMemEval-S evidence-recall *any-gold*, deterministic,
+  no API key), gated against a checked-in baseline that records the exact
+  retrieval config it was measured under. Its scope, its current fail
+  floor and the work to give it teeth are documented — including the
+  parts that do not yet work — in
+  [`scripts/bench/lme/baselines/README.md`](scripts/bench/lme/baselines/README.md).
+- **A full N=125 A/B re-run on the committed harness is pending**, blocked
+  on a provider key. When it lands, its raw per-question artifacts get
+  committed under [`docs/benchmarks/lme-raw/`](docs/benchmarks/lme-raw/README.md)
+  in the same shape as the latency envelope's — because
+  [a published number without a committed raw artifact is not publishable
+  here](docs/benchmarks/README.md).
+
+Competitor LongMemEval figures previously listed in this table (Zep,
+Mem0) were removed at the same time: they carried no citation, and one of
+them was a LoCoMo score mislabelled as LongMemEval. See
+[**Competitor figures**](docs/benchmarks/README.md#competitor-figures).
 
 ## Persona tracking — PersonaMem (32k)
 
 Full 32k split (589 questions, 37 shared contexts), production hybrid
-recall path, exact letter-match scoring (no LLM judge), zero errors:
+recall path on the **quality operating point** (rerank ON — *not* the
+shipped default; see
+[operating points](docs/benchmarks/operating-points.md)), exact
+letter-match scoring (no LLM judge), zero errors:
 
 | Configuration | Accuracy |
 |---|---|
-| **Lunaris + two-reader ensemble (oracle upper bound¹)** | **81.8%** (482/589) |
-| Lunaris + claude-sonnet-5 reader | **75.0%** (442/589) |
+| **Lunaris + claude-sonnet-5 reader** (single reader, quality path) | **75.0%** (442/589) |
 | No-memory floor (same reader, options only) | 41.9% (247/589) |
 | TencentDB-Agent-Memory (published; split/reader unstated) | 76% / 48% |
+| *Two-reader oracle cascade — an upper bound, not a system result¹* | *81.8% (482/589)* |
 
 **Memory lift: +33.1 points** with the identical reader — larger than
 Tencent's published +28, from a lower floor. Fact-recall questions go
 from 2.3% without memory to 83.7% with it.
 
-¹ claude-opus-5 re-answered only the questions the Sonnet arm missed
-(gold labels routed them), so 81.8% is an upper bound on a two-reader
-cascade, not a single-reader measurement; the clean single-reader number
-is 75.0%. Full methodology, per-category table, caveats, and
-reproduction commands:
+Two caveats we state rather than bury:
+
+¹ **81.8% is an oracle bound, not a measurement of Lunaris.**
+claude-opus-5 re-answered only the questions the Sonnet arm missed, and
+*gold labels* decided which questions those were. A deployable cascade
+would need a gold-free routing rule. The headline is the clean
+single-reader **75.0%**.
+
+² **One of the seven categories does not measure memory.** In
+`suggest_new_ideas` (93 of the 589 questions) the gold answer is
+essentially always the *shortest* option — a classifier that reads
+nothing and picks the shortest candidate scores **98.9%** there against
+0–15.5% in every other category. Its published "memory net-harms this
+category" reading is an artifact of that, not a finding, and we
+deliberately do **not** optimise against it. The 75.0% is understated by
+the presence of 93 questions that cannot be won on merit. Root cause and
+the regression test that pins it: [issue
+#141](https://github.com/pilotspace/lunaris/issues/141).
+
+Full methodology, per-category table, caveats, and reproduction commands:
 [`scripts/bench/pm/RESULTS.md`](scripts/bench/pm/RESULTS.md) and the
 [book write-up](https://github.com/pilotspace/lunaris/blob/main/docs/book/src/benchmarks/personamem.md).
 
