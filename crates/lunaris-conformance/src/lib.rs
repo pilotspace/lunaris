@@ -26,6 +26,7 @@ pub mod protocol;
 pub mod raptor;
 pub mod skip;
 pub mod storage;
+pub mod suite_scope;
 
 // Phase 12 Plan 12-04 — chaos / fsck helpers shared with the Helios
 // SIGKILL test. Always-on (no feature gate) so downstream integration

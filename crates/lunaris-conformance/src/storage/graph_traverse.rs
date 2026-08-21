@@ -17,17 +17,19 @@ use std::sync::Arc;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::types::CypherQuery;
 
-pub async fn cypher_subset(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
+use crate::suite_scope::SuiteScope;
+
+pub async fn cypher_subset(storage: &Arc<dyn StoragePort>, run: &SuiteScope) -> anyhow::Result<()> {
     debug_assert!(storage.capabilities().graph_native, "caller must gate on graph_native");
 
-    crate::fixtures::seed_one_edge(storage).await?;
+    crate::fixtures::seed_one_edge(storage, run).await?;
 
     let query = CypherQuery {
         graph: "lunaris_graph".to_string(),
         cypher: "MATCH (n)-[r]->(m) RETURN n LIMIT 5".to_string(),
         params: serde_json::Map::new(),
     };
-    let result = storage.graph_traverse(&lunaris_core::Scope::dev(), &query, None).await?;
+    let result = storage.graph_traverse(run.scope(), &query, None).await?;
 
     anyhow::ensure!(
         !result.rows.is_empty(),

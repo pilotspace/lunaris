@@ -17,27 +17,32 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::types::{Lsn, WriteOp};
 
+use crate::suite_scope::SuiteScope;
+
 /// Asserts that an atomic_write of N ops either commits ALL or NONE.
 ///
 /// Happy-path shape: write 3 keys in one atomic_write, then assert all
 /// 3 are readable via `read_as_of` at a "now" timestamp far in the
 /// future (so any backend's snapshot semantics include the just-committed
 /// row regardless of HLC clock skew).
-pub async fn all_or_nothing(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    let keys: [&[u8]; 3] = [b"conformance:aw:k1", b"conformance:aw:k2", b"conformance:aw:k3"];
+pub async fn all_or_nothing(
+    storage: &Arc<dyn StoragePort>,
+    run: &SuiteScope,
+) -> anyhow::Result<()> {
+    let keys: [Vec<u8>; 3] = [run.key("aw:k1"), run.key("aw:k2"), run.key("aw:k3")];
     let ops: Vec<WriteOp> = keys
         .iter()
         .enumerate()
-        .map(|(i, k)| WriteOp::KvPut { key: k.to_vec(), value: format!("v{i}").into_bytes() })
+        .map(|(i, k)| WriteOp::KvPut { key: k.clone(), value: format!("v{i}").into_bytes() })
         .collect();
 
-    let lsn = storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
+    let lsn = storage.atomic_write(run.scope(), &ops).await?;
 
     // Read at a generous "now" — backends with snapshot pinning need
     // a timestamp that comfortably overlaps the commit's HLC.
     let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
     for k in keys.iter() {
-        let row = storage.read_as_of(&lunaris_core::Scope::dev(), k, now).await?;
+        let row = storage.read_as_of(run.scope(), k, now).await?;
         anyhow::ensure!(
             row.is_some(),
             "atomic_write::all_or_nothing: key {:?} missing after commit (lsn={:?})",
@@ -55,12 +60,12 @@ pub async fn all_or_nothing(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()
 /// `{ wall_ms: u64, counter: u32 }` lex tuple per
 /// `crates/lunaris-core/src/storage/types.rs:16`), so direct `>`
 /// comparison is correct.
-pub async fn lsn_monotonic(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
+pub async fn lsn_monotonic(storage: &Arc<dyn StoragePort>, run: &SuiteScope) -> anyhow::Result<()> {
     let mut prev: Option<Lsn> = None;
     for i in 0..5u32 {
-        let key = format!("conformance:lsn:{i:03}").into_bytes();
+        let key = run.key(&format!("lsn:{i:03}"));
         let ops = vec![WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }];
-        let lsn = storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
+        let lsn = storage.atomic_write(run.scope(), &ops).await?;
         if let Some(p) = prev {
             anyhow::ensure!(
                 lsn > p,
