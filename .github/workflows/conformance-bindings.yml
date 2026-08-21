@@ -2,7 +2,7 @@ name: conformance-bindings
 
 # Per-driver backend parity gate.
 #
-# Builds both bindings WITH the `bindings-it` feature, then runs THREE
+# Builds both bindings WITH the `bindings-it` feature, then runs TWO
 # independent per-driver parity tests (Rust / Python / TypeScript) against a
 # live Moon. Each driver asserts its own rows against the committed golden
 # reference at
@@ -136,7 +136,7 @@ jobs:
             kill "$MOON_PID" 2>/dev/null || true
           fi
 
-  # Offline smoke row: runs the three drivers with backend env vars UNSET.
+  # Offline smoke row: runs both drivers with backend env vars UNSET.
   # The Rust test + Python test + TS test all skip gracefully in that mode
   # so this row acts as a "feature-build compiles cleanly on stock ubuntu"
   # guard rather than a parity-against-live-backend check.
