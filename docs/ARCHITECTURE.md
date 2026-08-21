@@ -116,16 +116,21 @@ budget like this:
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side (`RrfFusion::Moon`) | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command (PERF-MOON-01) | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered `buffered(32)` fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` (`lunaris-retrieve/src/hydrate.rs`) | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
-| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only pay it when you ask for it — `LUNARIS_RECALL_RERANK=1` (MCP + HTTP/SDK recall; the hook hot path never reranks) or an explicit `.rerank(..)` in the DSL |
+| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | **A quality stage, not a latency-class stage.** Measured **p50 1301.3 ms** at the default `top_in=60` (575.6 ms at `top_in=30`) — ~100× the blueprint §4.2 12 ms allocation, which is not achievable with per-pair GGUF cross-encoding ([`capacity.md` §4](operations/capacity.md)). Off by default; only pay it when you ask for it — `LUNARIS_RECALL_RERANK=1` (MCP + HTTP/SDK recall; the hook hot path never reranks) or an explicit `.rerank(..)` in the DSL. Enabling it **voids** the 25 ms p50 contract and the 100 ms latency SLO |
 
-**The 86 ms lesson.** The same 10k-document SQuAD harness
-(`scripts/bench-squad-kb.py`) measured **p50 86 ms** when query
-embedding went through an out-of-process Ollama HTTP server, and
-**p50 10.3 ms / p99 20.8 ms** on the strict-replay path that removes
-that hop (`scripts/ollama-replay-server.py` +
+**The 86 ms lesson** (historical — v0.1.1, 2026-04-23). The same
+10k-document SQuAD harness (`scripts/bench-squad-kb.py`) measured
+**p50 86 ms** when query embedding went through an out-of-process
+Ollama HTTP server, and **~11 ms** on the strict-replay path that
+removes that hop (`scripts/ollama-replay-server.py` +
 `scripts/precompute-embeds.py`). The engine's own search + hydrate
 path was ~10 ms all along; the network hop to the embedder was ~75 ms
-of pure overhead. That measurement is why v0.4 (N-03) moved embedding
+of pure overhead. *Treat the absolute numbers as retired:* that run
+used Ollama + EmbeddingGemma 300M at a 10k corpus, a stack removed in
+v0.4 (Ollama) and again in v0.6 (candle). The **only** current
+latency envelope is the GA-2b one in
+[`docs/operations/capacity.md`](operations/capacity.md); what survives
+from 2026-04 is the *ratio*, not the milliseconds. That measurement is why v0.4 (N-03) moved embedding
 in-process as the default — a property the v0.6 llama.cpp-only cutover
 preserves (llama-cpp-2 is in-process FFI, static-linked) — so the
 deployment matches the configuration the contract was proven on.
@@ -173,8 +178,8 @@ offer at any price.
 
 | Claim | Measured | Contract | Proof |
 |---|---|---|---|
-| Sub-25 ms recall | **p50 10.3 ms / p99 20.8 ms** (strict replay, 10k-doc corpus, live Moon) | p50 < 25 ms | [`docs/benchmarks/v0.2.x/README.md`](benchmarks/v0.2.x/README.md) |
-| Contract at the target corpus (GA-2b) | **p50 19–22 ms / p99 23.4–24.4 ms** (100k docs, unified production root, Moon v0.8.5, retrieval-only) — holds with ≤ 25 % headroom; opt-in rerank stage measures ~1.3 s/recall and graph-ON ~39 ms p50 | p50 < 25 ms @ 100k | [`docs/operations/capacity.md`](operations/capacity.md) |
+| Sub-25 ms recall at the target corpus (GA-2b) | **p50 19.2–22.4 ms · p95 22.3–24.1 ms · p99 23.4–24.4 ms** (100k docs/scope, unified production root, single-shard Moon v0.8.5, Apple M4 Pro, graph OFF, rerank OFF, k=30, retrieval-only — query embedding excluded; 500 timed queries after 50 warmup, run-to-run p50 drift ± 3 ms) — holds with ≤ 25 % headroom | p50 < 25 ms @ 100k | [`docs/operations/capacity.md`](operations/capacity.md) · [raw samples](benchmarks/ga2b-raw/README.md) |
+| Cost of the opt-in stages, same run | rerank ON **p50 1301.3 ms** (`top_in=60`) / **575.6 ms** (`top_in=30`); graph ON **p50 39.1 ms** | opt-in — no latency-class contract | [`docs/operations/capacity.md` §4](operations/capacity.md) |
 | Contract holds on Moon v0.3.0 | **retrieval-only p50 3.1 ms / p99 3.6 ms** (3k-doc SQuAD train, Q4-GGUF granite embedder, live Moon — smaller corpus than the 10k baseline, see the caveat in the report) | p50 < 25 ms | [`docs/benchmarks/v0.7-moon-v030-rerun.md`](benchmarks/v0.7-moon-v030-rerun.md) |
 | Navigate recall edge (graph-linked corpora only) | **plain 0.00 → nav 1.00 recall@5** on 2-hop graph-linked targets, +0.05 ms p50 | opt-in graph | [`docs/benchmarks/v0.7-moon-v030-rerun.md`](benchmarks/v0.7-moon-v030-rerun.md) |
 | Flat tail at k=30 | **p50 6.0 ms / p99 6.2 ms** (was p50 12 / p99 97.3 before the hydration fan-out, MCP stdio, live Moon) | p99 inside the p50 contract | [`docs/benchmarks/v0.6-recall-fanout-ab.md`](benchmarks/v0.6-recall-fanout-ab.md) |

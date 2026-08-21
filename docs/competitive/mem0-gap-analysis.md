@@ -121,7 +121,12 @@ string — while `POSITIONING.md:105` advertises them as a shipped "v0.4 ecosyst
 **Lunaris numbers (real, manually collected — NOT CI-gated; like-for-like methodology noted):**
 - Retrieval-only p50 **3.1 ms** / p99 3.6 ms (SQuAD 3k×300, Moon v0.3.0, Q4 GGUF). Methodology:
   retrieval-only noop-embed pass (`docs/benchmarks/v0.7-moon-v030-rerun.md`).
-- Strict-replay p50 **10.3 ms** / p99 20.8 ms (10k×1k SQuAD, 2026-04-23) — beats the 25 ms contract.
+- Target-corpus envelope p50 **19.2–22.4 ms** / p95 22.3–24.1 / p99 23.4–24.4 ms (100k docs per
+  scope, single-shard Moon v0.8.5, Apple M4 Pro, graph OFF, rerank OFF, k=30, retrieval-only,
+  500 timed queries after 50 warmup, ± 3 ms run-to-run p50 drift) — meets the 25 ms contract
+  with ≤ 25 % headroom. Methodology + raw samples: [`docs/operations/capacity.md`](../operations/capacity.md).
+  *(The former "strict-replay p50 10.3 ms" line was retracted 2026-08-21: it was measured on
+  Ollama + EmbeddingGemma 300M at k=3, a stack deleted in v0.4 and again in v0.6.)*
 
 **Apples-to-oranges caveat (mandatory):** Mem0's headline numbers are **accuracy** on LoCoMo/LongMemEval;
 Lunaris's real numbers are **retrieval latency** on SQuAD. They measure different axes and **cannot be
@@ -154,7 +159,7 @@ schedule it as its own wave.
 | docs/MIGRATING-FROM-MEM0.md | Mem0 has no bi-temporal model (overwrite semantics) | confirmed | Mem0 exposes no valid-time API; holds |
 | docs/MIGRATING-FROM-MEM0.md | Mem0 atomicity is best-effort per-store, no cross-store txn | confirmed | Mem0 writes vector+relational+graph in separate calls |
 | docs/MIGRATING-FROM-MEM0.md | Mem0 recall latency 200–500 ms | corrected | imprecise — Mem0 publishes p95 1.44 s (selective) with a wide query-dependent range; cite the dated figure |
-| docs/MIGRATING-FROM-MEM0.md | Lunaris recall p50 ~15 ms vs Mem0 ~300 ms | corrected | Lunaris real number is 10.3 ms strict-replay (manual, not CI-gated); the Mem0 ~300 ms is unsourced — re-cite both |
+| docs/MIGRATING-FROM-MEM0.md | Lunaris recall p50 ~15 ms vs Mem0 ~300 ms | corrected twice | 2026-07: re-cited to 10.3 ms strict-replay. **2026-08-21: that too was retracted** (deleted Ollama/candle stack, k=3, 10k corpus). Current figure is the GA-2b envelope p50 19.2–22.4 ms @ 100k docs (manual bench, not CI-gated); the Mem0 ~300 ms remains unsourced — Mem0's only published figure is p95 ~1.44 s |
 | docs/book/src/getting-started/why-lunaris.md | Mem0 graph: n/a | corrected | Mem0g exists (OSS v3 removed it → Platform-only, with open bugs); "n/a" is wrong |
 | docs/POSITIONING.md | v0.4 ecosystem — LangGraph / CrewAI / Letta adapters | corrected | not shipped at v0.7 — the adapters do not exist in code; mark roadmap, not delivered |
 | docs/POSITIONING.md | "memory + chat agent in 5 minutes → use Mem0" (DX honesty) | confirmed | Mem0's pip-install quickstart DX advantage is real |

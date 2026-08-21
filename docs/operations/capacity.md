@@ -78,10 +78,13 @@ on p50.
 
 - **Default config: HOLDS.** p50 19.2–22.4 ms across runs — but the
   headroom is now **≤ 25 %**, and p99 (23.4–24.4 ms) sits within 1 ms
-  of the 25 ms line. At 10k docs the same decomposition measured
-  p50 10.3 / p99 20.8 ms
-  ([v0.2.x baseline](../benchmarks/v0.2.x/README.md)); 10× corpus ≈
-  2× p50. The tail stays flat (p99 ≈ 1.1–1.2× p50 — the v0.6
+  of the 25 ms line. For scale intuition only: the 2026-04-23 10k-doc run
+  measured p50 10.3 / p99 20.8 ms, so 10× corpus ≈ 2× p50 — but that
+  figure was **retracted as a published claim on 2026-08-21** (Ollama +
+  EmbeddingGemma 300M, k=3, a stack deleted in v0.4/v0.6; its
+  [methodology page](../benchmarks/v0.2.x/README.md) never held a
+  captured number). Do not quote it; use it only as the shape of the
+  curve. The tail stays flat (p99 ≈ 1.1–1.2× p50 — the v0.6
   hydration-fanout fix is still doing its job).
 - **Graph-ON: does NOT hold** (p50 ~39 ms). The graph is opt-in and the
   contract is written against the default config, but deployments that

@@ -67,19 +67,22 @@ Window for all objectives: **30 days rolling**.
 
 ### Why 100 ms for the paging latency SLO
 
-The measured engine baseline is **p50 10.3 ms / p99 20.8 ms** (strict
-replay, 10k-doc corpus, live Moon —
-[`docs/benchmarks/v0.2.x/README.md`](../benchmarks/v0.2.x/README.md), cited
-in [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) "The numbers that anchor the
-claims"). 100 ms is that measured p99 with ~5× headroom for the HTTP layer,
+The 100 ms threshold was originally derived from a 2026-04-23 baseline of
+p50 10.3 ms / p99 20.8 ms (strict replay, 10k-doc corpus, live Moon).
+**That figure was retracted on 2026-08-21** — it was measured on Ollama +
+EmbeddingGemma 300M at k=3, a stack deleted in v0.4 and again in v0.6, and
+its methodology page was never populated. The threshold survives the
+retraction because GA-2b re-measured p99 at **23.4–24.4 ms** on the 100k
+target corpus ([`capacity.md` §3](capacity.md)) — within 3 ms of the number
+the derivation used. 100 ms is that measured p99 with ~4× headroom for the HTTP layer,
 reranking, and corpus growth beyond the measured envelope. It is a *paging*
 threshold, deliberately looser than the 25 ms product contract: the contract
 is a KPI we track and defend in benchmarks; the SLO is what we wake someone
 up for.
 
 GA-2b measured the p99 at the 100k target corpus: **23.4–24.4 ms**
-engine-side ([`capacity.md` §3](capacity.md)) — materially above the 10k
-baseline's 20.8 ms but still ~4× under the 100 ms threshold, so the target
+engine-side ([`capacity.md` §3](capacity.md)) — close to the (now retracted)
+10k-era p99 and still ~4× under the 100 ms threshold, so the target
 stands for the default config. Two conditions would force a revisit:
 corpus growth past the 100k envelope (the p50 KPI, not this SLO, breaks
 first), and **enabling the opt-in rerank stage**, which measures ~1.3 s per
@@ -137,11 +140,11 @@ SLO, just as none exports `LUNARIS_HTTP_CONCURRENCY`).
 
 | Number | Source | Caveat |
 |---|---|---|
-| p50 10.3 ms / p99 20.8 ms recall | `docs/benchmarks/v0.2.x/README.md` (strict replay, 10k docs, live Moon) | measured envelope is 10k docs, not the production target corpus |
+| ~~p50 10.3 ms / p99 20.8 ms recall~~ | ~~`docs/benchmarks/v0.2.x/README.md`~~ | **RETRACTED 2026-08-21.** Ollama + EmbeddingGemma 300M, k=3, 10k docs — a stack deleted in v0.4/v0.6; the cited methodology page never held a captured number. Superseded by the GA-2b row below |
 | Sub-25 ms p50 contract | `docs/ARCHITECTURE.md` — the product's core value statement | a *contract to defend*, not a measured ceiling at every corpus size |
 | p50 3.1 ms / p99 3.6 ms (Moon v0.3.0 rerun) | `docs/benchmarks/v0.7-moon-v030-rerun.md` | 3k-doc corpus — smaller than the 10k baseline; see that report's caveat |
 | 99.9 % availability targets | policy choice (one 43-minute full-outage budget per 30 d), **not** a measured baseline | provisional; revisit with GA-2 production data |
-| 100 ms latency SLO threshold | derived: measured 20.8 ms p99 × ~5 headroom, rounded to a stock bucket edge | provisional until GA-2 capacity study |
+| 100 ms latency SLO threshold | derived: p99 × ~4–5 headroom, rounded to a stock bucket edge. Originally derived off the retracted 20.8 ms; **re-anchored on the GA-2b 23.4–24.4 ms p99** | holds at 100k docs; unvalidated beyond it, and **void with `LUNARIS_RECALL_RERANK=1`** |
 | RPO = 0 / RTO < 1 s (Moon durability) | `docs/operations/backup-restore.md` restore drill | informs the readiness objective, not a request-level SLI |
 | p50 19–22 ms / p99 23.4–24.4 ms @ 100k docs (default config) | [`capacity.md`](capacity.md) (GA-2b, Moon v0.8.5, M4 Pro, retrieval-only) | the target-corpus envelope; two runs quoted because run-to-run p50 drift was ± 3 ms on a non-lab box |
 | Rerank stage ~1.3 s/recall (top_in=60), ~1.0–1.4 s one-time lazy load | [`capacity.md` §4](capacity.md) | opt-in `LUNARIS_RECALL_RERANK`; linear in `top_in`; voids the 100 ms latency row where enabled |

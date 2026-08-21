@@ -36,7 +36,16 @@ python3 nanobanana_rest.py \
 | `diagram-data-08-indexes.txt` | `lunaris-data-08-indexes.png` | Vector FT / BM25 / graph edges → RRF fusion |
 
 Keep prompts sparse: image models garble dense technical text. Numbers
-quoted in the prompts (recall p50 10.3 ms, contract < 25 ms) must stay
-in sync with `docs/benchmarks/v0.2.x/README.md` — update both or
-neither. Always inspect the generated PNG for spelling before
-committing.
+quoted in the prompts (recall p50 ≈ 19–22 ms at 100k documents per
+scope, contract < 25 ms) must stay in sync with
+[`docs/operations/capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md) —
+update both or neither. Always inspect the generated PNG for spelling
+before committing.
+
+> **Regeneration owed (2026-08-21).** The prompt sources were updated to
+> the GA-2b envelope when the `p50 10.3 ms` figure was retracted repo-wide,
+> but the **committed PNGs still render the retracted number** — image
+> regeneration needs a model run and was out of scope for the retraction
+> sweep. `lunaris-layers.png`, `lunaris-pipeline.png` and
+> `lunaris-stack.png` must be regenerated from these prompts before the
+> next release that ships the book or the README hero image.

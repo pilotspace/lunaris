@@ -54,10 +54,13 @@ mode every fan-out memory stack eventually hits.
 Recall flows right to left: your query fans out across semantic,
 keyword, and graph lanes *inside the substrate*, gets fused by
 reciprocal-rank fusion, optionally reranked by a cross-encoder, and
-returns in **p50 ≈ 10 ms** against a 10k-document corpus on commodity
-hardware ([benchmark methodology](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.2.x/README.md)
-— the published contract is p50 < 25 ms; measured strict-replay is
-p50 10.3 ms / p99 20.8 ms). Since the 2026-06-10 concurrent-hydration
+returns in **p50 19.2–22.4 ms · p95 22.3–24.1 ms · p99 23.4–24.4 ms**
+against the target corpus of **100,000 documents per scope** — engine-side
+(query embedding excluded), graph OFF, rerank OFF, k=30, single-shard Moon
+v0.8.5 on an Apple M4 Pro, 500 timed queries after 50 warmup, run-to-run p50
+drift ± 3 ms ([envelope + method](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md), [raw samples](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/ga2b-raw/README.md)). The published
+contract is p50 < 25 ms, so the headroom is ≤ 25 %. Since the 2026-06-10
+concurrent-hydration
 fan-out the tail is flat even at k=30 — p50 6.0 ms / p99 6.2 ms
 ([A/B methodology](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/v0.6-recall-fanout-ab.md)).
 The contract was re-validated on Moon v0.3.0 with the 4-bit GGUF

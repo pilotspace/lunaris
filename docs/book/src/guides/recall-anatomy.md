@@ -59,7 +59,7 @@ round trips**. Here is how a typical
 | 2. Hybrid search | ONE `FT.SEARCH` HYBRID round trip; Moon fuses vector KNN + BM25 with **native RRF** server-side | Fusion happens inside the engine that owns both indices — not N queries glued together in app code |
 | 2a. Filters & time | `TAG` pre-filters (`@source:{...}`) and `AS_OF <ms>` resolve **inside** the same search command | Filtering before scoring; the temporal cut never becomes an app-side post-filter |
 | 3. Hydrate | Every hit's chunk row fetched **concurrently** (ordered fan-out, one `HMGET` per row); parent episodes fan out once per unique `episode_id` | Concurrent requests pipeline over one multiplexed connection — k hydrations cost ~1 batch of round trips, not 2k serial ones. Since-deleted chunks are skipped, not errored |
-| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | ~12 ms p50 budget; only paid when you ask for it |
+| 4. Rerank (opt-in) | bge-reranker-v2-m3 cross-encoder, in-process | **A quality stage, not a latency-class stage** — measured **p50 1301.3 ms** at the default `top_in=60` (575.6 ms at `top_in=30`), ~100× the blueprint's 12 ms allocation. Off by default; enabling it voids the 25 ms p50 contract ([`capacity.md` §4](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)) |
 
 ### CJK and other case-less scripts — vector-only auto-planning
 
@@ -86,16 +86,21 @@ Japanese, or Korean (or any script without case):
   sentence mode degrades to paragraph-sized units. Chunks stay
   retrievable (the embedder is multilingual), just coarser.
 
-### The 86 ms lesson
+### The 86 ms lesson (historical — v0.1.1, 2026-04-23)
 
 The same 10k-document SQuAD harness (`scripts/bench-squad-kb.py`)
 measured:
 
 - **p50 86 ms** when query embedding went through an out-of-process
   Ollama HTTP server, and
-- **p50 10.3 ms / p99 20.8 ms** on the strict-replay path that removes
-  that hop (`scripts/ollama-replay-server.py` +
-  `scripts/precompute-embeds.py`).
+- **~11 ms** on the strict-replay path that removes that hop
+  (`scripts/ollama-replay-server.py` + `scripts/precompute-embeds.py`).
+
+> **Treat the absolute numbers here as retired.** That run used Ollama +
+> EmbeddingGemma 300M at k=3 on a 10k corpus — a stack removed in v0.4
+> (Ollama) and again in v0.6 (candle). What survives is the *ratio*, not
+> the milliseconds. The current latency envelope is the GA-2b one in
+> [`capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md).
 
 The engine's own search + hydrate path was ~10 ms all along; the
 network hop to the embedder was ~75 ms of pure overhead. That

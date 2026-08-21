@@ -1,5 +1,35 @@
 # Lunaris v0.2.x — reproducible benchmarks
 
+> # ⚠️ SUPERSEDED — DO NOT CITE THIS PAGE FOR A NUMBER
+>
+> **Retracted 2026-08-21.** This page was written as a *plan* for capturing
+> v0.2.x benchmarks and was cited across the README, `ARCHITECTURE.md`, the
+> book and the migration guides as the methodology behind a
+> "p50 10.3 ms / p99 20.8 ms" headline. Three things were wrong with that:
+>
+> 1. **This page never contained a captured number.** The `laptop-arm64.md`,
+>    `server-x86.md` and `raw/` artifacts promised below were never written;
+>    the directory holds this file and `verifier-divergence.md`, nothing else.
+> 2. **The 10.3 ms figure did not come from this harness.** It was measured
+>    on 2026-04-23 at v0.1.1 with **Ollama + EmbeddingGemma 300M**, k=3,
+>    cached-embed replay — a stack removed in v0.4 (Ollama) and again in v0.6
+>    (the candle cutover). The `make bench-public` / `cargo bench --bench
+>    recall_hot_path` commands below never produced it.
+> 3. **The runbook itself is dead.** It brings up Postgres (removed in 0.7.0)
+>    and points at port 6380 (an ai-proxy Redis on the reference box, not a
+>    Moon).
+>
+> **The current, live latency envelope is
+> [`docs/operations/capacity.md`](../../operations/capacity.md)** (GA-2b):
+> p50 19.2–22.4 ms · p95 22.3–24.1 ms · p99 23.4–24.4 ms at 100k documents
+> per scope, with raw per-query samples committed at
+> [`docs/benchmarks/ga2b-raw/`](../ga2b-raw/README.md).
+>
+> Everything below this line is preserved **only** as a record of what the
+> project intended in the v0.2.x line. It is not a claim.
+
+---
+
 This directory is the public landing zone for **reproducible**
 performance numbers on Lunaris v0.2.x. Every number that appears on
 the project README, in a blog post, or in a docs.rs tagline must be
@@ -67,9 +97,10 @@ column.
 
 The Core Value (CLAUDE.md §Core Value) commits to **p50 < 25 ms
 recall over millions of bi-temporal facts** on the laptop-arm64 rig.
-The v0.1 prior-art harness (`scripts/test-recovery.py`) already
-clocked **p50 10.3 ms / p99 20.8 ms** on a strict-replay path against
-a live Moon at 6380 (see auto-memory `reference_lunaris_benchmarks.md`).
+*(Historical, retracted — see the banner at the top of this file.)* The
+v0.1 prior-art harness was reported as clocking p50 10.3 / p99 20.8 ms on a
+strict-replay path; that figure is no longer published and is not reproducible
+from this directory.
 
 The v0.2 contract:
 
