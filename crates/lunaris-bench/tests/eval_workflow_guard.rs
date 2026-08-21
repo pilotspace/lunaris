@@ -490,3 +490,191 @@ fn workflow_gates_exactly_the_baselines_this_guard_validates() {
         "recall-ratchet.yml's matrix points expand to a different baseline set than GATING_BASELINES. CI and this guard must agree on which arms are gated."
     );
 }
+
+// ---------------------------------------------------------------------------
+// The third road to "reported nothing" — a job TIMEOUT.
+//
+// `recall_ratchet_concurrency_cannot_cancel_a_different_commit` above closed
+// the second road (a merge train cancelling the previous commit's run) and
+// explicitly named the shape: *a gate that gets cancelled reports nothing, and
+// "reported nothing" is indistinguishable from "passed" on a board with no
+// branch protection.* A job that exceeds `timeout-minutes` is reported by
+// GitHub as `cancelled` too — same word, same indistinguishable board, a
+// cause the previous fix does not touch.
+//
+// Measured on run 32484079897 (2026-08-21, the first and only run of the
+// two-arm N=40 shape, commit dc11319):
+//
+//   arm      setup+build   measure          per question   outcome
+//   fast     7m07s         46m02s / 10 q    4.60 min       success, 53m total
+//   quality  8m02s         cut at 62m10s    ~12.4 min      CANCELLED at 70m
+//
+// All FOUR quality shards completed exactly 5 of their 10 questions and died
+// inside the 6th — not a flake, a structural impossibility. `quality` turns
+// the reranker on, and a CPU cross-encoder pass costs ~2.7x the fast arm per
+// question (one measured question: `duration_ms: 675980`, 11.3 minutes).
+// 10 questions x 12.4 + 8 = ~132 minutes against a 70-minute ceiling.
+//
+// So the `quality` arm — the arm every published recall number was measured
+// on — has never once produced a ratchet verdict at N=40, and the board said
+// `cancelled`, not red.
+// ---------------------------------------------------------------------------
+
+/// Measured minutes per question on the hosted CPU runner, worst arm.
+/// From run 32484079897: `quality` completed 5 questions in 62m10s across all
+/// four shards (12.4 min/q); one question's own record says 11.3 min. Take the
+/// slower figure — the budget must hold for the arm that costs the most.
+const MEASURED_MIN_PER_QUESTION: usize = 13;
+
+/// Setup + Moon build + lunaris-evals build, before the first question runs.
+/// Observed 7m07s (warm caches) and 8m02s (GGUF download not cached). Budget
+/// generously: a cold `rust-cache` miss rebuilds llama.cpp from scratch.
+const BUILD_BUDGET_MIN: usize = 25;
+
+fn measure_timeout_minutes(yml: &str) -> usize {
+    yml.lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("timeout-minutes:"))
+        .and_then(|l| l.trim_start_matches("timeout-minutes:").trim().parse().ok())
+        .expect("recall-ratchet.yml measure job has no parseable `timeout-minutes:`")
+}
+
+/// The shard axis, e.g. `shard: [0, 1, 2, 3]` -> 4.
+fn matrix_shard_count(yml: &str) -> usize {
+    let line = yml
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("shard: ["))
+        .expect("recall-ratchet.yml has no `shard: [...]` matrix axis");
+    line.trim_start_matches("shard: [")
+        .trim_end_matches(']')
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .count()
+}
+
+/// The wall-clock budget must cover the work actually asked of a shard.
+///
+/// This is the guard that would have gone red at `5e37105` ("ratchet BOTH
+/// operating points at N=40, not one arm at N=16"). That commit multiplied the
+/// manifest by 2.5x AND added a second arm costing 2.7x per question, while
+/// leaving `timeout-minutes: 70` — a number derived for 4 questions of the
+/// cheap arm. The workflow's own comment still described the old shape ("~4
+/// questions x ~2-6 min ... warm-cache target well under 40 min"), so nothing
+/// in review contradicted it.
+///
+/// Deriving the budget from the manifest is the point: change N, change the
+/// shard count, or add a costlier arm, and this recomputes instead of trusting
+/// a number somebody typed once.
+#[test]
+fn the_shard_timeout_covers_the_work_the_matrix_asks_for() {
+    let yml = workflow_src();
+    let questions =
+        manifest_rows(&workspace_root().join("scripts/bench/lme/questions/offsets40.tsv"));
+    let shards = matrix_shard_count(&yml);
+    let per_shard = questions.div_ceil(shards);
+    let needed = per_shard * MEASURED_MIN_PER_QUESTION + BUILD_BUDGET_MIN;
+    let budget = measure_timeout_minutes(&yml);
+
+    assert!(
+        budget >= needed,
+        "recall-ratchet's measure job allows {budget} min, but {questions} questions \
+         over {shards} shards is {per_shard} questions/shard = {} min of measuring \
+         (at {MEASURED_MIN_PER_QUESTION} min/q on the QUALITY arm, measured) plus \
+         {BUILD_BUDGET_MIN} min of build = {needed} min. A shard that runs out of \
+         clock is reported by GitHub as `cancelled`, NOT as a failure, so the arm \
+         ships unmeasured behind a board that never turned red — the same \
+         indistinguishable-from-passing shape this file already guards twice. \
+         Either raise timeout-minutes or add shards; do not shrink the manifest \
+         (N=40 is what buys the 5-point detection floor).",
+        per_shard * MEASURED_MIN_PER_QUESTION
+    );
+}
+
+/// One arm's shard dying must not silently void the OTHER arm's verdict.
+///
+/// `ratchet` declares `needs: measure`, and `needs` waits on the ENTIRE measure
+/// matrix — both arms, every shard. On run 32484079897 all four `fast` shards
+/// passed and uploaded their artifacts; the four `quality` shards timed out;
+/// and BOTH ratchet jobs were `skipped`. The fast arm's numbers were sitting in
+/// artifact storage, complete and uncompared.
+///
+/// The fix is `if: ${{ !cancelled() }}` on the fan-in: run whenever the
+/// workflow itself was not cancelled, and let the job's own "expected N shard
+/// config files" assertion decide. That assertion already exists and is
+/// already correct — it simply never got to run. An arm with all its shards
+/// then ratchets normally; an arm missing shards goes RED and says which.
+///
+/// `!cancelled()` rather than `always()` deliberately: a human (or a
+/// same-commit concurrency supersede) cancelling the whole run should still
+/// stop the fan-in, not convert a deliberate cancel into a red board.
+#[test]
+fn a_timed_out_shard_cannot_silently_skip_the_ratchet() {
+    let yml = workflow_src();
+    let ratchet = yml
+        .split_once("  ratchet:")
+        .map(|(_, rest)| rest)
+        .expect("recall-ratchet.yml has no `ratchet:` job");
+    // The job's own keys, before `steps:`.
+    let header = ratchet.split_once("    steps:").map(|(h, _)| h).unwrap_or(ratchet);
+
+    assert!(
+        header.lines().any(|l| {
+            let t = l.trim();
+            t.starts_with("if:") && (t.contains("!cancelled()") || t.contains("always()"))
+        }),
+        "the `ratchet` fan-in job has no `if:` that survives a non-success in \
+         `measure`. With a bare `needs: measure` a single timed-out shard in \
+         EITHER arm skips BOTH ratchet jobs — observed on run 32484079897, where \
+         four green `fast` shards had already uploaded complete artifacts and \
+         were never compared to their baseline. A skipped gate reports nothing, \
+         and nothing is indistinguishable from a pass. Add `if: ${{{{ \
+         !cancelled() }}}}` and let the job's existing shard-count assertion \
+         turn the missing arm red."
+    );
+}
+
+/// The shard count is written in three places that must agree.
+///
+/// 1. the matrix axis `shard: [...]` — how many jobs run
+/// 2. `SHARD_COUNT` in the measure step's env — how the gate script slices the
+///    manifest
+/// 3. the ratchet's `[ "$(ls merged/config.shard*.env | wc -l)" -eq N ]` — how
+///    many shard results the fan-in demands before it will compare
+///
+/// Raising the shard count and missing (2) makes `anygold_gate.sh` reject the
+/// out-of-range index loudly (it checks `SHARD_INDEX < SHARD_COUNT`), so that
+/// half is already safe. Missing (3) makes every run red with a confusing
+/// message. Pin all three to one number so the next change to shard geometry is
+/// a single edit and a green test, not a guess.
+#[test]
+fn the_shard_count_agrees_across_matrix_script_env_and_fan_in() {
+    let yml = workflow_src();
+    let matrix = matrix_shard_count(&yml);
+
+    let env_count: usize = yml
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("SHARD_COUNT:"))
+        .and_then(|l| l.trim_start_matches("SHARD_COUNT:").trim().trim_matches('"').parse().ok())
+        .expect("recall-ratchet.yml has no parseable `SHARD_COUNT:`");
+    assert_eq!(
+        matrix, env_count,
+        "the matrix runs {matrix} shards but SHARD_COUNT tells anygold_gate.sh to \
+         slice the manifest {env_count} ways. The script refuses an out-of-range \
+         index, so this fails the job — loudly, but with a message about the \
+         script rather than about the workflow that is actually wrong."
+    );
+
+    let fan_in: usize = yml
+        .lines()
+        .map(str::trim)
+        .find(|l| l.contains("config.shard*.env") && l.contains("-eq"))
+        .and_then(|l| l.rsplit("-eq").next()?.split(']').next()?.trim().parse().ok())
+        .expect("recall-ratchet.yml's ratchet job has no parseable shard-count check");
+    assert_eq!(
+        matrix, fan_in,
+        "the matrix runs {matrix} shards but the fan-in demands exactly {fan_in} \
+         shard config files before it will compare against the baseline."
+    );
+}
