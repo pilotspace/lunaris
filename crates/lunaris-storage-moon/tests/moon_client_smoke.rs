@@ -13,7 +13,22 @@
 //! Dials `MOON_URL` (default `moon://localhost:6380`) and PANICS on connect if
 //! nothing is listening.
 //!
-//! RFC 0001 Wave 0: StoragePort methods now take `&Scope`. Tests pass `&Scope::dev()`.
+//! ## One partition per test (F11)
+//!
+//! Every test in this file used to write under `Scope::dev()`, which put all of
+//! them in ONE Moon FT index (`ft_index_name(scope, kind)`) and one graph
+//! (`graph_key(scope)`). `vector_search_as_of_round_trip_via_moon` asks for the
+//! top 5 and asserts its own seeded id is among them — and since the seeded
+//! embeddings are near-identical ramps that all score 1.0, which 5 come back is
+//! arbitrary once the index holds more than five. Measured: green, green, then
+//! RED on the third consecutive run against the same Moon, and RED under the
+//! parallel `--include-ignored` sweep on a many-core box while staying green on
+//! CI's smaller runner. A top-k assertion over a shared, growing index is a
+//! flake with a timer on it.
+//!
+//! So each test takes its own `test_scope(...)`. The scope is what Moon
+//! namespaces the vector and graph legs by, so an isolated partition means the
+//! top-5 can only ever contain this test's own rows.
 
 #![cfg(feature = "moon-it")]
 
@@ -28,19 +43,30 @@ fn moon_url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://localhost:6380".into())
 }
 
+/// A partition no other test — or earlier run of this one — is using.
+///
+/// `name` is only there to make a stuck key readable in `redis-cli`; the ULID
+/// is what makes it unique. Crockford's alphabet is a subset of the scope
+/// alphabet `[A-Za-z0-9_\-.]{1,128}`, so `Scope::new` cannot reject this.
+fn test_scope(name: &str) -> Scope {
+    Scope::new(format!("moonit-{name}-{}", ulid::Ulid::new()))
+        .expect("ULID-suffixed label is inside the scope alphabet")
+}
+
 #[tokio::test]
 async fn round_trip_via_moon_client() {
+    let scope = test_scope("kv-roundtrip");
     let storage = MoonStorage::connect(&moon_url())
         .await
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
 
     let clock = HlcClock::new(0);
-    let ep = Episode::new(Scope::dev(), "smoke://retrofit", "hello moon-client", &clock);
-    let key = keyspace::episode_key(&Scope::dev(), ep.id);
+    let ep = Episode::new(scope.clone(), "smoke://retrofit", "hello moon-client", &clock);
+    let key = keyspace::episode_key(&scope, ep.id);
     let value = serde_json::to_vec(&ep).expect("episode serializes");
 
     let lsn = storage
-        .atomic_write(&Scope::dev(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
+        .atomic_write(&scope, &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
         .await
         .expect("atomic_write commit via moon-client");
     assert!(
@@ -50,7 +76,7 @@ async fn round_trip_via_moon_client() {
 
     let now = clock.tick();
     let row = storage
-        .read_as_of(&Scope::dev(), &key, now)
+        .read_as_of(&scope, &key, now)
         .await
         .expect("read_as_of ok via moon-client")
         .expect("episode exists");
@@ -86,20 +112,19 @@ async fn capabilities_reports_native_rrf() {
 
 #[tokio::test]
 async fn queue_publish_subscribe_round_trip_via_moon_mq() {
+    let scope = test_scope("queue");
     let storage = MoonStorage::connect(&moon_url()).await.expect("connect to Moon");
     assert!(storage.capabilities().queue_native);
 
     let topic = format!("moon-it-queue-{}", ulid::Ulid::new());
     let payload = Bytes::from_static(b"moon-mq-round-trip");
     let mut stream = storage
-        .subscribe(&Scope::dev(), "moon-it-consumer", &topic, 0)
+        .subscribe(&scope, "moon-it-consumer", &topic, 0)
         .await
         .expect("subscribe to Moon MQ");
 
-    let offset = storage
-        .publish(&Scope::dev(), &topic, 0, payload.clone())
-        .await
-        .expect("publish to Moon MQ");
+    let offset =
+        storage.publish(&scope, &topic, 0, payload.clone()).await.expect("publish to Moon MQ");
     assert!(offset > 0, "Moon MQ stream id should map to a non-zero offset");
 
     let msg = tokio::time::timeout(Duration::from_secs(3), stream.next())
@@ -113,6 +138,7 @@ async fn queue_publish_subscribe_round_trip_via_moon_mq() {
 
 #[tokio::test]
 async fn hybrid_search_round_trip_after_ensure_indexes() {
+    let scope = test_scope("hybrid");
     use lunaris_core::WriteOp;
 
     let storage = MoonStorage::connect(&moon_url())
@@ -125,7 +151,7 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
     let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.001).collect();
     storage
         .atomic_write(
-            &Scope::dev(),
+            &scope,
             &[WriteOp::VectorUpsert {
                 index: "facts".into(),
                 id: id.clone(),
@@ -143,7 +169,7 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
     let typed = storage.client().typed();
     let mut text = typed.text();
     let weights: [f64; 3] = [0.5, 0.5, 0.0];
-    let index_name = keyspace::ft_index_name(&Scope::dev(), "facts");
+    let index_name = keyspace::ft_index_name(&scope, "facts");
     let hits = text
         // moon-v051-perf-exploit W0 fallout: the vendor bump added a `filter:
         // Option<&HybridFilter>` 8th param to `hybrid_search` (PR #174, HYBRID
@@ -162,6 +188,7 @@ async fn hybrid_search_round_trip_after_ensure_indexes() {
 
 #[tokio::test]
 async fn graph_query_valid_at_round_trip_via_moon() {
+    let scope = test_scope("graph-validat");
     let storage = MoonStorage::connect(&moon_url())
         .await
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
@@ -170,7 +197,7 @@ async fn graph_query_valid_at_round_trip_via_moon() {
     let id_hex = hex::encode(&id);
     storage
         .atomic_write(
-            &Scope::dev(),
+            &scope,
             &[WriteOp::GraphNode {
                 graph: "ignored-by-moon-scope-routing".into(),
                 id,
@@ -196,7 +223,7 @@ async fn graph_query_valid_at_round_trip_via_moon() {
     };
 
     let result = storage
-        .graph_traverse(&Scope::dev(), &q, Some(as_of))
+        .graph_traverse(&scope, &q, Some(as_of))
         .await
         .expect("GRAPH.QUERY VALID_AT must succeed through Moon");
     assert_eq!(result.headers, vec!["id", "name", "type"]);
@@ -208,6 +235,7 @@ async fn graph_query_valid_at_round_trip_via_moon() {
 
 #[tokio::test]
 async fn vector_search_as_of_round_trip_via_moon() {
+    let scope = test_scope("vector-asof");
     let storage = MoonStorage::connect(&moon_url())
         .await
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
@@ -217,7 +245,7 @@ async fn vector_search_as_of_round_trip_via_moon() {
     let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.0005).collect();
     storage
         .atomic_write(
-            &Scope::dev(),
+            &scope,
             &[WriteOp::VectorUpsert {
                 index: "chunks".into(),
                 id: id.clone(),
@@ -234,7 +262,7 @@ async fn vector_search_as_of_round_trip_via_moon() {
 
     let as_of = HlcClock::new(0).tick();
     let hits = storage
-        .vector_search(&Scope::dev(), "chunks", &embedding, 5, None, Some(as_of), false)
+        .vector_search(&scope, "chunks", &embedding, 5, None, Some(as_of), false)
         .await
         .expect("FT.SEARCH KNN AS_OF must succeed through Moon");
 
@@ -246,6 +274,7 @@ async fn vector_search_as_of_round_trip_via_moon() {
 
 #[tokio::test]
 async fn keyword_search_as_of_round_trip_via_moon() {
+    let scope = test_scope("keyword-asof");
     let storage = MoonStorage::connect(&moon_url())
         .await
         .expect("connect to Moon — set MOON_URL env or run Moon at localhost:6380");
@@ -255,7 +284,7 @@ async fn keyword_search_as_of_round_trip_via_moon() {
     let embedding: Vec<f32> = (0..768).map(|i| (i as f32) * 0.0007).collect();
     storage
         .atomic_write(
-            &Scope::dev(),
+            &scope,
             &[WriteOp::VectorUpsert {
                 index: "chunks".into(),
                 id: id.clone(),
@@ -272,12 +301,58 @@ async fn keyword_search_as_of_round_trip_via_moon() {
 
     let as_of = HlcClock::new(0).tick();
     let hits = storage
-        .keyword_search(&Scope::dev(), "chunks", &marker, 5, None, Some(as_of))
+        .keyword_search(&scope, "chunks", &marker, 5, None, Some(as_of))
         .await
         .expect("FT.SEARCH BM25 AS_OF must succeed through Moon");
 
     assert!(
         hits.iter().any(|h| h.id == id),
         "seeded keyword chunk must be visible through FT.SEARCH AS_OF: {hits:?}"
+    );
+}
+
+/// F11 guard — no test in this file may go back to the shared partition.
+///
+/// The fix above is invisible in behaviour: with every test on its own scope
+/// the suite is green, and it would also be green the day someone reintroduces
+/// `Scope::dev()` here — right up until the index grows past the top-k and the
+/// flake comes back. The failure took three consecutive runs to appear once;
+/// a reviewer will not reproduce it, so the guard has to be structural.
+///
+/// It reads the source rather than the behaviour on purpose, and pairs with
+/// the measured proof in the commit that introduced it (ten consecutive green
+/// runs against one Moon, where run three had been red).
+#[test]
+fn no_test_in_this_file_uses_the_shared_dev_scope() {
+    let src = include_str!("moon_client_smoke.rs");
+    // Assembled so this assertion cannot match its own text.
+    let needle = format!("Scope{}dev()", "::");
+
+    let offenders: Vec<String> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            // Prose may name the symbol — the module docs explain the bug.
+            !t.starts_with("//") && !t.starts_with('*') && l.contains(&needle)
+        })
+        .map(|(i, l)| format!("{}: {}", i + 1, l.trim()))
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "these lines put a test back on the shared dev partition: {offenders:#?}. \
+         Moon namespaces the vector index and the graph by scope, so a shared \
+         scope means every test's rows compete in one top-k — which is green \
+         until the index outgrows the k, then flaky forever. Use test_scope(..)."
+    );
+
+    // Vacuity floor: if this file is ever restructured so the scan walks
+    // nothing, fail here rather than reporting a clean bill of health.
+    let scoped = src.matches("test_scope(").count();
+    assert!(
+        scoped >= 7,
+        "expected at least 7 test_scope( sites (6 tests + the helper), found {scoped} — \
+         this guard is probably scanning a file that no longer looks like it thinks"
     );
 }
