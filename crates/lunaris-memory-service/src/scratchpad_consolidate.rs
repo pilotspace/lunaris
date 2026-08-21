@@ -115,7 +115,8 @@ pub async fn handle_inner(
             "background consolidation worker is live — calling \
              memory.scratchpad_consolidate now would race on the single \
              __mq_consumers consumer group and silently lose events. \
-             Disable the worker (LUNARIS_CONSOLIDATOR=0) before using this tool.",
+             Disable the worker (LUNARIS_CONSOLIDATE_ENABLED=0, read once at \
+             Lunaris::open) and restart before using this tool.",
         ));
     }
 
