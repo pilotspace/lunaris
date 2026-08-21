@@ -110,13 +110,29 @@ jobs:
           exit 1
       - name: Install maturin + pytest
         run: pip install maturin pytest pytest-asyncio python-ulid
-      - name: Build + install lunaris-py WITH bindings-it
-        run: maturin develop --release --features bindings-it
+      # `embed-remote` alongside `bindings-it`, in BOTH SDK builds.
+      #
+      # Two binding suites (`lunaris-py/tests/test_query_dsl.py` and
+      # `lunaris-ts/__test__/readme_quickstart.spec.mts`) stand up a stub
+      # OpenAI-compatible `/v1/embeddings` server and assert the engine
+      # actually called it — that is how they prove the query text crossed
+      # the FFI rather than silently embedding to zeros. `LUNARIS_EMBEDDER_
+      # OPENAI_URL` is only read when `embed-remote` is compiled in, so
+      # without this feature those suites could never pass; W4.14 widened
+      # this job to run them and they failed on exactly that.
+      #
+      # This does NOT drop `llamacpp` (it stays on via `default`), so the
+      # job still builds the shipped feature set. `resolve_embedder` only
+      # prefers llama.cpp when a GGUF is actually reachable, and no runner
+      # stages one — so the stub wins here and the local runtime wins on a
+      # real install. Both paths stay honest.
+      - name: Build + install lunaris-py WITH bindings-it + embed-remote
+        run: maturin develop --release --features bindings-it,embed-remote
         working-directory: crates/lunaris-py
-      - name: npm install + napi build lunaris-ts WITH bindings-it
+      - name: npm install + napi build lunaris-ts WITH bindings-it + embed-remote
         run: |
           npm ci --no-audit --no-fund
-          npx napi build --platform --release --features bindings-it
+          npx napi build --platform --release --features bindings-it,embed-remote
         working-directory: crates/lunaris-ts
       - name: Rust - per-driver backend parity
         run: |

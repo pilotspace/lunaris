@@ -149,6 +149,16 @@ async def _ingest_and_normalize(url: str, golden: dict) -> dict:
     assert len(episodes) == COUNT, (
         f"expected {COUNT} episodes from FFI, got {len(episodes)}"
     )
+    # The 10 fixture episodes' ULIDs, as they appear in the KV key suffix.
+    # `lunaris_core::keyspace::episode_key` renders
+    # `lunaris:{scope}:episode:{ulid}` with the ULID's canonical 26-char
+    # string and `Episode`'s serde emits `id` the same way, so the
+    # pythonized episode's `id` IS the key suffix — no decoding in between.
+    wanted = {ep["id"] for ep in episodes}
+    assert len(wanted) == COUNT, (
+        "the fixture corpus emitted duplicate episode ids — "
+        "it is no longer deterministic-distinct"
+    )
 
     handle = await lunaris.open(url)
     for ep in episodes:
@@ -157,19 +167,39 @@ async def _ingest_and_normalize(url: str, golden: dict) -> dict:
     prefix_bytes = golden["keys_prefix"].encode("utf-8")
     rows = await lunaris.lunaris.scan_kv_prefix(handle, prefix_bytes)
 
-    # Parse each key as "{prefix}{ulid}" and collect unique suffixes.
+    # Parse each key as "{prefix}{ulid}" and keep ONLY the fixture's own
+    # episodes.
+    #
+    # This filter is the whole point. Before W4.14 the parity suites were
+    # the only thing writing under `lunaris:_dev_:episode:` on the CI Moon,
+    # so an absolute count over the prefix happened to equal 10. Widening
+    # the live-Moon job to run every binding suite put 150+ unrelated
+    # episodes in the same scope, and the TypeScript sibling failed at
+    # `10 vs 163` — not because parity broke, but because "the store
+    # contains nothing else" was never the contract and never holds on a
+    # Moon that outlives one run. (Python survived only by alphabetical
+    # collection order: `test_backend_parity` runs before
+    # `test_conversational_parity`. That is a flake with a timer on it.)
+    # What IS the contract: the 10 deterministic fixture episodes are each
+    # present exactly once, at the golden per-episode key count.
     prefix_str = golden["keys_prefix"]
     distinct: set[str] = set()
+    matched = 0
     for k, _v in rows:
         try:
             key_str = bytes(k).decode("utf-8")
         except UnicodeDecodeError:
             continue
-        if key_str.startswith(prefix_str):
-            distinct.add(key_str[len(prefix_str):])
+        if not key_str.startswith(prefix_str):
+            continue
+        suffix = key_str[len(prefix_str):]
+        if suffix not in wanted:
+            continue
+        distinct.add(suffix)
+        matched += 1
 
     return {
-        "total_rows": len(rows),
+        "total_rows": matched,
         "keys_prefix": golden["keys_prefix"],
         "distinct_episode_ids": len(distinct),
     }
@@ -191,7 +221,8 @@ def _assert_structural_eq(rows: dict, golden: dict, label: str) -> None:
     )
     want_total = golden["episode_count"] * golden["per_episode_key_count"]
     assert rows["total_rows"] == want_total, (
-        f"{label} row-count drift: got {rows['total_rows']} want {want_total} "
+        f"{label} row-count drift: got {rows['total_rows']} fixture-owned rows, "
+        f"want {want_total} "
         f"({golden['episode_count']} episodes × {golden['per_episode_key_count']} keys/episode)"
     )
 

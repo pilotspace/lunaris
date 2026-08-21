@@ -125,23 +125,36 @@ pub struct NormalizedRows {
 pub async fn collect_normalized_chunk_rows(
     handle: &Lunaris,
     keys_prefix: &str,
+    wanted_ids: &std::collections::BTreeSet<String>,
 ) -> anyhow::Result<NormalizedRows> {
     let storage = handle.storage();
     let stream =
         storage.scan_range(&lunaris_core::Scope::dev(), keys_prefix.as_bytes(), None).await?;
     let rows: Vec<(bytes::Bytes, bytes::Bytes)> = stream.try_collect().await?;
 
-    // Distinct episode IDs: parse the key as "{prefix}{ulid}" and
-    // count unique ULIDs.
-    let distinct_episode_ids = rows
+    // Parse each key as "{prefix}{ulid}" and keep ONLY the fixture's own
+    // episodes.
+    //
+    // `wanted_ids` is the whole point of this signature. Before W4.14 the
+    // parity suites were the only thing writing under
+    // `lunaris:_dev_:episode:` on the CI Moon, so counting EVERY row under
+    // the prefix happened to equal 10. Widening the live-Moon job to run
+    // every binding suite put 150+ unrelated episodes in the same scope and
+    // the TypeScript sibling failed at `10 vs 163` — not because parity
+    // broke, but because "the store contains nothing else" was never the
+    // contract and never holds on a Moon that outlives one run. What IS the
+    // contract: the deterministic fixture episodes are each present exactly
+    // once, at the golden per-episode key count.
+    let matched: Vec<&str> = rows
         .iter()
         .filter_map(|(k, _)| std::str::from_utf8(k).ok())
         .filter_map(|s| s.strip_prefix(keys_prefix))
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
+        .filter(|suffix| wanted_ids.contains(*suffix))
+        .collect();
+    let distinct_episode_ids = matched.iter().collect::<std::collections::BTreeSet<_>>().len();
 
     Ok(NormalizedRows {
-        total_rows: rows.len(),
+        total_rows: matched.len(),
         keys_prefix: keys_prefix.to_string(),
         distinct_episode_ids,
     })
@@ -169,7 +182,7 @@ pub fn assert_structural_eq(rows: &NormalizedRows, golden: &GoldenReference) -> 
     let want_total = golden.episode_count * golden.per_episode_key_count;
     if rows.total_rows != want_total {
         bail!(
-            "row-count drift: got {} want {} ({} episodes × {} keys/episode)",
+            "row-count drift: got {} fixture-owned rows, want {} ({} episodes × {} keys/episode)",
             rows.total_rows,
             want_total,
             golden.episode_count,
@@ -244,7 +257,16 @@ async fn exercise_one_backend(
             .await
             .with_context(|| format!("ingest fixture episode into {backend_label}"))?;
     }
-    let rows = collect_normalized_chunk_rows(handle, &golden.keys_prefix)
+    // The fixture's own ULIDs, rendered exactly as `keyspace::episode_key`
+    // renders the key suffix, so the scan can ignore rows this test did not
+    // write.
+    let wanted_ids: std::collections::BTreeSet<String> =
+        corpus.episodes().iter().map(|ep| ep.id.to_string()).collect();
+    anyhow::ensure!(
+        wanted_ids.len() == corpus.episodes().len(),
+        "the fixture corpus emitted duplicate episode ids — it is no longer deterministic-distinct"
+    );
+    let rows = collect_normalized_chunk_rows(handle, &golden.keys_prefix, &wanted_ids)
         .await
         .with_context(|| format!("scan_range on {backend_label}"))?;
     assert_structural_eq(&rows, golden)
