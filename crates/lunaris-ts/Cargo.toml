@@ -57,6 +57,13 @@ default = ["llamacpp"]
 # (zero vectors). Workspace builds mask this via feature unification, so
 # only the package-scoped build-graph test catches it (found 2026-07-16).
 llamacpp = ["dep:lunaris-llamacpp", "lunaris-llamacpp/llamacpp", "lunaris/llamacpp"]
+# Tier-0 remote embedder (`LUNARIS_EMBEDDER_OPENAI_URL` /
+# `LUNARIS_EMBEDDER_OLLAMA_URL`). Opt-in, never in `default`: the shipped
+# `.node` runs llama.cpp locally. Enable for air-gapped / no-C++-toolchain
+# builds (`napi build --no-default-features --features embed-remote`) and
+# for the hermetic SDK tests, which point Lunaris at a stub
+# OpenAI-compatible `/v1/embeddings` server instead of running inference.
+embed-remote = ["lunaris/embed-remote"]
 # Plan 08-03 BLOCKER 3+4 resolution — conformance helpers
 # (`conformanceFixtureEpisodes`, `scanKvPrefix`) compile only under this
 # feature. Production npm packages do NOT enable it. The Plan 08-01
