@@ -1,0 +1,13 @@
+{
+  "config_signature": "anygold-v1|dataset=longmemeval_s|hybrid=1|pool=40|topk=60|adaptive=1|rerank=1|graph=0|embedder=granite-embedding-311m-multilingual-r2.Q4_K_M.gguf|reranker=bge-reranker-v2-m3.Q5_K_M.gguf|offsets=offsets40.tsv:40",
+  "hits": 40,
+  "metric": "lme_s_anygold",
+  "operating_point": "quality",
+  "produced": {
+    "date": "2026-08-21",
+    "platform": "Darwin-arm64"
+  },
+  "smallest_detectable_regression_points": 5.0,
+  "tolerance_questions": 1,
+  "total": 40
+}

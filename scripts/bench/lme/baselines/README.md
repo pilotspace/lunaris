@@ -97,10 +97,25 @@ no RNG — re-running the derivation reproduces the file byte for byte.
 
 Reference measurement, from `recall-ratchet.yml`: **~125 s/question** on
 the reference box at the full production retrieval config with rerank
-included. The `fast` arm skips the cross-encoder pass entirely so it is
-strictly cheaper, but **we have not measured how much cheaper**, so
-budget it at the same 125 s/question and let the margin be a surprise
-rather than a hope.
+included.
+
+**Measured 2026-08-21** (N=40 per arm, same box, one process per
+question): `fast` median **141.5 s**, `quality` median **163.5 s** — the
+cross-encoder costs about **15%**, not a factor. Reported as a ratio
+rather than as a correction to the 125 s figure above, because that
+figure came from the CI reference runner and this one did not; the ratio
+transfers across hardware and the absolute seconds do not.
+
+Concurrent heavy disk I/O ran during part of the `quality` arm, so the
+timings were checked for contamination rather than assumed clean: the six
+questions overlapping that window came in *faster* (median 145 s) than
+the rest (163.5 s), and excluding them moves the ratio 1.145 -> 1.155.
+No correction applied.
+
+So the guidance stands, now for a measured reason: **budget both arms at
+the same per-question cost.** A 15% saving does not change the shard
+layout, and assuming a larger one would be planning against a number
+nobody measured.
 
 | Layout | q/shard | measure time/shard | jobs | fits the 70-min job timeout? |
 |---|---|---|---|---|
@@ -127,15 +142,42 @@ caches less.
 | File | Operating point | Manifest | Status |
 |---|---|---|---|
 | `ci-anygold.json` | `quality` (rerank ON) | `offsets16.tsv`, N=16 | **BLESSED 2026-08-17** — the live gate. Fail floor 14/16 ≈ 12.5 points. Legacy; keep until the N=40 pair is blessed, then retire. |
-| `ci-anygold-fast-n40.json` | `fast` (rerank OFF) | `offsets40.tsv`, N=40 | **NOT YET BLESSED** — requires a measurement run |
-| `ci-anygold-quality-n40.json` | `quality` (rerank ON) | `offsets40.tsv`, N=40 | **NOT YET BLESSED** — requires a measurement run |
+| `ci-anygold-fast-n40.json` | `fast` (rerank OFF) | `offsets40.tsv`, N=40 | **BLESSED 2026-08-21** — 39/40. Fail floor 38/40 = 5.0 points. |
+| `ci-anygold-quality-n40.json` | `quality` (rerank ON) | `offsets40.tsv`, N=40 | **BLESSED 2026-08-21** — 40/40. Fail floor 39/40 = 5.0 points. |
 
-The two N=40 files **do not exist in this directory**, deliberately.
-A baseline is a measurement. Committing a placeholder with a plausible
-`hits` value would be inventing a number, and inventing the *floor* is
-the worst place to do it: it would silently define what counts as a
-regression. They get created by the blessing commands below, on a machine
-that actually ran the questions, and not before.
+Both N=40 files were withheld from this directory until they had been
+measured. A baseline is a measurement; committing a placeholder with a
+plausible `hits` value would be inventing a number, and inventing the
+*floor* is the worst place to do it, because it silently defines what
+counts as a regression. They were produced by the blessing commands below
+on a machine that actually ran the questions.
+
+### What the measurement said (2026-08-21, N=40 each, judge-free)
+
+| Arm | hits | multi-sess | temporal | knowl-upd | ss-user | ss-asst | ss-pref |
+|---|---|---|---|---|---|---|---|
+| `fast` (rerank OFF) | **39/40** | 11/11 | 11/11 | 6/6 | 6/6 | 4/4 | 1/2 |
+| `quality` (rerank ON) | **40/40** | 11/11 | 11/11 | 6/6 | 6/6 | 4/4 | 2/2 |
+
+The arms differ by exactly one question: **q134**
+(`single-session-preference`) misses under `fast` and hits under
+`quality`. That is the whole measured value of the cross-encoder on this
+manifest, and it is a real effect rather than a tie-break artifact:
+`pool` is per retrieval arm, so the fused vector+BM25 set holds up to
+`2 x pool = 80` candidates, `hybrid_rerank_top_in` widens the
+cross-encoder window to exactly that 80, and `topk=60` then keeps 60.
+Reranking discards 20 of 80, so reordering genuinely changes set
+membership and any-gold can see it.
+
+**Closing defect (b2) exposed no hidden weakness.** The four categories
+`offsets16.tsv` never covered — `temporal-reasoning`, `knowledge-update`,
+`single-session-user`, `single-session-assistant` — score perfectly on
+both arms, and the only miss anywhere sits in a category the old manifest
+*did* cover. Nothing about this run argues the widened manifest was
+needed. The argument for it is unchanged and still forward-looking: a
+future regression confined to 27.5% of the N=125 manifest would have been
+invisible at any N, and this run establishes that those categories start
+from a clean floor rather than a silently-broken one.
 
 `ci-anygold.json` keeps its filename — `crates/lunaris-bench/tests/eval_workflow_guard.rs`
 asserts on that exact path, and renaming it would break the guard and the
