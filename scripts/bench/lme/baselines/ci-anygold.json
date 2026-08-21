@@ -1,11 +1,14 @@
 {
+  "_annotation": "W3.7 (2026-08-21): this baseline measures the QUALITY operating point (rerank ON) while the shipped default is FAST (rerank OFF), and at N=16 with tolerance 1 it only fails on a 2-question drop = 12.5 points. offsets16.tsv also covers only 2 of the 6 LongMemEval-S categories. See baselines/README.md. Annotation-only key; --write-baseline does not regenerate it.",
   "config_signature": "anygold-v1|dataset=longmemeval_s|hybrid=1|pool=40|topk=60|adaptive=1|rerank=1|graph=0|embedder=granite-embedding-311m-multilingual-r2.Q4_K_M.gguf|reranker=bge-reranker-v2-m3.Q5_K_M.gguf|offsets=offsets16.tsv:16",
   "hits": 15,
   "metric": "lme_s_anygold",
+  "operating_point": "quality",
   "produced": {
     "date": "2026-08-17",
     "platform": "Darwin-arm64"
   },
+  "smallest_detectable_regression_points": 12.5,
   "tolerance_questions": 1,
   "total": 16
 }
