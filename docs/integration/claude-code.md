@@ -153,7 +153,9 @@ To register as a persistent Claude Code MCP server:
 Or using the Claude Code CLI:
 
 ```bash
-claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- npx -y @pilotspace/lunaris-mcp
 ```
 
 ### Via uv / uvx
@@ -181,7 +183,9 @@ To configure as a persistent Claude Code MCP server using uvx:
 Or using the Claude Code CLI:
 
 ```bash
-claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- uvx lunaris-mcp
 ```
 
 Both paths download a prebuilt binary for your platform on first run.
@@ -242,7 +246,9 @@ lunaris-mcp --help
 ### Step 1 — Register the server (project scope, VCS-shared)
 
 ```sh
-claude mcp add --transport stdio lunaris -- lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- lunaris-mcp
 ```
 
 This writes to the project-local config (`.mcp.json` in the repo root if you
@@ -253,7 +259,9 @@ To share the server definition with your team via version control, use the
 project scope explicitly:
 
 ```sh
-claude mcp add --scope project --transport stdio lunaris -- lunaris-mcp
+claude mcp add --scope project --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- lunaris-mcp
 ```
 
 This creates (or updates) `.mcp.json` at the repo root:

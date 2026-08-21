@@ -62,8 +62,12 @@ and register it:
 
 ```sh
 # no Rust toolchain needed — both download a prebuilt binary on first run
-claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
-# or: claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- npx -y @pilotspace/lunaris-mcp
+# or: claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- uvx lunaris-mcp
 ```
 
 Building from source instead? `lunaris-mcp` is **not on crates.io** (it
