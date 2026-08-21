@@ -47,6 +47,9 @@ on:
       - ".github/workflows/conformance-bindings.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   per-driver-parity:
     name: per-driver parity (moon)

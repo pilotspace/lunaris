@@ -85,6 +85,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 # Keyed on the COMMIT, not just the ref. A ref-only group makes every push to
 # `main` share one key, so with cancel-in-progress the next commit kills the
 # previous commit's in-flight ratchet — and at this gate's ~40-minute wall
