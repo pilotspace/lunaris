@@ -51,7 +51,10 @@ fn recalls_episode(hits: &[lunaris_retrieve::Hit], episode_id: Ulid) -> bool {
 }
 
 /// §2 "forget by episode id removes it from recall": ingest → recall hits →
-/// forget(Id) → rows_written == 1 → recall misses.
+/// forget(Id) → rows_written > 1 → recall misses.
+///
+/// `> 1`, not `== 1`: W1.4 made forget sweep the episode's chunk rows too, and
+/// the discriminating form is the one that goes red if that sweep is removed.
 #[tokio::test]
 async fn forget_id_removes_from_recall_moon() {
     let engine = open_moon().await;
