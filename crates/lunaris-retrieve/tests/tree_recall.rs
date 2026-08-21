@@ -39,7 +39,7 @@ use lunaris_core::storage::keyword::KeywordHit;
 use lunaris_core::{
     Episode, Filter, Hlc, HlcClock, KeywordPort, Scope, StorageError, StoragePort, StubEmbedder,
 };
-use lunaris_ingest::pipeline::ingest_episode_with_receipt;
+use lunaris_ingest::pipeline::ingest_episode_with_raptor;
 use lunaris_retrieve::operators::tree::Tree;
 use lunaris_retrieve::{Query, QueryContext, Retriever, SourceOp, Vector};
 use lunaris_storage_moon::MoonStorage;
@@ -218,11 +218,15 @@ async fn tree_retrieval_beats_flat_on_whole_document_query() {
     // summary so the `communities` FT index is populated.
     let episode = Episode::new(scope.clone(), "test:multi-section-doc", MULTI_SECTION_DOC, &clock);
 
-    let receipt = ingest_episode_with_receipt(
+    // W4.5: the RAPTOR community-tree write is OFF by default. This is the
+    // Tree operator's own test — the one thing that reads the `communities`
+    // index — so it opts in explicitly rather than relying on process env.
+    let receipt = ingest_episode_with_raptor(
         storage.as_ref() as &dyn StoragePort,
         embedder.as_ref(),
         &clock,
         episode,
+        true,
     )
     .await
     .expect("ingest must succeed");

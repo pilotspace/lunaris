@@ -62,6 +62,46 @@ fn ingest_embed_batch_size() -> usize {
     resolve_ingest_batch_size(std::env::var("LUNARIS_EMBED_BATCH").ok().as_deref())
 }
 
+/// Env knob (W4.5) gating the RAPTOR community-tree write.
+///
+/// **Default OFF.** The tree is built, summarised, embedded and persisted on
+/// every ingest that reaches `assemble_and_write` — which is the shipped
+/// default path (`Lunaris::ingest` graph-OFF, and `lunaris-hook`) — but
+/// nothing on any production path reads it:
+/// `lunaris_retrieve::production_root` composes `chunks_leg` + `facts_leg`
+/// only, and the `communities` index is queried exclusively by the opt-in
+/// `.tree(..)` DSL operator, which has no production caller. Until a reader
+/// lands, the write is pure cost — one extra `embed_batch` round-trip plus
+/// `2 × N` `WriteOp`s per ingest, paid even by a heading-free conversational
+/// turn (`build_doctree` synthesises a root node for those).
+///
+/// Truthy set is EXACTLY the `LUNARIS_GRAPH_ENABLED` /
+/// `LUNARIS_RECALL_RERANK` set: `"1" | "true" | "TRUE" | "on" | "ON"`.
+/// Anything else — including unset — is OFF.
+///
+/// Flipping this back to ON restores byte-identical pre-W4.5 behaviour; see
+/// `docs/decisions/2026-08-21-gate-raptor-community-write.md`.
+pub const RAPTOR_ENABLED_ENV_VAR: &str = "LUNARIS_RAPTOR_ENABLED";
+
+/// Pure decision function for [`RAPTOR_ENABLED_ENV_VAR`]. `None` = unset.
+///
+/// Tests pass explicit values rather than mutating process env — edition 2024
+/// makes `std::env::set_var` `unsafe` and parallel tests race on it. Mirrors
+/// `GraphPipelineHandle::initial_state_from_value` /
+/// `RecallRerankConfig::from_values`.
+pub fn raptor_enabled_from_value(raw: Option<&str>) -> bool {
+    matches!(raw, Some("1" | "true" | "TRUE" | "on" | "ON"))
+}
+
+/// Effective RAPTOR toggle, re-reading [`RAPTOR_ENABLED_ENV_VAR`] per ingest.
+///
+/// Deliberately uncached, for the same reason as [`ingest_embed_batch_size`]
+/// (issue #49): long-running daemons must observe env updates, and one env
+/// read per ingest is noise next to the embed calls it may save.
+fn raptor_enabled() -> bool {
+    raptor_enabled_from_value(std::env::var(RAPTOR_ENABLED_ENV_VAR).ok().as_deref())
+}
+
 /// Hard cap (in bytes) on a community summary before it is stored AND embedded.
 /// A summary is a retrieval handle for its subtree, not the subtree itself —
 /// ~500 tokens is ample. The cap also closes an ingest-OOM at the source:
@@ -137,6 +177,32 @@ pub async fn ingest_episode<S: StoragePort + ?Sized>(
     Ok(ingest_episode_with_receipt(storage, embedder, clock, episode).await?.lsn)
 }
 
+/// [`ingest_episode_with_receipt`] with the W4.5 RAPTOR toggle supplied
+/// explicitly instead of read from [`RAPTOR_ENABLED_ENV_VAR`].
+///
+/// Exists so callers that already own the decision — and tests, which must not
+/// mutate process env under edition 2024 — can drive both directions of the
+/// gate deterministically. [`ingest_episode_with_receipt`] is exactly this
+/// function with `raptor = raptor_enabled()`.
+///
+/// The counter-based and bake-off entry points have no explicit-flag twin:
+/// nothing needs one yet, and adding one is a two-line change if that stops
+/// being true.
+pub async fn ingest_episode_with_raptor<S: StoragePort + ?Sized>(
+    storage: &S,
+    embedder: &dyn Embedder,
+    clock: &HlcClock,
+    episode: Episode,
+    raptor: bool,
+) -> Result<IngestReceipt, LunarisError> {
+    let (drafts, heading_records) = chunk_markdown_with_headings(
+        &episode.content,
+        DEFAULT_TARGET_TOKENS,
+        DEFAULT_OVERLAP_TOKENS,
+    );
+    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records, raptor).await
+}
+
 /// Run [`ingest_episode`] and return the committed episode/chunk identifiers.
 pub async fn ingest_episode_with_receipt<S: StoragePort + ?Sized>(
     storage: &S,
@@ -153,7 +219,16 @@ pub async fn ingest_episode_with_receipt<S: StoragePort + ?Sized>(
         DEFAULT_TARGET_TOKENS,
         DEFAULT_OVERLAP_TOKENS,
     );
-    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+    ingest_episode_inner(
+        storage,
+        embedder,
+        clock,
+        episode,
+        drafts,
+        heading_records,
+        raptor_enabled(),
+    )
+    .await
 }
 
 /// Run the full ingest pipeline for a single Episode using a caller-supplied
@@ -202,7 +277,16 @@ pub async fn ingest_episode_with_counter_and_receipt<S: StoragePort + ?Sized>(
     );
 
     // Steps 2-5 are identical to ingest_episode; delegate to the shared helper.
-    ingest_episode_inner(storage, embedder, clock, episode, drafts, heading_records).await
+    ingest_episode_inner(
+        storage,
+        embedder,
+        clock,
+        episode,
+        drafts,
+        heading_records,
+        raptor_enabled(),
+    )
+    .await
 }
 
 /// Shared pipeline body used by both [`ingest_episode`] and
@@ -217,6 +301,7 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     episode: Episode,
     drafts: Vec<ChunkDraft>,
     heading_records: Vec<crate::chunker::HeadingRecord>,
+    raptor: bool,
 ) -> Result<IngestReceipt, LunarisError> {
     let episode_id = episode.id;
     // Step 2: embed in batches of 32 with per-chunk fallback
@@ -233,7 +318,8 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
 
     // Steps 4+5: assemble WriteOps and issue the single atomic write (INGEST-04).
     let receipt =
-        assemble_and_write(storage, embedder, &episode, chunks, &heading_records, clock).await?;
+        assemble_and_write(storage, embedder, &episode, chunks, &heading_records, clock, raptor)
+            .await?;
     Ok(IngestReceipt { lsn: receipt.lsn, episode_id, chunk_ids: receipt.chunk_ids })
 }
 
@@ -268,6 +354,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
     chunks: Vec<Chunk>,
     heading_records: &[crate::chunker::HeadingRecord],
     clock: &HlcClock,
+    raptor: bool,
 ) -> Result<AssembleReceipt, LunarisError> {
     let source_char_len = episode.content.chars().count();
     let doctree =
@@ -276,11 +363,161 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         LunarisError::Storage(StorageError::Backend(format!("doctree serialize: {e}")))
     })?;
 
+    // W4.5: the RAPTOR community tree is OFF by default — see
+    // [`RAPTOR_ENABLED_ENV_VAR`]. With the gate closed NONE of the community
+    // work happens: no tree build, no summarisation, no summary embedding, and
+    // no community `WriteOp`s. `chunks` is moved through untouched (which also
+    // skips `build_raptor_tree`'s defensive `chunks.to_vec()` clone), so
+    // `Chunk.parent_id` stays `None` — it has no production reader either.
+    //
+    // INGEST-04 is unaffected in both directions: the gate only decides how
+    // many ops go into the SINGLE `Vec<WriteOp>` assembled below. It never
+    // introduces a second write path.
+    let (communities, wired_chunks) = if raptor {
+        build_community_tree(embedder, episode, chunks, &doctree, clock).await?
+    } else {
+        (Vec::new(), chunks)
+    };
+
+    // Assemble all WriteOps into the single batch.
+    // Capacity: doctree + episode + 2×chunk + 2×community (KvPut + VectorUpsert).
+    // With RAPTOR OFF the community term is zero.
+    let mut ops: Vec<WriteOp> =
+        Vec::with_capacity(2 + 2 * wired_chunks.len() + 2 * communities.len());
+    let chunk_ids: Vec<ulid::Ulid> = wired_chunks.iter().map(|chunk| chunk.id).collect();
+
+    ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
+
+    let episode_value = serde_json::to_vec(episode).map_err(|e| {
+        LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
+    })?;
+    ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
+
+    // Chunks: use wired_chunks so parent_id is serialised (TREE-01 wiring).
+    for chunk in &wired_chunks {
+        let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
+        })?;
+        ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
+        let embedding =
+            chunk.embedding.as_ref().expect("embedding assigned before assemble_and_write").clone();
+        let metadata = json!({
+            "episode_id": chunk.episode_id.to_string(),
+            "heading_path": chunk.heading_path,
+            "offset": chunk.offset,
+            "text": chunk.text,
+            "source": &episode.source,
+        });
+        validate_chunk_metadata(&metadata).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}")))
+        })?;
+        ops.push(WriteOp::VectorUpsert {
+            index: CHUNK_VECTOR_INDEX.to_string(),
+            id: chunk.id.to_bytes().to_vec(),
+            embedding,
+            metadata,
+        });
+    }
+
+    // Communities: KvPut (KV hydration) + VectorUpsert (Phase-30 B1: communities index).
+    // Both ops are added to the SAME single WriteOp vector — INGEST-04 is preserved.
+    // Iterates zero times when the W4.5 gate is closed.
+    for community in &communities {
+        // KvPut: persist the full Community struct (now with summary_embedding populated).
+        let community_value = serde_json::to_vec(community).map_err(|e| {
+            LunarisError::Storage(StorageError::Backend(format!("community serialize: {e}")))
+        })?;
+        ops.push(WriteOp::KvPut {
+            key: community_key(&episode.scope, community.id),
+            value: community_value,
+        });
+
+        // VectorUpsert: write summary embedding into the `communities` FT vector index.
+        // `extract_content_for_index("communities", ..)` in atomic.rs reads
+        // `metadata["summary"]` for BM25 content — the field MUST be present here.
+        let embedding = community
+            .summary_embedding
+            .as_ref()
+            .expect("summary_embedding assigned in Phase-30 B1 block above")
+            .clone();
+        let metadata = json!({
+            "summary": community.summary,
+            "level": community.level,
+            "parent": community.parent.map(|p| p.to_string()),
+        });
+        ops.push(WriteOp::VectorUpsert {
+            index: COMMUNITY_VECTOR_INDEX.to_string(),
+            id: community.id.to_bytes().to_vec(),
+            embedding,
+            metadata,
+        });
+
+        // TODO(phase-future): push WriteOp::GraphEdge for parent-child edges (D7 deferred).
+        // The tree is fully navigable via Community.parent / Community.members + Chunk.parent_id
+        // without graph edges. Deferring avoids shipping an untested branch
+        // (the graph-OFF path never exercises it — same trap as Phase-28 graph-ON RC).
+        // W4.5 note: still deferred, and now doubly so — the tree itself has no
+        // production reader, so a navigable edge would have nothing to navigate for.
+    }
+
+    // INGEST-04: the single atomic write for this episode (see module-level invariant).
+    // NOTE: `maintenance_hint` below is a SEPARATE, best-effort call — it does
+    // not count against the "exactly one atomic_write" invariant (INGEST-04
+    // only constrains `atomic_write`, not maintenance signalling).
+    let vector_upserts = ops.iter().filter(|op| matches!(op, WriteOp::VectorUpsert { .. })).count();
+    let lsn = storage.atomic_write(&episode.scope, &ops).await?;
+
+    // W3 (moon-v051-perf-exploit) — post-bulk-ingest maintenance hint.
+    //
+    // Cross-agent contract (FROZEN, see tmp/moon-perf-context.md): Agent A adds
+    // `StoragePort::maintenance_hint` + `MaintenanceHint` to
+    // `lunaris_core::storage::port`, defaulted to a no-op so every existing
+    // backend keeps compiling without an override. This call is fully
+    // best-effort: a failure here must NEVER fail an already-committed
+    // ingest (the atomic_write above already succeeded), so errors are
+    // logged and swallowed, not propagated.
+    if let Err(e) = storage
+        .maintenance_hint(
+            &episode.scope,
+            lunaris_core::storage::port::MaintenanceHint::BulkIngestComplete { vector_upserts },
+        )
+        .await
+    {
+        tracing::warn!(
+            err = %e,
+            vector_upserts,
+            episode_id = %episode.id,
+            "post-ingest maintenance_hint failed (best-effort, ingest already committed)"
+        );
+    }
+
+    Ok(AssembleReceipt { lsn, chunk_ids })
+}
+
+/// The complete RAPTOR community-tree pass — build, summarise, embed.
+///
+/// Extracted in W4.5 so the default (gated-OFF) ingest provably never enters
+/// it: `build_raptor_tree`, `ExtractiveSummarizer::summarize` and the
+/// community-summary `embed_batch` all live behind this one call site.
+///
+/// Returns `(communities, wired_chunks)` where every community carries a
+/// capped summary and a populated `summary_embedding`, and every chunk carries
+/// the `parent_id` of its enclosing section.
+///
+/// Calls no storage method — WriteOp assembly and the single `atomic_write`
+/// stay in [`assemble_and_write`] (INGEST-04).
+async fn build_community_tree(
+    embedder: &dyn Embedder,
+    episode: &Episode,
+    chunks: Vec<Chunk>,
+    doctree: &crate::chunker::DocTree,
+    clock: &HlcClock,
+) -> Result<(Vec<lunaris_core::primitives::Community>, Vec<Chunk>), LunarisError> {
     // Phase 29 TREE-01/STORE-01: build the RAPTOR community tree.
     // build_raptor_tree wires Chunk.parent_id; use wired_chunks for all
     // downstream serialisation so parent_id is persisted correctly.
     let (mut communities, wired_chunks) =
-        build_raptor_tree(&doctree, &chunks, &episode.scope, &episode.source, clock);
+        build_raptor_tree(doctree, &chunks, &episode.scope, &episode.source, clock);
 
     // Phase 29 TREE-02: summarise each community bottom-up (deepest level first).
     // ExtractiveSummarizer is the default: no LLM required, always succeeds.
@@ -353,115 +590,7 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
         "Phase-30 B1: every Community must have summary_embedding after embed"
     );
 
-    // Assemble all WriteOps into the single batch.
-    // Capacity: doctree + episode + 2×chunk + 2×community (KvPut + VectorUpsert).
-    let mut ops: Vec<WriteOp> =
-        Vec::with_capacity(2 + 2 * wired_chunks.len() + 2 * communities.len());
-    let chunk_ids: Vec<ulid::Ulid> = wired_chunks.iter().map(|chunk| chunk.id).collect();
-
-    ops.push(WriteOp::KvPut { key: doctree_key(&episode.scope, episode.id), value: doctree_value });
-
-    let episode_value = serde_json::to_vec(episode).map_err(|e| {
-        LunarisError::Storage(StorageError::Backend(format!("episode serialize: {e}")))
-    })?;
-    ops.push(WriteOp::KvPut { key: episode_key(&episode.scope, episode.id), value: episode_value });
-
-    // Chunks: use wired_chunks so parent_id is serialised (TREE-01 wiring).
-    for chunk in &wired_chunks {
-        let chunk_value = serde_json::to_vec(chunk).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("chunk serialize: {e}")))
-        })?;
-        ops.push(WriteOp::KvPut { key: chunk_key(&episode.scope, chunk.id), value: chunk_value });
-        let embedding =
-            chunk.embedding.as_ref().expect("embedding assigned before assemble_and_write").clone();
-        let metadata = json!({
-            "episode_id": chunk.episode_id.to_string(),
-            "heading_path": chunk.heading_path,
-            "offset": chunk.offset,
-            "text": chunk.text,
-            "source": &episode.source,
-        });
-        validate_chunk_metadata(&metadata).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}")))
-        })?;
-        ops.push(WriteOp::VectorUpsert {
-            index: CHUNK_VECTOR_INDEX.to_string(),
-            id: chunk.id.to_bytes().to_vec(),
-            embedding,
-            metadata,
-        });
-    }
-
-    // Communities: KvPut (KV hydration) + VectorUpsert (Phase-30 B1: communities index).
-    // Both ops are added to the SAME single WriteOp vector — INGEST-04 is preserved.
-    for community in &communities {
-        // KvPut: persist the full Community struct (now with summary_embedding populated).
-        let community_value = serde_json::to_vec(community).map_err(|e| {
-            LunarisError::Storage(StorageError::Backend(format!("community serialize: {e}")))
-        })?;
-        ops.push(WriteOp::KvPut {
-            key: community_key(&episode.scope, community.id),
-            value: community_value,
-        });
-
-        // VectorUpsert: write summary embedding into the `communities` FT vector index.
-        // `extract_content_for_index("communities", ..)` in atomic.rs reads
-        // `metadata["summary"]` for BM25 content — the field MUST be present here.
-        let embedding = community
-            .summary_embedding
-            .as_ref()
-            .expect("summary_embedding assigned in Phase-30 B1 block above")
-            .clone();
-        let metadata = json!({
-            "summary": community.summary,
-            "level": community.level,
-            "parent": community.parent.map(|p| p.to_string()),
-        });
-        ops.push(WriteOp::VectorUpsert {
-            index: COMMUNITY_VECTOR_INDEX.to_string(),
-            id: community.id.to_bytes().to_vec(),
-            embedding,
-            metadata,
-        });
-
-        // TODO(phase-future): push WriteOp::GraphEdge for parent-child edges (D7 deferred).
-        // The tree is fully navigable via Community.parent / Community.members + Chunk.parent_id
-        // without graph edges. Deferring avoids shipping an untested branch
-        // (the graph-OFF path never exercises it — same trap as Phase-28 graph-ON RC).
-    }
-
-    // INGEST-04: the single atomic write for this episode (see module-level invariant).
-    // NOTE: `maintenance_hint` below is a SEPARATE, best-effort call — it does
-    // not count against the "exactly one atomic_write" invariant (INGEST-04
-    // only constrains `atomic_write`, not maintenance signalling).
-    let vector_upserts = ops.iter().filter(|op| matches!(op, WriteOp::VectorUpsert { .. })).count();
-    let lsn = storage.atomic_write(&episode.scope, &ops).await?;
-
-    // W3 (moon-v051-perf-exploit) — post-bulk-ingest maintenance hint.
-    //
-    // Cross-agent contract (FROZEN, see tmp/moon-perf-context.md): Agent A adds
-    // `StoragePort::maintenance_hint` + `MaintenanceHint` to
-    // `lunaris_core::storage::port`, defaulted to a no-op so every existing
-    // backend keeps compiling without an override. This call is fully
-    // best-effort: a failure here must NEVER fail an already-committed
-    // ingest (the atomic_write above already succeeded), so errors are
-    // logged and swallowed, not propagated.
-    if let Err(e) = storage
-        .maintenance_hint(
-            &episode.scope,
-            lunaris_core::storage::port::MaintenanceHint::BulkIngestComplete { vector_upserts },
-        )
-        .await
-    {
-        tracing::warn!(
-            err = %e,
-            vector_upserts,
-            episode_id = %episode.id,
-            "post-ingest maintenance_hint failed (best-effort, ingest already committed)"
-        );
-    }
-
-    Ok(AssembleReceipt { lsn, chunk_ids })
+    Ok((communities, wired_chunks))
 }
 
 /// Embed `drafts` in batches of [`INGEST_EMBED_BATCH_SIZE`]. On batch failure,
@@ -620,9 +749,17 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     }
 
     // Step 4: delegate to assemble_and_write — the single storage write call (INGEST-04).
-    Ok(assemble_and_write(storage, embedder, &episode, chunks, &winner.heading_records, clock)
-        .await?
-        .lsn)
+    Ok(assemble_and_write(
+        storage,
+        embedder,
+        &episode,
+        chunks,
+        &winner.heading_records,
+        clock,
+        raptor_enabled(),
+    )
+    .await?
+    .lsn)
 }
 
 #[cfg(test)]
