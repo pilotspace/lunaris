@@ -31,6 +31,8 @@ use lunaris_core::hlc::Hlc;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::types::WriteOp;
 
+use crate::suite_scope::SuiteScope;
+
 /// A pin unambiguously in the past — 1970-01-01T00:00:01Z. Older than any
 /// possible write, so a backend with a real version chain must answer
 /// "absent" and a backend without one must answer "cannot".
@@ -48,8 +50,8 @@ fn now_pin() -> Hlc {
     Hlc::from_parts(ms, 0, 0)
 }
 
-pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    let key: Vec<u8> = b"conformance:read_as_of:k1".to_vec();
+pub async fn snapshot(storage: &Arc<dyn StoragePort>, run: &SuiteScope) -> anyhow::Result<()> {
+    let key: Vec<u8> = run.key("read_as_of:k1");
     let value: Vec<u8> = b"snapshot-test-payload".to_vec();
 
     // Pre-write read must return None for a key that has never been
@@ -62,7 +64,7 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     // (Moon) now correctly refuses — the refusal is asserted by
     // `historical_pin_is_explicit`, and asserting it here too would
     // conflate "the key is absent" with "the backend cannot look back".
-    let pre = storage.read_as_of(&lunaris_core::Scope::dev(), &key, now_pin()).await?;
+    let pre = storage.read_as_of(run.scope(), &key, now_pin()).await?;
     anyhow::ensure!(
         pre.is_none(),
         "read_as_of::snapshot: expected None at 'now' before any write, got {:?}",
@@ -70,17 +72,13 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
     );
 
     storage
-        .atomic_write(
-            &lunaris_core::Scope::dev(),
-            &[WriteOp::KvPut { key: key.clone(), value: value.clone() }],
-        )
+        .atomic_write(run.scope(), &[WriteOp::KvPut { key: key.clone(), value: value.clone() }])
         .await?;
 
     let now = Hlc { wall_ms: u64::MAX / 2, counter: 0, node_id: 0 };
-    let post =
-        storage.read_as_of(&lunaris_core::Scope::dev(), &key, now).await?.ok_or_else(|| {
-            anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None")
-        })?;
+    let post = storage.read_as_of(run.scope(), &key, now).await?.ok_or_else(|| {
+        anyhow::anyhow!("read_as_of::snapshot: expected Some after commit, got None")
+    })?;
     anyhow::ensure!(
         post.value.as_ref() == value.as_slice(),
         "read_as_of::snapshot: payload mismatch — got {} bytes, want {}",
@@ -108,8 +106,11 @@ pub async fn snapshot(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
 ///
 /// Runs for EVERY backend, gated on nothing. A backend that cannot do
 /// as-of reads still has to prove it fails loudly.
-pub async fn historical_pin_is_explicit(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    let scope = lunaris_core::Scope::dev();
+pub async fn historical_pin_is_explicit(
+    storage: &Arc<dyn StoragePort>,
+    run: &SuiteScope,
+) -> anyhow::Result<()> {
+    let scope = run.scope().clone();
     let key: Vec<u8> = format!("conformance:read_as_of:historical:{}", ulid::Ulid::new()).into();
     let value: Vec<u8> = b"written-now-not-in-1970".to_vec();
 

@@ -46,21 +46,27 @@ pub mod vector_search;
 /// [`StorageCapabilities`](lunaris_core::storage::StorageCapabilities)
 /// signals the feature is unsupported (CONTEXT.md D-12).
 pub async fn run_full_storage_suite(storage: Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    atomic_write::all_or_nothing(&storage).await?;
-    atomic_write::lsn_monotonic(&storage).await?;
-    vector_search::recall(&storage).await?;
+    // F11 — one fresh partition per invocation, threaded down rather than read
+    // from a process-global. The suite used to write fixed keys under
+    // `Scope::dev()`, so it was green exactly once per store and red on every
+    // re-run; `tests/storage_suite_is_rerunnable.rs` runs this function twice
+    // in one process and would still collide if this were cached anywhere.
+    let run = crate::suite_scope::SuiteScope::fresh();
+    atomic_write::all_or_nothing(&storage, &run).await?;
+    atomic_write::lsn_monotonic(&storage, &run).await?;
+    vector_search::recall(&storage, &run).await?;
     if storage.capabilities().graph_native {
-        graph_traverse::cypher_subset(&storage).await?;
+        graph_traverse::cypher_subset(&storage, &run).await?;
     } else {
         eprintln!("conformance: SKIP graph_traverse::cypher_subset (graph_native=false)");
     }
-    scan_range::prefix(&storage).await?;
-    read_as_of::snapshot(&storage).await?;
+    scan_range::prefix(&storage, &run).await?;
+    read_as_of::snapshot(&storage, &run).await?;
     // 0.6.2 task 9 — NOT capability-gated on purpose: a backend that cannot
     // answer as-of reads must still prove it refuses them explicitly.
-    read_as_of::historical_pin_is_explicit(&storage).await?;
+    read_as_of::historical_pin_is_explicit(&storage, &run).await?;
     if storage.capabilities().queue_native {
-        queue::publish_subscribe_round_trip(&storage).await?;
+        queue::publish_subscribe_round_trip(&storage, &run).await?;
     } else {
         eprintln!("conformance: SKIP queue::publish_subscribe_round_trip (queue_native=false)");
     }

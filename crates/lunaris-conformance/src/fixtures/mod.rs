@@ -225,6 +225,7 @@ pub(crate) fn stub_embed(s: &str) -> Vec<f32> {
 /// Single `atomic_write` per INGEST-04 invariant.
 pub async fn seed_three_chunks(
     storage: &Arc<dyn StoragePort>,
+    run: &crate::suite_scope::SuiteScope,
     target_vec: &[f32],
 ) -> anyhow::Result<usize> {
     let mut ops: Vec<WriteOp> = Vec::with_capacity(3);
@@ -248,7 +249,11 @@ pub async fn seed_three_chunks(
         });
     }
     let count = ops.len();
-    storage.atomic_write(&lunaris_core::Scope::dev(), &ops).await?;
+    // F11 — the run's own scope, not `Scope::dev()`. The chunk IDs below stay
+    // fixed on purpose: Moon keys a vector at `{ft_index_name(scope, kind)}:{id}`,
+    // so the scope alone partitions them. (KV is the leg that does NOT get that
+    // for free — see `SuiteScope::key`.)
+    storage.atomic_write(run.scope(), &ops).await?;
     Ok(count)
 }
 
@@ -260,13 +265,18 @@ pub async fn seed_three_chunks(
 /// `^[A-Za-z_][A-Za-z0-9_]*$` per the T-01-03-01 / T-01-04-03 contracts.
 ///
 /// Single `atomic_write` per INGEST-04 invariant.
-pub async fn seed_one_edge(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
+pub async fn seed_one_edge(
+    storage: &Arc<dyn StoragePort>,
+    run: &crate::suite_scope::SuiteScope,
+) -> anyhow::Result<()> {
     let alice_id = b"conformance_alice".to_vec();
     let bob_id = b"conformance_bob".to_vec();
 
+    // Node IDs stay fixed: Moon writes graph ops into `graph_key(scope)`, so
+    // the run's scope is what keeps two invocations off each other's edges.
     storage
         .atomic_write(
-            &lunaris_core::Scope::dev(),
+            run.scope(),
             &[
                 WriteOp::GraphNode {
                     graph: "lunaris_graph".to_string(),

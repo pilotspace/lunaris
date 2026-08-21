@@ -17,32 +17,34 @@ use lunaris_core::error::StorageError;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::types::WriteOp;
 
+use crate::suite_scope::SuiteScope;
+
 /// Number of seeded rows under the `scan_range` prefix. 7 is small
 /// enough to stay deterministic AND large enough to catch off-by-one
 /// stream-walk bugs.
 const SEEDED_ROWS: usize = 7;
 
-pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
-    let prefix: &[u8] = b"conformance:scan_range:";
+pub async fn prefix(storage: &Arc<dyn StoragePort>, run: &SuiteScope) -> anyhow::Result<()> {
+    let prefix: Vec<u8> = run.key("scan_range:");
 
     // Seed each row in its own atomic_write so that order is well-defined
     // (the conformance contract is about scan completeness, not LSN
     // packing).
     for i in 0..SEEDED_ROWS {
-        let key = format!("conformance:scan_range:{i:03}").into_bytes();
+        let key = run.key(&format!("scan_range:{i:03}"));
         storage
             .atomic_write(
-                &lunaris_core::Scope::dev(),
+                run.scope(),
                 &[WriteOp::KvPut { key, value: format!("v{i}").into_bytes() }],
             )
             .await?;
     }
 
-    let count = count_under_prefix(storage, prefix).await?;
+    let count = count_under_prefix(storage, run, &prefix).await?;
     anyhow::ensure!(
         count as usize == SEEDED_ROWS,
         "scan_range::prefix: expected {SEEDED_ROWS} rows under {:?}, got {count}",
-        std::str::from_utf8(prefix).unwrap_or("<non-utf8>"),
+        std::str::from_utf8(&prefix).unwrap_or("<non-utf8>"),
     );
     Ok(())
 }
@@ -53,8 +55,12 @@ pub async fn prefix(storage: &Arc<dyn StoragePort>) -> anyhow::Result<()> {
 /// Mirrors `crash_recovery.rs:202-217` shape verbatim — the only delta is
 /// returning a `Result` instead of `panic!()` so the failure surfaces
 /// through `anyhow` rather than a runtime panic.
-async fn count_under_prefix(storage: &Arc<dyn StoragePort>, prefix: &[u8]) -> anyhow::Result<u64> {
-    let mut stream = storage.scan_range(&lunaris_core::Scope::dev(), prefix, None).await?;
+async fn count_under_prefix(
+    storage: &Arc<dyn StoragePort>,
+    run: &SuiteScope,
+    prefix: &[u8],
+) -> anyhow::Result<u64> {
+    let mut stream = storage.scan_range(run.scope(), prefix, None).await?;
     let mut total = 0u64;
     while let Some(item) = stream.next().await {
         match item {
