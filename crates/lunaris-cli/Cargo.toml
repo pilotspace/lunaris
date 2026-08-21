@@ -11,9 +11,26 @@ description      = "Human- and script-facing CLI for a running Lunaris memory st
 # which carries an optional PATH dependency on `vendor/moon`. cargo strips the
 # path on publish and demands a registry version, and the `moon` name on
 # crates.io belongs to an unrelated third party — so no version can ever
-# satisfy it. Distribution mirrors lunaris-mcp: npx / uvx / GitHub Release
-# binaries. See README.md and docs/book/src/mcp/index.md, which already
-# document the same caveat honestly for lunaris-mcp.
+# satisfy it.
+#
+# DISTRIBUTION: build from source. That is the whole story today.
+#
+#   cargo install --git https://github.com/pilotspace/lunaris lunaris-cli
+#
+# This comment used to say "Distribution mirrors lunaris-mcp: npx / uvx /
+# GitHub Release binaries." That was aspirational and is corrected here
+# (verified 2026-08-21): `lunaris-cli` is absent from crates.io (404), from
+# npm as `@pilotspace/lunaris-cli` (404), from PyPI as `lunaris-cli` (404),
+# and from the v0.7.0 GitHub release assets — which carry lunaris-mcp
+# tarballs, Python wheels and NAPI .node files, and nothing for the CLI. There
+# is no `crates/lunaris-cli-npm` / `-py` wrapper crate the way lunaris-mcp has,
+# and no workflow builds a CLI artifact. It is also mentioned nowhere in the
+# README or the book.
+#
+# To actually ship it, mirror lunaris-mcp end to end: a wrapper package pair
+# with a postinstall binary downloader, a prebuild matrix workflow, release
+# assets, and docs. Until someone does that, this stays a source build and the
+# manifest says so.
 publish          = false
 
 [[bin]]
