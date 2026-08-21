@@ -788,16 +788,22 @@ async fn uat4_forget_honors_scope() {
     );
 }
 
-/// **Target contract for UAT-4 once `ScopedLunaris::forget` lands (Wave 1F).**
+/// **UAT-4 cross-scope contract — un-ignored by W1.1 (2026-08-21).**
 ///
-/// This test is currently `#[ignore]`'d because the forget handler has not yet
-/// been migrated from `state.lunaris.forget(request)` to a scoped equivalent.
-/// Once the migration lands, un-ignore this test — it will fail until the
-/// handler returns `403 Forbidden` or `404 Not Found` for a cross-scope target.
+/// Parked behind `#[ignore = "un-ignore after ScopedLunaris::forget migration
+/// lands (Wave 1F / v0.3)"]` since v0.3. Wave 1F landed in v0.3; the ignore
+/// outlived it by four releases, and the P0 it guarded shipped in all four.
+/// It is live now: a cross-scope `Id` target answers `404 Not Found`.
 ///
-/// External consumers (Helios): once this test turns green, the v0.3 contract
-/// applies and your client code must handle 403/404 on cross-scope forget
-/// attempts (not just 200 with rows_written=0).
+/// External consumers (Helios): the v0.3 contract applies — handle 403/404 on
+/// a cross-scope forget, not just `200` with `rows_written = 0`.
+///
+/// **This test is NOT the discriminator for the W1.1 defect.** Mutation-proved:
+/// revert `handle_forget` to the deprecated `Lunaris::forget` and this test
+/// still passes, because a `Scope::dev()` scan matches nothing, and "matched
+/// nothing" is exactly what the 404 arm answers. Isolation was never the bug —
+/// the verb was inert for everybody. `uat4_forget_in_own_scope_actually_writes`
+/// below is the test that dies under that mutation; keep them as a pair.
 #[tokio::test]
 async fn uat4_forget_honors_scope_target_contract() {
     let clock = HlcClock::new(0);
