@@ -127,16 +127,42 @@ class EveryLiveMoonSuiteIsNamedByTheJob(unittest.TestCase):
         # A whole-suite invocation covers every file under it. Two shapes:
         # `pytest <dir>/` names the directory; `npx vitest run --config X`
         # with no file argument runs the config's whole `include` glob.
-        whole_vitest = re.search(
-            r"vitest run(?:\s+--[\w-]+(?:[= ]\S+)?)*\s*$", job, re.M
-        )
+        #
+        # Tokenized rather than pattern-matched: the obvious regex for
+        # "`vitest run` followed only by flags" nests two quantifiers
+        # (`(?:\s+--[\w-]+(?:[= ]\S+)?)*`) and CodeQL flagged it as
+        # exponential-backtracking (py/redos). A split-and-walk has no
+        # backtracking at all and reads more plainly besides.
+        def _is_whole_suite_vitest(line: str) -> bool:
+            parts = line.split()
+            if "vitest" not in parts:
+                return False
+            rest = parts[parts.index("vitest") + 1 :]
+            if not rest or rest[0] != "run":
+                return False
+            rest = rest[1:]
+            skip_next = False
+            for tok in rest:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if not tok.startswith("-"):
+                    # A bare token after `run` is a file/glob filter — this
+                    # invocation runs a subset, not the whole suite.
+                    return False
+                if "=" not in tok:
+                    # `--config vitest.config.mts` — the value is the next token.
+                    skip_next = True
+            return True
+
+        whole_vitest = any(_is_whole_suite_vitest(ln) for ln in job.splitlines())
 
         def covered(p: Path) -> bool:
             if p.name in job:
                 return True
             if str(p.parent.relative_to(REPO_ROOT)) in job:
                 return True
-            return p.suffix == ".mts" and whole_vitest is not None
+            return p.suffix == ".mts" and whole_vitest
 
         missing = [str(p.relative_to(REPO_ROOT)) for p in files if not covered(p)]
         self.assertEqual(
