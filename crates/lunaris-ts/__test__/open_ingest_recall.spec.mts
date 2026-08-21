@@ -83,6 +83,14 @@ function buildEpisode(content: string): object {
   };
 }
 
+/**
+ * Bail out of a test as SKIPPED, never as passed.
+ *
+ * The bare `return` this replaces made vitest report an un-run test as
+ * green. Mirrors the helper in `documentary_parity.spec.mts`.
+ */
+type SkippableCtx = { skip: (reason?: string) => void };
+
 describe("open / ingest / recall / forget / snapshot roundtrip", () => {
   test("errorsMapToLunarisError — unsupported scheme raises Error with STORAGE prefix", async () => {
     // Offline — exercises Rust-side URL parse + error taxonomy mapping.
@@ -91,9 +99,15 @@ describe("open / ingest / recall / forget / snapshot roundtrip", () => {
     ).rejects.toThrow(/STORAGE:/);
   });
 
-  test("openRoundtrip — await open(url) returns a Lunaris handle", async () => {
+  test("openRoundtrip — await open(url) returns a Lunaris handle", async (
+    ctx: SkippableCtx,
+  ) => {
     const url = resolveMoonUrl();
     if (!(await moonReachable(url))) {
+      // This was a bare `return` — silent, with not even a console line, so
+      // the most basic open -> ingest -> recall test in the SDK reported
+      // green whenever Moon was unreachable. That is the whole surface.
+      ctx.skip(`Moon unreachable at ${url}`);
       return;
     }
     try {
