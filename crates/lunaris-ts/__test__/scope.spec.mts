@@ -131,102 +131,116 @@ describe("EpisodeBuilder — offline", () => {
 // Online: ScopedLunaris ingest + cross-scope isolation
 // ---------------------------------------------------------------------------
 
+/**
+ * Bail out of a test as SKIPPED, never as passed.
+ *
+ * A bare `return` from a test body is a PASS to vitest. Every test below
+ * used to take one on an unreachable Moon AND on any error whose message
+ * started with `STORAGE:` — so the cross-scope isolation test, the only
+ * thing in this file proving one agent cannot read another's memories,
+ * reported green whenever ingest or recall failed.
+ */
+type SkippableCtx = { skip: (reason?: string) => void };
+
+/**
+ * Probe, open, and hand back a handle — or SKIP with a named reason.
+ *
+ * The handshake is the ONLY place a `STORAGE:` error is tolerated, because
+ * a plain Redis without RediSearch cannot open a Lunaris handle and that is
+ * a missing prerequisite rather than a defect. Everything after the open is
+ * the surface under test and must succeed or fail loudly.
+ */
+async function openOrSkip(ctx: SkippableCtx, url: string): Promise<ScopeHandle | null> {
+  if (!(await moonReachable(url))) {
+    ctx.skip(`Moon unreachable at ${url}`);
+    return null;
+  }
+  try {
+    return (await lunaris.open(url)) as ScopeHandle;
+  } catch (err) {
+    const msg = (err as Error).message ?? "";
+    if (msg.startsWith("STORAGE:")) {
+      ctx.skip(`the handle would not open (plain Redis without RediSearch?): ${msg}`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+interface ScopedView {
+  ingest: (b: unknown) => Promise<string>;
+  recall: (q: string) => Promise<unknown>;
+  dsl: () => unknown;
+  scope: { asStr: () => string };
+}
+
+interface ScopeHandle {
+  scoped: (s: unknown) => ScopedView;
+}
+
 describe("ScopedLunaris — online (requires Moon backend)", () => {
-  test("scoped().ingest() returns an LSN string", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-
-    try {
-      const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent.alpha");
-      const builder = new lunaris.EpisodeBuilder(
-        "ts-test/scope",
-        "the quick brown fox jumps over the lazy dog",
-      );
-      const scoped = handle.scoped(scope);
-      const lsn = await scoped.ingest(builder);
-      expect(typeof lsn).toBe("string");
-      expect(lsn.includes(":")).toBe(true);
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("scoped().ingest() returns an LSN string", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const scope = lunaris.Scope.new("agent.alpha");
+    const builder = new lunaris.EpisodeBuilder(
+      "ts-test/scope",
+      "the quick brown fox jumps over the lazy dog",
+    );
+    const scoped = handle.scoped(scope);
+    const lsn = await scoped.ingest(builder);
+    expect(typeof lsn).toBe("string");
+    expect(lsn.includes(":")).toBe(true);
   });
 
-  test("scoped().ingest() with metadata and tRef", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-
-    try {
-      const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent.alpha");
-      const builder = new lunaris.EpisodeBuilder("ts-test/meta", "some content")
-        .tRef("2026-01-01T00:00:00Z")
-        .metadata({ source_type: "unit-test" });
-      const lsn = await handle.scoped(scope).ingest(builder);
-      expect(typeof lsn).toBe("string");
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("scoped().ingest() with metadata and tRef", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const scope = lunaris.Scope.new("agent.alpha");
+    const builder = new lunaris.EpisodeBuilder("ts-test/meta", "some content")
+      .tRef("2026-01-01T00:00:00Z")
+      .metadata({ source_type: "unit-test" });
+    const lsn = await handle.scoped(scope).ingest(builder);
+    expect(typeof lsn).toBe("string");
   });
 
-  test("cross-scope isolation: scope_b does not see scope_a content", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
+  test("cross-scope isolation: scope_b does not see scope_a content", async (
+    ctx: SkippableCtx,
+  ) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const unique = `lunaris-wave3g-ts-isolation-${Date.now()}`;
 
-    try {
-      const handle = await lunaris.open(url);
-      const unique = `lunaris-wave3g-ts-isolation-${Date.now()}`;
+    const scopeA = lunaris.Scope.new("wave3g.scope-a");
+    const scopeB = lunaris.Scope.new("wave3g.scope-b");
 
-      const scopeA = lunaris.Scope.new("wave3g.scope-a");
-      const scopeB = lunaris.Scope.new("wave3g.scope-b");
+    // Ingest under scope_a.
+    const builder = new lunaris.EpisodeBuilder("ts-test/isolation", unique);
+    await handle.scoped(scopeA).ingest(builder);
 
-      // Ingest under scope_a.
-      const builder = new lunaris.EpisodeBuilder("ts-test/isolation", unique);
-      await handle.scoped(scopeA).ingest(builder);
+    // Recall under scope_b — must not return our unique sentinel.
+    const hitsB = await handle.scoped(scopeB).recall(unique);
+    expect(Array.isArray(hitsB)).toBe(true);
 
-      // Recall under scope_b — must not return our unique sentinel.
-      const hitsB = await handle.scoped(scopeB).recall(unique);
-      expect(Array.isArray(hitsB)).toBe(true);
-
-      const matching = (hitsB as unknown[]).filter((h) =>
-        JSON.stringify(h).includes(unique),
-      );
-      expect(matching).toHaveLength(0);
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+    const matching = (hitsB as unknown[]).filter((h) =>
+      JSON.stringify(h).includes(unique),
+    );
+    expect(matching).toHaveLength(0);
   });
 
-  test("scoped.scope getter returns bound Scope", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-
-    try {
-      const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent.alpha");
-      const scoped = handle.scoped(scope);
-      expect(scoped.scope.asStr()).toBe("agent.alpha");
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("scoped.scope getter returns bound Scope", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const scope = lunaris.Scope.new("agent.alpha");
+    const scoped = handle.scoped(scope);
+    expect(scoped.scope.asStr()).toBe("agent.alpha");
   });
 
-  test("scoped.dsl() returns a RetrievalBuilder", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-
-    try {
-      const handle = await lunaris.open(url);
-      const scope = lunaris.Scope.new("agent.alpha");
-      const builder = handle.scoped(scope).dsl();
-      expect(builder).toBeDefined();
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("scoped.dsl() returns a RetrievalBuilder", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const scope = lunaris.Scope.new("agent.alpha");
+    const builder = handle.scoped(scope).dsl();
+    expect(builder).toBeDefined();
   });
 });

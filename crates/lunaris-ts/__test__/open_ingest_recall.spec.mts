@@ -91,6 +91,46 @@ function buildEpisode(content: string): object {
  */
 type SkippableCtx = { skip: (reason?: string) => void };
 
+/**
+ * Probe, open, and hand back a handle — or SKIP with a named reason.
+ *
+ * The two ways these tests could legitimately not run are the two this
+ * helper owns: no Moon at the URL, and a Moon that is really a plain Redis
+ * (no RediSearch), which fails the Lunaris handshake. Everything AFTER the
+ * open is the surface under test, so it must succeed or fail loudly.
+ *
+ * That distinction is why this exists. Each test used to wrap its whole
+ * body in `try { ... } catch (err) { if (message.startsWith("STORAGE:"))
+ * return; throw err; }` — a bare `return` from a test is a PASS to vitest,
+ * so an `ingest` or `forget` that failed with any storage error reported
+ * green. Only the handshake gets that leniency now, and only as a visible
+ * skip.
+ */
+async function openOrSkip(ctx: SkippableCtx, url: string): Promise<Handle | null> {
+  if (!(await moonReachable(url))) {
+    ctx.skip(`Moon unreachable at ${url}`);
+    return null;
+  }
+  try {
+    return (await lunaris.open(url)) as Handle;
+  } catch (err) {
+    const msg = (err as Error).message ?? "";
+    if (msg.startsWith("STORAGE:")) {
+      ctx.skip(`the handle would not open (plain Redis without RediSearch?): ${msg}`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+interface Handle {
+  ingest: (ep: object) => Promise<string>;
+  snapshot: () => Promise<string>;
+  forget: (req: object) => Promise<unknown>;
+  recall: () => unknown;
+  graphPipeline: object;
+}
+
 describe("open / ingest / recall / forget / snapshot roundtrip", () => {
   test("errorsMapToLunarisError — unsupported scheme raises Error with STORAGE prefix", async () => {
     // Offline — exercises Rust-side URL parse + error taxonomy mapping.
@@ -102,86 +142,64 @@ describe("open / ingest / recall / forget / snapshot roundtrip", () => {
   test("openRoundtrip — await open(url) returns a Lunaris handle", async (
     ctx: SkippableCtx,
   ) => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) {
-      // This was a bare `return` — silent, with not even a console line, so
-      // the most basic open -> ingest -> recall test in the SDK reported
-      // green whenever Moon was unreachable. That is the whole surface.
-      ctx.skip(`Moon unreachable at ${url}`);
-      return;
-    }
-    try {
-      const handle = await lunaris.open(url);
-      expect(handle).toBeDefined();
-      expect(typeof handle.ingest).toBe("function");
-      expect(typeof handle.snapshot).toBe("function");
-      expect(typeof handle.graphPipeline).toBe("object");
-    } catch (err) {
-      // Plain Redis without RediSearch fails the Lunaris handshake —
-      // skip gracefully with the reason surfaced.
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+    // The bare `return` this replaces was silent, with not even a console
+    // line, so the most basic open -> ingest -> recall test in the SDK
+    // reported green whenever Moon was unreachable. That is the whole
+    // surface.
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    expect(handle).toBeDefined();
+    expect(typeof handle.ingest).toBe("function");
+    expect(typeof handle.snapshot).toBe("function");
+    expect(typeof handle.graphPipeline).toBe("object");
   });
 
-  test("snapshotRoundtrip — snapshot returns a monotonic LSN string", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-    try {
-      const handle = await lunaris.open(url);
-      const s1 = await handle.snapshot();
-      const s2 = await handle.snapshot();
-      expect(typeof s1).toBe("string");
-      expect(typeof s2).toBe("string");
-      // Lsn Display format is "{wall_ms}:{counter}" — compare on the
-      // numeric parts because ordering isn't lexicographic after certain
-      // wall/counter transitions.
-      const parse = (s: string): [number, number] => {
-        const [a, b] = s.split(":", 2);
-        return [Number.parseInt(a, 10), Number.parseInt(b, 10)];
-      };
-      const [w1, c1] = parse(s1);
-      const [w2, c2] = parse(s2);
-      expect(w2 > w1 || (w2 === w1 && c2 >= c1)).toBe(true);
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("snapshotRoundtrip — snapshot returns a monotonic LSN string", async (
+    ctx: SkippableCtx,
+  ) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const s1 = await handle.snapshot();
+    const s2 = await handle.snapshot();
+    expect(typeof s1).toBe("string");
+    expect(typeof s2).toBe("string");
+    // Lsn Display format is "{wall_ms}:{counter}" — compare on the
+    // numeric parts because ordering isn't lexicographic after certain
+    // wall/counter transitions.
+    const parse = (s: string): [number, number] => {
+      const [a, b] = s.split(":", 2);
+      return [Number.parseInt(a, 10), Number.parseInt(b, 10)];
+    };
+    const [w1, c1] = parse(s1);
+    const [w2, c2] = parse(s2);
+    expect(w2 > w1 || (w2 === w1 && c2 >= c1)).toBe(true);
   });
 
-  test("ingestRoundtrip — ingest returns an LSN string shaped wall_ms:counter", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-    try {
-      const handle = await lunaris.open(url);
-      const ep = buildEpisode("the quick brown fox jumps over the lazy dog");
-      const lsn = await handle.ingest(ep);
-      expect(typeof lsn).toBe("string");
-      expect(lsn.includes(":")).toBe(true);
+  test("ingestRoundtrip — ingest returns an LSN string shaped wall_ms:counter", async (
+    ctx: SkippableCtx,
+  ) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const ep = buildEpisode("the quick brown fox jumps over the lazy dog");
+    const lsn = await handle.ingest(ep);
+    expect(typeof lsn).toBe("string");
+    expect(lsn.includes(":")).toBe(true);
 
-      const builder = handle.recall();
-      expect(builder).toBeDefined();
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+    const builder = handle.recall();
+    expect(builder).toBeDefined();
   });
 
-  test("forgetRoundtrip — dry_run returns a receipt object with preview=true", async () => {
-    const url = resolveMoonUrl();
-    if (!(await moonReachable(url))) return;
-    try {
-      const handle = await lunaris.open(url);
-      const req = {
-        target: { Scope: { BySource: "ts-test/nonexistent-scope" } },
-        options: { hard: false, dry_run: true, confirmation_token: null },
-      };
-      const receipt = await handle.forget(req);
-      expect(typeof receipt).toBe("object");
-      expect((receipt as { preview?: boolean }).preview).toBe(true);
-    } catch (err) {
-      if ((err as Error).message?.startsWith("STORAGE:")) return;
-      throw err;
-    }
+  test("forgetRoundtrip — dry_run returns a receipt object with preview=true", async (
+    ctx: SkippableCtx,
+  ) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const req = {
+      target: { Scope: { BySource: "ts-test/nonexistent-scope" } },
+      options: { hard: false, dry_run: true, confirmation_token: null },
+    };
+    const receipt = await handle.forget(req);
+    expect(typeof receipt).toBe("object");
+    expect((receipt as { preview?: boolean }).preview).toBe(true);
   });
 });
