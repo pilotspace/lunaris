@@ -58,7 +58,10 @@ jobs:
       EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
       RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf
       RERANKER_GGUF_SHA256: 1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef
-      BASELINE_NAME: v0.6-llamacpp-cpu-x86_64
+      # PREFIX only. The CPU half is appended by the fingerprint step below:
+      # a job-level `env:` map is expanded BEFORE a runner is assigned, so it
+      # cannot see the hardware (STARTUP-01 — that rejects the entire file).
+      BASELINE_PREFIX: v0.6-llamacpp-cpu-x86_64
       # Resolved once: workflow_dispatch asking to (re)bless the baseline.
       SAVE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.save-baseline }}
     steps:
@@ -102,6 +105,39 @@ jobs:
           test -s ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
           test -s ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
 
+      - name: Fingerprint the runner CPU (baselines are hardware-specific)
+        # GitHub's ubuntu-24.04 pool is NOT one machine. Measured 2026-08-21
+        # across 4 runs of this workflow, rerank/1x8 falls into two tight
+        # clusters -- 1.2943-1.3127 s and 1.5160-1.5283 s. Within-cluster
+        # spread is 1.4% and 0.8%; BETWEEN clusters it is 16.8%. Runner image
+        # version does not correlate (a failing run shared 20260810.271.1 with
+        # two passing ones), so the split is the underlying CPU.
+        #
+        # With one shared baseline that made the 5% cliff a coin flip: the
+        # baseline was blessed on the fast cluster, so every push that landed
+        # on the slow one failed with a "regression" of +6-16% while the code
+        # was provably untouched. Run 32391855064 blamed e1666ad, a commit that
+        # adds a CLI crate and whose Cargo.lock diff has zero deletions -- it
+        # cannot have changed one instruction in lunaris-llamacpp.
+        #
+        # Keying the baseline by CPU makes the comparison like-for-like, which
+        # is what makes 5% a meaningful threshold at all (1.4% same-hardware
+        # spread sits well under it).
+        run: |
+          set -euo pipefail
+          model="$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo || true)"
+          [ -n "$model" ] || model="unknown-cpu"
+          fp="$(printf '%s' "$model" | tr 'A-Z' 'a-z' | tr -cd '[:alnum:]' | cut -c1-28)"
+          echo "CPU_MODEL=$model" >> "$GITHUB_ENV"
+          echo "BASELINE_NAME=${BASELINE_PREFIX}-${fp}" >> "$GITHUB_ENV"
+          echo "::notice::runner CPU '$model' -> baseline '${BASELINE_PREFIX}-${fp}'"
+          {
+            echo "### perf-gates hardware"
+            echo
+            echo "- CPU: \`$model\`"
+            echo "- baseline: \`${BASELINE_PREFIX}-${fp}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Restore saved baseline
         if: env.SAVE_BASELINE != 'true'
         uses: dawidd6/action-download-artifact@v6
@@ -131,7 +167,7 @@ jobs:
             cargo bench -p lunaris-bench --features llamacpp --bench llamacpp_hot_path -- \
               --baseline "${BASELINE_NAME}"
           else
-            echo "::warning::No saved baseline — bench runs but the regression gate is vacuously green. Dispatch with save-baseline=true to bless one."
+            echo "::warning::No saved baseline for '${BASELINE_NAME}' (CPU: ${CPU_MODEL}) — bench runs but the regression gate is vacuously green for this hardware. Dispatch with save-baseline=true while it is scheduled on this CPU to bless one."
             cargo bench -p lunaris-bench --features llamacpp --bench llamacpp_hot_path -- \
               --save-baseline "${BASELINE_NAME}"
           fi
