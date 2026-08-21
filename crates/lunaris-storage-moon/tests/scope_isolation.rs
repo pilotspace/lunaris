@@ -31,6 +31,7 @@ use lunaris_core::{HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::{MoonStorage, keyspace};
 use ulid::Ulid;
 
+mod common;
 /// Returns the Moon URL from the environment variable, or the default.
 fn moon_url() -> String {
     std::env::var("LUNARIS_MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
@@ -49,7 +50,7 @@ async fn cross_scope_kv_keys_are_disjoint() {
     let storage = match MoonStorage::connect(&url).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("LUNARIS_MOON_URL not reachable ({e}); SKIP scope_isolation test");
+            common::note_moon_unreachable(e);
             return;
         }
     };

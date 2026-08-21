@@ -100,6 +100,17 @@ jobs:
       # deleted, every real tenant) is guarded by a single assertion that lives
       # inside `run_protocol_lunaris_server.rs`, and that runner has three
       # separate paths that skip to green.
+      #
+      # Despite the name this is the JOB's no-silent-skip switch, honoured by
+      # lunaris-conformance, lunaris-storage-moon and lunaris-ingest alike. One
+      # variable on purpose: two names would let an operator turn half the job
+      # strict. F10 was the storage half — 20 skip decisions across 18 files, all
+      # green with Moon down, in the same job that guarantees Moon is up, while
+      # `episode_roundtrip` and `moon_client_smoke` failed loudly on the same
+      # missing dependency. Four of those files (keyword_bm25, scope_isolation,
+      # list_scopes, multishard_live) did not even use the `connect_or_skip`
+      # name, and two of them hold the very `#[ignore]`d tests the
+      # `--include-ignored` below exists to run.
       LUNARIS_CONFORMANCE_STRICT: "1"
       # W1.1 — `lunaris-storage-moon`'s live suite reads LUNARIS_MOON_URL, not
       # MOON_URL (see tests/list_scopes.rs::moon_url), and defaults to :6380.
@@ -249,8 +260,9 @@ jobs:
             -- --include-ignored
 
       - name: Run lunaris-recipes tests with moon-it
-        # Recipe integration tests use probe_backend skip discipline (SKIP when
-        # MOON_URL is unset); it is set in the job env, so they run live.
+        # MOON_URL is set in the job env, so these run live. (This crate has no
+        # skip sites of its own — checked 2026-08-21 while routing F10; the
+        # earlier "probe_backend skip discipline" note here was stale.)
         # Separate step from lunaris-conformance so failures are independently
         # visible in the Actions UI.
         if: success() || failure()

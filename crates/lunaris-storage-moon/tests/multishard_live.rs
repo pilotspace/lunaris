@@ -33,6 +33,7 @@ use lunaris_core::error::StorageError;
 use lunaris_storage_moon::ShardTopology;
 use lunaris_storage_moon::{MoonClient, shards};
 
+mod common;
 fn moon_url() -> String {
     std::env::var("LUNARIS_MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
 }
@@ -51,7 +52,7 @@ async fn connect_raw() -> Option<redis::aio::MultiplexedConnection> {
     match client.get_multiplexed_async_connection().await {
         Ok(c) => Some(c),
         Err(e) => {
-            eprintln!("LUNARIS_MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             None
         }
     }

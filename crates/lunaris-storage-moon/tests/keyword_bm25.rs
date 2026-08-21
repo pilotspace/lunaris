@@ -12,6 +12,7 @@ use lunaris_core::storage::types::WriteOp;
 use lunaris_storage_moon::MoonStorage;
 use ulid::Ulid;
 
+mod common;
 const FIXTURE_TEXTS: &[&str] = &[
     "the quick brown fox jumps over the lazy dog",
     "lazy dog snoozes in the afternoon sun",
@@ -32,7 +33,7 @@ async fn keyword_search_returns_normalized_bm25_hits_on_moon() {
     let moon = match MoonStorage::connect(&u).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             return;
         }
     };
@@ -74,7 +75,7 @@ async fn keyword_search_rejects_unknown_index_on_moon() {
     let moon = match MoonStorage::connect(&u).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             return;
         }
     };
@@ -94,7 +95,7 @@ async fn keyword_search_escapes_ft_specials_on_moon() {
     let moon = match MoonStorage::connect(&u).await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            common::note_moon_unreachable(e);
             return;
         }
     };

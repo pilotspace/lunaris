@@ -20,6 +20,7 @@ use lunaris_core::{Scope, StoragePort, WriteOp, keyspace::episode_key};
 use lunaris_storage_moon::MoonStorage;
 use ulid::Ulid;
 
+mod common;
 fn moon_url() -> String {
     std::env::var("LUNARIS_MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:6380".into())
 }
@@ -29,7 +30,7 @@ async fn maybe_connect() -> Option<MoonStorage> {
     match MoonStorage::connect(&moon_url()).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("LUNARIS_MOON_URL not reachable ({e}); SKIP list_scopes test");
+            common::note_moon_unreachable(e);
             None
         }
     }
