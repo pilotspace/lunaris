@@ -201,5 +201,79 @@ class NpmLockFileParity(unittest.TestCase):
         )
 
 
+class EntryPointsArePublished(unittest.TestCase):
+    """Every entry point npm resolves must be in `files` and on disk.
+
+    `files` is an allowlist: anything absent from it is silently omitted from
+    the published tarball. So a package can declare `"require": "./lunaris.cjs"`,
+    pass every test in the repo, publish successfully, and then throw
+    MODULE_NOT_FOUND the first time a consumer calls `require()` — because the
+    file the export map points at was never shipped. Nothing in this repo packs
+    a tarball and inspects it, so `files` is the only thing standing between the
+    export map and that outcome.
+
+    Live risk rather than a hypothetical: the v0.6 SDK rewrite moved the CJS
+    entry from `index.js` to a new `lunaris.cjs` and added `lunaris.d.ts`
+    alongside it. Two new filenames, both of which had to be added to `files`
+    by hand, in a package whose optional dependencies had already frozen once
+    (see this file's module docstring) for exactly that kind of manual-edit
+    miss.
+    """
+
+    def _referenced_paths(self) -> set[str]:
+        pkg = _load_package_json()
+        refs = set()
+        for key in ("main", "module", "types", "browser", "bin"):
+            v = pkg.get(key)
+            if isinstance(v, str):
+                refs.add(v)
+            elif isinstance(v, dict):
+                refs.update(x for x in v.values() if isinstance(x, str))
+
+        def walk(node) -> None:
+            if isinstance(node, str):
+                refs.add(node)
+            elif isinstance(node, dict):
+                for v in node.values():
+                    walk(v)
+
+        walk(pkg.get("exports", {}))
+        return {r[2:] if r.startswith("./") else r for r in refs}
+
+    def test_every_entry_point_is_listed_in_files(self) -> None:
+        refs = self._referenced_paths()
+        # Vacuity floor: an export map that resolves to nothing would otherwise
+        # make both assertions below pass over an empty set.
+        self.assertGreaterEqual(
+            len(refs),
+            3,
+            f"expected at least 3 entry points (main/module/types), found "
+            f"{sorted(refs)}. If package.json's shape changed, update this "
+            f"guard rather than letting it scan nothing.",
+        )
+
+        listed = set(_load_package_json().get("files", []))
+        missing = sorted(r for r in refs if r not in listed)
+        self.assertEqual(
+            [],
+            missing,
+            f"these entry points are referenced by package.json but absent from "
+            f'its "files" allowlist: {missing}. npm omits them from the '
+            f"published tarball, so the package installs cleanly and then fails "
+            f"with MODULE_NOT_FOUND on first use.",
+        )
+
+    def test_every_entry_point_exists_on_disk(self) -> None:
+        pkg_dir = TS_PACKAGE_JSON.parent
+        missing = sorted(r for r in self._referenced_paths() if not (pkg_dir / r).is_file())
+        self.assertEqual(
+            [],
+            missing,
+            f"package.json points at files that do not exist: {missing}. Listing "
+            f"a path in `files` does not create it; npm publishes the package "
+            f"without them and the export map resolves to nothing.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
