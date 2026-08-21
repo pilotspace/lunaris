@@ -126,7 +126,21 @@ jobs:
         run: |
           set -euo pipefail
           model="$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo || true)"
-          [ -n "$model" ] || model="unknown-cpu"
+          # NO silent fallback. A shared placeholder name would hand every
+          # unfingerprintable runner ONE baseline, which is exactly the
+          # 16.8%-between-classes lottery this step exists to end — and it
+          # would do it invisibly. aarch64 Linux /proc/cpuinfo has no
+          # `model name` field at all (it reports CPU implementer / CPU part),
+          # so moving this job to an ARM runner lands here. Fail loudly and
+          # make that a decision rather than a regression nobody sees.
+          if [ -z "$model" ]; then
+            echo "::error::cannot derive a CPU model from /proc/cpuinfo on this runner."
+            echo "::error::Baselines are hardware-specific; a shared fallback name would"
+            echo "::error::silently merge unlike hardware into one baseline. Extend this"
+            echo "::error::step with a fingerprint for this architecture (aarch64: use"
+            echo "::error::'CPU implementer' + 'CPU part') before running the gate here."
+            exit 1
+          fi
           fp="$(printf '%s' "$model" | tr 'A-Z' 'a-z' | tr -cd '[:alnum:]' | cut -c1-28)"
           echo "CPU_MODEL=$model" >> "$GITHUB_ENV"
           echo "BASELINE_NAME=${BASELINE_PREFIX}-${fp}" >> "$GITHUB_ENV"

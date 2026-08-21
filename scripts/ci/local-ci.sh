@@ -82,8 +82,16 @@ if [ "$TIER" = "full" ]; then
   fi
 
   if [ "${LOCAL_CI_RATCHET:-0}" = "1" ]; then
-    step "LME any-gold ratchet" scripts/bench/lme/anygold_gate.sh \
-      --baseline scripts/bench/lme/baselines/ci-anygold.json
+    # Gate the SHIPPED default (`fast`, rerank OFF) at N=40, matching what
+    # recall-ratchet.yml now gates. The legacy ci-anygold.json is N=16/one-arm
+    # and can only detect a 12.5-point regression; leaving local CI pointed at
+    # it meant a developer got a materially weaker gate than CI, and only on
+    # the arm users do NOT get by default. Both arms locally would be ~3.5 h,
+    # so this runs the primary one — CI covers `quality`.
+    step "LME any-gold ratchet (fast, N=40)" env \
+      OFFSETS_FILE=scripts/bench/lme/questions/offsets40.tsv RERANK=0 \
+      scripts/bench/lme/anygold_gate.sh \
+      --baseline scripts/bench/lme/baselines/ci-anygold-fast-n40.json
   else
     skip "LME any-gold ratchet" "opt-in: LOCAL_CI_RATCHET=1 (needs models + dataset)"
   fi
