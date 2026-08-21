@@ -101,9 +101,16 @@ whole database and must never land in an ordinary `cargo test --workspace`:
 $ cargo build --release -p lunaris-cli --features embedded-moon
 ```
 
-The published release binaries are built with it. A plain `cargo build -p
-lunaris-cli` is not, and `lunaris try` in that build exits non-zero telling you
-this exact command.
+A plain `cargo build -p lunaris-cli` is not, and `lunaris try` in that build
+exits non-zero telling you this exact command.
+
+**Today that clone-and-build is the only way to get it.** No workflow in
+`.github/workflows/` builds `lunaris-cli`, so there are no prebuilt `lunaris`
+binaries on any GitHub Release — only `lunaris-mcp` is prebuilt, and it ships
+inside the `npx` / `uvx` wrapper packages rather than as a loose binary. A
+release job for this CLI is tracked as **W0.9** in the ship plan; until it
+lands, "one command" means one command *after* a clone, and this page should
+not be read as promising a download.
 
 ## Flags
 
