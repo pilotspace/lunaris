@@ -247,6 +247,27 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
+      - name: Run lunaris-ingest tests with moon-it
+        # W4.8 — found by `gated_tests_have_a_runner`, not by eye. This crate's
+        # `c_live_moon_embedding_kv_size.rs` is gated on `moon-it` exactly like
+        # the three steps above, but no job ever passed the feature to
+        # `-p lunaris-ingest`, so the file compiled to nothing and
+        # `cargo test --workspace` reported green without it.
+        #
+        # What it proves is not incidental: the chunk bytes actually written to
+        # Moon's HSET carry no `"embedding"` key — the byte-level proof that the
+        # double-store fix survives the real ingest -> storage -> recall path,
+        # as opposed to the in-process serde round-trip `lunaris-core` already
+        # covers. The file even documents its own run command; nothing ran it.
+        #
+        # It reads bare `MOON_URL`, which this job's env sets alongside
+        # `LUNARIS_MOON_URL`.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-ingest \
+            --features moon-it \
+            --no-fail-fast
+
       - name: Timing summary (budget evidence)
         # Runs unconditionally so budget data is captured even on test failure.
         # SECONDS is the bash shell-init wall-clock counter; per-step SECONDS
