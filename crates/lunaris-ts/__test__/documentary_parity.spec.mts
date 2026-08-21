@@ -488,8 +488,17 @@ describe("Plan 11-03 — documentary parity (TypeScript)", () => {
   // nobody notices when the defect is fixed. `test.fails` passes only while
   // the body throws, so the day `emit_ts.rs` is fixed this test goes RED and
   // whoever fixed it must delete this comment and the `.fails` — which
-  // restores the real parity assertions in the same commit. The gate cannot
-  // rot into a muzzle.
+  // restores the real parity assertions in the same commit.
+  //
+  // One caveat, stated so it cannot surprise anyone: F20 is not the only thing
+  // wrong here. Behind it sits **F21** — `TimelineReconstruction.ingest`
+  // cannot set a historical valid-time at all, so `.between()` over a
+  // historical window returns zero rows even from Python, where the `Hlc`
+  // converts fine. Fixing F20 alone therefore leaves this body throwing (or
+  // asserting 0 != 6) and `test.fails` stays green over the SECOND defect.
+  // Whoever fixes F20 must check this test against F21 rather than trusting
+  // the green. The Python sibling is `xfail(strict=True)` on F21 directly and
+  // is the one that will flip first.
   test.fails("timeline_reconstruction_parity_between_10_and_15", async (ctx: SkippableCtx) => {
     if (!wrappersPresent()) {
       ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
