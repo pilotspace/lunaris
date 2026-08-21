@@ -270,7 +270,7 @@ async def _run_kb_quickstart(
 
     mem = await lunaris.open(url)
     prefix = f"kb:docs/doc-11-03-py/{backend_label}/"
-    kb = doc_mod.DocumentKnowledgeBase(mem, prefix)
+    kb = doc_mod.DocumentKnowledgeBase.new(mem, prefix)
     docs = _load_fixture("document_knowledge_base_docs.json")
     for d in docs:
         meta = {"doc_id": d["id"], "title": d["title"]}
@@ -310,7 +310,7 @@ async def _run_research_paper(
 
     mem = await lunaris.open(url)
     prefix = f"papers:doc-11-03-py/{backend_label}/"
-    corpus = doc_mod.ResearchPaperCorpus(mem, prefix)
+    corpus = doc_mod.ResearchPaperCorpus.new(mem, prefix)
     corpus = corpus.with_graph_pipeline(False)
     papers = _load_fixture("research_paper_corpus_papers.json")
     for p in papers:
@@ -356,7 +356,7 @@ async def _run_code_repo_as_of(
 
     mem = await lunaris.open(url)
     prefix = f"repo:doc-11-03-py/{backend_label}/"
-    repo = doc_mod.CodeRepoMemory(mem, prefix)
+    repo = doc_mod.CodeRepoMemory.new(mem, prefix)
     commits = _load_fixture("code_repo_100_commits.json")
     target = commits[commit_index_0based]
     target_ms = _rfc3339_to_unix_ms(target["committer_date_rfc3339"])
@@ -441,7 +441,7 @@ async def _run_timeline_between(
 
     mem = await lunaris.open(url)
     prefix = f"timeline:doc-11-03-py/{backend_label}/"
-    timeline = doc_mod.TimelineReconstruction(mem, prefix)
+    timeline = doc_mod.TimelineReconstruction.new(mem, prefix)
     events = _load_fixture("timeline_30_days.json")
     for e in events:
         ms = _rfc3339_to_unix_ms(e["valid_time_rfc3339"])
@@ -493,7 +493,7 @@ async def _run_customer_support_refund(
     import lunaris
 
     mem = await lunaris.open(url)
-    hist = doc_mod.CustomerSupportHistory(mem)
+    hist = doc_mod.CustomerSupportHistory.new(mem)
     fx = _load_fixture("customer_support_50_tickets.json")
     for t in fx["tickets"]:
         await hist.ingest_ticket(t["id"], t["body"])
