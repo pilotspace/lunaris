@@ -24,7 +24,7 @@ already running Cognee can evaluate the switch with concrete code.
 | Concern                                    | Cognee                                          | Lunaris                                                |
 |---------------------------------------------|-------------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python                                          | Embedded Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Vector DB (LanceDB / Qdrant / Weaviate / ...)  + Graph DB (Neo4j / FalkorDB / Memgraph / ...) — pluggable | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Vector DB (LanceDB / Qdrant / Weaviate / ...)  + Graph DB (Neo4j / FalkorDB / Memgraph / ...) — pluggable | Moon — one substrate, FT.* + graph + KV native |
 | **Composition model**                      | Pipeline of Tasks operating on DataPoints       | Composable retrieval DSL (`vector`, `keyword`, `graph` + `.and / .or / .then / .fuse_rrf`) |
 | **Bi-temporal**                            | Not first-class (DataPoints can carry timestamps but the engine doesn't model `(valid_time, sys_time)` tuples) | First-class `(valid_time, sys_time)` per row; `.as_of(ts)` is one combinator |
 | **Recall latency**                         | Depends on backend (~50 ms LanceDB local, ~200 ms cloud) | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |

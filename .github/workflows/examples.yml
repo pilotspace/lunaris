@@ -24,11 +24,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── Gate 1: no example instructs a reader to use a deleted backend ────────
+  # ── Gate 1: nothing instructs a reader to use a deleted backend ───────────
   #
   # A grep, on purpose. `cargo check` / `tsc` / `mypy` cannot read a URL string
   # or a shell block in a README — which is exactly how the 0.6-era examples
   # stayed green while being unrunnable. Cheapest job, so it fails fast.
+  #
+  # Scope widened 2026-08-22 (F15) from `examples/` to `examples/` + `docs/` +
+  # `README.md`. Scanning examples alone left `docs/guide.md` opening with
+  # "Two backends ship Day-0" and handing readers a `postgres://` URL — the
+  # same defect, on the page more people read. This workflow has no path
+  # filter, so a docs-only PR still runs this gate.
   dead-backends:
     name: no dead-backend instructions
     runs-on: ubuntu-latest

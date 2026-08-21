@@ -255,9 +255,8 @@ detect the degraded path.
    shape, contribute a constructor to `lunaris-llamacpp` and we'll surface it
    through both SDKs.
 
-2. **`noop` dim MUST match your index.** Lunaris's storage backends (Moon
-   `FT.SEARCH`, Postgres pgvector) are pre-sized for a fixed embedding width at
-   index-create time. `EmbedderConfig.noop(dim=...)` lets you pick any width,
+2. **`noop` dim MUST match your index.** Moon's `FT.SEARCH` index is pre-sized
+   for a fixed embedding width at index-create time. `EmbedderConfig.noop(dim=...)` lets you pick any width,
    so a mismatch against an existing index will corrupt recall — pass the same
    `dim` (768 for granite-r2) the index was built with.
 

@@ -4,7 +4,7 @@ The [`lunaris-conformance`](../../crates/lunaris-conformance/) crate ships three
 
 1. **Storage suite** — parameterized over `Arc<dyn StoragePort>`. Tests every method on the trait surface (atomic_write, vector_search, graph_traverse, scan_range, read_as_of, publish/subscribe, capabilities). Plan 05-02 STORE-05.
 2. **Protocol suite** — parameterized over `(reqwest::Client, base_url, token)`. Tests the four MemoryProtocol verbs + SSE + auth + rate limit + retrieval modes. Plan 05-03 PROTO-06.
-3. **AS_OF parity** — dual-backend differential test that asserts `recall` against Moon and Postgres returns identical hits + ordering for the same input. Plan 05-02 STORE-07. It needs both services and skips clean without them, so it is backstopped by `moon_declares_its_as_of_gap` in the same file, which runs unconditionally.
+3. **AS_OF behaviour** — asserts that a historical pin is answered or refused explicitly, never silently served from present time. `moon_declares_its_as_of_gap` runs unconditionally. The pre-0.7 dual-backend differential arm went with the second backend.
 
 **Historical vs latest reads (v0.6.2).** The storage suite's `read_as_of::historical_pin_is_explicit` is not capability-gated: it branches on the backend's own `StoragePort::supports_historical_kv_reads()` and requires the matching behaviour in both directions — a backend declaring `true` must not surface a row that did not exist at the pinned instant; a backend declaring `false` (Moon: plain hashes, no KV version chain) must refuse with `StorageError::NotSupported` rather than answer with present-time data.
 
@@ -16,7 +16,7 @@ The reference implementation under test is [`lunaris-server`](../../crates/lunar
 |--------------|---------------------------------------------------------------|-------|-------------------------------------------------------------------------------------------------|
 | Storage      | `lunaris_conformance::run_full_storage_suite(storage)`        | 9     | atomic_write, vector_search, graph_traverse (gated), scan_range, read_as_of (latest + historical), publish/subscribe, capabilities |
 | Protocol     | `lunaris_conformance::run_full_protocol_suite(client, url, t)`| 10    | POST /v1/ingest, POST /v1/recall (default + SSE + graph mode), POST /v1/forget (id + two-step hard), GET /v1/snapshot/{lsn}, auth (401 + 403), rate-limit (429 + Retry-After) |
-| AS_OF parity | `lunaris_conformance::storage::as_of_parity::run(moon, pg)`   | 1     | STORE-07 — Moon vs Postgres identical hits; capability-gated `Divergence` for rerank-score precision |
+| AS_OF gap    | `run_as_of_moon_gap` (test target)                            | 1     | STORE-07 — a historical KV pin is refused with `NotSupported`, not answered from present time |
 
 The Plan 04-03 chaos / crash-recovery property test (`tests/crash_recovery.rs`) ships under the same crate gated on the `chaos-it` Cargo feature.
 
@@ -25,21 +25,19 @@ The Plan 04-03 chaos / crash-recovery property test (`tests/crash_recovery.rs`) 
 ### Storage suite (per backend)
 
 ```bash
-# Moon
 MOON_URL=moon://localhost:6380 \
-  cargo test -p lunaris-conformance --test run_storage_moon -- --nocapture
-
-# Postgres
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
-  cargo test -p lunaris-conformance --test run_storage_postgres -- --nocapture
-
-# AS_OF parity (requires BOTH)
-MOON_URL=moon://localhost:6380 \
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
-  cargo test -p lunaris-conformance --test run_as_of_parity -- --nocapture
+  cargo test -p lunaris-conformance --features moon-it \
+    --test run_storage_moon -- --nocapture
 ```
 
-When env vars are unset → SKIPS cleanly (exit 0). When the TCP probe fails → SKIPS with diagnostic.
+Moon is the only backend as of 0.7.0, so the per-backend parity runners went
+with it — `run_storage_moon` is the whole storage story now.
+
+When `MOON_URL` is unset → SKIPS cleanly (exit 0). When the TCP probe fails
+→ SKIPS with diagnostic. In CI both of those are hard failures instead:
+`integration.yml` sets `LUNARIS_CONFORMANCE_STRICT=1` in the one job where
+every precondition holds by construction, so a suite that skips there fails
+the board rather than reporting green over nothing.
 
 ### Protocol suite (against `lunaris-server`)
 
@@ -47,7 +45,7 @@ When env vars are unset → SKIPS cleanly (exit 0). When the TCP probe fails →
 # 1. Build the binary so the subprocess runner can find it.
 cargo build -p lunaris-server  # → target/debug/lunaris-server
 
-# 2. Run the suite (picks MOON_URL first, falls back to PG_URL).
+# 2. Run the suite.
 MOON_URL=moon://localhost:6380 \
   cargo test -p lunaris-conformance \
     --test run_protocol_lunaris_server -- --nocapture
@@ -59,7 +57,6 @@ The runner spawns `lunaris-server --bind 127.0.0.1:0 --rate-burst 10 --rate-per-
 
 ```bash
 MOON_URL=moon://localhost:6380 \
-PG_URL=postgres://postgres:lunaris@localhost/lunaris \
   cargo test -p lunaris-conformance \
     --features chaos-it --test crash_recovery -- --nocapture
 ```
@@ -127,27 +124,24 @@ A conformant implementation:
 
 | Variable                     | Purpose                                                   | Required for                                  |
 |------------------------------|-----------------------------------------------------------|-----------------------------------------------|
-| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6380`)  | storage suite (Moon), AS_OF parity, protocol  |
-| `PG_URL`                     | Postgres backend connect URL                              | storage suite (Postgres), AS_OF parity, protocol |
+| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6380`)  | storage suite, protocol suite                 |
+| `LUNARIS_CONFORMANCE_STRICT` | `1` turns every skip decision into a hard failure          | CI, where the store is provisioned by the job |
 | `CARGO_TARGET_DIR`           | Override target dir for binary discovery                  | protocol suite when out-of-tree builds used   |
 | `CARGO_BIN_EXE_lunaris-server` | Pre-resolved binary path (forward-compat)               | protocol suite (rare; harness falls back)     |
 
-When `MOON_URL` AND `PG_URL` are both unset, every test SKIPS cleanly — `cargo test --workspace` stays green on a fresh checkout without backends.
+When `MOON_URL` is unset, every test SKIPS cleanly — `cargo test --workspace` stays green on a fresh checkout without a store. In CI that is inverted: `integration.yml` sets `LUNARIS_CONFORMANCE_STRICT=1` in the one job that provisions a Moon, so a skip there fails the board instead of reporting green over nothing.
 
 ## CI integration
 
-The workspace's GitHub Actions workflow (`.github/workflows/eval-gauntlet.yml` — landed by Plan 05-06) provisions Moon + Postgres via Docker services and runs the full conformance suite on every push + pull request. Suggested invocation block:
+The workspace's GitHub Actions workflow (`.github/workflows/integration.yml`) provisions Moon via a Docker service and runs the full conformance suite on every push + pull request:
 
 ```yaml
-- run: cargo build -p lunaris-server                                          # protocol-suite prereq
-- run: cargo test -p lunaris-conformance --test run_storage_moon
-- run: cargo test -p lunaris-conformance --test run_storage_postgres
-- run: cargo test -p lunaris-conformance --test run_as_of_parity
-- run: cargo test -p lunaris-conformance --test run_protocol_lunaris_server
+- run: cargo build -p lunaris-server --no-default-features   # protocol-suite prereq
+- run: cargo test -p lunaris-conformance --features moon-it --no-fail-fast
 - run: cargo test -p lunaris-conformance --features chaos-it --test crash_recovery
 ```
 
-All 5 invocations exit `0` when env vars unset (clean skip) OR backends reachable + suite passes. They exit `1` when backends are reachable AND suite assertions fire — exactly the gate behavior CI wants.
+Each invocation exits `0` when the suite passes, and `1` when an assertion fires. With `LUNARIS_CONFORMANCE_STRICT=1` set job-wide, an unreachable store also exits `1` rather than skipping — which is the point: a conformance job that skips is indistinguishable from one that passed.
 
 ## Glossary
 

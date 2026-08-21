@@ -326,9 +326,9 @@ MOON_URL=moon://localhost:6380 \
     --test run_protocol_lunaris_server -- --nocapture
 ```
 
-(or the `PG_URL` equivalent) returns exit code `0`. The harness exercises every contract in [§Verbs](#verbs) + [§Authentication](#authentication) + [§Rate limiting](#rate-limiting) + [§Error taxonomy](#error-taxonomy).
+returns exit code `0`. The harness exercises every contract in [§Verbs](#verbs) + [§Authentication](#authentication) + [§Rate limiting](#rate-limiting) + [§Error taxonomy](#error-taxonomy).
 
-See [`conformance.md`](./conformance.md) for the full how-to (storage suite, protocol suite, AS_OF parity, third-party certification).
+See [`conformance.md`](./conformance.md) for the full how-to (storage suite, protocol suite, AS_OF behaviour, third-party certification).
 
 The `memoryprotocol.dev` site standup with publicly-hosted certifications is a v1 deliverable (`PROTO-V1-01`).
 

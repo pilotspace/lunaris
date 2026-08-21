@@ -242,8 +242,8 @@ let lsn = scoped.ingest(EpisodeBuilder::new("user-msg", "Alice loves chocolate."
 ```
 
 `moon://host:port` is the only connection scheme — every retired spelling
-(`postgres://`, `memory://`, `sqlite:///path`) returns an error naming the
-migration guide. Embedding and reranking run
+(`postgres://`, `memory://`, `sqlite:///path`) was removed in 0.7.0 and now
+returns an error naming the migration guide. Embedding and reranking run
 **in-process** via llama.cpp (`granite-embedding-311m` Q4_K_M +
 `bge-reranker-v2-m3` Q5_K_M GGUF) — no embedding API, no network on the
 hot path; GPU offload is a build-time `metal`/`cuda`/`vulkan` feature.

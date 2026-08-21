@@ -24,9 +24,9 @@ subsystems can be added in a patch release.
 ### `StorageError`
 | Variant | Notes |
 |---|---|
-| `Backend(String)` | the backend (Moon RESP / Postgres) returned an error |
+| `Backend(String)` | the Moon backend returned a RESP-level error |
 | `NotSupported(&'static str)` | a capability the chosen backend doesn't offer |
-| `UnsupportedScheme(String)` | the URL passed to `Lunaris::open` / `lunaris::open` had a scheme other than `moon://` or `postgres://` |
+| `UnsupportedScheme(String)` | the URL passed to `Lunaris::open` / `lunaris::open` had a scheme other than `moon://` — every other spelling was retired in 0.7.0 |
 | `Serde(serde_json::Error)` | a stored value could not be (de)serialized |
 | `Io(std::io::Error)` | socket / file IO failure |
 

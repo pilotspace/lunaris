@@ -123,9 +123,8 @@ A toggle change *during* an in-flight ingest takes effect on the **next** call
 - **Embedding dimension.** The Moon adapter creates its vector index at the
   configured embedder's dimension (default 768-d; `Lunaris::open` passes
   `embedder.dim()`, or use `MoonStorage::connect_with_dim` directly), so a
-  1536-d embedder works on Moon out of the box. pgvector handles up to
-  ~1536-d. Footgun: Moon's `FT.CREATE` won't resize an existing index — drop
-  it first if you switch embedder width. See
+  1536-d embedder works out of the box. Footgun: Moon's `FT.CREATE` won't
+  resize an existing index — drop it first if you switch embedder width. See
   [Choosing a Backend](../operations/backends.md).
 - **Higher-level wrappers exist.** If you don't want to hand-build episodes,
   the [Cookbook](../cookbook/index.md) recipes (`DocumentKnowledgeBase`,

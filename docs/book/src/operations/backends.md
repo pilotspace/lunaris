@@ -3,8 +3,8 @@
 **As of 0.7.0 Lunaris ships exactly one `StoragePort` implementation: Moon,
 the Redis-compatible substrate.** `Lunaris::open(url)` accepts one scheme,
 `moon://host:port`; every retired spelling (`postgres://`, `postgresql://`,
-`memory://`, `sqlite:///path`) returns `UnsupportedScheme` carrying the
-migration link rather than half-working.
+`memory://`, `sqlite:///path`) was removed in 0.7.0 and returns
+`UnsupportedScheme` carrying the migration link rather than half-working.
 
 If you are on 0.6.x with a Postgres or SQLite store, **migrate before you bump
 the pin** — the exit ramp is `lunaris-migrate`, built from the v0.6.2 tag. See

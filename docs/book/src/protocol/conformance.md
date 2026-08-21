@@ -14,11 +14,10 @@ against:
 2. **Protocol suite** — parameterized over `(reqwest::Client, base_url,
    token)`. Tests the four [MemoryProtocol](./memoryprotocol-0.1.md) verbs +
    SSE + auth + rate limit + retrieval modes. Plan 05-03 PROTO-06.
-3. **AS_OF parity** — dual-backend differential test that asserts `recall`
-   against Moon and Postgres returns identical hits + ordering for the same
-   input. Plan 05-02 STORE-07. Needs both services and skips clean without
-   them, so it is backstopped by `moon_declares_its_as_of_gap` in the same
-   file, which runs unconditionally.
+3. **AS_OF behaviour** — asserts that a historical pin is answered or refused
+   explicitly, never silently served from present time. Plan 05-02 STORE-07.
+   `moon_declares_its_as_of_gap` runs unconditionally; the pre-0.7
+   dual-backend differential arm went with the second backend.
 
 **Historical vs latest reads (v0.6.2).** The storage suite's
 `read_as_of::historical_pin_is_explicit` is not capability-gated: it branches
@@ -175,27 +174,26 @@ A conformant implementation:
 
 | Variable                     | Purpose                                                   | Required for                                  |
 |------------------------------|-----------------------------------------------------------|-----------------------------------------------|
-| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6380`)  | storage suite (Moon), AS_OF parity, protocol  |
-| `PG_URL`                     | Postgres backend connect URL                              | storage suite (Postgres), AS_OF parity, protocol |
+| `MOON_URL`                   | Moon backend connect URL (e.g., `moon://localhost:6380`)  | storage suite, protocol suite                 |
+| `LUNARIS_CONFORMANCE_STRICT` | `1` turns every skip decision into a hard failure          | CI, where the store is provisioned by the job |
 | `CARGO_TARGET_DIR`           | Override target dir for binary discovery                  | protocol suite when out-of-tree builds used   |
 | `CARGO_BIN_EXE_lunaris-server` | Pre-resolved binary path (forward-compat)               | protocol suite (rare; harness falls back)     |
 
-When `MOON_URL` AND `PG_URL` are both unset, every test SKIPS cleanly —
-`cargo test --workspace` stays green on a fresh checkout without backends.
+When `MOON_URL` is unset, every test SKIPS cleanly — `cargo test --workspace`
+stays green on a fresh checkout without a store. In CI that is inverted:
+`integration.yml` sets `LUNARIS_CONFORMANCE_STRICT=1` in the one job that
+provisions a Moon, so a skip there fails the board instead of reporting green
+over nothing.
 
 ## CI integration
 
-The workspace's GitHub Actions workflow (`.github/workflows/eval-gauntlet.yml`
-— landed by Plan 05-06) provisions Moon + Postgres via Docker services and
-runs the full conformance suite on every push + pull request. Suggested
-invocation block:
+The workspace's GitHub Actions workflow (`.github/workflows/integration.yml`)
+provisions Moon via a Docker service and runs the full conformance suite on
+every push + pull request:
 
 ```yaml
-- run: cargo build -p lunaris-server                                          # protocol-suite prereq
-- run: cargo test -p lunaris-conformance --test run_storage_moon
-- run: cargo test -p lunaris-conformance --test run_storage_postgres
-- run: cargo test -p lunaris-conformance --test run_as_of_parity
-- run: cargo test -p lunaris-conformance --test run_protocol_lunaris_server
+- run: cargo build -p lunaris-server --no-default-features   # protocol-suite prereq
+- run: cargo test -p lunaris-conformance --features moon-it --no-fail-fast
 - run: cargo test -p lunaris-conformance --features chaos-it --test crash_recovery
 ```
 

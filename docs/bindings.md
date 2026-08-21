@@ -148,10 +148,9 @@ async function main() {
 main();
 ```
 
-Both examples target a running Moon backend at `moon://127.0.0.1:6380`.
-Swap in `postgres://postgres:pass@localhost/lunaris` to run against
-Postgres instead — Lunaris routes both URL schemes through the same
-`StoragePort` trait.
+Both examples target a running Moon backend at `moon://127.0.0.1:6380`,
+which is the only scheme `open` accepts — the second backend was removed
+in 0.7.0.
 
 ## Three-surface pipeline toggles
 
@@ -205,13 +204,11 @@ const handle = await open(url, {
 | Scheme       | Backend          | Example                                         |
 | ------------ | ---------------- | ----------------------------------------------- |
 | `moon://`    | Moon (RediSearch)| `moon://127.0.0.1:6380`                         |
-| `postgres://`| PostgreSQL       | `postgres://user:pass@localhost:5432/lunaris`   |
 
-Both backends support the full Lunaris surface. Moon is faster on hot
-recall paths; Postgres is the portability proof (zero ops overhead for
-teams that already run Postgres). Within a single driver process,
-`StoragePort::atomic_write` fans identical bytes to either backend, so
-backend parity is structural by construction — see Plan 08-04's
+That is the whole table. The PostgreSQL and SQLite backends were deleted
+in 0.7.0, and every retired scheme now returns `UnsupportedScheme`
+carrying the migration link. Within the driver process,
+`StoragePort::atomic_write` fans identical bytes to the one backend — see Plan 08-04's
 `crates/lunaris-conformance/tests/run_bindings_backend_parity.rs` for
 the per-driver parity gate.
 

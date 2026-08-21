@@ -77,7 +77,7 @@ so in their READMEs.
 | `cargo check --locked` | `quickstart-rs`, `multi-agent-rs` | compile breakage, API drift, **and** dependency drift — each example is its own workspace with its own lockfile |
 | `tsc --noEmit` | `quickstart-ts` | type-level API drift against this commit's `crates/lunaris-ts/lunaris.d.ts` |
 | `mypy` + `import` | `quickstart-py`, and the three framework examples | wrong method names, wrong kwargs, wrong arity, missing symbols |
-| [`ci/no-dead-backends.sh`](ci/no-dead-backends.sh) | every file under `examples/` | live instructions naming a backend deleted in 0.7.0 |
+| [`ci/no-dead-backends.sh`](ci/no-dead-backends.sh) | every file under `examples/` and `docs/`, plus the top-level `README.md` | live instructions naming a backend deleted in 0.7.0 |
 
 That last one is a grep, and it exists because **no compiler and no type
 checker can read a URL string or a shell block in a README.** The v0.6-era

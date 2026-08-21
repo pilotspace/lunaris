@@ -6,7 +6,7 @@ Status: alpha tracking v0.1.1 (Rust crate `lunaris`, `pip install lunaris`, `npm
 
 Lunaris is a multi-language agent memory engine — Rust-first, with PyO3 + napi-rs bindings generated from the same source of truth. You feed it raw observations (markdown documents, chat turns, tool outputs) as `Episode`s; it chunks, embeds, and (optionally) extracts entities/relations/facts via a local LLM, then stores everything in a bi-temporal MVCC key-value + vector + graph substrate. You query it through a composable retrieval **DSL** — a *Domain-Specific Language*, i.e. a small purpose-built query API where you chain operators into a plan rather than glue together raw calls — that fuses vector search, BM25 keyword lookup, graph traversal, and RAPTOR hierarchical tree retrieval, with a cross-encoder rerank pass on top.
 
-Two backends ship Day-0: **Moon** (Redis-compatible with `FT.*` native vector + BM25 + RRF) and **Postgres** (via `pgvector` + `AGE` + `pgmq`). Everything you call on `Lunaris` works identically against either — the URL scheme decides.
+One backend ships: **Moon** (Redis-compatible, with `FT.*` native vector + BM25 + RRF, `GRAPH.QUERY`, and a native MQ). The Postgres and SQLite backends were deleted in 0.7.0; `moon://host:port` is the only URL scheme `Lunaris::open` accepts.
 
 ### Mental model
 
@@ -102,11 +102,11 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 If all you need is the raw `Arc<dyn StoragePort>` (Plan 5 conformance harness, low-level tests):
 
 ```rust
-let storage = lunaris::open("postgres://lunaris:lunaris@localhost/lunaris").await?;
+let storage = lunaris::open("moon://localhost:6380").await?;
 // storage is Arc<dyn StoragePort>. No ingest/recall surface; you drive atomic_write, read_as_of, etc.
 ```
 
-URL schemes are matched at `crates/lunaris/src/open.rs:20-30` and `crates/lunaris/src/handle.rs:148-206`. Only `moon://`, `postgres://`, and `postgresql://` are accepted; anything else returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))`.
+URL schemes are matched at `crates/lunaris/src/open.rs` and `crates/lunaris/src/handle.rs`. Only `moon://` is accepted; every other scheme — including the retired `postgres://` / `postgresql://` / `sqlite://` / `memory://` — returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))` carrying the migration link.
 
 ### Gotchas
 
@@ -143,7 +143,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     //
     // Test form — matches tests/ingest_smoke.rs:91-108. Replace `my_storage()`
     // with any Arc<dyn StoragePort> (an in-memory recording fixture in tests,
-    // or MoonStorage::connect / PostgresStorage::connect directly in benches).
+    // or MoonStorage::connect directly in benches).
     let storage: Arc<dyn StoragePort> = Arc::new(my_storage());
     let clock = HlcClock::new(0);
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
@@ -230,7 +230,7 @@ let hits = lunaris
     .await?;
 ```
 
-When the handle was opened against a Moon URL, `fuse_rrf` detects the (Vector + Keyword(BM25)) shape on the same index and dispatches to Moon's native `text().hybrid_search` — **one** round trip instead of two (`crates/lunaris-retrieve/src/operators/fuse.rs`, governed by the capability hinted at `crates/lunaris-core/src/storage.rs` via `StorageCapabilities::native_rrf`). Postgres falls back to client-side RRF in the same operator. Same API either way.
+`fuse_rrf` detects the (Vector + Keyword(BM25)) shape on the same index and dispatches to Moon's native `text().hybrid_search` — **one** round trip instead of two (`crates/lunaris-retrieve/src/operators/fuse.rs`, governed by `StorageCapabilities::native_rrf` in `crates/lunaris-core/src/storage.rs`). A backend that does not declare the capability fuses client-side in the same operator; the API is identical either way.
 
 #### Step 4 — rerank
 
@@ -591,7 +591,7 @@ v0.1.1 ships three layers. Pick the lowest one that meets your need — thinner 
 2. **Primitives** in `lunaris_recipes::{MessageStream, DocumentCorpus, TemporalQuery, WorkingMemory}` — composable building blocks. ≤ 30 LOC public surface each.
 3. **Named recipes** — 10 thin vertical wrappers (5 conversational + 5 documentary) each ≤ 30 LOC, each forwarding to at most 2 primitive calls. Plus `CodingSessionMemory` — the v0 coding-agent tool-surface recipe, now a delegate over `WorkingMemory`.
 
-All three layers sit on the same `StoragePort`; Moon + Postgres work identically at every layer. The public recipe surface is codegen'd to PyO3 + napi-rs from a single annotated-Rust source (`lunaris-codegen` — see Section 1), so every Rust method below has a byte-stable `snake_case` Python counterpart and `camelCase` TypeScript counterpart.
+All three layers sit on the same `StoragePort`, so a future backend slots in at every layer without touching the recipe surface. The public recipe surface is codegen'd to PyO3 + napi-rs from a single annotated-Rust source (`lunaris-codegen` — see Section 1), so every Rust method below has a byte-stable `snake_case` Python counterpart and `camelCase` TypeScript counterpart.
 
 ```
                     Lunaris::recall / ingest / forget
@@ -692,7 +692,7 @@ Public surface: `new`, `ingest(chunks)`, `filter(field, value)`, `top(k)`, `sear
 
 Typestate-parameterised time-travel combinator. `S` is `Messages | Documents | Facts` — different type states unlock different methods. Source: `crates/lunaris-recipes/src/temporal_query.rs`.
 
-> **Backend note (v0.6.2).** A *past* `as_of` hydrates through `StoragePort::read_as_of`, which needs a backend that keeps a KV version chain — `supports_historical_kv_reads() == true` on Postgres and SQLite. On Moon the call returns `StorageError::NotSupported` (HTTP `501 not_supported`): Moon stores Lunaris rows as plain hashes, so it now refuses a historical pin instead of answering with present-time data. `before` / `after` / `between` filters over `valid`/`sys` on the *search* lane remain temporal on Moon (`FT.SEARCH AS_OF`).
+> **Backend note.** A *past* `as_of` hydrates through `StoragePort::read_as_of`, which needs a backend declaring `supports_historical_kv_reads() == true`. Moon does not, and is the only backend as of 0.7.0, so the call returns `StorageError::NotSupported` (HTTP `501 not_supported`): Moon stores Lunaris rows as plain hashes, so it refuses a historical pin rather than answering with present-time data. `before` / `after` / `between` filters over `valid`/`sys` on the *search* lane remain temporal (`FT.SEARCH AS_OF`).
 
 ```rust
 use lunaris_core::hlc::Hlc;
@@ -916,7 +916,7 @@ Public surface: `new`, `with_graph_pipeline(bool)`, `ingest_ticket(id, chunks)`,
 - **Graph-on is still default-off.** Every `.with_graph_pipeline(true)` call hits the same `GraphPipelineHandle` — you're toggling the handle, not the wrapper. Calling it on one wrapper flips graph on for every ingest in the process. Idempotent; matches blueprint §5.2.
 - **`between` is lower-inclusive, upper-EXCLUSIVE.** Applies to `TemporalQuery::between` and `TimelineReconstruction::between` both. For "days X..=Y inclusive" pass `hi = Y + 1_day`.
 - **HeliosScratchpad is still filesystem-shaped.** `grep` always uses hybrid + rerank; `read` always concatenates chunks; `edit` ignores its `_old` argument (MVCC retention keeps prior versions visible via `as_of`); `ls` is an O(all-episodes) prefix walk over `episode:` keys — fine session-scoped, not fine tenant-wide.
-- **`CustomerSupportHistory.recall` returns a concatenation, not a fused list.** Tickets first, chats second. Tie-bucket ordering across Moon vs Postgres is accepted as known-flakiness (top-k set equality is the gate, per D-13).
+- **`CustomerSupportHistory.recall` returns a concatenation, not a fused list.** Tickets first, chats second. Tie-bucket ordering is accepted as known-flakiness (top-k set equality is the gate, per D-13).
 - **Cross-language API is codegen'd.** Do not hand-write `lunaris-py` or `lunaris-ts` wrapper classes. Edit Rust, run `cargo run -p lunaris-codegen -- --dump-ir`, commit the IR snapshot — CI fails the PR when Rust/Py/TS drift. The Python surface is `snake_case`; the TypeScript surface is `camelCase`; both are stable versus the Rust surface at every wrapper method name and argument order.
 
 ---
@@ -948,7 +948,7 @@ Same pattern — stage `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`
 
 ### `LunarisError::Storage(StorageError::UnsupportedScheme("..."))`
 
-Your URL scheme isn't `moon`, `postgres`, or `postgresql` (`crates/lunaris/src/open.rs:20-30`). Check for typos (`redis://`, `mon://`). Lunaris does not auto-detect — it matches on the scheme string.
+Your URL scheme isn't `moon` (`crates/lunaris/src/open.rs`). Check for typos (`redis://`, `mon://`), and note that the pre-0.7 spellings are gone: the error carries the migration link. Lunaris does not auto-detect — it matches on the scheme string.
 
 ### Empty recall results
 

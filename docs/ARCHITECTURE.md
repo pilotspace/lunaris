@@ -216,7 +216,7 @@ The advantage map is real, but it is not "bi-temporal everywhere":
   `WHERE` clauses, never inline `{id: …}` maps (`atomic.rs`, fixed in
   `adbac2d`).
 - **There is no second backend to fall back to.** Through 0.6.x, Postgres
-  (tsvector BM25, pgvector, RLS-enforced scope) and SQLite took different
+  (tsvector BM25, pgvector — both deleted in 0.7.0) and SQLite took different
   routes to the same contract at different performance points. 0.7.0 deleted
   both: one substrate to test, tune, and operate. The cost is that Moon's
   gaps — the two above — are now the engine's gaps, and that running Lunaris
