@@ -3,6 +3,42 @@
 All notable changes to Lunaris are documented here.
 Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/CHANGELOG-archive.md).
 
+## [Unreleased]
+
+### Fixed
+
+- **A hard `forget` left the content recallable (W1.4).** `forget` only ever
+  matched the `episode:` row. A SOFT forget looked correct because `hydrate`
+  drops any chunk whose parent episode is sys-closed — but a HARD forget
+  deletes that episode row, so the gate's lookup returned `None` instead of
+  `Some((_, true))`, stopped firing, and the chunk hydrated again with an empty
+  `source`. The irreversible, confirmation-token-gated path was the leaky one.
+  `forget` now reaches the matched episodes' chunk rows: soft stamps them, hard
+  deletes them, and neither depends on the episode row surviving.
+
+### Changed
+
+- **`ForgetReceipt.rows_written` / `.rows_deleted` now count ROWS, not
+  episodes.** Because a forget reaches chunk rows, `forget(Id)` on a
+  one-chunk episode reports `2` where it previously reported `1`. The fields
+  are named for rows and the old number under-reported what was written; a
+  caller asserting an exact count should assert `>= 1` (or `> 1` to require
+  that chunks were included). Behaviour of the forget itself is otherwise
+  unchanged, and `dry_run` still writes nothing.
+
+### Known limitations
+
+- A hard `forget` does **not** remove the chunk's vector embedding or BM25
+  text from Moon's FT index. Recall is clean (a hit whose chunk row is gone is
+  dropped at hydration), but the bytes remain, and `classify_indices` still
+  reports `Kv + Vector + Graph` affected when only KV rows are written.
+- Facts, entities, relations and communities are **not** forgotten with their
+  episode, and cannot be under the current schema: they are keyed by a content
+  hash (`FactId = blake3(subject‖predicate‖object)`), so two episodes asserting
+  the same thing share one row, and no provenance links a row back to the
+  episodes that contributed it. Doing this correctly needs contributing-episode
+  provenance plus reference-counted deletion.
+
 ## [0.7.0] — 2026-08-18
 
 Moon-only, and the GA cut. Every storage backend except Moon is deleted,
