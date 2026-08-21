@@ -209,8 +209,7 @@ pub async fn run_rust_driver_backend_parity(moon_url: Option<&str>) -> anyhow::R
     let golden = GoldenReference::load()?;
 
     let Some(url) = moon_url else {
-        eprintln!("run_bindings_backend_parity: SKIP (LUNARIS_MOON_URL unset)");
-        return Ok(());
+        return crate::skip::skip_or_fail("run_bindings_backend_parity", "LUNARIS_MOON_URL unset");
     };
 
     let handle = Lunaris::open(url)

@@ -38,8 +38,10 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
     let storage_url = match probe_backend("MOON_URL", std::env::var("MOON_URL").ok()) {
         Some(u) => u,
         None => {
-            eprintln!("SKIP run_protocol_lunaris_server: MOON_URL not set / reachable");
-            return Ok(());
+            return lunaris_conformance::skip::skip_or_fail(
+                "run_protocol_lunaris_server",
+                "MOON_URL not set / reachable",
+            );
         }
     };
 
@@ -47,11 +49,10 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
     //    crates/lunaris-conformance/tests/crash_recovery.rs:247-261).
     let bin = resolve_lunaris_server_bin();
     if !std::path::Path::new(&bin).exists() {
-        eprintln!(
-            "SKIP run_protocol_lunaris_server: binary not found at {bin} — \
-             run `cargo build -p lunaris-server` first"
+        return lunaris_conformance::skip::skip_or_fail(
+            "run_protocol_lunaris_server",
+            format!("binary not found at {bin} — run `cargo build -p lunaris-server` first"),
         );
-        return Ok(());
     }
 
     // 3. Write a temp tokens-file with two test tokens. The runner cleans up
@@ -101,8 +102,10 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
         Err(e) => {
             let _ = child.kill();
             let _ = child.wait();
-            eprintln!("SKIP run_protocol_lunaris_server: server start failed: {e}");
-            return Ok(());
+            return lunaris_conformance::skip::skip_or_fail(
+                "run_protocol_lunaris_server",
+                format!("server start failed: {e}"),
+            );
         }
     };
 
@@ -220,23 +223,30 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     };
 
     let timeout = Duration::from_secs(1);
-    let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
-        Some(a) => a,
-        None => {
+    // Every resolved address, not just the first. `to_socket_addrs()`
+    // returns them in resolver order, and on macOS `localhost` yields
+    // `::1` ahead of `127.0.0.1` — so probing only `next()` reported a
+    // perfectly healthy IPv4-bound Moon as unreachable and skipped the
+    // whole suite to green. Which address answers is not the question;
+    // whether ANY does, is.
+    let addrs: Vec<_> = match host_port.to_socket_addrs() {
+        Ok(it) => it.collect(),
+        Err(_) => {
+            // Intentionally never log the URL itself — a store URL can
+            // carry credentials. Host:port and the env var name only.
             eprintln!(
                 "run_protocol_lunaris_server: SKIP {name} (DNS resolution of {host_port} failed)"
             );
             return None;
         }
     };
-    match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(_) => Some(url),
-        Err(_) => {
-            eprintln!(
-                "run_protocol_lunaris_server: SKIP {name} (TCP probe to {host_port} failed within {}ms)",
-                timeout.as_millis()
-            );
-            None
-        }
+    if addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok()) {
+        return Some(url);
     }
+    eprintln!(
+        "run_protocol_lunaris_server: SKIP {name} (TCP probe to {host_port} failed within {}ms across {} address(es))",
+        timeout.as_millis(),
+        addrs.len()
+    );
+    None
 }
