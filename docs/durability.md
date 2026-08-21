@@ -378,7 +378,7 @@ Run it:
 
 ```bash
 cd crates/lunaris-py
-LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+LUNARIS_MOON_URL="moon://127.0.0.1:6380" \
   uv run --with datasets --with python-ulid --with redis \
     python -u ../../scripts/test-recovery.py --docs 50
 ```

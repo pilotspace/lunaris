@@ -7,7 +7,7 @@
 //! - §4 scratchpad key `state` was write-OK/read-IMPOSSIBLE (`ERR empty query
 //!   after analysis`) and a fresh scope's first read errored `unknown index`.
 //!
-//! Live gate: LUNARIS_TEST_MOON_URL (skipped when unset).
+//! Live gate: LUNARIS_MOON_URL (skipped when unset).
 //! RED until the Moon dedupe sidecar + WorkingMemory find-fallback land.
 
 use std::sync::Arc;
@@ -17,10 +17,10 @@ use lunaris_core::{Scope, StubEmbedder};
 use ulid::Ulid;
 
 fn moon_url() -> Option<String> {
-    match std::env::var("LUNARIS_TEST_MOON_URL") {
+    match std::env::var("LUNARIS_MOON_URL") {
         Ok(u) if !u.is_empty() => Some(u),
         _ => {
-            eprintln!("skipping: LUNARIS_TEST_MOON_URL not set (live-Moon gate)");
+            eprintln!("skipping: LUNARIS_MOON_URL not set (live-Moon gate)");
             None
         }
     }

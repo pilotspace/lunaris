@@ -5,7 +5,7 @@ Tests are split into two groups:
 1. **Offline** — Scope validation + EpisodeBuilder construction. These run on
    any machine, no backend required.
 2. **Online** — ingest under a scope + cross-scope isolation. These require a
-   live Moon backend (LUNARIS_TEST_MOON_URL; see conftest.py) and skip when
+   live Moon backend (LUNARIS_MOON_URL; see conftest.py) and skip when
    none is reachable.
 """
 from __future__ import annotations

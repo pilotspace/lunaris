@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // The tests exercise the compiled `.node` binary produced by
 // `napi build --platform --release`. That binary is loaded on import via
 // the `@napi-rs/cli`-generated `index.js` / `index.mjs` loader. Tests that
-// need a live Moon or Postgres backend gate on `LUNARIS_TEST_MOON_URL`
+// need a live Moon or Postgres backend gate on `LUNARIS_MOON_URL`
 // and skip when no reachable backend is detected — mirrors the Python
 // `conftest.py::moon_backend_url` fixture shape.
 export default defineConfig({

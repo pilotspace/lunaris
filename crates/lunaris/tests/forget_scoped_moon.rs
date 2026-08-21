@@ -7,12 +7,14 @@
 //!
 //! ## Backend (0.7.0 port)
 //!
-//! Previously gated on `LUNARIS_TEST_MOON_URL`, which nothing in CI ever set —
-//! so all four Moon assertions below were *skipped on every run*, and only the
-//! `memory://` rejection test actually executed. They now open a harness-issued
-//! ephemeral Moon and run whenever a Moon binary is present.
+//! Previously gated on `LUNARIS_TEST_MOON_URL` — a third spelling of the Moon
+//! URL that no workflow ever set (the repo also used `MOON_URL` and
+//! `LUNARIS_MOON_URL`), so all four Moon assertions below were *skipped on
+//! every run* and only the `memory://` rejection test actually executed. They
+//! now open a harness-issued ephemeral Moon and run whenever a Moon binary is
+//! present. The surviving spelling is `LUNARIS_MOON_URL` (W4.14).
 //!
-//! The `LUNARIS_TEST_MOON_URL` escape hatch is deliberately NOT carried over.
+//! An env-var escape hatch is deliberately NOT carried over.
 //! This file calls `forget`; pointing it at an operator's live store was a
 //! footgun with no upside now that a disposable Moon costs ~3 ms.
 //!

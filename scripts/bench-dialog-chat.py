@@ -12,7 +12,7 @@ characters of a random subset of those turns. A hit "counts" when the
 original turn text (normalized) appears in the returned chunk text.
 
 Usage:
-  LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+  LUNARIS_MOON_URL="moon://127.0.0.1:6380" \
     uv run --with datasets --with python-ulid --with redis --with psutil \
       python scripts/bench-dialog-chat.py \
         [--turns 5000] [--queries 500] [--top-k 10]
@@ -31,7 +31,7 @@ import time
 import lunaris
 from lunaris.conversational import ChatAgentMemory
 
-MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6380")
+MOON_URL = os.environ.get("LUNARIS_MOON_URL", "moon://127.0.0.1:6380")
 USER_ID = "bench-user-dialog"
 
 
