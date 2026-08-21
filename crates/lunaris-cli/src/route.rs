@@ -39,6 +39,11 @@ const DEFAULT_CONNECT_MS: u64 = 500;
 pub(crate) enum Route {
     Socket,
     Direct,
+    /// `lunaris try`: an in-process Moon this command started and will shut
+    /// down. A distinct label because "direct" would be actively misleading —
+    /// nothing about a trial store persists, and a reader who confuses it with
+    /// their real store will wonder where their memories went.
+    Trial,
 }
 
 impl Route {
@@ -46,6 +51,7 @@ impl Route {
         match self {
             Route::Socket => "contextd",
             Route::Direct => "direct",
+            Route::Trial => "lunaris try — embedded Moon",
         }
     }
 }

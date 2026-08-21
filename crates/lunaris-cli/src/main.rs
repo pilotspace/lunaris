@@ -17,21 +17,39 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+mod corpus;
 mod direct;
 mod render;
 mod request;
 mod route;
+mod stage;
+mod trial;
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use request::Cli;
+use request::{Cli, Command};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> ExitCode {
-    init_tracing();
     let cli = Cli::parse();
+    let is_trial = matches!(cli.command, Command::Try(_));
+    init_tracing(is_trial);
+
+    // `try` is the one subcommand that does not talk to an existing store: it
+    // starts its own. Routing it before `to_request` is why `lunaris try` needs
+    // no `--scope`, no daemon and no `LUNARIS_STORE_URL`.
+    if let Command::Try(args) = &cli.command {
+        // The root parser declares `--scope` / `--json` as global flags, so
+        // clap will happily accept them here. `try` cannot honour either, and
+        // ignoring a flag someone typed is worse than refusing it.
+        let globals = trial::Globals {
+            scope_on_command_line: trial::scope_flag_typed(std::env::args()),
+            json: cli.json,
+        };
+        return trial::run(args, globals).await;
+    }
 
     let req = match cli.to_request() {
         Ok(req) => req,
@@ -76,8 +94,18 @@ fn socket_path() -> Option<std::path::PathBuf> {
 /// Logs go to stderr so stdout stays a clean, pipeable payload. Quiet by
 /// default: a CLI that narrates its own routing on every run is unusable in a
 /// pipeline.
-fn init_tracing() {
-    let filter = std::env::var("LUNARIS_CLI_LOG").unwrap_or_else(|_| "warn".to_owned());
+///
+/// `lunaris try` is quieter still. At `warn` a first run emits three lines a
+/// newcomer can do nothing about — Moon's `--maxmemory` auto-cap, a missing
+/// `tokenizer.json` for the BPE token counter, and a `Scope::dev()` migration
+/// notice from deep in the recall path. All three are true and none of them
+/// belong in the first thirty seconds; every one reads as "something is wrong"
+/// to someone who has no idea what a token counter is. `LUNARIS_CLI_LOG=warn`
+/// brings them straight back, and the trial's own failures are printed by
+/// `trial::run`, not by tracing, so nothing actionable is hidden.
+fn init_tracing(trial: bool) {
+    let default = if trial { "error" } else { "warn" };
+    let filter = std::env::var("LUNARIS_CLI_LOG").unwrap_or_else(|_| default.to_owned());
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
