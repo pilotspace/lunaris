@@ -32,12 +32,46 @@ The Postgres and SQLite backends were removed; see
 > **How it works:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the
 > layered design and the Moon advantage map, every claim proof-anchored.
 
+## Try it without installing anything
+
+No database, no container, no account, no config file. `lunaris try` starts a
+private in-process Moon on a loopback port, writes six sample memories, asks
+the store a question and shuts down when it exits.
+
+```console
+$ git clone https://github.com/pilotspace/lunaris && cd lunaris
+$ cargo build --release -p lunaris-cli --features embedded-moon
+$ ./target/release/lunaris try
+```
+
+```text
+  ✓ store          embedded Moon on 127.0.0.1:52350
+  ✓ corpus         6 sample memories
+
+  ? why did we pick Moon instead of Postgres
+
+ 1. [0.914] sample/decisions  01M0H9HYYMTDZB9VJK4S6Y8CFS
+    We chose Moon over Postgres for the memory substrate because recall has to
+    stay under 25 ms at a hundred thousand documents per scope, and Moon answers
+    vector search, BM25 and graph traversal in one round trip instead of three.
+
+recalled 5 of 6 memories in 1 ms
+```
+
+It refuses to touch a store it did not start — every `LUNARIS_*` store
+variable in your environment is ignored, and ports 6379/6380/6381/6399 are
+rejected outright. First run downloads a 253 MB embedder (once per machine);
+after that it is a few seconds. **This needs a clone** — `lunaris-cli` is not
+published to crates.io and has no prebuilt release binary yet.
+[Full walkthrough →](docs/quickstart-try.md)
+
 ## Pick your path
 
 | You are… | Do this | Time |
 |---|---|---|
 | **Giving your AI agent memory** (Claude Code, Codex) | [Install the MCP server](#1-give-your-ai-agent-memory-mcp) — no Rust toolchain needed | 2 min |
 | **Building an app** in Python / TypeScript / Rust | [Install an SDK](#2-build-with-an-sdk) | 5 min |
+| **Just looking** — want to see it recall something | [`lunaris try`](#try-it-without-installing-anything) — needs a clone and a `cargo build` | 3 min |
 | **Evaluating** against Mem0 / Zep / Cognee | Read [`POSITIONING.md`](docs/POSITIONING.md), then the [migration doc](#coming-from-another-agent-memory-tool) for your tool | 10 min |
 
 ---
