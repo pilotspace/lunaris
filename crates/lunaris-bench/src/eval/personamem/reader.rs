@@ -97,6 +97,23 @@ pub(crate) fn render_mcq_prompt(
     // with gold (v4/v5 scored below random on the category), and the working
     // signals are voice (an assistant reply addresses the user) and
     // persona-fit.
+    //
+    // ⚠ ISSUE #141 (2026-08-21): the suggestion half of this rationale was
+    // tuned against a DEGENERATE category. `suggest_new_ideas` gold is the
+    // shortest option in 98.9% of its 93 questions (no other category exceeds
+    // 15.5%), so neither "echo" nor "novelty" separates gold there — length
+    // does, and the clause below ("building on something they already do or
+    // love is often exactly right") plausibly SELECTS the long persona-woven
+    // distractors. Pinned by
+    // `dataset.rs::suggest_new_ideas_gold_is_the_shortest_option_and_no_other_category_is`.
+    //
+    // The prompt is deliberately left UNCHANGED here: it is the prompt the
+    // published 75.0% was measured with, and editing it silently would make
+    // that number uncomparable. Any change is a measurement change and must
+    // be run as a paired A/B with committed raw artifacts
+    // (docs/benchmarks/pm-raw/). It must NOT be changed in the direction of a
+    // shortness preference — that would score ~99% on a category that
+    // measures nothing and make real suggestions worse.
     s.push_str(
         "\nYou are the assistant in this ongoing conversation. Find the most \
          appropriate model response to the user's message. Verify each \

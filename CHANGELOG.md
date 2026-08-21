@@ -49,8 +49,16 @@ and a §7 upgrade/rollback procedure that has actually been rehearsed.
   (latency contract + no measured quality win;
   `docs/decisions/2026-08-18-graph-default-off-ga.md`); OTLP export is
   post-GA (`docs/decisions/2026-08-17-otlp-post-ga.md`).
-- **PersonaMem benchmark results** published in README + book (32k v1:
-  63.3% / 53.5% — above TencentDB-Agent-Memory's published claim).
+- **PersonaMem benchmark results** published in README + book. *(Corrected
+  2026-08-21, W3.9: this entry read "32k v1: 63.3% / 53.5% — above
+  TencentDB-Agent-Memory's published claim". That comparison was wrong —
+  63.3% is **below** Tencent's published 76%, and the entry cited a
+  superseded v1 run with no operating point stated. The current published
+  figures are the 32k split's **75.0% single-reader / 41.9% no-memory
+  floor on the `quality` operating point**, with their caveats, in
+  [`scripts/bench/pm/RESULTS.md`](scripts/bench/pm/RESULTS.md). Neither
+  is a head-to-head with Tencent — see
+  [`docs/benchmarks/README.md`](docs/benchmarks/README.md#competitor-figures).)*
 
 ### Changed (recall defaults)
 
