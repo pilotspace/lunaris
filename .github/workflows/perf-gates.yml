@@ -40,6 +40,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 concurrency:
   group: perf-gates-${{ github.ref }}
   cancel-in-progress: true
