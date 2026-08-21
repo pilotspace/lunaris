@@ -69,6 +69,12 @@ jobs:
       # dispatches on URL scheme, and since 0.7.0 `moon` is the only one it
       # accepts.
       MOON_URL: moon://localhost:6390
+      # W1.1 — `lunaris-storage-moon`'s live suite reads LUNARIS_MOON_URL, not
+      # MOON_URL (see tests/list_scopes.rs::moon_url), and defaults to :6380.
+      # Unset, its `maybe_connect()` printed a SKIP and returned Ok — six
+      # `#[ignore = "requires live Moon"]` tests that could never run even with
+      # `--include-ignored`. Same value, both names.
+      LUNARIS_MOON_URL: moon://localhost:6390
       # The `lunaris-test-harness` fixtures spawn their OWN disposable Moon per
       # test (never this one). Point them at the binary this job builds; without
       # it every harness-backed test panics with the no-moon diagnostic, because
@@ -170,15 +176,27 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
-      - name: Run lunaris-storage-moon tests with moon-it
+      - name: Run lunaris-storage-moon tests with moon-it (including --ignored)
         # The backend's own live-Moon suite. Before 0.7.0 this ran only from a
         # developer's shell; with Postgres gone it is the deepest live coverage
         # the storage layer has, so CI owns it.
+        #
+        # W1.1 — `--include-ignored` is the half that makes
+        # `grep -rn 'ignored' .github/workflows/` return something. Six tests
+        # in `tests/list_scopes.rs` + `tests/scope_isolation.rs` carry
+        # `#[ignore = "requires live Moon"]`; this job HAS a live Moon, so the
+        # ignore was gating them out of the one place they can run. All six
+        # verified green against a fresh Moon locally on 2026-08-21.
+        #
+        # The remaining workspace ignores stay ignored and are triaged in
+        # ci.yml's `ignored_test_ratchet`: they need a GGUF, a tokenizer, a
+        # release binary, or they pin a known Moon gap.
         if: success() || failure()
         run: |
           cargo test -p lunaris-storage-moon \
             --features moon-it \
-            --no-fail-fast
+            --no-fail-fast \
+            -- --include-ignored
 
       - name: Run lunaris-recipes tests with moon-it
         # Recipe integration tests use probe_backend skip discipline (SKIP when

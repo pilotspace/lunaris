@@ -109,17 +109,36 @@ pub async fn forget_handler(
         request.options.confirmation_token = Some(token);
     }
 
-    // P0 #1 Wave 2: HTTP forget route still routes through the deprecated
-    // bare `Lunaris::forget`. Migration to `engine.scoped(claims.scope).forget`
-    // is tracked in docs/v0.3-known-debt.md (per-handler scoped-API work).
-    #[allow(deprecated)]
-    let result = state.lunaris.forget(request).await;
+    // W1.1 (2026-08-21) — the route runs the SCOPED pipeline. Until this
+    // commit the handler called the deprecated bare `Lunaris::forget`, whose
+    // scan / read / write all route through `Scope::dev()`; every real tenant
+    // got `200 OK` with `rows_written = 0` and nothing was ever deleted. The
+    // JWT `tenant` claim is the only source of truth for the partition key
+    // (CLAUDE.md "HTTP DTO discipline"), so `claims.scope` is what binds here.
+    let result = state.lunaris.scoped(claims.scope.clone()).forget(request).await;
 
     // Always increment forget_total — both success + error contribute to the
     // counter. error_total increment lives inside map_error (W-11 fix).
     metrics().forget_total.with_label_values(&[scope_str, target_kind, hard_label]).inc();
 
     match result {
+        // W1.1 — a single-ULID target that matched nothing inside the caller's
+        // own partition is `404 Not Found`, not `200 OK` with a zero receipt.
+        // A 200 here is exactly the failure mode this task closes: the caller
+        // cannot distinguish "deleted" from "your token cannot see it".
+        // 404 rather than 403 is deliberate — a cross-scope ULID must be
+        // indistinguishable from a non-existent one, so the status must not
+        // confirm that the id exists in somebody else's partition.
+        // Bulk predicates (`Scope` / `Before`) keep 200-with-zero: matching
+        // nothing is a legitimate outcome for a range delete, not a miss.
+        Ok(receipt) if receipt.matched == 0 && target_kind == "id" => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "not_found",
+                "message": "no episode with that id is visible in this token's scope",
+            })),
+        )
+            .into_response(),
         Ok(receipt) => (StatusCode::OK, Json(receipt)).into_response(),
         Err(e) => map_error(e),
     }

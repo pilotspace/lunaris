@@ -15,12 +15,23 @@ use futures::StreamExt;
 use reqwest::{Client, StatusCode};
 use url::Url;
 
-/// Snapshot at a far-future Hlc — returns whatever rows exist (the conformance
+/// Snapshot at the CURRENT Hlc — returns whatever rows exist (the conformance
 /// corpus seeded by `ingest::happy_path` plus anything the backend already
-/// holds). Far-future Hlc encodes as `<wall_ms>.<counter>` per Plan 05-01
-/// snapshot route; we use `(u64::MAX/2).0` to avoid backend overflow.
+/// holds). The Hlc encodes as `<wall_ms>.<counter>` per the Plan 05-01
+/// snapshot route.
+///
+/// W1.1 — this used to request `(u64::MAX/2).0`, a far-FUTURE wall_ms, which
+/// `routes/snapshot.rs::is_future_hlc` answers with `404 snapshot_out_of_range`
+/// by design. The assertion had therefore been unsatisfiable ever since that
+/// rule landed; nobody noticed because the whole protocol suite skips unless
+/// `target/<profile>/lunaris-server` happens to exist, and no CI job built it.
+/// Integration CI now builds the binary, so this had to become true.
 pub async fn ndjson_stream(client: &Client, base: &Url, token: &str) -> anyhow::Result<()> {
-    let url = base.join(&format!("/v1/snapshot/{}.0", u64::MAX / 2))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let url = base.join(&format!("/v1/snapshot/{now_ms}.0"))?;
     let resp = client.get(url).bearer_auth(token).send().await?;
     anyhow::ensure!(
         resp.status() == StatusCode::OK,

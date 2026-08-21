@@ -52,6 +52,7 @@ pub async fn run_full_protocol_suite(
     recall::sse_streaming(&client, &base_url, &token).await?;
     recall::graph_mode_capability_gate(&client, &base_url, &token).await?;
     forget::id_target(&client, &base_url, &token).await?;
+    forget::unknown_id_returns_404(&client, &base_url, &token).await?;
     forget::two_step_hard_delete(&client, &base_url, &token).await?;
     snapshot::ndjson_stream(&client, &base_url, &token).await?;
     auth::missing_token_returns_401(&client, &base_url).await?;
