@@ -77,15 +77,21 @@ latency SLO (`docs/operations/capacity.md` §4).
 |---|---|---|
 | GA-2b capacity envelope | **both**, measured separately | `docs/operations/capacity.md` |
 | PersonaMem 32k (75.0 % single-reader) | **`quality`** — `PM_RERANK=1` in `scripts/bench/pm/run_pm.sh:112` | `scripts/bench/pm/RESULTS.md` |
-| LongMemEval CI recall ratchet | **`quality`** — `RERANK` defaults to `1` in `anygold_gate.sh` | `scripts/bench/lme/baselines/` |
+| LongMemEval CI recall ratchet | **both**, gated separately — `recall-ratchet.yml` runs a 4-shard x 2-point matrix | `scripts/bench/lme/baselines/` |
 | LongMemEval N=125 A/B runner | **`quality`** — `run_lme.sh` sets rerank on | `scripts/bench/lme/` |
 | §5 rerank drift regression baseline | **`quality`** by construction (it measures the reranker) | `crates/lunaris-llamacpp/tests/section5_rerank_parity.rs` |
 
-Read that table twice. **Every recall-quality number Lunaris publishes was
+Read that table twice. **Every published recall-quality headline was
 measured on `quality`, and every latency number that meets the 25 ms
 contract was measured on `fast`.** That is the exact split the two-point
-decision exists to make visible, and it is why the CI ratchet's operating
-point is itself a live defect — see
+decision exists to make visible.
+
+The CI ratchet used to be the loudest example of the failure: it gated
+`quality` only, so the configuration every user gets by default had no
+recall-quality gate at all. That is now closed — `recall-ratchet.yml` runs
+both arms against their own baselines, and
+`eval_workflow_guard.rs::workflow_gates_exactly_the_baselines_this_guard_validates`
+fails if the matrix and the checked-in baseline set ever disagree. See
 [`scripts/bench/lme/baselines/README.md`](../../scripts/bench/lme/baselines/README.md).
 
 ---

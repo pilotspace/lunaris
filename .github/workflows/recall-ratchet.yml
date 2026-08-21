@@ -16,25 +16,35 @@
 # runner can honestly produce, and it is Lunaris's own contract: recall
 # correctness, not e2e QA accuracy.
 #
-# Shape: a 4-way matrix shards the 16 questions (measured ~125 s/question
-# on the reference box with the full production retrieval config — rerank
-# INCLUDED, because disabling it demonstrably flips outcomes; a single
-# hosted job would blow the <40 min wall-clock target), then a cheap fan-in
-# job merges the shard artifacts and runs the ratchet: tally.py compares
-# any-gold hits against the checked-in baseline
-# scripts/bench/lme/baselines/ci-anygold.json with an explicit tolerance.
+# Shape: a 4-shard x 2-operating-point matrix (8 measure jobs, 10 questions
+# each, measured ~125 s/question on the reference box; a single hosted job
+# would blow the <40 min wall-clock target), then one cheap fan-in job PER
+# ARM merges that arm's shard artifacts and runs the ratchet: tally.py
+# compares any-gold hits against that arm's checked-in baseline
+# scripts/bench/lme/baselines/ci-anygold-<point>-n40.json with an explicit
+# tolerance.
+#
+# BOTH points are gated. `quality` (rerank ON) is what every published recall
+# number was measured on; `fast` (rerank OFF) is what users actually get by
+# default and had no recall-quality gate at all until this change. Gating one
+# and publishing both is how a shipped default goes unmeasured.
 # Regression beyond tolerance exits nonzero. The baseline records the
 # retrieval-config signature it was measured under; the gate refuses
 # (exit 6) to compare across a config change — re-bless with
 # `anygold_gate.sh --write-baseline` instead.
 #
-# N=16 (offsets16.tsv), not N=1 or N=125: one question proves plumbing but
-# ratchets nothing; 125 is hours of CPU embedding. 16 stratified questions
-# give 6.25-points-per-question granularity on a deterministic (judge-free)
-# metric — retrieval is stable run-to-run, so a 2-question drop is signal,
-# unlike the ±5-point LLM-judge noise floor that makes small J deltas
-# meaningless. NEVER report J-score deltas from this manifest; the ratchet
-# is any-gold only.
+# N=40 (offsets40.tsv), not N=1 or N=125: one question proves plumbing but
+# ratchets nothing; 125 is hours of CPU embedding. tally.py fails below
+# `baseline - tolerance`, so the smallest detectable drop is
+# (tolerance + 1) / N -- at N=40 tolerance 1 that is exactly 5.0 points,
+# versus 12.5 at the old N=16. The tolerance is NOT slack: an any-gold flip
+# needs only one borderline rank to cross the session-capping boundary, and
+# cross-platform float math can plausibly move one. Buy sensitivity with N.
+# offsets40.tsv also covers all SIX question categories; offsets16.tsv
+# carried only two, so a regression confined to the other four was invisible
+# at any N. NEVER report J-score deltas from this manifest; the ratchet is
+# any-gold only, and says nothing about whether a reader then answered
+# correctly.
 #
 # STARTUP-01 lesson (do not regress it): job-level `env:` maps are expanded
 # by the Actions service BEFORE a runner is assigned — `runner.*` / `env.*`
@@ -93,7 +103,7 @@ concurrency:
 
 jobs:
   measure:
-    name: any-gold shard ${{ matrix.shard }}/4 (judge-free, CPU)
+    name: any-gold ${{ matrix.point }} shard ${{ matrix.shard }}/4 (judge-free, CPU)
     runs-on: ubuntu-latest
     # ~4 questions x ~2-6 min (CPU, x86) + builds. Warm-cache target is well
     # under 40 min; the margin covers a cold llama.cpp + Moon compile. The
@@ -104,6 +114,16 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3]
+        # Both published operating points get a gate. `fast` (rerank OFF) is
+        # the SHIPPED default and had no recall-quality gate at all until now;
+        # `quality` (rerank ON) is what every published recall number was
+        # measured on. See docs/benchmarks/operating-points.md.
+        point: [fast, quality]
+        include:
+          - point: fast
+            rerank: "0"
+          - point: quality
+            rerank: "1"
     env:
       # GGUF URLs + digests: keep in sync with
       # crates/lunaris-mcp/src/model_stager.rs (ModelKind::url / ::sha256)
@@ -188,11 +208,13 @@ jobs:
         # warm Ollama here).
         run: cargo build --release -p lunaris-bench --bin lunaris-evals --features llamacpp
 
-      - name: Measure shard (4 questions, scratch Moon, judge-free)
+      - name: Measure shard (10 questions, scratch Moon, judge-free)
         env:
           LME_MOON_BIN: vendor/moon/target/release/moon
           SHARD_INDEX: ${{ matrix.shard }}
           SHARD_COUNT: "4"
+          OFFSETS_FILE: scripts/bench/lme/questions/offsets40.tsv
+          RERANK: ${{ matrix.rerank }}
         run: scripts/bench/lme/anygold_gate.sh
 
       - name: Give per-shard files collision-free names for the merge
@@ -213,7 +235,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recall-ratchet-shard-${{ matrix.shard }}
+          name: recall-ratchet-${{ matrix.point }}-shard-${{ matrix.shard }}
           path: |
             target/lme/anygold/q*.log
             target/lme/anygold/q*.json
@@ -222,10 +244,14 @@ jobs:
           retention-days: 14
 
   ratchet:
-    name: merge shards + ratchet vs baseline
+    name: merge ${{ matrix.point }} shards + ratchet vs baseline
     needs: measure
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        point: [fast, quality]
     env:
       MEASURE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.measure-only }}
     steps:
@@ -237,7 +263,7 @@ jobs:
       - name: Download all shard artifacts (merged)
         uses: actions/download-artifact@v4
         with:
-          pattern: recall-ratchet-shard-*
+          pattern: recall-ratchet-${{ matrix.point }}-shard-*
           path: merged/
           merge-multiple: true
 
@@ -253,13 +279,14 @@ jobs:
           [ "$(printf '%s\n' "$sig" | wc -l)" -eq 1 ] || {
             echo "::error::shards measured under different config signatures:"; printf '%s\n' "$sig"; exit 1; }
           sig="${sig#SIG=}"
-          expected="$(awk '!/^[[:space:]]*#/ && NF {c++} END {print c}' scripts/bench/lme/questions/offsets16.tsv)"
+          expected="$(awk '!/^[[:space:]]*#/ && NF {c++} END {print c}' scripts/bench/lme/questions/offsets40.tsv)"
+          baseline="scripts/bench/lme/baselines/ci-anygold-${{ matrix.point }}-n40.json"
           if [ "${MEASURE_ONLY}" = "true" ]; then
             echo "::notice::measure-only dispatch — baseline comparison skipped."
             python3 scripts/bench/lme/tally.py --dir merged --expected "$expected" --anygold --json | tee merged-anygold.json
           else
             python3 scripts/bench/lme/tally.py --dir merged --expected "$expected" --anygold \
-              --baseline scripts/bench/lme/baselines/ci-anygold.json \
+              --baseline "$baseline" \
               --config-signature "$sig" --json | tee merged-anygold.json
           fi
 
@@ -267,20 +294,20 @@ jobs:
         if: always()
         run: |
           {
-            echo "## LME-S any-gold ratchet (N=16, judge-free)"
+            echo "## LME-S any-gold ratchet — ${{ matrix.point }} (N=40, judge-free)"
             echo
             echo '```json'
             cat merged-anygold.json 2>/dev/null || echo '(no merged tally produced)'
             echo '```'
             echo
-            echo "Baseline: \`scripts/bench/lme/baselines/ci-anygold.json\` — re-bless locally with"
-            echo '`scripts/bench/lme/anygold_gate.sh --write-baseline scripts/bench/lme/baselines/ci-anygold.json`'
+            echo "Baseline: \`scripts/bench/lme/baselines/ci-anygold-${{ matrix.point }}-n40.json\` — re-bless locally with"
+            echo "\`scripts/bench/lme/baselines/README.md\` (blessing commands + the required distinct DIR per arm)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload merged tally
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recall-ratchet-merged-${{ github.run_id }}
+          name: recall-ratchet-merged-${{ matrix.point }}-${{ github.run_id }}
           path: merged-anygold.json
           retention-days: 14
