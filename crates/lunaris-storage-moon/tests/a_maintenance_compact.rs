@@ -41,7 +41,9 @@ use lunaris_core::Scope;
 use lunaris_core::storage::StoragePort;
 use lunaris_core::storage::types::WriteOp;
 use lunaris_storage_moon::MoonStorage;
-use lunaris_storage_moon::vector::maybe_compact_after_bulk_ingest;
+use lunaris_storage_moon::vector::{
+    maybe_compact_after_bulk_ingest, maybe_compact_after_bulk_ingest_with_min,
+};
 use serde_json::json;
 
 const DIM: usize = 768;
@@ -132,15 +134,16 @@ async fn below_gate_leaves_mutable_segment_uncompacted() {
 /// on the scope's chunks index and the vectors move into a real (HNSW)
 /// segment.
 ///
-/// SAFETY note on env mutation: `std::env::set_var` is `unsafe` on edition
-/// 2024. This crate does NOT `#![forbid(unsafe_code)]` at the workspace
-/// level for integration tests (unlike `lunaris-storage-moon`'s own `src/`,
-/// which avoids env mutation entirely for exactly this reason — see
-/// `client.rs::parse_op_timeout`'s doc comment). This test isolates the
-/// mutation to a `#[tokio::test]` that runs in its own process-wide env
-/// state; run this test file alone (`--test a_maintenance_compact`) if
-/// parallel env-var tests elsewhere in the same binary ever race on it (none
-/// currently exist in this crate).
+/// The gate is passed in as an ARGUMENT, not lowered via
+/// `LUNARIS_MOON_COMPACT_MIN`. The earlier version of this test set that
+/// variable with `std::env::set_var`, which is process-wide, and raced its own
+/// sibling: `§1` above runs concurrently and asserts that 20 upserts stay below
+/// the default 512 gate, but while this test held the gate at 5 that call saw
+/// 20 >= 5, compacted, and `§1` failed with `left: 1, right: 0`. The old
+/// comment here argued the mutation was safe because grep found no other site
+/// naming the variable — but `§1` never names it; it reads it the way every
+/// caller does, through `maybe_compact_after_bulk_ingest`. Shared mutable
+/// process state is not made safe by the absence of a grep hit.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn at_or_above_gate_compacts_into_a_real_segment() {
     let Some(moon) = connect_or_skip().await else { return };
@@ -149,18 +152,9 @@ async fn at_or_above_gate_compacts_into_a_real_segment() {
 
     assert_eq!(graph_segments(&moon, &scope).await, 0, "starts uncompacted");
 
-    // SAFETY: single-threaded env mutation local to this test process;
-    // no other test in this binary reads LUNARIS_MOON_COMPACT_MIN
-    // concurrently (grep confirms `a_maintenance_compact.rs` is the only
-    // site touching it), and `parse_compact_min` is a per-call pure read.
-    unsafe {
-        std::env::set_var("LUNARIS_MOON_COMPACT_MIN", "5");
-    }
-    let result = maybe_compact_after_bulk_ingest(moon.client(), &scope, 10).await;
-    unsafe {
-        std::env::remove_var("LUNARIS_MOON_COMPACT_MIN");
-    }
-    result.expect("maintenance_hint must succeed at/above the gate");
+    maybe_compact_after_bulk_ingest_with_min(moon.client(), &scope, 10, 5)
+        .await
+        .expect("maintenance_hint must succeed at/above the gate");
 
     let segments = graph_segments(&moon, &scope).await;
     assert!(

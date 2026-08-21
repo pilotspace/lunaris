@@ -406,7 +406,30 @@ pub async fn maybe_compact_after_bulk_ingest(
     scope: &Scope,
     vector_upserts: usize,
 ) -> Result<(), StorageError> {
-    if vector_upserts < compact_min_threshold() {
+    maybe_compact_after_bulk_ingest_with_min(client, scope, vector_upserts, compact_min_threshold())
+        .await
+}
+
+/// [`maybe_compact_after_bulk_ingest`] with the gate passed in explicitly
+/// instead of read from `LUNARIS_MOON_COMPACT_MIN`.
+///
+/// This exists because a test that wants to exercise the at-or-above-gate
+/// branch cheaply has to lower the gate, and the only other way to do that is
+/// `std::env::set_var` — which is process-wide. `tests/a_maintenance_compact.rs`
+/// did exactly that and raced against its own sibling: `§2` lowered the gate to
+/// 5 while `§1` was concurrently asserting that 20 upserts stay BELOW the
+/// default 512, so `§1` compacted and failed. The test's comment reasoned that
+/// grep showed no other site "touching" the variable, but `§1` reads it the way
+/// every caller does — indirectly, through this function — so grep could never
+/// have found it. Threading the value through as an argument removes the shared
+/// mutable state rather than trying to schedule around it.
+pub async fn maybe_compact_after_bulk_ingest_with_min(
+    client: &MoonClient,
+    scope: &Scope,
+    vector_upserts: usize,
+    compact_min: usize,
+) -> Result<(), StorageError> {
+    if vector_upserts < compact_min {
         return Ok(());
     }
     let typed = client.typed();
