@@ -93,13 +93,3 @@ bindings-it = []
 # discipline (Plan 02-04). Its `pg-it` sibling died in 0.7.0 with
 # `lunaris-storage-postgres`.
 moon-it = []
-# Plan 21-03 — gates the cross-SDK embedder parity test
-# (`tests/sdk_embedder_parity.rs`) behind a feature so default
-# `cargo test --workspace` does not pull it in. The test orchestrates
-# `python` and `node` subprocesses against the lunaris-py + lunaris-ts SDKs
-# and asserts byte-identical 768-d vectors on a fixed 100-input corpus.
-# Heavyweight: requires both toolchains, a built lunaris-py wheel + lunaris-ts
-# binding, and ~600 MB of fastembed ONNX cache. Invoke explicitly:
-#
-#   cargo test -p lunaris-conformance --features sdk-parity-it sdk_embedder_parity
-sdk-parity-it = []
