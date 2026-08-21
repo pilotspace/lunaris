@@ -2527,6 +2527,7 @@ version = "0.7.0"
 dependencies = [
  "async-trait",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "lunaris-core",
  "lunaris-rerank",
  "serde_json",
