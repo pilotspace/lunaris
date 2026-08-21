@@ -152,6 +152,30 @@ pub struct DistillParams {
     /// NOT re-archive the sources (`archived_count=0` on the duplicate).
     #[serde(default)]
     pub dedupe_key: Option<String>,
+
+    /// Declare this record as a FIRSTHAND observation rather than a
+    /// distillation of stored episodes.
+    ///
+    /// `source_episode_ids` may be empty **only** when this is `true`. That
+    /// asymmetry is the whole point: a caller that simply forgets to pass its
+    /// provenance still gets `"empty_provenance"`, so the relaxation cannot
+    /// silently become a blanket hole. Losing provenance has to be a stated
+    /// intention, not an omission.
+    ///
+    /// It exists because direct capture has nothing to cite. When an agent
+    /// decides something worth remembering, there is no prior episode the
+    /// decision was distilled *from* — the alternative was to route such
+    /// writes through plain `ingest`, which lands at `source_priority` 50,
+    /// BELOW `lunaris:tool_call:post` at 75. A hand-written durable memory
+    /// ranking under shell-command noise is the exact disease the curation
+    /// work exists to cure, so firsthand records take the `distilled:` source
+    /// and its priority of 95.
+    ///
+    /// Citations are still welcome: `firsthand` with a non-empty
+    /// `source_episode_ids` is legal and means "I formed this myself, and here
+    /// is the context it came up in".
+    #[serde(default)]
+    pub firsthand: bool,
 }
 
 /// Output of a `memory.distill` call. FLAT root (CLAUDE.md MCP
@@ -178,7 +202,7 @@ pub struct DistillResponse {
 ///
 /// Validates FIRST, in frozen §1 Reject order — a rejected request writes
 /// no episode and archives no source:
-/// 1. `source_episode_ids` empty → `"empty_provenance"`.
+/// 1. `source_episode_ids` empty AND `firsthand` false → `"empty_provenance"`.
 /// 2. any `source_episode_ids` entry not a ULID → `"invalid_source_id"`.
 /// 3. `content` empty/whitespace → `"empty_content"`.
 /// 4. unknown `kind` (incl. `"procedure"`) → `"invalid_kind"`.
@@ -192,7 +216,7 @@ pub async fn handle(
     scope: &Scope,
     params: DistillParams,
 ) -> Result<DistillResponse, ServiceError> {
-    if params.source_episode_ids.is_empty() {
+    if params.source_episode_ids.is_empty() && !params.firsthand {
         return Err(ServiceError::InvalidInput("empty_provenance".to_string()));
     }
     let mut source_ulids: Vec<Ulid> = Vec::with_capacity(params.source_episode_ids.len());
@@ -219,6 +243,11 @@ pub async fn handle(
         ),
     );
     meta.insert("tag_count".into(), serde_json::Value::Number(tag_count.into()));
+    // Self-describing: a firsthand record and a distilled one share the
+    // `distilled:{kind}:{scope}` source, so without this an auditor reading
+    // the store cannot tell "an agent asserted this" from "this was derived
+    // from N episodes". D6 provenance depends on that distinction.
+    meta.insert("firsthand".into(), serde_json::Value::Bool(params.firsthand));
 
     let scoped = lunaris.scoped(scope.clone());
 
@@ -385,6 +414,7 @@ mod tests {
                 title: None,
                 tags: None,
                 dedupe_key: None,
+                firsthand: false,
             },
         )
         .await
@@ -447,6 +477,7 @@ mod tests {
                 title: None,
                 tags: None,
                 dedupe_key: None,
+                firsthand: false,
             },
         )
         .await
@@ -490,6 +521,7 @@ mod tests {
             title: None,
             tags: None,
             dedupe_key: Some(dedupe.to_string()),
+            firsthand: false,
         };
 
         let first = handle(&lunaris, &scope, params("distill-dedupe-1"))
@@ -527,6 +559,7 @@ mod tests {
                 title: None,
                 tags: None,
                 dedupe_key: None,
+                firsthand: false,
             },
         )
         .await
@@ -552,6 +585,7 @@ mod tests {
                 title: None,
                 tags: None,
                 dedupe_key: None,
+                firsthand: false,
             },
         )
         .await
@@ -578,6 +612,7 @@ mod tests {
                 title: None,
                 tags: None,
                 dedupe_key: None,
+                firsthand: false,
             },
         )
         .await
@@ -620,6 +655,7 @@ mod tests {
                     title: None,
                     tags: None,
                     dedupe_key: None,
+                    firsthand: false,
                 },
             )
             .await
@@ -657,5 +693,211 @@ mod tests {
         assert_eq!(DistillKind::parse("gotcha"), Some(DistillKind::Gotcha));
         assert_eq!(DistillKind::parse("procedure"), None);
         assert_eq!(DistillKind::parse("Decision"), None, "kind must be exact snake_case");
+    }
+
+    // ---------------------------------------------------------------------
+    // Firsthand capture: the direct-write path.
+    //
+    // Distill was built to compress episodes the store already holds, so it
+    // demanded provenance. But the curation work needs the OPPOSITE motion —
+    // an agent deciding something worth remembering, with no prior episode to
+    // cite. Routing that through plain `ingest` lands it at `source_priority`
+    // 50, BELOW `lunaris:tool_call:post` at 75: a hand-written durable memory
+    // ranking under shell-command noise. So `firsthand` opens the provenance
+    // requirement, and these tests pin BOTH halves of that — that it opens,
+    // and that it stays shut for everyone who did not ask.
+    // ---------------------------------------------------------------------
+
+    /// The relaxation itself.
+    #[tokio::test]
+    async fn firsthand_accepts_a_record_with_no_provenance() {
+        let (lunaris, scope) = make_engine().await;
+        let resp = handle(
+            &lunaris,
+            &scope,
+            DistillParams {
+                kind: "decision".to_string(),
+                content: "we ship Moon-only; Postgres was a portability proof, not a product"
+                    .to_string(),
+                source_episode_ids: vec![],
+                title: None,
+                tags: None,
+                dedupe_key: None,
+                firsthand: true,
+            },
+        )
+        .await
+        .expect("a firsthand record must not need sources to cite");
+
+        assert_eq!(resp.status, "ok");
+        assert_eq!(
+            resp.archived_count, 0,
+            "nothing was distilled FROM, so nothing may be archived"
+        );
+    }
+
+    /// The half that keeps the relaxation honest. `firsthand` must be an
+    /// assertion, never a fallback: a caller that forgets its provenance still
+    /// gets `empty_provenance`, because the alternative is that every dropped
+    /// id-list silently degrades into an unsourced memory and no one finds out.
+    #[tokio::test]
+    async fn empty_provenance_is_still_rejected_without_the_firsthand_flag() {
+        let (lunaris, scope) = make_engine().await;
+        let before = key_count(&lunaris, &scope).await;
+        let err = handle(
+            &lunaris,
+            &scope,
+            DistillParams {
+                kind: "decision".to_string(),
+                content: "a caller that forgot to pass its sources".to_string(),
+                source_episode_ids: vec![],
+                title: None,
+                tags: None,
+                dedupe_key: None,
+                firsthand: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ServiceError::InvalidInput(msg) => assert_eq!(msg, "empty_provenance"),
+            other => panic!("expected InvalidInput(empty_provenance), got {other:?}"),
+        }
+        assert_eq!(key_count(&lunaris, &scope).await, before, "rejection must write nothing");
+    }
+
+    /// Old callers must be untouched. `firsthand` is `#[serde(default)]`, so
+    /// every wire payload written before this field existed still deserializes
+    /// — and still gets the strict behaviour it was written against.
+    #[test]
+    fn a_payload_without_the_field_defaults_to_not_firsthand() {
+        let params: DistillParams = serde_json::from_value(serde_json::json!({
+            "kind": "lesson",
+            "content": "c",
+            "source_episode_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        }))
+        .expect("pre-firsthand payloads must still deserialize");
+        assert!(
+            !params.firsthand,
+            "the default must be the STRICT side; defaulting to firsthand would \
+             silently drop the provenance requirement for every existing caller"
+        );
+    }
+
+    /// A firsthand record and a distilled one share the
+    /// `distilled:{kind}:{scope}` source — deliberately, so both rank at
+    /// priority 95. That makes them indistinguishable at read time unless the
+    /// record says which it is, so it does. D6 provenance depends on an
+    /// auditor being able to tell "an agent asserted this" from "this was
+    /// derived from N episodes".
+    #[tokio::test]
+    async fn a_firsthand_record_is_marked_as_such_and_still_ranks_as_distilled() {
+        let (lunaris, scope) = make_engine().await;
+        let resp = handle(
+            &lunaris,
+            &scope,
+            DistillParams {
+                kind: "gotcha".to_string(),
+                content: "Moon FT.SEARCH is read-your-writes; only num_docs lags".to_string(),
+                source_episode_ids: vec![],
+                title: None,
+                tags: None,
+                dedupe_key: None,
+                firsthand: true,
+            },
+        )
+        .await
+        .expect("distill must succeed");
+
+        let id = Ulid::from_string(&resp.distilled_episode_id).unwrap();
+        let key = episode_key(&scope, id);
+        let read_at = lunaris.clock().tick();
+        let row = lunaris.storage().read_as_of(&scope, &key, read_at).await.unwrap().unwrap();
+        let episode: lunaris_core::Episode = serde_json::from_slice(&row.value).unwrap();
+
+        assert_eq!(
+            episode.source,
+            format!("distilled:gotcha:{}", scope.as_str()),
+            "firsthand records take the distilled source on purpose: that is what \
+             earns source_priority 95 instead of ingest's 50"
+        );
+        assert_eq!(
+            episode.metadata.get("firsthand").and_then(|v| v.as_bool()),
+            Some(true),
+            "without this flag a reader cannot separate an asserted memory from a \
+             derived one — they carry the identical source string"
+        );
+        assert!(
+            episode
+                .metadata
+                .get("source_episode_ids")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.is_empty()),
+            "the provenance array must be present and empty, not absent — absent \
+             reads as 'this field predates the schema', empty reads as 'there was \
+             nothing to cite'"
+        );
+    }
+
+    /// A distilled record keeps saying it is not firsthand. Without this the
+    /// flag could regress to write-only-true and the distinction above would
+    /// quietly stop meaning anything.
+    #[tokio::test]
+    async fn a_sourced_record_is_marked_not_firsthand() {
+        let (lunaris, scope) = make_engine().await;
+        let a = seed_source(&lunaris, &scope, "raw episode A").await;
+        let resp = handle(
+            &lunaris,
+            &scope,
+            DistillParams {
+                kind: "lesson".to_string(),
+                content: "derived from a real episode".to_string(),
+                source_episode_ids: vec![a.to_string()],
+                title: None,
+                tags: None,
+                dedupe_key: None,
+                firsthand: false,
+            },
+        )
+        .await
+        .expect("distill must succeed");
+
+        let id = Ulid::from_string(&resp.distilled_episode_id).unwrap();
+        let key = episode_key(&scope, id);
+        let read_at = lunaris.clock().tick();
+        let row = lunaris.storage().read_as_of(&scope, &key, read_at).await.unwrap().unwrap();
+        let episode: lunaris_core::Episode = serde_json::from_slice(&row.value).unwrap();
+        assert_eq!(episode.metadata.get("firsthand").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    /// Citing sources AND asserting firsthand is legal, and means "I formed
+    /// this myself, and here is the context it came up in". The sources are
+    /// still archived — the flag governs the provenance REQUIREMENT, not what
+    /// distill does with provenance it was given.
+    #[tokio::test]
+    async fn firsthand_with_sources_still_archives_them() {
+        let (lunaris, scope) = make_engine().await;
+        let a = seed_source(&lunaris, &scope, "raw episode A").await;
+        let resp = handle(
+            &lunaris,
+            &scope,
+            DistillParams {
+                kind: "decision".to_string(),
+                content: "I decided this while looking at A".to_string(),
+                source_episode_ids: vec![a.to_string()],
+                title: None,
+                tags: None,
+                dedupe_key: None,
+                firsthand: true,
+            },
+        )
+        .await
+        .expect("distill must succeed");
+
+        assert_eq!(
+            resp.archived_count, 1,
+            "firsthand relaxes the requirement to cite, not the handling of \
+             citations that were provided"
+        );
     }
 }
