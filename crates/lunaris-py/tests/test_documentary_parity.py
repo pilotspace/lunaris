@@ -1,8 +1,12 @@
 """Phase 11 Plan 11-03 Task 2 — Python documentary parity driver.
 
-Python-driver leg of the cross-language parity suite. Mirrors the 5
-Rust-driver scenarios from
-`crates/lunaris-recipes/tests/documentary_parity.rs`:
+Python-driver leg of the cross-language parity suite. The 5 scenarios
+originally mirrored a Rust driver at
+`crates/lunaris-recipes/tests/documentary_parity.rs` — that file was
+DELETED in commit `03bf8bc` and only its fixtures survive, so the
+"three independent drivers (Rust / Python / TypeScript)" that
+`conformance-bindings.yml`'s header still advertises is now two.
+The scenarios:
 
   1. DocumentKnowledgeBase — basic RAG, query "quickstart"
   2. ResearchPaperCorpus — graph-off recall, query "reciprocal rank
@@ -14,19 +18,51 @@ Rust-driver scenarios from
   5. CustomerSupportHistory — "refund" recall preserves `ticket:` +
      `chat:` source prefixes with unique `(source, id)` pairs
 
-Per-driver backend parity (Phase 8 CONTEXT — Moon rows == Postgres
-rows WITHIN the Python run) is the correct interpretation of Phase 11
-SC #5. Top-k SET equality (D-13 tie-bucket ordering accepted) is the
-cross-backend assertion inside this one Python process.
+What these tests assert (0.7.0 — CORRECTED, ship-plan W2.9)
+-----------------------------------------------------------
+Each scenario runs ONCE against a live Moon and asserts its rows
+against the committed golden. That is the whole contract now.
+
+Until W2.9 this file called itself a *backend* parity driver: every
+scenario ran twice — once on `LUNARIS_MOON_URL`, once on
+`LUNARIS_POSTGRES_URL` — and the headline assertion was top-k SET
+equality between the two (D-13 tie-bucket ordering accepted). 0.7.0
+deleted `lunaris-storage-postgres`; `lunaris.open` now rejects every
+scheme but `moon://` with `UnsupportedScheme`. So the Postgres leg
+could not have run even against a live Postgres server, and the
+`_backends_or_skip()` gate — which demanded BOTH URLs — silently
+skipped all five scenarios on every invocation, including in
+`conformance-bindings.yml`, which stands up a real Moon on 6391 and
+runs this file. Five live-Moon scenarios were being thrown away to
+satisfy a dead second backend.
+
+The cross-backend SET-equality assertion is GONE and is not
+recoverable — there is no second backend to compare against. What
+survives is per-driver golden conformance, which is what
+`conformance-bindings.yml`'s own header describes as the intent
+("Each driver asserts its own rows against the committed golden
+reference"). The Rust / Python / TypeScript drivers each check
+themselves against the same golden; cross-LANGUAGE byte-identity was
+always explicitly out of scope.
+
+FOUR of the five scenarios now run for real. The fifth
+(`code_repo_memory_parity_as_of_commit_50`) is skipped against a NAMED
+product gap, not silently: Moon has no KV version chain, so a
+system-time `.as_of` pinned 18 months back — which is what the golden
+pins — is refused with `NotSupported`. See `_MOON_HISTORICAL_KV_READS`
+below for the one-line unskip.
+
+NOTE ON THE NAMES: the `_parity_` infix in the five test names is now
+a misnomer. It is kept deliberately — `docs/book/src/cookbook/
+document-kb.md` and `research-and-code.md` cite these names, and those
+files are outside this change's scope. Rename both together.
 
 Fixtures are loaded from `crates/lunaris-recipes/tests/fixtures/
 documentary/*.json` via relative path; we never duplicate fixture data
 in the Python crate. Golden is loaded from the same tree.
 
-Skip discipline mirrors `test_backend_parity.py`: if either
-`LUNARIS_MOON_URL` or `LUNARIS_POSTGRES_URL` is unset / unreachable,
-the test skips cleanly (no hard failure). If both are unreachable the
-test skips neutrally.
+Skip discipline: if `LUNARIS_MOON_URL` is unset or not TCP-reachable,
+the test skips cleanly (no hard failure).
 
 Imports: the documentary wrappers are exposed as the `lunaris.documentary`
 submodule by Plan 11-02b's PyModule routing
@@ -85,11 +121,11 @@ def _load_fixture(name: str) -> Any:
 # Skip helpers — two-tier (env + TCP probe) per Plan 04-03 / 05-02 pattern.
 # -----------------------------------------------------------------------------
 def _parse_host_port(url: str) -> tuple[str, int] | None:
-    for scheme, default_port in (
-        ("moon://", 6379),
-        ("postgres://", 5432),
-        ("postgresql://", 5432),
-    ):
+    # `moon://` only. The `postgres://` / `postgresql://` rows that used to
+    # sit here died with `lunaris-storage-postgres` in 0.7.0 — `lunaris.open`
+    # answers every other scheme with `UnsupportedScheme`, so parsing one
+    # would only have produced a URL nothing could open.
+    for scheme, default_port in (("moon://", 6379),):
         if url.startswith(scheme):
             rest = url[len(scheme):]
             if "@" in rest:
@@ -130,7 +166,7 @@ def _probe_backend(env_name: str) -> str | None:
         return None
     host, port = parsed
     if not _reachable(host, port):
-        # Do not log the full URL (postgres:// may carry credentials).
+        # Log host:port, never the full URL — a store URL may carry credentials.
         print(
             f"documentary_parity: SKIP {env_name} (TCP probe to {host}:{port} failed)",
             file=sys.stderr,
@@ -139,16 +175,25 @@ def _probe_backend(env_name: str) -> str | None:
     return url
 
 
-def _backends_or_skip() -> tuple[str, str]:
+# Mirror of `lunaris_storage_moon::as_of::HISTORICAL_KV_READS`.
+#
+# Moon has no KV version chain, so `StoragePort::read_as_of` refuses any pin
+# older than `AS_OF_LIVE_WINDOW_MS` (1 h) with `StorageError::NotSupported`.
+# That makes the system-time `.as_of` scenario below unrunnable on the only
+# backend 0.7.0 ships. Flip this to True on the day the Rust constant flips,
+# and the scenario starts gating again.
+_MOON_HISTORICAL_KV_READS = False
+
+
+def _moon_or_skip() -> str:
+    """The one live backend. Skips — never silently passes — when absent."""
     moon = _probe_backend("LUNARIS_MOON_URL")
-    pg = _probe_backend("LUNARIS_POSTGRES_URL")
-    if moon is None or pg is None:
+    if moon is None:
         pytest.skip(
-            "documentary_parity needs BOTH LUNARIS_MOON_URL and "
-            "LUNARIS_POSTGRES_URL reachable — per-driver backend parity "
-            "requires two live backends"
+            "documentary_parity needs LUNARIS_MOON_URL set and reachable "
+            "(moon:// is the only scheme lunaris.open accepts since 0.7.0)"
         )
-    return moon, pg
+    return moon
 
 
 def _lunaris_module():
@@ -236,22 +281,13 @@ async def _run_kb_quickstart(
 
 def test_document_knowledge_base_parity_quickstart_rag():
     doc_mod = _lunaris_module()
-    moon, pg = _backends_or_skip()
+    moon = _moon_or_skip()
     golden = _load_golden()
     scenario = golden["scenarios"]["document_knowledge_base_basic_rag"]
 
     async def run():
         moon_hits = await _run_kb_quickstart(
             doc_mod, moon, "moon", scenario["query"], scenario["top_k"]
-        )
-        pg_hits = await _run_kb_quickstart(
-            doc_mod, pg, "pg", scenario["query"], scenario["top_k"]
-        )
-        moon_set = set(moon_hits)
-        pg_set = set(pg_hits)
-        assert moon_set == pg_set, (
-            f"DocumentKnowledgeBase 'quickstart' set divergence:\n"
-            f"  moon={moon_set}\n  pg={pg_set}"
         )
         assert len(moon_hits) >= scenario["expected_min_hits"], (
             f"expected ≥{scenario['expected_min_hits']} hits; got {len(moon_hits)}"
@@ -287,7 +323,7 @@ async def _run_research_paper(
 
 def test_research_paper_corpus_parity_graph_off_recall():
     doc_mod = _lunaris_module()
-    moon, pg = _backends_or_skip()
+    moon = _moon_or_skip()
     golden = _load_golden()
     scenario = golden["scenarios"]["research_paper_corpus_graph_off"]
 
@@ -295,16 +331,13 @@ def test_research_paper_corpus_parity_graph_off_recall():
         moon_hits = await _run_research_paper(
             doc_mod, moon, "moon", scenario["query"]
         )
-        pg_hits = await _run_research_paper(doc_mod, pg, "pg", scenario["query"])
-        moon_set = set(moon_hits)
-        pg_set = set(pg_hits)
-        assert moon_set == pg_set, (
-            f"ResearchPaperCorpus '{scenario['query']}' set divergence:\n"
-            f"  moon={moon_set}\n  pg={pg_set}"
+        assert len(moon_hits) >= scenario["expected_min_hits"], (
+            f"expected ≥{scenario['expected_min_hits']} hits; got {len(moon_hits)}"
         )
-        assert len(moon_hits) >= scenario["expected_min_hits"]
         needles = scenario["expected_hit_body_contains_any"]
-        assert any(any(n in body for n in needles) for _s, body in moon_hits)
+        assert any(
+            any(n in body for n in needles) for _s, body in moon_hits
+        ), f"expected body match in {needles}; got {moon_hits}"
 
     asyncio.run(run())
 
@@ -342,8 +375,38 @@ async def _run_code_repo_as_of(
 
 
 def test_code_repo_memory_parity_as_of_commit_50():
+    # BLOCKED BY A PRODUCT GAP, not by the harness — and it is unblocked by
+    # fixing Moon, not by editing this file.
+    #
+    # `CodeRepoMemory.recall(q, as_of)` is `TemporalQuery::<Documents>::as_of`,
+    # which sets SYSTEM-time as_of on the RetrievalBuilder. `lunaris-retrieve`
+    # hydrate.rs hands that straight to `StoragePort::read_as_of`, and
+    # `lunaris-storage-moon` answers any pin older than
+    # `AS_OF_LIVE_WINDOW_MS` (1 h) with `StorageError::NotSupported` —
+    # `HISTORICAL_KV_READS = false` in `crates/lunaris-storage-moon/src/as_of.rs`,
+    # because Moon has no KV version chain. This scenario's golden pins
+    # `as_of = 2025-02-19T12:00:00Z`, roughly 18 months back, so the call
+    # raises rather than returning rows. Moon is the only backend since 0.7.0,
+    # so there is nowhere for it to pass.
+    #
+    # It is skipped rather than deleted because the fixture and the golden are
+    # still correct — this is the scenario that would prove bi-temporal
+    # time-travel through the SDK the day the KV version chain lands (Moon
+    # carries a half-built `TemporalKvIndex` with no production call sites).
+    # It is skipped rather than left running because a test known to fail is
+    # not a gate, it is a broken build.
+    #
+    # UNSKIP WHEN: `lunaris_storage_moon::as_of::HISTORICAL_KV_READS` is
+    # true — flip _MOON_HISTORICAL_KV_READS (defined above) to match it.
+    if not _MOON_HISTORICAL_KV_READS:
+        pytest.skip(
+            "0.7.0 product gap: Moon refuses historical KV reads "
+            "(HISTORICAL_KV_READS = false; as_of pinned ~18 months back by "
+            "the golden), so TemporalQuery.as_of raises NotSupported. Unskip "
+            "when HISTORICAL_KV_READS flips true."
+        )
     doc_mod = _lunaris_module()
-    moon, pg = _backends_or_skip()
+    moon = _moon_or_skip()
     golden = _load_golden()
     scenario = golden["scenarios"]["code_repo_memory_as_of_commit_50"]
 
@@ -352,23 +415,12 @@ def test_code_repo_memory_parity_as_of_commit_50():
             doc_mod, moon, "moon",
             scenario["query"], scenario["commit_index_0based"],
         )
-        pg_texts = await _run_code_repo_as_of(
-            doc_mod, pg, "pg",
-            scenario["query"], scenario["commit_index_0based"],
+        assert len(moon_texts) >= scenario["expected_min_hits"], (
+            f"expected ≥{scenario['expected_min_hits']} hits; got {len(moon_texts)}"
         )
-        moon_set = set(moon_texts)
-        pg_set = set(pg_texts)
-        assert moon_set == pg_set, (
-            f"CodeRepoMemory .as_of(commit_{scenario['commit_index_0based'] + 1}) "
-            f"set divergence:\n  moon={moon_set}\n  pg={pg_set}"
-        )
-        assert len(moon_texts) >= scenario["expected_min_hits"]
         expected = scenario["expected_first_body_contains"]
         assert any(expected in t for t in moon_texts), (
             f"moon: expected `{expected}` in hits; got {moon_texts}"
-        )
-        assert any(expected in t for t in pg_texts), (
-            f"pg: expected `{expected}` in hits; got {pg_texts}"
         )
 
     asyncio.run(run())
@@ -405,7 +457,7 @@ async def _run_timeline_between(
 
 def test_timeline_reconstruction_parity_between_10_and_15():
     doc_mod = _lunaris_module()
-    moon, pg = _backends_or_skip()
+    moon = _moon_or_skip()
     golden = _load_golden()
     scenario = golden["scenarios"]["timeline_reconstruction_between_10_and_15"]
 
@@ -416,18 +468,8 @@ def test_timeline_reconstruction_parity_between_10_and_15():
             scenario["between_lo_rfc3339"],
             scenario["between_hi_rfc3339"],
         )
-        pg_texts = await _run_timeline_between(
-            doc_mod, pg, "pg",
-            scenario["query"],
-            scenario["between_lo_rfc3339"],
-            scenario["between_hi_rfc3339"],
-        )
-        moon_set = set(moon_texts)
-        pg_set = set(pg_texts)
-        assert moon_set == pg_set, (
-            f"TimelineReconstruction .between set divergence:\n"
-            f"  moon={moon_set}\n  pg={pg_set}"
-        )
+        # The sharpest assertion in the file: an EXACT count, which pins the
+        # lower-inclusive / upper-exclusive `.between` boundary (Phase 9.1).
         assert len(moon_texts) == scenario["expected_count"], (
             f"expected exactly {scenario['expected_count']} events in "
             f"[{scenario['between_lo_rfc3339']}, "
@@ -466,12 +508,12 @@ async def _run_customer_support_refund(
 
 def test_customer_support_history_parity_refund_recall():
     doc_mod = _lunaris_module()
-    moon, pg = _backends_or_skip()
+    moon = _moon_or_skip()
     golden = _load_golden()
     scenario = golden["scenarios"]["customer_support_refund_recall"]
 
     async def run():
-        for label, url in (("moon", moon), ("pg", pg)):
+        for label, url in (("moon", moon),):
             hits = await _run_customer_support_refund(doc_mod, url, scenario["query"])
             prefixes = scenario["expected_source_prefixes"]
             ticket_prefix, chat_prefix = prefixes[0], prefixes[1]
