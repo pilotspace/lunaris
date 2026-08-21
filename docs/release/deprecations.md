@@ -1,6 +1,8 @@
 # crates.io deprecations — owner action list
 
-**Status:** open. **Audited:** 2026-08-15 against the live crates.io API.
+**Status:** open — **nothing on this page has been executed.**
+**Audited:** 2026-08-15, **re-verified 2026-08-21** against the live
+crates.io sparse index (`https://index.crates.io/lu/na/<crate>`).
 
 Everything on this page is an **external registry action**. It cannot be done
 from this repository, from CI, or by a `cargo publish` run: each command needs a
@@ -13,32 +15,61 @@ Nothing here has been executed. Ordering is not significant except where noted.
 
 ## Audit snapshot
 
+Re-verified 2026-08-21 against the sparse index. Nothing is yanked.
+
 | Crate | crates.io | Latest there | Latest we build | Verdict |
 |---|---|---|---|---|
-| `lunaris-memory` (umbrella) | yes | `0.6.0-rc.1` | `0.6.0-rc.2` | current |
-| `lunaris-core` | yes | `0.6.0-rc.1` | `0.6.0-rc.2` | current |
-| `lunaris-llamacpp` | yes | `0.6.0-rc.1` | `0.6.0-rc.2` | current |
-| `lunaris-embed-remote` | yes | `0.6.0-rc.1` | `0.6.0-rc.2` | current |
-| **`lunaris-embed-native`** | yes | **`0.5.0`** | *deleted* | **stale — deprecate** |
-| **`lunaris-rerank-native`** | yes | **`0.5.0`** | *deleted* | **stale — deprecate** |
+| `lunaris-memory` (umbrella) | yes | `0.7.0` | `0.7.0` | current |
+| `lunaris-core` | yes | `0.7.0` | `0.7.0` | current |
+| `lunaris-llamacpp` | yes | `0.7.0` | `0.7.0` | current |
+| `lunaris-embed-remote` | yes | `0.7.0` | `0.7.0` | current |
+| **`lunaris-embed-native`** | yes | **`0.5.0`** | *deleted (v0.6)* | **stale — deprecate, see §1** |
+| **`lunaris-rerank-native`** | yes | **`0.5.0`** | *deleted (v0.6)* | **stale — deprecate, see §1** |
+| **`lunaris-storage-postgres`** | **yes — confirmed 2026-08-21** | **`0.6.2`**, not yanked | *deleted (0.7.0)* | **stale — same treatment as §1** |
+| **`lunaris-storage-embedded`** | **yes — confirmed 2026-08-21** | **`0.6.2`**, not yanked | *deleted (0.7.0)* | **stale — same treatment as §1** |
 | `lunaris-hook` | no | — | `publish = false` | nothing to do |
 | `lunaris-mcp` | no | — | `publish = false` | nothing to do |
 | `lunaris-server` | no | — | `publish = false` | nothing to do |
 | `lunaris-memory-service` | no | — | `publish = false` | nothing to do |
+| `lunaris-cli` | **no (404)** | — | `publish = false` | not a deprecation — see the note below |
 | **`moondb`** | yes | **`0.2.1`** (2026-06-13) | vendored, declares `0.2.1` | **needs a release — see §2** |
-| **`lunaris-storage-postgres`** | *unaudited* | — | *deleted (0.7.0)* | **check the registry — see §3** |
-| **`lunaris-storage-embedded`** | *unaudited* | — | *deleted (0.7.0)* | **check the registry — see §3** |
 | `lunaris-migrate` | no | — | *deleted (0.7.0)*, was `publish = false` | nothing to do — see §3 |
 
-The last three rows post-date the audit run: slice B deleted those crates on
-2026-08-16 and the snapshot above was taken the day before. §3 opens with the
-registry check rather than an assertion for exactly that reason.
+**§3's open question is now answered.** The 2026-08-15 snapshot could not say
+whether the deleted storage backends were on the registry. They are:
+`lunaris-storage-postgres 0.6.2` and `lunaris-storage-embedded 0.6.2` are both
+live and unyanked. They are in exactly the same position as the two candle-era
+crates in §1 — obsolete, not unsound — so they get the same treatment: a
+tombstone patch release pointing at `docs/migration/0.6-to-0.7.md`, and **no
+yank** (`lunaris-memory 0.6.2` depends on them, so yanking would make that
+release unresolvable). That brings the tombstone list to **four crates**, not
+two.
 
-No version of any lunaris crate is currently yanked.
+**`lunaris-cli` is not a deprecation, it is an unshipped crate.** Verified
+2026-08-21: absent from crates.io (404), from npm as `@pilotspace/lunaris-cli`
+(404), from PyPI as `lunaris-cli` (404), and from the v0.7.0 release assets
+(which carry lunaris-mcp tarballs, Python wheels and NAPI `.node` files, and
+nothing for the CLI). Its manifest previously claimed "Distribution mirrors
+lunaris-mcp: npx / uvx / GitHub Release binaries"; that claim was corrected to
+build-from-source on 2026-08-21 (W2.14). No owner action is needed — this is
+engineering work if the CLI is ever to ship, not a registry command.
 
 ---
 
-## 1. `lunaris-embed-native` / `lunaris-rerank-native` — stale candle-era crates
+## 1. Stale crates on the registry — recommended action
+
+> **Recommendation (re-affirmed 2026-08-21, W2.14): publish a tombstone patch
+> release for each; do NOT `cargo yank` anything.** This is owner-only work —
+> every command below needs a crates.io API token belonging to a crate owner,
+> and a yank is irreversible in practice. The list is now **four** crates:
+> `lunaris-embed-native 0.5.0`, `lunaris-rerank-native 0.5.0`,
+> `lunaris-storage-postgres 0.6.2`, `lunaris-storage-embedded 0.6.2`. The
+> reasoning below is written for the first two; it applies unchanged to the
+> storage pair, substituting `docs/migration/0.6-to-0.7.md` for the migration
+> link and "the Postgres backend" / "the SQLite onboarding backend" for the
+> prose.
+
+### `lunaris-embed-native` / `lunaris-rerank-native` — stale candle-era crates
 
 ### What they are
 
