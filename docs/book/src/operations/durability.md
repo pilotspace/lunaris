@@ -34,9 +34,19 @@ grep gate; see [Ingesting Observations](../guides/ingest.md).
 
 Every primitive (`Episode`, `Chunk`, `Entity`, `Fact`, `Relation`,
 `Community`) carries a required `bt` field — a bi-temporal stamp
-`{ valid: (Hlc, Option<Hlc>), sys: (Hlc, Option<Hlc>) }` (full Snodgrass
-bi-temporal: *valid time* = when the fact was true in the world, *system
-time* = when Lunaris knew it). Nothing is updated in place:
+`{ valid: (Hlc, Option<Hlc>), sys: (Hlc, Option<Hlc>) }` (Snodgrass
+bi-temporal *at the storage model*: *valid time* = when the fact was true in
+the world, *system time* = when Lunaris knew it). Nothing is updated in
+place:
+
+> **Scope of the claim.** The write model below is fully bi-temporal, and
+> as-of *reads* work on the search and graph lanes (`FT.SEARCH AS_OF`,
+> `GRAPH.QUERY VALID_AT`). Historical **KV** reads do not: Moon stores
+> Lunaris rows as plain hashes with no version chain, so `read_as_of` past a
+> 1-hour live window refuses with `NotSupported` → HTTP 501 rather than
+> answering with today's data
+> (`crates/lunaris-storage-moon/src/as_of.rs`, pinned by
+> `crates/lunaris-conformance/tests/run_as_of_moon_gap.rs`).
 
 - An ingest **inserts** a row with `sys = (now, None)` and the supplied
   `valid` range.

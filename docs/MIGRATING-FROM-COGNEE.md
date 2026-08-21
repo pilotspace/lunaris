@@ -29,7 +29,7 @@ already running Cognee can evaluate the switch with concrete code.
 | **Bi-temporal**                            | Not first-class (DataPoints can carry timestamps but the engine doesn't model `(valid_time, sys_time)` tuples) | First-class `(valid_time, sys_time)` per row; `.as_of(ts)` is one combinator |
 | **Recall latency**                         | Depends on backend (~50 ms LanceDB local, ~200 ms cloud) | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |
 | **Atomicity**                              | Per-store best-effort                            | One `atomic_write` covers vector + KV + graph + audit + queue. CI gate enforces single call site |
-| **Tenancy**                                | `dataset` string on the API                     | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + Postgres RLS-enforced |
+| **Tenancy**                                | `dataset` string on the API                     | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + per-scope Moon keyspace |
 | **Graph query language**                   | Cypher (via backend)                            | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored(entity_ids, hops)` operator on both |
 | **Custom pipeline tasks**                  | First-class — register Tasks, compose with `await cognee.cognify()` | Override `Extractor` trait (Phase 3); recall DSL is fixed surface |
 | **License**                                | Apache 2.0                                      | Apache 2.0                                             |
