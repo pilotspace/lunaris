@@ -42,13 +42,33 @@
 
 name: Integration
 
-# PR-time removed 2026-08-18 (CI diet): this suite costs ~8 min on every PR
-# and duplicates what `scripts/ci/local-ci.sh full` runs locally at M4 speed.
-# main-push + nightly cron keep the post-merge backstop; dispatch covers
-# on-demand runs. See docs/ci/local-ci.md for the contract.
+# W1.6 (2026-08-21) — `pull_request` RESTORED.
+#
+# It was removed 2026-08-18 as a CI diet, on the reasoning that
+# `scripts/ci/local-ci.sh full` covers it locally. The audit result: 71
+# live-Moon test functions across 23 files — every one gated
+# `#![cfg(feature = "moon-it")]`, and ci.yml passes no `--features` — stopped
+# running on PRs entirely. Moon is the only substrate since 0.7.0, so that is
+# the deepest coverage the storage layer has, and it was landing unverified.
+# A local script is a backstop somebody may run; it is not a gate.
+#
+# Cost, measured rather than assumed: the storage-moon suite is ~15 s of test
+# time (52 functions, verified locally against a fresh Moon on 2026-08-21).
+# The job's wall clock is dominated by the Moon RELEASE BUILD, which
+# `Swatinem/rust-cache` keys on the pinned submodule SHA — and ci.yml's
+# `check` job already pays that same build on every PR. Integration runs in
+# PARALLEL with `check`, and `check` (clippy + full workspace test + doc +
+# semver-checks + deny) is the longer job, so restoring this trigger does not
+# extend the critical path.
+#
+# Deliberately NOT split into a PR subset and a nightly remainder: a split
+# leaves some arm running only after merge, which is the exact hole this task
+# exists to close. Revisit only with a measured p50 that breaks the budget
+# gate below.
 on:
   push:
     branches: [main]
+  pull_request:
   schedule:
     - cron: "45 2 * * *"
   workflow_dispatch:
