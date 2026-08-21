@@ -166,9 +166,20 @@ mod tests {
     }
 
     /// UAT: BPE count from the production granite tokenizer differs from surrogate.
-    /// Requires GRANITE_R2_TOKENIZER_PATH to point to a valid tokenizer.json.
+    ///
+    /// The reason string is not decoration: `cargo test -- --include-ignored`
+    /// prints it, and it is what tells the next reader this is a missing
+    /// fixture rather than a parked defect. Without it the test fails with a
+    /// bare `NotPresent` and reads like a regression — which is exactly how it
+    /// surfaced while routing F10.
+    ///
+    /// Deliberately NOT widened into `ignored_test_ratchet`'s scope: that
+    /// ratchet polices integration files, where an `#[ignore]` can park a
+    /// whole contract out of sight. An in-crate unit sits beside the code it
+    /// tests, so the reason string is enough.
     #[test]
-    #[ignore]
+    #[ignore = "needs GRANITE_R2_TOKENIZER_PATH pointing at a granite tokenizer.json; \
+                the surrogate counter is covered by the sibling test above"]
     fn bpe_counter_differs_from_surrogate_for_known_input() {
         let path = std::env::var("GRANITE_R2_TOKENIZER_PATH")
             .expect("GRANITE_R2_TOKENIZER_PATH must be set for this UAT test");
