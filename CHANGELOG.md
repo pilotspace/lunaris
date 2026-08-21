@@ -26,6 +26,13 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
   that chunks were included). Behaviour of the forget itself is otherwise
   unchanged, and `dry_run` still writes nothing.
 
+  **`ForgetReceipt.matched` and the MCP `memory.forget` response are
+  unaffected** — both still count EPISODES, which is what their names and docs
+  say and what a caller confirming a deletion reasons in. An earlier draft of
+  this change let the row count leak into both; CI caught it, and the counts
+  are now derived separately rather than sharing one number that happened to
+  agree until chunks were swept.
+
 ### Known limitations
 
 - A hard `forget` does **not** remove the chunk's vector embedding or BM25

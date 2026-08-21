@@ -59,12 +59,12 @@ async fn seed_episode(client: &Client, base: &Url, token: &str) -> anyhow::Resul
 ///   here means the handler is scanning a partition the caller does not own,
 ///   which is exactly the W1.1 defect.
 ///
-///   W1.4 loosened this from `== 1`. `matched` counts ROWS, and forget now
-///   sweeps the episode's chunk rows as well, so a one-chunk episode reports 2.
-///   The exact count was never the contract — the contract is that a scope the
-///   caller owns does not read as empty, and `>= 1` says exactly that. An
-///   exact-count assertion here would go red on any future ingest fan-out
-///   while testing nothing extra.
+///   `>= 1`, not `== 1`. `matched` counts episodes, so this is 1 today — but the
+///   exact count was never the contract. The contract is that a scope the
+///   caller owns does not read as empty, and `>= 1` says exactly that without
+///   going red on a future fan-out that changes the count while testing
+///   nothing extra. W1.4 is why this was looked at: an earlier draft let the
+///   row count leak into `matched` and this assertion is what went red.
 pub async fn id_target(client: &Client, base: &Url, token: &str) -> anyhow::Result<()> {
     let id = seed_episode(client, base, token).await?;
     let url = base.join("/v1/forget")?;
