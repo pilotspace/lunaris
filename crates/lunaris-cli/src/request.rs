@@ -17,7 +17,7 @@
 //! surface built on `dispatch` is an instrument for proving the other three
 //! agree.
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use lunaris_memory_service::protocol::MemoryRequest;
 
 /// Default recall breadth. Matches `RecallParams`' own `default_k` so the CLI
@@ -47,8 +47,33 @@ pub(crate) struct Cli {
     pub(crate) command: Command,
 }
 
+/// Arguments for the zero-config trial. See [`crate::trial`].
+#[derive(Args, Debug, Clone)]
+pub(crate) struct TryArgs {
+    /// Ask the sample store something other than the built-in question.
+    #[arg(long)]
+    pub(crate) query: Option<String>,
+
+    /// Maximum number of hits.
+    #[arg(long, short, default_value_t = crate::corpus::DEFAULT_K)]
+    pub(crate) k: usize,
+
+    /// Delete the trial store and start from an empty one.
+    #[arg(long)]
+    pub(crate) fresh: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Run a self-contained demo: start a private store, ingest a sample
+    /// corpus, and recall over it. No server, no account, no configuration.
+    ///
+    /// The trial store lives under ~/.lunaris/try and is kept between runs, so
+    /// a second `lunaris try` is instant. `--fresh` wipes it. It is never the
+    /// store your agents use — `try` starts its own on a loopback port and
+    /// shuts it down on exit.
+    Try(TryArgs),
+
     /// Search the store and print the hits the production recall path returns.
     Recall {
         /// Natural-language query.
@@ -102,6 +127,10 @@ pub(crate) enum RequestError {
     MissingScope,
     /// `forget` was given neither selector.
     MissingForgetTarget,
+    /// `try` is not a wire request — it runs its own store. `main` routes it
+    /// before this function is reached; the variant exists so the match stays
+    /// exhaustive and a future subcommand cannot fall through silently.
+    NotAWireRequest(&'static str),
 }
 
 impl std::fmt::Display for RequestError {
@@ -119,6 +148,12 @@ impl std::fmt::Display for RequestError {
                  An empty prefix would match every episode in the scope and is \
                  rejected as a footgun"
             ),
+            Self::NotAWireRequest(cmd) => write!(
+                f,
+                "`{cmd}` does not talk to an existing store, so it has no wire \
+                 request to build. This is a routing bug in main, not a usage \
+                 error"
+            ),
         }
     }
 }
@@ -126,6 +161,13 @@ impl std::fmt::Display for RequestError {
 impl Cli {
     /// Build the wire request this invocation represents.
     pub(crate) fn to_request(&self) -> Result<MemoryRequest, RequestError> {
+        // `try` runs its own store and needs no scope, so it must be rejected
+        // BEFORE the scope check — otherwise `lunaris try` would fail asking
+        // for a --scope it deliberately does not accept.
+        if matches!(self.command, Command::Try(_)) {
+            return Err(RequestError::NotAWireRequest("try"));
+        }
+
         let scope = self
             .scope
             .as_deref()
@@ -134,6 +176,10 @@ impl Cli {
             .to_string();
 
         Ok(match &self.command {
+            // Handled above; kept exhaustive so a new non-wire subcommand has
+            // to make a decision here rather than compile by accident.
+            Command::Try(_) => return Err(RequestError::NotAWireRequest("try")),
+
             Command::Recall { query, k, raw, as_of } => MemoryRequest::Recall {
                 scope,
                 params: lunaris_memory_service::recall::RecallParams {

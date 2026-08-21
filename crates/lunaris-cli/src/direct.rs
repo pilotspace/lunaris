@@ -62,8 +62,51 @@ pub(crate) async fn dispatch_direct(req: MemoryRequest) -> anyhow::Result<Value>
     let scope =
         Scope::new(req.scope()).with_context(|| format!("invalid scope {:?}", req.scope()))?;
     let url = resolve_store_url()?;
-    let lunaris = Arc::new(Lunaris::open(&url).await.with_context(|| format!("open {url}"))?);
-    lunaris_memory_service::protocol::dispatch(&lunaris, &scope, req)
+    let lunaris = open_handle(&url, None).await?;
+    dispatch_on(&lunaris, &scope, req).await
+}
+
+/// Open a handle at an EXPLICIT url, optionally with a caller-supplied embedder.
+///
+/// This is the crate's single storage-open site — `tests/single_storage_open.rs`
+/// enforces that, and the reason is the three pre-GA-1 recall pipelines that
+/// drifted apart precisely because each surface held its own handle. `lunaris
+/// try` needs a handle too (it drives seven dispatches against an embedded Moon
+/// it just started), so it comes HERE for it rather than growing a second open.
+///
+/// `url` is a parameter rather than a resolution, because `try`'s whole safety
+/// story is that its URL comes from a launcher that bound `127.0.0.1:0` — never
+/// from the environment, never from contextd discovery. Passing the URL in is
+/// what makes "cannot reach a real store" a property of the call site instead of
+/// a promise in a comment.
+///
+/// `embedder` is `None` on every production path, which means the engine
+/// resolves llama.cpp / remote / Noop exactly as `Lunaris::open` does. It is
+/// `Some` only for the documented `LUNARIS_TRY_EMBEDDER=stub` plumbing seam.
+pub(crate) async fn open_handle(
+    url: &str,
+    embedder: Option<Arc<dyn lunaris_core::Embedder>>,
+) -> anyhow::Result<Arc<Lunaris>> {
+    let engine = match embedder {
+        Some(e) => Lunaris::open_with_embedder(url, e)
+            .await
+            .with_context(|| format!("open {url} with a caller-supplied embedder"))?,
+        None => Lunaris::open(url).await.with_context(|| format!("open {url}"))?,
+    };
+    Ok(Arc::new(engine))
+}
+
+/// Run one request through the shared dispatch on an already-open handle.
+///
+/// Separate from [`open_handle`] so a caller with many requests — `lunaris try`
+/// ingests six samples before it recalls — pays the model load once. Both the
+/// one-shot and the many-shot path end at the identical `dispatch`.
+pub(crate) async fn dispatch_on(
+    lunaris: &Arc<Lunaris>,
+    scope: &Scope,
+    req: MemoryRequest,
+) -> anyhow::Result<Value> {
+    lunaris_memory_service::protocol::dispatch(lunaris, scope, req)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
