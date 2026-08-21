@@ -1,0 +1,113 @@
+# W0.2 — does the Moon install path we document actually work?
+#
+# Lunaris 0.7.0 refuses at connect any Moon below MIN_MOON_VERSION
+# (crates/lunaris-storage-moon/src/version.rs). Every install guide in this
+# repo points readers at Moon's curl one-liner. If that one-liner cannot
+# produce a Moon at or above the required version, nobody outside a
+# maintainer's machine can run Lunaris at all — which is the single fact
+# gating the public launch (W0.1).
+#
+# As of 2026-08-21 that is exactly the state: moon v0.8.5 is a published
+# release carrying ZERO assets (v0.8.4 has 48), so every platform tarball
+# 404s. Re-cutting those assets needs admin on pilotspace/moon.
+#
+# This job exists to stop that being a sentence in a planning document. It
+# converts it into a signal that flips green by itself the moment the assets
+# are re-cut, and goes red again if they ever disappear.
+#
+# SCHEDULED, never on push or pull_request. It depends on a third-party
+# release being present, which no contributor's PR can fix; making it block
+# merges would punish people for someone else's missing tarball. A red run
+# here means "the documented install path is broken", not "this change is
+# bad".
+#
+# Ports: none. The job installs a binary and asks it for its version. It
+# never starts a server, so it cannot touch 6379/6380/6381 or any bench port.
+name: moon-install-smoke
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: moon install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # Read the requirement from the source of truth rather than repeating
+      # it here. A hardcoded version would drift the moment the gate moves,
+      # and this job would then cheerfully approve a Moon that Lunaris
+      # rejects.
+      - name: Read MIN_MOON_VERSION from the connect gate
+        id: req
+        run: |
+          set -euo pipefail
+          src=crates/lunaris-storage-moon/src/version.rs
+          line=$(grep -E 'pub const MIN_MOON_VERSION' "$src")
+          major=$(echo "$line" | sed -E 's/.*major: *([0-9]+).*/\1/')
+          minor=$(echo "$line" | sed -E 's/.*minor: *([0-9]+).*/\1/')
+          patch=$(echo "$line" | sed -E 's/.*patch: *([0-9]+).*/\1/')
+          if ! [ "$major$minor$patch" -eq "$major$minor$patch" ] 2>/dev/null; then
+            echo "::error::could not parse MIN_MOON_VERSION out of $src — the"\
+                 "constant moved or changed shape, and this job would silently"\
+                 "compare against an empty version. Fix the parser."
+            exit 1
+          fi
+          echo "min=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "Lunaris requires moon >= ${major}.${minor}.${patch}"
+
+      - name: Run the documented install one-liner
+        id: install
+        continue-on-error: true
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/moon-bin
+        run: |
+          set -uo pipefail
+          mkdir -p "$INSTALL_DIR"
+          curl -fsSL https://raw.githubusercontent.com/pilotspace/moon/main/install.sh | sh
+          echo "exit=$?"
+
+      - name: Verify the installed Moon satisfies the connect gate
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/moon-bin
+          MIN: ${{ steps.req.outputs.min }}
+        run: |
+          set -uo pipefail
+          if [ ! -x "${INSTALL_DIR}/moon" ]; then
+            echo "::error::install.sh produced no moon binary at ${INSTALL_DIR}/moon."
+            echo "::error::The documented install path is BROKEN — see W0.1 in"\
+                 "docs/planning/2026-08-21-ship-plan.md. Most likely the newest"\
+                 "tag carries no release assets; compare"\
+                 "'gh release view <tag> --repo pilotspace/moon --json assets'"\
+                 "against the previous tag."
+            exit 1
+          fi
+          got=$("${INSTALL_DIR}/moon" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          if [ -z "$got" ]; then
+            echo "::error::'${INSTALL_DIR}/moon --version' printed no version"\
+                 "number. Either the binary is broken or its version output"\
+                 "changed shape."
+            exit 1
+          fi
+          echo "installed moon ${got}; Lunaris requires >= ${MIN}"
+          lowest=$(printf '%s\n%s\n' "$MIN" "$got" | sort -V | head -1)
+          if [ "$lowest" != "$MIN" ]; then
+            echo "::error::installed moon ${got} is BELOW the ${MIN} Lunaris"\
+                 "refuses to connect below. A reader following our install"\
+                 "guide would get a Lunaris that cannot start."
+            exit 1
+          fi
+          echo "the documented install path yields a Moon Lunaris will accept"
