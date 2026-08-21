@@ -28,10 +28,16 @@
 //!
 //! ## Why the embedder check does not run inference
 //!
-//! `Embedder::dim()` is a structural check that never pulls weights. Running a
-//! real `embed_batch` on a probe would be actively harmful: a wedged ggml pool
-//! cannot be cancelled from async Rust (see `lunaris-hook/src/watchdog.rs`), so
-//! an inference-based probe would itself wedge, on a timer, forever.
+//! `lunaris::resolved_embedder_backend()` is a structural check that never
+//! pulls weights. Running a real `embed_batch` on a probe would be actively
+//! harmful: a wedged ggml pool cannot be cancelled from async Rust (see
+//! `lunaris-hook/src/watchdog.rs`), so an inference-based probe would itself
+//! wedge, on a timer, forever.
+//!
+//! W1.2 replaced the previous `Embedder::dim() > 0` test, which was structural
+//! but not *discriminating*: `NoopEmbedder` reports 768 on purpose, so a
+//! zero-vector server passed readiness. [`embedder_check`] carries the
+//! reasoning.
 
 use std::time::{Duration, Instant};
 
@@ -190,9 +196,39 @@ async fn probe(lunaris: &Lunaris) -> ReadyReport {
 
     // Structural only — see the module docs on why a probe must never run
     // inference.
-    let embedder = if lunaris.embedder().dim() > 0 { CheckStatus::Ok } else { CheckStatus::Error };
+    let embedder = embedder_check(lunaris::resolved_embedder_backend(), lunaris.embedder().dim());
 
     ReadyReport::from_checks(Checks { ping, canary, embedder })
+}
+
+/// Classify the embedder without touching weights.
+///
+/// W1.2 — this used to be `dim() > 0`, which a `NoopEmbedder` satisfies by
+/// design: it reports 768 so an operator flipping to the zero-vector fallback
+/// does not have to re-create their `FT.CREATE` index geometry. The result was
+/// that `cargo build -p lunaris-server` — which resolves the umbrella with
+/// `default-features = false`, so no `llamacpp` — produced a server that
+/// embedded every document as zeros and reported itself READY. The release
+/// rehearsal hit this live and answered it with documentation
+/// (`docs/RELEASE.md`), not a guard. This is the guard.
+///
+/// A zero-vector embedder is not a degraded-but-serving state: recall silently
+/// collapses to BM25 with insertion-order tie-breaks, which is indistinguishable
+/// from working until somebody measures quality. Failing readiness pulls the
+/// instance out of the load balancer, which is the correct remedy — and
+/// liveness stays green, so it does not crash-loop.
+///
+/// `Unresolved` is NOT a failure: it means `Lunaris::open` never ran in this
+/// process, which is only true of `with_parts*` test seams. Treating "unknown"
+/// as "degraded" would fail every in-process harness for no signal.
+fn embedder_check(backend: lunaris::EmbedderBackend, dim: usize) -> CheckStatus {
+    if dim == 0 {
+        return CheckStatus::Error;
+    }
+    match backend {
+        lunaris::EmbedderBackend::Noop => CheckStatus::Error,
+        _ => CheckStatus::Ok,
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +245,63 @@ mod tests {
         let key = String::from_utf8(CANARY_KEY.to_vec()).expect("ascii");
         assert!(key.starts_with("lunaris:__health__:"), "canary must live in the reserved scope");
         assert!(!key.contains("01"), "canary key must be FIXED, never ULID-suffixed");
+    }
+
+    /// W1.2 RED — the defect in one assertion. `NoopEmbedder` reports
+    /// `dim() == 768`, so the previous `dim() > 0` check called a zero-vector
+    /// build READY. `/readyz` must refuse it.
+    #[test]
+    fn noop_embedder_is_not_ready() {
+        assert_eq!(
+            embedder_check(lunaris::EmbedderBackend::Noop, 768),
+            CheckStatus::Error,
+            "a zero-vector embedder must FAIL readiness — dim() is 768 for Noop by design, \
+             so a dim-only check cannot see it"
+        );
+        let checks = Checks {
+            ping: CheckStatus::Ok,
+            canary: CheckStatus::Ok,
+            embedder: embedder_check(lunaris::EmbedderBackend::Noop, 768),
+        };
+        assert!(
+            !ReadyReport::from_checks(checks).ready,
+            "a server with a Noop embedder must not report ready"
+        );
+    }
+
+    #[test]
+    fn real_backends_are_ready() {
+        for backend in [
+            lunaris::EmbedderBackend::LlamaCpp,
+            lunaris::EmbedderBackend::OpenAiRemote,
+            lunaris::EmbedderBackend::OllamaRemote,
+        ] {
+            assert_eq!(
+                embedder_check(backend, 768),
+                CheckStatus::Ok,
+                "{backend:?} produces real vectors and must pass readiness"
+            );
+        }
+    }
+
+    /// `Unresolved` means `Lunaris::open` never ran — a `with_parts*` test
+    /// seam, not a degraded server. "Unknown" must not be reported as broken.
+    #[test]
+    fn unresolved_backend_is_not_a_failure() {
+        assert_eq!(embedder_check(lunaris::EmbedderBackend::Unresolved, 768), CheckStatus::Ok);
+    }
+
+    /// A dim of zero is still structurally impossible to serve — Moon's
+    /// `FT.CREATE` rejects it — and stays an error on every backend.
+    #[test]
+    fn zero_dim_is_never_ready() {
+        for backend in [
+            lunaris::EmbedderBackend::LlamaCpp,
+            lunaris::EmbedderBackend::Noop,
+            lunaris::EmbedderBackend::Unresolved,
+        ] {
+            assert_eq!(embedder_check(backend, 0), CheckStatus::Error, "{backend:?} at dim 0");
+        }
     }
 
     #[test]
