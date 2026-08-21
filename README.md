@@ -16,9 +16,9 @@ The Postgres and SQLite backends were removed; see
 
 ![Lunaris layered architecture](https://raw.githubusercontent.com/pilotspace/lunaris/main/docs/book/src/images/architecture/lunaris-layers.png)
 
-> **Documentation:** the full guide lives in the **[Lunaris Book](https://pilotspace.github.io/lunaris/)** or
-> (`mdbook serve docs/book` locally .
-> live). **First time here?** [`docs/POSITIONING.md`](docs/POSITIONING.md) is
+> **Documentation:** the full guide lives in the
+> **[Lunaris Book](https://pilotspace.github.io/lunaris/)**, or run
+> `mdbook serve docs/book` to read it locally. **First time here?** [`docs/POSITIONING.md`](docs/POSITIONING.md) is
 > the one-page pitch + honest "use a different tool when…" criteria.
 > **How it works:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the
 > layered design and the Moon advantage map, every claim proof-anchored.
@@ -35,12 +35,19 @@ The Postgres and SQLite backends were removed; see
 
 ## 1. Give your AI agent memory (MCP)
 
-The MCP server gives any MCP-capable agent eleven memory tools — seven
+The MCP server gives any MCP-capable agent **16 memory tools** — eight
 durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
 `memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-`memory.status`) plus four working-memory scratchpad tools
+`memory.feedback`, `memory.status`), four working-memory scratchpad tools
 (`memory.scratchpad_write`, `memory.scratchpad_read`,
-`memory.scratchpad_grep`, `memory.scratchpad_consolidate`).
+`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four
+curation tools that are the reason to pick Lunaris over a vector store —
+`memory.verify_agenda` (what the store thinks may be stale),
+`memory.resolve` (retire a memory that is superseded),
+`memory.dream_agenda` (clusters of raw episodes ripe for distillation) and
+`memory.distill` (write the distilled prose back durably). The roster is
+pinned by `crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
+which drives the real binary through `tools/list`.
 Both install paths download a prebuilt native binary on first run —
 no Rust toolchain required (`linux-x64/arm64`, `darwin-x64/arm64`,
 `win32-x64`).
@@ -206,7 +213,9 @@ against them; any feature that weakens any of the three is rejected.
 
 Surface (SDKs / HTTP / MCP / hooks) → engine pipelines (ingest,
 retrieval DSL, opt-in graph + consolidation + verification) → one
-storage trait → three backends. The retrieval DSL fuses vector,
+storage trait → **one backend, Moon** (the trait is still the seam that
+kept Postgres and SQLite honest until 0.7.0 removed them). The retrieval
+DSL fuses vector,
 keyword (BM25), and graph lanes with RRF in a single typed expression —
 and on Moon, the fusion and the time-travel cut execute *inside the
 substrate*.
@@ -319,17 +328,21 @@ External Moon is the supported deployment (the embedded server is dev/test-only)
 
 ## Status
 
-| Milestone | Status |
-|---|---|
-| **v0.2.1 — multi-agent partitioning** | Shipped 2026-05-11 |
-| **v0.4 — in-process ML default** | Shipped 2026-05-14 — in-process embedder + reranker, Ollama path removed (candle then; llama.cpp since v0.6) |
-| **v0.4.0 — MCP surface + embedded Moon + RAPTOR** | Shipped 2026-06-13 — `lunaris-mcp` scratchpad tools, embedded Moon, RAPTOR tree retrieval, recall fan-out p50 12→6 ms, hybrid filter push-down |
-| **v0.5.0 — framework adapters + memory convergence + Apache-2.0** | Shipped 2026-06-16 — `lunaris_integrations` LangGraph/CrewAI/Letta adapters, write-time dedup + cross-episode supersede, relicensed Apache-2.0 |
-| **v0.5 — proactive capture + packaging** | Shipped 2026-05-26 — `lunaris-hook` lifecycle capture, MCP polish, npx/uvx distribution |
-| **v0.6 — adaptive chunking + RAPTOR** | In progress on `main` — hierarchical memory tree, `.tree()` retrieval operator |
-| **MCP working memory + embedded Moon** | Merged to `main` 2026-06-09 — four `memory.scratchpad_*` tools, guarded `scratchpad_consolidate`, opt-in `--features embedded-moon` |
+**Current release: 0.7.0** (2026-08-18). Newest first; every row is a git
+tag. [`CHANGELOG.md`](CHANGELOG.md) is the authority — this table is a summary.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+| Release | Date | What landed |
+|---|---|---|
+| **0.7.0 — Moon-only, and the GA cut** | 2026-08-18 | Every storage backend except Moon deleted; one `production_root` recall plan across HTTP / SDK / MCP / hook; opt-in rerank stage; recall-ratchet CI gate (replacing the Eval Gauntlet, which had 20 startup failures and 0 completed runs); measured 100k-doc capacity envelope with committed raw artifacts; rehearsed upgrade/rollback |
+| **0.6.2 — operability** | 2026-08-15 | Last release shipping Postgres + SQLite. Historical `read_as_of` / `scan_range` on Moon now fail loudly instead of quietly returning present-time data |
+| **0.6.0-rc.1 / rc.2** | 2026-07-15 / 07-17 | llama.cpp-only cutover (candle deleted); adaptive chunking + RAPTOR tree retrieval; Moon v0.8.0 bump |
+| **0.5.0 — adapters + memory convergence** | 2026-06-16 | LangGraph / CrewAI / Letta reference adapters, write-time dedup + cross-episode supersede, relicensed Apache-2.0 |
+| **0.4.0 — MCP surface** | 2026-06-13 | `lunaris-mcp` + the `memory.scratchpad_*` tools, RAPTOR tree retrieval, recall fan-out p50 12 → 6 ms, hybrid filter push-down |
+| **0.3.0 — proactive capture + packaging** | 2026-06-05 | `lunaris-hook` lifecycle capture, MCP polish, npx / uvx distribution |
+| **0.2.1 — multi-agent partitioning** | 2026-05-12 | The `Scope` newtype partition key |
+| **0.1.x** | 2026-04 → 05 | First engine cut: bi-temporal store, retrieval DSL, single-`atomic_write` ingest |
+
+[`RELEASES.md`](RELEASES.md) carries the per-release gate evidence.
 
 ## Coming from another agent-memory tool?
 

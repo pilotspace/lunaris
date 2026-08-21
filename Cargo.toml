@@ -102,7 +102,13 @@ edition      = "2024"
 rust-version = "1.94"
 license      = "Apache-2.0"
 authors      = ["Lunaris Authors"]
-repository   = "https://github.com/lunaris-dev/lunaris"
+# `lunaris-dev/lunaris` 404s (verified 2026-08-21 via `gh api`), yet all 13
+# published crates served it as their crates.io "Repository" link. The real
+# repo is `pilotspace/lunaris`, which every doc already uses. This only
+# takes effect on the next publish.
+repository   = "https://github.com/pilotspace/lunaris"
+homepage     = "https://pilotspace.github.io/lunaris/"
+documentation = "https://docs.rs/lunaris"
 publish      = false
 
 [workspace.dependencies]
