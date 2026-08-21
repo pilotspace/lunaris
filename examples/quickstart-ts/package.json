@@ -5,12 +5,14 @@
   "type": "module",
   "description": "Lunaris 10-minute quickstart — TypeScript",
   "scripts": {
-    "start": "tsx quickstart.mts"
+    "start": "tsx quickstart.mts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@pilotspace/lunaris": "^0.3.0"
+    "@pilotspace/lunaris": "^0.7.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

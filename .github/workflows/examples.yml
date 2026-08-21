@@ -1,0 +1,184 @@
+# Build or typecheck EVERY project under examples/.
+#
+# Why this file exists: before 2026-08-21 no CI job touched examples/ at all.
+# The three quickstarts spent a whole minor version telling readers to run
+# `sqlx migrate` against a Postgres image that had been deleted, and nothing
+# went red. Every gate below is unconditional — there is deliberately no
+# `|| true`, no `continue-on-error`, and no `if:` that can skip a check.
+#
+# What each gate can and cannot catch is written down in examples/README.md.
+#
+# Injection note: every `${{ }}` in this file expands a matrix value declared
+# below. No `github.event.*` field is interpolated anywhere.
+name: Examples
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Gate 1: no example instructs a reader to use a deleted backend ────────
+  #
+  # A grep, on purpose. `cargo check` / `tsc` / `mypy` cannot read a URL string
+  # or a shell block in a README — which is exactly how the 0.6-era examples
+  # stayed green while being unrunnable. Cheapest job, so it fails fast.
+  dead-backends:
+    name: no dead-backend instructions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - run: bash examples/ci/no-dead-backends.sh
+
+  # ── Gate 2: the Rust examples compile ────────────────────────────────────
+  #
+  # Each example is its own workspace (empty `[workspace]` table) with its own
+  # committed Cargo.lock, so `--locked` is load-bearing here in a way it is not
+  # in the main workspace: it is the only thing pinning their transitive
+  # resolution. quickstart-rs resolves `llama-cpp-sys-2` independently, and a
+  # free resolve picks a version whose bindings no longer match the
+  # exact-pinned `llama-cpp-2 =0.1.151`.
+  rust-examples:
+    name: cargo check (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [quickstart-rs, multi-agent-rs]
+    steps:
+      # vendor/moon only — .planning is private (cross-repo auth). The moondb
+      # path dep (vendor/moon/sdk/rust) is required to resolve the graph at all.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/${{ matrix.example }} -> target
+          key: ${{ matrix.example }}
+      # quickstart-rs builds with default features on, which embeds llama.cpp
+      # via llama-cpp-sys-2's build script — that needs cmake + a C++ toolchain.
+      # Deliberate: the example's README walks the reader through a real
+      # semantic recall with the granite-r2 GGUF, which a Tier-0 build cannot
+      # deliver. multi-agent-rs is `default-features = false` and pays none of it.
+      - name: Install cmake
+        if: matrix.example == 'quickstart-rs'
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: cargo check
+        env:
+          EXAMPLE: ${{ matrix.example }}
+        run: cargo check --locked --manifest-path "examples/$EXAMPLE/Cargo.toml"
+
+  # ── Gate 3: the TypeScript example typechecks ────────────────────────────
+  #
+  # tsconfig.json maps `@pilotspace/lunaris` to crates/lunaris-ts/lunaris.d.ts,
+  # so this compiles the example against THIS commit's declarations rather than
+  # against whatever npm last published.
+  ts-example:
+    name: tsc --noEmit (quickstart-ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: npm install
+        working-directory: examples/quickstart-ts
+        run: npm install --no-audit --no-fund
+      - name: typecheck
+        working-directory: examples/quickstart-ts
+        run: npm run typecheck
+
+  # ── Gate 4: the framework examples typecheck and import ──────────────────
+  #
+  # One venv per framework: the crewai / letta / langgraph adapters each import
+  # their framework at module scope and version-guard its shape, and the three
+  # pins do not co-install cleanly.
+  #
+  # MYPYPATH points at integrations/ so mypy reads the adapter SOURCE rather
+  # than treating the installed package as untyped — without it every call
+  # collapses to Any and the gate asserts nothing.
+  #
+  # The `import` step is not redundant with mypy: it proves the module-scope
+  # `from lunaris_integrations import ...` lines still resolve at runtime.
+  python-integration-examples:
+    name: mypy + import (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: langgraph-lunaris
+            extra: langgraph
+          - example: crewai-lunaris
+            extra: crewai
+          - example: letta-lunaris
+            extra: letta
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          # 3.11 is the floor `integrations/pyproject.toml` declares, and
+          # neither crewai nor letta publishes wheels for 3.14 yet.
+          python-version: "3.11"
+      - name: Install lunaris-integrations extra
+        env:
+          EXTRA: ${{ matrix.extra }}
+        run: pip install -e "integrations[$EXTRA]" mypy
+      - name: mypy
+        working-directory: examples/${{ matrix.example }}
+        env:
+          MYPYPATH: ${{ github.workspace }}/integrations
+        run: mypy --ignore-missing-imports main.py
+      - name: import
+        working-directory: examples/${{ matrix.example }}
+        run: python -c "import main"
+
+  # ── Gate 4b: the Python quickstart typechecks against the real wheel ─────
+  #
+  # quickstart-py imports the compiled `lunaris` binding, so it needs a wheel.
+  # `--no-default-features` builds Tier-0 (no llamacpp, no cmake, no C++),
+  # which is enough to resolve every symbol the example binds at module scope:
+  # `lunaris.open`, `Scope`, `EpisodeBuilder`. That import IS the gate — it goes
+  # red the day any of the three is renamed or dropped.
+  python-quickstart:
+    name: build wheel + import (quickstart-py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: quickstart-py-wheel
+      - name: Install maturin
+        run: pip install maturin mypy
+      - name: Build + install the Tier-0 lunaris wheel
+        working-directory: crates/lunaris-py
+        run: maturin develop --release --no-default-features
+      - name: mypy
+        working-directory: examples/quickstart-py
+        run: mypy --ignore-missing-imports quickstart.py
+      - name: import
+        working-directory: examples/quickstart-py
+        run: python -c "import quickstart"

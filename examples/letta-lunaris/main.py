@@ -1,12 +1,16 @@
 """Letta + Lunaris — insert/search archival memory via LunarisArchivalConnector.
 
-LIVE example (UAT): requires a running lunaris-server and a JWT. Run:
+LIVE example: requires a running lunaris-server (which needs a single-shard
+Moon behind it). The wire credential is an OPAQUE BEARER TOKEN, not a JWT — the
+server maps it to {tenant, scopes} from its --tokens-file, and the partition
+scope is the `tenant` claim, resolved server-side.
 
     export LUNARIS_SERVER_URL=http://127.0.0.1:8080
-    export LUNARIS_TOKEN=<jwt>
+    export LUNARIS_TOKEN=demo-token
     python main.py
 
-See README.md for the degrade rationale + the Letta-server wiring recipe.
+See README.md for the degrade rationale, the Letta-server wiring recipe, and
+why Moon v0.8.5 has to be built from source right now.
 """
 from __future__ import annotations
 

@@ -11,20 +11,29 @@ edition     = "2024"
 rust-version = "1.94"
 publish     = false
 
-# Phase 23 scaffold: standalone example for the 10-minute Postgres
-# quickstart. NOT a workspace member — keeps the example flow honest
-# (a fresh-clone user can `cd examples/quickstart-rs && cargo run`
-# without inheriting workspace dev-deps or features).
+# Standalone example for the 10-minute Moon quickstart. NOT a workspace
+# member — keeps the example flow honest (a fresh-clone user can
+# `cd examples/quickstart-rs && cargo run` without inheriting workspace
+# dev-deps or features).
 
 [dependencies]
-# `ollama` gives the smallest-external-dep path for the Ollama EXTRACTOR
-# + VERIFIER (OllamaExtractor + Ollama verify tier). The embedder and
-# reranker are always in-process (llama.cpp GGUF) — no Ollama needed for
-# embedding. Extraction/verification are remote-only since the llama.cpp
-# cutover; `cloud-api` selects the hosted-provider mux instead.
-# Published on crates.io as `lunaris-memory` (the bare `lunaris` name is
-# owned by an unrelated project); the import path is still `use lunaris::…`.
-lunaris = { package = "lunaris-memory", path = "../../crates/lunaris", default-features = false, features = ["ollama"] }
+# DEFAULT FEATURES ON, deliberately. `default = ["llamacpp"]` is what puts the
+# in-process granite-r2 GGUF embedder in the binary, and the README's whole
+# recall walkthrough depends on it. This example previously built with
+# `default-features = false, features = ["ollama"]` — a Tier-0 build with no
+# local embedder — while its README told the reader to stage a GGUF the binary
+# could not load. Recall "worked" against the zero-vector NoopEmbedder and
+# ranked nothing. The manifest and the README now agree.
+#
+# The cost is a C++ toolchain + cmake at build time. Readers without one
+# should build Tier-0 explicitly and configure a remote embedder:
+#   cargo run --release --no-default-features --features ollama
+#
+# `ollama` stays on for the EXTRACTOR + VERIFIER slots, which are remote-only
+# since the llama.cpp cutover; `cloud-api` selects the hosted-provider mux
+# instead. Published on crates.io as `lunaris-memory` (the bare `lunaris` name
+# is owned by an unrelated project); the import path is still `use lunaris::…`.
+lunaris = { package = "lunaris-memory", path = "../../crates/lunaris", features = ["ollama"] }
 tokio   = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow  = "1"
 tracing-subscriber = "0.3"

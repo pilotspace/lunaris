@@ -1,0 +1,23 @@
+{
+  // `npm run typecheck` compiles quickstart.mts against the declarations the
+  // package actually ships. `paths` resolves `@pilotspace/lunaris` to the
+  // in-repo binding source rather than to node_modules, so the gate checks
+  // THIS commit's surface instead of whatever version npm last published.
+  // Drop the `paths` block to typecheck against an installed release.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pilotspace/lunaris": ["../../crates/lunaris-ts/lunaris.d.ts"]
+    }
+  },
+  "include": ["quickstart.mts"]
+}
