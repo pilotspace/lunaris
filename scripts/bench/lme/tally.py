@@ -63,6 +63,25 @@ _Q_RE = re.compile(r"q(\d+)")
 _ANYGOLD_RE = re.compile(r"evidence_recall_hit\s*=\s*(true|false)")
 
 BASELINE_METRIC = "lme_s_anygold"
+
+# Truthy set for the rerank toggle -- EXACTLY the engine's
+# (crates/lunaris/src/recall_rerank.rs::RecallRerankConfig::from_values).
+_RERANK_TRUTHY = {"1", "true", "TRUE", "on", "ON"}
+
+
+def operating_point_of(config_signature: str | None) -> str:
+    """``"fast"`` (rerank OFF, the shipped default) or ``"quality"`` (rerank ON).
+
+    Derived from the signature the gate script computed, never from a
+    hand-written label -- W3.2 makes the operating point mandatory on every
+    published number, and a hand-applied one is a number waiting to be wrong.
+    Returns ``"unknown"`` for a signature that does not record rerank at all,
+    which is itself a defect worth seeing in the file.
+    """
+    for part in (config_signature or "").split("|"):
+        if part.startswith("rerank="):
+            return "quality" if part.split("=", 1)[1] in _RERANK_TRUTHY else "fast"
+    return "unknown"
 # One question of slack: an any-gold flip needs only one borderline rank to
 # cross the session-capping boundary, and cross-platform float math (the
 # baseline box vs the CI runner) can plausibly move one. Two is signal.
@@ -222,6 +241,12 @@ def main(argv: list[str] | None = None) -> int:
             "total": args.expected,
             "tolerance_questions": DEFAULT_TOLERANCE_QUESTIONS,
             "config_signature": args.config_signature,
+            # W3.2: every published number states its operating point.
+            # Derived from the signature so re-blessing can never drop it.
+            "operating_point": operating_point_of(args.config_signature),
+            "smallest_detectable_regression_points": round(
+                100.0 * (DEFAULT_TOLERANCE_QUESTIONS + 1) / args.expected, 1
+            ),
             "produced": {
                 "date": time.strftime("%Y-%m-%d", time.gmtime()),
                 "platform": f"{platform.system()}-{platform.machine()}",

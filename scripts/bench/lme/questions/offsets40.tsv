@@ -1,0 +1,81 @@
+# LongMemEval-S question set — N=40 stratified CI-ratchet manifest.
+#
+# Column 1 = zero-based offset into the longmemeval_s dataset (the value
+# passed as LUNARIS_EVAL_LME_OFFSET). Column 2 = the dataset's question
+# category.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The ratchet ran on offsets16.tsv, which has two defects that together
+# made the gate incapable of failing on anything short of a catastrophe:
+#
+#   1. SENSITIVITY. At N=16 with tolerance 1, the fail floor is 14/16 —
+#      the gate only trips on a drop of 2 questions, i.e. ~12.5 points of
+#      retrieval. A 5-point regression passes silently.
+#   2. COVERAGE. offsets16.tsv contains only `multi-session` and
+#      `single-session-preference`. Four of the six LongMemEval-S
+#      categories — including `temporal-reasoning` (26% of the N=125
+#      manifest) and `knowledge-update` — were not measured AT ALL, so a
+#      regression confined to one of them was invisible at any N.
+#
+# At N=40 with tolerance 1 the gate trips on a 2-question drop = exactly
+# 5.0 points, which is the stated sensitivity target, and all six
+# categories are present. See scripts/bench/lme/baselines/README.md for
+# the full arithmetic and the runner-cost tradeoff.
+#
+# Category mix (largest-remainder proportional to offsets125.tsv's
+# 33/33/19/18/14/8): 11 multi-session, 11 temporal-reasoning,
+# 6 knowledge-update, 6 single-session-user, 4 single-session-assistant,
+# 2 single-session-preference.
+#
+# DERIVATION (deterministic, reproducible, no sampling)
+# -----------------------------------------------------
+# Rows are a subset of offsets125.tsv. Within each category the k rows
+# are taken at evenly-spaced source indices `offs[round(i*m/k)]` for
+# i in 0..k-1, where m is that category's row count in offsets125.tsv.
+# No RNG, no seed, no cherry-picking: re-deriving from offsets125.tsv
+# reproduces this file byte for byte.
+#
+# Changing this file changes what "N=40" means and INVALIDATES the
+# checked-in baseline (tally.py refuses on a total mismatch, exit 6).
+# Add a new file rather than editing this one.
+9	single-session-user
+17	single-session-user
+26	single-session-user
+38	single-session-user
+46	single-session-user
+61	single-session-user
+71	multi-session
+82	multi-session
+89	multi-session
+103	multi-session
+114	multi-session
+120	multi-session
+128	multi-session
+177	multi-session
+197	multi-session
+208	multi-session
+221	multi-session
+134	single-session-preference
+144	single-session-preference
+241	temporal-reasoning
+251	temporal-reasoning
+266	temporal-reasoning
+283	temporal-reasoning
+289	temporal-reasoning
+301	temporal-reasoning
+307	temporal-reasoning
+316	temporal-reasoning
+339	temporal-reasoning
+349	temporal-reasoning
+361	temporal-reasoning
+367	knowledge-update
+377	knowledge-update
+383	knowledge-update
+397	knowledge-update
+404	knowledge-update
+436	knowledge-update
+446	single-session-assistant
+458	single-session-assistant
+479	single-session-assistant
+484	single-session-assistant

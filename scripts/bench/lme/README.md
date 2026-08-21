@@ -1,7 +1,7 @@
 # LongMemEval (LME) benchmark harness
 
-The runner behind Lunaris's headline recall-quality number, and the A/B that
-gates the 0.7.0 graph decision. It drives the `lunaris-evals` binary
+The runner behind Lunaris's LongMemEval recall-quality measurements, and the
+A/B that gates the 0.7.0 graph decision. It drives the `lunaris-evals` binary
 (`crates/lunaris-bench/src/bin/evals.rs`) one question per process against a
 throwaway Moon, then scores the results.
 
@@ -53,6 +53,10 @@ Do not "optimise" this into a single process. It has been tried; it fails
 slowly and silently.
 
 ### 3. The judge/generation noise floor is about ±5 points
+
+*(Canonical write-up, including the figure that was **retired** for having no
+evidence behind it:
+[`docs/benchmarks/measurement-noise.md`](../../../docs/benchmarks/measurement-noise.md).)*
 
 Proven 2026-07-30: the same config re-run produced **byte-identical retrieval
 on 108/108 questions and still flipped 10 verdicts**. Temperature is already
@@ -124,7 +128,7 @@ default; only the API key is mandatory.
 | `OFFSETS_FILE` | `questions/offsets125.tsv` | Question-set manifest. |
 | `LME_EVAL_BIN` | `target/release/lunaris-evals` | Eval binary. |
 | `LME_MOON_BIN` | `$HOME/.lunaris/bin/moon` | Moon server binary. |
-| `LME_RESULTS_DIR` | `target/lme` | Artifacts. Under `target/`, so gitignored. |
+| `LME_RESULTS_DIR` | `target/lme` | Artifacts. Under `target/`, so **gitignored** — see the warning below. |
 | `LME_EXTRACT_CACHE_DIR` | `$LME_RESULTS_DIR/extract-cache` | Extraction cache. |
 | `LUNARIS_EVAL_CACHE_DIR` | `~/.cache/lunaris/eval-hub` | Dataset cache. |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Embedder endpoint. |
@@ -135,6 +139,34 @@ default; only the API key is mandatory.
 | `MAX_ATTEMPTS` | `3` | Retries per question. |
 | `SHARDS` | `5` | Parallel fill shards. |
 | `SHARD_PORT_BASE` | `6410` | First fill-shard Moon port. |
+
+### `target/lme` is gitignored — a run that ends there leaves no evidence
+
+This is not a detail. It is the direct cause of the `85.4% (427/500)`
+retraction: the headline's per-question artifacts were written under a
+gitignored path, the working tree was cleaned, and the number became
+undefendable ([`docs/benchmarks/v0.7-longmemeval-jscore-validation.md`](../../../docs/benchmarks/v0.7-longmemeval-jscore-validation.md)).
+
+**Before any number from a run is published anywhere, commit its
+envelope:**
+
+```sh
+python3 scripts/bench/publish_raw.py --benchmark lme \
+  --dir target/lme/graphoff --expected 125 \
+  --operating-point quality --arm graphoff \
+  --out docs/benchmarks/lme-raw/$(date -u +%F)-n125-graphoff-quality.json
+```
+
+Conventions, schema and the empty-directory rationale:
+[`docs/benchmarks/lme-raw/README.md`](../../../docs/benchmarks/lme-raw/README.md).
+
+### Which operating point is this run?
+
+`run_lme.sh` and `anygold_gate.sh` (default `RERANK=1`) measure the
+**quality** operating point — rerank ON. The **shipped default is
+`fast`** (rerank OFF). Say which one every number came from; the
+publisher enforces it and refuses a mislabelled envelope.
+See [`docs/benchmarks/operating-points.md`](../../../docs/benchmarks/operating-points.md).
 
 ---
 
@@ -150,9 +182,11 @@ default; only the API key is mandatory.
 | `moon_watchdog.sh` | Restarts the bench Moon if it dies mid-run. |
 | `tally.py` | Three-way scoring (correct / wrong / ERR) + FINAL determination. `--anygold` scores retrieval (evidence_recall_hit) instead of judge verdicts; `--baseline` / `--write-baseline` drive the CI ratchet. |
 | `anygold_gate.sh` | Judge-free any-gold ratchet — the gate behind `.github/workflows/recall-ratchet.yml`. Starts and owns its own scratch Moon; needs no API key. |
-| `baselines/ci-anygold.json` | The checked-in ratchet baseline (hits / total / tolerance / config signature). Re-bless with `anygold_gate.sh --write-baseline`. |
+| `baselines/ci-anygold.json` | The checked-in ratchet baseline (hits / total / tolerance / config signature / operating point). Re-bless with `anygold_gate.sh --write-baseline`. |
+| `baselines/README.md` | **Which operating point the ratchet gates, why the N=16 gate could not fail, and the N=40 replacement.** Read before changing anything in `baselines/`. |
 | `questions/offsets125.tsv` | The canonical N=125 stratified manifest, with categories. |
-| `questions/offsets16.tsv` | 16-question shakeout subset. Never report deltas from it. |
+| `questions/offsets40.tsv` | N=40 CI-ratchet manifest — all six categories, deterministic derivation from `offsets125.tsv`. |
+| `questions/offsets16.tsv` | 16-question shakeout subset — **2 of 6 categories only**. Never report deltas from it. |
 | `questions/offsets_smoke.tsv` | One question. Plumbing check only. |
 
 ---
@@ -229,6 +263,17 @@ process per question, against a scratch Moon the gate starts itself. Any-gold
 judge and no extraction provider, so the gate runs on a stock hosted runner
 with only the embedder + reranker GGUFs and the public HF dataset — and it is
 deterministic, so unlike J-score there is no ±5-point noise floor to hide in.
+
+> **⚠ Two known defects in the shipped gate (found 2026-08-21, W3.7).**
+> It measures the **quality** operating point (`rerank=1`) while the shipped
+> default is **fast** (rerank OFF) — so the configuration users actually get
+> is un-ratcheted. And at N=16 with tolerance 1 the fail floor is 14/16: the
+> gate only trips on a **12.5-point** retrieval drop, and `offsets16.tsv`
+> covers 2 of the 6 LongMemEval-S categories, so a regression in
+> `temporal-reasoning` or `knowledge-update` is invisible at any N.
+> The decision, the sensitivity arithmetic and the N=40 replacement are in
+> [`baselines/README.md`](baselines/README.md). Do not read the current gate
+> passing as evidence that recall quality is stable.
 
 The result ratchets against `baselines/ci-anygold.json` with an explicit
 per-question tolerance. The baseline records the retrieval-config signature
