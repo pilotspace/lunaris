@@ -372,6 +372,10 @@ async fn single_pass_embed_count_equals_zero_extra_for_winner() {
     // So total calls <= 1 + N_candidates + 1.
     let n_candidates = 2usize; // structural + RSM
     // +1 for the Phase-30 B1 community summary embed_batch in assemble_and_write.
+    // W4.5 made that call conditional on `LUNARIS_RAPTOR_ENABLED`, so the actual
+    // count is `1 + n_candidates` by default. This stays an upper bound on
+    // purpose: it guards SINGLE-PASS (no winner re-embed), and must hold with
+    // the RAPTOR gate open or closed.
     let max_expected_calls = 1 + n_candidates + 1;
 
     assert!(
