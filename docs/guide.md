@@ -411,6 +411,12 @@ for h in &hits {
 Env seeds the initial state at open time:
 
 - `LUNARIS_GRAPH_ENABLED=1|0` — toggle the graph pipeline (`crates/lunaris/src/graph_pipeline.rs`).
+- `LUNARIS_RAPTOR_ENABLED=1|0` — toggle the RAPTOR community-tree write at
+  ingest (`crates/lunaris-ingest/src/pipeline.rs`). **Default off.** Nothing on
+  a default recall path reads the `communities` index — only the opt-in
+  `.tree(..)` DSL operator does — so leaving it on pays an extra embedder
+  round-trip and `2 × N` writes per ingest for nothing. Independent of
+  `LUNARIS_GRAPH_ENABLED`.
 - `LUNARIS_VERIFY_ENABLED=1|0` — toggle the verifier worker (`crates/lunaris/src/verify_pipeline.rs`).
 - `LUNARIS_CONSOLIDATE_ENABLED=1|0` — toggle the consolidator worker (`crates/lunaris/src/consolidator_pipeline.rs`).
 - `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD=<u64>` — depth beyond which `recall_with_degraded_check` flags results. Default 1000 (`crates/lunaris/src/recall.rs:26-31`).
