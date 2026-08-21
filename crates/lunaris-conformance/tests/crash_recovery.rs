@@ -118,26 +118,30 @@ mod chaos {
         // literal IP addresses — fine for `127.0.0.1:6380`, NOT for
         // `localhost:6380` which is the canonical dev-box form.
         let timeout = Duration::from_secs(1);
-        let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
-            Some(a) => a,
-            None => {
-                // Intentionally do NOT log the URL itself (a store URL can
-                // carry credentials). Log only the host_port and the env var
-                // name.
+        // Every resolved address, not just the first. `to_socket_addrs()`
+        // returns them in resolver order, and on macOS `localhost` yields
+        // `::1` ahead of `127.0.0.1` — so probing only `next()` reported a
+        // perfectly healthy IPv4-bound Moon as unreachable and skipped the
+        // whole suite to green. Which address answers is not the question;
+        // whether ANY does, is.
+        let addrs: Vec<_> = match host_port.to_socket_addrs() {
+            Ok(it) => it.collect(),
+            Err(_) => {
+                // Intentionally never log the URL itself — a store URL can
+                // carry credentials. Host:port and the env var name only.
                 eprintln!("crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)");
                 return None;
             }
         };
-        match TcpStream::connect_timeout(&addr, timeout) {
-            Ok(_) => Some(url),
-            Err(_) => {
-                eprintln!(
-                    "crash_recovery: SKIP {name} (TCP probe to {host_port} failed within {}ms)",
-                    timeout.as_millis()
-                );
-                None
-            }
+        if addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok()) {
+            return Some(url);
         }
+        eprintln!(
+            "crash_recovery: SKIP {name} (TCP probe to {host_port} failed within {}ms across {} address(es))",
+            timeout.as_millis(),
+            addrs.len()
+        );
+        None
     }
 
     /// Reopen the storage URL and count rows under the `episode:` prefix
@@ -318,7 +322,16 @@ mod chaos {
             // — never mutate process env from inside the test.
             let url = match probe_backend("MOON_URL", std::env::var("MOON_URL").ok()) {
                 Some(u) => u,
-                None => return Ok(()),
+                None => {
+                    // A proptest body returns TestCaseResult, so it cannot use
+                    // `skip_or_fail` directly — same decision, local spelling.
+                    prop_assert!(
+                        !lunaris_conformance::skip::strict(),
+                        "crash_recovery: refusing to skip under \
+                         LUNARIS_CONFORMANCE_STRICT=1 — MOON_URL not set / reachable"
+                    );
+                    return Ok(());
+                }
             };
             let (before, after) = run_chaos_iteration(&url, delay_ms);
             // STORE-06 invariant: anything in between `before` and

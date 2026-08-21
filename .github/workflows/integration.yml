@@ -73,6 +73,9 @@ on:
     - cron: "45 2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   integration:
     name: integration (Moon + moon-it)
@@ -89,6 +92,15 @@ jobs:
       # dispatches on URL scheme, and since 0.7.0 `moon` is the only one it
       # accepts.
       MOON_URL: moon://localhost:6390
+      # A skip in THIS job is a defect, not a courtesy. Every conformance
+      # precondition above is satisfied by construction here — the Moon is up
+      # and port-checked, the server binary is built — so a runner that
+      # short-circuits to Ok(()) has stopped testing while still reporting
+      # success. That is not hypothetical: the `/v1/forget` P0 (200 OK, nothing
+      # deleted, every real tenant) is guarded by a single assertion that lives
+      # inside `run_protocol_lunaris_server.rs`, and that runner has three
+      # separate paths that skip to green.
+      LUNARIS_CONFORMANCE_STRICT: "1"
       # W1.1 — `lunaris-storage-moon`'s live suite reads LUNARIS_MOON_URL, not
       # MOON_URL (see tests/list_scopes.rs::moon_url), and defaults to :6380.
       # Unset, its `maybe_connect()` printed a SKIP and returned Ok — six
