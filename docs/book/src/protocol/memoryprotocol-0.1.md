@@ -63,6 +63,12 @@ Per-route scope requirements:
 
 OAuth2 / JWT / OIDC issuance is a v1 gate (managed cloud `DEPLOY-V1-01`).
 
+> **"JWT" below is historical wording.** v0 ships **opaque bearer tokens** —
+> the claims (`tenant` = partition scope, `scopes` = verb permissions) live in
+> the server-side tokens file, never in the token. Read every "JWT `tenant`
+> claim" in this document as "the `tenant` claim the server resolved for this
+> token". Managed JWT/OIDC issuance is the v1 gate `DEPLOY-V1-01`.
+
 ## Rate limiting
 
 Per-tenant rate limit applied to every `/v1/*` request. Defaults: `60 rps`,

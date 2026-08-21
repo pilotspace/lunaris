@@ -9,6 +9,19 @@ authors.workspace      = true
 description = "Lunaris agent memory engine — umbrella crate (Apache-2.0)"
 repository.workspace = true
 readme      = "README.md"
+# `bi-temporal` is KEPT (reviewed W2.10, 2026-08-21) — it is accurate at the
+# storage-model level, which is what a crates.io keyword denotes:
+# `BiTemporal { valid, sys }` is a required field on every primitive, forget
+# and supersession close intervals instead of destroying rows, and the
+# temporal cut pushes into the substrate on the search and graph lanes
+# (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`).
+# What it does NOT mean: historical KV reads. `HISTORICAL_KV_READS = false`
+# (crates/lunaris-storage-moon/src/as_of.rs) and an `as_of` older than the
+# 1-hour AS_OF_LIVE_WINDOW_MS is refused as `NotSupported` -> HTTP 501,
+# pinned by crates/lunaris-conformance/tests/run_as_of_moon_gap.rs.
+# Prose MUST carry that scope; the keyword alone must never be the whole
+# claim. If historical KV reads are ever the headline, wire Moon's
+# TemporalKvIndex first, do not widen the wording.
 keywords    = ["agent", "memory", "llm", "bi-temporal", "vector-search"]
 categories  = ["database", "asynchronous", "data-structures"]
 

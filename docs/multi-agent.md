@@ -13,8 +13,14 @@ five scenarios pass against the v0.2 `lunaris-server` binary.
 
 Lunaris v0.2 introduces `Scope` — a partition key for multi-agent / multi-tenant
 isolation (RFC 0001). Every ingest, recall, and forget operation is bound to the
-JWT-derived scope. Agents cannot read, write, or delete data across scope
-boundaries.
+scope carried by the caller's token claims. Agents cannot read, write, or delete
+data across scope boundaries.
+
+> **Not a JWT.** v0 ships **opaque bearer tokens**: the claims (`tenant` =
+> partition scope, `scopes` = verb permissions) live in the server-side tokens
+> file, never in the token itself. Managed JWT/OIDC issuance is the v1 gate
+> `DEPLOY-V1-01`. Docs that say "JWT tenant claim" are using the historical
+> wording — see [`SECURITY.md`](../SECURITY.md).
 
 The token file format (`--tokens-file`) is unchanged from v0.1:
 

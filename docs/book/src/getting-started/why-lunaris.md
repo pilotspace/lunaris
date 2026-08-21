@@ -39,7 +39,7 @@ against them; any feature that weakens any of the three is rejected.
 |---|---|---|
 | **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured p50 19.2–22.4 ms / p99 23.4–24.4 ms at 100k documents per scope, graph OFF, rerank OFF. The opt-in cross-encoder rerank is a **quality** stage, not a latency-class stage — it measures **p50 1301.3 ms** at `top_in=60` and voids this contract when enabled. | `scripts/bench/perf/recall_latency.sh all` — a **manual, local** ~10-minute live-Moon gate. **Not CI-enforced:** `perf-gates.yml` is opt-in behind a `perf-bench` label, is not a required check, and is red on main ([`capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)) |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, audit, and queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
-| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` (`crates/lunaris-core/src/bitemporal.rs`) |
+| **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive; `forget` and supersession close intervals instead of destroying rows. "What did the agent know at time T" is a query on the **search and graph** lanes (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`) — a historical **KV** read has no version chain on Moon and `read_as_of` **refuses** past the 1-hour live window rather than answering with today's data. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` (`crates/lunaris-core/src/bitemporal.rs`); the refusal is pinned by `crates/lunaris-conformance/tests/run_as_of_moon_gap.rs` |
 
 If everything else fails, that performance + correctness contract must
 hold — it's what differentiates Lunaris from Mem0, Zep, and Cognee.
@@ -63,6 +63,9 @@ Pick Lunaris when you can say **yes** to most of these:
 - I want a single substrate (Moon or Postgres) instead of running a
   vector DB + graph DB + relational DB.
 - I need bi-temporal queries: "what did the agent believe at time T?"
+  (bi-temporal *writes* always; as-of *reads* on the search and graph lanes
+  only — a historical KV read is refused on Moon, so if you need to hydrate a
+  row *as it was*, Lunaris v0 is not the tool)
 - I need multi-tenant isolation that the type system enforces, not just
   a `user_id` string the caller could swap.
 - I want a composable retrieval DSL where vector + keyword + graph fuse
@@ -82,7 +85,7 @@ Pick Lunaris when you can say **yes** to most of these:
 | Core language | Rust (Py + TS bindings) | Python | Python / Go | Python |
 | Recall latency contract | sub-25 ms p50, **measured** at 100k docs/scope (manual bench — *not* CI-enforced) | best-effort | best-effort | best-effort |
 | Atomic ingest | single `atomic_write`, all-or-nothing | fan-out writes | fan-out writes | task pipeline |
-| Bi-temporal | yes, at the storage layer (`valid` + `sys`) | no | yes | partial |
+| Bi-temporal | yes at the storage layer (`valid` + `sys`); as-of *reads* on the search + graph lanes, **not** on KV hydrate | no | yes | partial |
 | Substrate count | 1 (Moon; Postgres and SQLite were removed in 0.7.0) | vector DB + store | vector DB + graph DB | configurable, multi |
 | Hybrid retrieval | typed DSL: `vector.and(keyword).fuse_rrf().top()` | flag | flag | pipeline step |
 | Graph | opt-in operator, off by default | Mem0g (Platform-only) | always-on | pipeline-driven |
