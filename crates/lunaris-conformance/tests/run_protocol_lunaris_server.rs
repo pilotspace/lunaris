@@ -67,6 +67,14 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
 
     // 4. Spawn the server with --bind 127.0.0.1:0 (ephemeral) + tight rate
     //    limit so rate_limit::burst_returns_429 fires within a few hundred ms.
+    //
+    //    W1.1: burst raised 10 -> 20. The forget contract tests now ingest a
+    //    real episode before targeting it (they used to forget random ULIDs
+    //    that had never existed), which adds three requests to the shared
+    //    token's bucket ahead of the burst test. At burst=10 those extra calls
+    //    tripped a 429 mid-suite and surfaced as an opaque JSON decode error.
+    //    `burst_returns_429` fires 30 requests, so 20 still trips it with
+    //    headroom — the gate is unchanged, only its runway.
     let mut child = Command::new(&bin)
         .arg("--bind")
         .arg("127.0.0.1:0")
@@ -77,7 +85,7 @@ async fn lunaris_server_protocol_conformance() -> anyhow::Result<()> {
         .arg("--rate-per-second")
         .arg("5")
         .arg("--rate-burst")
-        .arg("10")
+        .arg("20")
         .arg("--cors-origins")
         .arg("*")
         .arg("--shutdown-grace-secs")

@@ -1946,6 +1946,52 @@ fn maybe_cached_embedder(embedder: Arc<dyn Embedder>) -> Arc<dyn Embedder> {
 static EMBEDDER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
 static RERANKER_BACKEND_LOG_ONCE: OnceLock<()> = OnceLock::new();
 
+/// Which embedder backend [`Lunaris::open`] actually resolved in this process.
+///
+/// W1.2 (2026-08-21). The `Noop` arm is a **silent** degradation: every vector
+/// is zeros, so hybrid recall collapses to BM25 + insertion-order tie-breaks
+/// while every surface keeps answering `200`. Until this enum existed the only
+/// evidence was one `tracing::warn!` fired once per process — which
+/// `lunaris-server`'s `/readyz` could not see, so a server built without
+/// `llamacpp` (the workspace entry sets `default-features = false`) reported
+/// itself READY with a zero-vector embedder. `dim()` cannot distinguish the
+/// cases: `NoopEmbedder` reports a non-zero dim on purpose so the operator's
+/// existing `FT.CREATE` index geometry stays valid.
+///
+/// This is deliberately a *structural* signal. A probe must never call
+/// `embed_batch` to find out — a wedged ggml pool cannot be cancelled from
+/// async Rust, so an inference-based probe wedges on a timer forever (see
+/// `lunaris-server/src/readiness.rs` module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EmbedderBackend {
+    /// In-process llama.cpp over a staged GGUF — the shipped local path.
+    LlamaCpp,
+    /// Remote OpenAI-compatible `/embeddings` endpoint.
+    OpenAiRemote,
+    /// Remote Ollama endpoint (operator escape hatch).
+    OllamaRemote,
+    /// Zero-vector fallback. Real vectors are NOT being produced.
+    Noop,
+    /// `Lunaris::open` has not run in this process — the handle was built
+    /// through a `with_parts*` test seam, so no backend was resolved. Callers
+    /// must treat this as "unknown", never as "degraded".
+    Unresolved,
+}
+
+static RESOLVED_EMBEDDER_BACKEND: OnceLock<EmbedderBackend> = OnceLock::new();
+
+/// The embedder backend [`Lunaris::open`] resolved, or
+/// [`EmbedderBackend::Unresolved`] if `open` has not run in this process.
+///
+/// Process-global because `resolve_embedder` is process-global: it reads env
+/// and the model cache, and a process runs one server. Set once, on the first
+/// `open`.
+#[must_use]
+pub fn resolved_embedder_backend() -> EmbedderBackend {
+    RESOLVED_EMBEDDER_BACKEND.get().copied().unwrap_or(EmbedderBackend::Unresolved)
+}
+
 /// Granite-r2 model directory name under `<cache>/lunaris/models/`.
 const GRANITE_R2_DIR: &str = "granite-embedding-311m-multilingual-r2";
 /// bge-reranker-v2-m3 model directory name under `<cache>/lunaris/models/`.
@@ -2019,6 +2065,7 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
                     })?;
             match opened {
                 Ok(e) => {
+                    let _ = RESOLVED_EMBEDDER_BACKEND.set(EmbedderBackend::LlamaCpp);
                     EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
                         tracing::info!(
                             target: "lunaris::handle",
@@ -2053,6 +2100,7 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
         {
             let opts = lunaris_embed_remote::openai::OpenAiEmbedderOpts::default();
             let e = lunaris_embed_remote::openai::OpenAiEmbedder::new(opts)?;
+            let _ = RESOLVED_EMBEDDER_BACKEND.set(EmbedderBackend::OpenAiRemote);
             EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
                 tracing::info!(
                     target: "lunaris::handle",
@@ -2073,6 +2121,7 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
             let opts =
                 lunaris_embed_remote::OllamaEmbedderOpts { endpoint: url, ..Default::default() };
             let e = lunaris_embed_remote::OllamaEmbedder::new(opts)?;
+            let _ = RESOLVED_EMBEDDER_BACKEND.set(EmbedderBackend::OllamaRemote);
             EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
                 tracing::info!(
                     target: "lunaris::handle",
@@ -2088,6 +2137,7 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
     //    recall returns empty rows until a GGUF is staged (llamacpp) or a
     //    remote embedder is configured (`embed-remote`).
     let dim = resolve_embed_dim();
+    let _ = RESOLVED_EMBEDDER_BACKEND.set(EmbedderBackend::Noop);
     EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
         tracing::warn!(
             target: "lunaris::handle",

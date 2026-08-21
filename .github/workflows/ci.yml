@@ -57,8 +57,15 @@ jobs:
       # cannot link on any platform. Same for napi cdylib tests outside a
       # Node host. Their compile health is covered by the dedicated
       # `cargo check -p lunaris-py -p lunaris-ts` step below; their
-      # runtime coverage is owned by python-prebuild.yml (maturin+pytest)
-      # and ts-prebuild.yml (napi+vitest).
+      # runtime coverage is owned by conformance-bindings.yml, which is the
+      # ONLY workflow that runs pytest or vitest.
+      #
+      # W2.8 — this comment used to name python-prebuild.yml and
+      # ts-prebuild.yml as the owners. Verified counts in both:
+      # `grep -c pytest .github/workflows/python-prebuild.yml` = 0,
+      # `grep -c vitest .github/workflows/ts-prebuild.yml` = 0. Those two
+      # workflows build wheels / .node artifacts; they run no tests. A comment
+      # that misnames the owner of a coverage gap is how the gap stays open.
       - run: cargo test --workspace --all-targets --exclude lunaris-py --exclude lunaris-ts
       - run: cargo doc --workspace --no-deps
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
@@ -167,6 +174,59 @@ jobs:
             exit 1
           fi
 
+      # W1.1 — ignored-test ratchet.
+      #
+      # `uat4_forget_honors_scope_target_contract` was parked behind
+      # `#[ignore = "un-ignore after ScopedLunaris::forget migration lands
+      # (Wave 1F / v0.3)"]`. Wave 1F landed in v0.3. The test stayed ignored
+      # through 0.7.0, and the P0 it was written to catch — `/v1/forget`
+      # answering 200 while deleting nothing for every real tenant — shipped
+      # in four releases. Before this step, `grep -rn 'ignored'
+      # .github/workflows/` returned NOTHING: no job looked at ignored tests
+      # at all.
+      #
+      # A blanket `cargo test -- --ignored` is not the gate: every surviving
+      # ignore in `crates/*/tests/` genuinely needs a live Moon, a GGUF, a
+      # tokenizer, or a release binary that this job does not have, so it
+      # would be permanently red. (The ones that only need a live Moon DO run
+      # now — integration.yml passes `--include-ignored` to the
+      # lunaris-storage-moon step.) What this step enforces instead is that
+      # parking a test stays VISIBLE and REVIEWABLE:
+      #
+      #   1. every `#[ignore]` in an integration-test file must carry a
+      #      reason string, and
+      #   2. the total count is pinned, so a new one cannot be added without
+      #      a deliberate bump that a reviewer sees in the diff.
+      #
+      # Raising EXPECTED_IGNORED is a decision, not a formality: say in the
+      # PR body what the new ignore needs and what un-ignores it.
+      #
+      # Scope is `*/tests/*.rs` on purpose — in-crate `#[cfg(test)]` units sit
+      # beside the code they cover, whereas an integration file can silently
+      # park a whole contract. Comment lines are stripped first so prose ABOUT
+      # `#[ignore]` does not count.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: ignored_test_ratchet
+        run: |
+          set -euo pipefail
+          EXPECTED_IGNORED=13
+          sites=$(find crates -path '*/tests/*' -name '*.rs' -print0 \
+            | xargs -0 grep -hn '#\[ignore' \
+            | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
+          count=$(printf '%s\n' "$sites" | grep -c '#\[ignore' || true)
+          bare=$(printf '%s\n' "$sites" | grep -c '#\[ignore\]' || true)
+          echo "ignored integration tests: $count (bare: $bare)"
+          printf '%s\n' "$sites"
+          if [ "$bare" != "0" ]; then
+            echo "::error::a bare #[ignore] carries no reason and no expiry — write #[ignore = \"what it needs / what un-ignores it\"]"
+            exit 1
+          fi
+          if [ "$count" != "$EXPECTED_IGNORED" ]; then
+            echo "::error::ignored-test count is $count, ratchet expects $EXPECTED_IGNORED. Un-ignoring? Lower EXPECTED_IGNORED in ci.yml. Adding one? Raise it AND say in the PR what un-ignores it."
+            exit 1
+          fi
+
       # Plan 13-01 RELEASE-02 — audit envelope grep gate. Blocks
       # reintroduction of inline `serde_json::json!({"kind":"..."})`
       # envelopes in either worker crate. The canonical shape lives in
@@ -182,6 +242,59 @@ jobs:
             echo "::error::inline __lunaris_audit__ envelope detected — use lunaris_core::audit::publish_audit_event(AuditEvent::...)"
             exit 1
           fi
+
+      # W2.8 — `cargo install lunaris-mcp` must never be published as an
+      # instruction. `crates/lunaris-mcp` is `publish = false` (it links
+      # `lunaris-memory-service`, which carries a `vendor/` path dep), so the
+      # crate is not on crates.io and the command 404s for every reader who
+      # copies it. The working form is
+      # `cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp`.
+      #
+      # The gate cannot be a plain `grep -q` for the string: the correct docs
+      # NAME the broken command in order to warn about it ("plain `cargo
+      # install lunaris-mcp` will fail"), and both `npx`/`uvx` postinstall
+      # fallbacks carry the same warning as a code comment. So a match is only
+      # a violation when NOTHING within +/-3 lines marks it as wrong. Prose
+      # wraps, which is why the window is lines and not the single hit line.
+      #
+      # `docs/decisions/` and `docs/CHANGELOG-archive.md` are excluded on
+      # purpose: an ADR and a shipped changelog record what was true on the day
+      # they were written. Editing them to match today is falsifying a record,
+      # not fixing a doc. `tmp/` is excluded because it is the repo's
+      # gitignored scratch dir for `git commit -F tmp/<msg>.txt` bodies.
+      #
+      # The needle is assembled from two halves so this step's own diagnostic
+      # messages do not contain the literal string and flag themselves — which
+      # they did on the first draft, caught by re-running the gate against the
+      # tree that contains it.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: no_prescriptive_cargo_install_lunaris_mcp
+        run: |
+          set -uo pipefail
+          needle='cargo install lunaris-''mcp'
+          fixed="cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp"
+          markers='NOT |not on crates\.io|does not work|will fail|always fails|never worked|publish = false|cannot be installed'
+          violations=0
+          while IFS= read -r hit; do
+            file="${hit%%:*}"
+            rest="${hit#*:}"
+            line="${rest%%:*}"
+            lo=$(( line > 3 ? line - 3 : 1 ))
+            hi=$(( line + 3 ))
+            if ! sed -n "${lo},${hi}p" "$file" | grep -qE "$markers"; then
+              echo "::error file=${file},line=${line}::prescriptive '${needle}' — the crate is publish = false and that command 404s; use '${fixed}'"
+              violations=$((violations + 1))
+            fi
+          done < <(grep -rn --binary-files=without-match \
+            --exclude-dir=target --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules \
+            --exclude-dir=tmp --exclude-dir=decisions --exclude=CHANGELOG-archive.md \
+            -e "$needle" . || true)
+          if [ "$violations" != "0" ]; then
+            echo "::error::${violations} prescriptive site(s) — see the annotations above"
+            exit 1
+          fi
+          echo "no prescriptive '${needle}' sites"
 
       # Plan 13-01 RELEASE-01 — lunaris-core leaf-purity gate. Fails the
       # build if any worker crate sneaks into lunaris-core's transitive
@@ -278,3 +391,109 @@ jobs:
             git diff -- crates/lunaris-codegen/snapshots/
             exit 1
           fi
+
+  # W1.5 — make the "built ≠ wired" discriminators actually execute.
+  #
+  # `crates/lunaris/tests/llamacpp_wired.rs` and the five
+  # `crates/lunaris-llamacpp/tests/*.rs` files all open with
+  #
+  #     let Some(gguf) = staged(...) else { eprintln!("[skip] …"); return; };
+  #
+  # and no CI job staged a GGUF — only perf-gates.yml did, and that job is
+  # label-gated off PRs. So nine skip sites reported success on every PR
+  # without executing a line of the thing they exist to prove: that
+  # `Lunaris::open`'s production resolution chain really serves the llama.cpp
+  # backends rather than silently degrading to `NoopEmbedder`. A green check
+  # that never ran is worse than a missing one — it reads as evidence.
+  #
+  # Two halves, and both are needed:
+  #   1. stage the artifacts (cached on their SHA-256, so a warm run pays a
+  #      cache restore instead of ~721 MB of download), and
+  #   2. FAIL if any `[skip]` marker reaches the log. Staging can break
+  #      silently — a moved HuggingFace URL, a poisoned cache — and without
+  #      (2) the job would go right back to reporting success for nothing.
+  #      This is the loudness half, and it covers every skip site that exists
+  #      now or is added later without touching a line of Rust.
+  #
+  # Runner cost: a separate job so a cold GGUF download never blocks `check`,
+  # and so the two run in parallel. GGUF URLs / SHAs are kept identical to
+  # perf-gates.yml and crates/lunaris-mcp/src/model_stager.rs.
+  #
+  # Security: no `github.event.*` reaches any run: block; the two URLs are
+  # static literals passed through env:.
+  llamacpp-wired:
+    name: llamacpp built-not-wired discriminators
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EMBEDDER_GGUF_URL: https://huggingface.co/mykor/granite-embedding-311m-multilingual-r2-GGUF/resolve/main/granite-embedding-311M-multilingual-r2-Q4_K_M.gguf
+      EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
+      RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf
+      RERANKER_GGUF_SHA256: 1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef
+      # The harness spawns a disposable Moon per test; 0.7.0 removed the
+      # in-process fallback, so a missing binary is a panic, not a skip.
+      MOON_TEST_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
+          shared-key: llamacpp-wired
+
+      - name: Cache GGUF artifacts
+        id: gguf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.lunaris/models
+          key: gguf-${{ env.EMBEDDER_GGUF_SHA256 }}-${{ env.RERANKER_GGUF_SHA256 }}
+
+      - name: Stage GGUF artifacts (download + SHA-256 verify)
+        if: steps.gguf-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.lunaris/models
+          curl -sSfL --retry 3 "${EMBEDDER_GGUF_URL}" \
+            -o ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          curl -sSfL --retry 3 "${RERANKER_GGUF_URL}" \
+            -o ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+          cd ~/.lunaris/models
+          sha256sum -c <<EOF
+          ${EMBEDDER_GGUF_SHA256}  granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          ${RERANKER_GGUF_SHA256}  bge-reranker-v2-m3.Q5_K_M.gguf
+          EOF
+
+      - name: Assert artifacts staged
+        run: |
+          set -euo pipefail
+          test -s ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          test -s ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+
+      # `--nocapture` is REQUIRED: the `[skip]` markers go to the test's
+      # stderr, which libtest swallows for PASSING tests. Without it the
+      # loudness check below would have nothing to read.
+      - name: Run the llamacpp discriminators
+        run: |
+          set -euo pipefail
+          cargo test -p lunaris-llamacpp --features llamacpp -- --nocapture 2>&1 | tee gguf-tests.log
+          cargo test -p lunaris-memory --features llamacpp --test llamacpp_wired -- --nocapture 2>&1 | tee -a gguf-tests.log
+
+      - name: Fail on a vacuous skip
+        # The whole point of the job. A discriminator that did not execute must
+        # be visibly distinct from one that passed — never silently green.
+        run: |
+          set -uo pipefail
+          if grep -n '\[skip\]' gguf-tests.log; then
+            echo "::error::a built-not-wired discriminator SKIPPED in CI — the GGUF staging step above did not reach it. A skipped discriminator proves nothing; fix the staging rather than accepting the green."
+            exit 1
+          fi
+          echo "no [skip] markers — every discriminator executed"

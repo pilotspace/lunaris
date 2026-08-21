@@ -550,7 +550,17 @@ async fn mode_semantic_unchanged_by_handler_diff() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore]
+// W1.1 — a bare `#[ignore]` carries no expiry and no reason, which is exactly
+// how `uat4_forget_honors_scope_target_contract` parked a P0 for four
+// releases. Reason strings are now required by ci.yml's
+// `ignored_test_reason_required` gate.
+//
+// DEAD GATE, not a deferred one: this test also demands `PG_URL`, and 0.7.0
+// deleted `lunaris-storage-postgres` entirely. It can never run again as
+// written. Flagged to the ship plan as a deletion candidate under W2.9 (purge
+// dead Postgres language) rather than removed here, which is a sibling's file
+// sweep, not this task's.
+#[ignore = "DEAD since 0.7.0: requires PG_URL, but lunaris-storage-postgres was deleted — delete or rewrite as Moon-only (W2.9)"]
 async fn mode_graph_parity_across_moon_and_postgres() {
     // UAT-class — operator-driven. Skip unless BOTH env vars present.
     let moon_url = match std::env::var("MOON_URL") {

@@ -668,29 +668,23 @@ async fn uat3_body_scope_override_rejected_422() {
 /// Ingest 2 episodes under JWT_A (scope "agent-a"). Attempt a dry-run forget
 /// with JWT_B (scope "agent-b") targeting the first episode's id.
 ///
-/// ## Current behavior (Wave 1E)
+/// ## Contract as of W1.1 (2026-08-21)
 ///
-/// The forget handler currently uses `state.lunaris.forget(request)` without a
-/// scope-scoped wrapper — it is the only verb that has not yet been migrated to
-/// `ScopedLunaris` (Wave 1D only wired ingest + recall). Inside
-/// `Lunaris::forget`, the soft-delete path calls `atomic_write(&Scope::dev(),
-/// ops)`. The `Scope::dev()` partition ("_dev_") is different from the real
-/// scope partition where scope_a's episodes live — so the forget call finds zero
-/// matching rows and returns a receipt with `rows_written == 0`.
+/// The forget handler now runs `state.lunaris.scoped(claims.scope).forget(..)`.
+/// scope_b's token cannot see scope_a's partition, so the ULID matches nothing
+/// and the route answers `404 Not Found` — NOT `200 OK` with a zero receipt.
+///
+/// Until W1.1 this test asserted the pre-migration behaviour (200 + zero rows),
+/// which is precisely the defect: `Lunaris::forget` hard-coded `Scope::dev()`,
+/// so the route reported success for a delete it never performed — for EVERY
+/// real tenant, not just a cross-scope probe. The 200 assertion could never go
+/// red on the bug, which is why the bug survived from v0.3 to 0.7.0.
 ///
 /// The test asserts the observable contract:
-/// - HTTP 200 (auth passes — scope_b has the "forget" permission).
-/// - `preview == false` (not a dry_run request).
-/// - `rows_written == 0` and `rows_deleted == 0` — the cross-scope forget had
-///   no effect on scope_a's data.
+/// - HTTP 404 (auth passes — scope_b has the "forget" permission — but the
+///   target is invisible, and 404 must not confirm that it exists elsewhere).
+/// - scope_a's partition took ZERO storage writes.
 /// - scope_a's episodes are still retrievable after the cross-scope forget.
-///
-/// ## Future contract (Wave 1F / v0.3)
-///
-/// Once the forget handler is migrated to `scoped.forget(request)`, the
-/// expected HTTP status for a cross-scope target will change from 200 (zero
-/// rows) to 403 or 404. External consumers MUST be prepared for either status
-/// code once the scoped forget lands.
 #[tokio::test]
 async fn uat4_forget_honors_scope() {
     let clock = HlcClock::new(0);
@@ -724,8 +718,8 @@ async fn uat4_forget_honors_scope() {
     let app = build_app(storage.clone(), tokens_file);
 
     // --- JWT_B attempts to forget scope_a's first episode (dry_run=true) ---
-    // Under Wave 1E this returns 200 with rows_written == 0 (no match in _dev_
-    // partition). In a future scoped-forget world, this would return 403/404.
+    // W1.1: the scoped pipeline finds nothing in scope_b's partition, so the
+    // route answers 404 rather than a 200 that claims a no-op succeeded.
     let forget_body = serde_json::json!({
         "target": { "Id": episode_1.id.to_string() },
         "dry_run": true,
@@ -744,29 +738,31 @@ async fn uat4_forget_honors_scope() {
         .await
         .unwrap();
 
-    // HTTP 200: scope_b has the "forget" scope, so auth passes.
+    // HTTP 404: auth passes (scope_b holds the "forget" permission), but the
+    // ULID is invisible inside scope_b's partition. 404 rather than 403 so the
+    // status cannot be used to probe for ids in another tenant's scope.
     assert_eq!(
         resp_forget.status(),
-        StatusCode::OK,
-        "UAT-4a: cross-scope forget must return 200 (auth passes, zero rows affected)"
+        StatusCode::NOT_FOUND,
+        "UAT-4a: cross-scope forget must return 404, never 200-with-zero-rows"
     );
     let bytes_forget = to_bytes(resp_forget.into_body(), 65_536).await.unwrap();
-    let receipt: serde_json::Value = serde_json::from_slice(&bytes_forget).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes_forget).unwrap();
+    assert_eq!(body["error"], "not_found", "UAT-4b: 404 body must carry the typed error code");
 
-    // preview == true because dry_run == true.
-    assert_eq!(receipt["preview"], true, "UAT-4b: dry_run receipt must have preview=true");
-
-    // rows_written == 0: scope_a's episode is in its own partition; scope_b's
-    // forget (which uses Scope::dev() internally) cannot see it.
-    let rows_written = receipt["rows_written"].as_u64().unwrap_or(999);
-    let rows_deleted = receipt["rows_deleted"].as_u64().unwrap_or(999);
+    // scope_a's partition must have taken ZERO storage writes. This is the
+    // assertion that actually discriminates: a handler that scanned or wrote
+    // under the wrong partition key would show up here.
+    let writes_a = storage.batch_count_for_scope("agent-a");
     assert_eq!(
-        rows_written, 0,
-        "UAT-4c: cross-scope forget must write 0 rows; got rows_written={rows_written}"
+        writes_a, 0,
+        "UAT-4c: cross-scope forget must not write into scope_a; got {writes_a} batches"
     );
+    let writes_b = storage.batch_count_for_scope("agent-b");
     assert_eq!(
-        rows_deleted, 0,
-        "UAT-4d: cross-scope forget must delete 0 rows; got rows_deleted={rows_deleted}"
+        writes_b, 0,
+        "UAT-4d: a dry-run forget must not write into the caller's scope either; \
+         got {writes_b} batches"
     );
 
     // --- verify scope_a's data is still intact ---
@@ -792,18 +788,23 @@ async fn uat4_forget_honors_scope() {
     );
 }
 
-/// **Target contract for UAT-4 once `ScopedLunaris::forget` lands (Wave 1F).**
+/// **UAT-4 cross-scope contract — un-ignored by W1.1 (2026-08-21).**
 ///
-/// This test is currently `#[ignore]`'d because the forget handler has not yet
-/// been migrated from `state.lunaris.forget(request)` to a scoped equivalent.
-/// Once the migration lands, un-ignore this test — it will fail until the
-/// handler returns `403 Forbidden` or `404 Not Found` for a cross-scope target.
+/// Parked behind `#[ignore = "un-ignore after ScopedLunaris::forget migration
+/// lands (Wave 1F / v0.3)"]` since v0.3. Wave 1F landed in v0.3; the ignore
+/// outlived it by four releases, and the P0 it guarded shipped in all four.
+/// It is live now: a cross-scope `Id` target answers `404 Not Found`.
 ///
-/// External consumers (Helios): once this test turns green, the v0.3 contract
-/// applies and your client code must handle 403/404 on cross-scope forget
-/// attempts (not just 200 with rows_written=0).
+/// External consumers (Helios): the v0.3 contract applies — handle 403/404 on
+/// a cross-scope forget, not just `200` with `rows_written = 0`.
+///
+/// **This test is NOT the discriminator for the W1.1 defect.** Mutation-proved:
+/// revert `handle_forget` to the deprecated `Lunaris::forget` and this test
+/// still passes, because a `Scope::dev()` scan matches nothing, and "matched
+/// nothing" is exactly what the 404 arm answers. Isolation was never the bug —
+/// the verb was inert for everybody. `uat4_forget_in_own_scope_actually_writes`
+/// below is the test that dies under that mutation; keep them as a pair.
 #[tokio::test]
-#[ignore = "un-ignore after ScopedLunaris::forget migration lands (Wave 1F / v0.3)"]
 async fn uat4_forget_honors_scope_target_contract() {
     let clock = HlcClock::new(0);
     let storage = Arc::new(MockMultiTenantStorage::new());
@@ -840,12 +841,85 @@ async fn uat4_forget_honors_scope_target_contract() {
         .await
         .unwrap();
 
-    // This assertion will FAIL on Wave 1E (returns 200) and PASS on Wave 1F+.
+    // This assertion FAILED before W1.1 (returned 200) and PASSES after it.
     assert!(
         resp.status() == StatusCode::FORBIDDEN || resp.status() == StatusCode::NOT_FOUND,
         "UAT-4 target: cross-scope forget MUST return 403 or 404 once ScopedLunaris::forget lands; got {}",
         resp.status()
     );
+}
+
+/// **W1.1 discriminator — the defect was not cross-scope leakage, it was that
+/// `/v1/forget` deleted NOTHING for every real tenant.**
+///
+/// The two tests above only prove isolation, and isolation was never broken:
+/// the deprecated `Lunaris::forget` scanned `Scope::dev()`, which matches
+/// nothing for anybody, so a "cross-scope forget affects zero rows" assertion
+/// passed *because the verb was inert*. This test is the one that could only
+/// ever go green if the handler runs the caller's OWN partition key:
+/// scope_a's token forgets scope_a's own episode and the receipt must report a
+/// real soft-delete write, committed under `agent-a`.
+///
+/// Pre-W1.1 this returns `200` with `rows_written = 0` and an empty write log.
+#[tokio::test]
+async fn uat4_forget_in_own_scope_actually_writes() {
+    let clock = HlcClock::new(0);
+    let storage = Arc::new(MockMultiTenantStorage::new());
+
+    let scope_a = Scope::new("agent-a").unwrap();
+    let (chunk_1, episode_1) =
+        make_chunk_and_episode(&scope_a, "Episode 1 content", "src:ep1", &clock);
+    storage.seed_chunk(&scope_a, &chunk_1);
+    storage.seed_episode(&scope_a, &episode_1);
+
+    let tokens_file = write_tokens_file(&[("tok-a", "agent-a", &["ingest", "recall", "forget"])]);
+    let app = build_app(storage.clone(), tokens_file);
+
+    // Real (non-dry-run) soft forget of the caller's OWN episode.
+    let forget_body = serde_json::json!({
+        "target": { "Id": episode_1.id.to_string() },
+        "dry_run": false,
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/forget")
+                .header("authorization", "Bearer tok-a")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&forget_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK, "UAT-4f: in-scope forget must return 200");
+    let bytes = to_bytes(resp.into_body(), 65_536).await.unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(receipt["preview"], false, "UAT-4g: dry_run=false must not preview");
+    assert_eq!(
+        receipt["matched"].as_u64(),
+        Some(1),
+        "UAT-4h: the caller's own episode must be MATCHED under its own scope; \
+         a zero here means the handler is scanning the wrong partition"
+    );
+    assert_eq!(
+        receipt["rows_written"].as_u64(),
+        Some(1),
+        "UAT-4i: a soft forget must report one written row — this is the assertion \
+         the pre-W1.1 handler could never satisfy for any real tenant"
+    );
+
+    // And the write must have landed in agent-a's partition, exactly once (D-19).
+    let batches = storage.writes_for_scope("agent-a");
+    assert_eq!(
+        batches.len(),
+        1,
+        "UAT-4j: exactly one atomic_write under agent-a; got {}",
+        batches.len()
+    );
+    assert_eq!(batches[0].len(), 1, "UAT-4k: that batch must carry the single soft-delete op");
 }
 
 // ---------------------------------------------------------------------------

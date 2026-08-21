@@ -42,13 +42,33 @@
 
 name: Integration
 
-# PR-time removed 2026-08-18 (CI diet): this suite costs ~8 min on every PR
-# and duplicates what `scripts/ci/local-ci.sh full` runs locally at M4 speed.
-# main-push + nightly cron keep the post-merge backstop; dispatch covers
-# on-demand runs. See docs/ci/local-ci.md for the contract.
+# W1.6 (2026-08-21) — `pull_request` RESTORED.
+#
+# It was removed 2026-08-18 as a CI diet, on the reasoning that
+# `scripts/ci/local-ci.sh full` covers it locally. The audit result: 71
+# live-Moon test functions across 23 files — every one gated
+# `#![cfg(feature = "moon-it")]`, and ci.yml passes no `--features` — stopped
+# running on PRs entirely. Moon is the only substrate since 0.7.0, so that is
+# the deepest coverage the storage layer has, and it was landing unverified.
+# A local script is a backstop somebody may run; it is not a gate.
+#
+# Cost, measured rather than assumed: the storage-moon suite is ~15 s of test
+# time (52 functions, verified locally against a fresh Moon on 2026-08-21).
+# The job's wall clock is dominated by the Moon RELEASE BUILD, which
+# `Swatinem/rust-cache` keys on the pinned submodule SHA — and ci.yml's
+# `check` job already pays that same build on every PR. Integration runs in
+# PARALLEL with `check`, and `check` (clippy + full workspace test + doc +
+# semver-checks + deny) is the longer job, so restoring this trigger does not
+# extend the critical path.
+#
+# Deliberately NOT split into a PR subset and a nightly remainder: a split
+# leaves some arm running only after merge, which is the exact hole this task
+# exists to close. Revisit only with a measured p50 that breaks the budget
+# gate below.
 on:
   push:
     branches: [main]
+  pull_request:
   schedule:
     - cron: "45 2 * * *"
   workflow_dispatch:
@@ -69,6 +89,12 @@ jobs:
       # dispatches on URL scheme, and since 0.7.0 `moon` is the only one it
       # accepts.
       MOON_URL: moon://localhost:6390
+      # W1.1 — `lunaris-storage-moon`'s live suite reads LUNARIS_MOON_URL, not
+      # MOON_URL (see tests/list_scopes.rs::moon_url), and defaults to :6380.
+      # Unset, its `maybe_connect()` printed a SKIP and returned Ok — six
+      # `#[ignore = "requires live Moon"]` tests that could never run even with
+      # `--include-ignored`. Same value, both names.
+      LUNARIS_MOON_URL: moon://localhost:6390
       # The `lunaris-test-harness` fixtures spawn their OWN disposable Moon per
       # test (never this one). Point them at the binary this job builds; without
       # it every harness-backed test panics with the no-moon diagnostic, because
@@ -162,6 +188,24 @@ jobs:
           cat "$RUNNER_TEMP/moon.log" || true
           exit 1
 
+      - name: Build lunaris-server (the protocol suite spawns it)
+        # W1.5 — `tests/run_protocol_lunaris_server.rs` SKIPS cleanly when
+        # `target/<profile>/lunaris-server` is absent, and no CI job ever built
+        # it. The entire HTTP protocol conformance suite — every MemoryProtocol
+        # verb, the D-21 hard-delete rail, auth, rate limiting — had therefore
+        # been reporting success without spawning a server. It was hiding a
+        # real bug: `snapshot::ndjson_stream` asked for a far-future LSN, which
+        # `routes/snapshot.rs::is_future_hlc` answers `404` by design, so the
+        # assertion had been unsatisfiable since that rule landed. Fixed in the
+        # same commit; this step is what keeps it honest.
+        #
+        # `--no-default-features` deliberately: W1.2 put `llamacpp` in the
+        # server's default set, and compiling llama.cpp here would add a cold
+        # C++ build to this job's budget for no signal — the protocol suite
+        # asserts HTTP status and body shape, never embedding quality. The
+        # default-on build is exercised by ci.yml's workspace compile.
+        run: cargo build -p lunaris-server --no-default-features
+
       - name: Run conformance tests with moon-it
         # Scope is strictly -p lunaris-conformance (NOT --workspace) to keep the
         # 8-min budget tight; --workspace is owned by ci.yml.
@@ -170,15 +214,27 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
-      - name: Run lunaris-storage-moon tests with moon-it
+      - name: Run lunaris-storage-moon tests with moon-it (including --ignored)
         # The backend's own live-Moon suite. Before 0.7.0 this ran only from a
         # developer's shell; with Postgres gone it is the deepest live coverage
         # the storage layer has, so CI owns it.
+        #
+        # W1.1 — `--include-ignored` is the half that makes
+        # `grep -rn 'ignored' .github/workflows/` return something. Six tests
+        # in `tests/list_scopes.rs` + `tests/scope_isolation.rs` carry
+        # `#[ignore = "requires live Moon"]`; this job HAS a live Moon, so the
+        # ignore was gating them out of the one place they can run. All six
+        # verified green against a fresh Moon locally on 2026-08-21.
+        #
+        # The remaining workspace ignores stay ignored and are triaged in
+        # ci.yml's `ignored_test_ratchet`: they need a GGUF, a tokenizer, a
+        # release binary, or they pin a known Moon gap.
         if: success() || failure()
         run: |
           cargo test -p lunaris-storage-moon \
             --features moon-it \
-            --no-fail-fast
+            --no-fail-fast \
+            -- --include-ignored
 
       - name: Run lunaris-recipes tests with moon-it
         # Recipe integration tests use probe_backend skip discipline (SKIP when
