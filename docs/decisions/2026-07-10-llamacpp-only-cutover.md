@@ -17,8 +17,29 @@ reranker, quantized CPU matmuls bypassing BLAS) and the candle Metal
 activation-buffer leak. Phase B then ran the end-to-end gates on the
 llama.cpp GGUF stack:
 
-- **LongMemEval-S J = 96.0%** (≥ the 94.0% candle baseline)
-- **recall@10 = 98.0%**
+- **LongMemEval-S J = 96.0%** (≥ the 94.0% candle baseline) — **N=50
+  SUBSAMPLE** *(annotated 2026-08-21, W3.1)*
+- **recall@10 = 98.0%** — **N=50 SUBSAMPLE** *(annotated 2026-08-21, W3.1)*
+
+> **⚠ Annotation added 2026-08-21 — these two gate figures are an N=50
+> subsample of `longmemeval_s`, not a dataset-scale result.** Both were
+> measured over the first 50 questions. This repository's own benchmark
+> write-up describes that exact prefix as **"a sampling artifact, not the
+> real number"** — `longmemeval_s` orders its questions with an easy,
+> mostly single-session-factual prefix, and q0–49 is not representative
+> of the full 500 (`docs/benchmarks/v0.7-longmemeval-jscore-validation.md`,
+> written 2026-07-13, six days *after* this ADR relied on the prefix to
+> justify deleting the candle stack).
+>
+> The candle baseline (94.0% / 96.0%) it is compared against is the same
+> subsample, so the *relative* comparison — the actual decision input,
+> "llama.cpp is not worse than candle" — is sound and the decision is not
+> reopened. What is not sound is quoting 96.0% or 98.0% as Lunaris's
+> LongMemEval quality. Do not.
+>
+> The full-dataset figures that later replaced them have themselves been
+> retracted; Lunaris currently publishes no LongMemEval headline. See
+> [`docs/benchmarks/README.md`](../benchmarks/README.md).
 - regression baseline p95 ≤ 0.08 / inversion ≤ 3% — passed
 
 With the quality gates green and the perf gap structural (kernel quality,

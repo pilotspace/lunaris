@@ -126,8 +126,13 @@ nix            = { workspace = true }
 [features]
 # llama.cpp-only cutover Phase C (2026-07-10): llama.cpp is THE inference
 # runtime (GGUF Q4_K_M embedder + Q5_K_M reranker), gated by the Phase B
-# quality run — LongMemEval-S N=50 J=96.0% / recall@10=98.0% vs candle
-# baseline 94.0%/96.0% at ~4x less wall. C3 deleted the candle native
+# quality run — LongMemEval-S N=50 SUBSAMPLE J=96.0% / recall@10=98.0% vs
+# candle baseline 94.0%/96.0% (same subsample) at ~4x less wall. The N=50
+# prefix is an easy, mostly single-session-factual head of the dataset —
+# "a sampling artifact, not the real number"
+# (docs/benchmarks/v0.7-longmemeval-jscore-validation.md). The relative
+# comparison stands; the absolutes are NOT a Lunaris quality claim.
+# C3 deleted the candle native
 # embedder/reranker crates; the extractor/verifier LLM slots are REMOTE-ONLY
 # (C2c). Tier-0 (no local inference): `default-features = false` [+
 # `embed-remote`].

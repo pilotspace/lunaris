@@ -12,7 +12,18 @@
 //! targets): this is a REGRESSION BASELINE, not an acceptance gate — the
 //! load-bearing quality bar for the cutover was the end-to-end LongMemEval
 //! run (measured J = 96.0%, recall@10 = 98.0% with this exact Q5 stack, vs
-//! candle baseline 94.0%/96.0%). The original §5 targets (p95 ≤ 0.02,
+//! candle baseline 94.0%/96.0%).
+//!
+//! **N=50 SUBSAMPLE — annotated 2026-08-21 (W3.1).** Those four figures are
+//! the first 50 questions of `longmemeval_s`, not a dataset-scale result.
+//! The repo's own benchmark write-up calls that prefix "a sampling artifact,
+//! not the real number" (`docs/benchmarks/v0.7-longmemeval-jscore-validation.md`)
+//! — it is an easy, mostly single-session-factual head of the dataset. Both
+//! arms are the same subsample, so the RELATIVE comparison that justified
+//! the cutover holds; the absolute numbers must never be quoted as Lunaris's
+//! LongMemEval quality. Operating point: quality (rerank ON) by construction.
+//!
+//! The original §5 targets (p95 ≤ 0.02,
 //! inversions ≤ 1%) were design-doc aspirations no shipped quantized path
 //! ever met — the incumbent candle-Q5 measured p95 0.047 / inv 2.12% /
 //! max 0.185 on this panel; runtime-only drift (same GGUF, llamacpp vs

@@ -47,7 +47,10 @@ const HF_REPO: &str = "xiaowu0162/longmemeval";
 /// Default dataset file. `longmemeval_oracle` = reduced (evidence-only)
 /// haystack — easy retrieval, fast. Set `LUNARIS_EVAL_LME_DATASET=longmemeval_s`
 /// for the FULL adversarial haystack (~50 sessions / ~494 turns per question)
-/// that competitors (Zep 90.2%, etc.) report their J-score on.
+/// that other agent-memory projects report their J-score on. (The "Zep 90.2%"
+/// figure that used to appear here was removed 2026-08-21, W3.9: it had no
+/// citation anywhere in the repo and no stated reader model. Cross-system
+/// J-scores are not head-to-head anyway — see docs/benchmarks/README.md.)
 const DEFAULT_DATASET_FILENAME: &str = "longmemeval_oracle";
 
 /// Resolve the dataset file from `LUNARIS_EVAL_LME_DATASET` (default
