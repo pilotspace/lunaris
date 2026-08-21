@@ -31,6 +31,7 @@ async function main() {
   const handle = await open("moon://127.0.0.1:6380");
   const lsn = await handle.ingest({
     id: "01JABCDEFGHJKMNPQRSTVWXYZ0",
+    scope: "_dev_",
     source: "ts-example",
     content: "Lunaris bi-temporal hello.",
     metadata: {},
@@ -42,7 +43,7 @@ async function main() {
   });
   console.log("ingested at", lsn);
 
-  const hits = await handle.recall().execute();
+  const hits = await handle.recall().query("bi-temporal hello").top(5).execute();
   for (const h of hits) console.log(h);
 }
 

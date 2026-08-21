@@ -20,6 +20,8 @@
     "outDir": "./dist",
     "rootDir": "."
   },
-  "include": ["index.mts", "index.d.ts", "__test__/**/*"],
-  "exclude": ["dist", "node_modules", "target", "npm"]
+  "include": ["index.d.ts", "lunaris.d.ts", "__test__/**/*"],
+  // `__test__/readme_quickstart.ts` imports the package by NAME; only
+  // tsconfig.readme.json maps that specifier, so it is checked there.
+  "exclude": ["dist", "node_modules", "target", "npm", "__test__/readme_quickstart.ts"]
 }
