@@ -212,6 +212,14 @@ function bindingsItFeaturePresent(): boolean {
   );
 }
 
+/**
+ * Bail out of a test as SKIPPED, never as passed.
+ *
+ * The bare `return` this replaces made vitest report an un-run test as
+ * green. Mirrors the helper in `documentary_parity.spec.mts`.
+ */
+type SkippableCtx = { skip: (reason?: string) => void };
+
 describe("Plan 08-04 — per-driver backend parity (TypeScript)", () => {
   test("goldenReferenceLoads — committed JSON has the expected shape", () => {
     // Offline check (no backend needed). Guards against accidental drift
@@ -231,16 +239,16 @@ describe("Plan 08-04 — per-driver backend parity (TypeScript)", () => {
     expect(golden.per_episode_key_count).toBe(1);
   });
 
-  test("tsDriverBackendParity — ingest + scan + assert against golden", async () => {
+  test("tsDriverBackendParity — ingest + scan + assert against golden", async (ctx: SkippableCtx) => {
     if (!bindingsItFeaturePresent()) {
-      // vitest can't skip mid-test; exit as a pass (no-op) with a
-      // reason printed to the console — mirrors the Plan 08-03
-      // backend-unreachable no-op style.
-      // eslint-disable-next-line no-console
-      console.error(
-        "backend_parity: SKIP (lunaris-ts built without `bindings-it` feature — " +
-          "run `napi build --platform --release --cargo-flags \"--features bindings-it\"` " +
-          "to build the conformance helpers)",
+      // The comment this replaces claimed "vitest can't skip mid-test; exit
+      // as a pass (no-op)". That is false, and it is why this suite reported
+      // green for years without asserting anything: a bare `return` is a
+      // PASS to vitest, `ctx.skip(reason)` is a visible SKIP.
+      ctx.skip(
+        "lunaris-ts built without the `bindings-it` feature — run " +
+          "`napi build --platform --release --cargo-flags \"--features bindings-it\"` " +
+          "to build the conformance helpers",
       );
       return;
     }
@@ -249,11 +257,9 @@ describe("Plan 08-04 — per-driver backend parity (TypeScript)", () => {
     const moonUrl = await probeBackend("LUNARIS_MOON_URL");
 
     if (!moonUrl) {
-      // Moon unreachable — skip neutrally (no-op pass).
-      // eslint-disable-next-line no-console
-      console.error(
-        "backend_parity: SKIP (LUNARIS_MOON_URL not configured with a reachable Moon)",
-      );
+      // "no-op pass" was the bug, not the design. An unreachable Moon must
+      // be visible as un-run.
+      ctx.skip("LUNARIS_MOON_URL is not configured with a reachable Moon");
       return;
     }
 
