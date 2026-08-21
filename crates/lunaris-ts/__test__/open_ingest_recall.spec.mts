@@ -50,13 +50,25 @@ function buildEpisode(content: string): object {
   // so the existing backwards-compat tests continue to pass. Production callers
   // should use `engine.scoped(Scope.new(...)).ingest(new EpisodeBuilder(...))`
   // instead of constructing the raw Episode object.
-  const ts = Date.now();
-  const rand = Math.floor(Math.random() * 1_000_000_000)
-    .toString(36)
-    .padStart(8, "0");
-  // 26-char ULID-ish string — the Rust side parses via ulid::Ulid. We
-  // compose a 26-char upper-Crockford-base32 string from timestamp+random.
-  const id = `01${ts.toString(32).toUpperCase().padStart(10, "0")}${rand.toUpperCase().padStart(14, "0")}`.slice(0, 26);
+  // 26-char Crockford-base32 string — the Rust side parses via ulid::Ulid.
+  // The alphabet EXCLUDES I, L, O and U, so `Number.prototype.toString(32)`
+  // cannot be used: it emits `i`/`l`/`o`/`u` and the ingest fails with
+  // `VALIDATE: invalid character`. That was latent for as long as no Moon
+  // was reachable at the default URL, so the whole roundtrip never ran.
+  const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const enc = (value: number, width: number): string => {
+    let out = "";
+    let v = value;
+    for (let i = 0; i < width; i++) {
+      out = CROCKFORD[v % 32] + out;
+      v = Math.floor(v / 32);
+    }
+    return out;
+  };
+  const id =
+    enc(Date.now(), 10) +
+    enc(Math.floor(Math.random() * 2 ** 40), 8) +
+    enc(Math.floor(Math.random() * 2 ** 40), 8);
   return {
     id,
     scope: "_dev_",

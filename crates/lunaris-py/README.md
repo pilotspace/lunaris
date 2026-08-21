@@ -33,6 +33,7 @@ async def main():
     handle = await lunaris.open("moon://127.0.0.1:6380")
     lsn = await handle.ingest({
         "id": "01JABCDEFGHJKMNPQRSTVWXYZ0",
+        "scope": "_dev_",
         "source": "py-example",
         "content": "Lunaris bi-temporal hello.",
         "metadata": {},
@@ -42,7 +43,7 @@ async def main():
     })
     print("ingested at", lsn)
 
-    hits = await handle.recall().execute()
+    hits = await handle.recall().query("bi-temporal hello").top(5).execute()
     for h in hits:
         print(h)
 

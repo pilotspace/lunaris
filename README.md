@@ -159,14 +159,14 @@ async def main():
     handle = await lunaris.open("moon://127.0.0.1:6380")
 
     lsn = await handle.ingest({
-        "id": str(ulid.ULID()), "source": "quickstart",
+        "id": str(ulid.ULID()), "scope": "_dev_", "source": "quickstart",
         "content": "Alice loves chocolate.", "metadata": {}, "t_ref": None,
         "bt": {"valid": [{"wall_ms": 0, "counter": 0, "node_id": 0}, None],
                "sys":   [{"wall_ms": 0, "counter": 0, "node_id": 0}, None]},
     })
 
-    hits = await lunaris.RetrievalBuilder().bind(handle).top(5).execute()
-    print(lsn, hits)
+    hits = await handle.recall().query("what does Alice like?").top(5).execute()
+    print(lsn, [h["text"] for h in hits])
 
 asyncio.run(main())
 ```
@@ -178,7 +178,11 @@ import { open, RetrievalBuilder } from "@pilotspace/lunaris";
 
 const handle = await open("moon://127.0.0.1:6380");
 const lsn = await handle.ingest(episode);           // same episode shape as Python
-const hits = await new RetrievalBuilder().bind(handle).top(5).execute();
+const hits = await new RetrievalBuilder()
+  .bind(handle)
+  .query("what does Alice like?")
+  .top(5)
+  .execute();
 ```
 
 **Rust** — the typed surface:
