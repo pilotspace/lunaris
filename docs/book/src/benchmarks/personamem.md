@@ -14,27 +14,33 @@ breakdown, harness source, and the caveats.
 
 ## Results — 32k split, 589 questions, zero errors
 
+Measured on the **quality operating point** (rerank ON). That is *not*
+Lunaris's shipped default, which is the `fast` path with rerank off —
+see [operating points](https://github.com/pilotspace/lunaris/blob/main/docs/benchmarks/operating-points.md).
+No PersonaMem arm has yet been run on the shipped default.
+
 | configuration | accuracy |
 |---|---|
-| **Lunaris + two-reader ensemble (oracle, see caveat)** | **81.8%** (482/589) |
-| Lunaris + claude-sonnet-5 reader | **75.0%** (442/589) |
+| **Lunaris + claude-sonnet-5 reader** (single reader — the system result) | **75.0%** (442/589) |
 | No-memory floor (same reader, options only) | 41.9% (247/589) |
 | *TencentDB-Agent-Memory (published; split/reader unstated)* | *76% / 48%* |
+| *Two-reader oracle cascade — upper bound, not a system result* | *81.8% (482/589)* |
 
-Two claims, stated precisely:
+Three claims, stated precisely:
 
 - **The memory lift is +33.1 points** (75.0 vs 41.9 with the identical
   reader). Tencent's published lift is +28 (76 vs 48). Lunaris delivers a
-  larger lift from a lower floor.
-- **The two-reader ensemble beats the published 76% by 5.8 points** —
-  with a caveat we will not bury: claude-opus-5 re-answered exactly the
-  147 questions the Sonnet arm got wrong (fixing 40 of them), and gold
-  labels decided which questions went to the second reader. That makes
-  81.8% an **upper bound on a two-reader cascade**, not a single-reader
-  measurement. The clean single-reader number is 75.0%. Tencent's
-  release does not state its split or reader model, so treat the
-  comparison the way you should treat every cross-system benchmark
-  table: context, not a controlled head-to-head.
+  larger lift from a lower floor. Tencent's release does not state its
+  split or reader model, so treat that comparison the way you should
+  treat every cross-system benchmark table: context, not a controlled
+  head-to-head.
+- **81.8% is an oracle bound, and we will not lead with it.**
+  claude-opus-5 re-answered exactly the 147 questions the Sonnet arm got
+  wrong (fixing 40 of them), and *gold labels* decided which questions
+  went to the second reader. A deployable cascade would need a gold-free
+  routing rule. The system result is the single-reader **75.0%**.
+- **75.0% is understated.** 93 of the 589 questions live in a category
+  that does not measure memory at all — see below.
 
 ## What was actually measured
 
@@ -61,29 +67,46 @@ judge noise floor.
 
 ## Per-category
 
-| category | ensemble | sonnet | floor |
+| category | sonnet (system) | floor | *cascade (oracle)* |
 |---|---|---|---|
-| reasons behind preference updates | 97.0% | 90.9% | 65.7% |
-| full preference evolution | 91.4% | 82.0% | 78.4% |
-| recall user-shared facts | 83.7% | 78.3% | **2.3%** |
-| generalizing to new scenarios | 82.5% | 75.4% | 10.5% |
-| preference-aligned recommendations | 80.0% | 74.5% | 21.8% |
-| facts mentioned by the user | 64.7% | 58.8% | 17.6% |
-| suggest new ideas | 52.7% | 46.2% | 52.7% |
+| reasons behind preference updates | **90.9%** | 65.7% | *97.0%* |
+| full preference evolution | **82.0%** | 78.4% | *91.4%* |
+| recall user-shared facts | **78.3%** | **2.3%** | *83.7%* |
+| generalizing to new scenarios | **75.4%** | 10.5% | *82.5%* |
+| preference-aligned recommendations | **74.5%** | 21.8% | *80.0%* |
+| facts mentioned by the user | **58.8%** | 17.6% | *64.7%* |
+| ⚠ suggest new ideas — *does not measure memory* | 46.2% | 52.7% | *52.7%* |
 
 The fact-recall rows are where a memory system earns its keep: 2.3%
-without memory, 83.7% with it.
+without memory, 78.3% with it on a single reader.
 
-The most interesting row is the last one. In `suggest_new_ideas`, the
-no-memory floor *matches* the best memory configuration — because
-PersonaMem constructs those distractors **from the persona's own
-history**. The gold answer is never a first-person anecdote (93/93
-questions in this split) and typically *extends* an activity the user
-already loves; the traps are attractive persona-flavored recycles. Naive
-"be consistent with what you know" guidance scores below random here,
-and so does naive "prefer novel ideas" guidance — we measured both
-failure modes before landing the two-sided reader guidance documented in
-the harness source.
+### The last row is a broken benchmark question, not a Lunaris result
+
+In `suggest_new_ideas` the no-memory floor *matches* the best memory
+configuration. We spent a long time treating that as a retrieval finding.
+It is not. **The gold answer in that category is essentially always the
+shortest option**: a classifier that reads nothing at all — not the
+question, not the memories, not the persona — and simply picks the
+shortest candidate scores **98.9%** there, against 0–15.5% in every other
+category and a 25% random baseline. Gold averages 245 characters against
+564 for the distractors (2.3×); every other category sits between 0.75×
+and 1.17×.
+
+The distractors are the long, persona-woven ones, so retrieved persona
+content makes the *wrong* answer look better supported. That is the
+entire "memory net-harms this category" effect, and it is a property of
+how the dataset was constructed.
+
+**We do not optimise against it.** A shortness preference would score
+~99% here and mean nothing, while making real suggestions worse — in
+production, building on what we know about a user is the *desirable*
+behaviour this category punishes. The 93 questions stay in the
+denominator, so our 75.0% is understated rather than inflated, and a
+regression test pins the dataset property in both directions so it cannot
+be re-diagnosed as a retrieval defect.
+
+Full root-cause analysis:
+[issue #141](https://github.com/pilotspace/lunaris/issues/141).
 
 ## Reproduce it
 
