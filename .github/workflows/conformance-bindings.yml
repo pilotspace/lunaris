@@ -110,6 +110,41 @@ jobs:
           exit 1
       - name: Install maturin + pytest
         run: pip install maturin pytest pytest-asyncio python-ulid
+      # A deterministic embedder for the WHOLE job.
+      #
+      # Without one, `resolve_embedder` falls through to NoopEmbedder: zero
+      # vectors, so every document sits at the same distance from every query
+      # and top-k is arbitrary. `source_prefix` is a post-filter on hydrated
+      # rows (PR #85), so a recall with ten genuinely-matching turns returns
+      # whatever unrelated rows the index handed back. On run 32522481370 that
+      # made `multi_turn_conversation`, `slack_archive` and
+      # `meeting_notes_memory` pass while `chat_agent_memory` and
+      # `email_threading` failed — same cause, opposite outcomes, a coin flip.
+      #
+      # The stub is bag-of-tokens: overlapping vocabulary scores positive,
+      # disjoint vocabulary scores exactly 0. That keeps ranking assertions
+      # exact even as the shared `_dev_` scope fills with other suites'
+      # episodes. 768 dims matches both DEFAULT_DIM and NOOP_DEFAULT_DIM, so
+      # an index created by an earlier no-embedder run still fits.
+      #
+      # The two suites that stand up their OWN stub and spy on it
+      # (`test_query_dsl.py`, `readme_quickstart.spec.mts`) set the variable in
+      # the child environment and override this one — their point is proving
+      # the engine called them, which needs a server they control.
+      - name: Launch stub embedder (port 8399)
+        run: |
+          python3 scripts/ci/stub_embedder.py --port 8399 &
+          echo "STUB_EMBEDDER_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8399/ >/dev/null 2>&1; then
+              echo "stub embedder ready"
+              echo "LUNARIS_EMBEDDER_OPENAI_URL=http://127.0.0.1:8399" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ERROR: stub embedder did not come up on 8399"
+          exit 1
       # `embed-remote` alongside `bindings-it`, in BOTH SDK builds.
       #
       # Two binding suites (`lunaris-py/tests/test_query_dsl.py` and
@@ -161,6 +196,9 @@ jobs:
       - name: Dump Moon logs on failure
         if: failure()
         run: cat "$RUNNER_TEMP/moon.log" || true
+      - name: Tear down stub embedder
+        if: always()
+        run: kill "$STUB_EMBEDDER_PID" 2>/dev/null || true
       - name: Tear down Moon process
         if: always()
         run: |
