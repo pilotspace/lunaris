@@ -199,9 +199,24 @@ def _collapse_plan(node: _OpNode) -> dict:
     `recall_simple_execute` FFI accepts. See `crates/lunaris-py/src/dsl.rs`
     for the accepted fields.
 
-    This deliberately lossy — Plan 08-02 only needs DSL *shape* parity
-    for tests_dsl_parity.py; richer operator-tree execution lands when a
-    downstream vertical wrapper asks for it."""
+    The collapse is lossy — Plan 08-02 only needed DSL *shape* parity, and
+    richer operator-tree execution lands when a downstream wrapper asks for
+    it. What it must NOT be is quietly lossy: dropping a leg means running a
+    DIFFERENT query than the caller wrote and handing back the results as if
+    they answered the one they asked. Two measured cases:
+
+      Vector("chunks", 10).and_(Keyword.bm25("facts", 20)).top(5)
+        -> {"index": "facts", "k": 5}      # single leg, index picked by
+                                           # source order; flip the operands
+                                           # and you search "chunks" instead
+      Vector("chunks", 30).and_(Graph.anchored([alice], 2)).top(5)
+        -> {"index": "chunks", "k": 5}     # the graph traversal is gone
+
+    So anything the minimal FFI cannot carry raises here instead. A caller
+    who gets an exception goes and reads this docstring; a caller who gets a
+    plausible list of hits does not.
+    """
+    _reject_what_the_collapse_cannot_carry(node)
     plan: dict = {"query": "", "k": 5, "index": "chunks"}
 
     # POST-ORDER: children first, then the node itself. Operators are built
@@ -237,6 +252,68 @@ def _collapse_plan(node: _OpNode) -> dict:
 
     visit(node)
     return plan
+
+
+#: Operators the minimal `recall_simple_execute` FFI has no field for. Reaching
+#: one means the executed plan would differ from the written one.
+_UNSUPPORTED_OPS = {
+    "graph": "graph traversal",
+    "tree": "RAPTOR tree descent",
+    "navigate": "graph-navigate expansion",
+}
+
+#: Operators that select an index and a k. More than one and the last visited
+#: silently wins both.
+_RETRIEVAL_OPS = ("vector", "keyword")
+
+
+def _reject_what_the_collapse_cannot_carry(node: _OpNode) -> None:
+    """Raise if collapsing `node` would run a different plan than it describes.
+
+    Two conditions, both of which used to pass silently:
+
+    1. An operator the FFI has no field for (`graph` / `tree` / `navigate`).
+       Dropped entirely, so the caller gets a plain vector recall wearing the
+       shape of a graph query.
+    2. More than one retrieval leg. `index` and `k` are single-valued in the
+       collapsed plan, so the last leg visited overwrites the first — the
+       plan becomes single-leg and WHICH leg survives depends on the order
+       the operands were written in.
+
+    A `fuse_rrf` over a single leg is not an error: it is a no-op, and a
+    no-op is not a lie.
+    """
+    legs: list[str] = []
+    unsupported: list[str] = []
+
+    def walk(n: _OpNode) -> None:
+        if n.op in _UNSUPPORTED_OPS:
+            unsupported.append(n.op)
+        if n.op in _RETRIEVAL_OPS:
+            legs.append(f"{n.op}({n.args[0]!r}, k={n.args[1]})")
+        for child in n.children:
+            walk(child)
+
+    walk(node)
+
+    if unsupported:
+        pretty = ", ".join(f"{op} ({_UNSUPPORTED_OPS[op]})" for op in sorted(set(unsupported)))
+        raise NotImplementedError(
+            f"this plan uses {pretty}, which the Python SDK's plan collapse cannot "
+            f"carry to the engine yet — it would be dropped and you would get a "
+            f"plain vector recall instead, with no indication the traversal never "
+            f"ran. Use a vector/keyword plan here, or drive the full operator tree "
+            f"from the Rust API until the FFI carries this leg."
+        )
+
+    if len(legs) > 1:
+        raise NotImplementedError(
+            f"this plan composes {len(legs)} retrieval legs ({', '.join(legs)}), but "
+            f"the collapsed plan holds ONE index and ONE k — the last leg would "
+            f"silently win both, and reordering the operands would change which "
+            f"index is searched. Use a single leg, or drive the full operator tree "
+            f"from the Rust API."
+        )
 
 
 async def open(

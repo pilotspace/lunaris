@@ -173,20 +173,25 @@ latency difference is meaningful.
 # from a specific entity programmatically without dropping to Neo4j.
 ```
 
-**Lunaris**
+**Lunaris** — *Rust only today.* `Graph::anchored` composes into the operator
+tree and resolves to a native Moon graph query:
 
-```python
-hits = await (
-    mem.scoped(scope)
-       .recall()
-       .graph(lunaris.Graph.anchored(entity_ids=[alice_id], hops=2))
-       .top(10)
-       .execute(lunaris.Query.text("who does Alice work with?"))
-)
+```rust
+let hits = mem.scoped(scope)
+    .dsl(Graph::anchored(vec![alice_id], 2).and(Vector::new("chunks", 30)).top(10))
+    .execute(Query::text("who does Alice work with?"))
+    .await?;
 ```
 
-`Graph::anchored` resolves to an AGE Cypher query on Postgres or a
-native graph query on Moon — same operator on either backend.
+> **The Python and TypeScript SDKs cannot run this yet.** Their `.execute()`
+> collapses the operator tree to a single `(index, k, query)` triple before
+> crossing the FFI, and a graph leg has no field in that shape. Earlier drafts
+> of this guide showed a `.recall().graph(...)` chain — no such method exists
+> on the Python builder, and composing `Graph.anchored(...)` in via `.and_()`
+> used to drop the traversal silently and hand back a plain vector recall. Both
+> SDKs now raise `NotImplementedError` / `Error` rather than answer a different
+> question; use the Rust API for graph traversal until the FFI carries the leg
+> (ship-plan F2).
 
 ### Forget
 

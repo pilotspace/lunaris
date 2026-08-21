@@ -128,6 +128,40 @@ describe("README TypeScript quickstart", () => {
     });
   });
 
+  // Twin of `crates/lunaris-py/tests/test_query_dsl.py`'s three refusal tests.
+  // The collapsed plan holds ONE index and ONE k, so a plan that names more
+  // than one leg — or a leg the FFI has no field for — used to become a
+  // different query and return its results as if they answered the original.
+  test("ESM: a second retrieval leg is refused, not silently dropped", () => {
+    const { Vector, Keyword, _collapsePlan } = esm;
+    // Measured before the refusal: this collapsed to {index: "facts", k: 5},
+    // and flipping the operands searched "chunks" instead — the index was
+    // decided by source order.
+    const plan = Vector.new("chunks", 10)
+      .and(Keyword.bm25("facts", 20))
+      .fuseRrf(60)
+      .top(5);
+    expect(() => _collapsePlan(plan._node)).toThrow(/2 retrieval legs/);
+    // Both legs must be named; an error mentioning one leaves the reader
+    // guessing which half of their plan was the problem.
+    expect(() => _collapsePlan(plan._node)).toThrow(/chunks/);
+    expect(() => _collapsePlan(plan._node)).toThrow(/facts/);
+  });
+
+  test("ESM: an unsupported operator is refused, not silently dropped", () => {
+    const { Vector, Graph, _collapsePlan } = esm;
+    const plan = Vector.new("chunks", 30).and(Graph.anchored(["alice"], 2)).top(5);
+    expect(() => _collapsePlan(plan._node)).toThrow(/graph traversal/);
+  });
+
+  test("ESM: a no-op operator is not an error", () => {
+    // The rule is "refuse what would change the plan", not "refuse anything
+    // the FFI lacks a field for". fuseRrf over a single leg fuses nothing.
+    const { Vector, _collapsePlan } = esm;
+    const plan = _collapsePlan(Vector.new("chunks", 30).fuseRrf(60).top(5)._node);
+    expect(plan).toMatchObject({ index: "chunks", k: 5 });
+  });
+
   // -------------------------------------------------------------------------
   // 3. CJS — same wrapped classes, or the documented chain is a TypeError.
   // -------------------------------------------------------------------------

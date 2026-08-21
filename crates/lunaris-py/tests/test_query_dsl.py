@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import lunaris
-from lunaris import RetrievalBuilder, Vector
+from lunaris import Graph, Keyword, RetrievalBuilder, Vector
 from lunaris.dsl import _collapse_plan
 
 # --------------------------------------------------------------------------
@@ -76,6 +76,46 @@ def test_top_survives_the_collapse() -> None:
     """`.top(n)` must win over the leaf operator's `k` — it is the outer op."""
     plan = _collapse_plan(Vector("chunks", 30).top(5)._node)
     assert plan["k"] == 5, f"`.top(5)` was overwritten by the leaf k: {plan['k']}"
+
+
+def test_a_second_retrieval_leg_is_refused_not_silently_dropped() -> None:
+    """The collapsed plan holds ONE index and ONE k.
+
+    Before this refusal, `Vector("chunks", 10).and_(Keyword.bm25("facts", 20))`
+    collapsed to `{"index": "facts", "k": 5}` — a single-leg query whose index
+    was decided by the order the operands happened to be written in. Flipping
+    the operands searched "chunks" instead. The caller got a plausible list of
+    hits for a question they did not ask.
+    """
+    plan = Vector("chunks", 10).and_(Keyword.bm25("facts", 20)).fuse_rrf(60).top(5)
+    with pytest.raises(NotImplementedError) as excinfo:
+        _collapse_plan(plan._node)
+    msg = str(excinfo.value)
+    assert "2 retrieval legs" in msg, msg
+    # Both legs must be named — an error that mentions only one leaves the
+    # reader guessing which half of their plan was the problem.
+    assert "chunks" in msg and "facts" in msg, msg
+
+
+def test_an_unsupported_operator_is_refused_not_silently_dropped() -> None:
+    """A `graph` leg has no field in the minimal FFI, so it used to vanish.
+
+    `docs/MIGRATING-FROM-ZEP.md` sells graph traversal as a reason to move to
+    Lunaris. Returning a plain vector recall for it is worse than saying so.
+    """
+    plan = Vector("chunks", 30).and_(Graph.anchored(["alice"], hops=2)).top(5)
+    with pytest.raises(NotImplementedError) as excinfo:
+        _collapse_plan(plan._node)
+    assert "graph traversal" in str(excinfo.value), str(excinfo.value)
+
+
+def test_a_no_op_operator_is_not_an_error() -> None:
+    """The rule is "refuse what would change the plan", not "refuse anything
+    the FFI lacks a field for". `fuse_rrf` over a single leg fuses nothing, so
+    collapsing it away is a no-op — and a no-op is not a lie."""
+    plan = _collapse_plan(Vector("chunks", 30).fuse_rrf(60).top(5)._node)
+    assert plan["k"] == 5
+    assert plan["index"] == "chunks"
 
 
 def test_query_is_bound_to_the_handle_through_the_chain() -> None:
