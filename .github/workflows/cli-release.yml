@@ -1,0 +1,393 @@
+name: cli-release
+
+# Builds the `lunaris` CLI binary (crate `lunaris-cli`) for all 5 target
+# triples and attaches the tarballs to the GitHub Release on a `v*` tag.
+#
+# WHY THIS EXISTS (ship-plan W0.9)
+# --------------------------------
+# `lunaris try` is the project's front door, and until this workflow no
+# workflow in `.github/workflows/` built `lunaris-cli` at all — only
+# `lunaris-mcp` was prebuilt, and it ships *inside* the npx / uvx wrapper
+# packages rather than as a loose binary. The front door therefore opened only
+# after a `git clone` + `cargo build --release -p lunaris-cli --features
+# embedded-moon`. This workflow is what makes a shorter promise true.
+#
+# `crates/lunaris-cli` is `publish = false` (it depends on
+# `lunaris-memory-service`, which carries a `vendor/` path dep that cargo
+# strips on publish), so crates.io is structurally impossible. A GitHub
+# Release binary is the distribution channel.
+#
+# WHAT IS PROVEN (locally, on aarch64-apple-darwin, 2026-08-21)
+# --------------------------------------------------------------
+# One of the five triples was reproduced by hand off this branch, so the build
+# recipe itself is not a guess:
+#
+#   * `cargo build --release -p lunaris-cli --features embedded-moon`
+#     succeeds — 6 m 02 s on a warm registry, cold target dir.
+#   * The resulting `lunaris` runs: `--version` prints `lunaris 0.7.0`,
+#     `--help` exits 0 and lists the `try` subcommand. Those are exactly the
+#     two commands the "Smoke — the binary starts" step below runs.
+#   * The feature reaches the artifact. Built WITH `embedded-moon` the binary
+#     is 22 MB and does NOT contain trial.rs's `NO_EMBEDDED_MOON` refusal
+#     string (the compiler drops it once `cfg!(feature = "embedded-moon")` is
+#     `true`); built WITHOUT it the binary is 13 MB and the refusal string is
+#     present. A 9 MB delta and a flipped string is the Moon server actually
+#     being linked in.
+#   * The `cargo tree` gate below discriminates: 1 match with the feature,
+#     0 without.
+#
+# (A negative control matters here. Grepping the binary for Moon command names
+# like `BGREWRITEAOF` / `FT.NAVIGATE` looks like a server-presence test and is
+# NOT one — those strings come from the `moondb` CLIENT and are present in both
+# builds. Do not re-introduce that check believing it proves anything.)
+#
+# WHAT IS NOT YET PROVEN — READ THIS BEFORE TRUSTING THE FILE
+# -----------------------------------------------------------
+# This workflow has NEVER BEEN OBSERVED RUNNING. It was written and reviewed,
+# not executed. GitHub Actions cannot be executed from a working tree, and the
+# author was instructed not to push a tag. The local build above proves the
+# cargo invocation, not the workflow. Specifically unproven:
+#
+#   1. FOUR OF THE FIVE LEGS. Only `aarch64-apple-darwin` was reproduced
+#      locally. `--features embedded-moon` compiles the whole Moon server *in
+#      addition to* llama.cpp (the `lunaris` dep hard-wires `llamacpp`), and
+#      neither the CLI nor the Moon server has ever been built for
+#      `x86_64-pc-windows-msvc` from this repo — the highest-risk leg.
+#      `vendor/moon` does carry a `check-windows` CI job upstream, which is
+#      encouraging but is not the same as this feature set on this triple; and
+#      lunaris-mcp's Windows leg has failed on a tag before (v0.6.0-rc.1,
+#      E0432 on `tokio::net::UnixStream`). `crates/lunaris-cli/src/route.rs`
+#      does `#[cfg(unix)]`-gate its own UnixStream use, so the CLI itself
+#      should be clean; the Moon server is the unknown.
+#      The `aarch64-unknown-linux-gnu` cross leg is the second risk: it needs a
+#      C++ cross toolchain for BOTH llama.cpp and Moon.
+#   2. Wall-clock cost on a GitHub runner. 6 m on an M4 Pro with a warm cargo
+#      registry says little about a cold 2-core hosted runner, and nothing at
+#      all about the cross leg. The `timeout-minutes: 120` below is a budget,
+#      not a measurement.
+#   3. The tag-gated `upload-binary-release` job — asset naming, the
+#      `softprops/action-gh-release` upload and the completeness gate — has
+#      never run.
+#
+# WHAT WOULD PROVE IT, in increasing cost:
+#
+#   a. `workflow_dispatch` on a branch. Runs the full 5-way build matrix and
+#      skips the tag-gated upload. Proves (1) and (2), which is where the risk
+#      actually lives. CAVEAT: GitHub only offers the Run-workflow button for
+#      workflows present on the DEFAULT branch, so this is available only once
+#      this file is merged to `main`.
+#   b. A throwaway pre-release tag (e.g. `v0.0.0-cli-dryrun`), pushed, then
+#      the tag and its Release deleted. This is the only thing that proves (3)
+#      end to end. Nothing short of it does.
+#
+# Until (a) and (b) have both been observed green, do NOT edit README.md or
+# docs/quickstart-try.md to promise a downloadable binary. Both currently tell
+# the reader the truth — clone and build — and that stays correct until this
+# file has a reader.
+#
+# DELIBERATELY NOT DONE HERE
+# --------------------------
+# No npm / PyPI publish. `lunaris-mcp` ships through `crates/lunaris-mcp-npm`
+# and `crates/lunaris-mcp-py` wrapper packages; there is no `lunaris-cli-npm` /
+# `-py` equivalent, and inventing one is ship-plan W2.14's call, not this
+# task's. Consequently this workflow needs NO secrets beyond the automatic
+# workflow-scoped `GITHUB_TOKEN` (see `permissions:` below) — no NPM_TOKEN, no
+# MATURIN_PYPI_TOKEN. `npx lunaris try` remains undelivered.
+#
+# `embedded-moon` is passed EXPLICITLY on the build command line and is never
+# added to any crate's `default` feature set — a hard CLAUDE.md invariant,
+# enforced across every manifest by
+# `crates/lunaris-cli/tests/embedded_moon_manifest.rs`.
+#
+# fail-fast: false — per the Phase 8 risk register and mcp-prebuild.yml: a
+# failing arch demotes to "source install supported" rather than blocking the
+# whole release. The `!cancelled()` guards below are what make that mean
+# anything; see the long note on `upload-binary-release`.
+#
+# All `run:` steps consume static strings and CI-controlled matrix values only,
+# passed through `env:` rather than interpolated into the shell. No untrusted
+# user input (PR body / commit message / branch name) flows into a command.
+
+# `Cargo.toml` / `Cargo.lock` are in the path list for a load-bearing reason,
+# not as filler. A `paths:` filter alongside `tags:` is the subtle part of this
+# trigger shape: a release commit that happened to touch nothing under
+# `crates/lunaris-cli/**` could otherwise fail to match, and the tag would
+# produce no CLI binaries at all. Every release commit bumps the workspace
+# version in `Cargo.toml`, so that entry is what guarantees a match. This is
+# copied deliberately from mcp-prebuild.yml, which has demonstrably fired on
+# real `v*` tags (v0.6.0-rc.1, v0.7.0) with the identical shape. Do not prune
+# these two entries as "unrelated to the CLI".
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/lunaris-cli/**"
+      - "crates/lunaris-memory-service/**"
+      - ".github/workflows/cli-release.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # required for softprops/action-gh-release on tag push
+
+jobs:
+  build-binary:
+    name: cli ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # The Moon server and llama.cpp both compile from C/C++ source on every
+    # leg. The default ceiling is 360 min; setting 120 makes the budget
+    # explicit, so an overrun reads as "we budgeted 120 and it blew past it"
+    # rather than as a mystery 6 h timeout. The number is a guess until a
+    # dispatch run measures it.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      # vendor/moon only — the moondb path dep (vendor/moon/sdk/rust) is
+      # required for cargo to resolve the workspace graph, and with
+      # `--features embedded-moon` the vendor/moon crate itself is COMPILED,
+      # not merely resolved. .planning is private (cross-repo auth) and must
+      # NOT be pulled here.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+
+      - name: Install cross-compilation toolchain (aarch64 Linux)
+        if: matrix.cross == true && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # g++ cross REQUIRED twice over: the hard-wired `llamacpp` feature
+          # compiles llama.cpp (C++ via cmake), and `embedded-moon` compiles
+          # the Moon server's C/C++ deps. A C-only cross toolchain dies at the
+          # first .cpp file.
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          # rust-toolchain.toml (channel "1.94") overrides the toolchain the
+          # dtolnay action installed targets into (exact "1.94.1" — a
+          # DIFFERENT rustup toolchain dir), so the cross std lands in the
+          # wrong toolchain and cargo fails with E0463 "can't find crate for
+          # `core`". Add the target to the ACTIVE (override-resolved)
+          # toolchain. Learned in mcp-prebuild.yml; do not remove.
+          rustup target add aarch64-unknown-linux-gnu
+          # No .cargo/config.toml in-repo: point cargo, cc-rs and cmake-rs at
+          # the cross linker / compilers / archiver for the C and C++ deps
+          # (aws-lc-sys, llama-cpp-sys-2, and Moon's). cmake-rs reads the same
+          # CC_/CXX_<target> vars and forwards them as
+          # -DCMAKE_{C,CXX}_COMPILER to the llama.cpp configure step.
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
+            echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+          } >> "$GITHUB_ENV"
+
+      # The one check that catches a SILENT feature-forwarding break, which is
+      # a defect class this repo has actually shipped before (the SDK
+      # `llamacpp` forwarding bug produced zero vectors in a binary that built
+      # and ran fine). `embedded-moon` on lunaris-cli forwards to
+      # `lunaris-memory-service/embedded-moon`, which is what activates
+      # `dep:moon_server` (the vendor/moon path crate, aliased away from the
+      # workspace moondb->moon alias). If any link in that chain is dropped,
+      # the build still SUCCEEDS and produces a `lunaris` whose `try`
+      # subcommand refuses with NO_EMBEDDED_MOON — a broken front door that
+      # ships green.
+      #
+      # Verified locally to discriminate: `grep -c '^moon v'` over this output
+      # returns 1 with the feature and 0 without it. Runs BEFORE the build so
+      # a forwarding break costs seconds, not a full Moon + llama.cpp compile.
+      - name: Assert embedded-moon actually pulls in the Moon server
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          tree_out="$(cargo tree -p lunaris-cli --features embedded-moon \
+            --target "${MATRIX_TARGET}" --prefix none --format '{p}')"
+          if printf '%s\n' "${tree_out}" | sort -u | grep -qE '^moon v'; then
+            printf '%s\n' "${tree_out}" | sort -u | grep -E '^moon v'
+            echo "ok: embedded-moon resolves the vendor/moon server crate"
+          else
+            echo "::error::embedded-moon did NOT pull in the Moon server crate."
+            echo "The build would still succeed and ship a binary whose"
+            echo "\`lunaris try\` refuses with NO_EMBEDDED_MOON. Check the"
+            echo "feature chain: lunaris-cli/embedded-moon ->"
+            echo "lunaris-memory-service/embedded-moon -> dep:moon_server."
+            exit 1
+          fi
+
+      # `--features embedded-moon` is passed HERE, explicitly, and must never
+      # be moved into a manifest `default = [...]`.
+      - name: Build lunaris CLI release binary
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cargo build --release -p lunaris-cli \
+            --features embedded-moon \
+            --target "${MATRIX_TARGET}"
+
+      # Native legs only. A cross-built aarch64-linux binary cannot execute on
+      # an x86_64 runner, by design. `--version` is a deliberately minimal
+      # smoke: it proves the binary links and starts. It does NOT prove
+      # `lunaris try` works — the trial downloads a 253 MB GGUF and runs local
+      # inference, which is not something to put on every release leg. See
+      # "WHAT IS NOT YET PROVEN" in the header.
+      - name: Smoke — the binary starts
+        if: matrix.cross != true
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+        run: |
+          set -euo pipefail
+          OUTDIR="target/${MATRIX_TARGET}/release"
+          if [[ "${IS_WINDOWS}" == "true" ]]; then
+            BINARY="${OUTDIR}/lunaris.exe"
+          else
+            BINARY="${OUTDIR}/lunaris"
+          fi
+          "${BINARY}" --version
+          "${BINARY}" --help > /dev/null
+
+      # The crate is `lunaris-cli`; the BINARY it produces is named `lunaris`
+      # (`[[bin]] name = "lunaris"`). The tarball keeps the crate name so the
+      # asset is unambiguous next to `lunaris-mcp-<target>.tar.gz` on the same
+      # Release — and so no glob written as `lunaris-*` can ever match both.
+      - name: Package binary into tarball
+        shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          IS_WINDOWS: ${{ runner.os == 'Windows' }}
+        run: |
+          set -euo pipefail
+          OUTDIR="target/${MATRIX_TARGET}/release"
+          if [[ "${IS_WINDOWS}" == "true" ]]; then
+            BINARY="lunaris.exe"
+          else
+            BINARY="lunaris"
+          fi
+          TARBALL="lunaris-cli-${MATRIX_TARGET}.tar.gz"
+          tar czf "${TARBALL}" -C "${OUTDIR}" "${BINARY}"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunaris-cli-${{ matrix.target }}
+          path: lunaris-cli-${{ matrix.target }}.tar.gz
+          retention-days: 30
+
+  upload-binary-release:
+    name: attach CLI tarballs to GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-binary
+    # `!cancelled()` is what makes `fail-fast: false` above mean anything.
+    #
+    # Default `needs:` semantics skip a dependent job unless EVERY matrix leg
+    # of the needed job succeeded, so `fail-fast: false` on its own buys
+    # nothing on a tag: it lets the other legs finish, then the aggregate
+    # result goes "failure" and this job is SKIPPED wholesale. That is not
+    # hypothetical — it is exactly how the v0.6.0-rc.1 tag run built 4/5 MCP
+    # targets and shipped ZERO of them (see mcp-prebuild.yml).
+    #
+    # With `!cancelled()` this job runs on partial builds, ships what exists,
+    # and the completeness gate below still turns the run RED so the gap is
+    # loud rather than silent.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      # Nothing in this job reads a repo file, but `actions/checkout` is what
+      # gives `softprops/action-gh-release` a git context to resolve the tag
+      # against; mcp-prebuild.yml checks out here for the same reason. Cheap
+      # insurance, and `submodules: false` keeps it to a shallow tree.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Download all CLI binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # `lunaris-cli-*`, never `lunaris-*` — the latter would also sweep
+          # up mcp-prebuild.yml's `lunaris-mcp-*` artifacts on the same tag.
+          pattern: lunaris-cli-*
+          path: release-assets
+          merge-multiple: true
+
+      # Records which of the five targets actually produced a tarball. This
+      # step never fails: the assets that DID build should still reach the
+      # Release. The hard failure is the LAST step of the job, so an
+      # incomplete distribution is both published and unmistakably red.
+      - name: Determine target completeness
+        id: completeness
+        run: |
+          set -euo pipefail
+          missing=""
+          for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                   x86_64-apple-darwin aarch64-apple-darwin \
+                   x86_64-pc-windows-msvc; do
+            if [ -f "release-assets/lunaris-cli-${t}.tar.gz" ]; then
+              echo "ok:      lunaris-cli-${t}.tar.gz"
+            else
+              echo "MISSING: lunaris-cli-${t}.tar.gz"
+              missing="${missing} ${t}"
+            fi
+          done
+          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+
+      # A checksums file so a reader who downloads a tarball can verify it
+      # without trusting the transport. There is no wrapper package doing this
+      # for the CLI the way `crates/lunaris-mcp-npm/manifest.json` does for the
+      # MCP binary, so it has to be an asset.
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum ./*.tar.gz | sed 's|\./||' > lunaris-cli-SHA256SUMS.txt
+          cat lunaris-cli-SHA256SUMS.txt
+
+      - name: Upload CLI tarballs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/lunaris-cli-*.tar.gz
+            release-assets/lunaris-cli-SHA256SUMS.txt
+          fail_on_unmatched_files: true
+
+      # LAST step on purpose: the assets are attached for every target that
+      # built, and only then does an incomplete target set turn the run red.
+      # `!cancelled()` (not the default success-gate) because being last means
+      # any earlier step can otherwise suppress this one — and a failed upload
+      # is exactly when you want to know what shipped.
+      - name: Fail the run if any target is missing from the release
+        if: ${{ !cancelled() && steps.completeness.outputs.missing != '' }}
+        env:
+          MISSING_TARGETS: ${{ steps.completeness.outputs.missing }}
+        run: |
+          set -euo pipefail
+          echo "::error::lunaris CLI release is incomplete — no binary for: ${MISSING_TARGETS}"
+          echo "Assets were published for the targets that built."
+          echo "Users on the missing targets fall back to a source build:"
+          echo "  cargo install --git https://github.com/pilotspace/lunaris lunaris-cli"
+          echo "  (add --features embedded-moon for \`lunaris try\`)"
+          exit 1

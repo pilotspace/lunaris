@@ -13,9 +13,26 @@
 //
 // Skip posture: both LUNARIS_TEST_MOON_URL + LUNARIS_TEST_POSTGRES_URL must
 // be set and TCP-reachable for the 6 live-ingest scenarios to fire.
-// `vitest` can't mid-test-skip so when backends are absent the test body
-// exits as a no-op pass with a SKIP reason printed to stderr — mirror of
-// Plan 08-04's `backend_parity.spec.mts` style.
+//
+// CORRECTED 2026-08-21 (ship-plan W2.9). This block used to read: "`vitest`
+// can't mid-test-skip so when backends are absent the test body exits as a
+// no-op pass with a SKIP reason printed to stderr". The premise is FALSE —
+// `ctx.skip(reason)` mid-test is exactly what vitest offers, and the
+// consequence was that all 6 scenarios reported PASSED while asserting
+// nothing. Every bail-out now goes through `ctx.skip`, so an un-run test is
+// visible as un-run. Verified by running the two shapes side by side: the
+// bare `return` renders "✓ passed", `ctx.skip(reason)` renders
+// "↓ skipped [reason]".
+//
+// STILL OPEN, deliberately out of this change's scope: the
+// `LUNARIS_TEST_POSTGRES_URL` half of the gate is DEAD. 0.7.0 deleted
+// `lunaris-storage-postgres` and `lunaris.open` rejects every scheme but
+// `moon://`, so `requireBothBackends()` can never succeed and these 6
+// scenarios never run at all. Rewriting them as Moon-only golden
+// conformance — the way `documentary_parity.spec.mts` was rewritten in the
+// same wave — is its own task, because it un-skips 6 scenarios that have
+// never executed against 0.7.0 and their pass/fail is genuinely unknown.
+// This commit only stops them lying about it.
 //
 // Naming: `__test__/` (singular per crate-local vitest config include
 // `__test__/**/*.spec.mts`). Plan 10-03 frontmatter says `__tests__/` —
@@ -119,6 +136,15 @@ async function probeBackend(envName: string): Promise<string | null> {
   }
   return u;
 }
+
+/**
+ * The slice of vitest's test context this file needs.
+ *
+ * `ctx.skip(reason)` is the whole point: it replaces bare `return`s that
+ * made vitest report an un-run test as green. Anything that cannot run must
+ * be visible as un-run.
+ */
+type SkippableCtx = { skip: (reason?: string) => void };
 
 /** Acquire both backend URLs, or `null` to indicate skip. */
 async function requireBothBackends(): Promise<{ moon: string; pg: string } | null> {
@@ -225,11 +251,20 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     }
   });
 
-  test("chat_agent_memory parity — 10-turn chat Moon-vs-Postgres", async () => {
+  test("chat_agent_memory parity — 10-turn chat Moon-vs-Postgres", async (ctx: SkippableCtx) => {
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const fixture = loadFixture("chat_agent_memory.json");
     const userId = fixture.user_id as string;
     const turns = fixture.turns as { text: string }[];
@@ -252,11 +287,20 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     expect(divs, `ChatAgentMemory parity: ${divs.join("; ")}`).toEqual([]);
   });
 
-  test("multi_turn_conversation parity — recall + consolidate report parity", async () => {
+  test("multi_turn_conversation parity — recall + consolidate report parity", async (ctx: SkippableCtx) => {
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const fixture = loadFixture("multi_turn_conversation.json");
     const userId = fixture.user_id as string;
     const otherUserId = fixture.other_user_id as string;
@@ -317,11 +361,20 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     expect(divs, `MultiTurnConversation parity: ${divs.join("; ")}`).toEqual([]);
   });
 
-  test("slack_archive parity — channel filter on top of wide-recall", async () => {
+  test("slack_archive parity — channel filter on top of wide-recall", async (ctx: SkippableCtx) => {
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const fixture = loadFixture("slack_archive.json");
     const channels = fixture.channels as {
       id: string;
@@ -358,11 +411,20 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     expect(divs, `SlackArchive parity: ${divs.join("; ")}`).toEqual([]);
   });
 
-  test("email_threading graph-off parity — default blueprint §5.2 path", async () => {
+  test("email_threading graph-off parity — default blueprint §5.2 path", async (ctx: SkippableCtx) => {
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const fixture = loadFixture("email_threading.json");
     const rootId = fixture.root_id as string;
     const messages = fixture.messages as { from: string; body: string }[];
@@ -392,19 +454,25 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     expect(divs, `EmailThreading parity: ${divs.join("; ")}`).toEqual([]);
   });
 
-  test("email_threading graph-on opt-in — Gemma-gated toggle surface", async () => {
+  test("email_threading graph-on opt-in — Gemma-gated toggle surface", async (ctx: SkippableCtx) => {
     // Risk row #2 — skip when Gemma weight env is not set.
     if (!process.env.LUNARIS_EXTRACT_GEMMA_PATH) {
-      // eslint-disable-next-line no-console
-      console.error(
-        "conversational_parity: SKIP graph-on (LUNARIS_EXTRACT_GEMMA_PATH unset)",
-      );
+      ctx.skip("LUNARIS_EXTRACT_GEMMA_PATH unset");
       return;
     }
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const { EmailThreading } = lunaris as {
       EmailThreading: new (h: unknown) => {
         with_graph_pipeline: (on: boolean) => { with_graph_pipeline: (on: boolean) => unknown };
@@ -424,11 +492,20 @@ describe("Plan 10-03 — TypeScript conversational parity (dual-backend)", () =>
     ).toBe(false);
   });
 
-  test("meeting_notes_memory parity — 10-note transcript Moon-vs-Postgres", async () => {
+  test("meeting_notes_memory parity — 10-note transcript Moon-vs-Postgres", async (ctx: SkippableCtx) => {
     const both = await requireBothBackends();
-    if (!both) return;
+    if (!both) {
+      ctx.skip(
+        "requires BOTH LUNARIS_TEST_MOON_URL and LUNARIS_TEST_POSTGRES_URL; " +
+          "the Postgres half is DEAD since 0.7.0 (W2.9) — this never runs",
+      );
+      return;
+    }
     const pair = await openPair(both.moon, both.pg);
-    if (!pair) return;
+    if (!pair) {
+      ctx.skip("could not open both backends");
+      return;
+    }
     const fixture = loadFixture("meeting_notes_memory.json");
     const notes = fixture.notes as { heading: string; body: string }[];
     const query = fixture.query as string;
