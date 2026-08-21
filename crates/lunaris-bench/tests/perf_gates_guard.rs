@@ -88,6 +88,54 @@ fn the_baseline_is_keyed_by_cpu_not_shared_across_the_pool() {
 /// step ever moves after the restore, `env.BASELINE_NAME` expands to empty and
 /// the restore silently fetches nothing — a vacuously green gate that looks
 /// exactly like a passing one.
+/// The fingerprint must not SILENTLY fall back to a shared name.
+///
+/// The whole point of keying the baseline by CPU is that GitHub's pool mixes
+/// hardware classes that differ 16.8% on this workload while the same class
+/// varies 1.4%. A fallback like `model="unknown-cpu"` hands every machine that
+/// cannot be fingerprinted ONE shared baseline — which is precisely the
+/// hardware lottery this step exists to end, reintroduced quietly.
+///
+/// This is not hypothetical. `/proc/cpuinfo` on **aarch64 Linux has no
+/// `model name` field at all** (it reports `CPU implementer` / `CPU part`), so
+/// the day anyone moves this job to `ubuntu-*-arm` the awk yields "" and every
+/// ARM runner silently shares a baseline. Failing loudly forces that to be a
+/// decision instead of a regression nobody sees.
+#[test]
+fn the_cpu_fingerprint_never_silently_shares_a_baseline() {
+    let yml = workflow_src();
+    let step =
+        yml.split("Fingerprint the runner CPU").nth(1).expect("the fingerprint step must exist");
+    // Slice to the step's REAL boundary — the next `- name:`. A fixed line
+    // count does not work here: this step carries ~18 lines of comment before
+    // its `run:` block, so `take(20)` reads only prose and every assertion
+    // below passes against text that contains no shell at all. That mistake
+    // was made and caught here; keep the boundary structural.
+    let body: String = match step.find("\n      - name:") {
+        Some(end) => step[..end].to_string(),
+        None => step.to_string(),
+    };
+    assert!(
+        body.contains("run:"),
+        "sliced the fingerprint step down to something with no `run:` block — \
+         the assertions below would be inspecting comments, not shell"
+    );
+
+    assert!(
+        !body.contains("unknown-cpu"),
+        "the fingerprint step falls back to a literal shared name. Every runner \
+         whose CPU cannot be identified would then gate against the SAME \
+         baseline, which is the 16.8%-between-classes lottery this step was \
+         added to end. Fail the step instead and say what to extend."
+    );
+    assert!(
+        body.contains("exit 1"),
+        "the fingerprint step must FAIL when it cannot derive a CPU model. \
+         aarch64 Linux /proc/cpuinfo has no `model name` field, so a silent \
+         fallback turns an architecture change into an invisible baseline merge."
+    );
+}
+
 #[test]
 fn the_fingerprint_step_runs_before_the_baseline_is_consumed() {
     let yml = workflow_src();

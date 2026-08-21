@@ -60,7 +60,15 @@ async fn live_moon_chunk_kv_never_carries_embedding_but_vector_search_still_work
     let clock = HlcClock::new(0);
     let episode = Episode::new(scope.clone(), "quarterly-report.md", DOC, &clock);
 
-    let receipt = lunaris_ingest::ingest_episode_with_receipt(&storage, &embedder, &clock, episode)
+    // W4.5 gated the RAPTOR community write behind LUNARIS_RAPTOR_ENABLED
+    // (default OFF), so the default path writes NO communities and the
+    // community assertion at the bottom of this test could never hold. Section
+    // 3 below is a community-KV property, so this opts in explicitly — the same
+    // way raptor_wiring.rs does, via the parameter rather than by mutating
+    // process env (edition 2024 makes std::env::set_var unsafe, and parallel
+    // tests race on it).
+    let receipt =
+        lunaris_ingest::ingest_episode_with_raptor(&storage, &embedder, &clock, episode, true)
         .await
         .expect("live ingest must succeed");
     assert!(!receipt.chunk_ids.is_empty(), "fixture must produce at least one chunk");
