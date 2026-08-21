@@ -11,7 +11,7 @@ use lunaris_core::{
     keyspace::{chunk_prefix, community_prefix},
     primitives::{Chunk, Community},
 };
-use lunaris_ingest::ingest_episode;
+use lunaris_ingest::ingest_episode_with_raptor;
 use lunaris_test_harness::open_test_storage;
 
 // ---------------------------------------------------------------------------
@@ -72,7 +72,12 @@ async fn fixture_3a_h1_community_summary_non_empty() {
     let ep = headed_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
+    // W4.5: the RAPTOR community tree is OFF by default. Every assertion in this
+    // file is a community-tree property, so it opts in explicitly rather than
+    // relying on process env (unsafe under edition 2024, and racy in parallel).
+    ingest_episode_with_raptor(&*port, &embedder, &clock, ep, true)
+        .await
+        .expect("ingest must succeed");
 
     let communities: Vec<Community> =
         scan_deserialize(&*port, &scope, community_prefix(&scope)).await;
@@ -136,7 +141,12 @@ async fn fixture_3b_leaf_chunk_parent_id_set() {
     let ep = headed_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
+    // W4.5: the RAPTOR community tree is OFF by default. Every assertion in this
+    // file is a community-tree property, so it opts in explicitly rather than
+    // relying on process env (unsafe under edition 2024, and racy in parallel).
+    ingest_episode_with_raptor(&*port, &embedder, &clock, ep, true)
+        .await
+        .expect("ingest must succeed");
 
     // Collect all persisted community IDs.
     let communities: Vec<Community> =
@@ -191,7 +201,12 @@ async fn long_terminal_free_section_summary_is_capped() {
     let ep = Episode::new(Scope::dev(), "longsec.md", content, &clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&*port, &embedder, &clock, ep).await.expect("ingest must succeed");
+    // W4.5: the RAPTOR community tree is OFF by default. Every assertion in this
+    // file is a community-tree property, so it opts in explicitly rather than
+    // relying on process env (unsafe under edition 2024, and racy in parallel).
+    ingest_episode_with_raptor(&*port, &embedder, &clock, ep, true)
+        .await
+        .expect("ingest must succeed");
 
     let communities: Vec<Community> =
         scan_deserialize(&*port, &scope, community_prefix(&scope)).await;

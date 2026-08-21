@@ -29,7 +29,9 @@ use lunaris_core::{
     keyspace::{chunk_prefix, community_prefix},
     primitives::{Chunk, Community},
 };
-use lunaris_ingest::ingest_episode;
+use lunaris_ingest::{
+    RAPTOR_ENABLED_ENV_VAR, ingest_episode, ingest_episode_with_raptor, raptor_enabled_from_value,
+};
 use lunaris_test_harness::open_test_storage;
 use parking_lot::Mutex;
 
@@ -198,4 +200,151 @@ async fn raptor_off_by_default_skips_the_synthetic_root_on_a_heading_free_turn()
          texts seen: {:?}",
         embedder.texts()
     );
+}
+
+// ---------------------------------------------------------------------------
+// GREEN, opposite direction — the flag still turns RAPTOR back ON
+// ---------------------------------------------------------------------------
+
+/// Without this test a gate that hard-disables RAPTOR would pass the OFF tests
+/// forever. Drives the explicit-flag entry point with `raptor = true` and
+/// re-asserts the full Phase-29/30 contract the OFF path suppresses:
+/// communities persist, summaries are non-empty (the summarizer ran), chunks
+/// are wired into the tree, and the community-summary embed call happens.
+#[tokio::test]
+async fn raptor_on_rebuilds_the_full_community_tree() {
+    let storage = open_test_storage().await;
+    let port = storage.port();
+    let embedder = CountingEmbedder::new(768);
+    let clock = HlcClock::new(0);
+    let ep = Episode::new(Scope::dev(), "headed.md", HEADED_DOC, &clock);
+    let scope = ep.scope.clone();
+
+    ingest_episode_with_raptor(&*port, &embedder, &clock, ep, true)
+        .await
+        .expect("ingest must succeed with RAPTOR ON");
+
+    let communities: Vec<Community> =
+        scan_deserialize(&*port, &scope, community_prefix(&scope)).await;
+    assert_eq!(
+        communities.len(),
+        3,
+        "RAPTOR ON must persist one community per heading (H1/H2/H3); levels: {:?}",
+        communities.iter().map(|c| c.level).collect::<Vec<_>>()
+    );
+
+    // The summarizer ran: every community carries a non-empty summary built by
+    // recursively aggregating descendant leaf text.
+    for c in &communities {
+        assert!(
+            !c.summary.is_empty(),
+            "RAPTOR ON: community (id={}, level={}) must have a non-empty summary",
+            c.id,
+            c.level
+        );
+    }
+
+    // The tree is wired: every chunk points at a persisted community.
+    let community_ids: std::collections::BTreeSet<ulid::Ulid> =
+        communities.iter().map(|c| c.id).collect();
+    let chunks: Vec<Chunk> = scan_deserialize(&*port, &scope, chunk_prefix(&scope)).await;
+    assert!(!chunks.is_empty(), "chunks must be persisted");
+    for chunk in &chunks {
+        let pid = chunk.parent_id.expect("RAPTOR ON: every chunk must carry parent_id");
+        assert!(
+            community_ids.contains(&pid),
+            "chunk (id={}) parent_id={pid} must point at a persisted community",
+            chunk.id
+        );
+    }
+
+    // The summary embed call happened: chunk batch + summary batch = 2.
+    assert_eq!(
+        embedder.calls(),
+        2,
+        "RAPTOR ON: expected 2 embed_batch calls (chunks + community summaries), got {}",
+        embedder.calls()
+    );
+}
+
+/// The exact cost the gate removes, measured on one document: turning RAPTOR
+/// OFF drops one whole `embed_batch` round-trip and every community row. Runs
+/// both arms in one test so the comparison cannot drift between fixtures.
+#[tokio::test]
+async fn gate_removes_one_embed_round_trip_and_every_community_row() {
+    let clock = HlcClock::new(0);
+
+    // ON arm.
+    let on_storage = open_test_storage().await;
+    let on_port = on_storage.port();
+    let on_embedder = CountingEmbedder::new(768);
+    let on_ep = Episode::new(Scope::dev(), "headed.md", HEADED_DOC, &clock);
+    let on_scope = on_ep.scope.clone();
+    ingest_episode_with_raptor(&*on_port, &on_embedder, &clock, on_ep, true)
+        .await
+        .expect("ON ingest");
+    let on_communities: Vec<Community> =
+        scan_deserialize(&*on_port, &on_scope, community_prefix(&on_scope)).await;
+
+    // OFF arm.
+    let off_storage = open_test_storage().await;
+    let off_port = off_storage.port();
+    let off_embedder = CountingEmbedder::new(768);
+    let off_ep = Episode::new(Scope::dev(), "headed.md", HEADED_DOC, &clock);
+    let off_scope = off_ep.scope.clone();
+    ingest_episode_with_raptor(&*off_port, &off_embedder, &clock, off_ep, false)
+        .await
+        .expect("OFF ingest");
+    let off_communities: Vec<Community> =
+        scan_deserialize(&*off_port, &off_scope, community_prefix(&off_scope)).await;
+
+    assert_eq!(
+        off_embedder.calls() + 1,
+        on_embedder.calls(),
+        "the gate must remove exactly one embed_batch round-trip per ingest \
+         (OFF={}, ON={})",
+        off_embedder.calls(),
+        on_embedder.calls()
+    );
+    assert_eq!(off_communities.len(), 0, "OFF arm must persist no communities");
+    assert_eq!(on_communities.len(), 3, "ON arm must persist the three heading communities");
+
+    // The chunk work is identical in both arms — only community work differs.
+    let on_chunks: Vec<Chunk> =
+        scan_deserialize(&*on_port, &on_scope, chunk_prefix(&on_scope)).await;
+    let off_chunks: Vec<Chunk> =
+        scan_deserialize(&*off_port, &off_scope, chunk_prefix(&off_scope)).await;
+    assert_eq!(
+        on_chunks.len(),
+        off_chunks.len(),
+        "the gate must not change how many chunks are written"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The env contract itself (pure, no process-env mutation)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn raptor_env_var_is_named_for_operators() {
+    assert_eq!(RAPTOR_ENABLED_ENV_VAR, "LUNARIS_RAPTOR_ENABLED");
+}
+
+#[test]
+fn unset_env_is_off() {
+    assert!(!raptor_enabled_from_value(None), "unset must be OFF — that is the whole point");
+}
+
+#[test]
+fn truthy_set_matches_the_graph_and_rerank_toggles() {
+    for v in ["1", "true", "TRUE", "on", "ON"] {
+        assert!(raptor_enabled_from_value(Some(v)), "{v:?} must be truthy");
+    }
+}
+
+#[test]
+fn everything_else_is_off() {
+    for v in ["", "0", "false", "False", "yes", "True", "off", " 1", "1 ", "enabled"] {
+        assert!(!raptor_enabled_from_value(Some(v)), "{v:?} must be OFF");
+    }
 }

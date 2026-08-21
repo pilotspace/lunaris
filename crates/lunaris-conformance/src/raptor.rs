@@ -36,7 +36,7 @@ use lunaris_core::{
     Episode, HlcClock, Scope, StoragePort, StubEmbedder, keyspace::community_prefix,
     primitives::Community,
 };
-use lunaris_ingest::ingest_episode;
+use lunaris_ingest::ingest_episode_with_raptor;
 use ulid::Ulid;
 
 // ---------------------------------------------------------------------------
@@ -104,7 +104,9 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 
     // First ingest.
     let ep1 = raptor_episode(&clock);
-    ingest_episode(&*storage, &embedder, &clock, ep1)
+    // W4.5: the RAPTOR write is OFF by default; this suite asserts RAPTOR
+    // properties, so it opts in explicitly.
+    ingest_episode_with_raptor(&*storage, &embedder, &clock, ep1, true)
         .await
         .map_err(|e| anyhow::anyhow!("first ingest failed: {e}"))?;
 
@@ -115,7 +117,7 @@ pub async fn run_raptor_idempotency_suite(storage: Arc<dyn StoragePort>) -> anyh
 
     // Second ingest (same document, same scope+source → deterministic IDs).
     let ep2 = raptor_episode(&clock);
-    ingest_episode(&*storage, &embedder, &clock, ep2)
+    ingest_episode_with_raptor(&*storage, &embedder, &clock, ep2, true)
         .await
         .map_err(|e| anyhow::anyhow!("second ingest failed: {e}"))?;
 
@@ -172,12 +174,14 @@ pub async fn run_raptor_parity_suite(
 
     // Ingest independently on each backend.
     let ep_a = raptor_episode(&clock);
-    ingest_episode(&*storage_a, &embedder, &clock, ep_a)
+    // W4.5: RAPTOR is OFF by default — opt in, or both arms compare empty
+    // trees and the determinism claim becomes vacuous.
+    ingest_episode_with_raptor(&*storage_a, &embedder, &clock, ep_a, true)
         .await
         .map_err(|e| anyhow::anyhow!("storage_a ingest failed: {e}"))?;
 
     let ep_b = raptor_episode(&clock);
-    ingest_episode(&*storage_b, &embedder, &clock, ep_b)
+    ingest_episode_with_raptor(&*storage_b, &embedder, &clock, ep_b, true)
         .await
         .map_err(|e| anyhow::anyhow!("storage_b ingest failed: {e}"))?;
 
@@ -188,6 +192,13 @@ pub async fn run_raptor_parity_suite(
     communities_a.sort_by_key(|c| c.id.to_bytes());
     communities_b.sort_by_key(|c| c.id.to_bytes());
 
+    // Non-emptiness FIRST: two empty trees are trivially field-equal, so
+    // without this the whole suite passes vacuously (it did, briefly, when
+    // W4.5 flipped the RAPTOR default and only the idempotency arm noticed).
+    anyhow::ensure!(
+        !communities_a.is_empty(),
+        "parity: storage_a produced 0 communities — nothing to compare"
+    );
     anyhow::ensure!(
         communities_a.len() == communities_b.len(),
         "parity: community count differs: a={} b={}",

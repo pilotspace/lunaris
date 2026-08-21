@@ -21,7 +21,7 @@ use lunaris_core::{
 };
 use lunaris_ingest::{
     BpeTokenCounter, TokenCounter, ingest_episode, ingest_episode_with_counter,
-    ingest_episode_with_receipt,
+    ingest_episode_with_raptor, ingest_episode_with_receipt,
 };
 use lunaris_test_harness::open_test_storage_with_dim;
 use parking_lot::Mutex;
@@ -394,7 +394,10 @@ async fn community_bt_comes_from_caller_clock() {
     let clock = HlcClock::new(42);
     let ep = small_episode(&clock);
 
-    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    // W4.5: the RAPTOR community tree is OFF by default. This test asserts a
+    // community-tree property, so it opts in explicitly rather than relying on
+    // process env (unsafe under edition 2024, and racy across parallel tests).
+    ingest_episode_with_raptor(&*storage, &*embedder, &clock, ep, true).await.expect("ingest ok");
 
     let batch = storage.first_batch();
     let community_bytes: Vec<&[u8]> = batch
@@ -449,7 +452,10 @@ async fn community_summary_embedding_populated_at_ingest() {
     let clock = HlcClock::new(0);
     let ep = twelve_kb_episode(&clock);
 
-    ingest_episode(&*storage, &*embedder, &clock, ep).await.expect("ingest ok");
+    // W4.5: the RAPTOR community tree is OFF by default. This test asserts a
+    // community-tree property, so it opts in explicitly rather than relying on
+    // process env (unsafe under edition 2024, and racy across parallel tests).
+    ingest_episode_with_raptor(&*storage, &*embedder, &clock, ep, true).await.expect("ingest ok");
 
     let batch = storage.first_batch();
 
@@ -563,7 +569,10 @@ async fn ingest_then_search_communities() -> Vec<lunaris_core::VectorHit> {
     let ep = twelve_kb_episode(&clock);
     let scope = ep.scope.clone();
 
-    ingest_episode(&*port, &*embedder, &clock, ep).await.expect("ingest ok");
+    // W4.5: the RAPTOR community tree is OFF by default. This test asserts a
+    // community-tree property, so it opts in explicitly rather than relying on
+    // process env (unsafe under edition 2024, and racy across parallel tests).
+    ingest_episode_with_raptor(&*port, &*embedder, &clock, ep, true).await.expect("ingest ok");
 
     // StubEmbedder produces a fixed non-zero vector. Use a non-zero probe so cosine
     // similarity is well-defined and the scan can return hits.
