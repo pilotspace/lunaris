@@ -329,17 +329,43 @@ jobs:
       # once, including both package READMEs — the pages npmjs.com and
       # crates.io render. Rationale, and the two bugs the first draft had,
       # are in the script.
-      - name: mcp_add_examples_boot
-        run: python3 scripts/tests/test_mcp_add_examples_boot.py
-
-      - name: gated_tests_have_a_runner
-        run: python3 scripts/tests/test_gated_tests_have_a_runner.py
-
-      # Guards the guard: the parity test is stdlib-only and cheap, and a
-      # release whose lockfile disagrees with package.json takes down every
-      # workflow that runs `npm ci`.
-      - name: npm_version_parity
-        run: python3 scripts/tests/test_npm_version_parity.py
+      # Every python guard in scripts/tests/, discovered rather than listed.
+      #
+      # This step used to name three files. There were fifteen. The other
+      # twelve — 66 passing assertions covering the hook adapters, the capture
+      # signal gate, contextd lifecycle and scope forwarding, turnkey
+      # verification, the Moon identity probe and the session digest — ran in
+      # no workflow at all. They were not failing quietly; nothing executed
+      # them. All twelve pass in a sanitized environment (`env -i`, empty
+      # HOME), so wiring them cost nothing but the seconds below.
+      #
+      # Discovered by glob on purpose: a hardcoded list is how the gap opened,
+      # and it would reopen the next time someone adds a guard and forgets the
+      # second edit. `test_gated_tests_have_a_runner.py` asserts this step
+      # covers every file, and fails if the glob ever matches fewer than ten.
+      #
+      # They are stdlib-only unittest suites and cost ~8s in total, so they run
+      # as one step rather than fifteen; the loop does NOT stop at the first
+      # failure, so one broken guard cannot hide the rest.
+      - name: python guards (scripts/tests)
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          files=(scripts/tests/test_*.py)
+          if [ "${#files[@]}" -lt 10 ]; then
+            echo "::error::found only ${#files[@]} python guards in scripts/tests/ \
+          (expected >= 10). If they moved, update this step AND \
+          test_gated_tests_have_a_runner.py — an empty glob would otherwise \
+          make this step pass having run nothing."
+            exit 1
+          fi
+          fail=0
+          for f in "${files[@]}"; do
+            echo "::group::$f"
+            python3 "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit "$fail"
 
       # Plan 13-01 RELEASE-01 — lunaris-core leaf-purity gate. Fails the
       # build if any worker crate sneaks into lunaris-core's transitive

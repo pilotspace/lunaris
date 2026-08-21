@@ -198,5 +198,73 @@ class GatedTestFilesHaveARunner(unittest.TestCase):
         )
 
 
+class PythonGuardsHaveARunner(unittest.TestCase):
+    """The same rule, turned on this directory.
+
+    This file polices feature-gated Rust tests and did not police its own
+    neighbours. On 2026-08-21 that gap was measured: of the 15 guards in
+    `scripts/tests/`, workflows named exactly THREE. The other twelve — 66
+    passing assertions covering the hook adapters, the capture signal gate,
+    contextd lifecycle and scope forwarding, turnkey verification, the Moon
+    identity probe and the session digest — ran nowhere. They were source code
+    shaped like reassurance, which is the exact sentence in this file's own
+    docstring.
+
+    All twelve pass in a sanitized environment (`env -i`, empty HOME), so they
+    were not failing quietly either; nothing was running them at all.
+
+    A workflow may name a guard directly or match it with a glob — the point is
+    that some job executes it, not how the job spells it.
+    """
+
+    def _python_guards(self) -> list[Path]:
+        return sorted((REPO_ROOT / "scripts" / "tests").glob("test_*.py"))
+
+    def _runner_text(self) -> str:
+        """Workflow YAML with comment lines stripped.
+
+        Not cosmetic. The first draft matched raw text and passed while twelve
+        guards ran nowhere, because `ts-prebuild.yml` carries the comment "No
+        workflow ran scripts/tests/*.py before 0.6.1" — prose describing the
+        absence satisfied a check for the presence. A comment is not a runner.
+        """
+        out = []
+        for wf in WORKFLOWS.glob("*.yml"):
+            for line in wf.read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                out.append(line)
+        return "\n".join(out)
+
+    def test_every_python_guard_is_executed_by_some_workflow(self) -> None:
+        guards = self._python_guards()
+        # Vacuity floor: if the glob stops matching, this test must fail rather
+        # than pass over an empty list.
+        self.assertGreaterEqual(
+            len(guards),
+            10,
+            f"expected at least 10 python guards in scripts/tests/, found "
+            f"{len(guards)}. If they moved, update this test — an empty glob "
+            f"would otherwise make it green forever.",
+        )
+
+        text = self._runner_text()
+        unrun = []
+        for g in guards:
+            rel = g.relative_to(REPO_ROOT).as_posix()
+            named = rel in text
+            globbed = "scripts/tests/test_*.py" in text or "scripts/tests/*.py" in text
+            if not (named or globbed):
+                unrun.append(rel)
+
+        self.assertEqual(
+            [],
+            unrun,
+            f"these python guards are executed by no workflow: {unrun}. A guard "
+            f"nothing runs is not a guard. Add them to ci.yml — preferably via a "
+            f"glob loop, so the next one added is covered without a second edit.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
