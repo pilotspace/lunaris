@@ -317,7 +317,7 @@ letter-match scoring (no LLM judge), zero errors:
 
 **Memory lift: +33.1 points** with the identical reader — larger than
 Tencent's published +28, from a lower floor. Fact-recall questions go
-from 2.3% without memory to 83.7% with it.
+from 2.3% without memory to **78.3%** with it, single reader.
 
 Two caveats we state rather than bury:
 
