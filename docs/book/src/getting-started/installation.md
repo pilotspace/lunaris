@@ -14,7 +14,7 @@ storage scheme**:
 |---|---|---|
 | `moon://host:port` | Moon | a running Moon started with `--shards 1` |
 
-Every other spelling — `memory://`, `sqlite:///path`, `postgres://…` —
+Every retired spelling — `memory://`, `sqlite:///path`, `postgres://…` —
 is rejected by `Lunaris::open` with an `UnsupportedScheme` error carrying
 the migration link. The Postgres and SQLite backends were deleted in
 0.7.0; if you have data in one, migrate it **before** you bump your

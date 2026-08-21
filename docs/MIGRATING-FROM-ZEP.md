@@ -21,12 +21,12 @@ already running Zep can evaluate the switch with concrete code.
 | Concern                                   | Zep                                          | Lunaris                                                |
 |--------------------------------------------|----------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python service (Zep Cloud or self-hosted)    | Embedded Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Postgres + Neo4j (two services)              | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Postgres + Neo4j (two services)              | Moon — one substrate, FT.* + graph + KV native |
 | **Bi-temporal model**                     | Temporal Knowledge Graph — facts carry validity periods | `(valid_time, sys_time)` tuple per row — Snodgrass bi-temporal **at the storage model**. Read the scope before migrating: as-of *reads* work on the search and graph lanes (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`); a historical **KV** read has no version chain to walk on Moon, so `read_as_of` beyond a 1-hour live window **refuses** (`NotSupported` → HTTP 501) rather than answering with today's data |
 | **Recall latency**                         | 200–500 ms (HTTP hop + Python)              | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |
 | **Tenancy**                                | `user_id` / `session_id` strings on the API | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + per-scope Moon keyspace |
 | **Atomicity**                              | Per-store best-effort; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
-| **Graph queries**                          | Cypher via Neo4j                             | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored` operator |
+| **Graph queries**                          | Cypher via Neo4j                             | Moon native graph via the `Graph::anchored` operator |
 | **Embedder coupling**                     | OpenAI default                                | In-process native granite-r2 (local, 768-d) by default; Ollama HTTP escape hatch (`--features embed-remote`) for air-gapped/remote deployments |
 | **Memory consolidation**                  | "MemGPT-style" salience-weighted episodic   | ACT-R base-level activation + Leiden community detection (RFC blueprint §5.1) |
 | **License**                                | Apache 2.0                                   | Apache 2.0                                             |

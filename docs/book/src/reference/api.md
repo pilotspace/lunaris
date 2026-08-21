@@ -26,7 +26,7 @@ use lunaris::prelude::*;
 
 The prelude is intentionally small. Reach into the full re-export list (or the
 member crates directly) for everything else — extractor/verifier backend
-structs, the storage concretes (`MoonStorage`, `PostgresStorage`), the recipe
+structs, the storage concrete (`MoonStorage`), the recipe
 types, `init_logging`, the pipeline handles, etc.
 
 ## Crate map
@@ -44,7 +44,6 @@ types, `init_logging`, the pipeline handles, etc.
 | `lunaris-embed-remote` | `Embedder` impl — Ollama HTTP escape hatch (`--features embed-remote`); resolves after the llama.cpp step |
 | `lunaris-rerank` | `Reranker` trait + `NoopReranker` (the cross-encoder impl lives in `lunaris-llamacpp`) |
 | `lunaris-storage-moon` | `StoragePort` on a Redis-compatible substrate (native `FT.*`, `GRAPH.QUERY`, MQ, RRF) |
-| `lunaris-storage-postgres` | `StoragePort` on Postgres + pgvector + Apache AGE + pgmq (RLS-enforced isolation) |
 | `lunaris-server` | HTTP + SSE MemoryProtocol 0.1 server (axum) |
 | `lunaris-recipes` | Recipe primitives + conversational / documentary wrappers (see [Cookbook](../cookbook/index.md)) |
 | `lunaris-py` / `lunaris-ts` | PyO3 / napi-rs bindings (see [SDKs](../sdk/python.md)) |

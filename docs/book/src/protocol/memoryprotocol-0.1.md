@@ -394,7 +394,7 @@ MOON_URL=moon://localhost:6380 \
     --test run_protocol_lunaris_server -- --nocapture
 ```
 
-(or the `PG_URL` equivalent) returns exit code `0`. The harness exercises
+returns exit code `0`. The harness exercises
 every contract in [§Verbs](#verbs) + [§Authentication](#authentication) +
 [§Rate limiting](#rate-limiting) + [§Error taxonomy](#error-taxonomy).
 

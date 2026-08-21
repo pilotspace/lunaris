@@ -131,7 +131,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 ### Gotchas
 
 - **`forget()` is soft-delete by default.** It writes an MVCC supersede op that stamps `bt.sys[1]` on every matched primitive (`crates/lunaris/src/forget.rs:468-502`). The rows are still physically present and return from `read_as_of(ts)` for any `ts` before the soft-delete. For GDPR-irreversible purge see Scenario 6 — you must route through `Lunaris::confirm_hard_forget` (`crates/lunaris/src/forget.rs:307`), NOT through the recipe surface.
-- **`edit` preserves history automatically.** The old version is never overwritten in place. A later `pad.as_of(pre_edit_ts).read("notes.md")` returns the pre-edit bytes **on a backend that can serve historical KV reads** (Postgres, SQLite); on Moon that read is refused with `NotSupported` — see the Scenario 5 gotchas.
+- **`edit` preserves history in the search lane, not the KV lane.** The old version is never overwritten in place, but a `pad.as_of(pre_edit_ts).read("notes.md")` is **refused with `NotSupported`** on Moon — the only backend as of 0.7.0 — because Moon stores Lunaris rows as plain hashes with no KV version chain. It refuses rather than answering with present-time data dressed up as history. `before` / `after` / `between` filters on the *search* lane stay temporal. See the Scenario 5 gotchas.
 - **Session lifetime is the caller's concern.** The pad is `Clone` but carries no drop hook — if you never call `forget()`, every episode stays until a retention-bound `ForgetTarget::Before` sweep or an explicit purge. Scenario 6 walks the retention path.
 - **`read` returns `Option<String>`.** `None` = zero hits (never written / already purged / empty path). Don't conflate empty-string (`Some("")`) with "no such file" (`None`). It first tries `WorkingMemory::read` (single `Value::String`); on a miss it falls back to the multi-chunk `read_at` path that concatenates up to `READ_TOP = 8` hits (`coding_session_memory.rs:71, 113-129, 247-272`).
 
@@ -214,7 +214,7 @@ A long-running chat agent writes one scratchpad file per turn (`turn-000000.md` 
 ### When to use it
 
 - Chat-agent workloads with hundreds-to-tens-of-thousands of turns per session.
-- CI smoke tests of the CodingSessionMemory happy path on fresh Moon / Postgres.
+- CI smoke tests of the CodingSessionMemory happy path on a fresh Moon.
 - Budget-regression tracking (INGEST-05 / RETRIEVE-11 / RETRIEVE-12).
 
 ### Code
@@ -279,9 +279,8 @@ Sourced from `budgets()` at `coding_session_memory_smoke.rs:195-201` (which in t
 | Backend    | ingest p50 | recall p50 |
 |------------|-----------:|-----------:|
 | Moon       |      50 ms |      25 ms |
-| Postgres   |     100 ms |      60 ms |
 
-Moon over budget is a **hard-fail** — the blueprint §4.2 differentiator is the sub-25 ms recall. Postgres inside `2×` over budget is a hard-fail; past `2×` soft-fails per Plan 02-04 D-12 — the portability backend is allowed to lag the native one, not to ship broken. See `check_budget` at `coding_session_memory_smoke.rs:206-219` for the enforcement.
+Over budget is a **hard-fail** — the blueprint §4.2 differentiator is the sub-25 ms recall, and with one backend there is no relaxed lane to fall into. See `check_budget` in `coding_session_memory_smoke.rs` for the enforcement.
 
 ### Gotchas
 
@@ -367,7 +366,7 @@ async fn build_and_query(url: &str, docs: u64)
          .await?;
      ```
      This is what the smoke test does implicitly via `pad.grep(...)` — the zero-hit result does not cause it to fail because the budget check is a *latency* check, not a *correctness* one. See `check_budget` at `coding_session_memory_smoke.rs:206-219`.
-- **`LUNARIS_HELIOS_SMOKE_DOCS=50000` unlocks the full target.** Default `docs = 1_000` for dev-box runs (`coding_session_memory_smoke.rs:123-126`). The 50K document pass takes ~5 minutes on warm Moon / Postgres.
+- **`LUNARIS_HELIOS_SMOKE_DOCS=50000` unlocks the full target.** Default `docs = 1_000` for dev-box runs (`coding_session_memory_smoke.rs:123-126`). The 50K document pass takes ~5 minutes on a warm Moon.
 - **Cleanup is the operator's problem on the bulk path.** Because the bulk corpus doesn't land under `helios:fs/<sid>/`, calling `pad.forget()` won't touch it. The smoke test skips cleanup and relies on a fresh backend per CI run (`coding_session_memory_smoke.rs:156-161`). In your production harness, call `lunaris.forget(ForgetTarget::Scope(ScopeSpec::BySource("bench:md-doc/".into())))` explicitly, or use a scoped session.
 - **`storage().as_ref()` is the shape `build_md_doc_corpus` wants.** The helper takes `&dyn StoragePort`; `Lunaris::storage()` returns `Arc<dyn StoragePort>` (`crates/lunaris/src/handle.rs:369-371`); `.as_ref()` bridges the two. This is the exact invocation at `coding_session_memory_smoke.rs:129-133` — copy it verbatim.
 
@@ -428,7 +427,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ### Gotchas
 
-- **Postgres or SQLite only (v0.6.2).** `AsOfScratchpad::read` hydrates through `StoragePort::read_as_of` at a historical pin, which needs a backend with a KV version chain: `supports_historical_kv_reads() == true` on Postgres and SQLite. **Moon returns `StorageError::NotSupported`** (HTTP `501 not_supported`) for this scenario — it stores Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin instead of returning the *current* file contents dressed up as history, which is what it did before. Everything else in this guide (write / edit / read / grep / forget at latest) works on Moon unchanged.
+- **This scenario does not run on 0.7.0.** `AsOfScratchpad::read` hydrates through `StoragePort::read_as_of` at a historical pin, which needs a backend declaring `supports_historical_kv_reads() == true`. The two backends that did were deleted in 0.7.0. **Moon returns `StorageError::NotSupported`** (HTTP `501 not_supported`) — it stores Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin rather than returning the *current* file contents dressed up as history. Everything else in this guide (write / edit / read / grep / forget at latest) works unchanged.
 - **`AsOfScratchpad` is a borrowed view.** It holds `&CodingSessionMemory` (`coding_session_memory.rs:225-228`), so the borrow checker will stop you from moving the pad while an `as_of` view is alive. Good — this is the intentional invariant. Don't try to store the view in a long-lived struct.
 - **Time-travel is read-only.** `AsOfScratchpad` exposes one method — `read(path)` (`coding_session_memory.rs:233-236`). There is no `write`, `edit`, `forget`, or `grep` at a historical timestamp. If you need a historical write (i.e., compensating rewrite), you issue a fresh `pad.write()` now and let MVCC stamp the current time.
 - **Capture the HLC, not wall-clock time.** `HlcClock::tick()` returns a causal timestamp bound to the handle's monotonic counter (`crates/lunaris-core/src/hlc.rs:41-57`). Using `std::time::SystemTime::now()` and parsing it into an `Hlc` is wrong — the HLC has a node id and a counter; two HLCs with different node ids can compare equal at the `wall_ms` field while being distinct causal points.
@@ -660,21 +659,23 @@ async fn main() -> Result<(), lunaris::LunarisError> {
 
 ---
 
-## Scenario 9 — Dual-backend portability
+## Scenario 9 — Probe before you open
 
 ### Problem
 
-Your dev laptop runs Postgres (easy `brew install`). Staging runs Moon (we built Moon; we want to see the native `FT.*` speedups). Production is Moon-only. The Helios code must not branch on the backend — only the URL scheme changes.
+A harness that calls `Lunaris::open` against an unreachable store fails with a
+connection error thirty seconds into a run, or — worse — hangs. You want to
+decide up front whether the store is there, and say so.
 
 ### When to use it
 
-- Local development against Postgres, CI against both, production against Moon.
-- Portability proofs for customers / auditors who want to see Lunaris isn't Moon-locked.
-- Any deployment that exercises `STORE-07` AS_OF parity across the two backends.
+- Integration tests that must run on a laptop with no Moon and in CI with one.
+- Any harness where "the store was not reachable" and "the store answered
+  wrong" must be distinguishable outcomes.
 
 ### Code
 
-Paraphrase of the dual-backend probe at `crates/lunaris/tests/coding_session_memory_smoke.rs:43-103`. The pattern is one `for url_env in ["MOON_URL", "PG_URL"]` loop; the rest of the code is identical across backends.
+Paraphrase of the probe in `crates/lunaris/tests/coding_session_memory_smoke.rs`.
 
 ```rust
 use std::net::{TcpStream, ToSocketAddrs};
@@ -690,8 +691,6 @@ fn probe_backend(env_name: &str) -> Option<String> {
     let host_port = url
         .strip_prefix("moon://")
         .or_else(|| url.strip_prefix("redis://"))
-        .or_else(|| url.strip_prefix("postgres://"))
-        .or_else(|| url.strip_prefix("postgresql://"))
         .unwrap_or(&url);
     let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
     let host_port = host_port.split('/').next().unwrap_or(host_port);
@@ -707,37 +706,37 @@ fn probe_backend(env_name: &str) -> Option<String> {
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
-    for url_env in ["MOON_URL", "PG_URL"] {
-        let Some(url) = probe_backend(url_env) else {
-            continue;
-        };
-        eprintln!("=== backend: {url_env} ({url}) ===");
+    let Some(url) = probe_backend("MOON_URL") else {
+        // Locally this is a skip. In CI, where the job provisions the store,
+        // make it a hard failure — see the gotchas below.
+        eprintln!("SKIP: MOON_URL unset or unreachable");
+        return Ok(());
+    };
+    eprintln!("=== store: {url} ===");
 
-        // Identical code path on both backends.
-        let lunaris = Arc::new(Lunaris::open(&url).await?);
-        let pad = CodingSessionMemory::new(lunaris.clone(), "portability-demo");
+    let lunaris = Arc::new(Lunaris::open(&url).await?);
+    let pad = CodingSessionMemory::new(lunaris.clone(), "probe-demo");
 
-        pad.write("hello.md", "hello from dual-backend").await?;
-        let body = pad.read("hello.md").await?;
-        assert!(body.is_some());
+    pad.write("hello.md", "hello from a probed store").await?;
+    let body = pad.read("hello.md").await?;
+    assert!(body.is_some());
 
-        let hits = pad.grep("hello", 5).await?;
-        eprintln!("{url_env} grep hits: {}", hits.len());
+    let hits = pad.grep("hello", 5).await?;
+    eprintln!("grep hits: {}", hits.len());
 
-        let _ = pad.forget().await?;
-    }
+    let _ = pad.forget().await?;
     Ok(())
 }
 ```
 
 ### Gotchas
 
-- **URL scheme is the only backend selector.** `moon://host:port` routes to `MoonStorage`; `postgres://user:pass@host/db` and `postgresql://...` route to `PostgresStorage` (`crates/lunaris/src/handle.rs:148-206`). Anything else returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))`. No second argument, no feature flag flip — the URL wins.
-- **Moon hits the native `FT.*` RRF path; Postgres does client-side RRF.** When both branches of a `fuse_rrf` land on the Moon backend, the Phase 1.5 RRF dispatch takes one round-trip via `client.text().hybrid_search()` (`STORE-09` in `REQUIREMENTS.md`). Postgres falls back to client-side RRF — correct but slower. No code change; only latency differs.
-- **Latency budgets differ per backend.** Moon: `ingest p50 ≤ 50 ms, recall p50 ≤ 25 ms`. Postgres: `ingest p50 ≤ 100 ms, recall p50 ≤ 60 ms`. See Scenario 3's budget table and `budgets()` at `coding_session_memory_smoke.rs:195-201`. CI asserts these on every push.
-- **Probe failure is `continue`, not `panic`.** The `probe_backend` helper silently skips a backend when its env var is unset OR the TCP probe fails — and a subsequent `eprintln!("SKIP ...")` documents why. The remaining backend still runs. This is the discipline Plan 04-03 locked in; mirror it in any custom harness.
-- **AS_OF parity is a `STORE-07` contract, not an accident.** The conformance suite (`crates/lunaris-conformance`) asserts `hits_moon == hits_postgres` field-by-field for AS_OF queries. If your Helios code depends on subtle ordering, it works on both backends. If the conformance suite flags divergence in v1, the `StorageCapabilities` surface at `crates/lunaris-core/src/...` will gate it — but today (v0) parity holds across the six primitives.
-- **`build_md_doc_corpus` is bench-crate-scoped, not backend-specific.** It calls `storage.atomic_write` — which every backend implements (`STORE-01`). If your integration tests vendor bench helpers, the helper works on Moon and Postgres alike. No backend-specific bulk-ingest shim exists, or is needed.
+- **URL scheme is the only backend selector.** `moon://host:port` routes to `MoonStorage` and is the only scheme accepted; every retired spelling returns `LunarisError::Storage(StorageError::UnsupportedScheme(_))` carrying the migration link. No second argument, no feature flag flip — the URL wins.
+- **`fuse_rrf` is one round-trip, not two.** When both branches of a `fuse_rrf` land on the Moon backend, the RRF dispatch takes a single round-trip via `client.text().hybrid_search()` (`STORE-09` in `REQUIREMENTS.md`) rather than fusing client-side.
+- **Latency budgets.** `ingest p50 ≤ 50 ms, recall p50 ≤ 25 ms`. See Scenario 3's budget table and `budgets()` in `coding_session_memory_smoke.rs`. CI asserts these on every push.
+- **Probe failure is `continue`, not `panic` — locally.** The `probe_backend` helper skips when `MOON_URL` is unset OR the TCP probe fails, and a subsequent `eprintln!("SKIP ...")` documents why. Mirror that in any custom harness — but pair it with a strict switch, as `lunaris-conformance` does with `LUNARIS_CONFORMANCE_STRICT=1`: a skip is right on a laptop and wrong in the job that provisioned the store, and a suite that skips green there covers nothing.
+- **AS_OF is a `STORE-07` contract, not an accident.** The conformance suite (`crates/lunaris-conformance`) pins AS_OF results field-by-field, so Helios code that depends on subtle ordering keeps working across releases.
+- **`build_md_doc_corpus` is bench-crate-scoped.** It calls `storage.atomic_write` (`STORE-01`), so a vendored bench helper works unchanged. No bulk-ingest shim exists, or is needed.
 
 ---
 
@@ -749,7 +748,7 @@ Before shipping Helios-on-Lunaris to production, confirm each item below. These 
 - [ ] **Forget strategy.** Decide per-tenant / per-session which of (soft `pad.forget()`, hard `lunaris.confirm_hard_forget + forget(...hard().with_token(...))`, temporal sweep `ForgetTarget::Before(hlc)`) you run and on what schedule. Audit events fire on every call — treat `__lunaris_audit__` as the compliance source of truth. Scenario 6.
 - [ ] **Degraded observability wired.** `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` tuned for expected queue depth; UI / metric surfaces `Hit::degraded` so operators can see lag before an outage. Scenario 8.
 - [ ] **Verifier + consolidator toggles explicit.** Both default OFF in v0. If you turn on the verifier (`VerifierPipelineHandle::enable()` — umbrella at `crates/lunaris/src/lib.rs:84`), monitor `__lunaris_verify__` queue lag per `VERIFY-05`. Same for `ConsolidatorPipelineHandle`. Keep toggles in one place (startup config), not scattered across request-path code.
-- [ ] **Moon vs Postgres tuning.** In production the default path is Moon — its latency budgets are the load-bearing `Core Value` from `PROJECT.md`. Postgres is the portability proof and runs at a relaxed budget (`2×` over hard-fails, beyond that soft-fails per Plan 02-04 D-12). If your CI runs dual-backend, don't treat a Postgres soft-fail as a Moon regression.
+- [ ] **Latency budgets owned.** Moon's `ingest p50 ≤ 50 ms` / `recall p50 ≤ 25 ms` are the load-bearing `Core Value` from `PROJECT.md`, and with one backend there is no relaxed lane to attribute a regression to. Treat an over-budget run as a regression, not as backend variance.
 - [ ] **Hard-delete audit trail archived.** `__lunaris_audit__` events for hard forgets are the only forensic record after the KV rows are gone. Persist the topic to cold storage for the retention window your compliance regime requires.
 - [ ] **Graph pipeline posture explicit.** If Helios depends on graph-aware recall (Scenario 7), ingest with graph ON from day zero — retrofitting requires re-ingest. If Helios does NOT need graph (pure RAG workloads), keep it OFF to stay inside the no-graph ingest budget.
 - [ ] **Docs cross-link up to date.** This guide complements [`docs/guide.md`](guide.md) — the user guide covers the full Lunaris DSL, worker wiring, and HTTP wire protocol. When Lunaris ships a new recipe or changes the `CodingSessionMemory` surface, update this file alongside the Phase-5 plans — the nine public methods enforced by `coding_session_memory_public_surface_under_50_loc` are your contract with every downstream Helios build.
