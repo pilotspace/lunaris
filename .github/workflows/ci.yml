@@ -67,6 +67,23 @@ jobs:
       # workflows build wheels / .node artifacts; they run no tests. A comment
       # that misnames the owner of a coverage gap is how the gap stays open.
       - run: cargo test --workspace --all-targets --exclude lunaris-py --exclude lunaris-ts
+
+      # W4.8 — the `cloud-api` suites. CLAUDE.md makes the extractor and
+      # verifier slots REMOTE-ONLY, so this is the wiring for the primary LLM
+      # path, and until now no `cargo test` anywhere enabled the feature: it
+      # reached CI only through `cargo check`, which builds a test binary and
+      # never runs it. Both suites stand up a fake /v1/chat/completions on
+      # 127.0.0.1:0 — no API key, no network, no secret.
+      #
+      # `remote_llm_wired` is a built-vs-wired discriminator, not a unit test:
+      # it counts requests the fake server actually received, and 0 means the
+      # resolver ignored the provider env and silently used Noop. That is the
+      # failure it exists to catch, and it has never once run.
+      - name: Run the cloud-api discriminators
+        run: |
+          set -euo pipefail
+          cargo test -p lunaris-llm --features cloud-api --test openai_compat_fake_server
+          cargo test -p lunaris-memory --features cloud-api --test remote_llm_wired
       - run: cargo doc --workspace --no-deps
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
       # features on every PR. Production wheels / .node binaries are
@@ -295,6 +312,22 @@ jobs:
             exit 1
           fi
           echo "no prescriptive '${needle}' sites"
+
+      # W4.8 — "every writer has a reader", applied to feature-gated tests.
+      # A file opening with `#![cfg(feature = "X")]` compiles to nothing
+      # unless a job passes `--features X`; `cargo test --workspace` walks
+      # past it and still reports green. On its first run this found five
+      # such files, including the three that prove `lunaris try` works and
+      # the discriminator that catches the LLM resolver falling back to Noop.
+      # Rationale, findings and the allowlist rules live in the script.
+      - name: gated_tests_have_a_runner
+        run: python3 scripts/tests/test_gated_tests_have_a_runner.py
+
+      # Guards the guard: the parity test is stdlib-only and cheap, and a
+      # release whose lockfile disagrees with package.json takes down every
+      # workflow that runs `npm ci`.
+      - name: npm_version_parity
+        run: python3 scripts/tests/test_npm_version_parity.py
 
       # Plan 13-01 RELEASE-01 — lunaris-core leaf-purity gate. Fails the
       # build if any worker crate sneaks into lunaris-core's transitive
