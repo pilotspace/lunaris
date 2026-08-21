@@ -16,13 +16,73 @@ use lunaris::{EpisodeBuilder, IngestKind, Lunaris, WorkingMemory};
 use lunaris_core::{Scope, StubEmbedder};
 use ulid::Ulid;
 
+/// Resolve the live-Moon URL, or decide to skip — unless CI forbids skipping.
+///
+/// Every test in this file used to bail on `None` with a bare `return`, which
+/// is a PASS to the harness. That is fine locally (a developer without a Moon
+/// gets a green suite instead of five connection errors) and exactly wrong in
+/// `integration.yml`, which builds Moon, port-checks it, and exports
+/// `LUNARIS_MOON_URL` before running this target: there, an absent variable
+/// means the fixture broke, and five silent passes would report success for a
+/// suite that tested nothing. `LUNARIS_CONFORMANCE_STRICT=1` (set by
+/// `integration.yml`) turns the skip into a panic.
+///
+/// Same contract as `lunaris-storage-moon`'s `common::note_moon_unreachable`,
+/// which this file could not reuse — different crate, no shared test module.
 fn moon_url() -> Option<String> {
-    match std::env::var("LUNARIS_MOON_URL") {
-        Ok(u) if !u.is_empty() => Some(u),
+    decide_moon_url(std::env::var("LUNARIS_MOON_URL").ok(), strict())
+}
+
+fn strict() -> bool {
+    matches!(std::env::var("LUNARIS_CONFORMANCE_STRICT").as_deref(), Ok("1") | Ok("true"))
+}
+
+/// The decision, with the environment passed in rather than read.
+///
+/// Split so the invariant is directly testable without `set_var` — which
+/// edition 2024 makes `unsafe`, and which would race the siblings in this
+/// same test binary anyway.
+fn decide_moon_url(raw: Option<String>, strict: bool) -> Option<String> {
+    match raw {
+        Some(u) if !u.is_empty() => Some(u),
         _ => {
+            assert!(
+                !strict,
+                "LUNARIS_MOON_URL is unset, and LUNARIS_CONFORMANCE_STRICT=1 forbids \
+                 skipping. This target runs in integration.yml, which builds Moon, \
+                 port-checks it, and exports the URL — so an absent variable here means \
+                 the fixture broke, not that the environment lacks a Moon. Skipping \
+                 would report five green tests for a suite that tested nothing."
+            );
             eprintln!("skipping: LUNARIS_MOON_URL not set (live-Moon gate)");
             None
         }
+    }
+}
+
+/// The guard for the guard: a strict mode nothing enforces is decoration.
+#[test]
+fn strict_mode_refuses_to_skip_without_a_moon_url() {
+    // Lenient: absent or empty URL skips, as it must for a local `cargo test`.
+    assert_eq!(decide_moon_url(None, false), None);
+    assert_eq!(decide_moon_url(Some(String::new()), false), None);
+    // Present: returned verbatim regardless of strictness.
+    let url = "moon://127.0.0.1:6399".to_string();
+    assert_eq!(decide_moon_url(Some(url.clone()), true), Some(url.clone()));
+    assert_eq!(decide_moon_url(Some(url.clone()), false), Some(url));
+    // Strict + absent: panics rather than reporting a pass.
+    for raw in [None, Some(String::new())] {
+        let err = std::panic::catch_unwind(|| decide_moon_url(raw.clone(), true))
+            .expect_err("strict mode must panic when LUNARIS_MOON_URL is unset");
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| err.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            msg.contains("LUNARIS_CONFORMANCE_STRICT"),
+            "the panic must name the variable an operator would unset; got {msg:?}"
+        );
     }
 }
 
