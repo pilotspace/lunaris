@@ -175,6 +175,7 @@ pub async fn two_step_hard_delete(client: &Client, base: &Url, token: &str) -> a
     // The handler deserializes this back into ForgetReceipt + calls
     // confirm_hard_forget to mint the typed ForgetConfirmation token.
     let confirmation_token = serde_json::to_string(&dry_receipt)?;
+    let deleted_id = target_id.clone();
     let hard_resp = client
         .post(url)
         .bearer_auth(token)
@@ -199,6 +200,37 @@ pub async fn two_step_hard_delete(client: &Client, base: &Url, token: &str) -> a
         payload.get("rows_deleted").and_then(|v| v.as_u64()) == Some(1),
         "hard-delete of a just-ingested episode must report rows_deleted=1 — a 0 means the \
          D-21 flow completed without removing anything; body={payload}"
+    );
+
+    // Step 4 — the row is actually GONE, not merely reported gone.
+    //
+    // Everything above reads the handler's own receipt. A handler that
+    // reports `rows_deleted: 1` while deleting nothing satisfies every
+    // assertion so far, and "reported a delete" is indistinguishable from
+    // "performed a delete" until something goes looking for the row. That is
+    // the same shape as the defect this whole suite exists to catch: the
+    // pre-W1.1 handler returned a perfectly well-formed 200 for every real
+    // tenant and deleted nothing.
+    //
+    // `unknown_id_returns_404` already pins the contract for an id that
+    // resolves to nothing in the caller's scope, so a deleted id must now be
+    // indistinguishable from one that never existed. If the row survived, this
+    // comes back 200 with a receipt instead.
+    let gone_resp = client
+        .post(base.join("/v1/forget")?)
+        .bearer_auth(token)
+        .json(&json!({
+            "target": { "Id": deleted_id.clone() },
+            "dry_run": true,
+        }))
+        .send()
+        .await?;
+    let gone_status = gone_resp.status();
+    anyhow::ensure!(
+        gone_status == StatusCode::NOT_FOUND,
+        "after a hard delete reported rows_deleted=1, re-targeting {deleted_id} returned \
+         {gone_status} instead of 404 — the receipt claimed a deletion that did not happen. \
+         A 200 here means the row is still addressable in the caller's scope."
     );
     Ok(())
 }
