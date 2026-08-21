@@ -904,14 +904,23 @@ async fn uat4_forget_in_own_scope_actually_writes() {
         "UAT-4h: the caller's own episode must be MATCHED under its own scope; \
          a zero here means the handler is scanning the wrong partition"
     );
+    // TWO rows, not one: the fixture seeds an episode AND its chunk, and W1.4
+    // made a soft forget sweep the matched episode's chunk rows alongside the
+    // episode itself. Before that sweep the content stayed recallable after a
+    // successful forget, which is the bug W1.4 closed — so a `1` here would be
+    // the regression, not the pass. The unit distinction matters and is
+    // deliberate: `matched` above counts EPISODES (what the caller named),
+    // `rows_written` counts ROWS (how the episode is stored).
     assert_eq!(
         receipt["rows_written"].as_u64(),
-        Some(1),
-        "UAT-4i: a soft forget must report one written row — this is the assertion \
-         the pre-W1.1 handler could never satisfy for any real tenant"
+        Some(2),
+        "UAT-4i: a soft forget must write the episode row AND its chunk row — \
+         this is the assertion the pre-W1.1 handler could never satisfy for any \
+         real tenant, and a `1` means the W1.4 chunk sweep regressed"
     );
 
-    // And the write must have landed in agent-a's partition, exactly once (D-19).
+    // And the write must have landed in agent-a's partition, in ONE atomic
+    // batch (D-19) — the sweep must not fan out into a second `atomic_write`.
     let batches = storage.writes_for_scope("agent-a");
     assert_eq!(
         batches.len(),
@@ -919,7 +928,11 @@ async fn uat4_forget_in_own_scope_actually_writes() {
         "UAT-4j: exactly one atomic_write under agent-a; got {}",
         batches.len()
     );
-    assert_eq!(batches[0].len(), 1, "UAT-4k: that batch must carry the single soft-delete op");
+    assert_eq!(
+        batches[0].len(),
+        2,
+        "UAT-4k: that one batch must carry BOTH soft-delete ops — episode and chunk"
+    );
 }
 
 // ---------------------------------------------------------------------------

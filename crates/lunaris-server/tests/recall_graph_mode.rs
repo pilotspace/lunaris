@@ -542,125 +542,24 @@ async fn mode_semantic_unchanged_by_handler_diff() {
 }
 
 // ---------------------------------------------------------------------------
-// Live dual-backend UAT — `#[ignore]`-gated per ROADMAP Phase 7 SC #3b.
-// Mirrors the pattern from Plan 05-04's `helios_scratchpad_smoke.rs` — skips
-// cleanly when MOON_URL / PG_URL env vars unset; runs end-to-end against live
-// Moon + Postgres backends when both are set. Listed in 05-HUMAN-UAT.md as a
-// deferred-measurement gate.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-// W1.1 — a bare `#[ignore]` carries no expiry and no reason, which is exactly
-// how `uat4_forget_honors_scope_target_contract` parked a P0 for four
-// releases. Reason strings are now required by ci.yml's
-// `ignored_test_reason_required` gate.
+// DELETED 2026-08-22 (F12): `mode_graph_parity_across_moon_and_postgres`
 //
-// DEAD GATE, not a deferred one: this test also demands `PG_URL`, and 0.7.0
-// deleted `lunaris-storage-postgres` entirely. It can never run again as
-// written. Flagged to the ship plan as a deletion candidate under W2.9 (purge
-// dead Postgres language) rather than removed here, which is a sibling's file
-// sweep, not this task's.
-#[ignore = "DEAD since 0.7.0: requires PG_URL, but lunaris-storage-postgres was deleted — delete or rewrite as Moon-only (W2.9)"]
-async fn mode_graph_parity_across_moon_and_postgres() {
-    // UAT-class — operator-driven. Skip unless BOTH env vars present.
-    let moon_url = match std::env::var("MOON_URL") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("SKIP mode_graph_parity_across_moon_and_postgres: MOON_URL env var not set",);
-            return;
-        }
-    };
-    let pg_url = match std::env::var("PG_URL") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("SKIP mode_graph_parity_across_moon_and_postgres: PG_URL env var not set",);
-            return;
-        }
-    };
-
-    // Boot both backends; reject gracefully if either Lunaris::open fails
-    // (same two-tier probe discipline as Plan 04-03).
-    let moon = match Lunaris::open(&moon_url).await {
-        Ok(l) => Arc::new(l),
-        Err(e) => {
-            eprintln!(
-                "SKIP mode_graph_parity_across_moon_and_postgres: Lunaris::open(MOON_URL={moon_url}) failed: {e}",
-            );
-            return;
-        }
-    };
-    let pg = match Lunaris::open(&pg_url).await {
-        Ok(l) => Arc::new(l),
-        Err(e) => {
-            eprintln!(
-                "SKIP mode_graph_parity_across_moon_and_postgres: Lunaris::open(PG_URL={pg_url}) failed: {e}",
-            );
-            return;
-        }
-    };
-
-    // Enable graph pipeline on both so the ingest fan-out actually writes
-    // graph nodes + edges.
-    moon.graph_pipeline().enable();
-    pg.graph_pipeline().enable();
-
-    // Build the HTTP app against each handle.
-    let moon_app = build_test_app_with(moon.clone());
-    let pg_app = build_test_app_with(pg.clone());
-
-    // Issue identical mode=graph recall requests against both backends and
-    // diff the response hit-id sets. Per capabilities() parity rules
-    // (Plan 05-02 STORE-07), both backends MUST return equivalent hit sets
-    // when fed the same ingest corpus.
-    let body = r#"{"query":"what did Alice do at Acme","k":5,"mode":"graph"}"#;
-
-    let moon_resp = moon_app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/recall")
-                .header("authorization", "Bearer tok-all")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .expect("req"),
-        )
-        .await
-        .expect("moon oneshot");
-    let pg_resp = pg_app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/recall")
-                .header("authorization", "Bearer tok-all")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .expect("req"),
-        )
-        .await
-        .expect("pg oneshot");
-
-    assert_eq!(moon_resp.status(), StatusCode::OK);
-    assert_eq!(pg_resp.status(), StatusCode::OK);
-
-    let moon_bytes = to_bytes(moon_resp.into_body(), 1_048_576).await.expect("moon body");
-    let pg_bytes = to_bytes(pg_resp.into_body(), 1_048_576).await.expect("pg body");
-    let moon_v: serde_json::Value = serde_json::from_slice(&moon_bytes).expect("moon json");
-    let pg_v: serde_json::Value = serde_json::from_slice(&pg_bytes).expect("pg json");
-
-    // Parity check: both backends must return non-empty hit sets and the
-    // returned ids overlap (strict set-equality is too brittle when the
-    // corpora aren't byte-identical; this asserts the graph branch fired on
-    // both + produced overlapping results).
-    let moon_ids: Vec<serde_json::Value> =
-        moon_v.as_array().unwrap_or(&vec![]).iter().map(|h| h["id"].clone()).collect();
-    let pg_ids: Vec<serde_json::Value> =
-        pg_v.as_array().unwrap_or(&vec![]).iter().map(|h| h["id"].clone()).collect();
-    assert!(!moon_ids.is_empty(), "Moon response must yield at least one hit: {moon_v}",);
-    assert!(!pg_ids.is_empty(), "Postgres response must yield at least one hit: {pg_v}",);
-    // Intersection non-empty — parity contract per capabilities() rules.
-    let overlap = moon_ids.iter().filter(|id| pg_ids.contains(id)).count();
-    assert!(
-        overlap > 0,
-        "Moon and Postgres hit-id sets must overlap for mode=graph parity: moon={moon_ids:?} pg={pg_ids:?}",
-    );
-}
+// It demanded `MOON_URL` AND `PG_URL` and diffed the two backends' hit-id sets.
+// 0.7.0 deleted `lunaris-storage-postgres`, so the second half of that gate
+// could never be satisfied again — the test was `#[ignore]`d with a reason
+// saying exactly that, which kept an unrunnable file honest but not useful.
+//
+// Deleting rather than rewriting Moon-only, because there was nothing to
+// rewrite: the test enabled the graph pipeline and immediately recalled
+// WITHOUT SEEDING A CORPUS, then asserted the hit sets were non-empty and
+// overlapped. Against two live stores it asserted over whatever the operator's
+// data happened to contain; the parity claim was the only thing it added, and
+// parity has one arm now.
+//
+// The gap it leaves is real and is NOT covered by the four tests above, which
+// all drive `MockGraphStorage`: **there is no live-Moon test that a
+// `mode=graph` recall returns hits from a graph corpus this repo seeded.**
+// Filed as F16 rather than left implied by a husk — an `#[ignore]`d test reads
+// like coverage in a directory listing, and that is how a P0 sat parked for
+// four releases (W1.1).
+// ---------------------------------------------------------------------------
