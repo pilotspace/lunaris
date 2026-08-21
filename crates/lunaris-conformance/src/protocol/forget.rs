@@ -3,7 +3,7 @@
 //! Three test functions:
 //! - [`id_target`] — soft `dry_run: true` against a **really-ingested**
 //!   `ForgetTarget::Id` returns `200` with a `preview: true` receipt that
-//!   matched exactly one row.
+//!   matched at least one row.
 //! - [`unknown_id_returns_404`] — W1.1: an `Id` target that resolves to nothing
 //!   in the caller's scope is `404`, not a `200` receipt claiming zero rows.
 //! - [`two_step_hard_delete`] — proves the D-21 contract:
@@ -55,9 +55,16 @@ async fn seed_episode(client: &Client, base: &Url, token: &str) -> anyhow::Resul
 /// Asserts:
 /// - status `200 OK`,
 /// - `preview` field is `true`,
-/// - `matched == 1` — the row is visible under the caller's own scope. A zero
+/// - `matched >= 1` — the rows are visible under the caller's own scope. A zero
 ///   here means the handler is scanning a partition the caller does not own,
 ///   which is exactly the W1.1 defect.
+///
+///   W1.4 loosened this from `== 1`. `matched` counts ROWS, and forget now
+///   sweeps the episode's chunk rows as well, so a one-chunk episode reports 2.
+///   The exact count was never the contract — the contract is that a scope the
+///   caller owns does not read as empty, and `>= 1` says exactly that. An
+///   exact-count assertion here would go red on any future ingest fan-out
+///   while testing nothing extra.
 pub async fn id_target(client: &Client, base: &Url, token: &str) -> anyhow::Result<()> {
     let id = seed_episode(client, base, token).await?;
     let url = base.join("/v1/forget")?;
@@ -77,8 +84,8 @@ pub async fn id_target(client: &Client, base: &Url, token: &str) -> anyhow::Resu
         "dry_run forget receipt should carry preview=true; body={payload}"
     );
     anyhow::ensure!(
-        payload.get("matched").and_then(|v| v.as_u64()) == Some(1),
-        "dry_run forget of a just-ingested episode must report matched=1 — a 0 means the \
+        payload.get("matched").and_then(|v| v.as_u64()).unwrap_or(0) >= 1,
+        "dry_run forget of a just-ingested episode must report matched >= 1 — a 0 means the \
          handler is not using the caller's scope; body={payload}"
     );
     Ok(())
