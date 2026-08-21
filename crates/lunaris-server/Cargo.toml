@@ -48,6 +48,33 @@ parking_lot         = { workspace = true }
 thiserror           = { workspace = true }
 anyhow              = { workspace = true }
 
+# W1.2 (2026-08-21) — the crate had NO `[features]` block at all.
+#
+# The workspace entry for `lunaris` sets `default-features = false` (root
+# Cargo.toml), so `cargo build -p lunaris-server` resolved the umbrella WITHOUT
+# `llamacpp`, silently produced a `NoopEmbedder` (every vector zero), and
+# `/readyz` reported green. There was no `-p lunaris-server --features llamacpp`
+# to reach for either — a builder had to know the `--features lunaris/llamacpp`
+# spelling. The release rehearsal hit this live (docs/RELEASE.md).
+#
+# `default = ["llamacpp"]` — deliberate, and one step further than the sibling
+# binaries. `lunaris-mcp`, `lunaris-hook`, `lunaris-cli` and
+# `lunaris-memory-service` HARD-WIRE `features = ["llamacpp"]` on the dependency
+# line, which fixes the trap but removes the Tier-0 build entirely. Routing it
+# through a default feature keeps the safe thing automatic while leaving
+# `--no-default-features` as an explicit, greppable opt-out for a
+# no-inference / air-gapped deployment. Costs nothing in CI: the workspace
+# already compiles llama.cpp for those siblings, so feature unification means
+# `cargo test --workspace` builds exactly what it built before.
+#
+# Pinned by `crates/lunaris-core/tests/sdk_feature_forwarding.rs`.
+[features]
+default = ["llamacpp"]
+llamacpp = ["lunaris/llamacpp"]
+metal    = ["lunaris/metal"]
+cuda     = ["lunaris/cuda"]
+vulkan   = ["lunaris/vulkan"]
+
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full", "test-util", "macros"] }
 

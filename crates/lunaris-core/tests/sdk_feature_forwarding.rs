@@ -115,3 +115,39 @@ fn bench_llamacpp_and_gpu_features_forward_to_umbrella() {
         assert_forwards("crates/lunaris-bench/Cargo.toml", gpu, &format!("lunaris/{gpu}"));
     }
 }
+
+/// W1.2 — `lunaris-server` was the surface this guard did not cover, and it
+/// was the surface that shipped the bug. It had NO `[features]` block at all,
+/// so `cargo build -p lunaris-server` resolved the umbrella with
+/// `default-features = false` (the workspace entry), produced a `NoopEmbedder`,
+/// and `/readyz` still reported green. Every other binary surface hard-wires
+/// `features = ["llamacpp"]` on its dependency line
+/// (`lunaris-mcp`, `lunaris-hook`, `lunaris-cli`, `lunaris-memory-service`);
+/// the server routes it through a default feature instead so
+/// `--no-default-features` stays a deliberate, greppable Tier-0 opt-out.
+#[test]
+fn server_llamacpp_and_gpu_features_forward_to_umbrella() {
+    assert_forwards("crates/lunaris-server/Cargo.toml", "llamacpp", "lunaris/llamacpp");
+    for gpu in ["metal", "cuda", "vulkan"] {
+        assert_forwards("crates/lunaris-server/Cargo.toml", gpu, &format!("lunaris/{gpu}"));
+    }
+}
+
+/// The forwarding above is necessary but not sufficient: a `llamacpp` feature
+/// nobody enables is the same zero-vector build. A plain
+/// `cargo build -p lunaris-server` must land on the real embedder, so
+/// `llamacpp` has to be in the server's `default` set.
+#[test]
+fn server_default_features_include_llamacpp() {
+    let path = workspace_root().join("crates/lunaris-server/Cargo.toml");
+    let manifest =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let default = feature_array(&manifest, "default")
+        .expect("crates/lunaris-server/Cargo.toml: no `default` feature — a plain `cargo build -p lunaris-server` would resolve NoopEmbedder");
+    assert!(
+        default.contains("\"llamacpp\""),
+        "crates/lunaris-server/Cargo.toml: `default` must include \"llamacpp\" so a plain \
+         `cargo build -p lunaris-server` cannot silently produce a zero-vector embedder. \
+         Current array: {default}"
+    );
+}
