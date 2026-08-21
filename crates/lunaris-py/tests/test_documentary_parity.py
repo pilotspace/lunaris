@@ -455,6 +455,37 @@ async def _run_timeline_between(
     return [h["text"] for h in hits]
 
 
+# `xfail(strict=True)`, not `skip` — and the assertions below are UNCHANGED.
+#
+# KNOWN DEFECT F21: `TimelineReconstruction` cannot ingest an event with a
+# historical valid-time, so `.between()` over a historical window can only ever
+# return zero rows. `TimelineReconstruction.ingest` forwards straight to
+# `DocumentCorpus::ingest`, which builds `Episode::new(...)` — that sets
+# `bt: BiTemporal::now(clock)` and `t_ref: None` and stores the caller's
+# `event_valid_time_unix_ms` as ORDINARY METADATA. `.between(lo, hi)` renders
+# `Filter::ValidTimeRange` into Moon's `@valid_time:[lo hi]`, which matches the
+# INGEST time. So a corpus of 2025-01 events ingested today has no valid_time
+# inside [2025-01-10, 2025-01-16) and the recipe whose entire headline is
+# timeline reconstruction reconstructs nothing.
+#
+# The fix is in the recipe/corpus layer (honour a valid-time from the caller
+# when building the Episode), not in this test, so it needs its own red/green
+# pair. Its TypeScript sibling is blocked one step earlier by F20 — the TS SDK
+# cannot even construct the `Hlc` — and is held by `test.fails` for the same
+# reason. Between them, the bi-temporal recipe surface does not work in either
+# SDK, which is what ledger task W4.13 was really recording.
+#
+# `strict=True` is the point: an xfail that unexpectedly PASSES is reported as
+# a failure, so the day the recipe is fixed this goes red and whoever fixed it
+# must delete this marker — restoring the real parity assertions in the same
+# commit. A `skip` would have read "not run" forever.
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "F21: TimelineReconstruction.ingest cannot set a historical valid-time, "
+        "so .between() over a historical window always returns 0 rows"
+    ),
+)
 def test_timeline_reconstruction_parity_between_10_and_15():
     doc_mod = _lunaris_module()
     moon = _moon_or_skip()

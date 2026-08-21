@@ -87,6 +87,21 @@ chaos-it = []
 # needed for revision 2 (no byte-exact assertion) so we intentionally omit
 # `dep:base64` here.
 bindings-it = []
+# W4.14 — forward the umbrella crate's remote-embedder feature so the CI
+# driver can be pointed at a stub `/v1/embeddings` server.
+#
+# Not cosmetic. This driver runs FIRST in `conformance-bindings.yml` and seeds
+# the 10 fixture episodes into the shared `_dev_` scope. Without a remote
+# embedder it seeds them with `NoopEmbedder` ZERO vectors — and a zero vector
+# sits at L2 distance ||q|| = 1.0 from any unit query, while a genuinely
+# weak-but-real match (cosine 0.29) sits at 1.19. Under the `1/(1+d)` score
+# the un-embedded rows WIN. Every later suite then recalls the fixture corpus
+# instead of its own data; that is how the README quickstart came back with
+# five "Episode N: alpha beta gamma..." rows for the query "what does Alice
+# like?" on run 32524873697. See ledger F22 — the same pathology bites any
+# production store that ever ran without an embedder, which is the documented
+# Tier-0 default.
+embed-remote = ["lunaris/embed-remote"]
 # Plan 14-01 (CI-01): substrate-hardening gate. Empty feature (no deps
 # chained) — a semantic marker for "this test needs a live Moon".
 # The actual connection is via `MOON_URL` per the existing two-tier skip

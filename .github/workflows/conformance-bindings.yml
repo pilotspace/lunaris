@@ -169,9 +169,14 @@ jobs:
           npm ci --no-audit --no-fund
           npx napi build --platform --release --features bindings-it,embed-remote
         working-directory: crates/lunaris-ts
+      # `embed-remote` here too, and for a reason the other two steps do not
+      # share: this driver runs FIRST and seeds the 10 fixture episodes into
+      # the shared `_dev_` scope. Seeded with NoopEmbedder zero vectors they
+      # outrank every real match forever (F22), and every later suite recalls
+      # them instead of its own data.
       - name: Rust - per-driver backend parity
         run: |
-          cargo test -p lunaris-conformance --features bindings-it \
+          cargo test -p lunaris-conformance --features bindings-it,embed-remote \
             --test run_bindings_backend_parity -- --nocapture
       # W4.14 — the WHOLE suite, not just `backend_parity`.
       #
