@@ -434,15 +434,19 @@ fn is_ft_query_unusable(err: &LunarisError) -> bool {
     )
 }
 
-/// `true` when the scope's FT index does not exist yet (`unknown index`) —
-/// a brand-new scope with zero ingested rows. Reads resolve to "not found",
-/// never an error. Same string-match caveat as [`is_ft_query_unusable`];
-/// pinned by `scratchpad_read_fresh_scope_returns_none_moon`.
+/// `true` when the scope's FT index does not exist yet — a brand-new scope
+/// with zero ingested rows. Reads resolve to "not found", never an error.
+/// Pinned by `scratchpad_read_fresh_scope_returns_none_moon`.
+///
+/// F1: the predicate now comes from `lunaris_retrieve::missing_index`, which
+/// is also what every recall leg uses. This copy matched two of Moon's three
+/// spellings for the same condition, and `operators::tree` matched only the
+/// third — four call sites, three predicates, one rule. One shared predicate
+/// means a newly-observed spelling is fixed everywhere at once.
 fn is_ft_index_missing(err: &LunarisError) -> bool {
     matches!(
         err,
-        LunarisError::Storage(StorageError::Backend(msg))
-            if msg.contains("unknown index") || msg.contains("Unknown index")
+        LunarisError::Storage(e) if lunaris_retrieve::missing_index::is_index_absent(e)
     )
 }
 

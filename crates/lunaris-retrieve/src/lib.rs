@@ -42,6 +42,7 @@ pub mod builder;
 pub mod composition;
 pub mod fusion;
 pub mod hydrate;
+pub mod missing_index;
 pub mod operators;
 pub mod planner;
 pub mod service;

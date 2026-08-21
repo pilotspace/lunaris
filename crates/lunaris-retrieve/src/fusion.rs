@@ -179,8 +179,8 @@ pub async fn fuse_via_moon_native(
     // depend on. The format is duplicated alongside `decode_moon_vector_key`
     // for the same reason. Live-measurement gap, 2026-05-12.
     let per_scope_index = format!("lunaris_{}_{}_idx", ctx.scope.as_str(), hint.index);
-    let hits: Vec<moon::TextSearchHit> = text
-        .hybrid_search(
+    let hits: Vec<moon::TextSearchHit> = crate::missing_index::no_rows_if_index_absent(
+        text.hybrid_search(
             &per_scope_index,
             &ctx.query.text,
             &q_emb,
@@ -191,11 +191,9 @@ pub async fn fuse_via_moon_native(
             moon_filter.as_ref(),
         )
         .await
-        .map_err(|e| {
-            LunarisError::Storage(lunaris_core::StorageError::Backend(format!(
-                "moon hybrid_search: {e}"
-            )))
-        })?;
+        .map_err(|e| lunaris_core::StorageError::Backend(format!("moon hybrid_search: {e}"))),
+    )
+    .map_err(LunarisError::Storage)?;
 
     // Moon's HYBRID reply carries the fused score under `__rrf_score` in the
     // fields map — NOT in the SDK's typed `score` field. The Moon SDK parser

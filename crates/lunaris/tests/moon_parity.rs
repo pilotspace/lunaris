@@ -124,3 +124,32 @@ async fn scratchpad_read_fresh_scope_returns_none_moon() {
         .expect("read on a brand-new scope must not surface 'unknown index'");
     assert_eq!(read, None);
 }
+
+/// F1 — a brand-new scope's FIRST recall must be `Ok(vec![])`, not an error.
+///
+/// Moon creates a scope's FT index lazily, on first write. A scope that has
+/// never been ingested into therefore has no index, and `FT.SEARCH` answers
+/// `unknown index`. `WorkingMemory::read` already handles that
+/// (`working_memory.rs::is_unknown_index`); the recall path did not, so the
+/// very first thing a new agent does — ask what it remembers, before it has
+/// remembered anything — was an error rather than an empty list.
+///
+/// That is the worst possible place for it: it cannot be hit by an existing
+/// deployment, only by a new one, so it survives every amount of production
+/// traffic. It surfaced from the Python SDK's `test_cross_scope_isolation`,
+/// which recalls under a scope it deliberately never writes to (ledger F1).
+///
+/// Empty is the honest answer. "I have no index for you" is an implementation
+/// detail of lazy creation, and a caller cannot act on it.
+#[tokio::test]
+async fn recall_on_a_brand_new_scope_returns_no_hits_moon() {
+    let Some(url) = moon_url() else { return };
+    let engine = open_moon(&url).await;
+    let scoped = engine.scoped(fresh_scope("virgin-recall"));
+
+    let hits = scoped
+        .recall(lunaris_retrieve::Query::text("anything at all"))
+        .await
+        .expect("recall on a brand-new scope must not surface 'unknown index'");
+    assert!(hits.is_empty(), "a scope with no writes cannot have hits, got {hits:?}");
+}

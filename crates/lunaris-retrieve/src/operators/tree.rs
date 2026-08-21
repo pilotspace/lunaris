@@ -152,13 +152,13 @@ impl Retriever for Tree {
             .await
         {
             Ok(hits) => hits,
-            // Graceful-empty for missing index: `vector_search` returns `StorageError`
-            // (not `LunarisError`). Moon surfaces a missing FT index as
-            // `StorageError::Backend("moon: redis error: \"Unknown\": Index name")`.
-            // Treat this as "scope has no ingested communities" → return empty rather
-            // than propagating a hard error. This is the normal state for a freshly
-            // created scope before any ingest has run.
-            Err(lunaris_core::StorageError::Backend(ref msg)) if msg.contains("Index name") => {
+            // Graceful-empty for a missing index — the normal state for a scope
+            // that has not been ingested into yet. F1 moved the predicate to
+            // `crate::missing_index`, which recognises all three spellings Moon
+            // uses; this site had been matching only `Index name`, so the same
+            // condition reported through the hybrid path's wording sailed
+            // straight past it.
+            Err(ref e) if crate::missing_index::is_index_absent(e) => {
                 tracing::debug!(
                     scope = %ctx.scope,
                     index = %self.index,

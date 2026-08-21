@@ -133,18 +133,20 @@ impl Navigate {
     async fn fallback_vector(&self, ctx: &QueryContext) -> Result<Vec<RawHit>, LunarisError> {
         let index = self.fallback_index.as_deref().unwrap_or(&self.index);
         let q_emb = ctx.embed_once().await?;
-        let hits = ctx
-            .storage
-            .vector_search(
-                &ctx.scope,
-                index,
-                &q_emb,
-                self.k,
-                ctx.query.filter.as_ref(),
-                ctx.query.as_of,
-                false,
-            )
-            .await?;
+        // F1: same rule as the leg above — an absent index means no rows.
+        let hits = crate::missing_index::no_rows_if_index_absent(
+            ctx.storage
+                .vector_search(
+                    &ctx.scope,
+                    index,
+                    &q_emb,
+                    self.k,
+                    ctx.query.filter.as_ref(),
+                    ctx.query.as_of,
+                    false,
+                )
+                .await,
+        )?;
         Ok(hits
             .into_iter()
             .map(|h| RawHit {
@@ -190,6 +192,10 @@ impl Retriever for Navigate {
             // Defensive: a backend that reports the capability but still
             // refuses navigate degrades instead of failing the recall.
             Err(StorageError::NotSupported(_)) => return self.fallback_vector(ctx).await,
+            // F1: a scope with no writes has no index to navigate. Empty, not
+            // an error — and not a fallback either, since the fallback would
+            // search the same absent index.
+            Err(ref e) if crate::missing_index::is_index_absent(e) => return Ok(vec![]),
             Err(e) => return Err(LunarisError::Storage(e)),
         };
         Ok(hits
