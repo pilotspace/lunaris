@@ -108,9 +108,13 @@ pub struct ForgetResponse {
 
     /// Number of episodes logically removed. Always `0` on a preview.
     ///
-    /// For the default soft-delete path this equals `rows_written` from the
-    /// underlying `ForgetReceipt`. Hard-delete receipts (not exposed via MCP)
-    /// would populate `rows_deleted` instead; the sum covers both paths.
+    /// Counted in EPISODES, matching [`Self::matched`] and this field's name.
+    /// It used to be `rows_written + rows_deleted` from the underlying
+    /// `ForgetReceipt`, which was the same number right up until W1.4 made
+    /// forget sweep each episode's chunk rows — after which a one-chunk
+    /// episode reported `removed: 2`. An agent asked to confirm a deletion
+    /// needs the count of the things it named, not of the rows they happen to
+    /// occupy.
     pub removed: u64,
 }
 
@@ -146,10 +150,11 @@ pub async fn handle(
     let scoped = lunaris.scoped(scope.clone());
     let receipt = scoped.forget(request).await?;
 
-    // Soft-delete (default) populates rows_written; hard-delete populates
-    // rows_deleted. The MCP wire doesn't expose the hard flag, so in practice
-    // rows_deleted is always 0 here. Sum both to be defensive.
-    let removed = receipt.rows_written + receipt.rows_deleted;
+    // In episodes, not rows — see `ForgetResponse::removed`. A committing call
+    // removes exactly what it matched; a preview removes nothing, and reading
+    // that from the engine's own `preview` flag rather than from the request
+    // means the two can never disagree.
+    let removed = if receipt.preview { 0 } else { receipt.matched };
     let status = if receipt.preview { "preview" } else { "deleted" };
 
     tracing::debug!(

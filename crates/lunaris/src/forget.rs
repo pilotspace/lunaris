@@ -90,7 +90,16 @@ pub enum IndexKind {
 pub struct ForgetReceipt {
     pub target: ForgetTarget,
     pub indices_affected: Vec<IndexKind>,
-    /// Primitives the target matched — what a committing call WOULD remove.
+    /// **Episodes** the target matched — the blast radius a committing call
+    /// would have, counted in the unit the caller reasons in.
+    ///
+    /// Deliberately NOT the row count. W1.4 made forget sweep each matched
+    /// episode's chunk rows, so `rows_written` / `rows_deleted` now report 2+
+    /// where they used to report 1 — but "I am about to delete 2 things" is a
+    /// worse answer to `memory.forget --dry-run` than "1 episode", and the
+    /// MCP-facing DTO in `lunaris-memory-service` documents this as episodes.
+    /// Rows are an implementation detail of how an episode is stored; the
+    /// episode is what the caller asked to forget.
     ///
     /// Populated on EVERY path, including `dry_run`, where `rows_written` and
     /// `rows_deleted` are both zero by construction: a preview whose only
@@ -610,12 +619,15 @@ pub(crate) async fn forget_scoped(
         }
 
         let matches = scan_matches_scoped(storage.as_ref(), scope, &request.target, clock).await?;
+        // W1.4: `matches` now holds chunk rows too. `matched` stays a count of
+        // EPISODES so the preview keeps meaning what its docs say.
+        let matched = episode_match_count(&matches, scope);
 
         if request.options.dry_run {
             let receipt = ForgetReceipt {
                 target: request.target.clone(),
                 indices_affected: classify_indices(&request.target),
-                matched: matches.len() as u64,
+                matched,
                 rows_written: 0,
                 rows_deleted: 0,
                 audit_lsn: Lsn { wall_ms: 0, counter: 0 },
@@ -644,7 +656,7 @@ pub(crate) async fn forget_scoped(
         let receipt = ForgetReceipt {
             target: request.target.clone(),
             indices_affected: classify_indices(&request.target),
-            matched: matches.len() as u64,
+            matched,
             rows_written: if request.options.hard { 0 } else { matches.len() as u64 },
             rows_deleted: if request.options.hard { matches.len() as u64 } else { 0 },
             audit_lsn: Lsn { wall_ms: 0, counter: 0 },
@@ -729,6 +741,16 @@ async fn scan_episode_matches_scoped(
         }
     }
     Ok(out)
+}
+
+/// How many EPISODES a scan matched, as opposed to how many rows it will touch.
+///
+/// Counted by key prefix rather than by payload shape: a `Chunk` also carries
+/// an `id` field, so the payload-parsing sibling below would happily count one.
+/// The key is the only thing that says which kind a row is.
+fn episode_match_count(matches: &[ForgetMatch], scope: &lunaris_core::Scope) -> u64 {
+    let prefix = lunaris_core::keyspace::episode_prefix(scope);
+    matches.iter().filter(|m| m.key.starts_with(&prefix)).count() as u64
 }
 
 /// The ulids of the episodes a scan matched, read from the payloads.

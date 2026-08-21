@@ -114,6 +114,6 @@ mod tests {
     /// Non-`Backend` variants are never index-absence, whatever they say.
     #[test]
     fn a_non_backend_variant_is_never_index_absence() {
-        assert!(!is_index_absent(&StorageError::NotSupported("unknown index".into())));
+        assert!(!is_index_absent(&StorageError::NotSupported("unknown index")));
     }
 }
