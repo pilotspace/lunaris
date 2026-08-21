@@ -168,6 +168,24 @@ jobs:
           cat "$RUNNER_TEMP/moon.log" || true
           exit 1
 
+      - name: Build lunaris-server (the protocol suite spawns it)
+        # W1.5 — `tests/run_protocol_lunaris_server.rs` SKIPS cleanly when
+        # `target/<profile>/lunaris-server` is absent, and no CI job ever built
+        # it. The entire HTTP protocol conformance suite — every MemoryProtocol
+        # verb, the D-21 hard-delete rail, auth, rate limiting — had therefore
+        # been reporting success without spawning a server. It was hiding a
+        # real bug: `snapshot::ndjson_stream` asked for a far-future LSN, which
+        # `routes/snapshot.rs::is_future_hlc` answers `404` by design, so the
+        # assertion had been unsatisfiable since that rule landed. Fixed in the
+        # same commit; this step is what keeps it honest.
+        #
+        # `--no-default-features` deliberately: W1.2 put `llamacpp` in the
+        # server's default set, and compiling llama.cpp here would add a cold
+        # C++ build to this job's budget for no signal — the protocol suite
+        # asserts HTTP status and body shape, never embedding quality. The
+        # default-on build is exercised by ci.yml's workspace compile.
+        run: cargo build -p lunaris-server --no-default-features
+
       - name: Run conformance tests with moon-it
         # Scope is strictly -p lunaris-conformance (NOT --workspace) to keep the
         # 8-min budget tight; --workspace is owned by ci.yml.

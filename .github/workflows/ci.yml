@@ -331,3 +331,109 @@ jobs:
             git diff -- crates/lunaris-codegen/snapshots/
             exit 1
           fi
+
+  # W1.5 — make the "built ≠ wired" discriminators actually execute.
+  #
+  # `crates/lunaris/tests/llamacpp_wired.rs` and the five
+  # `crates/lunaris-llamacpp/tests/*.rs` files all open with
+  #
+  #     let Some(gguf) = staged(...) else { eprintln!("[skip] …"); return; };
+  #
+  # and no CI job staged a GGUF — only perf-gates.yml did, and that job is
+  # label-gated off PRs. So nine skip sites reported success on every PR
+  # without executing a line of the thing they exist to prove: that
+  # `Lunaris::open`'s production resolution chain really serves the llama.cpp
+  # backends rather than silently degrading to `NoopEmbedder`. A green check
+  # that never ran is worse than a missing one — it reads as evidence.
+  #
+  # Two halves, and both are needed:
+  #   1. stage the artifacts (cached on their SHA-256, so a warm run pays a
+  #      cache restore instead of ~721 MB of download), and
+  #   2. FAIL if any `[skip]` marker reaches the log. Staging can break
+  #      silently — a moved HuggingFace URL, a poisoned cache — and without
+  #      (2) the job would go right back to reporting success for nothing.
+  #      This is the loudness half, and it covers every skip site that exists
+  #      now or is added later without touching a line of Rust.
+  #
+  # Runner cost: a separate job so a cold GGUF download never blocks `check`,
+  # and so the two run in parallel. GGUF URLs / SHAs are kept identical to
+  # perf-gates.yml and crates/lunaris-mcp/src/model_stager.rs.
+  #
+  # Security: no `github.event.*` reaches any run: block; the two URLs are
+  # static literals passed through env:.
+  llamacpp-wired:
+    name: llamacpp built-not-wired discriminators
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EMBEDDER_GGUF_URL: https://huggingface.co/mykor/granite-embedding-311m-multilingual-r2-GGUF/resolve/main/granite-embedding-311M-multilingual-r2-Q4_K_M.gguf
+      EMBEDDER_GGUF_SHA256: 58d27f63e69ccf7abce27bf6b35bb0edebc3a1c05ad4a3165acaba1cdca107c0
+      RERANKER_GGUF_URL: https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q5_K_M.gguf
+      RERANKER_GGUF_SHA256: 1a212007526c7083627eed92b39dd4472e90ff1374a03fb068733378220813ef
+      # The harness spawns a disposable Moon per test; 0.7.0 removed the
+      # in-process fallback, so a missing binary is a panic, not a skip.
+      MOON_TEST_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            vendor/moon -> vendor/moon/target
+          shared-key: llamacpp-wired
+
+      - name: Cache GGUF artifacts
+        id: gguf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.lunaris/models
+          key: gguf-${{ env.EMBEDDER_GGUF_SHA256 }}-${{ env.RERANKER_GGUF_SHA256 }}
+
+      - name: Stage GGUF artifacts (download + SHA-256 verify)
+        if: steps.gguf-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.lunaris/models
+          curl -sSfL --retry 3 "${EMBEDDER_GGUF_URL}" \
+            -o ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          curl -sSfL --retry 3 "${RERANKER_GGUF_URL}" \
+            -o ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+          cd ~/.lunaris/models
+          sha256sum -c <<EOF
+          ${EMBEDDER_GGUF_SHA256}  granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          ${RERANKER_GGUF_SHA256}  bge-reranker-v2-m3.Q5_K_M.gguf
+          EOF
+
+      - name: Assert artifacts staged
+        run: |
+          set -euo pipefail
+          test -s ~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf
+          test -s ~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf
+
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+
+      # `--nocapture` is REQUIRED: the `[skip]` markers go to the test's
+      # stderr, which libtest swallows for PASSING tests. Without it the
+      # loudness check below would have nothing to read.
+      - name: Run the llamacpp discriminators
+        run: |
+          set -euo pipefail
+          cargo test -p lunaris-llamacpp --features llamacpp -- --nocapture 2>&1 | tee gguf-tests.log
+          cargo test -p lunaris-memory --features llamacpp --test llamacpp_wired -- --nocapture 2>&1 | tee -a gguf-tests.log
+
+      - name: Fail on a vacuous skip
+        # The whole point of the job. A discriminator that did not execute must
+        # be visibly distinct from one that passed — never silently green.
+        run: |
+          set -uo pipefail
+          if grep -n '\[skip\]' gguf-tests.log; then
+            echo "::error::a built-not-wired discriminator SKIPPED in CI — the GGUF staging step above did not reach it. A skipped discriminator proves nothing; fix the staging rather than accepting the green."
+            exit 1
+          fi
+          echo "no [skip] markers — every discriminator executed"
