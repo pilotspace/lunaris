@@ -1,6 +1,6 @@
 //! Plan 05-03 — rate-limit contract (D-08).
 //!
-//! Subprocess runner sets `--rate-per-second 5 --rate-burst 10`; this test
+//! Subprocess runner sets `--rate-per-second 5 --rate-burst 20`; this test
 //! fires up to 30 requests as quickly as possible against `/v1/recall`.
 //! Asserts at least one response carries `429 Too Many Requests` plus a
 //! `Retry-After` header per spec.
@@ -22,7 +22,7 @@ pub async fn burst_returns_429(client: &Client, base: &Url, token: &str) -> anyh
 
     let mut saw_429 = false;
     let mut saw_retry_after = false;
-    // 30 requests gives ample headroom over the runner-configured burst=10
+    // 30 requests gives ample headroom over the runner-configured burst=20
     // even if the per-second refill races with the loop.
     for _ in 0..30u32 {
         let resp = client.post(url.clone()).bearer_auth(token).json(&body).send().await?;
@@ -42,7 +42,7 @@ pub async fn burst_returns_429(client: &Client, base: &Url, token: &str) -> anyh
     }
     anyhow::ensure!(
         saw_429,
-        "rate_limit: 30 burst requests did not trigger 429 (rate-burst=10 expected)"
+        "rate_limit: 30 burst requests did not trigger 429 (rate-burst=20 expected)"
     );
     anyhow::ensure!(saw_retry_after, "rate_limit: 429 response missing Retry-After header");
     Ok(())

@@ -353,11 +353,14 @@ async fn recall_sse_streams_when_event_stream_accept() {
     );
 }
 
+/// W1.1 — a bulk predicate that matches nothing still returns a 200 preview
+/// receipt. Zero matches is a legitimate outcome for a range delete, so the
+/// 404 arm added in W1.1 deliberately does NOT apply to `Scope` / `Before`.
 #[tokio::test]
 async fn forget_dry_run_returns_receipt() {
     let app = build_test_app();
     let body = serde_json::json!({
-        "target": { "Id": ulid::Ulid::new().to_string() },
+        "target": { "Scope": { "BySource": "src:nothing-here/" } },
         "dry_run": true
     });
     let req = Request::builder()
@@ -372,6 +375,30 @@ async fn forget_dry_run_returns_receipt() {
     let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
     let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(v["preview"], true, "dry_run receipt must have preview=true");
+}
+
+/// W1.1 — a single-ULID target that resolves to nothing in the caller's scope
+/// is `404 Not Found`. Before W1.1 this returned `200 OK` with a zero receipt,
+/// which is indistinguishable from a successful delete.
+#[tokio::test]
+async fn forget_unknown_id_returns_404() {
+    let app = build_test_app();
+    let body = serde_json::json!({
+        "target": { "Id": ulid::Ulid::new().to_string() },
+        "dry_run": true
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/forget")
+        .header("authorization", "Bearer tok-all")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .expect("req");
+    let resp = app.oneshot(req).await.expect("oneshot");
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let bytes = to_bytes(resp.into_body(), 65_536).await.expect("body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert_eq!(v["error"], "not_found");
 }
 
 #[tokio::test]

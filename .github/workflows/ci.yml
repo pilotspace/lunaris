@@ -167,6 +167,59 @@ jobs:
             exit 1
           fi
 
+      # W1.1 — ignored-test ratchet.
+      #
+      # `uat4_forget_honors_scope_target_contract` was parked behind
+      # `#[ignore = "un-ignore after ScopedLunaris::forget migration lands
+      # (Wave 1F / v0.3)"]`. Wave 1F landed in v0.3. The test stayed ignored
+      # through 0.7.0, and the P0 it was written to catch — `/v1/forget`
+      # answering 200 while deleting nothing for every real tenant — shipped
+      # in four releases. Before this step, `grep -rn 'ignored'
+      # .github/workflows/` returned NOTHING: no job looked at ignored tests
+      # at all.
+      #
+      # A blanket `cargo test -- --ignored` is not the gate: every surviving
+      # ignore in `crates/*/tests/` genuinely needs a live Moon, a GGUF, a
+      # tokenizer, or a release binary that this job does not have, so it
+      # would be permanently red. (The ones that only need a live Moon DO run
+      # now — integration.yml passes `--include-ignored` to the
+      # lunaris-storage-moon step.) What this step enforces instead is that
+      # parking a test stays VISIBLE and REVIEWABLE:
+      #
+      #   1. every `#[ignore]` in an integration-test file must carry a
+      #      reason string, and
+      #   2. the total count is pinned, so a new one cannot be added without
+      #      a deliberate bump that a reviewer sees in the diff.
+      #
+      # Raising EXPECTED_IGNORED is a decision, not a formality: say in the
+      # PR body what the new ignore needs and what un-ignores it.
+      #
+      # Scope is `*/tests/*.rs` on purpose — in-crate `#[cfg(test)]` units sit
+      # beside the code they cover, whereas an integration file can silently
+      # park a whole contract. Comment lines are stripped first so prose ABOUT
+      # `#[ignore]` does not count.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: ignored_test_ratchet
+        run: |
+          set -euo pipefail
+          EXPECTED_IGNORED=13
+          sites=$(find crates -path '*/tests/*' -name '*.rs' -print0 \
+            | xargs -0 grep -hn '#\[ignore' \
+            | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
+          count=$(printf '%s\n' "$sites" | grep -c '#\[ignore' || true)
+          bare=$(printf '%s\n' "$sites" | grep -c '#\[ignore\]' || true)
+          echo "ignored integration tests: $count (bare: $bare)"
+          printf '%s\n' "$sites"
+          if [ "$bare" != "0" ]; then
+            echo "::error::a bare #[ignore] carries no reason and no expiry — write #[ignore = \"what it needs / what un-ignores it\"]"
+            exit 1
+          fi
+          if [ "$count" != "$EXPECTED_IGNORED" ]; then
+            echo "::error::ignored-test count is $count, ratchet expects $EXPECTED_IGNORED. Un-ignoring? Lower EXPECTED_IGNORED in ci.yml. Adding one? Raise it AND say in the PR what un-ignores it."
+            exit 1
+          fi
+
       # Plan 13-01 RELEASE-02 — audit envelope grep gate. Blocks
       # reintroduction of inline `serde_json::json!({"kind":"..."})`
       # envelopes in either worker crate. The canonical shape lives in
