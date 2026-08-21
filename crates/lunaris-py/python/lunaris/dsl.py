@@ -6,6 +6,11 @@ Rust callers use:
 
     Vector("chunks", 30).and_(Keyword.bm25("chunks", 30)).fuse_rrf(60).top(5)
 
+The query text itself is set with `.query(text)`, the Python spelling of the
+Rust terminal `builder.execute(Query::text(t))`:
+
+    handle.recall().query("what does Alice like?").top(5).execute()
+
 The classes are pure-Python data-builders that collect the composed plan as
 a flat list of `(op, args)` tuples; the terminal `.execute()` collapses the
 plan down to the defaults the Rust `recall_simple_execute` FFI accepts
@@ -56,8 +61,9 @@ class _OpNode:
 
 
 class _Composable:
-    """Mixin exposing `.and_(...)`, `.fuse_rrf(k)`, `.top(n)`, `.as_of(ms)`,
-    `.filter(...)` / `.filter_str(...)`. Returned from every DSL entry point."""
+    """Mixin exposing `.and_(...)`, `.fuse_rrf(k)`, `.top(n)`, `.query(text)`,
+    `.as_of(ms)`, `.filter(...)` / `.filter_str(...)`. Returned from every DSL
+    entry point."""
 
     _node: _OpNode
 
@@ -82,6 +88,19 @@ class _Composable:
 
     def top(self, n: int) -> "RetrievalBuilder":
         node = _OpNode("top", (int(n),), (self._node,))
+        return RetrievalBuilder._from_node(node, _inherit_handle(self))
+
+    def query(self, text: str) -> "RetrievalBuilder":
+        """Set the query text the plan searches for.
+
+        Mirrors the Rust terminal `builder.execute(Query::text(t))`. Without
+        it the plan searches for the empty string, which is what every
+        `.execute()` did before v0.7.1 — the DSL had no way to express a
+        text query at all.
+
+            handle.recall().query("what does Alice like?").top(5).execute()
+        """
+        node = _OpNode("query", (str(text),), (self._node,))
         return RetrievalBuilder._from_node(node, _inherit_handle(self))
 
     def as_of(self, wall_ms: int) -> "RetrievalBuilder":
@@ -185,7 +204,13 @@ def _collapse_plan(node: _OpNode) -> dict:
     downstream vertical wrapper asks for it."""
     plan: dict = {"query": "", "k": 5, "index": "chunks"}
 
+    # POST-ORDER: children first, then the node itself. Operators are built
+    # outside-in (`Vector("chunks", 30).top(5)` is `top -> vector`), so a
+    # pre-order walk let the leaf's `k` overwrite `.top(n)` — `.top(5)` on
+    # the default root silently became `k = 30`.
     def visit(n: _OpNode) -> None:
+        for child in n.children:
+            visit(child)
         if n.op == "vector":
             plan["index"] = n.args[0]
             plan["k"] = int(n.args[1])
@@ -207,8 +232,8 @@ def _collapse_plan(node: _OpNode) -> dict:
             plan["filter"] = str(n.args[0])
         elif n.op == "as_of":
             plan["as_of_ms"] = int(n.args[0])
-        for child in n.children:
-            visit(child)
+        elif n.op == "query":
+            plan["query"] = str(n.args[0])
 
     visit(node)
     return plan
