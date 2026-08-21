@@ -50,7 +50,7 @@
 //! - [`CustomerSupportHistory`](documentary::CustomerSupportHistory) — ticket
 //!   / case-history recall.
 //!
-//! [Lunaris]: https://github.com/lunaris-dev/lunaris
+//! [Lunaris]: https://github.com/pilotspace/lunaris
 
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]

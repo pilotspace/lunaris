@@ -4,12 +4,16 @@ MCP server for [Lunaris](https://github.com/pilotspace/lunaris) — the
 production-grade agent memory engine.
 
 `lunaris-mcp` exposes Lunaris memory to Claude Code, OpenAI Codex, and any
-other MCP-native agent via the stdio transport. Eleven tools are registered —
-seven durable-memory tools (`memory.ingest`, `memory.recall`, `memory.forget`,
-`memory.list_scopes`, `memory.record_decision`, `memory.record_edit`,
-`memory.status`) plus four working-memory scratchpad tools
-(`memory.scratchpad_write`, `memory.scratchpad_read`, `memory.scratchpad_grep`,
-`memory.scratchpad_consolidate`).
+other MCP-native agent via the stdio transport.
+
+**16 tools** are registered — eight durable-memory tools (`memory.ingest`,
+`memory.recall`, `memory.forget`, `memory.list_scopes`, `memory.record_decision`,
+`memory.record_edit`, `memory.feedback`, `memory.status`), four working-memory
+scratchpad tools (`memory.scratchpad_write`, `memory.scratchpad_read`,
+`memory.scratchpad_grep`, `memory.scratchpad_consolidate`), and four curation
+tools (`memory.verify_agenda`, `memory.resolve`, `memory.dream_agenda`,
+`memory.distill`) that let an agent maintain its memory rather than only append
+to it.
 
 ## Install
 

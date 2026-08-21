@@ -51,8 +51,8 @@ the `cargo install --git` form above — plain `cargo install lunaris-mcp`
 
 ## Tool surface
 
-Eleven tools are registered (all implemented) — seven durable-memory tools
-plus four working-memory (scratchpad) tools:
+**16 tools** are registered (all implemented) — eight durable-memory tools,
+four working-memory (scratchpad) tools, and four curation tools:
 
 | Tool | Input | Returns |
 |------|-------|---------|
@@ -63,6 +63,11 @@ plus four working-memory (scratchpad) tools:
 | `memory.record_decision` | `decision`, `rationale`, optional `alternatives`, `tags`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.record_edit` | `path`, `after`, optional `before`, `intent`, `dedupe_key` | `{ lsn, was_duplicate }` |
 | `memory.status` | _(none)_ | backend capability profile + MQ queue-depth probes |
+| `memory.feedback` | `memory_id`, `sentiment` (±), `reason` (**required**), optional `dedupe_key` | `{ lsn, was_duplicate, activation_applied }` |
+| `memory.verify_agenda` | optional `limit` | `{ count, items[] }` — episodes the staleness sweep flagged (recorded git anchor no longer matches HEAD for files they reference) |
+| `memory.resolve` | `episode_id`, `action` (`keep` \| `invalidate`), optional `reason`, `superseded_by` | `{ status, episode_id, invalidated, agenda_removed }` |
+| `memory.dream_agenda` | optional `limit`, `min_cluster_size`, `max_activation` | `{ status, total_candidates, count, clusters[] }` — **read-only**; writes nothing |
+| `memory.distill` | `kind` (`decision` \| `lesson` \| `invariant` \| `gotcha`), `content`, `source_episode_ids`, optional `title`, `tags`, `dedupe_key` | `{ status, distilled_episode_id, lsn, archived_count, was_duplicate }` |
 | `memory.scratchpad_write` | `key`, `value`, optional `namespace` | `{ lsn }` |
 | `memory.scratchpad_read` | `key`, optional `namespace` | `{ found, value }` |
 | `memory.scratchpad_grep` | `pattern`, optional `namespace` | `{ entries[] }` |
@@ -74,6 +79,26 @@ plus four working-memory (scratchpad) tools:
 idempotency. `memory.status` reports the bound scope and backend capabilities
 (`queue_native`, `graph_native`, `rerank_native`, `native_rrf`,
 `max_vector_dim`, `cypher_dialect`, …).
+
+The **four curation tools** are what separate Lunaris from a vector store with
+an MCP wrapper — they let an agent *maintain* its memory, not just append to
+it. `memory.verify_agenda` surfaces memories the background staleness sweep
+believes have gone out of date (the git anchor recorded with the episode no
+longer matches HEAD for the files it references); `memory.resolve` acts on one
+— `keep` prunes the agenda row and leaves the episode live, `invalidate`
+soft-deletes it via an MVCC tombstone so it stops appearing in
+`memory.recall`. `memory.dream_agenda` is the read-only planner for
+distillation: it surfaces clusters of ripe (referenced, not-yet-distilled) raw
+episodes with activation stats and **writes nothing**, and `memory.distill` is
+the transactional apply step that writes the distilled prose back as a durable,
+highest-priority episode (`source = "distilled:{kind}:<scope>"`,
+`source_priority = 95`). `memory.feedback` records explicit ± human/agent
+feedback on one memory with a required reason, writing a strong reinforcement
+signal to the activation ledger that moves its recall ranking.
+
+The roster is pinned against the real binary by
+`crates/lunaris-mcp/tests/server_boot.rs::server_boots_and_lists_all_tools`,
+which spawns the process and drives `initialize` → `tools/list`.
 
 The four `memory.scratchpad_*` tools are working memory — transient,
 key-addressed notes (drafts, plans, in-progress state) under a `scratchpad/`
@@ -168,7 +193,7 @@ docker run -d --name lunaris-moon -p 6380:6379 \
 ```
 
 `--shards 1` is mandatory — an ingest is one MULTI/EXEC transaction and a
-sharded Moon rejects it. All eleven tools work against Moon: native HNSW
+sharded Moon rejects it. All 16 tools work against Moon: native HNSW
 vector search, BM25 keyword fusion, graph, queues, and search-side bi-temporal
 reads. See
 [Running an external Moon](https://github.com/pilotspace/lunaris/blob/main/docs/operations/external-moon.md).
