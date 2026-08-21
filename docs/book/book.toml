@@ -1,6 +1,6 @@
 [book]
 title = "Lunaris"
-description = "Production-grade agent-memory engine in Rust, with Python and TypeScript SDKs. Sub-25 ms recall over millions of bi-temporal facts, with provable atomicity and a graph that's opt-in."
+description = "Production-grade agent-memory engine in Rust, with Python and TypeScript SDKs. Sub-25 ms recall at 100,000 documents per scope (measured), with provable atomicity and a graph that's opt-in."
 authors = ["The Lunaris contributors"]
 language = "en"
 src = "src"

@@ -3,22 +3,52 @@
 
 **Lunaris**
 
-Lunaris is a production-grade **agent memory engine** built as a pure Rust framework with Python (PyO3) and TypeScript (NAPI) SDKs. It takes raw observations (messages, documents, tool results) from agents, extracts structured primitives using a small local LLM, and stores them in a bi-temporal MVCC store backed by **Moon** (our internal high-performance Redis-compatible substrate) with **Postgres** as a portability proof. Agents query it through a composable retrieval DSL that fuses semantic search, graph traversal, and BM25 keyword lookup.
+Lunaris is a production-grade **agent memory engine** built as a pure Rust framework with Python (PyO3) and TypeScript (NAPI) SDKs. It takes raw observations (messages, documents, tool results) from agents, extracts structured primitives using a small local LLM, and stores them in a bi-temporal MVCC store backed by **Moon** (our internal high-performance Redis-compatible substrate) — and, since 0.7.0, only Moon; the Postgres portability proof and the SQLite onboarding backend were deleted. Agents query it through a composable retrieval DSL that fuses semantic search, graph traversal, and BM25 keyword lookup.
 
 The audience is internal agent platforms first (we own the substrate), with a public Rust crate / `pip install lunaris` / `npm i lunaris` story to follow. Helios is the first downstream consumer; LangGraph / CrewAI / Letta integration is a second-wave concern.
 
-**Core Value:** **Sub-25ms recall over millions of bi-temporal facts, with provable atomicity and a graph that's opt-in.** If everything else fails, that one performance + correctness contract must hold — it's what differentiates Lunaris from Mem0, Zep, and Cognee.
+**Core Value:** **Sub-25 ms recall at 100,000 documents per scope, with provable atomicity and a graph that's opt-in.** If everything else fails, that one performance + correctness contract must hold — it's what differentiates Lunaris from Mem0, Zep, and Cognee.
+
+> **The claim is exactly this wide — do not restate it wider.**
+> - **Latency is measured, at 100k, not at "millions":** p50 19.2–22.4 ms /
+>   p95 22.3–24.1 / p99 23.4–24.4 ms, engine-side (query embedding excluded),
+>   graph OFF, rerank OFF, k=30, single-shard Moon v0.8.5 on an Apple M4 Pro
+>   (`docs/operations/capacity.md`). The 1k → 100k trend (0.7 ms → ~20 ms p50)
+>   says a million-fact scope would NOT meet 25 ms p50 on that hardware. The
+>   "millions" wording was retracted 2026-08-21. Graph ON measures ~39 ms p50
+>   and does not fit the contract; rerank ON measures ~1.3 s and is a quality
+>   stage, not a latency-class stage.
+> - **"Bi-temporal" is qualified on Moon:** valid-time/system-time is a
+>   required field on every primitive, and as-of *reads* work on the search
+>   and graph paths (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`). Historical
+>   **KV** reads are NOT available — `HISTORICAL_KV_READS = false`
+>   (`crates/lunaris-storage-moon/src/as_of.rs`); an `as_of` older than the
+>   1-hour `AS_OF_LIVE_WINDOW_MS` is refused as `NotSupported` → HTTP 501,
+>   pinned by `crates/lunaris-conformance/tests/run_as_of_moon_gap.rs`.
+>   Never sell time-travel without that sentence attached.
 
 ### Constraints
 
 - **Tech stack — Rust**: edition 2024, MSRV **1.94** (matches Moon to ease cross-repo work)
 - **Tech stack — Python**: 3.11+ (PyO3 0.29 baseline)
 - **Tech stack — TypeScript**: Node 20+, napi-rs 3.x
-- **Backend ordering — Moon first, Postgres second**: explicit inversion of blueprint §5.3, justified by internal-first deployment
+- **Backend — Moon only (0.7.0+)**: the original "Moon first, Postgres second" ordering inverted blueprint §5.3 for internal-first deployment; 0.7.0 finished the job and deleted the Postgres and SQLite backends outright. `moon://host:port` is the only scheme `lunaris::open` accepts
 - **Latest libraries policy**: tokio latest 1.x, axum ≥0.8, sqlx ≥0.9, llama-cpp-2 (exact-pinned), tower ≥0.5, tracing ≥0.1, thiserror 2.x, anyhow 1.x, serde latest 1.x, redis 0.32+ (or direct Moon SDK if available in `moon/sdk/`)
 - **No duplicate vector / BM25 libs**: Moon native `FT.*` is the canonical implementation; Lunaris does NOT bundle a second HNSW (e.g., `instant-distance`) or BM25 (e.g., `tantivy`)
-- **Timeline — 7 calendar days to production rollout**: explicit user override of blueprint §14 (90-day plan). The team takes the risk of compressed validation; mitigated by automated quality gates on every push (LongMemEval, LoCoMo, ER-F1, perf smoke) and progressive rollout (5% → 25% → 100% traffic at lunaris.dev)
-- **Real-use-case-at-once testing**: all 10 recipes get integration tests against both Moon and Postgres simultaneously. No "we'll add Postgres later" scope cuts.
+- **Timeline — 7 calendar days to production rollout**: explicit user override of blueprint §14 (90-day plan). The team takes the risk of compressed validation; mitigated by progressive rollout (5% → 25% → 100% traffic at lunaris.dev).
+  **The "automated quality gates on every push (LongMemEval, LoCoMo, ER-F1,
+  perf smoke)" clause was retracted 2026-08-21 — none of it is true.** No
+  eval gate runs on push: `eval-gauntlet.yml` was deleted from main and, before
+  that, failed 200/200 runs at 0 s duration. LoCoMo *structurally cannot*
+  produce a score — `crates/lunaris-bench/src/eval/locomo.rs` ingests each
+  question's own gold answer into a scratchpad and then greps for it, a
+  self-retrieval tautology. ER-F1 is a stub that returns `0.0`
+  (`er_f1.rs`). Every failure path emits `SKIPPED`, so neither can go red.
+  `perf-gates.yml` is opt-in behind a `perf-bench` label, is not a required
+  check, and is currently red on main. **Do not cite an eval or perf number
+  as CI-enforced.** The only latency evidence is the manual GA-2b run
+  (`docs/operations/capacity.md`)
+- **Real-use-case-at-once testing**: all 10 recipes get integration tests against Moon. (This constraint originally said "both Moon and Postgres simultaneously"; the Postgres half became moot when the backend was deleted in 0.7.0.)
 - **Atomic commits**: every plan/phase commits incrementally. The Moon repo's `git commit -F tmp/<msg>.txt` pattern is mirrored here per the user's global git rules.
 - **File size**: no `.rs` file exceeds 1500 lines (matches Moon's convention); split read/write at 1000 lines.
 - **Lock discipline**: `parking_lot::RwLock` over `std::sync::RwLock`; never hold a lock across `.await` (matches Moon's UNSAFE_POLICY.md guidance).
@@ -86,35 +116,26 @@ The audience is internal agent platforms first (we own the substrate), with a pu
   by `Scope::new` so the `lunaris:{scope}:{kind}:{ulid}` KV format cannot
   byte-alias across scopes. The v0.2.0 operator workaround ("don't mint
   scope strings ending in `:episode`...") is obsolete — closure is at the
-  type level. Postgres enforces the same alphabet via the per-table
-  `<table>_scope_check` constraint (migration 7).
+  type level. (The Postgres per-table `<table>_scope_check` constraint that
+  mirrored this alphabet went away with the backend in 0.7.0.)
 
 ### HTTP DTO discipline (`lunaris-server`)
 
 - Every public request DTO MUST carry `#[serde(deny_unknown_fields)]`. The
   v0.2 review (P-1) found two of three v0.2 DTOs missing it; both now have it
   (`IngestBody`, `RecallRequest`, `ForgetRequestDto`). Without the attribute,
-  clients can smuggle `scope` / `tenant` overrides past the JWT-bound
+  clients can smuggle `scope` / `tenant` overrides past the server-bound
   partition key.
-- The JWT `tenant` claim is the **only** source of truth for the partition
-  scope. Route handlers MUST consume `claims.scope` and ignore any wire-side
-  `scope` / `tenant` fields.
-
-### Postgres RLS
-
-- Every `tenant_isolation` policy MUST declare both `USING` and `WITH CHECK`.
-  `USING`-only is read-tight on SELECT/UPDATE but leaves INSERT
-  scope-unchecked at the database boundary — RC-3 (v0.2 review).
-- Production connections MUST use a `NOSUPERUSER NOBYPASSRLS` role —
-  superusers bypass RLS regardless of `FORCE ROW LEVEL SECURITY`. See
-  `docs/migration/0.1-to-0.2.md` §6.2 for the role-creation recipe.
-- **Every Postgres read path** in `lunaris-storage-postgres` MUST open a
-  read tx and run `SELECT set_config('lunaris.scope', $1, true)` before
-  the body. Mirror the `vector.rs::vector_search` pattern. The
-  `RC-A` v0.2 target-review found `keyword_search` skipping this step —
-  BM25 silently returned zero hits under the production role. Tests
-  under the app role MUST cover every port method, not just
-  `vector_search`/`read_as_of`. Owner/superuser tests pass by accident.
+- **The server-side token claim is the only source of truth for the partition
+  scope.** Route handlers MUST consume the `AuthClaims.tenant` the auth
+  middleware attached and ignore any wire-side `scope` / `tenant` fields.
+  **There are no JWTs in v0** — this convention used to say "the JWT `tenant`
+  claim" and that was never true of the shipped server. The wire credential is
+  an **opaque bearer token**; its claims (`tenant` = partition scope, `scopes`
+  = verb permissions) live in the server-side tokens file, never in the token
+  (`crates/lunaris-server/src/state.rs::TokenClaims`, `SECURITY.md` §"There
+  are no JWTs in v0"). Managed JWT/OIDC issuance is the v1 gate
+  `DEPLOY-V1-01`.
 
 ### Invariants worth grep-pinning
 

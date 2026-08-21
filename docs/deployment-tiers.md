@@ -46,8 +46,13 @@ re-measure when bumping `llama-cpp-2` or the token budget):
   all. Zero C++ in the build — this is the CI cell
   `cargo check -p lunaris-memory --no-default-features`.
 - **Default server**: Tier-1 covers ingest + hybrid recall at full
-  quality minus the ~12 ms cross-encoder pass (`Hit.rerank_applied =
-  false` marks the degraded path).
+  quality minus the cross-encoder pass (`Hit.rerank_applied = false`
+  marks the path without it). That pass is **not** the ~12 ms the
+  blueprint budgeted: it measures **p50 1301.3 ms** at the default
+  `top_in=60` (575.6 ms at `top_in=30`) on an M4 Pro with full Metal
+  offload — see [`docs/operations/capacity.md` §4](operations/capacity.md).
+  Tier-1 is therefore the **fast** tier, and Tier-2 buys quality at a
+  seconds-class latency budget.
 - **Quality-max recall**: Tier-2. The reranker loads lazily on the first
   `rerank()` — a process that never reranks pays Tier-1 RSS.
 

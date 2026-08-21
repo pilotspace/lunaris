@@ -134,6 +134,15 @@ compared directly**. Lunaris currently has **no comparable accuracy number** bec
 harnesses are stubbed — closing that (task `eval-gauntlet-ci-gate`) is the prerequisite for any honest
 accuracy claim. This is flagged, not a like-for-like comparison.
 
+**Sharper than "stubbed" (2026-08-21 audit):** ER-F1 is a literal stub returning `0.0`
+(`crates/lunaris-bench/src/eval/er_f1.rs`). LoCoMo is worse than a stub — it is a
+**self-retrieval tautology**: `eval/locomo.rs` ingests each question's own gold answer
+into a scratchpad (`eval/mod.rs::ingest_answers_to_pad`) and then greps for it
+(`recall_j_score_from_pad`). Any J-score it emits measures string round-tripping, not
+memory. Both harnesses emit `SKIPPED` on every failure path, so neither can go red, and
+the `eval-gauntlet.yml` workflow that ran them has been deleted from `main` (it failed
+200/200 runs at 0 s duration before that). **Never publish a figure from either.**
+
 ## E. Ranked backlog (ROI-ordered within severity; P0 anchor = production-risk + core contract)
 
 | proposed_task_slug | dimension | severity | impact | acceptance_evidence | rough_effort | depends-on |

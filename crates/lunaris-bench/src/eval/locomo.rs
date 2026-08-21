@@ -1,5 +1,30 @@
 //! Plan 05-06 EVAL-02 — LoCoMo J-score harness.
 //!
+//! # ⚠️ DO NOT PUBLISH A NUMBER FROM THIS HARNESS
+//!
+//! **This harness cannot measure LoCoMo accuracy, and its output must never
+//! be quoted as an accuracy result.** It is a **self-retrieval tautology**:
+//! [`crate::eval::ingest_answers_to_pad`] writes each question's own **gold
+//! answer** into a scratchpad, and [`crate::eval::recall_j_score_from_pad`]
+//! then recalls and greps for that same answer. A high J-score here measures
+//! that the store round-trips a string it was just handed — nothing about
+//! long-conversation memory, and nothing comparable to a published LoCoMo
+//! figure.
+//!
+//! It also **cannot fail**: every error path emits `EvalRow::skipped`, so the
+//! harness can never go red and is worthless as a CI quality gate. The
+//! `eval-gauntlet.yml` workflow that ran it was deleted from `main`; before
+//! that it failed 200/200 runs at 0 s duration. The CLAUDE.md claim of
+//! "automated quality gates on every push (LongMemEval, LoCoMo, ER-F1, perf
+//! smoke)" was retracted on 2026-08-21 for exactly this reason.
+//!
+//! Turning this into a real harness means: parse the LoCoMo conversation
+//! sessions (not the answers) as the corpus, ingest **those**, recall by
+//! question, and judge the recalled context against the gold answer with an
+//! LLM judge — i.e. the shape `crates/lunaris-bench`'s LongMemEval path uses.
+//! Until that exists, Lunaris has **no LoCoMo number**, and saying so is the
+//! honest position.
+//!
 //! Same shape as [`crate::eval::longmemeval`]; HF dataset
 //! `snap-research/locomo10`; threshold J ≥ 70 (alpha bar per blueprint §13).
 //!

@@ -1,7 +1,11 @@
 # Lunaris
 
-**Sub-25 ms recall over millions of bi-temporal facts, with provable
-atomicity and a graph that's opt-in.**
+**Sub-25 ms recall at 100,000 documents per scope — measured, not
+projected — with provable atomicity and a graph that's opt-in.**
+
+<sub>p50 19.2–22.4 ms / p99 23.4–24.4 ms, engine-side, single-shard Moon
+v0.8.5 on an Apple M4 Pro — [full envelope and method](docs/operations/capacity.md).
+Beyond 100k the contract is unvalidated; do not read "millions".</sub>
 
 A production-grade agent-memory engine in Rust, with first-class Python
 and TypeScript SDKs and a zero-Rust MCP server for coding agents. Raw
