@@ -165,49 +165,193 @@ fn ratchet_workflow_runs_the_gate_against_the_checked_in_baseline() {
     );
 }
 
-/// The baseline the workflow gates on must exist, parse, and be internally
-/// coherent — including its config signature's offsets manifest actually
-/// matching the manifest in the tree (a silently edited manifest invalidates
-/// the ratchet).
-#[test]
-fn checked_in_baseline_is_coherent_with_the_offsets_manifest() {
-    let p = workspace_root().join("scripts/bench/lme/baselines/ci-anygold.json");
-    let body = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+/// The baselines CI gates on after the two-operating-point split
+/// (`scripts/bench/lme/baselines/README.md`). Hardcoded, never globbed: a
+/// glob over the directory passes vacuously the moment a file is deleted or
+/// renamed, which is precisely the failure this guard exists to catch.
+const GATING_BASELINES: &[&str] = &["ci-anygold-fast-n40.json", "ci-anygold-quality-n40.json"];
+
+/// The legacy N=16 `quality` baseline. Still coherence-checked while it
+/// exists, but deliberately exempt from the sensitivity bar below: its
+/// `(1 + 1) / 16` = 12.5-point fail floor IS the defect the N=40 pair
+/// replaces (baselines/README.md defect (b1)). Retired in a follow-up once
+/// the pair has run green on `main` once.
+const LEGACY_BASELINE: &str = "ci-anygold.json";
+
+/// The largest regression, in percentage points, that a gating baseline is
+/// allowed to be blind to. `tally.py` fails when `hits < baseline − tolerance`,
+/// so the smallest detectable drop is `(tolerance + 1) / total`. Requiring
+/// that to be <= 5% is exactly `total >= 20 * (tolerance + 1)` — the general
+/// form stated in scripts/bench/lme/baselines/README.md, checked in integer
+/// arithmetic so no float rounding sits between the rule and the assertion.
+const MAX_BLIND_SPOT_POINTS: u64 = 5;
+const MIN_N_PER_TOLERANCE_STEP: u64 = 100 / MAX_BLIND_SPOT_POINTS;
+
+struct Baseline {
+    total: u64,
+    tolerance: u64,
+    signature: String,
+}
+
+/// Load a baseline and assert it is internally coherent — including that its
+/// config signature's offsets manifest matches the manifest actually in the
+/// tree. A silently edited manifest invalidates the ratchet without changing
+/// a single number in the baseline file.
+fn load_and_check_baseline(name: &str) -> Baseline {
+    let p = workspace_root().join("scripts/bench/lme/baselines").join(name);
+    let body = std::fs::read_to_string(&p).unwrap_or_else(|e| {
+        panic!(
+            "read {}: {e}\n  A baseline is a MEASUREMENT — bless it with \
+             `anygold_gate.sh --write-baseline` on a machine that actually ran \
+             the questions. See scripts/bench/lme/baselines/README.md.",
+            p.display()
+        )
+    });
     let v: serde_json::Value =
         serde_json::from_str(&body).unwrap_or_else(|e| panic!("parse {}: {e}", p.display()));
 
-    assert_eq!(v["metric"], "lme_s_anygold", "baseline metric must be lme_s_anygold");
-    let hits = v["hits"].as_u64().expect("baseline.hits must be a non-negative integer");
-    let total = v["total"].as_u64().expect("baseline.total must be a non-negative integer");
-    let tol = v["tolerance_questions"]
+    assert_eq!(v["metric"], "lme_s_anygold", "{name}: metric must be lme_s_anygold");
+    let hits = v["hits"].as_u64().unwrap_or_else(|| panic!("{name}: hits must be an integer"));
+    let total = v["total"].as_u64().unwrap_or_else(|| panic!("{name}: total must be an integer"));
+    let tolerance = v["tolerance_questions"]
         .as_u64()
-        .expect("baseline.tolerance_questions must be a non-negative integer");
-    assert!(hits <= total, "baseline hits {hits} cannot exceed total {total}");
-    assert!(total > 1, "a 1-question baseline ratchets nothing");
+        .unwrap_or_else(|| panic!("{name}: tolerance_questions must be an integer"));
+    assert!(hits <= total, "{name}: hits {hits} cannot exceed total {total}");
+    assert!(total > 1, "{name}: a 1-question baseline ratchets nothing");
     assert!(
-        tol < total,
-        "tolerance {tol} >= total {total} makes the gate vacuous — it could never fail"
+        tolerance < total,
+        "{name}: tolerance {tolerance} >= total {total} makes the gate vacuous — \
+         it could never fail"
     );
 
-    let sig = v["config_signature"].as_str().expect("baseline.config_signature must be a string");
+    let signature =
+        v["config_signature"].as_str().expect("config_signature must be a string").to_string();
     // `offsets=<file>:<count>` must agree with the manifest in the tree.
-    let offsets_part = sig
+    let offsets_part = signature
         .split('|')
         .find_map(|part| part.strip_prefix("offsets="))
-        .expect("config_signature must carry an offsets=<file>:<count> component");
+        .unwrap_or_else(|| panic!("{name}: signature needs an offsets=<file>:<count> component"));
     let (fname, count) =
         offsets_part.rsplit_once(':').expect("offsets component must be <file>:<count>");
     let count: u64 = count.parse().expect("offsets count must be numeric");
-    assert_eq!(count, total, "signature offsets count must equal baseline.total");
+    assert_eq!(count, total, "{name}: signature offsets count must equal total");
     let manifest = workspace_root().join("scripts/bench/lme/questions").join(fname);
     let rows = manifest_rows(&manifest);
     assert_eq!(
         rows as u64,
         total,
-        "{} holds {rows} questions but the baseline claims {total} — manifest drift; \
+        "{} holds {rows} questions but {name} claims {total} — manifest drift; \
          re-bless the baseline",
         manifest.display()
     );
+
+    // `operating_point` and `smallest_detectable_regression_points` are DERIVED
+    // fields — tally.py computes both from the signature and the counts
+    // (scripts/bench/lme/tally.py:246-248). They are also plain JSON anyone can
+    // hand-edit, and a floor that misreports its own sensitivity is worse than
+    // no floor at all. Re-derive both and compare.
+    let rerank = signature
+        .split('|')
+        .find_map(|part| part.strip_prefix("rerank="))
+        .unwrap_or_else(|| panic!("{name}: signature carries no rerank= component"));
+    let derived_point = match rerank {
+        "0" => "fast",
+        "1" => "quality",
+        other => panic!("{name}: unexpected rerank={other} in signature (expected 0 or 1)"),
+    };
+    let stated_point =
+        v["operating_point"].as_str().unwrap_or_else(|| panic!("{name}: operating_point missing"));
+    assert_eq!(
+        stated_point, derived_point,
+        "{name}: operating_point says {stated_point}, but the config signature says \
+         rerank={rerank} ({derived_point}) — one of the two was hand-edited, and the \
+         published numbers are labelled from this field"
+    );
+
+    let claimed = v["smallest_detectable_regression_points"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("{name}: smallest_detectable_regression_points missing"));
+    let computed = 100.0 * (tolerance + 1) as f64 / total as f64;
+    assert!(
+        (claimed - computed).abs() < 0.05,
+        "{name}: claims a {claimed:.1}-point smallest detectable regression, but \
+         tolerance {tolerance} over N={total} actually gives {computed:.1}. The gate \
+         is blinder than the file says it is."
+    );
+
+    Baseline { total, tolerance, signature }
+}
+
+/// Every baseline in the tree — legacy and gating alike — must parse and agree
+/// with its manifest.
+#[test]
+fn every_baseline_is_coherent_with_its_offsets_manifest() {
+    for name in std::iter::once(LEGACY_BASELINE).chain(GATING_BASELINES.iter().copied()) {
+        load_and_check_baseline(name);
+    }
+}
+
+/// The gate must be able to fail on a regression of the size this project
+/// actually argues about. At N=16 / tolerance=1 the smallest detectable drop
+/// was 2/16 = 12.5 points, so a 5-point retrieval regression — the scale of
+/// the deltas in `docs/benchmarks/` — was invisible.
+#[test]
+fn gating_baselines_can_detect_a_five_point_regression() {
+    for name in GATING_BASELINES {
+        let b = load_and_check_baseline(name);
+        let blind_spot = (b.tolerance + 1) as f64 / b.total as f64 * 100.0;
+        assert!(
+            b.total >= MIN_N_PER_TOLERANCE_STEP * (b.tolerance + 1),
+            "{name}: tolerance {} over N={} means the gate cannot see a regression \
+             smaller than {blind_spot:.1} points (limit {MAX_BLIND_SPOT_POINTS}). \
+             Buy sensitivity with N, not by dropping the tolerance — the tolerance is \
+             a correctness allowance for cross-platform float math, and a gate that \
+             cries wolf gets disabled.",
+            b.tolerance,
+            b.total
+        );
+    }
+}
+
+/// Two baselines that both measure the same operating point would let CI
+/// report "both points gated" while gating one — the published `fast` default
+/// would stay exactly as unguarded as it was before the split.
+#[test]
+fn gating_baselines_cover_two_distinct_operating_points() {
+    let points: Vec<(&str, String)> = GATING_BASELINES
+        .iter()
+        .map(|name| {
+            let b = load_and_check_baseline(name);
+            let rerank = b
+                .signature
+                .split('|')
+                .find_map(|part| part.strip_prefix("rerank="))
+                .unwrap_or_else(|| panic!("{name}: signature carries no rerank= component"))
+                .to_string();
+            (*name, rerank)
+        })
+        .collect();
+
+    let fast = points.iter().filter(|(_, r)| r == "0").count();
+    let quality = points.iter().filter(|(_, r)| r == "1").count();
+    assert!(
+        fast == 1 && quality == 1,
+        "the gating pair must be exactly one `fast` (rerank=0, the SHIPPED default) \
+         and one `quality` (rerank=1), got {points:?}. Gating the same point twice \
+         reads as coverage and is not."
+    );
+
+    // A `fast` baseline whose filename says `quality` (or vice versa) would pass
+    // the count check above while pointing CI at the wrong floor.
+    for (name, rerank) in &points {
+        let expected = if rerank == "0" { "fast" } else { "quality" };
+        assert!(
+            name.contains(expected),
+            "{name} measures rerank={rerank} ({expected}) but its filename says otherwise — \
+             the workflow selects the baseline BY NAME, so this mismatch silently gates \
+             each arm against the other arm's floor"
+        );
+    }
 }
 
 fn manifest_rows(path: &Path) -> usize {
