@@ -19,9 +19,10 @@ and there is no business logic of its own.
 | `top` | `fn top(self, k: usize) -> Self` | caps output; default `10`; **consumes `self`** |
 | `search` | `async fn search(self, query: &str) -> Result<Vec<Hit>, LunarisError>` | **consumes `self`**; fans out a `Vector + Keyword(BM25) ⊕ RRF(60)` plan with a generous over-fetch, executes, then prunes to the source prefix and caps at `k` |
 
-`search` returns `Vec<Hit>` ranked by the fused RRF score. The
-Moon-native-RRF vs Postgres-client-side-merge branch lives inside
-`RetrievalBuilder::execute` — the wrapper is pure plan composition. Source
+`search` returns `Vec<Hit>` ranked by the fused RRF score. The dispatch to
+Moon's native RRF (versus a client-side merge for a backend that does not
+declare the capability) lives inside `RetrievalBuilder::execute` — the wrapper
+is pure plan composition. Source
 prefix scoping runs post-hydrate (the `chunks` FT schema does not carry
 `source`), so a modest over-fetch is applied before pruning to the corpus's
 prefix.

@@ -20,7 +20,7 @@ Pencil-line annotation arrow to RETRIEVE, numbered list in small print: "1 exact
 Pencil-line annotation arrow to STORE: "durable vs ephemeral — choose per lifetime"
 
 TIER 3 at bottom: three small boxes connected left to right by thin arrows: "ingest pipeline" → "recall DSL (RRF)" → "working memory".
-Below them one database cylinder labeled "SQLite / Moon" with a thin arrow down from the engine boxes.
+Below them one database cylinder labeled "Moon" with a thin arrow down from the engine boxes.
 Pencil-line annotation arrow to the cylinder: "same store as lunaris-hook"
 
 Thin solid arrows connect tier 1 → tier 2 → tier 3 with small open arrowheads. Annotation leader lines are thin, light pencil-gray strokes ending in small dots.

@@ -96,8 +96,8 @@ and the type system rejects mixing incompatible operators.
 ### Time-travel recall (no Mem0 equivalent)
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
+> keeps a KV version chain to hydrate the historical rows, and the two
+> backends that did (Postgres, SQLite) were deleted in 0.7.0. On **Moon** the call returns
 > `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
 > Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
 > rather than silently answering with present-time data. Moon's search and

@@ -107,7 +107,8 @@ would be silently lost; the supersede writers patch both.)
 > **Which half is universal.** The bi-temporal *write* model above holds
 > on every backend. As-of *reads* do not: `StoragePort::read_as_of` can
 > answer a **historical** pin only where the backend keeps a KV version
-> chain — Postgres and SQLite (`supports_historical_kv_reads() == true`).
+> chain (`supports_historical_kv_reads() == true`), and the two backends
+> that did were deleted in 0.7.0.
 > **Moon stores Lunaris rows as plain hashes with no version chain**, so
 > since v0.6.2 it refuses a historical pin with
 > `StorageError::NotSupported` (HTTP `501 not_supported`) rather than

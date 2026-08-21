@@ -330,8 +330,8 @@ into a path no Moon process is holding, and start the new instance yourself.
 * **No point-in-time recovery.** There is no "restore to 14:32" story. The
   granularity is one backup.
 * **No incremental backup.** Every backup is a full directory copy.
-* **Moon only.** Postgres and SQLite backends have their own durability
-  stories and are not covered here (and are slated for removal in 0.7.0).
+* **Moon only.** The Postgres and SQLite backends were deleted in 0.7.0;
+  their durability stories left with them.
 * **No replica-based backup.** Backing up a Moon replica instead of the master
   would remove the downtime requirement; untested here.
 

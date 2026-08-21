@@ -52,7 +52,7 @@ A few more differentiators, with proof:
 | **Type-enforced multi-tenancy** | `Scope::new(s)?` validates against `[A-Za-z0-9_\-.]{1,128}`; the wire can't smuggle a different scope past `ScopedLunaris`. On Moon the scope is baked into the key, the FT index name and the graph name, so a cross-scope read has nothing to address. (Postgres RLS was the second boundary through 0.6.2; that backend was removed in 0.7.0.) | `crates/lunaris-core/src/scope.rs` ([RFC 0001](https://github.com/pilotspace/lunaris/blob/main/docs/rfcs/0001-scope-newtype.md)) |
 | **Opt-in graph** | `Graph::anchored(entity_ids, hops)` is an operator. Off by default — your dev box doesn't load a graph extractor until you call `lunaris.graph_pipeline().enable()`. | `crates/lunaris-retrieve/src/operators/graph.rs` |
 | **Remote-only verifier, no accidental cost** | The verifier resolves from `LUNARIS_VERIFY_PROVIDER` (anthropic/openai/gemini/minimax/openai-compat) or a caller-supplied impl. With no provider configured the effective verifier is `NoopVerifier` (a `tracing::warn!` says so) — opt in deliberately, no local model to stage. | `crates/lunaris-verify/src/lib.rs` |
-| **One substrate, not three** | Moon *or* Postgres holds the vector index, the graph, the keyword index, and the queue. No vector DB + graph DB + relational DB to operate. | [Choosing a Backend](../operations/backends.md) |
+| **One substrate, not three** | Moon holds the vector index, the graph, the keyword index, and the queue. No vector DB + graph DB + relational DB to operate. | [Choosing a Backend](../operations/backends.md) |
 
 ## When Lunaris is the answer
 
@@ -60,7 +60,7 @@ Pick Lunaris when you can say **yes** to most of these:
 
 - My agent's recall p50 is on the hot path of user experience —
   300 ms feels slow.
-- I want a single substrate (Moon or Postgres) instead of running a
+- I want a single substrate (Moon) instead of running a
   vector DB + graph DB + relational DB.
 - I need bi-temporal queries: "what did the agent believe at time T?"
   (bi-temporal *writes* always; as-of *reads* on the search and graph lanes

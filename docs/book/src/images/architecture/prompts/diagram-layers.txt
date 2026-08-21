@@ -22,8 +22,7 @@ TIER 3 (lower middle, warm sand whisper tint #f5f0e8): label "CONTRACTS"
   Pencil-line annotation arrow: "swap backends — same trait"
 
 TIER 4 (bottom, cloud blue whisper tint #eef3f9): label "SUBSTRATE"
-  HERO ELEMENT, drawn slightly larger: a database cylinder labeled "MOON" containing four tiny icons in a row labeled: "vectors" · "keywords" · "graph" · "queue"
-  To its right, two smaller cylinders: "Postgres" and "SQLite"
+  HERO ELEMENT, drawn alone and large: a database cylinder labeled "MOON" containing four tiny icons in a row labeled: "vectors" · "keywords" · "graph" · "queue"
   Pencil-line annotation arrow to MOON: "one engine, one transaction"
 
 CONNECTIONS: one thin vertical arrow between each tier, top to bottom, small open arrowheads. Between ENGINE and SUBSTRATE, the arrow carries a small label: "one atomic commit".

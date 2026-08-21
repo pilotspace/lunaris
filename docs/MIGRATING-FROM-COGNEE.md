@@ -30,7 +30,7 @@ already running Cognee can evaluate the switch with concrete code.
 | **Recall latency**                         | Depends on backend (~50 ms LanceDB local, ~200 ms cloud) | p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64`           |
 | **Atomicity**                              | Per-store best-effort                            | One `atomic_write` covers vector + KV + graph + audit + queue. CI gate enforces single call site |
 | **Tenancy**                                | `dataset` string on the API                     | `Scope` newtype (`[A-Za-z0-9_\-.]{1,128}`) threaded through every storage call + per-scope Moon keyspace |
-| **Graph query language**                   | Cypher (via backend)                            | AGE Cypher (Postgres) OR Moon native graph; same `Graph::anchored(entity_ids, hops)` operator on both |
+| **Graph query language**                   | Cypher (via backend)                            | Moon native graph via the same `Graph::anchored(entity_ids, hops)` operator on both |
 | **Custom pipeline tasks**                  | First-class — register Tasks, compose with `await cognee.cognify()` | Override `Extractor` trait (Phase 3); recall DSL is fixed surface |
 | **License**                                | Apache 2.0                                      | Apache 2.0                                             |
 
@@ -179,8 +179,8 @@ adds the fan-out primitive.
 ### Time-travel recall
 
 > **Backend note (v0.6.2).** `.as_of(<past timestamp>)` needs a backend that
-> keeps a KV version chain to hydrate the historical rows: **Postgres and
-> SQLite** answer these. On **Moon** the call returns
+> keeps a KV version chain to hydrate the historical rows, and the two
+> backends that did (Postgres, SQLite) were deleted in 0.7.0. On **Moon** the call returns
 > `StorageError::NotSupported` (HTTP `501 not_supported`) — Moon stores
 > Lunaris rows as plain hashes, and since v0.6.2 it refuses a historical pin
 > rather than silently answering with present-time data. Moon's search and
@@ -201,8 +201,8 @@ hits = await (
 )
 ```
 
-The temporal cut happens at the storage layer (`tstzrange &&` on
-Postgres, native bi-temporal on Moon). On 1M-fact corpora the
+The temporal cut happens at the storage layer (`FT.SEARCH AS_OF` on
+Moon). On 1M-fact corpora the
 latency difference matters.
 
 ## Migration checklist
@@ -219,7 +219,7 @@ latency difference matters.
 5. **Shadow reads.** Every `cognee.search(...)` is also issued to
    Lunaris's recall DSL. Diff in your eval harness.
 6. **Cutover and decommission.** You now run one Rust process +
-   Moon/Postgres instead of Cognee + (vector DB) + (graph DB).
+   Moon instead of Cognee + (vector DB) + (graph DB).
 
 ## When to stay on Cognee
 
@@ -229,7 +229,7 @@ latency difference matters.
   Tasks) and that's load-bearing for your stack.
 - You're committed to a specific vector DB / graph DB combination
   that Lunaris doesn't ship a backend for, and you don't want to
-  operate Moon or Postgres.
+  operate Moon.
 - Pure Python deploy, no Rust binary in the build pipeline.
 
 ## Known gaps vs Cognee today
@@ -239,7 +239,7 @@ latency difference matters.
   impl — one impl, not a chain. v0.3 RFC 0007 adds composable
   fallback combinators for resilience but does not introduce a
   pipeline DSL.
-- **Backend matrix is smaller.** Lunaris ships Moon + Postgres; no
+- **Backend matrix is smaller.** Lunaris ships Moon alone; no
   LanceDB / Qdrant / Weaviate adapter today. The `StoragePort`
   trait is the extension point — a third-party crate can implement
   the trait for any backend.

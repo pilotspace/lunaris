@@ -39,7 +39,7 @@ wire to it without duplicating test code.
 |--------------|---------------------------------------------------------------|-------|-------------------------------------------------------------------------------------------------|
 | Storage      | `lunaris_conformance::run_full_storage_suite(storage)`        | 9     | atomic_write, vector_search, graph_traverse (gated), scan_range, read_as_of (latest + historical), publish/subscribe, capabilities |
 | Protocol     | `lunaris_conformance::run_full_protocol_suite(client, url, t)`| 10    | POST /v1/ingest, POST /v1/recall (default + SSE + graph mode), POST /v1/forget (id + two-step hard), GET /v1/snapshot/{lsn}, auth (401 + 403), rate-limit (429 + Retry-After) |
-| AS_OF parity | `lunaris_conformance::storage::as_of_parity::run(moon, pg)`   | 1     | STORE-07 — Moon vs Postgres identical hits; capability-gated `Divergence` for rerank-score precision |
+| AS_OF gap    | `run_as_of_moon_gap` (test target)                            | 1     | STORE-07 — a historical KV pin is refused with `NotSupported`, not answered from present time |
 
 The Plan 04-03 chaos / crash-recovery property test (`tests/crash_recovery.rs`)
 ships under the same crate gated on the `chaos-it` Cargo feature.

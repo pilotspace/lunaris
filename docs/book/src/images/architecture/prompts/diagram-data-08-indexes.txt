@@ -11,7 +11,7 @@ Subtitle in lighter gray (#8a8a85): "step 8 of 8 — how queries find data"
 
 LAYOUT: a central storage cylinder at the left, and three index lanes fanning out to the right.
 
-LEFT — database cylinder labeled "Moon / Postgres / SQLite" with the three kinds of data as small stacked labels inside: "episodes  chunks  entities  facts  communities".
+LEFT — database cylinder labeled "Moon" with the three kinds of data as small stacked labels inside: "episodes  chunks  entities  facts  communities".
 
 THREE LANES (thin arrows from the cylinder rightward):
 
