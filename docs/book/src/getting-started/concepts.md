@@ -144,12 +144,19 @@ invalid or unintended scope past the type. (`Scope::dev()` exists but is
 `#[doc(hidden)]` — a migration crutch for code paths that haven't
 threaded a real scope through yet.)
 
-On the **HTTP** surface, the `tenant` claim from the bearer token is the
-*only* source of truth for the partition scope — route handlers ignore
-any `scope` field on the request body. On **Postgres**, row-level
-security re-enforces it at the database boundary (both `USING` and
-`WITH CHECK`, under a `NOSUPERUSER NOBYPASSRLS` role). Same ULID under
-two different scopes = two distinct rows, no leak. Details:
+On the **HTTP** surface, the `tenant` claim resolved for the bearer token
+is the *only* source of truth for the partition scope — route handlers
+ignore any `scope` field on the request body. On **Moon**, the scope is
+baked into the key, the FT index name and the graph name
+(`lunaris:{scope}:{kind}:{ulid}`, `lunaris_{scope}_{kind}_idx`), so a
+cross-scope read has nothing to address rather than being filtered after
+the fact. Same ULID under two different scopes = two distinct rows, no
+leak.
+
+> Through 0.6.2 a second boundary existed: Postgres row-level security
+> (`USING` + `WITH CHECK`, under a `NOSUPERUSER NOBYPASSRLS` role). That
+> backend was removed in 0.7.0, so today the isolation is structural in the
+> Moon keyspace rather than row-filtered in a database. Details:
 [Multi-Agent & Scope](../guides/multi-agent.md).
 
 ### The keyspace

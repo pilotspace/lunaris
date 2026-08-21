@@ -11,8 +11,8 @@ successful call.
 > **`Lunaris::forget` is hard-coded to `Scope::dev()` internally** for its
 > `atomic_write` / `read_as_of` / `scan_range` calls
 > (`crates/lunaris/src/forget.rs:300-303`). Under **any** non-`_dev_` scope it
-> silently returns `rows_written = 0, rows_deleted = 0` — Postgres RLS or the
-> Moon SCAN prefix filters everything out. It emits a `tracing::warn!` on every
+> silently returns `rows_written = 0, rows_deleted = 0` — the Moon SCAN
+> prefix filters everything out. It emits a `tracing::warn!` on every
 > call so the line above your `forget(...)` says so. The real per-scope routing
 > — `ScopedLunaris::forget(target)` with a `403`/`404` cross-scope contract —
 > is a **v0.3 deliverable**. See RFC 0001 §11.6 and `CHANGELOG.md`
