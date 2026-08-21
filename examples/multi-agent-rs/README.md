@@ -13,13 +13,50 @@ memory model **by running against a live Moon backend**:
    the scope, recall — the agent's episodes are still there. Moon is durable;
    there is no explicit load step.
 
-## Why the `with_parts_keyword` escape hatch (not `fastembed`)
+## Get a Moon first
 
-The example builds the handle by hand so it runs with **zero external
-services and no one-time ONNX weight download**:
+This example needs a **single-shard** Moon. `--shards 1` is mandatory, not a
+tuning choice: Lunaris commits each ingest as one MULTI/EXEC transaction, and a
+sharded Moon rejects it with `TXN does not support cross-shard writes`.
+
+Lunaris 0.7.0 also refuses any Moon below `0.8.5`, and **v0.8.5 was published
+with zero release assets** — the platform tarballs 404 and the ghcr package
+answers `401` to an anonymous pull. So there is no binary to download today
+(ship-plan task W0.1). Build one from the vendored submodule instead:
+
+```sh
+# from the repo root
+git submodule update --init vendor/moon
+cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+
+mkdir -p /tmp/lunaris-multi-agent-data
+vendor/moon/target/release/moon \
+    --port 6380 --shards 1 --dir /tmp/lunaris-multi-agent-data
+```
+
+Confirm it is up with any Redis client: `redis-cli -p 6380 PING` → `PONG`.
+
+## Run it
+
+```sh
+cd examples/multi-agent-rs
+export LUNARIS_STORE_URL="moon://127.0.0.1:6380"
+cargo run            # or: RUST_LOG=error cargo run   (quieter — hides the consolidate-queue WARN)
+```
+
+`LUNARIS_STORE_URL` has **no default on purpose**. This example ingests demo
+episodes under two scopes and then asserts on what comes back; a hardcoded
+`moon://localhost:6380` would write that data into whatever Moon owns the port
+on your machine, which on a developer box is often a real store. If 6380 is
+taken, pick another port and change both places together.
+
+## Why the `with_parts_keyword` escape hatch
+
+The example builds the handle by hand so it runs with **zero external services
+beyond that one Moon**, and with no model download:
 
 ```rust
-let moon = Arc::new(MoonStorage::connect("moon://localhost:6380").await?);
+let moon = Arc::new(MoonStorage::connect(&store_url()?).await?);
 let storage: Arc<dyn StoragePort> = moon.clone();
 let keyword: Arc<dyn KeywordPort> = moon.clone();          // MoonStorage IS the BM25 port too
 let embedder: Arc<dyn Embedder>  = Arc::new(StubEmbedder::new(768));   // 768d matches Moon's chunks FT index
@@ -27,14 +64,19 @@ let clock: Arc<HlcClock>         = HlcClock::new(0);
 let lunaris = Lunaris::with_parts_keyword(storage, keyword, embedder, clock);
 ```
 
+That is also why `Cargo.toml` sets `default-features = false`: no `llamacpp`
+feature means no C++ toolchain, no cmake, and no 253 MB GGUF to stage.
+
 `StubEmbedder` emits **deterministic, non-semantic** vectors — cosine scores
-come out `0.0` and ranking is meaningless. That's fine: this example proves
-the *round-trip + scope isolation + durability*, so the assertions check
+come out `0.0` and ranking is meaningless. That is fine here: this example
+proves the *round-trip + scope isolation + durability*, so the assertions check
 "≥ 1 hit returned" / "no cross-scope source leak", not "the right hit ranked
-first". Swap `StubEmbedder` for `Lunaris::open("moon://localhost:6380")` (the
-`fastembed` default — auto-downloads EmbeddingGemma-300M ONNX weights to
-`~/.cache/lunaris/models/fastembed/` on first call) and the *same* code
-recalls semantically.
+first".
+
+For semantic recall, drop the escape hatch and use `Lunaris::open(&url)` with
+default features on (the in-process llama.cpp granite-r2 embedder, staged at
+`~/.lunaris/models/`). The rest of the code is unchanged — see
+[`examples/quickstart-rs/`](../quickstart-rs/), which does exactly that.
 
 ## Episode IDs
 
@@ -43,25 +85,6 @@ recalls semantically.
 `EpisodeBuilder::new(source, content)` directly. Override the id with
 `.id(...)` only when you want idempotent replay (re-ingesting the same logical
 episode without creating a duplicate KV row).
-
-## Run it
-
-A single-shard Moon server at `moon://localhost:6380` is required. `--shards 1`
-is mandatory — the 12-shard default breaks Lunaris's cross-shard `atomic_write`
-with `TXN does not support cross-shard writes`. To (re)start one:
-
-```sh
-cd ../../tmp/moon-data && nohup ../../../moon/target/release/moon \
-    --port 6380 --shards 1 > ../moon-6380.log 2>&1 &
-redis-cli -p 6380 PING   # -> PONG
-```
-
-Then:
-
-```sh
-cd examples/multi-agent-rs
-cargo run            # or: RUST_LOG=error cargo run   (quieter — hides the consolidate-queue WARN)
-```
 
 ## Expected output
 
@@ -94,7 +117,7 @@ multi-agent: after re-open, scope_b recall("owner") -> 1 hit(s)
 multi-agent: OK — agent-a memory is durable across the process boundary
 
 multi-agent: ALL ASSERTIONS PASSED ✔
-multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemory, MessageStream) currently build episodes with Scope::dev() and partition only by source prefix; hard per-agent isolation today goes through the low-level lunaris.scoped(scope) handle shown above (or, in lunaris-server, the JWT `tenant` claim). See docs/book/src/guides/multi-agent.md.
+multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemory, MessageStream) currently build episodes with Scope::dev() and partition only by source prefix; hard per-agent isolation today goes through the low-level lunaris.scoped(scope) handle shown above (or, in lunaris-server, the server-side `tenant` claim). See docs/book/src/guides/multi-agent.md.
 ```
 
 (The `wall_ms` / run-id numbers and the line ordering inside a section change
@@ -121,4 +144,4 @@ caveat.
 - [`docs/book/src/guides/multi-agent.md`](../../docs/book/src/guides/multi-agent.md)
   — the multi-agent model, the three-level table, and this example's run output.
 - [`examples/quickstart-rs/`](../quickstart-rs/) — the single-episode,
-  single-scope quickstart against Postgres.
+  single-scope quickstart against Moon, with a real semantic embedder.

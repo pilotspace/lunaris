@@ -1,8 +1,14 @@
 # Lunaris Quickstart — Moon on localhost:6380.
 #
-# 0.7.0 is Moon-only. This file used to build the `scripts/pg-lunaris` image
-# (Postgres + pgvector + pgmq + AGE); both that image and the Postgres backend
-# it served were deleted. See `docs/migration/0.6-to-0.7.md`.
+# 0.7.0 is Moon-only. The image this file used to build, and the relational
+# backend it served, were both deleted in 0.7.0 — see
+# `docs/migration/0.6-to-0.7.md`.
+#
+# HEADS UP: `ghcr.io/pilotspace/moon:0.8.5` is not pullable yet. The v0.8.5
+# release shipped zero assets and the ghcr package answers `401` to an
+# anonymous pull, so `docker compose up -d` fails today. This file is correct
+# and starts working the moment those assets are re-cut (ship-plan task W0.1).
+# Until then, build Moon from `vendor/moon` — see README.md, "Path B".
 #
 # Two flags are load-bearing and are therefore spelled out instead of left to
 # the image's CMD (`vendor/moon/Dockerfile`, which ships `--shards 0`):
