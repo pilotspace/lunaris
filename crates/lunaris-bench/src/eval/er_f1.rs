@@ -1,5 +1,14 @@
 //! Plan 05-06 EVAL-03 — Entity Resolution F1 harness.
 //!
+//! # ⚠️ STUB — DO NOT PUBLISH A NUMBER FROM THIS HARNESS
+//!
+//! **The F1 computation is not implemented.** It returns `0.0`, and every
+//! failure path emits `EvalRow::skipped`, so this harness can neither produce
+//! a real score nor go red. It is not a CI quality gate and never was: the
+//! CLAUDE.md claim of "automated quality gates on every push (LongMemEval,
+//! LoCoMo, ER-F1, perf smoke)" was retracted on 2026-08-21. Lunaris has **no
+//! entity-resolution F1 number**.
+//!
 //! Loads `tner/wnut2017` (held-out NER corpus per CONTEXT.md D-19) via
 //! `crate::eval::longmemeval::download_dataset` (W-7 fix — shared
 //! `pub(crate)` helper, NOT a fictional `__download_test_helper` alias);

@@ -1,7 +1,7 @@
 <div class="lx-hero">
   <p class="lx-eyebrow">Agent Memory Engine</p>
   <h1 class="lx-hero-title">🌙 Lunaris</h1>
-  <p class="lx-hero-sub">Sub-25 ms recall over millions of bi-temporal facts, with provable atomicity and a graph that's opt-in.</p>
+  <p class="lx-hero-sub">Sub-25 ms recall at 100,000 documents per scope — measured — with provable atomicity and a graph that's opt-in.</p>
   <div class="lx-cta">
     <a class="lx-btn lx-btn-primary" href="getting-started/quickstart.html">Get started</a>
     <a class="lx-btn lx-btn-ghost" href="https://github.com/pilotspace/lunaris">Our GitHub</a>
@@ -93,7 +93,7 @@ them; any feature that weakens any of the three is rejected.
 
 | Moat | What it means | Where enforced |
 |---|---|---|
-| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench recall_hot_path` + perf smoke in CI |
+| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured p50 19.2–22.4 ms / p99 23.4–24.4 ms at 100k documents per scope, graph OFF, rerank OFF. The opt-in cross-encoder rerank is a **quality** stage, not a latency-class stage — it measures **p50 1301.3 ms** at `top_in=60` and voids this contract when enabled. | `scripts/bench/perf/recall_latency.sh all` — a **manual, local** ~10-minute live-Moon gate. **Not CI-enforced:** `perf-gates.yml` is opt-in behind a `perf-bench` label, is not a required check, and is red on main ([`capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)) |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
 | **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive, on every backend — supersede closes intervals instead of destroying rows. As-of *reads* are search-side and graph-side (`FT.SEARCH AS_OF`, `GRAPH.QUERY VALID_AT`); historical **KV** reads have no version chain on Moon and are refused explicitly — see [Core concepts](./getting-started/concepts.md#bi-temporal-mvcc--the-hlc). | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` |
 

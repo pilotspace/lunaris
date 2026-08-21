@@ -269,7 +269,12 @@ scoped.dsl()
     .await?;
 ```
 
-The default reranker is BGE-Reranker-v2-m3 (~12 ms p50 budget). When its
+The default reranker is BGE-Reranker-v2-m3. **Budget seconds, not
+milliseconds:** it measures **p50 1301.3 ms** at the default `top_in=60`
+(575.6 ms at `top_in=30`), plus a one-time ~1.0–1.4 s lazy GGUF load on the
+first reranked recall of the process ([`capacity.md` §4](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)). Rerank is a
+quality stage; enabling it voids the 25 ms p50 recall contract and the 100 ms
+latency SLO. When its
 weights are missing, `Lunaris::open` installs `NoopReranker` and
 `lunaris.reranker()` still returns a working `Arc<dyn Reranker>` that passes
 scores through unchanged — `Hit::rerank_applied` is `false` in that case.

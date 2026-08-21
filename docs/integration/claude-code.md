@@ -448,7 +448,7 @@ Moon runs on port 6380 by default
 an ingest is one MULTI/EXEC transaction and a sharded Moon rejects it. Moon
 provides native vector search, BM25/hybrid fusion, graph traversal, queues,
 and search-side bi-temporal reads.
-(HNSW) over millions of bi-temporal facts.
+(HNSW), measured to p50 19–22 ms at 100k documents per scope.
 
 ### Custom storage URL
 
@@ -652,7 +652,7 @@ With Wave A connected:
   with a non-empty-prefix guard to prevent accidental total-wipe and a
   preview-by-default `dry_run` (an agent that forgets to think about deletion
   gets a match count, not a data loss).
-- **Sub-25 ms recall** — Moon's HNSW index over millions of bi-temporal facts.
+- **Sub-25 ms recall** — Moon's HNSW index; measured p50 19–22 ms / p99 23.4–24.4 ms at 100k documents per scope ([capacity.md](../operations/capacity.md)). Unvalidated beyond 100k.
 
 ---
 

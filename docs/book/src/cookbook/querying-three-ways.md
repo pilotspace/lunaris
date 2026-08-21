@@ -87,7 +87,7 @@ node and then descend to every leaf chunk underneath it — including chunks
 that would never score into a flat top-k on their own. This is the core
 insight: summarise at multiple granularities, then match at the right level.
 
-The system targets sub-25ms recall over millions of bi-temporal facts. Vector
+The system targets sub-25 ms recall, measured at 100k documents per scope. Vector
 search runs in single-digit milliseconds, community summary embeddings let
 whole-document queries bypass flat chunk retrieval, and no LLM sits on the read
 path. Summaries are embedded with the same model as chunks, so cosine scores

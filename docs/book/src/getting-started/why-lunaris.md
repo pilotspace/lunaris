@@ -8,15 +8,24 @@ pitch and the exclusions.
 
 ## The one-line claim
 
-**Sub-25 ms recall over millions of bi-temporal facts, with provable
+**Sub-25 ms recall at 100,000 documents per scope, with provable
 atomicity and an opt-in graph.** Embedded Rust core. Python + TypeScript
 bindings generated from the same source of truth. Apache 2.0. That's it.
+
+The latency half is measured: **p50 19.2–22.4 ms / p99 23.4–24.4 ms**
+engine-side at 100k docs/scope on single-shard Moon v0.8.5 (Apple M4 Pro,
+graph OFF, rerank OFF, k=30) —
+[`capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md).
+**We do not claim "millions":** the 1k → 100k trend (0.7 ms → ~20 ms p50)
+says a million-fact scope would not meet 25 ms p50 on that hardware, and no
+run at that size exists.
 
 You feed it raw observations — chat turns, documents, tool outputs — as
 `Episode`s. It chunks, embeds, and (optionally) extracts entities,
 relations, and facts using a small local LLM, then stores everything in a
-bi-temporal MVCC store backed by **Postgres** (the portable default) or
-**Moon** (a high-performance Redis-compatible substrate). Agents query it
+bi-temporal MVCC store backed by **Moon** (a high-performance
+Redis-compatible substrate) — and, since 0.7.0, only Moon: the Postgres and
+SQLite backends were removed. Agents query it
 through a composable retrieval DSL that fuses semantic search, graph
 traversal, and BM25 keyword lookup, with an optional cross-encoder rerank
 pass on top.
@@ -28,7 +37,7 @@ against them; any feature that weakens any of the three is rejected.
 
 | Moat | What it means | Where enforced |
 |---|---|---|
-| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Cross-encoder rerankers stay sub-30 ms. | `cargo bench --bench recall_hot_path` + perf smoke in CI |
+| **Sub-25 ms p50 recall** | No LLM on the recall hot path. Measured p50 19.2–22.4 ms / p99 23.4–24.4 ms at 100k documents per scope, graph OFF, rerank OFF. The opt-in cross-encoder rerank is a **quality** stage, not a latency-class stage — it measures **p50 1301.3 ms** at `top_in=60` and voids this contract when enabled. | `scripts/bench/perf/recall_latency.sh all` — a **manual, local** ~10-minute live-Moon gate. **Not CI-enforced:** `perf-gates.yml` is opt-in behind a `perf-bench` label, is not a required check, and is red on main ([`capacity.md`](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)) |
 | **Single `atomic_write` per ingest** | All-or-nothing commit across vector, KV, BM25, audit, and queue. Fan-out architectures (Mem0, Zep) can't make this guarantee. | `crates/lunaris-ingest/tests/ingest_pipeline.rs::single_atomic_write_call` + CI grep gate |
 | **Bi-temporal MVCC + HLC** | `BiTemporal { valid, sys }` on every primitive. "What did the agent know at time T" is a query, not a rebuild. | Required field on `Episode`, `Chunk`, `Entity`, `Fact`, `Relation`, `Community` (`crates/lunaris-core/src/bitemporal.rs`) |
 
@@ -71,13 +80,13 @@ Pick Lunaris when you can say **yes** to most of these:
 | | **Lunaris** | **Mem0** | **Zep** | **Cognee** |
 |---|---|---|---|---|
 | Core language | Rust (Py + TS bindings) | Python | Python / Go | Python |
-| Recall latency contract | sub-25 ms p50, enforced in CI | best-effort | best-effort | best-effort |
+| Recall latency contract | sub-25 ms p50, **measured** at 100k docs/scope (manual bench — *not* CI-enforced) | best-effort | best-effort | best-effort |
 | Atomic ingest | single `atomic_write`, all-or-nothing | fan-out writes | fan-out writes | task pipeline |
 | Bi-temporal | yes, at the storage layer (`valid` + `sys`) | no | yes | partial |
-| Substrate count | 1 (Moon *or* Postgres) | vector DB + store | vector DB + graph DB | configurable, multi |
+| Substrate count | 1 (Moon; Postgres and SQLite were removed in 0.7.0) | vector DB + store | vector DB + graph DB | configurable, multi |
 | Hybrid retrieval | typed DSL: `vector.and(keyword).fuse_rrf().top()` | flag | flag | pipeline step |
 | Graph | opt-in operator, off by default | Mem0g (Platform-only) | always-on | pipeline-driven |
-| Multi-tenancy | `Scope` newtype + Postgres RLS | `user_id` string | `session_id` | namespace |
+| Multi-tenancy | `Scope` newtype + per-scope Moon keyspace, FT index and graph | `user_id` string | `session_id` | namespace |
 | Hosted option | not yet (roadmap) | yes | yes (Zep Cloud) | self-host |
 | License | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 

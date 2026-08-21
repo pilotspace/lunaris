@@ -7,9 +7,17 @@ go deeper; this page is the elevator pitch + the honest exclusions.
 
 ## The one-line claim
 
-**Sub-25 ms recall over millions of bi-temporal facts, with provable
+**Sub-25 ms recall at 100,000 documents per scope, with provable
 atomicity and an opt-in graph.** Embedded Rust core. Python + TS
 bindings. Apache 2.0. That's it.
+
+The latency half of that claim is measured, not projected: **p50
+19.2–22.4 ms / p99 23.4–24.4 ms** engine-side at 100k docs/scope on
+single-shard Moon v0.8.5 (Apple M4 Pro, graph OFF, rerank OFF, k=30) —
+[`docs/operations/capacity.md`](operations/capacity.md). **We do not claim
+"millions."** The 1k → 100k trend (0.7 ms → ~20 ms p50) says a
+million-fact scope would not meet 25 ms p50 on that hardware, and no run
+at that size exists.
 
 ## What "Lunaris is the answer" looks like
 
