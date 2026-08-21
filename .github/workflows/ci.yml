@@ -57,8 +57,15 @@ jobs:
       # cannot link on any platform. Same for napi cdylib tests outside a
       # Node host. Their compile health is covered by the dedicated
       # `cargo check -p lunaris-py -p lunaris-ts` step below; their
-      # runtime coverage is owned by python-prebuild.yml (maturin+pytest)
-      # and ts-prebuild.yml (napi+vitest).
+      # runtime coverage is owned by conformance-bindings.yml, which is the
+      # ONLY workflow that runs pytest or vitest.
+      #
+      # W2.8 — this comment used to name python-prebuild.yml and
+      # ts-prebuild.yml as the owners. Verified counts in both:
+      # `grep -c pytest .github/workflows/python-prebuild.yml` = 0,
+      # `grep -c vitest .github/workflows/ts-prebuild.yml` = 0. Those two
+      # workflows build wheels / .node artifacts; they run no tests. A comment
+      # that misnames the owner of a coverage gap is how the gap stays open.
       - run: cargo test --workspace --all-targets --exclude lunaris-py --exclude lunaris-ts
       - run: cargo doc --workspace --no-deps
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
@@ -235,6 +242,59 @@ jobs:
             echo "::error::inline __lunaris_audit__ envelope detected — use lunaris_core::audit::publish_audit_event(AuditEvent::...)"
             exit 1
           fi
+
+      # W2.8 — `cargo install lunaris-mcp` must never be published as an
+      # instruction. `crates/lunaris-mcp` is `publish = false` (it links
+      # `lunaris-memory-service`, which carries a `vendor/` path dep), so the
+      # crate is not on crates.io and the command 404s for every reader who
+      # copies it. The working form is
+      # `cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp`.
+      #
+      # The gate cannot be a plain `grep -q` for the string: the correct docs
+      # NAME the broken command in order to warn about it ("plain `cargo
+      # install lunaris-mcp` will fail"), and both `npx`/`uvx` postinstall
+      # fallbacks carry the same warning as a code comment. So a match is only
+      # a violation when NOTHING within +/-3 lines marks it as wrong. Prose
+      # wraps, which is why the window is lines and not the single hit line.
+      #
+      # `docs/decisions/` and `docs/CHANGELOG-archive.md` are excluded on
+      # purpose: an ADR and a shipped changelog record what was true on the day
+      # they were written. Editing them to match today is falsifying a record,
+      # not fixing a doc. `tmp/` is excluded because it is the repo's
+      # gitignored scratch dir for `git commit -F tmp/<msg>.txt` bodies.
+      #
+      # The needle is assembled from two halves so this step's own diagnostic
+      # messages do not contain the literal string and flag themselves — which
+      # they did on the first draft, caught by re-running the gate against the
+      # tree that contains it.
+      #
+      # Security: static literal strings only; no untrusted input.
+      - name: no_prescriptive_cargo_install_lunaris_mcp
+        run: |
+          set -uo pipefail
+          needle='cargo install lunaris-''mcp'
+          fixed="cargo install --git https://github.com/pilotspace/lunaris lunaris-mcp"
+          markers='NOT |not on crates\.io|does not work|will fail|always fails|never worked|publish = false|cannot be installed'
+          violations=0
+          while IFS= read -r hit; do
+            file="${hit%%:*}"
+            rest="${hit#*:}"
+            line="${rest%%:*}"
+            lo=$(( line > 3 ? line - 3 : 1 ))
+            hi=$(( line + 3 ))
+            if ! sed -n "${lo},${hi}p" "$file" | grep -qE "$markers"; then
+              echo "::error file=${file},line=${line}::prescriptive '${needle}' — the crate is publish = false and that command 404s; use '${fixed}'"
+              violations=$((violations + 1))
+            fi
+          done < <(grep -rn --binary-files=without-match \
+            --exclude-dir=target --exclude-dir=vendor --exclude-dir=.git --exclude-dir=node_modules \
+            --exclude-dir=tmp --exclude-dir=decisions --exclude=CHANGELOG-archive.md \
+            -e "$needle" . || true)
+          if [ "$violations" != "0" ]; then
+            echo "::error::${violations} prescriptive site(s) — see the annotations above"
+            exit 1
+          fi
+          echo "no prescriptive '${needle}' sites"
 
       # Plan 13-01 RELEASE-01 — lunaris-core leaf-purity gate. Fails the
       # build if any worker crate sneaks into lunaris-core's transitive
