@@ -46,10 +46,21 @@ thiserror    = { workspace = true }
 # pin: llama-cpp-2 tracks llama.cpp upstream aggressively; bump deliberately
 # (same policy as the vendored Moon SHA).
 llama-cpp-2 = { version = "=0.1.151", optional = true }
+# The exact pin above does NOT constrain the sys sibling: llama-cpp-2 0.1.151
+# declares `llama-cpp-sys-2 = "^0.1.151"` (verified against the crates.io API),
+# so a resolve WITHOUT our committed lockfile takes the newest 0.1.x — 0.1.154
+# today. Upstream ships the two in lockstep and only tests the matched pair, so
+# wrapper .151 against sys .154 is a combination nobody validated. Our lockfile
+# hid this: `cargo add lunaris-memory` resolves fresh and does not get it.
+#
+# Declared here purely to pin the transitive version. Nothing in this crate
+# calls it directly, and it must stay optional + feature-tied so a
+# `default-features = false` Tier-0 build still pulls no C++ toolchain.
+llama-cpp-sys-2 = { version = "=0.1.151", optional = true }
 
 [features]
 default  = []
-llamacpp = ["dep:llama-cpp-2"]
+llamacpp = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
 # GPU offload backends — enable the one matching the build device (cutover
 # decision 4: CPU default, per-target build-time GPU). All compose with
 # `llamacpp`; device selection stays a runtime probe + LUNARIS_DEVICE.
