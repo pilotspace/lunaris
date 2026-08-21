@@ -69,8 +69,8 @@ async fn live_moon_chunk_kv_never_carries_embedding_but_vector_search_still_work
     // tests race on it).
     let receipt =
         lunaris_ingest::ingest_episode_with_raptor(&storage, &embedder, &clock, episode, true)
-        .await
-        .expect("live ingest must succeed");
+            .await
+            .expect("live ingest must succeed");
     assert!(!receipt.chunk_ids.is_empty(), "fixture must produce at least one chunk");
 
     // 1. Read the RAW bytes Moon actually stored for each chunk — not a
