@@ -27,7 +27,7 @@ TEST 1 additionally writes the same plane probes pre-kill and verifies them
 post-restart (the #69-protected MQ/temporal planes were previously unprobed).
 
 Usage:
-  LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+  LUNARIS_MOON_URL="moon://127.0.0.1:6380" \
     uv run --with datasets --with python-ulid --with redis \
       python scripts/test-recovery.py [--docs 200]
   python scripts/test-recovery.py --upgrade-replay \
@@ -648,7 +648,7 @@ async def main():
         print(i + 1, flush=True)
 asyncio.run(main())
 """
-    env = dict(os.environ, LUNARIS_TEST_MOON_URL=MOON_URL)
+    env = dict(os.environ, LUNARIS_MOON_URL=MOON_URL)
     proc = subprocess.Popen(
         [sys.executable, "-c", script],
         stdout=subprocess.PIPE,

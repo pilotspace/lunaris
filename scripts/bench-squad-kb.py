@@ -20,7 +20,7 @@ measuring:
     system CPU%, used memory, load average — sampled once per second
 
 Usage:
-  LUNARIS_TEST_MOON_URL="moon://127.0.0.1:6380" \
+  LUNARIS_MOON_URL="moon://127.0.0.1:6380" \
     uv run --with datasets --with python-ulid --with redis --with psutil \
       python scripts/bench-squad-kb.py \
         [--docs 300] [--queries 100] [--top-k 10] [--split validation|train]
@@ -39,7 +39,7 @@ from collections import OrderedDict
 import lunaris
 from lunaris.documentary import DocumentKnowledgeBase
 
-MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6380")
+MOON_URL = os.environ.get("LUNARIS_MOON_URL", "moon://127.0.0.1:6380")
 SOURCE_PREFIX = "hf-squad/"
 
 

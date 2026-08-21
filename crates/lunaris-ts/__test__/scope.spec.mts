@@ -5,7 +5,7 @@
 // 1. Offline — Scope validation + EpisodeBuilder construction. These run on
 //    any machine, no backend required.
 // 2. Online — ingest under a scope + cross-scope isolation. These require a
-//    live Moon backend (LUNARIS_TEST_MOON_URL) and skip when none is
+//    live Moon backend (LUNARIS_MOON_URL) and skip when none is
 //    reachable.
 
 import { describe, expect, test } from "vitest";
@@ -16,7 +16,7 @@ const lunaris = await import("../index.mjs");
 const DEFAULT_MOON_URL = "moon://127.0.0.1:6380";
 
 function resolveMoonUrl(): string {
-  return process.env.LUNARIS_TEST_MOON_URL ?? DEFAULT_MOON_URL;
+  return process.env.LUNARIS_MOON_URL ?? DEFAULT_MOON_URL;
 }
 
 async function moonReachable(url: string): Promise<boolean> {

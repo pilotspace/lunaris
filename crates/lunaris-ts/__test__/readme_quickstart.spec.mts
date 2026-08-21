@@ -214,7 +214,7 @@ describe("README TypeScript quickstart", () => {
 // 4. LIVE — real Moon + stub embedder. Skips loudly when either is absent.
 // ---------------------------------------------------------------------------
 
-const MOON_URL = process.env.LUNARIS_TEST_MOON_URL ?? "";
+const MOON_URL = process.env.LUNARIS_MOON_URL ?? "";
 const DIM = 768; // lunaris_embed_remote::openai::DEFAULT_DIM
 
 function embed(text: string): number[] {

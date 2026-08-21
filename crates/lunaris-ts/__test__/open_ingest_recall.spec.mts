@@ -1,7 +1,7 @@
 // Plan 08-03 Task 1 — open / ingest / recall / forget / snapshot roundtrip.
 //
 // These tests exercise the full 5-method Rust surface behind the Lunaris
-// handle. They REQUIRE a reachable Moon backend (LUNARIS_TEST_MOON_URL
+// handle. They REQUIRE a reachable Moon backend (LUNARIS_MOON_URL
 // env var; default moon://127.0.0.1:6380) and are skipped when no backend
 // is available — so the suite still passes on a fresh clone without a
 // dev box.
@@ -20,7 +20,7 @@ const lunaris = await import("../index.mjs");
 const DEFAULT_MOON_URL = "moon://127.0.0.1:6380";
 
 function resolveMoonUrl(): string {
-  return process.env.LUNARIS_TEST_MOON_URL ?? DEFAULT_MOON_URL;
+  return process.env.LUNARIS_MOON_URL ?? DEFAULT_MOON_URL;
 }
 
 async function moonReachable(url: string): Promise<boolean> {

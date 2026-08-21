@@ -16,7 +16,7 @@ import path from "node:path";
 import urlMod from "node:url";
 import { performance } from "node:perf_hooks";
 
-const MOON_URL = process.env.LUNARIS_TEST_MOON_URL ?? "moon://127.0.0.1:6380";
+const MOON_URL = process.env.LUNARIS_MOON_URL ?? "moon://127.0.0.1:6380";
 const OUT_DIR = process.env.LUNARIS_SDK_EVIDENCE_DIR
   ?? path.resolve(path.dirname(urlMod.fileURLToPath(import.meta.url)), "..", "milestones", "v0.1.1-sdk-real");
 fs.mkdirSync(OUT_DIR, { recursive: true });

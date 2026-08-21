@@ -292,6 +292,28 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
+      - name: Run lunaris-memory umbrella live-Moon tests
+        # W4.14 — `crates/lunaris/tests/moon_parity.rs` gates on
+        # `LUNARIS_MOON_URL`, which this job's env sets, but `-p lunaris-memory`
+        # (the umbrella crate's real package name — the directory is
+        # `crates/lunaris`, the package is `lunaris-memory`) was
+        # never in this job's scope. `ci.yml` runs it as part of `--workspace`
+        # with no Moon anywhere, so the file's five tests printed
+        # "skipping: LUNARIS_MOON_URL not set" on every run in every workflow.
+        #
+        # It carries the regression pins for the two defects that motivated it:
+        # a fresh scope's FIRST recall (which used to error `unknown index`)
+        # and memory-update convergence on the extraction path.
+        #
+        # Deliberately NOT `--all-targets`: this crate's unit tests are
+        # `ci.yml`'s job. The `--test` filter keeps this step to the live
+        # integration files and keeps the 8-minute budget intact.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-memory \
+            --test moon_parity \
+            --no-fail-fast
+
       - name: Timing summary (budget evidence)
         # Runs unconditionally so budget data is captured even on test failure.
         # SECONDS is the bash shell-init wall-clock counter; per-step SECONDS

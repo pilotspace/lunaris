@@ -122,12 +122,25 @@ jobs:
         run: |
           cargo test -p lunaris-conformance --features bindings-it \
             --test run_bindings_backend_parity -- --nocapture
-      - name: Python - per-driver backend parity
+      # W4.14 — the WHOLE suite, not just `backend_parity`.
+      #
+      # This is the only job in the repo that starts a Moon. Until now it ran
+      # exactly one file per SDK, so the other ten live-Moon binding suites
+      # ran only in the `bindings-it` job below, whose own step name says
+      # "offline / skip path" — every one of them skipped, every time. That
+      # included `documentary_parity` and `conversational_parity`, both of
+      # which had just been rewritten to be satisfiable. A satisfiable gate
+      # that no job satisfies is the same green as an unsatisfiable one.
+      #
+      # Pinned by `scripts/tests/test_live_moon_binding_tests_have_a_runner.py`,
+      # which fails if a live-Moon binding suite is added and this job is not
+      # widened to cover it.
+      - name: Python - full binding suite (live Moon)
         if: success() || failure()
-        run: pytest crates/lunaris-py/tests/test_backend_parity.py -v
-      - name: TypeScript - per-driver backend parity
+        run: pytest crates/lunaris-py/tests/ -v
+      - name: TypeScript - full binding suite (live Moon)
         if: success() || failure()
-        run: npx vitest run --config vitest.config.mts __test__/backend_parity.spec.mts
+        run: npx vitest run --config vitest.config.mts
         working-directory: crates/lunaris-ts
       - name: Dump Moon logs on failure
         if: failure()

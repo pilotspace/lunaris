@@ -1,7 +1,7 @@
 """Plan 08-02 Task 1 — open / ingest / recall / forget / snapshot roundtrip.
 
 These tests exercise the full 5-method Rust surface behind the Lunaris
-handle. They REQUIRE a reachable Moon backend (`LUNARIS_TEST_MOON_URL` env
+handle. They REQUIRE a reachable Moon backend (`LUNARIS_MOON_URL` env
 var; default `moon://127.0.0.1:6380`) and `pytest.skip` when none is
 available — so the suite still passes on a fresh clone without a dev box.
 

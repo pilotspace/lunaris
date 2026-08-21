@@ -5,7 +5,7 @@ import lunaris
 from lunaris.conversational import ChatAgentMemory
 from lunaris.documentary import DocumentKnowledgeBase
 
-MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6380")
+MOON_URL = os.environ.get("LUNARIS_MOON_URL", "moon://127.0.0.1:6380")
 
 def show(tag, p):
     print(f"\n── {tag} ──\n{json.dumps(p, indent=2, default=str) if not isinstance(p, str) else p}")

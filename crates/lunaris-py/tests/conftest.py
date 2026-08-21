@@ -8,7 +8,7 @@ that has Moon listening.
 
 Environment variables:
 
-- `LUNARIS_TEST_MOON_URL` — override the default `moon://127.0.0.1:6380`.
+- `LUNARIS_MOON_URL` — override the default `moon://127.0.0.1:6380`.
 - `LUNARIS_TEST_POSTGRES_URL` — optional Postgres test target.
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ def moon_backend_url() -> str:
     resolution, GIL discipline on the URL-parse error path) should NOT
     depend on it.
     """
-    url = os.environ.get("LUNARIS_TEST_MOON_URL", DEFAULT_MOON_URL)
+    url = os.environ.get("LUNARIS_MOON_URL", DEFAULT_MOON_URL)
     parsed = _parse_moon_host_port(url)
     if parsed is None:
         pytest.skip(f"malformed Moon URL: {url!r}")
@@ -73,7 +73,7 @@ def moon_backend_url() -> str:
     if not _host_port_reachable(host, port):
         pytest.skip(
             f"Moon backend not reachable at {host}:{port}; set "
-            f"LUNARIS_TEST_MOON_URL or start a Moon dev box to run this test"
+            f"LUNARIS_MOON_URL or start a Moon dev box to run this test"
         )
     # Stage 2 — attempt a real handshake to distinguish Moon from plain Redis.
     if _handshake_cache.get(url) is False:

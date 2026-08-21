@@ -42,12 +42,12 @@ FEEDBACK_SOURCE = "lunaris:turn_feedback"
 
 
 def default_moon_endpoint() -> tuple[str, int]:
-    """Default --host/--port from `LUNARIS_TEST_MOON_URL` (the convention every
+    """Default --host/--port from `LUNARIS_MOON_URL` (the convention every
     sibling Moon script honors, e.g. `moon://127.0.0.1:6380`), falling back to
     127.0.0.1:6380. Read at call time, never cached (issue #49 convention).
     NOTE: on boxes running the launchd Moon agent the live port is 6381 —
     6380 may be a foreign Redis; pass --port or set the env accordingly."""
-    url = os.environ.get("LUNARIS_TEST_MOON_URL")
+    url = os.environ.get("LUNARIS_MOON_URL")
     if url:
         parsed = urlparse(url)
         if parsed.hostname:
@@ -287,13 +287,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--host",
         default=default_host,
-        help="Moon host (default: LUNARIS_TEST_MOON_URL host, else 127.0.0.1)",
+        help="Moon host (default: LUNARIS_MOON_URL host, else 127.0.0.1)",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=default_port,
-        help="Moon port (default: LUNARIS_TEST_MOON_URL port, else 6380)",
+        help="Moon port (default: LUNARIS_MOON_URL port, else 6380)",
     )
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(argv)

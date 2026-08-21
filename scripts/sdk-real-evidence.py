@@ -9,7 +9,7 @@ Exercises the Python SDK end-to-end against a live Moon backend:
 
 Per-scenario JSON envelope written to `${LUNARIS_SDK_EVIDENCE_DIR}/py-<name>.json`.
 
-Backend URL comes from `LUNARIS_TEST_MOON_URL`. Scenarios that require a
+Backend URL comes from `LUNARIS_MOON_URL`. Scenarios that require a
 real Moon handshake skip-clean if the probe fails; the script still exits 0
 on skip, non-zero only on hard failure.
 """
@@ -24,7 +24,7 @@ import time
 import traceback
 from pathlib import Path
 
-MOON_URL = os.environ.get("LUNARIS_TEST_MOON_URL", "moon://127.0.0.1:6380")
+MOON_URL = os.environ.get("LUNARIS_MOON_URL", "moon://127.0.0.1:6380")
 OUT_DIR = Path(os.environ.get("LUNARIS_SDK_EVIDENCE_DIR", "milestones/v0.1.1-sdk-real"))
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
