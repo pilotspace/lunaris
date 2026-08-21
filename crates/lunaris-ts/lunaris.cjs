@@ -249,7 +249,69 @@ class RetrievalBuilder extends _Composable {
 /** Collapse the operator tree into the flat plan the `recallSimpleExecute`
  * FFI accepts. Exported under an underscore for the parity tests; not part
  * of the supported surface. */
+// Operators the minimal `recallSimpleExecute` FFI has no field for. Reaching
+// one means the executed plan would differ from the written one.
+const _UNSUPPORTED_OPS = {
+  graph: "graph traversal",
+  tree: "RAPTOR tree descent",
+  navigate: "graph-navigate expansion",
+};
+
+// Operators that select an index and a k. More than one and the last visited
+// silently wins both.
+const _RETRIEVAL_OPS = ["vector", "keyword"];
+
+// Raise if collapsing `root` would run a different plan than it describes.
+// Twin of `python/lunaris/dsl.py::_reject_what_the_collapse_cannot_carry` —
+// keep the two in step, a divergence here is an SDK parity bug.
+//
+// Two conditions, both of which used to pass silently:
+//   1. An operator the FFI has no field for. Dropped entirely, so the caller
+//      gets a plain vector recall wearing the shape of a graph query.
+//   2. More than one retrieval leg. `index` and `k` are single-valued, so the
+//      last leg visited overwrites the first — the plan becomes single-leg and
+//      WHICH leg survives depends on the order the operands were written in.
+// A `fuseRrf` over one leg is not an error: it is a no-op, and a no-op is not
+// a lie.
+function _rejectWhatTheCollapseCannotCarry(root) {
+  const legs = [];
+  const unsupported = new Set();
+
+  (function walk(n) {
+    if (n.op in _UNSUPPORTED_OPS) unsupported.add(n.op);
+    if (_RETRIEVAL_OPS.includes(n.op)) {
+      legs.push(`${n.op}(${JSON.stringify(n.args[0])}, k=${n.args[1]})`);
+    }
+    for (const child of n.children) walk(child);
+  })(root);
+
+  if (unsupported.size > 0) {
+    const pretty = [...unsupported]
+      .sort()
+      .map((op) => `${op} (${_UNSUPPORTED_OPS[op]})`)
+      .join(", ");
+    throw new Error(
+      `this plan uses ${pretty}, which the TypeScript SDK's plan collapse ` +
+        `cannot carry to the engine yet — it would be dropped and you would get ` +
+        `a plain vector recall instead, with no indication the traversal never ` +
+        `ran. Use a vector/keyword plan here, or drive the full operator tree ` +
+        `from the Rust API until the FFI carries this leg.`,
+    );
+  }
+
+  if (legs.length > 1) {
+    throw new Error(
+      `this plan composes ${legs.length} retrieval legs (${legs.join(", ")}), ` +
+        `but the collapsed plan holds ONE index and ONE k — the last leg would ` +
+        `silently win both, and reordering the operands would change which index ` +
+        `is searched. Use a single leg, or drive the full operator tree from the ` +
+        `Rust API.`,
+    );
+  }
+}
+
 function _collapsePlan(root) {
+  _rejectWhatTheCollapseCannotCarry(root);
   const plan = { query: "", k: 5, index: "chunks" };
 
   // POST-ORDER: children first, then the node itself. Operators are built
