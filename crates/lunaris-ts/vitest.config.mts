@@ -17,11 +17,13 @@ export default defineConfig({
     testTimeout: 30000,
     // Run suites sequentially so tests that mutate process.env (the
     // env-surface toggle test) don't race against suites that read it.
+    //
+    // This was `poolOptions.threads.singleThread`, which Vitest 4 REMOVED —
+    // and package.json pins vitest ^4.1.8. The option was being ignored, so
+    // the sequential guarantee this comment describes was not in effect and
+    // the env-mutation race it exists to prevent was live. A config key that
+    // silently stops applying reads exactly like one that works.
     pool: "threads",
-    poolOptions: {
-      threads: {
-        singleThread: true,
-      },
-    },
+    fileParallelism: false,
   },
 });

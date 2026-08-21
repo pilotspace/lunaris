@@ -1,4 +1,13 @@
-"""Phase 10 Plan 10-03 — Python cross-language parity for conversational wrappers.
+"""NOT COLLECTED — this file has never run. See W4.15 / W4.14.
+
+pytest collects `test_*.py` and `*_test.py`. This filename matches neither,
+so nothing here has executed since it landed. Renaming it is deliberately NOT
+the fix: every scenario below drives "both Moon and Postgres", and Postgres was
+deleted in 0.7.0, so collecting it would only convert a silent no-op into a
+loud failure. The Moon-only rewrite is tracked as W4.14 alongside its
+TypeScript sibling; rename it as part of that, not before.
+
+Phase 10 Plan 10-03 — Python cross-language parity for conversational wrappers.
 
 Drives each of the 5 Phase 10 conversational wrappers end-to-end from
 the Python binding layer through both Moon and Postgres, re-using the
