@@ -71,7 +71,19 @@ async fn forget_id_removes_from_recall_moon() {
     assert!(recalls_episode(&pre, ep_id), "pre-forget recall must surface the episode: {pre:?}");
 
     let receipt = scoped.forget(ForgetTarget::Id(ep_id)).await.expect("forget");
-    assert_eq!(receipt.rows_written, 1, "forget(Id) must stamp exactly the one episode row");
+    // W1.4 changed what this counts. A forget now stamps the episode row AND
+    // its chunk rows, so the receipt reports ROWS — which is what the field is
+    // named — instead of episodes. `> 1` is the discriminating form: it is the
+    // assertion that fails if the chunk sweep is ever removed, and it does not
+    // go brittle when a fixture's chunk count changes.
+    assert!(
+        receipt.rows_written > 1,
+        "forget(Id) stamped {} row(s) — the episode only. Its chunks keep \
+         bt.sys.1 = None, and recall stays clean solely because hydrate drops \
+         chunks under a sys-closed parent; delete that parent instead (a HARD \
+         forget) and the content comes back.",
+        receipt.rows_written
+    );
 
     let post = scoped.recall(Query::text("cobalt beacon flash interval")).await.expect("recall");
     assert!(
@@ -108,7 +120,13 @@ async fn forget_prefix_removes_all_matches_moon() {
         .forget(ForgetTarget::Scope(ScopeSpec::BySource("wipe-me/".into())))
         .await
         .expect("forget");
-    assert_eq!(receipt.rows_written, 3, "all three wipe-me/* episodes must be stamped");
+    // Three episodes plus their chunks — see the note on the Id test above.
+    assert!(
+        receipt.rows_written > 3,
+        "a prefix forget stamped {} row(s), which is the three episode rows and \
+         none of their chunks",
+        receipt.rows_written
+    );
 
     let post = scoped.recall(Query::text("violet antenna hum")).await.expect("recall");
     assert!(recalls_episode(&post, keep_id), "keep/x must still recall: {post:?}");
@@ -190,4 +208,118 @@ async fn forget_hard_without_token_rejected() {
         format!("{err}").contains("confirmation"),
         "error must name the missing confirmation token, got: {err}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// W1.4 — a HARD forget leaves the content recallable.
+//
+// The sibling `forget_id_removes_from_recall_moon` above passes, and it is not
+// vacuous: it asserts the episode recalls before the forget and not after. But
+// it exercises the SOFT path, and the soft path only appears to work.
+//
+// `scan_matches_scoped` walks one prefix — `lunaris:{scope}:episode:`. Chunk
+// rows are never matched, so a forget never touches them. Recall stays clean
+// only because `hydrate` has a second pass that looks up each chunk's parent
+// episode and drops the hit when that episode is sys-closed:
+//
+//     .filter(|(_, chunk)| !matches!(episode_sources.get(&chunk.episode_id),
+//                                    Some((_, true))))
+//
+// A soft forget stamps `bt.sys.1`, the lookup yields `Some((_, true))`, the
+// chunk is dropped. A HARD forget issues `WriteOp::KvDelete` on the episode
+// row, so the lookup yields **`None`** — and `!matches!(None, Some((_, true)))`
+// is `true`. The chunk is kept and hydrates with an empty `source`.
+//
+// So the stronger operation is the leakier one: the irreversible, D-21
+// confirmation-token-gated path that reports `rows_deleted` is the one that
+// fails to hide the data, while the reversible default succeeds. Two locally
+// reasonable decisions compose into it — forget's "v0 walks the episode kind"
+// and hydrate's "missing episodes stay tolerated (empty source)" — and each
+// one documents itself honestly in a comment.
+//
+// This is a data-deletion contract, not a ranking nicety: a caller who asks to
+// hard-delete a conversation gets a receipt saying it happened, and the text
+// still comes back from recall.
+// ---------------------------------------------------------------------------
+
+/// The bytes must be gone from recall after a confirmed hard delete.
+#[tokio::test]
+async fn hard_forget_removes_the_content_from_recall_moon() {
+    let engine = open_moon().await;
+    let scope = fresh_scope("hard-id");
+    let scoped = engine.scoped(scope.clone());
+
+    let ep_id = Ulid::new();
+    scoped
+        .ingest(
+            EpisodeBuilder::new("wipe-me/hard", "the scarlet pendulum swings every 23 seconds")
+                .id(ep_id),
+        )
+        .await
+        .expect("ingest");
+
+    let pre = scoped.recall(Query::text("scarlet pendulum swing interval")).await.expect("recall");
+    assert!(recalls_episode(&pre, ep_id), "pre-forget recall must surface the episode: {pre:?}");
+
+    // The D-21 two-step rail: preview, mint a token from that receipt, delete.
+    let dry = scoped.forget(ForgetTarget::Id(ep_id).dry_run()).await.expect("dry-run forget");
+    let token = engine.confirm_hard_forget(dry).await.expect("confirm");
+    let receipt =
+        scoped.forget(ForgetTarget::Id(ep_id).hard().with_token(token)).await.expect("hard forget");
+    assert!(
+        receipt.rows_deleted > 1,
+        "a hard forget deleted {} row(s) — the episode alone, leaving its chunks \
+         behind in KV and in the FT index",
+        receipt.rows_deleted
+    );
+
+    let post = scoped.recall(Query::text("scarlet pendulum swing interval")).await.expect("recall");
+    assert!(
+        !recalls_episode(&post, ep_id),
+        "a confirmed HARD delete reported rows_deleted={} and the content is STILL \
+         recallable. The episode row is gone, so hydrate's parent-episode gate \
+         yields None rather than Some((_, true)) and stops dropping the chunk. \
+         Forget must reach the chunk rows, not rely on a gate that only fires \
+         while the episode row survives. Hits: {post:?}",
+        receipt.rows_deleted
+    );
+}
+
+/// And the chunk text itself must not be returned under any provenance.
+///
+/// Separate from the assertion above on purpose: `recalls_episode` matches on
+/// `Hit::episode_id`, and a hard-deleted parent leaves the hit's `source`
+/// EMPTY — so a fix that merely blanked provenance could satisfy the sibling
+/// test while the verbatim text still came back. This asserts the thing a
+/// caller actually asked to be rid of.
+#[tokio::test]
+async fn hard_forget_leaves_no_recallable_text_moon() {
+    let engine = open_moon().await;
+    let scope = fresh_scope("hard-text");
+    let scoped = engine.scoped(scope.clone());
+
+    let ep_id = Ulid::new();
+    let secret = "the scarlet pendulum swings every 23 seconds";
+    scoped
+        .ingest(EpisodeBuilder::new("wipe-me/hard-text", secret).id(ep_id))
+        .await
+        .expect("ingest");
+
+    let pre = scoped.recall(Query::text("scarlet pendulum swing interval")).await.expect("recall");
+    assert!(
+        pre.iter().any(|h| h.text.contains("scarlet pendulum")),
+        "pre-forget recall must return the text, or this test asserts nothing: {pre:?}"
+    );
+
+    let dry = scoped.forget(ForgetTarget::Id(ep_id).dry_run()).await.expect("dry-run forget");
+    let token = engine.confirm_hard_forget(dry).await.expect("confirm");
+    scoped.forget(ForgetTarget::Id(ep_id).hard().with_token(token)).await.expect("hard forget");
+
+    let post = scoped.recall(Query::text("scarlet pendulum swing interval")).await.expect("recall");
+    let leaked: Vec<&str> = post
+        .iter()
+        .filter(|h| h.text.contains("scarlet pendulum"))
+        .map(|h| h.text.as_str())
+        .collect();
+    assert!(leaked.is_empty(), "the verbatim text survived a confirmed hard delete: {leaked:?}");
 }

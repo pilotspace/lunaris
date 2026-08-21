@@ -121,7 +121,7 @@ pub async fn unknown_id_returns_404(
 ///      (the safety rail per `crates/lunaris/src/forget.rs` forget_scoped impl).
 ///   2. `dry_run: true` returns a `ForgetReceipt { preview: true, ... }`.
 ///   3. `hard: true` with the prior receipt JSON in `confirmation_token` → `200 OK`
-///      and `ForgetReceipt { preview: false, rows_deleted: 1 }`.
+///      and `ForgetReceipt { preview: false, rows_deleted: >= 1 }`.
 ///
 /// The `confirmation_token` wire shape is the SERIALIZED prior `ForgetReceipt`
 /// JSON (per Plan 05-01 routes/forget.rs rustdoc — `ForgetConfirmation` has a
@@ -129,7 +129,12 @@ pub async fn unknown_id_returns_404(
 /// directly; the server reconstructs it from the receipt round-trip).
 ///
 /// W1.1: the target is a real ingested episode, so step 3 asserts an actual
-/// deletion (`rows_deleted == 1`) rather than the shape of an empty receipt.
+/// deletion (`rows_deleted >= 1`) rather than the shape of an empty receipt.
+///
+/// W1.4 loosened the exact `== 1` to `>= 1`: a forget now deletes the episode
+/// row AND its chunk rows, so the count is rows, not episodes. The guard this
+/// assertion exists for is unchanged — zero still fails, and Step 4 below
+/// proves the row is actually gone rather than merely reported gone.
 pub async fn two_step_hard_delete(client: &Client, base: &Url, token: &str) -> anyhow::Result<()> {
     let url = base.join("/v1/forget")?;
     let target_id = seed_episode(client, base, token).await?;
@@ -197,9 +202,9 @@ pub async fn two_step_hard_delete(client: &Client, base: &Url, token: &str) -> a
         "hard-delete receipt should carry preview=false; body={payload}"
     );
     anyhow::ensure!(
-        payload.get("rows_deleted").and_then(|v| v.as_u64()) == Some(1),
-        "hard-delete of a just-ingested episode must report rows_deleted=1 — a 0 means the \
-         D-21 flow completed without removing anything; body={payload}"
+        payload.get("rows_deleted").and_then(|v| v.as_u64()).unwrap_or(0) >= 1,
+        "hard-delete of a just-ingested episode must report at least one deleted row — a 0 \
+         means the D-21 flow completed without removing anything; body={payload}"
     );
 
     // Step 4 — the row is actually GONE, not merely reported gone.

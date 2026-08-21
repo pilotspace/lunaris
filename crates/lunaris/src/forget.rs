@@ -667,6 +667,35 @@ async fn scan_matches_scoped(
     target: &ForgetTarget,
     clock: &HlcClock,
 ) -> Result<Vec<ForgetMatch>, LunarisError> {
+    let mut out = scan_episode_matches_scoped(storage, scope, target, clock).await?;
+
+    // W1.4: the episode row is not the content. Its chunks are, and until now
+    // nothing in a forget ever touched them.
+    //
+    // A SOFT forget appeared to work because `hydrate`'s episode pass drops any
+    // chunk whose parent episode is sys-closed. A HARD forget deletes the
+    // episode row outright, so that lookup returns `None` instead of
+    // `Some((_, true))` — and the gate stops firing. The chunk hydrates again,
+    // with an empty `source`, after a confirmed irreversible delete that
+    // reported `rows_deleted`.
+    //
+    // Reaching the chunks fixes both paths at once: soft stamps them, hard
+    // deletes them, and neither depends on the episode row surviving.
+    let episode_ids = matched_episode_ids(&out);
+    if !episode_ids.is_empty() {
+        out.extend(scan_chunk_matches_scoped(storage, scope, &episode_ids, clock).await?);
+    }
+    Ok(out)
+}
+
+/// The episode half — unchanged behaviour, lifted out so the chunk sweep below
+/// runs for the `ForgetTarget::Id` fast path too.
+async fn scan_episode_matches_scoped(
+    storage: &dyn StoragePort,
+    scope: &lunaris_core::Scope,
+    target: &ForgetTarget,
+    clock: &HlcClock,
+) -> Result<Vec<ForgetMatch>, LunarisError> {
     use futures::stream::StreamExt;
 
     // OPS-01 fast path: single-target read_as_of on the canonical scoped key.
@@ -680,8 +709,7 @@ async fn scan_matches_scoped(
         });
     }
 
-    // OPS-02 / OPS-03: walk this scope's episode partition only. v0 walks the
-    // `episode:` kind; richer scope languages (chunk:, fact:, ...) are v1.
+    // OPS-02 / OPS-03: walk this scope's episode partition.
     let prefix = format!("{}episode:", lunaris_core::keyspace::scope_prefix(scope)).into_bytes();
 
     let mut stream =
@@ -699,6 +727,69 @@ async fn scan_matches_scoped(
                 .unwrap_or_else(|| BiTemporal { valid: (Hlc::ZERO, None), sys: (Hlc::ZERO, None) });
             out.push(ForgetMatch { key: k.to_vec(), payload: v.to_vec(), bt });
         }
+    }
+    Ok(out)
+}
+
+/// The ulids of the episodes a scan matched, read from the payloads.
+///
+/// Parsed from the value rather than the key: the key format belongs to
+/// `lunaris_core::keyspace` and this module must not re-derive it (RC-1).
+fn matched_episode_ids(matches: &[ForgetMatch]) -> std::collections::HashSet<Ulid> {
+    matches
+        .iter()
+        .filter_map(|m| serde_json::from_slice::<serde_json::Value>(&m.payload).ok())
+        .filter_map(|v| v.get("id").and_then(|id| id.as_str()).and_then(|s| s.parse::<Ulid>().ok()))
+        .collect()
+}
+
+/// Every chunk row belonging to one of `episode_ids`.
+///
+/// This is a prefix scan of the scope's chunk partition, and it runs even on
+/// the `ForgetTarget::Id` fast path, which is a real cost: ingest writes
+/// doctree / episode / chunk / vector ops and **no** reverse episode->chunk
+/// index, so there is nothing cheaper to consult. Forget is not a hot path and
+/// correctness wins here; a back-link written at ingest would remove the scan
+/// and is the obvious follow-up if a large scope ever makes this hurt.
+///
+/// Deliberately NOT extended to facts, entities, relations or communities.
+/// Those are keyed by a content hash — `FactId = blake3(subject || predicate
+/// || object)`, `EntityId = blake3(name || type)` — so two episodes asserting
+/// the same thing write the SAME row, and no provenance links a row back to
+/// the episodes that contributed it (`RawExtraction::source_chunk_id` is
+/// dropped when the validated `Fact` is persisted). Deleting one of those on a
+/// single episode's forget would erase another episode's assertion. Doing it
+/// properly needs contributing-episode provenance plus reference-counted
+/// deletion — a schema change, tracked separately.
+async fn scan_chunk_matches_scoped(
+    storage: &dyn StoragePort,
+    scope: &lunaris_core::Scope,
+    episode_ids: &std::collections::HashSet<Ulid>,
+    clock: &HlcClock,
+) -> Result<Vec<ForgetMatch>, LunarisError> {
+    use futures::stream::StreamExt;
+
+    let prefix = lunaris_core::keyspace::chunk_prefix(scope);
+    let mut stream =
+        storage.scan_range(scope, &prefix, None).await.map_err(LunarisError::Storage)?;
+    let mut out = Vec::new();
+    while let Some(item) = stream.next().await {
+        let (k, v) = item.map_err(LunarisError::Storage)?;
+        let Ok(chunk) = serde_json::from_slice::<lunaris_core::Chunk>(&v) else {
+            continue; // not a chunk row, or a shape this version cannot read
+        };
+        if !episode_ids.contains(&chunk.episode_id) {
+            continue;
+        }
+        // Same typed-bt load the episode loop does: `build_soft_delete_op`
+        // mutates the typed BiTemporal before patching it into the payload.
+        let now = clock.tick();
+        let row_opt = storage.read_as_of(scope, &k, now).await.map_err(LunarisError::Storage)?;
+        let bt = row_opt
+            .as_ref()
+            .map(|r| r.bt)
+            .unwrap_or_else(|| BiTemporal { valid: (Hlc::ZERO, None), sys: (Hlc::ZERO, None) });
+        out.push(ForgetMatch { key: k.to_vec(), payload: v.to_vec(), bt });
     }
     Ok(out)
 }
