@@ -539,3 +539,48 @@ jobs:
             exit 1
           fi
           echo "no [skip] markers — every discriminator executed"
+
+  # W4.8 — the `embedded-moon` trial suite.
+  #
+  # `crates/lunaris-cli/tests/try_end_to_end.rs` opens with
+  # `#![cfg(feature = "embedded-moon")]`, and until this job existed no
+  # workflow anywhere passed that feature to a `cargo test`. The whole file
+  # compiled to nothing, so the three tests that prove `lunaris try` actually
+  # starts a store, ingests the sample corpus and returns real hits had never
+  # run in CI — while `cargo test --workspace` reported green. The project's
+  # front door shipped with structural coverage only (manifest shape, reserved
+  # ports, stager parity) and zero behavioural coverage.
+  #
+  # A SEPARATE job on purpose. `embedded-moon` pulls in the Moon server crate
+  # and compiles a whole database; CLAUDE.md requires it stay out of every
+  # default feature set precisely so `cargo test --workspace` and CI-clippy
+  # stay light. Enabling it explicitly on one dedicated job honours that
+  # invariant — `crates/lunaris-cli/tests/embedded_moon_manifest.rs` keeps the
+  # manifests themselves honest and would fail if anyone moved the feature
+  # into a `default = [...]` to make this easier.
+  #
+  # No GGUF staging: the suite sets LUNARIS_TRY_EMBEDDER=stub, so it asserts
+  # the plumbing (store comes up, corpus lands, hits come back) without
+  # claiming anything about ranking quality. Verified locally on 2026-08-21 —
+  # 6 targets, 37 passed, 0 failed.
+  trial-embedded-moon:
+    name: lunaris try (embedded-moon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Other lunaris-cli tests use the harness, which spawns a disposable
+      # Moon per test; 0.7.0 removed the in-process fallback, so a missing
+      # binary is a panic, not a skip.
+      MOON_TEST_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init vendor/moon submodule
+        run: git submodule update --init vendor/moon
+      - uses: dtolnay/rust-toolchain@1.94
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Moon (release, from vendor/moon submodule)
+        run: cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+      - name: Run the trial suite with embedded-moon
+        run: cargo test -p lunaris-cli --features embedded-moon
