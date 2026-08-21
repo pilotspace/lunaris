@@ -77,7 +77,22 @@ jobs:
       - name: cargo check
         env:
           EXAMPLE: ${{ matrix.example }}
-        run: cargo check --locked --manifest-path "examples/$EXAMPLE/Cargo.toml"
+        # Each example is its OWN workspace (empty `[workspace]` in its
+        # Cargo.toml) so a fresh-clone reader can `cd` in and build without
+        # inheriting 18 crates of dev-deps. The cost: its Cargo.lock is not
+        # maintained by anything that touches the root lock, so ANY change to a
+        # workspace crate's dependency graph — a new dep, a version pin — leaves
+        # every example lock stale, and `--locked` then fails on a diff that has
+        # nothing to do with the example. That is not a bug in this gate; it is
+        # the gate doing its job. The remedy is in the error message so nobody
+        # has to rediscover it.
+        run: |
+          set -euo pipefail
+          cargo check --locked --manifest-path "examples/$EXAMPLE/Cargo.toml" || {
+            echo "::error::examples/$EXAMPLE/Cargo.lock is stale. Regenerate and commit it:"
+            echo "::error::  cargo generate-lockfile --manifest-path examples/$EXAMPLE/Cargo.toml"
+            exit 1
+          }
 
   # ── Gate 3: the TypeScript example typechecks ────────────────────────────
   #
@@ -168,6 +183,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # `maturin develop` refuses to run outside a virtualenv, so this job died
+      # at the maturin step before compiling anything. Same failure, same fix as
+      # conformance-bindings.yml, which lost every run from 2026-04-23 to it.
+      # $GITHUB_ENV / $GITHUB_PATH only reach LATER steps, so this must precede
+      # the pip install below — which then lands in the venv, as do mypy and the
+      # python that runs the import gate. Static strings only; no untrusted input.
+      - name: Create Python venv
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: Swatinem/rust-cache@v2
         with:
           key: quickstart-py-wheel
