@@ -71,7 +71,7 @@ export declare class EmailThreading {
 /**
  * Opaque container around a resolved [`lunaris_core::Embedder`]. Constructed
  * via one of the `#[napi(factory)]` methods; consumed by
- * [`crate::Lunaris::withEmbedder`].
+ * `crate::Lunaris::withEmbedder`.
  */
 export declare class EmbedderConfig {
   /**
@@ -232,7 +232,7 @@ export declare class MultiTurnConversation {
 /**
  * Opaque container around a resolved [`lunaris_rerank::Reranker`]. Constructed
  * via the `#[napi(factory)]` methods; consumed by
- * [`crate::Lunaris::withReranker`].
+ * `crate::Lunaris::withReranker`.
  */
 export declare class RerankerConfig {
   /**
@@ -390,7 +390,7 @@ export declare class SlackArchiveQuery {
   recall(query: string): Promise<Array<any>>
 }
 
-/** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>. */
+/** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + `TemporalQuery<Documents>`. */
 export declare class TimelineReconstruction {
   /** Construct bound to `source_prefix`. */
   static new(lunaris: Lunaris, sourcePrefix: string): TimelineReconstruction

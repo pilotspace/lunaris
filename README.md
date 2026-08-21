@@ -178,7 +178,11 @@ import { open, RetrievalBuilder } from "@pilotspace/lunaris";
 
 const handle = await open("moon://127.0.0.1:6380");
 const lsn = await handle.ingest(episode);           // same episode shape as Python
-const hits = await new RetrievalBuilder().bind(handle).top(5).execute();
+const hits = await new RetrievalBuilder()
+  .bind(handle)
+  .query("what does Alice like?")
+  .top(5)
+  .execute();
 ```
 
 **Rust** — the typed surface:

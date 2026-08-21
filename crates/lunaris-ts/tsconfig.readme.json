@@ -1,0 +1,19 @@
+{
+  // W0.6 — compiles the README quickstart against the SHIPPED declaration
+  // file, resolving `@pilotspace/lunaris` to `index.d.ts` exactly the way a
+  // consumer's `node_modules` copy would (package.json `types` field).
+  //
+  // Run: `npm run typecheck`. A runtime test passes happily while
+  // `index.d.ts` is wrong; this is the gate that does not.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pilotspace/lunaris": ["./lunaris.d.ts"]
+    }
+  },
+  // Override the base config's exclude — the fixture is the POINT here.
+  "exclude": ["dist", "node_modules", "target", "npm"],
+  "include": ["lunaris.d.ts", "__test__/readme_quickstart.ts"]
+}

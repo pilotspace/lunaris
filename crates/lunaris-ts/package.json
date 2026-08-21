@@ -2,14 +2,14 @@
   "name": "@pilotspace/lunaris",
   "version": "0.7.0",
   "description": "Lunaris — agent memory engine (TypeScript bindings, napi-rs 3.x).",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "lunaris.cjs",
+  "types": "lunaris.d.ts",
   "module": "index.mjs",
   "exports": {
     ".": {
-      "types": "./index.d.ts",
+      "types": "./lunaris.d.ts",
       "import": "./index.mjs",
-      "require": "./index.js"
+      "require": "./lunaris.cjs"
     }
   },
   "license": "Apache-2.0",
@@ -43,8 +43,10 @@
   },
   "files": [
     "index.js",
-    "index.mjs",
     "index.d.ts",
+    "index.mjs",
+    "lunaris.cjs",
+    "lunaris.d.ts",
     "README.md"
   ],
   "optionalDependencies": {
@@ -57,6 +59,8 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
+    "typecheck": "tsc --noEmit -p tsconfig.readme.json",
+    "pretest": "npm run typecheck",
     "test": "vitest run --config vitest.config.mts",
     "test:watch": "vitest --config vitest.config.mts"
   },
