@@ -160,8 +160,8 @@ fn ratchet_workflow_runs_the_gate_against_the_checked_in_baseline() {
         "recall-ratchet.yml must invoke scripts/bench/lme/anygold_gate.sh"
     );
     assert!(
-        yml.contains("scripts/bench/lme/baselines/ci-anygold.json"),
-        "recall-ratchet.yml must compare against the checked-in baseline file"
+        yml.contains(BASELINE_PATH_TEMPLATE),
+        "recall-ratchet.yml must build its baseline path from {BASELINE_PATH_TEMPLATE}"
     );
 }
 
@@ -176,6 +176,13 @@ const GATING_BASELINES: &[&str] = &["ci-anygold-fast-n40.json", "ci-anygold-qual
 /// `(1 + 1) / 16` = 12.5-point fail floor IS the defect the N=40 pair
 /// replaces (baselines/README.md defect (b1)). Retired in a follow-up once
 /// the pair has run green on `main` once.
+/// recall-ratchet.yml builds its baseline path from `matrix.point`, so the
+/// literal filenames never appear in the workflow. The check that matters is
+/// therefore: substitute every DECLARED point into this template and compare
+/// the result to GATING_BASELINES.
+const BASELINE_PATH_TEMPLATE: &str =
+    "scripts/bench/lme/baselines/ci-anygold-${{ matrix.point }}-n40.json";
+
 const LEGACY_BASELINE: &str = "ci-anygold.json";
 
 /// The largest regression, in percentage points, that a gating baseline is
@@ -435,4 +442,51 @@ fn recall_ratchet_concurrency_cannot_cancel_a_different_commit() {
             group.trim()
         );
     }
+}
+
+/// The workflow must gate EXACTLY the baselines this guard validates.
+///
+/// Without this, narrowing the matrix to `point: [fast]` would leave CI gating
+/// one arm while the guard happily kept validating two files — coverage on
+/// paper, one measured arm in fact. Both the measure matrix and the ratchet
+/// matrix are checked: measuring both arms but ratcheting only one is the same
+/// hole wearing a different hat.
+#[test]
+fn workflow_gates_exactly_the_baselines_this_guard_validates() {
+    let yml = workflow_src();
+    assert!(yml.contains(BASELINE_PATH_TEMPLATE), "baseline path template missing");
+
+    let axes: Vec<Vec<String>> = yml
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("point: ["))
+        .map(|l| {
+            l.trim_start_matches("point: [")
+                .trim_end_matches(']')
+                .split(',')
+                .map(|p| p.trim().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        axes.len() >= 2,
+        "expected a point axis on BOTH measure and ratchet, found {}. Measuring two arms and ratcheting one gates nothing on the unratcheted arm.",
+        axes.len()
+    );
+    for (i, a) in axes.iter().enumerate() {
+        assert_eq!(
+            a, &axes[0],
+            "point axis #{i} differs from the first: the jobs would measure and ratchet different sets of arms"
+        );
+    }
+
+    let mut got: Vec<String> = axes[0].iter().map(|p| format!("ci-anygold-{p}-n40.json")).collect();
+    got.sort();
+    let mut want: Vec<String> = GATING_BASELINES.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(
+        got, want,
+        "recall-ratchet.yml's matrix points expand to a different baseline set than GATING_BASELINES. CI and this guard must agree on which arms are gated."
+    );
 }
