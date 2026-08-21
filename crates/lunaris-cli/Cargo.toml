@@ -50,12 +50,44 @@ lunaris-core = { workspace = true }
 lunaris-memory-service = { workspace = true }
 
 clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+# `fs` is for `lunaris try`'s model staging (streaming a GGUF to disk without
+# blocking the runtime); everything else was already here for the socket leg.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "fs"] }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }
 tracing    = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# ── `lunaris try` — zero-config trial path (W0.4) ─────────────────────────────
+# Model staging for the trial: the front door cannot ask a stranger to fetch a
+# 253 MB GGUF by hand. This is the SECOND copy of the staging logic in the
+# workspace (the first is `lunaris-mcp/src/model_stager.rs`, which is
+# `pub(crate)` and therefore unreachable from here). W0.7 promotes ONE copy into
+# `lunaris-core`; when it lands, `src/stage.rs` deletes and this dep block goes
+# with it. `crates/lunaris-cli/tests/stage_contract.rs` pins the two copies to
+# the same URL + SHA-256 so they cannot drift in the meantime.
+reqwest      = { workspace = true, features = ["stream"] }
+sha2         = { workspace = true }
+futures-util = "0.3"
+# indicatif 0.17 — progress on STDERR. A silent 253 MB download reads as a hang,
+# which is the single worst thing a first-run command can do. Same version as
+# lunaris-mcp; not a workspace dep because only these two crates draw bars.
+indicatif    = "0.17"
+dirs         = { workspace = true }
+
+[features]
+default = []
+# embedded-moon: `lunaris try` brings up an in-process Moon so a stranger needs
+# no server, no container and no account. Forwards to the ONE launcher
+# definition in lunaris-memory-service (never a private `dep:moon_server`), and
+# is NEVER in `default` — the CLAUDE.md invariant exists because the moon server
+# crate is a multi-minute compile that would otherwise land in every
+# `cargo test --workspace` and CI clippy run. The published GitHub Release /
+# npx / uvx artifact is built WITH this feature; a plain
+# `cargo build -p lunaris-cli` is not. Guarded by tests/embedded_moon_manifest.rs.
+embedded-moon = ["lunaris-memory-service/embedded-moon"]
+
 [dev-dependencies]
 lunaris-test-harness = { workspace = true }
+tempfile             = "3"
