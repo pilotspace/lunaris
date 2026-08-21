@@ -140,6 +140,27 @@ Per-surface deltas on top of that shared root:
 Rerank is OFF by default on every surface; with it off the bge-reranker GGUF
 is never loaded. When enabled, the stage runs between RRF fusion and the
 final `top(k)` over the top `LUNARIS_RECALL_RERANK_TOP_IN` candidates.
+**Budget seconds, not milliseconds, for it** — the measured cost is
+p50 1301.3 ms at `top_in=60` and 575.6 ms at `top_in=30`
+([capacity §4](https://github.com/pilotspace/lunaris/blob/main/docs/operations/capacity.md)).
+It is a quality stage, not a latency-class stage, and turning it on voids
+the 25 ms p50 recall contract.
+
+#### Activation boost — **on by default, and it changes ranking**
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_ACTIVATION_BOOST` | **on** (any value except `0`) | Applies the ACT-R activation-ledger prior to the fused candidate set on the **`lunaris-memory-service` recall path** — MCP `memory.recall`, contextd, `lunaris-cli`. Memories that have been referenced before rank higher than their raw hybrid score alone would place them. Set `LUNARIS_ACTIVATION_BOOST=0` to opt out (`crates/lunaris-memory-service/src/recall.rs`). |
+| `LUNARIS_BOOST_CACHE_CAPACITY` | `10000` | Entries in the in-process activation-boost lookup cache (`crates/lunaris-verify/src/reflect_apply.rs`). Non-numeric / `0` → default. |
+
+> **Read this before you A/B anything.** Because the boost is **on by
+> default** and is **not** applied on the HTTP/SDK path, the same query can
+> rank differently through MCP than through `/v1/recall` — that is by design,
+> but it makes cross-surface comparisons invalid unless you pin the variable.
+> Any benchmark, eval, or regression comparison MUST state which value it ran
+> with, and both arms of an A/B must run with the same one. It is also the
+> first thing to check when recall ordering looks inexplicable in production.
+
 
 > The llama.cpp granite-r2 embedder and bge-reranker-v2-m3 reranker are
 > selected unconditionally when the `llamacpp` feature is on (default) —
@@ -190,6 +211,16 @@ per-pipeline env → workspace env → TOML file → built-in default.
 | `LUNARIS_LLM_PROVIDER` | `ollama` (built-in fallback pair is `ollama` + `gemma3:4b`) | Default provider for the extract/verify/reflect pipelines: `ollama`\|`anthropic`\|`openai`\|`gemini`\|`openai-compat`; unknown value is a hard `UnknownProvider` error |
 | `LUNARIS_LLM_MODEL` | `gemma3:4b` | Default model id for those pipelines |
 | `LUNARIS_LLM_CONFIG` | unset | Path to a TOML file with optional `[default]`/`[extract]`/`[verify]`/`[reflect]` sections (`provider`, `model`); env vars still win over file values; unreadable path is a hard error |
+| `LUNARIS_EXTRACT_MODEL` | — | Per-pipeline model override for the extractor. Beats `LUNARIS_LLM_MODEL`; the general form is `LUNARIS_{EXTRACT,VERIFY,REFLECT}_MODEL` (`lunaris-llm/src/config.rs:170`). |
+| `LUNARIS_VERIFY_MODEL` | — | Same, for the verifier. |
+| `LUNARIS_REFLECT_MODEL` | — | Same, for the reflect pipeline. |
+| `LUNARIS_OPENAI_COMPAT_API_KEY` | — | API key for the `openai-compat` provider. Keyless endpoints (llama-server, vLLM, LM Studio) may leave it unset. |
+
+**Precedence for a pipeline's provider/model**, highest first: the per-pipeline
+env var (`LUNARIS_EXTRACT_PROVIDER` / `LUNARIS_EXTRACT_MODEL`) → the workspace
+env var (`LUNARIS_LLM_PROVIDER` / `LUNARIS_LLM_MODEL`) → the matching section of
+`LUNARIS_LLM_CONFIG`'s TOML → the built-in fallback pair (`ollama` +
+`gemma3:4b`). Env always wins over the file.
 
 ### Moon storage tuning (`lunaris-storage-moon`)
 
@@ -200,6 +231,7 @@ Read by the Moon adapter in **any** embedding process (server, MCP, SDKs).
 | `LUNARIS_MOON_OP_TIMEOUT` | `10` (whole **seconds** — no `_MS`/`_SECS` suffix in the name) | Per-command Moon response timeout on the multiplexed connection (`HSET`/`FT.*`/TXN/`PING`), so a stalled Moon cannot hang ingest or recall (`lunaris-storage-moon/src/client.rs`). `≤ 0`/unparseable → warn + default. |
 | `LUNARIS_MOON_COMPACT_MIN` | `512` | Minimum vector-upsert count in a bulk ingest before the `BulkIngestComplete` maintenance hint issues `FT.COMPACT` on the scope's vector indexes (`lunaris-storage-moon/src/vector.rs`). `0`/garbage → warn + default. |
 | `LUNARIS_MOON_SNAPSHOT_EVERY_COMMIT` | `true` | Whether every `atomic_write` commit also registers a `TEMPORAL.SNAPSHOT_AT` (`lunaris-storage-moon/src/atomic.rs`). Set `false` to save one Moon round trip per write **if you never use `AS_OF` recall**. |
+| `LUNARIS_MOON_DISCOVERY_TIMEOUT_MS` | `25` | Liveness-probe budget when a hook / MCP / CLI process resolves a Moon URL from the contextd discovery file `~/.lunaris/contextd-moon.url` (`lunaris-core/src/store_discovery.rs`). Deliberately tiny: this runs on the startup path of a one-shot binary, where a **stale** discovery file must cost milliseconds, not seconds. Raise it only if your Moon is genuinely slow to answer `PING`; `0` is rejected (`connect_timeout` refuses a zero duration). |
 
 ### Supervision / worker pool
 
@@ -209,6 +241,100 @@ Read by the Moon adapter in **any** embedding process (server, MCP, SDKs).
 | `LUNARIS_SCOPE_IDLE_TIMEOUT_MS` | `1800000` (30 min) | Idle-scope worker eviction timeout |
 | `LUNARIS_WORKER_DRAIN_MS` | `5000` (5 s) | Graceful drain window when a scope worker shuts down |
 | `LUNARIS_CONSOLIDATE_DEBOUNCE_MS` | `60000` (60 s) | Debounce window the consolidation worker waits before flushing a batch of episode events to `consolidate_scoped` (`lunaris-consolidate/src/worker.rs`) |
+
+### Ingest + embedding batching
+
+The embedder batches by **token window**, not by row count, and the two families
+of knob are independent: `*_BATCH_TOKENS` sizes the llama.cpp compute buffer,
+`*_BATCH*` sizes how many items the caller hands over at once.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_EMBED_MAX_BATCH_TOKENS` | `4096` | llama.cpp batch-token window for the in-process embedder (`lunaris/src/handle.rs:2105`). Values `< 16` are rejected → default. This is the main RSS lever: ~2.5 GB compute buffer at 4096. |
+| `LUNARIS_CONTEXT_EMBED_MAX_BATCH_TOKENS` | `1024` | The same knob for the interactive / contextd embedder. Smaller on purpose (~1.1 GB vs ~2.5 GB) — an interactive path should not hold a server-sized buffer. Values `< 16` → default. |
+| `LUNARIS_EMBED_BATCH` | `32` | Rows per embed call on the **ingest** driver (`lunaris-ingest/src/pipeline.rs`). Re-read per batch, so a long-running daemon picks up changes without a restart (issue #49). Values below the built-in `32` are **clamped up**, not honoured — this knob can only raise the batch. |
+| `LUNARIS_EMBED_BATCH_SIZE` | `16` | Rows per embed call in the **hook's** embed-promotion worker (`lunaris-hook/src/embed_promotion.rs`). Minimum `1`. |
+| `LUNARIS_EMBED_BATCH_WAIT_MS` | `25` | How long that worker waits to accumulate a batch before flushing. |
+| `LUNARIS_EMBED_PROMOTION_ENABLED` | `true` | Whether hook-captured rows get embedded (promoted from keyword-only to vector-searchable) at all. |
+| `LUNARIS_EMBED_PROMOTION_WORKER` | `true` | Whether promotion runs on a background worker. `false` keeps promotion enabled but inline. |
+| `LUNARIS_EMBED_DIM` | `768` | Vector dimension asserted for the `NoopEmbedder` path (`lunaris_core::NOOP_DEFAULT_DIM`). Changing it on a store that already holds vectors re-embeds nothing. |
+| `LUNARIS_PREWARM_CONCURRENCY` | `4` | Max concurrent speculative warm-up recall tasks spawned by `ScopedLunaris::end_turn`. Must be a positive integer; `0` / non-numeric / unset → default. One `INFO` line per process records the resolved value. |
+| `LUNARIS_GRAPH_EXTRACT_GRANULARITY` | `chunk` | `session` / `episode` / `doc` make graph extraction one LLM call over the whole episode instead of one per chunk — far fewer calls, coarser entities. `chunk` / `chunks` / unset keeps the per-chunk default (`lunaris/src/ingest.rs`). |
+
+### Scope resolution
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_SCOPES_FILE` | `~/.lunaris/scopes.json` | Path to the JSON map from working directory to `Scope`, used by `lunaris-hook` and anything else resolving a scope from cwd (`lunaris-core/src/scope_resolver.rs`). Point it elsewhere for a per-project or per-machine layout. |
+| `LUNARIS_HOOK_SCOPE` | — | Hard override: skips cwd resolution entirely and uses this scope. Highest precedence (`lunaris-hook/src/scope.rs`). |
+| `LUNARIS_SCOPE` | — | The `--scope` flag's env fallback for `lunaris-cli`. |
+
+### contextd — the shared local daemon
+
+`lunaris-contextd` keeps one warm embedder and one Moon connection for all the
+short-lived hook / MCP / CLI processes on a machine. Everything below tunes how
+those processes find it and how long they will wait.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_CONTEXTD_SOCKET` | `~/.lunaris/codex-contextd.sock` | Unix socket path. Read **first**, ahead of any store discovery — a developer running contextd would otherwise silently redirect tests and hooks (`lunaris-hook/src/context.rs::default_socket_path`). |
+| `LUNARIS_CONTEXTD_EMBEDDED_MOON` | enabled | Set `0` / `false` to stop contextd launching its own in-process Moon; it then requires an external store. |
+| `LUNARIS_CONTEXTD_MOON_DIR` | `~/.lunaris/contextd-moon-data` | Data directory for that embedded Moon. An unusable directory logs a `WARN` and disables the embedded path rather than failing the daemon. |
+| `LUNARIS_CLI_CONNECT_MS` | `500` | How long `lunaris-cli` waits to connect to the contextd socket before falling back to a direct store connection (`lunaris-cli/src/route.rs`). |
+| `LUNARIS_CLI_LOG` | `warn` | Tracing filter for `lunaris-cli` (stderr). |
+| `LUNARIS_CONTEXTD_AUTOSTART` | `1` | Whether the Codex hook adapter starts `lunaris-contextd` on demand. `0` / `false` requires you to run it yourself. |
+| `LUNARIS_CONTEXTD_BIN` | resolved from `PATH` | Explicit path to the `lunaris-contextd` binary. |
+| `LUNARIS_HOOK_BIN` | resolved from `PATH` | Explicit path to the `lunaris-hook` binary. |
+
+#### Codex hook-adapter budgets
+
+`scripts/lunaris-codex-hook-adapter.py` is a thin shim that talks to contextd
+over the socket above. These are its per-phase deadlines, in milliseconds; each
+one degrades to "inject nothing" rather than delaying the agent.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_CONTEXT_ENABLED` | on | Master switch for context injection through the adapter. Any disabling value turns injection off while leaving capture alone. |
+| `LUNARIS_CONTEXT_TIMEOUT_MS` | `300` | Budget for the prompt-phase recall round trip. |
+| `LUNARIS_CONTEXT_POST_TOOL_TIMEOUT_MS` | `LUNARIS_CONTEXT_TIMEOUT_MS` (`300`) | Budget for the post-tool-call recall. |
+| `LUNARIS_CONTEXT_DIGEST_TIMEOUT_MS` | `LUNARIS_CONTEXT_TIMEOUT_MS` (`300`) | Budget for the SessionStart digest. |
+| `LUNARIS_CONTEXT_CAPTURE_TIMEOUT_MS` | `120` | Budget for a capture write. Tighter than recall on purpose — a capture is fire-and-forget. |
+| `LUNARIS_CONTEXT_COLD_TIMEOUT_MS` | `15000` | Budget for the **first** request after contextd starts, which pays the model-load cost. |
+| `LUNARIS_CONTEXT_CAPTURE_FAST` | on | Fire-and-forget capture path. Turning it off makes captures synchronous — useful when debugging a capture that seems to vanish. |
+| `LUNARIS_CONTEXT_CAPTURE_GATE` | `on` | The signal gate that drops low-value captures. `off` is the kill-switch that captures everything. |
+| `LUNARIS_HOOK_OUTPUT_TARGET` | `codex` | Output dialect the hook emits (`codex` / `claude`). |
+
+### Hook context injection
+
+What the Claude Code / Codex hook may inject, and the latency budgets it may
+spend doing it. Every timeout here is a **hard budget on a user-visible path** —
+exceeding one degrades to injecting nothing, never to blocking the turn.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_CONTEXT_RECALL` | `hybrid` | Recall plan for context injection. `vector` opts out of the keyword / graph legs. |
+| `LUNARIS_CONTEXT_MAX_CHARS` | `1600` | Character budget for prompt-phase injected context. |
+| `LUNARIS_CONTEXT_MIN_SCORE` | `0.55` | Score floor for a hit to be injected at prompt phase. Raise it if injected memories feel irrelevant; lower it if the hook injects nothing. |
+| `LUNARIS_CONTEXT_POST_TOOL_MAX_CHARS` | `900` | Same budget for post-tool-call injection (falls back to `LUNARIS_CONTEXT_MAX_CHARS`). |
+| `LUNARIS_CONTEXT_POST_TOOL_MIN_SCORE` | `0.60` | Score floor post-tool (falls back to `LUNARIS_CONTEXT_MIN_SCORE`). Higher than the prompt floor on purpose — a mid-turn interruption must clear a higher bar. |
+| `LUNARIS_CONTEXT_DIGEST_MAX_CHARS` | `2000` | Character budget for the SessionStart digest. |
+| `LUNARIS_CONTEXT_PROMPT_INCLUDE_TOOLCALLS` | off | `1` restores raw tool-call captures to prompt-phase injection. Off by default because they crowd out durable decisions and edits. |
+| `LUNARIS_HOOK_CONTEXT_BUDGET_MS` | `250` | Wall-clock budget for building handover context. Clamped to `[10, 10000]`. |
+| `LUNARIS_HOOK_DROP_AFTER_MS` | `100` | Emergency-drop deadline (HOOK-06): past this the hook warns and exits `0` rather than delaying the agent. Clamped to `[10, 10000]`. |
+| `LUNARIS_TRANSCRIPT_TAIL_BYTES` | `4194304` (4 MiB) | How much of a transcript file's tail the hook reads per turn. |
+| `LUNARIS_HOOK_INCLUDE` | — | Colon-separated glob allow-list of paths the hook may capture. |
+| `LUNARIS_HOOK_EXCLUDE` | — | Colon-separated glob deny-list, applied on top of the built-in defaults rather than replacing them. |
+
+The `LUNARIS_CODEX_*` spellings (`LUNARIS_CODEX_CONTEXT_MAX_CHARS`,
+`…_CONTEXT_MIN_SCORE`, `…_POST_TOOL_*`) are **legacy aliases** consulted after
+the `LUNARIS_CONTEXT_*` names above. Prefer the unprefixed names; the Codex
+ones exist so older Codex hook configs keep working.
+
+### Recall degradation signal
+
+| Variable | Default | Controls |
+|---|---|---|
+| `LUNARIS_VERIFY_QUEUE_WARN_THRESHOLD` | `1000` | `recall_with_degraded_check()` flags every returned hit `degraded = true` when the verifier queue depth exceeds this at recall start (`lunaris/src/recall.rs`). Lower it for earlier warning that verification is falling behind. |
 
 ### Logging
 
