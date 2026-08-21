@@ -98,17 +98,28 @@ no Rust toolchain required (`linux-x64/arm64`, `darwin-x64/arm64`,
 **Claude Code** — one command, either runner:
 
 ```bash
-claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- npx -y @pilotspace/lunaris-mcp
 # or
-claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- uvx lunaris-mcp
 ```
+
+`LUNARIS_MCP_STORAGE` is **not optional** — see below. Without it the server
+refuses to boot, so the shorter form of this command fails on first use.
 
 **Any MCP client** — JSON config:
 
 ```json
 {
   "mcpServers": {
-    "lunaris": { "command": "npx", "args": ["-y", "@pilotspace/lunaris-mcp"] }
+    "lunaris": {
+      "command": "npx",
+      "args": ["-y", "@pilotspace/lunaris-mcp"],
+      "env": { "LUNARIS_MCP_STORAGE": "moon://127.0.0.1:6380" }
+    }
   }
 }
 ```

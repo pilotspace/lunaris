@@ -11,13 +11,19 @@ Pick whichever runner you installed (see [Install](./index.md#install)):
 
 ```sh
 # cargo-installed binary, shared with your team via the repo's .mcp.json
-claude mcp add --scope project --transport stdio lunaris -- lunaris-mcp
+claude mcp add --scope project --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- lunaris-mcp
 
 # no Rust toolchain (Node)
-claude mcp add --transport stdio lunaris -- npx -y @pilotspace/lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- npx -y @pilotspace/lunaris-mcp
 
 # no Rust toolchain (Python)
-claude mcp add --transport stdio lunaris -- uvx lunaris-mcp
+claude mcp add --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- uvx lunaris-mcp
 ```
 
 `--scope project` writes a VCS-shared `.mcp.json` at the repo root:

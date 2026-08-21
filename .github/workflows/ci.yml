@@ -320,6 +320,15 @@ jobs:
       # such files, including the three that prove `lunaris try` works and
       # the discriminator that catches the LLM resolver falling back to Noop.
       # Rationale, findings and the allowlist rules live in the script.
+      # W0.3 — every `claude mcp add` example must set LUNARIS_MCP_STORAGE.
+      # Since 0.7.0 the server refuses to boot without it, so a bare
+      # invocation is an example that fails on first use. Eleven were live at
+      # once, including both package READMEs — the pages npmjs.com and
+      # crates.io render. Rationale, and the two bugs the first draft had,
+      # are in the script.
+      - name: mcp_add_examples_boot
+        run: python3 scripts/tests/test_mcp_add_examples_boot.py
+
       - name: gated_tests_have_a_runner
         run: python3 scripts/tests/test_gated_tests_have_a_runner.py
 

@@ -44,7 +44,9 @@ a package manager at all.
 ### Claude Code
 
 ```sh
-claude mcp add --scope project --transport stdio lunaris -- lunaris-mcp
+claude mcp add --scope project --transport stdio lunaris \
+  -e LUNARIS_MCP_STORAGE=moon://127.0.0.1:6380 \
+  -- lunaris-mcp
 ```
 
 ### Codex
