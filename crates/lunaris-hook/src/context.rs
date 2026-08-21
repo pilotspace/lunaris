@@ -295,6 +295,16 @@ pub struct ContextService {
     /// the per-scope RSS growth (~350 MB/scope loaded lazily on first rerank).
     /// Shared once here and injected via `with_reranker`.
     reranker: Arc<tokio::sync::OnceCell<Arc<dyn lunaris::Reranker>>>,
+    /// W4.16 — where a dropped capture is recorded so it outlives the process.
+    ///
+    /// Held as a field rather than resolved at the call site so a test can
+    /// point it at a tempdir without `std::env::set_var`: env is process-wide,
+    /// and a sibling test reading the same variable indirectly is exactly how
+    /// `a_maintenance_compact` raced itself red.
+    ///
+    /// `None` means there was no home directory to anchor to; the failure then
+    /// degrades to the `tracing` line alone.
+    capture_failure_log: Option<PathBuf>,
 }
 
 impl ContextService {
@@ -307,7 +317,15 @@ impl ContextService {
             query_embeddings: Arc::new(Mutex::new(HashMap::new())),
             embedder: Arc::new(tokio::sync::OnceCell::new()),
             reranker: Arc::new(tokio::sync::OnceCell::new()),
+            capture_failure_log: crate::capture_failures::default_log_path(),
         }
+    }
+
+    /// Redirect the capture-failure record (tests; operators use the
+    /// `LUNARIS_CAPTURE_FAILURE_LOG` override that `default_log_path` reads).
+    pub fn with_capture_failure_log(mut self, path: PathBuf) -> Self {
+        self.capture_failure_log = Some(path);
+        self
     }
 
     /// Resolve the process-shared embedder, loading the GGUF at most ONCE per
@@ -1353,12 +1371,25 @@ impl ContextService {
         let service = self.clone();
         let scope = scope.clone();
         let source = source.to_owned();
+        let failure_log = self.capture_failure_log.clone();
         tokio::spawn(async move {
             if let Err(err) = service
                 .capture_tool(&scope, &source, session_id, tool, payload, paths, cwd.as_deref())
                 .await
             {
-                tracing::debug!(err = %err, "lunaris tool capture write failed");
+                // W4.16 — `warn`, not `debug`. contextd's default filter is
+                // `warn`, so the old level made this invisible even when the
+                // daemon HAD a working stderr; the `/dev/null` fds were only
+                // the second of two independent reasons nobody saw the
+                // fifty-minute write outage on 2026-08-21.
+                tracing::warn!(err = %err, "lunaris tool capture write failed");
+                // And a record that outlives both the process and its fds.
+                // Best-effort by construction: failing to report a failure
+                // must never escalate into breaking the user's session.
+                if let Some(path) = failure_log.as_deref() {
+                    let stamp = chrono::Utc::now().to_rfc3339();
+                    let _ = crate::capture_failures::record_at(path, &stamp, &err.to_string());
+                }
             }
         });
     }
@@ -3430,6 +3461,184 @@ mod tests {
         ) -> Result<(), lunaris_core::StorageError> {
             self.inner.insert_dedupe_key(scope, dedupe_key, lsn).await
         }
+    }
+
+    /// W4.16 — every write refused, so the capture cannot possibly land.
+    struct WriteRefusingStorage {
+        inner: Arc<dyn StoragePort>,
+    }
+
+    #[async_trait::async_trait]
+    impl StoragePort for WriteRefusingStorage {
+        async fn atomic_write(
+            &self,
+            scope: &Scope,
+            ops: &[lunaris_core::WriteOp],
+        ) -> Result<Lsn, lunaris_core::StorageError> {
+            // The shape of the outage this exists for: Moon 6381 answered
+            // EVERY write with `MOONERR diskfull` for ~50 minutes.
+            let _ = (scope, ops);
+            Err(lunaris_core::StorageError::Backend("MOONERR diskfull".into()))
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        async fn vector_search(
+            &self,
+            scope: &Scope,
+            index: &str,
+            query: &[f32],
+            k: usize,
+            filter: Option<&lunaris_core::Filter>,
+            as_of: Option<lunaris_core::Hlc>,
+            rerank: bool,
+        ) -> Result<Vec<lunaris_core::VectorHit>, lunaris_core::StorageError> {
+            self.inner.vector_search(scope, index, query, k, filter, as_of, rerank).await
+        }
+
+        async fn graph_traverse(
+            &self,
+            scope: &Scope,
+            query: &lunaris_core::CypherQuery,
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<lunaris_core::GraphResult, lunaris_core::StorageError> {
+            self.inner.graph_traverse(scope, query, as_of).await
+        }
+
+        async fn scan_range(
+            &self,
+            scope: &Scope,
+            prefix: &[u8],
+            as_of: Option<lunaris_core::Hlc>,
+        ) -> Result<
+            futures::stream::BoxStream<
+                '_,
+                Result<(bytes::Bytes, bytes::Bytes), lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            self.inner.scan_range(scope, prefix, as_of).await
+        }
+
+        async fn read_as_of(
+            &self,
+            scope: &Scope,
+            key: &[u8],
+            as_of: lunaris_core::Hlc,
+        ) -> Result<Option<lunaris_core::Row<bytes::Bytes>>, lunaris_core::StorageError> {
+            self.inner.read_as_of(scope, key, as_of).await
+        }
+
+        async fn publish(
+            &self,
+            scope: &Scope,
+            topic: &str,
+            partition: u16,
+            payload: bytes::Bytes,
+        ) -> Result<u64, lunaris_core::StorageError> {
+            self.inner.publish(scope, topic, partition, payload).await
+        }
+
+        async fn subscribe(
+            &self,
+            scope: &Scope,
+            group: &str,
+            topic: &str,
+            partition: u16,
+        ) -> Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<lunaris_core::QueueMsg, lunaris_core::StorageError>,
+            >,
+            lunaris_core::StorageError,
+        > {
+            self.inner.subscribe(scope, group, topic, partition).await
+        }
+
+        fn capabilities(&self) -> lunaris_core::StorageCapabilities {
+            self.inner.capabilities()
+        }
+
+        async fn lookup_by_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+        ) -> Result<Option<Lsn>, lunaris_core::StorageError> {
+            self.inner.lookup_by_dedupe_key(scope, dedupe_key).await
+        }
+
+        async fn insert_dedupe_key(
+            &self,
+            scope: &Scope,
+            dedupe_key: &str,
+            lsn: Lsn,
+        ) -> Result<(), lunaris_core::StorageError> {
+            self.inner.insert_dedupe_key(scope, dedupe_key, lsn).await
+        }
+    }
+
+    /// W4.16 DISCRIMINATOR — a dropped capture must leave a trace an operator
+    /// can find AFTER the fact.
+    ///
+    /// The bug this pins: on 2026-08-21 Moon refused every write for ~50
+    /// minutes and nothing anywhere said so. `contextd` reported it through
+    /// `tracing` at `debug` (below its own default `warn` filter) to a stderr
+    /// that the running daemon had on `/dev/null`, the hook adapter discarded
+    /// the response and returned 0, and no hook-side log file existed. A
+    /// vanished capture was byte-for-byte indistinguishable from a successful
+    /// one.
+    ///
+    /// So the assertion is deliberately NOT "a warning was logged" — the whole
+    /// failure was that logs went nowhere. It is: an artifact survives on disk,
+    /// outliving the process and its file descriptors, naming the error.
+    #[tokio::test]
+    async fn a_refused_capture_leaves_a_record_on_disk() {
+        let scope = Scope::new("test-w416-capture-failure").unwrap();
+        let store = open_test_storage().await;
+        let refusing =
+            StdArc::new(WriteRefusingStorage { inner: store.port() }) as Arc<dyn StoragePort>;
+        let embedder: Arc<dyn lunaris_core::Embedder> = StdArc::new(StubEmbedder::new(768));
+        let handle = StdArc::new(Lunaris::with_parts(refusing.clone(), embedder, HlcClock::new(0)));
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = dir.path().join("logs").join("capture-failures.log");
+
+        let svc = ContextService::new().with_capture_failure_log(log.clone());
+        svc.insert_handle_for_test(&scope, handle).await;
+        svc.insert_storage_for_test(&scope, refusing.clone()).await;
+
+        svc.spawn_capture_tool(
+            &scope,
+            "post_tool_use",
+            Some("sess-w416".to_owned()),
+            Some("Edit".to_owned()),
+            serde_json::json!({"file_path": "/tmp/x.rs"}),
+            None,
+            None,
+        );
+
+        // The write is fire-and-forget by design (the hook must not block the
+        // user's turn), so poll rather than assume it has landed.
+        let mut body = String::new();
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&log)
+                && !text.trim().is_empty()
+            {
+                body = text;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            !body.is_empty(),
+            "a capture that could not be written left NO artifact at {log:?}. An operator \
+             has no way to learn the headline feature stopped working — which is the \
+             entire defect W4.16 exists to close."
+        );
+        assert!(
+            body.contains("diskfull"),
+            "the record must name the underlying error so an operator can act on it; got {body:?}"
+        );
     }
 
     /// The activation write failing must NOT fail the turn-path: capture

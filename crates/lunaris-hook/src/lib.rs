@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
+pub mod capture_failures;
 pub mod citation;
 pub mod context;
 pub mod dedupe;
