@@ -69,6 +69,24 @@ class VerifyFailFast(unittest.TestCase):
             self.assertFalse(missing.exists(), "verify must not create settings")
 
     def test_verify_unreachable_storage_fails_fast(self) -> None:
+        # Precondition, stated rather than discovered: this scenario needs
+        # verify to REACH the storage stage, which means the settings stage
+        # must pass first, which means the settings file must carry hook
+        # entries — and setup only writes those with `--hooks on`, which needs
+        # a built hook binary. Without it the run below writes hooks-off
+        # settings and verify correctly fails at `settings`, so the assertion
+        # on `VERIFY FAIL: storage` is testing an unreachable state.
+        #
+        # That is exactly what happened the first time this file ran in CI
+        # (2026-08-21): it had never been executed by any workflow, and the
+        # `check` job has no release hook binary, so it failed on a premise
+        # rather than on the contract. Skipping names the missing prerequisite
+        # instead of asserting through it.
+        if not HOOK_BIN.exists():
+            self.skipTest(
+                f"needs a release hook binary at {HOOK_BIN} — without it setup writes "
+                f"hooks-off settings and verify never reaches the storage stage"
+            )
         with tempfile.TemporaryDirectory() as tmp:
             settings = Path(tmp) / "settings.json"
             wrote = run_setup(
@@ -78,7 +96,7 @@ class VerifyFailFast(unittest.TestCase):
                 "local",
                 "--no-build-hooks",
                 "--hooks",
-                "on" if HOOK_BIN.exists() else "off",
+                "on",
                 "--claude-settings",
                 str(settings),
                 "--storage-url",
