@@ -3,18 +3,19 @@
 //! Demonstrates the public API surface against a local Moon: open a
 //! handle, ingest one episode under a scope, recall it.
 //!
-//! Through 0.6.x this quickstart targeted Postgres + pgvector. 0.7.0 is
-//! Moon-only — see `docs/migration/0.6-to-0.7.md`.
+//! The relational backends were deleted in 0.7.0 — see
+//! `docs/migration/0.6-to-0.7.md`.
 //!
 //! ## Prerequisites
 //!
-//! 1. `docker compose up -d` (from this directory) — starts Moon on
-//!    `localhost:6380` with `--shards 1` (REQUIRED: Lunaris ingest is a
-//!    single MULTI/EXEC TXN and Moon refuses cross-shard writes).
+//! 1. A single-shard Moon on `localhost:6380` (`--shards 1` is REQUIRED:
+//!    Lunaris ingest is a single MULTI/EXEC TXN and Moon refuses cross-shard
+//!    writes). `docker compose up -d` will do it once the v0.8.5 release
+//!    assets exist; until then build from `vendor/moon` — README.md, "Path B".
 //! 2. Stage the granite-r2 Q4_K_M GGUF at `~/.lunaris/models/` for the
-//!    default in-process llama.cpp embedder. (Or `ollama serve &` with
-//!    `--features embed-remote` + `LUNARIS_EMBEDDER_OLLAMA_URL` as the
-//!    air-gap escape hatch.)
+//!    default in-process llama.cpp embedder. (Tier-0 builds —
+//!    `--no-default-features` — have no local embedder and need
+//!    `--features embed-remote` + `LUNARIS_EMBEDDER_OLLAMA_URL` instead.)
 //! 3. `export LUNARIS_STORE_URL="moon://127.0.0.1:6380"`.
 //! 4. `cargo run`.
 //!

@@ -1,7 +1,7 @@
 //! Lunaris multi-agent / multi-session example — Rust.
 //!
-//! Proves three things against a **live Moon backend** (`moon://localhost:6380`,
-//! single-shard):
+//! Proves three things against a **live single-shard Moon backend**, whose URL
+//! comes from `LUNARIS_STORE_URL` (no default — see `store_url` below):
 //!
 //! 1. **Hard isolation between agents.** Two `Scope`s under one `Lunaris`
 //!    handle; recall under each scope never returns the other agent's content.
@@ -13,34 +13,44 @@
 //!
 //! ## Embedder choice
 //!
-//! This example uses the **`with_parts_keyword` escape hatch** rather than the
-//! `fastembed` default-feature path. Rationale: it must run with NO external
-//! services and NO one-time ONNX weight download — `cd examples/multi-agent-rs
-//! && cargo run` should Just Work given a Moon server. So:
+//! This example uses the **`with_parts_keyword` escape hatch** rather than
+//! `Lunaris::open`. Rationale: it must run with no services beyond the one
+//! Moon, no C++ toolchain and no model download — which is also why
+//! `Cargo.toml` sets `default-features = false`. So:
 //!
-//! - `storage` = `Arc<MoonStorage>::connect("moon://localhost:6380")`
+//! - `storage` = `Arc<MoonStorage>::connect(&store_url()?)`
 //! - `keyword` = the **same** `Arc<MoonStorage>` (it impls `KeywordPort`, so
 //!   you still get BM25)
 //! - `embedder` = `StubEmbedder::new(768)` — deterministic, NOT semantic. The
-//!   Moon `chunks` FT index is 768d (matches EmbeddingGemma), so the dims line
-//!   up; the *ranking* is meaningless, which is why the assertions below check
-//!   "≥ 1 hit" / "no cross-scope leak" rather than "the right hit ranked
-//!   first". Swap `StubEmbedder` for a real backend (llama.cpp /
-//!   ollama via `Lunaris::open`) and the same code recalls semantically.
+//!   Moon `chunks` FT index is 768d (matching the granite-r2 embedder), so the
+//!   dims line up; the *ranking* is meaningless, which is why the assertions
+//!   below check "≥ 1 hit" / "no cross-scope leak" rather than "the right hit
+//!   ranked first". Swap `StubEmbedder` for `Lunaris::open` on a default-
+//!   feature build and the same code recalls semantically.
 //!
 //! ## Prerequisites
 //!
-//! A single-shard Moon server at `moon://localhost:6380`. `--shards 1` is
-//! required: the 12-shard default breaks Lunaris's cross-shard `atomic_write`
-//! with `TXN does not support cross-shard writes`. To (re)start one:
+//! A single-shard Moon, with its URL exported as `LUNARIS_STORE_URL`.
+//! `--shards 1` is required: the sharded default breaks Lunaris's
+//! `atomic_write` with `TXN does not support cross-shard writes`.
+//!
+//! Lunaris 0.7.0 rejects any Moon below 0.8.5, and v0.8.5 shipped no release
+//! assets, so there is nothing to download yet — build one from the vendored
+//! submodule:
 //!
 //! ```sh
-//! cd tmp/moon-data && nohup ../../../moon/target/release/moon \
-//!     --port 6380 --shards 1 > ../moon-6380.log 2>&1 &
+//! cargo build --release --manifest-path vendor/moon/Cargo.toml --bin moon
+//! vendor/moon/target/release/moon --port 6380 --shards 1 --dir /tmp/lunaris-multi-agent-data
 //! redis-cli -p 6380 PING   # -> PONG
 //! ```
 //!
-//! Then: `cd examples/multi-agent-rs && cargo run`.
+//! Then:
+//!
+//! ```sh
+//! cd examples/multi-agent-rs
+//! export LUNARIS_STORE_URL="moon://127.0.0.1:6380"
+//! cargo run
+//! ```
 //!
 //! The verbatim run output is captured in this directory's `README.md`.
 
@@ -52,7 +62,19 @@ use lunaris::{
     StoragePort, StubEmbedder, Vector,
 };
 
-const MOON_URL: &str = "moon://localhost:6380";
+/// The store URL, read from `LUNARIS_STORE_URL`.
+///
+/// There is no default on purpose, and this example is the reason the rule
+/// exists: it ingests demo episodes under two scopes and then asserts on what
+/// comes back. A hardcoded `moon://localhost:6380` would write that demo data
+/// into whatever Moon happens to own the port on the reader's machine — which
+/// on a developer box is very often a real store.
+fn store_url() -> Result<String> {
+    std::env::var("LUNARIS_STORE_URL").context(
+        "set LUNARIS_STORE_URL=moon://127.0.0.1:6380 (single-shard) \
+         — see examples/multi-agent-rs/README.md",
+    )
+}
 
 /// `EpisodeBuilder::new(source, content)`.
 ///
@@ -67,11 +89,10 @@ fn episode(source: &str, content: &str) -> EpisodeBuilder {
 /// as BOTH the storage and keyword (BM25) port, and a deterministic 768d
 /// `StubEmbedder`. See the module docs for why the stub embedder.
 async fn open_moon_handle() -> Result<Lunaris> {
-    let moon = Arc::new(
-        MoonStorage::connect(MOON_URL)
-            .await
-            .with_context(|| format!("MoonStorage::connect({MOON_URL}) failed — is the single-shard Moon server running?"))?,
-    );
+    let url = store_url()?;
+    let moon = Arc::new(MoonStorage::connect(&url).await.with_context(|| {
+        format!("MoonStorage::connect({url}) failed — is the single-shard Moon server running?")
+    })?);
     let storage: Arc<dyn StoragePort> = moon.clone();
     let keyword: Arc<dyn KeywordPort> = moon.clone();
     let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder::new(768));
@@ -271,7 +292,7 @@ async fn main() -> Result<()> {
         "multi-agent: NOTE — the recipe wrappers (MultiTurnConversation, ChatAgentMemory, \
          MessageStream) currently build episodes with Scope::dev() and partition only by source \
          prefix; hard per-agent isolation today goes through the low-level lunaris.scoped(scope) \
-         handle shown above (or, in lunaris-server, the JWT `tenant` claim). See \
+         handle shown above (or, in lunaris-server, the server-side `tenant` claim). See \
          docs/book/src/guides/multi-agent.md."
     );
     Ok(())
