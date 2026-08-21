@@ -1,8 +1,12 @@
 // Phase 11 Plan 11-03 Task 3 — TypeScript documentary parity driver.
 //
-// TS-driver leg of the cross-language parity suite. Mirrors the 5
-// Rust + Py scenarios from
-// `crates/lunaris-recipes/tests/documentary_parity.rs`:
+// TS-driver leg of the cross-language parity suite. The 5 scenarios
+// originally mirrored a Rust driver at
+// `crates/lunaris-recipes/tests/documentary_parity.rs` — that file was
+// DELETED in commit `03bf8bc` and only its fixtures survive, so the
+// "three independent drivers (Rust / Python / TypeScript)" that
+// `conformance-bindings.yml`'s header still advertises is now two.
+// The scenarios:
 //
 //   1. DocumentKnowledgeBase — basic RAG, query "quickstart"
 //   2. ResearchPaperCorpus — graph-off recall, query "reciprocal rank
@@ -15,11 +19,46 @@
 //   5. CustomerSupportHistory — "refund" recall preserves `ticket:` +
 //      `chat:` source prefixes with unique `(source, id)` pairs
 //
-// Per-driver backend parity (Phase 8 CONTEXT — Moon rows == Postgres
-// rows WITHIN the TypeScript run) is the correct interpretation of
-// Phase 11 SC #5. Top-k SET equality (D-13 tie-bucket ordering
-// accepted) is the cross-backend assertion inside this one Node
-// process.
+// WHAT THESE TESTS ASSERT (0.7.0 — CORRECTED, ship-plan W2.9)
+// ------------------------------------------------------------
+// Each scenario runs ONCE against a live Moon and asserts its rows
+// against the committed golden. That is the whole contract now.
+//
+// Until W2.9 this file called itself a *backend* parity driver: every
+// scenario ran twice — once on `LUNARIS_MOON_URL`, once on
+// `LUNARIS_POSTGRES_URL` — and the headline assertion was top-k SET
+// equality between the two. 0.7.0 deleted `lunaris-storage-postgres`;
+// `lunaris.open` now rejects every scheme but `moon://` with
+// `UnsupportedScheme`. The Postgres leg could not have run even against
+// a live Postgres server, so `backendsOrNull()` — which demanded BOTH
+// URLs — returned null on every invocation.
+//
+// THAT NULL WAS WORSE HERE THAN IN THE PYTHON DRIVER. Each test bailed
+// with a bare `return`, which vitest reports as PASSED. Five tests were
+// reporting green while asserting nothing — including under
+// `conformance-bindings.yml`, which stands up a real Moon on 6391 and
+// runs `npm test`. A test that cannot run must SKIP, never pass; every
+// bail below now goes through `ctx.skip(reason)`.
+//
+// The cross-backend SET-equality assertion is GONE and is not
+// recoverable — there is no second backend to compare against. What
+// survives is per-driver golden conformance, which is what
+// `conformance-bindings.yml`'s own header describes as the intent
+// ("Each driver asserts its own rows against the committed golden
+// reference"). Cross-LANGUAGE byte-identity was always out of scope.
+//
+// FOUR of the five scenarios now run for real. The fifth
+// (`code_repo_memory_parity_as_of_commit_50`) is skipped against a
+// NAMED product gap, not silently: Moon has no KV version chain, so a
+// system-time `.as_of` pinned 18 months back — which is what the golden
+// pins — is refused with `NotSupported`. See MOON_HISTORICAL_KV_READS
+// below for the one-line unskip.
+//
+// NOTE ON THE NAMES: the `_parity_` infix in the five test names is now
+// a misnomer. It is kept deliberately —
+// `docs/book/src/cookbook/document-kb.md` and `research-and-code.md`
+// cite these names, and those files are outside this change's scope.
+// Rename both together.
 //
 // Import path: flat `import { ... } from "../index.mjs"` per Plan
 // 11-02b's "Known limitations" — napi-rs 3.x's proc-macro registry
@@ -78,11 +117,11 @@ function loadFixture<T>(name: string): T {
 // Skip helpers (two-tier env + TCP probe per Plan 04-03 / 05-02).
 // ---------------------------------------------------------------------------
 function parseHostPort(u: string): { host: string; port: number } | null {
-  const schemes: [string, number][] = [
-    ["moon://", 6379],
-    ["postgres://", 5432],
-    ["postgresql://", 5432],
-  ];
+  // `moon://` only. The `postgres://` / `postgresql://` rows that used to
+  // sit here died with `lunaris-storage-postgres` in 0.7.0 — `lunaris.open`
+  // answers every other scheme with `UnsupportedScheme`, so parsing one
+  // would only have produced a URL nothing could open.
+  const schemes: [string, number][] = [["moon://", 6379]];
   for (const [scheme, defaultPort] of schemes) {
     if (u.startsWith(scheme)) {
       let rest = u.slice(scheme.length);
@@ -135,12 +174,31 @@ async function probeBackend(envName: string): Promise<string | null> {
   return u;
 }
 
-async function backendsOrNull(): Promise<{ moon: string; pg: string } | null> {
-  const moon = await probeBackend("LUNARIS_MOON_URL");
-  const pg = await probeBackend("LUNARIS_POSTGRES_URL");
-  if (moon === null || pg === null) return null;
-  return { moon, pg };
+// The one live backend. `moon://` is the only scheme `lunaris.open` accepts
+// since 0.7.0, so there is nothing else to probe.
+async function moonOrNull(): Promise<string | null> {
+  return probeBackend("LUNARIS_MOON_URL");
 }
+
+/**
+ * Bail out of a test as SKIPPED, never as passed.
+ *
+ * `ctx.skip(reason)` is the whole point of this helper: the bare `return`
+ * it replaces made vitest report an un-run test as green. Anything that
+ * cannot run must be visible as un-run.
+ */
+type SkippableCtx = { skip: (reason?: string) => void };
+
+/**
+ * Mirror of `lunaris_storage_moon::as_of::HISTORICAL_KV_READS`.
+ *
+ * Moon has no KV version chain, so `StoragePort::read_as_of` refuses any pin
+ * older than `AS_OF_LIVE_WINDOW_MS` (1 h) with `StorageError::NotSupported`.
+ * That makes the system-time `.as_of` scenario below unrunnable on the only
+ * backend 0.7.0 ships. Flip this to `true` on the day the Rust constant flips,
+ * and the scenario starts gating again.
+ */
+const MOON_HISTORICAL_KV_READS = false;
 
 function wrappersPresent(): boolean {
   const l = lunaris as Record<string, unknown>;
@@ -323,93 +381,128 @@ describe("Plan 11-03 — documentary parity (TypeScript)", () => {
     }
   });
 
-  test("document_knowledge_base_parity_quickstart_rag", async () => {
+  test("document_knowledge_base_parity_quickstart_rag", async (ctx: SkippableCtx) => {
     if (!wrappersPresent()) {
-      console.error(
-        "documentary_parity: SKIP (rebuild lunaris-ts with napi build to include 11-02b wrappers)",
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
+    const g = loadGolden();
+    const s = g.scenarios.document_knowledge_base_basic_rag as any;
+    const moonHits = await runKbQuickstart(moon, "moon", s.query, s.top_k);
+    expect(moonHits.length).toBeGreaterThanOrEqual(s.expected_min_hits);
+    const needles = s.expected_hit_body_contains_any as string[];
+    expect(moonHits.some(([, body]) => needles.some((n) => body.includes(n)))).toBe(true);
+  }, 60_000);
+
+  test("research_paper_corpus_parity_graph_off_recall", async (ctx: SkippableCtx) => {
+    if (!wrappersPresent()) {
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
+    const g = loadGolden();
+    const s = g.scenarios.research_paper_corpus_graph_off as any;
+    const moonHits = await runResearchPaper(moon, "moon", s.query);
+    expect(moonHits.length).toBeGreaterThanOrEqual(s.expected_min_hits);
+    const needles = s.expected_hit_body_contains_any as string[];
+    expect(moonHits.some(([, body]) => needles.some((n) => body.includes(n)))).toBe(true);
+  }, 60_000);
+
+  test("code_repo_memory_parity_as_of_commit_50", async (ctx: SkippableCtx) => {
+    // BLOCKED BY A PRODUCT GAP, not by the harness — and it is unblocked by
+    // fixing Moon, not by editing this file.
+    //
+    // `CodeRepoMemory.recall(q, as_of)` is `TemporalQuery::<Documents>::as_of`,
+    // which sets SYSTEM-time as_of on the RetrievalBuilder. `lunaris-retrieve`
+    // hydrate.rs hands that straight to `StoragePort::read_as_of`, and
+    // `lunaris-storage-moon` answers any pin older than `AS_OF_LIVE_WINDOW_MS`
+    // (1 h) with `StorageError::NotSupported` — `HISTORICAL_KV_READS = false`
+    // in `crates/lunaris-storage-moon/src/as_of.rs`, because Moon has no KV
+    // version chain. This scenario's golden pins `as_of =
+    // 2025-02-19T12:00:00Z`, roughly 18 months back, so the call throws rather
+    // than returning rows. Moon is the only backend since 0.7.0, so there is
+    // nowhere for it to pass.
+    //
+    // Skipped rather than deleted: the fixture and golden are still correct,
+    // and this is the scenario that would prove bi-temporal time-travel
+    // through the SDK the day the KV version chain lands. Skipped rather than
+    // left running: a test known to fail is not a gate, it is a broken build.
+    //
+    // UNSKIP WHEN: `lunaris_storage_moon::as_of::HISTORICAL_KV_READS` is
+    // true — flip MOON_HISTORICAL_KV_READS (defined above) to match it.
+    if (!MOON_HISTORICAL_KV_READS) {
+      ctx.skip(
+        "0.7.0 product gap: Moon refuses historical KV reads " +
+          "(HISTORICAL_KV_READS = false), so TemporalQuery.as_of throws " +
+          "NotSupported. Unskip when HISTORICAL_KV_READS flips true.",
       );
       return;
     }
-    const backends = await backendsOrNull();
-    if (backends === null) return;
-    const g = loadGolden();
-    const s = g.scenarios.document_knowledge_base_basic_rag as any;
-    const moonHits = await runKbQuickstart(backends.moon, "moon", s.query, s.top_k);
-    const pgHits = await runKbQuickstart(backends.pg, "pg", s.query, s.top_k);
-    const moonSet = new Set(moonHits.map((h) => JSON.stringify(h)));
-    const pgSet = new Set(pgHits.map((h) => JSON.stringify(h)));
-    expect(moonSet).toEqual(pgSet);
-    expect(moonHits.length).toBeGreaterThanOrEqual(s.expected_min_hits);
-    const needles = s.expected_hit_body_contains_any as string[];
-    expect(moonHits.some(([, body]) => needles.some((n) => body.includes(n)))).toBe(true);
-  }, 60_000);
-
-  test("research_paper_corpus_parity_graph_off_recall", async () => {
-    if (!wrappersPresent()) return;
-    const backends = await backendsOrNull();
-    if (backends === null) return;
-    const g = loadGolden();
-    const s = g.scenarios.research_paper_corpus_graph_off as any;
-    const moonHits = await runResearchPaper(backends.moon, "moon", s.query);
-    const pgHits = await runResearchPaper(backends.pg, "pg", s.query);
-    const moonSet = new Set(moonHits.map((h) => JSON.stringify(h)));
-    const pgSet = new Set(pgHits.map((h) => JSON.stringify(h)));
-    expect(moonSet).toEqual(pgSet);
-    expect(moonHits.length).toBeGreaterThanOrEqual(s.expected_min_hits);
-    const needles = s.expected_hit_body_contains_any as string[];
-    expect(moonHits.some(([, body]) => needles.some((n) => body.includes(n)))).toBe(true);
-  }, 60_000);
-
-  test("code_repo_memory_parity_as_of_commit_50", async () => {
-    if (!wrappersPresent()) return;
-    const backends = await backendsOrNull();
-    if (backends === null) return;
+    if (!wrappersPresent()) {
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
     const g = loadGolden();
     const s = g.scenarios.code_repo_memory_as_of_commit_50 as any;
     const moonTexts = await runCodeRepoAsOf(
-      backends.moon, "moon", s.query, s.commit_index_0based,
+      moon, "moon", s.query, s.commit_index_0based,
     );
-    const pgTexts = await runCodeRepoAsOf(
-      backends.pg, "pg", s.query, s.commit_index_0based,
-    );
-    expect(new Set(moonTexts)).toEqual(new Set(pgTexts));
     expect(moonTexts.length).toBeGreaterThanOrEqual(s.expected_min_hits);
     const needle = s.expected_first_body_contains as string;
     expect(moonTexts.some((t) => t.includes(needle))).toBe(true);
-    expect(pgTexts.some((t) => t.includes(needle))).toBe(true);
   }, 90_000);
 
-  test("timeline_reconstruction_parity_between_10_and_15", async () => {
-    if (!wrappersPresent()) return;
-    const backends = await backendsOrNull();
-    if (backends === null) return;
+  test("timeline_reconstruction_parity_between_10_and_15", async (ctx: SkippableCtx) => {
+    if (!wrappersPresent()) {
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
     const g = loadGolden();
     const s = g.scenarios.timeline_reconstruction_between_10_and_15 as any;
     const moonTexts = await runTimelineBetween(
-      backends.moon, "moon", s.query,
+      moon, "moon", s.query,
       s.between_lo_rfc3339, s.between_hi_rfc3339,
     );
-    const pgTexts = await runTimelineBetween(
-      backends.pg, "pg", s.query,
-      s.between_lo_rfc3339, s.between_hi_rfc3339,
-    );
-    expect(new Set(moonTexts)).toEqual(new Set(pgTexts));
+    // The sharpest assertion in the file: an EXACT count, which pins the
+    // lower-inclusive / upper-exclusive `.between` boundary (Phase 9.1).
     expect(moonTexts.length).toBe(s.expected_count);
     for (const needle of s.expected_event_ids_slice as string[]) {
       expect(moonTexts.some((t) => t.includes(needle))).toBe(true);
     }
   }, 60_000);
 
-  test("customer_support_history_parity_refund_recall", async () => {
-    if (!wrappersPresent()) return;
-    const backends = await backendsOrNull();
-    if (backends === null) return;
+  test("customer_support_history_parity_refund_recall", async (ctx: SkippableCtx) => {
+    if (!wrappersPresent()) {
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
     const g = loadGolden();
     const s = g.scenarios.customer_support_refund_recall as any;
-    for (const [label, url_] of [
-      ["moon", backends.moon],
-      ["pg", backends.pg],
-    ] as const) {
+    for (const [label, url_] of [["moon", moon]] as const) {
       const hits = await runCustomerSupportRefund(url_, s.query);
       const [ticketPrefix, chatPrefix] = s.expected_source_prefixes as [
         string, string,
