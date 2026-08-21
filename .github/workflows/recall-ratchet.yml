@@ -17,9 +17,8 @@
 # correctness, not e2e QA accuracy.
 #
 # Shape: a 4-shard x 2-operating-point matrix (8 measure jobs, 10 questions
-# each, measured ~125 s/question on the reference box; a single hosted job
-# would blow the <40 min wall-clock target), then one cheap fan-in job PER
-# ARM merges that arm's shard artifacts and runs the ratchet: tally.py
+# each), then one cheap fan-in job PER ARM merges that arm's shard artifacts
+# and runs the ratchet: tally.py
 # compares any-gold hits against that arm's checked-in baseline
 # scripts/bench/lme/baselines/ci-anygold-<point>-n40.json with an explicit
 # tolerance.
@@ -108,11 +107,29 @@ jobs:
   measure:
     name: any-gold ${{ matrix.point }} shard ${{ matrix.shard }}/4 (judge-free, CPU)
     runs-on: ubuntu-latest
-    # ~4 questions x ~2-6 min (CPU, x86) + builds. Warm-cache target is well
-    # under 40 min; the margin covers a cold llama.cpp + Moon compile. The
-    # per-question alarm(2) watchdog inside the gate script keeps a single
-    # wedged question from eating the whole budget.
-    timeout-minutes: 70
+    # Derived from measured cost, NOT typed once and left behind. Run
+    # 32484079897 (2026-08-21) on the hosted CPU runner:
+    #
+    #   arm      setup+build   measure         per question   outcome
+    #   fast     7m07s         46m02s / 10 q   4.60 min       success, 53m
+    #   quality  8m02s         cut at 62m10s   ~12.4 min      CANCELLED at 70m
+    #
+    # `quality` runs the CPU cross-encoder, so it costs ~2.7x the fast arm per
+    # question. 10 questions x ~13 min + 25 min of build is ~155 min. The old
+    # 70 came from the N=16 shape (4 questions/shard, rerank-only-arm) and
+    # survived `5e37105` untouched when N went to 40 AND a costlier second arm
+    # was added -- so all four `quality` shards died mid-question on every run,
+    # reported as `cancelled`, which is not a red board.
+    #
+    # This is a BACKSTOP, not a budget: the gate script's own per-question
+    # watchdog (MAX_ATTEMPTS=2 x QTIMEOUT=1200s) bounds a wedged question at
+    # 40 min. A shard that still overruns is a real problem, and the ratchet
+    # job's `if: !cancelled()` now turns it red instead of skipping.
+    #
+    # Pinned by eval_workflow_guard.rs::the_shard_timeout_covers_the_work_the_matrix_asks_for,
+    # which recomputes this from offsets40.tsv and the matrix -- change the
+    # manifest or the shard count and the guard, not review, catches the drift.
+    timeout-minutes: 170
     strategy:
       fail-fast: false
       matrix:
@@ -249,6 +266,20 @@ jobs:
   ratchet:
     name: merge ${{ matrix.point }} shards + ratchet vs baseline
     needs: measure
+    # `needs:` waits on the ENTIRE measure matrix -- both arms, every shard --
+    # so one timed-out `quality` shard skipped BOTH ratchet jobs on run
+    # 32484079897 while four complete, green `fast` shards sat uncompared in
+    # artifact storage. A skipped gate reports nothing, and nothing is
+    # indistinguishable from a pass.
+    #
+    # Run whenever the workflow itself was not cancelled and let this job's own
+    # "expected N shard config files" assertion decide: a whole arm ratchets
+    # normally, a missing arm goes RED and names what is absent. `!cancelled()`
+    # rather than `always()` on purpose -- a human cancelling the run, or a
+    # same-commit concurrency supersede, should still stop the fan-in rather
+    # than convert a deliberate cancel into a red board.
+    # Pinned by eval_workflow_guard.rs::a_timed_out_shard_cannot_silently_skip_the_ratchet.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
