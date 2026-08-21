@@ -221,6 +221,15 @@ jobs:
       # Raising EXPECTED_IGNORED is a decision, not a formality: say in the
       # PR body what the new ignore needs and what un-ignores it.
       #
+      # 13 -> 12 (2026-08-22): F12 deleted
+      # `recall_graph_mode.rs::mode_graph_parity_across_moon_and_postgres`, an
+      # `#[ignore]`d test that needed `PG_URL` against a crate 0.7.0 removed —
+      # and which, read closely, enabled the graph pipeline and recalled
+      # WITHOUT SEEDING A CORPUS, so it asserted over whatever the operator's
+      # store happened to hold. Deleted rather than left as a husk; the gap it
+      # leaves is ledger F16. This ratchet caught the drop on the same PR that
+      # made it, which is the behaviour it exists for.
+      #
       # Scope is `*/tests/*.rs` on purpose — in-crate `#[cfg(test)]` units sit
       # beside the code they cover, whereas an integration file can silently
       # park a whole contract. Comment lines are stripped first so prose ABOUT
@@ -230,7 +239,7 @@ jobs:
       - name: ignored_test_ratchet
         run: |
           set -euo pipefail
-          EXPECTED_IGNORED=13
+          EXPECTED_IGNORED=12
           sites=$(find crates -path '*/tests/*' -name '*.rs' -print0 \
             | xargs -0 grep -hn '#\[ignore' \
             | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
