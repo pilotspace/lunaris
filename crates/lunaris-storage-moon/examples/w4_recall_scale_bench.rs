@@ -1,13 +1,17 @@
 //! W4 validation bench (moon-v051-perf-exploit): strict-replay-style recall
 //! latency at 10k-doc scale against live Moon.
 //!
-//! Philosophy matches the historical strict-replay baseline (p50 10.3 ms /
-//! p99 20.8 ms, 10k-doc SQuAD, docs/benchmarks/v0.6-recall-fanout-ab.md):
+//! Philosophy matches the retrieval-only decomposition used by the current
+//! latency envelope (docs/operations/capacity.md, GA-2b: p50 19.2-22.4 ms /
+//! p99 23.4-24.4 ms at 100k docs per scope):
 //! query vectors are precomputed OUTSIDE the timed loop, so the number is
 //! retrieval-only. Differences vs that baseline: synthetic clustered vectors
 //! instead of SQuAD embeddings, and `StoragePort::vector_search` (KNN k=10 +
 //! scope prefilter) instead of the full SDK recall()+hydrate path — so treat
 //! it as the substrate floor, not an end-to-end replacement.
+//!
+//! (The historical `p50 10.3 ms` baseline this comment used to name was
+//! retracted 2026-08-21 — measured on a since-deleted Ollama/candle stack.)
 //!
 //! Run: `MOON_URL=moon://127.0.0.1:7805 cargo run -p lunaris-storage-moon \
 //!        --example w4_recall_scale_bench --features moon-it --release`

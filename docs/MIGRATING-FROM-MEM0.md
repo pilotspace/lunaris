@@ -17,11 +17,11 @@ not marketing comparisons.
 | Concern                                    | Mem0                                    | Lunaris                                                |
 |---------------------------------------------|------------------------------------------|--------------------------------------------------------|
 | **Runtime**                                | Python / hosted REST API                | Rust core + Python (PyO3) + TypeScript (NAPI) bindings |
-| **Storage**                                | Vector DB + graph DB + relational (3 services) | Moon (one substrate, FT.* + graph + KV native) OR Postgres (pgvector + AGE + pgmq) |
+| **Storage**                                | Vector DB + graph DB + relational (3 services) | Moon (one substrate, FT.* + graph + KV native) |
 | **Atomicity**                              | Best-effort per-store; no cross-store transaction | One `atomic_write` covers vector + KV + BM25 + audit + queue. CI gate enforces single call site |
 | **Bi-temporal facts**                      | Not modeled — overwrite semantics       | First-class `(valid_time, sys_time)` tuple per row     |
-| **Recall latency (laptop, 1M facts)**     | p95 ~1.44 s (Mem0-published "selective" figure, 2026-06; wide query-dependent range) | 10.3 ms p50 / 20.8 ms p99 strict-replay (manual bench, not CI-gated); budget p50 ≤ 25 ms / p99 ≤ 100 ms on `laptop-arm64` (M2 Pro) |
-| **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call + RLS-enforced in Postgres |
+| **Recall latency (laptop, 1M facts)**     | p95 ~1.44 s (Mem0-published "selective" figure, 2026-06; wide query-dependent range) | **p50 19.2–22.4 ms / p99 23.4–24.4 ms** measured at **100k documents per scope** (not 1M — see note below): single-shard Moon v0.8.5, Apple M4 Pro, graph OFF, rerank OFF, k=30, retrieval-only, manual bench (not CI-gated) — [`capacity.md`](operations/capacity.md). Budget p50 ≤ 25 ms / p99 ≤ 100 ms |
+| **Tenancy**                                | Per-user "user_id" string               | `Scope` newtype with regex-validated alphabet `[A-Za-z0-9_\-.]{1,128}`, propagated through every storage call and enforced by a per-scope Moon keyspace |
 | **Forgetting**                             | Hard delete                              | Tombstone via bi-temporal `sys_time` close (audit trail preserved) |
 | **License**                                | Apache 2.0                              | Apache 2.0                                             |
 | **Default LLM coupling**                  | OpenAI                                   | None — pick any cloud provider or an OpenAI-compatible local server (Ollama, llama-server, vLLM); verifier optional |
@@ -154,9 +154,9 @@ Suggested phases:
 4. **Cutover when the diff is acceptable.** Promote Lunaris to
    primary; keep Mem0 as fallback for ~1 release.
 5. **Decommission Mem0.** At this point you own one Rust process
-   instead of three Python services. Recall p50 drops to ~10 ms on the
-   embedded substrate (10.3 ms strict-replay bench, manual — not
-   CI-gated); measure your own Mem0 baseline (Mem0's published figure is
+   instead of three Python services. Recall p50 measures **19–22 ms** on a
+   100k-document scope ([`capacity.md`](operations/capacity.md) — manual
+   bench, not CI-gated); measure your own Mem0 baseline (Mem0's published figure is
    a p95 ~1.44 s, selective).
 
 ## When NOT to migrate

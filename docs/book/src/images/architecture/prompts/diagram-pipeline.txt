@@ -19,7 +19,7 @@ LOWER FLOW, labeled "RECALL" at its right edge (soft sage whisper tint #eef5ee b
   three thin parallel lanes leave the cylinder, labeled "vector", "keyword", "graph"
   the three lanes merge into a box: "fuse (RRF)" → "rerank" → "answer"
   Pencil-line annotation arrow at the three lanes: "one query, three search modes"
-  Pencil-line annotation arrow near "answer", with a loose pencil circle: "p50 ≈ 10 ms"
+  Pencil-line annotation arrow near "answer", with a loose pencil circle: "p50 ≈ 20 ms @ 100k"
 
 TIME-TRAVEL NOTE: below the MOON cylinder, small gray print text: "as-of T: ask what the agent believed at time T" with a tiny clock line-icon.
 

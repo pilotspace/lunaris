@@ -23,7 +23,7 @@ RIGHT SIDE, header "LUNARIS ON MOON" (soft sage whisper tint #eef5ee behind the 
   Small gray margin note: "1 process to operate"
 
 BOTTOM ROW (warm sand whisper tint #f5f0e8), two small metric cards side by side:
-  card 1: "recall p50 10.3 ms — contract < 25 ms"
+  card 1: "recall p50 19-22 ms @ 100k docs — contract < 25 ms"
   card 2: "crash window between stores: zero"
 
 BALANCE NOTE: small light-gray print text at bottom margin: "trade-off: Moon is one more thing to run — SQLite mode needs nothing"

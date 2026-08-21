@@ -28,7 +28,7 @@ TIER 4 (bottom, cloud blue whisper tint #eef3f9): label "SUBSTRATE"
 
 CONNECTIONS: one thin vertical arrow between each tier, top to bottom, small open arrowheads. Between ENGINE and SUBSTRATE, the arrow carries a small label: "one atomic commit".
 
-KEY METRIC: bottom-right, a loose pencil circle around the text "recall p50 ≈ 10 ms" with a tiny annotation "contract: < 25 ms".
+KEY METRIC: bottom-right, a loose pencil circle around the text "recall p50 ≈ 20 ms @ 100k docs" with a tiny annotation "contract: < 25 ms".
 
 ANNOTATION STYLE: all annotations connect with thin, light pencil-gray leader lines (like pencil strokes) ending in small dots — gentle, sketchy, thin.
 
