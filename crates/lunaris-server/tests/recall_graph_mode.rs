@@ -371,18 +371,33 @@ async fn mode_graph_composes_graph_operator_when_gate_passes() {
     // Assert 1a: HTTP 200 OK (NOT 501 — gate passed because graph_native=true).
     assert_eq!(resp.status(), StatusCode::OK, "gate should pass when graph_native=true",);
 
-    // Assert 1b: storage.graph_traverse was called exactly once — PRIMARY
-    // proof that Graph::anchored was composed into the retrieval root.
+    // Assert 1b: graph_traverse fired TWICE, in order — PRIMARY proof that
+    // Graph::anchored was composed into the retrieval root.
+    //
+    // F16 re-baseline (was: exactly once). The handler now resolves the
+    // query's capitalized tokens to real `EntityId`s by asking the graph for
+    // them by name, then anchors on what came back. It used to mint
+    // `EntityId::from_name_and_type(token, "")` and anchor on that, which
+    // matched nothing in any real store — every id is derived from
+    // `(name, type)` with a REAL type. Two calls is the fix, not a regression:
+    // resolve, then traverse.
     let calls = storage.graph_calls.lock().clone();
     assert_eq!(
         calls.len(),
-        1,
-        "graph_traverse MUST be called exactly once — proves Graph::anchored was composed into root",
+        2,
+        "expected a name-resolution call then an anchored traversal; got {} call(s)",
+        calls.len(),
     );
 
-    // Assert 1c: cypher body contains id_hex (W-7 alignment) and [*1..2]
-    // (DEFAULT_GRAPH_HOPS=2 per graph.rs:54).
-    let cypher = &calls[0].0.cypher;
+    // Assert 1c: the FIRST call resolves names and does NOT traverse; the
+    // SECOND is the anchored traversal, carrying id_hex (W-7 alignment) and
+    // [*1..2] (DEFAULT_GRAPH_HOPS=2 per graph.rs:54).
+    let resolve = &calls[0].0.cypher;
+    assert!(
+        resolve.contains("n.name") && !resolve.contains("[*1.."),
+        "first call must be the name lookup, not a traversal: {resolve}",
+    );
+    let cypher = &calls[1].0.cypher;
     assert!(cypher.contains("id_hex"), "W-7 alignment: cypher must use id_hex property: {cypher}",);
     assert!(
         cypher.contains("[*1..2]"),
