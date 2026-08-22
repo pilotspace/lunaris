@@ -233,8 +233,7 @@ fn render_knn_filter(f: &Filter) -> Option<String> {
             // empty by construction; `[lo, -1]` matches nothing, which is
             // the right answer.
             let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
-            let hi =
-                before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
+            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
             Some(format!("@valid_time:[{lo} {hi}]"))
         }
         Filter::And(xs) if !xs.is_empty() => {

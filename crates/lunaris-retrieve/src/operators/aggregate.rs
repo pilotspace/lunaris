@@ -378,9 +378,12 @@ mod tests {
         let after = Hlc { wall_ms: 1_700_000_000_000, counter: 0, node_id: 0 };
         let before = Hlc { wall_ms: 1_760_000_000_000, counter: 0, node_id: 0 };
         let f = Filter::ValidTimeRange { after: Some(after), before: Some(before) };
+        // Upper bound is `hi - 1`: the filter is documented half-open
+        // `[after, before)` while Moon's numeric range is inclusive.
+        // Re-baselined by F21 along with the other four render sites.
         assert_eq!(
             filter_to_aggregate_query(Some(&f)).unwrap(),
-            "@valid_time:[1700000000000 1760000000000]"
+            "@valid_time:[1700000000000 1759999999999]"
         );
     }
 

@@ -313,8 +313,7 @@ fn filter_to_moon(f: &Filter) -> String {
             // MUST agree on which rows are in the window. One encoding,
             // valid on both parsers, beats two that happen to coincide.
             let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
-            let hi =
-                before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
+            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
             format!("@valid_time:[{lo} {hi}]")
         }
         // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New

@@ -421,8 +421,13 @@ mod tests {
         match filter_to_moon_hybrid_filter(&f) {
             Some(Hf::Numeric { field, min, max }) => {
                 assert_eq!(field, "valid_time");
+                // `[after, before)` — the lower bound is the value itself,
+                // the upper is `hi - 1` because `Hf::Numeric` is inclusive on
+                // both ends. Re-baselined from `max == 1_760_000_000_000` when
+                // F21 found five renders disagreeing with the filter's own
+                // documented half-open contract.
                 assert_eq!(min, 1_700_000_000_000_f64);
-                assert_eq!(max, 1_760_000_000_000_f64);
+                assert_eq!(max, 1_759_999_999_999_f64);
             }
             other => panic!("expected Numeric, got {other:?}"),
         }
