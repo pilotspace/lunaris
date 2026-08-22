@@ -93,10 +93,7 @@ fn plain_from_value_rejects_the_napi_hlc_shape() {
     let err = serde_json::from_value::<Hlc>(napi_hlc(1_736_467_200_000.0, 0.0, 0.0))
         .expect_err("serde is expected to reject a float for a u64 field");
     let msg = err.to_string();
-    assert!(
-        msg.contains("floating point"),
-        "expected a float-vs-u64 type error, got: {msg}"
-    );
+    assert!(msg.contains("floating point"), "expected a float-vs-u64 type error, got: {msg}");
 }
 
 /// The fix, asserted on the value and not merely on the absence of an error.

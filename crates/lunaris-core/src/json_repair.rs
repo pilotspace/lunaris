@@ -38,7 +38,7 @@
 //! floats so the typed deserialisation still rejects them loudly instead of
 //! wrapping around.
 
-use serde_json::Value;
+use serde_json::{Map, Number, Value};
 
 /// Recursively rewrite every integral floating-point number in `value` as an
 /// integer number, leaving genuine fractional values, non-finite values, and
@@ -47,6 +47,38 @@ use serde_json::Value;
 /// Structure (objects, arrays, key order) and every non-numeric leaf are
 /// preserved exactly.
 pub fn restore_integral_numbers(value: Value) -> Value {
-    // RED stub — today's behaviour: no repair at all.
-    value
+    match value {
+        Value::Number(n) => Value::Number(restore_number(n)),
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(restore_integral_numbers).collect())
+        }
+        Value::Object(map) => Value::Object(
+            map.into_iter().map(|(k, v)| (k, restore_integral_numbers(v))).collect::<Map<_, _>>(),
+        ),
+        other => other,
+    }
+}
+
+fn restore_number(n: Number) -> Number {
+    // Already carrying integer-ness — nothing to repair, and re-deriving it
+    // through `as_f64` would be the only place precision could be lost.
+    if n.is_i64() || n.is_u64() {
+        return n;
+    }
+    let Some(f) = n.as_f64() else {
+        return n;
+    };
+    if !f.is_finite() || f.fract() != 0.0 {
+        return n;
+    }
+    // Strict `<` on the upper bound: `u64::MAX as f64` rounds UP to 2^64, so
+    // `f as u64` at that value would saturate to a number the caller never
+    // wrote. Same reasoning holds at the i64 floor, which is exact.
+    if f >= 0.0 && f < (u64::MAX as f64) {
+        Number::from(f as u64)
+    } else if f < 0.0 && f >= (i64::MIN as f64) {
+        Number::from(f as i64)
+    } else {
+        n
+    }
 }

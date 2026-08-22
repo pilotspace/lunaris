@@ -66,7 +66,8 @@ pub fn emit_ts(ir: &SurfaceIR) -> TsOutput {
     rust.push_str("use napi_derive::napi;\n");
     rust.push_str("use std::sync::Arc;\n");
     rust.push('\n');
-    rust.push_str("use super::errors::napi_err;\n\n");
+    rust.push_str("use super::errors::napi_err;\n");
+    rust.push_str("use super::js_value::from_js;\n\n");
 
     dts.push_str(DTS_HEADER);
     dts.push('\n');
@@ -115,7 +116,7 @@ fn emit_ts_method_rust(
         //
         // Plan 08-03 Rule 1 fix (mirror of Plan 08-02's emit_py.rs fix):
         // pre-convert every `Named` / `Vec` / `Option` / `Json` param via
-        // `serde_json::from_value::<T>` BEFORE the `Lunaris::open` call so
+        // `from_js::<T>` BEFORE the `Lunaris::open` call so
         // the Rust-side inherent method sees owned typed values rather
         // than a raw `serde_json::Value`. napi-rs 3.x has no GIL analog,
         // but the same pre-conversion pattern keeps the emitted code
@@ -145,7 +146,7 @@ fn emit_ts_method_rust(
         // Async instance method (e.g. `Lunaris::ingest`, `Lunaris::forget`,
         // `Lunaris::snapshot`).
         //
-        // Plan 08-03 Rule 1 fix: eager `serde_json::from_value` for every
+        // Plan 08-03 Rule 1 fix: eager `from_js` for every
         // non-primitive param so `inner.ingest(Episode)` / `inner.forget(ForgetRequest)`
         // call sites see the concrete Rust owned type. `String` / `bool` /
         // `u32` pass through as-is.
@@ -457,7 +458,7 @@ fn emit_ts_method_rust(
     out.push('\n');
 }
 
-/// Plan 08-03 Rule 1 — emit `let {name}_owned: {ty} = serde_json::from_value(...)` lines
+/// Plan 08-03 Rule 1 — emit `let {name}_owned: {ty} = from_js(...)` lines
 /// for every non-primitive param. Returns the per-param bound name (either
 /// the original `p.name` for primitives or `"{p.name}_owned"` for typed
 /// Named / Vec / Option / Json). Used by async methods that must `?` the
@@ -467,13 +468,13 @@ fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
     for p in params {
         match &p.ty {
             // `Vec<serde_json::Value>` needs to be wrapped in
-            // `serde_json::Value::Array(...)` before `serde_json::from_value`
+            // `serde_json::Value::Array(...)` before `from_js`
             // can coerce it into a typed `Vec<T>`.
             IrTyRef::Vec { .. } => {
                 let owned_name = format!("{}_owned", p.name);
                 writeln!(
                     out,
-                    "        let {owned_name}: {ty} = serde_json::from_value(serde_json::Value::Array({param}.clone())).map_err(napi_err)?;",
+                    "        let {owned_name}: {ty} = from_js(serde_json::Value::Array({param}.clone())).map_err(napi_err)?;",
                     owned_name = owned_name,
                     ty = rust_owned_ty_ts(&p.ty),
                     param = p.name
@@ -485,7 +486,7 @@ fn emit_ts_owned_bindings(out: &mut String, params: &[IrParam]) -> Vec<String> {
                 let owned_name = format!("{}_owned", p.name);
                 writeln!(
                     out,
-                    "        let {owned_name}: {ty} = serde_json::from_value({param}.clone()).map_err(napi_err)?;",
+                    "        let {owned_name}: {ty} = from_js({param}.clone()).map_err(napi_err)?;",
                     owned_name = owned_name,
                     ty = rust_owned_ty_ts(&p.ty),
                     param = p.name
@@ -543,7 +544,7 @@ fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Ve
                 let owned_name = format!("{}_owned", p.name);
                 writeln!(
                     out,
-                    "        let {owned_name}: {ty} = serde_json::from_value(serde_json::Value::Array({param}.clone())).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
+                    "        let {owned_name}: {ty} = from_js(serde_json::Value::Array({param}.clone())).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
                     owned_name = owned_name,
                     ty = rust_owned_ty_ts(&p.ty),
                     param = p.name
@@ -555,7 +556,7 @@ fn emit_ts_owned_bindings_infallible(out: &mut String, params: &[IrParam]) -> Ve
                 let owned_name = format!("{}_owned", p.name);
                 writeln!(
                     out,
-                    "        let {owned_name}: {ty} = serde_json::from_value({param}.clone()).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
+                    "        let {owned_name}: {ty} = from_js({param}.clone()).unwrap_or_else(|e| panic!(\"{param}: {{e}}\"));",
                     owned_name = owned_name,
                     ty = rust_owned_ty_ts(&p.ty),
                     param = p.name
@@ -617,7 +618,7 @@ fn ts_call_args_from_owned(params: &[IrParam], owned: &[String]) -> String {
 }
 
 /// Plan 08-03 — Rust owned-type spelling used as the explicit type
-/// annotation on `let {name}_owned: {ty} = serde_json::from_value(...)`.
+/// annotation on `let {name}_owned: {ty} = from_js(...)`.
 /// Mirrors `emit_py.rs::rust_owned_ty` so the two emitters stay in lockstep
 /// on which Rust spelling each surface.toml `kind = "named"` maps to.
 fn rust_owned_ty_ts(ty: &IrTyRef) -> String {
@@ -716,7 +717,7 @@ fn format_call_args(params: &[IrParam]) -> String {
         .map(|p| match &p.ty {
             IrTyRef::Str => format!("&{}", p.name),
             IrTyRef::Json => {
-                format!("serde_json::from_value({}.clone()).map_err(napi_err)?", p.name)
+                format!("from_js({}.clone()).map_err(napi_err)?", p.name)
             }
             _ => p.name.clone(),
         })

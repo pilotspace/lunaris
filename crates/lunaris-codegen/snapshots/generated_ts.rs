@@ -14,6 +14,7 @@ use napi_derive::napi;
 use std::sync::Arc;
 
 use super::errors::napi_err;
+use super::js_value::from_js;
 
 /// High-level memory-engine handle. Opens a storage backend by URL and drives ingest, recall, forget, and snapshot.
 #[napi]
@@ -34,7 +35,7 @@ impl Lunaris {
     /// Ingest one Episode through the hot path (graph-OFF default) or the graph-extraction path (toggle ON).
     #[napi]
     pub async fn ingest(&self, episode: serde_json::Value) -> napi::Result<String> {
-        let episode_owned: ::lunaris::Episode = serde_json::from_value(episode.clone()).map_err(napi_err)?;
+        let episode_owned: ::lunaris::Episode = from_js(episode.clone()).map_err(napi_err)?;
         let out = self.inner.ingest(episode_owned).await.map_err(napi_err)?;
         Ok(out.to_string())
     }
@@ -49,7 +50,7 @@ impl Lunaris {
     /// Single-entry-point erasure API (OPS-01/02/03/04). Soft-delete default; hard mode requires a confirmation token.
     #[napi]
     pub async fn forget(&self, req: serde_json::Value) -> napi::Result<serde_json::Value> {
-        let req_owned: ::lunaris::forget::ForgetRequest = serde_json::from_value(req.clone()).map_err(napi_err)?;
+        let req_owned: ::lunaris::forget::ForgetRequest = from_js(req.clone()).map_err(napi_err)?;
         let out = self.inner.forget(req_owned).await.map_err(napi_err)?;
         serde_json::to_value(&out).map_err(napi_err)
     }
@@ -111,7 +112,7 @@ impl Graph {
     /// Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph.
     #[napi(factory)]
     pub fn anchored(entity_ids: Vec<serde_json::Value>, hops: u32) -> napi::Result<Self> {
-        let entity_ids_owned: Vec<::lunaris::EntityId> = serde_json::from_value(serde_json::Value::Array(entity_ids.clone())).map_err(napi_err)?;
+        let entity_ids_owned: Vec<::lunaris::EntityId> = from_js(serde_json::Value::Array(entity_ids.clone())).map_err(napi_err)?;
         let inner = ::lunaris::Graph::anchored(entity_ids_owned.into_iter().map(|e| (e, 1.0_f32)).collect(), hops as usize);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -436,7 +437,7 @@ impl MeetingNotesMemory {
     /// Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery.
     #[napi]
     pub fn attendees(&self, attendees: serde_json::Value) -> napi::Result<MeetingNotesQuery> {
-        let attendees_owned: Vec<String> = serde_json::from_value(attendees.clone()).map_err(napi_err)?;
+        let attendees_owned: Vec<String> = from_js(attendees.clone()).map_err(napi_err)?;
         let out = self.inner.attendees(attendees_owned);
         Ok(MeetingNotesQuery { inner: Arc::new(out) })
     }
@@ -489,7 +490,7 @@ impl DocumentKnowledgeBase {
     /// Ingest chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = from_js(chunks.clone()).map_err(napi_err)?;
         self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
         Ok(())
     }
@@ -497,7 +498,7 @@ impl DocumentKnowledgeBase {
     /// Add an equality filter on a metadata field.
     #[napi]
     pub fn filter(&self, field: String, value: serde_json::Value) -> napi::Result<DocumentKnowledgeBase> {
-        let value_owned: serde_json::Value = serde_json::from_value(value.clone()).map_err(napi_err)?;
+        let value_owned: serde_json::Value = from_js(value.clone()).map_err(napi_err)?;
         let out = self.inner.as_ref().clone().filter(&field, value_owned);
         Ok(DocumentKnowledgeBase { inner: Arc::new(out) })
     }
@@ -547,7 +548,7 @@ impl ResearchPaperCorpus {
     /// Ingest chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, chunks: serde_json::Value) -> napi::Result<()> {
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = from_js(chunks.clone()).map_err(napi_err)?;
         self.inner.ingest(chunks_owned).await.map_err(napi_err)?;
         Ok(())
     }
@@ -583,8 +584,8 @@ impl CodeRepoMemory {
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
     #[napi]
     pub async fn ingest_commit(&self, commit_sha: String, committer_date_unix_ms: serde_json::Value, chunks: serde_json::Value) -> napi::Result<()> {
-        let committer_date_unix_ms_owned: i64 = serde_json::from_value(committer_date_unix_ms.clone()).map_err(napi_err)?;
-        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(chunks.clone()).map_err(napi_err)?;
+        let committer_date_unix_ms_owned: i64 = from_js(committer_date_unix_ms.clone()).map_err(napi_err)?;
+        let chunks_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = from_js(chunks.clone()).map_err(napi_err)?;
         self.inner.ingest_commit(&commit_sha, committer_date_unix_ms_owned, chunks_owned).await.map_err(napi_err)?;
         Ok(())
     }
@@ -592,7 +593,7 @@ impl CodeRepoMemory {
     /// Recall at point-in-time `as_of`.
     #[napi]
     pub async fn recall(&self, query: String, as_of: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
-        let as_of_owned: ::lunaris::Hlc = serde_json::from_value(as_of.clone()).map_err(napi_err)?;
+        let as_of_owned: ::lunaris::Hlc = from_js(as_of.clone()).map_err(napi_err)?;
         let out = self.inner.recall(&query, as_of_owned).await.map_err(napi_err)?;
         out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
@@ -620,7 +621,7 @@ impl TimelineReconstruction {
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
     #[napi]
     pub async fn ingest(&self, events: serde_json::Value) -> napi::Result<()> {
-        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = serde_json::from_value(events.clone()).map_err(napi_err)?;
+        let events_owned: Vec<(String, serde_json::Map<String, serde_json::Value>)> = from_js(events.clone()).map_err(napi_err)?;
         self.inner.ingest(events_owned).await.map_err(napi_err)?;
         Ok(())
     }
@@ -628,8 +629,8 @@ impl TimelineReconstruction {
     /// Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics).
     #[napi]
     pub async fn between(&self, query: String, lo: serde_json::Value, hi: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
-        let lo_owned: ::lunaris::Hlc = serde_json::from_value(lo.clone()).map_err(napi_err)?;
-        let hi_owned: ::lunaris::Hlc = serde_json::from_value(hi.clone()).map_err(napi_err)?;
+        let lo_owned: ::lunaris::Hlc = from_js(lo.clone()).map_err(napi_err)?;
+        let hi_owned: ::lunaris::Hlc = from_js(hi.clone()).map_err(napi_err)?;
         let out = self.inner.between(&query, lo_owned, hi_owned).await.map_err(napi_err)?;
         out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }
@@ -637,7 +638,7 @@ impl TimelineReconstruction {
     /// Recall the snapshot at `ts`.
     #[napi]
     pub async fn as_of(&self, query: String, ts: serde_json::Value) -> napi::Result<Vec<serde_json::Value>> {
-        let ts_owned: ::lunaris::Hlc = serde_json::from_value(ts.clone()).map_err(napi_err)?;
+        let ts_owned: ::lunaris::Hlc = from_js(ts.clone()).map_err(napi_err)?;
         let out = self.inner.as_of(&query, ts_owned).await.map_err(napi_err)?;
         out.iter().map(|v| serde_json::to_value(v).map_err(napi_err)).collect::<napi::Result<Vec<_>>>()
     }

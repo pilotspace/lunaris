@@ -468,37 +468,39 @@ describe("Plan 11-03 — documentary parity (TypeScript)", () => {
 
   // `test.fails`, not `ctx.skip` — and the assertions below are UNCHANGED.
   //
-  // KNOWN DEFECT F20: the TypeScript SDK cannot construct an `Hlc`. Every
-  // generated conversion site lowers a JS value through
-  // `serde_json::from_value::<T>()`, and napi hands JS numbers over as f64 —
-  // so `{ wall_ms: 1736467200000, counter: 0, node_id: 0 }`, which is an
-  // ordinary integer in JS, arrives as `1736467200000.0` and serde rejects it:
+  // KNOWN DEFECT F21: `TimelineReconstruction.ingest` cannot set a historical
+  // valid-time. It forwards to `DocumentCorpus::ingest`, which builds the
+  // Episode with `bt: BiTemporal::now(clock)` and `t_ref: None` and stores the
+  // caller's `event_valid_time_unix_ms` as ORDINARY METADATA. `.between(lo, hi)`
+  // renders into Moon's `@valid_time:[lo hi]`, which matches the INGEST time —
+  // so a corpus of January-2025 events ingested today has nothing in
+  // `[2025-01-10, 2025-01-16)` and the recipe whose entire headline is timeline
+  // reconstruction returns zero rows. The body below fails
+  // `expected 0 to be 6`, which is F21's exact signature.
   //
-  //     VALIDATE: invalid type: floating point `1736467200000.0`, expected u64
-  //
-  // That takes out `.between()` and `.as_of()` — the whole bi-temporal
-  // time-travel surface — for every TypeScript caller, not just this test.
-  // It is also the answer to ledger task W4.13 ("SDK bi-temporal time-travel
-  // has no passing test anywhere"): there is none because it does not work.
-  // The fix is in `lunaris-codegen`'s `emit_ts.rs`, which must emit a helper
-  // that normalises integral floats before deserialising, so it needs its own
-  // red/green pair and its own regenerate-and-parity-check pass.
+  // The fix belongs in the recipe/corpus layer — honour a caller-supplied
+  // valid-time when building the Episode — and it is a CONTRACT decision, not a
+  // local patch: `DocumentCorpus` is shared by five recipes.
   //
   // Why `test.fails` rather than a skip: a skip reports "not run" forever and
-  // nobody notices when the defect is fixed. `test.fails` passes only while
-  // the body throws, so the day `emit_ts.rs` is fixed this test goes RED and
-  // whoever fixed it must delete this comment and the `.fails` — which
-  // restores the real parity assertions in the same commit.
+  // nobody notices when the defect is fixed. `test.fails` passes only while the
+  // body throws or asserts false, so the day the recipe honours a historical
+  // valid-time this test goes RED and whoever fixed it must delete this comment
+  // and the `.fails` — which restores the real parity assertions in the same
+  // commit. The Python sibling is `xfail(strict=True)` on the same defect.
   //
-  // One caveat, stated so it cannot surprise anyone: F20 is not the only thing
-  // wrong here. Behind it sits **F21** — `TimelineReconstruction.ingest`
-  // cannot set a historical valid-time at all, so `.between()` over a
-  // historical window returns zero rows even from Python, where the `Hlc`
-  // converts fine. Fixing F20 alone therefore leaves this body throwing (or
-  // asserting 0 != 6) and `test.fails` stays green over the SECOND defect.
-  // Whoever fixes F20 must check this test against F21 rather than trusting
-  // the green. The Python sibling is `xfail(strict=True)` on F21 directly and
-  // is the one that will flip first.
+  // HISTORY — F20, now FIXED, used to sit in FRONT of F21 here. The TypeScript
+  // SDK could not construct an `Hlc` at all: napi drops integer-ness above
+  // u32::MAX, so `{ wall_ms: 1736467200000, ... }` arrived as a float and the
+  // generated binding's `serde_json::from_value::<Hlc>` rejected it with
+  // `VALIDATE: invalid type: floating point ...`. The bindings now lower
+  // through `from_js`, which repairs the number shape first
+  // (`lunaris_core::json_repair`), and this body reaches its assertions. That
+  // is exactly the hazard the old comment warned about — fixing the first
+  // defect left `test.fails` green over the second — so it is recorded rather
+  // than deleted. F20's own guard is `__test__/hlc_bitemporal.spec.mts`, which
+  // asserts on the CALL rather than on rows and therefore cannot be masked by
+  // F21.
   test.fails("timeline_reconstruction_parity_between_10_and_15", async (ctx: SkippableCtx) => {
     if (!wrappersPresent()) {
       ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
