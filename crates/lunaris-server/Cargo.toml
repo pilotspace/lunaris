@@ -77,6 +77,10 @@ vulkan   = ["lunaris/vulkan"]
 
 [dev-dependencies]
 tokio              = { workspace = true, features = ["full", "test-util", "macros"] }
+# F16: `recall_graph_mode_live.rs` needs a REAL Moon behind the handler —
+# the four mock-driven tests in `recall_graph_mode.rs` pin composition but
+# never prove the graph leg reaches actual GRAPH.QUERY rows.
+lunaris-test-harness = { workspace = true }
 
 [[bin]]
 name = "lunaris-server"
