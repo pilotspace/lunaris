@@ -105,6 +105,14 @@ pub(crate) async fn publish(
 /// RFC 0001 Wave 1C: queue health is read through Moon's available `MQ`
 /// surface. Current Moon exposes `MQ DLQLEN` but not `XLEN` on the same server
 /// profile, so this returns dead-letter depth as the best native signal.
+///
+/// F25 caveat: since `publish` creates topics with `MAXDELIVERY 0`, DLQ routing
+/// is disabled and this now reports **0 for every healthy or unhealthy topic
+/// alike**. It is not a backlog gauge and must not be read as one. That is not
+/// a regression in signal — under the old default the DLQ was the one place
+/// the lost messages were NOT going (pilotspace/moon#652) — but it does mean
+/// queue depth is currently unobservable. Restoring a real gauge needs `XLEN`
+/// on the MQ profile, or Moon#652 fixed so `MAXDELIVERY` is safe to re-enable.
 pub(crate) async fn queue_length(
     c: &MoonClient,
     scope: &Scope,
