@@ -617,8 +617,12 @@ fn json_to_cypher_literal(v: &serde_json::Value) -> String {
 /// Non-finite components are rejected for the same reason plus a worse one:
 /// a NaN makes every comparison against the row meaningless.
 pub(crate) fn unindexable_reason(embedding: &[f32]) -> Option<&'static str> {
-    // RED stub — today's behaviour: every embedding is indexed, zero or not.
-    let _ = embedding;
+    if embedding.iter().any(|f| !f.is_finite()) {
+        return Some("non-finite");
+    }
+    if embedding.iter().all(|f| *f == 0.0) {
+        return Some("all-zero");
+    }
     None
 }
 
