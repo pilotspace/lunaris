@@ -93,14 +93,18 @@ fn build_test_app_with(lunaris: Arc<Lunaris>) -> axum::Router {
 /// The `TestStore` owns the Moon child process — the caller MUST bind it.
 async fn live_engine(test: &str) -> Option<(Arc<Lunaris>, TestStore)> {
     if lunaris_test_harness::moon_binary().is_none() {
-        eprintln!("{test}: no Moon binary (set MOON_TEST_BINARY); SKIP");
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "{test}: no Moon binary (set MOON_TEST_BINARY)"
+        ));
         return None;
     }
     let engine =
         open_test_engine_with_embedder(Arc::new(NoopEmbedder::new(768)) as Arc<dyn Embedder>).await;
     let (lunaris, store) = engine.into_parts();
     if !lunaris.storage().capabilities().graph_native {
-        eprintln!("{test}: backend has no native graph; SKIP");
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "{test}: backend has no native graph"
+        ));
         return None;
     }
     Some((Arc::new(lunaris), store))

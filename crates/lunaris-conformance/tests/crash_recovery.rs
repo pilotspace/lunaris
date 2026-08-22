@@ -129,18 +129,20 @@ mod chaos {
             Err(_) => {
                 // Intentionally never log the URL itself — a store URL can
                 // carry credentials. Host:port and the env var name only.
-                eprintln!("crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)");
+                lunaris_test_harness::strict_skip::note_unavailable(format!(
+                    "crash_recovery: SKIP {name} (DNS resolution of {host_port} failed)"
+                ));
                 return None;
             }
         };
         if addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok()) {
             return Some(url);
         }
-        eprintln!(
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
             "crash_recovery: SKIP {name} (TCP probe to {host_port} failed within {}ms across {} address(es))",
             timeout.as_millis(),
             addrs.len()
-        );
+        ));
         None
     }
 

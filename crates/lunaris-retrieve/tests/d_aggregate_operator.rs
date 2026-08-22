@@ -252,9 +252,9 @@ async fn seed_grouped_chunks(
 async fn aggregate_count_returns_exact_group_counts_on_live_moon() {
     let url = moon_url();
     if !probe_moon(&url) {
-        eprintln!(
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
             "SKIP aggregate_count_returns_exact_group_counts_on_live_moon: Moon not reachable at {url}"
-        );
+        ));
         return;
     }
 
@@ -313,9 +313,9 @@ async fn aggregate_count_returns_exact_group_counts_on_live_moon() {
 async fn aggregate_filter_eq_narrows_before_counting_on_live_moon() {
     let url = moon_url();
     if !probe_moon(&url) {
-        eprintln!(
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
             "SKIP aggregate_filter_eq_narrows_before_counting_on_live_moon: Moon not reachable at {url}"
-        );
+        ));
         return;
     }
 
