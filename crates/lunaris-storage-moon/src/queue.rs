@@ -332,8 +332,7 @@ pub(crate) async fn subscribe(
                 let typed = s.client.typed();
                 let mut mq = typed.mq();
                 let _ = mq.ack(&s.topic, &entry.id).await;
-                let offset =
-                    stream_id_to_offset(&entry.id).max(s.last_offset.saturating_add(1));
+                let offset = stream_id_to_offset(&entry.id).max(s.last_offset.saturating_add(1));
                 s.last_offset = offset;
                 let queue_msg = QueueMsg {
                     topic: s.topic.clone(),

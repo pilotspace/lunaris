@@ -74,7 +74,11 @@ async fn private_moon(test: &str) -> Option<EphemeralMoon> {
 /// `MAXDELIVERY 3`, a burst pushed into it, and one `COUNT 1` pop that claims
 /// four and returns one. Returns the raw connection so callers can keep
 /// inspecting the same server.
-async fn strand_a_backlog(url: &str, scope: &Scope, bodies: &[&str]) -> redis::aio::MultiplexedConnection {
+async fn strand_a_backlog(
+    url: &str,
+    scope: &Scope,
+    bodies: &[&str],
+) -> redis::aio::MultiplexedConnection {
     let host = url.strip_prefix("moon://").unwrap_or(url);
     let client = redis::Client::open(format!("redis://{host}")).expect("redis client");
     let mut conn = client.get_multiplexed_async_connection().await.expect("connect");
@@ -135,8 +139,12 @@ async fn the_strand_this_test_builds_is_real() {
         || matches!(&again, redis::Value::Array(a) if a.is_empty());
     assert!(empty, "expected the surplus to be unreachable via MQ POP, got {again:?}");
 
-    let pending: redis::Value =
-        redis::cmd("XPENDING").arg(&topic).arg("__mq_consumers").query_async(&mut conn).await.expect("XPENDING");
+    let pending: redis::Value = redis::cmd("XPENDING")
+        .arg(&topic)
+        .arg("__mq_consumers")
+        .query_async(&mut conn)
+        .await
+        .expect("XPENDING");
     let count = match &pending {
         redis::Value::Array(a) => match a.first() {
             Some(redis::Value::Int(n)) => *n,
@@ -205,10 +213,7 @@ async fn a_healthy_topic_still_delivers_each_message_once() {
     // Nothing more must arrive: a fifth read within a generous window means
     // the recovery sweep re-delivered something the poll loop already ACKed.
     let extra = tokio::time::timeout(Duration::from_secs(2), stream.next()).await;
-    assert!(
-        extra.is_err(),
-        "a healthy topic delivered a duplicate after {got:?}: {extra:?}"
-    );
+    assert!(extra.is_err(), "a healthy topic delivered a duplicate after {got:?}: {extra:?}");
 
     got.sort();
     let mut want = sent.clone();
