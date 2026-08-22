@@ -17,6 +17,9 @@ pub mod circuit_breaker;
 pub mod embedder;
 pub mod error;
 pub mod hlc;
+// F20 — repair JSON numbers that lost their integer-ness crossing the
+// napi-rs boundary (every integer above u32::MAX arrives as a float).
+pub mod json_repair;
 // Wave 2.5B: storage-agnostic primitive KV key helpers (moved from lunaris-storage-moon).
 pub mod keyspace;
 pub mod primitives;
