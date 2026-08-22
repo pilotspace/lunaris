@@ -30,6 +30,28 @@ impl Hlc {
     pub fn from_parts(wall_ms: u64, counter: u32, node_id: u16) -> Self {
         Self { wall_ms, counter, node_id }
     }
+
+    /// An `Hlc` addressing a real-world instant, for use on the **valid**
+    /// axis of a [`crate::BiTemporal`].
+    ///
+    /// This is deliberately NOT issued by an [`HlcClock`]. A clock-issued
+    /// stamp answers "when did this process observe the event", which is the
+    /// **system** axis; the valid axis answers "when was this true in the
+    /// world" and routinely points into the past. Backdating the system axis
+    /// would break the total order the clock exists to guarantee — backdating
+    /// the valid axis is the whole point of having two.
+    ///
+    /// `counter` and `node_id` are zero: a real-world instant carries no
+    /// causality, so there is no tie to break. Two episodes stamped at the
+    /// same real-world millisecond compare equal on the valid axis, which is
+    /// the correct answer.
+    ///
+    /// Pre-epoch instants clamp to zero. `wall_ms` is unsigned, so the
+    /// alternative is a wrap into the far future — a document dated 1969
+    /// would sort after everything instead of before it.
+    pub fn from_utc(t: chrono::DateTime<chrono::Utc>) -> Self {
+        Self { wall_ms: t.timestamp_millis().max(0) as u64, counter: 0, node_id: 0 }
+    }
 }
 
 #[derive(Debug)]

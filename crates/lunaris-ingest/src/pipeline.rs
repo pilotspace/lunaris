@@ -298,11 +298,15 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     storage: &S,
     embedder: &dyn Embedder,
     clock: &HlcClock,
-    episode: Episode,
+    mut episode: Episode,
     drafts: Vec<ChunkDraft>,
     heading_records: Vec<crate::chunker::HeadingRecord>,
     raptor: bool,
 ) -> Result<IngestReceipt, LunarisError> {
+    // F21 — idempotent, and repeated here rather than assumed: this is a
+    // public entry point that `lunaris-bench` and the recipes call directly,
+    // without passing through `Lunaris::ingest`.
+    episode.ground_valid_axis();
     let episode_id = episode.id;
     // Step 2: embed in batches of 32 with per-chunk fallback
     let embeddings = embed_with_fallback(embedder, &drafts).await?;
@@ -311,7 +315,12 @@ async fn ingest_episode_inner<S: StoragePort + ?Sized>(
     // Step 3: build typed Chunks (drafts + their freshly-issued embeddings)
     let mut chunks: Vec<Chunk> = Vec::with_capacity(drafts.len());
     for (draft, embedding) in drafts.into_iter().zip(embeddings.into_iter()) {
-        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+        let mut c = draft.into_chunk_valid_from(
+            episode.scope.clone(),
+            episode.id,
+            clock,
+            episode.bt.valid.0,
+        );
         c.embedding = Some(embedding);
         chunks.push(c);
     }
@@ -407,6 +416,15 @@ async fn assemble_and_write<S: StoragePort + ?Sized>(
             "offset": chunk.offset,
             "text": chunk.text,
             "source": &episode.source,
+            // F21 — the graph-OFF path omitted this field entirely, so
+            // `Filter::ValidTimeRange` matched NOTHING for anything ingested
+            // with the graph off. That is the SHIPPED DEFAULT and the path
+            // every `DocumentCorpus`-backed recipe takes, so the bi-temporal
+            // query surface was inert for its primary callers. The graph-ON
+            // twin in `lunaris/src/ingest.rs` has carried it since Plan
+            // 09.1-02; the two metadata blocks were never diffed against
+            // each other. Keep them in step.
+            "valid_time_ms": chunk.bt.valid.0.wall_ms,
         });
         validate_chunk_metadata(&metadata).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!("schema gate: {e}")))
@@ -700,12 +718,15 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     storage: &S,
     embedder: &dyn Embedder,
     clock: &HlcClock,
-    episode: Episode,
+    mut episode: Episode,
     counter: std::sync::Arc<dyn TokenCounter + Send + Sync>,
     bakeoff_config: Option<std::sync::Arc<BakoffConfig>>,
     target_tokens: usize,
     overlap_tokens: usize,
 ) -> Result<Lsn, LunarisError> {
+    // F21 — see `ingest_episode_inner`; the bake-off path builds its own
+    // chunks and would otherwise miss the grounding.
+    episode.ground_valid_axis();
     let Some(config) = bakeoff_config else {
         // Fallback: standard counter-based ingest (backward-compatible).
         return ingest_episode_with_counter(storage, embedder, clock, episode, counter).await;
@@ -743,7 +764,12 @@ pub async fn ingest_episode_with_bakeoff<S: StoragePort + ?Sized>(
     // SINGLE-PASS: no embed_batch call here — embeddings come from the bake-off.
     let mut chunks: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
     for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
-        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+        let mut c = draft.into_chunk_valid_from(
+            episode.scope.clone(),
+            episode.id,
+            clock,
+            episode.bt.valid.0,
+        );
         c.embedding = Some(embedding);
         chunks.push(c);
     }

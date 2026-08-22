@@ -325,7 +325,7 @@ async function runTimelineBetween(
   );
   for (const e of events) {
     const ms = rfc3339ToUnixMs(e.valid_time_rfc3339);
-    const meta = { event_id: e.id, event_valid_time_unix_ms: ms };
+    const meta = { event_id: e.id, valid_time_unix_ms: ms };
     await timeline.ingest([[e.text, meta]]);
   }
   const lo = { wall_ms: rfc3339ToUnixMs(loRfc), counter: 0, node_id: 0 };
@@ -466,42 +466,44 @@ describe("Plan 11-03 — documentary parity (TypeScript)", () => {
     expect(moonTexts.some((t) => t.includes(needle))).toBe(true);
   }, 90_000);
 
-  // `test.fails`, not `ctx.skip` — and the assertions below are UNCHANGED.
+  // F21 FIXED — the `test.fails` marker that used to sit here is gone, and the
+  // assertions below are the ones it was parked in front of, unchanged.
   //
-  // KNOWN DEFECT F21: `TimelineReconstruction.ingest` cannot set a historical
-  // valid-time. It forwards to `DocumentCorpus::ingest`, which builds the
-  // Episode with `bt: BiTemporal::now(clock)` and `t_ref: None` and stores the
-  // caller's `event_valid_time_unix_ms` as ORDINARY METADATA. `.between(lo, hi)`
-  // renders into Moon's `@valid_time:[lo hi]`, which matches the INGEST time —
-  // so a corpus of January-2025 events ingested today has nothing in
-  // `[2025-01-10, 2025-01-16)` and the recipe whose entire headline is timeline
-  // reconstruction returns zero rows. The body below fails
-  // `expected 0 to be 6`, which is F21's exact signature.
+  // What it recorded: `TimelineReconstruction.ingest` forwards to
+  // `DocumentCorpus::ingest`, which built the Episode with
+  // `bt: BiTemporal::now(clock)` and `t_ref: None` and stored the caller's
+  // valid-time as ordinary metadata. `.between(lo, hi)` renders into Moon's
+  // `@valid_time:[lo hi]`, which matched the INGEST time, so a corpus of
+  // January-2025 events ingested today had nothing in `[2025-01-10,
+  // 2025-01-16)` and this body failed `expected 0 to be 6`.
   //
-  // The fix belongs in the recipe/corpus layer — honour a caller-supplied
-  // valid-time when building the Episode — and it is a CONTRACT decision, not a
-  // local patch: `DocumentCorpus` is shared by five recipes.
+  // Three things had to change:
   //
-  // Why `test.fails` rather than a skip: a skip reports "not run" forever and
-  // nobody notices when the defect is fixed. `test.fails` passes only while the
-  // body throws or asserts false, so the day the recipe honours a historical
-  // valid-time this test goes RED and whoever fixed it must delete this comment
-  // and the `.fails` — which restores the real parity assertions in the same
-  // commit. The Python sibling is `xfail(strict=True)` on the same defect.
+  //   1. Core — the valid axis was not caller-settable ANYWHERE; no production
+  //      path called `BiTemporal::at`. `Episode::ground_valid_axis` now moves
+  //      it to `t_ref`, and every chunk inherits `episode.bt.valid.0`.
+  //   2. Recipe — `DocumentCorpus` honours the reserved metadata key
+  //      `valid_time_unix_ms`. Note the rename: this spec used to invent
+  //      `event_valid_time_unix_ms`, and `DocumentCorpus` serves papers, docs
+  //      and repos as well as timelines, so "event" was one caller's
+  //      vocabulary imposed on the rest.
+  //   3. The graph-OFF ingest path — the shipped default, and the one every
+  //      DocumentCorpus recipe takes — never wrote a `valid_time_ms` field at
+  //      all. Found only because this test kept failing after (1) and (2).
   //
-  // HISTORY — F20, now FIXED, used to sit in FRONT of F21 here. The TypeScript
+  // HISTORY — F20, also fixed, used to sit in FRONT of F21 here. The TypeScript
   // SDK could not construct an `Hlc` at all: napi drops integer-ness above
   // u32::MAX, so `{ wall_ms: 1736467200000, ... }` arrived as a float and the
   // generated binding's `serde_json::from_value::<Hlc>` rejected it with
   // `VALIDATE: invalid type: floating point ...`. The bindings now lower
   // through `from_js`, which repairs the number shape first
-  // (`lunaris_core::json_repair`), and this body reaches its assertions. That
-  // is exactly the hazard the old comment warned about — fixing the first
-  // defect left `test.fails` green over the second — so it is recorded rather
-  // than deleted. F20's own guard is `__test__/hlc_bitemporal.spec.mts`, which
-  // asserts on the CALL rather than on rows and therefore cannot be masked by
-  // F21.
-  test.fails("timeline_reconstruction_parity_between_10_and_15", async (ctx: SkippableCtx) => {
+  // (`lunaris_core::json_repair`). That stacking is the whole reason both
+  // markers were chosen to FAIL when the defect goes away rather than to skip:
+  // fixing F20 left `test.fails` green over F21, and only a marker that reds
+  // on success surfaces the next layer. F20's own guard is
+  // `__test__/hlc_bitemporal.spec.mts`, which asserts on the CALL rather than
+  // on rows and therefore cannot be masked by anything here.
+  test("timeline_reconstruction_parity_between_10_and_15", async (ctx: SkippableCtx) => {
     if (!wrappersPresent()) {
       ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
       return;

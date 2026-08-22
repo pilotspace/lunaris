@@ -75,7 +75,14 @@ impl Lunaris {
     /// in-flight ingest takes effect on the NEXT call, never mid-call. The
     /// `snapshot_extractor()` Arc is also captured ONCE in the graph-ON
     /// branch before any await.
-    pub async fn ingest(&self, episode: Episode) -> Result<Lsn, LunarisError> {
+    pub async fn ingest(&self, mut episode: Episode) -> Result<Lsn, LunarisError> {
+        // F21 — ground the VALID axis on the caller's declared real-world
+        // date before anything derives from it. Every chunk inherits
+        // `episode.bt.valid.0`, so this ONE call is what makes
+        // `Filter::ValidTimeRange` mean "true in this window" rather than
+        // "written in this window", on both the graph-ON and graph-OFF
+        // paths. A no-op without a `t_ref`.
+        episode.ground_valid_axis();
         // Plan 04-04 D-16: capture the episode_id BEFORE the move so we can
         // include it in the consolidate-queue envelope after the
         // atomic_write commits. The ingest functions consume `episode` so
@@ -435,7 +442,12 @@ async fn ingest_episode_graph_on(
         // mirroring the graph-OFF path in `lunaris_ingest::pipeline::assemble_and_write`.
         let mut out: Vec<Chunk> = Vec::with_capacity(winner.drafts.len());
         for (draft, embedding) in winner.drafts.into_iter().zip(winner.embeddings.into_iter()) {
-            let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+            let mut c = draft.into_chunk_valid_from(
+                episode.scope.clone(),
+                episode.id,
+                clock,
+                episode.bt.valid.0,
+            );
             c.embedding = Some(embedding);
             out.push(c);
         }
@@ -453,7 +465,12 @@ async fn ingest_episode_graph_on(
         debug_assert_eq!(embeddings.len(), drafts.len());
         let mut out: Vec<Chunk> = Vec::with_capacity(drafts.len());
         for (draft, embedding) in drafts.into_iter().zip(embeddings.into_iter()) {
-            let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+            let mut c = draft.into_chunk_valid_from(
+                episode.scope.clone(),
+                episode.id,
+                clock,
+                episode.bt.valid.0,
+            );
             c.embedding = Some(embedding);
             out.push(c);
         }
