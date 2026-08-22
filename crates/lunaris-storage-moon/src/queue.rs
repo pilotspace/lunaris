@@ -24,6 +24,12 @@
 //! continue. On a message, this adapter ACKs the stream entry before yielding
 //! `QueueMsg`; `StoragePort` has no separate ack hook.
 //!
+//! `COUNT 1` is only safe because `publish` creates topics with
+//! `MAXDELIVERY 0` — under the server default of 3 a single `COUNT 1` pop
+//! claims four entries and returns one, destroying the other three (F25,
+//! pilotspace/moon#652). Do not raise `max_delivery_count` here without first
+//! reading that issue.
+//!
 //! Phase 1 caps idle CPU at ~3 polls / sec (T-01-03-03 mitigation). Phase 4
 //! `VERIFY-06` adds backpressure.
 
@@ -73,7 +79,23 @@ pub(crate) async fn publish(
     let scoped_topic = mq_topic(scope, topic);
     let typed = c.typed();
     let mut mq = typed.mq();
-    mq.create(&scoped_topic, None).await.map_err(mq_err)?;
+    // MAXDELIVERY 0, not the server default of 3 — see F25 / pilotspace/moon#652.
+    // `MQ POP <key> COUNT <n>` claims `n + max_delivery_count` entries and
+    // returns at most `n`; the surplus lands in the group PEL with
+    // `last_delivered_id` advanced past it, is never handed to a client and is
+    // never ACKed, so `read_group_new` (which reads only `>`) can never see it
+    // again. With the default 3 and this module's `COUNT 1` polling, every poll
+    // against a backlog deeper than one destroyed up to three messages
+    // silently. Setting it to 0 disables DLQ routing, which makes the claim
+    // exactly `count`.
+    //
+    // The trade is dead-lettering for at-least-once delivery. On a promotion
+    // queue that is plainly the right way round, and the DLQ was not a working
+    // safety net anyway — it was where the losses were NOT going.
+    // `MQ CREATE` on an existing topic updates the setting, and publish runs on
+    // every send, so a topic damaged under the old default heals on its next
+    // publish. Messages already stranded do not come back.
+    mq.create(&scoped_topic, Some(0)).await.map_err(mq_err)?;
     let entry_id = mq.push(&scoped_topic, payload.as_ref()).await.map_err(mq_err)?;
     Ok(stream_id_to_offset(&entry_id))
 }

@@ -72,10 +72,7 @@ async fn a_backlog_deeper_than_one_is_delivered_in_full() {
 
     let sent: Vec<String> = (1..=5).map(|i| format!("message-{i}")).collect();
     for body in &sent {
-        storage
-            .publish(&scope, TOPIC, 0, Bytes::from(body.clone()))
-            .await
-            .expect("publish");
+        storage.publish(&scope, TOPIC, 0, Bytes::from(body.clone())).await.expect("publish");
     }
 
     // Subscribe only AFTER the whole burst is queued — that is the shape the
