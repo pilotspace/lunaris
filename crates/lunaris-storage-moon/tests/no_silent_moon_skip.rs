@@ -27,6 +27,15 @@ mod common;
 /// `#[ignore = "requires live Moon"]` tests that integration.yml deliberately
 /// un-ignores with `--include-ignored`, so CI went out of its way to run
 /// exactly the tests that would have skipped silently.
+///
+/// Six more joined on 2026-08-23, and how they were missed is the point. They
+/// reach Moon through `EphemeralMoon::spawn()` rather than a `connect_or_skip`
+/// helper, and announce it as `no ephemeral Moon (..); SKIP` — so the sweep
+/// below, which then required the literal phrase "not reachable", matched none
+/// of them. A guard keyed on one family's wording is blind to the next family,
+/// and this one was blind to `valid_time_half_open.rs` and
+/// `zero_vector_not_indexed.rs`: the F21 and F22 guards, both of them running
+/// in the strict integration job, both of them green if Moon never came up.
 const ROSTER: &[&str] = &[
     "a_hybrid_filter_trust.rs",
     "a_maintenance_compact.rs",
@@ -34,18 +43,24 @@ const ROSTER: &[&str] = &[
     "b_graph_hotpath.rs",
     "concurrent_txn_isolation.rs",
     "cypher_ingest_hazards.rs",
+    "dim_configurable.rs",
     "graph_anchor_constrains.rs",
     "graph_decay_recency.rs",
     "hotkeys_live.rs",
     "keyword_bm25.rs",
+    "knn_prefilter_is_never_silently_dropped.rs",
     "list_scopes.rs",
+    "mq_backlog_delivery.rs",
+    "mq_stranded_recovery.rs",
     "mq_typed_client.rs",
     "multishard_live.rs",
     "navigate_ab_bench.rs",
     "navigate_recall.rs",
     "quantization_recall.rs",
     "scope_isolation.rs",
+    "valid_time_half_open.rs",
     "vector_filter_moon.rs",
+    "zero_vector_not_indexed.rs",
 ];
 
 fn tests_dir() -> std::path::PathBuf {
@@ -67,6 +82,11 @@ fn code_of(path: &std::path::Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A code line that PRINTS a skip. The decision's observable form.
+fn announces_a_skip(line: &str) -> bool {
+    (line.contains("eprintln!") || line.contains("println!")) && line.contains("SKIP")
 }
 
 #[test]
@@ -113,7 +133,22 @@ fn no_test_file_outside_the_roster_invents_its_own_skip() {
             continue;
         }
         let code = code_of(&p);
-        if code.contains("not reachable") && code.contains("SKIP") {
+        // Keyed on the skip DECISION, not on one phrasing of it. The first
+        // version of this sweep required the literal "not reachable"
+        // alongside "SKIP", which matched the `connect_or_skip` family and
+        // nothing else — so the six files that reach Moon through
+        // `EphemeralMoon::spawn()` and print `no ephemeral Moon (..); SKIP`
+        // sailed past a guard written to catch exactly them. Two of the six
+        // were the F21 and F22 guards: the strict integration job was running
+        // them, and would have reported success on a Moon that never came up.
+        // The key is a PRINT that announces a skip — `eprintln!(".. SKIP")` —
+        // which is the observable form of the decision in all six, whatever
+        // words surround it. Bare `SKIP` was tried first and over-matched:
+        // `multishard_failfast.rs` carries "must be SKIPPED entirely" inside
+        // an `assert!` message, and an assertion is a FAILURE, not a skip.
+        // `code_of` has already dropped comment lines, so prose describing a
+        // skip cannot trip it either.
+        if code.lines().any(announces_a_skip) {
             rogue.push(name);
         }
     }

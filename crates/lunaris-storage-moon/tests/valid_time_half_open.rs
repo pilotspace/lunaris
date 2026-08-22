@@ -50,6 +50,8 @@ use lunaris_core::{Hlc, Scope, StoragePort, WriteOp};
 use lunaris_storage_moon::MoonStorage;
 use lunaris_test_harness::EphemeralMoon;
 
+mod common;
+
 const DIM: usize = 768;
 
 /// Millisecond instants around a window. `LO` and `HI` are the bounds
@@ -63,7 +65,7 @@ async fn private_moon(test: &str) -> Option<EphemeralMoon> {
     match EphemeralMoon::spawn().await {
         Ok(m) => Some(m),
         Err(e) => {
-            eprintln!("{test}: no ephemeral Moon ({e}); SKIP");
+            common::note_moon_unreachable(format!("{test}: no ephemeral Moon ({e})"));
             None
         }
     }

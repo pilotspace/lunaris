@@ -31,13 +31,15 @@ use lunaris_core::{Scope, StorageError, StoragePort, WriteOp};
 use lunaris_storage_moon::MoonStorage;
 use lunaris_test_harness::EphemeralMoon;
 
+mod common;
+
 /// Boot a private Moon or skip (mirrors the `MOON_URL not reachable; SKIP`
 /// convention of the other moon-it suites when no binary is available).
 async fn private_moon(test: &str) -> Option<EphemeralMoon> {
     match EphemeralMoon::spawn().await {
         Ok(m) => Some(m),
         Err(e) => {
-            eprintln!("{test}: no ephemeral Moon ({e}); SKIP");
+            common::note_moon_unreachable(format!("{test}: no ephemeral Moon ({e})"));
             None
         }
     }
