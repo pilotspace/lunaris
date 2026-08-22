@@ -54,8 +54,7 @@ async fn hybrid_fuse_treats_the_upper_bound_as_exclusive() {
         ids[3].to_bytes().to_vec(),
     );
 
-    let filter =
-        Filter::ValidTimeRange { after: Some(hlc_at(LO)), before: Some(hlc_at(HI)) };
+    let filter = Filter::ValidTimeRange { after: Some(hlc_at(LO)), before: Some(hlc_at(HI)) };
     let hits = recall_hybrid(&storage, &embedder, &scope, "timeline", 50, Some(filter)).await;
     let got: Vec<Vec<u8>> = hits.iter().map(|h| h.id.clone()).collect();
     let has = |id: &Vec<u8>| got.iter().any(|g| g == id);
