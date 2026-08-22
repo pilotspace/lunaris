@@ -285,8 +285,10 @@ fn filter_to_aggregate_query(filter: Option<&Filter>) -> Result<String, LunarisE
         None => Ok("*".to_string()),
         Some(Filter::Eq { field, value }) => Ok(format!("@{field}:{{{}}}", json_bare(value))),
         Some(Filter::ValidTimeRange { after, before }) => {
+            // Half-open `[after, before)` — `hi - 1` on the upper bound,
+            // matching every other render of this filter (F21).
             let min = after.map_or(0.0_f64, |h| h.wall_ms as f64);
-            let max = before.map_or(u64::MAX as f64, |h| h.wall_ms as f64);
+            let max = before.map_or(u64::MAX as f64, |h| h.wall_ms.saturating_sub(1) as f64);
             Ok(format!("@valid_time:[{min} {max}]"))
         }
         Some(other) => Err(LunarisError::Retrieve(RetrieveError::OperatorFailed(format!(

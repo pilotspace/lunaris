@@ -203,7 +203,15 @@ impl<S> TemporalQuery<S>
 where
     S: SupportsAsOf + SupportsBetween,
 {
-    /// Constrain to items whose valid_time falls within `[after, before]`.
+    /// Constrain to items whose valid_time falls within the HALF-OPEN range
+    /// `[after, before)` — lower bound inclusive, upper bound exclusive.
+    ///
+    /// This doc-comment used to say `[after, before]`, and the Moon renders
+    /// were built to match it, which is where F21's off-by-one came from.
+    /// `lunaris_core::storage::types::Filter::ValidTimeRange` is the
+    /// canonical statement of the contract and has always said half-open;
+    /// so does the parity golden ("lower-inclusive, upper-exclusive").
+    ///
     /// Panics if `after > before` — check is factored into
     /// `check_between_bounds` (private; Blocker #3 fix) so the test exercises
     /// the production assertion directly.

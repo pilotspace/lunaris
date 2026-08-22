@@ -12,9 +12,11 @@
 //! therefore intersects the two REAL indexed fields — `source` (TAG) ∩
 //! `valid_time` (NUMERIC) — which is the stronger heterogeneous-leaf test
 //! (bitmap intersection of a TAG allowlist and a numeric-range allowlist, the
-//! riskiest CHANGE B path). `valid_time` is populated by DIRECT WRITE here
-//! because the production ingest path does not yet emit `valid_time_ms`
-//! (pipeline.rs:328-334) — a separate gap recorded in TASK.md §4/§7.
+//! riskiest CHANGE B path). `valid_time` is populated by DIRECT WRITE here.
+//! That started as a workaround — the graph-OFF ingest path emitted no
+//! `valid_time_ms` at all — and is now a deliberate choice: F21 closed that
+//! gap, but a direct write lets the test name the exact instant it means
+//! rather than inheriting whatever the clock said.
 
 mod hybrid_filter_common;
 

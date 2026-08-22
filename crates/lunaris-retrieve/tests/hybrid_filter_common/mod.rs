@@ -25,12 +25,14 @@
 //! - `source` is written as a TAG field per chunk (`atomic.rs:204`), so
 //!   Eq/StartsWith/Or on `source` become correct once Moon applies the filter
 //!   to BOTH branches. RED now → GREEN after.
-//! - `valid_time` is a declared NUMERIC field but the production ingest path
-//!   never populates `valid_time_ms` (pipeline.rs:328-334). The And/ValidTime
-//!   tests therefore DIRECT-WRITE chunks carrying `valid_time_ms` so the
-//!   numeric leaf is real. This exercises the Moon/SDK numeric-filter
-//!   capability (the task's scope) — NOT the ingest→valid_time wiring, which
-//!   is a separate gap recorded in TASK.md §4/§7.
+//! - `valid_time` is a declared NUMERIC field. When this harness was written
+//!   the production ingest path never populated `valid_time_ms` on the
+//!   graph-OFF leg, so the And/ValidTime tests DIRECT-WRITE chunks carrying
+//!   it. That gap is now closed (F21 — `pipeline.rs` emits the field, and
+//!   `Episode::ground_valid_axis` puts a real date on it), but the direct
+//!   write is KEPT: it lets a test state the exact instant it means instead
+//!   of inheriting whatever the clock said, which is what a boundary
+//!   assertion needs.
 #![allow(dead_code)]
 
 use std::collections::HashSet;
