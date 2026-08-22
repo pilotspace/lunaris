@@ -210,8 +210,31 @@ fn render_knn_filter(f: &Filter) -> Option<String> {
             // The chunks FT schema declares `valid_time` NUMERIC
             // (SchemaField::Numeric in ensure_indexes). None maps to the
             // -inf / +inf sentinels Moon's f64 parser accepts.
+            // `Filter::ValidTimeRange` is documented half-open `[after,
+            // before)`, and Moon reads a bare numeric bound as INCLUSIVE.
+            // The upper bound is therefore rendered as `hi - 1`, which is
+            // EXACT rather than an approximation: `valid_time_ms` is only
+            // ever written from `chunk.bt.valid.0.wall_ms`, an integer
+            // number of milliseconds, so the closed range `[lo, hi-1]` and
+            // the half-open `[lo, hi)` contain precisely the same integers.
+            // If that field ever becomes fractional this stops being exact.
+            //
+            // Moon's grammar DOES have a `(`-prefix for exclusive bounds and
+            // it works on plain FT.SEARCH — but NOT here. The KNN prefilter
+            // is parsed by a separate, smaller parser
+            // (`vendor/moon/src/command/vector_search/ft_search/parse.rs`)
+            // whose numeric branch is a bare `parts[1].parse::<f64>().ok()?`.
+            // On `"(200"` that returns None for the WHOLE filter, and the
+            // caller degrades to an UNFILTERED search rather than erroring —
+            // so `(` here does not narrow the range, it silently removes it.
+            // Measured: 4 of 4 rows returned. See ledger F26.
+            //
+            // `saturating_sub` guards `before = 0`, where the window is
+            // empty by construction; `[lo, -1]` matches nothing, which is
+            // the right answer.
             let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
-            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
+            let hi =
+                before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
             Some(format!("@valid_time:[{lo} {hi}]"))
         }
         Filter::And(xs) if !xs.is_empty() => {
@@ -253,7 +276,11 @@ fn filter_matches(f: &Filter, meta: &serde_json::Value) -> Result<bool, StorageE
             let Some(ms) = meta.get("valid_time_ms").and_then(|v| v.as_u64()) else {
                 return Ok(false);
             };
-            Ok(after.is_none_or(|a| ms >= a.wall_ms) && before.is_none_or(|b| ms <= b.wall_ms))
+            // Half-open `[after, before)` — `<`, not `<=`. This is the
+            // client-side twin of the `(`-prefix in `render_knn_filter`, and
+            // the two MUST agree: a hit's membership cannot depend on
+            // whether Moon evaluated the filter or we did (F21).
+            Ok(after.is_none_or(|a| ms >= a.wall_ms) && before.is_none_or(|b| ms < b.wall_ms))
         }
         other => Err(StorageError::Backend(format!(
             "filter_unsupported_on_moon: no post-filter evaluation for {other:?}"
@@ -537,7 +564,7 @@ mod tests {
         ]);
         assert_eq!(
             render_knn_filter(&f).as_deref(),
-            Some("@source:{notes.md} @valid_time:[100 200]")
+            Some("@source:{notes.md} @valid_time:[100 199]")
         );
     }
 
@@ -561,7 +588,7 @@ mod tests {
             after: None,
             before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
         };
-        assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[-inf 200]"));
+        assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[-inf 199]"));
         let f = Filter::ValidTimeRange { after: None, before: None };
         assert_eq!(render_knn_filter(&f).as_deref(), Some("@valid_time:[-inf +inf]"));
     }

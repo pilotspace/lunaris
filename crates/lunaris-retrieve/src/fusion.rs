@@ -273,10 +273,12 @@ fn decode_moon_vector_key(key: &[u8], index: &str) -> Option<Vec<u8>> {
 /// - [`Filter::Eq`] → `Tag { field, value }` (exact TAG match; bare value)
 /// - [`Filter::StartsWith`] → `Tag { field, value: "<prefix>*" }` (prefix match)
 /// - [`Filter::And`] / [`Filter::Or`] → recursive `And` / `Or`
-/// - [`Filter::ValidTimeRange`] → `Numeric { field: "valid_time", min, max }`
-///   (inclusive). Open sides use FINITE sentinels because Moon's NUMERIC
-///   parser rejects non-finite bounds: `0.0` for an open `after`,
-///   `u64::MAX as f64` for an open `before`.
+/// - [`Filter::ValidTimeRange`] → `Numeric { field: "valid_time", min, max }`.
+///   `Numeric` is inclusive on both ends while the filter is documented
+///   half-open `[after, before)`, so `max` carries `hi - 1` (F21). Open
+///   sides use FINITE sentinels because Moon's NUMERIC parser rejects
+///   non-finite bounds: `0.0` for an open `after`, `u64::MAX as f64` for an
+///   open `before`.
 fn filter_to_moon_hybrid_filter(filter: &Option<Filter>) -> Option<moon::text::HybridFilter> {
     filter.as_ref().and_then(filter_node_to_hybrid)
 }
@@ -298,10 +300,22 @@ fn filter_node_to_hybrid(f: &Filter) -> Option<moon::text::HybridFilter> {
             let children: Vec<Hf> = xs.iter().filter_map(filter_node_to_hybrid).collect();
             (!children.is_empty()).then_some(Hf::Or(children))
         }
+        // Half-open `[after, before)`. `Hf::Numeric` is INCLUSIVE on both
+        // ends, so the upper bound is rendered as `hi - 1` — exact, not an
+        // approximation, because `valid_time` is only ever written from an
+        // integer `wall_ms`, so `[lo, hi-1]` closed and `[lo, hi)` half-open
+        // hold the same integers. Same rule as
+        // `lunaris_storage_moon::vector::render_knn_filter` (F21).
+        //
+        // This is the leg the DocumentCorpus recipes actually take. It was
+        // the LAST of five sites to be fixed, and the only one the
+        // storage-layer tests did not cover — which is exactly why the
+        // TypeScript parity suite stayed red at `expected 7 to be 6` after
+        // vector_search and keyword_search were both green.
         Filter::ValidTimeRange { after, before } => Some(Hf::Numeric {
             field: "valid_time".to_string(),
             min: after.map_or(0.0_f64, |h| h.wall_ms as f64),
-            max: before.map_or(u64::MAX as f64, |h| h.wall_ms as f64),
+            max: before.map_or(u64::MAX as f64, |h| h.wall_ms.saturating_sub(1) as f64),
         }),
         // `#[non_exhaustive]` on `Filter` requires a wildcard arm. A new
         // variant cannot be expressed as a HYBRID FILTER yet — emit no native

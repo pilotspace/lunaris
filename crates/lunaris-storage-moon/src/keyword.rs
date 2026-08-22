@@ -305,8 +305,16 @@ fn filter_to_moon(f: &Filter) -> String {
             // maps to -inf / +inf sentinels. The Moon FT schema on the `chunks`
             // index declares `valid_time` NUMERIC (Plan 09.1-02 Task 2 landed
             // SchemaField::Numeric("valid_time") in ensure_indexes).
+            // Half-open `[after, before)` — the exact twin of
+            // `vector.rs::render_knn_filter`, including the `hi - 1`
+            // encoding. Plain FT.SEARCH (this leg) does accept Moon's
+            // `(`-prefix for an exclusive bound, but the KNN prefilter
+            // parser does not (F26), and the two legs of a hybrid recall
+            // MUST agree on which rows are in the window. One encoding,
+            // valid on both parsers, beats two that happen to coincide.
             let lo = after.map_or("-inf".to_string(), |h| h.wall_ms.to_string());
-            let hi = before.map_or("+inf".to_string(), |h| h.wall_ms.to_string());
+            let hi =
+                before.map_or("+inf".to_string(), |h| h.wall_ms.saturating_sub(1).to_string());
             format!("@valid_time:[{lo} {hi}]")
         }
         // `#[non_exhaustive]` on `Filter` requires a wildcard arm. New
@@ -661,7 +669,7 @@ mod tests {
             after: Some(Hlc { wall_ms: 100, counter: 0, node_id: 0 }),
             before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
         };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[100 200]");
+        assert_eq!(filter_to_moon(&f), "@valid_time:[100 199]");
     }
 
     #[test]
@@ -679,7 +687,7 @@ mod tests {
             after: None,
             before: Some(Hlc { wall_ms: 200, counter: 0, node_id: 0 }),
         };
-        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf 200]");
+        assert_eq!(filter_to_moon(&f), "@valid_time:[-inf 199]");
     }
 
     #[test]
