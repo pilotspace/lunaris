@@ -24,11 +24,29 @@
 //! continue. On a message, this adapter ACKs the stream entry before yielding
 //! `QueueMsg`; `StoragePort` has no separate ack hook.
 //!
-//! `COUNT 1` is only safe because `publish` creates topics with
-//! `MAXDELIVERY 0` — under the server default of 3 a single `COUNT 1` pop
-//! claims four entries and returns one, destroying the other three (F25,
-//! pilotspace/moon#652). Do not raise `max_delivery_count` here without first
-//! reading that issue.
+//! `COUNT 1` is only safe because topics are created with `MAXDELIVERY 0` —
+//! under the server default of 3 a single `COUNT 1` pop claims four entries
+//! and returns one, destroying the other three (F25, pilotspace/moon#652). Do
+//! not raise `max_delivery_count` here without first reading that issue.
+//! `subscribe` asserts the setting for itself rather than trusting a `publish`
+//! to have run first: a consumer can attach to a topic no healthy producer has
+//! touched since the fix, and that consumer would otherwise go on stranding
+//! its own backlog one pop at a time.
+//!
+//! ## Recovering a pre-fix backlog (F22 step 2)
+//!
+//! Messages stranded by the old default are NOT lost. `MQ POP` cannot see
+//! them — `read_group_new` reads only `>` and `last_delivered_id` is already
+//! past them — but they are still in the `__mq_consumers` PEL with their
+//! payloads intact, and `XAUTOCLAIM` walks the PEL directly. A subscriber
+//! therefore begins with a bounded reclaim sweep and only then polls for new
+//! work. On the live personal store that sweep has 111,729 entries to hand
+//! back (census, 2026-08-22).
+//!
+//! This is the one place in the module that issues a raw RESP command. It has
+//! to be: `XAUTOCLAIM` is a stream command with no `MqClient` equivalent, and
+//! the whole point is to reach entries the MQ surface cannot. The frozen
+//! contract forbids raw `MQ` invocations specifically, which this is not.
 //!
 //! Phase 1 caps idle CPU at ~3 polls / sec (T-01-03-03 mitigation). Phase 4
 //! `VERIFY-06` adds backpressure.
@@ -94,7 +112,8 @@ pub(crate) async fn publish(
     // safety net anyway — it was where the losses were NOT going.
     // `MQ CREATE` on an existing topic updates the setting, and publish runs on
     // every send, so a topic damaged under the old default heals on its next
-    // publish. Messages already stranded do not come back.
+    // publish. Messages already stranded by it are recovered separately, by
+    // the reclaim sweep in `subscribe`.
     mq.create(&scoped_topic, Some(0)).await.map_err(mq_err)?;
     let entry_id = mq.push(&scoped_topic, payload.as_ref()).await.map_err(mq_err)?;
     Ok(stream_id_to_offset(&entry_id))
@@ -125,6 +144,41 @@ pub(crate) async fn queue_length(
     Ok(n.max(0) as u64)
 }
 
+/// The consumer group and consumer `MQ` uses internally
+/// (`vendor/moon/src/shard/mq_exec.rs`). The reclaim sweep has to name them
+/// explicitly because it bypasses the MQ surface to read that group's PEL.
+const MQ_GROUP: &str = "__mq_consumers";
+/// A consumer name distinct from MQ's own `__mq_default`, so a reclaimed entry
+/// is visibly attributed to recovery in `XPENDING` output.
+const RECLAIM_CONSUMER: &str = "__lunaris_reclaim";
+/// How many PEL entries one sweep step asks for.
+const RECLAIM_BATCH: usize = 128;
+
+/// Only reclaim entries idle at least this long. Default 30s.
+///
+/// A live consumer's window between `MQ POP` and `MQ ACK` is sub-millisecond
+/// (see `subscribe` — the ack is the statement before the yield), so 30s is
+/// four orders of magnitude of headroom. It exists because `subscribe` is not
+/// exclusive: a second process attaching to the same topic must not be able to
+/// tear an in-flight message out of the first one's hands, which is exactly
+/// what a zero threshold would let it do. Stranded entries are months old and
+/// clear the bar trivially.
+///
+/// `LUNARIS_MQ_RECLAIM_IDLE_MS` overrides it; the integration tests set it to
+/// zero because they strand and recover within the same second.
+fn reclaim_min_idle_ms() -> u64 {
+    std::env::var("LUNARIS_MQ_RECLAIM_IDLE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(30_000)
+}
+
+/// One entry handed back by the reclaim sweep.
+struct Reclaimed {
+    id: String,
+    data: Bytes,
+}
+
 /// Internal state threaded through the unfold stream.
 struct PollState {
     client: MoonClient,
@@ -132,6 +186,104 @@ struct PollState {
     topic: String,
     partition: u16,
     last_offset: u64,
+    /// `Some(cursor)` while the PEL sweep is still walking; `None` once it has
+    /// wrapped, after which this subscriber only polls for new work. Topics
+    /// created with `MAXDELIVERY 0` cannot strand anything new, so one pass is
+    /// the whole job.
+    reclaim_cursor: Option<String>,
+    /// Entries the last sweep step returned and this stream has not yielded.
+    reclaimed: std::collections::VecDeque<Reclaimed>,
+}
+
+/// One `XAUTOCLAIM` step: returns the next cursor and the entries claimed.
+///
+/// A server that does not implement `XAUTOCLAIM` ends the sweep rather than
+/// failing the subscription — recovery is a bonus, not a precondition for
+/// consuming new messages.
+async fn reclaim_step(
+    client: &MoonClient,
+    topic: &str,
+    cursor: &str,
+) -> (Option<String>, Vec<Reclaimed>) {
+    let mut typed = client.typed();
+    let reply: Result<redis::Value, _> = redis::cmd("XAUTOCLAIM")
+        .arg(topic)
+        .arg(MQ_GROUP)
+        .arg(RECLAIM_CONSUMER)
+        .arg(reclaim_min_idle_ms())
+        .arg(cursor)
+        .arg("COUNT")
+        .arg(RECLAIM_BATCH)
+        .query_async(typed.inner_mut())
+        .await;
+
+    let Ok(value) = reply else {
+        // No such group yet, no XAUTOCLAIM on this build, or a transport
+        // glitch. Either way, stop sweeping and get on with new work.
+        return (None, Vec::new());
+    };
+    parse_reclaim_reply(value)
+}
+
+/// Split an `XAUTOCLAIM` reply into `(next cursor, entries)`.
+///
+/// The reply is `[cursor, [[id, [field, value, ...]], ...]]` with an optional
+/// third element (deleted ids) on newer servers. A cursor of `0-0` means the
+/// scan wrapped, which is reported as `None`.
+fn parse_reclaim_reply(value: redis::Value) -> (Option<String>, Vec<Reclaimed>) {
+    let redis::Value::Array(parts) = value else {
+        return (None, Vec::new());
+    };
+    let mut it = parts.into_iter();
+    let cursor = match it.next() {
+        Some(v) => redis_string(&v).unwrap_or_default(),
+        None => return (None, Vec::new()),
+    };
+    let entries = match it.next() {
+        Some(redis::Value::Array(rows)) => rows,
+        _ => Vec::new(),
+    };
+
+    let mut out = Vec::with_capacity(entries.len());
+    for row in entries {
+        let redis::Value::Array(pair) = row else { continue };
+        let mut pair = pair.into_iter();
+        let Some(id) = pair.next().and_then(|v| redis_string(&v)) else { continue };
+        // Contract v1 wire shape: `body <bytes>`. An entry without a `body`
+        // field drains as EMPTY, exactly as the poll path treats it, so a
+        // legacy-format straggler cannot wedge the sweep.
+        let data = match pair.next() {
+            Some(redis::Value::Array(fields)) => field_value(fields, b"body"),
+            _ => Bytes::new(),
+        };
+        out.push(Reclaimed { id, data });
+    }
+
+    let next = if cursor.is_empty() || cursor == "0-0" { None } else { Some(cursor) };
+    (next, out)
+}
+
+/// Pull one field's value out of a flat `[field, value, ...]` array.
+fn field_value(fields: Vec<redis::Value>, want: &[u8]) -> Bytes {
+    let mut it = fields.into_iter();
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        if redis_bytes(&k).as_deref() == Some(want) {
+            return redis_bytes(&v).map(Bytes::from).unwrap_or_default();
+        }
+    }
+    Bytes::new()
+}
+
+fn redis_bytes(v: &redis::Value) -> Option<Vec<u8>> {
+    match v {
+        redis::Value::BulkString(b) => Some(b.clone()),
+        redis::Value::SimpleString(s) => Some(s.as_bytes().to_vec()),
+        _ => None,
+    }
+}
+
+fn redis_string(v: &redis::Value) -> Option<String> {
+    redis_bytes(v).and_then(|b| String::from_utf8(b).ok())
 }
 
 pub(crate) async fn subscribe(
@@ -146,7 +298,26 @@ pub(crate) async fn subscribe(
     // into the `'static` stream).
     let scoped_topic = mq_topic(scope, topic);
 
-    let state = PollState { client, topic: scoped_topic, partition, last_offset: 0 };
+    // Assert MAXDELIVERY 0 for ourselves. `publish` does the same, but a
+    // consumer must not depend on a producer having run since the F25 fix:
+    // attached to a topic still carrying the server default, every `COUNT 1`
+    // poll below would strand up to three more messages. A failure here is not
+    // fatal — an MQ-less server still has to be able to report that through the
+    // stream rather than through a panic at subscribe time.
+    {
+        let typed = client.typed();
+        let _ = typed.mq().create(&scoped_topic, Some(0)).await;
+    }
+
+    let state = PollState {
+        client,
+        topic: scoped_topic,
+        partition,
+        last_offset: 0,
+        // Start the PEL sweep at the beginning of the stream.
+        reclaim_cursor: Some("0-0".to_string()),
+        reclaimed: std::collections::VecDeque::new(),
+    };
 
     // We wrap each polling tick in a stream::unfold; idle ticks (empty reply)
     // sleep then recurse so the consumer never sees a phantom message. The
@@ -154,6 +325,40 @@ pub(crate) async fn subscribe(
     // lands on the same idle path — the stream never terminates on a glitch.
     let stream = stream::unfold(state, |mut s| async move {
         loop {
+            // Phase 1: hand back anything the reclaim sweep recovered. These
+            // are messages `MQ POP` provably cannot reach, so they go first —
+            // a busy topic must not starve its own backlog.
+            if let Some(entry) = s.reclaimed.pop_front() {
+                let typed = s.client.typed();
+                let mut mq = typed.mq();
+                let _ = mq.ack(&s.topic, &entry.id).await;
+                let offset =
+                    stream_id_to_offset(&entry.id).max(s.last_offset.saturating_add(1));
+                s.last_offset = offset;
+                let queue_msg = QueueMsg {
+                    topic: s.topic.clone(),
+                    partition: s.partition,
+                    offset,
+                    payload: entry.data,
+                };
+                return Some((Ok(queue_msg), s));
+            }
+            // Phase 2: advance the sweep until it wraps. Bounded: each step
+            // claims at most RECLAIM_BATCH, and the cursor only moves forward.
+            if let Some(cursor) = s.reclaim_cursor.take() {
+                let (next, entries) = reclaim_step(&s.client, &s.topic, &cursor).await;
+                s.reclaim_cursor = next;
+                if !entries.is_empty() {
+                    s.reclaimed.extend(entries);
+                    continue;
+                }
+                if s.reclaim_cursor.is_some() {
+                    // Cursor moved but this page held nothing claimable (every
+                    // entry was inside the idle threshold). Keep walking.
+                    continue;
+                }
+            }
+            // Phase 3: normal polling for new work.
             let typed = s.client.typed();
             let mut mq = typed.mq();
             let batch = match mq.pop(&s.topic, 1).await {
