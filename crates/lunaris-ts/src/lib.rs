@@ -71,6 +71,9 @@ mod dsl;
 // napi classes (preset / Ollama / BYO-ONNX factories). NOT codegen-managed.
 mod embedder_config;
 mod errors;
+// F20 — the deserialisation seam the generated bindings route through;
+// repairs JS integers that napi floated above u32::MAX.
+mod js_value;
 // Phase 21 Plan 21-02 Task 3 — handwritten `#[napi] impl Lunaris` extension
 // that adds `withEmbedder` / `withReranker` chainable methods. NOT
 // codegen-managed; generated.rs stays untouched.
