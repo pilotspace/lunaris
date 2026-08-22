@@ -103,6 +103,24 @@ impl DocumentCorpus {
         }
     }
 
+    /// Reserved metadata key naming an entry's **real-world** instant, as
+    /// whole unix milliseconds (i64).
+    ///
+    /// Set it and the entry is stamped on the bi-temporal VALID axis at that
+    /// instant instead of at ingest time, which is what makes
+    /// [`crate::TemporalQuery::between`] answer "what was true in this
+    /// window" rather than "what did we write in this window" (F21). Absent
+    /// or malformed, the axis falls back to the ingest instant — the corpus
+    /// never guesses a date and never fails an ingest over one.
+    ///
+    /// Reading it is additive: the key stays in `metadata`, so it still
+    /// round-trips and still works with [`Self::filter`].
+    ///
+    /// Unprefixed by design. `DocumentCorpus` backs papers, docs, repos and
+    /// timelines alike, so "event" would be one caller's vocabulary imposed
+    /// on the rest.
+    pub const VALID_TIME_KEY: &'static str = "valid_time_unix_ms";
+
     /// Ingest chunked content. Each `(content, metadata)` pair becomes one
     /// [`Episode`] whose `source = format!("{prefix}{ulid}")`. Delegates to
     /// [`Lunaris::ingest`] per chunk so the umbrella pipeline runs the

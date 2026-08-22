@@ -32,6 +32,8 @@ all-features = false
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+# F21 — DocumentCorpus reads the reserved valid-time key into Episode::t_ref.
+chrono              = { workspace = true }
 lunaris = { workspace = true }
 lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
