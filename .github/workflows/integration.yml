@@ -292,6 +292,28 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
+      - name: Run lunaris-server live graph-mode test
+        # F16 — this job is the only one with a Moon, and `-p lunaris-server`
+        # was never in its scope. `recall_graph_mode_live.rs` needs a real
+        # backend (its `live_engine` helper prints SKIP and returns when
+        # `MOON_TEST_BINARY` is unset), so under `ci.yml`'s Moon-less
+        # `--workspace` it would report green while asserting nothing — the
+        # exact shape W4.8 and W4.14 were filed for.
+        #
+        # What it proves: a `mode=graph` recall over a corpus the test itself
+        # seeds returns hits. All four tests in the sibling
+        # `recall_graph_mode.rs` drive a mock and pin composition, so they
+        # stayed green through three defects that together made the feature
+        # incapable of returning a hit.
+        #
+        # `MOON_TEST_BINARY` is set in this job's env, which is what the
+        # ephemeral-Moon harness this file uses reads.
+        if: success() || failure()
+        run: |
+          cargo test -p lunaris-server \
+            --test recall_graph_mode_live \
+            --no-fail-fast
+
       - name: Run lunaris-memory umbrella live-Moon tests
         # W4.14 — `crates/lunaris/tests/moon_parity.rs` gates on
         # `LUNARIS_MOON_URL`, which this job's env sets, but `-p lunaris-memory`
