@@ -234,19 +234,19 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         Err(_) => {
             // Intentionally never log the URL itself — a store URL can
             // carry credentials. Host:port and the env var name only.
-            eprintln!(
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
                 "run_protocol_lunaris_server: SKIP {name} (DNS resolution of {host_port} failed)"
-            );
+            ));
             return None;
         }
     };
     if addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok()) {
         return Some(url);
     }
-    eprintln!(
+    lunaris_test_harness::strict_skip::note_unavailable(format!(
         "run_protocol_lunaris_server: SKIP {name} (TCP probe to {host_port} failed within {}ms across {} address(es))",
         timeout.as_millis(),
         addrs.len()
-    );
+    ));
     None
 }

@@ -45,6 +45,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod strict_skip;
+
 pub mod doubles;
 pub mod moon;
 

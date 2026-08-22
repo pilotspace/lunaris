@@ -53,7 +53,9 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
     let host_port = if let Some(rest) = url.strip_prefix("moon://") {
         rest.split('/').next()?.to_string()
     } else {
-        eprintln!("run_storage_moon: SKIP {name} (unknown URL scheme)");
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "run_storage_moon: SKIP {name} (unknown URL scheme)"
+        ));
         return None;
     };
 
@@ -69,17 +71,19 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         Err(_) => {
             // Intentionally never log the URL itself — a store URL can
             // carry credentials. Host:port and the env var name only.
-            eprintln!("run_storage_moon: SKIP {name} (DNS resolution of {host_port} failed)");
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "run_storage_moon: SKIP {name} (DNS resolution of {host_port} failed)"
+            ));
             return None;
         }
     };
     if addrs.iter().any(|a| TcpStream::connect_timeout(a, timeout).is_ok()) {
         return Some(url);
     }
-    eprintln!(
+    lunaris_test_harness::strict_skip::note_unavailable(format!(
         "run_storage_moon: SKIP {name} (TCP probe to {host_port} failed within {}ms across {} address(es))",
         timeout.as_millis(),
         addrs.len()
-    );
+    ));
     None
 }
