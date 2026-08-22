@@ -238,3 +238,24 @@ async fn mode_graph_returns_hits_from_a_corpus_this_test_seeded() {
          the graph leg never reached a hydratable GRAPH.QUERY row. body={body}"
     );
 }
+
+/// Guard: this file must have a runner in a job that HAS a Moon.
+///
+/// `live_engine` skips loudly when `MOON_TEST_BINARY` is unset, which is the
+/// right behaviour for a developer laptop and the wrong one for CI: under
+/// `ci.yml`'s Moon-less `cargo test --workspace` this file would report green
+/// while asserting nothing. That is the same shape as W4.8 (a `moon-it` crate
+/// no job passed the feature to) and W4.14 (five tests that printed
+/// "skipping: LUNARIS_MOON_URL not set" on every run of every workflow).
+///
+/// Asserts on the `run:` line rather than the step name or its comment — prose
+/// mentioning the file is not a runner.
+#[test]
+fn this_file_has_a_runner_in_a_moon_bearing_job() {
+    const INTEGRATION_YML: &str = include_str!("../../../.github/workflows/integration.yml");
+    assert!(
+        INTEGRATION_YML.contains("--test recall_graph_mode_live"),
+        "no job invokes this file. Without a runner in a job that sets \
+         MOON_TEST_BINARY, every test here SKIPS and passes, covering nothing."
+    );
+}
