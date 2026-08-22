@@ -321,7 +321,12 @@ pub async fn ingest_structured_inner(
     // Per-chunk KV + Vector (BM25 piggybacks on `content` in metadata).
     let mut chunks: Vec<Chunk> = Vec::with_capacity(drafts.len());
     for (draft, emb) in drafts.into_iter().zip(chunk_embeddings.into_iter()) {
-        let mut c = draft.into_chunk(episode.scope.clone(), episode.id, clock);
+        let mut c = draft.into_chunk_valid_from(
+            episode.scope.clone(),
+            episode.id,
+            clock,
+            episode.bt.valid.0,
+        );
         c.embedding = Some(emb.clone());
         let chunk_value = serde_json::to_vec(&c).map_err(|e| {
             LunarisError::Storage(StorageError::Backend(format!(

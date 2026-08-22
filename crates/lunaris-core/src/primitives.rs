@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::bitemporal::BiTemporal;
-use crate::hlc::HlcClock;
+use crate::hlc::{Hlc, HlcClock};
 use crate::scope::Scope;
 
 // ---------------- Episode ----------------
@@ -32,6 +32,31 @@ pub struct Episode {
 }
 
 impl Episode {
+    /// Ground the **valid** axis on `t_ref`, leaving the **system** axis alone.
+    ///
+    /// `t_ref` is the caller's declared real-world date for this content —
+    /// a chat session's date, a commit's author date, a document's dateline.
+    /// [`Episode::new`] cannot know it, so it stamps `BiTemporal::now`, which
+    /// puts BOTH axes on the ingest instant. Until this runs, the store is
+    /// mono-temporal with a spare field: `Filter::ValidTimeRange` answers
+    /// "what did we WRITE in this window" instead of "what was TRUE in this
+    /// window", and a corpus of last year's events matches nothing dated last
+    /// year (F21).
+    ///
+    /// Idempotent, and a no-op without a `t_ref` — an undated episode has
+    /// nothing better to say than "now", and saying "now" is correct rather
+    /// than merely a fallback.
+    ///
+    /// The system axis is deliberately untouched. It records when Lunaris
+    /// learned the thing, and no caller-supplied value may move it: an
+    /// `as_of` system query that could be talked into claiming we knew
+    /// something before we recorded it is not an audit trail.
+    pub fn ground_valid_axis(&mut self) {
+        if let Some(t) = self.t_ref {
+            self.bt.valid.0 = Hlc::from_utc(t);
+        }
+    }
+
     /// Construct a new [`Episode`].
     ///
     /// `scope` is the partition key (RFC 0001). Use [`Scope::dev()`] at Wave 0

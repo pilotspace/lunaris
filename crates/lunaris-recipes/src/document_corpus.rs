@@ -139,6 +139,21 @@ impl DocumentCorpus {
                 content,
                 self.lunaris.clock().as_ref(),
             );
+            // F21 — honour the caller's declared real-world instant on the
+            // bi-temporal VALID axis. Read additively: the key stays in
+            // `metadata` so it still round-trips and still works with
+            // `.filter()`.
+            //
+            // `as_i64` is deliberately strict. A float, a string date, or a
+            // null is NOT coerced — a corpus that quietly reinterprets
+            // caller data as a system-level time axis is worse than one that
+            // ignores it, because the wrong answer looks like a right one.
+            // Anything unreadable leaves `t_ref` unset, and the axis falls
+            // back to the ingest instant.
+            episode.t_ref = metadata
+                .get(Self::VALID_TIME_KEY)
+                .and_then(|v| v.as_i64())
+                .and_then(chrono::DateTime::from_timestamp_millis);
             episode.metadata = metadata;
             self.lunaris.ingest(episode).await?;
         }

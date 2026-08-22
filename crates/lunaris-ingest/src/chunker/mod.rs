@@ -118,6 +118,26 @@ impl ChunkDraft {
     /// owning Episode's [`Scope`] so the chunk inherits the same partition
     /// key (the typical pattern is `draft.into_chunk(episode.scope.clone(),
     /// episode.id, &clock)`).
+    /// Convert to a Phase 1 [`Chunk`] whose **valid** axis is inherited from
+    /// the owning Episode rather than issued by the clock.
+    ///
+    /// A chunk is a slice of its episode's content, so it was true in the
+    /// world at exactly the same instant the episode was — never at the
+    /// instant the chunker happened to run. Passing `episode.bt.valid.0`
+    /// here is what makes `Filter::ValidTimeRange` mean "what was TRUE in
+    /// this window" (F21). The **system** axis stays clock-issued.
+    pub fn into_chunk_valid_from(
+        self,
+        scope: Scope,
+        episode_id: Ulid,
+        clock: &HlcClock,
+        valid_from: lunaris_core::Hlc,
+    ) -> Chunk {
+        let mut c = self.into_chunk(scope, episode_id, clock);
+        c.bt.valid.0 = valid_from;
+        c
+    }
+
     pub fn into_chunk(self, scope: Scope, episode_id: Ulid, clock: &HlcClock) -> Chunk {
         let mut c = Chunk::new(
             scope,
