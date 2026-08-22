@@ -159,10 +159,27 @@ impl Retriever for Tree {
             // condition reported through the hybrid path's wording sailed
             // straight past it.
             Err(ref e) if crate::missing_index::is_index_absent(e) => {
-                tracing::debug!(
+                // F8: WARN, not debug. Returning empty is correct (F1: an
+                // absent index means nothing has been written under this
+                // scope), but the caller ASKED for tree retrieval, so silence
+                // leaves them with flat results and no way to learn why.
+                // RAPTOR is opt-in and does not backfill, so the usual cause is
+                // a corpus ingested before it was enabled — which no amount of
+                // re-querying will fix.
+                //
+                // The message names `raptor` and `re-ingest` deliberately;
+                // `tree_missing_index_is_loud.rs` asserts on both, because a
+                // warning a reader cannot act on is only marginally better than
+                // no warning. Its sibling test pins that a present-but-empty
+                // index stays quiet, so this stays rare enough to be worth
+                // reading.
+                tracing::warn!(
                     scope = %ctx.scope,
                     index = %self.index,
-                    "Tree: communities index not found (scope has no ingested communities); returning empty"
+                    "Tree: no communities index for this scope, so `.tree(..)` \
+                     matched nothing and recall fell back to flat results. \
+                     RAPTOR is opt-in and does not backfill: enable it and \
+                     re-ingest this scope's documents to build the tree."
                 );
                 return Ok(vec![]);
             }
