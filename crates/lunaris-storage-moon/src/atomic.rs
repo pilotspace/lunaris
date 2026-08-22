@@ -278,7 +278,22 @@ async fn run_ops(
                     None
                 };
                 let mut fields: Vec<(&str, &[u8])> = Vec::with_capacity(6);
-                fields.push(("vec", buf.as_slice()));
+                match unindexable_reason(embedding) {
+                    None => fields.push(("vec", buf.as_slice())),
+                    Some(reason) => {
+                        // Per-row at debug: a Tier-0 ingest of 10k chunks must not
+                        // flood the log. The once-per-process warning that this is
+                        // happening at all belongs to `resolve_embedder`, which
+                        // already emits it when it falls back to NoopEmbedder.
+                        tracing::debug!(
+                            target: "lunaris::storage::moon",
+                            index = %index,
+                            reason,
+                            "embedding not fit for the KNN index — writing the row \
+                             without a `vec` field (F22)"
+                        );
+                    }
+                }
                 fields.push(("meta", meta_json.as_bytes()));
                 if let Some(c) = content.as_ref() {
                     fields.push(("content", c.as_bytes()));
@@ -556,6 +571,55 @@ fn json_to_cypher_literal(v: &serde_json::Value) -> String {
         serde_json::Value::Null => "null".to_string(),
         other => quote(&other.to_string()),
     }
+}
+
+/// F22 — decide whether an embedding is fit to enter the KNN index, and if
+/// not, say why.
+///
+/// # Why a zero vector must not be indexed
+///
+/// A zero vector is not a neutral placeholder. Under Moon's KNN the reported
+/// `__vec_score` is a DISTANCE, and the adapter converts it with `1/(1+d)`.
+/// A zero vector sits at distance `||q||` from ANY query — 1.0 for the unit
+/// queries every embedder produces — while a genuine but weak match sits
+/// further away. Measured on a live Moon against a random unit query:
+///
+/// | row                | `__vec_score` (distance) | `1/(1+d)` |
+/// |--------------------|--------------------------|-----------|
+/// | all-zero vector    | 1.0                      | 0.500     |
+/// | real chunk         | 1.7649367                | 0.362     |
+/// | real chunk         | 1.8104194                | 0.356     |
+///
+/// The un-embedded row wins, against every query, forever. Re-ingesting later
+/// with a working embedder does not repair rows already written.
+///
+/// This is not hypothetical: the documented Tier-0 build produces exactly
+/// this. `resolve_embedder` falls back to `NoopEmbedder` (zero vectors) with a
+/// single `tracing::warn!` when no GGUF is staged and no remote embedder is
+/// configured, and `lunaris-hook` capture writes zero vectors DELIBERATELY so
+/// the request path stays storage-bound, promoting real ones later. If the
+/// promotion worker is disabled or Moon MQ is unavailable, that window never
+/// closes.
+///
+/// # Why skipping the field is the right repair
+///
+/// Verified on a live Moon: a row written WITHOUT the `vec` field is absent
+/// from KNN, is still found by BM25, and still hydrates. `HSET`ing a real
+/// `vec` later — exactly what the promotion worker's `VectorUpsert` does —
+/// brings it into KNN at distance ~0. So skipping costs nothing the row could
+/// otherwise have had, and composes with the capture-then-promote design.
+///
+/// It also makes `lunaris::handle`'s existing claim true. That doc comment
+/// already says "Vector recall returns empty rows until a GGUF is staged";
+/// before this guard it was false, and the false comment is part of why the
+/// defect went unnoticed.
+///
+/// Non-finite components are rejected for the same reason plus a worse one:
+/// a NaN makes every comparison against the row meaningless.
+pub(crate) fn unindexable_reason(embedding: &[f32]) -> Option<&'static str> {
+    // RED stub — today's behaviour: every embedding is indexed, zero or not.
+    let _ = embedding;
+    None
 }
 
 #[cfg(test)]
