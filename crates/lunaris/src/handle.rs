@@ -2133,9 +2133,19 @@ async fn resolve_embedder(max_batch_tokens: u32) -> Result<Arc<dyn Embedder>, Lu
         }
     }
 
-    // 2. No local runtime reachable — NoopEmbedder (zero vectors). Vector
-    //    recall returns empty rows until a GGUF is staged (llamacpp) or a
-    //    remote embedder is configured (`embed-remote`).
+    // 2. No local runtime reachable — NoopEmbedder (zero vectors). Rows
+    //    ingested in this state are written WITHOUT a `vec` field (see
+    //    `lunaris_storage_moon::atomic::unindexable_reason`), so they are
+    //    absent from vector recall but still reachable by BM25 and still
+    //    hydratable; a later real embedding for the same id promotes them
+    //    into the KNN index.
+    //
+    //    That skip is load-bearing, not tidiness. A zero vector is NOT a
+    //    neutral placeholder: under the `1/(1+d)` score it sits at distance
+    //    `||q||` from any unit query and OUTRANKS genuine matches, forever
+    //    (F22). Before the skip, this comment claimed vector recall returned
+    //    empty rows here — it did not, and the false comment is part of why
+    //    the defect went unnoticed.
     let dim = resolve_embed_dim();
     let _ = RESOLVED_EMBEDDER_BACKEND.set(EmbedderBackend::Noop);
     EMBEDDER_BACKEND_LOG_ONCE.get_or_init(|| {
