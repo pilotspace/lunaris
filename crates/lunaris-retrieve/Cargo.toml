@@ -74,6 +74,11 @@ bytes                = { workspace = true }
 futures              = { workspace = true }
 serde_json           = { workspace = true }
 ulid                 = { workspace = true }
+# F8: `tree_missing_index_is_loud.rs` captures the operator's own tracing
+# output — the signal IS the behaviour under test, so it has to be observed
+# rather than eyeballed.
+tracing              = { workspace = true }
+tracing-subscriber   = { workspace = true }
 
 [features]
 default = []
