@@ -194,8 +194,7 @@ async fn the_seeded_corpus_reaches_the_graph() {
         params: serde_json::from_value(serde_json::json!({ "ids": [format!("{}", alice_id())] }))
             .expect("params"),
     };
-    let result =
-        lunaris.storage().graph_traverse(&scope, &q, None).await.expect("graph traverse");
+    let result = lunaris.storage().graph_traverse(&scope, &q, None).await.expect("graph traverse");
     assert!(!result.rows.is_empty(), "the anchor entity reached nothing — the seed never landed");
     assert!(
         result.rows.iter().all(|r| r.first().is_some_and(|v| v.is_string())),

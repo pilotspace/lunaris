@@ -824,6 +824,12 @@ async fn ingest_episode_graph_on(
             id: fact_id_bytes.clone(),
             label: "Fact".into(),
             props: json!({
+                // F16: the retrieval Cypher selects `m.id_hex`. This node had
+                // every other property but that one, so every fact reachable by
+                // a traversal came back with a NULL id, decoded to an empty
+                // byte string, and was dropped in hydration — the graph leg
+                // could never contribute the one node kind that hydrates.
+                "id_hex": format!("{}", f.id),
                 "predicate": f.predicate,
                 "confidence": f.confidence,
                 "valid_from_iso": f.valid_from_iso,

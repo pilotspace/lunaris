@@ -167,7 +167,7 @@ pub async fn recall_handler(
     // double-wrapped by a second top/rerank stage.
     let mut fallback_degraded = false;
     if req.mode == RetrievalMode::Graph {
-        let entities = extract_query_entities(&req.query);
+        let entities = resolve_query_entities(&state, &claims.scope, &req.query).await;
         if entities.is_empty() {
             fallback_degraded = true;
         } else {
@@ -219,14 +219,68 @@ pub async fn recall_handler(
     }
 }
 
-/// v0 entity extraction for HTTP mode=graph — mirrors
-/// `lunaris_retrieve::planner::has_entity_like_capitalized_token` inline
+/// Resolve the query's entity-like tokens to the `EntityId`s that actually
+/// exist in this scope's graph.
+///
+/// F16: this used to mint `EntityId::from_name_and_type(token, "")` directly
+/// and anchor on that. Every id in the store is derived from `(name, type)`
+/// with a REAL type — `blake3("alice::Person")`, never `blake3("alice::")` —
+/// so the minted anchor matched nothing, the traversal returned no rows, and
+/// `mode=graph` quietly answered with the semantic leg alone while reporting
+/// `degraded=false`. The handler cannot know an entity's type from free text,
+/// so it asks the graph instead: one `name` lookup, then anchor on what came
+/// back.
+///
+/// A token that resolves to nothing contributes no seed, so a query naming an
+/// entity this scope has never seen now falls through to the degraded path
+/// rather than anchoring on an id that cannot exist.
+async fn resolve_query_entities(
+    state: &AppState,
+    scope: &lunaris_core::Scope,
+    text: &str,
+) -> Vec<EntityId> {
+    let names = entity_like_tokens(text);
+    if names.is_empty() {
+        return Vec::new();
+    }
+    // Moon ignores the inline-property form `(n {name: nm})`, so this MUST use
+    // `WHERE` — see the same note in `routes/graph.rs`.
+    let cypher = "UNWIND $names AS nm MATCH (n) WHERE n.name = nm \
+                  RETURN n.id_hex AS id LIMIT $k"
+        .to_string();
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "names".to_string(),
+        serde_json::Value::Array(
+            names.iter().map(|n| serde_json::Value::String(n.clone())).collect(),
+        ),
+    );
+    params.insert("k".to_string(), serde_json::Value::from(names.len() as i64 * 4));
+    let query = lunaris_core::storage::types::CypherQuery {
+        graph: lunaris_retrieve::LUNARIS_GRAPH_NAME.to_string(),
+        cypher,
+        params,
+    };
+    let Ok(result) = state.lunaris.storage().graph_traverse(scope, &query, None).await else {
+        // A resolution failure is not a recall failure: fall through to the
+        // degraded semantic path rather than 500-ing the request.
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for row in &result.rows {
+        if let Some(id) = row.first().and_then(|v| v.as_str()).and_then(EntityId::from_hex)
+            && !out.contains(&id)
+        {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// Walk whitespace tokens and return every capitalized non-first token —
+/// mirrors `lunaris_retrieve::planner::has_entity_like_capitalized_token`
 /// (Phase 7 risk register: no new extractor, no new query-planner strategy).
-/// Walks whitespace tokens; every capitalized non-first token mints an
-/// `EntityId::from_name_and_type(token, "")`. Empty `entity_type` reflects
-/// the v0 "no type-tagging at HTTP" constraint — the caller surfaces the
-/// empty-hit case via `degraded=true`.
-fn extract_query_entities(text: &str) -> Vec<EntityId> {
+fn entity_like_tokens(text: &str) -> Vec<String> {
     text.split_whitespace()
         .enumerate()
         .filter_map(|(i, tok)| {
@@ -243,7 +297,7 @@ fn extract_query_entities(text: &str) -> Vec<EntityId> {
                     .rfind(|c: char| c.is_ascii_alphanumeric())
                     .map(|idx| idx + 1)
                     .unwrap_or(clean.len());
-                Some(EntityId::from_name_and_type(&clean[..end], ""))
+                Some(clean[..end].to_string())
             } else {
                 None
             }
@@ -324,25 +378,28 @@ mod tests {
         assert_eq!(q.k, 30);
     }
 
-    // ---- Plan 07-01 extract_query_entities unit tests ---------------------
+    // ---- Plan 07-01 token-extraction unit tests ---------------------------
+    //
+    // F16: these used to assert on minted `EntityId`s. They now assert on the
+    // NAMES, because the ids are resolved from the graph — an id minted from
+    // `(token, "")` never matched anything in the store.
 
     #[test]
-    fn extract_query_entities_matches_rust_sdk_shape() {
+    fn entity_like_tokens_matches_rust_sdk_shape() {
         // "what did Alice do at Acme last April?" → Alice + Acme + April.
-        let ents = extract_query_entities("what did Alice do at Acme last April?");
-        assert_eq!(ents.len(), 3, "Alice + Acme + April");
-        let alice = EntityId::from_name_and_type("Alice", "");
-        assert!(ents.contains(&alice), "expected Alice EntityId in {ents:?}",);
+        let names = entity_like_tokens("what did Alice do at Acme last April?");
+        assert_eq!(names.len(), 3, "Alice + Acme + April, got {names:?}");
+        assert!(names.contains(&"Alice".to_string()), "expected Alice in {names:?}");
     }
 
     #[test]
-    fn extract_query_entities_empty_on_lowercase_query() {
-        assert!(extract_query_entities("show me everything lowercase").is_empty());
+    fn entity_like_tokens_empty_on_lowercase_query() {
+        assert!(entity_like_tokens("show me everything lowercase").is_empty());
     }
 
     #[test]
-    fn extract_query_entities_skips_sentence_initial_capitalization() {
+    fn entity_like_tokens_skips_sentence_initial_capitalization() {
         // "What" is sentence-initial — NOT an entity (matches planner.rs behavior).
-        assert!(extract_query_entities("What is going on").is_empty());
+        assert!(entity_like_tokens("What is going on").is_empty());
     }
 }

@@ -524,6 +524,45 @@ pub async fn ingest_structured_inner(
             embedding: emb.clone(),
             metadata: json!({"predicate": f.predicate, "fact_text": f.fact_text}),
         });
+        // F16: the fact must exist as a GRAPH node too, not only in KV and the
+        // vector index. Without this the agent-supplied path writes a graph of
+        // entities with nothing retrievable in it: `Graph::anchored` returns
+        // node ids and `hydrate_mixed` resolves a candidate as a chunk row or a
+        // fact row — never an entity row — so a traversal that reaches only
+        // entities yields no hit at all. Mirrors the extraction path's fan-out
+        // in `ingest.rs` (Fact node + HAS_FACT + FACT_ABOUT) so both ingest
+        // paths leave the same graph shape behind.
+        let fact_id_bytes = fact_id.to_bytes().to_vec();
+        ops.push(WriteOp::GraphNode {
+            graph: GRAPH_NAME.into(),
+            id: fact_id_bytes.clone(),
+            label: "Fact".into(),
+            props: json!({
+                // `id_hex` is the property the retrieval Cypher selects
+                // (`RETURN m.id_hex`). A Fact node without it comes back NULL
+                // and its candidate is dropped — see the F16 RED commit.
+                "id_hex": fact_id_bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                "predicate": f.predicate,
+                "confidence": f.confidence,
+                "valid_from_iso": f.valid_from.to_rfc3339(),
+                "valid_to_iso": f.valid_to.map(|t| t.to_rfc3339()),
+            }),
+            index_kind: "facts".into(),
+        });
+        ops.push(WriteOp::GraphEdge {
+            graph: GRAPH_NAME.into(),
+            src: sid.0.to_vec(),
+            dst: fact_id_bytes.clone(),
+            rel: "HAS_FACT".into(),
+            props: json!({}),
+        });
+        ops.push(WriteOp::GraphEdge {
+            graph: GRAPH_NAME.into(),
+            src: fact_id_bytes,
+            dst: oid.0.to_vec(),
+            rel: "FACT_ABOUT".into(),
+            props: json!({}),
+        });
     }
 
     // Fold the updated spo-index rows into the SAME atomic_write (one KvPut per
