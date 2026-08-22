@@ -104,8 +104,18 @@ pub(crate) async fn run_worker(
         .context("subscribe embed promotion queue")?;
 
     loop {
+        // F25: this used to be `parse_event(&msg.payload)?`, which RETURNED
+        // from the worker on one malformed payload while the identical call in
+        // the batching loop below merely logged and continued. A single bad
+        // message stopped promotion for the whole scope.
         let first = match stream.next().await {
-            Some(Ok(msg)) => parse_event(&msg.payload)?,
+            Some(Ok(msg)) => match parse_event(&msg.payload) {
+                Ok(event) => event,
+                Err(err) => {
+                    tracing::warn!(err = %err, "lunaris embed promotion event ignored");
+                    continue;
+                }
+            },
             Some(Err(err)) => {
                 tracing::debug!(err = %err, "lunaris embed promotion queue poll failed");
                 tokio::time::sleep(Duration::from_millis(250)).await;
@@ -181,16 +191,25 @@ async fn promote_batch(
     events: Vec<EmbedPromotionEvent>,
     batch_size: usize,
 ) -> anyhow::Result<PromotionOutcome> {
-    let outcome = PromotionOutcome::default();
+    let mut outcome = PromotionOutcome::default();
     let storage = handle.storage();
     let mut wanted: HashMap<Ulid, String> = HashMap::new();
     for event in events {
         for chunk_id in event.chunk_ids {
-            if let Ok(id) = Ulid::from_string(&chunk_id) {
-                wanted.entry(id).or_insert_with(|| event.source.clone());
+            match Ulid::from_string(&chunk_id) {
+                Ok(id) => {
+                    // Dedup: the same chunk named twice is one unit of work, not
+                    // two, so it must not inflate `requested` either.
+                    wanted.entry(id).or_insert_with(|| event.source.clone());
+                }
+                Err(_) => {
+                    outcome.bad_id += 1;
+                    tracing::warn!(chunk_id = %chunk_id, "lunaris embed promotion: not a ULID");
+                }
             }
         }
     }
+    outcome.requested = wanted.len() + outcome.bad_id;
     if wanted.is_empty() {
         return Ok(outcome);
     }
@@ -201,66 +220,116 @@ async fn promote_batch(
     let mut sources = Vec::with_capacity(wanted.len());
     for (chunk_id, source) in wanted {
         let key = chunk_key(scope, chunk_id);
-        let Some(row) = storage.read_as_of(scope, &key, as_of).await? else {
-            continue;
-        };
-        let chunk: Chunk = serde_json::from_slice(&row.value)?;
-        if chunk.text.trim().is_empty() {
-            continue;
+        // F25: each of these arms used to be a bare `continue` or a `?` that
+        // discarded the whole batch. None of them left a number behind.
+        match storage.read_as_of(scope, &key, as_of).await {
+            Ok(Some(row)) => match serde_json::from_slice::<Chunk>(&row.value) {
+                Ok(chunk) => {
+                    if chunk.text.trim().is_empty() {
+                        outcome.empty_text += 1;
+                        continue;
+                    }
+                    chunks.push(chunk);
+                    sources.push(source);
+                }
+                Err(err) => {
+                    outcome.failed += 1;
+                    tracing::warn!(
+                        %chunk_id, err = %err,
+                        "lunaris embed promotion: chunk row did not decode"
+                    );
+                }
+            },
+            Ok(None) => {
+                outcome.missing += 1;
+                tracing::warn!(
+                    %chunk_id,
+                    "lunaris embed promotion: event named a chunk with no row"
+                );
+            }
+            Err(err) => {
+                outcome.failed += 1;
+                tracing::warn!(
+                    %chunk_id, err = %err,
+                    "lunaris embed promotion: chunk read failed"
+                );
+            }
         }
-        chunks.push(chunk);
-        sources.push(source);
     }
     if chunks.is_empty() {
         return Ok(outcome);
     }
 
     let started = std::time::Instant::now();
-    let mut promoted = 0usize;
     for (chunk_batch, source_batch) in chunks.chunks(batch_size).zip(sources.chunks(batch_size)) {
-        let texts: Vec<&str> = chunk_batch.iter().map(|chunk| chunk.text.as_str()).collect();
-        // Background lane: promotion must never head-of-line-block an
-        // interactive recall query on the shared embedder worker context.
-        let embeddings = handle.embedder().embed_batch_lowpri(&texts).await?;
-        if embeddings.len() != chunk_batch.len() {
-            anyhow::bail!(
-                "embed promotion returned {} rows for {} chunks",
-                embeddings.len(),
-                chunk_batch.len()
-            );
+        // F25: a failure here used to `?` out of the whole function, throwing
+        // away every LATER batch as well — and the MQ message was already
+        // consumed, so those chunks were gone for good.
+        match promote_one_batch(handle, scope, chunk_batch, source_batch).await {
+            Ok(written) => outcome.promoted += written,
+            Err(err) => {
+                outcome.failed += chunk_batch.len();
+                tracing::warn!(
+                    err = %err,
+                    chunks = chunk_batch.len(),
+                    "lunaris embed promotion: batch failed, its chunks stay unpromoted"
+                );
+            }
         }
-
-        let mut ops = Vec::with_capacity(chunk_batch.len());
-        for ((chunk, source), embedding) in
-            chunk_batch.iter().zip(source_batch.iter()).zip(embeddings.into_iter())
-        {
-            let metadata = json!({
-                "episode_id": chunk.episode_id.to_string(),
-                "heading_path": &chunk.heading_path,
-                "offset": chunk.offset,
-                "text": &chunk.text,
-                "source": source,
-            });
-            validate_chunk_metadata(&metadata).map_err(|e| anyhow::anyhow!("schema gate: {e}"))?;
-            ops.push(WriteOp::VectorUpsert {
-                index: "chunks".to_string(),
-                id: chunk.id.to_bytes().to_vec(),
-                embedding,
-                metadata,
-            });
-        }
-        storage.atomic_write(scope, &ops).await?;
-        promoted += ops.len();
     }
 
     if std::env::var("LUNARIS_CONTEXT_PROFILE").ok().as_deref() == Some("1") {
         tracing::info!(
-            promoted,
+            promoted = outcome.promoted,
             elapsed_ms = started.elapsed().as_millis(),
             "lunaris embed promotion batch complete"
         );
     }
     Ok(outcome)
+}
+
+/// Embed and write one batch. Split out of [`promote_batch`] so a failure is a
+/// value the caller can count rather than a `?` that discards its siblings.
+async fn promote_one_batch(
+    handle: &Lunaris,
+    scope: &Scope,
+    chunk_batch: &[Chunk],
+    source_batch: &[String],
+) -> anyhow::Result<usize> {
+    let texts: Vec<&str> = chunk_batch.iter().map(|chunk| chunk.text.as_str()).collect();
+    // Background lane: promotion must never head-of-line-block an
+    // interactive recall query on the shared embedder worker context.
+    let embeddings = handle.embedder().embed_batch_lowpri(&texts).await?;
+    if embeddings.len() != chunk_batch.len() {
+        anyhow::bail!(
+            "embed promotion returned {} rows for {} chunks",
+            embeddings.len(),
+            chunk_batch.len()
+        );
+    }
+
+    let mut ops = Vec::with_capacity(chunk_batch.len());
+    for ((chunk, source), embedding) in
+        chunk_batch.iter().zip(source_batch.iter()).zip(embeddings.into_iter())
+    {
+        let metadata = json!({
+            "episode_id": chunk.episode_id.to_string(),
+            "heading_path": &chunk.heading_path,
+            "offset": chunk.offset,
+            "text": &chunk.text,
+            "source": source,
+        });
+        validate_chunk_metadata(&metadata).map_err(|e| anyhow::anyhow!("schema gate: {e}"))?;
+        ops.push(WriteOp::VectorUpsert {
+            index: "chunks".to_string(),
+            id: chunk.id.to_bytes().to_vec(),
+            embedding,
+            metadata,
+        });
+    }
+    let written = ops.len();
+    handle.storage().atomic_write(scope, &ops).await?;
+    Ok(written)
 }
 
 /// F25: say what was dropped, unconditionally. The old summary sat behind
@@ -474,7 +543,8 @@ mod promotion_accounting_tests {
     /// Write a chunk row straight to KV, bypassing ingest, and return its id.
     async fn seed_chunk(handle: &Lunaris, scope: &Scope, text: &str) -> Ulid {
         let clock = HlcClock::new(0);
-        let chunk = Chunk::new(scope.clone(), Ulid::new(), text, text.len() as u32, 0, vec![], &clock);
+        let chunk =
+            Chunk::new(scope.clone(), Ulid::new(), text, text.len() as u32, 0, vec![], &clock);
         let id = chunk.id;
         let key = chunk_key(scope, id);
         let value = serde_json::to_vec(&chunk).unwrap();
@@ -543,7 +613,10 @@ mod promotion_accounting_tests {
         assert_eq!(outcome.failed, 0, "{outcome:?}");
         assert_eq!(
             outcome.requested,
-            outcome.promoted + outcome.empty_text + outcome.missing + outcome.bad_id
+            outcome.promoted
+                + outcome.empty_text
+                + outcome.missing
+                + outcome.bad_id
                 + outcome.failed,
             "the buckets must sum to what was asked for: {outcome:?}"
         );
@@ -555,8 +628,7 @@ mod promotion_accounting_tests {
     #[tokio::test]
     async fn a_failing_batch_does_not_discard_the_batches_after_it() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let embedder =
-            Arc::new(FlakyEmbedder { dim: 768, calls: calls.clone(), fail_on_call: 1 });
+        let embedder = Arc::new(FlakyEmbedder { dim: 768, calls: calls.clone(), fail_on_call: 1 });
         let handle = open_test_engine_with_embedder(embedder).await;
         let scope = Scope::new("test.f25.batchfail").unwrap();
 
