@@ -40,13 +40,15 @@ const RUST_PAIRS: &[(&str, &str)] = &[
     ("crates/lunaris-py/src/generated.rs", "crates/lunaris-codegen/snapshots/generated_py.rs"),
 ];
 
-const TEXT_PAIRS: &[(&str, &str)] = &[(
-    "crates/lunaris-ts/generated.d.ts",
-    "crates/lunaris-codegen/snapshots/generated_ts.d.ts",
-)];
+const TEXT_PAIRS: &[(&str, &str)] =
+    &[("crates/lunaris-ts/generated.d.ts", "crates/lunaris-codegen/snapshots/generated_ts.d.ts")];
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).expect("crates/<crate>").to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/<crate>")
+        .to_path_buf()
 }
 
 fn read(root: &Path, rel: &str) -> String {
@@ -110,8 +112,8 @@ fn the_guard_is_doing_more_than_a_byte_compare() {
     let root = workspace_root();
     let (shipped, snapshot) = RUST_PAIRS[0];
     let raw_equal = read(&root, shipped) == read(&root, snapshot);
-    let normalized_equal =
-        normalize_rust(&read(&root, shipped), shipped) == normalize_rust(&read(&root, snapshot), snapshot);
+    let normalized_equal = normalize_rust(&read(&root, shipped), shipped)
+        == normalize_rust(&read(&root, snapshot), snapshot);
     assert!(
         normalized_equal,
         "the pair must agree after normalisation — that is the invariant above"
