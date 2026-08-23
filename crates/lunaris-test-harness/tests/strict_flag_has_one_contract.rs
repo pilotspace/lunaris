@@ -32,7 +32,8 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Source lines that actually READ the variable from the environment.
+/// Source lines that actually READ the variable from the environment, each
+/// paired with the body of the function that performs the read.
 ///
 /// Comments and assertion messages mention it constantly — the sweep must see
 /// the `env::var` call, not the name. Keyed on the read, not the word.
@@ -61,13 +62,7 @@ fn read_sites() -> Vec<(String, usize, String)> {
                             .unwrap_or(&p)
                             .to_string_lossy()
                             .into_owned();
-                        // The comparison is not always on the read line. The
-                        // harness's own test binds the value first and checks
-                        // it on the next line; a single-line window reported
-                        // that as a reader with no contract.
-                        let lines: Vec<&str> = body.lines().collect();
-                        let window = lines[n..(n + 3).min(lines.len())].join(" ");
-                        out.push((rel, n + 1, format!("{t} {window}")));
+                        out.push((rel, n + 1, enclosing_fn(&body, n)));
                     }
                 }
             }
@@ -75,6 +70,26 @@ fn read_sites() -> Vec<(String, usize, String)> {
     }
     out.sort();
     out
+}
+
+/// The body of the function containing line `n`, as one string.
+///
+/// A fixed line count does not work here and two attempts proved it: the
+/// comparison that gives a read its meaning sits one line below it in the
+/// harness's ambient check and four lines below it in `lunaris-conformance`'s.
+/// The contract's real boundary is the enclosing `fn`, so the window is cut
+/// there — walk back to the `fn` line, forward to the `}` at its indent.
+fn enclosing_fn(body: &str, n: usize) -> String {
+    let lines: Vec<&str> = body.lines().collect();
+    let start = (0..=n)
+        .rev()
+        .find(|&i| lines[i].trim_start().starts_with("fn ") || lines[i].contains(" fn "))
+        .unwrap_or(n);
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    let end = ((start + 1)..lines.len())
+        .find(|&i| lines[i].trim() == "}" && lines[i].len() - lines[i].trim_start().len() == indent)
+        .unwrap_or(lines.len() - 1);
+    lines[start..=end].join(" ")
 }
 
 /// Files allowed to read the variable directly. Everything else must route
