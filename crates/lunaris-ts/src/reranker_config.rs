@@ -35,29 +35,33 @@ impl RerankerConfig {
     /// `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`. Loads eagerly and
     /// raises on a missing/corrupt artifact (explicit construction = fail
     /// fast; the umbrella's default resolution defers the load instead).
+    ///
+    /// On a Tier-0 build (no `llamacpp` feature) this raises `InvalidArg`
+    /// instead of loading a model.
+    // NOT a doc comment — see the note on `EmbedderConfig::llamacpp` for why
+    // the two-item form duplicated the declaration in the shipped index.d.ts,
+    // and why `///` would leak this into it.
     #[napi(factory)]
-    #[cfg(feature = "llamacpp")]
-    pub fn llamacpp(opts: Option<LlamaCppRerankerConfigOpts>) -> Result<Self> {
-        let opts = opts.unwrap_or_default();
-        let gguf_path = opts.gguf_path.map(PathBuf::from).unwrap_or_else(default_reranker_gguf);
-        let opts = lunaris_llamacpp::LlamaCppRerankerOpts { gguf_path, ..Default::default() };
-        let r = lunaris_llamacpp::LlamaCppReranker::open(opts)
-            .map_err(|e| napi_err(LunarisError::from(e)))?;
-        Ok(Self { inner: Arc::new(r) })
-    }
-
-    /// Stub raising `InvalidArg` when the cdylib was built without the
-    /// `llamacpp` feature (Tier-0 build).
-    #[napi(factory)]
-    #[cfg(not(feature = "llamacpp"))]
     #[allow(unused_variables)]
     pub fn llamacpp(opts: Option<LlamaCppRerankerConfigOpts>) -> Result<Self> {
-        Err(napi::Error::new(
-            napi::Status::InvalidArg,
-            "RerankerConfig.llamacpp() requires the lunaris cdylib to be built with the \
-             `llamacpp` feature (this is a Tier-0 no-inference build). Use \
-             RerankerConfig.noop() or install a full build.",
-        ))
+        #[cfg(feature = "llamacpp")]
+        {
+            let opts = opts.unwrap_or_default();
+            let gguf_path = opts.gguf_path.map(PathBuf::from).unwrap_or_else(default_reranker_gguf);
+            let opts = lunaris_llamacpp::LlamaCppRerankerOpts { gguf_path, ..Default::default() };
+            let r = lunaris_llamacpp::LlamaCppReranker::open(opts)
+                .map_err(|e| napi_err(LunarisError::from(e)))?;
+            Ok(Self { inner: Arc::new(r) })
+        }
+        #[cfg(not(feature = "llamacpp"))]
+        {
+            Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                "RerankerConfig.llamacpp() requires the lunaris cdylib to be built with the \
+                 `llamacpp` feature (this is a Tier-0 no-inference build). Use \
+                 RerankerConfig.noop() or install a full build.",
+            ))
+        }
     }
 
     /// RETIRED (llama.cpp-only cutover): the candle `NativeReranker` was

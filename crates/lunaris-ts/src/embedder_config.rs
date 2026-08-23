@@ -45,30 +45,42 @@ impl EmbedderConfig {
     ///
     /// `ggufPath` defaults to the staged artifact
     /// `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
+    ///
+    /// On a Tier-0 build (no `llamacpp` feature) this raises `InvalidArg`
+    /// instead of loading a model.
+    // NOT a doc comment: napi copies `///` into the published index.d.ts, and
+    // this is maintainer detail, not consumer API.
+    //
+    // ONE `#[napi]` item with a `cfg`-branching BODY, not two items with
+    // `#[cfg]` on each. napi's .d.ts generation honours `#[cfg]` on a `mod`
+    // declaration but NOT on an individual item, so the two-item form emitted
+    // both arms and declared `llamacpp` twice in the shipped index.d.ts — a
+    // file describing a build with the feature simultaneously on and off.
+    // Reordering the attributes does NOT help (measured: rebuild was
+    // byte-identical); only collapsing to one item does. Guarded by
+    // lunaris-codegen's `no_member_is_declared_twice`.
     #[napi(factory)]
-    #[cfg(feature = "llamacpp")]
-    pub fn llamacpp(opts: Option<LlamaCppConfigOpts>) -> Result<Self> {
-        let opts = opts.unwrap_or_default();
-        let gguf_path = opts.gguf_path.map(PathBuf::from).unwrap_or_else(default_embedder_gguf);
-        let opts = lunaris_llamacpp::LlamaCppEmbedderOpts { gguf_path, ..Default::default() };
-        let e = lunaris_llamacpp::LlamaCppEmbedder::open(opts)
-            .map_err(|e| napi_err(LunarisError::from(e)))?;
-        let dim = e.dim() as u32;
-        Ok(Self { inner: Arc::new(e), declared_dim: dim })
-    }
-
-    /// Stub raising `InvalidArg` when the cdylib was built without the
-    /// `llamacpp` feature (Tier-0 build).
-    #[napi(factory)]
-    #[cfg(not(feature = "llamacpp"))]
     #[allow(unused_variables)]
     pub fn llamacpp(opts: Option<LlamaCppConfigOpts>) -> Result<Self> {
-        Err(napi::Error::new(
-            napi::Status::InvalidArg,
-            "EmbedderConfig.llamacpp() requires the lunaris cdylib to be built with the \
-             `llamacpp` feature (this is a Tier-0 no-inference build). Use \
-             EmbedderConfig.noop() or install a full build.",
-        ))
+        #[cfg(feature = "llamacpp")]
+        {
+            let opts = opts.unwrap_or_default();
+            let gguf_path = opts.gguf_path.map(PathBuf::from).unwrap_or_else(default_embedder_gguf);
+            let opts = lunaris_llamacpp::LlamaCppEmbedderOpts { gguf_path, ..Default::default() };
+            let e = lunaris_llamacpp::LlamaCppEmbedder::open(opts)
+                .map_err(|e| napi_err(LunarisError::from(e)))?;
+            let dim = e.dim() as u32;
+            Ok(Self { inner: Arc::new(e), declared_dim: dim })
+        }
+        #[cfg(not(feature = "llamacpp"))]
+        {
+            Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                "EmbedderConfig.llamacpp() requires the lunaris cdylib to be built with the \
+                 `llamacpp` feature (this is a Tier-0 no-inference build). Use \
+                 EmbedderConfig.noop() or install a full build.",
+            ))
+        }
     }
 
     /// RETIRED (llama.cpp-only cutover): the candle `NativeEmbedder` was
