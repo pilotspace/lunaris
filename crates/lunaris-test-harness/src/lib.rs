@@ -46,6 +46,7 @@
 #![forbid(unsafe_code)]
 
 pub mod live_probe;
+pub mod models;
 pub mod strict_skip;
 
 pub mod doubles;
