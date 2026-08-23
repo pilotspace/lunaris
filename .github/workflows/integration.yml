@@ -369,12 +369,25 @@ jobs:
         # Deliberately NOT `--all-targets`: this crate's unit tests are
         # `ci.yml`'s job. The `--test` filter keeps this step to the live
         # integration files and keeps the 8-minute budget intact.
+        #
+        # `phase_14_1_reflect_invalidate` added 2026-08-24 (F39). It had never
+        # executed anywhere — its probe gave up on the first resolved address
+        # (F37) — and the first time it ran it caught a real product bug:
+        # Moon's `read_as_of` hydrated `Row.bt` from a hash field nothing
+        # writes, which silently disabled `apply_reflect_invalidate`'s
+        # idempotency guard. Fixing the probe without wiring the test in here
+        # would put it straight back to never running.
+        #
+        # `chaos_helios_sigkill` is deliberately NOT here: its live arm is a
+        # 50-iteration SIGKILL run and would not fit this job's budget. It
+        # remains un-run in CI — tracked, not forgotten.
         if: success() || failure()
         run: |
           cargo test -p lunaris-memory \
             --test moon_parity \
             --test coding_session_memory_smoke \
             --test consolidator_scope_isolation \
+            --test phase_14_1_reflect_invalidate \
             --no-fail-fast \
             -- --include-ignored
 
