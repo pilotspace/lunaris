@@ -527,7 +527,7 @@ fn probe_backend(env_name: &str) -> Option<String> {
 /// Phase 12 risk register row #5; CONTEXT.md D-13). Operator follow-up is
 /// documented in `.planning/phases/12-helios-production-hardening/12-HUMAN-UAT.md`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires MOON_URL or PG_URL"]
+#[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> {
     for url_env in ["MOON_URL", "PG_URL"] {
         let Some(url) = probe_backend(url_env) else {

@@ -373,7 +373,7 @@ mod live {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "50x2 SIGKILL live run; requires MOON_URL or PG_URL"]
+#[ignore = "50x2 SIGKILL live run — real wall-clock cost is the blocker, not the environment; deliberately outside the 8-minute integration budget"]
 async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
     let iters: u64 =
         std::env::var("LUNARIS_CHAOS_HELIOS_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);

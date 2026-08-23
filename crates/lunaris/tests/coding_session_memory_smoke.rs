@@ -41,7 +41,7 @@ use lunaris::{CodingSessionMemory, Lunaris};
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "requires MOON_URL or PG_URL env vars"]
+#[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn helios_chat_10k_turns_dual_backend() -> anyhow::Result<()> {
     for url_env in ["MOON_URL", "PG_URL"] {
         let Some(url) = probe_backend(url_env) else {
@@ -108,7 +108,7 @@ async fn helios_chat_10k_turns_dual_backend() -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "requires MOON_URL or PG_URL env vars + ~5min runtime when DOCS=50000"]
+#[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step (~5min only when DOCS=50000; the default is small)"]
 async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
     for url_env in ["MOON_URL", "PG_URL"] {
         let Some(url) = probe_backend(url_env) else {
@@ -324,7 +324,7 @@ fn coding_session_memory_v2_surface_matches_v1_exactly() {
 /// `#[ignore]`-gated behind `MOON_URL` / `PG_URL` TCP probes in the same way
 /// as the 10K-turn chat test above — default `cargo test` skips this.
 #[tokio::test]
-#[ignore = "requires MOON_URL or PG_URL env vars"]
+#[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn coding_session_memory_v2_delegation_round_trip() -> anyhow::Result<()> {
     for url_env in ["MOON_URL", "PG_URL"] {
         let Some(url) = probe_backend(url_env) else {
