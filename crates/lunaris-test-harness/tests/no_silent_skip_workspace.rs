@@ -56,10 +56,6 @@ const ENVIRONMENT_GATED: &[(&str, &str)] = &[
         "lunaris-storage-moon/tests/multishard_live.rs",
         "LUNARIS_TEST_MOON_SHARDS, and a server-version floor",
     ),
-    (
-        "lunaris-storage-moon/tests/common/mod.rs",
-        "IS the strict helper — it owns the one legitimate SKIP print",
-    ),
 ];
 
 /// Moon-dependent skips that still print for themselves, in crates the strict
@@ -229,8 +225,10 @@ fn no_test_file_prints_a_skip_it_decided_alone() {
          REFUSE to skip: {offenders:?}\n\n\
          Under LUNARIS_CONFORMANCE_STRICT=1 — which .github/workflows/integration.yml sets at \
          job level — a skip means the fixture broke, and printing one reports success for a \
-         suite that tested nothing. Route it (see \
-         lunaris-storage-moon/tests/common/mod.rs), or add the file to ENVIRONMENT_GATED with \
+         suite that tested nothing. Route it through \
+         `lunaris_test_harness::strict_skip::note_unavailable` (or a crate-local wrapper \
+         over it, as lunaris-storage-moon/tests/common/mod.rs is), or add the file to \
+         ENVIRONMENT_GATED with \
          the gate it honours if the missing thing genuinely is not supposed to exist in CI."
     );
 }

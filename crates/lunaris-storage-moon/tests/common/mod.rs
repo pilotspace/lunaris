@@ -67,15 +67,8 @@ pub fn note_moon_unreachable(err: impl std::fmt::Display) {
 /// binary, so siblings share the process. Pass the flag; do not mutate the
 /// environment to test the environment.
 pub fn note_moon_unreachable_with(err: impl std::fmt::Display, strict: bool) {
-    if strict {
-        panic!(
-            "Moon is unreachable ({err}), and LUNARIS_CONFORMANCE_STRICT=1 forbids \
-             skipping. This suite only runs in integration.yml, which builds Moon, \
-             port-checks it, and then runs these tests — so an unreachable Moon here \
-             means the fixture broke, not that the environment lacks one. Skipping \
-             would report success for a suite that tested nothing. Unset the variable \
-             to run against whatever Moon happens to be up locally."
-        );
-    }
-    eprintln!("MOON_URL not reachable ({err}); SKIP");
+    lunaris_test_harness::strict_skip::note_unavailable_with(
+        format!("MOON_URL not reachable ({err})"),
+        strict,
+    )
 }
