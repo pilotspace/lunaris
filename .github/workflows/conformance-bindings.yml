@@ -37,6 +37,16 @@ on:
     - cron: "15 3 * * *"
   push:
     branches: [main]
+    # The rule: every crate the parity suites EXECUTE, not just the ones that
+    # define the bindings. This is the only job in the repo that starts a Moon
+    # and runs the SDK binding suites, and it does not run on `pull_request` at
+    # all — so a path missing here is a defect class nothing detects until the
+    # nightly, on main, after the merge.
+    #
+    # F30 is exactly that: `TimelineReconstruction::between` ignored its
+    # `source_prefix`, `documentary_parity` went red on main for four runs, and
+    # the fix itself lives in `lunaris-recipes` — which was NOT listed, so the
+    # job proving the fix would not have re-run on merge.
     paths:
       - "crates/lunaris-py/**"
       - "crates/lunaris-ts/**"
@@ -44,6 +54,11 @@ on:
       - "crates/lunaris-conformance/**"
       - "crates/lunaris/**"
       - "crates/lunaris-core/**"
+      # Executed by every parity suite: the recipes under test, the retrieval
+      # stack every recall goes through, and the Moon adapter underneath it.
+      - "crates/lunaris-recipes/**"
+      - "crates/lunaris-retrieve/**"
+      - "crates/lunaris-storage-moon/**"
       - ".github/workflows/conformance-bindings.yml"
   workflow_dispatch:
 
