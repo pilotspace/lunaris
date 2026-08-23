@@ -78,13 +78,56 @@ pub(crate) async fn read_as_of(
     match value {
         None => Ok(None),
         Some(v) => {
-            let bt = match bt_bytes {
-                Some(b) => serde_json::from_slice::<BiTemporal>(&b).unwrap_or_else(|_| zero_bt()),
-                None => zero_bt(),
-            };
+            let bt = hydrate_bt(bt_bytes.as_deref(), &v);
             Ok(Some(Row { key: key.to_vec(), value: Bytes::from(v), bt }))
         }
     }
+}
+
+/// Recover a row's [`BiTemporal`] stamp from the `bt` sidecar field, falling
+/// back to the `bt` object carried inside the JSON payload.
+///
+/// ## Why the payload fallback exists
+///
+/// The module doc above says "the writer must HSET [`bt`] explicitly" and
+/// "Phase 2's higher-level write path will always populate it." Phase 2 never
+/// landed: `WriteOp::KvPut` carries only `key + value`, `atomic.rs` issues a
+/// bare `HSET <key> v <value>`, and **no code path in this workspace ever
+/// writes the `bt` field**. So the sidecar is absent for every key ever
+/// written, and this function used to answer `zero_bt()` unconditionally —
+/// meaning `Row.bt` from Moon was always zeros.
+///
+/// That is not cosmetic. `lunaris_verify::reflect_apply::apply_reflect_invalidate`
+/// stamps `bt.sys.1` into the payload (its own comment: "`WriteOp::KvPut` has
+/// no separate `bt` field. The bt mutation must ride inside the serialised
+/// payload bytes"), then guards re-stamping with `if row.bt.sys.1.is_some()
+/// { skip }`. With `Row.bt` pinned at zero that guard could never fire, so
+/// every reflect pass re-invalidated every already-invalidated fact with a
+/// fresh timestamp and the invalidation time drifted forward on each run.
+///
+/// The payload is therefore the real source of truth, and this reads it.
+/// The sidecar still wins when present, so a future write path that populates
+/// it needs no change here.
+///
+/// Found by `phase_14_1_reflect_invalidate::reflect_invalidate_moon`, which
+/// had never executed: its `probe_backend` gave up on the first resolved
+/// address, so it skipped in every environment including CI (ship-plan F37).
+pub(crate) fn hydrate_bt(sidecar: Option<&[u8]>, payload: &[u8]) -> BiTemporal {
+    if let Some(b) = sidecar
+        && let Ok(bt) = serde_json::from_slice::<BiTemporal>(b)
+    {
+        return bt;
+    }
+    // A malformed sidecar falls through to the payload rather than to zeros:
+    // answering "never invalidated" for a row that IS invalidated is the
+    // failure mode this whole function exists to remove.
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload)
+        && let Some(bt_v) = v.get("bt")
+        && let Ok(bt) = serde_json::from_value::<BiTemporal>(bt_v.clone())
+    {
+        return bt;
+    }
+    zero_bt()
 }
 
 #[inline]
@@ -216,6 +259,66 @@ pub(crate) async fn scan_range<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a payload the way every real writer does: a JSON object whose
+    /// `bt` member carries the stamp.
+    fn payload_with_sys_end(end_ms: u64) -> Vec<u8> {
+        let mut bt = zero_bt();
+        bt.sys.1 = Some(Hlc { wall_ms: end_ms, counter: 0, node_id: 0 });
+        serde_json::to_vec(&serde_json::json!({ "text": "a fact", "bt": bt })).unwrap()
+    }
+
+    /// THE regression. No code path writes the `bt` sidecar, so before this
+    /// fix `Row.bt` was `zero_bt()` for every key Moon has ever stored — and
+    /// `apply_reflect_invalidate`'s "already invalidated, skip" guard reads
+    /// exactly this field.
+    #[test]
+    fn an_invalidation_carried_in_the_payload_is_visible_on_the_row() {
+        let bt = hydrate_bt(None, &payload_with_sys_end(1234));
+        assert_eq!(
+            bt.sys.1.map(|h| h.wall_ms),
+            Some(1234),
+            "a row invalidated in its payload read back as never-invalidated"
+        );
+    }
+
+    /// The vacuity floor: a row that was NOT invalidated must still read as
+    /// live, or the test above would pass by answering Some() to everything.
+    #[test]
+    fn a_live_row_still_reads_as_live() {
+        let payload =
+            serde_json::to_vec(&serde_json::json!({ "text": "a fact", "bt": zero_bt() })).unwrap();
+        assert!(hydrate_bt(None, &payload).sys.1.is_none());
+    }
+
+    /// The sidecar is authoritative when present — a future write path that
+    /// populates it must not be silently overridden by a stale payload.
+    #[test]
+    fn the_sidecar_wins_over_the_payload_when_it_parses() {
+        let mut side = zero_bt();
+        side.sys.1 = Some(Hlc { wall_ms: 999, counter: 0, node_id: 0 });
+        let side_bytes = serde_json::to_vec(&side).unwrap();
+        let bt = hydrate_bt(Some(&side_bytes), &payload_with_sys_end(1234));
+        assert_eq!(bt.sys.1.map(|h| h.wall_ms), Some(999));
+    }
+
+    /// A malformed sidecar must fall through to the payload, NOT to zeros.
+    /// Answering "never invalidated" for a row that is invalidated is the
+    /// exact failure this function exists to remove; the old code did that
+    /// via `unwrap_or_else(|_| zero_bt())`.
+    #[test]
+    fn a_malformed_sidecar_falls_through_to_the_payload() {
+        let bt = hydrate_bt(Some(b"not json at all"), &payload_with_sys_end(1234));
+        assert_eq!(bt.sys.1.map(|h| h.wall_ms), Some(1234));
+    }
+
+    /// And a payload that is not JSON at all (or carries no `bt`) is the one
+    /// case where zeros are the honest answer.
+    #[test]
+    fn a_payload_without_a_bt_member_is_zeroed() {
+        assert!(hydrate_bt(None, b"raw opaque bytes").sys.1.is_none());
+        assert!(hydrate_bt(None, br#"{"text":"no bt here"}"#).sys.1.is_none());
+    }
 
     #[test]
     fn zero_bt_round_trips_through_serde() {
