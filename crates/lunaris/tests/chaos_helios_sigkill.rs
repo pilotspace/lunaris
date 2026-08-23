@@ -18,12 +18,12 @@
 //! Default `cargo test -p lunaris --test chaos_helios_sigkill` runs the
 //! pure-helper tests only — they compile + pass with no backends.
 //!
-//! The 50×2 chaos run is `#[ignore]`-gated and requires `MOON_URL` and/or
-//! `PG_URL` env vars. Tuning knob: `LUNARIS_CHAOS_HELIOS_ITERS` (default
-//! 50).
+//! The chaos run is `#[ignore]`-gated and requires `MOON_URL`. Tuning knob:
+//! `LUNARIS_CHAOS_HELIOS_ITERS` (default 50). It was a 50×2 run against Moon
+//! and Postgres until 0.7.0 slice B deleted the Postgres backend.
 //!
 //! ```bash
-//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris@localhost/lunaris \
+//! MOON_URL=moon://localhost:6380 \
 //!   LUNARIS_CHAOS_HELIOS_ITERS=50 \
 //!   cargo test -p lunaris --test chaos_helios_sigkill \
 //!   chaos_sigkill_helios_flow_zero_orphans -- --ignored --nocapture
@@ -122,10 +122,6 @@ pub fn evidence_path(dir: &Path, iter: u64, backend: &str, site: &str) -> PathBu
     dir.join(format!("{iter:03}-{backend}-{site}.json"))
 }
 
-pub fn fallback_marker_path(dir: &Path) -> PathBuf {
-    dir.join("postgres-fallback.json")
-}
-
 /// Redact userinfo from postgres URLs before serialization (T-12-04-04).
 pub fn redact_url(raw: &str) -> String {
     if let Some(rest) = raw.strip_prefix("postgres://") {
@@ -143,12 +139,6 @@ fn strip_userinfo(authority_plus: &str) -> String {
     } else {
         authority_plus.to_string()
     }
-}
-
-/// Detect the pgmq partition-packing fallback trigger per `12-HUMAN-UAT.md` §2.
-pub fn is_pgmq_fallback_error(err_display: &str) -> bool {
-    let hay = err_display.to_ascii_lowercase();
-    hay.contains("pgmq") || hay.contains("partition")
 }
 
 /// Emit one run's JSON evidence. Failures to write are logged only — JSON
@@ -170,7 +160,7 @@ pub fn write_evidence(path: &Path, record: &RunRecord) {
 }
 
 // ---------------------------------------------------------------------------
-// Live chaos run — #[ignore]-gated, requires MOON_URL / PG_URL
+// Live chaos run — #[ignore]-gated, requires MOON_URL
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
@@ -178,7 +168,6 @@ mod live {
     use super::*;
 
     use std::io::{BufRead, BufReader};
-    use std::net::{TcpStream, ToSocketAddrs};
     use std::process::{Command, Stdio};
     use std::sync::Arc;
     use std::time::Duration;
@@ -190,30 +179,16 @@ mod live {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
 
-    /// Byte-identical probe to other Helios tests (sha256 match — Phase 9
-    /// convention). Two-tier skip: env-empty / DNS-fail / TCP-timeout all
-    /// return None.
+    /// TCP probe — delegates to `lunaris_test_harness::live_probe`.
+    ///
+    /// Two defects at once, both of which this replaces. It returned `None`
+    /// with NO announcement on every path (`.ok()?`, the empty check, the
+    /// unknown scheme), so a chaos run that tested nothing was
+    /// indistinguishable from one that passed. And it took
+    /// `to_socket_addrs().next()`, so a hostname whose first address is
+    /// unreachable read as "no fixture" — the CI shape.
     pub(crate) fn probe_backend(url_env: &str) -> Option<String> {
-        let raw = std::env::var(url_env).ok()?;
-        if raw.is_empty() {
-            return None;
-        }
-        let host_port = if let Some(rest) = raw.strip_prefix("moon://") {
-            rest.split('/').next()?.to_string()
-        } else if raw.starts_with("postgres://") || raw.starts_with("postgresql://") {
-            let after_scheme = raw.split("://").nth(1)?;
-            let authority = after_scheme.split('/').next()?;
-            let bare = authority.rsplit('@').next()?;
-            if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
-        } else {
-            return None;
-        };
-        let timeout = Duration::from_secs(1);
-        let addr = host_port.to_socket_addrs().ok().and_then(|mut it| it.next())?;
-        match TcpStream::connect_timeout(&addr, timeout) {
-            Ok(_) => Some(raw),
-            Err(_) => None,
-        }
+        lunaris_test_harness::live_probe::probe_url_env(url_env)
     }
 
     fn chaos_bin_path() -> PathBuf {
@@ -396,46 +371,10 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
         }
     };
 
-    // --- Postgres branch (with pgmq fallback detector) ---
-    let pg_result = match live::probe_backend("PG_URL") {
-        Some(url) => {
-            // Pre-open probe — catches pgmq partition-packing early.
-            match lunaris::Lunaris::open(&url).await {
-                Ok(_) => {
-                    eprintln!("chaos: running Postgres branch at {}", redact_url(&url));
-                    let (done, orphaned) =
-                        live::per_backend_run("postgres", &url, iters, &evidence_dir).await;
-                    Some((done, orphaned, false))
-                }
-                Err(e) => {
-                    let disp = format!("{e}");
-                    if is_pgmq_fallback_error(&disp) {
-                        eprintln!("POSTGRES_FALLBACK pgmq_partition_packing_error: {disp}");
-                        let marker = fallback_marker_path(&evidence_dir);
-                        let payload = serde_json::json!({
-                            "fallback": "pgmq_partition_packing_error",
-                            "error_display": disp,
-                            "runbook": ".planning/phases/12-helios-production-hardening/12-HUMAN-UAT.md#2-sigkill-chaos-postgres-fallback-plan-12-04-forward-reference",
-                        });
-                        if let Ok(f) = fs::File::create(&marker) {
-                            let _ = serde_json::to_writer_pretty(&f, &payload);
-                        }
-                        Some((0, 0, true))
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "chaos: Postgres open failed with non-fallback error: {disp}"
-                        ));
-                    }
-                }
-            }
-        }
-        None => {
-            lunaris_test_harness::strict_skip::note_unavailable(
-                "chaos: Postgres branch (PG_URL unset or unreachable)",
-            );
-            None
-        }
-    };
+    // The Postgres branch is gone with the backend: 0.7.0 slice B deleted
+    // `lunaris-storage-postgres` and retired `PG_URL` (integration.yml header).
+    // It lived on here only because its probe returned None in silence, so a
+    // chaos run that exercised one backend looked like one that exercised two.
 
     // --- Hard gate per success criteria ---
     if let Some((done, orphaned)) = moon_result {
@@ -448,19 +387,6 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
             evidence_dir.display()
         );
     }
-    if let Some((done, orphaned, fallback)) = pg_result
-        && !fallback
-    {
-        assert!(done > 0, "Postgres probed but no iterations completed");
-        assert_eq!(
-            orphaned,
-            0,
-            "Postgres chaos: {orphaned}/{done} iterations showed orphans — \
-                 HELIOS-06 FAILED (evidence under {})",
-            evidence_dir.display()
-        );
-    }
-
     Ok(())
 }
 
@@ -480,15 +406,6 @@ fn redact_url_strips_postgres_userinfo() {
     assert_eq!(redact_url("postgres://user:password@host:5432/db"), "postgres://host:5432/db");
     assert_eq!(redact_url("postgresql://user:password@host:5432/db"), "postgresql://host:5432/db");
     assert_eq!(redact_url("moon://localhost:6380"), "moon://localhost:6380");
-}
-
-#[test]
-fn pgmq_fallback_detector_matches_documented_triggers() {
-    assert!(is_pgmq_fallback_error("pgmq partition packing failed"));
-    assert!(is_pgmq_fallback_error("could not find partition for queue"));
-    assert!(is_pgmq_fallback_error("PGMQ queue error"));
-    assert!(!is_pgmq_fallback_error("connection refused"));
-    assert!(!is_pgmq_fallback_error("moon redis error"));
 }
 
 #[test]

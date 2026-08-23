@@ -12,9 +12,7 @@
 //!    tests); skips gracefully when Moon is unreachable, mirroring
 //!    `tests/tree_recall.rs`'s harness style.
 
-use std::net::TcpStream;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -179,22 +177,14 @@ fn moon_url() -> String {
     std::env::var("MOON_URL").unwrap_or_else(|_| "moon://127.0.0.1:7804".into())
 }
 
+/// Delegates to `lunaris_test_harness::live_probe`, which tries EVERY address
+/// the host resolves to. The local copy took only the first, so a hostname
+/// whose first address is unreachable read as "no Moon" even with one running.
 fn probe_moon(url: &str) -> bool {
-    let host_port = url
-        .strip_prefix("moon://")
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or("127.0.0.1:7804");
-    if let Ok(addr) = host_port.parse::<std::net::SocketAddr>() {
-        TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
-    } else {
-        use std::net::ToSocketAddrs;
-        host_port
-            .to_socket_addrs()
-            .ok()
-            .and_then(|mut it| it.next())
-            .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok())
-            .unwrap_or(false)
-    }
+    // `reachable`, not `probe_url_with`: both call sites below announce their
+    // own skip with the test name in it, and announcing here too would print
+    // the same decision twice.
+    lunaris_test_harness::live_probe::reachable(url)
 }
 
 /// Stub keyword port — the aggregate path doesn't use BM25 keyword search.

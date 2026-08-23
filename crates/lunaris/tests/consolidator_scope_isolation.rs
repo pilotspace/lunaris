@@ -18,7 +18,7 @@
 //! - drives the full publish → worker → `consolidate_scoped` → audit-emit
 //!   loop end-to-end inside one tokio runtime.
 //!
-//! The `#[ignore]`-gated dual-backend variant probes MOON_URL / PG_URL the
+//! The `#[ignore]`-gated live variant probes MOON_URL the
 //! same way `helios_scratchpad_smoke.rs` does and runs the same assertions
 //! against live backends. Default `cargo test --workspace` still compiles
 //! the file and runs the default in-process gate.
@@ -32,7 +32,6 @@
 #![deny(rust_2018_idioms, unreachable_pub)]
 
 use std::collections::HashMap;
-use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -491,60 +490,43 @@ async fn consolidator_system_wide_sees_other_promotions_control() {
 
 // ---------------------------------------------------------------------------
 // Dual-backend #[ignore]-gated variant. Default `cargo test --workspace` does
-// NOT run this — it fires only when MOON_URL or PG_URL is set AND the TCP
+// NOT run this — it fires only when MOON_URL is set AND the TCP
 // probe succeeds. Mirrors helios_scratchpad_smoke.rs probe discipline.
 // ---------------------------------------------------------------------------
 
-/// TCP probe — same W-3 / W-7 pattern as helios_scratchpad_smoke.rs.
+/// TCP probe — delegates to the workspace's one implementation.
+///
+/// See `lunaris_test_harness::live_probe` for why the local copy's
+/// first-address-only resolution made this suite skip in CI.
 fn probe_backend(env_name: &str) -> Option<String> {
-    // `.ok()?` here used to return None with NO announcement, so the most
-    // common skip path of all — the variable simply not set — was invisible to
-    // BOTH the reader and `no_silent_skip_workspace.rs`, whose detection is
-    // keyed on prints. A skip that prints nothing cannot be found by looking
-    // for prints; routing it is what makes it visible.
-    let Ok(url) = std::env::var(env_name) else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!("{env_name} unset"));
-        return None;
-    };
-    let host_port = url
-        .strip_prefix("moon://")
-        .or_else(|| url.strip_prefix("redis://"))
-        .or_else(|| url.strip_prefix("postgres://"))
-        .or_else(|| url.strip_prefix("postgresql://"))
-        .unwrap_or(&url);
-    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
-    let host_port = host_port.split('/').next().unwrap_or(host_port);
-    let timeout = Duration::from_secs(1);
-    let Some(addr) = host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "{env_name} (DNS resolution of {host_port} failed)"
-        ));
-        return None;
-    };
-    if TcpStream::connect_timeout(&addr, timeout).is_ok() {
-        Some(url)
-    } else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "{env_name} (TCP probe to {host_port} failed)"
-        ));
-        None
-    }
+    probe_backend_with(env_name, lunaris_test_harness::strict_skip::strict())
 }
 
-/// Phase 12 HELIOS-04 live-backend variant of the isolation gate. Runs
-/// only with `MOON_URL` and/or `PG_URL` set. Seed size is controlled by
+/// The same probe with strictness passed in. The unit test below asserts an
+/// unset variable yields `None`, which under the integration job's ambient
+/// `LUNARIS_CONFORMANCE_STRICT=1` would otherwise panic — correct for a suite,
+/// wrong for the test that checks the suite's behaviour. Never `set_var`: it
+/// races every sibling in this binary.
+fn probe_backend_with(env_name: &str, strict: bool) -> Option<String> {
+    lunaris_test_harness::live_probe::probe_url_env_with(env_name, strict)
+}
+
+/// Phase 12 HELIOS-04 live-backend variant of the isolation gate. Runs only
+/// with `MOON_URL` set. Seed size is controlled by
 /// `LUNARIS_SCOPE_ISOLATION_NOTES` (default 200 per-side = 400 total; set
 /// to 5000 for the documented 10K-note workload).
 ///
-/// Fallback discipline — if Postgres fails with a pgmq partition-packing
-/// error, the test emits `POSTGRES_FALLBACK pgmq_partition_packing_error`
-/// and continues. This is the pre-authorized v0.1.1 fallback (ROADMAP
-/// Phase 12 risk register row #5; CONTEXT.md D-13). Operator follow-up is
-/// documented in `.planning/phases/12-helios-production-hardening/12-HUMAN-UAT.md`.
+/// The Postgres arm and its pgmq partition-packing fallback are gone with the
+/// backend (0.7.0 slice B). A `PG_URL` that no crate can open is not a second
+/// backend; it is a skip that reports success.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> {
-    for url_env in ["MOON_URL", "PG_URL"] {
+    // 0.7.0 is Moon-only: slice B deleted `lunaris-storage-postgres` and
+    // retired `PG_URL` (see integration.yml's header). The `PG_URL` arm this
+    // loop used to carry could never open a backend again; it survived only
+    // because its probe skipped in silence.
+    for url_env in ["MOON_URL"] {
         let Some(url) = probe_backend(url_env) else {
             continue;
         };
@@ -555,22 +537,7 @@ async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> 
             .and_then(|v| v.parse().ok())
             .unwrap_or(200);
 
-        let open_result = Lunaris::open(&url).await;
-        let lunaris = match open_result {
-            Ok(l) => l,
-            Err(e) if url_env == "PG_URL" => {
-                let err_s = format!("{e}");
-                if err_s.contains("pgmq") || err_s.contains("partition") {
-                    eprintln!(
-                        "POSTGRES_FALLBACK pgmq_partition_packing_error: {err_s}\n\
-                         See .planning/phases/12-helios-production-hardening/12-HUMAN-UAT.md"
-                    );
-                    continue;
-                }
-                return Err(e.into());
-            }
-            Err(e) => return Err(e.into()),
-        };
+        let lunaris = Lunaris::open(&url).await?;
         let lunaris =
             lunaris.with_consolidator(Arc::new(AlwaysPromoteConsolidator) as Arc<dyn Consolidator>);
 
@@ -664,7 +631,7 @@ async fn consolidator_scope_isolation_dual_backend_live() -> anyhow::Result<()> 
 #[test]
 fn probe_backend_missing_env_returns_none() {
     // Use a deliberately-unset env var name so the probe returns None.
-    assert!(probe_backend("LUNARIS_SCOPE_ISOLATION_UNSET_ENV_VAR").is_none());
+    assert!(probe_backend_with("LUNARIS_SCOPE_ISOLATION_UNSET_ENV_VAR", false).is_none());
 }
 
 // ---------------------------------------------------------------------------
