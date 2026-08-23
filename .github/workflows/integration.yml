@@ -129,10 +129,15 @@ jobs:
       # because Moon's `--dir` otherwise auto-resolves to the platform
       # user-data directory — a restart without it reopens the same store and
       # resets nothing.
+      #
+      # MOON_DATA_DIR / MOON_LOG are NOT set here: the `runner` context is not
+      # available in a job-level `env:` block (only github, needs, strategy,
+      # matrix, vars, inputs), and referencing it makes the whole workflow file
+      # invalid — GitHub reports "this run likely failed because of a workflow
+      # file issue" with no job-level annotation and NOTHING in the pull
+      # request's check rollup. They are exported from $RUNNER_TEMP below.
       MOON_PORT: "6390"
-      MOON_DATA_DIR: ${{ runner.temp }}/moon-data
       MOON_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
-      MOON_LOG: ${{ runner.temp }}/moon.log
 
     steps:
       - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
@@ -205,6 +210,15 @@ jobs:
         # default-on build is exercised by ci.yml's workspace compile.
         run: cargo build -p lunaris-server --no-default-features
 
+
+      - name: Pin Moon runtime paths
+        # $RUNNER_TEMP is a plain shell variable here, which `run:` can read
+        # even though the `runner` CONTEXT is off-limits in job-level `env:`.
+        run: |
+          {
+            echo "MOON_DATA_DIR=$RUNNER_TEMP/moon-data"
+            echo "MOON_LOG=$RUNNER_TEMP/moon.log"
+          } >> "$GITHUB_ENV"
 
       - name: Launch Moon (port 6390, single shard, fresh data dir)
         # Same script every later step uses, so "first launch" and "reset

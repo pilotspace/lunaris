@@ -150,3 +150,50 @@ fn the_parse_finds_the_steps_it_is_meant_to_check() {
          asserts nothing"
     );
 }
+
+/// Contexts GitHub allows in a JOB-level `env:` block. `runner` is NOT among
+/// them — it exists only at step level and inside `run:`.
+///
+/// Getting this wrong invalidates the WHOLE workflow file: every job fails
+/// before any step runs, GitHub reports only "this run likely failed because
+/// of a workflow file issue", and the failure does not appear in the pull
+/// request's `statusCheckRollup` at all. So a board that looks green is not
+/// evidence the workflow parsed. Cost one red push to learn.
+const JOB_ENV_ALLOWED: &[&str] =
+    &["github", "needs", "strategy", "matrix", "vars", "inputs", "env", "secrets"];
+
+#[test]
+fn the_job_env_block_uses_only_contexts_github_allows() {
+    let body = workflow();
+    let mut in_job_env = false;
+    let mut offenders = Vec::new();
+    for (n, line) in body.lines().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        if line.trim() == "env:" && indent == 4 {
+            in_job_env = true;
+            continue;
+        }
+        if in_job_env {
+            // The block ends at the next key at the same indent.
+            if !line.trim().is_empty() && indent <= 4 && !line.trim().starts_with('#') {
+                in_job_env = false;
+                continue;
+            }
+            for cap in line.split("${{").skip(1) {
+                let expr = cap.split("}}").next().unwrap_or("").trim();
+                let root = expr.split(['.', ' ', '(']).next().unwrap_or("").trim();
+                if !root.is_empty() && !JOB_ENV_ALLOWED.contains(&root) {
+                    offenders.push(format!("  line {}: ${{{{ {expr} }}}}", n + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the job-level `env:` block references contexts GitHub does not allow there:\n{}\n\n\
+         Allowed: {JOB_ENV_ALLOWED:?}. Anything else makes the entire workflow file invalid — \
+         no job runs, and the failure never reaches the PR's check rollup. Export the value \
+         from a `run:` step into $GITHUB_ENV instead.",
+        offenders.join("\n")
+    );
+}
