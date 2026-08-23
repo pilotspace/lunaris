@@ -40,8 +40,14 @@
 ///
 /// Set by `.github/workflows/integration.yml`, where every precondition is
 /// satisfied by construction.
+/// Delegates rather than re-reading. A private copy of this parse is how the
+/// readers drifted apart: `lunaris/tests/moon_parity.rs` grew an `Ok("true")`
+/// arm the other three never had, which would have made
+/// `LUNARIS_CONFORMANCE_STRICT=true` mean strict in one suite and permissive
+/// here — the "half the job strict" hazard the module docs above warn about,
+/// arrived at through the parse instead of a second name.
 pub fn strict() -> bool {
-    std::env::var("LUNARIS_CONFORMANCE_STRICT").as_deref() == Ok("1")
+    lunaris_test_harness::strict_skip::strict()
 }
 
 /// Record that Moon was unreachable — skipping on a dev box, panicking in a

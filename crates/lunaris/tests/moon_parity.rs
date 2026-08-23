@@ -27,14 +27,17 @@ use ulid::Ulid;
 /// suite that tested nothing. `LUNARIS_CONFORMANCE_STRICT=1` (set by
 /// `integration.yml`) turns the skip into a panic.
 ///
-/// Same contract as `lunaris-storage-moon`'s `common::note_moon_unreachable`,
-/// which this file could not reuse — different crate, no shared test module.
+/// Same contract as every other live-fixture suite, and now literally the same
+/// code: `lunaris_test_harness::strict_skip::strict()`. The private copy this
+/// file used to carry accepted `Ok("1") | Ok("true")` while the harness,
+/// `lunaris-conformance` and `lunaris-storage-moon` accepted only `"1"`, so
+/// `LUNARIS_CONFORMANCE_STRICT=true` would have turned this one suite strict
+/// and left the rest skipping quietly.
 fn moon_url() -> Option<String> {
-    decide_moon_url(std::env::var("LUNARIS_MOON_URL").ok(), strict())
-}
-
-fn strict() -> bool {
-    matches!(std::env::var("LUNARIS_CONFORMANCE_STRICT").as_deref(), Ok("1") | Ok("true"))
+    decide_moon_url(
+        std::env::var("LUNARIS_MOON_URL").ok(),
+        lunaris_test_harness::strict_skip::strict(),
+    )
 }
 
 /// The decision, with the environment passed in rather than read.

@@ -35,7 +35,24 @@ pub fn strict() -> bool {
 /// the `eprintln!` + `return Ok(())` pair it replaces, keeping the skip's
 /// control flow identical and its meaning conditional.
 pub fn skip_or_fail(runner: &str, reason: impl std::fmt::Display) -> anyhow::Result<()> {
-    if strict() {
+    skip_or_fail_with(runner, reason, strict())
+}
+
+/// The decision, with the environment passed in rather than read.
+///
+/// Splitting it is what makes the branch testable at all. The test that used
+/// to cover it declared a local `decide(strict: bool)` that re-implemented the
+/// `if` and asserted on THAT — so it passed whatever `skip_or_fail` did, and
+/// would have stayed green if this function started returning `Ok(())` in both
+/// arms, which is precisely the bug it was written to catch. Taking the flag
+/// as a parameter also keeps the test off `set_var`, which edition 2024 makes
+/// `unsafe` because it races every sibling in the same binary.
+pub fn skip_or_fail_with(
+    runner: &str,
+    reason: impl std::fmt::Display,
+    strict: bool,
+) -> anyhow::Result<()> {
+    if strict {
         anyhow::bail!(
             "{runner}: refusing to skip under LUNARIS_CONFORMANCE_STRICT=1 — {reason}. \
              This job is expected to have every precondition satisfied, so a skip here \
@@ -50,29 +67,45 @@ pub fn skip_or_fail(runner: &str, reason: impl std::fmt::Display) -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
-    /// The helper's whole job is to branch, so both directions are asserted.
-    /// A version that always returned `Ok` would be indistinguishable from the
-    /// bug it replaces.
+    /// The helper's whole job is to branch, so both directions are asserted —
+    /// against the REAL function. The previous version of this test declared a
+    /// local `decide(strict: bool)` with the same `if` inside and asserted on
+    /// that instead, which is a fact about the test, not about `skip_or_fail`.
     #[test]
     fn a_skip_is_fatal_only_under_strict_mode() {
-        // Exercised through the same code path the runners use, but with the
-        // flag resolved by the caller — process env is never mutated here, for
-        // the reason the module docs give.
-        fn decide(strict: bool) -> anyhow::Result<()> {
-            if strict {
-                anyhow::bail!("strict");
-            }
-            Ok(())
-        }
-        assert!(decide(true).is_err(), "strict mode must turn a skip into a failure");
-        assert!(decide(false).is_ok(), "a skip outside strict mode must stay green");
+        // Process env is never mutated here, for the reason the module docs
+        // give; the flag arrives as an argument.
+        assert!(
+            super::skip_or_fail_with("a_runner", "no Moon", true).is_err(),
+            "strict mode must turn a skip into a failure"
+        );
+        assert!(
+            super::skip_or_fail_with("a_runner", "no Moon", false).is_ok(),
+            "a skip outside strict mode must stay green"
+        );
     }
 
+    /// The parse itself, read-only against whatever the ambient value is.
+    ///
+    /// This replaces `assert_eq!(Some("1"), Some("1"))` plus
+    /// `assert!(!matches!(Some("true"), Some("1")))` — two facts about
+    /// literals that never called `strict()` and would have stayed green if
+    /// this module started accepting `"true"`.
+    ///
+    /// What it catches, honestly stated: it pins `strict()` to the documented
+    /// parse for the value the process actually has. Under `integration.yml`
+    /// that value is `"1"`, so a `strict()` broken to always-false fails here
+    /// in the one job where a wrong answer costs something. Locally, with the
+    /// variable unset, it pins the `None` arm. It never calls `set_var` —
+    /// flipping the variable would race every sibling in this binary,
+    /// including siblings that reach it through `skip_or_fail`.
     #[test]
-    fn strict_is_off_unless_the_flag_is_exactly_one() {
-        // Documents the parse: any value other than "1" leaves skips quiet, so
-        // `LUNARIS_CONFORMANCE_STRICT=true` does NOT silently enable it.
-        assert_eq!(Some("1"), Some("1"));
-        assert!(!matches!(Some("true"), Some("1")));
+    fn strict_matches_the_documented_parse_for_the_ambient_value() {
+        let ambient = std::env::var("LUNARIS_CONFORMANCE_STRICT").ok();
+        assert_eq!(
+            super::strict(),
+            ambient.as_deref() == Some("1"),
+            "strict() disagreed with the documented parse for ambient value {ambient:?};              only the exact string \"1\" enables strict mode, so              LUNARIS_CONFORMANCE_STRICT=true must NOT silently enable it"
+        );
     }
 }
