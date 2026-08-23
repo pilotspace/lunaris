@@ -59,23 +59,24 @@ const ENVIRONMENT_GATED: &[(&str, &str)] = &[
 ];
 
 /// Moon-dependent skips that still print for themselves, in crates the strict
-/// integration job does NOT run. Real debt, tracked rather than hidden: a
-/// silent skip is only harmless while nothing promises a Moon, and the moment
-/// one of these crates joins the strict job it becomes the same defect that
-/// F27 describes.
+/// integration job does NOT run.
 ///
-/// This list may SHRINK freely. It may not grow: a file not on it and not
-/// environment-gated fails the sweep, which is what keeps the debt bounded
-/// while it is paid down.
-const UNROUTED_DEBT: &[&str] = &[
-    "lunaris-retrieve/tests/hybrid_filter_common/mod.rs",
-    "lunaris-retrieve/tests/navigate_filter_moon.rs",
-    "lunaris-retrieve/tests/tree_recall.rs",
-    "lunaris/tests/chaos_helios_sigkill.rs",
-    "lunaris/tests/coding_session_memory_smoke.rs",
-    "lunaris/tests/consolidator_scope_isolation.rs",
-    "lunaris/tests/phase_14_1_reflect_invalidate.rs",
-];
+/// **Empty since F27 was paid off (2026-08-23).** All seven files —
+/// `lunaris-retrieve`'s `hybrid_filter_common`, `navigate_filter_moon` and
+/// `tree_recall`, and `lunaris`'s `chaos_helios_sigkill`,
+/// `coding_session_memory_smoke`, `consolidator_scope_isolation` and
+/// `phase_14_1_reflect_invalidate` — now route through
+/// `lunaris_test_harness::strict_skip::note_unavailable`, so
+/// `LUNARIS_CONFORMANCE_STRICT=1` makes them FAIL instead of skip. That
+/// matters the moment either crate joins the strict integration job: until
+/// then a silent skip is harmless only because nothing promises them a Moon,
+/// and "harmless today" is not a property anyone re-checks on the day it
+/// changes.
+///
+/// The constant stays so the sweep keeps one shape for exemptions, and so
+/// re-opening the debt is an edit somebody has to justify. It may not grow:
+/// a file not on it and not environment-gated fails the sweep.
+const UNROUTED_DEBT: &[&str] = &[];
 
 /// Files whose whole job is to name the spelling in order to forbid it.
 const GUARDS: &[&str] = &[
@@ -100,6 +101,25 @@ fn code_only(body: &str) -> String {
         .join("\n")
 }
 
+/// ## What this sweep structurally CANNOT see
+///
+/// Detection is keyed on PRINTS. A skip that prints nothing — `let url =
+/// std::env::var(name).ok()?;` returning `None` on the most common path of all,
+/// the variable simply not being set — is invisible here, and invisible to a
+/// reader skimming for `SKIP`. Three such paths were found in F27's payoff
+/// (2026-08-23) and none of them were found by reading source. They were found
+/// by MEASURING: run the suite with `LUNARIS_CONFORMANCE_STRICT=1` and no
+/// fixture, and look for the targets that PASS. A target that passes there
+/// never reached the helper, whatever its source says.
+///
+///     unset MOON_URL PG_URL
+///     LUNARIS_CONFORMANCE_STRICT=1 MOON_TEST_BINARY=/nonexistent \
+///       cargo test -p <crate> --test <target> -- --include-ignored
+///     # must FAIL. "ok" means strict mode is decorative for that target.
+///
+/// Nothing runs that arm automatically: the integration job sets strict AND
+/// supplies the fixture, so strict never fires there. Filed as F36.
+///
 /// Does this source contain a print that announces a skip?
 ///
 /// Scans each print-macro INVOCATION — from `println!` to its matching close
@@ -251,14 +271,24 @@ fn every_listed_file_still_announces_a_skip() {
     );
 }
 
-/// The debt list is a ratchet: it may shrink, never grow.
+/// The debt is PAID. It may not be re-opened by adding an entry.
+///
+/// This assertion used to read `len() <= CEILING` with `CEILING = 7`, which was
+/// right while seven files were waiting to be routed and wrong the moment the
+/// last one landed: at zero entries, a ceiling of seven is a BUDGET for seven
+/// more, and it reads as a passing test either way. A ratchet has to move with
+/// the thing it ratchets.
+///
+/// Re-opening the list is a deliberate act — edit this assertion and say in the
+/// commit why the skip cannot be routed. It is not something a new entry should
+/// be able to do quietly.
 #[test]
-fn the_unrouted_debt_has_not_grown() {
-    const CEILING: usize = 7;
+fn the_unrouted_debt_is_still_paid_off() {
     assert!(
-        UNROUTED_DEBT.len() <= CEILING,
-        "UNROUTED_DEBT grew to {} (ceiling {CEILING}). Route the new skip instead of listing \
-         it — the list exists to bound debt that predates F27, not to absorb more.",
+        UNROUTED_DEBT.is_empty(),
+        "UNROUTED_DEBT is back to {} entries: {UNROUTED_DEBT:?}. Every one of these was routed \
+         through `lunaris_test_harness::strict_skip` in F27; route the new skip the same way \
+         rather than re-opening a list whose whole point was to reach zero.",
         UNROUTED_DEBT.len()
     );
 }

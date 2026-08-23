@@ -62,7 +62,10 @@ async fn acquire_moon() -> Option<(Option<lunaris_test_harness::EphemeralMoon>, 
             Some((Some(m), url))
         }
         Err(e) => {
-            eprintln!("SKIP tree_recall: cannot spawn disposable Moon: {e:#}");
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "tree_recall: cannot spawn disposable Moon ({e:#}) \
+                 — set MOON_TEST_BINARY or build vendor/moon"
+            ));
             None
         }
     }

@@ -168,7 +168,15 @@ async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
 /// TCP probe + URL parsing (Plan 04-03 W-3 / W-7 fixes verbatim — accepts
 /// both literal IPs and hostnames; `to_socket_addrs()` not `parse::<SocketAddr>`).
 fn probe_backend(env_name: &str) -> Option<String> {
-    let url = std::env::var(env_name).ok()?;
+    // `.ok()?` here used to return None with NO announcement, so the most
+    // common skip path of all — the variable simply not set — was invisible to
+    // BOTH the reader and `no_silent_skip_workspace.rs`, whose detection is
+    // keyed on prints. A skip that prints nothing cannot be found by looking
+    // for prints; routing it is what makes it visible.
+    let Ok(url) = std::env::var(env_name) else {
+        lunaris_test_harness::strict_skip::note_unavailable(format!("{env_name} unset"));
+        return None;
+    };
     let host_port = url
         .strip_prefix("moon://")
         .or_else(|| url.strip_prefix("redis://"))
@@ -179,11 +187,18 @@ fn probe_backend(env_name: &str) -> Option<String> {
     let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
     let host_port = host_port.split('/').next().unwrap_or(host_port);
     let timeout = Duration::from_secs(1);
-    let addr = host_port.to_socket_addrs().ok().and_then(|mut it| it.next())?;
+    let Some(addr) = host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) else {
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "{env_name} (DNS resolution of {host_port} failed)"
+        ));
+        return None;
+    };
     if TcpStream::connect_timeout(&addr, timeout).is_ok() {
         Some(url)
     } else {
-        eprintln!("SKIP {env_name} (TCP probe to {host_port} failed)");
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "{env_name} (TCP probe to {host_port} failed)"
+        ));
         None
     }
 }

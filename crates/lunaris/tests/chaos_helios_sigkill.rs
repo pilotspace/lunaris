@@ -389,7 +389,9 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
             Some((done, orphaned))
         }
         None => {
-            eprintln!("chaos: SKIP Moon (MOON_URL unset or unreachable)");
+            lunaris_test_harness::strict_skip::note_unavailable(
+                "chaos: Moon branch (MOON_URL unset or unreachable)",
+            );
             None
         }
     };
@@ -428,7 +430,9 @@ async fn chaos_sigkill_helios_flow_zero_orphans() -> anyhow::Result<()> {
             }
         }
         None => {
-            eprintln!("chaos: SKIP Postgres (PG_URL unset or unreachable)");
+            lunaris_test_harness::strict_skip::note_unavailable(
+                "chaos: Postgres branch (PG_URL unset or unreachable)",
+            );
             None
         }
     };
