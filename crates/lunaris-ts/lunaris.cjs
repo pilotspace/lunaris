@@ -246,104 +246,129 @@ class RetrievalBuilder extends _Composable {
   }
 }
 
-/** Collapse the operator tree into the flat plan the `recallSimpleExecute`
- * FFI accepts. Exported under an underscore for the parity tests; not part
- * of the supported surface. */
-// Operators the minimal `recallSimpleExecute` FFI has no field for. Reaching
-// one means the executed plan would differ from the written one.
-const _UNSUPPORTED_OPS = {
-  graph: "graph traversal",
-  tree: "RAPTOR tree descent",
-  navigate: "graph-navigate expansion",
-};
+/** Marshal the operator tree into the plan object the `recallSimpleExecute`
+ * FFI executes. Exported under an underscore for the parity tests; not part
+ * of the supported surface.
+ *
+ * The name is historical — it no longer collapses. F14 replaced the flat
+ * `{index, k}` FFI with a `{root: <operator tree>}` one, so the tree a caller
+ * composes is the tree the engine builds. `lunaris_retrieve::plan`
+ * (Rust) is the single parser both SDKs marshal into.
+ *
+ * Twin of `python/lunaris/dsl.py::_collapse_plan` — keep the two in step; a
+ * divergence here is an SDK parity bug.
+ *
+ * `query` / `asOf` / `filter` stay envelope-level rather than becoming tree
+ * nodes, because they are builder state on the Rust side too: one query text,
+ * one as-of witness and one filter narrow the whole plan. That is why setting
+ * any of them twice with different values throws — the tree has branches, the
+ * envelope does not, and picking one of the two silently would run a query
+ * the caller did not write.
+ */
+function _collapsePlan(root) {
+  const envelope = { query: "" };
 
-// Operators that select an index and a k. More than one and the last visited
-// silently wins both.
-const _RETRIEVAL_OPS = ["vector", "keyword"];
-
-// Raise if collapsing `root` would run a different plan than it describes.
-// Twin of `python/lunaris/dsl.py::_reject_what_the_collapse_cannot_carry` —
-// keep the two in step, a divergence here is an SDK parity bug.
-//
-// Two conditions, both of which used to pass silently:
-//   1. An operator the FFI has no field for. Dropped entirely, so the caller
-//      gets a plain vector recall wearing the shape of a graph query.
-//   2. More than one retrieval leg. `index` and `k` are single-valued, so the
-//      last leg visited overwrites the first — the plan becomes single-leg and
-//      WHICH leg survives depends on the order the operands were written in.
-// A `fuseRrf` over one leg is not an error: it is a no-op, and a no-op is not
-// a lie.
-function _rejectWhatTheCollapseCannotCarry(root) {
-  const legs = [];
-  const unsupported = new Set();
-
-  (function walk(n) {
-    if (n.op in _UNSUPPORTED_OPS) unsupported.add(n.op);
-    if (_RETRIEVAL_OPS.includes(n.op)) {
-      legs.push(`${n.op}(${JSON.stringify(n.args[0])}, k=${n.args[1]})`);
+  function setEnvelope(key, value, op) {
+    const already = Object.prototype.hasOwnProperty.call(envelope, key);
+    const conflicts =
+      key === "query" ? envelope.query !== "" && envelope.query !== value : already && envelope[key] !== value;
+    if (conflicts) {
+      throw new Error(
+        `this plan sets .${op}() twice with different values ` +
+          `(${JSON.stringify(envelope[key])} and ${JSON.stringify(value)}), but the ` +
+          `plan carries ONE ${key}: it narrows every branch at once. Split the ` +
+          `plan, or apply .${op}() once at the top.`,
+      );
     }
-    for (const child of n.children) walk(child);
-  })(root);
+    envelope[key] = value;
+  }
 
-  if (unsupported.size > 0) {
-    const pretty = [...unsupported]
-      .sort()
-      .map((op) => `${op} (${_UNSUPPORTED_OPS[op]})`)
-      .join(", ");
+  function onlyChild(n) {
+    if (n.children.length !== 1) {
+      throw new Error(`\`${n.op}\` wraps exactly one plan, got ${n.children.length}`);
+    }
+    return n.children[0];
+  }
+
+  function build(n) {
+    if (n.op === "query") {
+      setEnvelope("query", String(n.args[0]), "query");
+      return build(onlyChild(n));
+    }
+    if (n.op === "as_of") {
+      setEnvelope("as_of_ms", Number(n.args[0]), "asOf");
+      return build(onlyChild(n));
+    }
+    if (n.op === "filter") {
+      setEnvelope("filter", String(n.args[0]), "filter");
+      return build(onlyChild(n));
+    }
+    if (n.op === "vector" || n.op === "keyword") {
+      return { op: n.op, index: String(n.args[0]), k: Number(n.args[1]) };
+    }
+    if (n.op === "graph") {
+      return {
+        op: "graph",
+        seeds: n.args[0].map(_marshalSeed),
+        hops: Number(n.args[1]),
+      };
+    }
+    if (n.op === "and") {
+      if (n.children.length !== 2) {
+        throw new Error(`\`and\` joins exactly two plans, got ${n.children.length}`);
+      }
+      return { op: "and", left: build(n.children[0]), right: build(n.children[1]) };
+    }
+    if (n.op === "fuse_rrf") {
+      return { op: "fuse_rrf", k: Number(n.args[0]), child: build(onlyChild(n)) };
+    }
+    if (n.op === "top") {
+      return { op: "top", n: Number(n.args[0]), child: build(onlyChild(n)) };
+    }
     throw new Error(
-      `this plan uses ${pretty}, which the TypeScript SDK's plan collapse ` +
-        `cannot carry to the engine yet — it would be dropped and you would get ` +
-        `a plain vector recall instead, with no indication the traversal never ` +
-        `ran. Use a vector/keyword plan here, or drive the full operator tree ` +
-        `from the Rust API until the FFI carries this leg.`,
+      `the TypeScript SDK has no marshalling for operator \`${n.op}\`, so this ` +
+        `plan cannot be sent to the engine as written. Drive the full operator ` +
+        `tree from the Rust API, or add an arm here and the matching one in ` +
+        `\`lunaris_retrieve::plan\`.`,
     );
   }
 
-  if (legs.length > 1) {
-    throw new Error(
-      `this plan composes ${legs.length} retrieval legs (${legs.join(", ")}), ` +
-        `but the collapsed plan holds ONE index and ONE k — the last leg would ` +
-        `silently win both, and reordering the operands would change which index ` +
-        `is searched. Use a single leg, or drive the full operator tree from the ` +
-        `Rust API.`,
-    );
-  }
+  envelope.root = build(root);
+  return envelope;
 }
 
-function _collapsePlan(root) {
-  _rejectWhatTheCollapseCannotCarry(root);
-  const plan = { query: "", k: 5, index: "chunks" };
-
-  // POST-ORDER: children first, then the node itself. Operators are built
-  // outside-in (`Vector("chunks", 30).top(5)` is `top -> vector`), so a
-  // pre-order walk let the leaf's `k` overwrite `.top(n)` — `.top(5)` on the
-  // default root silently became `k = 30`.
-  function visit(n) {
-    for (const child of n.children) visit(child);
-    if (n.op === "vector" || n.op === "keyword") {
-      plan.index = n.args[0];
-      plan.k = Number(n.args[1]);
-    } else if (n.op === "graph") {
-      // No-op in the minimal FFI — a follow-up plan wires the real graph
-      // branch. Plan 08-03 intentionally lossy per <key_constraints>.
-    } else if (n.op === "and") {
-      // Composition encoded via children; FFI takes the most recent
-      // vector/keyword spec.
-    } else if (n.op === "fuse_rrf") {
-      // No explicit field in the minimal FFI — collapsed away.
-    } else if (n.op === "top") {
-      plan.k = Number(n.args[0]);
-    } else if (n.op === "filter") {
-      plan.filter = String(n.args[0]);
-    } else if (n.op === "as_of") {
-      plan.as_of_ms = Number(n.args[0]);
-    } else if (n.op === "query") {
-      plan.query = String(n.args[0]);
-    }
+/** Render one graph anchor into the seed shape the engine accepts.
+ *
+ * A seed is an entity IDENTITY, and the engine derives that identity from
+ * `(name, type)` — the same "Alice" is a different anchor as a Person than as
+ * a Place. So a bare `"alice"` is rejected rather than paired with a guessed
+ * type: guessing yields a valid-looking EntityId that matches nothing, and a
+ * traversal anchored on nothing returns an empty result that is
+ * indistinguishable from "no such relationship exists".
+ */
+function _marshalSeed(seed, index) {
+  if (Array.isArray(seed) && seed.length === 2) {
+    return { name: String(seed[0]), type: String(seed[1]) };
   }
-
-  visit(root);
-  return plan;
+  if (seed !== null && typeof seed === "object") {
+    if ("name" in seed && "type" in seed) {
+      const out = { name: String(seed.name), type: String(seed.type) };
+      if ("confidence" in seed) out.confidence = Number(seed.confidence);
+      return out;
+    }
+    throw new Error(
+      `graph seed ${index} is an object without both 'name' and 'type': ${JSON.stringify(seed)}`,
+    );
+  }
+  if (typeof seed === "string" && /^[0-9a-f]{32}$/i.test(seed)) return seed;
+  throw new Error(
+    `graph seed ${index} (${JSON.stringify(seed)}) is neither a 32-char hex ` +
+      `EntityId nor a (name, type) pair. Pass Graph.anchored([{ name: 'Alice', ` +
+      `type: 'Person' }], 2), an ['Alice', 'Person'] pair, or the hex id the ` +
+      `engine emitted. A bare name would need a guessed entity type, and the ` +
+      `wrong type anchors the traversal on an entity that does not exist — ` +
+      `which returns empty, exactly like a real absence of edges.`,
+  );
 }
 
 // The generated `Lunaris.recall()` returns the codegen-frozen native builder,
