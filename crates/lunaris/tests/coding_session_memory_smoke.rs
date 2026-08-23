@@ -1,11 +1,14 @@
-//! Plan 05-04 HELIOS-02 — dual-backend integration smoke for [`CodingSessionMemory`].
+//! Plan 05-04 HELIOS-02 — live integration smoke for [`CodingSessionMemory`].
+//!
+//! The `_dual_backend` test names are historical: 0.7.0 slice B deleted the
+//! Postgres backend, leaving Moon. They are kept because `docs/` cites them by
+//! name and line.
 //!
 //! Two `#[ignore]`-gated tests:
 //!
 //! 1. [`helios_chat_10k_turns_dual_backend`] — synthetic 10K-turn chat
 //!    (per turn: write user msg, read prior msg, occasional edit + grep).
-//!    Asserts ingest p50 ≤ 50 ms (Moon) / ≤ 100 ms (Postgres) AND
-//!    recall p50 ≤ 25 ms (Moon) / ≤ 60 ms (Postgres) — same budgets as
+//!    Asserts ingest p50 ≤ 50 ms AND recall p50 ≤ 25 ms on Moon — same as
 //!    INGEST-05 / RETRIEVE-11/12 from Plan 02-04.
 //! 2. [`helios_doc_rag_50k_md_dual_backend`] — bulk-ingest synthetic markdown
 //!    documents via [`lunaris_bench::build_md_doc_corpus`]; query 100x via
@@ -14,12 +17,12 @@
 //! Both `#[ignore]`-gated by default. Run via:
 //!
 //! ```bash
-//! MOON_URL=moon://localhost:6380 PG_URL=postgres://lunaris@localhost/lunaris \
+//! MOON_URL=moon://localhost:6380 \
 //!   cargo test -p lunaris --test coding_session_memory_smoke -- --ignored --nocapture
 //! ```
 //!
 //! Per-backend skip discipline mirrors Plan 04-03 verbatim — TCP probe with
-//! 1s timeout against each `(MOON_URL, PG_URL)` URL; missing env or
+//! 1s timeout against the `MOON_URL` URL; missing env or
 //! unreachable host → `continue` (other backend still gets exercised).
 //!
 //! The full corpus shapes (10K turns / 50K docs) are documented defaults; the
@@ -30,9 +33,8 @@
 #![forbid(unsafe_code)]
 #![deny(rust_2018_idioms, unreachable_pub)]
 
-use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use lunaris::{CodingSessionMemory, Lunaris};
 
@@ -43,7 +45,10 @@ use lunaris::{CodingSessionMemory, Lunaris};
 #[tokio::test]
 #[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn helios_chat_10k_turns_dual_backend() -> anyhow::Result<()> {
-    for url_env in ["MOON_URL", "PG_URL"] {
+    // Moon-only since 0.7.0 slice B deleted `lunaris-storage-postgres` and
+    // retired `PG_URL` (integration.yml header). The `PG_URL` arm survived
+    // here only because its probe skipped in silence.
+    for url_env in ["MOON_URL"] {
         let Some(url) = probe_backend(url_env) else {
             continue;
         };
@@ -110,7 +115,10 @@ async fn helios_chat_10k_turns_dual_backend() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step (~5min only when DOCS=50000; the default is small)"]
 async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
-    for url_env in ["MOON_URL", "PG_URL"] {
+    // Moon-only since 0.7.0 slice B deleted `lunaris-storage-postgres` and
+    // retired `PG_URL` (integration.yml header). The `PG_URL` arm survived
+    // here only because its probe skipped in silence.
+    for url_env in ["MOON_URL"] {
         let Some(url) = probe_backend(url_env) else {
             continue;
         };
@@ -156,7 +164,7 @@ async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
         // directly with `bench:md-doc/<idx>` source, NOT via pad.write, so the
         // pad's `helios:fs/<sid>/` prefix wouldn't match. Cleanup is deferred
         // to the operator (or a separate forget(BySource("bench:md-doc/")) call
-        // when the smoke runs in CI against a freshly-spun Moon/Postgres).
+        // when the smoke runs in CI against a freshly-spun Moon).
     }
     Ok(())
 }
@@ -165,77 +173,41 @@ async fn helios_doc_rag_50k_md_dual_backend() -> anyhow::Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// TCP probe + URL parsing (Plan 04-03 W-3 / W-7 fixes verbatim — accepts
-/// both literal IPs and hostnames; `to_socket_addrs()` not `parse::<SocketAddr>`).
+/// TCP probe — delegates to the workspace's one implementation.
+///
+/// The local copy this replaces took `to_socket_addrs().next()`, so a
+/// hostname resolving to an unreachable address before a reachable one read
+/// as "no fixture". That is exactly what `moon://localhost:6390` does on a CI
+/// runner, and it is why this suite skipped inside the job that guaranteed
+/// its Moon. See `lunaris_test_harness::live_probe`.
 fn probe_backend(env_name: &str) -> Option<String> {
-    // `.ok()?` here used to return None with NO announcement, so the most
-    // common skip path of all — the variable simply not set — was invisible to
-    // BOTH the reader and `no_silent_skip_workspace.rs`, whose detection is
-    // keyed on prints. A skip that prints nothing cannot be found by looking
-    // for prints; routing it is what makes it visible.
-    let Ok(url) = std::env::var(env_name) else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!("{env_name} unset"));
-        return None;
-    };
-    let host_port = url
-        .strip_prefix("moon://")
-        .or_else(|| url.strip_prefix("redis://"))
-        .or_else(|| url.strip_prefix("postgres://"))
-        .or_else(|| url.strip_prefix("postgresql://"))
-        .unwrap_or(&url);
-    // Strip user:pass@ and any path suffix.
-    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
-    let host_port = host_port.split('/').next().unwrap_or(host_port);
-    let timeout = Duration::from_secs(1);
-    let Some(addr) = host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "{env_name} (DNS resolution of {host_port} failed)"
-        ));
-        return None;
-    };
-    if TcpStream::connect_timeout(&addr, timeout).is_ok() {
-        Some(url)
-    } else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "{env_name} (TCP probe to {host_port} failed)"
-        ));
-        None
-    }
+    lunaris_test_harness::live_probe::probe_url_env(env_name)
 }
 
 /// Returns `(ingest_p50_budget_ms, recall_p50_budget_ms)` per backend.
-/// Sourced from REQUIREMENTS.md INGEST-05 / RETRIEVE-11 (Moon) and
-/// INGEST-05 / RETRIEVE-12 (Postgres). Same budgets as Plan 02-04 D-12.
+/// Sourced from REQUIREMENTS.md INGEST-05 / RETRIEVE-11. The RETRIEVE-12
+/// Postgres row went with the backend in 0.7.0 slice B.
 fn budgets(env_name: &str) -> (f64, f64) {
     match env_name {
         "MOON_URL" => (50.0, 25.0), // INGEST-05 + RETRIEVE-11
-        "PG_URL" => (100.0, 60.0),  // INGEST-05 + RETRIEVE-12
         _ => (f64::INFINITY, f64::INFINITY),
     }
 }
 
-/// Hard-fail on Moon over budget. Postgres ≤ 2× over → hard-fail; > 2× over →
-/// soft-fail per ROADMAP risk register / Plan 02-04 D-12 — Postgres known-issue
-/// gap is documented but doesn't block alpha tag.
+/// Hard-fail on any backend over budget.
+///
+/// This used to grade Moon and Postgres differently — Postgres ≤ 2× over was a
+/// hard fail, > 2× over a documented soft fail (Plan 02-04 D-12). With the
+/// Postgres backend deleted in 0.7.0 slice B there is one backend left, and it
+/// has never had a soft-fail lane.
 fn check_budget(env_name: &str, metric: &str, value: f64, budget: f64) {
     if value <= budget {
         return;
     }
     let ratio = value / budget;
-    if env_name == "MOON_URL" {
-        panic!(
-            "{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Moon hard-fail"
-        );
-    }
-    if ratio > 2.0 {
-        eprintln!(
-            "WARN {env_name} {metric}={value:.2}ms exceeds budget {budget}ms by >2x ({ratio:.2}x) — Postgres soft-fail per Plan 02-04 D-12"
-        );
-    } else {
-        panic!(
-            "{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Postgres ≤2x hard-fail per Plan 02-04 D-12"
-        );
-    }
+    panic!(
+        "{env_name} {metric}={value:.2}ms exceeds budget {budget}ms ({ratio:.2}x) — Moon hard-fail"
+    );
 }
 
 /// Compute the `pct`-th percentile (0..=100) of `samples`. Mutates the buffer
@@ -273,8 +245,9 @@ fn percentile_p50_picks_middle() {
 fn budgets_table_matches_requirements() {
     // INGEST-05 + RETRIEVE-11 (Moon) — ingest p50 ≤ 50ms, recall p50 ≤ 25ms.
     assert_eq!(budgets("MOON_URL"), (50.0, 25.0));
-    // INGEST-05 + RETRIEVE-12 (Postgres) — ingest p50 ≤ 100ms, recall p50 ≤ 60ms.
-    assert_eq!(budgets("PG_URL"), (100.0, 60.0));
+    // The Postgres row (RETRIEVE-12) is gone with the backend; an unknown
+    // name must fall through to the infinite budget below, not to a stale row.
+    assert_eq!(budgets("PG_URL"), (f64::INFINITY, f64::INFINITY));
     // Unknown env name → infinite budget (graceful — never hard-fails).
     assert_eq!(budgets("UNKNOWN"), (f64::INFINITY, f64::INFINITY));
 }
@@ -282,7 +255,7 @@ fn budgets_table_matches_requirements() {
 #[test]
 fn check_budget_within_budget_does_not_panic() {
     check_budget("MOON_URL", "ingest_p50", 10.0, 50.0);
-    check_budget("PG_URL", "recall_p50", 30.0, 60.0);
+    check_budget("MOON_URL", "recall_p50", 24.0, 25.0);
 }
 
 #[test]
@@ -291,17 +264,12 @@ fn check_budget_moon_over_budget_hard_fails() {
     check_budget("MOON_URL", "ingest_p50", 100.0, 50.0);
 }
 
+/// The soft-fail lane is gone, not merely unused: a 2.5× overrun used to
+/// eprintln and continue. If it ever comes back, this catches it.
 #[test]
-#[should_panic(expected = "Postgres ≤2x hard-fail")]
-fn check_budget_postgres_within_2x_hard_fails() {
-    // 150ms vs 100ms budget = 1.5× → ≤ 2× → hard-fail.
-    check_budget("PG_URL", "ingest_p50", 150.0, 100.0);
-}
-
-#[test]
-fn check_budget_postgres_over_2x_soft_fails_only() {
-    // 250ms vs 100ms budget = 2.5× → > 2× → eprintln + continue. NO panic.
-    check_budget("PG_URL", "ingest_p50", 250.0, 100.0);
+#[should_panic(expected = "Moon hard-fail")]
+fn check_budget_far_over_budget_still_hard_fails() {
+    check_budget("MOON_URL", "ingest_p50", 250.0, 100.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -336,12 +304,15 @@ fn coding_session_memory_v2_surface_matches_v1_exactly() {
 /// wrap (on `CodingSessionMemory::write`) and unwrap (on `CodingSessionMemory::read`)
 /// paths route through `WorkingMemory` cleanly on both backends.
 ///
-/// `#[ignore]`-gated behind `MOON_URL` / `PG_URL` TCP probes in the same way
+/// `#[ignore]`-gated behind the `MOON_URL` TCP probe in the same way
 /// as the 10K-turn chat test above — default `cargo test` skips this.
 #[tokio::test]
 #[ignore = "requires MOON_URL; un-ignored by integration.yml's lunaris-memory step"]
 async fn coding_session_memory_v2_delegation_round_trip() -> anyhow::Result<()> {
-    for url_env in ["MOON_URL", "PG_URL"] {
+    // Moon-only since 0.7.0 slice B deleted `lunaris-storage-postgres` and
+    // retired `PG_URL` (integration.yml header). The `PG_URL` arm survived
+    // here only because its probe skipped in silence.
+    for url_env in ["MOON_URL"] {
         let Some(url) = probe_backend(url_env) else {
             continue;
         };

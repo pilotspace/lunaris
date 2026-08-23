@@ -31,9 +31,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
 
 use lunaris_core::{BiTemporal, Hlc, HlcClock, Scope, StoragePort, WriteOp};
 use lunaris_verify::apply_reflect_invalidate;
@@ -43,50 +41,21 @@ use ulid::Ulid;
 // Shared probe helper (verbatim Shared Pattern 2 per codebase convention)
 // ---------------------------------------------------------------------------
 
+/// TCP probe — delegates to the workspace's one implementation
+/// (`lunaris_test_harness::live_probe`), which tries EVERY address the host
+/// resolves to. The local copy took only the first, so `moon://localhost:6390`
+/// read as unreachable on any runner whose resolver returns `::1` first.
 fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
-    // `url?` here used to return None with NO announcement, so the most common
-    // skip path of all — the variable simply not set — was invisible to BOTH
-    // the reader and `no_silent_skip_workspace.rs`, whose detection is keyed on
-    // prints. A skip that prints nothing cannot be found by looking for prints.
+    let strict = lunaris_test_harness::strict_skip::strict();
     let Some(url) = url else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "phase_14_1: {name} (URL unset)"
-        ));
+        lunaris_test_harness::strict_skip::note_unavailable_with(
+            format!("phase_14_1: {name} (URL unset)"),
+            strict,
+        );
         return None;
     };
-    let host_port = if let Some(rest) = url.strip_prefix("moon://") {
-        rest.split('/').next()?.to_string()
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let after_scheme = url.split("://").nth(1)?;
-        let authority = after_scheme.split('/').next()?;
-        let bare = authority.rsplit('@').next()?;
-        if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
-    } else {
-        lunaris_test_harness::strict_skip::note_unavailable(format!(
-            "phase_14_1: {name} (unknown URL scheme)"
-        ));
-        return None;
-    };
-    let timeout = Duration::from_secs(1);
-    let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
-        Some(a) => a,
-        None => {
-            lunaris_test_harness::strict_skip::note_unavailable(format!(
-                "phase_14_1: {name} (DNS resolution of {host_port} failed)"
-            ));
-            return None;
-        }
-    };
-    match TcpStream::connect_timeout(&addr, timeout) {
-        Ok(_) => Some(url),
-        Err(_) => {
-            lunaris_test_harness::strict_skip::note_unavailable(format!(
-                "phase_14_1: {name} (TCP probe to {host_port} failed within {}ms)",
-                timeout.as_millis()
-            ));
-            None
-        }
-    }
+    lunaris_test_harness::live_probe::probe_url_with(&format!("phase_14_1: {name}"), &url, strict)
+        .then_some(url)
 }
 
 // ---------------------------------------------------------------------------
