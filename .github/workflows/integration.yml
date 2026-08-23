@@ -124,6 +124,15 @@ jobs:
       # 0.7.0 removed the in-process fallback that used to absorb a missing
       # binary.
       MOON_TEST_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+      # Inputs to scripts/ci/reset_moon.sh, which restarts Moon on an EMPTY
+      # data dir before every test step (F28). MOON_DATA_DIR is explicit
+      # because Moon's `--dir` otherwise auto-resolves to the platform
+      # user-data directory — a restart without it reopens the same store and
+      # resets nothing.
+      MOON_PORT: "6390"
+      MOON_DATA_DIR: ${{ runner.temp }}/moon-data
+      MOON_BINARY: ${{ github.workspace }}/vendor/moon/target/release/moon
+      MOON_LOG: ${{ runner.temp }}/moon.log
 
     steps:
       - name: Checkout (vendor/moon only — .planning skipped, cross-repo auth)
@@ -178,39 +187,6 @@ jobs:
             --manifest-path vendor/moon/Cargo.toml \
             --bin moon
 
-      - name: Launch Moon service (port 6390, single shard)
-        # Background with stdout+stderr to a log file so the on-failure dump
-        # has something to show. Port 6390 matches eval-gauntlet.yml's URL
-        # contract (local dev uses 6380; CI uses 6390).
-        #
-        # `--shards 1` is REQUIRED, not cosmetic: Lunaris ingest is a single
-        # MULTI/EXEC TXN and Moon refuses cross-shard writes. A sharded Moon
-        # fails every ingest with "TXN does not support cross-shard writes"
-        # (docs/operations/external-moon.md).
-        run: |
-          mkdir -p "$RUNNER_TEMP"
-          ./vendor/moon/target/release/moon --port 6390 --shards 1 \
-            > "$RUNNER_TEMP/moon.log" 2>&1 &
-          MOON_PID=$!
-          echo "MOON_PID=$MOON_PID" >> "$GITHUB_ENV"
-          echo "Moon launched with PID $MOON_PID, logging to $RUNNER_TEMP/moon.log"
-
-      - name: Wait for Moon (60s max, two retries tolerated)
-        # TCP probe, 30 attempts at 2s. Bash /dev/tcp is sufficient; no netcat
-        # dep. Two retries absorb the first-second-of-boot loopback flake.
-        run: |
-          for i in $(seq 1 30); do
-            if (echo > /dev/tcp/localhost/6390) >/dev/null 2>&1; then
-              echo "moon reachable after $i attempts"
-              exit 0
-            fi
-            echo "waiting for moon (6390) ($i/30)..."
-            sleep 2
-          done
-          echo "ERROR: moon not reachable after 60s"
-          cat "$RUNNER_TEMP/moon.log" || true
-          exit 1
-
       - name: Build lunaris-server (the protocol suite spawns it)
         # W1.5 — `tests/run_protocol_lunaris_server.rs` SKIPS cleanly when
         # `target/<profile>/lunaris-server` is absent, and no CI job ever built
@@ -229,6 +205,20 @@ jobs:
         # default-on build is exercised by ci.yml's workspace compile.
         run: cargo build -p lunaris-server --no-default-features
 
+
+      - name: Launch Moon (port 6390, single shard, fresh data dir)
+        # Same script every later step uses, so "first launch" and "reset
+        # between steps" cannot drift apart. It restarts on an empty --dir,
+        # waits for the port, and then ASSERTS the store is empty — a reset
+        # whose emptiness is never checked is a setup step pretending to be
+        # evidence.
+        #
+        # `--shards 1` is REQUIRED, not cosmetic: Lunaris ingest is a single
+        # MULTI/EXEC TXN and Moon refuses cross-shard writes. A sharded Moon
+        # fails every ingest with "TXN does not support cross-shard writes"
+        # (docs/operations/external-moon.md).
+        run: bash scripts/ci/reset_moon.sh
+
       - name: Run conformance tests with moon-it
         # Scope is strictly -p lunaris-conformance (NOT --workspace) to keep the
         # 8-min budget tight; --workspace is owned by ci.yml.
@@ -236,6 +226,13 @@ jobs:
           cargo test -p lunaris-conformance \
             --features moon-it \
             --no-fail-fast
+
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
 
       - name: Run lunaris-storage-moon tests with moon-it (including --ignored)
         # The backend's own live-Moon suite. Before 0.7.0 this ran only from a
@@ -259,6 +256,13 @@ jobs:
             --no-fail-fast \
             -- --include-ignored
 
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
+
       - name: Run lunaris-recipes tests with moon-it
         # MOON_URL is set in the job env, so these run live. (This crate has no
         # skip sites of its own — checked 2026-08-21 while routing F10; the
@@ -270,6 +274,13 @@ jobs:
           cargo test -p lunaris-recipes \
             --features moon-it \
             --no-fail-fast
+
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
 
       - name: Run lunaris-ingest tests with moon-it
         # W4.8 — found by `gated_tests_have_a_runner`, not by eye. This crate's
@@ -292,6 +303,13 @@ jobs:
             --features moon-it \
             --no-fail-fast
 
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
+
       - name: Run lunaris-server live graph-mode test
         # F16 — this job is the only one with a Moon, and `-p lunaris-server`
         # was never in its scope. `recall_graph_mode_live.rs` needs a real
@@ -313,6 +331,13 @@ jobs:
           cargo test -p lunaris-server \
             --test recall_graph_mode_live \
             --no-fail-fast
+
+      - name: Reset Moon (fresh data dir)
+        # F28: without this the next suite runs against whatever the previous
+        # one left behind, and can report success for something it never
+        # established. FLUSHALL is NOT sufficient — it leaves FT indices
+        # standing, which is exactly what `keyword_bm25` was passing on.
+        run: bash scripts/ci/reset_moon.sh
 
       - name: Run lunaris-memory umbrella live-Moon tests
         # W4.14 — `crates/lunaris/tests/moon_parity.rs` gates on
