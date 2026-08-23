@@ -12,12 +12,13 @@ Rust terminal `builder.execute(Query::text(t))`:
     handle.recall().query("what does Alice like?").top(5).execute()
 
 The classes are pure-Python data-builders that collect the composed plan as
-a flat list of `(op, args)` tuples; the terminal `.execute()` collapses the
-plan down to the defaults the Rust `recall_simple_execute` FFI accepts
-(query string + index + k + filter + as_of). Richer operator trees (full
-fuse_rrf / Graph / cross-encoder rerank) can land in follow-up plans that
-extend the FFI surface — the `recall_simple_execute` call side already
-covers every Plan 08-02 acceptance test.
+an operator tree; the terminal `.execute()` marshals that tree into the plan
+dict the Rust `recall_simple_execute` FFI executes, where
+`lunaris_retrieve::plan::retriever_from_json` — the single parser both the
+Python and TypeScript SDKs marshal into — turns it back into a retriever.
+Composition therefore runs as written: `.and_()`, `.fuse_rrf()`, `.top()` and
+a graph leg all reach the engine (F14). `query` / `as_of` / `filter` stay
+envelope-level because they are builder state in Rust too.
 
 The classes accept both `.and_(...)` (Python-PEP-8-friendly spelling,
 Python disallows `and` as an identifier) AND `.and_op(...)` — the Rust
@@ -32,6 +33,7 @@ the config dict post-construction and calls `handle.graph_pipeline.enable()`
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from .lunaris import (  # type: ignore[attr-defined]
@@ -195,125 +197,132 @@ class RetrievalBuilder(_Composable):
 
 
 def _collapse_plan(node: _OpNode) -> dict:
-    """Walk the operator tree and collapse it to the minimal shape the
-    `recall_simple_execute` FFI accepts. See `crates/lunaris-py/src/dsl.rs`
-    for the accepted fields.
+    """Marshal the operator tree into the plan dict the FFI executes.
 
-    The collapse is lossy — Plan 08-02 only needed DSL *shape* parity, and
-    richer operator-tree execution lands when a downstream wrapper asks for
-    it. What it must NOT be is quietly lossy: dropping a leg means running a
-    DIFFERENT query than the caller wrote and handing back the results as if
-    they answered the one they asked. Two measured cases:
+    The name is historical. It no longer collapses: F14 replaced the flat
+    ``{index, k}`` FFI with a ``{"root": <operator tree>}`` one, so the tree a
+    caller composes is the tree the engine builds. ``lunaris_retrieve::plan``
+    (Rust) is the single parser both SDKs marshal into.
 
-      Vector("chunks", 10).and_(Keyword.bm25("facts", 20)).top(5)
-        -> {"index": "facts", "k": 5}      # single leg, index picked by
-                                           # source order; flip the operands
-                                           # and you search "chunks" instead
-      Vector("chunks", 30).and_(Graph.anchored([alice], 2)).top(5)
-        -> {"index": "chunks", "k": 5}     # the graph traversal is gone
+    Three things stay envelope-level rather than becoming tree nodes —
+    ``query``, ``as_of`` and ``filter`` — because they are builder state on
+    the Rust side too, not retrievers: one query text, one as-of witness and
+    one filter narrow the whole plan. That is why setting any of them twice
+    with different values raises: the tree has branches, the envelope does
+    not, and picking one of the two silently would run a query the caller did
+    not write.
 
-    So anything the minimal FFI cannot carry raises here instead. A caller
-    who gets an exception goes and reads this docstring; a caller who gets a
-    plausible list of hits does not.
+    Anything this function cannot marshal raises instead of being dropped. A
+    caller who gets an exception goes and reads this docstring; a caller who
+    gets a plausible list of hits does not.
     """
-    _reject_what_the_collapse_cannot_carry(node)
-    plan: dict = {"query": "", "k": 5, "index": "chunks"}
+    envelope: dict = {"query": ""}
 
-    # POST-ORDER: children first, then the node itself. Operators are built
-    # outside-in (`Vector("chunks", 30).top(5)` is `top -> vector`), so a
-    # pre-order walk let the leaf's `k` overwrite `.top(n)` — `.top(5)` on
-    # the default root silently became `k = 30`.
-    def visit(n: _OpNode) -> None:
-        for child in n.children:
-            visit(child)
-        if n.op == "vector":
-            plan["index"] = n.args[0]
-            plan["k"] = int(n.args[1])
-        elif n.op == "keyword":
-            # Keyword falls back to vector defaults on the FFI side for v0.1.1.
-            plan["index"] = n.args[0]
-            plan["k"] = int(n.args[1])
-        elif n.op == "graph":
-            # Graph: no-op in the minimal FFI; a follow-up plan wires
-            # the real graph branch.
-            pass
-        elif n.op == "and":
-            pass
-        elif n.op == "fuse_rrf":
-            pass
-        elif n.op == "top":
-            plan["k"] = int(n.args[0])
-        elif n.op == "filter":
-            plan["filter"] = str(n.args[0])
-        elif n.op == "as_of":
-            plan["as_of_ms"] = int(n.args[0])
-        elif n.op == "query":
-            plan["query"] = str(n.args[0])
+    def set_envelope(key: str, value: object, op: str) -> None:
+        if key in envelope and envelope[key] != value and key != "query":
+            raise NotImplementedError(
+                f"this plan sets .{op}() twice with different values "
+                f"({envelope[key]!r} and {value!r}), but the plan carries ONE "
+                f"{key}: it narrows every branch at once. Split the plan, or "
+                f"apply .{op}() once at the top."
+            )
+        if key == "query" and envelope["query"] not in ("", value):
+            raise NotImplementedError(
+                f"this plan sets .query() twice with different text "
+                f"({envelope['query']!r} and {value!r}), but a plan runs ONE "
+                f"query against every leg. Apply .query() once at the top."
+            )
+        envelope[key] = value
 
-    visit(node)
-    return plan
+    def only_child(n: _OpNode) -> _OpNode:
+        if len(n.children) != 1:
+            raise NotImplementedError(
+                f"`{n.op}` wraps exactly one plan, got {len(n.children)}"
+            )
+        return n.children[0]
 
-
-#: Operators the minimal `recall_simple_execute` FFI has no field for. Reaching
-#: one means the executed plan would differ from the written one.
-_UNSUPPORTED_OPS = {
-    "graph": "graph traversal",
-    "tree": "RAPTOR tree descent",
-    "navigate": "graph-navigate expansion",
-}
-
-#: Operators that select an index and a k. More than one and the last visited
-#: silently wins both.
-_RETRIEVAL_OPS = ("vector", "keyword")
-
-
-def _reject_what_the_collapse_cannot_carry(node: _OpNode) -> None:
-    """Raise if collapsing `node` would run a different plan than it describes.
-
-    Two conditions, both of which used to pass silently:
-
-    1. An operator the FFI has no field for (`graph` / `tree` / `navigate`).
-       Dropped entirely, so the caller gets a plain vector recall wearing the
-       shape of a graph query.
-    2. More than one retrieval leg. `index` and `k` are single-valued in the
-       collapsed plan, so the last leg visited overwrites the first — the
-       plan becomes single-leg and WHICH leg survives depends on the order
-       the operands were written in.
-
-    A `fuse_rrf` over a single leg is not an error: it is a no-op, and a
-    no-op is not a lie.
-    """
-    legs: list[str] = []
-    unsupported: list[str] = []
-
-    def walk(n: _OpNode) -> None:
-        if n.op in _UNSUPPORTED_OPS:
-            unsupported.append(n.op)
-        if n.op in _RETRIEVAL_OPS:
-            legs.append(f"{n.op}({n.args[0]!r}, k={n.args[1]})")
-        for child in n.children:
-            walk(child)
-
-    walk(node)
-
-    if unsupported:
-        pretty = ", ".join(f"{op} ({_UNSUPPORTED_OPS[op]})" for op in sorted(set(unsupported)))
+    def build(n: _OpNode) -> dict:
+        if n.op == "query":
+            set_envelope("query", str(n.args[0]), "query")
+            return build(only_child(n))
+        if n.op == "as_of":
+            set_envelope("as_of_ms", int(n.args[0]), "as_of")
+            return build(only_child(n))
+        if n.op == "filter":
+            set_envelope("filter", str(n.args[0]), "filter")
+            return build(only_child(n))
+        if n.op in ("vector", "keyword"):
+            return {"op": n.op, "index": str(n.args[0]), "k": int(n.args[1])}
+        if n.op == "graph":
+            return {
+                "op": "graph",
+                "seeds": [_marshal_seed(s, i) for i, s in enumerate(n.args[0])],
+                "hops": int(n.args[1]),
+            }
+        if n.op == "and":
+            if len(n.children) != 2:
+                raise NotImplementedError(
+                    f"`and` joins exactly two plans, got {len(n.children)}"
+                )
+            return {
+                "op": "and",
+                "left": build(n.children[0]),
+                "right": build(n.children[1]),
+            }
+        if n.op == "fuse_rrf":
+            return {"op": "fuse_rrf", "k": int(n.args[0]), "child": build(only_child(n))}
+        if n.op == "top":
+            return {"op": "top", "n": int(n.args[0]), "child": build(only_child(n))}
         raise NotImplementedError(
-            f"this plan uses {pretty}, which the Python SDK's plan collapse cannot "
-            f"carry to the engine yet — it would be dropped and you would get a "
-            f"plain vector recall instead, with no indication the traversal never "
-            f"ran. Use a vector/keyword plan here, or drive the full operator tree "
-            f"from the Rust API until the FFI carries this leg."
+            f"the Python SDK has no marshalling for operator `{n.op}`, so this "
+            f"plan cannot be sent to the engine as written. Drive the full "
+            f"operator tree from the Rust API, or add an arm here and the "
+            f"matching one in `lunaris_retrieve::plan`."
         )
 
-    if len(legs) > 1:
+    envelope["root"] = build(node)
+    return envelope
+
+
+_HEX32 = re.compile(r"[0-9a-fA-F]{32}")
+
+
+def _marshal_seed(seed: object, index: int) -> object:
+    """Render one graph anchor into the seed shape the engine accepts.
+
+    A seed is an entity IDENTITY, and the engine derives that identity from
+    ``(name, type)`` — the same "Alice" is a different anchor as a Person than
+    as a Place. So a bare ``"alice"`` is rejected rather than paired with a
+    guessed type: guessing yields a valid-looking EntityId that matches
+    nothing, and a traversal anchored on nothing returns an empty result that
+    is indistinguishable from "no such relationship exists".
+    """
+    if isinstance(seed, dict):
+        if "name" in seed and "type" in seed:
+            out = {"name": str(seed["name"]), "type": str(seed["type"])}
+            if "confidence" in seed:
+                out["confidence"] = float(seed["confidence"])
+            return out
         raise NotImplementedError(
-            f"this plan composes {len(legs)} retrieval legs ({', '.join(legs)}), but "
-            f"the collapsed plan holds ONE index and ONE k — the last leg would "
-            f"silently win both, and reordering the operands would change which "
-            f"index is searched. Use a single leg, or drive the full operator tree "
-            f"from the Rust API."
+            f"graph seed {index} is a dict without both 'name' and 'type': {seed!r}"
         )
+    if isinstance(seed, (tuple, list)) and len(seed) == 2:
+        return {"name": str(seed[0]), "type": str(seed[1])}
+    # `int(seed, 16)` is NOT the check to use here: Python accepts underscores
+    # and surrounding whitespace, so `"…abc_ef"` would pass on this side and
+    # fail the TypeScript twin's `/^[0-9a-f]{32}$/i`. Two SDKs that accept
+    # different inputs for the same documented shape is the parity bug the
+    # marshallers exist to avoid.
+    if isinstance(seed, str) and _HEX32.fullmatch(seed):
+        return seed
+    raise NotImplementedError(
+        f"graph seed {index} ({seed!r}) is neither a 32-char hex EntityId nor a "
+        f"(name, type) pair. Pass Graph.anchored([{{'name': 'Alice', "
+        f"'type': 'Person'}}], hops=2), a ('Alice', 'Person') tuple, or the hex "
+        f"id the engine emitted. A bare name would need a guessed entity type, "
+        f"and the wrong type anchors the traversal on an entity that does not "
+        f"exist \u2014 which returns empty, exactly like a real absence of edges."
+    )
 
 
 async def open(

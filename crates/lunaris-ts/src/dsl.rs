@@ -28,7 +28,7 @@ use std::sync::Arc;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use ::lunaris::{Query, Vector};
+use ::lunaris::Query;
 
 use crate::Lunaris;
 use crate::errors::napi_err;
@@ -36,10 +36,14 @@ use crate::errors::napi_err;
 /// Minimal `recall` execute bridge for the TS-side DSL.
 ///
 /// Accepts a plan JSON of shape:
-/// `{"query": "...", "k": 5, "index": "chunks", "filter": "...", "as_of_ms": 123}`.
-/// All keys are optional; missing fields fall back to
-/// `{query: "", k: 5, index: "chunks"}`. Returns a JSON array of hit
-/// objects which napi-rs 3.x converts to a `Promise<Array<object>>` in TS.
+/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123}`, where
+/// `root` is the operator tree documented on `lunaris_retrieve::plan`.
+/// All keys are optional. When `root` is absent the flat pre-F14 fields
+/// (`index`, `k`) are read instead and normalized into the equivalent one-leg
+/// `vector` tree, so the two spellings share one execution path. Missing
+/// fields fall back to `{query: "", k: 5, index: "chunks"}`. Returns a JSON
+/// array of hit objects which napi-rs 3.x converts to a
+/// `Promise<Array<object>>` in TS.
 #[napi(js_name = "recallSimpleExecute")]
 pub async fn recall_simple_execute(
     handle: &Lunaris,
@@ -50,16 +54,24 @@ pub async fn recall_simple_execute(
     // Extract plan fields with safe defaults so the TS-side builder can
     // forward a sparse object.
     let query_text = plan.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let k = plan.get("k").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(5);
-    let index = plan.get("index").and_then(|v| v.as_str()).unwrap_or("chunks").to_string();
     let filter_str_opt = plan.get("filter").and_then(|v| v.as_str()).map(|s| s.to_string());
     let as_of_ms = plan.get("as_of_ms").and_then(|v| v.as_u64());
 
-    // Build the operator tree on the Rust side. The TS-side DSL builder
-    // collapses more elaborate compositions (fuse_rrf, graph, as_of,
-    // filter) into the same underlying Query via the filter+as_of+k knobs.
-    let root = Vector::new(&index, k);
-    let mut builder = inner.recall().with_root(root);
+    // The operator tree. Absent = the pre-F14 flat shape, which is rewritten
+    // into the one-leg tree that means the same thing rather than executed by
+    // a parallel code path — so the Python SDK, the TypeScript SDK and any
+    // future caller all get their plan built by ONE parser.
+    let root_json = match plan.get("root") {
+        Some(v) => v.clone(),
+        None => {
+            let k = plan.get("k").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(5);
+            let index = plan.get("index").and_then(|v| v.as_str()).unwrap_or("chunks");
+            serde_json::json!({"op": "vector", "index": index, "k": k})
+        }
+    };
+    let root = ::lunaris::retriever_from_json(&root_json)
+        .map_err(|e| crate::errors::napi_err_with_code("VALIDATE", format!("plan: {e}")))?;
+    let mut builder = inner.recall().with_root_boxed(root);
     if let Some(s) = filter_str_opt {
         builder = builder.filter_str(&s).map_err(|e| {
             crate::errors::napi_err_with_code("VALIDATE", format!("filter_str: {e}"))

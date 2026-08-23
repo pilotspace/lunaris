@@ -66,56 +66,141 @@ def test_query_composes_with_the_other_operators() -> None:
     assert isinstance(builder, RetrievalBuilder)
     plan = _collapse_plan(builder._node)
     assert plan["query"] == "chocolate"
-    assert plan["index"] == "chunks"
-    assert plan["k"] == 4
     assert plan["filter"] == "source = 'quickstart'"
     assert plan["as_of_ms"] == 1_000_000
+    assert plan["root"] == {
+        "op": "top",
+        "n": 4,
+        "child": {"op": "vector", "index": "chunks", "k": 30},
+    }
 
 
-def test_top_survives_the_collapse() -> None:
-    """`.top(n)` must win over the leaf operator's `k` — it is the outer op."""
+def test_top_stays_the_outer_operator() -> None:
+    """`.top(n)` is the outer op and must stay outer.
+
+    Pre-F14 the flat plan had ONE `k` for both `.top(n)` and the leg's own
+    `k`, so they fought over it and a parents-before-children walk let the
+    leaf win. F14 gives each its own node, which is what the Rust DSL means:
+    fetch 30 candidates, return the best 5.
+    """
     plan = _collapse_plan(Vector("chunks", 30).top(5)._node)
-    assert plan["k"] == 5, f"`.top(5)` was overwritten by the leaf k: {plan['k']}"
+    assert plan["root"] == {
+        "op": "top",
+        "n": 5,
+        "child": {"op": "vector", "index": "chunks", "k": 30},
+    }
 
 
-def test_a_second_retrieval_leg_is_refused_not_silently_dropped() -> None:
-    """The collapsed plan holds ONE index and ONE k.
+def test_a_second_retrieval_leg_is_carried_not_dropped() -> None:
+    """Pre-F14 the plan held ONE index and ONE k, so this test asserted a
+    REFUSAL: `Vector("chunks", 10).and_(Keyword.bm25("facts", 20))` collapsed
+    to `{"index": "facts", "k": 5}` — a single-leg query whose index was
+    decided by the order the operands happened to be written in, and flipping
+    them searched "chunks" instead.
 
-    Before this refusal, `Vector("chunks", 10).and_(Keyword.bm25("facts", 20))`
-    collapsed to `{"index": "facts", "k": 5}` — a single-leg query whose index
-    was decided by the order the operands happened to be written in. Flipping
-    the operands searched "chunks" instead. The caller got a plausible list of
-    hits for a question they did not ask.
+    F14 carries the tree across the FFI, so the composition survives WITH its
+    operand order — the property the single-leg collapse could not preserve.
     """
     plan = Vector("chunks", 10).and_(Keyword.bm25("facts", 20)).fuse_rrf(60).top(5)
-    with pytest.raises(NotImplementedError) as excinfo:
-        _collapse_plan(plan._node)
-    msg = str(excinfo.value)
-    assert "2 retrieval legs" in msg, msg
-    # Both legs must be named — an error that mentions only one leaves the
-    # reader guessing which half of their plan was the problem.
-    assert "chunks" in msg and "facts" in msg, msg
+    assert _collapse_plan(plan._node)["root"] == {
+        "op": "top",
+        "n": 5,
+        "child": {
+            "op": "fuse_rrf",
+            "k": 60,
+            "child": {
+                "op": "and",
+                "left": {"op": "vector", "index": "chunks", "k": 10},
+                "right": {"op": "keyword", "index": "facts", "k": 20},
+            },
+        },
+    }
+
+    flipped = Keyword.bm25("facts", 20).and_(Vector("chunks", 10))
+    assert _collapse_plan(flipped._node)["root"]["left"] == {
+        "op": "keyword",
+        "index": "facts",
+        "k": 20,
+    }
 
 
-def test_an_unsupported_operator_is_refused_not_silently_dropped() -> None:
-    """A `graph` leg has no field in the minimal FFI, so it used to vanish.
+def test_a_graph_leg_is_carried_and_a_bare_name_is_not_an_anchor() -> None:
+    """`docs/MIGRATING-FROM-ZEP.md` sells graph traversal as a reason to move
+    to Lunaris, and pre-F14 a `graph` leg had no field in the flat FFI, so it
+    vanished. It now reaches the engine.
 
-    `docs/MIGRATING-FROM-ZEP.md` sells graph traversal as a reason to move to
-    Lunaris. Returning a plain vector recall for it is worse than saying so.
+    A bare `"alice"` still raises: an EntityId is derived from `(name, type)`,
+    so a bare name needs a guessed type, and the wrong type anchors on an
+    entity that does not exist — which returns empty, exactly like a real
+    absence of edges.
     """
-    plan = Vector("chunks", 30).and_(Graph.anchored(["alice"], hops=2)).top(5)
+    plan = (
+        Vector("chunks", 30)
+        .and_(Graph.anchored([("Alice", "Person")], hops=2))
+        .top(5)
+    )
+    assert _collapse_plan(plan._node)["root"]["child"]["right"] == {
+        "op": "graph",
+        "seeds": [{"name": "Alice", "type": "Person"}],
+        "hops": 2,
+    }
+
+    bare = Vector("chunks", 30).and_(Graph.anchored(["alice"], hops=2)).top(5)
     with pytest.raises(NotImplementedError) as excinfo:
-        _collapse_plan(plan._node)
-    assert "graph traversal" in str(excinfo.value), str(excinfo.value)
+        _collapse_plan(bare._node)
+    msg = str(excinfo.value)
+    assert "name" in msg and "type" in msg, msg
+
+
+def test_the_hex_seed_form_accepts_exactly_what_the_typescript_twin_accepts() -> None:
+    """Both SDKs document one hex spelling: 32 chars, `[0-9a-f]` only.
+
+    `int(seed, 16)` is the obvious Python check and the wrong one — it accepts
+    underscores (`int("1_2", 16) == 18`) and surrounding whitespace, so a seed
+    Python waved through would be rejected by the TypeScript twin's
+    `/^[0-9a-f]{32}$/i`. Two SDKs accepting different inputs for the same
+    documented shape is the parity bug the marshallers exist to avoid.
+    """
+    ok = "0123456789abcdef0123456789abcdef"
+    assert _collapse_plan(Graph.anchored([ok], hops=1)._node)["root"]["seeds"] == [ok]
+
+    for bad in (
+        "0123456789abcdef0123456789abc_ef",  # int(_, 16) accepts underscores
+        " 123456789abcdef0123456789abcdef",  # ...and leading whitespace
+        "0123456789abcdef0123456789abcde",   # 31 chars
+        "0123456789abcdef0123456789abcdefa",  # 33 chars
+        "0123456789abcdef0123456789abcdeg",  # not hex
+    ):
+        with pytest.raises(NotImplementedError):
+            _collapse_plan(Graph.anchored([bad], hops=1)._node)
+
+
+def test_an_operator_with_no_marshalling_is_refused_not_silently_dropped() -> None:
+    """The DSL cannot build such a node today, so this reaches past the public
+    surface to prove the fallthrough is a raise. Without it, adding a
+    combinator to the DSL and forgetting the marshalling arm would silently
+    drop the operator — the exact defect F14 removed."""
+    from lunaris.dsl import _OpNode
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        _collapse_plan(_OpNode("raptor_descend", (3,)))
+    assert "raptor_descend" in str(excinfo.value)
 
 
 def test_a_no_op_operator_is_not_an_error() -> None:
     """The rule is "refuse what would change the plan", not "refuse anything
-    the FFI lacks a field for". `fuse_rrf` over a single leg fuses nothing, so
-    collapsing it away is a no-op — and a no-op is not a lie."""
+    unusual". `fuse_rrf` over a single leg fuses nothing, and a no-op is not
+    a lie — it is carried through as written."""
     plan = _collapse_plan(Vector("chunks", 30).fuse_rrf(60).top(5)._node)
-    assert plan["k"] == 5
-    assert plan["index"] == "chunks"
+    assert plan["root"] == {
+        "op": "top",
+        "n": 5,
+        "child": {
+            "op": "fuse_rrf",
+            "k": 60,
+            "child": {"op": "vector", "index": "chunks", "k": 30},
+        },
+    }
 
 
 def test_query_is_bound_to_the_handle_through_the_chain() -> None:

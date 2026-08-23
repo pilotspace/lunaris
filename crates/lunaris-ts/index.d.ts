@@ -542,7 +542,10 @@ export declare function openHandle(url: string): Promise<Lunaris>
  *
  * Accepts a plan JSON of shape:
  * `{"query": "...", "k": 5, "index": "chunks", "filter": "...", "as_of_ms": 123}`.
- * All keys are optional; missing fields fall back to
+ * All keys are optional. `root` is the operator tree documented on
+ * `lunaris_retrieve::plan`; when it is absent the flat pre-F14 fields
+ * (`index`, `k`) are read instead and normalized into the equivalent
+ * one-leg `vector` tree. Missing fields fall back to
  * `{query: "", k: 5, index: "chunks"}`. Returns a JSON array of hit
  * objects which napi-rs 3.x converts to a `Promise<Array<object>>` in TS.
  */

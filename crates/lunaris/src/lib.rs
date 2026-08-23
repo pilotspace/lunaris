@@ -159,9 +159,9 @@ pub use lunaris_verify::{OllamaVerifier, OllamaVerifierOpts};
 pub use lunaris_retrieve::{
     AndRetriever, DEFAULT_GRAPH_HOPS, DEFAULT_GRAPH_K, DegradedFallbackRetriever,
     FlooredTopRetriever, FuseRrfRetriever, Graph, Hit, Keyword, LUNARIS_GRAPH_NAME, MAX_GRAPH_HOPS,
-    Navigate, Plan, Query, RawHit, RerankRetriever, RetrievalBuilder, RetrievalService, Retriever,
-    SourceOp, TopRetriever, Tree, Vector, degraded_fallback, filter_str, floored_top, hybrid_root,
-    plan_query, rerank,
+    Navigate, Plan, PlanError, Query, RawHit, RerankRetriever, RetrievalBuilder, RetrievalService,
+    Retriever, SourceOp, TopRetriever, Tree, Vector, degraded_fallback, filter_str, floored_top,
+    hybrid_root, plan_query, rerank, retriever_from_json,
 };
 
 // Reranker trait + helpers re-exported from lunaris-rerank so callers

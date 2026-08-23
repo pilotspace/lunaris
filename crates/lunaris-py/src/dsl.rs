@@ -12,10 +12,12 @@
 //! This module exposes the Rust side of that bridge:
 //!
 //! - [`recall_simple_execute`] — `&PyLunaris` + an opaque plan dict →
-//!   list of hydrated hits. For v0.1.1 the accepted plan shape is the
-//!   default `Vector("chunks", k).top(n).execute(Query::text(q))` path, which
-//!   covers every Plan 08-02 acceptance test without a handwritten spec
-//!   parser. Extensions land when downstream vertical wrappers need them.
+//!   list of hydrated hits. The plan carries a `"root"` operator tree that
+//!   `lunaris_retrieve::plan::retriever_from_json` turns into the retriever,
+//!   so a composed plan (`.and_()`, `.fuse_rrf()`, `.top()`, a graph leg)
+//!   runs as the caller wrote it (F14). The pre-F14 flat `{index, k}` shape
+//!   is still accepted and is normalized into the same single-`vector` tree,
+//!   so there is exactly ONE place that decides what a plan means.
 //! - [`ingest_py`] / [`forget_py`] — handwritten async wrappers that accept
 //!   the full Episode / ForgetRequest dict shape. Reserved name space: not
 //!   called directly from Python (generated.rs owns `PyLunaris::ingest`
@@ -33,7 +35,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use ::lunaris::{Query, Vector};
+use ::lunaris::Query;
 
 use crate::PyLunaris;
 use crate::errors::py_err;
@@ -41,10 +43,17 @@ use crate::errors::py_err;
 /// Minimal `recall` execute bridge.
 ///
 /// Accepts a plan dict of shape
-/// `{"query": "...", "k": 5, "index": "chunks", "filter": "...", "filter_kwargs": {...}, "as_of_ms": 123}`.
-/// All keys are optional. Missing fields fall back to
-/// `{query: "", k: 5, index: "chunks", no filter, no as_of}`. Returns
-/// a Python list of hit dicts via `pythonize::pythonize`.
+/// `{"root": {...}, "query": "...", "filter": "...", "as_of_ms": 123}`, where
+/// `root` is the operator tree documented on
+/// [`lunaris_retrieve::plan`]. All keys are optional.
+///
+/// When `root` is absent the flat pre-F14 fields (`index`, `k`) are read
+/// instead and normalized into the equivalent one-leg `vector` tree — the
+/// legacy shape is a spelling of a plan, not a second execution path, so a
+/// change to how plans are built cannot apply to one caller and miss the
+/// other. Missing fields fall back to `{query: "", k: 5, index: "chunks"}`.
+///
+/// Returns a Python list of hit dicts via `pythonize::pythonize`.
 #[pyfunction]
 #[pyo3(signature = (handle, plan))]
 fn recall_simple_execute<'py>(
@@ -61,13 +70,24 @@ fn recall_simple_execute<'py>(
         Some(v) => v.extract()?,
         None => String::new(),
     };
-    let k: usize = match plan.get_item("k")? {
-        Some(v) => v.extract()?,
-        None => 5,
-    };
-    let index: String = match plan.get_item("index")? {
-        Some(v) => v.extract()?,
-        None => "chunks".to_string(),
+    // The operator tree. Absent = the pre-F14 flat shape, which is rewritten
+    // into the one-leg tree that means the same thing rather than executed by
+    // a parallel code path.
+    let root_json: serde_json::Value = match plan.get_item("root")? {
+        Some(v) => pythonize::depythonize(&v).map_err(|e| {
+            crate::errors::py_err_str("VALIDATE", format!("plan root is not JSON-shaped: {e}"))
+        })?,
+        None => {
+            let k: usize = match plan.get_item("k")? {
+                Some(v) => v.extract()?,
+                None => 5,
+            };
+            let index: String = match plan.get_item("index")? {
+                Some(v) => v.extract()?,
+                None => "chunks".to_string(),
+            };
+            serde_json::json!({"op": "vector", "index": index, "k": k})
+        }
     };
     let filter_str_opt: Option<String> = match plan.get_item("filter")? {
         Some(v) => Some(v.extract()?),
@@ -79,14 +99,12 @@ fn recall_simple_execute<'py>(
     };
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        // Build the operator tree on the Rust side. For v0.1.1 the "plan
-        // shape" is the minimal default — the Python-side DSL builder
-        // collapses more elaborate compositions (fuse_rrf, graph, as_of,
-        // filter) into the same underlying Query via the filter+as_of+k
-        // knobs. Richer operator trees land in a follow-up plan when a
-        // downstream vertical needs them.
-        let root = Vector::new(&index, k);
-        let mut builder = inner.recall().with_root(root);
+        // Build the operator tree on the Rust side from the plan the SDK
+        // marshalled. `filter` / `as_of` / the query text stay envelope-level
+        // because they are builder state in Rust too, not retrievers.
+        let root = ::lunaris::retriever_from_json(&root_json)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("plan: {e}")))?;
+        let mut builder = inner.recall().with_root_boxed(root);
         if let Some(s) = filter_str_opt {
             builder = builder
                 .filter_str(&s)

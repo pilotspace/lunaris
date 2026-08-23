@@ -138,6 +138,13 @@ pub fn plan_repr(r: &dyn Retriever) -> String {
             None => format!("navigate({},k={})", n.index, n.k),
         };
     }
+    if let Some(g) = any.downcast_ref::<crate::operators::graph::Graph>() {
+        // Seed COUNT, not the ids: an EntityId list is unbounded and belongs in
+        // a trace, not in a plan string that gets compared for equality. Before
+        // F14 `Graph` fell through to `<opaque>` here, which made every graph
+        // plan compare equal to every other one.
+        return format!("graph(seeds={},hops={})", g.seeds.len(), g.hops);
+    }
     if let Some(a) = any.downcast_ref::<AndRetriever>() {
         let (l, rr) = a.branches();
         return format!("and({},{})", plan_repr(l), plan_repr(rr));

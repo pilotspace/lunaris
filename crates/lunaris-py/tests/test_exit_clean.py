@@ -12,8 +12,12 @@ with `atexit` (which runs BEFORE those destructors), freeing every engine
 deterministically. This test red/greens the whole loop in a real
 subprocess: pre-fix wheels exit 134 here, post-fix wheels exit 0.
 
-Runs offline (sqlite `memory://` storage); skips when the granite GGUF is
-not staged (Tier-0 / no-inference environments).
+Skips when the granite GGUF is not staged (Tier-0 / no-inference
+environments) or when no Moon is reachable. It opened `memory://` until
+0.7.0 deleted the embedded SQLite backend; the URL now comes from the
+`moon_backend_url` fixture, because a hardcoded dead scheme made the worker
+fail at `open()` — BEFORE it ever reached the embed this test exists to
+measure — while still reporting as a plain assertion failure.
 """
 from __future__ import annotations
 
@@ -57,7 +61,7 @@ ep = {
 }
 
 async def main():
-    handle = await lunaris.open("memory://")
+    handle = await lunaris.open(MOON_URL)
     await handle.ingest(ep)
 
 asyncio.run(main())
@@ -66,10 +70,11 @@ print("MAIN-DONE", flush=True)
 
 
 @pytest.mark.skipif(not GGUF.exists(), reason="granite GGUF not staged")
-def test_worker_exits_cleanly_after_real_embed() -> None:
+def test_worker_exits_cleanly_after_real_embed(moon_backend_url: str) -> None:
     pytest.importorskip("ulid", reason="python-ulid not installed")
+    snippet = f"MOON_URL = {moon_backend_url!r}\n" + WORKER_SNIPPET
     proc = subprocess.run(
-        [sys.executable, "-c", WORKER_SNIPPET],
+        [sys.executable, "-c", snippet],
         capture_output=True,
         text=True,
         timeout=600,

@@ -100,16 +100,26 @@ describe("README TypeScript quickstart", () => {
     expect(chained._handle).toBe(handle);
   });
 
-  test("ESM: .query(text) reaches the collapsed plan", () => {
+  test("ESM: .query(text) reaches the marshalled plan", () => {
     const { RetrievalBuilder, Vector, _collapsePlan } = esm;
     const plan = _collapsePlan(
       new RetrievalBuilder().query("chocolate").top(3)._node,
     );
     expect(plan.query).toBe("chocolate");
-    expect(plan.k).toBe(3);
+    expect(plan.root).toEqual({
+      op: "top",
+      n: 3,
+      child: { op: "vector", index: "chunks", k: 30 },
+    });
 
-    // `.top(n)` is the OUTER operator; the leaf `k` must not overwrite it.
-    expect(_collapsePlan(Vector.new("chunks", 30).top(5)._node).k).toBe(5);
+    // `.top(n)` is the OUTER operator and stays outer. Pre-F14 the flat plan
+    // had one `k` for both, so `.top(5)` and the leg's `k=30` fought over it;
+    // now they are what the Rust DSL means — fetch 30 candidates, return 5.
+    expect(_collapsePlan(Vector.new("chunks", 30).top(5)._node).root).toEqual({
+      op: "top",
+      n: 5,
+      child: { op: "vector", index: "chunks", k: 30 },
+    });
 
     // Composes with every other combinator, in any order.
     const full = _collapsePlan(
@@ -121,45 +131,111 @@ describe("README TypeScript quickstart", () => {
     );
     expect(full).toMatchObject({
       query: "chocolate",
-      index: "chunks",
-      k: 4,
       filter: "source = 'quickstart'",
       as_of_ms: 1_000_000,
     });
+    expect(full.root).toEqual({
+      op: "top",
+      n: 4,
+      child: { op: "vector", index: "chunks", k: 30 },
+    });
   });
 
-  // Twin of `crates/lunaris-py/tests/test_query_dsl.py`'s three refusal tests.
-  // The collapsed plan holds ONE index and ONE k, so a plan that names more
-  // than one leg — or a leg the FFI has no field for — used to become a
-  // different query and return its results as if they answered the original.
-  test("ESM: a second retrieval leg is refused, not silently dropped", () => {
+  // Twin of `crates/lunaris-py/tests/test_dsl_parity.py`. Pre-F14 the plan
+  // held ONE index and ONE k, so a second leg overwrote the first and these
+  // tests asserted a REFUSAL. F14 carries the tree across the FFI, so they
+  // now assert the composition survives — with the operand order intact,
+  // which is what the single-leg collapse could not preserve.
+  test("ESM: a second retrieval leg is carried, not dropped", () => {
     const { Vector, Keyword, _collapsePlan } = esm;
-    // Measured before the refusal: this collapsed to {index: "facts", k: 5},
-    // and flipping the operands searched "chunks" instead — the index was
-    // decided by source order.
     const plan = Vector.new("chunks", 10)
       .and(Keyword.bm25("facts", 20))
       .fuseRrf(60)
       .top(5);
-    expect(() => _collapsePlan(plan._node)).toThrow(/2 retrieval legs/);
-    // Both legs must be named; an error mentioning one leaves the reader
-    // guessing which half of their plan was the problem.
-    expect(() => _collapsePlan(plan._node)).toThrow(/chunks/);
-    expect(() => _collapsePlan(plan._node)).toThrow(/facts/);
+    expect(_collapsePlan(plan._node).root).toEqual({
+      op: "top",
+      n: 5,
+      child: {
+        op: "fuse_rrf",
+        k: 60,
+        child: {
+          op: "and",
+          left: { op: "vector", index: "chunks", k: 10 },
+          right: { op: "keyword", index: "facts", k: 20 },
+        },
+      },
+    });
+
+    // Measured pre-F14: both operand orders collapsed to the SAME single-leg
+    // plan, so which index got searched was decided by source order with no
+    // diagnostic. The two orders must now build two different plans.
+    const flipped = Keyword.bm25("facts", 20).and(Vector.new("chunks", 10));
+    expect(_collapsePlan(flipped._node).root.left).toEqual({
+      op: "keyword",
+      index: "facts",
+      k: 20,
+    });
   });
 
-  test("ESM: an unsupported operator is refused, not silently dropped", () => {
+  test("ESM: a graph leg is carried, and a bare name is not an anchor", () => {
     const { Vector, Graph, _collapsePlan } = esm;
-    const plan = Vector.new("chunks", 30).and(Graph.anchored(["alice"], 2)).top(5);
-    expect(() => _collapsePlan(plan._node)).toThrow(/graph traversal/);
+    const plan = Vector.new("chunks", 30)
+      .and(Graph.anchored([["Alice", "Person"]], 2))
+      .top(5);
+    expect(_collapsePlan(plan._node).root.child.right).toEqual({
+      op: "graph",
+      seeds: [{ name: "Alice", type: "Person" }],
+      hops: 2,
+    });
+
+    // An EntityId is derived from (name, type). A bare name would need a
+    // guessed type, and the wrong type anchors on an entity that does not
+    // exist — which returns empty, exactly like a real absence of edges.
+    const bare = Vector.new("chunks", 30).and(Graph.anchored(["alice"], 2)).top(5);
+    expect(() => _collapsePlan(bare._node)).toThrow(/name.*type|type.*name/s);
+  });
+
+  test("ESM: the hex seed form accepts exactly what the Python twin accepts", () => {
+    // Twin of `test_the_hex_seed_form_accepts_exactly_what_the_typescript_twin_accepts`.
+    // Python's obvious check, `int(seed, 16)`, accepts underscores and leading
+    // whitespace; this regex does not, and the two SDKs must agree on the one
+    // documented spelling.
+    const { Graph, _collapsePlan } = esm;
+    const ok = "0123456789abcdef0123456789abcdef";
+    expect(_collapsePlan(Graph.anchored([ok], 1)._node).root.seeds).toEqual([ok]);
+
+    for (const bad of [
+      "0123456789abcdef0123456789abc_ef",
+      " 123456789abcdef0123456789abcdef",
+      "0123456789abcdef0123456789abcde",
+      "0123456789abcdef0123456789abcdefa",
+      "0123456789abcdef0123456789abcdeg",
+    ]) {
+      expect(() => _collapsePlan(Graph.anchored([bad], 1)._node)).toThrow();
+    }
+  });
+
+  test("ESM: an operator with no marshalling is refused, not silently dropped", () => {
+    // The DSL cannot build such a node today, so this reaches past the public
+    // surface to prove the fallthrough is a throw. Without it, adding a
+    // combinator to the DSL and forgetting the marshalling arm would silently
+    // drop the operator — the exact defect F14 removed.
+    const { _collapsePlan } = esm;
+    const rogue = { op: "raptor_descend", args: [3], children: [] };
+    expect(() => _collapsePlan(rogue)).toThrow(/raptor_descend/);
   });
 
   test("ESM: a no-op operator is not an error", () => {
     // The rule is "refuse what would change the plan", not "refuse anything
-    // the FFI lacks a field for". fuseRrf over a single leg fuses nothing.
+    // unusual". fuseRrf over a single leg fuses nothing, and a no-op is not
+    // a lie — it is carried through as written.
     const { Vector, _collapsePlan } = esm;
     const plan = _collapsePlan(Vector.new("chunks", 30).fuseRrf(60).top(5)._node);
-    expect(plan).toMatchObject({ index: "chunks", k: 5 });
+    expect(plan.root).toEqual({
+      op: "top",
+      n: 5,
+      child: { op: "fuse_rrf", k: 60, child: { op: "vector", index: "chunks", k: 30 } },
+    });
   });
 
   // -------------------------------------------------------------------------

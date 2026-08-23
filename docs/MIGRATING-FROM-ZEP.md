@@ -174,8 +174,8 @@ latency difference is meaningful.
 # from a specific entity programmatically without dropping to Neo4j.
 ```
 
-**Lunaris** — *Rust only today.* `Graph::anchored` composes into the operator
-tree and resolves to a native Moon graph query:
+**Lunaris** — `Graph::anchored` composes into the operator tree and resolves
+to a native Moon graph query:
 
 ```rust
 let hits = mem.scoped(scope)
@@ -184,15 +184,49 @@ let hits = mem.scoped(scope)
     .await?;
 ```
 
-> **The Python and TypeScript SDKs cannot run this yet.** Their `.execute()`
-> collapses the operator tree to a single `(index, k, query)` triple before
-> crossing the FFI, and a graph leg has no field in that shape. Earlier drafts
-> of this guide showed a `.recall().graph(...)` chain — no such method exists
-> on the Python builder, and composing `Graph.anchored(...)` in via `.and_()`
-> used to drop the traversal silently and hand back a plain vector recall. Both
-> SDKs now raise `NotImplementedError` / `Error` rather than answer a different
-> question; use the Rust API for graph traversal until the FFI carries the leg
-> (ship-plan F2).
+The same plan from Python — the SDK marshals the operator tree across the FFI
+and one Rust parser (`lunaris_retrieve::plan`) rebuilds it, so the tree you
+write is the tree that runs:
+
+```python
+from lunaris import Graph, Vector
+
+hits = await (
+    Graph.anchored([{"name": "Alice", "type": "Person"}], hops=2)
+    .and_(Vector("chunks", 30))
+    .top(10)
+    .query("who does Alice work with?")
+    .bind(handle)
+    .execute()
+)
+```
+
+and from TypeScript:
+
+```ts
+const hits = await Graph.anchored([["Alice", "Person"]], 2)
+  .and(Vector.new("chunks", 30))
+  .top(10)
+  .query("who does Alice work with?")
+  .bind(handle)
+  .execute();
+```
+
+> **Seeds need a type, not just a name.** An `EntityId` is derived from
+> `(name, type)` — the same "Alice" is a different anchor as a `Person` than as
+> a `Place` — so a bare `"alice"` is rejected rather than paired with a guessed
+> type. Guessing produces a well-formed id that matches nothing, and a
+> traversal anchored on nothing returns empty, which is indistinguishable from
+> a real absence of edges. Pass `{"name": …, "type": …}`, an `("Alice",
+> "Person")` pair, or the 32-char hex id the engine emitted.
+>
+> There is no `.recall().graph(...)` method on either builder; compose the leg
+> in with `.and_()` / `.and()` as shown. Before ship-plan **F14** these SDKs
+> collapsed the operator tree to a single `(index, k, query)` triple before
+> crossing the FFI, so a graph leg had nowhere to go — earlier releases dropped
+> it silently and returned a plain vector recall, and the release before this
+> one raised `NotImplementedError` / `Error` rather than answer a different
+> question.
 
 ### Forget
 
