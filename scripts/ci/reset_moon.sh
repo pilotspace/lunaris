@@ -60,21 +60,48 @@ for i in $(seq 1 30); do
 done
 
 # Prove the reset actually reset something. Without this the whole isolation
-# claim rests on a setup step, and a setup step is not evidence — the F28
-# audit spent two rounds analysing a store it had not created.
-if command -v redis-cli >/dev/null 2>&1; then
-  size="$(redis-cli -p "$PORT" DBSIZE 2>/dev/null || echo unknown)"
-  # Keyed on the SUCCESS marker: every successful FT.INFO reply carries
-  # `index_name`. The missing-index error has at least three spellings, and
-  # enumerating them is an open set.
-  info="$(redis-cli -p "$PORT" FT.INFO chunks 2>&1 || true)"
-  if echo "$info" | grep -q "index_name" || [ "$size" != "0" ]; then
-    echo "ERROR: Moon on $PORT is not empty after reset (DBSIZE=$size)."
-    echo "  FT.INFO chunks -> $(echo "$info" | head -1)"
-    echo "  A reset that leaves state behind defeats the isolation this script exists for."
-    exit 1
-  fi
-  echo "reset verified: DBSIZE=0, no chunks index"
-else
-  echo "WARNING: redis-cli absent — restart done but emptiness NOT verified"
+# claim rests on a setup step, and a setup step is not evidence — the F28 audit
+# spent two rounds analysing a store it had not created.
+#
+# Spoken over a raw socket, NOT via redis-cli. The first version of this script
+# guarded the check with `command -v redis-cli` and warned when absent; GitHub
+# runners have no redis-cli, so all six invocations skipped verification and the
+# job went green anyway. A check with a soft-fail escape hatch is the exact
+# defect this script exists to prevent, so there is no escape hatch now: if the
+# store cannot be proven empty, the step FAILS.
+probe() {
+  exec 3<>"/dev/tcp/localhost/$PORT" || return 1
+  printf 'DBSIZE\r\nFT.INFO chunks\r\n' >&3
+  local line out=""
+  while IFS= read -r -t 3 line <&3; do
+    out+="$line"$'\n'
+  done
+  exec 3<&- 2>/dev/null || true
+  exec 3>&- 2>/dev/null || true
+  printf '%s' "$out"
+}
+
+reply="$(probe)" || {
+  echo "ERROR: could not open a socket to Moon on $PORT to verify the reset"
+  exit 1
+}
+
+# DBSIZE answers with a RESP integer, `:0`.
+size_line="$(printf '%s' "$reply" | head -1 | tr -d '\r')"
+if [ "$size_line" != ":0" ]; then
+  echo "ERROR: Moon on $PORT is not empty after reset — DBSIZE replied '$size_line', wanted ':0'."
+  echo "  A reset that leaves state behind defeats the isolation this script exists for."
+  exit 1
 fi
+
+# FT.INFO on a missing index answers with a RESP error. Keyed on the SUCCESS
+# marker `index_name`, which every successful reply carries: Moon spells the
+# missing-index error at least three ways ("no such index", "Unknown index",
+# "Unknown Index name") and enumerating them is an open set.
+if printf '%s' "$reply" | grep -q "index_name"; then
+  echo "ERROR: the \`chunks\` FT index survived the reset on $PORT."
+  echo "  FLUSHALL leaves indices standing; only an empty --dir removes them."
+  exit 1
+fi
+
+echo "reset verified: DBSIZE=0, no chunks index"
