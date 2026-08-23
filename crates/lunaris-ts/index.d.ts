@@ -85,11 +85,9 @@ export declare class EmbedderConfig {
    *
    * `ggufPath` defaults to the staged artifact
    * `~/.lunaris/models/granite-embedding-311m-multilingual-r2.Q4_K_M.gguf`.
-   */
-  static llamacpp(opts?: LlamaCppConfigOpts | undefined | null): EmbedderConfig
-  /**
-   * Stub raising `InvalidArg` when the cdylib was built without the
-   * `llamacpp` feature (Tier-0 build).
+   *
+   * On a Tier-0 build (no `llamacpp` feature) this raises `InvalidArg`
+   * instead of loading a model.
    */
   static llamacpp(opts?: LlamaCppConfigOpts | undefined | null): EmbedderConfig
   /**
@@ -243,11 +241,9 @@ export declare class RerankerConfig {
    * `~/.lunaris/models/bge-reranker-v2-m3.Q5_K_M.gguf`. Loads eagerly and
    * raises on a missing/corrupt artifact (explicit construction = fail
    * fast; the umbrella's default resolution defers the load instead).
-   */
-  static llamacpp(opts?: LlamaCppRerankerConfigOpts | undefined | null): RerankerConfig
-  /**
-   * Stub raising `InvalidArg` when the cdylib was built without the
-   * `llamacpp` feature (Tier-0 build).
+   *
+   * On a Tier-0 build (no `llamacpp` feature) this raises `InvalidArg`
+   * instead of loading a model.
    */
   static llamacpp(opts?: LlamaCppRerankerConfigOpts | undefined | null): RerankerConfig
   /**
