@@ -78,7 +78,10 @@ pub async fn connect() -> Option<(Option<EphemeralMoon>, Arc<MoonStorage>)> {
     let moon = match EphemeralMoon::spawn().await {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("SKIP hybrid_filter: cannot spawn disposable Moon: {e:#}");
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "hybrid_filter: cannot spawn disposable Moon ({e:#}) \
+                 — set MOON_TEST_BINARY or build vendor/moon"
+            ));
             return None;
         }
     };

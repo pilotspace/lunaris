@@ -44,7 +44,16 @@ use ulid::Ulid;
 // ---------------------------------------------------------------------------
 
 fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
-    let url = url?;
+    // `url?` here used to return None with NO announcement, so the most common
+    // skip path of all — the variable simply not set — was invisible to BOTH
+    // the reader and `no_silent_skip_workspace.rs`, whose detection is keyed on
+    // prints. A skip that prints nothing cannot be found by looking for prints.
+    let Some(url) = url else {
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "phase_14_1: {name} (URL unset)"
+        ));
+        return None;
+    };
     let host_port = if let Some(rest) = url.strip_prefix("moon://") {
         rest.split('/').next()?.to_string()
     } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
@@ -53,24 +62,28 @@ fn probe_backend(name: &str, url: Option<String>) -> Option<String> {
         let bare = authority.rsplit('@').next()?;
         if bare.contains(':') { bare.to_string() } else { format!("{bare}:5432") }
     } else {
-        eprintln!("phase_14_1: SKIP {name} (unknown URL scheme)");
+        lunaris_test_harness::strict_skip::note_unavailable(format!(
+            "phase_14_1: {name} (unknown URL scheme)"
+        ));
         return None;
     };
     let timeout = Duration::from_secs(1);
     let addr = match host_port.to_socket_addrs().ok().and_then(|mut it| it.next()) {
         Some(a) => a,
         None => {
-            eprintln!("phase_14_1: SKIP {name} (DNS resolution of {host_port} failed)");
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "phase_14_1: {name} (DNS resolution of {host_port} failed)"
+            ));
             return None;
         }
     };
     match TcpStream::connect_timeout(&addr, timeout) {
         Ok(_) => Some(url),
         Err(_) => {
-            eprintln!(
-                "phase_14_1: SKIP {name} (TCP probe to {host_port} failed within {}ms)",
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "phase_14_1: {name} (TCP probe to {host_port} failed within {}ms)",
                 timeout.as_millis()
-            );
+            ));
             None
         }
     }

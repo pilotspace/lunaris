@@ -28,13 +28,15 @@ const DIM: usize = 768;
 
 async fn connect_or_skip() -> Option<MoonStorage> {
     let Ok(url) = std::env::var("MOON_URL") else {
-        eprintln!("MOON_URL unset; SKIP");
+        lunaris_test_harness::strict_skip::note_unavailable("MOON_URL unset");
         return None;
     };
     match MoonStorage::connect_with_dim(&url, DIM).await {
         Ok(s) => Some(s),
         Err(e) => {
-            eprintln!("MOON_URL not reachable ({e}); SKIP");
+            lunaris_test_harness::strict_skip::note_unavailable(format!(
+                "MOON_URL not reachable ({e})"
+            ));
             None
         }
     }
