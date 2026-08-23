@@ -1,10 +1,12 @@
 //! napi-rs 3.x emitter.
 //!
-//! Converts a [`SurfaceIR`] into the two artefacts Plan 08-03 will land at
-//! `crates/lunaris-ts/src/generated.rs` + `crates/lunaris-ts/generated.d.ts`
-//! (Wave 3 host crate doesn't exist yet — Plan 08-01 commits the snapshots
-//! at `crates/lunaris-codegen/snapshots/generated_ts.{rs,d.ts}` per revision
-//! 2).
+//! Converts a [`SurfaceIR`] into two artefacts, both committed under
+//! `crates/lunaris-codegen/snapshots/generated_ts.{rs,d.ts}`. The Rust glue is
+//! hand-copied to `crates/lunaris-ts/src/generated.rs`, which the host crate
+//! compiles; the `.d.ts` is NOT copied anywhere. It used to be duplicated at
+//! `crates/lunaris-ts/generated.d.ts`, where nothing consumed it and it drifted
+//! (F17) — that copy is deleted, and napi-rs generates the declarations the
+//! package actually ships (`crates/lunaris-ts/index.d.ts`).
 //!
 //! napi-rs 3.x handles the `Promise<T>` conversion for async fns natively;
 //! the emitter simply marks async methods with `#[napi]` and returns
@@ -658,6 +660,41 @@ fn rust_owned_ty_ts(ty: &IrTyRef) -> String {
     }
 }
 
+/// Lower-camel-case a Rust identifier, matching what napi-rs does to every
+/// method and parameter name it exports.
+///
+/// The `.d.ts` this module emits DECLARES the surface napi produces; it does
+/// not define it. napi renames `with_graph_pipeline` to `withGraphPipeline`
+/// before it reaches JavaScript, so a declaration that says
+/// `with_graph_pipeline` describes a method that does not exist (F17). The
+/// Rust glue keeps snake_case — that is napi's INPUT, and renaming it there
+/// would change the exported name.
+///
+/// Verified against `crates/lunaris-ts/index.d.ts`, napi's own output, for
+/// every name currently in the IR: `as_of`, `fuse_rrf`, `ingest_channel`,
+/// `ingest_chat`, `ingest_commit`, `ingest_ticket`, `with_graph_pipeline`,
+/// `with_user`, `source_prefix`.
+fn lower_camel(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut upper_next = false;
+    for (i, ch) in name.chars().enumerate() {
+        if ch == '_' {
+            // A leading underscore is part of the identifier, not a separator.
+            if i == 0 {
+                out.push(ch);
+            } else {
+                upper_next = true;
+            }
+        } else if upper_next {
+            out.extend(ch.to_uppercase());
+            upper_next = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn emit_ts_type_dts(out: &mut String, ty: &IrType) {
     if let Some(doc) = &ty.doc {
         writeln!(out, "/** {doc} */").unwrap();
@@ -682,14 +719,14 @@ fn emit_ts_method_dts(out: &mut String, m: &IrMethod) {
         .params
         .iter()
         .filter(|p| !matches!(p.ty, IrTyRef::Scope))
-        .map(|p| format!("{}: {}", p.name, ts_param_ty_dts(&p.ty)))
+        .map(|p| format!("{}: {}", lower_camel(&p.name), ts_param_ty_dts(&p.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let ret = match (&m.is_async, &m.returns.ty) {
         (IrAsync::Yes, _) => format!("Promise<{}>", ts_return_ty_dts(&m.returns.ty)),
         (IrAsync::No, ty) => ts_return_ty_dts(ty),
     };
-    writeln!(out, "{prefix}{name}({params}): {ret};", name = m.name).unwrap();
+    writeln!(out, "{prefix}{name}({params}): {ret};", name = lower_camel(&m.name)).unwrap();
 }
 
 fn format_params_rust(params: &[IrParam], _with_self: bool) -> String {

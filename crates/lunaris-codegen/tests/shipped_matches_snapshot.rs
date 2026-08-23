@@ -5,9 +5,8 @@
 //! `lunaris-codegen --emit` writes only to `crates/lunaris-codegen/snapshots/`,
 //! and `--check` diffs only those same three paths ([`codegen_managed_paths`]).
 //! The files the SDKs actually build against —
-//! `crates/lunaris-ts/src/generated.rs`, `crates/lunaris-py/src/generated.rs`,
-//! `crates/lunaris-ts/generated.d.ts` — are copied across BY HAND, and until
-//! this file nothing compared them.
+//! `crates/lunaris-ts/src/generated.rs` and `crates/lunaris-py/src/generated.rs`
+//! — are copied across BY HAND, and until this file nothing compared them.
 //!
 //! So a contributor who edits the emitter, regenerates, and forgets the copy
 //! gets a green `parity-check` over an SDK still containing the old code. The
@@ -40,8 +39,14 @@ const RUST_PAIRS: &[(&str, &str)] = &[
     ("crates/lunaris-py/src/generated.rs", "crates/lunaris-codegen/snapshots/generated_py.rs"),
 ];
 
-const TEXT_PAIRS: &[(&str, &str)] =
-    &[("crates/lunaris-ts/generated.d.ts", "crates/lunaris-codegen/snapshots/generated_ts.d.ts")];
+// There is no TEXT_PAIRS list. `crates/lunaris-ts/generated.d.ts` used to be a
+// hand-copy of the `.d.ts` snapshot and was the third pair here; it was deleted
+// with F17 because nothing consumed it — absent from `tsconfig.json`'s
+// `include` and from `package.json`'s `files`, so neither type-checked nor
+// published, while declaring a snake_case surface the runtime does not expose.
+// The `.d.ts` snapshot is now pinned against napi's own `index.d.ts` by
+// `dts_matches_napi_naming.rs`, which checks something a copy-compare cannot:
+// that the declared names EXIST.
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,10 +69,6 @@ fn normalize_rust(src: &str, what: &str) -> String {
     prettyplease::unparse(&file)
 }
 
-fn normalize_text(src: &str) -> String {
-    src.replace("\r\n", "\n").lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
-}
-
 #[test]
 fn every_shipped_rust_file_means_the_same_as_its_snapshot() {
     let root = workspace_root();
@@ -83,19 +84,6 @@ fn every_shipped_rust_file_means_the_same_as_its_snapshot() {
              shipped path (and rustfmt it) in the same commit that regenerates it.\n\n\
              This is NOT a whitespace complaint — both sides were re-printed through \
              prettyplease before comparing, so a difference here is a difference in meaning."
-        );
-    }
-}
-
-#[test]
-fn every_shipped_text_file_matches_its_snapshot() {
-    let root = workspace_root();
-    for (shipped, snapshot) in TEXT_PAIRS {
-        assert_eq!(
-            normalize_text(&read(&root, shipped)),
-            normalize_text(&read(&root, snapshot)),
-            "{shipped} and {snapshot} differ. Same reason as the Rust pair: `--check` never \
-             looked at the shipped copy."
         );
     }
 }

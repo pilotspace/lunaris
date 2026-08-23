@@ -33,7 +33,7 @@ export class Keyword {
 /** Graph-traversal DSL operator; anchors on a set of entity ids and expands N hops. */
 export class Graph {
   /** Anchor on `entity_ids` and traverse up to `hops` edges out in the Lunaris graph. */
-  static anchored(entity_ids: Array<EntityId>, hops: number): this;
+  static anchored(entityIds: Array<EntityId>, hops: number): this;
 }
 
 /** Chainable retrieval plan builder. Terminal .execute() runs the plan through the hydrate stage. */
@@ -41,13 +41,13 @@ export class RetrievalBuilder {
   /** Compose `other` in parallel with the current plan; unions the result set. */
   and(other: RetrievalBuilder): this;
   /** Fuse two parallel branches via reciprocal-rank fusion (client-side or Moon-native depending on capabilities). */
-  fuse_rrf(k: number): this;
+  fuseRrf(k: number): this;
   /** Keep only the top `n` hits after fusion. */
   top(n: number): this;
   /** Attach a filter predicate (parsed via filter_str) to the query; fails on a malformed predicate string. */
   filter(pred: string): this;
   /** Pin the query to an as-of-HLC time-travel view (SQL:2011 bi-temporal read). */
-  as_of(hlc: Hlc): this;
+  asOf(hlc: Hlc): this;
 }
 
 /** Runtime toggle for the graph-extraction pipeline (default OFF per blueprint §5.2). The toggle method is the canonical single-item entry in the binding surface. */
@@ -65,7 +65,7 @@ export class ConsolidatorPipelineHandle {
 /** Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair. */
 export class ChatAgentMemory {
   /** Construct a ChatAgentMemory bound to `user_id`. */
-  static new(lunaris: Lunaris, user_id: string): this;
+  static new(lunaris: Lunaris, userId: string): this;
   /** Record a single conversational turn. */
   remember(turn: string): Promise<string>;
   /** Recall turns matching `query`. */
@@ -75,9 +75,9 @@ export class ChatAgentMemory {
 /** Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass. */
 export class MultiTurnConversation {
   /** Construct bound to `user_id`. */
-  static new(lunaris: Lunaris, user_id: string): this;
+  static new(lunaris: Lunaris, userId: string): this;
   /** Record a turn for `thread_id` (session id). */
-  remember(turn: string, thread_id: string): Promise<string>;
+  remember(turn: string, threadId: string): Promise<string>;
   /** Recall turns matching `query` across all sessions. */
   recall(query: string): Promise<Array<Hit>>;
   /** Run one scope-filtered consolidation pass (Phase 9.1 cross-user isolation). */
@@ -89,7 +89,7 @@ export class SlackArchive {
   /** Construct a root archive handle. */
   static new(lunaris: Lunaris): this;
   /** Ingest one message into `channel` authored by `participant_id`. */
-  ingest_channel(channel: string, participant_id: string, message: string): Promise<string>;
+  ingestChannel(channel: string, participantId: string, message: string): Promise<string>;
   /** Recall across the whole archive. */
   recall(query: string): Promise<Array<Hit>>;
   /** Narrow to one channel. Returns a SlackArchiveQuery. */
@@ -101,7 +101,7 @@ export class SlackArchive {
 /** Narrowed query builder returned by SlackArchive::channel / SlackArchive::user. */
 export class SlackArchiveQuery {
   /** Add a `user` narrow on top of a `.channel(...)` narrow. */
-  with_user(id: string): this;
+  withUser(id: string): this;
   /** Execute the narrowed recall. */
   recall(query: string): Promise<Array<Hit>>;
 }
@@ -111,13 +111,13 @@ export class EmailThreading {
   /** Construct a new email-archive handle rooted at `email:thread/`. */
   static new(lunaris: Lunaris): this;
   /** Ingest one email into `root_id`'s thread, authored by `from`. */
-  ingest(root_id: string, from: string, body: string): Promise<string>;
+  ingest(rootId: string, from: string, body: string): Promise<string>;
   /** Narrow to one thread `root_id`. Returns a new EmailThreading. */
-  thread(root_id: string): this;
+  thread(rootId: string): this;
   /** Recall across the current scope. */
   recall(query: string): Promise<Array<Hit>>;
   /** Opt-in the v0.1.0 graph pipeline (blueprint §5.2 graph-default-off preserved when enable=false). */
-  with_graph_pipeline(enable: boolean): this;
+  withGraphPipeline(enable: boolean): this;
 }
 
 /** Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder. */
@@ -131,7 +131,7 @@ export class MeetingNotesMemory {
   /** Narrow to notes attributed to `attendees`. Returns a MeetingNotesQuery. */
   attendees(attendees: StrList): MeetingNotesQuery;
   /** Opt-in the v0.1.0 graph pipeline (blueprint §5.2). */
-  with_graph_pipeline(enable: boolean): this;
+  withGraphPipeline(enable: boolean): this;
 }
 
 /** Narrowed query builder returned by MeetingNotesMemory::attendees. */
@@ -143,7 +143,7 @@ export class MeetingNotesQuery {
 /** Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`. */
 export class DocumentKnowledgeBase {
   /** Construct a knowledge base bound to `source_prefix`. */
-  static new(lunaris: Lunaris, source_prefix: string): this;
+  static new(lunaris: Lunaris, sourcePrefix: string): this;
   /** Ingest chunked `(content, metadata)` pairs. */
   ingest(chunks: DocumentChunks): Promise<void>;
   /** Add an equality filter on a metadata field. */
@@ -157,9 +157,9 @@ export class DocumentKnowledgeBase {
 /** Research-paper corpus wrapper with opt-in citation graph. */
 export class ResearchPaperCorpus {
   /** Construct bound to `source_prefix`. */
-  static new(lunaris: Lunaris, source_prefix: string): this;
+  static new(lunaris: Lunaris, sourcePrefix: string): this;
   /** Opt-in the citation graph (blueprint §5.2 graph-default-off). */
-  with_graph_pipeline(on: boolean): this;
+  withGraphPipeline(on: boolean): this;
   /** Ingest chunked `(content, metadata)` pairs. */
   ingest(chunks: DocumentChunks): Promise<void>;
   /** Execute the RRF-fused recall. */
@@ -169,23 +169,23 @@ export class ResearchPaperCorpus {
 /** Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies. */
 export class CodeRepoMemory {
   /** Construct bound to `repo_prefix`. */
-  static new(lunaris: Lunaris, repo_prefix: string): this;
+  static new(lunaris: Lunaris, repoPrefix: string): this;
   /** Ingest one commit as a batch of `(function_body, metadata)` chunks. */
-  ingest_commit(commit_sha: string, committer_date_unix_ms: UnixMs, chunks: DocumentChunks): Promise<void>;
+  ingestCommit(commitSha: string, committerDateUnixMs: UnixMs, chunks: DocumentChunks): Promise<void>;
   /** Recall at point-in-time `as_of`. */
-  recall(query: string, as_of: Hlc): Promise<Array<Hit>>;
+  recall(query: string, asOf: Hlc): Promise<Array<Hit>>;
 }
 
 /** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>. */
 export class TimelineReconstruction {
   /** Construct bound to `source_prefix`. */
-  static new(lunaris: Lunaris, source_prefix: string): this;
+  static new(lunaris: Lunaris, sourcePrefix: string): this;
   /** Ingest timeline events as chunked `(content, metadata)` pairs. */
   ingest(events: DocumentChunks): Promise<void>;
   /** Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics). */
   between(query: string, lo: Hlc, hi: Hlc): Promise<Array<Hit>>;
   /** Recall the snapshot at `ts`. */
-  as_of(query: string, ts: Hlc): Promise<Array<Hit>>;
+  asOf(query: string, ts: Hlc): Promise<Array<Hit>>;
 }
 
 /** Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream. */
@@ -193,11 +193,11 @@ export class CustomerSupportHistory {
   /** Construct with hard-coded source prefixes `ticket:` and `chat:`. */
   static new(lunaris: Lunaris): this;
   /** Opt-in the product/customer relationship graph (blueprint §5.2). */
-  with_graph_pipeline(on: boolean): this;
+  withGraphPipeline(on: boolean): this;
   /** Ingest one ticket body. `ticket_id` is stamped into metadata. */
-  ingest_ticket(ticket_id: string, body: string): Promise<void>;
+  ingestTicket(ticketId: string, body: string): Promise<void>;
   /** Ingest one chat-turn. `ticket_id/turn_idx` slug lands in the MessageStream thread_id. */
-  ingest_chat(ticket_id: string, turn_idx: number, participant: string, msg: string): Promise<string>;
+  ingestChat(ticketId: string, turnIdx: number, participant: string, msg: string): Promise<string>;
   /** Recall from both buckets; RRF fusion happens within each primitive's own bucket. */
   recall(query: string): Promise<Array<Hit>>;
 }
