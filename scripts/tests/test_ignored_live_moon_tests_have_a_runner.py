@@ -94,7 +94,22 @@ def ignore_sites():
 
 
 def workflow_text() -> str:
-    return "\n".join(p.read_text() for p in sorted(WORKFLOWS.glob("*.yml")))
+    """Workflow YAML with comment lines removed.
+
+    Not optional. The `lunaris-storage-moon` step's own comment block explains
+    what `--include-ignored` is for, so a scan of the raw text finds the flag in
+    PROSE and counts the step as a runner even after the real flag is deleted.
+    Caught by mutation: removing the flag from that step left this guard green.
+
+    Comment lines are dropped both for YAML (`#` at the start of a line) and for
+    the shell inside `run:` blocks, which use the same marker."""
+    out = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for line in path.read_text().splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            out.append(line)
+    return "\n".join(out)
 
 
 def steps_that_include_ignored() -> set[str]:
