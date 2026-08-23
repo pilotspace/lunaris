@@ -35,13 +35,35 @@ use crate::{DocumentCorpus, Documents, TemporalQuery};
 pub struct TimelineReconstruction {
     lunaris: Arc<Lunaris>,
     corpus: DocumentCorpus,
+    /// Kept alongside the corpus because the temporal read path cannot reach
+    /// the corpus's own copy. See [`TimelineReconstruction::scoped`].
+    source_prefix: String,
 }
 
 impl TimelineReconstruction {
     /// Construct bound to `source_prefix` (e.g. `"timeline:events/"`).
     pub fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self {
-        let corpus = DocumentCorpus::new(lunaris.clone(), scope, source_prefix);
-        Self { lunaris, corpus }
+        let source_prefix = source_prefix.into();
+        let corpus = DocumentCorpus::new(lunaris.clone(), scope, source_prefix.clone());
+        Self { lunaris, corpus, source_prefix }
+    }
+
+    /// Restrict hits to this timeline's own `source_prefix`.
+    ///
+    /// `TemporalQuery` carries no prefix and no scope — it recalls across the
+    /// whole store — so without this every timeline in a scope answers every
+    /// other timeline's query (F30). Mirrors `DocumentCorpus::search`, which
+    /// post-filters on `Hit.source` for the same reason: `source` is not a
+    /// field on Moon's `chunks` FT schema, so the filter cannot be pushed into
+    /// the `StoragePort`.
+    ///
+    /// Post-filtering shrinks the result set without a matching over-fetch,
+    /// because `TemporalQuery` exposes no `top_k`. A window crowded with other
+    /// timelines can therefore return fewer than the backend's default `k`
+    /// rows. That is a smaller error than returning another timeline's events
+    /// as if they were yours, and it is visible rather than silently wrong.
+    fn scoped(&self, hits: Vec<Hit>) -> Vec<Hit> {
+        hits.into_iter().filter(|h| h.source.starts_with(&self.source_prefix)).collect()
     }
 
     /// Ingest timeline events as chunked `(content, metadata)` pairs.
@@ -56,13 +78,19 @@ impl TimelineReconstruction {
     /// Recall all events in `[lo, hi)` (lower inclusive, upper exclusive).
     /// 2 primitive calls: `TemporalQuery::<Documents>::new` + `.between().execute()`.
     pub async fn between(&self, query: &str, lo: Hlc, hi: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone()).between(lo, hi).execute(query).await
+        let hits = TemporalQuery::<Documents>::new(self.lunaris.clone())
+            .between(lo, hi)
+            .execute(query)
+            .await?;
+        Ok(self.scoped(hits))
     }
 
     /// Recall the snapshot at `ts`. 2 primitive calls:
     /// `TemporalQuery::<Documents>::new` + `.as_of(ts).execute()`.
     pub async fn as_of(&self, query: &str, ts: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(ts).execute(query).await
+        let hits =
+            TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(ts).execute(query).await?;
+        Ok(self.scoped(hits))
     }
 }
 
