@@ -46,6 +46,7 @@ import re
 import stat
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,93 +80,144 @@ def tracked_files() -> list[Path]:
     return files
 
 
-def test_installer_exists_and_is_executable() -> None:
-    assert INSTALLER.is_file(), (
-        f"{INSTALLER.relative_to(ROOT)} is missing. Lunaris is Moon-only, so the "
-        "install path for Moon is part of Lunaris' own install story."
-    )
-    mode = INSTALLER.stat().st_mode
-    assert mode & stat.S_IXUSR, (
-        f"{INSTALLER.relative_to(ROOT)} is not executable. It is documented as a "
-        "`curl … | sh` target, but a checkout user runs it directly."
-    )
+class MoonInstallPath(unittest.TestCase):
+    def test_installer_exists_and_is_executable(self) -> None:
+        assert INSTALLER.is_file(), (
+            f"{INSTALLER.relative_to(ROOT)} is missing. Lunaris is Moon-only, so the "
+            "install path for Moon is part of Lunaris' own install story."
+        )
+        mode = INSTALLER.stat().st_mode
+        assert mode & stat.S_IXUSR, (
+            f"{INSTALLER.relative_to(ROOT)} is not executable. It is documented as a "
+            "`curl … | sh` target, but a checkout user runs it directly."
+        )
+
+    def test_installer_is_a_ladder_not_a_single_download(self) -> None:
+        """A single strategy is exactly what broke. Require a real fallback.
+
+        Without this, the installer could be 'fixed' by swapping one dead URL
+        for another and the version-parity test below would still pass.
+        """
+        body = INSTALLER.read_text()
+        for rung, needle in (
+            ("reuse an existing Moon", "find_existing_moon"),
+            ("published tarball fast path", "try_prebuilt"),
+            ("source build fallback", "build_from_source"),
+        ):
+            assert needle in body, f"install-moon.sh has no {rung} rung (`{needle}`)"
+
+        # `cargo install --git` is the obvious form and it CANNOT work: cargo
+        # initialises submodules, and Moon's .gitmodules points .planning at a
+        # private scp-style URL cargo cannot parse. Regressing to it would break
+        # every anonymous install while still looking correct in review.
+        #
+        # Match on CODE, not on the file's own prose. The installer documents this
+        # trap in a comment block, and a raw substring scan reports that comment as
+        # the defect it warns about — the check would fail on a correct file and be
+        # 'fixed' by deleting the explanation.
+        code = "\n".join(
+            line for line in body.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert "cargo install --git" not in code, (
+            "install-moon.sh uses `cargo install --git`, which fails for every "
+            "anonymous user: cargo initialises Moon's `.planning` submodule, whose "
+            "URL is `git@github.com:pilotspace/moon-docs.git` (private, scp-style) "
+            "and cargo rejects it with 'relative URL without a base'. Clone with "
+            "--depth 1 --branch <tag> and `cargo install --path` instead."
+        )
+
+    def test_installer_pins_the_version_the_engine_requires(self) -> None:
+        m = re.search(
+            r"MIN_MOON_VERSION\s*:\s*MoonVersion\s*=\s*MoonVersion\s*\{\s*"
+            r"major:\s*(\d+),\s*minor:\s*(\d+),\s*patch:\s*(\d+)",
+            VERSION_RS.read_text(),
+        )
+        assert m, f"could not parse MIN_MOON_VERSION out of {VERSION_RS.relative_to(ROOT)}"
+        engine = ".".join(m.groups())
+
+        im = re.search(r'^MIN_MOON_VERSION="([^"]+)"', INSTALLER.read_text(), re.M)
+        assert im, "install-moon.sh does not define MIN_MOON_VERSION"
+        installer = im.group(1)
+
+        assert installer == engine, (
+            f"install-moon.sh pins Moon {installer} but the engine refuses anything "
+            f"below {engine} at connect ({VERSION_RS.relative_to(ROOT)}). The install "
+            "would appear to succeed and then fail inside an agent session."
+        )
+
+    def test_no_surface_routes_users_to_the_dead_oneliner(self) -> None:
+        offenders: list[str] = []
+        for path in tracked_files():
+            if path == INSTALLER or path.name == Path(__file__).name:
+                continue  # both quote it to explain why it is wrong
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if DEAD_ONELINER.search(line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{i}")
+
+        assert not offenders, (
+            "these surfaces still tell users to run Moon's own installer, which "
+            "resolves to the latest tag and 404s (v0.8.5/6/7 all ship 0 assets):\n  "
+            + "\n  ".join(offenders)
+            + "\n\nRoute them to `scripts/install-moon.sh` instead."
+        )
 
 
-def test_installer_is_a_ladder_not_a_single_download() -> None:
-    """A single strategy is exactly what broke. Require a real fallback.
+    def test_nothing_asks_the_moon_binary_for_its_version(self) -> None:
+        """`moon --version` does not exist. Nothing may call it.
 
-    Without this, the installer could be 'fixed' by swapping one dead URL
-    for another and the version-parity test below would still pass.
-    """
-    body = INSTALLER.read_text()
-    for rung, needle in (
-        ("reuse an existing Moon", "find_existing_moon"),
-        ("published tarball fast path", "try_prebuilt"),
-        ("source build fallback", "build_from_source"),
-    ):
-        assert needle in body, f"install-moon.sh has no {rung} rung (`{needle}`)"
+        This test exists because the bug it prevents already happened. The
+        installer was written against `moon --version`, which is REJECTED
+        ("unexpected argument") — the version is not in `strings` either, and
+        the only surface is `INFO server`, which needs a running server. I
+        fixed the installer and left the identical call in the CI workflow it
+        was copied from; the install then succeeded on both platforms and
+        failed at the verify step.
 
-    # `cargo install --git` is the obvious form and it CANNOT work: cargo
-    # initialises submodules, and Moon's .gitmodules points .planning at a
-    # private scp-style URL cargo cannot parse. Regressing to it would break
-    # every anonymous install while still looking correct in review.
-    #
-    # Match on CODE, not on the file's own prose. The installer documents this
-    # trap in a comment block, and a raw substring scan reports that comment as
-    # the defect it warns about — the check would fail on a correct file and be
-    # 'fixed' by deleting the explanation.
-    code = "\n".join(
-        line for line in body.splitlines() if not line.lstrip().startswith("#")
-    )
-    assert "cargo install --git" not in code, (
-        "install-moon.sh uses `cargo install --git`, which fails for every "
-        "anonymous user: cargo initialises Moon's `.planning` submodule, whose "
-        "URL is `git@github.com:pilotspace/moon-docs.git` (private, scp-style) "
-        "and cargo rejects it with 'relative URL without a base'. Clone with "
-        "--depth 1 --branch <tag> and `cargo install --path` instead."
-    )
+        A per-copy fix leaves the next copy. This keys on the decision — never
+        interrogate the binary for a version — rather than on one file.
+        """
+        # A call, not prose. Comments legitimately name the trap to explain it.
+        call = re.compile(r"""(?<!\w)(moon|\$bin|"\$bin"|\$\{?bin\}?)["']?\s+(--version|-V)(?!\w)""")
+        offenders: list[str] = []
+        for path in tracked_files():
+            if path.name == Path(__file__).name:
+                continue
+            comment = "//" if path.suffix == ".rs" else "#"
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            # In Markdown, only a FENCED command is an instruction. Prose that
+            # names the trap in order to explain it is exactly what this guard
+            # wants people to write, and flagging it would push them to delete
+            # the explanation.
+            md = path.suffix == ".md"
+            fenced = not md
+            for i, line in enumerate(text.splitlines(), 1):
+                if md and line.lstrip().startswith("```"):
+                    fenced = not fenced
+                    continue
+                if not fenced:
+                    continue
+                stripped = line.lstrip()
+                if stripped.startswith(comment) or stripped.startswith("//!"):
+                    continue
+                if call.search(line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{i}")
 
-
-def test_installer_pins_the_version_the_engine_requires() -> None:
-    m = re.search(
-        r"MIN_MOON_VERSION\s*:\s*MoonVersion\s*=\s*MoonVersion\s*\{\s*"
-        r"major:\s*(\d+),\s*minor:\s*(\d+),\s*patch:\s*(\d+)",
-        VERSION_RS.read_text(),
-    )
-    assert m, f"could not parse MIN_MOON_VERSION out of {VERSION_RS.relative_to(ROOT)}"
-    engine = ".".join(m.groups())
-
-    im = re.search(r'^MIN_MOON_VERSION="([^"]+)"', INSTALLER.read_text(), re.M)
-    assert im, "install-moon.sh does not define MIN_MOON_VERSION"
-    installer = im.group(1)
-
-    assert installer == engine, (
-        f"install-moon.sh pins Moon {installer} but the engine refuses anything "
-        f"below {engine} at connect ({VERSION_RS.relative_to(ROOT)}). The install "
-        "would appear to succeed and then fail inside an agent session."
-    )
-
-
-def test_no_surface_routes_users_to_the_dead_oneliner() -> None:
-    offenders: list[str] = []
-    for path in tracked_files():
-        if path == INSTALLER or path.name == Path(__file__).name:
-            continue  # both quote it to explain why it is wrong
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for i, line in enumerate(text.splitlines(), 1):
-            if DEAD_ONELINER.search(line):
-                offenders.append(f"{path.relative_to(ROOT)}:{i}")
-
-    assert not offenders, (
-        "these surfaces still tell users to run Moon's own installer, which "
-        "resolves to the latest tag and 404s (v0.8.5/6/7 all ship 0 assets):\n  "
-        + "\n  ".join(offenders)
-        + "\n\nRoute them to `scripts/install-moon.sh` instead."
-    )
+        assert not offenders, (
+            "these call `moon --version`, which the Moon binary REJECTS — it has "
+            "no version flag at all:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nRead the `.moon-version` marker install-moon.sh writes, or "
+            "`INFO server | grep moon_version` against a RUNNING Moon. Use "
+            "`moon --help` (exit 0, binds nothing) only as a liveness check."
+        )
 
 
 if __name__ == "__main__":
-    sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", __file__]))
+    unittest.main(verbosity=2)

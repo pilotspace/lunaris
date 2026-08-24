@@ -97,8 +97,30 @@ jobs:
                  "clone or build broke — see scripts/install-moon.sh."
             exit 1
           fi
-          got=$("$bin" --version | head -n1 | tr ' ' '\n' \
-                | grep -m1 '^v\?[0-9][0-9.]*' | sed -e 's/^v//' -e 's/-.*$//')
+
+          # The Moon binary has NO version flag: `--version` and `-V` are both
+          # rejected ("unexpected argument"), and the version is not in
+          # `strings` -- the only surface is `INFO server`, which needs a
+          # RUNNING server this job must never start. An earlier revision of
+          # this step asked for `--version` (inherited from the smoke job it
+          # replaced) and failed on both platforms AFTER a successful install.
+          #
+          # So: prove the binary executes, then read the version from the
+          # marker the installer wrote.
+          if ! "$bin" --help >/dev/null 2>&1; then
+            echo "::error::${bin} exists but does not execute (\`moon --help\` failed)."\
+                 "Likely a truncated download or a wrong-architecture binary."
+            exit 1
+          fi
+
+          marker="${INSTALL_DIR}/.moon-version"
+          if [ ! -r "$marker" ]; then
+            echo "::error::install-moon.sh wrote no ${marker}. Without it a later"\
+                 "run cannot tell what this binary is and will treat it as"\
+                 "unverified, so the no-op check below would rebuild."
+            exit 1
+          fi
+          got=$(head -n1 "$marker" | sed -e 's/^v//' -e 's/-.*$//')
           echo "installed moon: ${got} (require >= ${MIN})"
           lowest=$(printf '%s\n%s\n' "$MIN" "$got" \
                    | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)
