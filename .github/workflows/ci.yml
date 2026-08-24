@@ -87,6 +87,17 @@ jobs:
           set -euo pipefail
           cargo test -p lunaris-llm --features cloud-api --test openai_compat_fake_server
           cargo test -p lunaris-memory --features cloud-api --test remote_llm_wired
+
+      # `summarizer.rs`'s `llm_faux` mod sits behind `llm-summarizer`, which no
+      # `cargo test` enabled — so `cargo test --workspace` ran 3 of the file's 5
+      # tests and reported green for all of it. The two it skipped drive
+      # `LlmSummarizer` over `lunaris_llm::faux::FauxBackend`: in-process, no
+      # network, no key, 0.00s. Nothing about them needed parking; the feature
+      # existed to keep `lunaris-llm` off the default dependency graph, and the
+      # test coverage went with it by accident.
+      - name: Run the llm-summarizer tests
+        run: cargo test -p lunaris-ingest --features llm-summarizer --test summarizer
+
       - run: cargo doc --workspace --no-deps
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
       # features on every PR. Production wheels / .node binaries are

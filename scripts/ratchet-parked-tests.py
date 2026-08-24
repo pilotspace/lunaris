@@ -10,8 +10,19 @@ That is blind two ways, and both blind spots were occupied:
     enabled by no workflow, so it was the least-covered test in the repo
     while the ratchet reported a matching count.
   * `*/tests/*` skips `src/`, where `#[cfg(test)]` unit tests live.
+
+A THIRD mechanism parks tests without `#[ignore]` at all: a Cargo feature that
+no workflow enables. `crash_recovery.rs` sat behind `chaos-it` that way, with a
+placeholder test standing in for the real file, so `cargo test --workspace`
+printed a green `1 passed` for a suite it had not compiled. Neither this
+ratchet nor the manifest could see it. `scripts/_featgate.py` computes that
+coverage from the workflows and reports here, against the same manifest — one
+inventory, whatever the mechanism.
 """
 import re, sys, pathlib
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _featgate
 
 def uncommented(src):
     """Blank out // and /* */ comments, preserving line count."""
@@ -92,6 +103,7 @@ if __name__ == '__main__':
     manifest = read_manifest(manifest_path)
 
     found = sites()
+    gated, gate_covered, unknown_preds = _featgate.scan()
     rc = 0
     keys = []
     print(f'parked tests in crates/: {len(found)}')
@@ -109,6 +121,29 @@ if __name__ == '__main__':
                   'Add a line saying which job un-parks it (RUN_BY) or that none does '
                   '(NEVER_RUN) — a parked test nobody runs is not coverage.')
             rc = 1
+
+    print(f'feature-gated test sites: {gate_covered + len(gated)} — '
+          f'{gate_covered} reachable from a workflow, {len(gated)} not')
+    for key, kind, attr, ln in gated:
+        status = manifest.get(key, ('UNLISTED', ''))[0]
+        print(f'  [{status:9}] {key}  (L{ln})  {attr}')
+        keys.append(key)
+        if key not in manifest:
+            print(f'::error::{key} is gated on a Cargo feature that NO `cargo test` '
+                  f'in .github/workflows/ enables ({attr}), so it is compiled out '
+                  f'everywhere and asserts nothing. Add it to {manifest_path} — '
+                  'RUN_BY once a job enables the feature, NEVER_RUN with the reason '
+                  'nothing can.')
+            rc = 1
+
+    # An unrecognised cfg predicate is assumed TRUE, which makes a gate look
+    # reachable. Say so out loud rather than let the assumption pass as a result.
+    if unknown_preds:
+        print(f'::error::unrecognised cfg predicates {unknown_preds} were assumed '
+              'true when deciding reachability. Add them to _featgate.KNOWN with '
+              "the value CI actually has — a coverage claim resting on a guess is "
+              'the defect this script exists to find.')
+        rc = 1
 
     for key in manifest:
         if key not in keys:

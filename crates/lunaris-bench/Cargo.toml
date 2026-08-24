@@ -96,8 +96,14 @@ proptest           = { workspace = true }
 [features]
 # Gate the live budget-assertion test behind a feature so the default
 # `cargo test --workspace` skips it (it has no value without Criterion
-# data on disk). CI runs `cargo test -p lunaris-bench --features budget-it`
-# AFTER `cargo bench` populates `target/criterion/`.
+# data on disk).
+#
+# NO workflow enables this feature. The line here used to claim "CI runs
+# `cargo test -p lunaris-bench --features budget-it` AFTER `cargo bench`
+# populates `target/criterion/`" — it does not, and never has. Recorded in
+# ci/parked-tests.txt and tracked as ship-plan W4.9. A comment asserting
+# coverage that does not exist is worse than no comment: it is the reason
+# nobody went looking.
 default = []
 budget-it = []
 # N-04 D4 — release-binary-size CI gate. Off by default so plain
