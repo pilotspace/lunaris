@@ -28,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import uuid
 import subprocess
 import sys
 import threading
@@ -310,6 +311,18 @@ def stub_embedder():
                 os.environ["LUNARIS_EMBEDDER_OPENAI_URL"] = prev
 
 
+def _episode_in(scope: str, content: str) -> dict:
+    """`_episode` with a caller-chosen partition key.
+
+    W4.12's test needs a FOREIGN row present to prove the read is partitioned;
+    a row only in the scope under test cannot distinguish isolation from an
+    empty store.
+    """
+    ep = _episode(content)
+    ep["scope"] = scope
+    return ep
+
+
 def _episode(content: str) -> dict:
     import ulid
 
@@ -451,3 +464,68 @@ async def test_handle_recall_returns_the_working_builder(moon_backend_url: str) 
     with pytest.raises(NotImplementedError) as exc:
         frozen.top(5)
     assert "lunaris.dsl" in str(exc.value)
+
+
+# W4.12 — a DSL query must be bindable to a partition.
+#
+# `handle.recall()` hands out the working `lunaris.dsl.RetrievalBuilder`
+# (`_attach_recall_shim`), but `handle.scoped(s).dsl()` returns the
+# codegen-frozen NATIVE builder instead, whose whole surface is
+# `['and', 'as_of', 'filter', 'fuse_rrf', 'top']` — no terminal op at all. So
+# the only scope-bound DSL entry point in the SDK cannot be executed, and
+# `dsl.py` has no scope support by any other route either. For a product whose
+# core claim includes multi-agent isolation, that is a hole in the public
+# surface.
+#
+# The control below is the point of the test, not ceremony: it proves the
+# fixture partitions rows at all, so a failure downstream is the DSL path and
+# not the ingest. Isolation is a property of the READ — asserting it needs a
+# foreign row present that the read must not return.
+@pytest.mark.asyncio
+async def test_scoped_dsl_binds_the_partition(moon_backend_url: str) -> None:
+    tag = uuid.uuid4().hex[:10]
+    a = lunaris.Scope(f"w412a-{tag}")
+    b = lunaris.Scope(f"w412b-{tag}")
+
+    handle = await lunaris.open(moon_backend_url)
+    # Tagged so a previous run's rows — which live in a DIFFERENT scope but
+    # the SAME store — cannot satisfy either assertion below.
+    a_text = f"Alice loves chocolate cake ({tag})."
+    b_text = f"Bob also loves chocolate cake ({tag})."
+    await handle.ingest(_episode_in(str(a), a_text))
+    await handle.ingest(_episode_in(str(b), b_text))
+
+    # CONTROL — the non-DSL scoped path. If this cannot see A's row, no
+    # embedder produced usable vectors and the assertion below would be
+    # measuring the wrong thing.
+    control = await handle.scoped(a).recall("chocolate")
+    control_texts = [h.get("text", "") for h in control]
+    if not control_texts:
+        pytest.skip(
+            "scoped(a).recall returned nothing — no usable embedder in this "
+            "build, so the scoped-DSL assertion has no control to stand on"
+        )
+    assert b_text not in control_texts, (
+        f"the CONTROL leaked the other scope's row: {control_texts}"
+    )
+
+    # THE ASSERTION — same partition, composed through the DSL.
+    hits = await handle.scoped(a).dsl().query("chocolate cake").top(5).execute()
+    texts = [h.get("text", "") for h in hits]
+    assert texts, "scoped(a).dsl() … .execute() returned nothing"
+    # Both halves are load-bearing, and they fail on DIFFERENT defects.
+    #
+    # POSITIVE: an unbound plan runs at `Scope::dev()`, a partition this test
+    # never wrote to — so it comes back with other tests' leftovers rather than
+    # empty, and an exclusion-only assertion passes while reading the wrong
+    # tenant entirely. Only a plan actually bound to `a` can contain a_text.
+    assert a_text in texts, (
+        f"scoped(a).dsl() did not return scope a's own row — the plan reached "
+        f"the engine unbound and read some other partition: {texts}"
+    )
+    # NEGATIVE: b_text is deliberately near-identical to a_text, so it outranks
+    # everything else in the store for this query. If the scope were carried
+    # but ignored on the read path, it would be right here.
+    assert b_text not in texts, (
+        f"scoped(a).dsl() escaped its partition and returned scope b's row: {texts}"
+    )

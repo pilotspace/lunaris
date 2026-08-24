@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from "vitest";
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 
 const lunaris = await import("../index.mjs");
 
@@ -167,10 +168,16 @@ async function openOrSkip(ctx: SkippableCtx, url: string): Promise<ScopeHandle |
   }
 }
 
+interface DslBuilder {
+  query: (text: string) => DslBuilder;
+  top: (n: number) => DslBuilder;
+  execute: () => Promise<Array<{ text?: string }>>;
+}
+
 interface ScopedView {
   ingest: (b: unknown) => Promise<string>;
   recall: (q: string) => Promise<unknown>;
-  dsl: () => unknown;
+  dsl: () => DslBuilder;
   scope: { asStr: () => string };
 }
 
@@ -236,11 +243,64 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
     expect(scoped.scope.asStr()).toBe("agent.alpha");
   });
 
-  test("scoped.dsl() returns a RetrievalBuilder", async (ctx: SkippableCtx) => {
+  // `toBeDefined()` was the whole assertion here until W4.12. It passed
+  // against a builder that had NO `query` and NO `execute` — the frozen
+  // codegen stub — so it proved only that `dsl()` returned an object.
+  test("scoped.dsl() returns a builder that can actually be composed", async (
+    ctx: SkippableCtx,
+  ) => {
     const handle = await openOrSkip(ctx, resolveMoonUrl());
     if (!handle) return;
     const scope = lunaris.Scope.new("agent.alpha");
     const builder = handle.scoped(scope).dsl();
-    expect(builder).toBeDefined();
+    expect(typeof builder.query).toBe("function");
+    expect(typeof builder.top).toBe("function");
+    expect(typeof builder.execute).toBe("function");
+  });
+
+  test("scoped().dsl() runs the plan INSIDE the bound partition", async (
+    ctx: SkippableCtx,
+  ) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const tag = randomUUID().replace(/-/g, "").slice(0, 10);
+    const a = lunaris.Scope.new(`w412a-${tag}`);
+    const b = lunaris.Scope.new(`w412b-${tag}`);
+
+    // Tagged so a previous run's rows — different scope, SAME store — cannot
+    // satisfy either assertion below.
+    const aText = `Alice loves chocolate cake (${tag}).`;
+    const bText = `Bob also loves chocolate cake (${tag}).`;
+    await handle.scoped(a).ingest(new lunaris.EpisodeBuilder("ts-test/w412", aText));
+    await handle.scoped(b).ingest(new lunaris.EpisodeBuilder("ts-test/w412", bText));
+
+    // CONTROL — the non-DSL scoped path. If this cannot see A's row, no
+    // embedder produced usable vectors and the assertion below would be
+    // measuring the wrong thing.
+    const control = (await handle.scoped(a).recall("chocolate cake")) as Array<{
+      text?: string;
+    }>;
+    const controlTexts = control.map((h) => h.text ?? "");
+    if (controlTexts.length === 0) {
+      ctx.skip(
+        "scoped(a).recall returned nothing — no usable embedder in this build, " +
+          "so the scoped-DSL assertion has no control to stand on",
+      );
+      return;
+    }
+    expect(controlTexts).not.toContain(bText);
+
+    const hits = await handle.scoped(a).dsl().query("chocolate cake").top(5).execute();
+    const texts = hits.map((h) => h.text ?? "");
+    expect(texts.length).toBeGreaterThan(0);
+    // POSITIVE: an unbound plan runs at `Scope::dev()`, a partition this test
+    // never wrote to — so it comes back with other tests' leftovers rather
+    // than empty, and an exclusion-only assertion passes while reading the
+    // wrong tenant entirely.
+    expect(texts).toContain(aText);
+    // NEGATIVE: bText is deliberately near-identical to aText, so it outranks
+    // everything else in the store for this query. A scope that were carried
+    // but ignored on the read path would put it right here.
+    expect(texts).not.toContain(bText);
   });
 });
