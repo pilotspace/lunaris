@@ -48,6 +48,24 @@ roots=(
   "$repo/README.md"
 )
 
+# Widened 2026-08-24: the package READMEs are the crates.io / npm / PyPI
+# landing pages — the first thing a `pip install lunaris` user reads — and the
+# guard had never looked at one. Both SDK READMEs were telling every new user
+# "A Moon or Postgres backend ... `moon://` and `postgres://` URL schemes are
+# supported", eighteen months after `postgres://` started returning
+# UnsupportedScheme. Exactly the F15 defect, in the surface with the widest
+# audience.
+roots+=( "$repo"/crates/*/README.md )
+
+# NOT all of `crates/`, deliberately. The patterns match ~70 lines across 45
+# files in there, and nearly all of them are bench harness internals, test
+# fixtures, and prose in `//!` module notes explaining what the code used to
+# do — none of which instructs a reader to do anything. Flagging them would
+# buy escapes, not corrections, and a guard that gets muzzled detects nothing
+# (the same failure mode this script's own header describes). The published
+# rustdoc under `crates/` IS a real reader surface and is NOT covered here;
+# widening to it needs the ~70-line residue triaged first, not a blanket root.
+
 # Patterns that name a deleted backend or its tooling.
 #
 # Every entry is a symbol, scheme, or env var that ONLY Lunaris could own.
@@ -136,4 +154,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "OK: no live Postgres/SQLite instructions under examples/, docs/, README.md ($scanned mentions checked)."
+echo "OK: no live Postgres/SQLite instructions under examples/, docs/, README.md, crates/*/README.md ($scanned mentions checked)."

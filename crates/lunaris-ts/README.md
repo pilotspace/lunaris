@@ -20,7 +20,7 @@ For the full user-facing install + quickstart guide covering both TypeScript and
 ## Requirements
 
 - Node **20+** (NAPI ABI v8 pin — `abi_pin.spec.mts` asserts `process.versions.napi >= 8` at test startup).
-- A Moon or Postgres backend reachable from the process; `moon://` and `postgres://` URL schemes are supported.
+- A Moon backend reachable from the process. `moon://` is the only supported URL scheme — `postgres://` and `sqlite://` were removed in 0.7.0 and now return `UnsupportedScheme`. See [`docs/migration/0.6-to-0.7.md`](../../docs/migration/0.6-to-0.7.md).
 
 ## Example
 
