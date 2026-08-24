@@ -84,6 +84,8 @@ from typing import Any
 
 import pytest
 
+from conftest import run_tag, run_window_offset_ms
+
 
 # -----------------------------------------------------------------------------
 # Paths — everything anchors on the repo checkout layout.
@@ -263,13 +265,44 @@ def _rfc3339_to_unix_ms(s: str) -> int:
 # -----------------------------------------------------------------------------
 # Scenario 1 — DocumentKnowledgeBase basic RAG.
 # -----------------------------------------------------------------------------
+# F34 — every source prefix below carries a per-RUN token.
+#
+# Without it this suite is only correct against a FRESH backend: each helper
+# re-ingests its fixtures under a constant prefix, so a second run against the
+# same Moon reads its own rows plus the previous run's. Measured on
+# `origin/main`: `test_timeline_reconstruction_parity_between_10_and_15`
+# returned 12 events where it asserts exactly 6, every one duplicated. CI never
+# saw it because runners are fresh — which makes this a "CI gets away with it"
+# pass, not a "CI proves it is fine" one.
+#
+# The token keeps the EXACT count, which is the sharpest assertion in the file
+# and the thing that pins `.between`'s inclusive-lo / exclusive-hi boundary.
+# Relaxing it to a lower bound would have made the symptom go away and stopped
+# detecting a genuine over-return at the same time.
+#
+# `test_conversational_parity.py` has always done this; `run_tag` now lives in
+# conftest so there is one definition rather than a copy per suite.
+_TAG = run_tag()
+
+# ...and the timeline scenario additionally shifts its VALID-TIME window per
+# run. The prefix alone does not isolate it: `TimelineReconstruction.between`
+# pushes `@valid_time:[lo hi]` down to Moon but filters the prefix in memory
+# AFTER the root's global `top(30)`, so every run's 6 in-window rows compete
+# for the same 30 slots. Measured against one accumulating store: run 2
+# returned 12, run 5 returned exactly 30 (the cap), and once the TypeScript
+# twin piled onto the same window a later run returned 5 of its own 6 — an
+# UNDER-return, which reads like a product bug rather than a dirty store.
+# Shifting the window makes Moon's own numeric filter do the isolating.
+_WINDOW_OFFSET_MS = run_window_offset_ms()
+
+
 async def _run_kb_quickstart(
     doc_mod: Any, url: str, backend_label: str, query: str, top_k: int
 ) -> list[tuple[str, str]]:
     import lunaris
 
     mem = await lunaris.open(url)
-    prefix = f"kb:docs/doc-11-03-py/{backend_label}/"
+    prefix = f"kb:docs/doc-11-03-py/{backend_label}/{_TAG}/"
     kb = doc_mod.DocumentKnowledgeBase.new(mem, prefix)
     docs = _load_fixture("document_knowledge_base_docs.json")
     for d in docs:
@@ -309,7 +342,7 @@ async def _run_research_paper(
     import lunaris
 
     mem = await lunaris.open(url)
-    prefix = f"papers:doc-11-03-py/{backend_label}/"
+    prefix = f"papers:doc-11-03-py/{backend_label}/{_TAG}/"
     corpus = doc_mod.ResearchPaperCorpus.new(mem, prefix)
     corpus = corpus.with_graph_pipeline(False)
     papers = _load_fixture("research_paper_corpus_papers.json")
@@ -355,7 +388,7 @@ async def _run_code_repo_as_of(
     import lunaris
 
     mem = await lunaris.open(url)
-    prefix = f"repo:doc-11-03-py/{backend_label}/"
+    prefix = f"repo:doc-11-03-py/{backend_label}/{_TAG}/"
     repo = doc_mod.CodeRepoMemory.new(mem, prefix)
     commits = _load_fixture("code_repo_100_commits.json")
     target = commits[commit_index_0based]
@@ -490,15 +523,17 @@ async def _run_timeline_between(
     import lunaris
 
     mem = await lunaris.open(url)
-    prefix = f"timeline:doc-11-03-py/{backend_label}/"
+    prefix = f"timeline:doc-11-03-py/{backend_label}/{_TAG}/"
     timeline = doc_mod.TimelineReconstruction.new(mem, prefix)
     events = _load_fixture("timeline_30_days.json")
     for e in events:
-        ms = _rfc3339_to_unix_ms(e["valid_time_rfc3339"])
+        ms = _rfc3339_to_unix_ms(e["valid_time_rfc3339"]) + _WINDOW_OFFSET_MS
         meta = {"event_id": e["id"], "valid_time_unix_ms": ms}
         await timeline.ingest([(e["text"], meta)])
-    lo_ms = _rfc3339_to_unix_ms(lo_rfc3339)
-    hi_ms = _rfc3339_to_unix_ms(hi_rfc3339)
+    # The SAME shift on both sides, so the inclusive-lo / exclusive-hi boundary
+    # this scenario exists to pin is preserved exactly under the translation.
+    lo_ms = _rfc3339_to_unix_ms(lo_rfc3339) + _WINDOW_OFFSET_MS
+    hi_ms = _rfc3339_to_unix_ms(hi_rfc3339) + _WINDOW_OFFSET_MS
     lo = {"wall_ms": lo_ms, "counter": 0, "node_id": 0}
     hi = {"wall_ms": hi_ms, "counter": 0, "node_id": 0}
     hits = await timeline.between(query, lo, hi)
@@ -571,6 +606,32 @@ async def _run_customer_support_refund(
 
     mem = await lunaris.open(url)
     hist = doc_mod.CustomerSupportHistory.new(mem)
+
+    # PRECONDITION, not an assertion about the product.
+    #
+    # `CustomerSupportHistory` takes no source prefix and — like every recipe
+    # in both SDKs — is constructed at `Scope::dev()`
+    # (`crates/lunaris-py/src/generated.rs:718`; 10 such call sites per
+    # binding). So this scenario has NO isolation knob: a previous run's 50
+    # tickets sit in the same scope, under the same sources, and compete for
+    # the same `top(30)`. Measured: after a handful of runs the ticket rows
+    # were crowded out entirely and the assertion below reported
+    # "ticket-prefix hits: expected 0 to be greater than or equal to 1" — which
+    # reads like a recall regression, not a dirty store.
+    #
+    # `run_tag` and `run_window_offset_ms` fix the scenarios that DO have a
+    # knob. This one cannot be fixed from the test side; giving the SDK a
+    # scope-bound path is ship-plan W4.12. Until then, say the requirement out
+    # loud rather than letting it fail three steps downstream.
+    stale = await hist.recall(query)
+    assert not stale, (
+        f"this suite requires a Moon with no previous run's documents in it, and "
+        f"{len(stale)} are already present under `ticket:` / `chat:`. Reset with "
+        f"`bash scripts/ci/reset_moon.sh` (or point LUNARIS_MOON_URL at a fresh "
+        f"Moon) and re-run. Every recipe binding constructs at Scope::dev(), so "
+        f"this scenario has no per-run partition to hide behind — see W4.12."
+    )
+
     fx = _load_fixture("customer_support_50_tickets.json")
     for t in fx["tickets"]:
         await hist.ingest_ticket(t["id"], t["body"])

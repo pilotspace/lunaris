@@ -15,12 +15,57 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import socket
+import time
 from typing import Optional
 
 import pytest
 
 DEFAULT_MOON_URL = "moon://127.0.0.1:6380"
+
+
+def run_tag() -> str:
+    """A per-run discriminator, so a second run cannot read the first's rows.
+
+    Any suite that writes under a source prefix or a scope MUST mix this in.
+    A constant prefix makes the suite correct only against a fresh backend:
+    it re-ingests its fixtures on top of the previous run's, and an
+    exact-count assertion then reads double. CI gets away with it because
+    runners are fresh; a developer running twice does not (F34 —
+    `test_documentary_parity.py` read 12 where it wanted 6).
+
+    `test_conversational_parity.py` had this right from the start with a
+    private copy; it now imports this one, so there is a single definition to
+    find when the next suite needs it.
+    """
+    return f"{int(time.time() * 1000):x}{secrets.token_hex(3)}"
+
+
+def run_window_offset_ms() -> int:
+    """A per-run shift for any fixture whose test filters on VALID TIME.
+
+    `run_tag` is not enough on its own. A per-run source prefix keeps two runs'
+    rows distinguishable, but the recipes filter that prefix in memory AFTER a
+    global `top(30)` — while `.between()` pushes `@valid_time:[lo hi]` down to
+    Moon. So every run's rows land in the SAME window and compete for the same
+    30 slots. Measured: run 2 of the timeline scenario returned 12, run 5
+    returned exactly 30 (the cap), and once the TS suite piled onto the same
+    window a later run returned 5 of its own 6 — an UNDER-return, which reads
+    like a product bug rather than a dirty store.
+
+    Shifting the window per run is what actually isolates: Moon's own numeric
+    filter then excludes the other runs, so the top-30 never sees them.
+
+    Drawn from entropy, not from the clock. A time-derived offset looks tidier
+    but two suites that start in the same second — which is exactly what a
+    `pytest tests/` or a CI matrix does — would land on the same window and
+    reproduce the bug this exists to prevent. The shift is a uniform
+    translation, so it changes no assertion's meaning; the only thing at stake
+    is collision probability, and 1e5 seven-day slots puts that at ~1e-5 per
+    pair of runs. A collision just re-creates the old failure, loudly.
+    """
+    return secrets.randbelow(100_000) * 7 * 86_400_000
 
 
 def _host_port_reachable(host: str, port: int, timeout_s: float = 0.4) -> bool:

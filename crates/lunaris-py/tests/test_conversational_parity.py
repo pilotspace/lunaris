@@ -67,13 +67,13 @@ import asyncio
 import json
 import os
 import pathlib
-import secrets
 import socket
 import sys
-import time
 from typing import Any
 
 import pytest
+
+from conftest import run_tag
 
 # Canonical fixture path — reach from this file back to
 # `crates/lunaris-recipes/tests/fixtures/conversational/`. Structure:
@@ -96,9 +96,10 @@ def _load_fixture(name: str) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _run_tag() -> str:
-    """A per-run discriminator, so a second run cannot read the first's rows."""
-    return f"{int(time.time() * 1000):x}{secrets.token_hex(3)}"
+# The per-run discriminator moved to conftest.py in F34, when
+# test_documentary_parity.py needed the same thing and would otherwise have
+# grown a second copy of it.
+_run_tag = run_tag
 
 
 def _parse_host_port(url: str) -> tuple[str, int] | None:
