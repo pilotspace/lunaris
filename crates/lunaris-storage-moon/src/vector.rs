@@ -77,7 +77,9 @@ pub(crate) async fn vector_search(
     let Some(f) = filter else {
         let knn_query = format!("*=>[KNN {k} @vec $query]");
         let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
-        return parse_ft_search(reply, rerank, &per_scope_index);
+        let mut hits = parse_ft_search(reply, rerank, &per_scope_index)?;
+        hydrate_metadata(c, &per_scope_index, &mut hits).await?;
+        return Ok(hits);
     };
 
     // Server-side enforcement — only the chunks index declares the TAG /
@@ -87,7 +89,9 @@ pub(crate) async fn vector_search(
     {
         let knn_query = format!("{expr}=>[KNN {k} @vec $query]");
         let reply = search_raw(c, &per_scope_index, &knn_query, &qbytes, k, rerank, as_of).await?;
-        return parse_ft_search(reply, rerank, &per_scope_index);
+        let mut hits = parse_ft_search(reply, rerank, &per_scope_index)?;
+        hydrate_metadata(c, &per_scope_index, &mut hits).await?;
+        return Ok(hits);
     }
 
     // Post-filter path: over-fetch, evaluate against hit metadata, truncate.
@@ -103,21 +107,15 @@ pub(crate) async fn vector_search(
     let knn_query = format!("*=>[KNN {k_fetch} @vec $query]");
     let reply =
         search_raw(c, &per_scope_index, &knn_query, &qbytes, k_fetch, rerank, as_of).await?;
-    let hits = parse_ft_search(reply, rerank, &per_scope_index)?;
-    // Moon's FT.SEARCH reply carries only score fields, not the stored hash —
-    // read each candidate's `meta` field lazily (in rank order, stopping at
-    // k matches) so the evaluator sees the same metadata `atomic_write` stored.
-    let mut typed = c.typed();
+    let mut hits = parse_ft_search(reply, rerank, &per_scope_index)?;
+    // The evaluator reads stored metadata, so hydrate before filtering. This
+    // was a sequential per-candidate `HGET` that stopped at k matches — up to
+    // `k * 4` round-trips; it is now one pipelined batch. Every candidate is
+    // fetched rather than only those examined before the k-th match, which
+    // trades bytes for round-trips in the direction that matters.
+    hydrate_metadata(c, &per_scope_index, &mut hits).await?;
     let mut out = Vec::with_capacity(k);
-    for mut h in hits {
-        if h.metadata.is_null() {
-            let key = format!("{per_scope_index}:{}", hex::encode(&h.id));
-            let raw: Option<Vec<u8>> =
-                typed.hget(key.as_bytes(), "meta").await.map_err(moon_err)?;
-            if let Some(bytes) = raw {
-                h.metadata = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
-            }
-        }
+    for h in hits {
         if filter_matches(f, &h.metadata)? {
             out.push(h);
             if out.len() == k {
@@ -126,6 +124,67 @@ pub(crate) async fn vector_search(
         }
     }
     Ok(out)
+}
+
+/// Read each hit's stored `meta` hash back from KV.
+///
+/// Moon's `FT.SEARCH` reply carries only score fields, never the stored hash,
+/// so EVERY exit of `vector_search` that returns hits must do this. Before
+/// 2026-08-24 only the post-filter exit did — and only because
+/// `filter_matches` could not evaluate without it. The contract was satisfied
+/// incidentally, on the one path that happened to need it, while the unfiltered
+/// and KNN-prefilter exits returned `metadata: null` for every hit.
+///
+/// That is not cosmetic: `VectorHit.metadata` flows into `RawHit` and through
+/// the whole retrieve pipeline, and community BM25 content extraction reads
+/// `metadata["summary"]` — which is why
+/// `lunaris-ingest/tests/ingest_pipeline.rs::community_hits_carry_summary_metadata_for_bm25`
+/// failed on Moon and was parked as a "known gap" (port-plan §6 item 6).
+/// Pinned by `tests/vector_filter_moon.rs::metadata_is_hydrated_on_every_search_path`.
+///
+/// Issued as ONE pipelined round-trip. The post-filter path previously walked
+/// candidates sequentially, awaiting an `HGET` each time and stopping at `k`
+/// matches — up to `k * 4` round-trips in the worst case. Fetching the same
+/// values in a single pipeline transfers more bytes but pays one RTT, which is
+/// the term that dominates. Hits that already carry metadata are skipped, so a
+/// caller that hydrated some other way is not re-fetched.
+async fn hydrate_metadata(
+    c: &MoonClient,
+    per_scope_index: &str,
+    hits: &mut [VectorHit],
+) -> Result<(), StorageError> {
+    let need: Vec<usize> =
+        hits.iter().enumerate().filter(|(_, h)| h.metadata.is_null()).map(|(i, _)| i).collect();
+    if need.is_empty() {
+        return Ok(());
+    }
+
+    let mut pipe = redis::pipe();
+    for &i in &need {
+        let key = format!("{per_scope_index}:{}", hex::encode(&hits[i].id));
+        pipe.cmd("HGET").arg(key.as_bytes()).arg("meta");
+    }
+
+    let mut typed = c.typed();
+    let raws: Vec<Option<Vec<u8>>> =
+        pipe.query_async(typed.inner_mut()).await.map_err(redis_err)?;
+
+    // A short reply would silently mis-pair values with hits, so refuse it
+    // rather than zip-truncating into wrong metadata.
+    if raws.len() != need.len() {
+        return Err(StorageError::Backend(format!(
+            "meta hydrate: asked for {} values, Moon returned {}",
+            need.len(),
+            raws.len()
+        )));
+    }
+
+    for (&i, raw) in need.iter().zip(raws) {
+        if let Some(bytes) = raw {
+            hits[i].metadata = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        }
+    }
+    Ok(())
 }
 
 async fn search_raw(
