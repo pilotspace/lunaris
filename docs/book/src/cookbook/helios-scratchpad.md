@@ -30,7 +30,7 @@ at compile time, so the surface can neither grow nor shrink without an
 
 | # | Method | Signature |
 |---|---|---|
-| 1 | `new` | `fn new(lunaris: Arc<Lunaris>, session_id: &str) -> Self` |
+| 1 | `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, session_id: &str) -> Self` |
 | 2 | `write` | `async fn write(path: &str, content: impl Into<String>) -> Result<Lsn, LunarisError>` |
 | 3 | `read` | `async fn read(path: &str) -> Result<Option<String>, LunarisError>` |
 | 4 | `edit` | `async fn edit(path: &str, _old: &str, new: &str) -> Result<Lsn, LunarisError>` |

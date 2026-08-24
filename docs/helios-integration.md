@@ -28,7 +28,7 @@ See also the Out-of-Scope row in `PROJECT.md` ("Claude Code FS adapter shape (CA
 
 The ≤50-LOC public-surface contract (`HELIOS-01`) is enforced at compile time by the test `coding_session_memory_public_surface_under_50_loc` (`crates/lunaris/src/recipes/coding_session_memory.rs:290`) — which now asserts *exactly* nine public symbols (the surface may not shrink either). The nine public symbols are:
 
-1. `CodingSessionMemory::new(Arc<Lunaris>, &str) -> Self`
+1. `CodingSessionMemory::new(Arc<Lunaris>, Scope, &str) -> Self`
 2. `CodingSessionMemory::write(&self, path, content) -> Result<Lsn, LunarisError>`
 3. `CodingSessionMemory::read(&self, path) -> Result<Option<String>, LunarisError>`
 4. `CodingSessionMemory::edit(&self, path, _old, new) -> Result<Lsn, LunarisError>`
@@ -92,6 +92,9 @@ A single agent session runs end-to-end inside one process: open Lunaris, create 
 ```rust
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
@@ -100,7 +103,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
 
     // Session prefix = "helios:fs/session-42/" (coding_session_memory.rs:95).
-    let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
     // Write two docs.
     let _lsn_notes = pad.write("notes.md", "# Notes\nFirst draft.").await?;
@@ -153,17 +156,22 @@ One Helios process serves many concurrent agent sessions — e.g., a long-runnin
 
 ```rust
 use std::sync::Arc;
-use lunaris::{CodingSessionMemory, Lunaris};
+use lunaris::{CodingSessionMemory, Lunaris, Scope};
 use ulid::Ulid;
 
 /// Process-wide state — one handle shared across every request.
 struct AppState {
     lunaris: Arc<Lunaris>,
+    /// RFC 0001 partition key. Held beside the handle, not derived per
+    /// request: every pad this process opens belongs to the same tenant,
+    /// and a scratchpad that writes here but reads elsewhere is the
+    /// cross-tenant leak the scope exists to prevent.
+    scope: Scope,
 }
 
 impl AppState {
-    async fn new(url: &str) -> Result<Self, lunaris::LunarisError> {
-        Ok(Self { lunaris: Arc::new(Lunaris::open(url).await?) })
+    async fn new(url: &str, scope: Scope) -> Result<Self, lunaris::LunarisError> {
+        Ok(Self { lunaris: Arc::new(Lunaris::open(url).await?), scope })
     }
 
     /// Per-request: allocate a fresh session id, construct a scratchpad.
@@ -174,7 +182,7 @@ impl AppState {
         // the user id (one user may have many sessions and want the
         // older ones purged independently).
         let session_id = Ulid::new().to_string();
-        CodingSessionMemory::new(self.lunaris.clone(), &session_id)
+        CodingSessionMemory::new(self.lunaris.clone(), self.scope.clone(), &session_id)
     }
 }
 
@@ -225,13 +233,16 @@ This is a paraphrase of `helios_chat_10k_turns_dual_backend` at `crates/lunaris/
 use std::sync::Arc;
 use std::time::Instant;
 use lunaris::{CodingSessionMemory, Lunaris};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 async fn run_chat_session(url: &str, turns: usize)
     -> Result<(f64, f64), lunaris::LunarisError>
 {
     let lunaris = Arc::new(Lunaris::open(url).await?);
     let session_id = format!("smoke-chat-{}", ulid::Ulid::new());
-    let pad = CodingSessionMemory::new(lunaris.clone(), &session_id);
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), &session_id);
 
     let mut ingest_samples_ms: Vec<f64> = Vec::with_capacity(turns);
     let mut recall_samples_ms: Vec<f64> = Vec::with_capacity(turns);
@@ -311,13 +322,16 @@ This paraphrases `helios_doc_rag_50k_md_dual_backend` at `crates/lunaris/tests/c
 ```rust
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 async fn build_and_query(url: &str, docs: u64)
     -> Result<(), lunaris::LunarisError>
 {
     let lunaris = Arc::new(Lunaris::open(url).await?);
     let session_id = format!("smoke-rag-{}", ulid::Ulid::new());
-    let pad = CodingSessionMemory::new(lunaris.clone(), &session_id);
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), &session_id);
 
     // `build_md_doc_corpus` batches 64 markdown episodes per atomic_write
     // against the raw storage port (crates/lunaris-bench/src/corpus.rs:783).
@@ -389,11 +403,14 @@ An agent made a wrong decision at turn 847. The user wants to see what the agent
 ```rust
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Hlc, Lunaris};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
     // t1: agent writes the first draft.
     pad.write("plan.md", "Plan v1: go left").await?;
@@ -454,10 +471,12 @@ A user closes their account and legal requires every trace of their data gone wi
 use std::sync::Arc;
 use lunaris::{ForgetTarget, CodingSessionMemory, Lunaris, ScopeSpec};
 
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
+
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
     // --- SOFT path ----------------------------------------------------------
     // Reversible via `read_as_of(ts_before_forget)`. Good for session expiry
@@ -538,6 +557,9 @@ The CodingSessionMemory public surface is intentionally narrow (`coding_session_
 ```rust
 use std::sync::Arc;
 use lunaris::{EntityId, Graph, CodingSessionMemory, Lunaris, Query, Vector};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
@@ -554,7 +576,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     //     ingested corpus without re-ingest leaves zero graph edges —
     //     extraction happens inside the ingest hot path, not after the fact.
     let session_id = "session-42";
-    let pad = CodingSessionMemory::new(lunaris.clone(), session_id);
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), session_id);
     pad.write("alice-note.md",
         "Alice joined Acme in 2021. Acme acquired Beta the next year.").await?;
 
@@ -617,11 +639,14 @@ The verifier queue (`__lunaris_verify__`) has backed up under ingest pressure �
 use std::sync::Arc;
 use lunaris::{CodingSessionMemory, Lunaris};
 use lunaris_retrieve::Hit;
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let pad = CodingSessionMemory::new(lunaris.clone(), "session-42");
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "session-42");
 
     // `pad.grep` already lowers to `recall_with_degraded_check().execute(...)`
     // under the hood (coding_session_memory.rs:151-156). The degraded flag is
@@ -682,6 +707,9 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 use lunaris::{CodingSessionMemory, Lunaris};
+    use lunaris::Scope;
+
+    let scope = Scope::new("helios-prod")?;   // RFC 0001 partition key
 
 /// TCP probe with 1s timeout. Mirror of `probe_backend` at
 /// coding_session_memory_smoke.rs:171-190. Accepts hostnames and literal IPs
@@ -715,7 +743,7 @@ async fn main() -> Result<(), lunaris::LunarisError> {
     eprintln!("=== store: {url} ===");
 
     let lunaris = Arc::new(Lunaris::open(&url).await?);
-    let pad = CodingSessionMemory::new(lunaris.clone(), "probe-demo");
+    let pad = CodingSessionMemory::new(lunaris.clone(), scope.clone(), "probe-demo");
 
     pad.write("hello.md", "hello from a probed store").await?;
     let body = pad.read("hello.md").await?;

@@ -3,7 +3,7 @@
 /** Conversational wrapper exposing a `remember` / `recall` pair over a per-user `MessageStream + WorkingMemory` pair. */
 export declare class ChatAgentMemory {
   /** Construct a ChatAgentMemory bound to `user_id`. */
-  static new(lunaris: Lunaris, userId: string): ChatAgentMemory
+  static new(lunaris: Lunaris, scope: string, userId: string): ChatAgentMemory
   /** Record a single conversational turn. */
   remember(turn: string): Promise<string>
   /** Recall turns matching `query`. */
@@ -13,7 +13,7 @@ export declare class ChatAgentMemory {
 /** Code-repository memory wrapper. Stores commit SHA in Episode metadata and recalls point-in-time function bodies. */
 export declare class CodeRepoMemory {
   /** Construct bound to `repo_prefix`. */
-  static new(lunaris: Lunaris, repoPrefix: string): CodeRepoMemory
+  static new(lunaris: Lunaris, scope: string, repoPrefix: string): CodeRepoMemory
   /** Ingest one commit as a batch of `(function_body, metadata)` chunks. */
   ingestCommit(commitSha: string, committerDateUnixMs: any, chunks: any): Promise<void>
   /** Recall at point-in-time `as_of`. */
@@ -29,7 +29,7 @@ export declare class ConsolidatorPipelineHandle {
 /** Customer-support history wrapper. Owns both a tickets DocumentCorpus and a chats MessageStream. */
 export declare class CustomerSupportHistory {
   /** Construct with hard-coded source prefixes `ticket:` and `chat:`. */
-  static new(lunaris: Lunaris): CustomerSupportHistory
+  static new(lunaris: Lunaris, scope: string): CustomerSupportHistory
   /** Opt-in the product/customer relationship graph (blueprint §5.2). */
   withGraphPipeline(on: boolean): CustomerSupportHistory
   /** Ingest one ticket body. `ticket_id` is stamped into metadata. */
@@ -43,7 +43,7 @@ export declare class CustomerSupportHistory {
 /** Documentary knowledge-base wrapper. Owns a DocumentCorpus bound to a single `source_prefix`. */
 export declare class DocumentKnowledgeBase {
   /** Construct a knowledge base bound to `source_prefix`. */
-  static new(lunaris: Lunaris, sourcePrefix: string): DocumentKnowledgeBase
+  static new(lunaris: Lunaris, scope: string, sourcePrefix: string): DocumentKnowledgeBase
   /** Ingest chunked `(content, metadata)` pairs. */
   ingest(chunks: any): Promise<void>
   /** Add an equality filter on a metadata field. */
@@ -57,7 +57,7 @@ export declare class DocumentKnowledgeBase {
 /** Thread-scoped email wrapper with an opt-in graph-pipeline builder. */
 export declare class EmailThreading {
   /** Construct a new email-archive handle rooted at `email:thread/`. */
-  static new(lunaris: Lunaris): EmailThreading
+  static new(lunaris: Lunaris, scope: string): EmailThreading
   /** Ingest one email into `root_id`'s thread, authored by `from`. */
   ingest(rootId: string, from: string, body: string): Promise<string>
   /** Narrow to one thread `root_id`. Returns a new EmailThreading. */
@@ -198,7 +198,7 @@ export declare class Lunaris {
 /** Meeting-notes wrapper with heading-scoped ingest and an opt-in graph-pipeline builder. */
 export declare class MeetingNotesMemory {
   /** Construct bound to `meeting:notes/`. */
-  static new(lunaris: Lunaris): MeetingNotesMemory
+  static new(lunaris: Lunaris, scope: string): MeetingNotesMemory
   /** Record one note under `heading` (thread_id) with `body` content. */
   note(heading: string, body: string): Promise<string>
   /** Recall across the meeting corpus. */
@@ -218,7 +218,7 @@ export declare class MeetingNotesQuery {
 /** Cross-session conversational wrapper with a per-user scoped `.consolidate()` cross-session promotion pass. */
 export declare class MultiTurnConversation {
   /** Construct bound to `user_id`. */
-  static new(lunaris: Lunaris, userId: string): MultiTurnConversation
+  static new(lunaris: Lunaris, scope: string, userId: string): MultiTurnConversation
   /** Record a turn for `thread_id` (session id). */
   remember(turn: string, threadId: string): Promise<string>
   /** Recall turns matching `query` across all sessions. */
@@ -263,7 +263,7 @@ export declare class RerankerConfig {
 /** Research-paper corpus wrapper with opt-in citation graph. */
 export declare class ResearchPaperCorpus {
   /** Construct bound to `source_prefix`. */
-  static new(lunaris: Lunaris, sourcePrefix: string): ResearchPaperCorpus
+  static new(lunaris: Lunaris, scope: string, sourcePrefix: string): ResearchPaperCorpus
   /** Opt-in the citation graph (blueprint §5.2 graph-default-off). */
   withGraphPipeline(on: boolean): ResearchPaperCorpus
   /** Ingest chunked `(content, metadata)` pairs. */
@@ -367,7 +367,7 @@ export declare class ScopedLunaris {
 /** Slack archive wrapper. Holds a root MessageStream scoped at `slack:archive/`. */
 export declare class SlackArchive {
   /** Construct a root archive handle. */
-  static new(lunaris: Lunaris): SlackArchive
+  static new(lunaris: Lunaris, scope: string): SlackArchive
   /** Ingest one message into `channel` authored by `participant_id`. */
   ingestChannel(channel: string, participantId: string, message: string): Promise<string>
   /** Recall across the whole archive. */
@@ -389,7 +389,7 @@ export declare class SlackArchiveQuery {
 /** Timeline-reconstruction wrapper. Two-call composition of DocumentCorpus + TemporalQuery<Documents>. */
 export declare class TimelineReconstruction {
   /** Construct bound to `source_prefix`. */
-  static new(lunaris: Lunaris, sourcePrefix: string): TimelineReconstruction
+  static new(lunaris: Lunaris, scope: string, sourcePrefix: string): TimelineReconstruction
   /** Ingest timeline events as chunked `(content, metadata)` pairs. */
   ingest(events: any): Promise<void>
   /** Recall all events in `[lo, hi)` — lower-inclusive, upper-exclusive (11-01 boundary semantics). */

@@ -11,7 +11,7 @@ leaking across users). It exposes three methods:
 
 | Method | Signature | Forwards to |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, user_id: &str) -> Self` | `MessageStream::new` + `WorkingMemory::new` |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, user_id: &str) -> Self` | `MessageStream::new` + `WorkingMemory::new` |
 | `remember` | `async fn remember(turn: impl Into<String>) -> Result<Lsn, LunarisError>` | `MessageStream::ingest(turn, "default", "user")` |
 | `recall` | `async fn recall(query: &str) -> Result<Vec<Hit>, LunarisError>` | `MessageStream::recall` |
 
@@ -32,15 +32,17 @@ construct a per-user memory, replay a handful of turns, then recall.
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::ChatAgentMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // One handle per process — share via Arc. URL scheme picks the backend.
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-support-bot")?;
 
-    let mem = ChatAgentMemory::new(lunaris.clone(), "user-42");
+    let mem = ChatAgentMemory::new(lunaris.clone(), scope.clone(), "user-42");
 
     // Record conversational turns as they happen.
     mem.remember("I'm planning a trip to Kyoto in April.").await?;
@@ -72,17 +74,19 @@ fresh process — a new request handler, a restarted service, a different machin
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::conversational::ChatAgentMemory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     // A brand-new process. Nothing was kept in memory between runs.
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-support-bot")?;
 
     // Same user id as before ⇒ same `"chat:user-42/"` scope ⇒ same memory.
     // `new` is pure — the first storage round-trip is the `recall` below.
-    let mem = ChatAgentMemory::new(lunaris.clone(), "user-42");
+    let mem = ChatAgentMemory::new(lunaris.clone(), scope.clone(), "user-42");
 
     let prior = mem.recall("what has the user told me so far?").await?;
     for h in &prior {

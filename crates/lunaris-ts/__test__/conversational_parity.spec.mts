@@ -56,6 +56,13 @@ import path from "node:path";
 import url from "node:url";
 import { runTag } from "./run_isolation.mjs";
 
+// W4.17 — ONE scope per suite run. Recipes take a partition key as of W4.17,
+// and it is the axis Moon actually partitions on: a per-run scope isolates a
+// run from every earlier run AND from the Python twin, at the level below any
+// top-k. The per-scenario source prefixes below stay because they separate
+// scenarios FROM EACH OTHER inside this run, not runs from each other.
+const SUITE_SCOPE = `tsconv-${runTag()}`;
+
 // Dynamic import — matches the `backend_parity.spec.mts` pattern so a
 // binding-load failure surfaces via `abi_pin.spec.mts` first.
 const lunaris = await import("../index.mjs");
@@ -238,7 +245,7 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
         };
       };
     };
-    const cam = ChatAgentMemory.new(h, userId);
+    const cam = ChatAgentMemory.new(h, SUITE_SCOPE, userId);
     for (const turn of turns) await cam.remember(turn.text);
 
     const hits = await cam.recall(query);
@@ -277,8 +284,8 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
         };
       };
     };
-    const conv = MultiTurnConversation.new(h, userId);
-    const other = MultiTurnConversation.new(h, otherUserId);
+    const conv = MultiTurnConversation.new(h, SUITE_SCOPE, userId);
+    const other = MultiTurnConversation.new(h, SUITE_SCOPE, otherUserId);
 
     for (const s of sessions) {
       for (const t of s.turns) await conv.remember(t.text, s.thread_id);
@@ -336,7 +343,7 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
         };
       };
     };
-    const slack = SlackArchive.new(h);
+    const slack = SlackArchive.new(h, SUITE_SCOPE);
     for (const ch of channels) {
       for (const m of ch.messages) await slack.ingestChannel(ch.id, m.user, m.text);
     }
@@ -384,7 +391,7 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
         };
       };
     };
-    const email = EmailThreading.new(h);
+    const email = EmailThreading.new(h, SUITE_SCOPE);
     for (const m of messages) await email.ingest(rootId, m.from, m.body);
 
     const hits = await email.thread(rootId).recall(query);
@@ -424,7 +431,7 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
     const gh = h as { graphPipeline: { isEnabled: () => boolean } };
     expect(gh.graphPipeline.isEnabled(), "a fresh handle must be graph-off").toBe(false);
 
-    const em = EmailThreading.new(h).withGraphPipeline(true);
+    const em = EmailThreading.new(h, SUITE_SCOPE).withGraphPipeline(true);
     expect(gh.graphPipeline.isEnabled(), "withGraphPipeline(true) must enable it").toBe(true);
     em.withGraphPipeline(false);
     expect(gh.graphPipeline.isEnabled(), "withGraphPipeline(false) must disable it").toBe(false);
@@ -451,7 +458,7 @@ describe("Plan 10-03 — TypeScript conversational wrappers (live Moon)", () => 
         };
       };
     };
-    const mn = MeetingNotesMemory.new(h);
+    const mn = MeetingNotesMemory.new(h, SUITE_SCOPE);
     for (const n of notes) await mn.note(n.heading, `${n.body} [run ${tag}]`);
 
     const hits = await mn.recall(query);

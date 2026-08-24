@@ -243,6 +243,77 @@ describe("ScopedLunaris — online (requires Moon backend)", () => {
     expect(scoped.scope.asStr()).toBe("agent.alpha");
   });
 
+  // W4.17 — recipes are partitionable.
+  test("a recipe binds its partition", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const l = lunaris as unknown as {
+      ChatAgentMemory: {
+        new: (h: unknown, scope: string, userId: string) => {
+          remember: (t: string) => Promise<unknown>;
+          recall: (q: string) => Promise<Array<{ text?: string }>>;
+        };
+      };
+    };
+
+    const tag = randomUUID().replace(/-/g, "").slice(0, 10);
+    // The SAME user id in both scopes on purpose: a recipe's source prefix
+    // (`chat:<user>/`) is its OTHER discriminator, so differing user ids would
+    // let the test pass on the prefix alone and prove nothing about the scope.
+    const user = `w417-${tag}`;
+    const aText = `Alice loves chocolate cake (${tag}).`;
+    const bText = `Bob also loves chocolate cake (${tag}).`;
+
+    const camA = l.ChatAgentMemory.new(handle, `w417a-${tag}`, user);
+    const camB = l.ChatAgentMemory.new(handle, `w417b-${tag}`, user);
+    await camA.remember(aText);
+    await camB.remember(bText);
+
+    // CONTROL first, through the native scoped path (not the recipe). It reads
+    // the SAME partition with the SAME query, so it separates "this build has
+    // no usable embedder" from "the recipe is bound to the wrong partition".
+    // A bare length-zero skip cannot tell those apart, and the second is
+    // exactly the defect this test exists to catch.
+    const control = (await handle
+      .scoped(lunaris.Scope.new(`w417a-${tag}`))
+      .recall("chocolate cake")) as Array<{ text?: string }>;
+    const controlTexts = control.map((h) => h.text ?? "");
+    if (!controlTexts.includes(aText)) {
+      ctx.skip(
+        "the control recall could not see its own row either — no usable " +
+          `embedder in this build; control returned ${JSON.stringify(controlTexts)}`,
+      );
+      return;
+    }
+
+    const hits = await camA.recall("chocolate cake");
+    const texts = hits.map((h) => h.text ?? "");
+    // POSITIVE: an instance bound to the WRONG partition still returns other
+    // rows, so exclusion alone would pass while reading somebody else's data.
+    expect(texts).toContain(aText);
+    // NEGATIVE: bText is deliberately near-identical, so it outranks
+    // everything else in the store for this query.
+    expect(texts).not.toContain(bText);
+  });
+
+  test("a recipe refuses an invalid scope", async (ctx: SkippableCtx) => {
+    const handle = await openOrSkip(ctx, resolveMoonUrl());
+    if (!handle) return;
+    const l = lunaris as unknown as {
+      ChatAgentMemory: { new: (h: unknown, scope: string, userId: string) => unknown };
+    };
+    // `:` is the KV-format delimiter and is rejected by the scope alphabet;
+    // accepting it would let one scope byte-alias another's keyspace.
+    let caught: unknown = null;
+    try {
+      l.ChatAgentMemory.new(handle, "w417:colon", "user-1");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).not.toBeNull();
+    expect(String(caught).toLowerCase()).toContain("scope");
+  });
+
   // `toBeDefined()` was the whole assertion here until W4.12. It passed
   // against a builder that had NO `query` and NO `execute` — the frozen
   // codegen stub — so it proved only that `dsl()` returned an object.

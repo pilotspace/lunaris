@@ -38,9 +38,15 @@
 // row-level assertions remain F21's to restore.
 
 import { describe, expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
 import net from "node:net";
 
 const lunaris = await import("../index.mjs");
+
+// W4.17 — recipes take a partition key. One scope per run keeps this file's
+// fixtures out of every other run's and out of documentary_parity's, on the
+// axis the store actually partitions on.
+const SUITE_SCOPE = `tshlc-${randomUUID().replace(/-/g, "").slice(0, 10)}`;
 
 // A real millisecond timestamp: 2025-01-10T00:00:00Z. Chosen because it is
 // past `u32::MAX` — the entire point — and exactly representable in an f64,
@@ -128,7 +134,7 @@ describe("F20 — a JS millisecond timestamp survives the napi boundary", () => 
       return;
     }
     const handle = await lunaris.open(moon);
-    const timeline = lunaris.TimelineReconstruction.new(handle, "f20-between:");
+    const timeline = lunaris.TimelineReconstruction.new(handle, SUITE_SCOPE, "f20-between:");
 
     // Seed one event so the query runs against a populated index rather than
     // an empty-index edge case, and so the query term survives Moon's
@@ -156,7 +162,7 @@ describe("F20 — a JS millisecond timestamp survives the napi boundary", () => 
       return;
     }
     const handle = await lunaris.open(moon);
-    const timeline = lunaris.TimelineReconstruction.new(handle, "f20-asof:");
+    const timeline = lunaris.TimelineReconstruction.new(handle, SUITE_SCOPE, "f20-asof:");
     await timeline.ingest([["deployment rollout milestone", { kind: "release" }]]);
 
     try {
@@ -180,7 +186,7 @@ describe("F20 — a JS millisecond timestamp survives the napi boundary", () => 
       return;
     }
     const handle = await lunaris.open(moon);
-    const repo = lunaris.CodeRepoMemory.new(handle, "f20-commit:");
+    const repo = lunaris.CodeRepoMemory.new(handle, SUITE_SCOPE, "f20-commit:");
 
     // F20 is not an `Hlc`-only defect: `committerDateUnixMs` lowers into an
     // `i64` and broke for exactly the same reason. This is the second,
@@ -202,7 +208,7 @@ describe("F20 — a JS millisecond timestamp survives the napi boundary", () => 
       return;
     }
     const handle = await lunaris.open(moon);
-    const timeline = lunaris.TimelineReconstruction.new(handle, "f20-bad:");
+    const timeline = lunaris.TimelineReconstruction.new(handle, SUITE_SCOPE, "f20-bad:");
 
     // The repair must not have turned the binding into a shape-blind sink.
     // A fractional wall_ms is not an integer in any encoding and must fail.

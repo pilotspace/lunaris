@@ -13,7 +13,7 @@ deliberately thin two-call composition of
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>, source_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"timeline:events/"`) |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, source_prefix: impl Into<String>) -> Self` | binds the inner corpus (e.g. `"timeline:events/"`) |
 | `ingest` | `async fn ingest(events: Vec<(String, serde_json::Map<String, serde_json::Value>)>) -> Result<(), LunarisError>` | forwards to `DocumentCorpus::ingest` (1 primitive call) |
 | `between` | `async fn between(query: &str, lo: Hlc, hi: Hlc) -> Result<Vec<Hit>, LunarisError>` | events in **`[lo, hi)`** — lower inclusive, upper exclusive; 2 primitive calls (`TemporalQuery::<Documents>::new` + `.between(lo, hi).execute(query)`) |
 | `as_of` | `async fn as_of(query: &str, ts: Hlc) -> Result<Vec<Hit>, LunarisError>` | the snapshot at `ts`; 2 primitive calls (`TemporalQuery::<Documents>::new` + `.as_of(ts).execute(query)`) |
@@ -37,14 +37,16 @@ Shaped after `timeline_reconstruction_between_returns_exactly_6_events` in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_core::hlc::Hlc;
 use lunaris_recipes::documentary::TimelineReconstruction;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://localhost:6380").await?);
-    let timeline = TimelineReconstruction::new(lunaris.clone(), "timeline:events/");
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-ops")?;
+    let timeline = TimelineReconstruction::new(lunaris.clone(), scope.clone(), "timeline:events/");
 
     // Ingest dated events. Stamp the event's valid time into metadata so
     // your own queries can filter on it; the bi-temporal `valid_from` the

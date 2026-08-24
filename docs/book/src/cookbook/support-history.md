@@ -15,7 +15,7 @@ relationship graph.
 
 | Method | Signature | Notes |
 |---|---|---|
-| `new` | `fn new(lunaris: Arc<Lunaris>) -> Self` | **no prefix arg** — prefixes `ticket:` and `chat:` are hard-coded |
+| `new` | `fn new(lunaris: Arc<Lunaris>, scope: Scope, scope: Scope) -> Self` | **no prefix arg** — prefixes `ticket:` and `chat:` are hard-coded |
 | `with_graph_pipeline` | `fn with_graph_pipeline(self, on: bool) -> Self` | `enable()` / `disable()` on the graph handle; builder-style; **consumes `self`**; default OFF |
 | `ingest_ticket` | `async fn ingest_ticket(ticket_id: impl Into<String>, body: impl Into<String>) -> Result<(), LunarisError>` | `ticket_id` is stamped into metadata; 1 primitive call (`DocumentCorpus::ingest`) |
 | `ingest_chat` | `async fn ingest_chat(ticket_id: impl Into<String>, turn_idx: usize, participant: impl Into<String>, msg: impl Into<String>) -> Result<Lsn, LunarisError>` | `turn_idx` is **`usize`**; the `ticket_id/turn_idx` slug becomes the `MessageStream` thread id so chats cluster per ticket; 1 primitive call (`MessageStream::ingest`) |
@@ -42,13 +42,15 @@ Shaped after the `"refund"` recall scenario in
 
 ```rust,no_run
 use std::sync::Arc;
-use lunaris::Lunaris;
+use lunaris::{Lunaris, Scope};
 use lunaris_recipes::documentary::CustomerSupportHistory;
 
 #[tokio::main]
 async fn main() -> Result<(), lunaris::LunarisError> {
     let lunaris = Arc::new(Lunaris::open("moon://127.0.0.1:6380").await?);
-    let hist = CustomerSupportHistory::new(lunaris.clone());
+    // The partition every recipe below reads and writes in.
+    let scope = Scope::new("acme-support-bot")?;
+    let hist = CustomerSupportHistory::new(lunaris.clone(), scope.clone());
 
     // Ticket bodies → DocumentCorpus under `ticket:<id>`.
     hist.ingest_ticket("T-1042", "Customer requests a refund for order #5567 — duplicate charge.").await?;

@@ -231,9 +231,10 @@ pub struct PyChatAgentMemory {
 impl PyChatAgentMemory {
     /// Construct a ChatAgentMemory bound to `user_id`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::conversational::ChatAgentMemory::new(lunaris_owned, scope_owned, &user_id);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -269,9 +270,10 @@ pub struct PyMultiTurnConversation {
 impl PyMultiTurnConversation {
     /// Construct bound to `user_id`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, user_id: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, user_id: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::conversational::MultiTurnConversation::new(lunaris_owned, scope_owned, &user_id);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -316,9 +318,10 @@ pub struct PySlackArchive {
 impl PySlackArchive {
     /// Construct a root archive handle.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::conversational::SlackArchive::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -392,9 +395,10 @@ pub struct PyEmailThreading {
 impl PyEmailThreading {
     /// Construct a new email-archive handle rooted at `email:thread/`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::conversational::EmailThreading::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -442,9 +446,10 @@ pub struct PyMeetingNotesMemory {
 impl PyMeetingNotesMemory {
     /// Construct bound to `meeting:notes/`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::conversational::MeetingNotesMemory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -524,9 +529,10 @@ pub struct PyDocumentKnowledgeBase {
 impl PyDocumentKnowledgeBase {
     /// Construct a knowledge base bound to `source_prefix`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::documentary::DocumentKnowledgeBase::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -576,9 +582,10 @@ pub struct PyResearchPaperCorpus {
 impl PyResearchPaperCorpus {
     /// Construct bound to `source_prefix`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::documentary::ResearchPaperCorpus::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -621,9 +628,10 @@ pub struct PyCodeRepoMemory {
 impl PyCodeRepoMemory {
     /// Construct bound to `repo_prefix`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, repo_prefix: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, repo_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::documentary::CodeRepoMemory::new(lunaris_owned, scope_owned, &repo_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -662,9 +670,10 @@ pub struct PyTimelineReconstruction {
 impl PyTimelineReconstruction {
     /// Construct bound to `source_prefix`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris, source_prefix: String) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String, source_prefix: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::documentary::TimelineReconstruction::new(lunaris_owned, scope_owned, &source_prefix);
         Ok(Self { inner: Arc::new(inner) })
     }
@@ -713,9 +722,10 @@ pub struct PyCustomerSupportHistory {
 impl PyCustomerSupportHistory {
     /// Construct with hard-coded source prefixes `ticket:` and `chat:`.
     #[staticmethod]
-    fn new(lunaris: &PyLunaris) -> PyResult<Self> {
+    fn new(lunaris: &PyLunaris, scope: String) -> PyResult<Self> {
         let lunaris_owned: ::std::sync::Arc<::lunaris::Lunaris> = lunaris.inner.clone();
-        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::dev();
+        let scope_owned: ::lunaris_core::scope::Scope = ::lunaris_core::scope::Scope::new(&scope)
+            .map_err(|e| crate::errors::py_err_str("VALIDATE", format!("scope: {e}")))?;
         let inner = ::lunaris_recipes::documentary::CustomerSupportHistory::new(lunaris_owned, scope_owned);
         Ok(Self { inner: Arc::new(inner) })
     }
