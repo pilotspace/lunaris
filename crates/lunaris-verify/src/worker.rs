@@ -5,12 +5,22 @@
 //!
 //! ## Lifecycle
 //!
-//! ```ignore
+//! ```no_run
+//! use std::sync::Arc;
+//! use lunaris_core::{LunarisError, StoragePort};
+//! use lunaris_verify::{Verifier, run_verify_worker};
+//!
+//! # async fn demo(
+//! #     storage: Arc<dyn StoragePort>,
+//! #     verifier: Arc<dyn Verifier>,
+//! # ) -> Result<(), LunarisError> {
 //! let shutdown = Arc::new(tokio::sync::Notify::new());
+//! // `HlcClock::new` already returns an `Arc<HlcClock>`.
 //! let clock = lunaris_core::HlcClock::new(0);
 //! let handle = run_verify_worker(storage, verifier, shutdown.clone(), clock).await?;
 //! shutdown.notify_one();
 //! handle.await.ok();
+//! # Ok(()) }
 //! ```
 //!
 //! ## B-2 fix — real MVCC primitive-row supersede (Plan 04-04 Task 4)

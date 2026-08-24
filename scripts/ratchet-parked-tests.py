@@ -18,6 +18,13 @@ printed a green `1 passed` for a suite it had not compiled. Neither this
 ratchet nor the manifest could see it. `scripts/_featgate.py` computes that
 coverage from the workflows and reports here, against the same manifest — one
 inventory, whatever the mechanism.
+
+A FOURTH parks a whole category rather than a single test: a ```ignore fence
+on a rustdoc example. It suppresses the compile as well as the run, so the
+example can drift arbitrarily far from the API it documents and nothing
+reports it. Every fence in `crates/` was unfenced in W4.11 and ci.yml's check
+job now runs `cargo test --doc`, so the floor is zero and `fenced_doctests`
+below holds it there.
 """
 import re, sys, pathlib
 
@@ -70,6 +77,29 @@ def sites(root='crates'):
                     i = j
             i += 1
     return found
+
+FENCE = re.compile(r'^\s*//[/!].*```[A-Za-z0-9_,\- ]*\bignore\b')
+
+
+def fenced_doctests(root='crates'):
+    """Rustdoc examples parked by an ```ignore fence.
+
+    Deliberately has no ledger and no allow-list: unlike `#[ignore]`, which
+    can legitimately mark a test that needs a live backend, an ```ignore
+    fence never buys anything CI can later un-park. The fix is always to make
+    the example compile — with hidden `# ` setup lines if it needs context —
+    or to mark it ```text if it is a fragment for pasting rather than an
+    example. Both leave the reader better off than an unchecked snippet.
+    """
+    found = []
+    for f in sorted(pathlib.Path(root).rglob('*.rs')):
+        if 'target' in f.parts:
+            continue
+        for n, line in enumerate(f.read_text(errors='replace').splitlines(), 1):
+            if FENCE.search(line):
+                found.append((str(f), n, line.strip()))
+    return found
+
 
 USAGE = """usage: scripts/ratchet-parked-tests.py [manifest]
 
@@ -150,6 +180,14 @@ if __name__ == '__main__':
             print(f'::error::{manifest_path} lists {key}, which is no longer parked. '
                   'Delete the line.')
             rc = 1
+
+    fenced = fenced_doctests()
+    print(f'doctests parked by an ```ignore fence: {len(fenced)} (floor is 0)')
+    for f, ln, txt in fenced:
+        print(f'::error::{f}:{ln} parks a rustdoc example with an ```ignore fence, '
+              'which suppresses the compile too. Make it compile (hidden `# ` lines '
+              f'can supply the context) or mark it ```text if it is a paste fragment: {txt}')
+        rc = 1
 
     run_by = sum(1 for k in keys if manifest.get(k, ('', ''))[0] == 'RUN_BY')
     never = sum(1 for k in keys if manifest.get(k, ('', ''))[0] == 'NEVER_RUN')

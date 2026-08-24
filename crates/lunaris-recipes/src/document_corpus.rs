@@ -9,13 +9,14 @@
 //!
 //! ## Fluent builder
 //!
-//! ```ignore
+//! ```no_run
 //! use std::sync::Arc;
-//! use lunaris::Lunaris;
+//! use lunaris::{Lunaris, Scope};
 //! use lunaris_recipes::DocumentCorpus;
 //!
 //! # async fn demo(mem: Arc<Lunaris>) -> anyhow::Result<()> {
-//! let hits = DocumentCorpus::new(mem, "kb:papers/")
+//! let scope = Scope::new("acme.agent-1")?;
+//! let hits = DocumentCorpus::new(mem, scope, "kb:papers/")
 //!     .filter("lang", "en")
 //!     .top(10)
 //!     .search("quantum error correction")

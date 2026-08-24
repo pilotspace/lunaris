@@ -66,14 +66,17 @@ pub const DEFAULT_TREE_DEPTH: usize = 1;
 /// Construction is fluent. Pass it to [`crate::RetrievalBuilder::with_root`] or
 /// compose with other operators via `.and()` / `.or()` / `.fuse_rrf()`.
 ///
-/// ```ignore
-/// use lunaris_retrieve::{RetrievalBuilder, Query};
+/// ```no_run
+/// use lunaris_core::LunarisError;
+/// use lunaris_retrieve::{Query, RetrievalBuilder};
 /// use lunaris_retrieve::operators::tree::Tree;
 ///
+/// # async fn demo(builder: RetrievalBuilder) -> Result<(), LunarisError> {
 /// let hits = builder
 ///     .with_root(Tree::new("communities", 5))
 ///     .execute(Query::text("What are the main themes across both reports?"))
 ///     .await?;
+/// # Ok(()) }
 /// ```
 #[derive(Clone, Debug)]
 #[must_use = "Tree is a query node — pass it to RetrievalBuilder::with_root() or chain via .and/.or/.fuse_rrf, otherwise it never executes"]

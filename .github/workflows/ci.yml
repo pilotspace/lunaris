@@ -99,6 +99,22 @@ jobs:
         run: cargo test -p lunaris-ingest --features llm-summarizer --test summarizer
 
       - run: cargo doc --workspace --no-deps
+      # W4.11 — doctests had NEVER run in this repo. `cargo test
+      # --all-targets` above does not include them (cargo's own help:
+      # "--all-targets  Test all targets (does not include doctests)"), and
+      # `cargo doc` builds the examples without executing them. No workflow
+      # passed `--doc`, so the examples in the public rustdoc — the first code
+      # an adopter copies — were unverified for the life of the project.
+      #
+      # On top of that, 29 fences across 20 files were marked ```ignore, which
+      # suppresses even the compile. Unfencing them found real drift: calls
+      # with the wrong arity, a `Scope::new("a:b")` that the scope alphabet
+      # rejects, and `Graph::anchored(vec![id], 2)` when the seeds have been
+      # `Vec<(EntityId, f32)>` for several releases.
+      #
+      # Same py/ts exclusions and the same reason as the `--all-targets` run.
+      - name: Run the doctests (NOT covered by --all-targets)
+        run: cargo test --doc --workspace --exclude lunaris-py --exclude lunaris-ts
       # Plan 08-04 - confirm both binding crates type-check under DEFAULT
       # features on every PR. Production wheels / .node binaries are
       # built with default features only (no `bindings-it`); this step

@@ -23,11 +23,21 @@
 //!
 //! ## Lifecycle
 //!
-//! ```ignore
+//! ```no_run
+//! use std::sync::Arc;
+//! use lunaris_core::{LunarisError, StoragePort};
+//! use lunaris_consolidate::{Consolidator, run_consolidate_worker};
+//!
+//! # async fn demo(
+//! #     storage: Arc<dyn StoragePort>,
+//! #     consolidator: Arc<dyn Consolidator>,
+//! # ) -> Result<(), LunarisError> {
 //! let shutdown = Arc::new(tokio::sync::Notify::new());
-//! let handle = run_consolidate_worker(storage, consolidator, shutdown.clone()).await?;
+//! let handle =
+//!     run_consolidate_worker(storage, consolidator, shutdown.clone(), None).await?;
 //! shutdown.notify_one();
 //! handle.await.ok();
+//! # Ok(()) }
 //! ```
 //!
 //! ## Debounce (D-17)

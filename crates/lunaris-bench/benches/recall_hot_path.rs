@@ -3,7 +3,7 @@
 //! Measures `Lunaris::recall().with_root(...).execute(Query::text(q))`
 //! end-to-end on the canonical hybrid recipe:
 //!
-//! ```ignore
+//! ```no_run
 //! Vector::new("facts", 30)
 //!     .and(Keyword::bm25("facts", 30))
 //!     .fuse_rrf(60)

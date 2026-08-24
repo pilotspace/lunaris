@@ -31,7 +31,9 @@ use ulid::Ulid;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use lunaris::EpisodeBuilder;
+///
 /// let builder = EpisodeBuilder::new("agent:fs/report.md", "# Q3 Report\n...")
 ///     .t_ref(chrono::Utc::now());
 /// // scope is injected by engine.scoped(scope_a).ingest(builder).await?
