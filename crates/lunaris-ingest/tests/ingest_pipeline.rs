@@ -527,26 +527,26 @@ async fn community_vector_index_searchable_after_ingest() {
     );
 }
 
-/// **KNOWN GAP, not a fixture problem — `#[ignore]`d rather than deleted.**
-///
 /// Community `VectorUpsert` metadata must carry a `summary` field: that is what
-/// BM25 content extraction reads. Through 0.6.x this assertion lived inside the
-/// test above and was kept green by pinning the whole test to the embedded
-/// SQLite backend. 0.7.0 deleted that backend, and on Moon this FAILS:
-/// `lunaris-storage-moon::vector::vector_search` hydrates `VectorHit.metadata`
-/// from KV only on the post-filter path (`vector.rs` ~:92-120); with
-/// `filter = None` it keeps whatever the FT reply carried, which for the
-/// communities index is nothing.
+/// BM25 content extraction reads.
 ///
-/// Relaxing the assertion would hide a real production gap — communities BM25
-/// content extraction is silently empty on Moon — so the assertion is kept
-/// verbatim and marked ignored, which leaves it runnable
-/// (`cargo test -- --ignored`) and visible in every test listing. The fix is
-/// item 6 of docs/testing/memory-to-moon-port-plan.md §6, deliberately out of
-/// scope for the backend deletion. Un-`ignore` when the hydrate covers the
-/// unfiltered path.
+/// **Was parked as a KNOWN GAP; un-parked 2026-08-24 with the fix.** Through
+/// 0.6.x this assertion lived inside the test above and was kept green by
+/// pinning the whole test to the embedded SQLite backend. 0.7.0 deleted that
+/// backend and it began failing on Moon, because
+/// `lunaris-storage-moon::vector::vector_search` hydrated `VectorHit.metadata`
+/// from KV on only ONE of its three exits — the post-filter path, which
+/// hydrated because `filter_matches` could not evaluate otherwise. With
+/// `filter = None` (this test's path) hits kept whatever the FT reply carried,
+/// which for the communities index is nothing. So communities BM25 content
+/// extraction was silently empty on the only supported backend.
+///
+/// Relaxing the assertion would have hidden that, so it was kept verbatim and
+/// parked instead — runnable, visible, and asserting the real contract. The
+/// fix (port-plan §6 item 6) hoists hydration into `hydrate_metadata` and calls
+/// it from all three exits in one pipelined round-trip; see
+/// `lunaris-storage-moon/tests/vector_filter_moon.rs::metadata_is_hydrated_on_every_search_path`.
 #[tokio::test]
-#[ignore = "Moon does not hydrate VectorHit.metadata on the unfiltered path — port-plan §6 item 6"]
 async fn community_hits_carry_summary_metadata_for_bm25() {
     let hits = ingest_then_search_communities().await;
     assert!(!hits.is_empty(), "precondition: the communities index must return hits");
