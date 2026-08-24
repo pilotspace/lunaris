@@ -211,6 +211,28 @@ jobs:
         run: cargo build -p lunaris-server --no-default-features
 
 
+
+      - name: Build the chaos driver binary
+        # Placed BEFORE the Moon launch on purpose: the isolation guard
+        # (integration_steps_are_isolated.rs) requires every live-Moon step to be
+        # IMMEDIATELY preceded by a reset. Slotting a build between the reset and
+        # the conformance step broke that invariant, and the guard caught it.
+        # BOTH crash suites spawn `chaos` as a subprocess, and NOTHING built
+        # it. `chaos` lives in `lunaris-bench`, a DIFFERENT package from either
+        # test, so Cargo never sets `CARGO_BIN_EXE_chaos` (that variable covers
+        # same-package bins only) and both fall back to
+        # `<target>/<profile>/chaos`, which did not exist on a runner.
+        #
+        # This is why `chaos_helios_sigkill`'s park reason was not just wrong
+        # but incomplete: it blamed wall-clock, and the actual blocker was a
+        # missing binary. Nobody knew, because the test had never run — a
+        # never-run test's documented requirements are themselves unverified.
+        #
+        # Debug profile: both resolvers pick the directory from
+        # `cfg!(debug_assertions)`, and `cargo test` without `--release` is
+        # debug.
+        run: cargo build -p lunaris-bench --bin chaos
+
       - name: Pin Moon runtime paths
         # $RUNNER_TEMP is a plain shell variable here, which `run:` can read
         # even though the `runner` CONTEXT is off-limits in job-level `env:`.
@@ -232,23 +254,6 @@ jobs:
         # fails every ingest with "TXN does not support cross-shard writes"
         # (docs/operations/external-moon.md).
         run: bash scripts/ci/reset_moon.sh
-
-      - name: Build the chaos driver binary
-        # BOTH crash suites spawn `chaos` as a subprocess, and NOTHING built
-        # it. `chaos` lives in `lunaris-bench`, a DIFFERENT package from either
-        # test, so Cargo never sets `CARGO_BIN_EXE_chaos` (that variable covers
-        # same-package bins only) and both fall back to
-        # `<target>/<profile>/chaos`, which did not exist on a runner.
-        #
-        # This is why `chaos_helios_sigkill`'s park reason was not just wrong
-        # but incomplete: it blamed wall-clock, and the actual blocker was a
-        # missing binary. Nobody knew, because the test had never run — a
-        # never-run test's documented requirements are themselves unverified.
-        #
-        # Debug profile: both resolvers pick the directory from
-        # `cfg!(debug_assertions)`, and `cargo test` without `--release` is
-        # debug.
-        run: cargo build -p lunaris-bench --bin chaos
 
       - name: Run conformance tests with moon-it
         # `chaos-it` added 2026-08-24. Without it `crash_recovery.rs` compiles
