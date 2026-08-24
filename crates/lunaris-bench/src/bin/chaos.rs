@@ -31,7 +31,7 @@
 //!
 //! Required env:
 //!
-//! * `LUNARIS_URL` — `moon://host:port` or `postgres://...`.
+//! * `LUNARIS_URL` — `moon://host:port`. (`postgres://` was removed in 0.7.0.)
 //! * `KILL_SITE` — `MidHeliosScratchpadWrite` | `MidConsolidatorPromotion`.
 //!
 //! Optional env:
@@ -94,7 +94,6 @@ async fn run_phase4_legacy(args: &[String]) -> ExitCode {
         eprintln!();
         eprintln!("examples:");
         eprintln!("  chaos moon://localhost:6380 --corpus 10000");
-        eprintln!("  chaos postgres://localhost/lunaris_chaos --corpus 10000");
         return ExitCode::from(2);
     }
 
@@ -161,7 +160,7 @@ async fn run_helios_profile() -> ExitCode {
         Ok(v) if !v.is_empty() => v,
         _ => {
             eprintln!(
-                "chaos: --profile helios requires LUNARIS_URL env (moon://... | postgres://...)"
+                "chaos: --profile helios requires LUNARIS_URL env (moon://host:port)"
             );
             return ExitCode::from(2);
         }

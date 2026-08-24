@@ -21,7 +21,7 @@ For the full user-facing install + quickstart guide covering both Python and Typ
 ## Requirements
 
 - Python **3.11+** (abi3 stable ABI — one wheel covers 3.11, 3.12, 3.13)
-- A Moon or Postgres backend reachable from the process; `moon://` and `postgres://` URL schemes are supported.
+- A Moon backend reachable from the process. `moon://` is the only supported URL scheme — `postgres://` and `sqlite://` were removed in 0.7.0 and now return `UnsupportedScheme`. See [`docs/migration/0.6-to-0.7.md`](../../docs/migration/0.6-to-0.7.md).
 
 ## Example
 
