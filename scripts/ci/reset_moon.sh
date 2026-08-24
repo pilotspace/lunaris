@@ -30,14 +30,71 @@ elif command -v fuser >/dev/null 2>&1; then
 else
   pids=""
 fi
+# `lsof`/`fuser` are not guaranteed on a runner, and an empty `$pids` used to
+# skip the kill silently. The launch step exports MOON_PID; use it as the
+# fallback rather than proceeding with nothing to kill.
+if [ -z "$pids" ] && [ -n "${MOON_PID:-}" ]; then
+  pids="$MOON_PID"
+fi
+
 if [ -n "$pids" ]; then
   # shellcheck disable=SC2086
   kill $pids 2>/dev/null || true
 fi
-for _ in $(seq 1 20); do
-  if ! (echo > "/dev/tcp/localhost/$PORT") >/dev/null 2>&1; then break; fi
-  sleep 1
-done
+
+# Wait on PROCESS LIVENESS, not on a port probe.
+#
+# The probe this replaces polled `/dev/tcp/localhost/$PORT` and broke the
+# moment one connect attempt failed. A connect can fail transiently while the
+# server is still very much alive (a momentarily full accept backlog is
+# enough), and when it did, the script carried on: `rm -rf "$DIR"` ran under a
+# live Moon, the replacement could not bind the port, and the verification
+# below was answered by the OLD server.
+#
+# That is not hypothetical. In the failing run every healthy reset logged
+# "moon reachable after 2 attempt(s)"; the broken one logged **1** — answered
+# instantly, because nothing had gone away — and then `DBSIZE ':8'`.
+#
+# `kill -0` asks the kernel whether the process exists. There is no transient
+# false negative.
+alive_pids() {
+  local p out=""
+  for p in $pids; do
+    if kill -0 "$p" 2>/dev/null; then out="$out $p"; fi
+  done
+  printf '%s' "$out"
+}
+
+if [ -n "$pids" ]; then
+  for _ in $(seq 1 20); do
+    [ -z "$(alive_pids)" ] && break
+    sleep 1
+  done
+  if [ -n "$(alive_pids)" ]; then
+    stubborn="$(alive_pids)"
+    echo "moon pid(s)$stubborn ignored SIGTERM after 20s; escalating to SIGKILL"
+    # shellcheck disable=SC2086
+    kill -9 $stubborn 2>/dev/null || true
+    for _ in $(seq 1 10); do
+      [ -z "$(alive_pids)" ] && break
+      sleep 1
+    done
+  fi
+  if [ -n "$(alive_pids)" ]; then
+    echo "ERROR: moon pid(s)$(alive_pids) survived SIGTERM and SIGKILL."
+    exit 1
+  fi
+fi
+
+# Belt and braces: even with every known pid reaped, refuse to delete the data
+# directory while anything still holds the port. Deleting it under a live
+# server is what turns this reset into a no-op that still reports success.
+if (echo > "/dev/tcp/localhost/$PORT") >/dev/null 2>&1; then
+  echo "ERROR: port $PORT is still accepting connections after the old Moon was reaped."
+  echo "  Something else is listening. Refusing to reset around it, because every"
+  echo "  check below would then be answered by a store this script did not create."
+  exit 1
+fi
 
 rm -rf "$DIR"
 mkdir -p "$DIR"
@@ -98,10 +155,19 @@ fi
 # marker `index_name`, which every successful reply carries: Moon spells the
 # missing-index error at least three ways ("no such index", "Unknown index",
 # "Unknown Index name") and enumerating them is an open set.
-if printf '%s' "$reply" | grep -q "index_name"; then
-  echo "ERROR: the \`chunks\` FT index survived the reset on $PORT."
-  echo "  FLUSHALL leaves indices standing; only an empty --dir removes them."
-  exit 1
-fi
+#
+# Matched with a bash `case`, not `grep`. `if ... | grep -q ...` is FAIL-OPEN:
+# when grep is missing the pipeline exits non-zero, the condition is false, and
+# the script falls straight through to "reset verified" having checked nothing.
+# That is the same shape as the `command -v redis-cli` escape hatch this
+# script's header describes, so it does not get to survive next to that note.
+# A `case` needs no external command and cannot fail this way.
+case "$reply" in
+  *index_name*)
+    echo "ERROR: the \`chunks\` FT index survived the reset on $PORT."
+    echo "  FLUSHALL leaves indices standing; only an empty --dir removes them."
+    exit 1
+    ;;
+esac
 
 echo "reset verified: DBSIZE=0, no chunks index"
