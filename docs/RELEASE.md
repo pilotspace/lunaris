@@ -27,10 +27,18 @@ git push origin v0.7.0
 # 3. CI does NOT run on the tag. `ci.yml` triggers on main pushes + PRs
 #    only, so semver-checks (advisory) and the lunaris-core
 #    `cargo publish --dry-run` must already be green on the MAIN COMMIT you
-#    are tagging — check the main-push board there, not the tag. Exactly four
+#    are tagging — check the main-push board there, not the tag. FIVE
 #    workflows fire on a `v*` tag: crates-publish, ts-prebuild, mcp-prebuild,
-#    python-prebuild. (`ci.yml` has NO tag-gated job — the dormant
-#    submodule-tag-parity / RELEASE-05 job was removed in issue #136.)
+#    python-prebuild, and cli-release. (`ci.yml` has NO tag-gated job — the
+#    dormant submodule-tag-parity / RELEASE-05 job was removed in issue #136.)
+#
+#    cli-release is easy to miss: its `on:` block leads with `push: branches:
+#    [main]` and a `paths:` filter, so it reads as a main-only workflow, but
+#    the same block carries `tags: ["v*"]` — and unlike the other four it has
+#    `permissions: contents: write` and runs softprops/action-gh-release. So
+#    the tag does not just publish packages; it CUTS THE GITHUB RELEASE and
+#    uploads the CLI binaries. This line said "four" through v0.7.0 and was
+#    measured wrong at the real v0.7.1 tag on 2026-08-25.
 
 # 4. crates.io publish runs in CI: .github/workflows/crates-publish.yml
 #    triggers on the v* tag (workflow_dispatch for an initial/repair run —
