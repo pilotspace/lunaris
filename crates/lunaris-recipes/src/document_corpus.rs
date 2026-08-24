@@ -212,8 +212,7 @@ impl DocumentCorpus {
         // recalled across every scope in the store. Invisible until W4.17, because
         // every SDK recipe binding constructed at `Scope::dev()` and the two halves
         // agreed by accident.
-        let mut builder =
-            self.lunaris.recall().with_root(plan);
+        let mut builder = self.lunaris.recall().with_scope(self.scope.clone()).with_root(plan);
         if let Some(f) = combined {
             builder = builder.filter(f);
         }

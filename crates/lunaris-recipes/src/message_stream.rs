@@ -149,6 +149,7 @@ impl MessageStream {
         let hits: Vec<Hit> = self
             .lunaris
             .recall()
+            .with_scope(self.scope.clone())
             .with_root(plan)
             .execute(Query::text(query))
             .await?;
