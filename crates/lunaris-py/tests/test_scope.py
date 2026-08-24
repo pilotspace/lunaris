@@ -198,10 +198,23 @@ async def test_scoped_lunaris_scope_getter(moon_backend_url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scoped_dsl_returns_retrieval_builder(moon_backend_url: str) -> None:
-    """scoped.dsl() must return a RetrievalBuilder (not None, not raise)."""
+async def test_scoped_dsl_returns_a_builder_that_can_be_composed(
+    moon_backend_url: str,
+) -> None:
+    """scoped.dsl() must return a builder that can actually be driven.
+
+    `assert builder is not None` was the whole assertion here until W4.12, and
+    it passed against the codegen-frozen stub whose surface is
+    `['and', 'as_of', 'filter', 'fuse_rrf', 'top']` — no `query`, no
+    `execute`. It proved only that `dsl()` returned an object. The TypeScript
+    twin (`expect(builder).toBeDefined()`) had the same hole.
+    """
     handle = await lunaris.open(moon_backend_url)
     scope = lunaris.Scope("agent.alpha")
     scoped = handle.scoped(scope)
     builder = scoped.dsl()
-    assert builder is not None
+    for name in ("query", "top", "execute"):
+        assert callable(getattr(builder, name, None)), (
+            f"scoped.dsl() returned a builder with no callable `{name}` — "
+            f"this is the frozen codegen stub, not the working builder"
+        )
