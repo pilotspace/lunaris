@@ -190,7 +190,7 @@ where
     /// without the Filter variant in `lunaris-core` would not compile;
     /// the PR deliberately holds for Phase 9.1.
     pub async fn execute(self, query: &str) -> Result<Vec<Hit>, LunarisError> {
-        let mut builder = self.lunaris.recall();
+        let mut builder = self.lunaris.recall().with_scope(self.scope.clone());
         if let Some(ts) = self.bounds.as_of {
             builder = builder.as_of(ts);
         }

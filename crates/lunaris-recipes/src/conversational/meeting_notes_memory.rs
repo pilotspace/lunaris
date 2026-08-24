@@ -125,6 +125,7 @@ impl MeetingNotesQuery {
         let plan = Vector::new("chunks", 24).and(Keyword::bm25("chunks", 24)).fuse_rrf(60).top(8);
         self.lunaris
             .recall()
+            .with_scope(self.scope.clone())
             .with_root(plan)
             .filter(filter)
             .execute(Query::text(query))
