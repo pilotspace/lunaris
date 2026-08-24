@@ -68,11 +68,11 @@ done
 # it here would make this gate fail forever on a target that is behaving
 # correctly.
 #
-# That is worth its own note, though: `integration.yml` runs
-# `-p lunaris-recipes --features moon-it` inside the Moon-having job, with a
-# dedicated fresh-Moon reset before it, and the package touches no Moon. The
-# step name and the feature flag both promise live coverage that does not
-# exist. See ship-plan F36.
+# integration.yml used to run `-p lunaris-recipes --features moon-it` inside the
+# Moon-having job, with a dedicated fresh-Moon reset before it, against a
+# package that touches no Moon. That step and the vacuous feature are both
+# gone (F36); this comment stays so the next reader knows the omission below
+# is a decision, not an oversight.
 
 if [ "$fail" -ne 0 ]; then
   echo "::error::strict mode is decorative for at least one target (above)"

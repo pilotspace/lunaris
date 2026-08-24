@@ -43,10 +43,16 @@ workspace = true
 optional = true
 
 # W3 (moon-v051-perf-exploit): optional dep for the live-Moon embedding
-# double-store proof (`tests/c_live_moon_embedding_kv_size.rs`). Mirrors the
-# `lunaris-recipes` `moon-it` pattern: `optional = true` + `dep:` feature so
-# `cargo test -p lunaris-ingest` (default features) never compiles the Moon
-# client at all.
+# double-store proof (`tests/c_live_moon_embedding_kv_size.rs`): `optional =
+# true` + a `dep:` feature, so `cargo test -p lunaris-ingest` (default
+# features) never compiles the Moon client at all.
+#
+# This comment used to cite `lunaris-recipes` as the model for the pattern.
+# That feature was deleted in F36 because it gated zero code — the shape was
+# right, the crate had nothing to gate. The difference that makes it earn its
+# keep HERE is `c_live_moon_embedding_kv_size.rs`: a real test file that is
+# compiled only when the feature is on, and a step in integration.yml that
+# turns it on.
 [dependencies.lunaris-storage-moon]
 workspace = true
 optional = true

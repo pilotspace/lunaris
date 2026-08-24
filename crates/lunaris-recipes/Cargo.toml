@@ -12,10 +12,6 @@
 # internal crates — the workspace root `[workspace.dependencies]` block holds
 # only EXTERNAL crates (tokio, serde, thiserror, …), so internal deps MUST use
 # explicit path entries, not `{ workspace = true }`.
-#
-# Feature gate `moon-it` mirrors Phase 4 Plan 04-03 + Phase 5 Plan
-# 05-02 `probe_backend` discipline: parity tests under `tests/` SKIP cleanly
-# when env URL is unset, so `cargo test -p lunaris-recipes` stays zero-config.
 
 [package]
 name        = "lunaris-recipes"
@@ -38,7 +34,6 @@ lunaris = { workspace = true }
 lunaris-core = { workspace = true }
 lunaris-retrieve = { workspace = true }
 lunaris-consolidate = { workspace = true }
-lunaris-storage-moon = { workspace = true, optional = true }
 tokio       = { workspace = true }
 async-trait = { workspace = true }
 thiserror   = { workspace = true }
@@ -68,7 +63,17 @@ parking_lot         = { workspace = true }
 
 [features]
 default = []
-# Integration-test flags — parity tests SKIP cleanly when env URL is unset
-# (mirrors Phase 4 Plan 04-03 + Plan 05-02 probe_backend discipline).
-moon-it = ["dep:lunaris-storage-moon"]
-# `pg-it` was removed in 0.7.0 with `lunaris-storage-postgres` (Moon-only).
+# No integration-test features. F36 — this crate carried a `moon-it` feature
+# that gated ZERO code. Its three integration files each define their own
+# in-file mock `StoragePort` and none reads a backend URL, so there was nothing
+# for the feature to switch on; all it did was mark `lunaris-storage-moon`
+# `optional`. It did not even save the build: `cargo tree -p lunaris-recipes
+# -e normal` shows `lunaris-storage-moon` arriving anyway through `lunaris` and
+# `lunaris-retrieve` with the feature OFF.
+#
+# integration.yml ran `-p lunaris-recipes --features moon-it` in the
+# Moon-having job regardless, with a fresh-Moon reset of its own before it, so
+# the step name and the flag both promised live coverage this crate cannot
+# provide. Both are gone. `cargo test --workspace --all-targets` in ci.yml runs
+# these tests, which is the only place they were ever really running.
+# (`pg-it` was removed earlier, in 0.7.0, with `lunaris-storage-postgres`.)
