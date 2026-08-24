@@ -159,9 +159,7 @@ async fn run_helios_profile() -> ExitCode {
     let url = match std::env::var("LUNARIS_URL") {
         Ok(v) if !v.is_empty() => v,
         _ => {
-            eprintln!(
-                "chaos: --profile helios requires LUNARIS_URL env (moon://host:port)"
-            );
+            eprintln!("chaos: --profile helios requires LUNARIS_URL env (moon://host:port)");
             return ExitCode::from(2);
         }
     };
