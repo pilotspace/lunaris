@@ -74,6 +74,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
+import { runTag, runWindowOffsetMs } from "./run_isolation.mjs";
 
 const lunaris = await import("../index.mjs");
 
@@ -241,6 +242,34 @@ type Hit = { id: unknown; source: string; text: string; [k: string]: unknown };
 // Scenario runners.
 // ---------------------------------------------------------------------------
 
+// F34 — every source prefix below carries a per-RUN token.
+//
+// Without it this suite is only correct against a FRESH backend: each helper
+// re-ingests its fixtures under a constant prefix, so a second run against the
+// same Moon reads its own rows plus the previous run's, and
+// `expect(moonTexts.length).toBe(s.expected_count)` reads double. Measured on
+// the Python twin of this file: 6 events became 12, then 30 across five runs.
+// CI never saw it because runners are fresh.
+//
+// The token keeps the EXACT count, which is what pins `.between`'s
+// inclusive-lo / exclusive-hi boundary. Relaxing it to a lower bound would
+// have hidden the symptom and stopped detecting a genuine over-return.
+//
+// `conversational_parity.spec.mts` has always done this; `runTag` now lives in
+// `run_tag.mts` so there is one definition rather than a copy per suite.
+const TAG = runTag();
+
+// ...and the timeline scenario additionally shifts its VALID-TIME window per
+// run. The prefix alone does not isolate it: `TimelineReconstruction.between`
+// pushes `@valid_time:[lo hi]` down to Moon but filters the prefix in memory
+// AFTER the root's global `top(30)`, so every run's 6 in-window rows compete
+// for the same 30 slots. Measured against one accumulating store: run 2
+// returned 12, run 5 returned exactly 30 (the cap), and with both language
+// suites on the same window a later run returned 5 of its own 6 — an
+// UNDER-return, which reads like a product bug rather than a dirty store.
+// Shifting the window makes Moon's own numeric filter do the isolating.
+const WINDOW_OFFSET_MS = runWindowOffsetMs();
+
 async function runKbQuickstart(
   url_: string,
   backendLabel: string,
@@ -249,7 +278,7 @@ async function runKbQuickstart(
 ): Promise<[string, string][]> {
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
-  const prefix = `kb:docs/doc-11-03-ts/${backendLabel}/`;
+  const prefix = `kb:docs/doc-11-03-ts/${backendLabel}/${TAG}/`;
   let kb = l.DocumentKnowledgeBase.new(mem, prefix);
   const docs = loadFixture<{ id: string; title: string; body: string }[]>(
     "document_knowledge_base_docs.json",
@@ -270,7 +299,7 @@ async function runResearchPaper(
 ): Promise<[string, string][]> {
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
-  const prefix = `papers:doc-11-03-ts/${backendLabel}/`;
+  const prefix = `papers:doc-11-03-ts/${backendLabel}/${TAG}/`;
   let corpus = l.ResearchPaperCorpus.new(mem, prefix);
   corpus = corpus.withGraphPipeline(false);
   const papers = loadFixture<{ id: string; title: string; abstract: string }[]>(
@@ -293,7 +322,7 @@ async function runCodeRepoAsOf(
 ): Promise<string[]> {
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
-  const prefix = `repo:doc-11-03-ts/${backendLabel}/`;
+  const prefix = `repo:doc-11-03-ts/${backendLabel}/${TAG}/`;
   const repo = l.CodeRepoMemory.new(mem, prefix);
   const commits = loadFixture<
     { sha: string; committer_date_rfc3339: string; function_body_chunk: string }[]
@@ -318,18 +347,20 @@ async function runTimelineBetween(
 ): Promise<string[]> {
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
-  const prefix = `timeline:doc-11-03-ts/${backendLabel}/`;
+  const prefix = `timeline:doc-11-03-ts/${backendLabel}/${TAG}/`;
   const timeline = l.TimelineReconstruction.new(mem, prefix);
   const events = loadFixture<{ id: string; valid_time_rfc3339: string; text: string }[]>(
     "timeline_30_days.json",
   );
   for (const e of events) {
-    const ms = rfc3339ToUnixMs(e.valid_time_rfc3339);
+    const ms = rfc3339ToUnixMs(e.valid_time_rfc3339) + WINDOW_OFFSET_MS;
     const meta = { event_id: e.id, valid_time_unix_ms: ms };
     await timeline.ingest([[e.text, meta]]);
   }
-  const lo = { wall_ms: rfc3339ToUnixMs(loRfc), counter: 0, node_id: 0 };
-  const hi = { wall_ms: rfc3339ToUnixMs(hiRfc), counter: 0, node_id: 0 };
+  // The SAME shift on both sides, so the inclusive-lo / exclusive-hi boundary
+  // this scenario exists to pin is preserved exactly under the translation.
+  const lo = { wall_ms: rfc3339ToUnixMs(loRfc) + WINDOW_OFFSET_MS, counter: 0, node_id: 0 };
+  const hi = { wall_ms: rfc3339ToUnixMs(hiRfc) + WINDOW_OFFSET_MS, counter: 0, node_id: 0 };
   const hits = (await timeline.between(query, lo, hi)) as Hit[];
   return hits.map((h) => h.text);
 }
@@ -341,6 +372,35 @@ async function runCustomerSupportRefund(
   const l = lunaris as Record<string, any>;
   const mem = await l.open(url_);
   const hist = l.CustomerSupportHistory.new(mem);
+
+  // PRECONDITION, not an assertion about the product.
+  //
+  // `CustomerSupportHistory` takes no source prefix and — like every recipe in
+  // both SDKs — is constructed at `Scope::dev()`
+  // (`crates/lunaris-ts/src/generated.rs:227`; 10 such call sites per binding).
+  // So this scenario has NO isolation knob: a previous run's 50 tickets sit in
+  // the same scope, under the same sources, and compete for the same
+  // `top(30)`. Measured: after a handful of runs the ticket rows were crowded
+  // out entirely and the assertion downstream reported "ticket-prefix hits:
+  // expected 0 to be greater than or equal to 1" — which reads like a recall
+  // regression, not a dirty store.
+  //
+  // `runTag` and `runWindowOffsetMs` fix the scenarios that DO have a knob.
+  // This one cannot be fixed from the test side; giving the SDK a scope-bound
+  // path is ship-plan W4.12. Until then, say the requirement out loud rather
+  // than letting it fail three steps downstream.
+  const stale = (await hist.recall(query)) as Hit[];
+  if (stale.length > 0) {
+    throw new Error(
+      `this suite requires a Moon with no previous run's documents in it, and ` +
+        `${stale.length} are already present under \`ticket:\` / \`chat:\`. Reset ` +
+        `with \`bash scripts/ci/reset_moon.sh\` (or point LUNARIS_MOON_URL at a ` +
+        `fresh Moon) and re-run. Every recipe binding constructs at ` +
+        `Scope::dev(), so this scenario has no per-run partition to hide ` +
+        `behind — see W4.12.`,
+    );
+  }
+
   const fx = loadFixture<{
     tickets: { id: string; body: string }[];
     chats: {
