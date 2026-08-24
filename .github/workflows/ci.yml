@@ -230,31 +230,36 @@ jobs:
       # leaves is ledger F16. This ratchet caught the drop on the same PR that
       # made it, which is the behaviour it exists for.
       #
-      # Scope is `*/tests/*.rs` on purpose — in-crate `#[cfg(test)]` units sit
-      # beside the code they cover, whereas an integration file can silently
-      # park a whole contract. Comment lines are stripped first so prose ABOUT
-      # `#[ignore]` does not count.
+      # The shell version of this gate was blind in two ways, and BOTH blind
+      # spots were occupied — it reported 12, matching its own expectation,
+      # while 14 tests were parked:
+      #
+      #   * `#[cfg_attr(not(feature = "x"), ignore = "...")]` never contains
+      #     the literal `#[ignore`, and spanning lines put it out of reach of a
+      #     line-oriented grep entirely. `binary_size_gate.rs` parks that way,
+      #     and its `ci-perf-gates` feature is enabled by no workflow — so the
+      #     least-covered test in the repo was the one the ratchet could not
+      #     see. Verified by planting a cfg_attr-parked test in `tests/`: the
+      #     old command stayed at 12.
+      #   * scope was `*/tests/*.rs`, which skips `#[cfg(test)]` units in
+      #     `src/` (`lunaris-ingest/src/chunker/token.rs` parks one).
+      #
+      # A bare COUNT also could not answer the question that matters — it
+      # cannot tell a test some job un-parks from one that runs nowhere. So the
+      # ratchet is now a coverage manifest (`ci/parked-tests.txt`): every parked
+      # test must name the job that un-parks it (RUN_BY) or admit that none does
+      # (NEVER_RUN). Parking a test is a decision; the manifest is where it gets
+      # recorded. Today: 14 parked, 9 un-parked by a job, 5 run nowhere.
+      #
+      # Now a script, not inline shell, so the gate can be run locally the same
+      # way CI runs it — a guard nobody can reproduce is the same defect one
+      # level up. It strips comments (prose ABOUT `#[ignore]` must not count),
+      # joins multi-line attributes, and requires a reason whatever the parking
+      # mechanism.
       #
       # Security: static literal strings only; no untrusted input.
-      - name: ignored_test_ratchet
-        run: |
-          set -euo pipefail
-          EXPECTED_IGNORED=12
-          sites=$(find crates -path '*/tests/*' -name '*.rs' -print0 \
-            | xargs -0 grep -hn '#\[ignore' \
-            | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' || true)
-          count=$(printf '%s\n' "$sites" | grep -c '#\[ignore' || true)
-          bare=$(printf '%s\n' "$sites" | grep -c '#\[ignore\]' || true)
-          echo "ignored integration tests: $count (bare: $bare)"
-          printf '%s\n' "$sites"
-          if [ "$bare" != "0" ]; then
-            echo "::error::a bare #[ignore] carries no reason and no expiry — write #[ignore = \"what it needs / what un-ignores it\"]"
-            exit 1
-          fi
-          if [ "$count" != "$EXPECTED_IGNORED" ]; then
-            echo "::error::ignored-test count is $count, ratchet expects $EXPECTED_IGNORED. Un-ignoring? Lower EXPECTED_IGNORED in ci.yml. Adding one? Raise it AND say in the PR what un-ignores it."
-            exit 1
-          fi
+      - name: parked_test_ratchet
+        run: python3 scripts/ratchet-parked-tests.py
 
       # Plan 13-01 RELEASE-02 — audit envelope grep gate. Blocks
       # reintroduction of inline `serde_json::json!({"kind":"..."})`
