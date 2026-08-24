@@ -39,10 +39,12 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use lunaris::Lunaris;
+//! use lunaris_core::scope::Scope;
 //! use lunaris_recipes::{TemporalQuery, Messages};
 //!
 //! # async fn demo(mem: Arc<Lunaris>, some_ts: lunaris_core::Hlc) -> anyhow::Result<()> {
-//! let hits = TemporalQuery::<Messages>::new(mem)
+//! let scope = Scope::new("acme-agent-1")?;
+//! let hits = TemporalQuery::<Messages>::new(mem, scope)
 //!     .as_of(some_ts)
 //!     .execute("search text")
 //!     .await?;
@@ -64,6 +66,7 @@ use std::sync::Arc;
 use lunaris::Lunaris;
 use lunaris_core::LunarisError;
 use lunaris_core::hlc::Hlc;
+use lunaris_core::scope::Scope;
 use lunaris_core::storage::types::Filter;
 use lunaris_retrieve::{Hit, Query};
 
@@ -134,6 +137,12 @@ fn check_between_bounds(after: Hlc, before: Hlc) {
 /// Typestate time-travel combinator. `S` is a compile-only phantom.
 pub struct TemporalQuery<S> {
     lunaris: Arc<Lunaris>,
+    /// W4.17 — the partition this query reads in. It used to have none, and
+    /// `execute` ran `lunaris.recall()` unscoped: every temporal read crossed
+    /// every scope in the store. `tests/timeline_prefix_scoped_recall.rs`
+    /// named this in its header ("takes neither a prefix nor a scope") while
+    /// F30 fixed only the prefix half.
+    scope: Scope,
     bounds: TemporalBounds,
     _source: PhantomData<S>,
 }
@@ -142,10 +151,10 @@ impl<S> TemporalQuery<S>
 where
     S: SupportsAsOf,
 {
-    /// Construct a TemporalQuery over source `S`. Source is a phantom
-    /// marker — no runtime value required.
-    pub fn new(lunaris: Arc<Lunaris>) -> Self {
-        Self { lunaris, bounds: TemporalBounds::default(), _source: PhantomData }
+    /// Construct a TemporalQuery over source `S` bound to `scope`. Source is
+    /// a phantom marker — no runtime value required.
+    pub fn new(lunaris: Arc<Lunaris>, scope: Scope) -> Self {
+        Self { lunaris, scope, bounds: TemporalBounds::default(), _source: PhantomData }
     }
 
     /// Return the snapshot at `ts` for source `S`. Subsequent operators

@@ -45,6 +45,10 @@ use crate::{DocumentCorpus, Documents, TemporalQuery};
 #[derive(Clone)]
 pub struct CodeRepoMemory {
     lunaris: Arc<Lunaris>,
+    /// W4.17 — kept alongside `corpus` so the TEMPORAL read path can carry
+    /// the same partition the write path does. `TemporalQuery` had no scope
+    /// at all until W4.17.
+    scope: Scope,
     corpus: DocumentCorpus,
 }
 
@@ -52,8 +56,8 @@ impl CodeRepoMemory {
     /// Construct bound to `repo_prefix` (e.g. `"repo:lunaris/"`). Every
     /// `ingest_commit` call stamps `repo_prefix` onto the Episode `source`.
     pub fn new(lunaris: Arc<Lunaris>, scope: Scope, repo_prefix: impl Into<String>) -> Self {
-        let corpus = DocumentCorpus::new(lunaris.clone(), scope, repo_prefix);
-        Self { lunaris, corpus }
+        let corpus = DocumentCorpus::new(lunaris.clone(), scope.clone(), repo_prefix);
+        Self { lunaris, scope, corpus }
     }
 
     /// Ingest one commit as a batch of `(function_body, metadata)` chunks.
@@ -86,7 +90,10 @@ impl CodeRepoMemory {
     /// See note: `TemporalQuery` recalls across ALL Documents; isolation is
     /// the caller's responsibility (fixture-isolated in tests).
     pub async fn recall(&self, query: &str, as_of: Hlc) -> Result<Vec<Hit>, LunarisError> {
-        TemporalQuery::<Documents>::new(self.lunaris.clone()).as_of(as_of).execute(query).await
+        TemporalQuery::<Documents>::new(self.lunaris.clone(), self.scope.clone())
+            .as_of(as_of)
+            .execute(query)
+            .await
     }
 }
 

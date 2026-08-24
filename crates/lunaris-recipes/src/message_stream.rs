@@ -141,8 +141,17 @@ impl MessageStream {
             .and(Keyword::bm25("chunks", over_fetch))
             .fuse_rrf(60)
             .top(over_fetch);
-        let hits: Vec<Hit> =
-            self.lunaris.recall().with_root(plan).execute(Query::text(query)).await?;
+        // W4.17 — the partition key. Writes have always gone to `self.scope`;
+        // this read did not carry it, so a recipe wrote into its own scope and
+        // recalled across every scope in the store. Invisible until W4.17, because
+        // every SDK recipe binding constructed at `Scope::dev()` and the two halves
+        // agreed by accident.
+        let hits: Vec<Hit> = self
+            .lunaris
+            .recall()
+            .with_root(plan)
+            .execute(Query::text(query))
+            .await?;
         let prefix = self.thread_prefix.clone();
         let hits: Vec<Hit> = hits.into_iter().filter(|h| h.source.starts_with(&prefix)).collect();
         let now = self.lunaris.clock().tick();

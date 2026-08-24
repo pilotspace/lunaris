@@ -207,7 +207,13 @@ impl DocumentCorpus {
             .and(Keyword::bm25("chunks", over_fetch))
             .fuse_rrf(DEFAULT_RRF_K)
             .top(over_fetch);
-        let mut builder = self.lunaris.recall().with_root(plan);
+        // W4.17 — the partition key. Writes have always gone to `self.scope`;
+        // this read did not carry it, so a recipe wrote into its own scope and
+        // recalled across every scope in the store. Invisible until W4.17, because
+        // every SDK recipe binding constructed at `Scope::dev()` and the two halves
+        // agreed by accident.
+        let mut builder =
+            self.lunaris.recall().with_root(plan);
         if let Some(f) = combined {
             builder = builder.filter(f);
         }
