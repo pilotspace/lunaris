@@ -426,6 +426,56 @@ def test_code_repo_memory_parity_as_of_commit_50():
     asyncio.run(run())
 
 
+# W4.13 — the REFUSAL is the contract, and nothing asserted it.
+#
+# The scenario above is skipped against a named product gap, which is the right
+# call: a test known to fail is a broken build, not a gate. But skipping it left
+# the SDK-level time-travel story documented and untested in BOTH directions —
+# nothing checked that a historical `as_of` returns rows, and nothing checked
+# that it refuses either. An `as_of` that silently returned an empty list, or
+# that quietly answered with latest-state rows, would have passed every test in
+# this repo.
+#
+# That second failure mode is the dangerous one. Returning today's rows for a
+# pin 18 months back is a wrong answer that looks like a right one; the whole
+# point of `reject_historical_read` is that it refuses BEFORE issuing any RESP
+# command, so a rejected read cannot be confused with a transport failure.
+#
+# The assertion keys on `moon_kv_as_of`, which
+# `crates/lunaris-storage-moon/src/as_of.rs` defines as the greppable machine
+# token for exactly this purpose, rather than on the prose that follows it.
+#
+# INVERT WHEN: `HISTORICAL_KV_READS` flips true — at which point this test
+# should assert rows come back and the scenario above should be unskipped.
+# Both are gated on the same mirrored constant so they cannot drift apart.
+def test_historical_as_of_is_refused_not_silently_empty():
+    if _MOON_HISTORICAL_KV_READS:
+        pytest.skip(
+            "HISTORICAL_KV_READS is true — the refusal this asserts no longer "
+            "applies. Unskip test_code_repo_memory_parity_as_of_commit_50 and "
+            "delete this test in the same commit."
+        )
+    doc_mod = _lunaris_module()
+    moon = _moon_or_skip()
+    golden = _load_golden()
+    scenario = golden["scenarios"]["code_repo_memory_as_of_commit_50"]
+
+    async def run():
+        with pytest.raises(Exception) as excinfo:
+            await _run_code_repo_as_of(
+                doc_mod, moon, "moon",
+                scenario["query"], scenario["commit_index_0based"],
+            )
+        msg = str(excinfo.value)
+        assert "moon_kv_as_of" in msg, (
+            "a historical as_of must be REFUSED with the moon_kv_as_of token, "
+            "not answered and not failed some other way. lunaris-server maps "
+            f"this variant to a 501; got: {msg}"
+        )
+
+    asyncio.run(run())
+
+
 # -----------------------------------------------------------------------------
 # Scenario 4 — TimelineReconstruction .between exactly 6 events.
 # -----------------------------------------------------------------------------

@@ -466,6 +466,64 @@ describe("Plan 11-03 — documentary parity (TypeScript)", () => {
     expect(moonTexts.some((t) => t.includes(needle))).toBe(true);
   }, 90_000);
 
+  // W4.13 — the REFUSAL is the contract, and nothing asserted it.
+  //
+  // The scenario above is skipped against a named product gap, which is the
+  // right call: a test known to fail is a broken build, not a gate. But
+  // skipping it left the SDK-level time-travel story documented and untested in
+  // BOTH directions — nothing checked that a historical `as_of` returns rows,
+  // and nothing checked that it refuses either. An `as_of` that silently
+  // returned an empty array, or that quietly answered with latest-state rows,
+  // would have passed every test in this repo.
+  //
+  // That second failure mode is the dangerous one. Returning today's rows for a
+  // pin 18 months back is a wrong answer that looks like a right one; the whole
+  // point of `reject_historical_read` is that it refuses BEFORE issuing any
+  // RESP command, so a rejected read cannot be confused with a transport
+  // failure.
+  //
+  // The assertion keys on `moon_kv_as_of`, which
+  // `crates/lunaris-storage-moon/src/as_of.rs` defines as the greppable machine
+  // token for exactly this purpose, rather than on the prose that follows it.
+  //
+  // INVERT WHEN: `HISTORICAL_KV_READS` flips true — at which point this test
+  // should assert rows come back and the scenario above should be unskipped.
+  // Both are gated on the same mirrored constant so they cannot drift apart.
+  test("historical as_of is refused, not silently empty", async (ctx: SkippableCtx) => {
+    if (MOON_HISTORICAL_KV_READS) {
+      ctx.skip(
+        "HISTORICAL_KV_READS is true — the refusal this asserts no longer " +
+          "applies. Unskip code_repo_memory_parity_as_of_commit_50 and delete " +
+          "this test in the same commit.",
+      );
+      return;
+    }
+    if (!wrappersPresent()) {
+      ctx.skip("rebuild lunaris-ts with napi build to include the 11-02b wrappers");
+      return;
+    }
+    const moon = await moonOrNull();
+    if (moon === null) {
+      ctx.skip("LUNARIS_MOON_URL unset or unreachable");
+      return;
+    }
+    const g = loadGolden();
+    const s = g.scenarios.code_repo_memory_as_of_commit_50 as any;
+
+    let caught: unknown = null;
+    try {
+      await runCodeRepoAsOf(moon, "moon", s.query, s.commit_index_0based);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught, "a historical as_of must throw, not return").not.toBeNull();
+    expect(
+      String(caught),
+      "the throw must carry the moon_kv_as_of token — lunaris-server maps this " +
+        "variant to a 501 — rather than being some other failure",
+    ).toContain("moon_kv_as_of");
+  }, 90_000);
+
   // F21 FIXED — the `test.fails` marker that used to sit here is gone, and the
   // assertions below are the ones it was parked in front of, unchanged.
   //
