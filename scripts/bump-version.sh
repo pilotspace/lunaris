@@ -146,6 +146,24 @@ jq --arg v "$VER" '
 ' "$lockjson" > "$tmp_lock"
 mv "$tmp_lock" "$lockjson"
 
+# 7. examples/*/Cargo.lock — each example is its OWN cargo workspace with its
+#    own lockfile pinning the lunaris-* path deps. examples.yml regenerates
+#    them and fails if the result differs from what is committed ("Cargo.lock
+#    is stale"), so a bump that skips them turns the Examples board red.
+#
+#    Same class of miss as the TS lockfile above, in a third place: the version
+#    lives in more surfaces than the ones a bump obviously touches.
+for ex_manifest in examples/*/Cargo.toml; do
+  [[ -f "$ex_manifest" ]] || continue
+  ex_dir=$(dirname "$ex_manifest")
+  [[ -f "$ex_dir/Cargo.lock" ]] || continue
+  echo "-> Regenerating $ex_dir/Cargo.lock"
+  cargo generate-lockfile --manifest-path "$ex_manifest" >/dev/null 2>&1 || {
+    echo "ERROR: could not regenerate $ex_dir/Cargo.lock" >&2
+    exit 4
+  }
+done
+
 echo "-> Version parity assertion"
 # Rust source-of-truth: root Cargo.toml [workspace.package].version.
 rust_ver=$(grep -A 20 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version *= *"\(.*\)".*/\1/')
@@ -205,5 +223,17 @@ if [[ -n "$lock_entry_stale" ]]; then
   exit 5
 fi
 
-echo "OK: all five surfaces at $VER (and the TS package-lock)"
+# The examples pin the workspace crates by path+version; a stale lock here is
+# what examples.yml reports as "Cargo.lock is stale".
+for ex_lock in examples/*/Cargo.lock; do
+  [[ -f "$ex_lock" ]] || continue
+  ex_name=$(basename "$(dirname "$ex_lock")")
+  if grep -q 'name = "lunaris-memory"' "$ex_lock" && \
+     ! grep -A1 'name = "lunaris-memory"' "$ex_lock" | grep -q "version = \"$VER\""; then
+    echo "ERROR: $ex_lock still pins lunaris-memory below $VER ($ex_name)" >&2
+    exit 5
+  fi
+done
+
+echo "OK: all five surfaces at $VER (and the TS package-lock + example locks)"
 echo "Next: cargo build --workspace --all-targets --all-features; then follow 13-03-HUMAN-UAT.md"
