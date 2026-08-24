@@ -5,6 +5,49 @@ Entries before 0.6.0-rc.1 are preserved raw in [docs/CHANGELOG-archive.md](docs/
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-08-25
+
+### Added
+
+- **Lunaris owns its Moon install path (W0.10).** `scripts/install-moon.sh`
+  installs the Moon server Lunaris requires, walking a ladder and failing only
+  if every rung fails: reuse a Moon already on this machine, else a published
+  release tarball for the pinned tag, else a shallow clone of the public source
+  tag plus `cargo install --path`. `setup-lunaris-agents.py` now **runs** it
+  when no Moon is found rather than printing a command (`--install-moon never`
+  restores the old behaviour).
+
+  This replaces ten surfaces — every install guide, three Rust error strings,
+  and the agent setup's own no-Moon exit — that told users to run Moon's curl
+  one-liner. **That command could not succeed on any machine:** it downloads a
+  release tarball and, with no `VERSION`, resolves to the *latest* tag, and
+  Moon v0.8.5, v0.8.6 and v0.8.7 all publish zero binary assets while the ghcr
+  image is private. Lunaris is no longer gated on another project's release
+  pipeline; re-cutting those assets now only makes installs faster.
+
+  The version is pinned to the engine's `MIN_MOON_VERSION`, never "latest".
+  `MOON_VERSION=` pins forward and is validated against that floor rather than
+  trusted; `INSTALL_DIR=` chooses the target.
+
+### Fixed
+
+- **`scripts/bump-version.sh` left `crates/lunaris-ts/package-lock.json`
+  stale**, which has broken two releases: `npm ci` refuses a lock that
+  disagrees with `package.json`, so every workflow installing lunaris-ts dies
+  at that step. v0.7.0's fix landed reactively after nightly failures. The bump
+  now rewrites the lock's version, its `optionalDependencies`, and the
+  `node_modules/@pilotspace/lunaris-*` resolution entries.
+
+### Known limitations
+
+- **The Moon binary exposes no version flag.** `moon --version` and `moon -V`
+  are both rejected, and the version is not recoverable from the binary; the
+  only surface is `INFO server`, which requires a running server. An arbitrary
+  Moon therefore cannot be version-checked offline. `install-moon.sh` records
+  what it installs in a `.moon-version` marker and reuses unmarked binaries
+  with a warning, relying on Lunaris' connect-time check as the real gate.
+
+
 ### Fixed
 
 - **A hard `forget` left the content recallable (W1.4).** `forget` only ever
