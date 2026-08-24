@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-bench"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2314,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-codegen"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-conformance"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-consolidate"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-embed-remote"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "lunaris-core",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-extract"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-hook"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-ingest"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2523,7 +2523,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-llamacpp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "llama-cpp-2",
@@ -2538,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-llm"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "lunaris-core",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-mcp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2589,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-memory"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-memory-service"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-py"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-recipes"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-rerank"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "lunaris-core",
@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-retrieve"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2745,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-server"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-storage-moon"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-test-harness"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2816,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-ts"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2841,7 +2841,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris-verify"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -5999,7 +5999,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "clap",
